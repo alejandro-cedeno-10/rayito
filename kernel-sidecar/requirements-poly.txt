@@ -1,0 +1,11 @@
+# Pins of the `poly` image variant only (rayito-base-poly): the bash kernel and
+# its resolved dependencies, installed by the conditional layer of
+# image/Dockerfile on top of requirements.txt when the zip carries the
+# `kernels_variant` marker. rayito-base never installs this file. Resolved on
+# 2026-09-16 from PyPI (bash_kernel 0.10.0 requires pexpect>=4.0, ipykernel and
+# filetype; pexpect/ptyprocess match the pins of requirements.txt so `pip
+# check` stays clean); every wheel is pure Python (py2.py3-none-any).
+bash_kernel==0.10.0
+filetype==1.2.0
+pexpect==4.9.0
+ptyprocess==0.7.0

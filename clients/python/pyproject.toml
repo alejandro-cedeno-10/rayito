@@ -1,0 +1,115 @@
+[project]
+name = "rayito"
+version = "0.2.0"
+description = "Sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, en tu propia cuenta."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+    "grpcio>=1.84,<2",
+    "protobuf>=7.36.1,<8",
+    "boto3>=1.43.82,<2",
+]
+keywords = ["sandbox", "e2b", "aws", "microvm", "firecracker", "agents", "code-interpreter"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+cli = ["typer>=0.15,<1"]
+mcp = ["mcp>=2.2,<3"]
+
+[project.scripts]
+rayito = "rayito.cli.__main__:main"
+rayito-mcp = "rayito.mcp.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/alejandro-cedeno-10/rayito"
+Repository = "https://github.com/alejandro-cedeno-10/rayito"
+Documentation = "https://github.com/alejandro-cedeno-10/rayito/tree/main/docs/site/docs"
+Changelog = "https://github.com/alejandro-cedeno-10/rayito/blob/main/clients/python/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.12",
+    "mypy>=1.14",
+    "types-protobuf>=6.30",
+    "grpc-stubs>=1.53",
+    "typer>=0.15,<1",
+    "rayito[mcp]",
+]
+docs = [
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=0.27",
+]
+
+[build-system]
+requires = ["uv_build>=0.7.19,<0.9"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["src/rayito/v1"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "T20"]
+ignore = ["RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"src/rayito/cli/**" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rayito"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: corre contra AWS real (requiere RAYITO_E2E=1 y RAYITO_TEMPLATE); excluido por defecto",
+    "bench: benchmarks nightly, excluidos por defecto",
+    "slow: e2e de más de una hora (RAYITO_E2E_SLOW=1), excluidos por defecto",
+]
+addopts = "-m 'not e2e and not bench and not slow'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+exclude = ["src/rayito/v1/"]
+
+[[tool.mypy.overrides]]
+module = ["rayito.v1.*"]
+ignore_errors = true
+follow_imports = "skip"
+
+# Los fakes de test heredan de los servicers generados (sin tipos): la única
+# relajación de `strict`, acotada a esos cinco módulos.
+[[tool.mypy.overrides]]
+module = [
+    "tests.unit.conftest",
+    "tests.unit.fake_process",
+    "tests.unit.fake_filesystem",
+    "tests.unit.fake_code",
+    "tests.unit.fake_pty",
+]
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true

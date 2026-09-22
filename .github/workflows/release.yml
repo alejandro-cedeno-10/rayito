@@ -1,0 +1,302 @@
+name: release
+
+# Publica cada componente desde su tag (openspec m7-supply-chain, D10):
+#
+#   python-v<v>      clients/python  → PyPI (Trusted Publishing, attestations PEP 740)
+#   typescript-v<v>  clients/typescript → npm (trusted publishing con provenance)
+#   rayd-v<v>        crates/rayd     → assets de la GitHub Release del tag:
+#                    rayd (cargo auditable, .dep-v0), rayito-image.zip,
+#                    rayd.cdx.json (CycloneDX 1.5), los dos bundles cosign
+#                    (keyless, Sigstore) y SHA256SUMS
+#
+# Los tags los crea release-please (release-please.yml). Un tag creado con
+# GITHUB_TOKEN no dispara este workflow: en ese caso se lanza a mano con
+# `workflow_dispatch`, eligiendo el tag en "Use workflow from" y pasando el
+# mismo tag en `tag` con `dry_run: false`. Con `dry_run: true` (por defecto)
+# cada job construye, comprueba, firma (rayd) y sube los artefactos al run,
+# pero no publica nada: sirve para ensayar desde cualquier rama cuyos
+# manifiestos ya lleven la versión del tag (p. ej. la rama del PR de release).
+#
+# `npm publish` es la ÚNICA invocación de npm del repositorio (pnpm es el
+# gestor para todo lo demás): el trusted publishing de npm está implementado
+# sólo en el CLI de npm ≥ 11.5.1 (pnpm 9.15.4 no hace el intercambio OIDC).
+# Node 24 trae npm 11.x; el job lo comprueba y falla con un mensaje claro.
+#
+# Pasos manuales, una sola vez (docs/RELEASING.md):
+#   1. PyPI → Trusted Publisher para `rayito`: repo alejandro-cedeno-10/rayito, workflow
+#      `release.yml`, environment `pypi` (admite pending publisher).
+#   2. npm → primera publicación manual y luego Settings → Trusted Publisher:
+#      GitHub Actions, alejandro-cedeno-10/rayito, workflow `release.yml`, environment `npm`.
+#   3. Environments `pypi` y `npm` en GitHub, con required reviewers.
+#   4. Opcional: secreto `RELEASE_PLEASE_TOKEN` (PAT fine-grained) para que
+#      los tags de release-please disparen este workflow solos.
+
+on:
+  push:
+    tags: ["python-v*", "typescript-v*", "rayd-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a publicar o ensayar (python-v… | typescript-v… | rayd-v…)"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: "Construir, comprobar y firmar sin publicar"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  resolve:
+    name: resolve component and version from the tag
+    runs-on: ubuntu-24.04
+    outputs:
+      component: ${{ steps.tag.outputs.component }}
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+      publish: ${{ steps.tag.outputs.publish }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag="$REF_NAME"
+            publish=true
+          else
+            tag="$INPUT_TAG"
+            test -n "$tag" || { echo "workflow_dispatch needs the 'tag' input (e.g. rayd-v0.2.0)"; exit 1; }
+            if [ "$DRY_RUN" = "false" ]; then
+              test "$REF" = "refs/tags/$tag" || {
+                echo "publishing needs the run to start from the tag itself: Use workflow from → Tags → $tag (got $REF)"
+                exit 1
+              }
+              publish=true
+            else
+              publish=false
+            fi
+          fi
+          case "$tag" in
+            python-v[0-9]*) component=python; version="${tag#python-v}" ;;
+            typescript-v[0-9]*) component=typescript; version="${tag#typescript-v}" ;;
+            rayd-v[0-9]*) component=rayd; version="${tag#rayd-v}" ;;
+            *) echo "unsupported tag shape: $tag (expected python-v*, typescript-v* or rayd-v*)"; exit 1 ;;
+          esac
+          {
+            echo "component=$component"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "component=$component version=$version publish=$publish"
+
+  python:
+    name: python → PyPI (Trusted Publishing)
+    needs: resolve
+    if: needs.resolve.outputs.component == 'python'
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: Tag matches pyproject version
+        run: |
+          actual="$(cd clients/python && uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$VERSION" != "$actual" ]; then
+            echo "el tag python-v$VERSION no coincide con pyproject.toml ($actual)"
+            exit 1
+          fi
+      - name: Build sdist and wheel
+        run: cd clients/python && uv build
+      - name: Check wheel contents
+        run: python3 scripts/check_wheel.py clients/python/dist/*.whl
+      - name: twine check
+        run: uvx twine==7.0.0 check clients/python/dist/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-dist-${{ needs.resolve.outputs.version }}
+          path: clients/python/dist/
+          if-no-files-found: error
+      - name: Publish to PyPI (OIDC, attestations on by default)
+        if: needs.resolve.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: clients/python/dist
+
+  typescript:
+    name: typescript → npm (trusted publishing)
+    needs: resolve
+    if: needs.resolve.outputs.component == 'typescript'
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: clients/typescript
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm ≥ 11.5.1 (trusted publishing lives in the npm CLI)
+        run: |
+          required=11.5.1
+          actual="$(npm --version)"
+          lowest="$(printf '%s\n%s\n' "$required" "$actual" | sort -V | head -n1)"
+          if [ "$lowest" != "$required" ]; then
+            echo "npm $actual is below $required: npm trusted publishing needs npm >= $required (Node 24 bundles 11.x)"
+            exit 1
+          fi
+          echo "npm $actual"
+      - name: Tag matches package.json version
+        run: |
+          actual="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$actual" ]; then
+            echo "el tag typescript-v$VERSION no coincide con package.json ($actual)"
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm pack:check
+      - name: pnpm pack → rayito-<version>.tgz
+        run: |
+          pnpm pack
+          test -f "rayito-$VERSION.tgz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-tarball-${{ needs.resolve.outputs.version }}
+          path: clients/typescript/rayito-${{ needs.resolve.outputs.version }}.tgz
+          if-no-files-found: error
+      - name: npm publish (OIDC, provenance attached automatically; the only npm call in the repo)
+        if: needs.resolve.outputs.publish == 'true'
+        run: npm publish "rayito-$VERSION.tgz" --access public
+
+  rayd:
+    name: rayd → signed release assets
+    needs: resolve
+    if: needs.resolve.outputs.component == 'rayd'
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: write
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+      RAYD_BIN: target/aarch64-unknown-linux-musl/release/rayd
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag matches [workspace.package].version
+        run: |
+          actual="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          if [ "$VERSION" != "$actual" ]; then
+            echo "el tag rayd-v$VERSION no coincide con Cargo.toml [workspace.package] ($actual)"
+            exit 1
+          fi
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+      - run: cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.6 cargo-cyclonedx@0.5.9
+      - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0)
+        run: cargo auditable zigbuild --release --locked --target aarch64-unknown-linux-musl -p rayd
+      - name: .dep-v0 names root rayd at the workspace version with tonic, tokio, axum, nix
+        run: python3 scripts/check_auditable.py "$RAYD_BIN"
+      - name: CycloneDX 1.5 SBOM (crates/rayd/rayd.cdx.json)
+        run: cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
+      - name: rayito-image.zip (the artefact the maintainer publishes with make image-publish)
+        run: |
+          cp "$RAYD_BIN" image/rayd
+          python3 scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
+          python3 scripts/image_zip.py image image/rayito-image.zip
+      - name: Stage the release assets
+        run: |
+          mkdir -p release
+          cp "$RAYD_BIN" release/rayd
+          cp image/rayito-image.zip release/rayito-image.zip
+          cp crates/rayd/rayd.cdx.json release/rayd.cdx.json
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: cosign sign-blob (keyless, bundles next to the assets)
+        working-directory: release
+        run: |
+          cosign sign-blob --yes --bundle rayd.sigstore.json rayd
+          cosign sign-blob --yes --bundle rayito-image.zip.sigstore.json rayito-image.zip
+      - name: cosign verify-blob self-check (the identity users verify against)
+        working-directory: release
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          identity='^https://github.com/alejandro-cedeno-10/rayito/\.github/workflows/release\.yml@refs/tags/rayd-v'
+          if [ "$REF_TYPE" != "tag" ]; then
+            identity='^https://github.com/alejandro-cedeno-10/rayito/\.github/workflows/release\.yml@refs/'
+            echo "dry run from a branch: the certificate identity carries this ref, not a rayd-v tag"
+          fi
+          cosign verify-blob --bundle rayd.sigstore.json \
+            --certificate-identity-regexp "$identity" --certificate-oidc-issuer "$OIDC_ISSUER" rayd
+          cosign verify-blob --bundle rayito-image.zip.sigstore.json \
+            --certificate-identity-regexp "$identity" --certificate-oidc-issuer "$OIDC_ISSUER" rayito-image.zip
+      - name: SHA256SUMS
+        working-directory: release
+        run: |
+          sha256sum rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rayd-release-${{ needs.resolve.outputs.version }}
+          path: release/
+          if-no-files-found: error
+      - name: Upload the assets to the GitHub release created by release-please
+        if: needs.resolve.outputs.publish == 'true'
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --clobber

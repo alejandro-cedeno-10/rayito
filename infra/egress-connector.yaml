@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito M6 egress allowlist: an AWS::Lambda::NetworkConnector whose ENIs live
+  in your subnets behind a security group that only lets the listed CIDRs out,
+  plus the operator role Lambda assumes to manage those ENIs. Pass the
+  ConnectorArn output as Sandbox.create(egress=[...]) and every packet a sandbox
+  sends leaves through this security group instead of INTERNET_EGRESS.
+  Property names come from the CloudFormation template reference for
+  AWS::Lambda::NetworkConnector (Config, VpcEgressConfiguration); see
+  infra/README.md for the recipe, the caller IAM and the NAT note.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC of the subnets below; the security group is created here.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      Subnets (1 to 16, same VPC) where Lambda provisions the connector's ENIs.
+      Reaching an internet destination additionally needs a NAT gateway or an
+      egress-only route in these subnets, which this stack does not create.
+  ConnectorName:
+    Type: String
+    Default: rayito-egress
+    AllowedPattern: "^[a-zA-Z0-9_-]{1,64}$"
+    Description: Unique name of the connector within the account and Region.
+  AllowedPort:
+    Type: Number
+    Default: 443
+    MinValue: 1
+    MaxValue: 65535
+    Description: TCP port the sandboxes may reach on the allowed CIDRs.
+  AllowedCidr1:
+    Type: String
+    Default: ""
+    Description: First allowed destination CIDR (e.g. 10.0.0.0/16); empty = none.
+  AllowedCidr2:
+    Type: String
+    Default: ""
+    Description: Second allowed destination CIDR; empty = none.
+  AllowedCidr3:
+    Type: String
+    Default: ""
+    Description: Third allowed destination CIDR; empty = none.
+  AllowedCidr4:
+    Type: String
+    Default: ""
+    Description: Fourth allowed destination CIDR; empty = none.
+  AllowedCidr5:
+    Type: String
+    Default: ""
+    Description: Fifth allowed destination CIDR; empty = none.
+
+Conditions:
+  HasCidr1: !Not [!Equals [!Ref AllowedCidr1, ""]]
+  HasCidr2: !Not [!Equals [!Ref AllowedCidr2, ""]]
+  HasCidr3: !Not [!Equals [!Ref AllowedCidr3, ""]]
+  HasCidr4: !Not [!Equals [!Ref AllowedCidr4, ""]]
+  HasCidr5: !Not [!Equals [!Ref AllowedCidr5, ""]]
+
+Resources:
+  # Lambda assumes this role to create, describe and delete the connector's
+  # ENIs. No aws:SourceAccount condition on purpose: the aws-samples operator
+  # role omits it and the service call does not carry the account tag
+  # (AWS_API_NOTES.md section 10).
+  OperatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      Policies:
+        - PolicyName: manage-connector-enis
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+
+  # The allowlist itself: no ingress at all, and egress only to the CIDRs
+  # given, on one TCP port. EC2 keeps its implicit allow-all egress rule
+  # until at least one egress rule is declared, so the first rule is the
+  # localhost placeholder from the CloudFormation reference ("Remove the
+  # default rule"): with every AllowedCidr empty nothing leaves.
+  EgressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Rayito egress allowlist for ${ConnectorName}
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 127.0.0.1/32
+          Description: placeholder that removes the implicit allow-all egress rule
+        - !If
+          - HasCidr1
+          - IpProtocol: tcp
+            FromPort: !Ref AllowedPort
+            ToPort: !Ref AllowedPort
+            CidrIp: !Ref AllowedCidr1
+            Description: allowed destination 1
+          - !Ref AWS::NoValue
+        - !If
+          - HasCidr2
+          - IpProtocol: tcp
+            FromPort: !Ref AllowedPort
+            ToPort: !Ref AllowedPort
+            CidrIp: !Ref AllowedCidr2
+            Description: allowed destination 2
+          - !Ref AWS::NoValue
+        - !If
+          - HasCidr3
+          - IpProtocol: tcp
+            FromPort: !Ref AllowedPort
+            ToPort: !Ref AllowedPort
+            CidrIp: !Ref AllowedCidr3
+            Description: allowed destination 3
+          - !Ref AWS::NoValue
+        - !If
+          - HasCidr4
+          - IpProtocol: tcp
+            FromPort: !Ref AllowedPort
+            ToPort: !Ref AllowedPort
+            CidrIp: !Ref AllowedCidr4
+            Description: allowed destination 4
+          - !Ref AWS::NoValue
+        - !If
+          - HasCidr5
+          - IpProtocol: tcp
+            FromPort: !Ref AllowedPort
+            ToPort: !Ref AllowedPort
+            CidrIp: !Ref AllowedCidr5
+            Description: allowed destination 5
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: rayito
+          Value: egress-allowlist
+
+  Connector:
+    Type: AWS::Lambda::NetworkConnector
+    Properties:
+      Name: !Ref ConnectorName
+      OperatorRole: !GetAtt OperatorRole.Arn
+      Configuration:
+        VpcEgressConfiguration:
+          AssociatedComputeResourceTypes:
+            - MicroVm
+          NetworkProtocol: IPv4
+          SecurityGroupIds:
+            - !Ref EgressSecurityGroup
+          SubnetIds: !Ref SubnetIds
+
+Outputs:
+  ConnectorArn:
+    Description: Pass it as Sandbox.create(egress=[ConnectorArn]).
+    Value: !GetAtt Connector.Arn
+  ConnectorState:
+    Value: !GetAtt Connector.State
+  EgressSecurityGroupId:
+    Value: !Ref EgressSecurityGroup
+  OperatorRoleArn:
+    Value: !GetAtt OperatorRole.Arn
+  CallerPolicyStatement:
+    Description: The statement the SDK caller needs on top of spike/m0/iam.yaml (or pass the ARN as NetworkConnectorArns).
+    Value: !Sub '{"Effect":"Allow","Action":"lambda:PassNetworkConnector","Resource":"${Connector.Arn}"}'

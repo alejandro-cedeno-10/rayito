@@ -1,0 +1,40 @@
+# Rust
+/target/
+/target-*/
+*.cdx.json
+
+# Artefactos de imagen (se reconstruyen con `make image-zip`)
+/image/rayd
+/image/*.zip
+/image/kernel-sidecar/
+
+# Python
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.venv/
+/clients/python/dist/
+/clients/python/build/
+*.egg-info/
+
+# TypeScript
+node_modules/
+/clients/typescript/dist/
+/clients/typescript/coverage/
+/clients/typescript/*.tgz
+
+# Documentación generada
+/docs/site/_build/
+/site/
+
+# Notas de trabajo del asistente y bitácoras de aceptación: son internas y no
+# aportan nada al que clona el repositorio.
+/.claude/
+
+# Salida cruda del spike M0: lleva IDs de cuenta, ARNs, endpoints e IDs de
+# MicroVM del entorno donde se corrió. Se regenera localmente con
+# `spike/m0/run_m0.py` y nunca se versiona; las cifras medidas viven en
+# `spike/m0/M0_RESULTS.md`.
+/spike/m0/out/

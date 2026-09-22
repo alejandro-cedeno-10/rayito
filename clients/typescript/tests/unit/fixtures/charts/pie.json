@@ -1,0 +1,18 @@
+{
+  "type": "pie",
+  "title": "Pie",
+  "elements": [
+    {
+      "label": "a",
+      "angle": 120.0,
+      "radius": 1.0,
+      "autopct": "33.3%"
+    },
+    {
+      "label": "b",
+      "angle": 240.0,
+      "radius": 1.0,
+      "autopct": 66.7
+    }
+  ]
+}

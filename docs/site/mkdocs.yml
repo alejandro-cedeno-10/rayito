@@ -1,0 +1,62 @@
+site_name: Rayito
+site_description: Sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, en tu propia cuenta.
+docs_dir: docs
+site_dir: _build
+repo_url: https://github.com/alejandro-cedeno-10/rayito
+strict: true
+
+theme:
+  name: material
+  language: es
+  features:
+    - navigation.sections
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: amber
+      toggle:
+        icon: material/brightness-7
+        name: Modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: amber
+      toggle:
+        icon: material/brightness-4
+        name: Modo claro
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["../../clients/python/src"]
+          options:
+            docstring_style: google
+            show_source: false
+            members_order: source
+            show_root_heading: true
+            show_symbol_type_heading: true
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Inicio: index.md
+  - Quickstart: quickstart.md
+  - CLI: cli.md
+  - Conceptos: concepts.md
+  - Referencia de API: api.md
+  - Kernels: kernels.md
+  - Seguridad: security.md
+  - Límites: limits.md
+  - Compatibilidad con E2B: e2b-compat.md
+  - Servidor MCP: mcp.md
+  - Modelo de costes: cost.md
+  - Pool de sandboxes: pool.md
+  - Persistencia: persistence.md
+  - Verificar una release: verify.md

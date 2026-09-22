@@ -1,0 +1,8 @@
+# Propietarios por ruta (GOVERNANCE.md). Con un solo mantenedor todas las
+# entradas apuntan a la misma persona; la forma ya es la que tendrá con más.
+*                       @alejandro-cedeno-10
+/proto/                 @alejandro-cedeno-10
+/crates/                @alejandro-cedeno-10
+/clients/python/        @alejandro-cedeno-10
+/clients/typescript/    @alejandro-cedeno-10
+/AWS_API_NOTES.md       @alejandro-cedeno-10

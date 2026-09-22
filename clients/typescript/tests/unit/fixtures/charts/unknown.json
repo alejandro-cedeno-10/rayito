@@ -1,0 +1,9 @@
+{
+  "type": "heatmap",
+  "title": "Heat",
+  "elements": [
+    {
+      "z": 1
+    }
+  ]
+}

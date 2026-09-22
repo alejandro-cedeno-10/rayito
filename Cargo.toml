@@ -1,0 +1,71 @@
+[workspace]
+resolver = "3"
+members = ["crates/rayito-proto", "crates/rayd-core", "crates/rayd"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98"
+version = "0.2.0"
+license = "Apache-2.0"
+repository = "https://github.com/alejandro-cedeno-10/rayito"
+homepage = "https://github.com/alejandro-cedeno-10/rayito"
+publish = false
+
+[workspace.dependencies]
+rayito-proto = { path = "crates/rayito-proto" }
+rayd-core = { path = "crates/rayd-core" }
+
+tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "router", "server"] }
+tonic-prost = "=0.14.6"
+tonic-prost-build = { version = "=0.14.6", default-features = false }
+prost = "=0.14.4"
+prost-types = "=0.14.4"
+protox = "=0.9.1"
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util", "fs"] }
+tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
+tokio-util = { version = "=0.7.19", default-features = false, features = ["codec"] }
+axum = { version = "=0.8.9", default-features = false, features = ["tokio", "http1", "json"] }
+hyper = "=1.11.1"
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }
+http = "=1.5.0"
+http-body = "=1.1.0"
+http-body-util = "=0.1.5"
+bytes = "=1.12.1"
+futures = { version = "=0.3.34", default-features = false, features = ["std"] }
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "ioctl", "resource"] }
+libc = "=0.2.189"
+thiserror = "=2.0.20"
+anyhow = "=1.0.104"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["env-filter", "fmt", "json", "std"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.11.0"
+subtle = { version = "=2.6.1", default-features = false }
+zeroize = { version = "=1.9.0", features = ["derive"] }
+base64 = "=0.23.1"
+tempfile = "=3.27.0"
+notify = { version = "=8.2.0", default-features = false }
+mimalloc = "=0.1.52"
+getrandom = "=0.4.3"
+# S3 persistence (ADR-009): the only TLS client in the binary. `sigv4a`,
+# `sso` and `credentials-process` stay out; the trust store is the OS bundle.
+aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "=1.148.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+tar = "=0.4.46"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

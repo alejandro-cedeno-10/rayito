@@ -1,0 +1,88 @@
+name: audit (weekly)
+
+# Auditoría semanal de dependencias (openspec m7-supply-chain, D5): las mismas
+# comprobaciones que el job `audit` y `deny` de ci.yml, pero con la base de
+# datos de advisories fresca del lunes, de modo que un aviso publicado después
+# del último CI pone rojo el job sin ningún cambio de código. El job `node`
+# añade `pnpm audit --audit-level high` sobre todos los scopes: los hallazgos
+# sólo de devDependencies se informan cada semana y sólo fallan a partir de
+# `high`. Política ante un hallazgo: subir la versión en el mismo PR si hay
+# parche; si no, `ignore` documentado (deny.toml, `--ignore-vuln`,
+# `auditConfig`) y un issue.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: cargo-deny advisories (fresh database)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories
+          rust-version: "1.98"
+
+  python:
+    name: pip-audit (image pins + uv exports)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: pip-audit over the image pins (kernel-sidecar/requirements.txt)
+        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements.txt --no-deps --strict
+      - name: pip-audit over the poly variant pins (kernel-sidecar/requirements-poly.txt)
+        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps --strict
+      - name: pip-audit over the SDK runtime graph (uv export of clients/python)
+        run: |
+          (cd clients/python && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/rayito-client.txt")
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
+      - name: pip-audit over the sidecar lock (uv export of kernel-sidecar)
+        run: |
+          (cd kernel-sidecar && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/kernel-sidecar.txt")
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+
+  node:
+    name: pnpm audit (prod moderate, all scopes high)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: production graph (fails at moderate)
+        run: pnpm audit --prod --audit-level moderate
+      - name: every scope including devDependencies (fails at high only)
+        run: pnpm audit --audit-level high

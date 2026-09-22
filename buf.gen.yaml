@@ -1,0 +1,22 @@
+version: v2
+plugins:
+  # Rust (rayd): generado en crates/rayito-proto/build.rs con tonic-prost-build +
+  # protox (sin protoc). tonic >= 0.14 separó prost en tonic-prost.
+  #
+  # Python: el gencode importa por ruta absoluta de proto (`from rayito.v1 import
+  # common_pb2`), así que la salida va a la raíz `src/` y queda importable como
+  # `rayito.v1.*`. Regla: el pin de `protobuf` en pyproject debe ser >= la
+  # versión del plugin (v36.1 -> protobuf>=7.36.1).
+  - remote: buf.build/protocolbuffers/python:v36.1
+    out: clients/python/src
+  - remote: buf.build/protocolbuffers/pyi:v36.1
+    out: clients/python/src
+  - remote: buf.build/grpc/python:v1.84.0
+    out: clients/python/src
+  # TypeScript: Connect-ES v2 sólo necesita protoc-gen-es (incluye descriptores
+  # de servicio); el transporte gRPC es createGrpcTransport de connect-node.
+  - remote: buf.build/bufbuild/es:v2.15.0
+    out: clients/typescript/src/gen
+    opt:
+      - target=ts
+      - import_extension=js

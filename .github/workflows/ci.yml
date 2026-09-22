@@ -1,0 +1,277 @@
+name: ci
+
+# Toda acción va fijada a un SHA de commit con su tag en el comentario
+# (openspec m7-supply-chain, D1); `permissions: contents: read` global y
+# ningún job eleva nada (D2); harden-runner en modo audit como primer paso de
+# cada job. El paso "no unpinned actions" del job `check` impide que un
+# `@vN` vuelva a colarse.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: lint + test (x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: actionlint (workflows validated without act)
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          curl -fsSL -o "$RUNNER_TEMP/actionlint/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint" actionlint
+          "$RUNNER_TEMP/actionlint/actionlint" -no-color
+      - name: no unpinned actions (every `uses:` is a commit SHA)
+        run: python3 scripts/check_pins.py
+      - name: no environment identifiers in tracked files (accounts, buckets, SSO, resource ids, local paths)
+        run: python3 scripts/check_hygiene.py
+      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1.5.0
+        with:
+          version: 1.73.0
+          setup_only: true
+      - run: buf lint
+      - name: buf breaking
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: buf breaking --against ".git#branch=${BASE_REF},subdir=proto"
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - run: uvx ruff==0.16.7 check scripts
+      - name: limits.json renders _limits.py and limits.ts without drift
+        run: python3 scripts/gen_limits.py --check
+      - name: Apache-2.0 declared in the five manifests, LICENSE and NOTICE copies identical
+        run: python3 scripts/check_license.py
+      - name: Python client unit tests, lint, format and types
+        run: |
+          cd clients/python
+          uv run pytest tests/unit
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src tests
+      - name: scripts/ unit tests (bench, check_auditable, check_license, shims)
+        run: cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
+      - name: Python wheel build and content checks
+        run: |
+          (cd clients/python && uv build)
+          python3 scripts/check_wheel.py clients/python/dist/*.whl
+          uvx twine==7.0.0 check clients/python/dist/*
+
+  typescript:
+    name: typescript client (lint, typecheck, build, unit)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm pack:check
+
+  sidecar:
+    name: kernel-sidecar (protocol, dispatcher, real ipykernel)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: Lint and type-check
+        run: |
+          cd kernel-sidecar
+          uvx ruff==0.16.7 check .
+          uvx ruff==0.16.7 format --check .
+          uv run mypy src
+      - name: Host tests
+        run: cd kernel-sidecar && uv run --with-requirements requirements.txt pytest
+      - name: Real kernel tests (pinned requirements plus the poly bash kernel, ipc sockets)
+        env:
+          RAYITO_REQUIRE_BASH_KERNEL: "1"
+        run: cd kernel-sidecar && uv run --with-requirements requirements.txt --with-requirements requirements-poly.txt pytest -m kernel
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: advisories, bans, licenses, sources (deny.toml)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          rust-version: "1.98"
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: pip-audit over the image pins (kernel-sidecar/requirements.txt)
+        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements.txt --no-deps --strict
+      - name: pip-audit over the poly variant pins (kernel-sidecar/requirements-poly.txt)
+        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps --strict
+      - name: pip-audit over the SDK runtime graph (uv export of clients/python)
+        run: |
+          (cd clients/python && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/rayito-client.txt")
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
+      - name: pip-audit over the sidecar lock (uv export of kernel-sidecar)
+        run: |
+          (cd kernel-sidecar && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/kernel-sidecar.txt")
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+      - name: pnpm audit over the production graph of the TypeScript client
+        run: |
+          cd clients/typescript
+          pnpm install --frozen-lockfile
+          pnpm audit --prod --audit-level moderate
+
+  arm:
+    name: test on aarch64 (ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain from rust-toolchain.toml (aarch64-unknown-linux-gnu host)
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo test natively on aarch64 (cfg(unix) adapter suites, non-root self-skips)
+        run: cargo test --workspace --locked
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: Sidecar host tests with the image pins (manylinux_2_28_aarch64 wheels)
+        run: cd kernel-sidecar && uv run --with-requirements requirements.txt pytest
+      - name: Sidecar real kernel tests on aarch64 (plus the poly bash kernel)
+        env:
+          RAYITO_REQUIRE_BASH_KERNEL: "1"
+        run: cd kernel-sidecar && uv run --with-requirements requirements.txt --with-requirements requirements-poly.txt pytest -m kernel
+
+  build:
+    name: rayd aarch64-unknown-linux-musl
+    runs-on: ubuntu-24.04
+    needs: check
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+      - run: cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.6 cargo-cyclonedx@0.5.9
+      - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0)
+        run: cargo auditable zigbuild --release --locked --target aarch64-unknown-linux-musl -p rayd
+      - run: file target/aarch64-unknown-linux-musl/release/rayd
+      - name: .dep-v0 names root rayd at the workspace version with tonic, tokio, axum, nix
+        run: python3 scripts/check_auditable.py target/aarch64-unknown-linux-musl/release/rayd
+      - name: CycloneDX 1.5 SBOM of the aarch64 crate graph (crates/rayd/rayd.cdx.json)
+        run: |
+          cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
+          python3 -c "import json; d = json.load(open('crates/rayd/rayd.cdx.json')); assert d['specVersion'] == '1.5', d['specVersion']; assert d['metadata']['component']['name'] == 'rayd'; print('sbom components:', len(d['components']))"
+      - run: cp target/aarch64-unknown-linux-musl/release/rayd image/rayd
+      - run: python3 scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
+      - run: python3 scripts/image_zip.py image image/rayito-image.zip
+      - name: Slim and poly variant zips (each marker present in its zip, none in full)
+        run: |
+          python3 scripts/image_zip.py image image/rayito-image-slim.zip --variant slim
+          python3 scripts/image_zip.py image image/rayito-image-poly.zip --variant poly
+          python3 -c "import sys; sys.path.insert(0, 'scripts'); from image_zip import marker_variant; assert marker_variant('image/rayito-image-slim.zip') == 'slim'; assert marker_variant('image/rayito-image-poly.zip') == 'poly'; assert marker_variant('image/rayito-image.zip') == 'full'; print('variants ok')"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rayd-aarch64-musl
+          path: |
+            target/aarch64-unknown-linux-musl/release/rayd
+            image/rayito-image.zip
+            crates/rayd/rayd.cdx.json
+          if-no-files-found: error
+
+  docs:
+    name: docs site (mkdocs --strict)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: Build the docs site strictly (no deploy)
+        run: cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build

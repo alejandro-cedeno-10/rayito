@@ -1,0 +1,167 @@
+name: e2e (AWS)
+
+# Aceptación contra AWS real desde CI (openspec m7-supply-chain, D8).
+#
+# Coste: ≈ $0,03 por ejecución (AWS_API_NOTES.md §12: lectura de snapshot +
+# cómputo de ~12 sandboxes cortos); el nightly ≈ $1/mes. Este workflow NUNCA
+# construye ni publica una versión de imagen (+$0,037/semana cada una):
+# corre contra la última versión ACTIVE de la imagen de test que el
+# mantenedor publica desde su máquina (`make image-publish`), o contra la
+# versión que se pase en `template_version`.
+#
+# Guardas: `concurrency: e2e` (una ejecución a la vez: el sweeper de
+# conftest termina todos los MicroVMs vivos del template), `timeout-minutes`
+# por job, pre-flight que falla si hay más de 10 MicroVMs vivos del template
+# antes de empezar, y un sweeper `if: always()` que termina lo que quede al
+# final (idempotente, `TerminateMicrovm` es 10 TPS). Cada sandbox lleva
+# además `maximumDurationInSeconds` ≤ 1800.
+#
+# Credenciales: sólo por OIDC con `aws-actions/configure-aws-credentials`
+# sobre el rol de `infra/ci-oidc-role.yaml` (trust exacto a
+# `repo:alejandro-cedeno-10/rayito:environment:e2e`; sólo las acciones de MicroVM sobre
+# el ARN de la imagen de test). Sin `RAYITO_EXECUTION_ROLE_ARN`: los tests
+# que lo necesitan se saltan solos y no hay logs de runtime en CI.
+#
+# Pasos manuales, una sola vez (infra/README.md):
+#   1. Desplegar `infra/ci-oidc-role.yaml` con `TestImageArns=<arn de rayito-base>`.
+#   2. Crear el environment `e2e` en GitHub con required reviewers.
+#   3. Variables del repositorio: RAYITO_E2E_ROLE_ARN (output `RoleArn` de la
+#      pila), RAYITO_E2E_TEMPLATE_ARN (siempre un ARN, nunca un nombre: la
+#      política del rol compara ARNs), RAYITO_E2E_REGION (opcional, us-east-1).
+#   4. AWS Budget de $10/mes filtrado por servicio `AWS Lambda` con alerta por
+#      correo al 80 %.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Qué suite correr"
+        type: choice
+        options: [python, typescript, both]
+        default: python
+      template_version:
+        description: "Versión de imagen (RAYITO_TEMPLATE_VERSION); vacío = última ACTIVE"
+        type: string
+        required: false
+        default: ""
+      expression:
+        description: "Filtro -k de pytest (sólo la suite Python)"
+        type: string
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 5 * * *"
+
+concurrency:
+  group: e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RAYITO_E2E: "1"
+  RAYITO_TEMPLATE: ${{ vars.RAYITO_E2E_TEMPLATE_ARN }}
+  RAYITO_TEMPLATE_VERSION: ${{ inputs.template_version }}
+
+jobs:
+  python:
+    name: python e2e (pytest -m e2e)
+    if: github.event_name == 'schedule' || inputs.suite == 'python' || inputs.suite == 'both'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: e2e
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.RAYITO_E2E_ROLE_ARN }}
+          aws-region: ${{ vars.RAYITO_E2E_REGION || 'us-east-1' }}
+          role-session-name: rayito-e2e-${{ github.run_id }}
+          role-duration-seconds: 3600
+      - name: pre-flight (> 10 live MicroVMs of the template → fail)
+        run: |
+          test -n "$RAYITO_TEMPLATE" || { echo "RAYITO_E2E_TEMPLATE_ARN is not set"; exit 1; }
+          aws sts get-caller-identity --query Arn --output text
+          live=$(aws lambda-microvms list-microvms --image-identifier "$RAYITO_TEMPLATE" \
+            --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text | wc -w)
+          echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE"
+          test "$live" -le 10 || { echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE (> 10)"; exit 1; }
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.12"
+      - name: pytest tests/e2e -m e2e
+        env:
+          PYTEST_EXPRESSION: ${{ inputs.expression }}
+        run: |
+          cd clients/python
+          if [ -n "$PYTEST_EXPRESSION" ]; then
+            uv run pytest tests/e2e -m e2e -v -k "$PYTEST_EXPRESSION"
+          else
+            uv run pytest tests/e2e -m e2e -v
+          fi
+      - name: sweeper (terminate every remaining MicroVM of the template)
+        if: always()
+        run: |
+          aws lambda-microvms list-microvms --image-identifier "$RAYITO_TEMPLATE" \
+            --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text \
+            | tr '\t' '\n' | xargs -r -n1 aws lambda-microvms terminate-microvm --microvm-identifier
+
+  typescript:
+    name: typescript e2e (pnpm test:e2e)
+    needs: python
+    if: ${{ !cancelled() && needs.python.result != 'failure' && github.event_name == 'workflow_dispatch' && (inputs.suite == 'typescript' || inputs.suite == 'both') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: e2e
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.RAYITO_E2E_ROLE_ARN }}
+          aws-region: ${{ vars.RAYITO_E2E_REGION || 'us-east-1' }}
+          role-session-name: rayito-e2e-${{ github.run_id }}
+          role-duration-seconds: 3600
+      - name: pre-flight (> 10 live MicroVMs of the template → fail)
+        run: |
+          test -n "$RAYITO_TEMPLATE" || { echo "RAYITO_E2E_TEMPLATE_ARN is not set"; exit 1; }
+          aws sts get-caller-identity --query Arn --output text
+          live=$(aws lambda-microvms list-microvms --image-identifier "$RAYITO_TEMPLATE" \
+            --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text | wc -w)
+          echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE"
+          test "$live" -le 10 || { echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE (> 10)"; exit 1; }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:e2e
+      - name: sweeper (terminate every remaining MicroVM of the template)
+        if: always()
+        run: |
+          aws lambda-microvms list-microvms --image-identifier "$RAYITO_TEMPLATE" \
+            --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text \
+            | tr '\t' '\n' | xargs -r -n1 aws lambda-microvms terminate-microvm --microvm-identifier

@@ -1,0 +1,9 @@
+Rayito
+Copyright 2026 Rayito contributors
+
+This product includes software developed by third parties:
+
+- e2b_charts 1.0.0 (MIT License), Copyright (c) 2025 FOUNDRYLABS, INC.
+  Vendored at kernel-sidecar/src/rayito_kernel_sidecar/_vendor/e2b_charts
+  with its LICENSE file alongside; see VENDORED.md there for the upstream
+  source, the sdist checksum and the single import-path change.

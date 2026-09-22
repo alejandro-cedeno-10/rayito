@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "python3",
+    "-m",
+    "ipykernel_launcher",
+    "-f",
+    "{connection_file}",
+    "--config=/opt/rayito/sidecar/ipython/ipython_kernel_config.py"
+  ],
+  "display_name": "rayito",
+  "language": "python",
+  "interrupt_mode": "signal",
+  "metadata": {
+    "rayito": "the sidecar rewrites /opt/rayito/sidecar to --sidecar-root and python3 to its own interpreter at start"
+  }
+}

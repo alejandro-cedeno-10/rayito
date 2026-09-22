@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Vulnerabilidad de seguridad
+    url: https://github.com/alejandro-cedeno-10/rayito/security/advisories/new
+    about: Repórtala en privado (SECURITY.md). Nunca en un issue público ni pegando tokens, JWE o runHookPayload.
+  - name: Documentación
+    url: https://github.com/alejandro-cedeno-10/rayito/tree/main/docs/site/docs
+    about: Conceptos, referencia de API, límites, compatibilidad con E2B y modelo de costes.

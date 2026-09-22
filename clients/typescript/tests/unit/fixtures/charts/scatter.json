@@ -1,0 +1,20 @@
+{
+  "type": "scatter",
+  "title": "Scatter",
+  "x_label": null,
+  "y_label": null,
+  "x_unit": null,
+  "y_unit": null,
+  "x_ticks": [],
+  "x_tick_labels": [],
+  "x_scale": "datetime",
+  "y_ticks": [],
+  "y_tick_labels": [],
+  "y_scale": "categorical",
+  "elements": [
+    {
+      "label": "dots",
+      "points": [[1, "a"], [2, "b"]]
+    }
+  ]
+}

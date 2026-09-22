@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+import "rayito/v1/common.proto";
+import "rayito/v1/process.proto";
+
+// Terminal interactiva real (pseudo-terminal), no un proceso con pipes.
+//
+// Forma server-stream + unarios (la misma que envd de E2B): no depende de que el
+// proxy de AWS soporte streams bidireccionales y permite que la PTY comparta el
+// handle de comando del SDK.
+service PtyService {
+  // El primer mensaje del stream es siempre PtyStarted{pid}.
+  rpc Create(PtyStart) returns (stream PtyServerMessage);
+
+  // Se reengancha a una PTY viva tras disconnect() o suspend/resume.
+  rpc Connect(ConnectRequest) returns (stream PtyServerMessage);
+
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+  rpc Resize(ResizeRequest) returns (ResizeResponse);
+  rpc Kill(KillPtyRequest) returns (KillPtyResponse);
+}
+
+message PtySize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message PtyStart {
+  PtySize size = 1;
+  map<string, string> envs = 2;
+  optional string cwd = 3;
+  optional User user = 4;
+  // Por defecto el shell de login del usuario, lanzado como `-i -l`.
+  optional string shell = 5;
+  // Misma semántica que StartRequest.timeout_ms. 0 = sin límite.
+  uint64 timeout_ms = 6;
+}
+
+message PtyServerMessage {
+  oneof message {
+    PtyStarted started = 1;
+    bytes data = 2;
+    PtyExited exited = 3;
+    KeepAlive keepalive = 4;
+  }
+  // Secuencia monótona por PTY de los mensajes `data` (misma regla que
+  // DataEvent.seq), para reanudar sin huecos con Connect.from_seq tras un
+  // disconnect() o un suspend/resume. 0 en started, exited y keepalive.
+  uint64 seq = 5;
+}
+
+message PtyStarted {
+  uint32 pid = 1;
+}
+
+// Misma forma que EndEvent de ProcessService.
+message PtyExited {
+  sint32 exit_code = 1;
+  bool exited = 2;
+  string status = 3;
+  optional StreamError error = 4;
+  optional int32 signal = 5;
+}
+
+message ResizeRequest {
+  uint32 pid = 1;
+  PtySize size = 2;
+}
+message ResizeResponse {}
+
+message KillPtyRequest {
+  uint32 pid = 1;
+}
+message KillPtyResponse {}

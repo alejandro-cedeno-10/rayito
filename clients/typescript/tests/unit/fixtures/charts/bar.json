@@ -1,0 +1,20 @@
+{
+  "type": "bar",
+  "title": "Bar",
+  "x_label": "category",
+  "y_label": "count",
+  "x_unit": null,
+  "y_unit": null,
+  "elements": [
+    {
+      "label": "a",
+      "group": "_container0",
+      "value": "1.0"
+    },
+    {
+      "label": "b",
+      "group": "_container0",
+      "value": 2.5
+    }
+  ]
+}

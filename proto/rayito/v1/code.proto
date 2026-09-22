@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+import "rayito/v1/common.proto";
+
+// Ejecución de código con estado persistente y resultados enriquecidos.
+// Implementado por el agente como proxy al kernel-sidecar (un kernel Jupyter
+// por contexto).
+service CodeService {
+  // Crea un contexto de ejecución (un kernel con su propio scope y cwd).
+  rpc CreateContext(CreateContextRequest) returns (CreateContextResponse);
+
+  // Ejecuta código y transmite la salida a medida que se produce. Si el cliente
+  // cancela el stream, el agente interrumpe la ejecución en el kernel.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+
+  // Se reengancha a una ejecución en curso tras perder el stream (p. ej. tras
+  // suspend/resume). UNIMPLEMENTED hasta M5.
+  rpc Reattach(ReattachRequest) returns (stream ExecuteEvent);
+
+  rpc ListContexts(ListContextsRequest) returns (ListContextsResponse);
+  rpc DestroyContext(DestroyContextRequest) returns (DestroyContextResponse);
+
+  // Reinicia el kernel de un contexto perdiendo su estado. Útil tras un
+  // proceso que deja el intérprete inservible.
+  rpc RestartContext(RestartContextRequest) returns (RestartContextResponse);
+}
+
+message CreateContextRequest {
+  // Vacío, "python", "bash" o "javascript". El kernel bash sólo existe en la
+  // variante de imagen rayito-base-poly (UNIMPLEMENTED en las demás) y
+  // arranca en la primera celda. "javascript" es un nombre reservado: hoy
+  // ninguna imagen trae ese kernel (UNIMPLEMENTED en todas).
+  string language = 1;
+  // Por defecto el home del usuario por defecto.
+  optional string cwd = 2;
+  map<string, string> envs = 3;
+}
+message CreateContextResponse {
+  string context_id = 1;
+}
+
+message ExecuteRequest {
+  // Si se omite, se usa el contexto por defecto, creándolo si no existe.
+  optional string context_id = 1;
+  string code = 2;
+  // Impuesto por el agente: al vencer envía interrupt al kernel; si no queda
+  // idle en 5 s, reinicia el contexto y emite ExecutionError{name:
+  // "ExecutionTimeout"} seguido de ExecutionEnd. 0 = sin límite.
+  uint64 timeout_ms = 3;
+  // Variables sólo para esta ejecución (sólo en contextos Python).
+  map<string, string> envs = 4;
+  // Selecciona el contexto por defecto de ese lenguaje ("python", "bash",
+  // "javascript"), creándolo si no existe. Incompatible con context_id.
+  // Vacío = el contexto indicado o el de Python.
+  optional string language = 5;
+}
+
+message ReattachRequest {
+  string context_id = 1;
+  string execution_id = 2;
+  uint64 from_seq = 3;
+}
+
+message ExecuteEvent {
+  oneof event {
+    OutputChunk stdout = 1;
+    OutputChunk stderr = 2;
+    // Un resultado enriquecido (gráfico, tabla, valor de retorno).
+    ExecutionResult result = 3;
+    // Nunca es terminal: siempre le sigue ExecutionEnd.
+    ExecutionError error = 4;
+    ExecutionEnd end = 5;
+    // Primer mensaje del stream (execute_input de Jupyter).
+    ExecutionStarted started = 6;
+    KeepAlive keepalive = 7;
+  }
+  // Secuencia monótona por ejecución, para Reattach.from_seq.
+  uint64 seq = 8;
+}
+
+message ExecutionStarted {
+  string execution_id = 1;
+  uint64 execution_count = 2;
+}
+
+message OutputChunk {
+  string text = 1;
+  int64 timestamp_unix_ns = 2;
+}
+
+// Espejo de los mime bundles del protocolo Jupyter. Todos los campos son
+// opcionales; un mismo resultado puede traer varias representaciones.
+message ExecutionResult {
+  // true si es el valor de retorno de la última expresión (execute_result).
+  bool is_main_result = 1;
+  optional string text = 2;
+  optional string html = 3;
+  optional string markdown = 4;
+  optional string latex = 5;
+  // Documento JSON.
+  optional string json = 6;
+  optional string javascript = 7;
+  // Imágenes en base64.
+  optional string png = 8;
+  optional string jpeg = 9;
+  optional string svg = 10;
+  optional string pdf = 11;
+  // Datos estructurados de gráficos extraídos de matplotlib (JSON).
+  optional string chart = 12;
+  // DataFrame serializado (JSON, orient=list).
+  optional string data = 13;
+  // Otros mime types no mapeados: mime -> contenido.
+  map<string, string> extra = 14;
+}
+
+message ExecutionError {
+  string name = 1;
+  string value = 2;
+  repeated string traceback = 3;
+}
+
+message ExecutionEnd {
+  uint64 execution_count = 1;
+}
+
+message ListContextsRequest {}
+message ContextInfo {
+  string context_id = 1;
+  string language = 2;
+  string cwd = 3;
+}
+message ListContextsResponse {
+  repeated ContextInfo contexts = 1;
+}
+
+message DestroyContextRequest {
+  string context_id = 1;
+}
+message DestroyContextResponse {}
+
+message RestartContextRequest {
+  string context_id = 1;
+}
+message RestartContextResponse {}

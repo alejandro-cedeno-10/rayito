@@ -1,0 +1,20 @@
+[package]
+name = "rayd-core"
+description = "Domain and ports of the rayd agent: lifecycle, access-token gate, health, processes, filesystem, code execution, metrics, clock"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+
+[lints]
+workspace = true

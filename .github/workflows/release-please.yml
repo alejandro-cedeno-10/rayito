@@ -1,0 +1,36 @@
+name: release-please
+
+# Abre y mantiene el PR de release en modo manifest (openspec m7-supply-chain,
+# D9): tres componentes (`clients/python`, `clients/typescript`, `crates/rayd`)
+# ligados por el plugin `linked-versions`, así cada release mueve los tres a
+# la misma versión y crea los tags `python-v*`, `typescript-v*` y `rayd-v*`.
+#
+# Token: los tags creados con `GITHUB_TOKEN` no disparan otros workflows. Con
+# un PAT fine-grained (`contents: write`, `pull-requests: write`, sólo este
+# repositorio) guardado como `RELEASE_PLEASE_TOKEN`, los tags disparan
+# `release.yml`; sin él, `release.yml` se lanza a mano con `workflow_dispatch`
+# y el input `tag` (docs/RELEASING.md).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: release PR and tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}

@@ -1,0 +1,24 @@
+{
+  "type": "line",
+  "title": "Line chart",
+  "x_label": "x",
+  "y_label": "y",
+  "x_unit": null,
+  "y_unit": "cm",
+  "x_ticks": [0.0, 1.0, 2.0],
+  "x_tick_labels": ["0", "1", "2"],
+  "x_scale": "linear",
+  "y_ticks": [1.0, 2.0, 3.0],
+  "y_tick_labels": ["1", "2", "3"],
+  "y_scale": "log",
+  "elements": [
+    {
+      "label": "_child0",
+      "points": [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]
+    },
+    {
+      "label": "series b",
+      "points": [["2024-01-01", 5.0], ["2024-01-02", 6.5]]
+    }
+  ]
+}

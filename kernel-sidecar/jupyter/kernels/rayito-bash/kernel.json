@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "python3",
+    "-m",
+    "bash_kernel",
+    "-f",
+    "{connection_file}"
+  ],
+  "display_name": "rayito-bash",
+  "language": "bash",
+  "interrupt_mode": "signal",
+  "metadata": {
+    "rayito": "installed at start only when bash_kernel is importable (rayito-base-poly); python3 becomes the sidecar's interpreter"
+  }
+}

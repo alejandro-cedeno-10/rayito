@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+import "rayito/v1/common.proto";
+
+// Ejecución de comandos arbitrarios dentro del sandbox.
+service ProcessService {
+  // Lanza un proceso y transmite su salida. El primer mensaje del stream es
+  // siempre un StartEvent con el PID; después vienen DataEvent hasta EndEvent.
+  rpc Start(StartRequest) returns (stream ProcessEvent);
+
+  // Se engancha al stream de un proceso ya en marcha (background) o terminado
+  // hace menos de 30 s (se reenvían StartEvent + EndEvent).
+  rpc Connect(ConnectRequest) returns (stream ProcessEvent);
+
+  // Escribe en el stdin de un proceso vivo (sólo si se lanzó con stdin=true).
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+
+  // Cierra el stdin (EOF) de un proceso lanzado con stdin=true.
+  rpc CloseStdin(CloseStdinRequest) returns (CloseStdinResponse);
+
+  // Envía una señal al grupo de procesos (SIGTERM, SIGKILL, ...).
+  rpc SendSignal(SendSignalRequest) returns (SendSignalResponse);
+
+  // Lista procesos y PTYs activos.
+  rpc List(ListRequest) returns (ListResponse);
+}
+
+message ProcessConfig {
+  string cmd = 1;
+  repeated string args = 2;
+  map<string, string> envs = 3;
+  optional string cwd = 4;
+}
+
+message StartRequest {
+  ProcessConfig process = 1;
+  optional User user = 2;
+  // Impuesto por el agente sobre CLOCK_MONOTONIC. Medido en M0 (Q19): el
+  // monotónico SÍ avanza durante suspend, así que un plazo puede vencer nada
+  // más reanudar; M5 lo rearma en /resume. Al vencer: SIGTERM al grupo,
+  // SIGKILL 5 s después, y EndEvent{exited:false, status:"timeout",
+  // error:{code:"deadline_exceeded"}}. 0 = sin límite.
+  uint64 timeout_ms = 3;
+  // false (default): stdin es /dev/null. true: pipe abierto hasta CloseStdin.
+  bool stdin = 4;
+  // Etiqueta libre del cliente para localizar el proceso en List.
+  optional string tag = 5;
+}
+
+message ConnectRequest {
+  uint32 pid = 1;
+  // 0 = sólo salida nueva. N = reenviar DataEvents con seq >= N desde el buffer
+  // (último MiB); OUT_OF_RANGE si ya fue descartado.
+  uint64 from_seq = 2;
+}
+
+message ProcessEvent {
+  oneof event {
+    StartEvent start = 1;
+    DataEvent data = 2;
+    EndEvent end = 3;
+    KeepAlive keepalive = 4;
+  }
+}
+
+message StartEvent {
+  uint32 pid = 1;
+}
+
+message DataEvent {
+  oneof output {
+    bytes stdout = 1;
+    bytes stderr = 2;
+  }
+  // Secuencia monótona por proceso, para reanudar con Connect.from_seq.
+  uint64 seq = 3;
+}
+
+message EndEvent {
+  // 128 + señal cuando el proceso muere por señal.
+  sint32 exit_code = 1;
+  bool exited = 2;
+  // "exited" | "signaled" | "timeout" | "suspending" | "output_truncated".
+  // "output_truncated" cierra sólo este stream (el proceso sigue vivo) cuando
+  // el suscriptor no consume durante 30 s; error.code = "output_truncated" y
+  // el cliente puede volver con Connect(pid, from_seq).
+  string status = 3;
+  optional StreamError error = 4;
+  optional int32 signal = 5;
+}
+
+message SendInputRequest {
+  uint32 pid = 1;
+  bytes data = 2;
+}
+message SendInputResponse {}
+
+message CloseStdinRequest {
+  uint32 pid = 1;
+}
+message CloseStdinResponse {}
+
+message SendSignalRequest {
+  uint32 pid = 1;
+  // Número de señal POSIX. 15 = SIGTERM, 9 = SIGKILL.
+  int32 signal = 2;
+}
+message SendSignalResponse {}
+
+message ListRequest {}
+
+enum ProcessKind {
+  PROCESS_KIND_UNSPECIFIED = 0;
+  PROCESS_KIND_PROCESS = 1;
+  PROCESS_KIND_PTY = 2;
+}
+
+message ProcessInfo {
+  uint32 pid = 1;
+  ProcessConfig config = 2;
+  optional string tag = 3;
+  ProcessKind kind = 4;
+}
+
+message ListResponse {
+  repeated ProcessInfo processes = 1;
+}

@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  Rayito: E2B-compatible sandbox SDK on AWS MicroVMs. Full constitution in
+  openspec/project.md — read it before creating or editing any change.
+
+  Hard rules:
+  - Never invent AWS API parameters. If a name/field/response shape is not
+    literally in AWS_API_NOTES.md, stop and ask; do not infer by analogy.
+  - The .proto is the source of truth. Never hand-write request/response
+    structs in Rust/Python/TypeScript.
+  - One milestone at a time (see MILESTONES.md). No features/abstractions
+    "for later"; see SPEC.md section 4 non-goals.
+  - A milestone never closes on mocks; acceptance runs against real AWS
+    (clients/python/tests/e2e).
+  - ARM64 only: aarch64-unknown-linux-musl.
+  - rayd is hexagonal: rayd-core (domain + ports) has no tonic/axum/
+    tokio-process; those live only in rayd's adapters. Introduce a port
+    trait only in the milestone that ships its adapter.
+  - Identifiers always in English; Spanish only in user-facing strings,
+    docstrings/comments, and product vocabulary already crossing the wire.
+  - No inline comments inside function bodies; comment WHY not WHAT.
+  - Security defaults (non-root user, scratch env, rlimits, process groups,
+    bounded output channels) ship in the milestone that introduces the
+    surface they protect, not in a later hardening pass.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito: rol IAM que asume el workflow e2e.yml de GitHub Actions por OIDC
+  (openspec m7-supply-chain, D8b). Trust exacto a un environment de un
+  repositorio; sólo las acciones de MicroVM que el SDK y la aceptación
+  llaman, sobre las imágenes de test. Sin permisos de imagen, S3, cuotas ni
+  etiquetas: publicar una imagen sigue siendo una acción del mantenedor.
+
+Parameters:
+  GitHubRepository:
+    Type: String
+    Default: alejandro-cedeno-10/rayito
+    Description: "owner/repo cuyo workflow asume el rol"
+    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+  GitHubEnvironment:
+    Type: String
+    Default: e2e
+    Description: "environment de GitHub (con required reviewers) desde el que se asume el rol"
+    AllowedPattern: "^[A-Za-z0-9_.-]+$"
+  TestImageArns:
+    Type: CommaDelimitedList
+    Description: "ARNs de las imágenes de test (rayito-base y, opcionalmente, rayito-base-caps)"
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "false reutiliza el proveedor token.actions.githubusercontent.com que ya exista en la cuenta"
+  ExecutionRoleArn:
+    Type: String
+    Default: ""
+    Description: "opcional: execution role que los tests podrán pasar a run-microvm (iam:PassRole); vacío = ninguno"
+  RoleName:
+    Type: String
+    Default: rayito-e2e-github
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, "true"]
+  HasExecutionRole: !Not [!Equals [!Ref ExecutionRoleArn, ""]]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  E2eRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: !Sub "GitHub Actions e2e for ${GitHubRepository} (environment ${GitHubEnvironment})"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateProvider
+                - !Ref GitHubOidcProvider
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepository}:environment:${GitHubEnvironment}"
+      Policies:
+        - PolicyName: rayito-e2e-microvms
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: MicrovmLifecycleOnTestImages
+                Effect: Allow
+                Action:
+                  - lambda:RunMicrovm
+                  - lambda:GetMicrovm
+                  - lambda:SuspendMicrovm
+                  - lambda:ResumeMicrovm
+                  - lambda:TerminateMicrovm
+                  - lambda:CreateMicrovmAuthToken
+                Resource: !Ref TestImageArns
+              - Sid: ListMicrovms
+                Effect: Allow
+                Action: lambda:ListMicrovms
+                Resource: "*"
+              - Sid: PassManagedNetworkConnectors
+                Effect: Allow
+                Action: lambda:PassNetworkConnector
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:*"
+              - !If
+                - HasExecutionRole
+                - Sid: PassExecutionRole
+                  Effect: Allow
+                  Action: iam:PassRole
+                  Resource: !Ref ExecutionRoleArn
+                - !Ref AWS::NoValue
+
+Outputs:
+  RoleArn:
+    Description: "valor de la variable de repositorio RAYITO_E2E_ROLE_ARN"
+    Value: !GetAtt E2eRole.Arn
+  TrustedSubject:
+    Description: "claim sub exacto que el trust acepta"
+    Value: !Sub "repo:${GitHubRepository}:environment:${GitHubEnvironment}"

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// Estado del agente y del sandbox. Health es el único RPC que no exige
+// `x-access-token`: es la sonda de readiness y liveness del SDK (el estado de
+// `get-microvm` es eventualmente consistente y no sirve para eso).
+service HealthService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Metrics(MetricsRequest) returns (MetricsResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {
+  bool agent_ready = 1;
+  bool kernel_ready = 2;
+  string agent_version = 3;
+  uint64 uptime_ms = 4;
+  // microvmId recibido en el hook /run.
+  string sandbox_id = 5;
+  // Se incrementa en cada hook /resume. Si cambia, el cliente re-suscribe sus
+  // streams (Process.Connect, Pty.Connect, WatchDir, Code.Reattach).
+  uint64 resume_generation = 6;
+  // Desfase estimado del reloj de pared tras el último resume (0 si no hay).
+  int64 clock_offset_ms = 7;
+  // true si algún kernel no respondió tras resume y perdió su estado.
+  bool kernel_state_lost = 8;
+  // true sólo cuando rayd instaló y verificó la ruta de política que bloquea
+  // IMDS (169.254.169.254) para uid 1000-65535: exige CAP_NET_ADMIN (imagen
+  // con additionalOsCapabilities ALL). false en la imagen por defecto
+  // (fail-open).
+  bool imds_blocked = 9;
+  // Llamadas anómalas a los hooks en este arranque: /run repetido y
+  // recuperaciones de un /suspend que nunca congeló la VM (rayd no rechaza
+  // ninguna transición). Distinto de 0 = alguien posee un token allPorts.
+  uint64 hook_anomalies = 10;
+  // Metadata del runHookPayload tal cual; vacío antes de /run o si el payload
+  // no lo trae.
+  map<string, string> metadata = 11;
+}
+
+message MetricsRequest {}
+message MetricsResponse {
+  double cpu_used_pct = 1;
+  uint64 mem_used_bytes = 2;
+  uint64 mem_total_bytes = 3;
+  uint64 disk_used_bytes = 4;
+  uint64 disk_total_bytes = 5;
+  uint32 cpu_count = 6;
+  int64 timestamp_unix_ms = 7;
+}

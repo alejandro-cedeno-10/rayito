@@ -1,0 +1,215 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+import "rayito/v1/common.proto";
+
+service FilesystemService {
+  // Lectura en streaming en chunks de 256 KiB.
+  rpc Read(ReadRequest) returns (stream ReadResponse);
+
+  // Escritura en streaming. Un WriteRequest con `path` empieza un fichero nuevo
+  // (cerrando el anterior), así que N ficheros pueden compartir un stream.
+  // Chunks <= 1 MiB; un mensaje > 4 MiB se rechaza con INVALID_ARGUMENT.
+  // El agente escribe en un temporal del mismo directorio, fsync y rename
+  // (atómico), creando padres y asignando propietario al usuario indicado.
+  rpc Write(stream WriteRequest) returns (WriteResponse);
+
+  // NOT_FOUND si no existe (el SDK lo traduce en exists() == false).
+  rpc Stat(StatRequest) returns (StatResponse);
+  rpc ListDir(ListDirRequest) returns (ListDirResponse);
+  // ALREADY_EXISTS si el directorio ya existe (SDK: make_dir() == false);
+  // INVALID_ARGUMENT si existe algo que no es un directorio.
+  rpc MakeDir(MakeDirRequest) returns (MakeDirResponse);
+  rpc Move(MoveRequest) returns (MoveResponse);
+  rpc Remove(RemoveRequest) returns (RemoveResponse);
+
+  // Observa un directorio. El primer mensaje es WatchStarted, emitido sólo
+  // cuando el watch inotify está instalado; NOT_FOUND / INVALID_ARGUMENT llegan
+  // como status gRPC antes de cualquier mensaje. Sin debounce.
+  rpc WatchDir(WatchDirRequest) returns (stream WatchDirResponse);
+
+  // Empaqueta el HOME del usuario (tar.gz, lista de exclusión documentada)
+  // y lo sube a S3 con las credenciales del execution role, como root.
+  // Un solo checkpoint o restore a la vez por sandbox (FAILED_PRECONDITION).
+  rpc Checkpoint(CheckpointRequest) returns (stream CheckpointEvent);
+  // Descarga <key_prefix>/manifest.json y <key_prefix>/home.tar.gz y los
+  // extrae en el HOME del usuario (sin seguir ni escapar del HOME).
+  // NOT_FOUND si no hay manifest bajo el prefijo.
+  rpc Restore(RestoreRequest) returns (stream RestoreEvent);
+}
+
+message ReadRequest {
+  string path = 1;
+  optional User user = 2;
+}
+message ReadResponse {
+  bytes chunk = 1;
+}
+
+message WriteRequest {
+  // Presente en el primer mensaje de cada fichero.
+  optional string path = 1;
+  optional User user = 2;
+  optional uint32 mode = 3;
+  bytes chunk = 4;
+}
+message WriteResponse {
+  // Una entrada por fichero escrito, en orden.
+  repeated EntryInfo entries = 1;
+}
+
+message StatRequest {
+  string path = 1;
+  optional User user = 2;
+}
+message StatResponse {
+  EntryInfo entry = 1;
+}
+
+message ListDirRequest {
+  string path = 1;
+  // 1 = sólo el directorio. >1 desciende. 0 se interpreta como 1.
+  uint32 depth = 2;
+  optional User user = 3;
+}
+message ListDirResponse {
+  repeated EntryInfo entries = 1;
+}
+
+message MakeDirRequest {
+  string path = 1;
+  optional User user = 2;
+}
+message MakeDirResponse {
+  EntryInfo entry = 1;
+}
+
+message MoveRequest {
+  string source = 1;
+  string destination = 2;
+  optional User user = 3;
+}
+message MoveResponse {
+  EntryInfo entry = 1;
+}
+
+message RemoveRequest {
+  string path = 1;
+  bool recursive = 2;
+  optional User user = 3;
+}
+message RemoveResponse {}
+
+message WatchDirRequest {
+  string path = 1;
+  bool recursive = 2;
+  optional User user = 3;
+  // Si es true, FilesystemEvent.entry se rellena en CREATE/WRITE/CHMOD.
+  bool include_entry = 4;
+}
+
+message WatchDirResponse {
+  oneof event {
+    WatchStarted started = 1;
+    FilesystemEvent filesystem = 2;
+    KeepAlive keepalive = 3;
+  }
+}
+
+message WatchStarted {}
+
+enum FilesystemEventType {
+  FILESYSTEM_EVENT_TYPE_UNSPECIFIED = 0;
+  FILESYSTEM_EVENT_TYPE_CREATE = 1;
+  FILESYSTEM_EVENT_TYPE_WRITE = 2;
+  FILESYSTEM_EVENT_TYPE_REMOVE = 3;
+  FILESYSTEM_EVENT_TYPE_RENAME = 4;
+  FILESYSTEM_EVENT_TYPE_CHMOD = 5;
+}
+
+message FilesystemEvent {
+  // Relativo al directorio observado.
+  string name = 1;
+  FilesystemEventType type = 2;
+  optional EntryInfo entry = 3;
+}
+
+message S3Location {
+  string bucket = 1;
+  // Prefijo de clave sin `/` inicial ni final; rayd añade
+  // `/home.tar.gz` y `/manifest.json`.
+  string key_prefix = 2;
+  // Región del bucket; ausente = AWS_REGION del MicroVM.
+  optional string region = 3;
+}
+
+message CheckpointRequest {
+  S3Location target = 1;
+  optional User user = 2;
+  // Rutas relativas al HOME (sin `..`, sin `/` inicial), máx. 64.
+  repeated string exclude = 3;
+}
+message CheckpointEvent {
+  oneof event {
+    CheckpointStarted started = 1;
+    CheckpointProgress progress = 2;
+    CheckpointDone done = 3;
+    StreamError error = 4;
+    KeepAlive keepalive = 5;
+  }
+}
+message CheckpointStarted {
+  // Entradas que se van a archivar (ficheros + dirs + symlinks).
+  uint64 files = 1;
+  // Suma de tamaños de los ficheros regulares.
+  uint64 bytes = 2;
+}
+message CheckpointProgress {
+  uint64 files_done = 1;
+  uint64 bytes_read = 2;
+  uint64 bytes_uploaded = 3;
+}
+message CheckpointDone {
+  uint64 files = 1;
+  uint64 bytes_read = 2;
+  // Tamaño del tar.gz subido.
+  uint64 archive_bytes = 3;
+  // Hex del sha256 del tar.gz.
+  string sha256 = 4;
+  // No legibles + tipos no soportados.
+  uint64 skipped = 5;
+  uint32 duration_ms = 6;
+}
+
+message RestoreRequest {
+  S3Location source = 1;
+  optional User user = 2;
+}
+message RestoreEvent {
+  oneof event {
+    RestoreStarted started = 1;
+    RestoreProgress progress = 2;
+    RestoreDone done = 3;
+    StreamError error = 4;
+    KeepAlive keepalive = 5;
+  }
+}
+message RestoreStarted {
+  // Del manifest.
+  uint64 archive_bytes = 1;
+  // Del manifest.
+  uint64 files = 2;
+}
+message RestoreProgress {
+  uint64 files_done = 1;
+  uint64 bytes_downloaded = 2;
+}
+message RestoreDone {
+  uint64 files = 1;
+  uint64 bytes_written = 2;
+  uint64 archive_bytes = 3;
+  string sha256 = 4;
+  uint64 skipped = 5;
+  uint32 duration_ms = 6;
+}

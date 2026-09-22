@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// Identidad de usuario bajo la que se ejecuta una operación dentro del sandbox.
+// Ausente = usuario sin privilegios por defecto ("user", uid 1000). Nunca root
+// salvo petición explícita y con la imagen configurada para permitirlo.
+message User {
+  string username = 1;
+}
+
+// Error estructurado devuelto dentro de streams, donde no se puede usar el
+// status de gRPC sin cortar la conexión.
+//
+// Códigos cerrados: "not_found", "permission_denied", "invalid_argument",
+// "unimplemented", "deadline_exceeded", "output_truncated", "suspending",
+// "resumed_state_lost", "kernel_died", "internal". Un cliente trata cualquier
+// código desconocido como "internal".
+message StreamError {
+  string code = 1;
+  string message = 2;
+}
+
+// Emitido por el agente cuando un stream lleva un tiempo sin mensajes (30 s por
+// defecto; 5 s durante CodeService.Execute) para que el proxy no lo corte por
+// inactividad. Los clientes lo ignoran.
+message KeepAlive {}
+
+enum FileType {
+  FILE_TYPE_UNSPECIFIED = 0;
+  FILE_TYPE_FILE = 1;
+  FILE_TYPE_DIRECTORY = 2;
+  FILE_TYPE_SYMLINK = 3;
+}
+
+message EntryInfo {
+  string name = 1;
+  FileType type = 2;
+  string path = 3;
+  uint64 size = 4;
+  uint32 mode = 5;
+  string permissions = 6;
+  string owner = 7;
+  string group = 8;
+  int64 modified_time_unix_ms = 9;
+  optional string symlink_target = 10;
+}

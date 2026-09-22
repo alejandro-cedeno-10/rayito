@@ -1,0 +1,93 @@
+name: Bug
+description: Algo no funciona como dice la documentación.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por el informe. Antes de seguir: si crees que es una **vulnerabilidad**,
+        no la describas aquí; usa el formulario privado de `SECURITY.md`.
+        Nunca pegues un JWE (`x-aws-proxy-auth`), un access token (`x-access-token`)
+        ni un `runHookPayload`.
+  - type: dropdown
+    id: sdk
+    attributes:
+      label: Componente
+      description: Dónde ves el problema.
+      options:
+        - python
+        - typescript
+        - rayd / imagen
+        - scripts
+    validations:
+      required: true
+  - type: input
+    id: sdk_version
+    attributes:
+      label: Versión del SDK
+      description: "`pip show rayito` o `pnpm list rayito`; para `rayd`, el tag `rayd-v*` o el commit."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: agent_version
+    attributes:
+      label: agent_version
+      description: "Lo devuelve `sbx.get_health().agent_version` (Python) o `(await sbx.getHealth()).agentVersion` (TypeScript)."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: image
+    attributes:
+      label: Imagen (nombre y versión)
+      description: "El nombre de la `microvm-image` y su versión, como en `list-microvm-image-versions`."
+      placeholder: "rayito-base 16.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: region
+    attributes:
+      label: Región
+      options:
+        - us-east-1
+        - us-west-2
+        - eu-west-1
+        - ap-northeast-1
+        - otra (indícala en la reproducción)
+    validations:
+      required: true
+  - type: textarea
+    id: state_reason
+    attributes:
+      label: stateReason (redactado)
+      description: "`sbx.get_info().state_reason` si el sandbox no está `RUNNING`. Quita ids de cuenta y ARNs que no quieras publicar."
+      render: text
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproducción mínima
+      description: El código o los comandos más cortos que reproducen el problema, sin datos de clientes.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Qué esperabas y qué pasó
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Salida del SDK o de CloudWatch (`/rayito/<template>`). Recuerda: sin tokens, JWE, `runHookPayload` ni contenido de ficheros del sandbox."
+      render: text
+  - type: checkboxes
+    id: not_a_vulnerability
+    attributes:
+      label: Confirmación
+      options:
+        - label: He leído `SECURITY.md` y esto no es una vulnerabilidad.
+          required: true

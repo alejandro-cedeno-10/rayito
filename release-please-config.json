@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "separate-pull-requests": false,
+  "changelog-sections": [
+    {"type": "feat", "section": "Added"},
+    {"type": "fix", "section": "Fixed"},
+    {"type": "perf", "section": "Changed"},
+    {"type": "refactor", "section": "Changed"},
+    {"type": "docs", "section": "Documentation"},
+    {"type": "chore", "section": "Miscellaneous", "hidden": true},
+    {"type": "ci", "section": "Miscellaneous", "hidden": true},
+    {"type": "test", "section": "Miscellaneous", "hidden": true}
+  ],
+  "packages": {
+    "clients/python": {
+      "component": "python",
+      "release-type": "python",
+      "package-name": "rayito",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [{"type": "generic", "path": "src/rayito/_version.py"}]
+    },
+    "clients/typescript": {
+      "component": "typescript",
+      "release-type": "node",
+      "package-name": "rayito",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [{"type": "generic", "path": "src/version.ts"}]
+    },
+    "crates/rayd": {
+      "component": "rayd",
+      "release-type": "simple",
+      "package-name": "rayd",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {"type": "toml", "path": "/Cargo.toml", "jsonpath": "$.workspace.package.version"},
+        {"type": "toml", "path": "/Cargo.lock", "jsonpath": "$.package[?(@.name=='rayd')].version"},
+        {"type": "toml", "path": "/Cargo.lock", "jsonpath": "$.package[?(@.name=='rayd-core')].version"},
+        {"type": "toml", "path": "/Cargo.lock", "jsonpath": "$.package[?(@.name=='rayito-proto')].version"}
+      ]
+    }
+  },
+  "plugins": [
+    {"type": "linked-versions", "groupName": "rayito", "components": ["python", "typescript", "rayd"]}
+  ]
+}

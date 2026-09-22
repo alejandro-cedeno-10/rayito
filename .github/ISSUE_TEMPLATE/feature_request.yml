@@ -1,0 +1,48 @@
+name: Propuesta
+description: Una capacidad nueva o un cambio de comportamiento.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rayito sólo hace lo que Lambda MicroVMs permite de verdad: una propuesta
+        útil dice qué primitiva de AWS la sustenta. Sólo cuentan los hechos
+        verificados en `AWS_API_NOTES.md`; nada se deduce por analogía con otras APIs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema
+      description: Qué intentas hacer y qué te lo impide hoy.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Propuesta
+      description: Cómo lo resolverías (superficie del SDK, cambio en `rayd`, en la imagen o en los scripts).
+    validations:
+      required: true
+  - type: textarea
+    id: e2b_equivalent
+    attributes:
+      label: Equivalente en E2B
+      description: "Si E2B lo ofrece, cómo se llama y si `docs/site/docs/e2b-compat.md` ya lo lista como `UnimplementedError`."
+  - type: textarea
+    id: aws_primitive
+    attributes:
+      label: Primitiva de AWS que lo hace posible
+      description: "Qué operación o campo de `lambda-microvms` (o del guest) lo sustenta, citando `AWS_API_NOTES.md` (§ o Q). Si no está ahí, dilo: es lo primero que habrá que verificar."
+    validations:
+      required: true
+  - type: dropdown
+    id: openspec
+    attributes:
+      label: ¿Escribirías el cambio OpenSpec?
+      description: "`openspec/changes/<nombre>/` con proposal, design, tasks y specs delta (CONTRIBUTING.md §2)."
+      options:
+        - Sí, puedo escribirlo
+        - Con ayuda
+        - "No"
+    validations:
+      required: true

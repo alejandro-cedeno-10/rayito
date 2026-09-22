@@ -1,0 +1,15 @@
+# LF everywhere: check_license.py hashes LICENSE and compares LICENSE/NOTICE
+# copies byte by byte, and the wheel and npm tarball take the working-tree
+# bytes. With core.autocrlf=true (the Git for Windows default) a checkout
+# would rewrite them to CRLF and the gate would fail; these rules win over
+# that setting.
+*           text=auto eol=lf
+LICENSE     text eol=lf
+NOTICE      text eol=lf
+
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.zip       binary
+*.gz        binary
+*.whl       binary

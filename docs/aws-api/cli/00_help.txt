@@ -1,0 +1,65 @@
+
+lambda-microvms
+^^^^^^^^^^^^^^^
+
+
+Description
+***********
+
+Provides APIs to create, manage, and operate AWS Lambda MicroVMs and
+their associated MicroVM Image environments.
+
+
+Available Commands
+******************
+
+* create-microvm-auth-token
+
+* create-microvm-image
+
+* create-microvm-shell-auth-token
+
+* delete-microvm-image
+
+* delete-microvm-image-version
+
+* get-microvm
+
+* get-microvm-image
+
+* get-microvm-image-build
+
+* get-microvm-image-version
+
+* help
+
+* list-managed-microvm-image-versions
+
+* list-managed-microvm-images
+
+* list-microvm-image-builds
+
+* list-microvm-image-versions
+
+* list-microvm-images
+
+* list-microvms
+
+* list-tags
+
+* resume-microvm
+
+* run-microvm
+
+* suspend-microvm
+
+* tag-resource
+
+* terminate-microvm
+
+* untag-resource
+
+* update-microvm-image
+
+* update-microvm-image-version
+

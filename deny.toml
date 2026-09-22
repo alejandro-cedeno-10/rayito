@@ -1,0 +1,47 @@
+# cargo-deny policy for the Rust workspace (openspec m7-supply-chain, D4).
+#
+# Licences: the allowlist of docs/research/2026-09-m7-oss-readiness.md verbatim;
+# `notify` (CC0-1.0) is a named exception so a new CC0 crate still fails.
+# Duplicates stay warnings (seven known today). `allow-wildcard-paths` covers
+# the `{ workspace = true }` path dependencies, which carry no version by
+# design. The targets are the real build target plus the two developer hosts,
+# so host-only crates (windows-sys) are audited too.
+#
+# Advisory policy: bump the crate in the same PR when a patched version exists;
+# otherwise add an `ignore` entry with the advisory id, reason and date, and
+# open an issue.
+
+[graph]
+targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu"]
+all-features = false
+
+[advisories]
+db-path = "$CARGO_HOME/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "MPL-2.0"]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+
+[[licenses.exceptions]]
+crate = "notify"
+allow = ["CC0-1.0"]
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

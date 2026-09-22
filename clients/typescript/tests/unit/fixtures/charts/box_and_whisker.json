@@ -1,0 +1,19 @@
+{
+  "type": "box_and_whisker",
+  "title": "Box",
+  "x_label": "group",
+  "y_label": "value",
+  "x_unit": null,
+  "y_unit": null,
+  "elements": [
+    {
+      "label": "a",
+      "min": 1.0,
+      "first_quartile": 2.0,
+      "median": 3.0,
+      "third_quartile": 4.0,
+      "max": 5.0,
+      "outliers": [9.0, 10.5]
+    }
+  ]
+}

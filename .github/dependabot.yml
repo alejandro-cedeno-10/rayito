@@ -1,0 +1,81 @@
+# Actualizaciones semanales agrupadas por ecosistema (minor + patch en un solo
+# PR; los majors abren el suyo porque el árbol de Cargo va fijado con `=`).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: uv
+    directory: /clients/python
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      uv-python-client:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: uv
+    directory: /kernel-sidecar
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      uv-kernel-sidecar:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: /kernel-sidecar
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-kernel-sidecar-image:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: npm
+    directory: /clients/typescript
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directory: /image
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

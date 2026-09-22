@@ -1,0 +1,209 @@
+{
+    "GroupDefinitions": [
+        {
+            "Type": "DIMENSION",
+            "Key": "USAGE_TYPE"
+        }
+    ],
+    "ResultsByTime": [
+        {
+            "TimePeriod": {
+                "Start": "2026-09-14",
+                "End": "2026-09-15"
+            },
+            "Total": {},
+            "Groups": [
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Storage-GB-Hour"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0075015432",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "67.5138934392",
+                            "Unit": "GB-Hours"
+                        }
+                    }
+                }
+            ],
+            "Estimated": true
+        },
+        {
+            "TimePeriod": {
+                "Start": "2026-09-15",
+                "End": "2026-09-16"
+            },
+            "Total": {},
+            "Groups": [
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Memory-GB-Second-ARM"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0226510576",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "6177.505",
+                            "Unit": "GB-Seconds"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Read-GB"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.1755410952",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "113.4888229372",
+                            "Unit": "GB"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Storage-GB-Hour"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0128716879",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "115.8452027849",
+                            "Unit": "GB-Hours"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Write-GB"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.009647428",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "2.5403251648",
+                            "Unit": "GB"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-vCPU-Second-ARM"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0903665226",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "3262.989",
+                            "Unit": "vCPU-Seconds"
+                        }
+                    }
+                }
+            ],
+            "Estimated": true
+        },
+        {
+            "TimePeriod": {
+                "Start": "2026-09-16",
+                "End": "2026-09-17"
+            },
+            "Total": {},
+            "Groups": [
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Memory-GB-Second-ARM"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.002792071",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "761.467",
+                            "Unit": "GB-Seconds"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Read-GB"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0255005561",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "16.486328125",
+                            "Unit": "GB"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-Snapshot-Storage-GB-Hour"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0091912538",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "82.7212920308",
+                            "Unit": "GB-Hours"
+                        }
+                    }
+                },
+                {
+                    "Keys": [
+                        "Lambda-MicroVM-vCPU-Second-ARM"
+                    ],
+                    "Metrics": {
+                        "UnblendedCost": {
+                            "Amount": "0.0112517085",
+                            "Unit": "USD"
+                        },
+                        "UsageQuantity": {
+                            "Amount": "406.281",
+                            "Unit": "vCPU-Seconds"
+                        }
+                    }
+                }
+            ],
+            "Estimated": true
+        },
+        {
+            "TimePeriod": {
+                "Start": "2026-09-17",
+                "End": "2026-09-18"
+            },
+            "Total": {
+                "UnblendedCost": {
+                    "Amount": "0",
+                    "Unit": "USD"
+                },
+                "UsageQuantity": {
+                    "Amount": "0",
+                    "Unit": "N/A"
+                }
+            },
+            "Groups": [],
+            "Estimated": true
+        }
+    ],
+    "DimensionValueAttributes": []
+}

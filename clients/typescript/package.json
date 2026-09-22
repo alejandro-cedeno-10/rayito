@@ -1,0 +1,69 @@
+{
+  "name": "rayito",
+  "version": "0.2.0",
+  "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alejandro-cedeno-10/rayito.git",
+    "directory": "clients/typescript"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:e2e": "vitest run --project e2e --no-file-parallelism",
+    "lint": "biome check .",
+    "pack:check": "node scripts/pack-check.mjs",
+    "format": "biome format --write .",
+    "gen": "cd ../.. && buf generate"
+  },
+  "keywords": [
+    "sandbox",
+    "aws",
+    "lambda",
+    "microvm",
+    "agents",
+    "e2b"
+  ],
+  "dependencies": {
+    "@aws-sdk/client-lambda-microvms": "^3.1133.0",
+    "@aws-sdk/client-sts": "^3.1133.0",
+    "@bufbuild/protobuf": "^2.15.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-node": "^2.2.0",
+    "@smithy/node-http-handler": "^4.12.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^20.19.43",
+    "tsdown": "^0.23.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

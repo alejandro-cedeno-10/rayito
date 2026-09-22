@@ -1,0 +1,30 @@
+{"id":1,"op":"ping"}
+{"id":2,"op":"create_context","context_id":"ctx-0123456789ab","language":"python","cwd":"/tmp","envs":{"A":"1","B":"dos"}}
+{"id":3,"op":"execute","context_id":"default","execution_id":"exec-0123456789abcdef","code":"print(\"hola\")\nx = 42\n","envs":{}}
+{"id":4,"op":"interrupt","context_id":"default","execution_id":"exec-0123456789abcdef"}
+{"id":5,"op":"interrupt","context_id":"default"}
+{"id":6,"op":"destroy_context","context_id":"ctx-0123456789ab"}
+{"id":7,"op":"restart_context","context_id":"default","envs":{"M4":"1"}}
+{"id":8,"op":"list_contexts"}
+{"id":9,"op":"reseed"}
+{"id":10,"op":"quiesce"}
+{"id":11,"op":"resume"}
+{"id":12,"op":"create_context","context_id":"default-bash","language":"bash","cwd":"/home/user","envs":{}}
+{"event":"ready","v":1,"default_context_id":"default","kernel_pid":4242,"warmup_ms":1875,"languages":["python"]}
+{"event":"ready","v":1,"default_context_id":"default","kernel_pid":4242,"warmup_ms":1875,"languages":["bash","javascript","python"]}
+{"event":"reply","id":1,"ok":true,"payload":{"contexts":1,"kernel_ready":true}}
+{"event":"reply","id":2,"ok":true,"payload":{"kernel_pid":4243}}
+{"event":"reply","id":6,"ok":false,"error":{"code":"not_found","message":"unknown context"}}
+{"event":"reply","id":8,"ok":true,"payload":{"contexts":[{"context_id":"default","cwd":"/home/user","kernel_pid":4242,"language":"python","state":"ready"}]}}
+{"event":"reply","id":8,"ok":true,"payload":{"contexts":[{"context_id":"default","cwd":"/home/user","kernel_pid":4242,"language":"python","state":"ready"},{"context_id":"default-bash","cwd":"/home/user","kernel_pid":4250,"language":"bash","state":"ready"}]}}
+{"event":"reply","id":9,"ok":true,"payload":{"deferred":[],"failed":[],"reseeded":["default"]}}
+{"event":"reply","id":9,"ok":true,"payload":{"deferred":[],"failed":[],"reseeded":["default"],"skipped":["default-bash"]}}
+{"event":"reply","id":11,"ok":true,"payload":{"contexts":[{"alive":true,"context_id":"default"}]}}
+{"event":"started","id":3,"execution_id":"exec-0123456789abcdef","execution_count":1}
+{"event":"stdout","id":3,"execution_id":"exec-0123456789abcdef","text":"hola\n","timestamp_unix_ns":1789000000000000000}
+{"event":"stderr","id":3,"execution_id":"exec-0123456789abcdef","text":"ñandú\n","timestamp_unix_ns":1789000000000000001}
+{"event":"result","id":3,"execution_id":"exec-0123456789abcdef","is_main_result":true,"mime":{"e2b/data":"{\"a\":[1,2]}","text/plain":"42"}}
+{"event":"error","id":3,"execution_id":"exec-0123456789abcdef","name":"ZeroDivisionError","value":"division by zero","traceback":["Traceback (most recent call last)","ZeroDivisionError: division by zero"]}
+{"event":"end","id":3,"execution_id":"exec-0123456789abcdef","execution_count":1}
+{"event":"kernel_died","context_id":"default","exit_code":3,"execution_id":"exec-0123456789abcdef"}
+{"event":"kernel_died","context_id":"ctx-0123456789ab","exit_code":null}

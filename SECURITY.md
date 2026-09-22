@@ -1,0 +1,184 @@
+# SECURITY — modelo de amenazas de Rayito
+
+> Complementa `ARCHITECTURE.md` (auth interna, hooks, suspend/resume) y
+> `AWS_API_NOTES.md` §9–§10 (credenciales, IAM). Cada mitigación cita el hito
+> en el que entra; hasta ese hito el riesgo está abierto y se asume.
+
+## Reportar una vulnerabilidad
+
+- **Dónde**: en privado, a través de GitHub Private Vulnerability Reporting:
+  <https://github.com/alejandro-cedeno-10/rayito/security/advisories/new>. Nunca en un
+  issue público, y nunca pegando un JWE (`x-aws-proxy-auth`), un access token
+  (`x-access-token`) ni un `runHookPayload`: con eso basta para entrar en un
+  sandbox ajeno mientras dure el token.
+- **Qué incluir**: SDK y versión (`rayito` de PyPI o de npm, `pip show rayito`
+  / `pnpm list rayito`), `agent_version` que devuelve `get_health()` /
+  `getHealth()`, nombre y versión de la imagen (`rayito-base` N.0 o
+  `rayito-base-caps`), región, y una reproducción mínima (código o comandos,
+  sin datos del cliente). Si hay impacto en la cuenta de AWS (credenciales,
+  cuota, factura), decirlo en la primera línea.
+- **Versiones soportadas**: sólo la última release publicada de cada
+  componente recibe correcciones.
+
+  | Componente | Dónde se publica | Versión con soporte |
+  |---|---|---|
+  | SDK Python `rayito` | PyPI | 0.2.0 |
+  | SDK TypeScript `rayito` | npm | 0.2.0 (aún no publicada; salta desde 0.0.5 por el lockstep `MAJOR.MINOR`) |
+  | imagen `rayito-base` con su `rayd` | tu cuenta de AWS (`make image-publish` desde el árbol etiquetado) | `rayd` 0.2.0, es decir, la imagen construida de `rayd-v0.2.0` (`rayito doctor` lo comprueba con la tabla de `docs/site/docs/limits.md`: el SDK 0.2 exige `agent_version` ≥ 0.2.0) |
+
+- **Plazos**: acuse de recibo en **7 días**; corrección o mitigación
+  publicada dentro de **90 días** desde el informe; divulgación coordinada a
+  los 90 días o al publicar la corrección, lo que llegue antes. Si lo
+  quieres, se te acredita en el aviso de seguridad (advisory).
+- **Sin recompensas**: no hay programa de *bug bounty*.
+
+## Modelo
+
+Tres principales con distinto nivel de confianza:
+
+| Principal | Confianza | Qué tiene |
+|---|---|---|
+| El operador del SDK (cuenta AWS del cliente) | total | credenciales IAM, el secreto del sandbox, el JWE |
+| El código que corre dentro del sandbox (generado por un LLM o por un usuario final) | **ninguna** | uid 1000, red saliente, acceso a IMDS si hay execution role |
+| AWS (proxy, hooks, snapshot) | plataforma | termina TLS, valida el JWE, invoca los hooks, clona el snapshot |
+
+Activos: (a) credenciales del execution role y de la cuenta, (b) el secreto
+`x-access-token` y el JWE, (c) los datos del cliente dentro del sandbox, (d) la
+integridad del agente `rayd`, (e) la cuota y la factura de la cuenta.
+
+## Amenazas y mitigaciones
+
+| # | Activo | Amenaza | Mitigación | Hito |
+|---|---|---|---|---|
+| T1 | credenciales AWS | El código del sandbox lee las credenciales del execution role por IMDSv2 (`169.254.169.254`): cualquier proceso del guest puede hacerlo | `Sandbox.create(execution_role_arn=None)` **por defecto**; sin rol no hay credenciales dentro (ni logs de runtime, documentado). Si se pasa un rol, mínimo privilegio (`spike/m0/iam.yaml`, sólo `logs:*`). **Bloqueo de IMDS para uid 1000-65535** en la variante `rayito-base-caps` (misma imagen publicada con `additionalOsCapabilities: ["ALL"]`): `rayd` instala en el arranque una ruta de política (`ip rule add uidrange 1000-65535 lookup 100` + `blackhole 169.254.169.254/32` en la tabla 100; el kernel del guest no trae `xt_owner`, `AWS_API_NOTES.md` Q48), la reverifica en `/run` y `/resume` y publica `Health.imds_blocked`; el SDK avisa una vez si hay rol e `imds_blocked` sigue en `false` **pasada la ventana de verificación** (10 s de `uptime` desde el `Health` de readiness: la verificación arranca en `/run` con presupuesto de 10 s y `imds_blocked` es `false` hasta que termina, así que un `false` en el `Health` de readiness aún no es veredicto; evaluar ahí sería un falso positivo en la propia imagen que cierra T1). Medido 2026-09-16 (caps 5.0): `PUT /latest/api/token` como uid 1000 → `EINVAL` en 0,3 s, root sigue llegando, la ruta sobrevive a `pause()`/`resume()`, el egress a internet no cambia. En la imagen por defecto (sin `CAP_NET_ADMIN`) el riesgo sigue abierto y `imds_blocked` es `false` (fail-open documentado). **M7 (`m7-s3-persistence`, ADR-009)**: con `persist=` el rol lleva además `s3:PutObject/GetObject/AbortMultipartUpload` sobre `<bucket>/<prefix>/*` y `s3:ListBucket` acotado al prefijo (`PersistenceBucket`/`PersistencePrefix` de `spike/m0/iam.yaml`); `rayd` lee IMDS **como root** para el checkpoint y uid 1000 sigue bloqueado en caps: la persistencia no abre IMDS al código del usuario | M2 / M6 ✔ / M7 |
+| T2 | integridad de `rayd` | Los hooks (`POST /aws/lambda-microvms/runtime/v1/*`) alcanzables desde fuera con un JWE `allPorts` (M0 Q24 lo confirmó: el proxy vive dentro de la VM) —y, sin ningún token, desde dentro de la propia VM: `rayd` escucha en `0.0.0.0:9000` en el mismo namespace de red que los procesos del sandbox (no hay netns, seccomp ni cgroups propios, y la ruta de política de M6 sólo agujerea `169.254.169.254/32`), así que cualquier proceso uid 1000 alcanza las seis rutas por loopback—: un `/run` falso reinstalaría el hash del token; un `/suspend` falso cortaría streams; un `/resume` falso subiría la generación; un `/terminate` falso se lleva la VM (`rayd` es el `CMD` de la imagen); un `/validate` falso reinicia el contexto `default` del kernel | Hooks en el puerto dedicado 9000, **nunca** en `allowedPorts`; el SDK no acuña `allPorts` por defecto; `/run` se acepta **una vez por arranque**. Desde M5 `/suspend` cierra los streams abiertos con su final `suspending` y hace `quiesce` + `sync`, pero **no destruye nada**: procesos, PTYs, kernels y ejecuciones siguen vivos y los handles se reenganchan solos (`Connect(from_seq)`, `Pty.Connect`, `WatchDir`, `Reattach`); un `/resume` forjado sólo incrementa `resume_generation`, sondea los kernels y reseed. **M6**: el origen **no es validable** (hooks y tráfico del proxy llegan ambos desde `127.0.0.1` por HTTP/1.1, el proxy elimina las cabeceras `X-aws-proxy-*`, AWS no comparte secreto por arranque), así que el control sigue siendo el puerto (9000 nunca en `allowedPorts`, `get_host(9000)` rechazado) —que acota sólo el origen externo: contra el origen de dentro de la VM no hay mitigación hoy, y autenticar `/terminate` y `/validate` por el uid del par (resolviendo el `SocketAddr` contra `/proc/net/tcp`) queda pendiente— y `rayd` hace visible lo que un `allPorts` hace: auditoría `hook_audit` de cada hook de runtime (`/run`, `/suspend`, `/resume`, `/terminate`) tras el primer `/run` —`/ready` y `/validate` son hooks de build y no se auditan, así que sus contadores nunca suben—, watchdog que recupera un `/suspend` que no congeló la VM (20 s sin salto de `CLOCK_MONOTONIC`) y contador `Health.hook_anomalies` (el SDK avisa una vez por generación). **`rayd` no limita ni rechaza transiciones**: el limitador del primer borrador de M6 (1 `/suspend` y 1 `/resume` cada 2 s) rechazaba también el `/suspend` real que AWS envía justo detrás de un par forjado, con lo que la VM se congelaba sin cerrar streams, sin `quiesce` ni `sync`, y el `/resume` real quedaba como repetición (sin generación nueva, sin sonda, sin reseed, con el tiempo congelado absorbido por los deadlines del servidor): peor que antes de M6. Riesgo residual (tabla): `/run` forjado → `already_ran` y el token original sigue válido (medido 2026-09-16, `tests/e2e/test_m6_hardening.py::test_forged_hooks`); `/suspend` forjado sin checkpoint → los streams se cierran con `suspending` y **20 s después** el watchdog reabre la puerta sin perder procesos, PTY, ficheros ni variables del kernel (el handle se reengancha con `reconnects == 1`; `Connect`, `Pty.Connect`, `WatchDir` y `Reattach` reintentan un `UNAVAILABLE suspending` con backoff dentro de `reconnect_timeout`); `/resume` forjado → sube `resume_generation`, sondea kernels y reseed (inofensivo); **ráfagas de `/suspend` + `/resume`** → cada ciclo se acepta y cada corte cuesta al cliente una reconexión (backoff 0,5 → 4 s) y, al cuarto corte seguido sin generación nueva, `ReconnectBudget` da el handle por fallido: es una denegación de servicio que el poseedor del token ya puede causar con el IAM que lo acuñó (`TerminateMicrovm`), no una ganancia; un `/resume` forjado entre el `/suspend` real y la congelación (≈ 1,4 s) convierte el `/resume` real en repetición (el cliente se reengancha igual, pero esa pausa no suma a `suspended_total` ni sondea kernels): no distinguible desde `rayd`; `/terminate` forjado → `rayd` cancela y la VM se va con él: irreversible, el único efecto de hook que el operador no puede deshacer; `/validate` forjado → reinicia el contexto `default` una vez por arranque y ejecuta la celda de validación saltándose el `stream_gate` (`execute_unchecked`, se pierden las variables de ese contexto) y sin línea `hook_audit`. Coste para el atacante: ninguna ganancia de acceso; interrupciones de ≤ 20 s por `/suspend` forjado sin checkpoint o de un ciclo por par forjado, todas visibles en `hook_audit` (salvo `/validate`, que no pasa por `audit()`) y (las anómalas) en `hook_anomalies` | M0 ✔ / M5 ✔ / M6 ✔ |
+| T3 | JWE del proxy | Robo o fuga del `x-aws-proxy-auth` (logs, tracebacks, historial de shell) da acceso al puerto 8080 durante ≤ 60 min | Defensa en profundidad: todo RPC salvo `Health` exige además `x-access-token`; TTL 60 min con refresh a 45; el SDK nunca loguea cabeceras; tokens por puerto sólo con `{port}` explícito | M2 |
+| T4 | secreto del sandbox | El sha256 del secreto viaja en `runHookPayload` (junto a `envs` y, desde M6, `metadata`), que puede quedar en eventos de datos de CloudTrail y en logs de `/run` | Sólo el **hash** sale del cliente; el secreto vive en el proceso del SDK (o en `RAYITO_ACCESS_TOKEN`); `rayd` guarda el hash con `zeroize`, compara en tiempo constante y nunca escribe el body de `/run` en stdout. `envs` y `metadata` son configuración y etiquetas, **no secretos**: `metadata` además lo devuelve `Health` (sin `x-access-token`) a cualquier principal que pueda acuñar un JWE para el sandbox y, sin credencial alguna, a la propia carga de trabajo del sandbox: el listener gRPC está en `0.0.0.0:8080` y `Health` es el único RPC anónimo (ADR-004), así que un proceso uid 1000 dentro del MicroVM lee `sandbox_id` y el mapa `metadata` completo. Se acepta: partir la respuesta rompería la sonda de readiness y el contrato del `.proto` 0.2.0, así que el único control es qué se mete en `metadata`. `RAYITO_ACCESS_TOKEN` la leen también los `create()` de ambos SDKs, no sólo `connect()`: exportarla convierte el secreto por sandbox en uno de toda la flota del proceso —lo que este mismo modelo rechaza en T14—, y el servidor MCP crea sus sandboxes sin pasar token, así que hoy no puede optar por no compartirlo; para fijar el secreto de un sandbox concreto se pasa con `access_token=` / `accessToken` | M2 ✔ / M6 ✔ |
+| T5 | aislamiento entre sandboxes | Estado clonado del snapshot compartido por todos los MicroVMs de una versión: clave HMAC del kernel Jupyter, semillas PRNG, UUIDs, cualquier secreto generado antes de `/ready` | Nada único antes de `/ready`; `OsRng`/`getrandom` por llamada (`ContextId`/`ExecutionId` salen de `OsRandomSource`); `/run` **reinicia el kernel por defecto** en una task tras el 200 (connection file y clave HMAC nuevos, proceso nuevo que siembra `random`/`numpy.random` de `os.urandom`, `envs` del payload), `kernel_ready=false` mientras dura (`restart_ms` 2–4 s medidos); `/resume` reseed `random`/`numpy.random` en cada kernel vivo; el e2e de M4 comprueba con dos sandboxes que `random.random()` y `numpy.random.default_rng()` difieren | M4 ✔ |
+| T6 | integridad del guest | Escalada a root: procesos, PTYs o kernels corriendo como root permiten tocar `rayd`, el sidecar y el disco entero | Usuario por defecto `user` (uid 1000); root sólo con `username == "root"` **y** `RAYITO_ALLOW_ROOT=1` en la imagen; entorno del hijo construido desde cero; kernels como uid 1000. `create-microvm-shell-auth-token` entra como **root**: no habilitar `SHELL_INGRESS` fuera de depuración | M2 |
+| T7 | disponibilidad de `rayd` | Agotamiento de recursos desde el sandbox: fork bomb, descriptores, salida infinita, procesos zombis, 8 conexiones del proxy saturadas | `RLIMIT_NPROC 512`, `RLIMIT_NOFILE 4096` (recortado al hard heredado: 1024 en Lambda MicroVMs, sin `CAP_SYS_RESOURCE`), `RLIMIT_CORE 0`; grupos de procesos con `killpg`; timeouts impuestos por el servidor; canales de salida acotados (64 × 32 KiB) con `output_truncated`; máx. 256 procesos/PTYs y máx. 256 entradas terminadas retenidas (≤ 256 MiB de rings sea cual sea la tasa de spawn); el SDK usa ≤ 2 canales HTTP/2. **M6**: `RLIMIT_CPU` por proceso opcional (`create(cpu_time_limit=)` → `limits.cpu_seconds` en el `runHookPayload`, 1-28800 s, hard = soft + 5 s: `SIGXCPU` y luego `SIGKILL`; el sidecar y los kernels no lo llevan), presupuesto de salida por sandbox de 128 MiB (marca alta 96 MiB) compartido por los rings de procesos y ejecuciones (cada ring desaloja primero lo suyo, el reaper suelta entradas terminadas por encima de la marca; la entrega en vivo nunca se toca), reserva de disco de 256 MiB comprobada con `statvfs` antes de crear el temporal de `Write` (`disk_reserve`/`disk_full` → `DiskFullException`). **cgroup2 es un límite de plataforma**: en la imagen por defecto `CapEff` es 0 y `/sys/fs/cgroup` no está montado (Q47); en la variante `ALL` cgroup2 está montado con `cpu`, `memory`, `pids`, `io` y los slices quedan para un cambio posterior | M2 ✔ / M6 ✔ |
+| T8 | datos del cliente | Exfiltración por red saliente (`INTERNET_EGRESS` es el conector por defecto) y persistencia de datos en snapshots suspendidos | Egress allowlist vía conector VPC propio: plantilla `infra/egress-connector.yaml` (`AWS::Lambda::NetworkConnector` + security group deny-all con CIDRs opcionales + `OperatorRole`), `Sandbox.create(egress=[arn])` y `SandboxInfo.egress` (`AWS_API_NOTES.md` §2); `terminate` en teardown de todo test. Omitir `egressNetworkConnectors` en `run-microvm` **no** cierra la red (Q44). Plantilla **validada** (`make infra-lint`: `validate-template` + `cfn-lint`) pero **no medida**: la puerta de despliegue del diseño exige una VPC propia o prestada (el stack crea un security group y ENIs dentro de ella) y la única VPC de la cuenta pertenece a otra carga de trabajo; la ausencia de NAT no es motivo (el deny-all no lo necesita). Q46 queda como "no medido" hasta que haya una VPC propia | M6 ✔ plantilla validada; allowlist **diferida** (sin medir hasta tener una VPC propia, Q46) |
+| T9 | datos del cliente | Fuga por logs: CloudWatch (stdout/stderr de `rayd`), CloudTrail (`runHookPayload`), logs locales del SDK | `rayd` **nunca** escribe comandos, `envs`, claves ni valores de `metadata` (sólo `metadata_keys`, un recuento), contenido de ficheros, código, bytes de PTY, tokens ni el body de `/run`; sólo ids, códigos y duraciones. Log group siempre explícito (`/rayito/<template>`) o `logging.disabled`. El SDK redacta cabeceras en excepciones y logs, y el aviso de `list(metadata=)` sobre un sandbox que aún arranca nombra sólo el id | M1 en adelante |
+| T10 | cadena de suministro | Imagen base, wheels de Python, plugins de `buf`, crates, toolchain o acciones de CI manipulados o cambiados silenciosamente | `image/Dockerfile` con `FROM …@sha256:05cb9b38…` (digest de la manifest list registrado 2026-09-16; manifest arm64 `63831a97…`) y `--base-image-version` **obligatoria** en `scripts/publish_image.py` (`BASE_IMAGE_VERSION` del Makefile, Q52); `deny.toml` + `cargo deny check` en CI y semanal (licencias en allowlist con excepción nominal `notify` CC0-1.0, advisories RustSec, sólo crates.io, `wildcards = deny`); `pip-audit --no-deps --strict` sobre `kernel-sidecar/requirements.txt` y los `uv export` de `clients/python` y `kernel-sidecar`; `pnpm audit --prod`; `cargo auditable` (grafo exacto en la sección ELF `.dep-v0`, verificado por `scripts/check_auditable.py`) + SBOM CycloneDX 1.5 (`rayd.cdx.json`); cosign keyless sobre `rayd` y `rayito-image.zip` (`docs/site/docs/verify.md`); acciones fijadas por SHA de commit con comentario de versión, `permissions: contents: read` global, `harden-runner` (audit) en todos los jobs, `actionlint` en `make lint` y CI, OpenSSF Scorecard; `requirements.txt` con pins exactos; plugins de `buf` pinneados; `cargo install --locked`; `Cargo.lock`, `uv.lock` y `pnpm-lock.yaml` versionados; Dependabot semanal (`cargo`, `uv`, `pip`, `npm`, `github-actions`, `docker`); `e2b_charts` vendorizado con licencia MIT auditada | M1 / M7 (implementado 2026-09-16; ✔ al aceptar `m7-supply-chain`) |
+| T11 | integridad del guest / datos de otros usuarios | El código del sandbox (uid 1000) usa a `rayd` (root) como *confused deputy* a través de `FilesystemService`: leer `/etc/shadow`, `/proc`, el binario de `rayd` o el `HOME` de otro usuario, o escribir fuera de su alcance por un symlink o un `..` | Lista de denegación sobre la ruta **canónica** (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, `/run/rayito`, `/opt/rayito`, el binario de `rayd`; `/root` y los `HOME` ajenos los protege el propio modo `0700` bajo la identidad del usuario); `..` rechazado antes de tocar el disco; cada operación de fichero corre con `setfsuid`/`setfsgid` del usuario en el hilo bloqueante (`FsIdentityGuard`), así que los permisos POSIX se aplican como si el usuario los hiciera; `Read` con `O_NOFOLLOW` y sólo ficheros regulares; `ListDir` y `WatchDir` nunca siguen symlinks; escrituras a temporal en el directorio destino con `fchown` al usuario; `user="root"` rechazado salvo `RAYITO_ALLOW_ROOT=1`; los errores nunca devuelven la ruta | M3 ✔ |
+| T12 | integridad del guest / disponibilidad | El código del sandbox corre en un kernel de Jupyter como uid 1000, el mismo uid que el sidecar: puede leer su propio connection file (`/run/rayito/k/<ctx>/`, `0700` de uid 1000), matar el sidecar o un kernel, agotar `RLIMIT_NPROC` (512, compartido con los procesos del sandbox) o inundar stdout | No hay escalada: sidecar y kernels nunca corren como root, `rayd` los lanza con el mismo `PreExecPlan` que cualquier proceso (uid 1000, grupo de procesos, rlimits) y no confía en nada que le llegue por stdio salvo el protocolo JSON v1 (líneas > 16 MiB o eventos desconocidos → `kill` del sidecar). Sidecar muerto → `rayd` lo relanza con backoff, mata el grupo de procesos de los kernels huérfanos y reporta `kernel_ready=false`; kernel muerto → `KernelDied` al cliente y reinicio automático (medido: siguiente celda en 1,9 s). Máx. 8 kernels por sandbox, cola de 256 eventos por `Execute` con `OutputTruncated`, buzón de 64 mensajes en el sidecar, `result` > 12 MiB recortado a `rayito/omitted`; el stderr del sidecar sólo se reemite con los campos JSON permitidos (nunca código ni salida) | M4 ✔ |
+| T13 | integridad del guest / datos del cliente | Una PTY es una terminal real con un shell de login: un esclavo mal concedido deja la terminal en manos de root, un shell como root da el disco entero, y los bytes de la terminal (contraseñas tecleadas, salida) son datos del cliente | `openpty` como root pero el esclavo se `fchown`/`fchmod 0o620` al usuario antes del spawn; el shell corre como uid 1000 con `setsid` + `TIOCSCTTY` (sesión y grupo propios; el maestro nunca llega al hijo: ambos descriptores son close-on-exec), sin shell root sin `RAYITO_ALLOW_ROOT` (`user="root"` → `PERMISSION_DENIED`), entorno construido desde cero (`TERM`, `LANG`, `SHELL`, `PATH`, `HOME`, `USER`, `LOGNAME` + `envs`); `Kill` es `SIGKILL` al grupo de la sesión y `timeout_ms` SIGTERM → SIGKILL; máx. 256 procesos + PTYs vivos, 8 suscriptores por PTY, chunks de 16 KiB; `rayd` y el SDK **nunca** loguean bytes de PTY (`on_data` es del cliente) | M5 ✔ |
+| T14 | custodia de secretos del pool | El pool de sandboxes suspendidos (`SandboxPool`, ADR-008) acuña el access token de cada plaza y lo guarda hasta `take()`: quien lea la memoria del proceso del pool o el fichero del backend JSON obtiene el secreto de cada plaza aparcada, y no hay rotación al tomar porque el sha256 del token se fija en `runHookPayload` en `/run` y `/run` se acepta una vez por arranque (T2) | **Un secreto fresco de 32 bytes por plaza** (nunca uno por pool: una fuga abre un VM, no la flota); el secreto vive en el proceso del pool (backend en memoria) o en un fichero JSON creado con modo `0600` y escrito de forma atómica (backend de fichero, de un solo proceso) **sólo hasta `take()`, que borra el registro antes de tocar la red**; después sólo lo tiene el `Sandbox` de quien tomó; `close(drain=False)` (deja secretos en reposo a propósito) sólo se admite con un backend persistente; el operador del pool puede leer todos los secretos aparcados, que es el **mismo nivel de confianza** que ya tiene el operador del SDK (posee las credenciales IAM que acuñan JWEs y terminan VMs): una aplicación que reparte sandboxes tomados entre inquilinos trata el proceso del pool como componente de confianza propio; el JWE se acuña al tomar y nunca se guarda (una plaza aparcada sólo es alcanzable con IAM **y** su secreto, ADR-004 sin cambios); `stats()`, `PoolSlotInfo` y `repr(SlotRecord)` nunca llevan el token y los logs nunca lo escriben (test de `caplog`). Residuales: un volcado del proceso o el fichero JSON exponen los secretos aparcados; `ListMicrovms` revela los ids a cualquier principal con ese permiso; un principal con `ResumeMicrovm` puede reanudar una plaza y arrancar su contador (el barrido la vuelve a aparcar en ≤ `sweep_interval_seconds` y lo avisa). Diseño en `openspec/changes/m7-suspended-pool/design.md` D4/D14 y `docs/site/docs/pool.md` | M7 ✔ (`m7-suspended-pool`, 2026-09-16) |
+| T15 | datos del cliente / S3 | El `HOME` del usuario viaja a un bucket del operador (`Sandbox.create(persist=)`, ADR-009): el archivo queda en reposo en S3; un archivo manipulado bajo el prefijo (por quien pueda escribir en él) se extrae en el `HOME` del sandbox siguiente; una VM matada a mitad de checkpoint deja partes multipart huérfanas; `rayd` (root, `CAP_MKNOD` en `CapEff`) es quien desempaqueta | El rol sólo alcanza `<bucket>/<prefix>/*` (sin `DeleteObject`) —que es un límite del rol, no una frontera entre inquilinos: `rayd` no liga el `S3Location` al sandbox (`resolve_location()` sólo valida sintaxis y el `sandbox_id` del manifest es informativo), así que quien tenga el access token de un sandbox puede leer o sobrescribir el `HOME` de cualquier otro bajo ese mismo prefijo; el prefijo **no separa inquilinos**: aislar a los que no confían entre sí exige un execution role y un prefijo por inquilino, no un `name` por inquilino, y ligar el destino al sandbox en el `runHookPayload` queda pendiente—, el archivo se cifra con el SSE por defecto del bucket y la política del bucket es del operador (SSE-KMS documentado, no plantillado). El restore corre bajo la identidad del usuario (`FsIdentityGuard`), acepta sólo ficheros regulares, directorios y symlinks (hard links, dispositivos, FIFOs y sockets se saltan: `mknod` nunca se alcanza), rechaza `..`, rutas absolutas y padres que salgan del `HOME` por un symlink (`unpack_in` sobre el `HOME` canónico), enmascara el modo a `0o777` (ningún fichero restaurado es setuid) y verifica el sha256 del archivo contra el manifest; los symlinks se escriben tal cual y nunca se siguen. El checkpoint lee como el usuario (lo que uid 1000 no puede leer no sale de la VM) y nunca archiva `/root`. `rayd` aborta el multipart en todo fallo, cancelación o `/suspend` (5 s de presupuesto) y la documentación exige una regla `AbortIncompleteMultipartUpload` a 1 día. Residual aceptado: quien puede escribir bajo el prefijo puede plantar ficheros en el `HOME` de la siguiente encarnación, que es exactamente lo que el prefijo es (el confused deputy de T11 no se amplía: todo lo escrito es del usuario y dentro de su `HOME`). Los logs de `rayd` llevan `rpc`, `outcome`, recuentos, `s3_error_code` y `s3_request_id`, nunca el bucket, el prefijo, una ruta o una credencial; el SDK loguea la `uri` a `info` y nunca la lista de exclusión ni el sha256 | M7 (`m7-s3-persistence`) |
+
+Riesgos operativos (no de seguridad, misma tabla mental): sandboxes huérfanos
+(8 h × $0.126/h y 2 GB de cuota cada uno) → `maximumDurationInSeconds` siempre
+explícito, sweeper de e2e, `TerminateMicrovm` idempotente en teardown.
+
+## IAM
+
+Plantillas de mínimo privilegio en **`spike/m0/iam.yaml`** (CloudFormation)
+y, desde M6, **`infra/egress-connector.yaml`** (conector de egress + security
+group + `OperatorRole`; receta en `infra/README.md`):
+
+- `BuildRole`: `s3:GetObject` sobre el prefijo del artefacto +
+  `logs:CreateLogGroup/CreateLogStream/PutLogEvents`. Trust
+  `lambda.amazonaws.com` con `sts:AssumeRole` + `sts:TagSession` y
+  `aws:SourceAccount`.
+- `ExecutionRole`: sólo `logs:*` sobre `/rayito/*`. Es el **máximo** que se
+  recomienda dar a un sandbox; por defecto no se pasa ninguno.
+- `CallerPolicy` (la política del **publicador**: la máquina que publica
+  imágenes con `rayito image publish` / `prune` y lanza sandboxes desde el
+  SDK — **no** la de un servidor de aplicación, que sólo necesita los
+  verbos de runtime: para eso la forma mínima ya publicada es
+  `infra/ci-oidc-role.yaml`): `List*` sobre `*`;
+  operaciones de imagen y MicroVM sobre `arn:aws:lambda:<region>:<acct>:microvm-image:*`
+  (el MicroVM se autoriza a través de su imagen); `iam:PassRole` sobre los dos
+  roles; `lambda:PassNetworkConnector` sobre los conectores gestionados y, con
+  el parámetro `NetworkConnectorArns`, sobre los conectores propios;
+  `s3:PutObject/GetObject` sobre el prefijo; `servicequotas:ListServiceQuotas`.
+- `OperatorRole` (`infra/egress-connector.yaml`): trust `lambda.amazonaws.com`
+  y sólo las ocho acciones `ec2:*NetworkInterface*` que el conector necesita
+  para sus ENIs.
+
+`spike/m0/iam.yaml` sigue siendo la plantilla de build/execution/caller (se
+mueve a `infra/` cuando deje de cambiar); `infra/` contiene ya lo nuevo.
+
+## Execution role: por defecto ninguno
+
+`Sandbox.create(execution_role_arn=None)`. Consecuencias documentadas al usuario:
+
+- Sin rol, **no hay logs de runtime en CloudWatch** (sólo los de build) y el
+  código del sandbox no puede llamar a AWS.
+- Con rol, **todo el código del sandbox hereda sus permisos** vía IMDSv2 en la
+  imagen por defecto. Pasar sólo roles con permisos que se aceptaría dar a un
+  LLM sin supervisión, o lanzar desde `rayito-base-caps` (T1): ahí el código
+  del sandbox (uid 1000) no alcanza IMDS y `get_health().imds_blocked` lo
+  confirma. El rol sigue siendo un permiso explícito del operador, no un
+  default.
+- Tras `resume()`, la rotación y el TTL de las credenciales de IMDS no están
+  documentados (M0 Q1). `rayd` invalida cualquier caché en `/resume`.
+- `Sandbox.create(persist=S3Prefix(...))` **exige** `execution_role_arn` (el
+  SDK no adivina un rol): es `rayd`, como root y por IMDSv2, quien sube y baja
+  el `HOME` a S3 con ese rol (ADR-009, T15). Dale al rol sólo el prefijo
+  (`PersistenceBucket`/`PersistencePrefix` en `spike/m0/iam.yaml`) y lanza
+  desde `rayito-base-caps` para que el código del sandbox no lo herede.
+- El shim `rayito.e2b` (M6) reproduce los defaults de red de E2B, no los del
+  SDK nativo: `ingress=["ALL_INGRESS"]` (endpoint público tras el proxy) y
+  `egress=["INTERNET_EGRESS"]`. `allow_internet_access=False` es
+  `UnimplementedError`: omitir `egressNetworkConnectors` en `run-microvm` no
+  cierra la red (el MicroVM hereda el conector de la versión de imagen,
+  `AWS_API_NOTES.md` Q44), así que el shim no finge. Para cerrar la entrada,
+  `ingress=["NO_INGRESS"]`; para el egress, el allowlist vía conector VPC de
+  este hito con `rayito.Sandbox(egress=[...])`. El execution role sigue
+  siendo `None` por defecto también en el shim.
+
+## Higiene de logging
+
+- Prohibido en `rayd` y en el sidecar: contenido de ficheros, código ejecutado,
+  `envs`, argumentos de comandos, bytes de PTY, tokens, hashes de token, el body
+  de `/run`, tracebacks de usuario. Permitido: `sandbox_id`, pids, `context_id`,
+  `execution_id`, códigos de error, duraciones, generaciones.
+- El SDK no incluye cabeceras ni `runHookPayload` en excepciones ni en
+  `debug_error_string` reexpuesto; `RateLimitException` y compañía llevan sólo
+  el nombre de la excepción de botocore y `retry_after`.
+- `logging.cloudWatch.logGroup` siempre explícito en `create-microvm-image` y
+  `run-microvm` (o `logging.disabled`), porque el nombre por defecto está
+  documentado de dos formas.
+- Los eventos de datos de CloudTrail para `RunMicrovm`, `CreateMicrovmAuthToken`
+  y `CreateMicrovmShellAuthToken` son opt-in; si se activan, tratar el trail
+  como sensible (contiene el hash del token).
+
+## Cadena de suministro (baseline M1, endurecida en M7)
+
+| Componente | Control |
+|---|---|
+| Imagen base | `public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3` (manifest list; el manifest `linux/arm64` que se descarga es `sha256:63831a97f9e498f7693c6f42951fe5d935947e6ae25a11fcab1fe0f5ae60b2a7`, registrado 2026-09-16); `--base-image-version` obligatoria en cada publish (`BASE_IMAGE_VERSION ?= 1`, Q52); vigilar `DEPRECATED → EXPIRING → EXPIRED`. Refrescar el digest cuando AWS mueva el tag: PR de Dependabot (`docker`), `docker buildx imagetools inspect public.ecr.aws/lambda/microvms:al2023-minimal` o, sin Docker, token de `https://public.ecr.aws/token/?scope=repository:lambda/microvms:pull` + `HEAD /v2/lambda/microvms/manifests/al2023-minimal` leyendo `Docker-Content-Digest` (receta en el propio `Dockerfile`); un bump de digest es una versión de imagen nueva, publicada y aceptada con el e2e como cualquier otra |
+| Paquetes del sistema | `dnf install` con lista explícita y `install_weak_deps=0` |
+| Python del sidecar | `requirements.txt` con `==` (ipykernel 6.31.0, jupyter_client 8.10.0, ipython 9.15.0, pyzmq 27.2.0, matplotlib 3.10.9, pandas 2.2.3, numpy 2.3.5); wheels `cp312 manylinux2014_aarch64` |
+| Rust | `rust-toolchain.toml` 1.98.1, `Cargo.lock` versionado, `cargo install --locked cargo-zigbuild@0.23.4`, `zig` 0.16.0, lints `unwrap_used`/`expect_used = deny` |
+| Codegen | plugins `buf` pinneados por tag; `tonic-prost-build` 0.14.6 y `protox` 0.9.1 en `Cargo.lock`; `buf breaking FILE` contra `main` |
+| SDK Python | `uv.lock`, `protobuf` con suelo igual al plugin, publicación en PyPI por Trusted Publishing |
+| Código vendorizado | `e2b_charts` (MIT) con su `LICENSE` junto al código, sin modificaciones locales sin nota y listado en `NOTICE` |
+| Dependencias | `deny.toml` + `cargo deny check` (advisories RustSec con `yanked = deny`, licencias `MIT`/`Apache-2.0`/`BSD-2`/`BSD-3`/`ISC`/`Unicode-3.0`/`Zlib`/`MPL-2.0` + excepción `notify` CC0-1.0, sólo crates.io, duplicados como aviso) en el job `deny` de `ci.yml`; `pip-audit --no-deps --strict` sobre `kernel-sidecar/requirements.txt` y los `uv export --frozen --no-dev` de `clients/python` y `kernel-sidecar`, y `pnpm audit --prod --audit-level moderate` en el job `audit`; los mismos tres cada lunes en `audit.yml` (más `pnpm audit --audit-level high` sobre todos los scopes). Política: parche en el mismo PR si existe; si no, `ignore` documentado con id, motivo y fecha + issue |
+| SBOM y firma | `rayd` se compila con `cargo auditable zigbuild` (sección `.dep-v0` con el grafo exacto de crates, `scripts/check_auditable.py` lo verifica en `make build`, CI y release); `cargo cyclonedx` produce `crates/rayd/rayd.cdx.json` (CycloneDX 1.5) que viaja con el artefacto de CI y la release; `cosign sign-blob --bundle` keyless (Sigstore, OIDC de GitHub) sobre `rayd` y `rayito-image.zip`, verificados en el propio job y por el usuario con la receta de `docs/site/docs/verify.md` (identidad `release.yml@refs/tags/rayd-v*`) |
+| Publicación | release-please en modo manifest con `linked-versions` (una versión para `clients/python`, `clients/typescript` y `crates/rayd`; tags `python-v*`, `typescript-v*`, `rayd-v*`); `release.yml` publica cada componente desde su tag: PyPI por Trusted Publishing con attestations PEP 740, npm por trusted publishing con provenance (Node 24, npm ≥ 11.5.1 comprobado; la única invocación de `npm` del repositorio), assets de `rayd` firmados en la GitHub Release; sin ningún token de larga duración |
+| CI | acciones fijadas por SHA de commit con comentario de versión (`uses: owner/repo@<sha> # vX.Y.Z`, gate `scripts/check_pins.py` —lista blanca: falla salvo que el `uses:` sea un SHA de 40 hex, y exige `==<versión>` en cada `uvx`— más `actionlint`, los dos en `ci.yml` y en `make lint`), `permissions: contents: read` global con elevación por job, `persist-credentials: false`, `step-security/harden-runner` en modo audit como primer paso de cada job, OpenSSF Scorecard semanal (`scorecard.yml`), `--locked` en `cargo clippy`/`test`/`zigbuild`; `ubuntu-24.04` x86 + `ubuntu-24.04-arm` (suites `cfg(unix)` y kernel real en aarch64); sin Docker ni runners de terceros; e2e sólo con rol OIDC (`infra/ci-oidc-role.yaml`, trust exacto a `environment: e2e`, sólo acciones de MicroVM sobre la imagen de test) y `workflow_dispatch`/nightly con pre-flight (> 10 VMs vivos → falla), `concurrency: e2e`, `timeout-minutes` y sweeper `always()`; el workflow nunca publica una imagen |
+
+## Auditoría interna
+
+**2026-09-22**, sobre el árbol 0.2.0 (`rayito` 0.2.0 en Python y TypeScript,
+`rayd` 0.2.0, imágenes `rayito-base` 20.0, `rayito-base-caps` 8.0 y
+`rayito-base-poly` 4.0): seis superficies (auth, escape, fs, persist, sdk,
+supply), 38 hallazgos propuestos y dos refutadores independientes por hallazgo.
+Resultado: **0 bloqueantes**, **2 mayores** y **4 menores** confirmados, 13 en
+disputa y 19 descartados.
+
+El informe completo —explotación, `file:line`, triaje y lo que la auditoría
+**no** cubrió (sin pentest en vivo contra AWS, sin fuzzing, sin verificación
+formal, sin red-team del MCP)— está en
+[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md). Ninguna mitigación de la
+tabla T1–T15 se retira; el informe sí señala las frases de esta página que no
+coinciden con el código y propone su corrección.
+
+**Estado de las correcciones (2026-09-22)**: las 16 filas que el triaje marcó
+«arreglar antes de publicar» están cerradas —entre ellas las frases de T2, T4
+y T15 de esta página—, cada una con su `file:line` y el test que la fija en
+[`docs/SECURITY_AUDIT.md` §9](docs/SECURITY_AUDIT.md#9-estado-de-las-correcciones).
+Las 7 filas diferidas a M8 y la aceptada con razón escrita siguen abiertas a
+propósito; §8 dice por qué.
