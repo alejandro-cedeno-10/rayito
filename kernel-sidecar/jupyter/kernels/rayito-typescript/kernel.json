@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/opt/rayito/deno/deno",
+    "jupyter",
+    "--kernel",
+    "--conn",
+    "{connection_file}"
+  ],
+  "display_name": "rayito-typescript",
+  "language": "typescript",
+  "interrupt_mode": "message",
+  "env": {
+    "NO_COLOR": "1",
+    "DENO_DIR": "${HOME}/.cache/deno",
+    "DENO_NO_UPDATE_CHECK": "1"
+  },
+  "metadata": {
+    "rayito": "installed at start only when /opt/rayito/deno/deno exists (rayito-base-poly); Deno listens on 127.0.0.1 TCP and is interrupted by interrupt_request"
+  }
+}

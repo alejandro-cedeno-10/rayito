@@ -24,8 +24,11 @@ Full context: `SPEC.md` (why/what/scope), `ARCHITECTURE.md` (design + ADRs),
   port traits, no `tonic`/`axum`/`tokio-process` types), `crates/rayd`
   (adapters + `main`). Compiles for `aarch64-unknown-linux-musl` only
   (Graviton/Firecracker is ARM64-only); static binary, no TLS on the
-  listeners (the AWS proxy terminates TLS); the only TLS client is the S3
-  adapter of ADR-009 (`rustls` + `aws-lc-rs`, `aws-sdk-s3`).
+  listeners (the AWS proxy terminates TLS); the only TLS clients are the S3
+  adapter of ADR-009 (`rustls` + `aws-lc-rs`, `aws-sdk-s3`) and the
+  credential-free presigned-URL transfer adapter of ADR-010
+  (`HyperSignedHttp`: `hyper-util` + `hyper-rustls` over the same
+  `rustls` + `aws-lc-rs` stack).
 - **Protocol**: gRPC h2c via `tonic` 0.14 with `x-aws-proxy-force-h2`
   (ADR-001). Only server-stream and unary RPCs; no bidi streaming (ADR-005).
 - **Kernel sidecar**: Python 3.12, `jupyter_client` `AsyncKernelManager`
@@ -58,8 +61,7 @@ Full context: `SPEC.md` (why/what/scope), `ARCHITECTURE.md` (design + ADRs),
    abstractions. See `SPEC.md` §4 for the explicit non-goals list (no
    desktop/GUI, no declarative templates/CLI, no multi-cloud, no non-Python
    kernels, no pre-warmed VM pools before M6, no billing/dashboard, no
-   per-sandbox metadata or size params, no `set_timeout`, no control-plane
-   service).
+   per-sandbox metadata or size params, no control-plane service).
 4. **A milestone never closes on mocks.** Its acceptance test runs against
    real AWS.
 5. **ARM64 only.** Everything compiles for `aarch64-unknown-linux-musl`. If a

@@ -83,12 +83,17 @@ pub fn emit_sidecar_log(record: &SidecarLogRecord) {
 }
 
 #[cfg(unix)]
-pub use unix::{TokioSidecarLauncher, TokioSidecarLink, kill_process_group, prepare_socket_root};
+pub use unix::{
+    TokioSidecarLauncher, TokioSidecarLink, kill_process_group, prepare_socket_root,
+    signal_process_group,
+};
 #[cfg(unix)]
 pub type PlatformSidecarLauncher = unix::TokioSidecarLauncher;
 
 #[cfg(not(unix))]
-pub use unsupported::{UnsupportedSidecarLauncher, kill_process_group, prepare_socket_root};
+pub use unsupported::{
+    UnsupportedSidecarLauncher, kill_process_group, prepare_socket_root, signal_process_group,
+};
 #[cfg(not(unix))]
 pub type PlatformSidecarLauncher = unsupported::UnsupportedSidecarLauncher;
 
@@ -130,10 +135,16 @@ mod unix {
     /// `SIGKILL` to a kernel's own session: kernels are group leaders, so
     /// the pid names the group.
     pub fn kill_process_group(pid: u32) {
-        let Ok(raw) = i32::try_from(pid) else {
+        signal_process_group(pid, Signal::SIGKILL as i32);
+    }
+
+    /// Any signal to a group led by `pid` (a kernel or the sidecar); an
+    /// unknown signal number or a gone group is ignored.
+    pub fn signal_process_group(pid: u32, signal: i32) {
+        let (Ok(raw), Ok(signal)) = (i32::try_from(pid), Signal::try_from(signal)) else {
             return;
         };
-        let _ = killpg(nix::unistd::Pid::from_raw(raw), Signal::SIGKILL);
+        let _ = killpg(nix::unistd::Pid::from_raw(raw), signal);
     }
 
     pub struct TokioSidecarLauncher {
@@ -240,6 +251,10 @@ mod unix {
 
         fn kill(&self) {
             kill_process_group(self.pid.0);
+        }
+
+        fn terminate(&self) {
+            signal_process_group(self.pid.0, Signal::SIGTERM as i32);
         }
     }
 
@@ -358,6 +373,8 @@ mod unsupported {
     }
 
     pub fn kill_process_group(_pid: u32) {}
+
+    pub fn signal_process_group(_pid: u32, _signal: i32) {}
 
     #[derive(Debug, Default, Clone, Copy)]
     pub struct UnsupportedSidecarLauncher;

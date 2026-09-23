@@ -8,6 +8,7 @@ import grpc
 import pytest
 from botocore.exceptions import ClientError
 
+import rayito
 from rayito._aws import translate_client_error
 from rayito._transport import (
     PROXY_FORBIDDEN_MARKER,
@@ -20,6 +21,9 @@ from rayito.exceptions import (
     AuthenticationException,
     CapacityException,
     FileNotFoundException,
+    FileUploadException,
+    GitAuthException,
+    GitUpstreamException,
     InvalidArgumentException,
     NotFoundException,
     QuotaExceededException,
@@ -28,6 +32,8 @@ from rayito.exceptions import (
     SandboxNotFoundException,
     SandboxStateException,
     TimeoutException,
+    TransferException,
+    UnimplementedError,
 )
 
 
@@ -171,3 +177,34 @@ def test_hierarchy_matches_e2b_shape() -> None:
     assert not issubclass(AuthenticationException, SandboxException)
     assert not issubclass(QuotaExceededException, SandboxException)
     assert not issubclass(CapacityException, SandboxException)
+
+
+def test_git_exceptions_follow_the_e2b_tree() -> None:
+    assert GitAuthException.__mro__[1:3] == (AuthenticationException, Exception)
+    assert issubclass(GitUpstreamException, SandboxException)
+    assert not issubclass(GitAuthException, SandboxException)
+    assert rayito.GitAuthException is GitAuthException
+    assert rayito.GitUpstreamException is GitUpstreamException
+
+
+def test_file_upload_exception_carries_code_and_reason() -> None:
+    failure = FileUploadException("s3_unavailable: x", code="unavailable", reason="s3_unavailable")
+    assert isinstance(failure, TransferException)
+    assert isinstance(failure, SandboxException)
+    assert (failure.code, failure.reason) == ("unavailable", "s3_unavailable")
+    assert rayito.FileUploadException is FileUploadException
+    assert rayito.UnimplementedError is UnimplementedError
+    assert issubclass(UnimplementedError, NotImplementedError)
+
+
+def test_unimplemented_error_names_feature_reason_and_optional_doc() -> None:
+    bare = UnimplementedError("upload_url", "falta transfer=S3Staging(...)")
+    assert (bare.feature, bare.reason, bare.doc) == (
+        "upload_url",
+        "falta transfer=S3Staging(...)",
+        None,
+    )
+    assert str(bare) == "upload_url no está disponible en Rayito: falta transfer=S3Staging(...)"
+    documented = UnimplementedError("fork", "sin primitiva", doc="docs/site/docs/e2b-compat.md")
+    assert str(documented).endswith(". Ver docs/site/docs/e2b-compat.md")
+    assert not isinstance(documented, SandboxException)

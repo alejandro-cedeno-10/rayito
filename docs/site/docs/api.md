@@ -24,6 +24,14 @@ Generada con `mkdocstrings` desde los docstrings del paquete `rayito`.
 
 ::: rayito.sandbox_sync.pty.PtyHandle
 
+::: rayito.sandbox_sync.listing.SandboxListPaginator
+
+## Git
+
+::: rayito.Git
+
+::: rayito.AsyncGit
+
 ## Pool de sandboxes
 
 ::: rayito.SandboxPool
@@ -51,6 +59,7 @@ Generada con `mkdocstrings` desde los docstrings del paquete `rayito`.
     options:
       members:
         - IdlePolicy
+        - SandboxLifecycle
         - SandboxInfo
         - SandboxListItem
         - SandboxHealth
@@ -70,6 +79,16 @@ Generada con `mkdocstrings` desde los docstrings del paquete `rayito`.
         - Logs
         - OutputMessage
         - ExecutionError
+        - S3Staging
+        - UploadTicket
+        - AsyncUploadTicket
+        - DownloadLink
+        - TransferStatus
+        - NetworkPolicy
+        - NetworkOptions
+        - EgressProxy
+        - NetworkState
+        - EgressEnforcement
 
 ## Excepciones
 

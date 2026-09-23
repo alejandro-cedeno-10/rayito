@@ -11,8 +11,10 @@ from collections.abc import Callable, Iterator
 from datetime import timedelta
 from typing import Any
 
+import grpc
 import pytest
 
+from rayito import ALL_TRAFFIC
 from rayito import Sandbox as NativeSandbox
 from rayito.e2b import (
     AsyncSandbox,
@@ -37,7 +39,8 @@ from rayito.e2b import (
     WriteInfo,
 )
 from rayito.e2b import exceptions as e2b_exceptions
-from rayito.v1 import filesystem_pb2
+from rayito.exceptions import InvalidArgumentException, LifecycleUnsupportedException
+from rayito.v1 import filesystem_pb2, lifecycle_pb2, network_pb2
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -53,6 +56,7 @@ from .conftest import (
     microvm_response,
     stub_metadata_probe,
 )
+from .fake_lifecycle import lifecycle_state
 
 ALL_INGRESS_ARN = "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS"
 INTERNET_EGRESS_ARN = (
@@ -62,8 +66,20 @@ HOME = "/home/user"
 READ_BUDGET_SECONDS = 5.0
 
 
+def managed_lifecycle(timeout_s: int = 300) -> Any:
+    """El `LifecycleState` que devuelve un `rayd` M9 tras un lanzamiento del
+    shim (que siempre manda bloque `lifecycle`)."""
+    return lifecycle_state(
+        deadline_in_ms=timeout_s * 1000,
+        timeout_ms=timeout_s * 1000,
+        cap_in_ms=(3600 - 60) * 1000,
+    )
+
+
 def capture_launch(control_plane: StubbedControlPlane, endpoint: RaydEndpoint) -> dict[str, Any]:
     captured: dict[str, Any] = {}
+    if endpoint.servicer.lifecycle is None:
+        endpoint.servicer.lifecycle = managed_lifecycle()
     control_plane.microvms.add_response("run_microvm", microvm_response(endpoint=endpoint.host))
     control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
     original = control_plane.plane.run_microvm
@@ -133,7 +149,7 @@ def test_hello_world_from_the_e2b_readme(
     control_plane.microvms.add_response(
         "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
     )
-    with Sandbox(
+    with Sandbox.create(
         access_token=ACCESS_TOKEN, control_plane=control_plane.plane, transport=fake_rayd.transport
     ) as sandbox:
         execution = sandbox.run_code("1+1")
@@ -146,10 +162,23 @@ def test_hello_world_from_the_e2b_readme(
         assert isinstance(sandbox.native, NativeSandbox)
         assert sandbox.sandbox_domain == fake_rayd.host
         assert repr(sandbox) == f"e2b.Sandbox(sandbox_id={SANDBOX_ID!r})"
-    assert captured["maximumDurationInSeconds"] == 300
+    assert_e2b_defaults(captured)
+
+
+def assert_e2b_defaults(captured: dict[str, Any]) -> None:
+    """Los valores por defecto de E2B en el `run-microvm`: plazo lógico de
+    300 s impuesto por `rayd` bajo una vida de plataforma de 3600 s."""
+    assert captured["maximumDurationInSeconds"] == 3600
     assert "idlePolicy" not in captured
     assert captured["ingressNetworkConnectors"] == [ALL_INGRESS_ARN]
     assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+    payload = json.loads(str(captured["runHookPayload"]))
+    assert payload["lifecycle"] == {
+        "auto_resume": False,
+        "cap_s": 3600,
+        "on_timeout": "kill",
+        "timeout_s": 300,
+    }
 
 
 # 2. Charts -----------------------------------------------------------------
@@ -209,7 +238,7 @@ def test_files_write_overloads_read_list_exists_and_watch(
     assert sbx.files.exists(f"{HOME}/missing.txt") is False
     sbx.files.make_dir(f"{HOME}/watched")
     seen: list[Any] = []
-    handle = sbx.files.watch_dir(f"{HOME}/watched", seen.append)
+    handle = sbx.files.watch_dir(f"{HOME}/watched", on_event=seen.append)
     fake_rayd.filesystem.push_event(
         f"{HOME}/watched", "new.txt", filesystem_pb2.FILESYSTEM_EVENT_TYPE_CREATE
     )
@@ -420,7 +449,7 @@ def test_beta_pause_then_connect(
         transport=fake_rayd.transport,
     )
     sandbox.run_code("x = 40")
-    assert sandbox.beta_pause() == SANDBOX_ID
+    assert sandbox.beta_pause() is True
     sandbox.native.close()
     again = Sandbox.connect(
         SANDBOX_ID,
@@ -435,7 +464,10 @@ def test_beta_pause_then_connect(
 # 7. Metrics ----------------------------------------------------------------
 
 
-def test_get_metrics_returns_a_one_element_list_in_bytes(sbx: Sandbox) -> None:
+def test_get_metrics_with_an_empty_history_is_the_snapshot_in_bytes(sbx: Sandbox) -> None:
+    """Sin muestras en el historial (sandbox recién creado) y sin rango,
+    `get_metrics()` devuelve la instantánea de `Metrics` como único punto;
+    la serie con historial está en `test_e2b_v2_sync.py`."""
     metrics = sbx.get_metrics()
     assert len(metrics) == 1 and isinstance(metrics[0], SandboxMetrics)
     assert metrics[0].mem_total == 2 * 1024**3
@@ -449,43 +481,36 @@ def test_get_metrics_returns_a_one_element_list_in_bytes(sbx: Sandbox) -> None:
 
 def unimplemented_calls(sandbox: Sandbox) -> dict[str, Callable[[], object]]:
     return {
-        "set_timeout": lambda: sandbox.set_timeout(60),
-        "Sandbox.set_timeout": lambda: Sandbox.set_timeout(sandbox.sandbox_id, 60),
-        "upload_url": lambda: sandbox.upload_url("/x"),
-        "download_url": lambda: sandbox.download_url("/x"),
-        "get_metrics(start=)": lambda: sandbox.get_metrics(start=1),
-        "Sandbox.get_metrics": lambda: Sandbox.get_metrics(sandbox.sandbox_id),
         "run_code(language=r)": lambda: sandbox.run_code("1", language="r"),
         "create_code_context(language=java)": lambda: sandbox.create_code_context(language="java"),
-        "list(next_token=)": lambda: Sandbox.list(next_token="x"),
         "list(state=PAUSED, query.metadata)": lambda: Sandbox.list(
             query=SandboxQuery(metadata={"a": "1"}), state=[SandboxState.PAUSED]
         ),
-        "beta_create(auto_pause=)": lambda: Sandbox.beta_create(auto_pause=True),
-        "connection_config": lambda: sandbox.connection_config,
+        "Sandbox.get_metrics": lambda: Sandbox.get_metrics(sandbox.sandbox_id),
+        "upload_url": lambda: sandbox.upload_url("/x"),
+        "download_url": lambda: sandbox.download_url("/x"),
     }
 
 
 UNIMPLEMENTED_FEATURES = [
-    "set_timeout",
-    "Sandbox.set_timeout",
-    "upload_url",
-    "download_url",
-    "get_metrics(start=)",
-    "Sandbox.get_metrics",
     "run_code(language=r)",
     "create_code_context(language=java)",
-    "list(next_token=)",
     "list(state=PAUSED, query.metadata)",
-    "beta_create(auto_pause=)",
-    "connection_config",
+    "Sandbox.get_metrics",
+    "upload_url",
+    "download_url",
 ]
 
 
 @pytest.mark.parametrize("feature", UNIMPLEMENTED_FEATURES)
 def test_unimplemented_features_raise_before_any_call(
-    sbx: Sandbox, fake_rayd: RaydEndpoint, feature: str
+    sbx: Sandbox, fake_rayd: RaydEndpoint, feature: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Los `UnimplementedError` que no son de la tabla D14: kernels, filtro
+    de metadatos sobre pausados, métricas de clase sin token y transferencias
+    sin staging (este último lo lanza el SDK nativo y lo atrapa el nombre de
+    E2B)."""
+    monkeypatch.delenv("RAYITO_ACCESS_TOKEN", raising=False)
     health_calls = len(fake_rayd.servicer.health_calls)
     executions = len(fake_rayd.code.executions)
     with pytest.raises(UnimplementedError) as excinfo:
@@ -494,17 +519,157 @@ def test_unimplemented_features_raise_before_any_call(
     assert isinstance(error, NotImplementedError)
     assert not isinstance(error, SandboxException)
     assert error.feature.split("(")[0].split(".")[-1] in str(error)
-    if feature.endswith("set_timeout"):
-        assert "UpdateMicrovm" in str(error) and "reincarnate()" in str(error)
     assert len(fake_rayd.servicer.health_calls) == health_calls
     assert len(fake_rayd.code.executions) == executions
 
 
-def test_set_timeout_names_update_microvm(sbx: Sandbox) -> None:
+def test_set_timeout_maps_to_native_exact(sbx: Sandbox, fake_rayd: RaydEndpoint) -> None:
+    sbx.set_timeout(60)
+    request = fake_rayd.lifecycle.requests[-1]
+    assert request.timeout_ms == 60_000
+    assert request.mode == lifecycle_pb2.TIMEOUT_MODE_EXACT
+
+
+def test_class_set_timeout(
+    sbx: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    Sandbox.set_timeout(
+        sbx.sandbox_id,
+        60,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    requests = fake_rayd.lifecycle.requests
+    assert [(r.timeout_ms, r.mode) for r in requests] == [
+        (60_000, lifecycle_pb2.TIMEOUT_MODE_EXACT)
+    ]
+
+
+def test_connect_timeout_is_at_least(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.lifecycle = managed_lifecycle()
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    sandbox = Sandbox.connect(
+        SANDBOX_ID,
+        120,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    sandbox.native.close()
+    request = fake_rayd.lifecycle.requests[-1]
+    assert request.timeout_ms == 120_000
+    assert request.mode == lifecycle_pb2.TIMEOUT_MODE_AT_LEAST
+
+
+def test_beta_create_auto_pause_is_lifecycle_pause(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured = capture_launch(control_plane, fake_rayd)
+    sandbox = Sandbox.beta_create(
+        IMAGE_ARN,
+        timeout=60,
+        auto_pause=True,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    sandbox.native.close()
+    assert captured["maximumDurationInSeconds"] == 3600
+    assert captured["idlePolicy"] == {
+        "maxIdleDurationSeconds": 300,
+        "suspendedDurationSeconds": 3300,
+        "autoResumeEnabled": True,
+    }
+    payload = json.loads(str(captured["runHookPayload"]))
+    assert payload["lifecycle"] == {
+        "auto_resume": False,
+        "cap_s": 3600,
+        "on_timeout": "pause",
+        "timeout_s": 60,
+    }
+
+
+def test_lifecycle_pause_maps_to_an_idle_policy(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured = capture_launch(control_plane, fake_rayd)
+    sandbox = Sandbox.create(
+        IMAGE_ARN,
+        timeout=60,
+        lifecycle={"on_timeout": "pause", "auto_resume": True},
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    sandbox.native.close()
+    assert captured["maximumDurationInSeconds"] == 3600
+    assert captured["idlePolicy"] == {
+        "maxIdleDurationSeconds": 300,
+        "suspendedDurationSeconds": 3300,
+        "autoResumeEnabled": True,
+    }
+    payload = json.loads(str(captured["runHookPayload"]))
+    assert payload["lifecycle"] == {
+        "auto_resume": True,
+        "cap_s": 3600,
+        "on_timeout": "pause",
+        "timeout_s": 60,
+    }
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    [
+        {"on_timeout": "freeze"},
+        {"on_timeout": "kill", "auto_resume": True},
+        {"on_timeout": {"action": "kill", "keep_memory": True}},
+    ],
+)
+def test_e2b_lifecycle_validation_makes_no_call(
+    control_plane: StubbedControlPlane, lifecycle: dict[str, Any]
+) -> None:
+    with pytest.raises(InvalidArgumentException):
+        Sandbox.create(IMAGE_ARN, lifecycle=lifecycle, control_plane=control_plane.plane)
+
+
+def test_older_image_raises_unimplemented_and_terminates(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.lifecycle = None
+    captured: dict[str, Any] = {}
+    control_plane.microvms.add_response("run_microvm", microvm_response(endpoint=fake_rayd.host))
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    control_plane.microvms.add_response(
+        "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+    )
+    original = control_plane.plane.run_microvm
+
+    def spy(request: Any) -> Any:
+        captured.update(request.to_api())
+        return original(request)
+
+    control_plane.plane.run_microvm = spy  # type: ignore[method-assign]
     with pytest.raises(UnimplementedError) as excinfo:
-        sbx.set_timeout(60)
-    assert excinfo.value.feature == "set_timeout"
-    assert "UpdateMicrovm" in str(excinfo.value)
+        Sandbox.create(
+            IMAGE_ARN,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+    assert excinfo.value.feature == "lifecycle"
+    assert "M9" in excinfo.value.reason
+    assert isinstance(excinfo.value.__cause__, LifecycleUnsupportedException)
+    assert "lifecycle" in json.loads(str(captured["runHookPayload"]))
 
 
 def test_bash_and_javascript_are_forwarded_other_kernels_are_not(
@@ -542,12 +707,15 @@ def test_ignored_kwargs_warn_and_defaults_reach_the_wire(
     control_plane.microvms.add_response("terminate_microvm", {})
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        sandbox = Sandbox(
+        sandbox = Sandbox.create(
             IMAGE_ARN,
             api_key="e2b_x",
             domain="e2b.dev",
             debug=True,
-            proxy="http://p",
+            api_url="https://a",
+            sandbox_url="https://s",
+            validate_api_key=True,
+            api_headers={"k": "v"},
             secure=False,
             access_token=ACCESS_TOKEN,
             control_plane=control_plane.plane,
@@ -555,30 +723,170 @@ def test_ignored_kwargs_warn_and_defaults_reach_the_wire(
         )
     sandbox.kill()
     compat = [w for w in caught if issubclass(w.category, RayitoCompatWarning)]
-    assert len(compat) == 5
-    assert not any("e2b_x" in str(w.message) for w in compat)
-    assert captured["maximumDurationInSeconds"] == 300
-    assert "idlePolicy" not in captured
-    assert captured["ingressNetworkConnectors"] == [ALL_INGRESS_ARN]
-    assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+    assert len(compat) == 8
+    for secret in ("e2b_x", "https://a", "https://s", "'v'"):
+        assert not any(secret in str(w.message) for w in compat)
+    assert_e2b_defaults(captured)
     payload = json.loads(str(captured["runHookPayload"]))
     assert "metadata" not in payload
 
 
-def test_allow_internet_access_false_is_unimplemented_before_any_call(
+def test_deprecated_constructor_warns_for_its_1x_kwargs(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
 ) -> None:
-    """Q44: sin conector de egress el MicroVM sigue saliendo a internet, así
-    que el shim no finge; el Stubber no recibe ningún `run-microvm`."""
-    with pytest.raises(UnimplementedError, match="allow_internet_access=False"):
-        Sandbox(
+    captured = capture_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sandbox = Sandbox(
             IMAGE_ARN,
-            allow_internet_access=False,
+            api_key="e2b_x",
+            domain="e2b.dev",
+            debug=True,
+            secure=False,
             access_token=ACCESS_TOKEN,
             control_plane=control_plane.plane,
             transport=fake_rayd.transport,
         )
+    sandbox.kill()
+    compat = [w for w in caught if issubclass(w.category, RayitoCompatWarning)]
+    assert [str(w.message).split(" ")[0] for w in compat] == [
+        "api_key",
+        "domain",
+        "debug",
+        "secure=False",
+    ]
+    assert_e2b_defaults(captured)
+
+
+def launch_with_network(
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    enforcement: int,
+    *,
+    terminated: bool = False,
+    **kwargs: Any,
+) -> tuple[dict[str, Any], Sandbox | None, BaseException | None]:
+    fake_rayd.servicer.egress_enforcement = enforcement  # type: ignore[assignment]
+    captured = capture_launch(control_plane, fake_rayd)
+    if terminated:
+        control_plane.microvms.add_response(
+            "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+        )
+    try:
+        sandbox = Sandbox.create(
+            IMAGE_ARN,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+            **kwargs,
+        )
+    except UnimplementedError as exc:
+        return captured, None, exc
+    return captured, sandbox, None
+
+
+def test_internet_access_off_is_the_guest_policy(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured, sandbox, error = launch_with_network(
+        control_plane,
+        fake_rayd,
+        network_pb2.EGRESS_ENFORCEMENT_GUEST_ROUTES,
+        allow_internet_access=False,
+    )
+    assert error is None and sandbox is not None
+    sandbox.native.close()
+    assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+    assert json.loads(str(captured["runHookPayload"]))["network"] == {"enforce": True}
+    assert list(fake_rayd.network.last_policy.deny_out) == [ALL_TRAFFIC]
+
+
+def test_internet_access_off_on_an_image_without_enforcement_terminates(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured, sandbox, error = launch_with_network(
+        control_plane,
+        fake_rayd,
+        network_pb2.EGRESS_ENFORCEMENT_NONE,
+        terminated=True,
+        allow_internet_access=False,
+        keep_on_failure=True,
+    )
+    assert sandbox is None and isinstance(error, UnimplementedError)
+    assert "rayito-base-caps" in str(error)
+    assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+    assert json.loads(str(captured["runHookPayload"]))["network"] == {"enforce": True}
+
+
+def test_network_with_an_e2b_selector_reaches_update_network(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured, sandbox, error = launch_with_network(
+        control_plane,
+        fake_rayd,
+        network_pb2.EGRESS_ENFORCEMENT_GUEST_ROUTES,
+        network={"allow_out": ["1.1.1.1"], "deny_out": lambda ctx: [ctx.all_traffic]},
+    )
+    assert error is None and sandbox is not None
+    sandbox.native.close()
+    policy = fake_rayd.network.last_policy
+    assert list(policy.allow_out) == ["1.1.1.1"]
+    assert list(policy.deny_out) == [ALL_TRAFFIC]
+    assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+
+
+def test_beta_create_network_maps_like_create(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.egress_enforcement = network_pb2.EGRESS_ENFORCEMENT_GUEST_ROUTES
+    capture_launch(control_plane, fake_rayd)
+    sandbox = Sandbox.beta_create(
+        IMAGE_ARN,
+        network={"deny_out": [ALL_TRAFFIC]},
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    sandbox.native.close()
+    assert list(fake_rayd.network.last_policy.deny_out) == [ALL_TRAFFIC]
+
+
+@pytest.mark.parametrize(
+    "network",
+    [{"rules": {}}, {"mask_request_host": "x"}, {"allow_public_traffic": True}],
+)
+def test_network_keys_without_primitive_make_no_call(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, network: dict[str, Any]
+) -> None:
+    with pytest.raises(UnimplementedError):
+        Sandbox.create(IMAGE_ARN, network=network, control_plane=control_plane.plane)
     assert fake_rayd.servicer.health_calls == []
+
+
+def test_update_network_instance_and_class_return_none(
+    sbx: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    assert sbx.update_network({"deny_out": [ALL_TRAFFIC], "allow_out": ["1.1.1.1"]}) is None
+    policy = fake_rayd.network.last_policy
+    assert list(policy.deny_out) == [ALL_TRAFFIC] and list(policy.allow_out) == ["1.1.1.1"]
+    assert sbx.update_network({"allow_internet_access": False}) is None
+    assert list(fake_rayd.network.last_policy.deny_out) == [ALL_TRAFFIC]
+    with pytest.raises(UnimplementedError):
+        sbx.update_network({"rules": {}})
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    result = Sandbox.update_network(
+        sbx.sandbox_id,
+        {"deny_out": ["10.0.0.0/8"]},
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    assert result is None
+    assert list(fake_rayd.network.last_policy.deny_out) == ["10.0.0.0/8"]
 
 
 def test_idle_and_egress_are_not_accepted() -> None:
@@ -593,3 +901,38 @@ def test_idle_and_egress_are_not_accepted() -> None:
 
 def test_async_sandbox_is_exported() -> None:
     assert AsyncSandbox.__name__ == "AsyncSandbox"
+
+
+def test_typescript_alias_reaches_the_agent(sbx: Sandbox, fake_rayd: RaydEndpoint) -> None:
+    assert sbx.run_code("1 + 1", language="ts").text == "2"
+    assert fake_rayd.code.execute_requests[-1].language == "typescript"
+    context = sbx.create_code_context(language="TypeScript")
+    assert context.language == "typescript"
+    assert fake_rayd.code.create_requests[-1].language == "typescript"
+
+
+def test_kernel_not_shipped_is_unimplemented_from_the_native_error(
+    sbx: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.code.languages = frozenset({"python"})
+    with pytest.raises(UnimplementedError) as ran:
+        sbx.run_code("1 + 1", language="javascript")
+    assert ran.value.feature == "run_code(language='javascript')"
+    assert "rayito-base-poly" in ran.value.reason
+    assert isinstance(ran.value.__cause__, InvalidArgumentException)
+    assert ran.value.__cause__.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    with pytest.raises(UnimplementedError) as created:
+        sbx.create_code_context(language="ts")
+    assert created.value.feature == "create_code_context(language='ts')"
+    assert isinstance(created.value.__cause__, InvalidArgumentException)
+    executions = len(fake_rayd.code.executions)
+    with pytest.raises(UnimplementedError) as refused:
+        sbx.run_code("1", language="r")
+    assert refused.value.feature == "run_code(language='r')"
+    assert len(fake_rayd.code.executions) == executions
+
+
+def test_other_native_errors_are_not_remapped(sbx: Sandbox) -> None:
+    with pytest.raises(InvalidArgumentException) as excinfo:
+        sbx.run_code("echo 1", language="bash", envs={"A": "1"})
+    assert not isinstance(excinfo.value, UnimplementedError)

@@ -13,6 +13,8 @@ import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { CodeService } from "../../../src/gen/rayito/v1/code_pb.js";
 import { FilesystemService } from "../../../src/gen/rayito/v1/filesystem_pb.js";
 import { HealthService } from "../../../src/gen/rayito/v1/health_pb.js";
+import { LifecyclePhase, LifecycleService } from "../../../src/gen/rayito/v1/lifecycle_pb.js";
+import { NetworkService } from "../../../src/gen/rayito/v1/network_pb.js";
 import { ProcessService } from "../../../src/gen/rayito/v1/process_pb.js";
 import { PtyService } from "../../../src/gen/rayito/v1/pty_pb.js";
 import type { TransportSettings } from "../../../src/transport/transport.js";
@@ -20,6 +22,8 @@ import { FakeCodeService } from "./code.js";
 import { installedTokenSha256 } from "./common.js";
 import { FakeFilesystemService } from "./filesystem.js";
 import { FakeHealth } from "./health.js";
+import { FakeLifecycleService } from "./lifecycle.js";
+import { FakeNetworkService } from "./network.js";
 import { FakeProcessService } from "./process.js";
 import { FakePtyService } from "./pty.js";
 
@@ -36,17 +40,39 @@ export interface SuspendResumeOptions {
   readonly kernelStateLost?: boolean;
 }
 
+/** Lo único que `rayd` admite con el plazo vencido (`RESUME_GRACE`/`EXPIRED`). */
+export const TIMEOUT_GATE_ADMITTED: ReadonlySet<string> = new Set([
+  "/rayito.v1.HealthService/Health",
+  "/rayito.v1.LifecycleService/SetTimeout",
+]);
+
+/** Las fases en las que la puerta `"phase"` rechaza: las de `rayd` con el plazo vencido. */
+const TIMEOUT_GATE_PHASES: ReadonlySet<LifecyclePhase> = new Set([
+  LifecyclePhase.EXPIRED,
+  LifecyclePhase.RESUME_GRACE,
+]);
+
 export class FakeRayd {
   readonly health: FakeHealth;
   readonly process: FakeProcessService;
   readonly filesystem: FakeFilesystemService;
   readonly code: FakeCodeService;
   readonly pty: FakePtyService;
+  readonly network: FakeNetworkService;
+  readonly lifecycle: FakeLifecycleService;
   readonly host = "127.0.0.1";
   readonly port: number;
   readonly server: http2.Http2Server;
   sessions = 0;
   requests = 0;
+  /** Rutas (`/rayito.v1.Servicio/Metodo`) que nunca responden: para probar que un `signal` corta la llamada. */
+  readonly held = new Set<string>();
+  /**
+   * La puerta de `rayd` con el plazo vencido: todo lo no admitido recibe
+   * `FAILED_PRECONDITION sandbox_timeout`; con `"phase"`, sólo mientras el
+   * `LifecycleState` de `Health` está `EXPIRED` o `RESUME_GRACE`, como `rayd`.
+   */
+  timeoutGate: boolean | "phase" = false;
   #forbidNext = 0;
   readonly #sessionSet = new Set<http2.ServerHttp2Session>();
 
@@ -59,6 +85,8 @@ export class FakeRayd {
       filesystem: FakeFilesystemService;
       code: FakeCodeService;
       pty: FakePtyService;
+      network: FakeNetworkService;
+      lifecycle: FakeLifecycleService;
     },
   ) {
     this.server = server;
@@ -68,6 +96,8 @@ export class FakeRayd {
     this.filesystem = services.filesystem;
     this.code = services.code;
     this.pty = services.pty;
+    this.network = services.network;
+    this.lifecycle = services.lifecycle;
   }
 
   static async start(options: FakeRaydOptions): Promise<FakeRayd> {
@@ -80,10 +110,13 @@ export class FakeRayd {
     const filesystem = new FakeFilesystemService(tokenSha256);
     const code = new FakeCodeService(tokenSha256);
     const pty = new FakePtyService(tokenSha256, process);
+    const network = new FakeNetworkService(tokenSha256, health);
+    const lifecycle = new FakeLifecycleService(tokenSha256, health);
     const routes = (router: ConnectRouter) => {
       router.service(HealthService, {
         health: (request, context) => health.health(request, context),
         metrics: (request, context) => health.metrics(request, context),
+        metricsHistory: (request, context) => health.metricsHistory(request, context),
       });
       router.service(ProcessService, {
         start: (request, context) => process.start(request, context),
@@ -104,6 +137,11 @@ export class FakeRayd {
         watchDir: (request, context) => filesystem.watchDir(request, context),
         checkpoint: (request, context) => filesystem.checkpoint(request, context),
         restore: (request, context) => filesystem.restore(request, context),
+        startImport: (request, context) => filesystem.startImport(request, context),
+        startExport: (request, context) => filesystem.startExport(request, context),
+        getTransfer: (request, context) => filesystem.getTransfer(request, context),
+        watchTransfer: (request, context) => filesystem.watchTransfer(request, context),
+        cancelTransfer: (request, context) => filesystem.cancelTransfer(request, context),
       });
       router.service(CodeService, {
         createContext: (request, context) => code.createContext(request, context),
@@ -120,6 +158,13 @@ export class FakeRayd {
         resize: (request, context) => pty.resize(request, context),
         kill: (request, context) => pty.kill(request, context),
       });
+      router.service(NetworkService, {
+        updateNetwork: (request, context) => network.updateNetwork(request, context),
+        getNetwork: (request, context) => network.getNetwork(request, context),
+      });
+      router.service(LifecycleService, {
+        setTimeout: (request, context) => lifecycle.setTimeout(request, context),
+      });
     };
     const adapter = connectNodeAdapter({ routes });
     let rayd: FakeRayd | undefined;
@@ -129,6 +174,13 @@ export class FakeRayd {
       if (current.takeForbidden()) {
         response.writeHead(403, { "content-type": "text/plain" });
         response.end("Forbidden");
+        return;
+      }
+      if (current.held.has(request.url ?? "")) {
+        return;
+      }
+      if (current.gates(request.url)) {
+        answerSandboxTimeout(request, response);
         return;
       }
       adapter(request, response);
@@ -145,8 +197,18 @@ export class FakeRayd {
       filesystem,
       code,
       pty,
+      network,
+      lifecycle,
     });
     return rayd;
+  }
+
+  gates(path: string): boolean {
+    if (this.timeoutGate === false || TIMEOUT_GATE_ADMITTED.has(path)) {
+      return false;
+    }
+    const phase = this.health.lifecycle?.phase ?? LifecyclePhase.ACTIVE;
+    return this.timeoutGate === true || TIMEOUT_GATE_PHASES.has(phase);
   }
 
   get transport(): Partial<TransportSettings> {
@@ -202,6 +264,20 @@ export class FakeRayd {
     }
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
+}
+
+/** Respuesta gRPC trailers-only tras drenar el cuerpo, como la capa de `rayd`. */
+function answerSandboxTimeout(
+  request: http2.Http2ServerRequest,
+  response: http2.Http2ServerResponse,
+): void {
+  request.resume();
+  response.writeHead(200, {
+    "content-type": "application/grpc+proto",
+    "grpc-status": "9",
+    "grpc-message": "sandbox_timeout",
+  });
+  response.end();
 }
 
 export async function startFakeRayd(options: FakeRaydOptions): Promise<FakeRayd> {

@@ -49,6 +49,9 @@ dev = [
     "grpc-stubs>=1.53",
     "typer>=0.15,<1",
     "rayito[mcp]",
+    # scripts/tests/test_iam_template.py parsea spike/m0/iam.yaml (CI corre
+    # scripts/tests con este entorno).
+    "pyyaml>=6.0",
 ]
 docs = [
     "mkdocs-material>=9.6",
@@ -99,7 +102,7 @@ ignore_errors = true
 follow_imports = "skip"
 
 # Los fakes de test heredan de los servicers generados (sin tipos): la única
-# relajación de `strict`, acotada a esos cinco módulos.
+# relajación de `strict`, acotada a esos módulos.
 [[tool.mypy.overrides]]
 module = [
     "tests.unit.conftest",
@@ -107,6 +110,7 @@ module = [
     "tests.unit.fake_filesystem",
     "tests.unit.fake_code",
     "tests.unit.fake_pty",
+    "tests.unit.fake_lifecycle",
 ]
 disallow_subclassing_any = false
 

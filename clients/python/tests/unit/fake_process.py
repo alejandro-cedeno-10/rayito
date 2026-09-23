@@ -111,6 +111,17 @@ def suspending() -> process_pb2.EndEvent:
     )
 
 
+def sandbox_timed_out() -> process_pb2.EndEvent:
+    """El final con que `rayd` cierra un stream al vencer el plazo lógico
+    del sandbox (ADR-011, tabla de cierres de design D6)."""
+    return process_pb2.EndEvent(
+        exit_code=0,
+        exited=False,
+        status="sandbox_timeout",
+        error=common_pb2.StreamError(code="sandbox_timeout", message="sandbox timeout"),
+    )
+
+
 class ReplayOutOfRange(Exception):
     def __init__(self, oldest: int, next_seq: int) -> None:
         super().__init__(f"from_seq fuera de rango: oldest={oldest} next={next_seq}")
@@ -179,6 +190,12 @@ class FakeProcess:
         el stream cerrado; el proceso sigue corriendo."""
         with self.lock:
             self._fan_out(process_pb2.ProcessEvent(end=suspending()))
+            self.subscribers = []
+
+    def close_streams(self, end: process_pb2.EndEvent) -> None:
+        """Cierra cada stream vivo con `end` sin terminar el proceso."""
+        with self.lock:
+            self._fan_out(process_pb2.ProcessEvent(end=end))
             self.subscribers = []
 
     def subscribe(
@@ -310,6 +327,24 @@ def run_env(process: FakeProcess, argument: str) -> None:
     process.finish(exited(0))
 
 
+@dataclass(frozen=True)
+class CannedReply:
+    """Salida y exit fijos para los comandos que contienen un fragmento
+    (`reply_when`): los tests de git no necesitan un git de verdad."""
+
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = 0
+
+
+def run_canned(process: FakeProcess, reply: CannedReply) -> None:
+    if reply.stdout:
+        process.publish("stdout", reply.stdout.encode())
+    if reply.stderr:
+        process.publish("stderr", reply.stderr.encode())
+    process.finish(exited(reply.exit_code))
+
+
 def run_unknown(process: FakeProcess, name: str) -> None:
     process.publish("stderr", f"bash: {name}: command not found\n".encode())
     process.finish(exited(127))
@@ -400,6 +435,7 @@ class FakeProcessService(process_pb2_grpc.ProcessServiceServicer):
     signal_requests: list[process_pb2.SendSignalRequest] = field(default_factory=list)
     signal_unavailable_calls: int = 0
     next_pid: int = FIRST_PID
+    replies: list[tuple[str, CannedReply]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def Start(
@@ -411,7 +447,7 @@ class FakeProcessService(process_pb2_grpc.ProcessServiceServicer):
         self._validate_start(request, context)
         process = self._spawn(request)
         subscriber, prelude = process.subscribe(0)
-        threading.Thread(target=run_script, args=(process,), daemon=True).start()
+        threading.Thread(target=self._run, args=(process,), daemon=True).start()
         return stream_events(process, subscriber, prelude, context)
 
     def Connect(
@@ -490,6 +526,15 @@ class FakeProcessService(process_pb2_grpc.ProcessServiceServicer):
 
     # --------------------------------------------------------- test controls
 
+    def reply_when(self, fragment: str, reply: CannedReply) -> None:
+        """Los comandos cuyo texto contiene `fragment` responden `reply`; la
+        primera regla que coincide gana y el resto sigue la tabla de scripts."""
+        self.replies.append((fragment, reply))
+
+    def commands(self) -> list[str]:
+        """El comando de usuario (el `-c` del wrapper) de cada `Start`, en orden."""
+        return [str(request.process.args[-1]) for request in self.start_requests]
+
     def suspend(self) -> None:
         """Lo que hace `/suspend`: los streams vivos terminan con
         `EndEvent{suspending}` y los nuevos se rechazan con el phase gate."""
@@ -516,6 +561,14 @@ class FakeProcessService(process_pb2_grpc.ProcessServiceServicer):
 
     def live_count(self) -> int:
         return len(self.live_processes()) + len(self.live_ptys())
+
+    def _run(self, process: FakeProcess) -> None:
+        command = str(process.request.process.args[-1])
+        for fragment, reply in self.replies:
+            if fragment in command:
+                run_canned(process, reply)
+                return
+        run_script(process)
 
     def _authenticate(self, context: grpc.ServicerContext) -> dict[str, str]:
         self.peers.add(str(context.peer()))

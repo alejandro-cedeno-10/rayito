@@ -206,6 +206,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: cargo test natively on aarch64 (cfg(unix) adapter suites, non-root self-skips)
         run: cargo test --workspace --locked
+      - name: m9_egress policy routes as root in a fresh network namespace (ADR-012)
+        run: |
+          binary="$(cargo test -p rayd --test m9_egress --locked --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "m9_egress" and .executable != null) | .executable')"
+          test -x "$binary"
+          sudo env RAYITO_REQUIRE_EGRESS_NETNS=1 unshare --net -- "$binary" --test-threads=1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: "3.12"

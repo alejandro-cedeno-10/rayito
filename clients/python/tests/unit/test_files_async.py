@@ -31,6 +31,7 @@ from rayito.exceptions import (
     RateLimitException,
     SandboxException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.v1 import common_pb2, filesystem_pb2
 
@@ -491,3 +492,16 @@ async def test_async_stream_reset_on_read_and_watch(
     assert "stream cortado" in str(exits[0])
     with pytest.raises(SandboxException, match="stream cortado"):
         await handle.get_new_events()
+
+
+async def test_async_older_agent_refuses_metadata_and_gzip_writes_before_any_byte(
+    sandbox: AsyncSandbox, fake_files: FakeFilesystemService
+) -> None:
+    """Misma regla que la versión síncrona sobre el `rayd` falso base."""
+    with pytest.raises(UnimplementedError, match="actualiza la imagen"):
+        await sandbox.files.write(f"{HOME}/m.txt", "x", metadata={"owner": "alice"})
+    with pytest.raises(UnimplementedError, match="actualiza la imagen"):
+        await sandbox.files.write(f"{HOME}/z.txt", "x", gzip=True)
+    assert fake_files.write_streams == []
+    fake_files.add_file(f"{HOME}/plain.txt", b"hola")
+    assert await sandbox.files.read(f"{HOME}/plain.txt", gzip=True, stream_idle_timeout=5) == "hola"

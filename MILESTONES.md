@@ -1014,6 +1014,118 @@ C-05.
 
 ---
 
+## M9 — Paridad con E2B
+
+Seis cambios OpenSpec (`openspec/changes/archive/2026-09-24-m9-*`) que
+cierran la tabla de paridad con E2B 2.51 (113 filas,
+`docs/site/docs/e2b-parity.md`).
+
+**Estado: M9 cerrado el 2026-09-24.** Aceptado contra AWS real, gates
+finales verdes sobre el árbol definitivo y los seis cambios archivados; queda
+sólo la release 0.3.0 por release-please al mergear (abajo). Los números
+medidos van a `AWS_API_NOTES.md` §16 con marcadores de posición
+(`microvm-<id>`, nombres de imagen, sin cuenta, bucket ni ARN).
+
+| # | Cambio OpenSpec | Alcance | Aceptación en AWS real (2026-09-24) | Estado |
+|---|---|---|---|---|
+| 1 | `m9-deno-kernels` | `javascript` y `typescript` con Deno 2.9.7 en `rayito-base-poly` (ADR-013) | `test_m9_deno_kernels.py` **8/8** y `test_m7_poly_kernels.py` **5/5** (bandas de tamaño revisadas, D12), `poly.e2e.test.ts` **2/2**; `kernel_ready_s` p50 poly 6,62 s frente a base 5,81 s; fila Q77 | cerrado; archivado 2026-09-24 |
+| 2 | `m9-file-transfer` | `upload_url`/`download_url` y ficheros grandes por S3 con las credenciales del llamante (ADR-010, T16) | `test_m9_transfer.py` **14/14**, `m9-transfer.e2e.test.ts` **6/6** (regresión de TS en `rayito-base` 22.0); filas Q70–Q75 (Q74: gzip 0,80 → 52,34 MB/s por el proxy) | cerrado; archivado 2026-09-24 |
+| 3 | `m9-server-timeout` | plazo lógico en `rayd`, `set_timeout`, `connect(timeout=)`, `on_timeout` (ADR-011, sustituye a ADR-007) | `test_m9_server_timeout.py` **12/12**, `test_set_timeout_beyond_cap` **3/3** aislado, `m9-timeout.e2e.test.ts` **5/5**; filas Q63 (salida 124, se mantiene), Q64 (pausa al vencer) y Q65 (auto-resume suelto) | cerrado; archivado 2026-09-24 |
+| 4 | `m9-sandbox-observability` | `MetricsHistory`, `paginate()`, hechos del guest en `Health` | `test_m9_observability.py` **4/4**, `m9-observability.e2e.test.ts` **2/2** (regresión de TS en 22.0); fila Q68 (`memory_mb` = `MemTotal` del guest, 8016 MiB con una imagen de 2048) | cerrado; archivado 2026-09-24 |
+| 5 | `m9-egress-policy` | política de egress en el guest de `rayito-base-caps` (ADR-012, T17) | QE1 (Q66) con su regla de parada, resuelta con la adenda de ADR-012 (opción C: bajo deny-all el DNS puede resolver, la conexión falla); QE2 (Q67): el proxy **no** reenvía TLS a un puerto del guest, `https_ports` sigue `UnimplementedError`; `test_m9_egress.py` **14/14**, `m9-egress.e2e.test.ts` verde | cerrado; archivado 2026-09-24 (motivo de `https_ports` citando Q67 en los dos SDK; el job `arm` de CI va al PR) |
+| 6 | `m9-e2b-v2-surface` | shims de E2B 2.x en Python y TypeScript (`rayito/e2b`), `git`, CLI `sandbox create\|connect\|exec\|metrics` | corpus E2B **18/18** en Python (9 sync + 9 async) y **8** programas de TS (`m9-e2b.e2e.test.ts` **11/11**), `fork()` vivo → `UnimplementedError`; `test_m9_git.py` **1/1** (`git` 2.50.1), `test_m9_cli_sandbox.py` **4/4** (PTY real), cookbook de M6 **2/2**; fila Q76 (`git-core`) | cerrado; archivado 2026-09-24 |
+
+**Estado de aceptación (M9, 2026-09-24, cuenta de pruebas, us-east-1):**
+verde contra AWS real. Regresión e2e de Python sobre **`rayito-base` 23.0,
+`rayito-base-caps` 12.0 y `rayito-base-poly` 7.0**: **62 passed de 62**
+(server-timeout 12, observability 4, deno 8, egress 14, transfer 14, M4 1, M5
+2, M6 2, M7 poly 5); la pasada completa anterior (84 tests sobre 22.0) dejó 73
+verdes y 11 rojos, todos en esos ficheros y todos verdes en la de 23.0 (2
+skipped opt-in: conector de egress propio y la rotación lenta de
+credenciales). Corpus, git y CLI: 23/26 en 23.0 con `watch` en rojo; tras el
+arreglo, corpus + M3 **22/22** en **24.0**. TypeScript **26/26** en 24.0 /
+caps 13.0 / poly 8.0 (corpus, timeout, M6, egress, poly); transfer y
+observability de TS verdes en la regresión completa de TS sobre 22.0.
+Imágenes republicadas desde el `rayd` final: **`rayito-base` 25.0** (build
+217,6 s; `snapshotBuild` 939 683 840 / 1 362 808 832 / 38 539 264 B),
+**`rayito-base-caps` 14.0** (200,1 s; 931 258 368 / 1 361 743 872 /
+36 409 344 B) y **`rayito-base-poly` 9.0** (207,9 s; 929 677 312 /
+1 500 737 536 / 36 425 728 B), las tres `SUCCESSFUL`/`ACTIVE`; la re-corrida
+de las suites afectadas sobre 25.0 (Python: timeout, egress, observability,
+corpus E2B y M4; TS: timeout, egress, corpus, observability) estaba en curso
+al escribir esto: `test_m9_server_timeout.py` ya dio **12/12** en 25.0
+(`terminatedAt − plazo` 14,2–18,8 s, pausa al vencer 2,45 s, auto-resume
+1,07 s, cliente muerto 251,2 s). Re-corrida terminada: Python **52/52** de
+las suites afectadas y TypeScript **24/24** sobre 25.0 / caps 14.0 / poly 9.0
+(con el arreglo tardío del timer del deadline de los streams de TS, en
+`clients/typescript/CHANGELOG.md`), más la aceptación de paquete con
+instalación limpia (Python y TS: subida y descarga de 50 MB con sha256
+coincidente, `set_timeout` → `TERMINATED`).
+
+**Cierre (2026-09-24):**
+
+- Motivo de `network.https_ports` citando Q67 en los dos SDK y en
+  `e2b-compat.md` (`m9-egress-policy` 7.2): hecho.
+- Gates finales sobre el árbol definitivo, verdes: Rust en la VM Lima
+  (`cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace
+  --locked` como uid 1500 con 856 passed y 2 ignored, `m9_egress` como root
+  en `unshare --net` 1 passed, `cargo deny check`, zigbuild auditable de
+  13 764 024 B con `.dep-v0` de 257 paquetes); Python unit 2115 passed, ruff
+  y mypy limpios; sidecar 85 passed; TypeScript 863 passed más lint,
+  typecheck, build y `pack:check`; `buf lint`,
+  `check_pins`/`check_license`/`check_hygiene`, `gen_limits --check`,
+  `scripts/tests` 186 passed y `mkdocs build --strict`.
+- `openspec/changes/m9-handoff` borrado y los seis cambios archivados en
+  orden (deno-kernels, file-transfer, server-timeout, sandbox-observability,
+  egress-policy, e2b-v2-surface): 0 escenarios perdidos (635 → 872 en 30 →
+  36 capabilities, `e2b-compat` 20 → 59) y `openspec validate --all --strict`
+  36/36.
+
+**Tras el merge:** release 0.3.0 en lockstep por release-please
+(`docs/RELEASING.md`) y coste de M9 en Cost Explorer (con el retardo de
+facturación).
+
+**Diferido con razón escrita (siguiente ciclo):**
+
+- **Egress, opción A**: bloquear el DNS de uid ≥ 1000 bajo deny-all en caps.
+  QE1 (Q66) midió que los resolvedores de la plataforma escuchan dentro del
+  guest, así que en M9 los nombres pueden resolverse bajo deny-all aunque toda
+  conexión fuera del VM falle (adenda de ADR-012, opción C; riesgo residual en
+  `SECURITY.md` T17). La opción A es una regla `ip rule` para el puerto 53 de
+  uid ≥ 1000 antes de la regla `local`, con cambio atómico y rollback.
+- **Fixtures TLS de los tests de `rayd` con `rcgen`**: la clave y el
+  certificado autofirmados de prueba de `crates/rayd/tests/fixtures/tls/`
+  están fijos en el repositorio y los escáneres los marcan; generarlos en
+  tiempo de test no cambia ningún comportamiento publicado.
+- **Ventana de rotación del kernel en `rayd` tras `/run`**: hoy la cierran
+  los SDK exigiendo `sandbox_id` en la readiness (Q78); cerrarla en el propio
+  agente (marcar `Rotating` de forma síncrona, residuo del orden de 100 µs)
+  exige republicar las tres imágenes.
+- **Reconexión tras un reset de stream del proxy** (`RST_STREAM`, "Stream
+  removed" antes del plazo real): tratarlo como corte reconectable
+  (`Connect(pid, from_seq)`); visto una vez en la regresión, no reproducido en
+  4 intentos.
+- **Mensaje amable de `rayito-mcp` sin el extra**: `rayito-mcp` y `python -m
+  rayito.mcp` sin `rayito[mcp]` acaban en un `ModuleNotFoundError` de `mcp`;
+  la CLI `rayito` ya imprime cómo instalar su extra. Documentado en el
+  `README.md`; no afecta a quien instala el extra.
+- **`--remap-path-prefix` en `ci.yml` y `release.yml`**: `make build` quita
+  del binario `rayd` las rutas del constructor, pero los jobs `rayd` de CI y
+  de release compilan sin ese `rustflags`, así que el `rayd` publicado lleva
+  rutas del runner. Sólo se puede verificar con un run de GitHub Actions.
+- **Job `arm` de CI con el paso de netns de `m9_egress`**
+  (`m9-egress-policy` 9.5): necesita el PR de M9 en GitHub; su equivalente
+  local (root en `unshare --net` en la VM Lima) está verde. Gate de merge.
+- **Salida del sidecar real dentro de la gracia de `SIGTERM`**
+  (`m9-server-timeout` 4.1): la secuencia manda `SIGKILL` a los 5 s de todas
+  formas y la e2e real termina con código 124; confirmarlo exige leer el log
+  de `rayd` en CloudWatch de una VM en modo `kill`.
+- Las filas diferidas de `docs/SECURITY_AUDIT.md` §8 siguen diferidas;
+  ningún cambio de M9 las empeora.
+- Revisión de arquitectura hexagonal/DDD: 32 hallazgos reales diferidos (la mayoría en `rayd`, cuyo cambio obliga a republicar y repetir la aceptación), listados con fichero, principio y arreglo en [`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md); 12 se corrigieron antes de 0.3.0.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

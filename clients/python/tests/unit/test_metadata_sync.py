@@ -312,3 +312,94 @@ def test_list_without_metadata_is_unchanged(control_plane: StubbedControlPlane) 
 
 def test_endpoint_helper_formats_host_and_port(fake_rayd: RaydEndpoint) -> None:
     assert endpoint_of(fake_rayd) == f"127.0.0.1:{fake_rayd.port}"
+
+
+GUEST_MEMORY_BYTES = 8_405_385_216
+
+
+def set_guest_facts(endpoint: RaydEndpoint, version: str, cpus: int, memory: int) -> None:
+    endpoint.servicer.agent_version = version
+    endpoint.servicer.cpu_count = cpus
+    endpoint.servicer.memory_total_bytes = memory
+
+
+def test_instance_get_info_carries_the_guest_facts_without_extra_rpc(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    set_guest_facts(fake_rayd, "0.3.0", 2, GUEST_MEMORY_BYTES)
+    capture_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("terminate_microvm", {})
+    with Sandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ) as sandbox:
+        assert sandbox.info.agent_version is None and sandbox.info.cpu_count is None
+        health_calls = len(fake_rayd.servicer.health_calls)
+        info = sandbox.get_info()
+        assert (info.agent_version, info.cpu_count, info.memory_mb) == ("0.3.0", 2, 8016)
+        assert len(fake_rayd.servicer.health_calls) == health_calls
+        assert (sandbox.info.agent_version, sandbox.info.cpu_count) == (None, None)
+        assert sandbox.info.memory_mb is None
+        assert sandbox.launch_info.memory_mb is None
+        health = sandbox.get_health()
+        assert (health.cpu_count, health.memory_total_bytes) == (2, GUEST_MEMORY_BYTES)
+
+
+def test_instance_get_info_of_a_pre_m9_agent_has_unknown_facts(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    set_guest_facts(fake_rayd, "0.2.0", 0, 0)
+    capture_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("terminate_microvm", {})
+    with Sandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ) as sandbox:
+        info = sandbox.get_info()
+        assert (info.agent_version, info.cpu_count, info.memory_mb) == ("0.2.0", None, None)
+
+
+def test_class_get_info_fills_the_guest_facts_from_the_same_health(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    set_guest_facts(fake_rayd, "0.3.0", 2, GUEST_MEMORY_BYTES)
+    fake_rayd.servicer.metadata = {"a": "1"}
+    transport = TrackingTransport.for_loopback()
+    stub_metadata_probe(control_plane, SANDBOX_ID, fake_rayd)
+    info = Sandbox.get_info(SANDBOX_ID, control_plane=control_plane.plane, transport=transport)
+    assert info.metadata == {"a": "1"}
+    assert (info.agent_version, info.cpu_count, info.memory_mb) == ("0.3.0", 2, 8016)
+    assert len(fake_rayd.servicer.health_calls) == 1
+
+    stub_metadata_probe(control_plane, SANDBOX_ID, fake_rayd, state="SUSPENDED")
+    paused = Sandbox.get_info(SANDBOX_ID, control_plane=control_plane.plane, transport=transport)
+    assert (paused.agent_version, paused.cpu_count, paused.memory_mb) == (None, None, None)
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(state="RUNNING"))
+    unread = Sandbox.get_info(SANDBOX_ID, read_metadata=False, control_plane=control_plane.plane)
+    assert unread.agent_version is None
+    assert len(fake_rayd.servicer.health_calls) == 1
+
+
+def test_class_get_info_of_a_booting_agent_has_unknown_facts(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    set_guest_facts(fake_rayd, "0.3.0", 2, GUEST_MEMORY_BYTES)
+    fake_rayd.servicer.not_ready_calls = 1
+    stub_metadata_probe(control_plane, SANDBOX_ID, fake_rayd)
+    info = Sandbox.get_info(
+        SANDBOX_ID, control_plane=control_plane.plane, transport=TrackingTransport.for_loopback()
+    )
+    assert info.metadata is None and info.agent_version is None and info.cpu_count is None

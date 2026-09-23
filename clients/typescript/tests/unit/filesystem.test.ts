@@ -15,9 +15,11 @@ import {
   materialiseWriteData,
   modifiedTimeFromMs,
   validateDepth,
+  validateMetadata,
   validateMode,
   validatePath,
   validateReadFormat,
+  validateStreamIdleTimeout,
   validateWatchTimeout,
   WatchState,
 } from "../../src/sandbox/filesystem.js";
@@ -26,6 +28,11 @@ import { entryInfo, FakeDirectory } from "./fake/filesystem.js";
 import { createTestSandbox, sleep, waitUntil } from "./helpers.js";
 
 const HOME = "/home/user";
+
+/** `toEqual` recorre un `Uint8Array` elemento a elemento: con MB tarda segundos y agota el timeout. */
+function sameBytes(actual: Uint8Array, expected: Uint8Array): boolean {
+  return Buffer.from(actual).equals(Buffer.from(expected));
+}
 
 describe("pure helpers", () => {
   test("validators", () => {
@@ -157,14 +164,14 @@ describe("files", () => {
     const { sandbox, rayd } = await createTestSandbox();
     const data = new Uint8Array(3_000_000).map((_, index) => (index * 7 + 255) & 0xff);
     await sandbox.files.write("big.bin", data);
-    expect(await sandbox.files.read("big.bin", { format: "bytes" })).toEqual(data);
+    expect(sameBytes(await sandbox.files.read("big.bin", { format: "bytes" }), data)).toBe(true);
     const stream = await sandbox.files.read("big.bin", { format: "stream" });
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream) {
       chunks.push(chunk);
     }
     expect(chunks.every((chunk) => chunk.byteLength <= 262_144)).toBe(true);
-    expect(Buffer.concat(chunks)).toEqual(Buffer.from(data));
+    expect(sameBytes(Buffer.concat(chunks), data)).toBe(true);
     await expect(sandbox.files.read("big.bin")).rejects.toBeInstanceOf(InvalidArgumentError);
     expect(rayd.filesystem.deadlines.Read?.[0]).toBe(63_000);
     expect(rayd.filesystem.deadlines.Write?.[0]).toBe(63_000);
@@ -374,5 +381,139 @@ describe("watchDir", () => {
     expect(first.isRunning).toBe(false);
     expect(second.isRunning).toBe(false);
     await waitUntil(() => rayd.filesystem.liveWatches === 0);
+  });
+});
+
+describe("M9 filesystem surface (gzip, metadata, blob, idle timeout)", () => {
+  test("validators for the new read and write options", () => {
+    expect(validateReadFormat("blob")).toBe("blob");
+    expect(validateStreamIdleTimeout(undefined)).toBeUndefined();
+    expect(validateStreamIdleTimeout(0)).toBeUndefined();
+    expect(validateStreamIdleTimeout(250)).toBe(250);
+    expect(() => validateStreamIdleTimeout(-1)).toThrow(InvalidArgumentError);
+    expect(() => validateStreamIdleTimeout(Number.NaN)).toThrow(InvalidArgumentError);
+    expect(validateMetadata(undefined)).toEqual({});
+    expect(validateMetadata({ Owner: "alice", "X-Tag_1": "v 1~" })).toEqual({
+      owner: "alice",
+      "x-tag_1": "v 1~",
+    });
+    expect(validateMetadata({ k: "v".repeat(3987) })).toEqual({ k: "v".repeat(3987) });
+  });
+
+  test("metadata rules match rayd and never echo a key or a value", () => {
+    const refused: Array<Record<string, string>> = [
+      { "secret key": "1" },
+      { secretkey: "valué" },
+      { Secret: "1", secret: "2" },
+      { "": "1" },
+      { ["s".repeat(256)]: "1" },
+      { k: "v".repeat(3988) },
+      Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`k${index}`, "v"])),
+    ];
+    for (const metadata of refused) {
+      let caught: unknown;
+      try {
+        validateMetadata(metadata);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught, JSON.stringify(Object.keys(metadata).slice(0, 2))).toBeInstanceOf(
+        InvalidArgumentError,
+      );
+      expect((caught as Error).message).not.toContain("secret");
+      expect((caught as Error).message).not.toContain("valué");
+    }
+    expect(() => validateMetadata(["a"] as never)).toThrow(InvalidArgumentError);
+  });
+
+  test("buildWriteRequests carries metadata only on each file's first message", async () => {
+    const seen: Array<Record<string, string>> = [];
+    for await (const request of buildWriteRequests(
+      [
+        { path: "a", data: new Uint8Array(2_000_000), mode: undefined },
+        { path: "b", data: new Uint8Array(1), mode: undefined },
+      ],
+      undefined,
+      { owner: "alice" },
+    )) {
+      seen.push({ ...request.metadata });
+    }
+    expect(seen).toEqual([{ owner: "alice" }, {}, { owner: "alice" }]);
+  });
+
+  test("metadata round trip: write, getInfo and list carry it; an overwrite without it clears it", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    const written = await sandbox.files.write("m.txt", "x", { metadata: { Owner: "alice" } });
+    expect(written.metadata).toEqual({ owner: "alice" });
+    expect(rayd.filesystem.writeMetadata).toEqual([{ owner: "alice" }]);
+    expect(rayd.filesystem.headers.GetTransfer).toHaveLength(1);
+    expect((await sandbox.files.getInfo("m.txt")).metadata).toEqual({ owner: "alice" });
+    const listed = await sandbox.files.list(HOME);
+    expect(listed.find((entry) => entry.name === "m.txt")?.metadata).toEqual({ owner: "alice" });
+    expect(Object.isFrozen(written.metadata)).toBe(true);
+    const overwritten = await sandbox.files.write("m.txt", "y");
+    expect(overwritten.metadata).toEqual({});
+    expect((await sandbox.files.getInfo("m.txt")).metadata).toEqual({});
+    await expect(
+      sandbox.files.write("n.txt", "z", { metadata: { "a b": "1" } }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+    expect(rayd.filesystem.writeStreams).toHaveLength(2);
+  });
+
+  test("gzip: write compresses on the unary session, read opts in with rayito-compress", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    const text = "rayito ".repeat(200_000);
+    const entry = await sandbox.files.write("g.txt", text, { gzip: true });
+    expect(entry.size).toBe(text.length);
+    expect(rayd.filesystem.headers.Write?.[0]?.["grpc-encoding"]).toBe("gzip");
+    expect(await sandbox.files.read("g.txt", { gzip: true })).toBe(text);
+    expect(rayd.filesystem.headers.Read?.[0]?.["rayito-compress"]).toBe("gzip");
+    await sandbox.files.write("plain.txt", "x");
+    expect(rayd.filesystem.headers.Write?.[1]?.["grpc-encoding"]).not.toBe("gzip");
+    await sandbox.files.read("plain.txt");
+    expect(rayd.filesystem.headers.Read?.[1]?.["rayito-compress"]).toBeUndefined();
+    expect(rayd.sessions).toBe(1);
+    expect(Sandbox.coreOf(sandbox).streamTransportOpened).toBe(false);
+  });
+
+  test("format blob returns an octet-stream Blob with the same bytes", async () => {
+    const { sandbox } = await createTestSandbox();
+    const bytes = new Uint8Array([0, 1, 2, 254, 255]);
+    await sandbox.files.write("b.bin", bytes);
+    const blob = await sandbox.files.read("b.bin", { format: "blob" });
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe("application/octet-stream");
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+  });
+
+  test("streamIdleTimeoutMs cancels a stalled read with TimeoutError; 0 disables the guard", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    await sandbox.files.write("slow.bin", new Uint8Array(600_000));
+    rayd.filesystem.readStallAfterFirstChunk = true;
+    const started = performance.now();
+    const error = await sandbox.files
+      .read("slow.bin", { format: "bytes", streamIdleTimeoutMs: 200 })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect((error as Error).message.startsWith("stream_idle_timeout")).toBe(true);
+    expect(performance.now() - started).toBeLessThan(5000);
+    await waitUntil(() => Sandbox.coreOf(sandbox).liveStreamCount === 0, 2000);
+    await expect(
+      sandbox.files.read("slow.bin", { streamIdleTimeoutMs: -1 }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+    rayd.filesystem.readStallAfterFirstChunk = false;
+    const whole = await sandbox.files.read("slow.bin", { format: "bytes", streamIdleTimeoutMs: 0 });
+    expect(whole.byteLength).toBe(600_000);
+  });
+
+  test("useOctetStream is accepted and changes nothing on the wire", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    await sandbox.files.write("o.txt", "x", { useOctetStream: true });
+    await sandbox.files.writeFiles([{ path: "p.txt", data: "y" }], { useOctetStream: true });
+    expect(rayd.filesystem.writeStreams.map((stream) => stream.map((m) => m.path))).toEqual([
+      ["o.txt"],
+      ["p.txt"],
+    ]);
+    expect(rayd.filesystem.headers.GetTransfer).toBeUndefined();
   });
 });

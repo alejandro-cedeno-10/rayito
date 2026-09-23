@@ -118,3 +118,13 @@ def test_payload_budget_error_names_envs_and_metadata() -> None:
 def test_invalid_metadata_rejected(metadata: dict[object, object]) -> None:
     with pytest.raises(InvalidArgumentException, match="metadata"):
         build_run_hook_payload(access_token=TOKEN, metadata=metadata)  # type: ignore[arg-type]
+
+
+def test_network_block_travels_only_when_enforcing() -> None:
+    enforcing = json.loads(build_run_hook_payload(access_token=TOKEN, network_enforce=True))
+    assert enforcing["network"] == {"enforce": True}
+    assert enforcing["v"] == 1
+    assert "network" not in json.loads(build_run_hook_payload(access_token=TOKEN))
+    assert "network" not in json.loads(
+        build_run_hook_payload(access_token=TOKEN, network_enforce=False)
+    )

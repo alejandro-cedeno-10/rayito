@@ -136,9 +136,12 @@ async fn harness_with(options: Options) -> Harness {
             files,
             code: code.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
             suspend: suspend.clone(),
             imds: Arc::new(rayd::adapters::ImdsState::default()),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+            network: rayd::network::NetworkManager::unavailable(session.clone()),
         },
         StreamSettings {
             keepalive_interval: options.keepalive,

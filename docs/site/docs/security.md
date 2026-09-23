@@ -16,7 +16,9 @@ hooks, snapshot).
 | Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels |
 | `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, `O_NOFOLLOW`, sin `..` |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
-| Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (track de endurecimiento de M6) |
+| Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde M9, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
+| URLs prefirmadas y SSRF de `rayd` (T16, M9) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
+| Proxy de egress de `rayd` como SSRF (T17, M9) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; **riesgo residual**: bajo deny-all en `rayito-base-caps` los nombres aún se resuelven por los resolvedores de la plataforma dentro del guest (canal de exfiltración por DNS, aunque toda conexión fuera del VM falla); las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -36,12 +38,15 @@ payload de creación. Ni `rayd` ni el SDK escriben claves ni valores de
 
 `rayito.e2b.Sandbox` reproduce los valores por defecto de E2B: endpoint
 público (`ingress=["ALL_INGRESS"]`) y salida a internet
-(`egress=["INTERNET_EGRESS"]`). `allow_internet_access=False` es
-`UnimplementedError`: un MicroVM sin conector de egress en `run-microvm`
-hereda el de la versión de imagen y sigue saliendo a internet (medido,
-`AWS_API_NOTES.md` Q44), así que el shim no finge cerrar la red. Para
-cerrar la entrada: `ingress=["NO_INGRESS"]`; para el egress, el allowlist
-vía conector VPC del track de endurecimiento con `rayito.Sandbox(egress=[...])`.
+(`egress=["INTERNET_EGRESS"]`). Un MicroVM sin conector de egress en
+`run-microvm` hereda el de la versión de imagen y sigue saliendo a internet
+(medido, `AWS_API_NOTES.md` Q44 y Q60), así que desde M9
+`allow_internet_access=False` y `network=` se aplican **dentro del guest**
+en `rayito-base-caps` y, en cualquier otra imagen, el SDK termina el VM y
+lanza `UnimplementedError`: nunca te devuelve un sandbox con la red abierta
+([Red saliente](network.md), `SECURITY.md` T17). Para cerrar la entrada:
+`ingress=["NO_INGRESS"]`; fuera del guest, el allowlist vía conector VPC con
+`rayito.Sandbox(egress=[...])`.
 
 ## Cadena de suministro
 
@@ -87,5 +92,7 @@ como parte del sandbox. Añade al bucket una regla
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
-proxy, `envs`, `metadata`, el body de los hooks. Sólo ids, códigos de estado y
-duraciones.
+proxy, `envs`, `metadata`, el body de los hooks; desde M9 tampoco URLs
+prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
+fichero, entradas de la política de egress, destinos del proxy ni
+credenciales de git. Sólo ids, códigos de estado, recuentos y duraciones.

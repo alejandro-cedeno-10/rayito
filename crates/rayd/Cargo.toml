@@ -37,6 +37,10 @@ aws-sdk-s3 = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 sha2 = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+rustls = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
@@ -46,6 +50,7 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 tonic = { workspace = true, features = ["channel"] }
+tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }

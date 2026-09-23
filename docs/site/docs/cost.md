@@ -38,7 +38,17 @@ Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
 ## Reglas prácticas
 
 - Un sandbox olvidado factura hasta `timeout` (3600 s por defecto): usa `with`
-  o `kill()`, y un `timeout` acorde a la tarea.
+  o `kill()`, y un `timeout` acorde a la tarea. Con el plazo del servidor de
+  M9 (`max_lifetime` u `on_timeout`) y `on_timeout='kill'`, un huérfano
+  factura hasta su plazo lógico más ≈ 15 s de 502 hasta `TERMINATED`
+  (`AWS_API_NOTES.md` Q58), no hasta `max_lifetime`. En modo `pause` sigue
+  facturando hasta que la suspensión llega (hasta `max_idle` sin cliente) y
+  después el storage del snapshot hasta el tope.
+- `files.write`/`files.read` de ficheros grandes con `transfer=S3Staging(...)`
+  (M9) van por S3 a 55–106 MB/s medidos dentro del VM (Q59) en vez de
+  0,65 MB/s por el proxy: menos segundos de cómputo facturados por fichero;
+  S3 cobra sus peticiones y el almacenamiento de 24–48 h del prefijo de
+  transferencias.
 - La política de idle por defecto (300 s) suspende un sandbox inactivo por
   ≈ $0.0049 el ciclo; para trabajos con huecos cortos, sube `max_idle_seconds`
   o pasa `idle=None`.

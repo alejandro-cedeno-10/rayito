@@ -115,6 +115,17 @@ def test_create_echo_iteration_callbacks_and_stdout(
     assert sandbox.pty.kill(pty.pid) is True
 
 
+def test_wait_delivers_pty_output_to_on_pty(sandbox: Sandbox) -> None:
+    pty = sandbox.pty.create(timeout=None)
+    pty.send_input("echo hola; exit 0\n")
+    chunks: list[bytes] = []
+    stdout: list[str] = []
+    result = pty.wait(on_pty=chunks.append, on_stdout=stdout.append)
+    assert b"hola" in b"".join(chunks)
+    assert stdout == []
+    assert result.exit_code == 0
+
+
 def test_pty_is_listed_and_refused_by_process_rpcs(sandbox: Sandbox) -> None:
     pty = sandbox.pty.create(timeout=None)
     listed = [info for info in sandbox.commands.list() if info.pid == pty.pid]

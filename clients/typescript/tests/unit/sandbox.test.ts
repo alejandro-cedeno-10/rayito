@@ -6,7 +6,13 @@ import {
   InvalidArgumentError,
   SandboxNotFoundError,
   SandboxNotReadyError,
+  UnimplementedError,
 } from "../../src/errors.js";
+import { EgressEnforcement as EnforcementMessage } from "../../src/gen/rayito/v1/network_pb.js";
+import { ALL_TRAFFIC } from "../../src/models.js";
+import type { SandboxPool } from "../../src/pool/pool.js";
+import { ALLOW_ONLY_NOTICE, CAPS_REASON, OLD_AGENT_REASON } from "../../src/sandbox/network.js";
+import { S3Prefix } from "../../src/sandbox/persistence.js";
 import { ReadinessPoll } from "../../src/sandbox/readiness.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import {
@@ -16,6 +22,7 @@ import {
 } from "../../src/transport/headers.js";
 import { DEFAULT_TRANSPORT_SETTINGS } from "../../src/transport/transport.js";
 import { FakeControlPlane, IMAGE_ARN, SANDBOX_ID } from "./fake/control-plane.js";
+import { LOCAL_PROXY_PORT } from "./fake/network.js";
 import type { FakeRayd } from "./fake/server.js";
 import {
   ACCESS_TOKEN,
@@ -24,6 +31,7 @@ import {
   RecordingLogger,
   sleep,
   startRayd,
+  type TestSandboxOptions,
   waitUntil,
 } from "./helpers.js";
 
@@ -66,6 +74,16 @@ describe("Sandbox.create", () => {
     expect(sandbox.region).toBe("us-east-1");
     expect(sandbox.resumeGeneration).toBe(0);
     expect(plane.callsTo("createAuthToken")[0]?.ports).toEqual([PortSpec.single(8080)]);
+  });
+
+  test("a Health served before the /run hook is not ready", async () => {
+    const { rayd } = await createTestSandbox({
+      beforeCreate: (fake) => {
+        fake.health.beforeRunCalls = 2;
+      },
+    });
+    expect(rayd.health.healthCalls).toHaveLength(3);
+    expect(rayd.health.beforeRunCalls).toBe(0);
   });
 
   test("the launch request carries the resolved options", async () => {
@@ -569,6 +587,23 @@ describe("transport", () => {
     pty.disconnect();
   });
 
+  test("gzip transport reuses the unary session", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    await sandbox.files.write("g.txt", "rayito ".repeat(10_000), { gzip: true });
+    expect(rayd.sessions).toBe(1);
+    const background = await sandbox.commands.run("sleep 5", { background: true });
+    const watch = await sandbox.files.watchDir("/home/user");
+    await waitUntil(() => rayd.sessions >= 2, 2000);
+    await sandbox.files.write("h.txt", "rayito ".repeat(10_000), { gzip: true });
+    expect(rayd.filesystem.headers.Write?.map((headers) => headers["grpc-encoding"])).toEqual([
+      "gzip",
+      "gzip",
+    ]);
+    expect(rayd.sessions).toBe(2);
+    background.disconnect();
+    await watch.stop();
+  });
+
   test("a logger receives lifecycle lines without secrets", async () => {
     const logger = new RecordingLogger();
     const { sandbox, plane } = await createTestSandbox({ create: { logger } });
@@ -578,5 +613,241 @@ describe("transport", () => {
     expect(dump).not.toContain(ACCESS_TOKEN);
     expect(dump).not.toContain(plane.jwe);
     expect(dump).toContain(SANDBOX_ID);
+  });
+});
+
+describe("egress policy", () => {
+  interface Captured {
+    readonly rayd: FakeRayd;
+    readonly plane: FakeControlPlane;
+  }
+
+  async function failedCreate(
+    enforcement: EnforcementMessage,
+    create: NonNullable<TestSandboxOptions["create"]>,
+    prepare: (rayd: FakeRayd) => void = () => undefined,
+  ): Promise<{ error: unknown; captured: Captured }> {
+    let captured: Captured | undefined;
+    const error = await createTestSandbox({
+      create,
+      beforeCreate: (rayd, plane) => {
+        rayd.health.egressEnforcement = enforcement;
+        prepare(rayd);
+        captured = { rayd, plane };
+      },
+    }).catch((caught: unknown) => caught);
+    return { error, captured: captured as Captured };
+  }
+
+  test.each([
+    ["none", EnforcementMessage.NONE],
+    ["unset", EnforcementMessage.UNSPECIFIED],
+  ])(
+    "allowInternetAccess false on an image reporting %s terminates even with keepOnFailure",
+    async (_label, enforcement) => {
+      const { error, captured } = await failedCreate(enforcement, {
+        allowInternetAccess: false,
+        keepOnFailure: true,
+      });
+      expect(error).toBeInstanceOf(UnimplementedError);
+      expect((error as UnimplementedError).feature).toBe("allowInternetAccess: false");
+      expect((error as UnimplementedError).reason).toContain("rayito-base-caps");
+      expect(captured.plane.callsTo("terminateMicrovm").map((call) => call.sandboxId)).toEqual([
+        SANDBOX_ID,
+      ]);
+      expect(captured.plane.launches[0]?.runHookPayload).toContain('"network":{"enforce":true}');
+      expect(captured.rayd.network.updateRequests).toHaveLength(0);
+    },
+  );
+
+  test("a capable image receives the resolved policy before create returns", async () => {
+    const { sandbox, rayd, plane } = await createTestSandbox({
+      create: {
+        network: { allowOut: ["1.2.3.4/32"], denyOut: ({ allTraffic }) => [allTraffic] },
+      },
+      beforeCreate: (fake) => {
+        fake.health.egressEnforcement = EnforcementMessage.GUEST_ROUTES;
+      },
+    });
+    expect(plane.launches[0]?.runHookPayload).toContain('"network":{"enforce":true}');
+    const sent = rayd.network.updateRequests;
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.policy?.allowOut).toEqual(["1.2.3.4/32"]);
+    expect(sent[0]?.policy?.denyOut).toEqual([ALL_TRAFFIC]);
+    expect(rayd.network.updateHeaders[0]?.["x-access-token"]).toBe(ACCESS_TOKEN);
+    expect(plane.callsTo("terminateMicrovm")).toHaveLength(0);
+    const state = await sandbox.getNetwork();
+    expect(state).toEqual({
+      allowOut: ["1.2.3.4/32"],
+      denyOut: [ALL_TRAFFIC],
+      egressProxyConfigured: false,
+      enforcement: "guest_routes",
+      localProxyPort: LOCAL_PROXY_PORT,
+    });
+    expect((await sandbox.getHealth()).egressEnforcement).toBe("guest_routes");
+  });
+
+  test("UpdateNetwork InvalidArgument at create terminates and raises InvalidArgumentError", async () => {
+    const { error, captured } = await failedCreate(
+      EnforcementMessage.GUEST_ROUTES,
+      { network: { denyOut: ["10.0.0.0/8"] }, keepOnFailure: true },
+      (rayd) => {
+        rayd.network.failNext.push(
+          new ConnectError("deny_out[0]: no es un CIDR", Code.InvalidArgument),
+        );
+      },
+    );
+    expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect(captured.plane.callsTo("terminateMicrovm")).toHaveLength(1);
+  });
+
+  test("an UpdateNetwork answer without enforcement terminates", async () => {
+    const { error, captured } = await failedCreate(
+      EnforcementMessage.GUEST_ROUTES,
+      { network: { denyOut: [ALL_TRAFFIC] } },
+      (rayd) => {
+        rayd.network.answerEnforcement = EnforcementMessage.NONE;
+      },
+    );
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect((error as UnimplementedError).feature).toBe("network");
+    expect(captured.rayd.network.updateRequests).toHaveLength(1);
+    expect(captured.plane.callsTo("terminateMicrovm")).toHaveLength(1);
+  });
+
+  test("allowOut alone sends no network block and no UpdateNetwork, with one notice", async () => {
+    const logger = new RecordingLogger();
+    const { rayd, plane } = await createTestSandbox({
+      create: { network: { allowOut: ["secret-allow.example"] }, logger },
+    });
+    expect(plane.launches[0]?.runHookPayload).not.toContain("network");
+    expect(rayd.network.updateRequests).toHaveLength(0);
+    expect(logger.at("info").filter((line) => line.message === ALLOW_ONLY_NOTICE)).toHaveLength(1);
+    expect(logger.dump()).not.toContain("secret-allow");
+  });
+
+  test("updateNetwork replaces the whole policy and getNetwork reads it back", async () => {
+    const logger = new RecordingLogger();
+    const { sandbox, rayd } = await createTestSandbox({ create: { logger } });
+    const denied = await sandbox.updateNetwork({ denyOut: ({ allTraffic }) => [allTraffic] });
+    expect(denied.enforcement).toBe("guest_routes");
+    expect(rayd.network.updateRequests.at(-1)?.policy?.denyOut).toEqual([ALL_TRAFFIC]);
+    const open = await sandbox.updateNetwork();
+    expect(open.enforcement).toBe("none");
+    expect(rayd.network.updateRequests.at(-1)?.policy?.denyOut).toEqual([]);
+    expect(rayd.network.updateRequests.at(-1)?.policy?.allowOut).toEqual([]);
+    const flag = await sandbox.updateNetwork(undefined, { allowInternetAccess: false });
+    expect(flag.denyOut).toEqual([ALL_TRAFFIC]);
+    const proxied = await sandbox.updateNetwork({
+      allowOut: ["api.example.com"],
+      denyOut: [ALL_TRAFFIC],
+      egressProxy: { address: "10.0.0.5:1080", username: "u-marker", password: "p-marker" },
+    });
+    expect(proxied.enforcement).toBe("guest_routes_and_proxy");
+    expect(proxied.egressProxyConfigured).toBe(true);
+    expect(rayd.network.updateRequests.at(-1)?.policy?.egressProxy?.password).toBe("p-marker");
+    expect(await sandbox.getNetwork()).toEqual(proxied);
+    const dump = logger.dump();
+    for (const secret of ["10.0.0.5", "u-marker", "p-marker", "api.example.com"]) {
+      expect(dump).not.toContain(secret);
+    }
+    await expect(sandbox.updateNetwork({ denyOut: ["example.com"] })).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
+  });
+
+  test("FailedPrecondition and Unimplemented from NetworkService are UnimplementedError", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    rayd.network.capable = false;
+    const error = await sandbox
+      .updateNetwork({ denyOut: [ALL_TRAFFIC] })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect((error as UnimplementedError).feature).toBe("updateNetwork");
+    expect((error as UnimplementedError).reason).toBe(CAPS_REASON);
+    expect((await sandbox.updateNetwork({})).enforcement).toBe("none");
+    rayd.network.failNext.push(new ConnectError("unknown service", Code.Unimplemented));
+    const old = await sandbox.getNetwork().catch((caught: unknown) => caught);
+    expect(old).toBeInstanceOf(UnimplementedError);
+    expect((old as UnimplementedError).reason).toBe(OLD_AGENT_REASON);
+  });
+
+  test("the static updateNetwork connects, updates and closes without killing", async () => {
+    const { sandbox, rayd, plane } = await createTestSandbox();
+    await sandbox.updateNetwork({ denyOut: ({ allTraffic }) => [allTraffic] });
+    const before = plane.calls.length;
+    const state = await Sandbox.updateNetwork(sandbox.sandboxId, undefined, {
+      accessToken: ACCESS_TOKEN,
+      controlPlane: plane,
+      transport: rayd.transport,
+    });
+    expect(state.enforcement).toBe("none");
+    expect(rayd.network.updateRequests.map((request) => request.policy?.denyOut)).toEqual([
+      [ALL_TRAFFIC],
+      [],
+    ]);
+    const operations = plane.calls.slice(before).map((call) => call.operation);
+    expect(operations).toEqual(["getMicrovm", "createAuthToken"]);
+    expect(plane.callsTo("terminateMicrovm")).toHaveLength(0);
+    sandbox.close();
+    await waitForConnections(rayd, 0);
+  });
+
+  test("the static updateNetwork validates before any AWS call and needs the token", async () => {
+    const plane = new FakeControlPlane({ endpoint: "127.0.0.1", states: ["RUNNING"] });
+    await expect(
+      Sandbox.updateNetwork(
+        SANDBOX_ID,
+        { denyOut: ["example.com"] },
+        { accessToken: ACCESS_TOKEN, controlPlane: plane },
+      ),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(
+      Sandbox.updateNetwork(SANDBOX_ID, { denyOut: [ALL_TRAFFIC] }, { controlPlane: plane }),
+    ).rejects.toBeInstanceOf(AuthenticationError);
+    expect(plane.calls).toHaveLength(0);
+  });
+
+  test("pool with a network policy or allowInternetAccess false is refused", async () => {
+    const reached = new Error("pool.take reached");
+    const take = vi.fn().mockRejectedValue(reached);
+    const pool = { take } as unknown as SandboxPool;
+    await expect(
+      Sandbox.create({ pool, network: { denyOut: [ALL_TRAFFIC] } }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(Sandbox.create({ pool, allowInternetAccess: false })).rejects.toThrow(
+      /allowInternetAccess/,
+    );
+    expect(take).not.toHaveBeenCalled();
+    await expect(Sandbox.create({ pool, network: {}, allowInternetAccess: true })).rejects.toBe(
+      reached,
+    );
+    expect(take).toHaveBeenCalledTimes(1);
+  });
+
+  test("reincarnate re-applies the policy to the successor", async () => {
+    const successorId = "microvm-00000000-0000-0000-0000-000000000002";
+    const { sandbox, rayd, plane } = await createTestSandbox({
+      create: {
+        executionRoleArn: "arn:aws:iam::123456789012:role/rayito-execution",
+        persist: new S3Prefix({ bucket: "amzn-s3-demo-bucket" }),
+        allowInternetAccess: false,
+      },
+      beforeCreate: (fake) => {
+        fake.health.egressEnforcement = EnforcementMessage.GUEST_ROUTES;
+      },
+    });
+    plane.sandboxIds.push(successorId);
+    const successor = await sandbox.reincarnate();
+    try {
+      expect(successor.sandboxId).toBe(successorId);
+      expect(rayd.network.updateRequests.map((request) => request.policy?.denyOut)).toEqual([
+        [ALL_TRAFFIC],
+        [ALL_TRAFFIC],
+      ]);
+      expect(plane.launches.at(-1)?.runHookPayload).toContain('"network":{"enforce":true}');
+    } finally {
+      successor.close();
+    }
   });
 });

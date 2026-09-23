@@ -26,6 +26,8 @@ LIBRARY_MODULES = (
     "rayito.cli._compat",
     "rayito.cli._session",
     "rayito.cli._console",
+    "rayito.cli._terminal",
+    "rayito.cli._tokens",
 )
 TYPER_MODULES = (
     "rayito.cli.app",

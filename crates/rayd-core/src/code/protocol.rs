@@ -90,6 +90,41 @@ impl SidecarOp {
     pub fn is_advisory(&self) -> bool {
         matches!(self, Self::Reseed)
     }
+
+    /// Layers the local egress proxy's variables (ADR-012) under the envs
+    /// of every op that starts a kernel, so each context create, restart,
+    /// `/run` rotation and post-resume restart gets them whatever its
+    /// language; the context's own envs still win. `Execute` envs are
+    /// user-supplied per cell and stay untouched.
+    #[must_use]
+    pub fn with_egress_env(self, egress_env: &BTreeMap<String, String>) -> Self {
+        if egress_env.is_empty() {
+            return self;
+        }
+        let layered = |envs: BTreeMap<String, String>| {
+            let mut merged = egress_env.clone();
+            merged.extend(envs);
+            merged
+        };
+        match self {
+            Self::CreateContext {
+                context_id,
+                language,
+                cwd,
+                envs,
+            } => Self::CreateContext {
+                context_id,
+                language,
+                cwd,
+                envs: layered(envs),
+            },
+            Self::RestartContext { context_id, envs } => Self::RestartContext {
+                context_id,
+                envs: layered(envs),
+            },
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +346,57 @@ mod tests {
 
     fn lines() -> Vec<&'static str> {
         FIXTURE.lines().filter(|line| !line.is_empty()).collect()
+    }
+
+    fn envs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn the_egress_env_is_layered_under_kernel_starting_ops_only() {
+        let egress = envs(&[("HTTPS_PROXY", "http://127.0.0.1:4000"), ("FOO", "egress")]);
+        let created = SidecarOp::CreateContext {
+            context_id: "c1".to_owned(),
+            language: "javascript".to_owned(),
+            cwd: "/home/user".to_owned(),
+            envs: envs(&[("FOO", "context")]),
+        }
+        .with_egress_env(&egress);
+        let SidecarOp::CreateContext { envs: merged, .. } = created else {
+            panic!("still a create");
+        };
+        assert_eq!(merged["HTTPS_PROXY"], "http://127.0.0.1:4000");
+        assert_eq!(merged["FOO"], "context");
+        let restarted = SidecarOp::RestartContext {
+            context_id: "default".to_owned(),
+            envs: BTreeMap::new(),
+        }
+        .with_egress_env(&egress);
+        assert_eq!(
+            restarted,
+            SidecarOp::RestartContext {
+                context_id: "default".to_owned(),
+                envs: egress.clone(),
+            }
+        );
+        let execute = SidecarOp::Execute {
+            context_id: "c1".to_owned(),
+            execution_id: "e1".to_owned(),
+            code: "1".to_owned(),
+            envs: BTreeMap::new(),
+        };
+        assert_eq!(execute.clone().with_egress_env(&egress), execute);
+        let untouched = SidecarOp::RestartContext {
+            context_id: "c1".to_owned(),
+            envs: envs(&[("A", "1")]),
+        };
+        assert_eq!(
+            untouched.clone().with_egress_env(&BTreeMap::new()),
+            untouched
+        );
     }
 
     fn request_lines() -> Vec<&'static str> {

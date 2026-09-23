@@ -84,15 +84,34 @@ el workspace) y se publicará cuando un usuario de Rig lo pida; un cliente
 `buf.gen.yaml` para Go se escribirá a petición); publicar `rayito-proto` en
 crates.io queda diferido.
 
-## Vida del sandbox vs. política de idle
+## Plazo, tope e idle
 
-Un sandbox es un MicroVM de Lambda con `maximumDurationInSeconds` fijado en
-`create(timeout=)`: la vida máxima (running + suspended), tope 8 h, y **no se
-puede cambiar después** (no existe `UpdateMicrovm`; por eso el `set_timeout`
-de E2B es `UnimplementedError`). Para seguir más allá de las 8 h con los mismos
-ficheros, `sbx.reincarnate()` guarda el `HOME` en S3 y lo restaura en un
-sandbox nuevo ([Persistencia](persistence.md)); las variables del kernel, los
-procesos y las PTY no sobreviven.
+Tres relojes distintos gobiernan la vida de un sandbox:
+
+| | Quién lo impone | ¿Se mueve? | Qué pasa al vencer |
+|---|---|---|---|
+| **Plazo lógico** (`timeout`, M9) | `rayd`, dentro del VM, aunque tu proceso muera | sí: `set_timeout()` (exacto, puede acortarlo) y `connect(timeout=)` (sólo alarga) | `on_timeout='kill'`: `rayd` sale y la VM pasa a `TERMINATED` ≈ 15 s después; `on_timeout='pause'`: se suspende |
+| **Tope** (`max_lifetime` = `maximumDurationInSeconds`) | la plataforma | no: no existe `UpdateMicrovm` | la VM termina, esté corriendo o suspendida |
+| **Idle** (`idle=IdlePolicy(...)`) | la plataforma | no | suspende tras `max_idle_seconds` sin tráfico por el endpoint |
+
+- Con `max_lifetime` u `on_timeout` en `create()` (exige una imagen M9,
+  ADR-011), `timeout` es el plazo lógico y `max_lifetime` (120–28 800 s, por
+  defecto `timeout + 60`) el tope; el plazo nunca pasa de `max_lifetime − 60 s`
+  desde el arranque. `get_info().expires_at` es el plazo lógico.
+- Sin ninguno de los dos, nada cambia respecto a M8: `timeout` es la vida
+  máxima (running + suspendido, tope 8 h) y no se mueve (ADR-007).
+- El tope **cuenta el tiempo suspendido**: un sandbox pausado sigue muriendo
+  a las 8 h desde su arranque. En modo `pause` los procesos siguen corriendo
+  entre el vencimiento y la suspensión (≈ 3 s con un cliente vivo, hasta
+  `max_idle` sin él), y la política de idle puede suspender antes del plazo.
+  Una suspensión real de menos de 2 s que cruza el plazo no se reconoce como
+  tal.
+- Cómo usarlo, en Python (sync y async) y TypeScript:
+  [Plazo del servidor](lifecycle.md).
+- Para seguir más allá de `max_lifetime` con los mismos ficheros,
+  `sbx.reincarnate()` guarda el `HOME` en S3 y lo restaura en un sandbox nuevo
+  ([Persistencia](persistence.md)); las variables del kernel, los procesos y
+  las PTY no sobreviven.
 
 La política de idle (`create(idle=IdlePolicy(...))`, 300 s por defecto)
 suspende el MicroVM cuando no recibe tráfico y lo reanuda con la siguiente
@@ -159,3 +178,37 @@ entrega bytes crudos; `send_input`, `resize` y `kill` son unarios.
 no es secreto (cualquier principal que pueda acuñar un JWE para el sandbox lo
 lee) y `Sandbox.list(metadata=...)` lo filtra en cliente sondeando cada
 sandbox `RUNNING`: O(n), ≈ 0,5-1 s por sandbox.
+
+## Historial de métricas
+
+`get_metrics()` es una instantánea procfs (dos lecturas de `/proc/stat` a
+100 ms). Desde M9, `rayd` además muestrea cada 5 s mientras el sandbox corre
+y guarda un anillo de 8 h (5 760 muestras) que `get_metrics_history(start=,
+end=, max_points=)` devuelve en orden ascendente: `cpu_used_pct` de cada
+muestra es la media desde la anterior, y `max_points` reduce la serie a tramos
+(la última muestra de cada tramo con la CPU promediada). Mientras el sandbox
+está suspendido no se muestrea: la serie tiene un **hueco**. El muestreo no
+toca la red, así que no cuenta como actividad para la política de idle.
+`cpu_count` y `memory_total_bytes` (en `get_health()`) y `memory_mb` son la
+**vista del guest**, que puede no coincidir con el tamaño de la imagen (Q68:
+8016 MiB y 4 CPU con una imagen de 2048 MiB). La forma de clase
+(`Sandbox.get_metrics_history(sandbox_id, access_token=...)`) necesita el
+access token y nunca despierta un sandbox suspendido.
+
+Ejemplos en Python y TypeScript: [Métricas y listado](observability.md).
+
+## Listado
+
+`Sandbox.list()` pagina `list-microvms` (páginas de 50) de forma perezosa.
+`Sandbox.paginate(limit=, next_token=, order=, started_after=, states=,
+metadata=)` da un `SandboxListPaginator` reanudable: `next_items()`,
+`has_next` y `next_token`, un cursor **opaco** (lleva el `nextToken` de AWS y
+el filtro, nunca se interpreta) que puedes guardar y pasar a otro proceso.
+
+- `order="asc" | "desc"` por `startedAt` se calcula en cliente: AWS no
+  ordena, así que el primer item llega tras recorrer **todas** las páginas
+  (O(páginas)). Un token reanudado con orden salta por identidad los items ya
+  entregados.
+- `states`, `started_after` y `template` filtran; `template` va al servidor.
+- `metadata=` es O(n): una sonda `Health` por sandbox `RUNNING`
+  (ver [Metadatos](#metadatos)).

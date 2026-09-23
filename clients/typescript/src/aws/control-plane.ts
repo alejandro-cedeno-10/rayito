@@ -20,6 +20,7 @@ import {
 } from "@aws-sdk/client-lambda-microvms";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { abortReasonOr, raceAbort } from "../abort.js";
 import {
   AuthenticationError,
   CapacityError,
@@ -30,14 +31,18 @@ import {
   SandboxNotFoundError,
   SandboxStateError,
 } from "../errors.js";
+import { defineHidden } from "../hidden.js";
 import { API_TPS, LIST_MAX_RESULTS, TERMINAL_STATES, TOKEN_TTL_MINUTES } from "../limits.js";
 import {
   type IdlePolicy,
+  type MicrovmListPage,
   type SandboxInfo,
   type SandboxListItem,
   sandboxInfo,
   sandboxListItem,
 } from "../models.js";
+import { ProxyTunnelAgent, validateProxyUrl } from "../transport/proxy-tunnel.js";
+import { validateIntegration, validateRetries } from "../validation.js";
 import { VERSION } from "../version.js";
 
 export const AUTH_TOKEN_RESPONSE_KEY = "X-aws-proxy-auth";
@@ -128,7 +133,7 @@ export interface IdlePolicyApi {
 export class LaunchRequest {
   readonly imageArn: string;
   readonly maximumDurationSeconds: number;
-  readonly runHookPayload: string;
+  declare readonly runHookPayload: string;
   readonly clientToken: string;
   readonly logging: LoggingConfig;
   readonly imageVersion: string | undefined;
@@ -140,7 +145,7 @@ export class LaunchRequest {
   constructor(fields: LaunchRequestFields) {
     this.imageArn = fields.imageArn;
     this.maximumDurationSeconds = fields.maximumDurationSeconds;
-    this.runHookPayload = fields.runHookPayload;
+    defineHidden(this, "runHookPayload", fields.runHookPayload);
     this.clientToken = fields.clientToken;
     this.logging = fields.logging;
     this.imageVersion = fields.imageVersion;
@@ -184,17 +189,45 @@ export interface ListMicrovmsOptions {
   readonly states?: readonly string[] | undefined;
 }
 
-/** Lo que el dominio necesita del plano de control de AWS. */
+/** Una sola llamada a `list-microvms`; `maxResults` entre 1 y 50 (lo fija el paginador, nunca el usuario). */
+export interface ListMicrovmsPageOptions {
+  readonly imageArn?: string | undefined;
+  readonly imageVersion?: string | undefined;
+  readonly maxResults: number;
+  readonly nextToken?: string | undefined;
+}
+
+/**
+ * Lo que una llamada al plano de control acepta del caller: `signal` viaja
+ * como `abortSignal` al `send` del SDK v3 (una opción del SDK, no un
+ * parámetro de la API) y abortarlo rechaza con `signal.reason`.
+ */
+export interface ControlPlaneCallOptions {
+  readonly signal?: AbortSignal | undefined;
+}
+
+/**
+ * Lo que el dominio necesita del plano de control de AWS. `runMicrovm` y
+ * `terminateMicrovm` no aceptan `signal`: cortar `run-microvm` a mitad
+ * dejaría un MicroVM sin id que terminar, y la limpieza tiene que correr
+ * también después de un aborto.
+ */
 export interface ControlPlane {
   readonly region: string;
-  resolveTemplateArn(template: string): Promise<string>;
+  resolveTemplateArn(template: string, options?: ControlPlaneCallOptions): Promise<string>;
   runMicrovm(request: LaunchRequest): Promise<SandboxInfo>;
-  getMicrovm(sandboxId: string): Promise<SandboxInfo>;
+  getMicrovm(sandboxId: string, options?: ControlPlaneCallOptions): Promise<SandboxInfo>;
   listMicrovms(options?: ListMicrovmsOptions): AsyncIterable<SandboxListItem>;
+  /** Una página sin filtrar por estado, con su `nextToken` (`undefined` en la última). */
+  listMicrovmsPage(options: ListMicrovmsPageOptions): Promise<MicrovmListPage>;
   terminateMicrovm(sandboxId: string): Promise<boolean>;
   suspendMicrovm(sandboxId: string): Promise<boolean>;
-  resumeMicrovm(sandboxId: string): Promise<boolean>;
-  createAuthToken(sandboxId: string, ports: readonly PortSpec[]): Promise<string>;
+  resumeMicrovm(sandboxId: string, options?: ControlPlaneCallOptions): Promise<boolean>;
+  createAuthToken(
+    sandboxId: string,
+    ports: readonly PortSpec[],
+    options?: ControlPlaneCallOptions,
+  ): Promise<string>;
 }
 
 export type MonotonicClock = () => number;
@@ -260,19 +293,76 @@ export class TokenBucket {
 
 /** El subconjunto estructural de `LambdaMicrovmsClient`/`STSClient` que usa el adaptador. */
 export interface CommandSender {
-  send(command: unknown): Promise<unknown>;
+  send(command: unknown, options?: { readonly abortSignal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface LambdaMicrovmsControlPlaneOptions {
   readonly client: CommandSender;
   readonly region: string;
+  /** Las credenciales y el proxy del cliente del SDK, para que otros clientes (S3) los hereden. */
+  readonly awsClientSettings?: AwsClientSettings | undefined;
   readonly stsClient?: CommandSender | (() => CommandSender) | undefined;
   readonly now?: MonotonicClock | undefined;
   readonly sleep?: Sleeper | undefined;
 }
 
-export interface FromRegionOptions {
+/**
+ * Ajustes del cliente del SDK de AWS que cambian el plano: `retries` (los
+ * reintentos, `maxAttempts = retries + 1`), `proxy` (`http://h:puerto`, por
+ * un túnel `CONNECT`) e `integration` (se añade al User-Agent).
+ */
+export interface ControlPlaneClientSettings {
+  readonly retries?: number | undefined;
+  readonly proxy?: string | undefined;
+  readonly integration?: string | undefined;
+}
+
+export interface FromRegionOptions extends ControlPlaneClientSettings {
   readonly credentials?: LambdaMicrovmsClientConfig["credentials"] | undefined;
+}
+
+/**
+ * Lo que otro cliente del SDK de AWS (los de S3 de las transferencias) hereda
+ * del plano de control: sus credenciales y su proxy. Vacío = la cadena por
+ * defecto y sin proxy, lo mismo que el plano.
+ */
+export interface AwsClientSettings {
+  readonly credentials?: NonNullable<LambdaMicrovmsClientConfig["credentials"]> | undefined;
+  readonly proxy?: string | undefined;
+}
+
+/** Un plano que expone esos ajustes (`LambdaMicrovmsControlPlane` y los que lo envuelven). */
+export interface AwsClientSettingsSource {
+  readonly awsClientSettings: AwsClientSettings;
+}
+
+/** Los `AwsClientSettings` de un plano, o `{}` si no los expone (un plano falso o uno construido sobre `client`). */
+export function awsClientSettingsOf(plane: ControlPlane): AwsClientSettings {
+  const settings = (plane as Partial<AwsClientSettingsSource>).awsClientSettings;
+  return settings ?? {};
+}
+
+export const DEFAULT_MAX_ATTEMPTS = 5;
+export const CONNECTION_TIMEOUT_MS = 5_000;
+export const REQUEST_TIMEOUT_MS = 60_000;
+export const INTEGRATION_USER_AGENT_KEY = "rayito-integration";
+
+export function hasClientSettings(settings: ControlPlaneClientSettings): boolean {
+  return (
+    settings.retries !== undefined ||
+    settings.proxy !== undefined ||
+    settings.integration !== undefined
+  );
+}
+
+/** Las opciones del `NodeHttpHandler`: con `proxy`, el `httpsAgent` es un `ProxyTunnelAgent`. */
+export function requestHandlerOptions(proxy: string | undefined): {
+  connectionTimeout: number;
+  requestTimeout: number;
+  httpsAgent?: ProxyTunnelAgent;
+} {
+  const base = { connectionTimeout: CONNECTION_TIMEOUT_MS, requestTimeout: REQUEST_TIMEOUT_MS };
+  return proxy === undefined ? base : { ...base, httpsAgent: new ProxyTunnelAgent(proxy) };
 }
 
 interface CallerIdentity {
@@ -292,6 +382,27 @@ interface ListMicrovmsInput {
   nextToken?: string;
 }
 
+/** `maxResults` fuera de 1–50 es un error de programación del SDK, no una entrada del usuario. */
+function listMicrovmsInput(options: ListMicrovmsPageOptions): ListMicrovmsInput {
+  const maxResults = options.maxResults;
+  if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > LIST_MAX_RESULTS) {
+    throw new RangeError(
+      `maxResults debe estar entre 1 y ${LIST_MAX_RESULTS}, recibido ${maxResults}`,
+    );
+  }
+  const input: ListMicrovmsInput = { maxResults };
+  if (options.imageArn !== undefined) {
+    input.imageIdentifier = options.imageArn;
+  }
+  if (options.imageVersion !== undefined) {
+    input.imageVersion = options.imageVersion;
+  }
+  if (options.nextToken !== undefined) {
+    input.nextToken = options.nextToken;
+  }
+  return input;
+}
+
 interface ListedItem {
   readonly microvmId?: string | undefined;
   readonly state?: string | undefined;
@@ -307,16 +418,39 @@ export interface MicrovmResponse extends ListedItem {
   readonly stateReason?: string | undefined;
   readonly idlePolicy?: Partial<IdlePolicyApi> | undefined;
   readonly executionRoleArn?: string | undefined;
+  readonly ingressNetworkConnectors?: readonly string[] | undefined;
+  readonly egressNetworkConnectors?: readonly string[] | undefined;
 }
 
-function clientConfig(region: string, credentials: FromRegionOptions["credentials"]) {
+/**
+ * La forma común que aceptan `LambdaMicrovmsClient` y `STSClient`. Tipo explícito para que el
+ * emisor de `.d.ts` nunca tenga que nombrar `@smithy/types` a través de un tipo inferido.
+ */
+export interface SdkClientConfig {
+  readonly region: string;
+  readonly credentials?: NonNullable<LambdaMicrovmsClientConfig["credentials"]>;
+  readonly maxAttempts: number;
+  readonly retryMode: string;
+  readonly requestHandler: NodeHttpHandler;
+  readonly customUserAgent: Array<[string, string]>;
+}
+
+/** La configuración de los clientes del SDK; `retries`, `proxy` e `integration` se validan aquí. */
+export function clientConfig(region: string, options: FromRegionOptions = {}): SdkClientConfig {
+  const retries = validateRetries(options.retries);
+  const integration = validateIntegration(options.integration);
+  const proxy = validateProxyUrl(options.proxy);
+  const userAgent: Array<[string, string]> = [["rayito", VERSION]];
+  if (integration !== undefined) {
+    userAgent.push([INTEGRATION_USER_AGENT_KEY, integration]);
+  }
   return {
     region,
-    ...(credentials === undefined ? {} : { credentials }),
-    maxAttempts: 5,
+    ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
+    maxAttempts: retries === undefined ? DEFAULT_MAX_ATTEMPTS : retries + 1,
     retryMode: "standard",
-    requestHandler: new NodeHttpHandler({ connectionTimeout: 5_000, requestTimeout: 60_000 }),
-    customUserAgent: [["rayito", VERSION]] as Array<[string, string]>,
+    requestHandler: new NodeHttpHandler(requestHandlerOptions(proxy)),
+    customUserAgent: userAgent,
   };
 }
 
@@ -326,11 +460,13 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
   readonly #client: CommandSender;
   #stsClient: CommandSender | (() => CommandSender) | undefined;
   readonly #buckets: Map<string, TokenBucket>;
+  readonly #awsClientSettings: AwsClientSettings;
   #identity: Promise<CallerIdentity> | undefined;
 
   constructor(options: LambdaMicrovmsControlPlaneOptions) {
     this.region = options.region;
     this.#client = options.client;
+    this.#awsClientSettings = Object.freeze({ ...(options.awsClientSettings ?? {}) });
     this.#stsClient = options.stsClient;
     const bucketOptions = { now: options.now, sleep: options.sleep };
     this.#buckets = new Map(
@@ -347,16 +483,33 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
     if (!resolvedRegion) {
       throw new InvalidArgumentError("falta la región: pasa `region` o define AWS_REGION");
     }
-    const config = clientConfig(resolvedRegion, options.credentials);
+    const config = clientConfig(resolvedRegion, options);
     return new LambdaMicrovmsControlPlane({
       client: new LambdaMicrovmsClient(config),
       region: resolvedRegion,
       stsClient: () => new STSClient(config),
+      awsClientSettings: {
+        ...(config.credentials === undefined ? {} : { credentials: config.credentials }),
+        ...(options.proxy === undefined ? {} : { proxy: options.proxy }),
+      },
     });
   }
 
+  /** Las credenciales y el proxy con los que se construyó (vacío con la cadena por defecto). */
+  get awsClientSettings(): AwsClientSettings {
+    return this.#awsClientSettings;
+  }
+
+  /** El cliente del SDK con el que habla este plano (para inspeccionar su configuración). */
+  get client(): CommandSender {
+    return this.#client;
+  }
+
   /** Un nombre pelado no vale en ninguna operación: siempre se pasa el ARN. */
-  async resolveTemplateArn(template: string): Promise<string> {
+  async resolveTemplateArn(
+    template: string,
+    options: ControlPlaneCallOptions = {},
+  ): Promise<string> {
     if (template.startsWith("arn:")) {
       return template;
     }
@@ -365,7 +518,8 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
         `template inválido: ${JSON.stringify(template)} (ARN o nombre [a-zA-Z0-9-_], máx. 64)`,
       );
     }
-    const identity = await this.#callerIdentity();
+    options.signal?.throwIfAborted();
+    const identity = await raceAbort(this.#callerIdentity(), options.signal);
     return `arn:${identity.partition}:lambda:${this.region}:${identity.account}:microvm-image:${template}`;
   }
 
@@ -374,10 +528,11 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
     return sandboxInfoFromResponse(response as MicrovmResponse);
   }
 
-  async getMicrovm(sandboxId: string): Promise<SandboxInfo> {
+  async getMicrovm(sandboxId: string, options: ControlPlaneCallOptions = {}): Promise<SandboxInfo> {
     const response = await this.#invoke(
       "GetMicrovm",
       new GetMicrovmCommand({ microvmIdentifier: sandboxId }),
+      options.signal,
     );
     return sandboxInfoFromResponse(response as MicrovmResponse);
   }
@@ -392,24 +547,31 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
     const wanted = options.states === undefined ? undefined : new Set(options.states);
     let nextToken: string | undefined;
     do {
-      const input: ListMicrovmsInput = { maxResults: LIST_MAX_RESULTS };
-      if (options.imageArn !== undefined) {
-        input.imageIdentifier = options.imageArn;
-      }
-      if (options.imageVersion !== undefined) {
-        input.imageVersion = options.imageVersion;
-      }
-      if (nextToken !== undefined) {
-        input.nextToken = nextToken;
-      }
-      const page = (await this.#invoke("ListMicrovms", new ListMicrovmsCommand(input))) as ListPage;
-      for (const item of page.items ?? []) {
-        if (listedStateWanted(String(item.state), wanted)) {
-          yield sandboxListItemFromResponse(item);
+      const page = await this.listMicrovmsPage({
+        imageArn: options.imageArn,
+        imageVersion: options.imageVersion,
+        maxResults: LIST_MAX_RESULTS,
+        nextToken,
+      });
+      for (const item of page.items) {
+        if (listedStateWanted(item.state, wanted)) {
+          yield item;
         }
       }
       nextToken = page.nextToken;
     } while (nextToken !== undefined);
+  }
+
+  /** `nextToken`, `imageIdentifier` e `imageVersion` sólo viajan si se dan (`AWS_API_NOTES.md` §6). */
+  async listMicrovmsPage(options: ListMicrovmsPageOptions): Promise<MicrovmListPage> {
+    const page = (await this.#invoke(
+      "ListMicrovms",
+      new ListMicrovmsCommand(listMicrovmsInput(options)),
+    )) as ListPage;
+    return Object.freeze({
+      items: Object.freeze((page.items ?? []).map(sandboxListItemFromResponse)),
+      nextToken: page.nextToken ?? undefined,
+    });
   }
 
   /** Idempotente en el modelo; `false` sólo si el MicroVM no existe. */
@@ -445,11 +607,12 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
   }
 
   /** `false` cuando AWS responde `ConflictException` (no estaba `SUSPENDED`). */
-  async resumeMicrovm(sandboxId: string): Promise<boolean> {
+  async resumeMicrovm(sandboxId: string, options: ControlPlaneCallOptions = {}): Promise<boolean> {
     try {
       await this.#invoke(
         "ResumeMicrovm",
         new ResumeMicrovmCommand({ microvmIdentifier: sandboxId }),
+        options.signal,
       );
     } catch (error) {
       if (error instanceof SandboxStateError) {
@@ -460,7 +623,11 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
     return true;
   }
 
-  async createAuthToken(sandboxId: string, ports: readonly PortSpec[]): Promise<string> {
+  async createAuthToken(
+    sandboxId: string,
+    ports: readonly PortSpec[],
+    options: ControlPlaneCallOptions = {},
+  ): Promise<string> {
     if (ports.length === 0) {
       throw new InvalidArgumentError("allowedPorts necesita al menos un puerto");
     }
@@ -471,16 +638,21 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
         expirationInMinutes: TOKEN_TTL_MINUTES,
         allowedPorts: ports.map((spec) => spec.toApi()),
       }),
+      options.signal,
     )) as { authToken?: Record<string, string> | undefined };
     return proxyJweFromResponse(response.authToken ?? {});
   }
 
-  async #invoke(operation: string, command: unknown): Promise<unknown> {
-    await this.#buckets.get(operation)?.acquire();
+  /** Con `signal`: uno ya abortado no envía nada y abortar a mitad rechaza con su `reason`, sin traducirlo. */
+  async #invoke(operation: string, command: unknown, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
+    await raceAbort<unknown>(this.#buckets.get(operation)?.acquire() ?? Promise.resolve(), signal);
     try {
-      return await this.#client.send(command);
+      return await (signal === undefined
+        ? this.#client.send(command)
+        : this.#client.send(command, { abortSignal: signal }));
     } catch (error) {
-      throw translateAwsError(error);
+      throw abortReasonOr(signal, translateAwsError(error));
     }
   }
 
@@ -525,13 +697,23 @@ const sharedPlanes = new Map<string, LambdaMicrovmsControlPlane>();
 /**
  * Un plano por región y proceso (ARCHITECTURE.md, "Token buckets por
  * proceso"): N `Sandbox.create()` concurrentes sin `controlPlane` explícito
- * comparten los mismos buckets y el mismo cliente del SDK.
+ * comparten los mismos buckets y el mismo cliente del SDK. Con `retries`,
+ * `proxy` o `integration` el plano es otro, dedicado a esa combinación y
+ * compartido por quien la repita.
  */
-export function sharedControlPlane(region?: string): LambdaMicrovmsControlPlane {
-  const key = region ?? "";
+export function sharedControlPlane(
+  region?: string,
+  settings: ControlPlaneClientSettings = {},
+): LambdaMicrovmsControlPlane {
+  const key = JSON.stringify([
+    region ?? "",
+    validateRetries(settings.retries) ?? null,
+    validateProxyUrl(settings.proxy) ?? null,
+    validateIntegration(settings.integration) ?? null,
+  ]);
   let plane = sharedPlanes.get(key);
   if (plane === undefined) {
-    plane = LambdaMicrovmsControlPlane.fromRegion(region);
+    plane = LambdaMicrovmsControlPlane.fromRegion(region, settings);
     sharedPlanes.set(key, plane);
   }
   return plane;
@@ -586,6 +768,8 @@ export function sandboxInfoFromResponse(response: MicrovmResponse): SandboxInfo 
     stateReason: response.stateReason,
     idle: idlePolicyFromResponse(response.idlePolicy),
     executionRoleArn: response.executionRoleArn,
+    ingress: (response.ingressNetworkConnectors ?? []).map(String),
+    egress: (response.egressNetworkConnectors ?? []).map(String),
   });
 }
 

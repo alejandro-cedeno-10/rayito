@@ -293,7 +293,15 @@ def check_watch_callback_and_entries(sandbox: Sandbox) -> None:
     handle = sandbox.files.watch_dir(WATCH_DIR, on_event=seen.append, include_entry=True)
     try:
         sandbox.files.write(f"{WATCH_DIR}/w.txt", b"w")
-        assert wait_for(lambda: ("w.txt", FilesystemEventType.RENAME) in named(seen)), named(seen)
+        assert wait_for(
+            lambda: any(
+                event.name == "w.txt"
+                and event.type is FilesystemEventType.WRITE
+                and event.entry is not None
+                for event in seen
+            )
+        ), named(seen)
+        assert ("w.txt", FilesystemEventType.RENAME) not in named(seen), named(seen)
         assert_clean_names(seen)
         sandbox.commands.run(f"chmod 600 {WATCH_DIR}/w.txt")
 

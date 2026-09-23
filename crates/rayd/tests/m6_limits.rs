@@ -20,6 +20,7 @@
 
 mod common;
 
+use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -173,6 +174,7 @@ fn file(path: &str, bytes: usize) -> WriteRequest {
         user: None,
         mode: None,
         chunk: vec![7; bytes],
+        metadata: HashMap::new(),
     }
 }
 

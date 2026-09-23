@@ -11,7 +11,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import boto3
@@ -24,7 +24,7 @@ from rayito._limits import (
     TERMINAL_STATES,
     TOKEN_TTL_MINUTES,
 )
-from rayito._models import IdlePolicy, SandboxInfo, SandboxListItem
+from rayito._models import IdlePolicy, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._version import __version__
 from rayito.exceptions import (
     AuthenticationException,
@@ -75,11 +75,13 @@ class PortSpec:
 
 @dataclass(frozen=True)
 class LaunchRequest:
-    """`RunMicrovmRequest` ya validado. `idle` trae los tres campos resueltos."""
+    """`RunMicrovmRequest` ya validado. `idle` trae los tres campos resueltos.
+    `run_hook_payload` lleva los `envs` de `create()` y queda fuera de
+    `repr()`."""
 
     image_arn: str
     maximum_duration_seconds: int
-    run_hook_payload: str
+    run_hook_payload: str = field(repr=False)
     client_token: str
     logging: dict[str, Any]
     image_version: str | None = None
@@ -128,6 +130,15 @@ class ControlPlane(Protocol):
         image_version: str | None = None,
         states: Iterable[str] | None = None,
     ) -> Iterator[SandboxListItem]: ...
+
+    def list_microvms_page(
+        self,
+        *,
+        image_arn: str | None,
+        image_version: str | None,
+        max_results: int,
+        next_token: str | None,
+    ) -> MicrovmListPage: ...
 
     def terminate_microvm(self, sandbox_id: str) -> bool: ...
 
@@ -179,13 +190,45 @@ class TokenBucket:
         self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
 
 
-def client_config() -> Config:
+DEFAULT_TOTAL_MAX_ATTEMPTS = 5
+
+
+@dataclass(frozen=True)
+class ClientSettings:
+    """Opciones del cliente boto3 que el shim de E2B expone como `retries=`,
+    `proxy=` y `ConnectionConfig.set_integration`: `retries` son reintentos
+    (intentos totales = `retries + 1`), `proxy` una URL `http://` para
+    botocore (nunca en el `repr`) e `integration` un sufijo del User-Agent.
+    Es hashable: cada combinación distinta tiene su propio plano compartido."""
+
+    retries: int | None = None
+    proxy: str | None = field(default=None, repr=False)
+    integration: str | None = None
+
+
+def client_config(settings: ClientSettings | None = None) -> Config:
+    resolved = settings or ClientSettings()
+    attempts = DEFAULT_TOTAL_MAX_ATTEMPTS if resolved.retries is None else resolved.retries + 1
+    user_agent = f"rayito/{__version__}"
+    if resolved.integration:
+        user_agent = f"{user_agent} {resolved.integration}"
+    proxies = None if resolved.proxy is None else {"http": resolved.proxy, "https": resolved.proxy}
     return Config(
-        retries={"mode": "standard", "total_max_attempts": 5},
+        retries={"mode": "standard", "total_max_attempts": attempts},
         connect_timeout=5,
         read_timeout=60,
-        user_agent_extra=f"rayito/{__version__}",
+        user_agent_extra=user_agent,
+        proxies=proxies,
     )
+
+
+def control_plane_session(plane: object) -> boto3.session.Session | None:
+    """La sesión boto3 de un plano que la expone (`session`), para que el SDK
+    firme sus URLs de S3 con el mismo principal que el plano de control
+    aunque el llamante sólo pasara `control_plane=`; `None` en cualquier otro
+    plano (fakes, envoltorios)."""
+    session = getattr(plane, "session", None)
+    return session if isinstance(session, boto3.session.Session) else None
 
 
 class LambdaMicrovmsControlPlane:
@@ -199,10 +242,12 @@ class LambdaMicrovmsControlPlane:
         sts_client_factory: Callable[[], Any] | None = None,
         clock: MonotonicClock = time.monotonic,
         sleep: Sleeper = time.sleep,
+        session: boto3.session.Session | None = None,
     ) -> None:
         self._client = client
         self._sts_client = sts_client
         self._sts_client_factory = sts_client_factory
+        self._session = session
         self._buckets = {
             operation: TokenBucket(rate, clock=clock, sleep=sleep)
             for operation, rate in API_TPS.items()
@@ -216,16 +261,25 @@ class LambdaMicrovmsControlPlane:
         session: boto3.session.Session | None = None,
         *,
         region: str | None = None,
+        settings: ClientSettings | None = None,
     ) -> LambdaMicrovmsControlPlane:
-        """El cliente STS se construye sólo si algún template se resuelve por nombre."""
+        """El cliente STS se construye sólo si algún template se resuelve por
+        nombre; ambos clientes llevan la `client_config(settings)`."""
         resolved_session = session or boto3.session.Session(region_name=region)
-        config = client_config()
+        config = client_config(settings)
         return cls(
             resolved_session.client("lambda-microvms", region_name=region, config=config),
             sts_client_factory=lambda: resolved_session.client(
                 "sts", region_name=region, config=config
             ),
+            session=resolved_session,
         )
+
+    @property
+    def session(self) -> boto3.session.Session | None:
+        """La sesión boto3 con la que se construyó el plano (`from_session`),
+        o `None` si se construyó sobre un cliente suelto."""
+        return self._session
 
     @property
     def region(self) -> str:
@@ -277,6 +331,35 @@ class LambdaMicrovmsControlPlane:
                         yield sandbox_list_item_from_response(item)
         except ClientError as exc:
             raise translate_client_error(exc) from exc
+
+    def list_microvms_page(
+        self,
+        *,
+        image_arn: str | None,
+        image_version: str | None,
+        max_results: int,
+        next_token: str | None,
+    ) -> MicrovmListPage:
+        """Una sola llamada a `list-microvms` (`maxResults`, y `nextToken`,
+        `imageIdentifier`, `imageVersion` sólo si vienen). No filtra por
+        estado: eso lo hace el paginador, que así puede reanudar por
+        identidad dentro de la página."""
+        if not 1 <= max_results <= LIST_MAX_RESULTS:
+            raise ValueError(f"max_results fuera de 1-{LIST_MAX_RESULTS}: {max_results}")
+        optional = {
+            key: value
+            for key, value in (
+                ("nextToken", next_token),
+                ("imageIdentifier", image_arn),
+                ("imageVersion", image_version),
+            )
+            if value is not None
+        }
+        response = self._invoke(
+            "ListMicrovms", self._client.list_microvms, maxResults=max_results, **optional
+        )
+        items = tuple(sandbox_list_item_from_response(item) for item in response.get("items", []))
+        return MicrovmListPage(items=items, next_token=response.get("nextToken"))
 
     def terminate_microvm(self, sandbox_id: str) -> bool:
         """Idempotente en el modelo; False sólo si el MicroVM no existe."""
@@ -349,27 +432,33 @@ class LambdaMicrovmsControlPlane:
         return self._sts_client
 
 
-ControlPlaneKey = tuple[Any, str | None]
+ControlPlaneKey = tuple[Any, str | None, ClientSettings | None]
 
 _shared_planes: dict[ControlPlaneKey, LambdaMicrovmsControlPlane] = {}
 _shared_planes_lock = threading.Lock()
 
 
 def shared_control_plane(
-    session: boto3.session.Session | None = None, *, region: str | None = None
+    session: boto3.session.Session | None = None,
+    *,
+    region: str | None = None,
+    settings: ClientSettings | None = None,
 ) -> LambdaMicrovmsControlPlane:
-    """Un plano por `(session, region)` y proceso (ARCHITECTURE.md, "Token buckets
-    por proceso"): N `Sandbox.create()` concurrentes sin `control_plane` explícito
-    comparten los mismos buckets y el mismo cliente boto3.
+    """Un plano por `(session, region, settings)` y proceso (ARCHITECTURE.md,
+    "Token buckets por proceso"): N `Sandbox.create()` concurrentes con las
+    mismas opciones y sin `control_plane` explícito comparten los mismos
+    buckets y el mismo cliente boto3.
 
     La sesión es la clave (no su `id()`) para que el registro la mantenga viva
     y un id reciclado nunca devuelva el plano de otra sesión.
     """
-    key: ControlPlaneKey = (session, region)
+    key: ControlPlaneKey = (session, region, settings)
     with _shared_planes_lock:
         plane = _shared_planes.get(key)
         if plane is None:
-            plane = LambdaMicrovmsControlPlane.from_session(session, region=region)
+            plane = LambdaMicrovmsControlPlane.from_session(
+                session, region=region, settings=settings
+            )
             _shared_planes[key] = plane
         return plane
 

@@ -1,7 +1,10 @@
-//! The kernel languages a context can run: the three canonical wire names,
-//! the id of the per-language default context that `Execute{language}`
-//! creates lazily, and how the sidecar's `ready.languages` list becomes the
-//! set of languages this image ships (design D2).
+//! The kernel languages a context can run: the four canonical wire names
+//! (`python`, `bash`, `javascript`, `typescript`), the id of the
+//! per-language default context that `Execute{language}` creates lazily,
+//! and how the sidecar's `ready.languages` list becomes the set of languages
+//! this image ships (design D2). `javascript` and `typescript` are served by
+//! Deno's built-in Jupyter kernel, shipped only in `rayito-base-poly`; every
+//! other image answers `LanguageUnavailable` for them.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -14,18 +17,20 @@ pub enum Language {
     Python,
     Bash,
     Javascript,
+    Typescript,
 }
 
 impl Language {
-    pub const ALL: [Self; 3] = [Self::Python, Self::Bash, Self::Javascript];
+    pub const ALL: [Self; 4] = [Self::Python, Self::Bash, Self::Javascript, Self::Typescript];
 
-    /// Empty selects Python; anything but the three canonical names is
+    /// Empty selects Python; anything but the four canonical names is
     /// `InvalidLanguage` (aliases and capitalisation are the SDKs' job).
     pub fn parse(raw: &str) -> Result<Self, CodeError> {
         match raw {
             "" | "python" => Ok(Self::Python),
             "bash" => Ok(Self::Bash),
             "javascript" => Ok(Self::Javascript),
+            "typescript" => Ok(Self::Typescript),
             _ => Err(CodeError::InvalidLanguage),
         }
     }
@@ -41,6 +46,7 @@ impl Language {
             Self::Python => "python",
             Self::Bash => "bash",
             Self::Javascript => "javascript",
+            Self::Typescript => "typescript",
         }
     }
 
@@ -162,6 +168,10 @@ mod tests {
             Ok(ExecuteTarget::LanguageDefault(Language::Bash))
         );
         assert_eq!(
+            ExecuteTarget::resolve(None, Some("typescript")),
+            Ok(ExecuteTarget::LanguageDefault(Language::Typescript))
+        );
+        assert_eq!(
             ExecuteTarget::resolve(Some("ctx-1"), None),
             Ok(ExecuteTarget::Explicit(ContextId::parse("ctx-1").unwrap()))
         );
@@ -193,9 +203,21 @@ mod tests {
         assert_eq!(Language::parse("python"), Ok(Language::Python));
         assert_eq!(Language::parse("bash"), Ok(Language::Bash));
         assert_eq!(Language::parse("javascript"), Ok(Language::Javascript));
+        assert_eq!(Language::parse("typescript"), Ok(Language::Typescript));
         assert_eq!(Language::parse_optional(None), Ok(Language::Python));
         assert_eq!(Language::parse_optional(Some("bash")), Ok(Language::Bash));
-        for raw in ["Python", "js", "JS", "r", "java", " bash", "bash "] {
+        for raw in [
+            "Python",
+            "js",
+            "JS",
+            "ts",
+            "TypeScript",
+            "typescript ",
+            "r",
+            "java",
+            " bash",
+            "bash ",
+        ] {
             assert_eq!(
                 Language::parse(raw),
                 Err(CodeError::InvalidLanguage),
@@ -215,6 +237,23 @@ mod tests {
         assert_eq!(
             Language::Javascript.default_context_id().as_str(),
             "default-javascript"
+        );
+        assert_eq!(
+            Language::Typescript.default_context_id().as_str(),
+            "default-typescript"
+        );
+        let defaults: Vec<String> = Language::ALL
+            .into_iter()
+            .map(|language| language.default_context_id().as_str().to_owned())
+            .collect();
+        assert_eq!(
+            defaults,
+            [
+                "default",
+                "default-bash",
+                "default-javascript",
+                "default-typescript"
+            ]
         );
         assert!(Language::Python.is_python());
         assert!(!Language::Bash.is_python());
@@ -247,5 +286,13 @@ mod tests {
             AvailableLanguages::from_ready(&["javascript".to_owned()]).languages,
             BTreeSet::from([Language::Python, Language::Javascript])
         );
+        let deno =
+            AvailableLanguages::from_ready(&["typescript".to_owned(), "javascript".to_owned()]);
+        assert_eq!(
+            deno.languages,
+            BTreeSet::from([Language::Python, Language::Javascript, Language::Typescript])
+        );
+        assert_eq!(deno.unknown, 0);
+        assert_eq!(deno.require(Language::Typescript), Ok(()));
     }
 }

@@ -28,6 +28,7 @@ from rayito._process_base import (
     OutputAccumulator,
     OutputCallback,
     OutputChunk,
+    WaitCallbacks,
     build_start_request,
     deadline_at,
     encode_stdin,
@@ -325,12 +326,22 @@ class CommandHandle:
         """Veces que el handle se reenganchó tras un suspend/resume o un corte."""
         return self._reconnects
 
-    def wait(self) -> CommandResult:
+    def wait(
+        self,
+        on_pty: Callable[[bytes], Any] | None = None,
+        on_stdout: Callable[[str], Any] | None = None,
+        on_stderr: Callable[[str], Any] | None = None,
+    ) -> CommandResult:
         """Consume el stream hasta el `EndEvent`. Exit distinto de cero →
         `CommandExitException`; timeout del agente → `TimeoutException`;
-        `output_truncated` → `SandboxException`. Idempotente."""
-        for _ in self:
-            pass
+        `output_truncated` → `SandboxException`. Idempotente.
+
+        `on_stdout`/`on_stderr` (texto) y `on_pty` (bytes de una PTY) reciben
+        cada chunk que esta llamada consume, después de los callbacks de
+        `run()`; lo ya leído antes (iterando) no se repite."""
+        callbacks = WaitCallbacks(on_pty=on_pty, on_stdout=on_stdout, on_stderr=on_stderr)
+        for chunk in self:
+            callbacks.deliver(chunk)
         return self._progress.resolve()
 
     def kill(self) -> bool:
@@ -420,7 +431,7 @@ class CommandHandle:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise self._progress.fail(exc) from exc
-                logger.info(
+                self._sandbox._logger_or(logger).info(
                     "pid %s: el gate del agente sigue cerrado (%s); reintento", self.pid, exc
                 )
                 time.sleep(delay)
@@ -432,7 +443,7 @@ class CommandHandle:
         return reason
 
     def _resubscribe_from_live(self, exc: NotFoundException) -> Any:
-        logger.warning(
+        self._sandbox._logger_or(logger).warning(
             "pid %s: se perdió salida entre el seq %s y lo que el agente retiene; "
             "se sigue desde la salida nueva",
             self.pid,

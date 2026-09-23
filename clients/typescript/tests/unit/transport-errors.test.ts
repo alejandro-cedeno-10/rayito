@@ -2,8 +2,10 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, test } from "vitest";
 import {
   AuthenticationError,
+  DiskFullError,
   FileNotFoundError,
   InvalidArgumentError,
+  LifecycleUnsupportedError,
   NotFoundError,
   RateLimitError,
   SandboxError,
@@ -17,8 +19,10 @@ import {
   isPhaseGate,
   isProxyForbidden,
   isReconnectable,
+  isSandboxTimeout,
   isStreamReset,
   translateRpcError,
+  translateSetTimeoutError,
   translateStreamError,
 } from "../../src/transport/errors.js";
 import {
@@ -221,6 +225,56 @@ describe("translateRpcError", () => {
   });
 });
 
+describe("the sandbox deadline (ADR-011)", () => {
+  test("FAILED_PRECONDITION sandbox_timeout is TimeoutError, checked before the generic rule", () => {
+    const gated = new ConnectError("sandbox_timeout", Code.FailedPrecondition);
+    expect(isSandboxTimeout(gated)).toBe(true);
+    const translated = translateRpcError(gated);
+    expect(translated).toBeInstanceOf(TimeoutError);
+    expect((translated as TimeoutError).grpcCode).toBe(Code.FailedPrecondition);
+    expect(translateRpcError(gated, { filesystem: true })).toBeInstanceOf(TimeoutError);
+    expect(isReconnectable(gated)).toBe(false);
+    expect(isSandboxTimeout(new ConnectError("not a pty", Code.FailedPrecondition))).toBe(false);
+    expect(isSandboxTimeout(new ConnectError("sandbox_timeout", Code.Unavailable))).toBe(false);
+  });
+
+  test("the in-stream code sandbox_timeout is TimeoutError", () => {
+    expect(translateStreamError("sandbox_timeout", "sandbox timeout")).toBeInstanceOf(TimeoutError);
+  });
+
+  test("the SetTimeout table", () => {
+    const cap = Date.UTC(2026, 8, 22, 12, 15, 0);
+    const beyond = translateSetTimeoutError(
+      new ConnectError(`timeout beyond cap; cap_unix_ms=${cap}`, Code.InvalidArgument),
+      2_000_000,
+    );
+    expect(beyond).toBeInstanceOf(InvalidArgumentError);
+    expect(beyond.message).toContain("maxLifetimeMs");
+    expect(beyond.message).toContain("28800");
+    expect(beyond.message).toContain("reincarnate()");
+    expect(beyond.message).toContain(new Date(cap).toISOString());
+    const unmanaged = translateSetTimeoutError(
+      new ConnectError("lifecycle_unmanaged", Code.FailedPrecondition),
+      60_000,
+    );
+    expect(unmanaged).toBeInstanceOf(InvalidArgumentError);
+    expect(unmanaged).not.toBeInstanceOf(LifecycleUnsupportedError);
+    expect(unmanaged.message).toContain("maxLifetimeMs");
+    expect(
+      translateSetTimeoutError(new ConnectError("nope", Code.Unimplemented), 60_000),
+    ).toBeInstanceOf(LifecycleUnsupportedError);
+    expect(
+      translateSetTimeoutError(new ConnectError("sandbox_timeout", Code.FailedPrecondition), 1000),
+    ).toBeInstanceOf(TimeoutError);
+    expect(
+      translateSetTimeoutError(new ConnectError("mode must be EXACT", Code.InvalidArgument), 1000),
+    ).toBeInstanceOf(InvalidArgumentError);
+    expect(
+      translateSetTimeoutError(new ConnectError("x-access-token", Code.Unauthenticated), 1000),
+    ).toBeInstanceOf(AuthenticationError);
+  });
+});
+
 describe("translateStreamError", () => {
   test("closed set of StreamError codes", () => {
     expect(translateStreamError("not_found", "m")).toBeInstanceOf(NotFoundError);
@@ -234,6 +288,19 @@ describe("translateStreamError", () => {
     expect(translateStreamError("suspending", "m")).toBeInstanceOf(SandboxStateError);
     expect(translateStreamError("output_truncated", "m").message).toContain("output_truncated");
     expect(translateStreamError("kernel_died", "m").message).toBe("kernel_died: m");
+  });
+
+  test("the M9 codes: failed_precondition, resource_exhausted, unavailable, cancelled", () => {
+    expect(translateStreamError("failed_precondition", "m")).toBeInstanceOf(InvalidArgumentError);
+    expect(translateStreamError("resource_exhausted", "disk_reserve")).toBeInstanceOf(
+      DiskFullError,
+    );
+    expect(translateStreamError("resource_exhausted", "disk_full")).toBeInstanceOf(DiskFullError);
+    const limited = translateStreamError("resource_exhausted", "demasiadas transferencias");
+    expect(limited).toBeInstanceOf(RateLimitError);
+    expect(limited).not.toBeInstanceOf(DiskFullError);
+    expect(translateStreamError("unavailable", "m").message).toBe("unavailable: m");
+    expect(translateStreamError("cancelled", "m").message).toBe("cancelled: m");
   });
 });
 

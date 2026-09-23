@@ -1,10 +1,31 @@
+import { inspect } from "node:util";
 import { describe, expect, test } from "vitest";
 import { FilesystemEventType as EventTypeProto } from "../../src/gen/rayito/v1/filesystem_pb.js";
+import { recordFromInfo, recordToJson } from "../../src/pool/core.js";
+import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { ACCESS_TOKEN, createTestSandbox, useFastStateChecks, waitUntil } from "./helpers.js";
 
 const HOME = "/home/user";
 
 describe("logging hygiene", () => {
+  test("inspecting the sandbox, its core or a pool record never shows the access token", async () => {
+    const { sandbox } = await createTestSandbox();
+    const core = Sandbox.coreOf(sandbox);
+    expect(core.accessToken).toBe(ACCESS_TOKEN);
+    expect(Object.keys(core)).not.toContain("accessToken");
+    expect(inspect(core, { depth: 4 })).not.toContain(ACCESS_TOKEN);
+    expect(inspect(sandbox, { depth: 4 })).not.toContain(ACCESS_TOKEN);
+    const record = recordFromInfo(sandbox.info, {
+      accessToken: ACCESS_TOKEN,
+      region: "us-east-1",
+      state: "ready",
+    });
+    expect(record.accessToken).toBe(ACCESS_TOKEN);
+    expect(inspect(record)).not.toContain(ACCESS_TOKEN);
+    expect(JSON.stringify(record)).not.toContain(ACCESS_TOKEN);
+    expect(recordToJson(record).access_token).toBe(ACCESS_TOKEN);
+  });
+
   useFastStateChecks();
 
   test("no logged string contains the JWE, the access token or the payload", async () => {

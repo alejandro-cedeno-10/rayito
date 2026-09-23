@@ -9,6 +9,7 @@ import { InvalidArgumentError } from "./errors.js";
 import {
   IDLE_MAX_IDLE_MIN_SECONDS,
   IDLE_SUSPENDED_MIN_SECONDS,
+  LIFECYCLE_TIMEOUT_EXIT_CODE,
   PORT_MAX,
   PORT_MIN,
 } from "./limits.js";
@@ -60,6 +61,31 @@ export function validateIdlePolicy(input: IdlePolicyInput): IdlePolicy {
   });
 }
 
+/** El `stateReason` de un MicroVM cuyo `rayd` salió al vencer el plazo en modo `kill` (Q63). */
+export const TIMED_OUT_STATE_REASON = `Container Stopped with Exit Code: ${LIFECYCLE_TIMEOUT_EXIT_CODE}`;
+
+export type LifecyclePhaseName = "unmanaged" | "active" | "resumeGrace" | "expired";
+
+/**
+ * El plazo lógico que impone `rayd` (ADR-011), leído de `Health` o de la
+ * respuesta de `setTimeout`. `unmanaged`: el sandbox se creó sin
+ * `maxLifetimeMs` ni `onTimeout` y su vida es la de la plataforma.
+ * `resumeGrace`: reanudado tras el plazo, espera un `connect()` 30 s.
+ * `expired`: vencido; sólo `Health` y `setTimeout` responden. `deadline` y
+ * `cap` son reloj de pared (`undefined` en `unmanaged`); `cap` es
+ * `maxLifetimeMs − 60 s` desde el arranque. `extensions` cuenta los
+ * `setTimeout`/`connect` que movieron el plazo en este arranque.
+ */
+export interface SandboxLifecycle {
+  readonly phase: LifecyclePhaseName;
+  readonly deadline: Date | undefined;
+  readonly cap: Date | undefined;
+  readonly timeoutMs: number;
+  readonly onTimeout: "kill" | "pause" | undefined;
+  readonly autoResume: boolean;
+  readonly extensions: number;
+}
+
 export interface SandboxInfoFields {
   readonly sandboxId: string;
   readonly state: string;
@@ -72,26 +98,65 @@ export interface SandboxInfoFields {
   readonly stateReason?: string | undefined;
   readonly idle?: IdlePolicy | undefined;
   readonly executionRoleArn?: string | undefined;
+  readonly ingress?: readonly string[] | undefined;
+  readonly egress?: readonly string[] | undefined;
+  readonly lifecycle?: SandboxLifecycle | undefined;
+  readonly agentVersion?: string | undefined;
+  readonly cpuCount?: number | undefined;
+  readonly memoryMb?: number | undefined;
+  readonly metadata?: Readonly<Record<string, string>> | undefined;
 }
 
 /**
  * Lo que devuelve `get-microvm` (y `run-microvm`), normalizado. `endpoint`
  * es siempre el hostname pelado; `endpointUrl` le antepone `https://`.
- * `template` es el ARN de la imagen.
+ * `template` es el ARN de la imagen. `expiresAt` es el plazo lógico cuando
+ * `rayd` lo gestiona (`lifecycle` con fase distinta de `unmanaged`) y el tope
+ * de la plataforma en otro caso; `platformExpiresAt` es siempre ese tope
+ * (`startedAt + maximumDurationSeconds`). `timedOut` es `true` cuando el
+ * MicroVM terminó porque `rayd` salió al vencer el plazo. `agentVersion`,
+ * `cpuCount` y `memoryMb` son la vista del guest leída de `Health` (sólo los
+ * rellena `getInfo()` de una instancia; `undefined` = no leído o agente
+ * anterior a M9): `memoryMb` es el `MemTotal` del guest en MiB, no el
+ * `minimumMemoryInMiB` de la versión de imagen. `ingress`/`egress` son los
+ * ARNs de conectores que devuelve `get-microvm` (`ingressNetworkConnectors`,
+ * `egressNetworkConnectors`), vacíos si la respuesta no los trae.
+ * `metadata` son los de `create({ metadata })` tal como los devolvió el
+ * último `Health` (`get-microvm` no los conoce): `undefined` si no se
+ * leyeron del agente y `{}` si se leyeron vacíos.
  */
 export interface SandboxInfo extends SandboxInfoFields {
   readonly terminatedAt: Date | undefined;
   readonly stateReason: string | undefined;
   readonly idle: IdlePolicy | undefined;
   readonly executionRoleArn: string | undefined;
+  readonly ingress: readonly string[];
+  readonly egress: readonly string[];
+  readonly lifecycle: SandboxLifecycle | undefined;
+  readonly agentVersion: string | undefined;
+  readonly cpuCount: number | undefined;
+  readonly memoryMb: number | undefined;
+  readonly metadata: Readonly<Record<string, string>> | undefined;
   readonly endpointUrl: string;
   readonly expiresAt: Date;
+  readonly platformExpiresAt: Date;
+  readonly timedOut: boolean;
   readonly templateName: string;
   remainingSeconds(now?: Date): number;
 }
 
+function logicalDeadline(lifecycle: SandboxLifecycle | undefined): Date | undefined {
+  if (lifecycle === undefined || lifecycle.phase === "unmanaged") {
+    return undefined;
+  }
+  return lifecycle.deadline;
+}
+
 export function sandboxInfo(fields: SandboxInfoFields): SandboxInfo {
-  const expiresAt = new Date(fields.startedAt.getTime() + fields.maximumDurationSeconds * 1000);
+  const platformExpiresAt = new Date(
+    fields.startedAt.getTime() + fields.maximumDurationSeconds * 1000,
+  );
+  const expiresAt = logicalDeadline(fields.lifecycle) ?? platformExpiresAt;
   return Object.freeze({
     sandboxId: fields.sandboxId,
     state: fields.state,
@@ -104,8 +169,17 @@ export function sandboxInfo(fields: SandboxInfoFields): SandboxInfo {
     stateReason: fields.stateReason,
     idle: fields.idle,
     executionRoleArn: fields.executionRoleArn,
+    ingress: Object.freeze([...(fields.ingress ?? [])]),
+    egress: Object.freeze([...(fields.egress ?? [])]),
+    lifecycle: fields.lifecycle,
+    agentVersion: fields.agentVersion,
+    cpuCount: fields.cpuCount,
+    memoryMb: fields.memoryMb,
+    metadata: fields.metadata === undefined ? undefined : Object.freeze({ ...fields.metadata }),
     endpointUrl: `https://${fields.endpoint}`,
     expiresAt,
+    platformExpiresAt,
+    timedOut: fields.stateReason === TIMED_OUT_STATE_REASON,
     templateName: templateNameFromArn(fields.template),
     remainingSeconds(now?: Date): number {
       const current = now ?? new Date();
@@ -114,7 +188,19 @@ export function sandboxInfo(fields: SandboxInfoFields): SandboxInfo {
   });
 }
 
-/** Un item de `list-microvms`: no trae `endpoint` ni `stateReason`. */
+/** La misma `SandboxInfo` de `get-microvm` con el plazo lógico leído de `rayd`. */
+export function withLifecycle(
+  info: SandboxInfo,
+  lifecycle: SandboxLifecycle | undefined,
+): SandboxInfo {
+  return sandboxInfo({ ...info, lifecycle });
+}
+
+/**
+ * Un item de `list-microvms`: no trae `endpoint` ni `stateReason`.
+ * `metadata` sólo llega cuando el listado filtró por metadatos (`undefined` =
+ * no leído).
+ */
 export interface SandboxListItem {
   readonly sandboxId: string;
   readonly state: string;
@@ -122,10 +208,17 @@ export interface SandboxListItem {
   readonly templateVersion: string;
   readonly startedAt: Date;
   readonly templateName: string;
+  readonly metadata?: Readonly<Record<string, string>> | undefined;
 }
 
 export function sandboxListItem(fields: Omit<SandboxListItem, "templateName">): SandboxListItem {
   return Object.freeze({ ...fields, templateName: templateNameFromArn(fields.template) });
+}
+
+/** Una página de `list-microvms` sin filtrar; `nextToken` es `undefined` en la última. */
+export interface MicrovmListPage {
+  readonly items: readonly SandboxListItem[];
+  readonly nextToken: string | undefined;
 }
 
 /**
@@ -228,13 +321,84 @@ export interface ProcessInfo {
   readonly kind: ProcessKindName;
 }
 
+/** El `ALL_TRAFFIC` de E2B: en una lista de egress cubre IPv4 e IPv6 (`0.0.0.0/0` y `::/0`). */
+export const ALL_TRAFFIC = "0.0.0.0/0";
+
+/**
+ * Lo que recibe un selector función de `allowOut`/`denyOut`, con los nombres
+ * de E2B (`ctx.allTraffic`, `ctx.rules`). `rules` siempre está vacío: Rayito
+ * no tiene `network.rules`.
+ */
+export interface NetworkSelectorContext {
+  readonly allTraffic: string;
+  readonly rules: ReadonlyMap<string, readonly unknown[]>;
+}
+
+/** Una lista de entradas o una función que la devuelve; se evalúa en el SDK, nunca en `rayd`. */
+export type NetworkSelector =
+  | readonly string[]
+  | ((ctx: NetworkSelectorContext) => readonly string[]);
+
+/**
+ * Proxy SOCKS5 del operador (`host:puerto` o `[IPv6]:puerto`). Las
+ * credenciales (RFC 1929, 1–255 bytes) sólo viajan en `UpdateNetwork`;
+ * `rayd` nunca las devuelve ni las registra.
+ */
+export interface EgressProxyInput {
+  readonly address: string;
+  readonly username?: string | undefined;
+  readonly password?: string | undefined;
+}
+
+/**
+ * Política de egress en el guest (sólo `rayito-base-caps`). `allowOut`
+ * admite CIDR, IP, `ALL_TRAFFIC` y nombres de host (exacto o `*.sufijo`, sólo
+ * 80/443 a través del proxy local); `denyOut`, CIDR e IP. Una entrada
+ * permitida gana siempre a una denegada, y `allowOut` sin `denyOut` no
+ * restringe nada.
+ */
+export interface NetworkPolicyInput {
+  readonly allowOut?: NetworkSelector | undefined;
+  readonly denyOut?: NetworkSelector | undefined;
+  readonly egressProxy?: EgressProxyInput | undefined;
+}
+
+/**
+ * Cómo aplica el guest la política (`Health.egress_enforcement`):
+ * `unspecified` es un agente anterior a M9 y, como `none`, significa que no
+ * hay política en el guest.
+ */
+export const EgressEnforcement = {
+  UNSPECIFIED: "unspecified",
+  NONE: "none",
+  GUEST_ROUTES: "guest_routes",
+  GUEST_ROUTES_AND_PROXY: "guest_routes_and_proxy",
+} as const;
+export type EgressEnforcement = (typeof EgressEnforcement)[keyof typeof EgressEnforcement];
+
+/**
+ * `NetworkService.GetNetwork`/`UpdateNetwork`: las listas tal como se
+ * enviaron, si hay proxy del operador (nunca su dirección ni credenciales) y
+ * el puerto del proxy local en `127.0.0.1` (`undefined` si no corre).
+ */
+export interface NetworkState {
+  readonly allowOut: readonly string[];
+  readonly denyOut: readonly string[];
+  readonly egressProxyConfigured: boolean;
+  readonly enforcement: EgressEnforcement;
+  readonly localProxyPort: number | undefined;
+}
+
 /**
  * `HealthService.Health` tal como lo expone `getHealth()`. `resumeGeneration`
  * cuenta los `/resume` aceptados desde el arranque del agente;
  * `clockOffsetMs` es `wall_delta − monotonic_delta` entre el último
  * `/suspend` y su `/resume` (0 si no hubo); `kernelStateLost` es `true`
  * cuando algún kernel no respondió a la sonda de `/resume` y fue reiniciado.
- * `uptimeMs` incluye el tiempo suspendido.
+ * `uptimeMs` incluye el tiempo suspendido. `lifecycle` es `undefined` en un
+ * agente anterior a M9, que no impone el plazo lógico. `egressEnforcement`
+ * es la política de egress que el guest verificó (`unspecified` en un agente
+ * anterior a M9, y cuenta como `none`).
  */
 export interface SandboxHealth {
   readonly agentReady: boolean;
@@ -245,9 +409,19 @@ export interface SandboxHealth {
   readonly resumeGeneration: number;
   readonly clockOffsetMs: number;
   readonly kernelStateLost: boolean;
+  readonly egressEnforcement: EgressEnforcement;
+  readonly lifecycle: SandboxLifecycle | undefined;
+  /** CPUs que ve el guest; 0 si no se pudieron leer o en un agente anterior a M9. */
+  readonly cpuCount: number;
+  /** `MemTotal` del guest en bytes (no el tamaño de la imagen); 0 como `cpuCount`. */
+  readonly memoryTotalBytes: number;
 }
 
-/** `HealthService.Metrics`: instantánea procfs del MicroVM. */
+/**
+ * `HealthService.Metrics` (instantánea procfs del MicroVM) o una muestra de
+ * `MetricsHistory`. `memCacheBytes` es el `Cached` de `/proc/meminfo`; 0 en
+ * un agente anterior a M9.
+ */
 export interface SandboxMetrics {
   readonly cpuUsedPct: number;
   readonly memUsedBytes: number;
@@ -256,6 +430,7 @@ export interface SandboxMetrics {
   readonly diskTotalBytes: number;
   readonly cpuCount: number;
   readonly timestamp: Date;
+  readonly memCacheBytes: number;
 }
 
 export const FileType = { FILE: "file", DIR: "dir", SYMLINK: "symlink" } as const;
@@ -267,6 +442,8 @@ export type FileType = (typeof FileType)[keyof typeof FileType];
  * (FIFO, socket, dispositivo). `path` es la ruta pedida normalizada, nunca la
  * canónica. `permissions` tiene la forma de `ls -l` (`-rw-r--r--`) y `mode`
  * son los bits `st_mode & 0o7777`. `symlinkTarget` sólo en symlinks.
+ * `metadata` son los metadatos de `write({ metadata })` con las claves en
+ * minúsculas; vacío si no hay o si el sistema de ficheros no los admite.
  */
 export interface EntryInfo {
   readonly name: string;
@@ -279,6 +456,7 @@ export interface EntryInfo {
   readonly group: string;
   readonly modifiedTime: Date;
   readonly symlinkTarget: string | undefined;
+  readonly metadata: Readonly<Record<string, string>>;
 }
 
 export const FilesystemEventType = {
@@ -303,11 +481,64 @@ export interface FilesystemEvent {
 
 export type WriteData = string | Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>;
 
-/** Un fichero de `files.writeFiles`: `data` se materializa en memoria. */
+/**
+ * Un fichero de `files.writeFiles`: `data` se materializa en memoria salvo
+ * que vaya por S3 (`transfer` configurado y `>= thresholdBytes`, o un
+ * `ReadableStream`, que se sube en streaming).
+ */
 export interface WriteEntry {
   readonly path: string;
   readonly data: WriteData;
   readonly mode?: number | undefined;
+}
+
+/**
+ * El bucket de transferencias de `uploadUrl`/`downloadUrl` y de los ficheros
+ * grandes (ADR-010). El SDK firma cada URL con tus credenciales; `rayd` nunca
+ * guarda ninguna. `bucket` es un nombre DNS sin puntos. `region` ausente usa
+ * la del sandbox y debe ser la del bucket. `maxExpiresIn` topa la vida de las
+ * URLs de usuario en segundos (el techo real es también la caducidad de tus
+ * credenciales). `thresholdBytes` es el tamaño a partir del cual
+ * `files.write`/`files.read` van por S3 y `multipartThresholdBytes` el de una
+ * exportación multiparte. No hay bucket por defecto: sin `transfer` se leen
+ * `RAYITO_TRANSFER_BUCKET`, `RAYITO_TRANSFER_PREFIX` y `RAYITO_TRANSFER_REGION`.
+ */
+export interface S3Staging {
+  readonly bucket: string;
+  readonly prefix?: string | undefined;
+  readonly region?: string | undefined;
+  readonly maxExpiresIn?: number | undefined;
+  readonly thresholdBytes?: number | undefined;
+  readonly multipartThresholdBytes?: number | undefined;
+}
+
+/** Un `S3Staging` validado y con sus valores por defecto, como lo expone `sandbox.transfer`. */
+export interface ResolvedS3Staging {
+  readonly bucket: string;
+  readonly prefix: string;
+  readonly region: string | undefined;
+  readonly maxExpiresIn: number;
+  readonly thresholdBytes: number;
+  readonly multipartThresholdBytes: number;
+}
+
+export type TransferDirectionName = "import" | "export";
+export type TransferPhaseName = "waiting" | "running" | "done" | "failed" | "cancelled";
+
+/**
+ * Una foto de `GetTransfer`: `bytesTotal` es 0 hasta que la importación ve
+ * el objeto; `probes` cuenta los sondeos del GET; `errorCode` y
+ * `errorReason` sólo en `failed`/`cancelled`.
+ */
+export interface TransferStatus {
+  readonly transferId: string;
+  readonly direction: TransferDirectionName;
+  readonly phase: TransferPhaseName;
+  readonly bytesDone: number;
+  readonly bytesTotal: number;
+  readonly probes: number;
+  readonly errorCode: string | undefined;
+  readonly errorReason: string | undefined;
 }
 
 /** Un contexto de `CodeService`: un kernel con su propio scope y cwd. */

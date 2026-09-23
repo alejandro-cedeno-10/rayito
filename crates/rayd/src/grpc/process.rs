@@ -1,7 +1,8 @@
 //! `ProcessService` over `ProcessManager`: proto <-> domain conversion, the
 //! gRPC status table of design D11 for everything that fails before the
 //! first message, the keepalive wrapper on both streams and the suspend
-//! close with the `EndEvent{suspending}` terminal (design D7). Error
+//! close with the `EndEvent{suspending}` terminal (design D7), or
+//! `EndEvent{sandbox_timeout}` at the logical deadline (ADR-011). Error
 //! messages and log lines carry pids, codes and errno names, never the
 //! command.
 
@@ -25,13 +26,15 @@ use tonic::codegen::BoxStream;
 use tonic::{Request, Response, Status};
 
 use super::keepalive::{DEFAULT_KEEPALIVE_INTERVAL, KeepAliveStream};
-use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream};
+use crate::lifecycle::{StreamCloseReason, SuspendClose, SuspendSignal, SuspendableStream};
 use crate::process::{ProcessManager, Spawner, SubscriberStream};
+use crate::transfer::TransferBarrier;
 
 pub struct ProcessGrpc<S: Spawner> {
     manager: Arc<ProcessManager<S>>,
     suspend: Arc<SuspendSignal>,
     keepalive_interval: Duration,
+    barrier: TransferBarrier,
 }
 
 impl<S: Spawner> ProcessGrpc<S> {
@@ -48,7 +51,16 @@ impl<S: Spawner> ProcessGrpc<S> {
             manager,
             suspend,
             keepalive_interval: interval,
+            barrier: TransferBarrier::disabled(),
         }
+    }
+
+    /// The read-after-upload barrier consulted before every spawn
+    /// (ADR-010); disabled unless a transfer manager is wired.
+    #[must_use]
+    pub fn with_barrier(mut self, barrier: TransferBarrier) -> Self {
+        self.barrier = barrier;
+        self
     }
 
     fn wrap(&self, stream: SubscriberStream) -> BoxStream<ProcessEvent> {
@@ -56,7 +68,7 @@ impl<S: Spawner> ProcessGrpc<S> {
             stream,
             self.suspend.subscribe(),
             |event| Ok(to_proto(event)),
-            || SuspendClose::Terminal(suspending_event()),
+            |reason| SuspendClose::Terminal(closing_event(reason)),
         );
         Box::pin(KeepAliveStream::new(
             closing,
@@ -76,6 +88,7 @@ impl<S: Spawner> ProcessService for ProcessGrpc<S> {
         request: Request<StartRequest>,
     ) -> Result<Response<Self::StartStream>, Status> {
         let input = spawn_input(request.into_inner());
+        self.barrier.before_workload("Start").await;
         let (_, stream) = self
             .manager
             .start(input)
@@ -225,6 +238,17 @@ fn suspending_event() -> ProcessEvent {
     }))
 }
 
+/// The deadline's close is terminal: the SDK raises instead of
+/// reconnecting.
+fn closing_event(reason: StreamCloseReason) -> ProcessEvent {
+    match reason {
+        StreamCloseReason::Suspending => suspending_event(),
+        StreamCloseReason::SandboxTimeout => {
+            to_proto(DomainEvent::Ended(ProcessEnd::sandbox_timeout()))
+        }
+    }
+}
+
 fn rejected(rpc: &'static str, error: &ProcessError) -> Status {
     tracing::warn!(rpc, reason = %error, "process rpc rejected");
     status_for(error)
@@ -335,6 +359,26 @@ mod tests {
                 assert_eq!(end.exit_code, 0);
                 assert_eq!(end.signal, None);
                 assert_eq!(end.error.unwrap().code, "suspending");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_close_reason_has_its_end_event() {
+        assert_eq!(
+            closing_event(StreamCloseReason::Suspending),
+            suspending_event()
+        );
+        match closing_event(StreamCloseReason::SandboxTimeout).event {
+            Some(process_event::Event::End(end)) => {
+                assert_eq!(end.status, "sandbox_timeout");
+                assert!(!end.exited);
+                assert_eq!(end.exit_code, 0);
+                assert_eq!(end.signal, None);
+                let error = end.error.unwrap();
+                assert_eq!(error.code, "sandbox_timeout");
+                assert_eq!(error.message, "sandbox timeout");
             }
             other => panic!("unexpected {other:?}"),
         }

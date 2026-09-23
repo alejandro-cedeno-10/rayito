@@ -10,15 +10,19 @@ from botocore.stub import Stubber
 
 from rayito import _aws
 from rayito._aws import (
+    ClientSettings,
     LambdaMicrovmsControlPlane,
     LaunchRequest,
     PortSpec,
     TokenBucket,
+    client_config,
+    control_plane_session,
     normalize_endpoint,
     proxy_jwe_from_response,
     shared_control_plane,
 )
 from rayito._models import IdlePolicy
+from rayito._version import __version__
 from rayito.exceptions import (
     InvalidArgumentException,
     RateLimitException,
@@ -265,7 +269,9 @@ def test_shared_control_plane_is_one_per_session_and_region(
 ) -> None:
     built: list[tuple[object, str | None]] = []
 
-    def fake_from_session(session: object = None, *, region: str | None = None) -> Any:
+    def fake_from_session(
+        session: object = None, *, region: str | None = None, settings: object = None
+    ) -> Any:
         built.append((session, region))
         return LambdaMicrovmsControlPlane(no_retry_client("lambda-microvms"))
 
@@ -280,6 +286,65 @@ def test_shared_control_plane_is_one_per_session_and_region(
     assert scoped is not default
     assert shared_control_plane(session, region=REGION) is scoped
     assert built == [(None, REGION), (None, "eu-west-1"), (session, REGION)]
+
+
+def test_client_config_applies_retries_proxy_and_integration() -> None:
+    config = client_config(ClientSettings(2, "http://h:1", "acme/1"))
+    assert config.retries == {"mode": "standard", "total_max_attempts": 3}
+    assert config.proxies == {"http": "http://h:1", "https": "http://h:1"}
+    assert config.user_agent_extra == f"rayito/{__version__} acme/1"
+    assert (config.connect_timeout, config.read_timeout) == (5, 60)
+
+
+def test_client_config_defaults_are_unchanged() -> None:
+    for config in (client_config(), client_config(ClientSettings())):
+        assert config.retries == {"mode": "standard", "total_max_attempts": 5}
+        assert config.proxies is None
+        assert config.user_agent_extra == f"rayito/{__version__}"
+
+
+def test_from_session_puts_the_settings_on_the_botocore_client() -> None:
+    plane = LambdaMicrovmsControlPlane.from_session(
+        fake_session(),
+        region=REGION,
+        settings=ClientSettings(retries=0, proxy="http://127.0.0.1:3128", integration="acme/1.0"),
+    )
+    config = plane._client.meta.config
+    assert config.retries["total_max_attempts"] == 1
+    assert config.proxies == {"http": "http://127.0.0.1:3128", "https": "http://127.0.0.1:3128"}
+    assert config.user_agent_extra.endswith("acme/1.0")
+
+
+def test_from_session_keeps_the_session_for_signing() -> None:
+    session = fake_session()
+    plane = LambdaMicrovmsControlPlane.from_session(session, region=REGION)
+    assert plane.session is session
+    assert control_plane_session(plane) is session
+    assert control_plane_session(object()) is None
+
+
+def test_shared_control_plane_is_one_per_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[object] = []
+
+    def fake_from_session(
+        session: object = None, *, region: str | None = None, settings: object = None
+    ) -> Any:
+        built.append(settings)
+        return LambdaMicrovmsControlPlane(no_retry_client("lambda-microvms"))
+
+    monkeypatch.setattr(_aws, "_shared_planes", {})
+    monkeypatch.setattr(LambdaMicrovmsControlPlane, "from_session", fake_from_session)
+    retried = ClientSettings(retries=2)
+    default = shared_control_plane(region=REGION)
+    first = shared_control_plane(region=REGION, settings=retried)
+    assert first is not default
+    assert shared_control_plane(region=REGION, settings=ClientSettings(retries=2)) is first
+    assert shared_control_plane(region=REGION, settings=ClientSettings(retries=3)) is not first
+    assert built == [None, retried, ClientSettings(retries=3)]
+
+
+def test_client_settings_repr_hides_the_proxy_url() -> None:
+    assert "clave" not in repr(ClientSettings(proxy="http://u:clave@h:1"))
 
 
 def test_from_session_builds_the_sts_client_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,3 +385,60 @@ def test_sts_factory_runs_once_and_only_for_template_names() -> None:
         assert plane.resolve_template_arn("other") == IMAGE_ARN.replace(IMAGE_NAME, "other")
         stub.assert_no_pending_responses()
     assert factory_calls == [1]
+
+
+def test_list_microvms_page_sends_exactly_the_given_keys_and_filters_nothing(
+    control_plane: StubbedControlPlane,
+) -> None:
+    control_plane.microvms.add_response(
+        "list_microvms",
+        {"items": [list_item("a", "RUNNING"), list_item("b", "TERMINATED")], "nextToken": "t2"},
+        expected_params={"maxResults": 50, "nextToken": "t1", "imageIdentifier": IMAGE_ARN},
+    )
+    page = control_plane.plane.list_microvms_page(
+        image_arn=IMAGE_ARN, image_version=None, max_results=50, next_token="t1"
+    )
+    assert [item.sandbox_id for item in page.items] == ["a", "b"]
+    assert page.items[1].state == "TERMINATED"
+    assert page.next_token == "t2"
+
+    control_plane.microvms.add_response(
+        "list_microvms",
+        {"items": [list_item("c", "SUSPENDED")]},
+        expected_params={"maxResults": 50},
+    )
+    last = control_plane.plane.list_microvms_page(
+        image_arn=None, image_version=None, max_results=50, next_token=None
+    )
+    assert [item.sandbox_id for item in last.items] == ["c"]
+    assert last.next_token is None
+
+    control_plane.microvms.add_response(
+        "list_microvms",
+        {"items": []},
+        expected_params={"maxResults": 7, "imageVersion": "3"},
+    )
+    empty = control_plane.plane.list_microvms_page(
+        image_arn=None, image_version="3", max_results=7, next_token=None
+    )
+    assert empty.items == () and empty.next_token is None
+
+
+def test_list_microvms_page_rejects_a_page_size_outside_the_api_range(
+    control_plane: StubbedControlPlane,
+) -> None:
+    for size in (0, 51):
+        with pytest.raises(ValueError, match="max_results"):
+            control_plane.plane.list_microvms_page(
+                image_arn=None, image_version=None, max_results=size, next_token=None
+            )
+
+
+def test_list_microvms_page_translates_a_stale_token(control_plane: StubbedControlPlane) -> None:
+    control_plane.microvms.add_client_error(
+        "list_microvms", service_error_code="ValidationException", http_status_code=400
+    )
+    with pytest.raises(InvalidArgumentException):
+        control_plane.plane.list_microvms_page(
+            image_arn=None, image_version=None, max_results=50, next_token="stale"
+        )

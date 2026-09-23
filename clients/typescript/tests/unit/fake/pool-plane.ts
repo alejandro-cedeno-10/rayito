@@ -10,28 +10,48 @@
  * index, outcome)` programa un fallo (un error o `false` para un conflicto)
  * en la llamada número `index` (desde 1) de esa operación; `hold(operation,
  * count)` bloquea las siguientes `count` llamadas hasta `release`.
+ * `addListedSandbox` registra un MicroVM con su `rayd` sin lanzarlo, para los
+ * listados con filtro de metadatos, que `listMicrovmsPage` sirve paginados.
  */
 
 import { randomUUID } from "node:crypto";
 import {
   type ControlPlane,
-  type LaunchRequest,
+  LaunchRequest,
   type ListMicrovmsOptions,
+  type ListMicrovmsPageOptions,
   type PortSpec,
   TokenBucket,
 } from "../../../src/aws/control-plane.js";
 import { SandboxNotFoundError } from "../../../src/errors.js";
 import { API_TPS, TERMINAL_STATES } from "../../../src/limits.js";
 import {
+  type MicrovmListPage,
   type SandboxInfo,
   type SandboxListItem,
   sandboxInfo,
   sandboxListItem,
 } from "../../../src/models.js";
-import { ACCOUNT_ID, JWE, REGION } from "./control-plane.js";
+import { encodeAccessToken } from "../../../src/payload.js";
+import { installedTokenSha256 } from "./common.js";
+import { ACCOUNT_ID, IMAGE_ARN, JWE, REGION } from "./control-plane.js";
 import { FakeRayd } from "./server.js";
 
 export type FailureOutcome = Error | false;
+
+export const LISTED_IMAGE_ARN = IMAGE_ARN;
+/** El token de los sandboxes de `addListedSandbox`: `Health` no lo pide; `MetricsHistory` sí. */
+export const LISTED_ACCESS_TOKEN = encodeAccessToken(
+  new TextEncoder().encode("listed-sandbox-access-token-32b!"),
+);
+
+export interface ListedSandboxOptions {
+  readonly metadata?: Readonly<Record<string, string>>;
+  readonly state?: string;
+  readonly startedAt?: Date;
+  readonly imageArn?: string;
+  readonly accessToken?: string;
+}
 
 export interface FakeCall {
   readonly operation: string;
@@ -101,6 +121,7 @@ export class FakePoolControlPlane implements ControlPlane {
   readonly clock: FakeClock;
   readonly microvms = new Map<string, FakeMicrovm>();
   readonly calls: FakeCall[] = [];
+  readonly pageRequests: ListMicrovmsPageOptions[] = [];
   readonly #now: () => Date;
   readonly #buckets = new Map<string, TokenBucket>();
   readonly #failures = new Map<string, Map<number, FailureOutcome>>();
@@ -223,15 +244,54 @@ export class FakePoolControlPlane implements ControlPlane {
       }
       const keep = wanted === undefined ? !TERMINAL_STATES.has(vm.state) : wanted.has(vm.state);
       if (keep) {
-        yield sandboxListItem({
-          sandboxId: vm.sandboxId,
-          state: vm.state,
-          template: vm.request.imageArn,
-          templateVersion: vm.request.imageVersion ?? "1.0",
-          startedAt: vm.startedAt,
-        });
+        yield this.#listItem(vm);
       }
     }
+  }
+
+  /** El mapa en orden de inserción, en páginas de `maxResults`; filtra por imagen como AWS, nunca por estado. */
+  async listMicrovmsPage(options: ListMicrovmsPageOptions): Promise<MicrovmListPage> {
+    await this.#enter("ListMicrovms", undefined);
+    this.pageRequests.push(options);
+    const matching = [...this.microvms.values()].filter(
+      (vm) => options.imageArn === undefined || vm.request.imageArn === options.imageArn,
+    );
+    const start = options.nextToken === undefined ? 0 : Number(options.nextToken);
+    const end = start + options.maxResults;
+    return {
+      items: matching.slice(start, end).map((vm) => this.#listItem(vm)),
+      nextToken: end < matching.length ? String(end) : undefined,
+    };
+  }
+
+  /**
+   * Un MicroVM ya arrancado con su propio `rayd` falso, sin pasar por
+   * `runMicrovm` (ni por su bucket): `metadata` es lo que su `Health`
+   * devuelve.
+   */
+  async addListedSandbox(options: ListedSandboxOptions = {}): Promise<FakeMicrovm> {
+    const sandboxId = `microvm-${randomUUID()}`;
+    const tokenSha256 = installedTokenSha256(options.accessToken ?? LISTED_ACCESS_TOKEN);
+    const rayd = await FakeRayd.start({ tokenSha256, sandboxId });
+    rayd.health.metadata = { ...(options.metadata ?? {}) };
+    const vm: FakeMicrovm = {
+      sandboxId,
+      state: options.state ?? "RUNNING",
+      endpoint: `${rayd.host}:${rayd.port}`,
+      request: new LaunchRequest({
+        imageArn: options.imageArn ?? LISTED_IMAGE_ARN,
+        maximumDurationSeconds: 3600,
+        runHookPayload: "{}",
+        clientToken: randomUUID(),
+        logging: { disabled: {} },
+      }),
+      startedAt: options.startedAt ?? this.#now(),
+      rayd,
+      tokenSha256,
+      stateReason: undefined,
+    };
+    this.microvms.set(sandboxId, vm);
+    return vm;
   }
 
   async terminateMicrovm(sandboxId: string): Promise<boolean> {
@@ -307,6 +367,16 @@ export class FakePoolControlPlane implements ControlPlane {
       throw new SandboxNotFoundError(`MicroVM ${sandboxId} no existe`);
     }
     return vm;
+  }
+
+  #listItem(vm: FakeMicrovm): SandboxListItem {
+    return sandboxListItem({
+      sandboxId: vm.sandboxId,
+      state: vm.state,
+      template: vm.request.imageArn,
+      templateVersion: vm.request.imageVersion ?? "1.0",
+      startedAt: vm.startedAt,
+    });
   }
 
   #info(vm: FakeMicrovm): SandboxInfo {

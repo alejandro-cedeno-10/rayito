@@ -32,6 +32,7 @@ from rayito.exceptions import (
     RateLimitException,
     SandboxException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.v1 import common_pb2, filesystem_pb2, filesystem_pb2_grpc
 
@@ -752,3 +753,22 @@ def test_files_with_a_wrong_token_are_unauthenticated(
             other.files.write(f"{HOME}/x", b"x")
     finally:
         other.close()
+
+
+def test_an_older_agent_refuses_metadata_and_gzip_writes_before_any_byte(
+    sandbox: Sandbox, fake_files: FakeFilesystemService
+) -> None:
+    """El `rayd` falso base no tiene transferencias (como un agente anterior
+    a M9): la sonda `GetTransfer("")` responde `UNIMPLEMENTED`, así que los
+    metadatos (que ignoraría en silencio) y el `Write` comprimido se
+    rechazan antes de abrir el stream; un `read(gzip=True)` sigue valiendo."""
+    with pytest.raises(UnimplementedError, match="actualiza la imagen"):
+        sandbox.files.write(f"{HOME}/m.txt", "x", metadata={"owner": "alice"})
+    with pytest.raises(UnimplementedError, match="actualiza la imagen"):
+        sandbox.files.write(f"{HOME}/z.txt", "x", gzip=True)
+    assert fake_files.write_streams == []
+    fake_files.add_file(f"{HOME}/plain.txt", b"hola")
+    assert sandbox.files.read(f"{HOME}/plain.txt", gzip=True, stream_idle_timeout=5) == "hola"
+    assert dict(sandbox.files.get_info(f"{HOME}/plain.txt").metadata) == {}
+    entry = sandbox.files.write(f"{HOME}/octet.txt", "x", use_octet_stream=True)
+    assert entry.size == 1

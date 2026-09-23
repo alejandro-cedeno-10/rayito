@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import logging
 from collections.abc import Sequence
+from typing import cast
 
 import grpc
+import grpc.aio
 import pytest
 
-from rayito._aws import PortSpec
+from rayito._aws import ControlPlane, PortSpec, sandbox_info_from_response
 from rayito._limits import TOKEN_REFRESH_AFTER_MINUTES
 from rayito._transport import (
     ACCESS_TOKEN_KEY,
@@ -24,6 +28,7 @@ from rayito._transport import (
     ProxyToken,
     TokenRefresher,
     TokenStore,
+    TransportSettings,
     is_kernel_gate,
     is_phase_gate,
     is_reconnectable,
@@ -35,9 +40,11 @@ from rayito.exceptions import (
     SandboxException,
     SandboxStateException,
 )
+from rayito.sandbox_sync.main import probe_health
 from rayito.v1 import health_pb2, health_pb2_grpc
 
-from .conftest import ACCESS_TOKEN, FakeClock, FakeRpcError, RaydEndpoint
+from .conftest import ACCESS_TOKEN, FakeClock, FakeRpcError, RaydEndpoint, microvm_response
+from .log_capture import capture_logs
 
 
 def minted_store(jwe: str = "jwe-0") -> TokenStore:
@@ -126,6 +133,68 @@ def test_anonymous_plugin_omits_access_token_and_rayd_rejects_metrics(
     assert ACCESS_TOKEN_KEY not in fake_rayd.servicer.health_calls[0]
 
 
+def plugin_metadata(plugin: ProxyAuthPlugin) -> tuple[tuple[str, str], ...]:
+    captured: list[tuple[tuple[str, str], ...]] = []
+
+    def callback(metadata: tuple[tuple[str, str], ...], error: Exception | None) -> None:
+        assert error is None
+        captured.append(metadata)
+
+    plugin(
+        cast("grpc.AuthMetadataContext", None), cast("grpc.AuthMetadataPluginCallback", callback)
+    )
+    return captured[0]
+
+
+@pytest.mark.parametrize("access_token", [ACCESS_TOKEN, None])
+def test_extra_metadata_goes_after_the_reserved_keys(access_token: str | None) -> None:
+    plugin = ProxyAuthPlugin(
+        minted_store(), port=8080, access_token=access_token, extra=(("x-trace", "1"),)
+    )
+    metadata = plugin_metadata(plugin)
+    assert metadata[-1] == ("x-trace", "1")
+    reserved = [key for key, _ in metadata[:-1]]
+    expected = [PROXY_AUTH_KEY, PROXY_PORT_KEY, PROXY_FORCE_H2_KEY]
+    assert reserved == (expected if access_token is None else [*expected, ACCESS_TOKEN_KEY])
+
+
+def test_extra_metadata_reaches_rayd_on_the_anonymous_health_probe(
+    fake_rayd: RaydEndpoint,
+) -> None:
+    transport = dataclasses.replace(fake_rayd.transport, extra_metadata=(("x-trace", "7"),))
+
+    class MintingPlane:
+        def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str:
+            return "jwe-probe"
+
+    info = sandbox_info_from_response(microvm_response(state="RUNNING", endpoint=fake_rayd.host))
+    response = probe_health(cast("ControlPlane", MintingPlane()), info, transport, 5.0)
+    assert response is not None and response.agent_ready
+    seen = fake_rayd.servicer.health_calls[-1]
+    assert seen["x-trace"] == "7"
+    assert ACCESS_TOKEN_KEY not in seen
+
+
+def test_http_proxy_becomes_a_channel_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[list[tuple[str, object]]] = []
+
+    def capture(target: str, credentials: object, options: list[tuple[str, object]]) -> object:
+        opened.append(options)
+        return object()
+
+    monkeypatch.setattr(grpc, "secure_channel", capture)
+    monkeypatch.setattr(grpc.aio, "secure_channel", capture)
+    plugin = ProxyAuthPlugin(minted_store(), port=8080, access_token=None)
+    proxied = TransportSettings(http_proxy="http://127.0.0.1:3128")
+    proxied.open_channel("host", plugin)
+    proxied.open_aio_channel("host", plugin)
+    TransportSettings().open_channel("host", plugin)
+    assert opened[0][-1] == ("grpc.http_proxy", "http://127.0.0.1:3128")
+    assert opened[1][-1] == ("grpc.http_proxy", "http://127.0.0.1:3128")
+    assert all(key != "grpc.http_proxy" for key, _ in opened[2])
+    assert opened[0][:-1] == list(CHANNEL_OPTIONS)
+
+
 def test_plugin_without_token_fails_the_call_locally(fake_rayd: RaydEndpoint) -> None:
     plugin = ProxyAuthPlugin(TokenStore(), port=8080, access_token=ACCESS_TOKEN)
     with fake_rayd.transport.open_channel(fake_rayd.host, plugin) as channel:
@@ -162,6 +231,26 @@ def test_refresher_rotates_at_45_minutes_without_rebuilding_the_channel(
         stub.Health(health_pb2.HealthRequest(), timeout=5)
     jwes = [call[PROXY_AUTH_KEY] for call in fake_rayd.servicer.health_calls]
     assert jwes == ["jwe-1", "jwe-2"]
+
+
+def test_refresher_failure_goes_to_the_sandbox_logger() -> None:
+    clock = FakeClock(start=0.0)
+
+    def failing_mint(ports: Sequence[PortSpec]) -> str:
+        raise RuntimeError("aws caído")
+
+    custom = logging.getLogger("tests.custom.refresher")
+    refresher = TokenRefresher(minted_store(), failing_mint, clock=clock, logger=custom)
+    clock.advance(TOKEN_REFRESH_AFTER_SECONDS)
+    with (
+        capture_logs("tests.custom.refresher") as mine,
+        capture_logs("rayito.transport") as default,
+    ):
+        assert refresher.refresh_due() is False
+        refresher.route_logs_to(logging.getLogger("tests.custom.refresher.other"))
+        assert refresher.refresh_due() is False
+    assert len(mine.records) == 2
+    assert default.records == []
 
 
 def test_refresher_reports_failure_and_keeps_the_old_token() -> None:

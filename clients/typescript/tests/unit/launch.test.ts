@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { PortSpec } from "../../src/aws/control-plane.js";
 import {
@@ -165,6 +166,30 @@ describe("connectors and logging", () => {
 });
 
 describe("buildLaunchPlan", () => {
+  test("inspecting or serializing the plan never shows the token or the payload", () => {
+    const envSecret = "env-secret-value-1234";
+    const plan = buildLaunchPlan({
+      imageArn: IMAGE_ARN,
+      region: REGION,
+      envs: { API_KEY: envSecret },
+      accessToken: ACCESS_TOKEN,
+    });
+    expect(plan.accessToken).toBe(ACCESS_TOKEN);
+    expect(plan.request.runHookPayload).toContain(envSecret);
+    expect(plan.request.toApi().runHookPayload).toBe(plan.request.runHookPayload);
+    for (const printed of [
+      inspect(plan, { depth: 10 }),
+      JSON.stringify(plan),
+      String({ ...plan }),
+    ]) {
+      expect(printed).not.toContain(ACCESS_TOKEN);
+      expect(printed).not.toContain(envSecret);
+    }
+    expect(Object.keys(plan)).not.toContain("accessToken");
+    expect(Object.keys(plan.request)).not.toContain("runHookPayload");
+    expect(inspect(plan, { depth: 10 })).toContain("rayito-base");
+  });
+
   test("produces the exact run-microvm input", () => {
     const plan = buildLaunchPlan({
       imageArn: IMAGE_ARN,
@@ -238,6 +263,87 @@ describe("buildLaunchPlan", () => {
     expect(api.imageVersion).toBe("2.0");
     expect(api.executionRoleArn).toBe("arn:aws:iam::123456789012:role/x");
     expect(api.egressNetworkConnectors).toHaveLength(1);
+  });
+
+  test("networkEnforce puts only the network flag in the payload and keeps the connectors", () => {
+    const base = { imageArn: IMAGE_ARN, region: REGION, accessToken: ACCESS_TOKEN };
+    const enforced = buildLaunchPlan({ ...base, networkEnforce: true }).request.toApi();
+    expect(JSON.parse(enforced.runHookPayload).network).toEqual({ enforce: true });
+    expect(enforced).not.toHaveProperty("egressNetworkConnectors");
+    for (const plain of [
+      buildLaunchPlan(base),
+      buildLaunchPlan({ ...base, networkEnforce: false }),
+    ]) {
+      expect(JSON.parse(plain.request.toApi().runHookPayload)).not.toHaveProperty("network");
+    }
+  });
+
+  test("no lifecycle block unless maxLifetimeMs or onTimeout is given", () => {
+    const plan = buildLaunchPlan({
+      imageArn: IMAGE_ARN,
+      region: REGION,
+      accessToken: ACCESS_TOKEN,
+      timeoutMs: 900_000,
+    });
+    const api = plan.request.toApi();
+    expect(api.maximumDurationInSeconds).toBe(900);
+    expect(JSON.parse(api.runHookPayload)).not.toHaveProperty("lifecycle");
+    expect(plan.lifecycleRequested).toBe(false);
+  });
+
+  test("a pause launch carries the block, the cap and a platform idle that auto-resumes", () => {
+    const plan = buildLaunchPlan({
+      imageArn: IMAGE_ARN,
+      region: REGION,
+      accessToken: ACCESS_TOKEN,
+      timeoutMs: 60_000,
+      maxLifetimeMs: 900_000,
+      onTimeout: "pause",
+      idle: { autoResume: false },
+    });
+    const api = plan.request.toApi();
+    expect(api.maximumDurationInSeconds).toBe(900);
+    expect(api.idlePolicy).toEqual({
+      maxIdleDurationSeconds: 300,
+      suspendedDurationSeconds: 600,
+      autoResumeEnabled: true,
+    });
+    expect(JSON.parse(api.runHookPayload).lifecycle).toEqual({
+      auto_resume: false,
+      cap_s: 900,
+      on_timeout: "pause",
+      timeout_s: 60,
+    });
+    expect(plan.lifecycleRequested).toBe(true);
+  });
+
+  test("a kill launch defaults maxLifetimeMs to timeout plus the margin", () => {
+    const plan = buildLaunchPlan({
+      imageArn: IMAGE_ARN,
+      region: REGION,
+      accessToken: ACCESS_TOKEN,
+      timeoutMs: 1500,
+      onTimeout: "kill",
+      idle: null,
+    });
+    const api = plan.request.toApi();
+    expect(api.maximumDurationInSeconds).toBe(120);
+    expect(JSON.parse(api.runHookPayload).lifecycle).toEqual({
+      auto_resume: false,
+      cap_s: 120,
+      on_timeout: "kill",
+      timeout_s: 2,
+    });
+  });
+
+  test("pause without idle and a cap above 8 h fail before any AWS call", () => {
+    const base = { imageArn: IMAGE_ARN, region: REGION, accessToken: ACCESS_TOKEN };
+    expect(() => buildLaunchPlan({ ...base, onTimeout: "pause", idle: null })).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => buildLaunchPlan({ ...base, maxLifetimeMs: 28_801_000 })).toThrow(
+      SandboxLifetimeError,
+    );
   });
 
   test("an oversized payload fails before any AWS call", () => {

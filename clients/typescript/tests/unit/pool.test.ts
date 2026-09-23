@@ -5,10 +5,11 @@
  * los temporizadores sin referencia y `await using`.
  */
 
-import { chmod, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { defineHidden } from "../../src/hidden.js";
 import {
   InMemoryPoolBackend,
   InvalidArgumentError,
@@ -93,6 +94,7 @@ interface Rig {
 
 const rigs: Rig[] = [];
 const pools: SandboxPool[] = [];
+const tempFiles: string[] = [];
 
 afterEach(async () => {
   const finished = rigs.splice(0);
@@ -104,6 +106,10 @@ afterEach(async () => {
   }
   for (const rig of finished) {
     await rig.plane.close();
+  }
+  for (const path of tempFiles.splice(0)) {
+    await rm(path, { force: true });
+    await rm(`${path}${TEMP_SUFFIX}`, { force: true });
   }
 });
 
@@ -167,7 +173,9 @@ function readyIds(pool: SandboxPool): string[] {
 }
 
 function tempFile(name: string): string {
-  return join(tmpdir(), `rayito-pool-${process.pid}-${Date.now()}-${name}`);
+  const path = join(tmpdir(), `rayito-pool-${process.pid}-${Date.now()}-${name}`);
+  tempFiles.push(path);
+  return path;
 }
 
 // ---------------------------------------------------------------- config
@@ -213,9 +221,8 @@ function record(
   startedAt: Date,
   state: "warming" | "ready" = "ready",
 ): SlotRecord {
-  return {
+  const fields: Omit<SlotRecord, "accessToken"> = {
     sandboxId,
-    accessToken: "a".repeat(43),
     endpoint: "host:1",
     template: IMAGE_ARN,
     templateVersion: "1.0",
@@ -229,6 +236,7 @@ function record(
     egress: [],
     parkedAt: state === "ready" ? new Date(startedAt.getTime() + 8000) : undefined,
   };
+  return defineHidden(fields, "accessToken", "a".repeat(43));
 }
 
 describe("pure core", () => {
@@ -298,6 +306,7 @@ describe("pure core", () => {
       "template_version",
     ]);
     expect(recordFromJson(json)).toEqual(original);
+    expect(recordFromJson(json).accessToken).toBe(original.accessToken);
     expect(() => recordFromJson({ sandbox_id: "x" })).toThrow(InvalidArgumentError);
     expect(() => recordFromJson({ ...json, state: "taken" })).toThrow(/estado de plaza/);
   });
@@ -843,6 +852,26 @@ describe("SandboxPool", () => {
     } finally {
       await sandbox.kill();
     }
+  });
+
+  test("Sandbox.create({ pool }) accepts transfer: client-side configuration only", async () => {
+    const { pool: make } = rig();
+    const pool = await make(1).start();
+    await waitIdle(pool, 1);
+
+    const sandbox = await Sandbox.create({
+      pool,
+      transfer: { bucket: "amzn-s3-demo-bucket", prefix: "xfer" },
+    });
+    try {
+      expect(sandbox.transfer?.bucket).toBe("amzn-s3-demo-bucket");
+      expect(sandbox.transfer?.prefix).toBe("xfer");
+    } finally {
+      await sandbox.kill();
+    }
+    await expect(Sandbox.create({ pool, transfer: { bucket: "a.b.c" } })).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
   });
 
   test("an unstarted pool raises PoolClosedError", async () => {

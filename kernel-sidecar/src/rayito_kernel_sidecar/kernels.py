@@ -2,8 +2,10 @@
 kernel at all (the FIFO execution queue, interrupt of a queued cell, what a
 restart or destroy does to in-flight cells, recovery after the kernel dies)
 so they run on any host against a fake; ``KernelContext`` adds the real
-``jupyter_client.AsyncKernelManager`` over ``ipc`` sockets (design D4) for
-the kernel of the context's language (``languages.LANGUAGES``).
+``jupyter_client.AsyncKernelManager`` for the kernel of the context's
+language (``languages.LANGUAGES``), over ``ipc`` sockets (design D4) or, for
+the Deno kernels that cannot bind them, loopback TCP (``kernel_endpoint``,
+ADR-013).
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ from rayito_kernel_sidecar.executions import (
     run_execution,
     run_silent,
 )
-from rayito_kernel_sidecar.languages import LANGUAGES, PYTHON
+from rayito_kernel_sidecar.languages import LANGUAGES, PYTHON, KernelLanguage, Transport
 from rayito_kernel_sidecar.logging import SidecarLogger
 from rayito_kernel_sidecar.protocol import (
     SYNTHETIC_CONTEXT_DESTROYED,
@@ -49,6 +51,8 @@ DiedCallback = Callable[[str, int | None, str | None], Awaitable[None]]
 
 KERNEL_NAME: Final = LANGUAGES[PYTHON].kernel_name
 KERNEL_READY_TIMEOUT_S: Final = 120.0
+LOOPBACK_IP: Final = "127.0.0.1"
+IPC_SOCKET_PREFIX: Final = "k"
 ABORT_DRAIN_TIMEOUT_S: Final = 10.0
 RECOVERY_BACKOFF_MAX_S: Final = 30.0
 INTERRUPTED: Final = "interrupted"
@@ -481,11 +485,32 @@ def kernel_environment(
     return env
 
 
+@dataclass(frozen=True)
+class KernelEndpoint:
+    """The ``transport``/``ip`` pair a context's ``AsyncKernelManager`` binds."""
+
+    transport: Transport
+    ip: str
+
+
+def kernel_endpoint(language: KernelLanguage, socket_dir: Path) -> KernelEndpoint:
+    """``ipc`` under the context's socket directory, or loopback TCP for
+    kernels that cannot bind ``ipc`` endpoints (Deno, ADR-013): any local
+    process can then reach the ports, but shell and control need the HMAC
+    key of the connection file, which stays in the ``0700`` socket
+    directory."""
+    if language.transport == "tcp":
+        return KernelEndpoint("tcp", LOOPBACK_IP)
+    return KernelEndpoint("ipc", str(socket_dir / IPC_SOCKET_PREFIX))
+
+
 class KernelContext(ContextBase):
-    """A real kernel behind ``AsyncKernelManager(transport="ipc")``: the
-    ``ipykernel`` of the ``rayito`` spec for Python, ``bash_kernel`` or
-    ``ijavascript`` for the other languages, all through the same channels
-    and the same ``executions`` mapping."""
+    """A real kernel behind ``AsyncKernelManager``: the ``ipykernel`` of the
+    ``rayito`` spec for Python and ``bash_kernel`` for bash over ``ipc``, the
+    Jupyter kernel built into Deno for JavaScript and TypeScript over
+    loopback TCP (ADR-013), all through the same channels and the same
+    ``executions`` mapping. The socket directory always exists (``0700``)
+    because it holds the connection file and its HMAC key."""
 
     def __init__(
         self,
@@ -539,10 +564,11 @@ class KernelContext(ContextBase):
         spec_manager = KernelSpecManager(
             kernel_dirs=[str(self._paths.kernelspecs_dir)], ensure_native_kernel=False
         )
+        endpoint = kernel_endpoint(self._kernel, self._socket_dir)
         km = AsyncKernelManager(
             kernel_name=self._kernel.kernel_name,
-            transport="ipc",
-            ip=str(self._socket_dir / "k"),
+            transport=endpoint.transport,
+            ip=endpoint.ip,
             connection_file=str(self.connection_file),
             kernel_spec_manager=spec_manager,
         )
@@ -608,7 +634,15 @@ class KernelContext(ContextBase):
     async def _run_cell(
         self, slot: ExecutionSlot, code: str, envs: Mapping[str, str], emit: Emit
     ) -> None:
-        await run_execution(self, slot.request_id, slot.execution_id, code, envs, emit)
+        await run_execution(
+            self,
+            slot.request_id,
+            slot.execution_id,
+            code,
+            envs,
+            emit,
+            strip_plain_text_ansi=self._kernel.strips_plain_text_ansi,
+        )
 
     async def _run_silent_cell(self, code: str) -> ExecutionOutcome:
         return await run_silent(self, code)

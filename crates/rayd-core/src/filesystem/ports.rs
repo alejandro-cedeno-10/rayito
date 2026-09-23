@@ -11,6 +11,7 @@ use thiserror::Error;
 use super::entry::{EntryKind, RawEntry};
 use super::events::RawWatchEvent;
 use super::identity::FsIdentity;
+use super::metadata::FileMetadata;
 
 /// Adapter failures carry an errno *name* (`ENOENT`) at most, never a path.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -77,6 +78,16 @@ pub trait FileSystem: Send + Sync {
     /// writer).
     fn open_read(&self, id: &FsIdentity, path: &str) -> Result<Box<dyn Read + Send>, FsIoError>;
 
+    /// The same open as `open_read` plus an `fstat` of the descriptor: the
+    /// export reads exactly the file measured here, by offset, even if the
+    /// name is replaced afterwards.
+    fn open_snapshot(&self, id: &FsIdentity, path: &str) -> Result<OpenedSnapshot, FsIoError>;
+
+    /// `llistxattr` + `lgetxattr` of every `user.rayito.*` attribute, never
+    /// following a symlink. A filesystem without xattrs, a file without
+    /// them or one the identity may not read answers an empty set.
+    fn read_metadata(&self, id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError>;
+
     /// Bytes a non-root user may still write on the filesystem holding
     /// `canonical_dir` (`statvfs`: `f_bavail * f_frsize`). The directory
     /// may not exist yet: the adapter walks up to the deepest existing
@@ -117,10 +128,30 @@ pub trait FileSystem: Send + Sync {
 pub trait WriteSink: Send {
     fn write_chunk(&mut self, bytes: &[u8]) -> Result<(), FsIoError>;
 
+    /// `fsetxattr` of every key on the temp file's descriptor, before
+    /// `commit`: no path-based call, and the set appears with the content.
+    /// `Unsupported` when the filesystem has no user xattrs, `NoSpace` when
+    /// the set does not fit.
+    fn set_metadata(&mut self, metadata: &FileMetadata) -> Result<(), FsIoError>;
+
     /// `fsync`, `fchmod`, `fchown` to `id`, `rename` over `final_name` in the
     /// sink's directory, `fsync` of the directory, then `lstat` of the
     /// result. A destination that is a directory answers `IsADirectory`.
     fn commit(self: Box<Self>, final_name: &str, id: &FsIdentity) -> Result<RawEntry, FsIoError>;
+}
+
+/// A regular file opened for an export, read by offset (`pread`) so a
+/// retried part re-reads its own range.
+pub trait SnapshotFile: Send + Sync {
+    /// Fewer bytes than `buf` holds only at the end of the file; `Ok(0)` at
+    /// or past it.
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize, FsIoError>;
+}
+
+/// What `open_snapshot` hands back: the open file and its `fstat`.
+pub struct OpenedSnapshot {
+    pub file: Box<dyn SnapshotFile>,
+    pub entry: RawEntry,
 }
 
 /// Installs one non-recursive watch on `canonical_root` and one on each of

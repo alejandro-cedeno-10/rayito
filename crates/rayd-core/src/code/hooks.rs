@@ -86,7 +86,7 @@ pub fn sidecar_spawn_spec(identity: &ProcessIdentity, config: &SidecarConfig) ->
     SpawnSpec {
         program,
         args,
-        env: build_child_env(identity, &BTreeMap::new(), &sidecar_env),
+        env: build_child_env(identity, &BTreeMap::new(), &BTreeMap::new(), &sidecar_env),
         cwd: identity.home.clone(),
         identity: identity.clone(),
         stdin: StdinMode::Pipe,

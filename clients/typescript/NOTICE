@@ -7,3 +7,7 @@ This product includes software developed by third parties:
   Vendored at kernel-sidecar/src/rayito_kernel_sidecar/_vendor/e2b_charts
   with its LICENSE file alongside; see VENDORED.md there for the upstream
   source, the sdist checksum and the single import-path change.
+- Git argument builders, porcelain parsers and failure snippets in
+  `clients/python/src/rayito/_git_base.py` and
+  `clients/typescript/src/sandbox/git-args.ts` are adapted from the E2B SDK
+  (github.com/e2b-dev/E2B, Apache License 2.0).

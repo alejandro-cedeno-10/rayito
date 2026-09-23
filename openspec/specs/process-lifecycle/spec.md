@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m2-processes-lifecycle. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Process start streams a StartEvent first
 `ProcessService.Start` SHALL spawn the requested program in its own process group and answer with a server-stream whose first message is `StartEvent{pid}`, followed by zero or more `DataEvent`s and exactly one terminal `EndEvent`, with no message after the `EndEvent`. The SDK SHALL send `ProcessConfig{cmd:"/bin/bash", args:["-l","-c", <cmd>]}` for `commands.run`.
 
@@ -209,7 +211,7 @@ After a process or PTY ends, its entry SHALL remain available to `Connect` for 3
 - **THEN** the list contains an item with the PTY's `pid`, `kind == "pty"` and `args == ("-i", "-l")`
 
 ### Requirement: HealthService.Metrics reports procfs metrics
-`Metrics` SHALL require `x-access-token` and return `cpu_used_pct` (0–100, from two `/proc/stat` samples 100 ms apart), `mem_used_bytes = MemTotal - MemAvailable`, `mem_total_bytes`, `disk_used_bytes`/`disk_total_bytes` of `/` from `statvfs`, `cpu_count >= 1`, and `timestamp_unix_ms` from the wall clock. The SDK SHALL expose `sbx.get_metrics() -> SandboxMetrics`.
+`Metrics` SHALL require `x-access-token` and return `cpu_used_pct` (0–100, from two `/proc/stat` samples 100 ms apart), `mem_used_bytes = MemTotal - MemAvailable`, `mem_total_bytes`, `mem_cache_bytes` (`Cached` of `/proc/meminfo` in bytes, 0 when the line is absent), `disk_used_bytes`/`disk_total_bytes` of `/` from `statvfs`, `cpu_count >= 1`, and `timestamp_unix_ms` from the wall clock. The SDK SHALL expose `sbx.get_metrics() -> SandboxMetrics` with `mem_cache_bytes` (Python, default 0 so an image that predates the field reads 0) and `getMetrics()` with `memCacheBytes` (TypeScript).
 
 #### Scenario: metrics from the SDK
 - **WHEN** the SDK calls `sbx.get_metrics()`
@@ -218,6 +220,10 @@ After a process or PTY ends, its entry SHALL remain available to `Connect` for 3
 #### Scenario: metrics without a token
 - **WHEN** `Metrics` is called without `x-access-token`
 - **THEN** it fails with `UNAUTHENTICATED`
+
+#### Scenario: page cache is reported
+- **WHEN** `parse_meminfo` reads a fixture with `Cached: 512000 kB` and another without a `Cached:` line, and the Linux integration test calls `Metrics` with the token
+- **THEN** the first yields `cached == 512000 * 1024`, the second `cached == 0` with no error, and the RPC answers `mem_cache_bytes > 0`
 
 ### Requirement: SDK command surface, sync and async
 The SDK SHALL expose `sbx.commands` with `run(cmd, *, background=False, envs=None, user=None, cwd=None, on_stdout=None, on_stderr=None, stdin=False, timeout=60.0, request_timeout=None, tag=None)` returning `CommandResult` (foreground) or `CommandHandle` (background), `list()`, `kill(pid)`, `send_stdin(pid, data)`, `close_stdin(pid)`, `connect(pid, *, from_seq=0, on_stdout=None, on_stderr=None, timeout=None, request_timeout=None)`. `CommandHandle` SHALL expose `pid`, `last_seq`, `stdout`, `stderr`, `exit_code`, `error`, `wait()`, `kill()`, `disconnect()`, `send_stdin()`, `close_stdin()` and iteration yielding `(stdout, stderr, pty)` tuples with `pty` always `None`. `AsyncSandbox.commands` SHALL offer the same names as coroutines/async iteration. Foreground `run` SHALL use the unary channel; background `run` and `connect` SHALL use a second, lazily opened channel; a sandbox SHALL never open more than two channels.
@@ -239,7 +245,7 @@ The SDK SHALL expose `sbx.commands` with `run(cmd, *, background=False, envs=Non
 - **THEN** the pid is still listed
 
 ### Requirement: SDK stream error contract
-The SDK SHALL retry a stream open exactly once after a proxy 403 (`PERMISSION_DENIED` with `Received http2 header with status: 403`) by re-minting the JWE, only when no message has been consumed. A mid-stream `UNAVAILABLE`, connection reset, `GOAWAY` or EOF, and an in-stream `suspending` end, SHALL trigger the reconnection contract of the `suspend-resume` capability (poll `Health` with backoff for `reconnect_timeout`, re-subscribe with `Connect(pid, from_seq=last_seq + 1)`); only when that poll fails SHALL the failure be classified: `TERMINATING|TERMINATED` → `SandboxNotFoundException`, `SUSPENDED` without auto-resume → `SandboxStateException`, otherwise `SandboxException`. gRPC `FAILED_PRECONDITION` SHALL map to `InvalidArgumentException`, `OUT_OF_RANGE` to `NotFoundException`, `DEADLINE_EXCEEDED` on a command stream to `TimeoutException`.
+The SDK SHALL retry a stream open exactly once after a proxy 403 (`PERMISSION_DENIED` with `Received http2 header with status: 403`) by re-minting the JWE, only when no message has been consumed. A mid-stream `UNAVAILABLE`, connection reset, `GOAWAY` or EOF, and an in-stream `suspending` end, SHALL trigger the reconnection contract of the `suspend-resume` capability (poll `Health` with backoff for `reconnect_timeout`, re-subscribe with `Connect(pid, from_seq=last_seq + 1)`); only when that poll fails SHALL the failure be classified: `TERMINATING|TERMINATED` → `SandboxNotFoundException`, `SUSPENDED` without auto-resume → `SandboxStateException`, otherwise `SandboxException`. gRPC `FAILED_PRECONDITION` SHALL map to `InvalidArgumentException` except with details `sandbox_timeout`, which SHALL map to `TimeoutException` (as SHALL an in-stream `EndEvent` or `PtyExited` with status `sandbox_timeout`) and SHALL NOT trigger the reconnection contract, `OUT_OF_RANGE` to `NotFoundException`, `DEADLINE_EXCEEDED` on a command stream to `TimeoutException`.
 
 #### Scenario: expired JWE at stream open
 - **WHEN** the proxy answers 403 to the `Start` request
@@ -252,6 +258,10 @@ The SDK SHALL retry a stream open exactly once after a proxy 403 (`PERMISSION_DE
 #### Scenario: reset while the sandbox comes back
 - **WHEN** a background stream is reset and `Health` answers again with a higher `resume_generation`
 - **THEN** the handle re-subscribes with `Connect(pid, from_seq=last_seq + 1)` and `wait()` returns the process's result
+
+#### Scenario: sandbox timeout is a timeout, not a cut
+- **WHEN** a background stream ends with `EndEvent{status:"sandbox_timeout"}` and a unary `SendInput` fails with `FAILED_PRECONDITION` `sandbox_timeout`
+- **THEN** `wait()` and `send_stdin()` both raise `TimeoutException` and no `Health` reconnect poll runs
 
 ### Requirement: Image provides the acceptance tooling and keeps rayd as root
 The image SHALL keep user `user` (uid 1000, home `/home/user`, shell `/bin/bash`), SHALL make `python3` resolve to Python 3.12 on the child `PATH`, SHALL fail its build if `/bin/bash`, `whoami`, `id`, `sleep`, `head`, `tr`, `env` or `python3` are missing, SHALL run `rayd` as root, and SHALL NOT set `RAYITO_ALLOW_ROOT`.
@@ -286,3 +296,19 @@ The image SHALL keep user `user` (uid 1000, home `/home/user`, shell `/bin/bash`
 - **WHEN** spawning fails with `ENOENT`
 - **THEN** the log line contains the errno name and no part of the command, while the gRPC error message returned to the client names the errno
 
+### Requirement: CommandHandle.wait accepts E2B output callbacks
+The native `CommandHandle.wait` SHALL accept optional keyword callbacks, and so SHALL `PtyHandle`, which inherits it. The signature SHALL be `wait(on_pty: Callable[[bytes], Any] | None = None, on_stdout: Callable[[str], Any] | None = None, on_stderr: Callable[[str], Any] | None = None) -> CommandResult`. `AsyncCommandHandle.wait` SHALL take the same keywords, accepting sync or `async` callbacks and awaiting results that are awaitable.
+
+While `wait()` consumes the stream, each decoded `(stdout, stderr, pty)` chunk SHALL be passed to the matching callback, after any `on_stdout`/`on_stderr` given at `run()` time. Chunks consumed before `wait()` was called SHALL NOT be replayed. The returned `CommandResult`, the exceptions (`CommandExitException`, `TimeoutException`, `SandboxException` for `output_truncated`) and the idempotence of `wait()` SHALL be unchanged.
+
+#### Scenario: callbacks receive the chunks
+- **WHEN** the unit test starts `commands.run("echo out; echo err >&2", background=True)` against the fake `rayd` and calls `handle.wait(on_stdout=out.append, on_stderr=err.append)`
+- **THEN** `out == ["out\n"]`, `err == ["err\n"]`, and the result has `stdout == "out\n"` and `exit_code == 0`
+
+#### Scenario: async callbacks are awaited
+- **WHEN** the async unit test calls `await handle.wait(on_stdout=async_append)`, where `async_append` is a coroutine function
+- **THEN** every stdout chunk has been appended by the time `wait()` returns
+
+#### Scenario: PTY output reaches on_pty
+- **WHEN** the unit test creates a PTY on the fake, sends `echo hola\n` and calls `handle.wait(on_pty=chunks.append)` until the fake exits
+- **THEN** the concatenated `chunks` contain `b"hola"`

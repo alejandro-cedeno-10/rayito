@@ -1,7 +1,7 @@
 //! An in-memory `KernelSidecar` for the host tests of the supervisor and
 //! the execute stream: each launch hands its event sink to the test, which
 //! plays the sidecar's stdout by hand; the link records every request line
-//! it is given and whether it was killed.
+//! it is given and whether it was killed or terminated.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,7 @@ use rayd_core::process::{Pid, ProcessIdentity, ResourceLimits, SpawnError, Spawn
 use rayd_core::session::{RunHookInput, SandboxSession};
 use tokio::sync::mpsc;
 
-use super::supervisor::{SidecarSupervisor, SupervisorSettings, lock};
+use super::supervisor::{KernelSignaller, SidecarSupervisor, SupervisorSettings, lock};
 
 pub const FAKE_PID: u32 = 4242;
 
@@ -25,6 +25,7 @@ pub const FAKE_PID: u32 = 4242;
 pub struct LaunchLog {
     lines: Arc<Mutex<Vec<String>>>,
     killed: Arc<AtomicBool>,
+    terminated: Arc<AtomicBool>,
 }
 
 impl LaunchLog {
@@ -43,6 +44,10 @@ impl LaunchLog {
 
     pub fn killed(&self) -> bool {
         self.killed.load(Ordering::Relaxed)
+    }
+
+    pub fn terminated(&self) -> bool {
+        self.terminated.load(Ordering::Relaxed)
     }
 
     /// The request lines as JSON, in order.
@@ -133,6 +138,10 @@ impl SidecarLink for FakeLink {
     fn kill(&self) {
         self.log.killed.store(true, Ordering::Relaxed);
     }
+
+    fn terminate(&self) {
+        self.log.terminated.store(true, Ordering::Relaxed);
+    }
 }
 
 fn spawn_spec() -> SpawnSpec {
@@ -157,6 +166,8 @@ fn spawn_spec() -> SpawnSpec {
 pub struct ReadySupervisor {
     pub supervisor: Arc<SidecarSupervisor>,
     pub launched: Launched,
+    /// Every later launch of the loop (a relaunch after an exit).
+    pub launches: mpsc::UnboundedReceiver<Launched>,
     pub registry: Arc<Mutex<ContextRegistry>>,
     pub session: Arc<SandboxSession>,
 }
@@ -199,6 +210,14 @@ pub fn running_session() -> Arc<SandboxSession> {
 
 /// A supervisor whose loop already launched the fake and saw its `ready`.
 pub async fn ready_supervisor(settings: SupervisorSettings) -> ReadySupervisor {
+    ready_supervisor_with(settings, Arc::new(|_, _| {})).await
+}
+
+/// The same, with the kernel signaller the test observes.
+pub async fn ready_supervisor_with(
+    settings: SupervisorSettings,
+    kernel_signaller: KernelSignaller,
+) -> ReadySupervisor {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
     let session = running_session();
@@ -208,7 +227,7 @@ pub async fn ready_supervisor(settings: SupervisorSettings) -> ReadySupervisor {
         session.clone(),
         registry.clone(),
         settings,
-        Arc::new(|_| {}),
+        kernel_signaller,
     );
     drop(supervisor.spawn());
     let mut launched = receiver
@@ -223,6 +242,7 @@ pub async fn ready_supervisor(settings: SupervisorSettings) -> ReadySupervisor {
     ReadySupervisor {
         supervisor,
         launched,
+        launches: receiver,
         registry,
         session,
     }

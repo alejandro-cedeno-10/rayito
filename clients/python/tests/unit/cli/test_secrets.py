@@ -16,6 +16,7 @@ from rayito.cli import _artifact, _checks, _publish
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 from rayito.sandbox_sync import main as sync_main
+from rayito.v1 import health_pb2
 
 from . import test_doctor as doctor_stubs
 from .conftest import (
@@ -59,7 +60,11 @@ def leaky_plane(fake_plane: FakeControlPlane, monkeypatch: pytest.MonkeyPatch) -
         lambda plane, info, transport, timeout: doctor_stubs.health_response(),
     )
     monkeypatch.setattr(
-        sync_main, "probe_metadata", lambda plane, info, transport, timeout: {"env": "ci"}
+        sync_main,
+        "probe_health",
+        lambda plane, info, transport, timeout: health_pb2.HealthResponse(
+            agent_ready=True, metadata={"env": "ci"}
+        ),
     )
     return fake_plane
 

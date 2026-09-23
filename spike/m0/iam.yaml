@@ -34,10 +34,34 @@ Parameters:
       or trailing slash); S3Prefix(prefix=) in the SDK must match it. Never
       `rayito` or a prefix of it: that namespace holds the image artifacts
       (`rayito/images/*`) and the execution role must not reach them.
+  TransferBucket:
+    Type: String
+    Default: ""
+    Description: >-
+      S3 bucket for upload_url/download_url and large-file staging
+      (transfer=S3Staging, ADR-010); empty = no transfer statements.
+  TransferPrefix:
+    Type: String
+    Default: rayito-transfer
+    AllowedPattern: "^[A-Za-z0-9_.-][A-Za-z0-9_./-]*[A-Za-z0-9_.-]$|^[A-Za-z0-9_.-]$"
+    Description: >-
+      Key prefix under TransferBucket (S3Staging(prefix=)). Never `rayito`,
+      a prefix of it, or PersistencePrefix: the 1-day lifecycle rule of the
+      transfer prefix would expire image artifacts or checkpoints.
+
+Rules:
+  TransferPrefixIsDisjoint:
+    RuleCondition: !Not [!Equals [!Ref TransferBucket, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref TransferPrefix, rayito]]
+        AssertDescription: TransferPrefix cannot be the image artifact namespace.
+      - Assert: !Not [!Equals [!Ref TransferPrefix, !Ref PersistencePrefix]]
+        AssertDescription: TransferPrefix cannot equal PersistencePrefix.
 
 Conditions:
   HasOwnConnectors: !Not [!Equals [!Join ["", !Ref NetworkConnectorArns], ""]]
   HasPersistenceBucket: !Not [!Equals [!Ref PersistenceBucket, ""]]
+  HasTransferBucket: !Not [!Equals [!Ref TransferBucket, ""]]
 
 Resources:
   BuildRole:
@@ -197,6 +221,29 @@ Resources:
             Effect: Allow
             Action: s3:ListBucket
             Resource: !Sub arn:aws:s3:::${ArtifactBucket}
+          # CreateMultipartUpload, UploadPart and CompleteMultipartUpload are
+          # authorised by s3:PutObject; the execution role gets nothing (ADR-010).
+          - !If
+            - HasTransferBucket
+            - Sid: TransferObjects
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+                - s3:AbortMultipartUpload
+              Resource: !Sub arn:aws:s3:::${TransferBucket}/${TransferPrefix}/*
+            - !Ref AWS::NoValue
+          - !If
+            - HasTransferBucket
+            - Sid: TransferMissingKeyIs404
+              Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub arn:aws:s3:::${TransferBucket}
+              Condition:
+                StringLike:
+                  s3:prefix: !Sub ${TransferPrefix}/*
+            - !Ref AWS::NoValue
           - Sid: ReadQuotas
             Effect: Allow
             Action: servicequotas:ListServiceQuotas

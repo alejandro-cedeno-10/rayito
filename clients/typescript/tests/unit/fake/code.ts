@@ -17,9 +17,12 @@
  * interrumpiéndola. Desde M7 honra `ExecuteRequest.language` como `rayd`:
  * `language` + `context_id` es `InvalidArgument`; un lenguaje que el fake no
  * "instala" (`languages`) es `Unimplemented` con `rayito-base-poly` en el
- * mensaje; los contextos `default-bash`/`default-javascript` nacen en la
- * primera celda de ese lenguaje y `listContexts` los lista con su lenguaje;
- * `envs` por ejecución en un contexto no Python es `InvalidArgument`.
+ * mensaje; los contextos `default-bash`/`default-javascript`/`default-typescript`
+ * nacen en la primera celda de ese lenguaje y `listContexts` los lista con su
+ * lenguaje; `envs` por ejecución en un contexto no Python es `InvalidArgument`.
+ * Desde M9 conoce `typescript` (kernel Deno de `rayito-base-poly`) y un nombre
+ * desconocido es `InvalidArgument` con el mensaje de `rayd` que lista los
+ * cuatro nombres canónicos.
  */
 
 import { randomBytes } from "node:crypto";
@@ -64,7 +67,13 @@ import {
 
 export const DEFAULT_CONTEXT_ID = "default";
 export const DEFAULT_LANGUAGE = "python";
-export const KNOWN_LANGUAGES: ReadonlySet<string> = new Set(["python", "bash", "javascript"]);
+export const KNOWN_LANGUAGES: ReadonlySet<string> = new Set([
+  "python",
+  "bash",
+  "javascript",
+  "typescript",
+]);
+const INVALID_LANGUAGE_MESSAGE = "language must be one of python, bash, javascript, typescript";
 export const POLY_IMAGE = "rayito-base-poly";
 const MAX_CONTEXTS = 8;
 const MAX_CODE_BYTES = 1_048_576;
@@ -721,10 +730,7 @@ export class FakeCodeService {
 
   #requireLanguage(language: string): string {
     if (!KNOWN_LANGUAGES.has(language)) {
-      throw new ConnectError(
-        "language must be one of python, bash, javascript",
-        Code.InvalidArgument,
-      );
+      throw new ConnectError(INVALID_LANGUAGE_MESSAGE, Code.InvalidArgument);
     }
     if (!this.languages.has(language)) {
       throw new ConnectError(

@@ -5,7 +5,9 @@
 //! `envs` on a non-Python context are `INVALID_ARGUMENT`), the 5 s keepalive
 //! on `Execute` and `Reattach`, and the suspend close with a trailing
 //! `UNAVAILABLE suspending` (design D7: no `ExecutionEnd`, so
-//! "`ExecutionError` is never terminal" stays true). Error messages and log
+//! "`ExecutionError` is never terminal" stays true), or
+//! `FAILED_PRECONDITION sandbox_timeout` at the logical deadline
+//! (ADR-011). Error messages and log
 //! lines carry ids, counts, language names and mime type names, never code,
 //! output, envs, cwd or tracebacks.
 
@@ -30,11 +32,13 @@ use tonic::{Request, Response, Status};
 use super::keepalive::KeepAliveStream;
 use crate::code::{CodeManager, ExecuteInput, ExecutionSubscriberStream};
 use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream};
+use crate::transfer::TransferBarrier;
 
 pub struct CodeGrpc {
     manager: Arc<CodeManager>,
     suspend: Arc<SuspendSignal>,
     keepalive_interval: Duration,
+    barrier: TransferBarrier,
 }
 
 impl CodeGrpc {
@@ -53,7 +57,16 @@ impl CodeGrpc {
             manager,
             suspend,
             keepalive_interval: interval,
+            barrier: TransferBarrier::disabled(),
         }
+    }
+
+    /// The read-after-upload barrier consulted before every cell
+    /// (ADR-010); disabled unless a transfer manager is wired.
+    #[must_use]
+    pub fn with_barrier(mut self, barrier: TransferBarrier) -> Self {
+        self.barrier = barrier;
+        self
     }
 
     fn wrap(&self, stream: ExecutionSubscriberStream) -> BoxStream<ExecuteEvent> {
@@ -61,7 +74,7 @@ impl CodeGrpc {
             stream,
             self.suspend.subscribe(),
             |output| Ok(to_proto(output)),
-            || SuspendClose::Status,
+            |_| SuspendClose::Status,
         );
         Box::pin(KeepAliveStream::new(
             closing,
@@ -100,6 +113,7 @@ impl CodeService for CodeGrpc {
         request: Request<ExecuteRequest>,
     ) -> Result<Response<Self::ExecuteStream>, Status> {
         let request = request.into_inner();
+        self.barrier.before_workload("Execute").await;
         let stream = self
             .manager
             .execute(ExecuteInput {

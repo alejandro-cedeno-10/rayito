@@ -13,6 +13,7 @@ import contextlib
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -20,7 +21,7 @@ import boto3
 import grpc
 import grpc.aio
 
-from rayito._aws import ControlPlane, PortSpec
+from rayito._aws import ControlPlane, PortSpec, control_plane_session
 from rayito._code_base import (
     DEFAULT_CODE_TIMEOUT_SECONDS,
     ContextLike,
@@ -28,27 +29,71 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._lifecycle_base import (
+    TimeoutRequest,
+    auto_resume_reopen,
+    connect_extension,
+    deadline_may_have_moved,
+    lifecycle_from_proto,
+    lifecycle_from_state,
+    older_agent_error,
+    pause_trigger_delay,
+    suspended_set_timeout_error,
+    translate_set_timeout_error,
+    unix_ms_now,
+    validate_set_timeout_seconds,
+)
 from rayito._limits import (
     DEFAULT_PERSIST_TIMEOUT_SECONDS,
     DEFAULT_PORT,
     SUSPENDED_STATES,
     TERMINAL_STATES,
 )
+from rayito._listing_base import ListOrder, listing_request
+from rayito._metrics_base import (
+    CLASS_HISTORY_FEATURE,
+    HISTORY_FEATURE,
+    ensure_history_readable,
+    history_unimplemented_error,
+    is_history_unimplemented,
+    metrics_history_from_proto,
+    metrics_history_request,
+)
 from rayito._models import (
+    AsyncUploadTicket,
     CheckpointResult,
     CodeContext,
+    DownloadLink,
     Execution,
     HostAccess,
     IdlePolicy,
     LaunchOptions,
+    NetworkOptions,
+    NetworkPolicy,
+    NetworkState,
     RestoreResult,
     S3Prefix,
+    S3Staging,
     SandboxHealth,
     SandboxInfo,
+    SandboxLifecycle,
     SandboxListItem,
     SandboxMetrics,
+    TimeoutActionName,
 )
-from rayito._payload import validated_metadata
+from rayito._network_base import (
+    GET_NETWORK_FEATURE,
+    UPDATE_NETWORK_FEATURE,
+    NetworkLaunch,
+    egress_gate_error,
+    network_rpc_error,
+    plan_network_launch,
+    policy_to_proto,
+    pool_network_kwarg,
+    readiness_enforcement,
+    state_from_proto,
+    update_policy,
+)
 from rayito._persistence_base import (
     CheckpointProgressCallback,
     RestoreProgressCallback,
@@ -78,6 +123,7 @@ from rayito._sandbox_base import (
     HOOK_ANOMALIES_WARNING,
     IMDS_OPEN_WARNING,
     METADATA_PROBE_TIMEOUT_SECONDS,
+    GuestFacts,
     LoggingOption,
     PortLike,
     ReadinessPoll,
@@ -86,22 +132,32 @@ from rayito._sandbox_base import (
     already_suspended,
     build_launch_plan,
     class_method_variant,
+    guest_facts_from_health,
     health_from_proto,
+    health_ready,
     health_reconnected,
     imds_open_warning_due,
+    info_with_health,
     is_suspending_reason,
-    list_states_for_metadata,
     metadata_from_health,
-    metadata_matches,
     metadata_probe_failure,
+    needs_explicit_resume,
     not_ready_error,
+    ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
+    sandbox_logger,
     terminal_state_error,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
+    with_guest_facts,
+)
+from rayito._transfer_base import (
+    expires_in_from_signature_expiration,
+    resolve_staging,
+    validate_staging_against_persist,
 )
 from rayito._transport import (
     AsyncTokenRefresher,
@@ -112,6 +168,7 @@ from rayito._transport import (
     is_not_yet_reachable,
     is_proxy_forbidden,
     is_reconnectable,
+    is_sandbox_timeout,
     is_stream_reset,
     rpc_status,
     translate_rpc_error,
@@ -126,8 +183,16 @@ from rayito.exceptions import (
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
 from rayito.sandbox_async.filesystem import AsyncFilesystem
+from rayito.sandbox_async.git import AsyncGit
+from rayito.sandbox_async.lifecycle import AsyncDeadlineTrigger, set_timeout_once_async
+from rayito.sandbox_async.listing import (
+    AsyncListingIo,
+    AsyncSandboxListPaginator,
+    collect_listing,
+)
 from rayito.sandbox_async.persistence import AsyncPersistenceClient
 from rayito.sandbox_async.pty import AsyncPty
+from rayito.sandbox_async.transfer import AsyncTransfers
 from rayito.sandbox_sync.main import (
     StubFactory,
     closed_during_reconnect,
@@ -140,6 +205,9 @@ from rayito.v1 import (
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
+    lifecycle_pb2_grpc,
+    network_pb2,
+    network_pb2_grpc,
     process_pb2_grpc,
     pty_pb2_grpc,
 )
@@ -186,7 +254,12 @@ async def probe_health_async(
         TokenStore(), lambda ports: control_plane.create_auth_token(info.sandbox_id, ports)
     )
     await asyncio.to_thread(refresher.mint, (PortSpec.single(DEFAULT_PORT),))
-    plugin = ProxyAuthPlugin(refresher.store, port=DEFAULT_PORT, access_token=None)
+    plugin = ProxyAuthPlugin(
+        refresher.store,
+        port=DEFAULT_PORT,
+        access_token=None,
+        extra=transport.extra_metadata,
+    )
     channel = transport.open_aio_channel(info.endpoint, plugin)
     try:
         response = await probe_health_reminting_async(
@@ -225,6 +298,48 @@ async def probe_health_reminting_async(stub: Any, refresher: TokenRefresher, tim
     return await stub.Health(health_pb2.HealthRequest(), timeout=timeout)
 
 
+async def call_dedicated_health_async(
+    control_plane: ControlPlane,
+    info: SandboxInfo,
+    transport: TransportSettings,
+    access_token: str,
+    invoke: Callable[[health_pb2_grpc.HealthServiceStub], Awaitable[T]],
+) -> T:
+    """`sandbox_sync.main.call_dedicated_health` sobre `grpc.aio`: el JWE
+    (boto3 en un hilo), un canal dedicado con el access token que se cierra
+    al salir, un reintento tras un 403 del proxy y la traducción unaria."""
+    refresher = TokenRefresher(
+        TokenStore(), lambda ports: control_plane.create_auth_token(info.sandbox_id, ports)
+    )
+    await asyncio.to_thread(refresher.mint, (PortSpec.single(DEFAULT_PORT),))
+    plugin = ProxyAuthPlugin(
+        refresher.store,
+        port=DEFAULT_PORT,
+        access_token=access_token,
+        extra=transport.extra_metadata,
+    )
+    channel = transport.open_aio_channel(info.endpoint, plugin)
+    try:
+        stub = health_pb2_grpc.HealthServiceStub(channel)
+        return await invoke_reminting_async(invoke, stub, refresher)
+    except grpc.RpcError as exc:
+        raise translate_rpc_error(exc) from exc
+    finally:
+        await channel.close(grace=None)
+
+
+async def invoke_reminting_async(
+    invoke: Callable[[Any], Awaitable[T]], stub: Any, refresher: TokenRefresher
+) -> T:
+    try:
+        return await invoke(stub)
+    except grpc.RpcError as exc:
+        if not is_proxy_forbidden(exc):
+            raise
+    await asyncio.to_thread(refresher.refresh_all)
+    return await invoke(stub)
+
+
 class AsyncSandbox:
     """Un MicroVM con `rayd` dentro. Se crea con `await AsyncSandbox.create()`."""
 
@@ -239,7 +354,10 @@ class AsyncSandbox:
         request_timeout: float,
         ready_timeout: float,
         reconnect_timeout: float = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+        logger: logging.Logger | None = None,
     ) -> None:
+        self._custom_logger = logger
+        self._logger = sandbox_logger(logger)
         self._info = info
         self._launch_info = info
         self._access_token = access_token
@@ -252,6 +370,7 @@ class AsyncSandbox:
         self._closed = False
         self._resume_generation = 0
         self._metadata: dict[str, str] = {}
+        self._guest = GuestFacts()
         self._paused = False
         self._anomalies_warned_generation: int | None = None
         self._imds_warned = False
@@ -259,7 +378,10 @@ class AsyncSandbox:
         self._reconnect_lock = asyncio.Lock()
         self._resumed = asyncio.Event()
         self._plugin = ProxyAuthPlugin(
-            refresher.store, port=DEFAULT_PORT, access_token=access_token
+            refresher.store,
+            port=DEFAULT_PORT,
+            access_token=access_token,
+            extra=transport.extra_metadata,
         )
         self._channel = transport.open_aio_channel(info.endpoint, self._plugin)
         self._stream_channel: grpc.aio.Channel | None = None
@@ -268,6 +390,14 @@ class AsyncSandbox:
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
+        self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._readiness_health: SandboxHealth | None = None
+        self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
+        self._lifecycle: SandboxLifecycle | None = None
+        self._deadline_pause_generation: int | None = None
+        self._reopen_task: asyncio.Task[bool] | None = None
+        self._reopens = 0
+        self._deadline_trigger = AsyncDeadlineTrigger(self._on_deadline)
         self._unary_stubs: dict[StubFactory, Any] = {
             process_pb2_grpc.ProcessServiceStub: self._process,
             filesystem_pb2_grpc.FilesystemServiceStub: self._files,
@@ -283,6 +413,10 @@ class AsyncSandbox:
         self._persist: S3Prefix | None = None
         self._last_restore: RestoreResult | None = None
         self._launch_options: LaunchOptions | None = None
+        self._transfer: S3Staging | None = None
+        self._session: boto3.session.Session | None = None
+        self._transfers = AsyncTransfers(self)
+        self._git: AsyncGit | None = None
 
     # ------------------------------------------------------------------ create
 
@@ -293,6 +427,8 @@ class AsyncSandbox:
         *,
         template_version: str | None = None,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
+        max_lifetime: int | None = None,
+        on_timeout: TimeoutActionName | None = None,
         idle: IdlePolicy | None = DEFAULT_IDLE_POLICY,
         envs: Mapping[str, str] | None = None,
         metadata: Mapping[str, str] | None = None,
@@ -301,6 +437,8 @@ class AsyncSandbox:
         allowed_ports: Sequence[PortLike] | None = None,
         ingress: Sequence[str] | None = None,
         egress: Sequence[str] | None = None,
+        network: NetworkPolicy | NetworkOptions | None = None,
+        allow_internet_access: bool = True,
         logging: LoggingOption = "disabled",
         region: str | None = None,
         session: boto3.session.Session | None = None,
@@ -314,10 +452,17 @@ class AsyncSandbox:
         persist: S3Prefix | None = None,
         persist_timeout: float = DEFAULT_PERSIST_TIMEOUT_SECONDS,
         pool: AsyncSandboxPool | None = None,
+        transfer: S3Staging | None = None,
+        logger: logging.Logger | None = None,
     ) -> Self:
-        """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=` y
-        `persist=`)."""
+        """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=`,
+        `persist=`, `transfer=`, el plazo lógico de `max_lifetime`/`on_timeout`
+        y la política de egress de `network=`/`allow_internet_access`, que
+        termina el VM aunque haya `keep_on_failure` si la imagen no la aplica)."""
+        launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
+        staging = resolve_staging(transfer)
+        validate_staging_against_persist(staging, persist)
         if pool is not None and persist is not None:
             raise InvalidArgumentException(
                 "create(pool=...) no admite persist=: una plaza del pool no puede restaurar "
@@ -329,6 +474,8 @@ class AsyncSandbox:
                     "template": template,
                     "template_version": template_version,
                     "timeout": timeout,
+                    "max_lifetime": max_lifetime,
+                    "on_timeout": on_timeout,
                     "idle": idle,
                     "envs": envs,
                     "metadata": metadata,
@@ -337,6 +484,8 @@ class AsyncSandbox:
                     "allowed_ports": allowed_ports,
                     "ingress": ingress,
                     "egress": egress,
+                    "network": pool_network_kwarg(network),
+                    "allow_internet_access": allow_internet_access,
                     "logging": logging,
                     "region": region,
                     "session": session,
@@ -346,7 +495,7 @@ class AsyncSandbox:
                     "transport": transport,
                 }
             )
-            return cast(
+            taken = cast(
                 "Self",
                 await pool.take(
                     ready_timeout=ready_timeout,
@@ -354,6 +503,9 @@ class AsyncSandbox:
                     reconnect_timeout=reconnect_timeout,
                 ),
             )
+            taken._bind_transfer(staging, pool.session)
+            taken._bind_logger(logger)
+            return taken
         plane = resolve_control_plane(control_plane, session, region)
         image_arn = await asyncio.to_thread(plane.resolve_template_arn, resolve_template(template))
         plan = build_launch_plan(
@@ -371,9 +523,12 @@ class AsyncSandbox:
             access_token=access_token,
             metadata=metadata,
             cpu_time_limit=cpu_time_limit,
+            max_lifetime=max_lifetime,
+            on_timeout=on_timeout,
+            network_enforce=launch.enforce,
         )
         info = await asyncio.to_thread(plane.run_microvm, plan.request)
-        logger.info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
+        sandbox_logger(logger).info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
         sandbox = await cls._open(
             info,
             access_token=plan.access_token,
@@ -384,7 +539,12 @@ class AsyncSandbox:
             ready_timeout=ready_timeout,
             reconnect_timeout=reconnect_timeout,
             terminate_on_failure=not keep_on_failure,
+            require_lifecycle=plan.lifecycle_requested,
+            logger=logger,
         )
+        sandbox._bind_transfer(staging, session)
+        if launch.enforce:
+            await sandbox._apply_initial_network(launch)
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -405,6 +565,9 @@ class AsyncSandbox:
             keep_on_failure=keep_on_failure,
             control_plane=plane,
             transport=transport,
+            max_lifetime=max_lifetime,
+            on_timeout=on_timeout,
+            network=launch.stored_policy,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -412,11 +575,30 @@ class AsyncSandbox:
             )
         return sandbox
 
-    @classmethod
+    @class_method_variant("_class_connect")
     async def connect(
+        self, *, timeout: int | None = None, request_timeout: float | None = None
+    ) -> AsyncSandbox:
+        """Misma semántica que `sbx.connect()` de `Sandbox`: reabre este
+        handle y extiende el plazo (`AT_LEAST`). Devuelve `self`."""
+        info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
+        if info.state in TERMINAL_STATES:
+            raise terminal_state_error(info)
+        self._info = info
+        self._paused = False
+        if needs_explicit_resume(info):
+            await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
+            await self._refresher.refresh_all()
+        await self._wait_until_ready(terminate_on_failure=False)
+        await self._extend_after_readiness(timeout, request_timeout=request_timeout)
+        return self
+
+    @classmethod
+    async def _class_connect(
         cls,
         sandbox_id: str,
         *,
+        timeout: int | None = None,
         access_token: str | None = None,
         region: str | None = None,
         session: boto3.session.Session | None = None,
@@ -426,16 +608,21 @@ class AsyncSandbox:
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         persist: S3Prefix | None = None,
+        transfer: S3Staging | None = None,
+        logger: logging.Logger | None = None,
     ) -> Self:
-        """Misma semántica que `Sandbox.connect` (incluido `persist=`, que sólo
-        enlaza el prefijo con `name`)."""
+        """Misma semántica que `Sandbox.connect(sandbox_id)` (incluidos
+        `persist=`, que sólo enlaza el prefijo con `name`, `transfer=` y
+        `timeout`, que nunca acorta el plazo lógico)."""
         token = require_access_token(access_token)
-        plane = resolve_control_plane(control_plane, session, region)
         bound = None if persist is None else require_named_persist(persist)
+        staging = resolve_staging(transfer)
+        validate_staging_against_persist(staging, bound)
+        plane = resolve_control_plane(control_plane, session, region)
         info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
         if info.state in TERMINAL_STATES:
             raise terminal_state_error(info)
-        if info.state == "SUSPENDED" and not (info.idle and info.idle.auto_resume):
+        if needs_explicit_resume(info):
             await asyncio.to_thread(plane.resume_microvm, sandbox_id)
         sandbox = await cls._open(
             info,
@@ -447,8 +634,15 @@ class AsyncSandbox:
             ready_timeout=ready_timeout,
             reconnect_timeout=reconnect_timeout,
             terminate_on_failure=False,
+            logger=logger,
         )
         sandbox._persist = bound
+        sandbox._bind_transfer(staging, session)
+        try:
+            await sandbox._extend_after_readiness(timeout, request_timeout=None)
+        except BaseException:
+            await sandbox.close()
+            raise
         return sandbox
 
     @classmethod
@@ -465,15 +659,19 @@ class AsyncSandbox:
         reconnect_timeout: float,
         terminate_on_failure: bool,
         readiness: type[ReadinessPoll] = ReadinessPoll,
+        require_lifecycle: bool = False,
+        logger: logging.Logger | None = None,
     ) -> Self:
         """Misma política de limpieza que `Sandbox._open`: con
         `terminate_on_failure`, todo fallo previo al primer `agent_ready` que no
         sea `SandboxNotReadyException` termina el MicroVM. `readiness` es el
-        calendario del sondeo (`TakePoll` desde el pool)."""
+        calendario del sondeo (`TakePoll` desde el pool) y `require_lifecycle`
+        la puerta de agente M9 de un lanzamiento con bloque `lifecycle`."""
         refresher = AsyncTokenRefresher(
             TokenRefresher(
                 TokenStore(),
                 lambda ports: control_plane.create_auth_token(info.sandbox_id, ports),
+                logger=logger,
             )
         )
         sandbox: Self | None = None
@@ -488,15 +686,23 @@ class AsyncSandbox:
                 request_timeout=request_timeout,
                 ready_timeout=ready_timeout,
                 reconnect_timeout=reconnect_timeout,
+                logger=logger,
             )
-            await sandbox._wait_until_ready(
+            ready = await sandbox._wait_until_ready(
                 terminate_on_failure=terminate_on_failure, readiness=readiness
             )
+            if require_lifecycle and lifecycle_from_proto(ready) is None:
+                raise older_agent_error(info.template_name, str(ready.agent_version))
         except BaseException as exc:
             if sandbox is not None:
                 await sandbox.close()
             if terminate_on_failure and not isinstance(exc, SandboxNotReadyException):
-                await asyncio.to_thread(terminate_quietly, control_plane, info.sandbox_id)
+                await asyncio.to_thread(
+                    terminate_quietly,
+                    control_plane,
+                    info.sandbox_id,
+                    sandbox_logger(logger),
+                )
             raise
         refresher.start()
         return sandbox
@@ -509,52 +715,72 @@ class AsyncSandbox:
         template_version: str | None = None,
         states: Iterable[str] | None = None,
         metadata: Mapping[str, str] | None = None,
+        started_after: datetime | None = None,
+        order: ListOrder | None = None,
         region: str | None = None,
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
-    ) -> list[SandboxListItem]:
+    ) -> builtins.list[SandboxListItem]:
         """Misma semántica y mismo coste O(n) con `metadata` que `Sandbox.list`;
         las sondas de `Health` van por `grpc.aio`, una tras otra."""
-        plane = resolve_control_plane(control_plane, session, region)
-        wanted = None if metadata is None else validated_metadata(metadata)
-        wanted_states = states if wanted is None else list_states_for_metadata(states)
-
-        def collect() -> list[SandboxListItem]:
-            image_arn = plane.resolve_template_arn(template) if template else None
-            return list(
-                plane.list_microvms(
-                    image_arn=image_arn, image_version=template_version, states=wanted_states
-                )
-            )
-
-        candidates = await asyncio.to_thread(collect)
-        if wanted is None:
-            return candidates
-        return await cls._filter_by_metadata(
-            plane, candidates, wanted, transport or TransportSettings(), request_timeout
+        request = listing_request(
+            template=None,
+            template_version=template_version,
+            states=states,
+            metadata=metadata,
+            started_after=started_after,
+            order=order,
+            limit=None,
+            next_token=None,
         )
+        plane = resolve_control_plane(control_plane, session, region)
+        image_arn = (
+            await asyncio.to_thread(plane.resolve_template_arn, template) if template else None
+        )
+        io = AsyncListingIo(
+            plane, probe_metadata_async, transport or TransportSettings(), request_timeout
+        )
+        return await collect_listing(io, request, image_arn)
 
     @classmethod
-    async def _filter_by_metadata(
+    def paginate(
         cls,
-        plane: ControlPlane,
-        candidates: Iterable[SandboxListItem],
-        wanted: Mapping[str, str],
-        transport: TransportSettings,
-        request_timeout: float,
-    ) -> builtins.list[SandboxListItem]:
-        matched: builtins.list[SandboxListItem] = []
-        for item in candidates:
-            try:
-                info = await asyncio.to_thread(plane.get_microvm, item.sandbox_id)
-            except SandboxNotFoundException:
-                continue
-            read = await probe_metadata_async(plane, info, transport, request_timeout)
-            if metadata_matches(read, wanted):
-                matched.append(dataclasses.replace(item, metadata=read))
-        return matched
+        *,
+        template: str | None = None,
+        template_version: str | None = None,
+        states: Iterable[str] | None = None,
+        metadata: Mapping[str, str] | None = None,
+        started_after: datetime | None = None,
+        order: ListOrder | None = None,
+        limit: int | None = None,
+        next_token: str | None = None,
+        region: str | None = None,
+        session: boto3.session.Session | None = None,
+        control_plane: ControlPlane | None = None,
+        transport: TransportSettings | None = None,
+        request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
+    ) -> AsyncSandboxListPaginator:
+        """`Sandbox.paginate` con `next_items()` asíncrono. No es `async`:
+        construir el paginador valida sin hacer E/S."""
+        request = listing_request(
+            template=template,
+            template_version=template_version,
+            states=states,
+            metadata=metadata,
+            started_after=started_after,
+            order=order,
+            limit=limit,
+            next_token=next_token,
+        )
+        plane = resolve_control_plane(control_plane, session, region)
+        io = AsyncListingIo(
+            plane, probe_metadata_async, transport or TransportSettings(), request_timeout
+        )
+        return AsyncSandboxListPaginator(
+            io=io, request=request, resolve_template_arn=plane.resolve_template_arn
+        )
 
     # -------------------------------------------------------------- properties
 
@@ -602,6 +828,11 @@ class AsyncSandbox:
         return self._persist
 
     @property
+    def transfer(self) -> S3Staging | None:
+        """Misma semántica que `Sandbox.transfer`."""
+        return self._transfer
+
+    @property
     def last_restore(self) -> RestoreResult | None:
         """El resultado del restore automático de `create(persist=)`; `None` si
         no hubo (primera vida de ese `name`) o si el sandbox no persiste."""
@@ -630,9 +861,15 @@ class AsyncSandbox:
 
     @class_method_variant("_class_get_info")
     async def get_info(self) -> SandboxInfo:
+        """Misma semántica que `Sandbox.get_info`: un `Health` sólo si el
+        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo."""
         refreshed = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
-        self._info = dataclasses.replace(refreshed, metadata=self.metadata)
-        return self._info
+        if deadline_may_have_moved(refreshed.state, self._lifecycle):
+            await self._refresh_health()
+        self._info = dataclasses.replace(
+            refreshed, metadata=self.metadata, lifecycle=self._lifecycle
+        )
+        return with_guest_facts(self._info, self._guest)
 
     @classmethod
     async def _class_get_info(
@@ -650,10 +887,10 @@ class AsyncSandbox:
         info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
         if not read_metadata:
             return info
-        probed = await probe_metadata_async(
+        probed = await probe_health_async(
             plane, info, transport or TransportSettings(), request_timeout
         )
-        return dataclasses.replace(info, metadata=probed)
+        return with_guest_facts(info_with_health(info, probed), ready_guest_facts(probed))
 
     @class_method_variant("_class_pause")
     async def pause(self, *, wait: bool = True) -> bool:
@@ -691,12 +928,14 @@ class AsyncSandbox:
 
     @class_method_variant("_class_resume")
     async def resume(self, *, wait: bool = True) -> None:
-        """Misma semántica que `Sandbox.resume`."""
+        """Misma semántica que `Sandbox.resume` (incluida la reapertura de un
+        sandbox reanudado después de su plazo lógico)."""
         self._paused = False
         await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
         await self._refresher.refresh_all()
         if wait:
             await self._wait_until_ready(terminate_on_failure=False)
+            await self._extend_after_readiness(None, request_timeout=None)
 
     @classmethod
     async def _class_resume(
@@ -714,10 +953,54 @@ class AsyncSandbox:
         if wait:
             await wait_for_state_async(plane, sandbox_id, "RUNNING", timeout=ready_timeout)
 
-    async def is_running(self) -> bool:
-        response = await self._probe_health(
-            min(ReadinessPoll.MAX_RPC_TIMEOUT, self._request_timeout)
+    @class_method_variant("_class_set_timeout")
+    async def set_timeout(self, timeout: int, *, request_timeout: float | None = None) -> None:
+        """Misma semántica que `Sandbox.set_timeout` (`SetTimeout` EXACT)."""
+        seconds = validate_set_timeout_seconds(timeout)
+        await self._send_set_timeout(
+            TimeoutRequest("exact", seconds * 1000), request_timeout=request_timeout
         )
+
+    @classmethod
+    async def _class_set_timeout(
+        cls,
+        sandbox_id: str,
+        timeout: int,
+        *,
+        access_token: str | None = None,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        region: str | None = None,
+        session: boto3.session.Session | None = None,
+        control_plane: ControlPlane | None = None,
+        transport: TransportSettings | None = None,
+    ) -> None:
+        """Misma semántica que `Sandbox.set_timeout(sandbox_id, timeout)`:
+        nunca despierta un sandbox suspendido."""
+        token = require_access_token(access_token, operation="set_timeout(sandbox_id)")
+        seconds = validate_set_timeout_seconds(timeout)
+        plane = resolve_control_plane(control_plane, session, region)
+        info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
+        if info.state in TERMINAL_STATES:
+            raise terminal_state_error(info)
+        if info.state in SUSPENDED_STATES:
+            raise suspended_set_timeout_error(info.sandbox_id)
+        request = TimeoutRequest("exact", seconds * 1000)
+        try:
+            await set_timeout_once_async(
+                plane,
+                info,
+                access_token=token,
+                request=request,
+                transport=transport or TransportSettings(),
+                request_timeout=request_timeout,
+            )
+        except grpc.RpcError as exc:
+            raise translate_set_timeout_error(exc, request) from exc
+
+    async def is_running(self, *, request_timeout: float | None = None) -> bool:
+        """Como `Sandbox.is_running`."""
+        timeout = min(ReadinessPoll.MAX_RPC_TIMEOUT, self._resolve_request_timeout(request_timeout))
+        response = await self._probe_health(timeout)
         return response is not None and response.agent_ready
 
     async def get_health(self, *, request_timeout: float | None = None) -> SandboxHealth:
@@ -727,6 +1010,32 @@ class AsyncSandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    async def upload_url(
+        self,
+        path: str,
+        user: str | None = None,
+        use_signature_expiration: int | None = None,
+    ) -> AsyncUploadTicket:
+        """Misma semántica que `Sandbox.upload_url`."""
+        return await self._filesystem.upload_url(
+            path,
+            user=user,
+            expires_in=expires_in_from_signature_expiration(use_signature_expiration),
+        )
+
+    async def download_url(
+        self,
+        path: str,
+        user: str | None = None,
+        use_signature_expiration: int | None = None,
+    ) -> DownloadLink:
+        """Misma semántica que `Sandbox.download_url`."""
+        return await self._filesystem.download_url(
+            path,
+            user=user,
+            expires_in=expires_in_from_signature_expiration(use_signature_expiration),
+        )
 
     async def get_host(self, port: int) -> HostAccess:
         validated = validate_host_port(port)
@@ -742,16 +1051,141 @@ class AsyncSandbox:
         )
         return metrics_from_proto(response)
 
+    @class_method_variant("_class_get_metrics_history")
+    async def get_metrics_history(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        max_points: int | None = None,
+        request_timeout: float | None = None,
+    ) -> builtins.list[SandboxMetrics]:
+        """Misma semántica que `Sandbox.get_metrics_history`."""
+        request = metrics_history_request(start, end, max_points)
+        timeout = self._resolve_request_timeout(request_timeout)
+        try:
+            response = await self._translated_unary(
+                lambda: self._health.MetricsHistory(request, timeout=timeout)
+            )
+        except SandboxException as exc:
+            if is_history_unimplemented(exc):
+                raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
+            raise
+        return metrics_history_from_proto(response)
+
+    @classmethod
+    async def _class_get_metrics_history(
+        cls,
+        sandbox_id: str,
+        *,
+        access_token: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        max_points: int | None = None,
+        request_timeout: float | None = None,
+        region: str | None = None,
+        session: boto3.session.Session | None = None,
+        control_plane: ControlPlane | None = None,
+        transport: TransportSettings | None = None,
+    ) -> builtins.list[SandboxMetrics]:
+        """`AsyncSandbox.get_metrics_history(sandbox_id)`: la variante de clase
+        de `Sandbox` con `get-microvm` en un hilo y el canal por `grpc.aio`."""
+        validated_id = validate_sandbox_id(sandbox_id)
+        token = require_access_token(access_token, operation="get_metrics_history(sandbox_id)")
+        request = metrics_history_request(start, end, max_points)
+        plane = resolve_control_plane(control_plane, session, region)
+        info = await asyncio.to_thread(plane.get_microvm, validated_id)
+        ensure_history_readable(info)
+        timeout = DEFAULT_REQUEST_TIMEOUT_SECONDS if request_timeout is None else request_timeout
+        try:
+            response = await call_dedicated_health_async(
+                plane,
+                info,
+                transport or TransportSettings(),
+                token,
+                lambda stub: stub.MetricsHistory(request, timeout=timeout),
+            )
+        except SandboxException as exc:
+            if is_history_unimplemented(exc):
+                raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
+            raise
+        return metrics_history_from_proto(response)
+
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._deadline_trigger.cancel()
         self._notify_resumed()
         await self._filesystem._stop_watches()
         await self._refresher.stop()
         await self._channel.close(grace=None)
         if self._stream_channel is not None:
             await self._stream_channel.close(grace=None)
+
+    # ----------------------------------------------------------------- network
+
+    @class_method_variant("_class_update_network")
+    async def update_network(
+        self,
+        network: NetworkPolicy | NetworkOptions | None = None,
+        *,
+        allow_internet_access: bool | None = None,
+        request_timeout: float | None = None,
+    ) -> NetworkState:
+        """Misma semántica que `Sandbox.update_network`: sustituye la política
+        entera (`None` o `{}` es sin restricciones) y afecta a las conexiones
+        nuevas."""
+        policy = update_policy(network, allow_internet_access)
+        return await self._send_update_network(
+            policy, feature=UPDATE_NETWORK_FEATURE, request_timeout=request_timeout
+        )
+
+    @classmethod
+    async def _class_update_network(
+        cls,
+        sandbox_id: str,
+        network: NetworkPolicy | NetworkOptions | None = None,
+        *,
+        allow_internet_access: bool | None = None,
+        access_token: str | None = None,
+        region: str | None = None,
+        session: boto3.session.Session | None = None,
+        control_plane: ControlPlane | None = None,
+        transport: TransportSettings | None = None,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ) -> NetworkState:
+        """Misma semántica que `Sandbox.update_network(sandbox_id, network)`:
+        `connect()` → `update_network()` → `close()`, nunca `kill()`."""
+        policy = update_policy(network, allow_internet_access)
+        sandbox = await cls._class_connect(
+            sandbox_id,
+            access_token=access_token,
+            region=region,
+            session=session,
+            request_timeout=request_timeout,
+            control_plane=control_plane,
+            transport=transport,
+        )
+        try:
+            return await sandbox._send_update_network(
+                policy, feature=UPDATE_NETWORK_FEATURE, request_timeout=request_timeout
+            )
+        finally:
+            await sandbox.close()
+
+    async def get_network(self, *, request_timeout: float | None = None) -> NetworkState:
+        """Misma semántica que `Sandbox.get_network`."""
+        timeout = self._resolve_request_timeout(request_timeout)
+        try:
+            response = await self._call_unary(
+                lambda: self._network_stub.GetNetwork(
+                    network_pb2.GetNetworkRequest(), timeout=timeout
+                )
+            )
+        except grpc.RpcError as exc:
+            raise network_rpc_error(exc, feature=GET_NETWORK_FEATURE) from exc
+        return state_from_proto(response)
 
     # ------------------------------------------------------------ sub-clients
 
@@ -766,6 +1200,14 @@ class AsyncSandbox:
     @property
     def pty(self) -> AsyncPty:
         return self._pty
+
+    @property
+    def git(self) -> AsyncGit:
+        """El módulo git de E2B 2.x (`clone`, `status`, `commit`, `push`...)
+        sobre `commands.run`; se construye en el primer uso."""
+        if self._git is None:
+            self._git = AsyncGit(self._commands)
+        return self._git
 
     # -------------------------------------------------------------------- code
 
@@ -856,7 +1298,7 @@ class AsyncSandbox:
         try:
             await self.kill()
         except SandboxNotFoundException:
-            logger.info("sandbox %s ya no existía al reencarnar", self.sandbox_id)
+            self._logger.info("sandbox %s ya no existía al reencarnar", self.sandbox_id)
         return successor
 
     async def _bind_and_restore(
@@ -868,13 +1310,54 @@ class AsyncSandbox:
         try:
             self._last_restore = await self.restore_files(timeout=persist_timeout)
         except NotFoundException:
-            logger.info("sandbox %s: sin checkpoint en %s", self.sandbox_id, self._persist.uri)
+            self._logger.info(
+                "sandbox %s: sin checkpoint en %s", self.sandbox_id, self._persist.uri
+            )
             self._last_restore = None
         except BaseException:
             await self.close()
             if terminate_on_failure:
-                await asyncio.to_thread(terminate_quietly, self._control_plane, self.sandbox_id)
+                await asyncio.to_thread(
+                    terminate_quietly, self._control_plane, self.sandbox_id, self._logger
+                )
             raise
+
+    async def _apply_initial_network(self, launch: NetworkLaunch) -> None:
+        """Misma compuerta que `Sandbox._apply_initial_network`: cualquier
+        fallo cierra el cliente y termina el VM aunque haya `keep_on_failure`."""
+        try:
+            await self._enforce_launch_policy(launch)
+        except BaseException:
+            await self.close()
+            await asyncio.to_thread(
+                terminate_quietly, self._control_plane, self.sandbox_id, self._logger
+            )
+            raise
+
+    async def _enforce_launch_policy(self, launch: NetworkLaunch) -> None:
+        reported = readiness_enforcement(self._readiness_health)
+        refused = egress_gate_error(self.sandbox_id, reported, launch.feature)
+        if refused is not None:
+            raise refused
+        state = await self._send_update_network(
+            launch.policy, feature=launch.feature, request_timeout=None
+        )
+        refused = egress_gate_error(self.sandbox_id, state.enforcement, launch.feature)
+        if refused is not None:
+            raise refused
+
+    async def _send_update_network(
+        self, policy: NetworkPolicy, *, feature: str, request_timeout: float | None
+    ) -> NetworkState:
+        timeout = self._resolve_request_timeout(request_timeout)
+        request = network_pb2.UpdateNetworkRequest(policy=policy_to_proto(policy))
+        try:
+            response = await self._call_unary(
+                lambda: self._network_stub.UpdateNetwork(request, timeout=timeout)
+            )
+        except grpc.RpcError as exc:
+            raise network_rpc_error(exc, feature=feature) from exc
+        return state_from_proto(response)
 
     async def create_code_context(
         self,
@@ -884,6 +1367,8 @@ class AsyncSandbox:
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
     ) -> CodeContext:
+        """Misma semántica que `Sandbox.create_code_context`, lenguajes y
+        variante de imagen incluidos."""
         return await self._code_client.create_context(
             cwd=cwd, language=language, envs=envs, request_timeout=request_timeout
         )
@@ -905,6 +1390,28 @@ class AsyncSandbox:
 
     # ------------------------------------------------------------- internals
 
+    def _bind_logger(self, logger: logging.Logger | None) -> None:
+        """El `logger=` de `create(pool=...)`: la plaza se abrió sin él, así
+        que se reenruta aquí, incluido el refresco del JWE."""
+        if logger is None:
+            return
+        self._custom_logger = logger
+        self._logger = logger
+        self._refresher.route_logs_to(logger)
+
+    def _logger_or(self, fallback: logging.Logger) -> logging.Logger:
+        """El logger de un sub-cliente (`commands`, `files`, `pty`, código,
+        persistencia, transferencias): el del usuario si lo dio, el del
+        módulo del sub-cliente si no."""
+        return fallback if self._custom_logger is None else self._custom_logger
+
+    def _bind_transfer(
+        self, staging: S3Staging | None, session: boto3.session.Session | None
+    ) -> None:
+        """Misma semántica que `Sandbox._bind_transfer`."""
+        self._transfer = staging
+        self._session = session or control_plane_session(self._control_plane)
+
     def _current_jwe(self, port: int) -> str:
         jwe = self._refresher.store.jwe_for(port)
         if jwe is None:
@@ -919,17 +1426,21 @@ class AsyncSandbox:
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
-        logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
+        self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         await self._refresher.refresh_all()
         return await call()
 
-    async def _call_unary(self, call: Callable[[], Awaitable[T]]) -> T:
+    async def _call_unary(self, call: Callable[[], Awaitable[T]], *, reopen: bool = True) -> T:
         """Misma política que `Sandbox._call_unary`: reintento del 403 y, tras
-        un corte reconectable, una reconexión y un reintento."""
+        un corte reconectable, una reconexión y un reintento; `reopen=False`
+        es el `SetTimeout` de la propia reapertura tras la pausa del plazo."""
         seen_generation = self._resume_generation
+        seen_reopens = self._reopens
         try:
             return await self._call_unary_once(call)
         except grpc.RpcError as exc:
+            if reopen and await self._reopened_after_deadline_pause(exc, seen_reopens):
+                return await self._call_unary_once(call)
             if not self._is_reconnectable(exc):
                 raise
             reason = exc
@@ -1008,15 +1519,17 @@ class AsyncSandbox:
         status que no es un corte (persistencia)."""
         stub = self._stub(service, stream=stream)
         seen_generation = self._resume_generation
+        seen_reopens = self._reopens
         try:
             return await self._first_message_reminting(start, stub, allow_empty)
         except grpc.RpcError as exc:
-            if not (reconnect and self._is_reconnectable(exc)):
-                raise await self._open_failure(exc, filesystem, translate) from exc
             reason = exc
-        outcome = await self._reconnect(reason, seen_generation)
-        if not outcome.resumed:
-            raise self._reconnect_error(outcome, reason) from reason
+        if not await self._reopened_after_deadline_pause(reason, seen_reopens):
+            if not (reconnect and self._is_reconnectable(reason)):
+                raise await self._open_failure(reason, filesystem, translate) from reason
+            outcome = await self._reconnect(reason, seen_generation)
+            if not outcome.resumed:
+                raise self._reconnect_error(outcome, reason) from reason
         try:
             return await first_stream_message_async(start(stub), allow_empty=allow_empty)
         except grpc.RpcError as exc:
@@ -1040,7 +1553,7 @@ class AsyncSandbox:
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
-        logger.info(
+        self._logger.info(
             "el proxy rechazó el token del sandbox %s al abrir un stream; reacuñando",
             self.sandbox_id,
         )
@@ -1058,7 +1571,7 @@ class AsyncSandbox:
         try:
             return await self._probe_health(STREAM_PROBE_TIMEOUT_SECONDS) is not None
         except Exception:
-            logger.debug("Health no respondió tras un corte de stream", exc_info=True)
+            self._logger.debug("Health no respondió tras un corte de stream", exc_info=True)
             return False
 
     async def _state_after_reset(self) -> str | None:
@@ -1078,7 +1591,7 @@ class AsyncSandbox:
             return cast("health_pb2.HealthResponse", response)
         except grpc.RpcError as exc:
             if is_not_yet_reachable(exc):
-                logger.debug(
+                self._logger.debug(
                     "sandbox %s: Health aún no alcanzable (%s)", self.sandbox_id, rpc_status(exc)
                 )
                 return None
@@ -1090,8 +1603,9 @@ class AsyncSandbox:
         poll = readiness(timeout=self._ready_timeout)
         while True:
             response = await self._probe_health(poll.rpc_timeout())
-            if response is not None and response.agent_ready and response.kernel_ready:
+            if response is not None and health_ready(response):
                 self._record_health(response)
+                self._readiness_health = health_from_proto(response)
                 return response
             if poll.should_check_state():
                 await self._fail_if_terminal()
@@ -1101,9 +1615,11 @@ class AsyncSandbox:
 
     def _record_health(self, response: health_pb2.HealthResponse) -> None:
         self._metadata = metadata_from_health(response)
+        self._guest = guest_facts_from_health(response)
         if self._ready_uptime_ms is None:
             self._ready_uptime_ms = int(response.uptime_ms)
         self._warn_hardening(response)
+        self._record_lifecycle(lifecycle_from_proto(response))
         generation = int(response.resume_generation)
         if generation == self._resume_generation:
             return
@@ -1111,14 +1627,14 @@ class AsyncSandbox:
         self._paused = False
         self._notify_resumed()
         if response.kernel_state_lost:
-            logger.warning(
+            self._logger.warning(
                 "sandbox %s: un kernel perdió su estado en el resume %s",
                 self.sandbox_id,
                 generation,
             )
         offset = int(response.clock_offset_ms)
         if abs(offset) > CLOCK_OFFSET_WARN_MS:
-            logger.warning(
+            self._logger.warning(
                 "sandbox %s: desfase de reloj de %s ms tras el resume %s",
                 self.sandbox_id,
                 offset,
@@ -1135,14 +1651,148 @@ class AsyncSandbox:
         anomalies = int(response.hook_anomalies)
         if anomalies > 0 and self._anomalies_warned_generation != generation:
             self._anomalies_warned_generation = generation
-            logger.warning(HOOK_ANOMALIES_WARNING, self.sandbox_id, anomalies)
+            self._logger.warning(HOOK_ANOMALIES_WARNING, self.sandbox_id, anomalies)
         if not self._imds_warned and imds_open_warning_due(
             response,
             execution_role_arn=self._info.execution_role_arn,
             ready_uptime_ms=self._ready_uptime_ms,
         ):
             self._imds_warned = True
-            logger.warning(IMDS_OPEN_WARNING, self.sandbox_id)
+            self._logger.warning(IMDS_OPEN_WARNING, self.sandbox_id)
+
+    def _record_lifecycle(self, lifecycle: SandboxLifecycle | None) -> None:
+        self._lifecycle = lifecycle
+        self._deadline_trigger.arm(pause_trigger_delay(lifecycle, unix_ms_now()))
+
+    async def _refresh_health(self) -> None:
+        response = await self._probe_health(
+            min(ReadinessPoll.MAX_RPC_TIMEOUT, self._request_timeout)
+        )
+        if response is not None:
+            self._record_health(response)
+
+    async def _send_set_timeout(
+        self, request: TimeoutRequest, *, request_timeout: float | None, reopen: bool = True
+    ) -> None:
+        timeout = self._resolve_request_timeout(request_timeout)
+        try:
+            state = await self._call_unary(
+                lambda: self._lifecycle_stub.SetTimeout(request.to_proto(), timeout=timeout),
+                reopen=reopen,
+            )
+        except grpc.RpcError as exc:
+            raise translate_set_timeout_error(exc, request) from exc
+        self._record_lifecycle(lifecycle_from_state(state))
+
+    async def _extend_after_readiness(
+        self, requested: int | None, *, request_timeout: float | None
+    ) -> None:
+        request = connect_extension(self._lifecycle, requested, unix_ms_now())
+        if request is not None:
+            await self._send_set_timeout(request, request_timeout=request_timeout)
+
+    async def _on_deadline(self) -> None:
+        """Misma política que `Sandbox._on_deadline`: fallos registrados y
+        tragados, nunca un `Health` a un sandbox que no está `RUNNING`."""
+        try:
+            await self._suspend_if_expired()
+        except Exception as exc:
+            self._logger.warning(
+                "sandbox %s: el disparador del plazo falló (%s); la política de idle de la "
+                "plataforma lo suspenderá",
+                self.sandbox_id,
+                type(exc).__name__,
+            )
+
+    async def _suspend_if_expired(self) -> None:
+        if self._closed:
+            return
+        info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
+        if info.state != "RUNNING":
+            return
+        response = await self._call_unary_once(
+            lambda: self._health.Health(
+                health_pb2.HealthRequest(), timeout=ReadinessPoll.MAX_RPC_TIMEOUT
+            )
+        )
+        self._record_health(response)
+        if self._lifecycle is not None and self._lifecycle.phase == "expired":
+            await self._suspend_for_deadline()
+
+    async def _suspend_for_deadline(self) -> None:
+        generation = self._resume_generation
+        suspended = await asyncio.to_thread(self._control_plane.suspend_microvm, self.sandbox_id)
+        if suspended:
+            self._deadline_pause_generation = generation
+        self._logger.info(
+            "sandbox %s: plazo lógico vencido en modo pause; suspend-microvm %s",
+            self.sandbox_id,
+            "aceptado" if suspended else "ya no aplicaba",
+        )
+
+    async def _reopened_after_deadline_pause(self, exc: grpc.RpcError, seen_reopens: int) -> bool:
+        """Misma regla que `Sandbox._reopened_after_deadline_pause`: el primer
+        `sandbox_timeout` tras una suspensión por el plazo de este cliente,
+        ya reanudado, reabre con `SetTimeout` (`auto_resume_reopen`). Los
+        callers concurrentes esperan la misma tarea (`asyncio.shield`: la
+        cancelación de uno no la corta para los demás) y quien llega tras
+        una reapertura hecha desde que empezó su llamada reintenta sin otro
+        `SetTimeout`."""
+        if self._closed or not is_sandbox_timeout(exc):
+            return False
+        if self._reopens > seen_reopens:
+            return True
+        task = self._reopen_task
+        if task is None:
+            paused_generation = self._deadline_pause_generation
+            if paused_generation is None:
+                return False
+            task = asyncio.ensure_future(self._reopen_after_deadline_pause(paused_generation))
+            self._reopen_task = task
+            task.add_done_callback(self._forget_reopen_task)
+        return await asyncio.shield(task)
+
+    def _forget_reopen_task(self, task: asyncio.Task[bool]) -> None:
+        if self._reopen_task is task:
+            self._reopen_task = None
+
+    async def _reopen_after_deadline_pause(self, paused_generation: int) -> bool:
+        """El cuerpo de la reapertura; la marca sólo se consume cuando la
+        `resume_generation` ya avanzó (un `sandbox_timeout` anterior a la
+        congelación no la gasta) y el `SetTimeout` respondió."""
+        try:
+            await self._refresh_health()
+            if self._resume_generation <= paused_generation:
+                return False
+            request = auto_resume_reopen(
+                self._lifecycle,
+                paused_generation=paused_generation,
+                generation=self._resume_generation,
+                now_ms=unix_ms_now(),
+            )
+            if request is None:
+                self._consume_deadline_pause(paused_generation)
+                return False
+            await self._send_set_timeout(request, request_timeout=None, reopen=False)
+        except (grpc.RpcError, SandboxException) as failure:
+            self._logger.warning(
+                "sandbox %s: no se pudo reabrir tras la pausa del plazo (%s)",
+                self.sandbox_id,
+                type(failure).__name__,
+            )
+            return False
+        self._consume_deadline_pause(paused_generation)
+        self._reopens += 1
+        self._logger.info(
+            "sandbox %s: reanudado tras la pausa del plazo; plazo reabierto a %s s",
+            self.sandbox_id,
+            request.seconds,
+        )
+        return True
+
+    def _consume_deadline_pause(self, paused_generation: int) -> None:
+        if self._deadline_pause_generation == paused_generation:
+            self._deadline_pause_generation = None
 
     def _is_reconnectable(self, exc: grpc.RpcError) -> bool:
         return not self._closed and is_reconnectable(exc)
@@ -1211,7 +1861,7 @@ class AsyncSandbox:
             outcome = self._already_back(seen_generation)
             if outcome is not None:
                 return outcome
-            logger.info(
+            self._logger.info(
                 "sandbox %s: stream/unario cortado (%s); esperando al agente hasta %g s",
                 self.sandbox_id,
                 type(reason).__name__,
@@ -1273,7 +1923,7 @@ class AsyncSandbox:
         except SandboxNotFoundException as exc:
             return exc
         except SandboxException:
-            logger.debug("get-microvm falló durante la reconexión", exc_info=True)
+            self._logger.debug("get-microvm falló durante la reconexión", exc_info=True)
             return None
         return reconnect_failure(reason, info=self._info, wake=wake)
 
@@ -1284,7 +1934,7 @@ class AsyncSandbox:
     def _reconnected(self, response: Any, seen_generation: int, elapsed: float) -> ReconnectOutcome:
         self._record_health(response)
         generation = int(response.resume_generation)
-        logger.info(
+        self._logger.info(
             "sandbox %s: reconectado en %.1f s (resume_generation %s -> %s)",
             self.sandbox_id,
             elapsed,
@@ -1294,7 +1944,7 @@ class AsyncSandbox:
         return ReconnectOutcome(True, generation != seen_generation, generation)
 
     def _failed_reconnect(self, error: Exception) -> ReconnectOutcome:
-        logger.warning("sandbox %s: reconexión fallida: %s", self.sandbox_id, error)
+        self._logger.warning("sandbox %s: reconexión fallida: %s", self.sandbox_id, error)
         return ReconnectOutcome(False, False, self._resume_generation, error)
 
     async def _fail_if_terminal(self) -> None:

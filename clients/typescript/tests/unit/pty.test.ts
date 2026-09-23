@@ -1,6 +1,11 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, test } from "vitest";
-import { CommandExitError, InvalidArgumentError, NotFoundError } from "../../src/errors.js";
+import {
+  CommandExitError,
+  InvalidArgumentError,
+  NotFoundError,
+  TimeoutError,
+} from "../../src/errors.js";
 import { StreamErrorSchema } from "../../src/gen/rayito/v1/common_pb.js";
 import { PtyExitedSchema } from "../../src/gen/rayito/v1/pty_pb.js";
 import { CommandHandle } from "../../src/sandbox/commands.js";
@@ -12,6 +17,7 @@ import {
   validateShell,
 } from "../../src/sandbox/pty.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { ptySandboxTimeoutExited } from "./fake/lifecycle.js";
 import { Collector, createTestSandbox, readUntil, waitUntil } from "./helpers.js";
 
 describe("pure helpers", () => {
@@ -174,5 +180,18 @@ describe("sandbox.pty", () => {
     await handle.sendInput("echo x\n");
     expect(rayd.sessions).toBe(2);
     handle.disconnect();
+  });
+});
+
+describe("the sandbox deadline on PTY streams", () => {
+  test("PtyExited sandbox_timeout rejects wait() with TimeoutError and never polls Health", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    const handle = await sandbox.pty.create();
+    const probes = rayd.health.healthCalls.length;
+    rayd.pty.ptys.get(handle.pid)?.finish(ptySandboxTimeoutExited());
+    const outcome = await handle.wait().catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(TimeoutError);
+    expect(handle.error).toBe("sandbox_timeout");
+    expect(rayd.health.healthCalls).toHaveLength(probes);
   });
 });

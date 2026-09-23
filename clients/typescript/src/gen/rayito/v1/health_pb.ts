@@ -4,13 +4,17 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { LifecycleState } from "./lifecycle_pb.js";
+import { file_rayito_v1_lifecycle } from "./lifecycle_pb.js";
+import type { EgressEnforcement } from "./network_pb.js";
+import { file_rayito_v1_network } from "./network_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file rayito/v1/health.proto.
  */
 export const file_rayito_v1_health: GenFile = /*@__PURE__*/
-  fileDesc("ChZyYXlpdG8vdjEvaGVhbHRoLnByb3RvEglyYXlpdG8udjEiDwoNSGVhbHRoUmVxdWVzdCLiAgoOSGVhbHRoUmVzcG9uc2USEwoLYWdlbnRfcmVhZHkYASABKAgSFAoMa2VybmVsX3JlYWR5GAIgASgIEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSEQoJdXB0aW1lX21zGAQgASgEEhIKCnNhbmRib3hfaWQYBSABKAkSGQoRcmVzdW1lX2dlbmVyYXRpb24YBiABKAQSFwoPY2xvY2tfb2Zmc2V0X21zGAcgASgDEhkKEWtlcm5lbF9zdGF0ZV9sb3N0GAggASgIEhQKDGltZHNfYmxvY2tlZBgJIAEoCBIWCg5ob29rX2Fub21hbGllcxgKIAEoBBI5CghtZXRhZGF0YRgLIAMoCzInLnJheWl0by52MS5IZWFsdGhSZXNwb25zZS5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIQCg5NZXRyaWNzUmVxdWVzdCK5AQoPTWV0cmljc1Jlc3BvbnNlEhQKDGNwdV91c2VkX3BjdBgBIAEoARIWCg5tZW1fdXNlZF9ieXRlcxgCIAEoBBIXCg9tZW1fdG90YWxfYnl0ZXMYAyABKAQSFwoPZGlza191c2VkX2J5dGVzGAQgASgEEhgKEGRpc2tfdG90YWxfYnl0ZXMYBSABKAQSEQoJY3B1X2NvdW50GAYgASgNEhkKEXRpbWVzdGFtcF91bml4X21zGAcgASgDMpABCg1IZWFsdGhTZXJ2aWNlEj0KBkhlYWx0aBIYLnJheWl0by52MS5IZWFsdGhSZXF1ZXN0GhkucmF5aXRvLnYxLkhlYWx0aFJlc3BvbnNlEkAKB01ldHJpY3MSGS5yYXlpdG8udjEuTWV0cmljc1JlcXVlc3QaGi5yYXlpdG8udjEuTWV0cmljc1Jlc3BvbnNlYgZwcm90bzM");
+  fileDesc("ChZyYXlpdG8vdjEvaGVhbHRoLnByb3RvEglyYXlpdG8udjEiDwoNSGVhbHRoUmVxdWVzdCL5AwoOSGVhbHRoUmVzcG9uc2USEwoLYWdlbnRfcmVhZHkYASABKAgSFAoMa2VybmVsX3JlYWR5GAIgASgIEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSEQoJdXB0aW1lX21zGAQgASgEEhIKCnNhbmRib3hfaWQYBSABKAkSGQoRcmVzdW1lX2dlbmVyYXRpb24YBiABKAQSFwoPY2xvY2tfb2Zmc2V0X21zGAcgASgDEhkKEWtlcm5lbF9zdGF0ZV9sb3N0GAggASgIEhQKDGltZHNfYmxvY2tlZBgJIAEoCBIWCg5ob29rX2Fub21hbGllcxgKIAEoBBI5CghtZXRhZGF0YRgLIAMoCzInLnJheWl0by52MS5IZWFsdGhSZXNwb25zZS5NZXRhZGF0YUVudHJ5EiwKCWxpZmVjeWNsZRgMIAEoCzIZLnJheWl0by52MS5MaWZlY3ljbGVTdGF0ZRI4ChJlZ3Jlc3NfZW5mb3JjZW1lbnQYDSABKA4yHC5yYXlpdG8udjEuRWdyZXNzRW5mb3JjZW1lbnQSEQoJY3B1X2NvdW50GA4gASgNEhoKEm1lbW9yeV90b3RhbF9ieXRlcxgPIAEoBBovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiEAoOTWV0cmljc1JlcXVlc3Qi0gEKD01ldHJpY3NSZXNwb25zZRIUCgxjcHVfdXNlZF9wY3QYASABKAESFgoObWVtX3VzZWRfYnl0ZXMYAiABKAQSFwoPbWVtX3RvdGFsX2J5dGVzGAMgASgEEhcKD2Rpc2tfdXNlZF9ieXRlcxgEIAEoBBIYChBkaXNrX3RvdGFsX2J5dGVzGAUgASgEEhEKCWNwdV9jb3VudBgGIAEoDRIZChF0aW1lc3RhbXBfdW5peF9tcxgHIAEoAxIXCg9tZW1fY2FjaGVfYnl0ZXMYCCABKAQiVwoVTWV0cmljc0hpc3RvcnlSZXF1ZXN0EhUKDXN0YXJ0X3VuaXhfbXMYASABKAMSEwoLZW5kX3VuaXhfbXMYAiABKAMSEgoKbWF4X3BvaW50cxgDIAEoDSJdChZNZXRyaWNzSGlzdG9yeVJlc3BvbnNlEisKB3NhbXBsZXMYASADKAsyGi5yYXlpdG8udjEuTWV0cmljc1Jlc3BvbnNlEhYKDm9sZGVzdF91bml4X21zGAIgASgDMucBCg1IZWFsdGhTZXJ2aWNlEj0KBkhlYWx0aBIYLnJheWl0by52MS5IZWFsdGhSZXF1ZXN0GhkucmF5aXRvLnYxLkhlYWx0aFJlc3BvbnNlEkAKB01ldHJpY3MSGS5yYXlpdG8udjEuTWV0cmljc1JlcXVlc3QaGi5yYXlpdG8udjEuTWV0cmljc1Jlc3BvbnNlElUKDk1ldHJpY3NIaXN0b3J5EiAucmF5aXRvLnYxLk1ldHJpY3NIaXN0b3J5UmVxdWVzdBohLnJheWl0by52MS5NZXRyaWNzSGlzdG9yeVJlc3BvbnNlYgZwcm90bzM", [file_rayito_v1_lifecycle, file_rayito_v1_network]);
 
 /**
  * @generated from message rayito.v1.HealthRequest
@@ -104,6 +108,38 @@ export type HealthResponse = Message<"rayito.v1.HealthResponse"> & {
    * @generated from field: map<string, string> metadata = 11;
    */
   metadata: { [key: string]: string };
+
+  /**
+   * Plazo lógico (ADR-011). Ausente en agentes anteriores a M9: es la
+   * puerta de capacidad del SDK. Fase UNMANAGED cuando el runHookPayload no
+   * pidió lifecycle. No es secreto (lo lee cualquiera que llegue a Health).
+   *
+   * @generated from field: rayito.v1.LifecycleState lifecycle = 12;
+   */
+  lifecycle?: LifecycleState | undefined;
+
+  /**
+   * Egress en el guest verificado por la sonda de rutas de rayd (ADR-012).
+   * UNSPECIFIED en agentes anteriores a M9 (el SDK lo trata como NONE).
+   *
+   * @generated from field: rayito.v1.EgressEnforcement egress_enforcement = 13;
+   */
+  egressEnforcement: EgressEnforcement;
+
+  /**
+   * Vista del guest, no el tamaño de la imagen: CPUs que `rayd` puede usar
+   * (`available_parallelism`) y `MemTotal` de `/proc/meminfo` en bytes. 0 si
+   * no se pudieron leer o en un agente anterior a M9. No es secreto: el
+   * propio sandbox lo lee de `/proc`.
+   *
+   * @generated from field: uint32 cpu_count = 14;
+   */
+  cpuCount: number;
+
+  /**
+   * @generated from field: uint64 memory_total_bytes = 15;
+   */
+  memoryTotalBytes: bigint;
 };
 
 /**
@@ -164,6 +200,14 @@ export type MetricsResponse = Message<"rayito.v1.MetricsResponse"> & {
    * @generated from field: int64 timestamp_unix_ms = 7;
    */
   timestampUnixMs: bigint;
+
+  /**
+   * `Cached` de `/proc/meminfo` (page cache) en bytes; 0 en un agente
+   * anterior a M9.
+   *
+   * @generated from field: uint64 mem_cache_bytes = 8;
+   */
+  memCacheBytes: bigint;
 };
 
 /**
@@ -172,6 +216,66 @@ export type MetricsResponse = Message<"rayito.v1.MetricsResponse"> & {
  */
 export const MetricsResponseSchema: GenMessage<MetricsResponse> = /*@__PURE__*/
   messageDesc(file_rayito_v1_health, 3);
+
+/**
+ * Límites inclusivos en milisegundos Unix del reloj de pared del guest.
+ * `start_unix_ms = 0`: desde la muestra más antigua; `end_unix_ms = 0`: sin
+ * límite superior; `max_points = 0`: sin reducción. Un límite negativo, o
+ * `start_unix_ms > end_unix_ms` con `end_unix_ms != 0`, es INVALID_ARGUMENT.
+ *
+ * @generated from message rayito.v1.MetricsHistoryRequest
+ */
+export type MetricsHistoryRequest = Message<"rayito.v1.MetricsHistoryRequest"> & {
+  /**
+   * @generated from field: int64 start_unix_ms = 1;
+   */
+  startUnixMs: bigint;
+
+  /**
+   * @generated from field: int64 end_unix_ms = 2;
+   */
+  endUnixMs: bigint;
+
+  /**
+   * @generated from field: uint32 max_points = 3;
+   */
+  maxPoints: number;
+};
+
+/**
+ * Describes the message rayito.v1.MetricsHistoryRequest.
+ * Use `create(MetricsHistoryRequestSchema)` to create a new message.
+ */
+export const MetricsHistoryRequestSchema: GenMessage<MetricsHistoryRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_health, 4);
+
+/**
+ * Muestras en orden ascendente de `timestamp_unix_ms`. En cada muestra
+ * `cpu_used_pct` es la media desde la muestra anterior (≈ 5 s), no la
+ * ventana de 100 ms de `Metrics`. Con `max_points` cada punto es la última
+ * muestra de su tramo, con `cpu_used_pct` promediado en el tramo.
+ * `oldest_unix_ms` es la muestra más antigua retenida (0 si no hay ninguna).
+ *
+ * @generated from message rayito.v1.MetricsHistoryResponse
+ */
+export type MetricsHistoryResponse = Message<"rayito.v1.MetricsHistoryResponse"> & {
+  /**
+   * @generated from field: repeated rayito.v1.MetricsResponse samples = 1;
+   */
+  samples: MetricsResponse[];
+
+  /**
+   * @generated from field: int64 oldest_unix_ms = 2;
+   */
+  oldestUnixMs: bigint;
+};
+
+/**
+ * Describes the message rayito.v1.MetricsHistoryResponse.
+ * Use `create(MetricsHistoryResponseSchema)` to create a new message.
+ */
+export const MetricsHistoryResponseSchema: GenMessage<MetricsHistoryResponse> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_health, 5);
 
 /**
  * Estado del agente y del sandbox. Health es el único RPC que no exige
@@ -196,6 +300,19 @@ export const HealthService: GenService<{
     methodKind: "unary";
     input: typeof MetricsRequestSchema;
     output: typeof MetricsResponseSchema;
+  },
+  /**
+   * Serie de métricas que `rayd` muestrea cada 5 s desde `/run`, en un
+   * anillo de 5760 muestras (8 h, el techo de vida del MicroVM). Exige
+   * `x-access-token`, como `Metrics`. Mientras la VM está suspendida no se
+   * muestrea: la serie tiene un hueco, como la de E2B con un sandbox pausado.
+   *
+   * @generated from rpc rayito.v1.HealthService.MetricsHistory
+   */
+  metricsHistory: {
+    methodKind: "unary";
+    input: typeof MetricsHistoryRequestSchema;
+    output: typeof MetricsHistoryResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_rayito_v1_health, 0);

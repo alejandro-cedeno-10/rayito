@@ -98,6 +98,7 @@ class AsyncSandboxPool:
         self._config = config
         self._backend: PoolBackend = backend if backend is not None else InMemoryPoolBackend()
         self._plane = resolve_control_plane(control_plane, session, region)
+        self._session = session
         self._transport = transport or TransportSettings()
         self._monotonic = monotonic
         self._now = now
@@ -123,6 +124,12 @@ class AsyncSandboxPool:
     @property
     def config(self) -> PoolConfig:
         return self._config
+
+    @property
+    def session(self) -> boto3.session.Session | None:
+        """La sesión boto3 del pool: con ella firman sus plazas las URLs y
+        las transferencias enrutadas de `transfer=S3Staging(...)`."""
+        return self._session
 
     @property
     def backend(self) -> PoolBackend:

@@ -36,16 +36,17 @@ with SandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
     sbx.kill()
 ```
 
-Si vienes del SDK de E2B, `rayito.e2b` es un drop-in a nivel de import: lo
-que Lambda MicroVMs no puede hacer lanza `UnimplementedError` en vez de
-aproximarse en silencio (`docs/site/docs/e2b-compat.md`).
+Si vienes del SDK de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
+son un drop-in a nivel de import de E2B 2.x: lo que Lambda MicroVMs no puede
+hacer lanza `UnimplementedError` en vez de aproximarse en silencio
+(`docs/site/docs/e2b-compat.md`). Desde M9 el shim exige una imagen M9.
 
 ```python
 from rayito.e2b import Sandbox          # antes: from e2b_code_interpreter import Sandbox
 
-with Sandbox(timeout=300, metadata={"run": "42"}) as sbx:
+with Sandbox.create(timeout=300, metadata={"run": "42"}) as sbx:
     print(sbx.run_code("1 + 1").text)
-    sbx.set_timeout(600)                # UnimplementedError: no existe UpdateMicrovm
+    sbx.set_timeout(600)                # SetTimeout: rayd mueve el plazo (tope max_lifetime, 3600 s por defecto)
 ```
 
 ## Cómo funciona
@@ -70,7 +71,8 @@ tu proceso (Python / TypeScript)                AWS, tu cuenta
   como uid 1000. `rayd` corre como root y es el único que toca los hooks de
   Lambda. Con `run_code(code, language="bash")` la celda va a un kernel bash
   que la variante de imagen `rayito-base-poly` arranca en la primera celda
-  (`docs/site/docs/kernels.md`); `javascript` queda reservado como nombre.
+  (`docs/site/docs/kernels.md`); desde M9 esa misma variante sirve
+  `language="javascript"` y `"typescript"` con el kernel de Deno.
 - **Desde qué lenguajes.** Hoy, Python y TypeScript. Cualquier otro lenguaje
   con un cliente gRPC puede hablar con `rayd` generando el cliente desde
   `proto/rayito/v1/`: el contrato es la fuente de verdad y los SDKs añaden
@@ -199,9 +201,9 @@ except DiskFullException:               # reserva de 256 MiB comprobada antes de
 Un MicroVM vive como mucho 8 h y `kill()` borra su disco. Con `persist=`,
 `rayd` guarda el `HOME` del usuario en tu bucket de S3 (como root, con el
 execution role; el código del sandbox sigue sin ver IMDS en `rayito-base-caps`)
-y lo restaura en el sandbox siguiente. `reincarnate()` es la respuesta al
-`set_timeout` de E2B: checkpoint, VM nueva con las mismas opciones, restore y
-`kill()` de la vieja. Sobreviven los ficheros; no las variables del kernel ni
+y lo restaura en el sandbox siguiente. `reincarnate()` es la respuesta a lo
+que `set_timeout` no puede dar, pasar de `max_lifetime` (ADR-011): checkpoint,
+VM nueva con las mismas opciones, restore y `kill()` de la vieja. Sobreviven los ficheros; no las variables del kernel ni
 los procesos. Detalles, lista de exclusión e IAM en
 [`docs/site/docs/persistence.md`](docs/site/docs/persistence.md).
 
@@ -215,6 +217,43 @@ sbx = Sandbox.create(
 )
 sbx.checkpoint_files(exclude=["data/raw"])          # home.tar.gz + manifest.json
 sbx = sbx.reincarnate()                               # 8 h frescas, mismo HOME
+```
+
+## Novedades de 0.3.0: paridad con E2B (M9)
+
+Rayito 0.3.0 cierra la tabla de paridad con E2B 2.x (113 filas,
+[`docs/site/docs/e2b-parity.md`](docs/site/docs/e2b-parity.md)). Todo está en
+el árbol con tests unitarios y **aceptado contra AWS real** el 2026-09-24
+(`MILESTONES.md`, M9); notas de la release en
+[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md).
+
+| Feature | Qué hace | Imagen | Documentación |
+|---|---|---|---|
+| **Plazo del servidor** (ADR-011) | `create(timeout=, max_lifetime=, on_timeout="kill" \| "pause")`: `rayd` hace cumplir el plazo aunque tu proceso muera; `set_timeout()` lo mueve y `connect(timeout=)` lo alarga | M9 | [`lifecycle.md`](docs/site/docs/lifecycle.md) |
+| **Transferencias por S3** (ADR-010) | `files.upload_url()`/`download_url()` firmadas con tus credenciales (`rayd` no guarda ninguna); con `transfer=S3Staging(...)` los ficheros grandes de `files.write`/`read` van por S3 (55–106 MB/s medidos frente a 0,68 MB/s por el proxy); `gzip=`, `metadata=` | M9 | [`files.md`](docs/site/docs/files.md) |
+| **Kernels JavaScript y TypeScript** (ADR-013) | `run_code(code, language="javascript" \| "typescript")` con el kernel de Deno 2.9.7 | `rayito-base-poly` | [`kernels.md`](docs/site/docs/kernels.md) |
+| **Red saliente** (ADR-012) | `network={"allow_out", "deny_out", "egress_proxy"}`, `allow_internet_access=False` y `update_network()` con la semántica de E2B, aplicados en el guest; en otra imagen fallan cerrados | `rayito-base-caps` | [`network.md`](docs/site/docs/network.md) |
+| **Métricas y listado** | `get_metrics_history()` (una muestra cada 5 s, 8 h), `Sandbox.paginate()` con `order`, `started_after`, `states` y un cursor reanudable | M9 | [`observability.md`](docs/site/docs/observability.md) |
+| **Git** | `sbx.git`: la API git de E2B (`clone`, `status`, `commit`, `push`, `pull`...) sobre `commands.run` | M9 | [`git.md`](docs/site/docs/git.md) |
+| **CLI** | `rayito sandbox create \| connect \| exec \| metrics`, con el access token sólo por fichero o entorno | M9 | [`cli.md`](docs/site/docs/cli.md) |
+| **Shims de E2B 2.x** | `rayito.e2b` (Python) y la nueva entrada `rayito/e2b` (TypeScript): cambia un import | M9 | [`e2b-compat.md`](docs/site/docs/e2b-compat.md) |
+
+Qué imagen necesita cada cosa y el IAM que añade M9 (sólo para las
+transferencias): [`docs/site/docs/images.md`](docs/site/docs/images.md).
+
+```python
+import requests
+from rayito import S3Staging, Sandbox
+
+staging = S3Staging("amzn-s3-demo-bucket")             # o RAYITO_TRANSFER_BUCKET
+with Sandbox.create(timeout=600, max_lifetime=3600, transfer=staging) as sbx:
+    ticket = sbx.files.upload_url("/home/user/in.csv")  # PUT desde cualquier cliente
+    with open("in.csv", "rb") as source:
+        requests.put(ticket, data=source, headers=ticket.headers).raise_for_status()
+    ticket.wait()
+    sbx.set_timeout(1800)
+    link = sbx.files.download_url("/home/user/in.csv", expires_in=600)
+    print(sbx.get_metrics_history(max_points=12))
 ```
 
 ## Verificar una release

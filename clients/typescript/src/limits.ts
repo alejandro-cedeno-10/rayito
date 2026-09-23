@@ -74,3 +74,45 @@ export const PERSIST_EXCLUDE_MAX = 64 as const;
 export const S3_BUCKET_NAME_MIN = 3 as const;
 export const S3_BUCKET_NAME_MAX = 63 as const;
 export const DEFAULT_PERSIST_TIMEOUT_SECONDS = 600 as const;
+
+export const EGRESS_MAX_ENTRIES_PER_LIST = 256 as const;
+export const EGRESS_MAX_HOSTNAME_ENTRIES = 64 as const;
+export const EGRESS_HOSTNAME_MAX_CHARS = 253 as const;
+export const EGRESS_PROXY_CREDENTIAL_MAX_BYTES = 255 as const;
+
+export const LIFECYCLE_CAP_MARGIN_SECONDS = 60 as const;
+export const LIFECYCLE_MIN_MAX_LIFETIME_SECONDS = 120 as const;
+export const LIFECYCLE_RESUME_GRACE_SECONDS = 30 as const;
+export const LIFECYCLE_AUTO_RESUME_MIN_SECONDS = 300 as const;
+export const LIFECYCLE_MIN_TIMEOUT_SECONDS = 1 as const;
+export const LIFECYCLE_TIMEOUT_EXIT_CODE = 124 as const;
+
+export const TRANSFER_DEFAULT_PREFIX = "rayito-transfer" as const;
+export const TRANSFER_DEFAULT_EXPIRES_IN_SECONDS = 3600 as const;
+export const TRANSFER_DEFAULT_MAX_EXPIRES_IN_SECONDS = 86400 as const;
+export const TRANSFER_PRESIGN_MAX_SECONDS = 604800 as const;
+export const TRANSFER_DEFAULT_THRESHOLD_BYTES = 8388608 as const;
+export const TRANSFER_THRESHOLD_MIN_BYTES = 1048576 as const;
+export const TRANSFER_DEFAULT_MULTIPART_THRESHOLD_BYTES = 5368709120 as const;
+export const TRANSFER_MULTIPART_THRESHOLD_MIN_BYTES = 16777216 as const;
+export const TRANSFER_SINGLE_PUT_MAX_BYTES = 5368709120 as const;
+export const TRANSFER_PART_SIZE_MIN_BYTES = 8388608 as const;
+export const TRANSFER_MAX_PARTS = 1000 as const;
+
+export const TRANSFER_MAX_ACTIVE = 16 as const;
+export const TRANSFER_MAX_RUNNING = 2 as const;
+export const TRANSFER_RETAINED_MAX = 64 as const;
+export const TRANSFER_RETAINED_SECONDS = 1800 as const;
+export const TRANSFER_PROBE_BUDGET_MS = 2000 as const;
+export const TRANSFER_POLL_FAST_INTERVAL_MS = 1000 as const;
+export const TRANSFER_POLL_SLOW_INTERVAL_MS = 5000 as const;
+export const TRANSFER_POLL_FAST_WINDOW_SECONDS = 600 as const;
+export const TRANSFER_URL_MAX_BYTES = 8192 as const;
+export const TRANSFER_INTERNAL_EXPIRES_IN_SECONDS = 900 as const;
+export const TRANSFER_CONNECT_TIMEOUT_MS = 5000 as const;
+export const TRANSFER_IDLE_TIMEOUT_MS = 30000 as const;
+
+export const METADATA_MAX_BYTES = 4000 as const;
+export const METADATA_MAX_KEYS = 64 as const;
+export const METADATA_XATTR_PREFIX = "user.rayito." as const;
+export const COMPRESSION_OPT_IN_HEADER = "rayito-compress" as const;

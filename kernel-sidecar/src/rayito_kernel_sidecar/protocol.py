@@ -21,6 +21,7 @@ MAX_MIME_VALUE_BYTES: Final = 8 * 1024 * 1024
 MAX_RESULT_BYTES: Final = 12 * 1024 * 1024
 MAX_EVENT_LINE_BYTES: Final = 15 * 1024 * 1024
 OMITTED_MIME: Final = "rayito/omitted"
+PLAIN_TEXT_MIME: Final = "text/plain"
 
 OPS: Final = frozenset(
     {
@@ -173,6 +174,14 @@ def split_text_chunks(text: str, max_bytes: int = MAX_STREAM_CHUNK_BYTES) -> lis
 
 def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
+
+
+def strip_plain_text_ansi(mime: Mapping[str, str]) -> dict[str, str]:
+    """A copy of a serialised bundle whose ``text/plain`` has ANSI escape
+    sequences removed; every other entry is untouched."""
+    return {
+        key: strip_ansi(value) if key == PLAIN_TEXT_MIME else value for key, value in mime.items()
+    }
 
 
 def serialise_mime(

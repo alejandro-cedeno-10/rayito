@@ -2,34 +2,24 @@
 //! gRPC metadata travels as HTTP/2 headers, so the check runs on the raw
 //! request before tonic decodes anything; a rejected call gets a gRPC
 //! `UNAUTHENTICATED` status without touching the service. The rejected
-//! request body is still read to its end (bounded) before answering: a
-//! trailers-only response on a half-open HTTP/2 stream makes hyper reset the
-//! stream, and the AWS proxy forwards that reset to the client as
-//! `RST_STREAM(CANCEL)`, which grpc surfaces as `CANCELLED` instead of the
-//! intended status (measured 2026-09-15, `AWS_API_NOTES.md` §16 Q29).
+//! request body is still read to its end (bounded) before answering
+//! (`reject::drain_rejected_body`).
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use bytes::Buf;
 use http::HeaderMap;
 use http_body::Body;
-use http_body_util::BodyExt;
 use rayd_core::auth::{ACCESS_TOKEN_METADATA_KEY, AuthError, requires_access_token};
 use rayd_core::session::SandboxSession;
 use tonic::Status;
 use tower::{Layer, Service};
 
-/// A rejected unary or server-stream request carries one small message; a
-/// client that keeps streaming past these bounds is answered anyway and the
-/// resulting reset is its own problem.
-pub const REJECTED_BODY_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
-pub const REJECTED_BODY_DRAIN_MAX_BYTES: usize = 1 << 20;
+use super::reject::drain_rejected_body;
 
 #[derive(Clone)]
 pub struct AccessTokenLayer {
@@ -125,32 +115,4 @@ fn presented_secret(headers: &HeaderMap) -> Result<Option<Vec<u8>>, Status> {
 fn rejected(rpc: &str, error: &AuthError) -> Status {
     tracing::warn!(rpc, reason = %error, "rpc rejected");
     Status::unauthenticated(error.to_string())
-}
-
-async fn drain_rejected_body<B>(body: B)
-where
-    B: Body + Send,
-{
-    let drained =
-        tokio::time::timeout(REJECTED_BODY_DRAIN_TIMEOUT, read_to_end_bounded(body)).await;
-    if drained.is_err() {
-        tracing::debug!(
-            timeout_ms = REJECTED_BODY_DRAIN_TIMEOUT.as_millis(),
-            "rejected request body still open; answering anyway"
-        );
-    }
-}
-
-async fn read_to_end_bounded<B>(body: B)
-where
-    B: Body + Send,
-{
-    let mut body = Box::pin(body);
-    let mut seen = 0usize;
-    while let Some(Ok(frame)) = body.frame().await {
-        seen += frame.data_ref().map_or(0, Buf::remaining);
-        if seen > REJECTED_BODY_DRAIN_MAX_BYTES {
-            return;
-        }
-    }
 }

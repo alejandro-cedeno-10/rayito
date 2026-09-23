@@ -13,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import boto3
 import pytest
 
 from rayito import (
@@ -22,8 +23,10 @@ from rayito import (
     JsonFilePoolBackend,
     PoolClosedException,
     PoolConfig,
+    S3Staging,
 )
 from rayito._payload import access_token_sha256
+from rayito._s3 import S3Gateway
 from rayito._transport import ACCESS_TOKEN_KEY
 from rayito.exceptions import (
     AuthenticationException,
@@ -94,6 +97,7 @@ async def make_pool(
 
     def factory(size: int = 2, **overrides: Any) -> AsyncSandboxPool:
         backend = overrides.pop("backend", None)
+        session = overrides.pop("session", None)
         config = PoolConfig(
             size=size,
             template=IMAGE_ARN,
@@ -105,6 +109,7 @@ async def make_pool(
         pool = AsyncSandboxPool(
             config,
             backend=backend,
+            session=session,
             control_plane=plane,
             transport=transport,
             monotonic=clock,
@@ -618,6 +623,31 @@ async def test_create_with_pool_is_sugar_for_take(make_pool: PoolFactory) -> Non
         await sandbox.kill()
     with pytest.raises(InvalidArgumentException, match="`envs`"):
         await AsyncSandbox.create(pool=pool, envs={"A": "1"})
+
+
+async def test_create_with_pool_signs_transfers_with_the_pool_session(
+    make_pool: PoolFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Las URLs y las transferencias enrutadas de una plaza se firman con la
+    sesión boto3 del pool, no con la cadena por defecto."""
+    session = boto3.session.Session(region_name="us-east-1")
+    built: list[object] = []
+
+    def from_session(cls: type[S3Gateway], given: object, region: str) -> S3Gateway:
+        built.append(given)
+        return cls(None)
+
+    monkeypatch.setattr("rayito._s3.S3Gateway.from_session", classmethod(from_session))
+    pool = await make_pool(size=1, session=session).start()
+    await wait_idle(pool, 1)
+    staging = S3Staging(bucket="amzn-s3-demo-bucket")
+
+    sandbox = await AsyncSandbox.create(pool=pool, transfer=staging)
+    try:
+        await sandbox._transfers._gateway_for(staging)
+        assert built == [session]
+    finally:
+        await sandbox.kill()
 
 
 @pytest.mark.parametrize(

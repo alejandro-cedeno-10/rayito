@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from rayito import __version__
 from rayito.cli import _compat
 
 LIMITS_MD = Path(__file__).resolve().parents[5] / "docs" / "site" / "docs" / "limits.md"
@@ -75,3 +76,19 @@ def test_row_series_are_major_minor() -> None:
     for row in _compat.COMPATIBILITY:
         assert re.fullmatch(r"\d+\.\d+", row.sdk_series)
         _compat.parse_semver(row.min_agent_version)
+
+
+@pytest.mark.parametrize("version", ["0.3.0", "0.3.1", "0.3.9-rc1", __version__])
+def test_current_and_upcoming_sdk_series_have_a_row(version: str) -> None:
+    """`rayito doctor` da `FAIL` sin fila para la serie del SDK: la serie 0.3
+    (M9) y la del `__version__` instalado tienen que estar en la tabla."""
+    series = _compat.series_of(_compat.parse_semver(version))
+    row = _compat.row_for(series)
+    assert row is not None, f"sin fila de compatibilidad para {series}"
+    assert _compat.assess(version, row.min_agent_version).status == "OK"
+
+
+def test_series_0_3_requires_the_m9_agent() -> None:
+    row = _compat.row_for("0.3")
+    assert row is not None and row.min_agent_version == "0.3.0"
+    assert _compat.assess("0.3.0", "0.2.0").status == "FAIL"

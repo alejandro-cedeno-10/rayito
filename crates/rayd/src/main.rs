@@ -1,39 +1,52 @@
 //! Entry point: parses the flags, reads the guest's capabilities (and
-//! installs the IMDS block when `CAP_NET_ADMIN` allows it), wires the
+//! installs the IMDS block when `CAP_NET_ADMIN` allows it, which also
+//! decides whether the egress manager can enforce, ADR-012), wires the
 //! domain, the process and PTY managers over one shared registry and one
 //! shared output budget, the code manager with its kernel sidecar, the
 //! persistence manager over the S3 store (execution role by `IMDSv2`) and
-//! the tar archiver, the suspend broadcast and the metrics probe to the
-//! gRPC and hooks listeners on `0.0.0.0`, and stops both on SIGTERM,
-//! Ctrl-C or the `/terminate` hook.
+//! the tar archiver, the presigned-transfer manager over its credential-free
+//! HTTPS client (ADR-010), the suspend broadcast, the metrics probe and the 5 s
+//! metrics sampler with its history ring and the logical deadline's watcher
+//! thread to the gRPC and hooks listeners on `0.0.0.0`, and stops both on
+//! SIGTERM, Ctrl-C, the `/terminate` hook or a kill-mode deadline, which
+//! exits with code 124 (ADR-011).
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
 use rayd::adapters::{
-    CredentialsSource, IdentitySwitch, ImdsBlock, ImdsState, PlatformMetricsProbe, S3ObjectStore,
-    SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM, UserConnectProbe,
-    detect_guest_capabilities, detect_spawn_platform, inherited_nofile_limits, install_imds_block,
-    prepare_socket_root,
+    CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock, ImdsState, OsRandomSource,
+    PlatformMetricsProbe, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
+    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform, inherited_nofile_limits,
+    install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
+use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
-use rayd::grpc::{PlatformProcessManager, Services};
+use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
 use rayd::hooks::HookServices;
-use rayd::lifecycle::{DEFAULT_REAPER_INTERVAL, Reaper, SuspendSignal, spawn_reaper};
+use rayd::lifecycle::{
+    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, Reaper, StreamCloser,
+    SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper, spawn_timeout_watcher,
+};
+use rayd::network::NetworkManager;
 use rayd::persistence::platform_persistence_manager;
 use rayd::process::{ManagerSettings, platform_manager, shared_registry_with_budget};
 use rayd::pty::{PtySettings, platform_pty_manager};
+use rayd::transfer::{TransferManager, TransferSettings};
 use rayd_core::clock::SystemClock;
 use rayd_core::code::SidecarConfig;
 use rayd_core::filesystem::DenyList;
 use rayd_core::metrics::MetricsProbe;
+use rayd_core::metrics_history::{HISTORY_SAMPLE_INTERVAL, MetricsHistory};
 use rayd_core::process::identity::ALLOW_ROOT_ENV;
 use rayd_core::process::{
     OutputBudget, ProcessConfigInfo, ProcessEvent, RegistryLimits, SpawnInput, UserPolicy,
 };
+use rayd_core::sandbox_timeout::SelfTerminator;
 use rayd_core::session::SandboxSession;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
@@ -132,7 +145,7 @@ fn split_command(raw: &str) -> Vec<String> {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     let args = parse_args(std::env::args().skip(1))?;
     rayd::logging::init().map_err(|error| anyhow::anyhow!("tracing init failed: {error}"))?;
 
@@ -143,32 +156,15 @@ async fn main() -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     spawn_stop_signal_handler(shutdown.clone());
     let imds = Arc::new(ImdsState::default());
-    install_imds_block_if_allowed(&imds).await;
+    let net_admin = install_imds_block_if_allowed(&imds).await;
+    let network = NetworkManager::platform(session.clone(), net_admin);
     let platform = detect_spawn_platform();
     log_spawn_platform(&platform);
     let policy = UserPolicy::from_env_flag(std::env::var(ALLOW_ROOT_ENV).ok().as_deref());
     let files = filesystem_manager(&session, &platform, policy);
     let output_budget = OutputBudget::default();
-    let code_settings = CodeSettings {
-        sidecar: args.sidecar_config(),
-        output_budget: output_budget.clone(),
-        ..CodeSettings::default()
-    };
-    if code_settings.sidecar.is_some() {
-        let identity = sidecar_identity(&session, platform.lookup.as_ref(), policy)
-            .map_err(|error| anyhow::anyhow!("resolving the sidecar identity: {error}"))?;
-        prepare_socket_root(Path::new(&args.socket_root), &identity)
-            .with_context(|| format!("preparing the socket root {}", args.socket_root))?;
-    }
-    let code = platform_code_manager(session.clone(), &platform, policy, code_settings)
-        .map_err(|error| anyhow::anyhow!("building the code manager: {error}"))?;
+    let code = code_manager(&session, &platform, policy, &args, &output_budget)?;
     let _supervisor = code.spawn_supervisor();
-    tracing::info!(
-        sidecar = !args.no_sidecar,
-        sidecar_root = %args.sidecar_root,
-        socket_root = %args.socket_root,
-        "code execution configured"
-    );
     let registry = shared_registry_with_budget(RegistryLimits::default(), output_budget);
     let ptys = platform_pty_manager(
         session.clone(),
@@ -189,22 +185,38 @@ async fn main() -> anyhow::Result<()> {
     let reapers: Vec<Arc<dyn Reaper>> = vec![processes.clone(), code.clone()];
     let _reaper = spawn_reaper(DEFAULT_REAPER_INTERVAL, reapers);
     let metrics: Arc<dyn MetricsProbe> = Arc::new(PlatformMetricsProbe::default());
+    let metrics_history = Arc::new(MetricsHistory::default());
+    let _sampler = spawn_metrics_sampler(
+        session.clone(),
+        metrics.clone(),
+        metrics_history.clone(),
+        HISTORY_SAMPLE_INTERVAL,
+    );
     let suspend = Arc::new(SuspendSignal::new());
+    let transfers = transfer_services(&session, &files, &suspend);
+    let (exit_reason, timeout) = deadline(&session, &shutdown, &suspend, &processes, &code)?;
 
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    let grpc = rayd::grpc::router(Services {
-        session: session.clone(),
-        processes,
-        ptys,
-        files,
-        code: code.clone(),
-        metrics,
-        suspend: suspend.clone(),
-        imds: imds.clone(),
-        persistence,
-    })
+    let grpc = rayd::grpc::router_with_transfers(
+        Services {
+            session: session.clone(),
+            processes,
+            ptys,
+            files,
+            code: code.clone(),
+            metrics,
+            metrics_history,
+            suspend: suspend.clone(),
+            imds: imds.clone(),
+            persistence,
+            timeout: timeout.clone(),
+            network: network.clone(),
+        },
+        StreamSettings::default(),
+        transfers,
+    )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
         shutdown.clone().cancelled_owned(),
@@ -218,6 +230,8 @@ async fn main() -> anyhow::Result<()> {
             shutdown: shutdown.clone(),
             imds,
             user_probe: Some(user_probe),
+            timeout,
+            network,
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());
@@ -226,8 +240,97 @@ async fn main() -> anyhow::Result<()> {
         async { grpc.await.context("gRPC listener failed") },
         async { hooks.await.context("hooks listener failed") },
     )?;
-    tracing::info!("rayd stopped");
-    Ok(())
+    tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
+    Ok(ExitCode::from(exit_reason.exit_code()))
+}
+
+/// The code manager over the kernel sidecar (none with `--no-sidecar`),
+/// with the socket root prepared for the sidecar identity; one log line
+/// says how code execution is configured.
+fn code_manager(
+    session: &Arc<SandboxSession>,
+    platform: &SpawnPlatform,
+    policy: UserPolicy,
+    args: &Args,
+    output_budget: &OutputBudget,
+) -> anyhow::Result<Arc<rayd::code::CodeManager>> {
+    let code_settings = CodeSettings {
+        sidecar: args.sidecar_config(),
+        output_budget: output_budget.clone(),
+        ..CodeSettings::default()
+    };
+    if code_settings.sidecar.is_some() {
+        let identity = sidecar_identity(session, platform.lookup.as_ref(), policy)
+            .map_err(|error| anyhow::anyhow!("resolving the sidecar identity: {error}"))?;
+        prepare_socket_root(Path::new(&args.socket_root), &identity)
+            .with_context(|| format!("preparing the socket root {}", args.socket_root))?;
+    }
+    let code = platform_code_manager(session.clone(), platform, policy, code_settings)
+        .map_err(|error| anyhow::anyhow!("building the code manager: {error}"))?;
+    tracing::info!(
+        sidecar = !args.no_sidecar,
+        sidecar_root = %args.sidecar_root,
+        socket_root = %args.socket_root,
+        "code execution configured"
+    );
+    Ok(code)
+}
+
+/// The presigned-transfer manager (ADR-010) over the hyper client with the
+/// OS trust store; without a trust store the transfer RPCs answer
+/// `UNIMPLEMENTED` and the barrier never waits. One log line says which.
+fn transfer_services(
+    session: &Arc<SandboxSession>,
+    files: &Arc<FilesystemManager>,
+    suspend: &Arc<SuspendSignal>,
+) -> TransferServices {
+    match HyperSignedHttp::new() {
+        Ok(http) => {
+            let manager = TransferManager::new(
+                session.clone(),
+                files.clone(),
+                suspend.clone(),
+                http,
+                Arc::new(OsRandomSource),
+                TransferSettings::default(),
+            );
+            tracing::info!(transfers = true, "transfers configured");
+            TransferServices {
+                barrier: manager.barrier(),
+                backend: manager,
+            }
+        }
+        Err(error) => {
+            tracing::warn!(transfers = false, reason = %error, "transfers unavailable");
+            TransferServices::unavailable()
+        }
+    }
+}
+
+/// The logical deadline (ADR-011): the watcher thread over the real exit
+/// sequence, parked until `/run` installs a lifecycle, and the exit reason
+/// that sequence records for `main`.
+fn deadline(
+    session: &Arc<SandboxSession>,
+    shutdown: &CancellationToken,
+    suspend: &Arc<SuspendSignal>,
+    processes: &Arc<PlatformProcessManager>,
+    code: &Arc<rayd::code::CodeManager>,
+) -> anyhow::Result<(Arc<ExitReason>, Arc<TimeoutWatcher>)> {
+    let exit_reason = Arc::new(ExitReason::default());
+    let terminator: Arc<dyn SelfTerminator> = Arc::new(ExitTerminator::new(ExitParts {
+        runtime: tokio::runtime::Handle::current(),
+        shutdown: shutdown.clone(),
+        suspend: suspend.clone(),
+        processes: processes.clone(),
+        code: code.clone(),
+        reason: exit_reason.clone(),
+        settings: session.settings().timeout,
+    }));
+    let closer = StreamCloser::new(code.clone(), suspend.clone());
+    let watcher = spawn_timeout_watcher(session.clone(), terminator, closer)
+        .context("starting the timeout watcher")?;
+    Ok((exit_reason, watcher))
 }
 
 /// The filesystem manager over the default deny list plus this binary's
@@ -292,8 +395,10 @@ async fn bind_listeners(args: &Args) -> anyhow::Result<(TcpListener, TcpListener
 /// One `capabilities` line per boot with the facts the hardening depends
 /// on; with `CAP_NET_ADMIN` the IMDS policy route goes in before the
 /// listeners start (so it is part of the memory snapshot), otherwise
-/// `imds_block_unavailable` and `rayd` keeps serving (fail-open).
-async fn install_imds_block_if_allowed(imds: &ImdsState) {
+/// `imds_block_unavailable` and `rayd` keeps serving (fail-open). Returns
+/// whether the guest grants `CAP_NET_ADMIN`, which also decides whether
+/// the egress policy can be enforced (ADR-012).
+async fn install_imds_block_if_allowed(imds: &ImdsState) -> bool {
     let guest = detect_guest_capabilities();
     tracing::info!(
         net_admin = guest.net_admin(),
@@ -305,7 +410,7 @@ async fn install_imds_block_if_allowed(imds: &ImdsState) {
     );
     if !guest.net_admin() {
         tracing::info!(reason = "no CAP_NET_ADMIN", "imds_block_unavailable");
-        return;
+        return false;
     }
     match install_imds_block().await {
         ImdsBlock::Installed => {
@@ -316,6 +421,7 @@ async fn install_imds_block_if_allowed(imds: &ImdsState) {
             tracing::warn!(reason = %reason, "imds_block_unavailable");
         }
     }
+    true
 }
 
 /// The uid-1000 half of the IMDS verification: a `python3` connect run as

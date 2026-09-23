@@ -2,8 +2,12 @@
 //! filesystem managers, the fake sidecar of `tests/fixtures/fake_sidecar.py`,
 //! the gRPC router on a loopback port and the hooks router called directly,
 //! with the knobs the hardening tests scale (session settings, output
-//! budget, the filesystem's free space, the IMDS state) and a session clock
-//! the tests can jump like a restore does.
+//! budget, the filesystem's free space, the IMDS state), a session clock
+//! the tests can jump like a restore does, and the logical deadline's
+//! watcher over the real exit sequence with the process exit replaced by a
+//! counter (ADR-011). A suite may wire the presigned-transfer manager over
+//! its own `SignedHttp` (ADR-010); the others get the `UNIMPLEMENTED`
+//! backend and a barrier that never waits.
 #![cfg(unix)]
 #![allow(
     dead_code,
@@ -32,12 +36,15 @@ use rayd::adapters::{
     StdFileSystem, TokioSidecarLauncher, UserConnectProbe, detect_spawn_platform,
 };
 use rayd::code::{
-    CodeManager, CodeSettings, KernelKiller, OpTimeouts, SidecarSupervisor, sidecar_identity,
+    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
 };
 use rayd::filesystem::{FilesystemManager, FilesystemPlatform, FilesystemSettings};
-use rayd::grpc::{PlatformProcessManager, Services, StreamSettings};
+use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
 use rayd::hooks::{HookReply, HookServices, hook_path};
-use rayd::lifecycle::SuspendSignal;
+use rayd::lifecycle::{
+    ExitParts, ExitReason, ExitTerminator, StreamCloser, SuspendSignal, TimeoutWatcher,
+    spawn_timeout_watcher,
+};
 use rayd::process::{ManagerSettings, platform_manager, shared_registry_with_budget};
 use rayd::pty::{PtySettings, platform_pty_manager};
 use rayd_core::clock::{Clock, SystemClock};
@@ -45,14 +52,18 @@ use rayd_core::code::{
     ContextRegistry, ExecutionLimits, KernelSidecar, SidecarConfig, sidecar_spawn_spec,
 };
 use rayd_core::filesystem::{
-    DenyList, EntryKind, FileSystem, FsIdentity, FsIoError, RawEntry, WriteSink,
+    DenyList, EntryKind, FileMetadata, FileSystem, FsIdentity, FsIoError, OpenedSnapshot, RawEntry,
+    WriteSink,
 };
 use rayd_core::lifecycle::Hook;
+use rayd_core::metrics_history::MetricsHistory;
 use rayd_core::process::{OutputBudget, RegistryLimits, UserPolicy};
+use rayd_core::sandbox_timeout::SelfTerminator;
 use rayd_core::session::{SandboxSession, SessionSettings};
 use rayito_proto::v1::code_service_client::CodeServiceClient;
 use rayito_proto::v1::filesystem_service_client::FilesystemServiceClient;
 use rayito_proto::v1::health_service_client::HealthServiceClient;
+use rayito_proto::v1::lifecycle_service_client::LifecycleServiceClient;
 use rayito_proto::v1::process_service_client::ProcessServiceClient;
 use rayito_proto::v1::pty_service_client::PtyServiceClient;
 use rayito_proto::v1::{
@@ -137,6 +148,14 @@ impl FileSystem for FaultyFileSystem {
         self.inner.open_read(id, path)
     }
 
+    fn open_snapshot(&self, id: &FsIdentity, path: &str) -> Result<OpenedSnapshot, FsIoError> {
+        self.inner.open_snapshot(id, path)
+    }
+
+    fn read_metadata(&self, id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError> {
+        self.inner.read_metadata(id, path)
+    }
+
     fn free_bytes(&self, id: &FsIdentity, dir: &str) -> Result<u64, FsIoError> {
         match &self.fault {
             DiskFault::FreeBytes(free) => Ok(free.load(Ordering::SeqCst)),
@@ -185,10 +204,25 @@ impl WriteSink for EnospcSink {
         Err(FsIoError::NoSpace)
     }
 
+    fn set_metadata(&mut self, metadata: &FileMetadata) -> Result<(), FsIoError> {
+        self.inner.set_metadata(metadata)
+    }
+
     fn commit(self: Box<Self>, final_name: &str, id: &FsIdentity) -> Result<RawEntry, FsIoError> {
         self.inner.commit(final_name, id)
     }
 }
+
+/// Builds the transfer backend and barrier over the harness's own session,
+/// filesystem manager and suspend broadcast.
+pub type TransferFactory = Box<
+    dyn FnOnce(
+            &Arc<SandboxSession>,
+            &Arc<FilesystemManager>,
+            &Arc<SuspendSignal>,
+        ) -> TransferServices
+        + Send,
+>;
 
 pub struct Options {
     pub run: bool,
@@ -201,6 +235,7 @@ pub struct Options {
     pub user_probe: Option<UserConnectProbe>,
     /// Extra fields of the run payload (`"limits":{"cpu_seconds":1}`).
     pub payload_extra: serde_json::Map<String, serde_json::Value>,
+    pub transfers: Option<TransferFactory>,
 }
 
 impl Default for Options {
@@ -218,6 +253,7 @@ impl Default for Options {
             imds: Arc::new(ImdsState::default()),
             user_probe: None,
             payload_extra: serde_json::Map::new(),
+            transfers: None,
         }
     }
 }
@@ -228,14 +264,24 @@ pub struct Harness {
     pub files: FilesystemServiceClient<Channel>,
     pub code: CodeServiceClient<Channel>,
     pub health: HealthServiceClient<Channel>,
+    pub lifecycle: LifecycleServiceClient<Channel>,
     pub hooks: Router,
     pub session: Arc<SandboxSession>,
     pub clock: Arc<JumpClock>,
     pub manager: Arc<CodeManager>,
     pub process_manager: Arc<PlatformProcessManager>,
+    /// The ring `MetricsHistory` serves; no sampler runs in the harness, so
+    /// tests seed it with `record`.
+    pub history: Arc<MetricsHistory>,
     pub budget: OutputBudget,
     pub log_path: PathBuf,
     pub root: String,
+    /// Cancelled by `/terminate` and by the kill-mode exit sequence.
+    pub shutdown: CancellationToken,
+    pub exit_reason: Arc<ExitReason>,
+    /// How many times the watcher fell back to `force` (a real agent
+    /// would have called `std::process::exit` instead).
+    pub forced_exits: Arc<AtomicU64>,
     _tempdir: tempfile::TempDir,
 }
 
@@ -329,10 +375,32 @@ pub async fn harness_with(options: Options) -> Harness {
         },
     );
     let suspend = Arc::new(SuspendSignal::new());
+    let transfers = options
+        .transfers
+        .map_or_else(TransferServices::unavailable, |factory| {
+            factory(&session, &files, &suspend)
+        });
+    let history = Arc::new(MetricsHistory::default());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
-    let grpc = rayd::grpc::router_with_settings(
+    let exit_reason = Arc::new(ExitReason::default());
+    let forced_exits = Arc::new(AtomicU64::new(0));
+    let timeout = timeout_watcher(
+        &session,
+        ExitParts {
+            runtime: tokio::runtime::Handle::current(),
+            shutdown: shutdown.clone(),
+            suspend: suspend.clone(),
+            processes: processes.clone(),
+            code: manager.clone(),
+            reason: exit_reason.clone(),
+            settings: session.settings().timeout,
+        },
+        forced_exits.clone(),
+    );
+    let network = rayd::network::NetworkManager::unavailable(session.clone());
+    let grpc = rayd::grpc::router_with_transfers(
         Services {
             session: session.clone(),
             processes: processes.clone(),
@@ -340,15 +408,19 @@ pub async fn harness_with(options: Options) -> Harness {
             files,
             code: manager.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: history.clone(),
             suspend: suspend.clone(),
             imds: options.imds.clone(),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: timeout.clone(),
+            network: network.clone(),
         },
         StreamSettings {
             keepalive_interval: KEEPALIVE,
             watch_keepalive_interval: KEEPALIVE,
             execute_keepalive_interval: KEEPALIVE,
         },
+        transfers,
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(listener),
@@ -364,24 +436,31 @@ pub async fn harness_with(options: Options) -> Harness {
         session: session.clone(),
         code: manager.clone(),
         suspend,
-        shutdown,
+        shutdown: shutdown.clone(),
         imds: options.imds,
         user_probe: options.user_probe,
+        timeout,
+        network,
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),
         ptys: PtyServiceClient::new(channel.clone()),
         files: FilesystemServiceClient::new(channel.clone()),
         code: CodeServiceClient::new(channel.clone()),
-        health: HealthServiceClient::new(channel),
+        health: HealthServiceClient::new(channel.clone()),
+        lifecycle: LifecycleServiceClient::new(channel),
         hooks,
         session,
         clock,
         manager,
         process_manager: processes,
+        history,
         budget: options.budget,
         log_path,
         root,
+        shutdown,
+        exit_reason,
+        forced_exits,
         _tempdir: tempdir,
     };
     if options.run {
@@ -392,6 +471,22 @@ pub async fn harness_with(options: Options) -> Harness {
         harness.wait_kernel_ready(Duration::from_secs(30)).await;
     }
     harness
+}
+
+/// The real watcher and exit sequence; only `std::process::exit` is
+/// replaced, by a counter.
+fn timeout_watcher(
+    session: &Arc<SandboxSession>,
+    parts: ExitParts<rayd::adapters::PlatformSpawner>,
+    forced_exits: Arc<AtomicU64>,
+) -> Arc<TimeoutWatcher> {
+    let closer = StreamCloser::new(parts.code.clone(), parts.suspend.clone());
+    let terminator: Arc<dyn SelfTerminator> = Arc::new(ExitTerminator::new(parts).with_force_exit(
+        Arc::new(move |_| {
+            forced_exits.fetch_add(1, Ordering::SeqCst);
+        }),
+    ));
+    spawn_timeout_watcher(session.clone(), terminator, closer).unwrap()
 }
 
 fn filesystem_manager(
@@ -436,7 +531,7 @@ fn code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let kernel_killer: KernelKiller = Arc::new(|_| {});
+    let kernel_killer: KernelSignaller = Arc::new(|_, _| {});
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,

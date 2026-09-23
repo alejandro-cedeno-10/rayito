@@ -13,9 +13,11 @@ el kernel gate (`UNAVAILABLE` con prefijo `kernel not ready`), el phase gate,
 Desde M7 honra `ExecuteRequest.language` como `rayd`: `language` +
 `context_id` es `INVALID_ARGUMENT`; un lenguaje que el fake no "instala"
 (`languages`) es `UNIMPLEMENTED` con `rayito-base-poly` en el mensaje; los
-contextos por defecto `default-bash`/`default-javascript` nacen en la primera
-celda de ese lenguaje y `ListContexts` los lista con su lenguaje; `envs` por
-ejecución en un contexto no Python es `INVALID_ARGUMENT`.
+contextos por defecto `default-bash`/`default-javascript`/`default-typescript`
+nacen en la primera celda de ese lenguaje y `ListContexts` los lista con su
+lenguaje; `envs` por ejecución en un contexto no Python es `INVALID_ARGUMENT`.
+Desde M9 conoce `typescript` y un nombre desconocido recibe el mensaje nuevo de
+`rayd` con los cuatro nombres canónicos.
 
 Desde M5 cada ejecución la corre un "recorder" propio que graba los eventos
 en un ring por ejecución, así el stream de `Execute` es un suscriptor más:
@@ -46,7 +48,8 @@ from .fake_process import require_access_token
 
 DEFAULT_CONTEXT_ID = "default"
 DEFAULT_LANGUAGE = "python"
-KNOWN_LANGUAGES = frozenset({"python", "bash", "javascript"})
+KNOWN_LANGUAGES = frozenset({"python", "bash", "javascript", "typescript"})
+INVALID_LANGUAGE_MESSAGE = "language must be one of python, bash, javascript, typescript"
 POLY_IMAGE = "rayito-base-poly"
 DEFAULT_CWD = "/home/user"
 KNOWN_DIRECTORIES = frozenset({"/", "/tmp", "/home/user"})
@@ -645,9 +648,7 @@ class FakeCodeService(code_pb2_grpc.CodeServiceServicer):
 
     def _require_language(self, language: str, context: grpc.ServicerContext) -> str:
         if language not in KNOWN_LANGUAGES:
-            context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT, "language must be one of python, bash, javascript"
-            )
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, INVALID_LANGUAGE_MESSAGE)
         if language not in self.languages:
             context.abort(
                 grpc.StatusCode.UNIMPLEMENTED,

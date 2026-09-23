@@ -7,6 +7,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use super::Pid;
+use crate::sandbox_timeout::SANDBOX_TIMEOUT_CODE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputStream {
@@ -31,6 +32,7 @@ pub enum EndStatus {
     Timeout,
     Suspending,
     OutputTruncated,
+    SandboxTimeout,
 }
 
 impl EndStatus {
@@ -42,6 +44,7 @@ impl EndStatus {
             Self::Timeout => "timeout",
             Self::Suspending => "suspending",
             Self::OutputTruncated => "output_truncated",
+            Self::SandboxTimeout => SANDBOX_TIMEOUT_CODE,
         }
     }
 }
@@ -64,6 +67,7 @@ impl StreamFailure {
     pub const DEADLINE_EXCEEDED: &'static str = "deadline_exceeded";
     pub const OUTPUT_TRUNCATED: &'static str = "output_truncated";
     pub const INTERNAL: &'static str = "internal";
+    pub const SANDBOX_TIMEOUT: &'static str = SANDBOX_TIMEOUT_CODE;
 }
 
 /// Terminal event of a stream. `exit_code` is `128 + signal` when the process
@@ -135,6 +139,23 @@ impl ProcessEnd {
         }
     }
 
+    /// The logical sandbox deadline closed the stream (ADR-011): the process
+    /// may still run (pause mode) or is about to be signalled (kill mode),
+    /// and the SDK must not reconnect.
+    #[must_use]
+    pub fn sandbox_timeout() -> Self {
+        Self {
+            status: EndStatus::SandboxTimeout,
+            exited: false,
+            exit_code: 0,
+            signal: None,
+            error: Some(StreamFailure {
+                code: StreamFailure::SANDBOX_TIMEOUT,
+                message: "sandbox timeout".to_owned(),
+            }),
+        }
+    }
+
     /// `wait(2)` itself failed: the process is gone but its status is unknown.
     #[must_use]
     pub fn wait_failed() -> Self {
@@ -175,6 +196,18 @@ mod tests {
             timed_out.error.as_ref().map(|error| error.code),
             Some("deadline_exceeded")
         );
+    }
+
+    #[test]
+    fn sandbox_timeout_is_a_non_exit_end_with_its_own_code() {
+        let end = ProcessEnd::sandbox_timeout();
+        assert_eq!(end.status.as_str(), "sandbox_timeout");
+        assert!(!end.exited);
+        assert_eq!(end.exit_code, 0);
+        assert_eq!(end.signal, None);
+        let error = end.error.unwrap();
+        assert_eq!(error.code, "sandbox_timeout");
+        assert_eq!(error.message, "sandbox timeout");
     }
 
     #[test]

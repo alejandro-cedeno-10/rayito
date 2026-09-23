@@ -83,6 +83,16 @@ def pty_suspending() -> pty_pb2.PtyExited:
     )
 
 
+def pty_sandbox_timed_out() -> pty_pb2.PtyExited:
+    """El `PtyExited` con que `rayd` cierra una PTY al vencer el plazo lógico
+    del sandbox (ADR-011, tabla de cierres de design D6)."""
+    return pty_pb2.PtyExited(
+        exited=False,
+        status="sandbox_timeout",
+        error=common_pb2.StreamError(code="sandbox_timeout", message="sandbox timeout"),
+    )
+
+
 def started_message(pid: int) -> pty_pb2.PtyServerMessage:
     return pty_pb2.PtyServerMessage(started=pty_pb2.PtyStarted(pid=pid))
 
@@ -160,6 +170,12 @@ class FakePty:
             self._fan_out(exited_message(pty_suspending()))
             self.subscribers = []
 
+    def close_streams(self, exited: pty_pb2.PtyExited) -> None:
+        """Cierra cada stream vivo con `exited` sin terminar la PTY."""
+        with self.lock:
+            self._fan_out(exited_message(exited))
+            self.subscribers = []
+
     def subscribe(
         self, from_seq: int
     ) -> tuple[queue.Queue[pty_pb2.PtyServerMessage] | None, list[pty_pb2.PtyServerMessage]]:
@@ -182,8 +198,12 @@ class FakePty:
                 self.subscribers.remove(subscriber)
 
     def feed_input(self, data: bytes) -> None:
-        """El eco de la terminal y la interpretación de cada línea completa."""
+        """El eco de la terminal y la interpretación de cada línea completa;
+        un Ctrl-D con la línea vacía termina el shell, como bash."""
         self.inputs.append(data)
+        if data == b"\x04" and not self.pending_line:
+            self.finish(pty_exited(0))
+            return
         self.publish(data.replace(b"\n", b"\r\n"))
         self.pending_line += data
         while b"\n" in self.pending_line:

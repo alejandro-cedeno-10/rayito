@@ -24,12 +24,17 @@ from rayito.v1 import (
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
+    lifecycle_pb2_grpc,
+    network_pb2,
+    network_pb2_grpc,
     process_pb2_grpc,
     pty_pb2_grpc,
 )
 
 from .fake_code import FakeCodeService
 from .fake_filesystem import FakeFilesystemService
+from .fake_lifecycle import FakeLifecycleService, TimeoutGate
+from .fake_network import FakeNetworkService
 from .fake_process import FakeProcessService, installed_token_sha256, presented_token_sha256
 from .fake_pty import FakePtyService
 
@@ -98,9 +103,12 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
     proxy mientras se restaura el snapshot); `not_ready_calls` responde
     `agent_ready=False` las siguientes N y `kernel_not_ready_calls` responde
     `kernel_ready=False` (sidecar arrancando o rotando el kernel por defecto)
-    las siguientes N. `Metrics` exige `x-access-token` y lo verifica como
-    `rayd`: decodifica base64url y compara el sha256 con el hash instalado
-    desde el `runHookPayload`.
+    las siguientes N. `before_run_calls` responde las siguientes N como
+    `rayd` antes de `/run` (el proxy deja pasar `Health` durante la
+    restauración): agente y kernel del snapshot listos, sin `sandbox_id`.
+    `Metrics` exige `x-access-token` y lo verifica como `rayd`: decodifica
+    base64url y compara el sha256 con el hash instalado desde el
+    `runHookPayload`.
     """
 
     token_sha256: str = field(default_factory=token_sha256_for_tests)
@@ -109,6 +117,7 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
     unavailable_calls: int = 0
     not_ready_calls: int = 0
     kernel_not_ready_calls: int = 0
+    before_run_calls: int = 0
     health_calls: list[dict[str, str]] = field(default_factory=list)
     metrics_calls: list[dict[str, str]] = field(default_factory=list)
     resume_generation: int = 0
@@ -118,10 +127,22 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
     metadata: dict[str, str] = field(default_factory=dict)
     imds_blocked: bool = False
     hook_anomalies: int = 0
+    cpu_count: int = 0
+    memory_total_bytes: int = 0
+    mem_cache_bytes: int = 0
+    history: list[health_pb2.MetricsResponse] = field(default_factory=list)
+    history_requests: list[health_pb2.MetricsHistoryRequest] = field(default_factory=list)
+    history_calls: list[dict[str, str]] = field(default_factory=list)
+    history_unimplemented: bool = False
+    lifecycle: Any = None
+    timeout_gate: bool = False
+    egress_enforcement: network_pb2.EgressEnforcement = network_pb2.EGRESS_ENFORCEMENT_UNSPECIFIED
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def Health(self, request: Any, context: grpc.ServicerContext) -> health_pb2.HealthResponse:
         metadata = metadata_dict(context.invocation_metadata())
+        remaining = context.time_remaining()
+        metadata[DEADLINE_KEY] = "none" if remaining is None else f"{remaining:.3f}"
         with self.lock:
             self.health_calls.append(metadata)
             if self.unavailable_calls > 0:
@@ -133,19 +154,29 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
             kernel_ready = ready and self.kernel_not_ready_calls <= 0
             if ready and not kernel_ready:
                 self.kernel_not_ready_calls -= 1
-        return health_pb2.HealthResponse(
+            before_run = ready and kernel_ready and self.before_run_calls > 0
+            if before_run:
+                self.before_run_calls -= 1
+            lifecycle = self.lifecycle
+        response = health_pb2.HealthResponse(
             agent_ready=ready,
             kernel_ready=kernel_ready,
             agent_version=self.agent_version,
             uptime_ms=self.uptime_ms,
-            sandbox_id=self.sandbox_id,
+            sandbox_id="" if before_run else self.sandbox_id,
             resume_generation=self.resume_generation,
             clock_offset_ms=self.clock_offset_ms,
             kernel_state_lost=self.kernel_state_lost,
             metadata=self.metadata,
             imds_blocked=self.imds_blocked,
             hook_anomalies=self.hook_anomalies,
+            cpu_count=self.cpu_count,
+            memory_total_bytes=self.memory_total_bytes,
+            egress_enforcement=self.egress_enforcement,
         )
+        if lifecycle is not None:
+            response.lifecycle.CopyFrom(lifecycle)
+        return response
 
     def Metrics(self, request: Any, context: grpc.ServicerContext) -> health_pb2.MetricsResponse:
         metadata = metadata_dict(context.invocation_metadata())
@@ -162,7 +193,27 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
             disk_total_bytes=8_000_000,
             cpu_count=1,
             timestamp_unix_ms=METRICS_TIMESTAMP_UNIX_MS,
+            mem_cache_bytes=self.mem_cache_bytes,
         )
+
+    def MetricsHistory(
+        self, request: health_pb2.MetricsHistoryRequest, context: grpc.ServicerContext
+    ) -> health_pb2.MetricsHistoryResponse:
+        """Como `rayd` M9: exige `x-access-token` y devuelve `history` tal cual
+        (el filtrado por rango es del agente, no del SDK). Con
+        `history_unimplemented` responde como un `rayd` anterior a M9."""
+        metadata = metadata_dict(context.invocation_metadata())
+        with self.lock:
+            self.history_calls.append(metadata)
+        if self.history_unimplemented:
+            context.abort(grpc.StatusCode.UNIMPLEMENTED, "Method not found")
+        if presented_token_sha256(metadata) != self.token_sha256:
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "x-access-token ausente o inválido")
+        with self.lock:
+            self.history_requests.append(request)
+            samples = list(self.history)
+        oldest = samples[0].timestamp_unix_ms if samples else 0
+        return health_pb2.MetricsHistoryResponse(samples=samples, oldest_unix_ms=oldest)
 
 
 @dataclass(frozen=True)
@@ -172,6 +223,8 @@ class RaydEndpoint:
     filesystem: FakeFilesystemService
     code: FakeCodeService
     pty: FakePtyService
+    lifecycle: FakeLifecycleService
+    network: FakeNetworkService
     host: str
     port: int
 
@@ -220,19 +273,30 @@ class RaydEndpoint:
         self.resume(clock_offset_ms=clock_offset_ms, kernel_state_lost=kernel_state_lost)
 
 
-def start_fake_rayd(servicer: FakeRayd | None = None) -> tuple[grpc.Server, RaydEndpoint]:
-    """Arranca un `rayd` falso completo en loopback; el caller lo para."""
+def start_fake_rayd(
+    servicer: FakeRayd | None = None, *, filesystem: FakeFilesystemService | None = None
+) -> tuple[grpc.Server, RaydEndpoint]:
+    """Arranca un `rayd` falso completo en loopback; el caller lo para.
+    `filesystem` sustituye el `FilesystemService` (p. ej. uno con
+    transferencias)."""
     servicer = servicer or FakeRayd()
     process = FakeProcessService(token_sha256=servicer.token_sha256)
-    filesystem = FakeFilesystemService(token_sha256=servicer.token_sha256)
+    filesystem = filesystem or FakeFilesystemService(token_sha256=servicer.token_sha256)
     code = FakeCodeService(token_sha256=servicer.token_sha256)
     pty = FakePtyService(token_sha256=servicer.token_sha256, processes=process)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=FAKE_SERVER_WORKERS))
+    lifecycle = FakeLifecycleService(token_sha256=servicer.token_sha256, holder=servicer)
+    network = FakeNetworkService(token_sha256=servicer.token_sha256)
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=FAKE_SERVER_WORKERS),
+        interceptors=[TimeoutGate(servicer)],
+    )
     health_pb2_grpc.add_HealthServiceServicer_to_server(servicer, server)
     process_pb2_grpc.add_ProcessServiceServicer_to_server(process, server)
     filesystem_pb2_grpc.add_FilesystemServiceServicer_to_server(filesystem, server)
     code_pb2_grpc.add_CodeServiceServicer_to_server(code, server)
     pty_pb2_grpc.add_PtyServiceServicer_to_server(pty, server)
+    lifecycle_pb2_grpc.add_LifecycleServiceServicer_to_server(lifecycle, server)
+    network_pb2_grpc.add_NetworkServiceServicer_to_server(network, server)
     port = server.add_secure_port(
         "127.0.0.1:0", grpc.local_server_credentials(grpc.LocalConnectionType.LOCAL_TCP)
     )
@@ -243,6 +307,8 @@ def start_fake_rayd(servicer: FakeRayd | None = None) -> tuple[grpc.Server, Rayd
         filesystem=filesystem,
         code=code,
         pty=pty,
+        lifecycle=lifecycle,
+        network=network,
         host="127.0.0.1",
         port=port,
     )
@@ -461,3 +527,14 @@ def stub_metadata_probe(
             "allowedPorts": [{"port": 8080}],
         },
     )
+
+
+TRANSFER_ENV_VARS = ("RAYITO_TRANSFER_BUCKET", "RAYITO_TRANSFER_PREFIX", "RAYITO_TRANSFER_REGION")
+
+
+@pytest.fixture(autouse=True)
+def isolated_transfer_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ningún test hereda el bucket de transferencias del entorno de quien
+    los corre: con él, `files.write`/`files.read` grandes irían por S3."""
+    for name in TRANSFER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)

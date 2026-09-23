@@ -129,6 +129,10 @@ def test_resolve_context_id_for_context_str_and_none() -> None:
         ("javascript", "javascript"),
         ("JS", "javascript"),
         ("js", "javascript"),
+        ("typescript", "typescript"),
+        ("TypeScript", "typescript"),
+        ("ts", "typescript"),
+        ("TS", "typescript"),
     ],
 )
 def test_normalize_language_table(given: str | None, canonical: str | None) -> None:
@@ -136,7 +140,7 @@ def test_normalize_language_table(given: str | None, canonical: str | None) -> N
     assert validate_language(given) == (canonical or "python")
 
 
-@pytest.mark.parametrize("rejected", ["r", "java", "ruby", "typescript", " bash"])
+@pytest.mark.parametrize("rejected", ["r", "java", "ruby", "tsx", " bash"])
 def test_normalize_language_rejects_other_kernels(rejected: str) -> None:
     with pytest.raises(InvalidArgumentException, match="language"):
         normalize_language(rejected)
@@ -329,7 +333,7 @@ def test_execution_text_and_to_json() -> None:
             {"is_main_result": False},
             {"is_main_result": True, "text/plain": "42"},
         ],
-        "logs": {"stdout": ["a\n"], "stderr": []},
+        "logs": Logs(stdout=["a\n"], stderr=[]).to_json(),
         "error": {"name": "E", "value": "v", "traceback": "t"},
         "execution_count": 3,
     }

@@ -12,9 +12,9 @@ bytes depend on content only.
 ``kernel-sidecar/ipython/startup/warmup_variant`` holding ``slim``, which
 ``0004_warmup.py`` reads to skip the kernel warm-up; ``--variant poly`` adds
 ``kernel-sidecar/kernels_variant`` holding ``poly``, which the conditional
-layer of ``image/Dockerfile`` reads to install the bash kernel (javascript
-stays a reserved name: no image ships that kernel, AWS_API_NOTES.md Q57).
-Nothing is written under the image
+layer of ``image/Dockerfile`` reads to install the bash kernel and the
+pinned Deno binary behind the ``javascript`` and ``typescript`` kernels
+(never started before ``/ready``). Nothing is written under the image
 directory, and the variants of one tree differ only by their marker entry
 (and so by their content hash). ``full`` (the default) adds nothing.
 

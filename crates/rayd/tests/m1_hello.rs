@@ -30,10 +30,16 @@ use rayd_core::filesystem::DenyList;
 use rayd_core::lifecycle::Hook;
 use rayd_core::process::{RegistryLimits, UserPolicy};
 use rayd_core::session::SandboxSession;
+use rayito_proto::v1::filesystem_service_client::FilesystemServiceClient;
 use rayito_proto::v1::health_service_client::HealthServiceClient;
+use rayito_proto::v1::lifecycle_service_client::LifecycleServiceClient;
+use rayito_proto::v1::network_service_client::NetworkServiceClient;
 use rayito_proto::v1::process_service_client::ProcessServiceClient;
 use rayito_proto::v1::pty_service_client::PtyServiceClient;
-use rayito_proto::v1::{HealthRequest, ListRequest, ListResponse, MetricsRequest, ResizeRequest};
+use rayito_proto::v1::{
+    GetNetworkRequest, GetTransferRequest, HealthRequest, ListRequest, ListResponse,
+    MetricsHistoryRequest, MetricsRequest, ResizeRequest, SetTimeoutRequest, UpdateNetworkRequest,
+};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -89,9 +95,12 @@ async fn harness() -> Harness {
         files,
         code: code.clone(),
         metrics: Arc::new(PlatformMetricsProbe::default()),
+        metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
         suspend: suspend.clone(),
         imds: Arc::new(rayd::adapters::ImdsState::default()),
         persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+        timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+        network: rayd::network::NetworkManager::unavailable(session.clone()),
     })
     .serve_with_incoming_shutdown(
         TcpIncoming::from(listener),
@@ -242,6 +251,42 @@ async fn every_other_rpc_is_unauthenticated_without_a_token() {
         .await
         .expect_err("Metrics requires a token");
     assert_eq!(metrics.code(), Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn lifecycle_network_transfer_and_history_rpcs_require_a_token() {
+    let harness = harness().await;
+    harness.run_with_secret(SECRET).await;
+    let channel = harness.channel.clone();
+    let set_timeout = LifecycleServiceClient::new(channel.clone())
+        .set_timeout(SetTimeoutRequest::default())
+        .await
+        .expect_err("SetTimeout requires a token");
+    let update_network = NetworkServiceClient::new(channel.clone())
+        .update_network(UpdateNetworkRequest::default())
+        .await
+        .expect_err("UpdateNetwork requires a token");
+    let get_network = NetworkServiceClient::new(channel.clone())
+        .get_network(GetNetworkRequest {})
+        .await
+        .expect_err("GetNetwork requires a token");
+    let get_transfer = FilesystemServiceClient::new(channel.clone())
+        .get_transfer(GetTransferRequest::default())
+        .await
+        .expect_err("GetTransfer requires a token");
+    let history = HealthServiceClient::new(channel)
+        .metrics_history(MetricsHistoryRequest::default())
+        .await
+        .expect_err("MetricsHistory requires a token");
+    for status in [
+        set_timeout,
+        update_network,
+        get_network,
+        get_transfer,
+        history,
+    ] {
+        assert_eq!(status.code(), Code::Unauthenticated);
+    }
 }
 
 #[tokio::test]

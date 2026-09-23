@@ -35,10 +35,17 @@ import {
   S3_BUCKET_NAME_MAX,
   S3_BUCKET_NAME_MIN,
 } from "../limits.js";
-import type { IdlePolicyInput } from "../models.js";
-import { asConnectError, isProxyForbidden, isStreamReset } from "../transport/errors.js";
+import type { IdlePolicyInput, NetworkPolicyInput } from "../models.js";
+import {
+  asConnectError,
+  isProxyForbidden,
+  isSandboxTimeout,
+  isStreamReset,
+  sandboxTimeoutError,
+} from "../transport/errors.js";
 import { type OpenedStream, type SandboxCore, type StreamStarter, withTimeout } from "./core.js";
 import type { LoggingOption, PortLike } from "./launch.js";
+import type { OnTimeout } from "./lifecycle.js";
 
 export const DEFAULT_PERSIST_TIMEOUT_MS = DEFAULT_PERSIST_TIMEOUT_SECONDS * 1000;
 export const EXCLUDE_MAX_BYTES = 4096;
@@ -221,6 +228,8 @@ export interface LaunchOptions {
   readonly template: string;
   readonly templateVersion: string | undefined;
   readonly timeoutMs: number | undefined;
+  readonly maxLifetimeMs: number | undefined;
+  readonly onTimeout: OnTimeout | undefined;
   readonly idle: IdlePolicyInput | null | undefined;
   readonly envs: Readonly<Record<string, string>> | undefined;
   readonly metadata: Readonly<Record<string, string>> | undefined;
@@ -235,6 +244,8 @@ export interface LaunchOptions {
   readonly requestTimeoutMs: number | undefined;
   readonly reconnectTimeoutMs: number | undefined;
   readonly keepOnFailure: boolean | undefined;
+  /** La política de egress ya resuelta (con `allowInternetAccess: false` incorporado). */
+  readonly network: NetworkPolicyInput | undefined;
 }
 
 export type CheckpointProgressCallback = (progress: CheckpointProgress) => void;
@@ -558,6 +569,8 @@ export function streamErrorFrom(error: StreamError): Error {
       return new InvalidArgumentError(message);
     case "deadline_exceeded":
       return new TimeoutError(message);
+    case "sandbox_timeout":
+      return sandboxTimeoutError();
     case "suspending":
       return new PersistenceError(interruptedMessage("el sandbox se está suspendiendo"), {
         code: "interrupted",
@@ -577,6 +590,9 @@ export function statusError(error: unknown): Error {
   }
   const message = connect.rawMessage;
   const base = { grpcCode: connect.code, cause: connect };
+  if (isSandboxTimeout(connect)) {
+    return sandboxTimeoutError(base);
+  }
   switch (connect.code) {
     case Code.NotFound:
       return new NotFoundError(message, base);
@@ -626,6 +642,9 @@ export function midStreamError(error: unknown): Error {
   const base = { grpcCode: connect.code, cause: connect };
   if (connect.code === Code.DeadlineExceeded) {
     return new TimeoutError(connect.rawMessage, base);
+  }
+  if (isSandboxTimeout(connect)) {
+    return sandboxTimeoutError(base);
   }
   if (connect.code === Code.Canceled) {
     return new SandboxError(`llamada cancelada por el cliente: ${connect.rawMessage}`, base);

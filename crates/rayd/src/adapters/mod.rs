@@ -3,13 +3,17 @@
 //! probe, the filesystem with its per-thread identity, the inotify
 //! watcher, the user database for names, the OS random source, the guest's
 //! capability mask, the policy route that blocks IMDS for the sandbox user,
-//! the tar/gzip home archiver and the S3 object store (ADR-009).
+//! the egress policy routes over the shared `ip` runner (ADR-012),
+//! the tar/gzip home archiver, the S3 object store (ADR-009) and the
+//! credential-free HTTPS client of presigned transfers (ADR-010).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
 pub mod capabilities;
+pub mod egress_routes;
 pub mod fs_identity;
 pub mod imds_block;
+pub mod ip_command;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod process_spawner;
@@ -18,6 +22,7 @@ pub mod pty_backend;
 pub mod random;
 pub mod s3_store;
 pub mod sidecar_process;
+pub mod signed_http;
 pub mod std_filesystem;
 pub mod tar_archiver;
 
@@ -45,7 +50,10 @@ pub use random::OsRandomSource;
 pub use s3_store::{ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore};
 #[cfg(unix)]
 pub use sidecar_process::TokioSidecarLauncher;
-pub use sidecar_process::{PlatformSidecarLauncher, kill_process_group, prepare_socket_root};
+pub use sidecar_process::{
+    PlatformSidecarLauncher, kill_process_group, prepare_socket_root, signal_process_group,
+};
+pub use signed_http::{FilteringResolver, HyperSignedHttp, SignedHttpInitError};
 pub use std_filesystem::PlatformFileSystem;
 #[cfg(unix)]
 pub use std_filesystem::StdFileSystem;

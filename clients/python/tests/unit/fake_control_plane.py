@@ -27,12 +27,13 @@ import grpc.aio
 
 from rayito._aws import LaunchRequest, PortSpec, TokenBucket
 from rayito._limits import API_TPS, TERMINAL_STATES
-from rayito._models import SandboxInfo, SandboxListItem
+from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._transport import ProxyAuthPlugin
 from rayito.exceptions import SandboxNotFoundException
 
 from .conftest import (
     ACCOUNT_ID,
+    IMAGE_ARN,
     JWE,
     REGION,
     FakeClock,
@@ -42,9 +43,21 @@ from .conftest import (
     TrackedChannel,
     TrackingTransport,
     start_fake_rayd,
+    token_sha256_for_tests,
 )
 
 FailureOutcome = Exception | bool
+PAGE_TOKEN_PREFIX = "page-"
+
+
+@dataclass(frozen=True)
+class PageCall:
+    """Los argumentos de una llamada a `list_microvms_page`."""
+
+    image_arn: str | None
+    image_version: str | None
+    max_results: int
+    next_token: str | None
 
 
 @dataclass(frozen=True)
@@ -98,8 +111,48 @@ class FakeControlPlane:
         }
         self._mints = 0
         self._lock = threading.Lock()
+        self.scripted_pages: list[tuple[SandboxListItem, ...]] | None = None
+        self.page_requests: list[PageCall] = []
 
     # ------------------------------------------------------------- scripting
+
+    def script_pages(self, *pages: Sequence[SandboxListItem]) -> None:
+        """Lo que `list_microvms_page` sirve desde ahora: la página `i` responde
+        al token `page-i` (la primera a `None`) con `nextToken` `page-{i+1}`
+        salvo la última. Sin guion, las páginas salen del mapa de MicroVMs."""
+        self.scripted_pages = [tuple(page) for page in pages]
+
+    def add_listed_sandbox(
+        self,
+        *,
+        metadata: dict[str, str] | None = None,
+        state: str = "RUNNING",
+        started_at: datetime | None = None,
+    ) -> str:
+        """Un MicroVM de `IMAGE_ARN` con su `rayd` falso (metadatos en `Health`)
+        para los listados que sondean metadatos; no cuenta como `RunMicrovm`."""
+        request = LaunchRequest(
+            image_arn=IMAGE_ARN,
+            maximum_duration_seconds=900,
+            run_hook_payload=json.dumps({"token_sha256": token_sha256_for_tests()}),
+            client_token=uuid.uuid4().hex,
+            logging={"disabled": {}},
+        )
+        sandbox_id = f"microvm-{uuid.uuid4()}"
+        server, rayd = start_fake_rayd(
+            FakeRayd(sandbox_id=sandbox_id, metadata=dict(metadata or {}))
+        )
+        with self._lock:
+            self._servers.append(server)
+            self.microvms[sandbox_id] = FakeMicrovm(
+                sandbox_id=sandbox_id,
+                state=state,
+                endpoint=f"{rayd.host}:{rayd.port}",
+                request=request,
+                started_at=started_at or self._now(),
+                rayd=rayd,
+            )
+        return sandbox_id
 
     def fail(self, operation: str, index: int, outcome: FailureOutcome) -> None:
         """Programa la llamada número `index` (desde 1) de `operation`: una
@@ -202,13 +255,49 @@ class FakeControlPlane:
                 continue
             if wanted is not None and vm.state not in wanted:
                 continue
-            yield SandboxListItem(
-                sandbox_id=vm.sandbox_id,
-                state=vm.state,
-                template=vm.request.image_arn,
-                template_version=vm.request.image_version or "1.0",
-                started_at=vm.started_at,
-            )
+            yield self._list_item(vm)
+
+    def list_microvms_page(
+        self,
+        *,
+        image_arn: str | None,
+        image_version: str | None,
+        max_results: int,
+        next_token: str | None,
+    ) -> MicrovmListPage:
+        """Una página como la de AWS: filtra imagen y versión en servidor, nunca
+        por estado. Sirve el guion de `script_pages` o, sin guion, el mapa de
+        MicroVMs troceado en páginas de `max_results`."""
+        self._enter("ListMicrovms", None)
+        self.page_requests.append(PageCall(image_arn, image_version, max_results, next_token))
+        pages = self._listing_pages(max_results)
+        index = 0 if next_token is None else int(next_token.removeprefix(PAGE_TOKEN_PREFIX))
+        items = tuple(
+            item
+            for item in pages[index]
+            if (image_arn is None or item.template == image_arn)
+            and (image_version is None or item.template_version == image_version)
+        )
+        following = f"{PAGE_TOKEN_PREFIX}{index + 1}" if index + 1 < len(pages) else None
+        return MicrovmListPage(items=items, next_token=following)
+
+    def _listing_pages(self, max_results: int) -> list[tuple[SandboxListItem, ...]]:
+        if self.scripted_pages is not None:
+            return self.scripted_pages or [()]
+        items = [self._list_item(vm) for vm in list(self.microvms.values())]
+        chunks = [
+            tuple(items[start : start + max_results]) for start in range(0, len(items), max_results)
+        ]
+        return chunks or [()]
+
+    def _list_item(self, vm: FakeMicrovm) -> SandboxListItem:
+        return SandboxListItem(
+            sandbox_id=vm.sandbox_id,
+            state=vm.state,
+            template=vm.request.image_arn,
+            template_version=vm.request.image_version or "1.0",
+            started_at=vm.started_at,
+        )
 
     def terminate_microvm(self, sandbox_id: str) -> bool:
         outcome = self._enter("TerminateMicrovm", sandbox_id)

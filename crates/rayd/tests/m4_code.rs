@@ -25,7 +25,7 @@ use rayd::adapters::{
     OsRandomSource, PlatformMetricsProbe, TokioSidecarLauncher, detect_spawn_platform,
 };
 use rayd::code::{
-    CodeManager, CodeSettings, KernelKiller, OpTimeouts, SidecarSupervisor, sidecar_identity,
+    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
 };
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{Services, StreamSettings};
@@ -200,9 +200,12 @@ async fn build_harness(
             files,
             code: manager.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
             suspend: suspend.clone(),
             imds: Arc::new(rayd::adapters::ImdsState::default()),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+            network: rayd::network::NetworkManager::unavailable(session.clone()),
         },
         StreamSettings {
             execute_keepalive_interval: KEEPALIVE,
@@ -270,7 +273,8 @@ fn code_manager(
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
     let recorder = killed.clone();
-    let kernel_killer: KernelKiller = Arc::new(move |pid| recorder.lock().unwrap().push(pid));
+    let kernel_killer: KernelSignaller =
+        Arc::new(move |pid, _signal| recorder.lock().unwrap().push(pid));
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
@@ -982,7 +986,7 @@ async fn context_cap_and_bad_inputs() {
     assert_eq!(language.code(), Code::InvalidArgument);
     assert_eq!(
         language.message(),
-        "language must be one of python, bash, javascript"
+        "language must be one of python, bash, javascript, typescript"
     );
     let listed = harness.list_contexts().await;
     let ctx = listed[1].clone();

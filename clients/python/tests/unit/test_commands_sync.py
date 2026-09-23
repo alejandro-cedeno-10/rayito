@@ -41,7 +41,7 @@ from .conftest import (
     auth_token_response,
     microvm_response,
 )
-from .fake_process import CHUNK_SIZE
+from .fake_process import CHUNK_SIZE, CannedReply
 
 TIMEOUT_LATENCY_BUDGET_SECONDS = 2.0
 DISCONNECT_DELAY_SECONDS = 0.2
@@ -175,6 +175,38 @@ def test_callbacks_receive_decoded_text(sandbox: Sandbox) -> None:
     sandbox.commands.run("err b", on_stdout=out.append, on_stderr=err.append)
     assert "".join(out) == "a\n"
     assert "".join(err) == "b\n"
+
+
+def test_wait_callbacks_receive_the_chunks_after_the_run_callbacks(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when("echo out", CannedReply(stdout="out\n", stderr="err\n"))
+    order: list[str] = []
+    out: list[str] = []
+    err: list[str] = []
+    handle = sandbox.commands.run(
+        "echo out; echo err >&2", background=True, on_stdout=lambda _: order.append("run")
+    )
+
+    def on_stdout(text: str) -> None:
+        order.append("wait")
+        out.append(text)
+
+    result = handle.wait(on_stdout=on_stdout, on_stderr=err.append)
+    assert (out, err) == (["out\n"], ["err\n"])
+    assert order == ["run", "wait"]
+    assert (result.stdout, result.exit_code) == ("out\n", 0)
+
+
+def test_wait_callbacks_never_replay_consumed_chunks(sandbox: Sandbox) -> None:
+    handle = sandbox.commands.run("seq 3", background=True)
+    iterator = iter(handle)
+    first, _, _ = next(iterator)
+    seen: list[str] = []
+    result = handle.wait(on_stdout=seen.append)
+    assert first == "1\n"
+    assert "".join(seen) == "2\n3\n"
+    assert result.stdout == "1\n2\n3\n"
 
 
 def test_non_zero_exit_is_command_exit_exception(sandbox: Sandbox) -> None:

@@ -9,12 +9,18 @@ import type {
   ControlPlane,
   LaunchRequest,
   ListMicrovmsOptions,
+  ListMicrovmsPageOptions,
   PortSpec,
 } from "../../../src/aws/control-plane.js";
-import { SandboxNotFoundError, SandboxStateError } from "../../../src/errors.js";
+import {
+  InvalidArgumentError,
+  SandboxNotFoundError,
+  SandboxStateError,
+} from "../../../src/errors.js";
 import { TERMINAL_STATES } from "../../../src/limits.js";
 import {
   type IdlePolicy,
+  type MicrovmListPage,
   type SandboxInfo,
   type SandboxListItem,
   sandboxInfo,
@@ -48,6 +54,8 @@ export class FakeControlPlane implements ControlPlane {
   readonly calls: RecordedCall[] = [];
   readonly launches: LaunchRequest[] = [];
   readonly listed: SandboxListItem[] = [];
+  readonly pageRequests: ListMicrovmsPageOptions[] = [];
+  #pages: SandboxListItem[][] | undefined;
   #states: string[];
   #idle: IdlePolicy | undefined;
   #jwe: string;
@@ -114,6 +122,7 @@ export class FakeControlPlane implements ControlPlane {
       maximumDurationSeconds: 3600,
       stateReason: this.stateReason,
       idle: this.#idle,
+      egress: this.launches.at(-1)?.egressConnectors,
     });
   }
 
@@ -159,6 +168,32 @@ export class FakeControlPlane implements ControlPlane {
     }
   }
 
+  /** Páginas guionizadas de `listMicrovmsPage`, con `nextToken` `page-1`, `page-2`…; sin guion, una sola con `listed`. */
+  scriptPages(...pages: ReadonlyArray<readonly SandboxListItem[]>): void {
+    this.#pages = pages.map((page) => [...page]);
+  }
+
+  /** Como AWS: filtra por imagen (`imageIdentifier`) y nunca por estado. */
+  async listMicrovmsPage(options: ListMicrovmsPageOptions): Promise<MicrovmListPage> {
+    this.calls.push({ operation: "listMicrovmsPage", sandboxId: "" });
+    this.pageRequests.push(options);
+    if (this.listMicrovmsError !== undefined) {
+      throw this.listMicrovmsError;
+    }
+    const pages = this.#pages ?? [this.listed];
+    const index = options.nextToken === undefined ? 0 : pageIndex(options.nextToken);
+    const page = pages[index];
+    if (page === undefined) {
+      throw new InvalidArgumentError(`nextToken desconocido: ${options.nextToken}`);
+    }
+    return {
+      items: page.filter(
+        (item) => options.imageArn === undefined || item.template === options.imageArn,
+      ),
+      nextToken: index + 1 < pages.length ? `${PAGE_TOKEN_PREFIX}${index + 1}` : undefined,
+    };
+  }
+
   async terminateMicrovm(sandboxId: string): Promise<boolean> {
     this.calls.push({ operation: "terminateMicrovm", sandboxId });
     if (this.terminateMissing) {
@@ -191,16 +226,32 @@ export class FakeControlPlane implements ControlPlane {
   }
 
   addListed(sandboxId: string, state: string): void {
-    this.listed.push(
-      sandboxListItem({
-        sandboxId,
-        state,
-        template: IMAGE_ARN,
-        templateVersion: "1.0",
-        startedAt: STARTED_AT,
-      }),
-    );
+    this.listed.push(listedItem(sandboxId, state));
   }
+}
+
+const PAGE_TOKEN_PREFIX = "page-";
+
+function pageIndex(nextToken: string): number {
+  return nextToken.startsWith(PAGE_TOKEN_PREFIX)
+    ? Number(nextToken.slice(PAGE_TOKEN_PREFIX.length))
+    : Number.NaN;
+}
+
+/** Un item de `list-microvms` de `IMAGE_ARN` arrancado `seconds` después de `STARTED_AT`. */
+export function listedItem(
+  sandboxId: string,
+  state = "RUNNING",
+  seconds = 0,
+  template = IMAGE_ARN,
+): SandboxListItem {
+  return sandboxListItem({
+    sandboxId,
+    state,
+    template,
+    templateVersion: "1.0",
+    startedAt: new Date(STARTED_AT.getTime() + seconds * 1000),
+  });
 }
 
 export { SandboxNotFoundError, SandboxStateError };

@@ -17,10 +17,13 @@ import hashlib
 import json
 import secrets
 from collections.abc import Mapping
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from rayito._limits import RUN_HOOK_PAYLOAD_MAX_CHARS
 from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    from rayito._lifecycle_base import LifecycleBlock
 
 PAYLOAD_VERSION: Final = 1
 DEFAULT_USER: Final = "user"
@@ -69,6 +72,8 @@ def build_run_hook_payload(
     user: str = DEFAULT_USER,
     workdir: str = DEFAULT_WORKDIR,
     cpu_time_limit: int | None = None,
+    lifecycle: LifecycleBlock | None = None,
+    network_enforce: bool = False,
 ) -> str:
     """Serializa el payload y falla si supera el límite del modelo (4096 chars).
 
@@ -78,6 +83,11 @@ def build_run_hook_payload(
     `cpu_time_limit` (segundos de CPU, no de pared, `1..=28800`) viaja como
     `limits: {"cpu_seconds": N}` sólo cuando se pasa: `rayd` lo aplica como
     `RLIMIT_CPU` a cada proceso y PTY del sandbox, nunca al kernel.
+    `lifecycle` (ADR-011) viaja sólo cuando se pasa: `rayd` impone con él el
+    plazo lógico; `v` sigue en 1 y un agente anterior a M9 ignora la clave.
+    `network_enforce` añade `"network": {"enforce": true}` (ADR-012): `rayd`
+    instala deny-all antes de responder a `/run` y la política real llega
+    después por `UpdateNetwork`; el payload nunca lleva reglas ni credenciales.
     """
     if not access_token:
         raise InvalidArgumentException("access_token no puede estar vacío")
@@ -93,6 +103,10 @@ def build_run_hook_payload(
         payload["metadata"] = validated_metadata(metadata)
     if cpu_time_limit is not None:
         payload["limits"] = {"cpu_seconds": validated_cpu_time_limit(cpu_time_limit)}
+    if lifecycle is not None:
+        payload["lifecycle"] = lifecycle.to_wire()
+    if network_enforce:
+        payload["network"] = {"enforce": True}
     text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     if len(text) > RUN_HOOK_PAYLOAD_MAX_CHARS:
         raise InvalidArgumentException(

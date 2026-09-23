@@ -14,21 +14,33 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   AuthenticationError,
   CapacityError,
+  DiskFullError,
   FileNotFoundError,
   InvalidArgumentError,
   NotFoundError,
   QuotaExceededError,
   RateLimitError,
   SandboxError,
+  type SandboxErrorOptions,
   SandboxStateError,
   TimeoutError,
 } from "../errors.js";
+import {
+  BEYOND_CAP_PREFIX,
+  beyondCapError,
+  capFromDetail,
+  LIFECYCLE_UNMANAGED_DETAIL,
+  SANDBOX_TIMEOUT_DETAIL,
+  setTimeoutUnsupportedError,
+  unmanagedLifecycleError,
+} from "../sandbox/lifecycle.js";
 
 export const PROXY_FORBIDDEN_MESSAGE = "HTTP 403";
 export const PHASE_GATE_DETAILS: ReadonlySet<string> = new Set(["suspending", "terminating"]);
 export const KERNEL_GATE_PREFIX = "kernel not ready";
 export const H2_CLOSED_PREFIX = "http/2 stream closed";
 export const MISSING_STATUS_MESSAGE = "protocol error: missing status";
+export const DISK_FULL_DETAILS: ReadonlySet<string> = new Set(["disk_reserve", "disk_full"]);
 const RESET_NODE_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
 
 export function asConnectError(error: unknown): ConnectError | undefined {
@@ -140,6 +152,25 @@ export function isStreamReset(error: unknown): boolean {
 }
 
 /**
+ * `rayd` con el plazo lógico vencido (ADR-011) responde `FailedPrecondition
+ * "sandbox_timeout"` a todo salvo `Health` y `SetTimeout`, también al cerrar
+ * `WatchDir`/`Read`/`Execute`/`Checkpoint`/`Restore`. No es `Unavailable`
+ * precisamente para no disparar la reconexión.
+ */
+export function isSandboxTimeout(error: unknown): boolean {
+  const connect = asConnectError(error);
+  return (
+    connect !== undefined &&
+    connect.code === Code.FailedPrecondition &&
+    connect.rawMessage === SANDBOX_TIMEOUT_DETAIL
+  );
+}
+
+export function sandboxTimeoutError(options: SandboxErrorOptions = {}): TimeoutError {
+  return new TimeoutError(`el sandbox alcanzó su timeout (${SANDBOX_TIMEOUT_DETAIL})`, options);
+}
+
+/**
  * Lo que dispara el contrato de reconexión: un reset por debajo de gRPC o el
  * phase gate `suspending`/`terminating`. Nunca `DeadlineExceeded` (el caller
  * eligió ese plazo), nunca el kernel gate (el agente vive), nunca un 403 del
@@ -155,7 +186,9 @@ export interface TranslateOptions {
 
 /**
  * Tabla unaria. `Canceled` sólo lo produce el propio cliente (cerrar el
- * stream), nunca un timeout, por eso no es `TimeoutError`.
+ * stream), nunca un timeout, por eso no es `TimeoutError`. El plazo vencido
+ * (`FailedPrecondition "sandbox_timeout"`) sí lo es, y se mira antes de la
+ * regla genérica de `FailedPrecondition`.
  */
 export function translateRpcError(error: unknown, options: TranslateOptions = {}): Error {
   const connect = asConnectError(error);
@@ -178,6 +211,9 @@ export function translateRpcError(error: unknown, options: TranslateOptions = {}
   if (isKernelGate(connect)) {
     return new SandboxError(`el kernel no está listo: ${message}`, base);
   }
+  if (isSandboxTimeout(connect)) {
+    return sandboxTimeoutError(base);
+  }
   switch (code) {
     case Code.InvalidArgument:
     case Code.FailedPrecondition:
@@ -198,7 +234,9 @@ export function translateRpcError(error: unknown, options: TranslateOptions = {}
     case Code.OutOfRange:
       return new NotFoundError(message, base);
     case Code.ResourceExhausted:
-      return new RateLimitError(message, base);
+      return DISK_FULL_DETAILS.has(message)
+        ? new DiskFullError(message, base)
+        : new RateLimitError(message, base);
     case Code.DeadlineExceeded:
       return new TimeoutError(message, base);
     case Code.Canceled:
@@ -222,7 +260,12 @@ function ownErrorInCause(error: ConnectError): Error | undefined {
   return undefined;
 }
 
-/** Mapa de `StreamError.code` (conjunto cerrado de `common.proto`). */
+/**
+ * Mapa de `StreamError.code` (conjunto cerrado de `common.proto`), el mismo
+ * que el SDK Python: `resource_exhausted` es `DiskFullError` sólo con el
+ * detalle de disco de `rayd`; `unavailable` y `cancelled` caen en
+ * `SandboxError` con el código delante.
+ */
 export function translateStreamError(
   code: string,
   message: string,
@@ -235,9 +278,16 @@ export function translateStreamError(
       return new AuthenticationError(message);
     case "deadline_exceeded":
       return new TimeoutError(message);
+    case SANDBOX_TIMEOUT_DETAIL:
+      return sandboxTimeoutError();
     case "unimplemented":
     case "invalid_argument":
+    case "failed_precondition":
       return new InvalidArgumentError(message);
+    case "resource_exhausted":
+      return DISK_FULL_DETAILS.has(message)
+        ? new DiskFullError(message)
+        : new RateLimitError(message);
     case "suspending":
       return new SandboxStateError(message);
     case "output_truncated":
@@ -245,4 +295,30 @@ export function translateStreamError(
     default:
       return new SandboxError(`${code}: ${message}`);
   }
+}
+
+/**
+ * La tabla de `LifecycleService.SetTimeout` antes de la unaria: más allá del
+ * tope, sin plazo lógico (`lifecycle_unmanaged`) y un agente anterior a M9
+ * (`Unimplemented`) tienen mensaje propio; el resto sigue `translateRpcError`.
+ */
+export function translateSetTimeoutError(error: unknown, timeoutMs: number): Error {
+  const connect = asConnectError(error);
+  if (connect === undefined || ownErrorInCause(connect) !== undefined) {
+    return translateRpcError(error);
+  }
+  const base = { grpcCode: connect.code, cause: connect };
+  if (connect.code === Code.InvalidArgument && connect.rawMessage.startsWith(BEYOND_CAP_PREFIX)) {
+    return beyondCapError(timeoutMs, capFromDetail(connect.rawMessage), base);
+  }
+  if (
+    connect.code === Code.FailedPrecondition &&
+    connect.rawMessage === LIFECYCLE_UNMANAGED_DETAIL
+  ) {
+    return unmanagedLifecycleError(base);
+  }
+  if (connect.code === Code.Unimplemented) {
+    return setTimeoutUnsupportedError(base);
+  }
+  return translateRpcError(connect);
 }

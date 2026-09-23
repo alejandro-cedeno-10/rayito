@@ -65,6 +65,44 @@ describe("SandboxInfo", () => {
     expect(Object.isFrozen(info)).toBe(true);
   });
 
+  test("expiresAt is the logical deadline when rayd manages it, platformExpiresAt the cap", () => {
+    const deadline = new Date("2026-09-15T14:45:00Z");
+    const lifecycle = {
+      phase: "active" as const,
+      deadline,
+      cap: new Date("2026-09-15T15:38:02Z"),
+      timeoutMs: 300_000,
+      onTimeout: "kill" as const,
+      autoResume: false,
+      extensions: 1,
+    };
+    const managed = sandboxInfo({ ...info, lifecycle });
+    expect(managed.lifecycle).toBe(lifecycle);
+    expect(managed.expiresAt).toEqual(deadline);
+    expect(managed.platformExpiresAt).toEqual(new Date("2026-09-15T15:39:02Z"));
+    expect(managed.remainingSeconds(new Date("2026-09-15T14:44:00Z"))).toBe(60);
+    const unmanaged = sandboxInfo({
+      ...info,
+      lifecycle: { ...lifecycle, phase: "unmanaged", deadline: undefined, cap: undefined },
+    });
+    expect(unmanaged.expiresAt).toEqual(new Date("2026-09-15T15:39:02Z"));
+    expect(info.platformExpiresAt).toEqual(info.expiresAt);
+    expect(info.lifecycle).toBeUndefined();
+  });
+
+  test("timedOut reads the exit code of a deadline exit", () => {
+    expect(info.timedOut).toBe(false);
+    const timedOut = sandboxInfo({
+      ...info,
+      state: "TERMINATED",
+      stateReason: "Container Stopped with Exit Code: 124",
+    });
+    expect(timedOut.timedOut).toBe(true);
+    expect(
+      sandboxInfo({ ...info, stateReason: "Container Stopped with Exit Code: 0" }).timedOut,
+    ).toBe(false);
+  });
+
   test("list items derive the template name", () => {
     const item = sandboxListItem({
       sandboxId: SANDBOX_ID,

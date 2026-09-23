@@ -182,3 +182,52 @@ async def test_async_list_without_metadata_is_unchanged(
     listed = await AsyncSandbox.list(control_plane=control_plane.plane)
     assert [item.sandbox_id for item in listed] == ["x"]
     assert listed[0].metadata is None
+
+
+GUEST_MEMORY_BYTES = 8_405_385_216
+
+
+async def test_async_instance_get_info_carries_the_guest_facts(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.agent_version = "0.3.0"
+    fake_rayd.servicer.cpu_count = 2
+    fake_rayd.servicer.memory_total_bytes = GUEST_MEMORY_BYTES
+    capture_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("terminate_microvm", {})
+    async with await AsyncSandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ) as sandbox:
+        health_calls = len(fake_rayd.servicer.health_calls)
+        info = await sandbox.get_info()
+        assert (info.agent_version, info.cpu_count, info.memory_mb) == ("0.3.0", 2, 8016)
+        assert len(fake_rayd.servicer.health_calls) == health_calls
+        assert (sandbox.info.agent_version, sandbox.info.cpu_count) == (None, None)
+        assert sandbox.info.memory_mb is None
+        assert sandbox.launch_info.cpu_count is None
+
+
+async def test_async_class_get_info_fills_the_guest_facts_only_when_running(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.agent_version = "0.2.0"
+    fake_rayd.servicer.cpu_count = 4
+    transport = TrackingTransport.for_loopback()
+    stub_metadata_probe(control_plane, SANDBOX_ID, fake_rayd)
+    info = await AsyncSandbox.get_info(
+        SANDBOX_ID, control_plane=control_plane.plane, transport=transport
+    )
+    assert (info.agent_version, info.cpu_count, info.memory_mb) == ("0.2.0", 4, None)
+    stub_metadata_probe(control_plane, SANDBOX_ID, fake_rayd, state="SUSPENDED")
+    paused = await AsyncSandbox.get_info(
+        SANDBOX_ID, control_plane=control_plane.plane, transport=transport
+    )
+    assert paused.agent_version is None and paused.cpu_count is None
+    assert transport.all_closed

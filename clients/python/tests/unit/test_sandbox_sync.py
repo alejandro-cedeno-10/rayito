@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +15,7 @@ from rayito import IdlePolicy, Sandbox, _aws
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito._limits import DEFAULT_PORT, HOOKS_PORT
 from rayito._payload import access_token_sha256
+from rayito._sandbox_base import ReadinessPoll
 from rayito._transport import (
     ACCESS_TOKEN_KEY,
     PROXY_AUTH_KEY,
@@ -23,11 +25,13 @@ from rayito._transport import (
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
+    LifecycleUnsupportedException,
     RateLimitException,
     SandboxNotFoundException,
     SandboxNotReadyException,
 )
 from rayito.sandbox_sync.pty import Pty
+from rayito.v1 import health_pb2
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -44,6 +48,7 @@ from .conftest import (
     list_item,
     microvm_response,
 )
+from .log_capture import capture_logs
 
 
 def proxy_forbidden() -> FakeRpcError:
@@ -550,7 +555,9 @@ def test_class_calls_without_control_plane_share_one_plane_per_process(
 ) -> None:
     built: list[tuple[object, str | None]] = []
 
-    def fake_from_session(session: object = None, *, region: str | None = None) -> Any:
+    def fake_from_session(
+        session: object = None, *, region: str | None = None, settings: object = None
+    ) -> Any:
         built.append((session, region))
         return control_plane.plane
 
@@ -564,3 +571,99 @@ def test_class_calls_without_control_plane_share_one_plane_per_process(
         assert Sandbox.pause(SANDBOX_ID, wait=False, region=REGION) is True
     assert built == [(None, REGION)]
     assert control_plane.clock.sleeps == pytest.approx([0.5])
+
+
+def test_is_running_request_timeout_bounds_the_health_deadline(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El plazo se verifica en el stub y no en `time_remaining()` del
+    servidor: gRPC redondea el deadline al milisegundo hacia arriba y un
+    `Health` real de 0.5 s puede caducar con el GIL ocupado."""
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    timeouts: list[float | None] = []
+
+    def health(
+        request: health_pb2.HealthRequest, timeout: float | None = None
+    ) -> health_pb2.HealthResponse:
+        timeouts.append(timeout)
+        return health_pb2.HealthResponse(agent_ready=True)
+
+    with Sandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ) as sandbox:
+        monkeypatch.setattr(sandbox._health, "Health", health)
+        assert sandbox.is_running(request_timeout=0.5) is True
+        assert sandbox.is_running() is True
+        assert timeouts == [0.5, ReadinessPoll.MAX_RPC_TIMEOUT]
+
+
+def test_logger_receives_the_create_and_readiness_records(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.unavailable_calls = 1
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    custom = logging.getLogger("tests.custom.sync")
+    with capture_logs("tests.custom.sync") as mine, capture_logs("rayito.sandbox") as default:
+        sandbox = Sandbox.create(
+            IMAGE_ARN,
+            idle=None,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+            logger=custom,
+        )
+        sandbox.kill()
+    messages = mine.messages()
+    assert f"run-microvm aceptado: {SANDBOX_ID} (PENDING)" in messages
+    assert any("Health aún no alcanzable" in message for message in messages)
+    assert default.messages() == []
+    assert sandbox._logger_or(logging.getLogger("rayito.commands")) is custom
+
+
+def test_without_logger_the_records_keep_their_module_loggers(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    with capture_logs("rayito.sandbox") as default:
+        sandbox = Sandbox.create(
+            IMAGE_ARN,
+            idle=None,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+        sandbox.kill()
+    assert f"run-microvm aceptado: {SANDBOX_ID} (PENDING)" in default.messages()
+    commands_logger = logging.getLogger("rayito.commands")
+    assert sandbox._logger_or(commands_logger) is commands_logger
+
+
+def test_failed_boot_cleanup_is_logged_on_the_given_logger(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_client_error("terminate_microvm", "InternalServerException")
+    custom = logging.getLogger("tests.custom.cleanup")
+    with (
+        capture_logs("tests.custom.cleanup") as mine,
+        capture_logs("rayito.sandbox") as default,
+        pytest.raises(LifecycleUnsupportedException),
+    ):
+        Sandbox.create(
+            IMAGE_ARN,
+            idle=None,
+            max_lifetime=3600,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+            logger=custom,
+        )
+    assert any("no se pudo terminar el sandbox" in message for message in mine.messages())
+    assert default.records == []

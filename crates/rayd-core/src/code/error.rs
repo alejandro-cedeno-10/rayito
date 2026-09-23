@@ -14,7 +14,7 @@ pub enum CodeError {
     InvalidContextId,
     #[error("code exceeds {max} bytes")]
     CodeTooLarge { max: usize },
-    #[error("language must be one of python, bash, javascript")]
+    #[error("language must be one of python, bash, javascript, typescript")]
     InvalidLanguage,
     #[error("language {0} is not installed in this image; use rayito-base-poly")]
     LanguageUnavailable(Language),
@@ -116,5 +116,12 @@ mod tests {
             CodeError::LanguageUnavailable(Language::Javascript).to_string(),
             "language javascript is not installed in this image; use rayito-base-poly"
         );
+        assert_eq!(
+            CodeError::InvalidLanguage.to_string(),
+            "language must be one of python, bash, javascript, typescript"
+        );
+        let typescript = CodeError::LanguageUnavailable(Language::Typescript).to_string();
+        assert!(typescript.contains("typescript"), "{typescript}");
+        assert!(typescript.contains("rayito-base-poly"), "{typescript}");
     }
 }

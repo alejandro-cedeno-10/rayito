@@ -7,6 +7,7 @@
  */
 
 import { InvalidArgumentError } from "../errors.js";
+import { defineHidden } from "../hidden.js";
 import { type IdlePolicy, type SandboxInfo, sandboxInfo } from "../models.js";
 import { ReadinessPoll } from "../sandbox/readiness.js";
 
@@ -20,7 +21,8 @@ const LISTED_STATES_TO_DROP: ReadonlySet<string> = new Set(["TERMINATING", "TERM
 
 /**
  * Todo lo que `take()` necesita de una plaza sin un `get-microvm`.
- * `accessToken` es el secreto de la plaza (uno por plaza, acuñado por el pool).
+ * `accessToken` es el secreto de la plaza (uno por plaza, acuñado por el pool)
+ * y no es enumerable: no sale al inspeccionar el registro.
  */
 export interface SlotRecord {
   readonly sandboxId: string;
@@ -66,9 +68,8 @@ export function recordFromInfo(
     readonly parkedAt?: Date | undefined;
   },
 ): SlotRecord {
-  return Object.freeze({
+  const record: Omit<SlotRecord, "accessToken"> = {
     sandboxId: info.sandboxId,
-    accessToken: fields.accessToken,
     endpoint: info.endpoint,
     template: info.template,
     templateVersion: info.templateVersion,
@@ -81,7 +82,8 @@ export function recordFromInfo(
     ingress: Object.freeze([]),
     egress: Object.freeze([]),
     parkedAt: fields.parkedAt,
-  });
+  };
+  return Object.freeze(defineHidden(record, "accessToken", fields.accessToken));
 }
 
 export function sandboxInfoFromRecord(record: SlotRecord, state = "SUSPENDED"): SandboxInfo {
@@ -180,9 +182,8 @@ export function recordFromJson(value: unknown): SlotRecord {
   }
   const parked = data.parked_at;
   const role = data.execution_role_arn;
-  return Object.freeze({
+  const record: Omit<SlotRecord, "accessToken"> = {
     sandboxId: stringField(data, "sandbox_id"),
-    accessToken: stringField(data, "access_token"),
     endpoint: stringField(data, "endpoint"),
     template: stringField(data, "template"),
     templateVersion: stringField(data, "template_version"),
@@ -195,7 +196,8 @@ export function recordFromJson(value: unknown): SlotRecord {
     ingress: stringList(data.ingress),
     egress: stringList(data.egress),
     parkedAt: parked === null || parked === undefined ? undefined : dateField(data, "parked_at"),
-  });
+  };
+  return Object.freeze(defineHidden(record, "accessToken", stringField(data, "access_token")));
 }
 
 /**
@@ -379,6 +381,8 @@ export const POOL_REJECTED_OPTIONS: readonly string[] = Object.freeze([
   "template",
   "templateVersion",
   "timeoutMs",
+  "maxLifetimeMs",
+  "onTimeout",
   "idle",
   "envs",
   "metadata",

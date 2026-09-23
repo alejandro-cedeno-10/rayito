@@ -27,7 +27,9 @@
 //! `user_reachable`, `imds_block_unavailable`, `imds_rule_missing`, `cpu_seconds`,
 //! `metadata_keys` (a count), `output_budget_bytes`, `entries_dropped`,
 //! `disk_reserve`, `disk_full`, `free_bytes`, `deferred`,
-//! `advisory_op_timeout`. Request bodies,
+//! `advisory_op_timeout`, and for the logical deadline (ADR-011)
+//! `sandbox_timeout` and `timeout_forced_exit` (messages), `on_timeout`,
+//! `extensions`, `overrun_ms`, `action`, `mode` and `lifecycle_phase`. Request bodies,
 //! payloads, tokens, digests, commands, the shell's arguments,
 //! environments, working directories, tags, stdin bytes, output bytes,
 //! terminal bytes (input or output), paths, entry names, symlink targets,

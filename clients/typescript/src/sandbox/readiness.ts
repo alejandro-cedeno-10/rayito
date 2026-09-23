@@ -15,6 +15,8 @@ import type { HealthResponse } from "../gen/rayito/v1/health_pb.js";
 import { SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { SandboxHealth, SandboxInfo } from "../models.js";
 import { isPhaseGate } from "../transport/errors.js";
+import { lifecycleFromProto } from "./lifecycle.js";
+import { enforcementFromProto } from "./network.js";
 
 export const CLOCK_OFFSET_WARN_MS = 5000;
 export const MAX_FUTILE_RECONNECTS = 3;
@@ -258,7 +260,56 @@ export function healthFromProto(response: HealthResponse): SandboxHealth {
     resumeGeneration: Number(response.resumeGeneration),
     clockOffsetMs: Number(response.clockOffsetMs),
     kernelStateLost: Boolean(response.kernelStateLost),
+    egressEnforcement: enforcementFromProto(response.egressEnforcement),
+    lifecycle: lifecycleFromProto(response.lifecycle),
+    cpuCount: response.cpuCount,
+    memoryTotalBytes: Number(response.memoryTotalBytes),
   });
+}
+
+const BYTES_PER_MIB = 1024n * 1024n;
+
+/** Lo que `getInfo()` de una instancia añade a `get-microvm`, leído del último `Health`. */
+export interface GuestFacts {
+  readonly agentVersion: string | undefined;
+  readonly cpuCount: number | undefined;
+  readonly memoryMb: number | undefined;
+}
+
+export const UNKNOWN_GUEST_FACTS: GuestFacts = Object.freeze({
+  agentVersion: undefined,
+  cpuCount: undefined,
+  memoryMb: undefined,
+});
+
+/**
+ * `""` y `0` significan "no leído": un agente anterior a M9 da `agentVersion`
+ * y deja `cpuCount`/`memoryMb` en `undefined`. `memoryMb` es `MemTotal` en MiB
+ * truncado.
+ */
+export function guestFactsFromHealth(response: HealthResponse): GuestFacts {
+  const memoryMb = Number(response.memoryTotalBytes / BYTES_PER_MIB);
+  return Object.freeze({
+    agentVersion: response.agentVersion === "" ? undefined : response.agentVersion,
+    cpuCount: response.cpuCount === 0 ? undefined : response.cpuCount,
+    memoryMb: memoryMb === 0 ? undefined : memoryMb,
+  });
+}
+
+/** El mapa `metadata` de `Health`, congelado; vacío sobre una imagen anterior a M6. */
+export function metadataFromHealth(response: HealthResponse): Readonly<Record<string, string>> {
+  return Object.freeze({ ...response.metadata });
+}
+
+/**
+ * Listo para la readiness de `create()`/`connect()`/`resume()`: agente y
+ * kernel listos y `sandboxId` presente. El proxy deja pasar `Health` antes de
+ * que `rayd` reciba `/run`; ese `Health` trae el kernel del snapshot sin rotar
+ * y ningún `sandboxId`, y la rotación de `/run` lo pondría `kernelReady=false`
+ * justo después (regresión de M9, `AWS_API_NOTES.md` Q78).
+ */
+export function healthReady(response: HealthResponse | undefined): response is HealthResponse {
+  return response?.agentReady === true && response.kernelReady && response.sandboxId !== "";
 }
 
 /**

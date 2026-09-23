@@ -16,12 +16,36 @@ class FilesystemEventType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FILESYSTEM_EVENT_TYPE_REMOVE: _ClassVar[FilesystemEventType]
     FILESYSTEM_EVENT_TYPE_RENAME: _ClassVar[FilesystemEventType]
     FILESYSTEM_EVENT_TYPE_CHMOD: _ClassVar[FilesystemEventType]
+
+class TransferDirection(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TRANSFER_DIRECTION_UNSPECIFIED: _ClassVar[TransferDirection]
+    TRANSFER_DIRECTION_IMPORT: _ClassVar[TransferDirection]
+    TRANSFER_DIRECTION_EXPORT: _ClassVar[TransferDirection]
+
+class TransferPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TRANSFER_PHASE_UNSPECIFIED: _ClassVar[TransferPhase]
+    TRANSFER_PHASE_WAITING: _ClassVar[TransferPhase]
+    TRANSFER_PHASE_RUNNING: _ClassVar[TransferPhase]
+    TRANSFER_PHASE_DONE: _ClassVar[TransferPhase]
+    TRANSFER_PHASE_FAILED: _ClassVar[TransferPhase]
+    TRANSFER_PHASE_CANCELLED: _ClassVar[TransferPhase]
 FILESYSTEM_EVENT_TYPE_UNSPECIFIED: FilesystemEventType
 FILESYSTEM_EVENT_TYPE_CREATE: FilesystemEventType
 FILESYSTEM_EVENT_TYPE_WRITE: FilesystemEventType
 FILESYSTEM_EVENT_TYPE_REMOVE: FilesystemEventType
 FILESYSTEM_EVENT_TYPE_RENAME: FilesystemEventType
 FILESYSTEM_EVENT_TYPE_CHMOD: FilesystemEventType
+TRANSFER_DIRECTION_UNSPECIFIED: TransferDirection
+TRANSFER_DIRECTION_IMPORT: TransferDirection
+TRANSFER_DIRECTION_EXPORT: TransferDirection
+TRANSFER_PHASE_UNSPECIFIED: TransferPhase
+TRANSFER_PHASE_WAITING: TransferPhase
+TRANSFER_PHASE_RUNNING: TransferPhase
+TRANSFER_PHASE_DONE: TransferPhase
+TRANSFER_PHASE_FAILED: TransferPhase
+TRANSFER_PHASE_CANCELLED: TransferPhase
 
 class ReadRequest(_message.Message):
     __slots__ = ("path", "user")
@@ -38,16 +62,25 @@ class ReadResponse(_message.Message):
     def __init__(self, chunk: _Optional[bytes] = ...) -> None: ...
 
 class WriteRequest(_message.Message):
-    __slots__ = ("path", "user", "mode", "chunk")
+    __slots__ = ("path", "user", "mode", "chunk", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     PATH_FIELD_NUMBER: _ClassVar[int]
     USER_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     CHUNK_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
     path: str
     user: _common_pb2.User
     mode: int
     chunk: bytes
-    def __init__(self, path: _Optional[str] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., mode: _Optional[int] = ..., chunk: _Optional[bytes] = ...) -> None: ...
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, path: _Optional[str] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., mode: _Optional[int] = ..., chunk: _Optional[bytes] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class WriteResponse(_message.Message):
     __slots__ = ("entries",)
@@ -286,3 +319,147 @@ class RestoreDone(_message.Message):
     skipped: int
     duration_ms: int
     def __init__(self, files: _Optional[int] = ..., bytes_written: _Optional[int] = ..., archive_bytes: _Optional[int] = ..., sha256: _Optional[str] = ..., skipped: _Optional[int] = ..., duration_ms: _Optional[int] = ...) -> None: ...
+
+class S3Object(_message.Message):
+    __slots__ = ("bucket", "key", "region")
+    BUCKET_FIELD_NUMBER: _ClassVar[int]
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    REGION_FIELD_NUMBER: _ClassVar[int]
+    bucket: str
+    key: str
+    region: str
+    def __init__(self, bucket: _Optional[str] = ..., key: _Optional[str] = ..., region: _Optional[str] = ...) -> None: ...
+
+class PresignedRequest(_message.Message):
+    __slots__ = ("url", "headers")
+    class HeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    URL_FIELD_NUMBER: _ClassVar[int]
+    HEADERS_FIELD_NUMBER: _ClassVar[int]
+    url: str
+    headers: _containers.ScalarMap[str, str]
+    def __init__(self, url: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class PresignedMultipart(_message.Message):
+    __slots__ = ("part_size", "parts")
+    PART_SIZE_FIELD_NUMBER: _ClassVar[int]
+    PARTS_FIELD_NUMBER: _ClassVar[int]
+    part_size: int
+    parts: _containers.RepeatedCompositeFieldContainer[PresignedRequest]
+    def __init__(self, part_size: _Optional[int] = ..., parts: _Optional[_Iterable[_Union[PresignedRequest, _Mapping]]] = ...) -> None: ...
+
+class StartImportRequest(_message.Message):
+    __slots__ = ("path", "user", "mode", "object", "get", "delete", "wait_for_object", "expires_at_unix_ms", "max_bytes", "expected_sha256", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_FIELD_NUMBER: _ClassVar[int]
+    GET_FIELD_NUMBER: _ClassVar[int]
+    DELETE_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FOR_OBJECT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    MAX_BYTES_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_SHA256_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    user: _common_pb2.User
+    mode: int
+    object: S3Object
+    get: PresignedRequest
+    delete: PresignedRequest
+    wait_for_object: bool
+    expires_at_unix_ms: int
+    max_bytes: int
+    expected_sha256: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, path: _Optional[str] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., mode: _Optional[int] = ..., object: _Optional[_Union[S3Object, _Mapping]] = ..., get: _Optional[_Union[PresignedRequest, _Mapping]] = ..., delete: _Optional[_Union[PresignedRequest, _Mapping]] = ..., wait_for_object: _Optional[bool] = ..., expires_at_unix_ms: _Optional[int] = ..., max_bytes: _Optional[int] = ..., expected_sha256: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class StartExportRequest(_message.Message):
+    __slots__ = ("path", "user", "object", "put", "multipart", "expires_at_unix_ms")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_FIELD_NUMBER: _ClassVar[int]
+    PUT_FIELD_NUMBER: _ClassVar[int]
+    MULTIPART_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    user: _common_pb2.User
+    object: S3Object
+    put: PresignedRequest
+    multipart: PresignedMultipart
+    expires_at_unix_ms: int
+    def __init__(self, path: _Optional[str] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., object: _Optional[_Union[S3Object, _Mapping]] = ..., put: _Optional[_Union[PresignedRequest, _Mapping]] = ..., multipart: _Optional[_Union[PresignedMultipart, _Mapping]] = ..., expires_at_unix_ms: _Optional[int] = ...) -> None: ...
+
+class StartTransferResponse(_message.Message):
+    __slots__ = ("transfer_id",)
+    TRANSFER_ID_FIELD_NUMBER: _ClassVar[int]
+    transfer_id: str
+    def __init__(self, transfer_id: _Optional[str] = ...) -> None: ...
+
+class GetTransferRequest(_message.Message):
+    __slots__ = ("transfer_id",)
+    TRANSFER_ID_FIELD_NUMBER: _ClassVar[int]
+    transfer_id: str
+    def __init__(self, transfer_id: _Optional[str] = ...) -> None: ...
+
+class WatchTransferRequest(_message.Message):
+    __slots__ = ("transfer_id",)
+    TRANSFER_ID_FIELD_NUMBER: _ClassVar[int]
+    transfer_id: str
+    def __init__(self, transfer_id: _Optional[str] = ...) -> None: ...
+
+class CancelTransferRequest(_message.Message):
+    __slots__ = ("transfer_id",)
+    TRANSFER_ID_FIELD_NUMBER: _ClassVar[int]
+    transfer_id: str
+    def __init__(self, transfer_id: _Optional[str] = ...) -> None: ...
+
+class CancelTransferResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class TransferState(_message.Message):
+    __slots__ = ("transfer_id", "direction", "phase", "bytes_done", "bytes_total", "probes", "entry", "sha256", "part_etags", "duration_ms", "error")
+    TRANSFER_ID_FIELD_NUMBER: _ClassVar[int]
+    DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    PHASE_FIELD_NUMBER: _ClassVar[int]
+    BYTES_DONE_FIELD_NUMBER: _ClassVar[int]
+    BYTES_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    PROBES_FIELD_NUMBER: _ClassVar[int]
+    ENTRY_FIELD_NUMBER: _ClassVar[int]
+    SHA256_FIELD_NUMBER: _ClassVar[int]
+    PART_ETAGS_FIELD_NUMBER: _ClassVar[int]
+    DURATION_MS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    transfer_id: str
+    direction: TransferDirection
+    phase: TransferPhase
+    bytes_done: int
+    bytes_total: int
+    probes: int
+    entry: _common_pb2.EntryInfo
+    sha256: str
+    part_etags: _containers.RepeatedScalarFieldContainer[str]
+    duration_ms: int
+    error: _common_pb2.StreamError
+    def __init__(self, transfer_id: _Optional[str] = ..., direction: _Optional[_Union[TransferDirection, str]] = ..., phase: _Optional[_Union[TransferPhase, str]] = ..., bytes_done: _Optional[int] = ..., bytes_total: _Optional[int] = ..., probes: _Optional[int] = ..., entry: _Optional[_Union[_common_pb2.EntryInfo, _Mapping]] = ..., sha256: _Optional[str] = ..., part_etags: _Optional[_Iterable[str]] = ..., duration_ms: _Optional[int] = ..., error: _Optional[_Union[_common_pb2.StreamError, _Mapping]] = ...) -> None: ...
+
+class TransferEvent(_message.Message):
+    __slots__ = ("state", "keepalive")
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    KEEPALIVE_FIELD_NUMBER: _ClassVar[int]
+    state: TransferState
+    keepalive: _common_pb2.KeepAlive
+    def __init__(self, state: _Optional[_Union[TransferState, _Mapping]] = ..., keepalive: _Optional[_Union[_common_pb2.KeepAlive, _Mapping]] = ...) -> None: ...

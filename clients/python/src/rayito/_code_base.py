@@ -32,8 +32,8 @@ MAX_CODE_BYTES: Final = 1_048_576
 MAIN_RESULT_MIME: Final = "text/plain"
 DEFAULT_CONTEXT_ID: Final = "default"
 DEFAULT_LANGUAGE: Final = "python"
-SUPPORTED_LANGUAGES: Final = frozenset({DEFAULT_LANGUAGE, "bash", "javascript"})
-LANGUAGE_ALIASES: Final[dict[str, str]] = {"js": "javascript"}
+SUPPORTED_LANGUAGES: Final = frozenset({DEFAULT_LANGUAGE, "bash", "javascript", "typescript"})
+LANGUAGE_ALIASES: Final[dict[str, str]] = {"js": "javascript", "ts": "typescript"}
 
 RESULT_MIME_FIELDS: Final[tuple[tuple[str, str], ...]] = (
     ("text", "text/plain"),
@@ -83,9 +83,10 @@ def require_context_id(context: ContextLike | None) -> str:
 
 
 def normalize_language(language: str | None) -> str | None:
-    """El nombre canónico del kernel (`python`, `bash`, `javascript`) sin
-    distinguir mayúsculas y con el alias `js`; `None` o `""` es "no enviar"
-    (el contexto indicado o el de Python)."""
+    """El nombre canónico del kernel (`python`, `bash`, `javascript`,
+    `typescript`) sin distinguir mayúsculas y con los alias `js` y `ts`;
+    `None` o `""` es "no enviar" (el contexto indicado o el de Python). Si la
+    imagen trae el kernel lo decide el agente, no el SDK."""
     if language is None or language == "":
         return None
     if not isinstance(language, str):
@@ -207,7 +208,7 @@ def result_from_proto(result: code_pb2.ExecutionResult) -> Result:
         value = str(getattr(result, name))
         raw[mime] = value
         fields[name] = _parsed_result_field(name, value)
-    extra = {str(mime): str(value) for mime, value in result.extra.items()}
+    extra = {str(mime): str(value) for mime, value in sorted(result.extra.items())}
     raw.update(extra)
     return Result(**fields, is_main_result=bool(result.is_main_result), extra=extra, raw=raw)
 

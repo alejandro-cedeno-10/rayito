@@ -1,5 +1,7 @@
 """The real ``ipykernel`` with the pinned requirements (Linux only: ``ipc``
-sockets). Every case of design D13 "Sidecar" that needs a kernel."""
+sockets). Every case of design D13 "Sidecar" that needs a kernel, plus the
+optional Deno TypeScript context over loopback TCP (ADR-013) when
+``RAYITO_TEST_DENO`` names a Deno executable."""
 
 from __future__ import annotations
 
@@ -7,6 +9,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -15,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_languages import sidecar_root_with_deno
 from test_server import Harness, MemoryTransport
 
 from rayito_kernel_sidecar.kernels import (
@@ -336,3 +340,75 @@ async def test_bash_context_starts_without_the_ipython_config(harness: Harness) 
     assert (await harness.reply(53))["payload"]["skipped"] == ["default-bash"]
     await harness.send(54, "destroy_context", context_id="default-bash")
     assert (await harness.reply(54))["ok"]
+
+
+def deno_under_test() -> str | None:
+    """The Deno binary ``RAYITO_TEST_DENO`` names, as a path or a ``PATH`` entry."""
+    named = os.environ.get("RAYITO_TEST_DENO")
+    return shutil.which(named) if named else None
+
+
+deno_installed = pytest.mark.skipif(
+    deno_under_test() is None, reason="RAYITO_TEST_DENO does not name a Deno executable"
+)
+
+DENO_ENV_CELL = (
+    "Deno.env.get('K') === '1' && Deno.env.get('NO_COLOR') === '1'"
+    " && Deno.env.get('DENO_DIR')!.endsWith('/.cache/deno')"
+)
+
+
+async def run_on(
+    context: KernelContext,
+    request_id: int,
+    code: str,
+    events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    collected: list[dict[str, Any]] = [] if events is None else events
+
+    async def emit(event: dict[str, Any]) -> None:
+        collected.append(event)
+
+    await context.run(request_id, f"exec-{request_id}", code, {}, emit)
+    return collected
+
+
+async def wait_for_event(events: list[dict[str, Any]], name: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while not any(event["event"] == name for event in events):
+        if time.monotonic() > deadline:
+            raise TimeoutError(name)
+        await asyncio.sleep(0.05)
+
+
+@deno_installed
+async def test_deno_typescript_context(tmp_path: Path) -> None:
+    """Message interrupt over loopback TCP keeps the context's state, the
+    kernelspec ``env`` and the context ``envs`` reach Deno, and the coloured
+    ``text/plain`` of Q61 comes back clean."""
+    deno = deno_under_test()
+    assert deno is not None
+    root = sidecar_root_with_deno(tmp_path / "root", Path(deno))
+    paths = KernelPaths(socket_root=tmp_path / "k", sidecar_root=root)
+    assert "typescript" in install_kernelspecs(paths)
+    context = KernelContext(
+        "ctx-ts", "typescript", str(tmp_path), {"K": "1"}, SidecarLogger(), paths
+    )
+    started = time.monotonic()
+    await context.start()
+    print(f"\n[m9] deno kernel start: {time.monotonic() - started:.2f} s")
+    try:
+        first = await run_on(context, 1, "const x: number = 40 + 2; x")
+        assert main_text(first) == "42"
+        assert error_of(first) is None
+        assert main_text(await run_on(context, 2, DENO_ENV_CELL)) == "true"
+        looping: list[dict[str, Any]] = []
+        running = asyncio.create_task(run_on(context, 3, "while (true) {}", looping))
+        await wait_for_event(looping, "started", 30.0)
+        await context.interrupt("exec-3")
+        await asyncio.wait_for(running, 10.0)
+        assert looping[-1]["event"] == "end"
+        print(f"[m9] deno interrupt error: {(error_of(looping) or {}).get('name')}")
+        assert main_text(await run_on(context, 4, "x")) == "42"
+    finally:
+        await context.shutdown()

@@ -13,6 +13,7 @@ import { StreamErrorSchema } from "../../src/gen/rayito/v1/common_pb.js";
 import { EndEventSchema } from "../../src/gen/rayito/v1/process_pb.js";
 import {
   buildStartRequest,
+  consumedEnd,
   DecodedStream,
   encodeStdin,
   outcomeFromEnd,
@@ -22,6 +23,7 @@ import {
   validatePid,
 } from "../../src/sandbox/commands.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { sandboxTimeoutEnd } from "./fake/lifecycle.js";
 import { Collector, createTestSandbox, readUntil, waitUntil } from "./helpers.js";
 
 describe("pure helpers", () => {
@@ -130,6 +132,29 @@ describe("pure helpers", () => {
       "",
     );
     expect(unknown).toBeInstanceOf(NotFoundError);
+  });
+
+  test("outcomeFromEnd: sandbox_timeout is TimeoutError and terminal, never suspending", () => {
+    const end = sandboxTimeoutEnd();
+    expect(outcomeFromEnd(end, "", "")).toBeInstanceOf(TimeoutError);
+    expect(
+      outcomeFromEnd(create(EndEventSchema, { status: "sandbox_timeout" }), "", ""),
+    ).toBeInstanceOf(TimeoutError);
+    expect(consumedEnd(end).kind).toBe("ended");
+  });
+});
+
+describe("the sandbox deadline on command streams", () => {
+  test("an EndEvent sandbox_timeout rejects wait() with TimeoutError and never polls Health", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    const handle = await sandbox.commands.run("sleep 30", { background: true, timeoutMs: 0 });
+    const probes = rayd.health.healthCalls.length;
+    rayd.process.processes.get(handle.pid)?.finish(sandboxTimeoutEnd());
+    const outcome = await handle.wait().catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(TimeoutError);
+    expect(handle.error).toBe("sandbox_timeout");
+    expect(rayd.health.healthCalls).toHaveLength(probes);
+    expect(Sandbox.coreOf(sandbox).liveStreamCount).toBe(0);
   });
 });
 

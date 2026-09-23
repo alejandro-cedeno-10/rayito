@@ -33,10 +33,10 @@ use super::executions::{
     ExecuteSink, ExecutionRecorder, InterruptHandle, RecorderParts, SharedExecutions,
 };
 use super::supervisor::{
-    KernelKiller, OpTimeouts, SidecarSupervisor, SupervisorSettings, lock, millis,
+    KernelSignaller, OpTimeouts, SidecarSupervisor, SupervisorSettings, lock, millis,
 };
 use super::validate::run_validation;
-use crate::adapters::{PlatformSidecarLauncher, SpawnPlatform, kill_process_group};
+use crate::adapters::{PlatformSidecarLauncher, SpawnPlatform, signal_process_group};
 use crate::lifecycle::Reaper;
 
 #[derive(Debug, Clone)]
@@ -484,6 +484,16 @@ impl CodeManager {
         sinks.len()
     }
 
+    /// The agent is ending at the logical deadline (ADR-011): the sidecar
+    /// is never relaunched again and `signal` reaches every kernel group
+    /// and the sidecar's group. Returns how many kernel groups were
+    /// signalled (zero without a sidecar).
+    pub fn stop_for_exit(&self, signal: i32) -> usize {
+        self.supervisor
+            .as_ref()
+            .map_or(0, |supervisor| supervisor.stop_for_exit(signal))
+    }
+
     /// Drops ended executions whose retention window closed, then, while
     /// the shared output budget sits above its high-water mark, the oldest
     /// ended ones regardless of age.
@@ -804,7 +814,7 @@ impl Reaper for CodeManager {
 
 /// Builds the manager for the host `rayd` runs on: the sidecar identity is
 /// the sandbox's default user through the same lookup and policy as
-/// processes, the launcher is the platform's, orphan kernels are killed by
+/// processes, the launcher is the platform's, kernels are signalled by
 /// process group.
 pub fn platform_code_manager(
     session: Arc<SandboxSession>,
@@ -821,14 +831,14 @@ pub fn platform_code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(PlatformSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let killer: KernelKiller = Arc::new(kill_process_group);
+    let signaller: KernelSignaller = Arc::new(signal_process_group);
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
         session.clone(),
         registry.clone(),
         settings.supervisor_settings(),
-        killer,
+        signaller,
     );
     Ok(CodeManager::new(
         session,

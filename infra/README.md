@@ -231,3 +231,121 @@ Estado 2026-09-16: plantilla validada (`cfn-lint` 1.56.3 y
 environment, las variables y el presupuesto son los pasos manuales del
 Migration Plan de `m7-supply-chain`.
 
+
+## Transferencias de ficheros (`spike/m0/iam.yaml`, M9)
+
+`files.upload_url`/`download_url` y los ficheros grandes de
+`files.write`/`files.read` (`Sandbox.create(transfer=S3Staging(bucket,
+prefix))`, ADR-010) usan un bucket tuyo. Las URLs las firma el SDK con las
+credenciales **del llamante** (tu proceso); el execution role no recibe
+nada y `rayd` no guarda ninguna credencial (`SECURITY.md` T16). Los
+parámetros `TransferBucket` y `TransferPrefix` de la plantilla añaden a
+`CallerPolicy` exactamente lo necesario; con `TransferBucket` vacío (por
+defecto) no hay ningún permiso de transferencia:
+
+```bash
+aws cloudformation deploy --stack-name rayito-m0-iam \
+  --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --profile <tu-perfil> \
+  --parameter-overrides ArtifactBucket=<bucket-de-artefactos> LogGroupPrefix=/rayito \
+      TransferBucket=amzn-s3-demo-bucket TransferPrefix=rayito-transfer
+```
+
+- `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` y
+  `s3:AbortMultipartUpload` sobre `arn:aws:s3:::<TransferBucket>/<TransferPrefix>/*`
+  (`CreateMultipartUpload`, `UploadPart` y `CompleteMultipartUpload` los
+  autoriza `s3:PutObject`) y `s3:ListBucket` con `s3:prefix =
+  <TransferPrefix>/*`, para que una clave que falta dé 404 y no 403.
+- `TransferPrefix` sigue el patrón de `PersistencePrefix` y **nunca** puede
+  ser `rayito` (los artefactos de imagen) ni igual a `PersistencePrefix`: la
+  regla `TransferPrefixIsDisjoint` de la plantilla lo rechaza, porque la
+  regla de ciclo de vida de 1 día borraría esos objetos. Debe coincidir con
+  el `prefix` de `S3Staging` (`rayito-transfer` por defecto).
+- El bucket en la **misma región** que los sandboxes (o `S3Staging(region=)`):
+  el SDK firma con el host virtual regional y `rayd` rechaza cualquier otro.
+  Nombres de bucket sin puntos.
+
+**Ciclo de vida** sobre el prefijo: los objetos de transferencia son de un
+solo uso y los multipart a medias se facturan. S3 redondea la expiración a la
+siguiente medianoche UTC, así que un objeto vive entre 24 y 48 h:
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "rayito-transfer",
+      "Filter": { "Prefix": "rayito-transfer/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 1 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
+```
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket amzn-s3-demo-bucket \
+  --lifecycle-configuration file://lifecycle.json --profile <tu-perfil>
+```
+
+**Política del bucket**: rechaza las firmas que no sean SigV4 (una URL SigV2
+podría vivir más y no la acepta `rayd`) y las peticiones sin TLS:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlySigV4",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": "arn:aws:s3:::amzn-s3-demo-bucket/rayito-transfer/*",
+      "Condition": { "StringNotEquals": { "s3:signatureversion": "AWS4-HMAC-SHA256" } }
+    },
+    {
+      "Sid": "OnlyTls",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::amzn-s3-demo-bucket",
+        "arn:aws:s3:::amzn-s3-demo-bucket/*"
+      ],
+      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+    }
+  ]
+}
+```
+
+**CORS**, sólo si un navegador sube o baja directamente (`PUT` con el cuerpo
+o el formulario `POST` de `upload_url(form=True)`), con orígenes explícitos,
+nunca `*`:
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://app.example.com"],
+      "AllowedMethods": ["PUT", "POST", "GET"],
+      "AllowedHeaders": ["Content-Type"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
+```
+
+**Cifrado**: el SSE-S3 por defecto basta. Con SSE-KMS, las credenciales del
+llamante necesitan además `kms:GenerateDataKey` (subidas) y `kms:Decrypt`
+(descargas) sobre la clave; la plantilla no lo incluye. `rayd` no envía
+parámetros de cifrado.
+
+**Red**: con un conector de egress propio (`egress-connector.yaml`) el VM
+necesita alcanzar S3 (gateway endpoint de S3 en la VPC o NAT); con
+`INTERNET_EGRESS` no hay que hacer nada. Con la política de egress en el
+guest de ADR-012, `rayd` (root) no está sujeto a las rutas por uid.
+
+Estado: parámetros y reglas validados con `cfn-lint` 1.56.3 y
+`scripts/tests/test_iam_template.py`; el despliegue y la medida contra AWS
+real están *pendientes de aceptación en AWS* (`m9-file-transfer` 8.x).

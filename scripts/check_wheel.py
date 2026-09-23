@@ -112,7 +112,9 @@ def problems_for(wheel: Path) -> list[str]:
 def cli_problems(metadata: str, entry_points: str) -> list[str]:
     lines = metadata.splitlines()
     problems = [
-        f"METADATA sin `{required}`" for required in CLI_METADATA_LINES if required not in lines
+        f"METADATA sin `{required}`"
+        for required in CLI_METADATA_LINES
+        if required not in lines
     ]
     if CLI_ENTRY_POINT not in entry_points.splitlines():
         problems.append(f"entry_points.txt sin `{CLI_ENTRY_POINT}`")
@@ -122,7 +124,9 @@ def cli_problems(metadata: str, entry_points: str) -> list[str]:
 def mcp_problems(metadata: str, entry_points: str) -> list[str]:
     lines = metadata.splitlines()
     problems = [
-        f"METADATA sin `{required}`" for required in MCP_METADATA_LINES if required not in lines
+        f"METADATA sin `{required}`"
+        for required in MCP_METADATA_LINES
+        if required not in lines
     ]
     if MCP_ENTRY_POINT not in entry_points.splitlines():
         problems.append(f"entry_points.txt sin `{MCP_ENTRY_POINT}`")

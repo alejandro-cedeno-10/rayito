@@ -3,7 +3,9 @@
 //! callers and execution events to their recorders with real backpressure,
 //! rotates the default kernel after `/run`, and on exit fails everything
 //! in flight, kills orphaned kernels, clears the registry and relaunches
-//! after the backoff. Op timeouts stay on the monotonic clock; one that
+//! after the backoff, unless the agent is ending at the logical deadline
+//! (ADR-011): then it signals every kernel group and the sidecar's own
+//! group and never relaunches again. Op timeouts stay on the monotonic clock; one that
 //! expires across a `/resume` is logged and not counted towards the kill
 //! switch (design D6), and neither is an advisory op (`reseed`, queued
 //! behind whatever cell is running at `/resume`).
@@ -23,6 +25,7 @@ use rayd_core::code::{
     SyntheticError, encode_request, run_rotation_request,
 };
 use rayd_core::process::SpawnSpec;
+use rayd_core::process::timeout::SIGKILL;
 use rayd_core::session::SandboxSession;
 use tokio::sync::mpsc::error::{SendTimeoutError, TrySendError};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -97,9 +100,10 @@ impl Default for SupervisorSettings {
     }
 }
 
-/// Kills an orphaned kernel by pid (its own process group); injected so
-/// the supervisor compiles on any host.
-pub type KernelKiller = Arc<dyn Fn(u32) + Send + Sync>;
+/// Sends a signal to a kernel's own process group, by pid: `SIGKILL` for an
+/// orphan, `SIGTERM` then `SIGKILL` when the agent ends; injected so the
+/// supervisor compiles on any host.
+pub type KernelSignaller = Arc<dyn Fn(u32, i32) + Send + Sync>;
 
 type PendingReply = oneshot::Sender<Result<ReplyPayload, CodeError>>;
 
@@ -143,7 +147,8 @@ pub struct SidecarSupervisor {
     dispatch_blocked: AtomicBool,
     restarts: AtomicU64,
     dropped_events: AtomicU64,
-    kernel_killer: KernelKiller,
+    kernel_signaller: KernelSignaller,
+    stopping: AtomicBool,
 }
 
 impl SidecarSupervisor {
@@ -153,7 +158,7 @@ impl SidecarSupervisor {
         session: Arc<SandboxSession>,
         registry: Arc<Mutex<ContextRegistry>>,
         settings: SupervisorSettings,
-        kernel_killer: KernelKiller,
+        kernel_signaller: KernelSignaller,
     ) -> Arc<Self> {
         let clock = session.clock();
         let (state, _) = watch::channel(SidecarState::Starting {
@@ -183,7 +188,8 @@ impl SidecarSupervisor {
             dispatch_blocked: AtomicBool::new(false),
             restarts: AtomicU64::new(0),
             dropped_events: AtomicU64::new(0),
-            kernel_killer,
+            kernel_signaller,
+            stopping: AtomicBool::new(false),
         })
     }
 
@@ -233,6 +239,31 @@ impl SidecarSupervisor {
         })
     }
 
+    /// The agent is ending (ADR-011 kill mode): from now on an exit is never
+    /// followed by a relaunch, and `signal` goes to every kernel group and
+    /// to the sidecar's group (`SIGTERM` lets its own handler stop the
+    /// server). Returns how many kernel groups were signalled.
+    pub fn stop_for_exit(&self, signal: i32) -> usize {
+        self.stopping.store(true, Ordering::SeqCst);
+        let kernel_pids = lock(&self.registry).kernel_pids();
+        for pid in &kernel_pids {
+            (self.kernel_signaller)(*pid, signal);
+        }
+        if let Some(link) = lock(&self.link).clone() {
+            if signal == SIGKILL {
+                link.kill();
+            } else {
+                link.terminate();
+            }
+        }
+        kernel_pids.len()
+    }
+
+    #[must_use]
+    pub fn stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
     /// `/run` happened: rotate the default kernel now if the sidecar is
     /// serving, or right after the next `ready` otherwise.
     pub fn request_rotation(&self, envs: BTreeMap<String, String>) {
@@ -244,8 +275,12 @@ impl SidecarSupervisor {
         drop(slot);
     }
 
-    /// A request with a reply, bounded by the op's deadline.
+    /// A request with a reply, bounded by the op's deadline. Every op that
+    /// starts a kernel leaves with the current egress proxy variables
+    /// layered under its envs (ADR-012), so the registry keeps only the
+    /// caller's envs.
     pub async fn call(&self, op: SidecarOp) -> Result<ReplyPayload, CodeError> {
+        let op = op.with_egress_env(&self.session.egress_env());
         let timeout = self.settings.op_timeouts.for_op(&op);
         let advisory = op.is_advisory();
         let name = op.name();
@@ -376,6 +411,13 @@ impl SidecarSupervisor {
 
     async fn run_loop(self: Arc<Self>, mut control: mpsc::UnboundedReceiver<Control>) {
         loop {
+            if self.stopping() {
+                tracing::info!(
+                    sidecar_restarts = self.restarts(),
+                    "sidecar stopped for exit"
+                );
+                return;
+            }
             let state = self.state();
             let attempt = state.attempt().max(1);
             self.state.send_replace(SidecarState::Starting {
@@ -584,7 +626,16 @@ impl SidecarSupervisor {
             pids
         };
         for pid in &kernel_pids {
-            (self.kernel_killer)(*pid);
+            (self.kernel_signaller)(*pid, SIGKILL);
+        }
+        if self.stopping() {
+            tracing::info!(
+                exit_code = code,
+                pending = pending_count(&executions),
+                kernels_killed = kernel_pids.len(),
+                "sidecar exited for shutdown"
+            );
+            return;
         }
         let restarts = self.restarts.fetch_add(1, Ordering::Relaxed) + 1;
         tracing::warn!(
@@ -601,6 +652,9 @@ impl SidecarSupervisor {
         let now = self.clock.monotonic();
         let next = self.state().exited(now);
         self.state.send_replace(next);
+        if self.stopping() {
+            return;
+        }
         let delay = match next {
             SidecarState::Exited { backoff_until, .. } => backoff_until.saturating_sub(now),
             _ => Duration::ZERO,
@@ -644,12 +698,16 @@ impl SidecarSupervisor {
                 exit_code,
                 ref execution_id,
             } => {
-                tracing::warn!(
-                    context_id,
-                    exit_code,
-                    execution_id,
-                    "kernel died; the sidecar restarts it"
-                );
+                if self.stopping() {
+                    tracing::info!(context_id, exit_code, "kernel stopped for shutdown");
+                } else {
+                    tracing::warn!(
+                        context_id,
+                        exit_code,
+                        execution_id,
+                        "kernel died; the sidecar restarts it"
+                    );
+                }
                 if let Ok(id) = ContextId::parse(context_id) {
                     let _ = lock(&self.registry).set_kernel_pid(&id, None);
                 }
@@ -780,13 +838,14 @@ pub(crate) fn millis(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use rayd_core::code::{CodeError, SidecarEvent, SidecarOp};
+    use rayd_core::code::{CodeError, SidecarEvent, SidecarOp, SidecarState};
+    use rayd_core::process::timeout::{SIGKILL, SIGTERM};
 
-    use super::super::fake_sidecar::ready_supervisor;
-    use super::{OpTimeouts, SidecarSupervisor, SupervisorSettings};
+    use super::super::fake_sidecar::{FAKE_PID, ready_supervisor, ready_supervisor_with};
+    use super::{OpTimeouts, SidecarSupervisor, SupervisorSettings, lock};
 
     fn settings() -> SupervisorSettings {
         SupervisorSettings {
@@ -862,5 +921,78 @@ mod tests {
         assert!(!log.killed(), "the counter restarts when the stall ends");
         time_out(&supervisor, 1).await;
         assert!(log.killed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_for_exit_signals_kernels_and_the_sidecar_and_never_relaunches() {
+        let signalled = Arc::new(Mutex::new(Vec::new()));
+        let recorder = signalled.clone();
+        let mut fixture = ready_supervisor_with(
+            settings(),
+            Arc::new(move |pid, signal| lock(&recorder).push((pid, signal))),
+        )
+        .await;
+        let supervisor = fixture.supervisor.clone();
+        assert_eq!(supervisor.stop_for_exit(SIGTERM), 1);
+        assert!(fixture.launched.log.terminated());
+        assert!(!fixture.launched.log.killed());
+        assert_eq!(*lock(&signalled), vec![(FAKE_PID + 1, SIGTERM)]);
+        assert_eq!(supervisor.stop_for_exit(SIGKILL), 1);
+        assert!(fixture.launched.log.killed());
+        drop(fixture.launched);
+        let relaunch =
+            tokio::time::timeout(Duration::from_secs(120), fixture.launches.recv()).await;
+        assert!(
+            matches!(relaunch, Ok(None) | Err(_)),
+            "a stopping supervisor must not relaunch the sidecar"
+        );
+        assert!(supervisor.stopping());
+        assert_eq!(
+            supervisor.restarts(),
+            0,
+            "a sidecar stopped for exit is not a restart"
+        );
+        assert!(matches!(supervisor.state(), SidecarState::Exited { .. }));
+        assert_eq!(
+            lock(&signalled).last().copied(),
+            Some((FAKE_PID + 1, SIGKILL))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn kernel_starting_ops_leave_with_the_egress_proxy_env_under_their_envs() {
+        let fixture = ready_supervisor(settings()).await;
+        fixture.session.set_egress_env(BTreeMap::from([
+            ("HTTPS_PROXY".to_owned(), "http://127.0.0.1:4000".to_owned()),
+            ("A".to_owned(), "egress".to_owned()),
+        ]));
+        let supervisor = fixture.supervisor.clone();
+        let restart = tokio::spawn(async move {
+            supervisor
+                .call(SidecarOp::RestartContext {
+                    context_id: "default".to_owned(),
+                    envs: BTreeMap::from([("A".to_owned(), "context".to_owned())]),
+                })
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let handle = fixture.supervisor.open_execution(execute_op()).unwrap();
+        let requests = fixture.launched.log.requests();
+        let restart_request = requests
+            .iter()
+            .find(|request| request["op"] == "restart_context")
+            .unwrap();
+        assert_eq!(
+            restart_request["envs"]["HTTPS_PROXY"],
+            "http://127.0.0.1:4000"
+        );
+        assert_eq!(restart_request["envs"]["A"], "context");
+        let execute_request = requests
+            .iter()
+            .find(|request| request["op"] == "execute")
+            .unwrap();
+        assert_eq!(execute_request["envs"], serde_json::json!({}));
+        fixture.supervisor.unregister_execution(handle.request_id);
+        restart.abort();
     }
 }

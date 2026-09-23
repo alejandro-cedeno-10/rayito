@@ -2,8 +2,11 @@
 //! requesting user's filesystem identity (design D2/D3): `realpath`,
 //! `lstat`, `O_NOFOLLOW` reads, temp-file writes committed by `rename`,
 //! `mkdir -p`, `rename(2)`, symlink-safe removal and the `statvfs` behind
-//! the disk reserve. Off Unix every call answers `Unsupported` so the gRPC
-//! surface still routes.
+//! the disk reserve; the export snapshot (`fstat` + `pread` on one
+//! descriptor) and the `user.rayito.*` metadata (`fsetxattr` on the temp
+//! file's descriptor, `llistxattr`/`lgetxattr` that never follow a
+//! symlink, `m9-file-transfer` D17). Off Unix every call answers
+//! `Unsupported` so the gRPC surface still routes.
 
 #[cfg(unix)]
 pub use unix::{StdFileSystem, TempWriteSink, io_error};
@@ -19,18 +22,19 @@ pub type PlatformFileSystem = unsupported::UnsupportedFileSystem;
 mod unix {
     use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
     use std::io::{self, Read, Write};
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::path::Path;
 
     use nix::errno::Errno;
     use nix::sys::statvfs::statvfs;
     use nix::unistd::{Gid, Uid, fchown};
     use rayd_core::filesystem::{
-        DEFAULT_DIR_MODE, EntryKind, FileSystem, FsIdentity, FsIoError, MODE_MASK, RawEntry,
-        TEMP_PREFIX, WriteSink, join_canonical,
+        DEFAULT_DIR_MODE, EntryKind, FileMetadata, FileSystem, FsIdentity, FsIoError, MODE_MASK,
+        OpenedSnapshot, RawEntry, SnapshotFile, TEMP_PREFIX, WriteSink, join_canonical,
     };
     use tempfile::NamedTempFile;
 
+    use super::xattr;
     use crate::adapters::IdentitySwitch;
     use crate::adapters::fs_identity::FsIdentityGuard;
 
@@ -76,32 +80,32 @@ mod unix {
                 .collect())
         }
 
-        /// `O_NONBLOCK` is there for the open, not the reads: `open(2)` of a
-        /// FIFO without a writer blocks forever otherwise, parking a pool
-        /// thread; with it the FIFO opens at once and the regular-file check
-        /// refuses it. Reads of a regular file ignore the flag.
+        /// A FIFO is refused without waiting for a writer (`open_regular`).
         fn open_read(
             &self,
             id: &FsIdentity,
             path: &str,
         ) -> Result<Box<dyn Read + Send>, FsIoError> {
             let _guard = self.enter(id)?;
-            let file = OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-                .open(path)
-                .map_err(|error| io_error(&error))?;
-            let file_type = file
-                .metadata()
-                .map_err(|error| io_error(&error))?
-                .file_type();
-            if file_type.is_dir() {
-                return Err(FsIoError::IsADirectory);
-            }
-            if !file_type.is_file() {
-                return Err(FsIoError::NotARegularFile);
-            }
+            let (file, _) = open_regular(path)?;
             Ok(Box::new(file))
+        }
+
+        /// The same open as `open_read`; the entry is the `fstat` of that
+        /// descriptor, so the export reads the inode it measured even if the
+        /// name is replaced afterwards.
+        fn open_snapshot(&self, id: &FsIdentity, path: &str) -> Result<OpenedSnapshot, FsIoError> {
+            let _guard = self.enter(id)?;
+            let (file, metadata) = open_regular(path)?;
+            Ok(OpenedSnapshot {
+                entry: raw_entry(entry_name(path), &metadata, Path::new(path)),
+                file: Box::new(PositionedFile(file)),
+            })
+        }
+
+        fn read_metadata(&self, id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError> {
+            let _guard = self.enter(id)?;
+            xattr::read_metadata(path)
         }
 
         /// `f_bavail * f_frsize` of the deepest existing ancestor of the
@@ -184,6 +188,13 @@ mod unix {
                 .map_err(|error| io_error(&error))
         }
 
+        /// On the descriptor with the agent's own rights, like `fchmod`: no
+        /// path is resolved, so the set lands on this inode and appears with
+        /// its content at the rename.
+        fn set_metadata(&mut self, metadata: &FileMetadata) -> Result<(), FsIoError> {
+            xattr::set_metadata(self.file.as_file(), metadata)
+        }
+
         /// `fsync`, `fchmod` and `fchown` run on the descriptor with the
         /// agent's own rights (the temp file is already the user's); the
         /// `rename`, the directory `fsync` and the final `lstat` run under
@@ -218,6 +229,48 @@ mod unix {
                 &metadata,
                 Path::new(&final_path),
             ))
+        }
+    }
+
+    /// `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`, regular files only.
+    /// `O_NONBLOCK` is there for the open, not the reads: `open(2)` of a FIFO
+    /// without a writer blocks forever otherwise, parking a pool thread;
+    /// with it the FIFO opens at once and the regular-file check refuses
+    /// it. Reads of a regular file ignore the flag.
+    fn open_regular(path: &str) -> Result<(File, fs::Metadata), FsIoError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|error| io_error(&error))?;
+        let metadata = file.metadata().map_err(|error| io_error(&error))?;
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            return Err(FsIoError::IsADirectory);
+        }
+        if !file_type.is_file() {
+            return Err(FsIoError::NotARegularFile);
+        }
+        Ok((file, metadata))
+    }
+
+    /// `pread` on an open descriptor: a retried part re-reads its own range
+    /// and no shared cursor exists between reads.
+    struct PositionedFile(File);
+
+    impl SnapshotFile for PositionedFile {
+        fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize, FsIoError> {
+            let mut filled = 0usize;
+            while filled < buf.len() {
+                let position = offset.saturating_add(u64::try_from(filled).unwrap_or(u64::MAX));
+                match self.0.read_at(&mut buf[filled..], position) {
+                    Ok(0) => break,
+                    Ok(read) => filled += read,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(error) => return Err(io_error(&error)),
+                }
+            }
+            Ok(filled)
         }
     }
 
@@ -461,6 +514,128 @@ mod unix {
             assert_eq!(outcome, Some(FsIoError::NotARegularFile));
         }
 
+        fn owner(value: &str) -> FileMetadata {
+            FileMetadata::parse([("Owner", value)]).unwrap()
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn metadata_set_before_commit_appears_with_the_content_and_an_overwrite_clears_it() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            let mut sink = fs_adapter.begin_write(&id, &root, 0o644).unwrap();
+            sink.write_chunk(b"v1").unwrap();
+            sink.set_metadata(&owner("alice")).unwrap();
+            sink.commit("f", &id).unwrap();
+            let path = format!("{root}/f");
+            assert_eq!(
+                fs_adapter.read_metadata(&id, &path).unwrap(),
+                owner("alice")
+            );
+            let replaced = fs_adapter.begin_write(&id, &root, 0o644).unwrap();
+            replaced.commit("f", &id).unwrap();
+            assert!(fs_adapter.read_metadata(&id, &path).unwrap().is_empty());
+            assert!(
+                fs_adapter
+                    .read_metadata(&id, &format!("{root}/missing"))
+                    .is_err()
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn read_metadata_never_follows_a_symlink_and_skips_foreign_attributes() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            let mut sink = fs_adapter.begin_write(&id, &root, 0o644).unwrap();
+            sink.set_metadata(&owner("alice")).unwrap();
+            sink.commit("target", &id).unwrap();
+            symlink("target", format!("{root}/link")).unwrap();
+            assert!(
+                fs_adapter
+                    .read_metadata(&id, &format!("{root}/link"))
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                fs_adapter
+                    .read_metadata(&id, &format!("{root}/target"))
+                    .unwrap(),
+                owner("alice")
+            );
+        }
+
+        /// An identity that may not search the directory reads an empty
+        /// set instead of failing (needs root to switch identities).
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn unreadable_metadata_is_empty() {
+            if !nix::unistd::getuid().is_root() {
+                return;
+            }
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let mut sink = fs_adapter.begin_write(&identity(), &root, 0o644).unwrap();
+            sink.set_metadata(&owner("alice")).unwrap();
+            sink.commit("f", &identity()).unwrap();
+            fs::set_permissions(&root, Permissions::from_mode(0o700)).unwrap();
+            let stranger = FsIdentity {
+                uid: 4_242,
+                gid: 4_242,
+                home: "/tmp".to_owned(),
+            };
+            let enforcing = StdFileSystem::new(IdentitySwitch::Enforce);
+            assert!(
+                enforcing
+                    .read_metadata(&stranger, &format!("{root}/f"))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        #[test]
+        fn open_snapshot_measures_the_descriptor_and_reads_by_offset() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            let path = format!("{root}/f");
+            fs::write(&path, b"0123456789").unwrap();
+            let opened = fs_adapter.open_snapshot(&id, &path).unwrap();
+            assert_eq!(opened.entry.size, 10);
+            assert_eq!(opened.entry.kind, EntryKind::File);
+            fs::rename(&path, format!("{root}/moved")).unwrap();
+            fs::write(&path, b"other").unwrap();
+            let mut buffer = [0u8; 4];
+            assert_eq!(opened.file.read_at(&mut buffer, 6).unwrap(), 4);
+            assert_eq!(&buffer, b"6789");
+            assert_eq!(opened.file.read_at(&mut buffer, 10).unwrap(), 0);
+        }
+
+        #[test]
+        fn open_snapshot_refuses_symlinks_and_fifos_without_blocking() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            fs::write(format!("{root}/f"), b"x").unwrap();
+            symlink("f", format!("{root}/l")).unwrap();
+            assert_eq!(
+                fs_adapter.open_snapshot(&id, &format!("{root}/l")).err(),
+                Some(FsIoError::IsSymlink)
+            );
+            let fifo = format!("{root}/pipe");
+            nix::unistd::mkfifo(fifo.as_str(), nix::sys::stat::Mode::S_IRWXU).unwrap();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = done_tx.send(fs_adapter.open_snapshot(&id, &fifo).err());
+            });
+            let outcome = done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("open_snapshot of a FIFO returned");
+            assert_eq!(outcome, Some(FsIoError::NotARegularFile));
+        }
+
         #[test]
         fn lstat_read_dir_make_dir_rename_and_remove() {
             let (_dir, root) = playground();
@@ -516,12 +691,163 @@ mod unix {
     }
 }
 
+/// `user.rayito.*` extended attributes through `libc`: the set is written
+/// on a descriptor and read back with the `l*` calls, so no symlink is ever
+/// followed. Values are capped at the domain's byte budget; a name listing
+/// that changes between the size query and the read is read again once.
+#[cfg(target_os = "linux")]
+mod xattr {
+    use std::ffi::CString;
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::AsRawFd;
+
+    use nix::errno::Errno;
+    use rayd_core::filesystem::{FileMetadata, FsIoError, METADATA_MAX_BYTES};
+
+    use super::unix::io_error;
+
+    pub fn set_metadata(file: &File, metadata: &FileMetadata) -> Result<(), FsIoError> {
+        for (key, value) in metadata.iter() {
+            let name = c_string(&FileMetadata::xattr_name(key))?;
+            set_one(file, &name, value.as_bytes()).map_err(|error| set_error(&error))?;
+        }
+        Ok(())
+    }
+
+    /// A file without attributes, a filesystem without them or one the
+    /// identity may not read answers an empty set.
+    pub fn read_metadata(path: &str) -> Result<FileMetadata, FsIoError> {
+        let path = c_string(path)?;
+        let names = match list_names(&path) {
+            Ok(names) => names,
+            Err(error) if is_unreadable(&error) => return Ok(FileMetadata::default()),
+            Err(error) => return Err(io_error(&error)),
+        };
+        let attributes = names
+            .split(|byte| *byte == 0)
+            .filter_map(|raw| std::str::from_utf8(raw).ok())
+            .filter(|name| FileMetadata::is_metadata_attribute(name))
+            .filter_map(|name| {
+                let value = get_one(&path, &c_string(name).ok()?).ok()?;
+                Some((name.to_owned(), value))
+            });
+        Ok(FileMetadata::from_xattrs(attributes))
+    }
+
+    fn is_unreadable(error: &io::Error) -> bool {
+        matches!(
+            error.raw_os_error().map(Errno::from_raw),
+            Some(Errno::ENOTSUP | Errno::ENODATA | Errno::EACCES | Errno::EPERM)
+        )
+    }
+
+    /// `ENOTSUP` is a filesystem without user attributes; `E2BIG` and
+    /// `ENOSPC` are a set that does not fit the inode.
+    fn set_error(error: &io::Error) -> FsIoError {
+        match error.raw_os_error().map(Errno::from_raw) {
+            Some(Errno::ENOTSUP) => FsIoError::Unsupported,
+            Some(Errno::E2BIG | Errno::ENOSPC) => FsIoError::NoSpace,
+            _ => io_error(error),
+        }
+    }
+
+    fn c_string(value: &str) -> Result<CString, FsIoError> {
+        CString::new(value).map_err(|_| FsIoError::Other {
+            errno: "EINVAL".to_owned(),
+        })
+    }
+
+    /// `fsetxattr(2)` with flags 0 (create or replace). Sound: `name` is a
+    /// NUL-terminated string and `value` a live slice whose length is
+    /// passed with it; the descriptor stays open for the whole call.
+    fn set_one(file: &File, name: &CString, value: &[u8]) -> io::Result<()> {
+        let result = unsafe {
+            libc::fsetxattr(
+                file.as_raw_fd(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// `llistxattr(2)`: a size query, then the read into a buffer of that
+    /// size. Sound: the buffer outlives both calls and its exact length is
+    /// passed; a null buffer with size 0 is the documented size query.
+    fn list_names(path: &CString) -> io::Result<Vec<u8>> {
+        for _ in 0..2 {
+            let size = unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
+            let size = usize::try_from(size).map_err(|_| io::Error::last_os_error())?;
+            let mut buffer = vec![0u8; size];
+            let read = unsafe {
+                libc::llistxattr(path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len())
+            };
+            match usize::try_from(read) {
+                Ok(read) => {
+                    buffer.truncate(read);
+                    return Ok(buffer);
+                }
+                Err(_) if Errno::last() == Errno::ERANGE => {}
+                Err(_) => return Err(io::Error::last_os_error()),
+            }
+        }
+        Err(io::Error::from_raw_os_error(Errno::ERANGE as i32))
+    }
+
+    /// `lgetxattr(2)` into a buffer of the whole metadata budget: a value
+    /// larger than that is not one the write rules could have stored.
+    /// Sound for the same reasons as `list_names`.
+    fn get_one(path: &CString, name: &CString) -> io::Result<Vec<u8>> {
+        let mut buffer = vec![0u8; METADATA_MAX_BYTES];
+        let read = unsafe {
+            libc::lgetxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+            )
+        };
+        let read = usize::try_from(read).map_err(|_| io::Error::last_os_error())?;
+        buffer.truncate(read);
+        Ok(buffer)
+    }
+}
+
+/// Unix hosts other than Linux (a developer's laptop) have no `user.*`
+/// namespace with these signatures: writes refuse, reads are empty.
+#[cfg(all(unix, not(target_os = "linux")))]
+mod xattr {
+    use std::fs::File;
+
+    use rayd_core::filesystem::{FileMetadata, FsIoError};
+
+    pub fn set_metadata(_file: &File, metadata: &FileMetadata) -> Result<(), FsIoError> {
+        if metadata.is_empty() {
+            Ok(())
+        } else {
+            Err(FsIoError::Unsupported)
+        }
+    }
+
+    pub fn read_metadata(_path: &str) -> Result<FileMetadata, FsIoError> {
+        Ok(FileMetadata::default())
+    }
+}
+
 #[cfg(not(unix))]
 mod unsupported {
     use std::io::Read;
 
     use rayd_core::filesystem::{
-        EntryKind, FileSystem, FsIdentity, FsIoError, RawEntry, WriteSink,
+        EntryKind, FileMetadata, FileSystem, FsIdentity, FsIoError, OpenedSnapshot, RawEntry,
+        WriteSink,
     };
 
     use crate::adapters::IdentitySwitch;
@@ -554,6 +880,18 @@ mod unsupported {
             _id: &FsIdentity,
             _path: &str,
         ) -> Result<Box<dyn Read + Send>, FsIoError> {
+            Err(FsIoError::Unsupported)
+        }
+
+        fn open_snapshot(
+            &self,
+            _id: &FsIdentity,
+            _path: &str,
+        ) -> Result<OpenedSnapshot, FsIoError> {
+            Err(FsIoError::Unsupported)
+        }
+
+        fn read_metadata(&self, _id: &FsIdentity, _path: &str) -> Result<FileMetadata, FsIoError> {
             Err(FsIoError::Unsupported)
         }
 

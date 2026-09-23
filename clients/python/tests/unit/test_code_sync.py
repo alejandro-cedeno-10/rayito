@@ -472,6 +472,27 @@ def test_create_waits_for_kernel_ready(
     assert fake_rayd.servicer.kernel_not_ready_calls == 0
 
 
+def test_create_ignores_a_health_served_before_the_run_hook(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.before_run_calls = 2
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+    )
+    with Sandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        ready_timeout=20,
+    ) as sandbox:
+        assert sandbox.run_code("1+1").text == "2"
+    assert len(fake_rayd.servicer.health_calls) == 3
+    assert fake_rayd.servicer.before_run_calls == 0
+
+
 def test_connect_with_a_wrong_token_is_unauthenticated_on_code_rpcs(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
 ) -> None:
@@ -551,7 +572,25 @@ def test_language_not_shipped_is_unimplemented(sandbox: Sandbox, fake_rayd: Rayd
     with pytest.raises(InvalidArgumentException) as created:
         sandbox.create_code_context(language="javascript")
     assert created.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    with pytest.raises(InvalidArgumentException) as typescript:
+        sandbox.run_code("1 + 1", language="ts")
+    assert typescript.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert "rayito-base-poly" in str(typescript.value)
     assert [item.id for item in sandbox.list_code_contexts()] == ["default"]
+
+
+def test_typescript_alias_travels_canonical(sandbox: Sandbox, fake_rayd: RaydEndpoint) -> None:
+    assert sandbox.run_code("1 + 1", language="ts").text == "2"
+    request = fake_rayd.code.execute_requests[-1]
+    assert request.language == "typescript"
+    assert not request.HasField("context_id")
+    assert fake_rayd.code.executions[-1].context_id == "default-typescript"
+    assert fake_rayd.code.lazy_contexts == ["default-typescript"]
+    listed = [(item.id, item.language) for item in sandbox.list_code_contexts()]
+    assert ("default-typescript", "typescript") in listed
+    context = sandbox.create_code_context(language="TypeScript")
+    assert context.language == "typescript"
+    assert fake_rayd.code.create_requests[-1].language == "typescript"
 
 
 def test_envs_per_execution_are_python_only(sandbox: Sandbox, fake_rayd: RaydEndpoint) -> None:

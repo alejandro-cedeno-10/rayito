@@ -71,6 +71,7 @@ def failed_precondition(message: str) -> FakeStatus:
 class FakeFile:
     data: bytes = b""
     mode: int = DEFAULT_FILE_MODE
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -150,6 +151,8 @@ def entry_info(path: str, node: Node) -> common_pb2.EntryInfo:
     )
     if isinstance(node, FakeSymlink):
         info.symlink_target = node.target
+    if isinstance(node, FakeFile):
+        info.metadata.update(node.metadata)
     return info
 
 
@@ -219,6 +222,7 @@ class OpenWrite:
     canonical: str
     mode: int
     data: bytearray = field(default_factory=bytearray)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -296,8 +300,8 @@ class FakeFilesystemService(filesystem_pb2_grpc.FilesystemServiceServicer):
                     current = self._begin(request)
                 elif current is None:
                     raise invalid("first message must carry path")
-                elif request.HasField("user") or request.HasField("mode"):
-                    raise invalid("user and mode only travel with path")
+                elif request.HasField("user") or request.HasField("mode") or request.metadata:
+                    raise invalid("user, mode and metadata only travel with path")
                 current.data.extend(chunk)
             if current is None:
                 raise invalid("stream carried no files")
@@ -560,10 +564,11 @@ class FakeFilesystemService(filesystem_pb2_grpc.FilesystemServiceServicer):
         if isinstance(self.tree.nodes.get(canonical), FakeDirectory):
             raise invalid("destination is a directory")
         self.tree.ensure_parents(canonical)
-        return OpenWrite(path=path, canonical=canonical, mode=mode)
+        metadata = {str(key).lower(): str(value) for key, value in request.metadata.items()}
+        return OpenWrite(path=path, canonical=canonical, mode=mode, metadata=metadata)
 
     def _commit(self, open_write: OpenWrite) -> common_pb2.EntryInfo:
-        node = FakeFile(bytes(open_write.data), open_write.mode)
+        node = FakeFile(bytes(open_write.data), open_write.mode, dict(open_write.metadata))
         self.tree.nodes[open_write.canonical] = node
         return entry_info(open_write.path, node)
 

@@ -44,6 +44,19 @@ pub enum FilesystemError {
     UserWithoutPath,
     #[error("mode may only be set on a message with path")]
     ModeWithoutPath,
+    #[error("metadata may only be set on a message with path")]
+    MetadataWithoutPath,
+    /// A key or value outside the rules of `FileMetadata`; the message is
+    /// fixed so it never quotes either.
+    #[error("metadatos inválidos")]
+    InvalidMetadata,
+    /// The destination filesystem has no user xattrs; the message is the
+    /// status detail the SDK keys on.
+    #[error("metadata_unsupported")]
+    MetadataUnsupported,
+    /// The set did not fit the file's xattr space.
+    #[error("metadata_too_large")]
+    MetadataTooLarge,
     #[error("stream carried no files")]
     NoFiles,
     #[error("listing exceeds {max} entries; reduce depth")]

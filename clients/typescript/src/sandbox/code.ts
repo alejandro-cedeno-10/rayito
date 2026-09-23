@@ -7,6 +7,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { ConnectError } from "@connectrpc/connect";
+import { abortReasonOr } from "../abort.js";
 import { parseChart } from "../charts.js";
 import { InvalidArgumentError, NotFoundError, SandboxError, TimeoutError } from "../errors.js";
 import {
@@ -48,8 +49,12 @@ export const SUPPORTED_LANGUAGES: ReadonlySet<string> = new Set([
   DEFAULT_LANGUAGE,
   "bash",
   "javascript",
+  "typescript",
 ]);
-export const LANGUAGE_ALIASES: ReadonlyMap<string, string> = new Map([["js", "javascript"]]);
+export const LANGUAGE_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["js", "javascript"],
+  ["ts", "typescript"],
+]);
 
 export const RESULT_MIME_FIELDS = [
   ["text", "text/plain"],
@@ -76,13 +81,16 @@ export type ContextLike = CodeContext | string;
 
 export interface RunCodeOptions extends RequestOptions {
   /**
-   * Kernel de la celda: `python` (por defecto), `bash` o `javascript` (alias
-   * `js`, sin distinguir mayúsculas). Selecciona el contexto por defecto de
-   * ese lenguaje (`default-bash`), que el agente crea en la primera celda;
-   * el kernel `bash` sólo existe en la variante de imagen `rayito-base-poly`
-   * (`InvalidArgumentError` con `Unimplemented` en las demás) y `javascript`
-   * es un nombre reservado sin kernel en ninguna imagen (`Unimplemented` en
-   * todas). Excluyente con `context`.
+   * Kernel de la celda: `python` (por defecto), `bash`, `javascript` (alias
+   * `js`) o `typescript` (alias `ts`), sin distinguir mayúsculas. Selecciona
+   * el contexto por defecto de ese lenguaje (`default-bash`,
+   * `default-typescript`), que el agente crea en la primera celda. `bash`,
+   * `javascript` y `typescript` sólo existen en la variante de imagen
+   * `rayito-base-poly` (`InvalidArgumentError` con `Unimplemented` y un
+   * mensaje que nombra `rayito-base-poly` en las demás). `javascript` y
+   * `typescript` los sirve el kernel Jupyter de Deno, que arranca en la
+   * primera celda y nunca antes de `/ready`; los dos aceptan sintaxis
+   * TypeScript. Excluyente con `context`.
    */
   readonly language?: string | undefined;
   readonly context?: ContextLike | undefined;
@@ -97,6 +105,12 @@ export interface RunCodeOptions extends RequestOptions {
 
 export interface CreateContextOptions extends RequestOptions {
   readonly cwd?: string | undefined;
+  /**
+   * Kernel del contexto, con los mismos nombres y alias que
+   * `RunCodeOptions.language` (`python` por defecto); los kernels Deno de
+   * `javascript`/`typescript` arrancan al crear el contexto y sólo existen en
+   * `rayito-base-poly`.
+   */
   readonly language?: string | undefined;
   readonly envs?: Readonly<Record<string, string>> | undefined;
 }
@@ -129,9 +143,11 @@ export function requireContextId(context: ContextLike | undefined): string {
 }
 
 /**
- * El nombre canónico del kernel (`python`, `bash`, `javascript`) sin
- * distinguir mayúsculas y con el alias `js`; `undefined` o `""` es "no
- * enviar" (el contexto indicado o el de Python).
+ * El nombre canónico del kernel (`python`, `bash`, `javascript`,
+ * `typescript`) sin distinguir mayúsculas y con los alias `js` y `ts`;
+ * `undefined` o `""` es "no enviar" (el contexto indicado o el de Python).
+ * Sólo el SDK resuelve alias: el agente acepta únicamente los nombres
+ * canónicos en minúsculas.
  */
 export function normalizeLanguage(language: string | undefined): string | undefined {
   if (language === undefined || language === "") {
@@ -476,9 +492,18 @@ export class CodeClient {
     });
     const opened = await this.core.openStream(
       (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
-      { service: CodeService, stream: false, reconnect: false },
+      { service: CodeService, stream: false, reconnect: false, signal: options.signal },
     );
-    return this.#consume(opened, builder, deadlineAt(deadline, this.core.now));
+    try {
+      return await this.#consume(
+        opened,
+        builder,
+        deadlineAt(deadline, this.core.now),
+        options.signal,
+      );
+    } catch (error) {
+      throw abortReasonOr(options.signal, error);
+    }
   }
 
   async createContext(options: CreateContextOptions = {}): Promise<CodeContext> {
@@ -487,9 +512,14 @@ export class CodeClient {
       (client, callOptions) => client.createContext(request, callOptions),
       options.requestTimeoutMs,
       CONTEXT_REQUEST_TIMEOUT_MS,
+      options.signal,
     );
     const contextId = response.contextId;
-    for (const listed of await this.listContexts({ requestTimeoutMs: options.requestTimeoutMs })) {
+    const contexts = await this.listContexts({
+      requestTimeoutMs: options.requestTimeoutMs,
+      signal: options.signal,
+    });
+    for (const listed of contexts) {
       if (listed.id === contextId) {
         return listed;
       }
@@ -502,6 +532,8 @@ export class CodeClient {
       (client, callOptions) =>
         client.listContexts(create(ListContextsRequestSchema, {}), callOptions),
       options.requestTimeoutMs,
+      undefined,
+      options.signal,
     );
     return response.contexts.map(contextFromProto);
   }
@@ -511,6 +543,8 @@ export class CodeClient {
     await this.core.codeCall(
       (client, callOptions) => client.destroyContext(request, callOptions),
       options.requestTimeoutMs,
+      undefined,
+      options.signal,
     );
   }
 
@@ -520,6 +554,7 @@ export class CodeClient {
       (client, callOptions) => client.restartContext(request, callOptions),
       options.requestTimeoutMs,
       CONTEXT_REQUEST_TIMEOUT_MS,
+      options.signal,
     );
   }
 
@@ -527,8 +562,9 @@ export class CodeClient {
     opened: OpenedStream<ExecuteEvent>,
     builder: ExecutionBuilder,
     deadlineAtMs: number | undefined,
+    signal: AbortSignal | undefined,
   ): Promise<Execution> {
-    const feed = new ExecutionFeed(this.core, opened, builder, deadlineAtMs);
+    const feed = new ExecutionFeed(this.core, opened, builder, deadlineAtMs, signal);
     try {
       await feed.run();
     } finally {
@@ -545,6 +581,7 @@ export class ExecutionFeed {
   #first: ExecuteEvent | undefined;
   readonly #builder: ExecutionBuilder;
   readonly #deadlineAt: number | undefined;
+  readonly #signal: AbortSignal | undefined;
   #generation: number;
   readonly #budget = new ReconnectBudget();
   finished = false;
@@ -554,12 +591,14 @@ export class ExecutionFeed {
     opened: OpenedStream<ExecuteEvent>,
     builder: ExecutionBuilder,
     deadlineAtMs: number | undefined,
+    signal?: AbortSignal,
   ) {
     this.#core = core;
     this.opened = opened;
     this.#first = opened.first;
     this.#builder = builder;
     this.#deadlineAt = deadlineAtMs;
+    this.#signal = signal;
     this.#generation = core.resumeGeneration;
     core.trackStream(opened.controller);
   }
@@ -620,7 +659,7 @@ export class ExecutionFeed {
       this.opened = await core.openStream(
         (client, callOptions) =>
           client.reattach(request, withTimeout(callOptions, this.#remainingDeadline())),
-        { service: CodeService, stream: false },
+        { service: CodeService, stream: false, signal: this.#signal },
       );
     } catch (error) {
       if (error instanceof NotFoundError) {

@@ -261,7 +261,7 @@ async fn language_and_context_are_exclusive() {
     assert_eq!(unknown.code(), Code::InvalidArgument);
     assert_eq!(
         unknown.message(),
-        "language must be one of python, bash, javascript"
+        "language must be one of python, bash, javascript, typescript"
     );
     assert_eq!(harness.requests_of("execute").len(), executes_before);
     assert!(create_lines_for(&harness, "default-bash").is_empty());

@@ -7,7 +7,14 @@ valida en cliente.
 
 | Límite | Valor | Qué hace el SDK |
 |---|---|---|
-| Vida máxima de un sandbox (`timeout`) | 28 800 s (8 h), running + suspended, **no ajustable** | `SandboxLifetimeException` por encima; no se puede extender después |
+| Vida máxima de un sandbox (`timeout`, o `max_lifetime` desde M9) | 28 800 s (8 h), running + suspended, **no ajustable** | `SandboxLifetimeException` por encima; el tope no se puede extender después |
+| Plazo lógico (`timeout` con `max_lifetime`/`on_timeout`, M9) | ≥ 1 s y como mucho `max_lifetime − 60 s` desde el arranque (`max_lifetime` 120–28 800 s, por defecto `timeout + 60`; 3600 en el shim) | `set_timeout` por encima del tope: `InvalidArgumentException` con el plazo intacto |
+| Historial de métricas (M9) | una muestra cada 5 s mientras corre; anillo de 5 760 muestras (8 h), ≈ 350 KB por respuesta completa | `max_points` ≥ 1 reduce la serie |
+| URLs de transferencia (M9) | 3600 s por defecto, tope `S3Staging.max_expires_in` (86 400) y 604 800 s (7 días de SigV4) | `InvalidArgumentException` con `use_signature_expiration <= 0` |
+| Ficheros por S3 (M9) | desde `threshold_bytes` (8 MiB; mínimo 1 MiB); exportación multiparte desde 5 GiB, ≤ 1 000 partes de ≥ 8 MiB; `PUT` único ≤ 5 GiB | el SDK elige la ruta |
+| Transferencias por sandbox (M9) | 16 activas, 2 moviendo bytes a la vez, 64 terminadas retenidas 30 min | `RateLimitException` (`RESOURCE_EXHAUSTED`) |
+| Metadatos por fichero (M9) | ≤ 64 claves y ≤ 4 000 B en total (xattrs `user.rayito.*`) | `InvalidArgumentException` antes de llamar |
+| Política de egress (M9) | ≤ 256 entradas por lista, ≤ 64 nombres de host, ≤ 4 096 prefijos por familia tras restar | `InvalidArgumentException` |
 | `runHookPayload` (`envs` + `metadata` + hash del token) | 4096 caracteres | `InvalidArgumentException` antes de llamar a AWS, nombrando `envs` y `metadata` |
 | Conexiones concurrentes por MicroVM | 8 (1 vCPU), 16, 32, 64, 128 | ≤ 2 canales HTTP/2 por sandbox: unarios y streams |
 | Ancho de banda del endpoint | 1 / 2 / 4 / 8 / 16 MB/s por tamaño | medido: 0,65 MB/s escritura, 6,71 MB/s lectura a 2 GB |
@@ -44,3 +51,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 |---|---|---|
 | `0.1` | `0.1.0` | M6: imds_blocked, hook_anomalies y metadata exigen el rayd del tag rayd-v0.1.0 |
 | `0.2` | `0.2.0` | M7: Checkpoint/Restore (persist=) y language= exigen el rayd del tag rayd-v0.2.0 |
+| `0.3` | `0.3.0` | M9: max_lifetime/on_timeout, set_timeout, get_metrics_history, network= y los kernels Deno exigen el rayd del tag rayd-v0.3.0 |

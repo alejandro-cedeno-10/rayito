@@ -25,9 +25,13 @@
  */
 
 import {
+  type AwsClientSettings,
+  awsClientSettingsOf,
   type ControlPlane,
+  type ControlPlaneCallOptions,
   type LaunchRequest,
   type ListMicrovmsOptions,
+  type ListMicrovmsPageOptions,
   PortSpec,
 } from "../aws/control-plane.js";
 import {
@@ -39,7 +43,7 @@ import {
 } from "../errors.js";
 import { DEFAULT_PORT, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
-import type { SandboxInfo, SandboxListItem } from "../models.js";
+import type { MicrovmListPage, SandboxInfo, SandboxListItem } from "../models.js";
 import { generateAccessToken } from "../payload.js";
 import {
   DEFAULT_READY_TIMEOUT_MS,
@@ -119,8 +123,12 @@ export class LaunchObserver implements ControlPlane {
     return this.#plane.region;
   }
 
-  resolveTemplateArn(template: string): Promise<string> {
-    return this.#plane.resolveTemplateArn(template);
+  get awsClientSettings(): AwsClientSettings {
+    return awsClientSettingsOf(this.#plane);
+  }
+
+  resolveTemplateArn(template: string, options?: ControlPlaneCallOptions): Promise<string> {
+    return this.#plane.resolveTemplateArn(template, options);
   }
 
   async runMicrovm(request: LaunchRequest): Promise<SandboxInfo> {
@@ -129,12 +137,16 @@ export class LaunchObserver implements ControlPlane {
     return info;
   }
 
-  getMicrovm(sandboxId: string): Promise<SandboxInfo> {
-    return this.#plane.getMicrovm(sandboxId);
+  getMicrovm(sandboxId: string, options?: ControlPlaneCallOptions): Promise<SandboxInfo> {
+    return this.#plane.getMicrovm(sandboxId, options);
   }
 
   listMicrovms(options?: ListMicrovmsOptions): AsyncIterable<SandboxListItem> {
     return this.#plane.listMicrovms(options);
+  }
+
+  listMicrovmsPage(options: ListMicrovmsPageOptions): Promise<MicrovmListPage> {
+    return this.#plane.listMicrovmsPage(options);
   }
 
   terminateMicrovm(sandboxId: string): Promise<boolean> {
@@ -145,12 +157,16 @@ export class LaunchObserver implements ControlPlane {
     return this.#plane.suspendMicrovm(sandboxId);
   }
 
-  resumeMicrovm(sandboxId: string): Promise<boolean> {
-    return this.#plane.resumeMicrovm(sandboxId);
+  resumeMicrovm(sandboxId: string, options?: ControlPlaneCallOptions): Promise<boolean> {
+    return this.#plane.resumeMicrovm(sandboxId, options);
   }
 
-  createAuthToken(sandboxId: string, ports: readonly PortSpec[]): Promise<string> {
-    return this.#plane.createAuthToken(sandboxId, ports);
+  createAuthToken(
+    sandboxId: string,
+    ports: readonly PortSpec[],
+    options?: ControlPlaneCallOptions,
+  ): Promise<string> {
+    return this.#plane.createAuthToken(sandboxId, ports, options);
   }
 }
 

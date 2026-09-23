@@ -5,7 +5,8 @@ Los unarios, `Write` y el `Read` en foreground van por el canal de unarios;
 stream para fijar el deadline por tamaño y rechazar directorios y symlinks
 sin tocar al agente. `Write` escribe cada fichero en un temporal del mismo
 directorio y lo renombra: en un directorio observado aparece como un único
-`RENAME`, no como `CREATE` + `WRITE`. Un `WatchHandle` cuyo stream cierra
+`WRITE` del destino (el agente empareja el rename del temporal), con
+`entry` si se pidió `include_entry`. Un `WatchHandle` cuyo stream cierra
 un `/suspend` (o el proxy) espera al agente y vuelve a emitir `WatchDir` con
 los mismos parámetros; los eventos ocurridos durante la pausa se pierden.
 """
@@ -15,7 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
 import grpc
@@ -29,27 +30,33 @@ from rayito._filesystem_base import (
     decode_text,
     entry_info_from_proto,
     file_request_deadline,
+    guarded_messages,
     is_already_exists,
     list_dir_request,
     make_dir_request,
     move_request,
     next_watch_name,
     notify_exit,
-    prepare_write_entries,
+    read_call_options,
     read_request,
     remove_request,
     require_regular_file,
     require_watch_started,
     stat_request,
     total_write_bytes,
+    validate_metadata,
     validate_read_format,
+    validate_stream_idle_timeout,
     validate_watch_timeout,
     watch_dir_request,
     watch_failure,
+    write_call_options,
 )
-from rayito._models import EntryInfo, FilesystemEvent, WriteEntry
+from rayito._limits import TRANSFER_DEFAULT_EXPIRES_IN_SECONDS
+from rayito._models import DownloadLink, EntryInfo, FilesystemEvent, UploadTicket, WriteEntry
 from rayito._process_base import deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._transfer_base import WritePlan, plan_writes
 from rayito._transport import is_stream_reset, translate_rpc_error
 from rayito.exceptions import FileNotFoundException, SandboxException, TimeoutException
 from rayito.v1 import filesystem_pb2, filesystem_pb2_grpc
@@ -76,6 +83,8 @@ class Filesystem:
         path: str,
         *,
         format: Literal["text"] = "text",
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> str: ...
@@ -86,6 +95,8 @@ class Filesystem:
         path: str,
         *,
         format: Literal["bytes"],
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> bytes: ...
@@ -96,6 +107,8 @@ class Filesystem:
         path: str,
         *,
         format: Literal["stream"],
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> Iterator[bytes]: ...
@@ -105,6 +118,8 @@ class Filesystem:
         path: str,
         *,
         format: str = "text",
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> str | bytes | Iterator[bytes]:
@@ -112,13 +127,35 @@ class Filesystem:
         (chunks de hasta 256 KiB tal como llegan). Hace `Stat` primero: un
         directorio o un symlink es `InvalidArgumentException` sin abrir el
         stream, y el deadline del `Read` es `60 s + 1 s por MB` del tamaño
-        salvo `request_timeout`."""
+        salvo `request_timeout`.
+
+        `gzip=True` pide la respuesta comprimida (inocuo en una imagen
+        anterior, que responde sin comprimir). `stream_idle_timeout` (s)
+        cancela la lectura si el siguiente chunk tarda más y levanta
+        `TimeoutException`. Con `transfer=S3Staging(...)` un fichero de al
+        menos `threshold_bytes` se exporta a S3 y se descarga con tus
+        credenciales (verificando su sha256); `gzip` no aplica ahí."""
         read_format = validate_read_format(format)
+        idle = validate_stream_idle_timeout(stream_idle_timeout)
         request = read_request(path, user)
         entry = require_regular_file(
             self.get_info(path, user=user, request_timeout=request_timeout)
         )
-        chunks = self._read_chunks(request, file_request_deadline(entry.size, request_timeout))
+        if self._routes(entry.size):
+            return self._sandbox._transfers.read_routed(
+                path,
+                entry,
+                read_format=read_format,
+                user=user,
+                request_timeout=request_timeout,
+                idle=idle,
+            )
+        chunks = self._read_chunks(
+            request,
+            file_request_deadline(entry.size, request_timeout),
+            options=read_call_options(gzip),
+            idle=idle,
+        )
         if read_format == "stream":
             return chunks
         data = b"".join(chunks)
@@ -131,13 +168,22 @@ class Filesystem:
         *,
         user: str | None = None,
         mode: int | None = None,
+        gzip: bool = False,
+        metadata: Mapping[str, str] | None = None,
+        use_octet_stream: bool = False,
         request_timeout: float | None = None,
     ) -> EntryInfo:
         """Escribe `data` (str en UTF-8, bytes o fichero abierto) de forma
         atómica, creando los padres y con `mode` (0o644 por defecto). Los
-        padres que falten se crean; el propietario es `user`."""
+        padres que falten se crean; el propietario es `user`. `gzip`,
+        `metadata` y `use_octet_stream` como en `write_files`."""
         entries = self.write_files(
-            [WriteEntry(path, data, mode)], user=user, request_timeout=request_timeout
+            [WriteEntry(path, data, mode)],
+            user=user,
+            gzip=gzip,
+            metadata=metadata,
+            use_octet_stream=use_octet_stream,
+            request_timeout=request_timeout,
         )
         return entries[0]
 
@@ -146,19 +192,98 @@ class Filesystem:
         files: Sequence[WriteEntry],
         *,
         user: str | None = None,
+        gzip: bool = False,
+        metadata: Mapping[str, str] | None = None,
+        use_octet_stream: bool = False,
         request_timeout: float | None = None,
     ) -> list[EntryInfo]:
         """N ficheros en **un** stream `Write`; devuelve sus `EntryInfo` en
         orden. Cada fichero se compromete de forma atómica por separado: si
         el stream falla a mitad, los ya escritos quedan y el resto no existe.
-        Deadline `60 s + 1 s por MB` del total salvo `request_timeout`."""
-        prepared = prepare_write_entries(files)
-        deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
-        response = self._sandbox._files_call(
-            lambda stub, timeout: stub.Write(build_write_requests(prepared, user), timeout=timeout),
-            deadline,
+        Deadline `60 s + 1 s por MB` del total salvo `request_timeout`.
+
+        `gzip=True` comprime el stream (`grpc-encoding: gzip`). `metadata`
+        (claves token de HTTP, se guardan en minúsculas) se aplica a cada
+        fichero y sustituye el conjunto entero; se valida antes de cualquier
+        RPC. Ambos exigen un agente M9 (`UnimplementedError` si no).
+        `use_octet_stream` se acepta y no tiene efecto (gRPC no usa
+        formularios). Con `transfer=S3Staging(...)`, cada fichero de al menos
+        `threshold_bytes` (o un stream binario no buscable) se sube a S3 con
+        tus credenciales y `rayd` lo importa; `gzip` no aplica ahí."""
+        normalized = validate_metadata(metadata)
+        self._require_m9_write(gzip=gzip, metadata=normalized)
+        plan = self._plan(files)
+        results: dict[int, EntryInfo] = {}
+        if plan.grpc:
+            prepared = plan.grpc_entries
+            deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
+            response = self._sandbox._files_call(
+                lambda stub, timeout: stub.Write(
+                    build_write_requests(prepared, user, normalized),
+                    timeout=timeout,
+                    **write_call_options(gzip),
+                ),
+                deadline,
+            )
+            for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
+                results[index] = entry_info_from_proto(entry)
+        for routed in plan.routed:
+            results[routed.index] = self._sandbox._transfers.write_routed(
+                routed, user=user, metadata=normalized, request_timeout=request_timeout
+            )
+        return [results[index] for index in range(plan.count)]
+
+    def upload_url(
+        self,
+        path: str,
+        *,
+        user: str | None = None,
+        expires_in: int = TRANSFER_DEFAULT_EXPIRES_IN_SECONDS,
+        max_bytes: int | None = None,
+        form: bool = False,
+        request_timeout: float | None = None,
+    ) -> UploadTicket:
+        """Una URL de subida a S3 firmada con tus credenciales, con la
+        importación a `path` ya armada en el sandbox (ADR-010). Es un `str`:
+        `requests.put(ticket, data=f, headers=ticket.headers)` basta; con
+        `form=True` es un formulario POST (`ticket.fields` más el fichero en
+        `file`) que S3 limita a `max_bytes`. De un solo uso; `expires_in` se
+        topa en `min(expires_in, transfer.max_expires_in, 604800)`. El
+        fichero aparece de forma asíncrona: `read`, `get_info`, `list`, un
+        comando o una celda esperan a la importación, y `ticket.wait()` la
+        espera explícitamente. Sin `transfer=S3Staging(...)` ni
+        `RAYITO_TRANSFER_BUCKET` levanta `UnimplementedError`."""
+        return self._sandbox._transfers.upload_url(
+            path,
+            user=user,
+            expires_in=expires_in,
+            max_bytes=max_bytes,
+            form=form,
+            request_timeout=request_timeout,
         )
-        return [entry_info_from_proto(entry) for entry in response.entries]
+
+    def download_url(
+        self,
+        path: str,
+        *,
+        user: str | None = None,
+        expires_in: int = TRANSFER_DEFAULT_EXPIRES_IN_SECONDS,
+        filename: str | None = None,
+        request_timeout: float | None = None,
+    ) -> DownloadLink:
+        """Exporta `path` tal como está ahora a S3 y devuelve una URL de
+        descarga firmada con tus credenciales (un `str` con `size`, `sha256`
+        y `expires_at`); `urlopen(link)` basta y admite `Range`. Un fichero
+        inexistente levanta `FileNotFoundException` al llamar; un directorio
+        o un symlink, `InvalidArgumentException`. `filename` es el nombre de
+        `Content-Disposition` (por defecto el de `path`)."""
+        return self._sandbox._transfers.download_url(
+            path,
+            user=user,
+            expires_in=expires_in,
+            filename=filename,
+            request_timeout=request_timeout,
+        )
 
     def list(
         self,
@@ -264,7 +389,7 @@ class Filesystem:
         acumulan para `get_new_events()`. `timeout` (> 0) es el deadline gRPC
         del stream y termina en `TimeoutException`; `0`/`None` es ilimitado.
         `request_timeout` se acepta por uniformidad y no aplica al stream. Un
-        `files.write` en el directorio aparece como un único `RENAME`."""
+        `files.write` en el directorio aparece como un único `WRITE`."""
         request = watch_dir_request(path, recursive, include_entry, user)
         deadline = validate_watch_timeout(timeout)
         call = self._open_watch(request, deadline)
@@ -297,23 +422,34 @@ class Filesystem:
             raise
         return call
 
-    def _read_chunks(self, request: Any, deadline: float) -> Iterator[bytes]:
+    def _read_chunks(
+        self,
+        request: Any,
+        deadline: float,
+        *,
+        options: dict[str, Any] | None = None,
+        idle: float | None = None,
+    ) -> Iterator[bytes]:
         call, first = self._sandbox._open_stream(
-            lambda stub: stub.Read(request, timeout=deadline),
+            lambda stub: stub.Read(request, timeout=deadline, **(options or {})),
             service=FILES_STUB,
             stream=False,
             allow_empty=True,
             filesystem=True,
         )
-        return self._remaining_chunks(call, first)
+        return self._remaining_chunks(call, first, idle)
 
-    def _remaining_chunks(self, call: Any, first: Any) -> Iterator[bytes]:
-        """Abandonar el iterador cancela el RPC para que el agente deje de bombear."""
+    def _remaining_chunks(
+        self, call: Any, first: Any, idle: float | None = None
+    ) -> Iterator[bytes]:
+        """Abandonar el iterador cancela el RPC para que el agente deje de
+        bombear; con `idle`, una espera más larga entre chunks lo cancela y
+        levanta `TimeoutException`."""
         if first is None:
             return
         try:
             yield bytes(first.chunk)
-            for response in call:
+            for response in guarded_messages(iter(call), idle, call.cancel):
                 yield bytes(response.chunk)
         except grpc.RpcError as exc:
             raise self._stream_failure(exc) from exc
@@ -322,6 +458,30 @@ class Filesystem:
 
     def _stream_failure(self, exc: grpc.RpcError) -> Exception:
         return self._sandbox._stream_failure(exc, filesystem=True)
+
+    def _routes(self, size: int) -> bool:
+        staging = self._sandbox.transfer
+        return (
+            staging is not None
+            and size >= staging.threshold_bytes
+            and self._sandbox._transfers.supports_transfers()
+        )
+
+    def _plan(self, files: Sequence[WriteEntry]) -> WritePlan:
+        """Sin `transfer` no se sondea nada y todo va por gRPC; con él, lo
+        grande va por S3 salvo que el agente sea anterior a M9."""
+        plan = plan_writes(files, self._sandbox.transfer)
+        if plan.routed and not self._sandbox._transfers.supports_transfers():
+            return plan.without_routing()
+        return plan
+
+    def _require_m9_write(self, *, gzip: bool, metadata: Mapping[str, str]) -> None:
+        """Un agente anterior ignoraría en silencio los metadatos y no acepta
+        un stream comprimido: la sonda lo detecta antes de mover bytes."""
+        if metadata:
+            self._sandbox._transfers.require_support("files.write(metadata=)")
+        if gzip:
+            self._sandbox._transfers.require_support("files.write(gzip=True)")
 
     def _track(self, handle: WatchHandle) -> None:
         with self._lock:
@@ -458,7 +618,7 @@ class WatchHandle:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise
-                logger.info(
+                self._sandbox._logger_or(logger).info(
                     "watch %s: el gate del agente sigue cerrado (%s); reintento", self._path, exc
                 )
                 time.sleep(delay)

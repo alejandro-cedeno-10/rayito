@@ -2,12 +2,20 @@ syntax = "proto3";
 
 package rayito.v1;
 
+import "rayito/v1/lifecycle.proto";
+import "rayito/v1/network.proto";
+
 // Estado del agente y del sandbox. Health es el único RPC que no exige
 // `x-access-token`: es la sonda de readiness y liveness del SDK (el estado de
 // `get-microvm` es eventualmente consistente y no sirve para eso).
 service HealthService {
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc Metrics(MetricsRequest) returns (MetricsResponse);
+  // Serie de métricas que `rayd` muestrea cada 5 s desde `/run`, en un
+  // anillo de 5760 muestras (8 h, el techo de vida del MicroVM). Exige
+  // `x-access-token`, como `Metrics`. Mientras la VM está suspendida no se
+  // muestrea: la serie tiene un hueco, como la de E2B con un sandbox pausado.
+  rpc MetricsHistory(MetricsHistoryRequest) returns (MetricsHistoryResponse);
 }
 
 message HealthRequest {}
@@ -37,6 +45,19 @@ message HealthResponse {
   // Metadata del runHookPayload tal cual; vacío antes de /run o si el payload
   // no lo trae.
   map<string, string> metadata = 11;
+  // Plazo lógico (ADR-011). Ausente en agentes anteriores a M9: es la
+  // puerta de capacidad del SDK. Fase UNMANAGED cuando el runHookPayload no
+  // pidió lifecycle. No es secreto (lo lee cualquiera que llegue a Health).
+  LifecycleState lifecycle = 12;
+  // Egress en el guest verificado por la sonda de rutas de rayd (ADR-012).
+  // UNSPECIFIED en agentes anteriores a M9 (el SDK lo trata como NONE).
+  EgressEnforcement egress_enforcement = 13;
+  // Vista del guest, no el tamaño de la imagen: CPUs que `rayd` puede usar
+  // (`available_parallelism`) y `MemTotal` de `/proc/meminfo` en bytes. 0 si
+  // no se pudieron leer o en un agente anterior a M9. No es secreto: el
+  // propio sandbox lo lee de `/proc`.
+  uint32 cpu_count = 14;
+  uint64 memory_total_bytes = 15;
 }
 
 message MetricsRequest {}
@@ -48,4 +69,27 @@ message MetricsResponse {
   uint64 disk_total_bytes = 5;
   uint32 cpu_count = 6;
   int64 timestamp_unix_ms = 7;
+  // `Cached` de `/proc/meminfo` (page cache) en bytes; 0 en un agente
+  // anterior a M9.
+  uint64 mem_cache_bytes = 8;
+}
+
+// Límites inclusivos en milisegundos Unix del reloj de pared del guest.
+// `start_unix_ms = 0`: desde la muestra más antigua; `end_unix_ms = 0`: sin
+// límite superior; `max_points = 0`: sin reducción. Un límite negativo, o
+// `start_unix_ms > end_unix_ms` con `end_unix_ms != 0`, es INVALID_ARGUMENT.
+message MetricsHistoryRequest {
+  int64 start_unix_ms = 1;
+  int64 end_unix_ms = 2;
+  uint32 max_points = 3;
+}
+
+// Muestras en orden ascendente de `timestamp_unix_ms`. En cada muestra
+// `cpu_used_pct` es la media desde la muestra anterior (≈ 5 s), no la
+// ventana de 100 ms de `Metrics`. Con `max_points` cada punto es la última
+// muestra de su tramo, con `cpu_used_pct` promediado en el tramo.
+// `oldest_unix_ms` es la muestra más antigua retenida (0 si no hay ninguna).
+message MetricsHistoryResponse {
+  repeated MetricsResponse samples = 1;
+  int64 oldest_unix_ms = 2;
 }

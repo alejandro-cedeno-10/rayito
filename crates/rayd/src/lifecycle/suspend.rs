@@ -4,14 +4,19 @@
 //! closes in the form its schema allows: an in-stream terminal message
 //! (`EndEvent`/`PtyExited` with status `suspending`) or a trailing
 //! `UNAVAILABLE` status. Streams opened after a resume subscribe to the
-//! next generation, so the following `/suspend` closes them too.
+//! next generation, so the following `/suspend` closes them too. The same
+//! broadcast closes them when the logical deadline expires (ADR-011), with
+//! `sandbox_timeout` instead of `suspending` in both forms and a trailing
+//! `FAILED_PRECONDITION` instead of `UNAVAILABLE`, which would start the
+//! SDK's reconnect loop.
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use rayd_core::sandbox_timeout::SANDBOX_TIMEOUT_CODE;
 use tokio_stream::Stream;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tonic::Status;
@@ -21,9 +26,56 @@ use tonic::Status;
 pub const SUSPENDING_MESSAGE: &str = "suspending";
 const CLOSE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// Why the open client streams are being closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamCloseReason {
+    Suspending,
+    SandboxTimeout,
+}
+
+impl StreamCloseReason {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Suspending => SUSPENDING_MESSAGE,
+            Self::SandboxTimeout => SANDBOX_TIMEOUT_CODE,
+        }
+    }
+
+    fn encode(self) -> u8 {
+        match self {
+            Self::Suspending => 0,
+            Self::SandboxTimeout => 1,
+        }
+    }
+
+    fn decode(raw: u8) -> Self {
+        if raw == Self::SandboxTimeout.encode() {
+            Self::SandboxTimeout
+        } else {
+            Self::Suspending
+        }
+    }
+}
+
+/// One generation of subscribers: the token they wait on and the reason
+/// written right before it is cancelled.
+#[derive(Debug, Default)]
+struct Subscription {
+    token: CancellationToken,
+    reason: Arc<AtomicU8>,
+}
+
+impl Subscription {
+    fn close(&self, reason: StreamCloseReason) {
+        self.reason.store(reason.encode(), Ordering::SeqCst);
+        self.token.cancel();
+    }
+}
+
 #[derive(Debug)]
 pub struct SuspendSignal {
-    current: Mutex<CancellationToken>,
+    current: Mutex<Subscription>,
     generation: AtomicU64,
     open_streams: Arc<AtomicUsize>,
 }
@@ -38,7 +90,7 @@ impl SuspendSignal {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            current: Mutex::new(CancellationToken::new()),
+            current: Mutex::new(Subscription::default()),
             generation: AtomicU64::new(0),
             open_streams: Arc::new(AtomicUsize::new(0)),
         }
@@ -47,16 +99,26 @@ impl SuspendSignal {
     /// Closes every stream subscribed since the previous broadcast and
     /// starts the generation the next streams will subscribe to.
     pub fn broadcast(&self, suspend_generation: u64) {
-        let previous = std::mem::replace(&mut *self.current(), CancellationToken::new());
+        let previous = self.rotate();
         self.generation.store(suspend_generation, Ordering::SeqCst);
-        previous.cancel();
+        previous.close(StreamCloseReason::Suspending);
+    }
+
+    /// Closes every open stream for `reason` without touching the suspend
+    /// generation; streams opened afterwards subscribe to a fresh token.
+    pub fn close_all(&self, reason: StreamCloseReason) {
+        self.rotate().close(reason);
     }
 
     #[must_use]
     pub fn subscribe(&self) -> SuspendWatch {
-        let token = self.current().clone();
+        let current = self.current();
+        let token = current.token.clone();
+        let reason = current.reason.clone();
+        drop(current);
         SuspendWatch {
             cancelled: Box::pin(token.cancelled_owned()),
+            reason,
             guard: Some(OpenStreamGuard::new(self.open_streams.clone())),
         }
     }
@@ -84,7 +146,11 @@ impl SuspendSignal {
         }
     }
 
-    fn current(&self) -> MutexGuard<'_, CancellationToken> {
+    fn rotate(&self) -> Subscription {
+        std::mem::take(&mut *self.current())
+    }
+
+    fn current(&self) -> MutexGuard<'_, Subscription> {
         self.current.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -112,6 +178,7 @@ impl Drop for OpenStreamGuard {
 /// generation is suspended, plus the open-stream slot.
 pub struct SuspendWatch {
     cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
+    reason: Arc<AtomicU8>,
     guard: Option<OpenStreamGuard>,
 }
 
@@ -126,6 +193,13 @@ impl SuspendWatch {
         self.cancelled.as_mut().await;
     }
 
+    /// Why this stream's generation was closed; meaningful once
+    /// `suspended` completed.
+    #[must_use]
+    pub fn close_reason(&self) -> StreamCloseReason {
+        StreamCloseReason::decode(self.reason.load(Ordering::SeqCst))
+    }
+
     /// Frees the open-stream slot before the stream object itself goes
     /// away (tonic keeps it until the close has been written).
     pub fn release(&mut self) {
@@ -133,8 +207,8 @@ impl SuspendWatch {
     }
 }
 
-/// How a stream ends on suspend: with one last in-stream message, or with
-/// a trailing `UNAVAILABLE suspending` status.
+/// How a stream ends on a close: with one last in-stream message, or with
+/// the trailing status of `close_status`.
 pub enum SuspendClose<T> {
     Terminal(T),
     Status,
@@ -147,13 +221,19 @@ pub trait SuspendAware {
     fn on_suspend(&mut self) {}
 }
 
+/// `UNAVAILABLE suspending` tells the SDK to reconnect after the resume;
+/// `FAILED_PRECONDITION sandbox_timeout` must not.
 #[must_use]
-pub fn suspending_status() -> Status {
-    Status::unavailable(SUSPENDING_MESSAGE)
+pub fn close_status(reason: StreamCloseReason) -> Status {
+    match reason {
+        StreamCloseReason::Suspending => Status::unavailable(SUSPENDING_MESSAGE),
+        StreamCloseReason::SandboxTimeout => Status::failed_precondition(SANDBOX_TIMEOUT_CODE),
+    }
 }
 
 /// Wraps a domain stream into a gRPC response stream that closes on
-/// suspend. `convert` maps the domain items; `close` picks the close form.
+/// suspend or at the deadline. `convert` maps the domain items; `close`
+/// picks the close form for the reason.
 pub struct SuspendableStream<S, C, F> {
     inner: Option<S>,
     convert: C,
@@ -166,7 +246,7 @@ impl<S, C, F, T> SuspendableStream<S, C, F>
 where
     S: Stream + SuspendAware + Unpin,
     C: Fn(S::Item) -> Result<T, Status>,
-    F: Fn() -> SuspendClose<T>,
+    F: Fn(StreamCloseReason) -> SuspendClose<T>,
 {
     pub fn new(inner: S, watch: SuspendWatch, convert: C, close: F) -> Self {
         Self {
@@ -185,9 +265,10 @@ where
         self.inner = None;
         self.watch.release();
         self.finished = true;
-        match (self.close)() {
+        let reason = self.watch.close_reason();
+        match (self.close)(reason) {
             SuspendClose::Terminal(item) => Poll::Ready(Some(Ok(item))),
-            SuspendClose::Status => Poll::Ready(Some(Err(suspending_status()))),
+            SuspendClose::Status => Poll::Ready(Some(Err(close_status(reason)))),
         }
     }
 }
@@ -196,7 +277,7 @@ impl<S, C, F, T> Stream for SuspendableStream<S, C, F>
 where
     S: Stream + SuspendAware + Unpin,
     C: Fn(S::Item) -> Result<T, Status> + Unpin,
-    F: Fn() -> SuspendClose<T> + Unpin,
+    F: Fn(StreamCloseReason) -> SuspendClose<T> + Unpin,
 {
     type Item = Result<T, Status>;
 
@@ -296,7 +377,7 @@ mod tests {
     async fn terminal_close_yields_the_item_then_ends() {
         let signal = SuspendSignal::new();
         let (fixture, inner) = fixture();
-        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::Terminal(999)
         });
         fixture.sender.send(1).await.unwrap();
@@ -326,7 +407,7 @@ mod tests {
     async fn status_close_yields_unavailable_suspending() {
         let signal = SuspendSignal::new();
         let (fixture, inner) = fixture();
-        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::<u32>::Status
         });
         signal.broadcast(1);
@@ -342,7 +423,7 @@ mod tests {
     async fn without_a_broadcast_the_stream_is_transparent_and_releases_on_end() {
         let signal = SuspendSignal::new();
         let (fixture, inner) = fixture();
-        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::<u32>::Status
         });
         fixture.sender.send(2).await.unwrap();
@@ -360,7 +441,7 @@ mod tests {
     async fn dropping_an_open_stream_frees_its_slot_and_a_later_generation_closes_new_streams() {
         let signal = SuspendSignal::new();
         let (_first, inner) = fixture();
-        let stream = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let stream = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::<u32>::Status
         });
         assert_eq!(signal.open_streams(), 1);
@@ -368,7 +449,7 @@ mod tests {
         assert_eq!(signal.open_streams(), 0);
         signal.broadcast(1);
         let (_second, inner) = fixture();
-        let mut later = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let mut later = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::<u32>::Status
         });
         let poll = tokio::time::timeout(Duration::from_millis(50), later.next()).await;
@@ -387,12 +468,12 @@ mod tests {
     async fn wait_streams_closed_reports_what_is_still_open() {
         let signal = Arc::new(SuspendSignal::new());
         let (_fixture, inner) = fixture();
-        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, || {
+        let mut stream = SuspendableStream::new(inner, signal.subscribe(), convert, |_| {
             SuspendClose::<u32>::Status
         });
         let (_unpolled, unpolled_inner) = fixture();
         let _never_polled =
-            SuspendableStream::new(unpolled_inner, signal.subscribe(), convert, || {
+            SuspendableStream::new(unpolled_inner, signal.subscribe(), convert, |_| {
                 SuspendClose::<u32>::Status
             });
         let reader = tokio::spawn(async move { stream.next().await.map(|item| item.is_err()) });
@@ -401,5 +482,44 @@ mod tests {
         let still_open = signal.wait_streams_closed(Duration::from_millis(500)).await;
         assert_eq!(still_open, 1);
         assert_eq!(reader.await.unwrap(), Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn close_all_ends_streams_with_sandbox_timeout_and_keeps_the_generation() {
+        let signal = SuspendSignal::new();
+        signal.broadcast(3);
+        let (_status_fixture, status_inner) = fixture();
+        let mut status_stream =
+            SuspendableStream::new(status_inner, signal.subscribe(), convert, |_| {
+                SuspendClose::<u32>::Status
+            });
+        let (terminal_fixture, terminal_inner) = fixture();
+        let mut terminal_stream =
+            SuspendableStream::new(terminal_inner, signal.subscribe(), convert, |reason| {
+                SuspendClose::Terminal(match reason {
+                    StreamCloseReason::Suspending => 1,
+                    StreamCloseReason::SandboxTimeout => 2,
+                })
+            });
+        signal.close_all(StreamCloseReason::SandboxTimeout);
+        let status = status_stream.next().await.unwrap().unwrap_err();
+        assert_eq!(status.code(), Code::FailedPrecondition);
+        assert_eq!(status.message(), "sandbox_timeout");
+        assert_eq!(terminal_stream.next().await.unwrap().unwrap(), 2);
+        assert!(terminal_fixture.suspended.load(Ordering::SeqCst));
+        assert_eq!(signal.generation(), 3);
+        assert_eq!(signal.open_streams(), 0);
+        let (_later_fixture, later_inner) = fixture();
+        let mut later = SuspendableStream::new(later_inner, signal.subscribe(), convert, |_| {
+            SuspendClose::<u32>::Status
+        });
+        signal.broadcast(4);
+        let suspended = later.next().await.unwrap().unwrap_err();
+        assert_eq!(suspended.code(), Code::Unavailable);
+        assert_eq!(suspended.message(), "suspending");
+        assert_eq!(
+            StreamCloseReason::SandboxTimeout.as_str(),
+            "sandbox_timeout"
+        );
     }
 }

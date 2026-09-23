@@ -17,12 +17,15 @@ import {
   EntryInfoSchema,
   FileType,
   KeepAliveSchema,
+  UserSchema,
 } from "../../../src/gen/rayito/v1/common_pb.js";
 import {
+  type CancelTransferRequest,
   type CheckpointEvent,
   type CheckpointRequest,
   FilesystemEventSchema,
   type FilesystemEventType,
+  type GetTransferRequest,
   type ListDirRequest,
   ListDirResponseSchema,
   type MakeDirRequest,
@@ -30,19 +33,25 @@ import {
   type MoveRequest,
   MoveResponseSchema,
   type ReadRequest,
+  ReadRequestSchema,
   type ReadResponse,
   ReadResponseSchema,
   type RemoveRequest,
   RemoveResponseSchema,
   type RestoreEvent,
   type RestoreRequest,
+  type StartExportRequest,
+  type StartImportRequest,
   type StatRequest,
   StatResponseSchema,
+  type TransferEvent,
   type WatchDirRequest,
   type WatchDirResponse,
   WatchDirResponseSchema,
   WatchStartedSchema,
+  type WatchTransferRequest,
   type WriteRequest,
+  WriteRequestSchema,
   WriteResponseSchema,
 } from "../../../src/gen/rayito/v1/filesystem_pb.js";
 import {
@@ -58,7 +67,9 @@ import {
   requireAccessToken,
   StreamEnd,
 } from "./common.js";
+import { SANDBOX_ID } from "./control-plane.js";
 import { FakePersistence } from "./persistence.js";
+import { FakeTransfers } from "./transfer.js";
 
 export const HOME = "/home/user";
 const DENIED_PREFIXES = ["/etc", "/usr"];
@@ -76,12 +87,27 @@ const PERMISSION_BITS = "rwxrwxrwx";
 export class FakeFile {
   data: Uint8Array;
   mode: number;
+  readonly metadata: Readonly<Record<string, string>>;
   readonly kind = "file";
 
-  constructor(data: Uint8Array = new Uint8Array(), mode = DEFAULT_FILE_MODE) {
+  constructor(
+    data: Uint8Array = new Uint8Array(),
+    mode = DEFAULT_FILE_MODE,
+    metadata: Readonly<Record<string, string>> = {},
+  ) {
     this.data = data;
     this.mode = mode;
+    this.metadata = metadata;
   }
+}
+
+/** Lo que hace `rayd` con `WriteRequest.metadata`: claves en minúsculas. */
+export function lowercasedMetadata(
+  metadata: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(metadata).map(([key, value]) => [key.toLowerCase(), value]),
+  );
 }
 
 export class FakeDirectory {
@@ -204,6 +230,9 @@ export function entryInfo(path: string, node: Node): EntryInfo {
   if (node instanceof FakeSymlink) {
     info.symlinkTarget = node.target;
   }
+  if (node instanceof FakeFile) {
+    info.metadata = { ...node.metadata };
+  }
   return info;
 }
 
@@ -280,6 +309,7 @@ interface OpenWrite {
   path: string;
   canonical: string;
   mode: number;
+  metadata: Readonly<Record<string, string>>;
   parts: Uint8Array[];
 }
 
@@ -316,9 +346,21 @@ export class FakeFilesystemService {
   readonly watchRequests: WatchDirRequest[] = [];
   liveWatches = 0;
   readonly persistence = new FakePersistence();
+  sandboxId = SANDBOX_ID;
+  readStallAfterFirstChunk = false;
+  readonly writeMetadata: Array<Readonly<Record<string, string>>> = [];
+  readonly transfers: FakeTransfers;
+  /** Los siguientes `Write` terminan con este status tras leer el stream (p. ej. `disk_reserve`). */
+  readonly writeRejections: ConnectError[] = [];
 
   constructor(tokenSha256: string) {
     this.tokenSha256 = tokenSha256;
+    this.transfers = new FakeTransfers({
+      sandboxId: () => this.sandboxId,
+      snapshot: (path, username) => this.#snapshot(path, username),
+      commit: (path, username, data, mode, metadata) =>
+        this.#importFile(path, username, data, mode, metadata),
+    });
   }
 
   get watchCalls(): WatchDirRequest[] {
@@ -332,12 +374,20 @@ export class FakeFilesystemService {
     this.#gatePhase();
     const data = this.#readable(request);
     this.readCalls += 1;
-    return this.#readChunks(data);
+    return this.readStallAfterFirstChunk
+      ? this.#stallAfterFirstChunk(data, context.signal)
+      : this.#readChunks(data);
   }
 
   async write(requests: AsyncIterable<WriteRequest>, context: HandlerContext) {
     this.#enter("Write", context);
     this.#gatePhase();
+    const rejection = this.writeRejections.shift();
+    if (rejection !== undefined) {
+      for await (const _request of requests) {
+      }
+      throw rejection;
+    }
     const messages: WriteMessageSummary[] = [];
     const entries: EntryInfo[] = [];
     let current: OpenWrite | undefined;
@@ -355,8 +405,12 @@ export class FakeFilesystemService {
           current = this.#begin(request);
         } else if (current === undefined) {
           throw invalid("first message must carry path");
-        } else if (request.user !== undefined || request.mode !== undefined) {
-          throw invalid("user and mode only travel with path");
+        } else if (
+          request.user !== undefined ||
+          request.mode !== undefined ||
+          Object.keys(request.metadata).length > 0
+        ) {
+          throw invalid("user, mode and metadata only travel with path");
         }
         current.parts.push(chunk);
       }
@@ -462,6 +516,34 @@ export class FakeFilesystemService {
     return this.persistence.restore(request, context);
   }
 
+  startImport(request: StartImportRequest, context: HandlerContext) {
+    this.#enter("StartImport", context);
+    return this.transfers.startImport(request);
+  }
+
+  startExport(request: StartExportRequest, context: HandlerContext) {
+    this.#enter("StartExport", context);
+    return this.transfers.startExport(request);
+  }
+
+  getTransfer(request: GetTransferRequest, context: HandlerContext) {
+    this.#enter("GetTransfer", context);
+    return this.transfers.getTransfer(request);
+  }
+
+  watchTransfer(
+    request: WatchTransferRequest,
+    context: HandlerContext,
+  ): AsyncIterable<TransferEvent> {
+    this.#enter("WatchTransfer", context);
+    return this.transfers.watchTransfer(request, context.signal);
+  }
+
+  cancelTransfer(request: CancelTransferRequest, context: HandlerContext) {
+    this.#enter("CancelTransfer", context);
+    return this.transfers.cancelTransfer(request);
+  }
+
   // --------------------------------------------------------- test controls
 
   /** Entrega un `FilesystemEvent` a todos los watches vivos de `path`. */
@@ -498,10 +580,12 @@ export class FakeFilesystemService {
       }
     }
     this.phase = "suspending";
+    this.transfers.suspend();
   }
 
   resume(): void {
     this.phase = undefined;
+    this.transfers.resume();
   }
 
   nodeAt(path: string): Node | undefined {
@@ -516,12 +600,17 @@ export class FakeFilesystemService {
     return node.data;
   }
 
-  addFile(path: string, data: Uint8Array | string, mode = DEFAULT_FILE_MODE): void {
+  addFile(
+    path: string,
+    data: Uint8Array | string,
+    mode = DEFAULT_FILE_MODE,
+    metadata: Readonly<Record<string, string>> = {},
+  ): void {
     const canonical = this.tree.canonical(normalize(path));
     this.tree.ensureParents(canonical);
     this.tree.nodes.set(
       canonical,
-      new FakeFile(typeof data === "string" ? bytes(data) : data, mode),
+      new FakeFile(typeof data === "string" ? bytes(data) : data, mode, metadata),
     );
   }
 
@@ -624,6 +713,14 @@ export class FakeFilesystemService {
     }
   }
 
+  async *#stallAfterFirstChunk(
+    data: Uint8Array,
+    signal: AbortSignal,
+  ): AsyncGenerator<ReadResponse, void, undefined> {
+    yield create(ReadResponseSchema, { chunk: data.subarray(0, READ_CHUNK_BYTES) });
+    await new AsyncQueue<never>().next(signal);
+  }
+
   #begin(request: WriteRequest): OpenWrite {
     this.#identity(request);
     const mode = request.mode ?? DEFAULT_FILE_MODE;
@@ -636,7 +733,9 @@ export class FakeFilesystemService {
       throw invalid("destination is a directory");
     }
     this.tree.ensureParents(canonical);
-    return { path, canonical, mode, parts: [] };
+    const metadata = lowercasedMetadata(request.metadata);
+    this.writeMetadata.push(metadata);
+    return { path, canonical, mode, metadata, parts: [] };
   }
 
   #commit(open: OpenWrite): EntryInfo {
@@ -647,9 +746,33 @@ export class FakeFilesystemService {
       data.set(part, offset);
       offset += part.byteLength;
     }
-    const node = new FakeFile(data, open.mode);
+    const node = new FakeFile(data, open.mode, open.metadata);
     this.tree.nodes.set(open.canonical, node);
     return entryInfo(open.path, node);
+  }
+
+  #snapshot(raw: string, username: string | undefined): { entry: EntryInfo; data: Uint8Array } {
+    const owner = username === undefined ? undefined : create(UserSchema, { username });
+    const data = this.#readable(create(ReadRequestSchema, { path: raw, user: owner }));
+    return {
+      entry: entryInfo(normalize(raw), this.#existing(this.#target(raw))),
+      data: data.slice(),
+    };
+  }
+
+  #importFile(
+    raw: string,
+    username: string | undefined,
+    data: Uint8Array,
+    mode: number | undefined,
+    metadata: Readonly<Record<string, string>>,
+  ): EntryInfo {
+    const owner = username === undefined ? undefined : create(UserSchema, { username });
+    const open = this.#begin(
+      create(WriteRequestSchema, { path: raw, mode, user: owner, metadata: { ...metadata } }),
+    );
+    open.parts.push(data);
+    return this.#commit(open);
   }
 
   #walk(root: string, canonicalRoot: string, depth: number): EntryInfo[] {
