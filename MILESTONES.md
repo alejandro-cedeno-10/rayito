@@ -1124,6 +1124,7 @@ facturación).
 - Las filas diferidas de `docs/SECURITY_AUDIT.md` §8 siguen diferidas;
   ningún cambio de M9 las empeora.
 - Revisión de arquitectura hexagonal/DDD: 32 hallazgos reales diferidos (la mayoría en `rayd`, cuyo cambio obliga a republicar y repetir la aceptación), listados con fichero, principio y arreglo en [`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md); 12 se corrigieron antes de 0.3.0.
+- `rayd` debería marcar close-on-exec los descriptores heredados al arrancar (defensa en profundidad): la CI de GitHub reveló que un proceso padre con pipes abiertos los filtra a las shells de usuario; el harness de tests ya lo hace y dentro del MicroVM no se ha observado.
 
 ---
 
