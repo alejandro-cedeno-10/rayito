@@ -10,6 +10,9 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-24
+
+
 `rayd` 0.3.0 (M9). Todos los cambios del contrato (`proto/rayito/v1/`) son
 aditivos y compatibles con `buf breaking` (FILE): un SDK 0.2 sigue hablando
 con este agente. Los SDK 0.3 necesitan este agente para las features de M9.

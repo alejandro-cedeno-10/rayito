@@ -133,7 +133,7 @@ E2B_EXCEPTION_NAMES = [
 def test_version_matches_pyproject() -> None:
     with PYPROJECT.open("rb") as handle:
         project = tomllib.load(handle)["project"]
-    assert project["version"] == rayito.__version__ == "0.2.0"
+    assert project["version"] == rayito.__version__
     assert project["requires-python"] == ">=3.11"
     assert "Typing :: Typed" in project["classifiers"]
     assert {"Homepage", "Repository", "Documentation", "Changelog"} <= set(project["urls"])

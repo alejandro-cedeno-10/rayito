@@ -6,6 +6,9 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-24
+
+
 Rayito 0.3.0 (M9, paridad con E2B 2.x). Notas completas en
 `docs/RELEASE_NOTES_0.3.0.md`; todo lo de M9 exige una imagen publicada con
 el `rayd` de M9.

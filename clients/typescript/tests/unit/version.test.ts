@@ -8,5 +8,4 @@ test("VERSION equals package.json", () => {
     readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8"),
   ) as { version: string };
   expect(VERSION).toBe(packageJson.version);
-  expect(VERSION).toBe("0.2.0");
 });
