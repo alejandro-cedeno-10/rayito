@@ -210,6 +210,14 @@ def clients(stubbed_clients: Stubs, fake_plane: FakeControlPlane) -> Clients:
     )
 
 
+@pytest.fixture(autouse=True)
+def plain_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Typer fuerza un terminal con colores cuando `GITHUB_ACTIONS`,
+    `FORCE_COLOR` o `PY_COLORS` están definidas; los códigos ANSI partirían
+    los textos que los tests buscan en la salida de uso."""
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", False)
+
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
