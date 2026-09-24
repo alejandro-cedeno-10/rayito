@@ -8,24 +8,10 @@ Todos los cambios notables del agente `rayd` (`crates/rayd`, con
 distribuye como binario estático `aarch64-unknown-linux-musl` dentro de la
 imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
-## [0.3.0](https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.2.0...rayd-v0.3.0) (2026-09-24)
-
-
-### ⚠ BREAKING CHANGES
-
-* el shim rayito.e2b / rayito/e2b sigue la superficie de E2B 2.x (pause devuelve bool, set_timeout ya no lanza UnimplementedError, nuevos órdenes posicionales); ver la sección de cambios incompatibles de los CHANGELOG de Python y TypeScript.
-
-### Added
-
-* M9, paridad con E2B (Rayito 0.3.0) ([8409453](https://github.com/alejandro-cedeno-10/rayito/commit/8409453792b8f34cc1d61ecaed0c388542eac91f))
-* Rayito 0.2.0, SDK de sandboxes para agentes sobre AWS Lambda MicroVMs ([dde681c](https://github.com/alejandro-cedeno-10/rayito/commit/dde681c4858ae548aa550b2e7ab58f21ef8a29d3))
-
-
-### Fixed
-
-* **rayd:** los procesos de usuario no heredan descriptores más allá de stdio ([fd07d9b](https://github.com/alejandro-cedeno-10/rayito/commit/fd07d9bd9e744c3929644d93330cae3485cb4c33))
-
 ## [Unreleased]
+
+## [0.3.0] - 2026-09-24
+
 
 `rayd` 0.3.0 (M9). Todos los cambios del contrato (`proto/rayito/v1/`) son
 aditivos y compatibles con `buf breaking` (FILE): un SDK 0.2 sigue hablando
