@@ -302,7 +302,7 @@ pub fn workspace_root() -> PathBuf {
 
 /// Marks every descriptor this test process inherited (a CI runner can leave
 /// pipes open past stdio) close-on-exec, so the agent's children see only
-/// what the agent itself hands them, as they do inside a MicroVM.
+/// what the agent itself hands them, as they do inside the sandbox VM.
 fn seal_inherited_descriptors() {
     static SEAL: Once = Once::new();
     SEAL.call_once(|| {
