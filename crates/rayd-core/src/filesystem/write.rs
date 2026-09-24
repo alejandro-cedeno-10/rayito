@@ -6,6 +6,7 @@
 //! file begins.
 
 use super::error::FilesystemError;
+use super::metadata::FileMetadata;
 use super::{DEFAULT_FILE_MODE, MAX_WRITE_CHUNK_BYTES, MODE_MASK};
 
 /// Free space the destination filesystem must keep for `rayd`'s own needs
@@ -21,12 +22,14 @@ pub fn check_disk_reserve(free_bytes: u64) -> Result<(), FilesystemError> {
     Ok(())
 }
 
-/// One `WriteRequest` without its bytes.
+/// One `WriteRequest` without its bytes. `metadata` is the raw map as it
+/// came; the session validates it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteMessage {
     pub path: Option<String>,
     pub user: Option<String>,
     pub mode: Option<u32>,
+    pub metadata: Vec<(String, String)>,
     pub chunk_len: usize,
 }
 
@@ -37,6 +40,7 @@ pub enum WriteStep {
         path: String,
         user: Option<String>,
         mode: u32,
+        metadata: FileMetadata,
     },
     Append {
         len: usize,
@@ -74,6 +78,8 @@ impl WriteSession {
             if mode > MODE_MASK {
                 return Err(FilesystemError::InvalidMode(mode));
             }
+            let metadata = FileMetadata::parse(message.metadata)
+                .map_err(|_| FilesystemError::InvalidMetadata)?;
             if self.open {
                 steps.push(WriteStep::Commit);
             }
@@ -83,6 +89,7 @@ impl WriteSession {
                 path,
                 user: message.user,
                 mode,
+                metadata,
             });
         } else {
             if !self.open {
@@ -93,6 +100,9 @@ impl WriteSession {
             }
             if message.mode.is_some() {
                 return Err(FilesystemError::ModeWithoutPath);
+            }
+            if !message.metadata.is_empty() {
+                return Err(FilesystemError::MetadataWithoutPath);
             }
         }
         if message.chunk_len > 0 {
@@ -124,9 +134,8 @@ mod tests {
     fn begin(path: &str, chunk_len: usize) -> WriteMessage {
         WriteMessage {
             path: Some(path.to_owned()),
-            user: None,
-            mode: None,
             chunk_len,
+            ..WriteMessage::default()
         }
     }
 
@@ -160,7 +169,8 @@ mod tests {
                 WriteStep::Begin {
                     path: "/tmp/a".to_owned(),
                     user: None,
-                    mode: 0o644
+                    mode: 0o644,
+                    metadata: FileMetadata::default(),
                 },
                 WriteStep::Append { len: 10 }
             ]
@@ -186,7 +196,8 @@ mod tests {
                 WriteStep::Begin {
                     path: "/tmp/b".to_owned(),
                     user: None,
-                    mode: 0o644
+                    mode: 0o644,
+                    metadata: FileMetadata::default(),
                 }
             ]
         );
@@ -262,6 +273,36 @@ mod tests {
         assert_eq!(
             session.accept(with_mode),
             Err(FilesystemError::ModeWithoutPath)
+        );
+    }
+
+    #[test]
+    fn metadata_is_validated_with_the_file_start() {
+        let mut session = WriteSession::new();
+        let mut first = begin("/tmp/a", 0);
+        first.metadata = vec![("Owner".to_owned(), "alice".to_owned())];
+        let steps = session.accept(first).unwrap();
+        let WriteStep::Begin { metadata, .. } = &steps[0] else {
+            panic!("expected a begin step, got {steps:?}");
+        };
+        assert_eq!(
+            metadata.iter().collect::<Vec<_>>(),
+            vec![("owner", "alice")]
+        );
+        let mut bad = begin("/tmp/b", 0);
+        bad.metadata = vec![("a b".to_owned(), "x".to_owned())];
+        assert_eq!(session.accept(bad), Err(FilesystemError::InvalidMetadata));
+    }
+
+    #[test]
+    fn metadata_needs_a_path() {
+        let mut session = WriteSession::new();
+        session.accept(begin("/tmp/a", 1)).unwrap();
+        let mut with_metadata = append(1);
+        with_metadata.metadata = vec![("k".to_owned(), "v".to_owned())];
+        assert_eq!(
+            session.accept(with_metadata),
+            Err(FilesystemError::MetadataWithoutPath)
         );
     }
 }

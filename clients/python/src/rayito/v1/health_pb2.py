@@ -22,9 +22,11 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from rayito.v1 import lifecycle_pb2 as rayito_dot_v1_dot_lifecycle__pb2
+from rayito.v1 import network_pb2 as rayito_dot_v1_dot_network__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16rayito/v1/health.proto\x12\trayito.v1\"\x0f\n\rHealthRequest\"\x82\x04\n\x0eHealthResponse\x12\x1f\n\x0b\x61gent_ready\x18\x01 \x01(\x08R\nagentReady\x12!\n\x0ckernel_ready\x18\x02 \x01(\x08R\x0bkernelReady\x12#\n\ragent_version\x18\x03 \x01(\tR\x0c\x61gentVersion\x12\x1b\n\tuptime_ms\x18\x04 \x01(\x04R\x08uptimeMs\x12\x1d\n\nsandbox_id\x18\x05 \x01(\tR\tsandboxId\x12+\n\x11resume_generation\x18\x06 \x01(\x04R\x10resumeGeneration\x12&\n\x0f\x63lock_offset_ms\x18\x07 \x01(\x03R\rclockOffsetMs\x12*\n\x11kernel_state_lost\x18\x08 \x01(\x08R\x0fkernelStateLost\x12!\n\x0cimds_blocked\x18\t \x01(\x08R\x0bimdsBlocked\x12%\n\x0ehook_anomalies\x18\n \x01(\x04R\rhookAnomalies\x12\x43\n\x08metadata\x18\x0b \x03(\x0b\x32\'.rayito.v1.HealthResponse.MetadataEntryR\x08metadata\x1a;\n\rMetadataEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"\x10\n\x0eMetricsRequest\"\x9c\x02\n\x0fMetricsResponse\x12 \n\x0c\x63pu_used_pct\x18\x01 \x01(\x01R\ncpuUsedPct\x12$\n\x0emem_used_bytes\x18\x02 \x01(\x04R\x0cmemUsedBytes\x12&\n\x0fmem_total_bytes\x18\x03 \x01(\x04R\rmemTotalBytes\x12&\n\x0f\x64isk_used_bytes\x18\x04 \x01(\x04R\rdiskUsedBytes\x12(\n\x10\x64isk_total_bytes\x18\x05 \x01(\x04R\x0e\x64iskTotalBytes\x12\x1b\n\tcpu_count\x18\x06 \x01(\rR\x08\x63puCount\x12*\n\x11timestamp_unix_ms\x18\x07 \x01(\x03R\x0ftimestampUnixMs2\x90\x01\n\rHealthService\x12=\n\x06Health\x12\x18.rayito.v1.HealthRequest\x1a\x19.rayito.v1.HealthResponse\x12@\n\x07Metrics\x12\x19.rayito.v1.MetricsRequest\x1a\x1a.rayito.v1.MetricsResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16rayito/v1/health.proto\x12\trayito.v1\x1a\x19rayito/v1/lifecycle.proto\x1a\x17rayito/v1/network.proto\"\x0f\n\rHealthRequest\"\xd3\x05\n\x0eHealthResponse\x12\x1f\n\x0b\x61gent_ready\x18\x01 \x01(\x08R\nagentReady\x12!\n\x0ckernel_ready\x18\x02 \x01(\x08R\x0bkernelReady\x12#\n\ragent_version\x18\x03 \x01(\tR\x0c\x61gentVersion\x12\x1b\n\tuptime_ms\x18\x04 \x01(\x04R\x08uptimeMs\x12\x1d\n\nsandbox_id\x18\x05 \x01(\tR\tsandboxId\x12+\n\x11resume_generation\x18\x06 \x01(\x04R\x10resumeGeneration\x12&\n\x0f\x63lock_offset_ms\x18\x07 \x01(\x03R\rclockOffsetMs\x12*\n\x11kernel_state_lost\x18\x08 \x01(\x08R\x0fkernelStateLost\x12!\n\x0cimds_blocked\x18\t \x01(\x08R\x0bimdsBlocked\x12%\n\x0ehook_anomalies\x18\n \x01(\x04R\rhookAnomalies\x12\x43\n\x08metadata\x18\x0b \x03(\x0b\x32\'.rayito.v1.HealthResponse.MetadataEntryR\x08metadata\x12\x37\n\tlifecycle\x18\x0c \x01(\x0b\x32\x19.rayito.v1.LifecycleStateR\tlifecycle\x12K\n\x12\x65gress_enforcement\x18\r \x01(\x0e\x32\x1c.rayito.v1.EgressEnforcementR\x11\x65gressEnforcement\x12\x1b\n\tcpu_count\x18\x0e \x01(\rR\x08\x63puCount\x12,\n\x12memory_total_bytes\x18\x0f \x01(\x04R\x10memoryTotalBytes\x1a;\n\rMetadataEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"\x10\n\x0eMetricsRequest\"\xc4\x02\n\x0fMetricsResponse\x12 \n\x0c\x63pu_used_pct\x18\x01 \x01(\x01R\ncpuUsedPct\x12$\n\x0emem_used_bytes\x18\x02 \x01(\x04R\x0cmemUsedBytes\x12&\n\x0fmem_total_bytes\x18\x03 \x01(\x04R\rmemTotalBytes\x12&\n\x0f\x64isk_used_bytes\x18\x04 \x01(\x04R\rdiskUsedBytes\x12(\n\x10\x64isk_total_bytes\x18\x05 \x01(\x04R\x0e\x64iskTotalBytes\x12\x1b\n\tcpu_count\x18\x06 \x01(\rR\x08\x63puCount\x12*\n\x11timestamp_unix_ms\x18\x07 \x01(\x03R\x0ftimestampUnixMs\x12&\n\x0fmem_cache_bytes\x18\x08 \x01(\x04R\rmemCacheBytes\"z\n\x15MetricsHistoryRequest\x12\"\n\rstart_unix_ms\x18\x01 \x01(\x03R\x0bstartUnixMs\x12\x1e\n\x0b\x65nd_unix_ms\x18\x02 \x01(\x03R\tendUnixMs\x12\x1d\n\nmax_points\x18\x03 \x01(\rR\tmaxPoints\"t\n\x16MetricsHistoryResponse\x12\x34\n\x07samples\x18\x01 \x03(\x0b\x32\x1a.rayito.v1.MetricsResponseR\x07samples\x12$\n\x0eoldest_unix_ms\x18\x02 \x01(\x03R\x0coldestUnixMs2\xe7\x01\n\rHealthService\x12=\n\x06Health\x12\x18.rayito.v1.HealthRequest\x1a\x19.rayito.v1.HealthResponse\x12@\n\x07Metrics\x12\x19.rayito.v1.MetricsRequest\x1a\x1a.rayito.v1.MetricsResponse\x12U\n\x0eMetricsHistory\x12 .rayito.v1.MetricsHistoryRequest\x1a!.rayito.v1.MetricsHistoryResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,16 +35,20 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_HEALTHRESPONSE_METADATAENTRY']._loaded_options = None
   _globals['_HEALTHRESPONSE_METADATAENTRY']._serialized_options = b'8\001'
-  _globals['_HEALTHREQUEST']._serialized_start=37
-  _globals['_HEALTHREQUEST']._serialized_end=52
-  _globals['_HEALTHRESPONSE']._serialized_start=55
-  _globals['_HEALTHRESPONSE']._serialized_end=569
-  _globals['_HEALTHRESPONSE_METADATAENTRY']._serialized_start=510
-  _globals['_HEALTHRESPONSE_METADATAENTRY']._serialized_end=569
-  _globals['_METRICSREQUEST']._serialized_start=571
-  _globals['_METRICSREQUEST']._serialized_end=587
-  _globals['_METRICSRESPONSE']._serialized_start=590
-  _globals['_METRICSRESPONSE']._serialized_end=874
-  _globals['_HEALTHSERVICE']._serialized_start=877
-  _globals['_HEALTHSERVICE']._serialized_end=1021
+  _globals['_HEALTHREQUEST']._serialized_start=89
+  _globals['_HEALTHREQUEST']._serialized_end=104
+  _globals['_HEALTHRESPONSE']._serialized_start=107
+  _globals['_HEALTHRESPONSE']._serialized_end=830
+  _globals['_HEALTHRESPONSE_METADATAENTRY']._serialized_start=771
+  _globals['_HEALTHRESPONSE_METADATAENTRY']._serialized_end=830
+  _globals['_METRICSREQUEST']._serialized_start=832
+  _globals['_METRICSREQUEST']._serialized_end=848
+  _globals['_METRICSRESPONSE']._serialized_start=851
+  _globals['_METRICSRESPONSE']._serialized_end=1175
+  _globals['_METRICSHISTORYREQUEST']._serialized_start=1177
+  _globals['_METRICSHISTORYREQUEST']._serialized_end=1299
+  _globals['_METRICSHISTORYRESPONSE']._serialized_start=1301
+  _globals['_METRICSHISTORYRESPONSE']._serialized_end=1417
+  _globals['_HEALTHSERVICE']._serialized_start=1420
+  _globals['_HEALTHSERVICE']._serialized_end=1651
 # @@protoc_insertion_point(module_scope)

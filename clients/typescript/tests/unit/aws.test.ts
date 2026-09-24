@@ -11,6 +11,8 @@ import { GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { describe, expect, test } from "vitest";
 import {
   type CommandSender,
+  clientConfig,
+  DEFAULT_MAX_ATTEMPTS,
   LambdaMicrovmsControlPlane,
   LaunchRequest,
   normalizeEndpoint,
@@ -31,7 +33,8 @@ import {
   SandboxNotFoundError,
   SandboxStateError,
 } from "../../src/errors.js";
-import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { resolveControlPlane, Sandbox } from "../../src/sandbox/sandbox.js";
+import { ProxyTunnelAgent } from "../../src/transport/proxy-tunnel.js";
 import { IMAGE_ARN, JWE, REGION, SANDBOX_ID, STARTED_AT } from "./fake/control-plane.js";
 import { ACCESS_TOKEN } from "./helpers.js";
 
@@ -370,6 +373,40 @@ describe("LambdaMicrovmsControlPlane", () => {
     });
   });
 
+  test("listMicrovmsPage sends one exact request and returns every item unfiltered", async () => {
+    const item = (id: string, state: string) => ({
+      microvmId: id,
+      state,
+      imageArn: IMAGE_ARN,
+      imageVersion: "1.0",
+      startedAt: STARTED_AT,
+    });
+    const recorder = new Recorder().answer(
+      { items: [item("a", "RUNNING"), item("b", "TERMINATED")], nextToken: "t2" },
+      { items: [] },
+    );
+    const control = plane(recorder);
+    const page = await control.listMicrovmsPage({
+      imageArn: IMAGE_ARN,
+      maxResults: 50,
+      nextToken: "t1",
+    });
+    expect(page.items.map((entry) => [entry.sandboxId, entry.state])).toEqual([
+      ["a", "RUNNING"],
+      ["b", "TERMINATED"],
+    ]);
+    expect(page.nextToken).toBe("t2");
+    const last = await control.listMicrovmsPage({ maxResults: 50 });
+    expect(last).toEqual({ items: [], nextToken: undefined });
+    expect(recorder.inputs(ListMicrovmsCommand.name)).toEqual([
+      { maxResults: 50, imageIdentifier: IMAGE_ARN, nextToken: "t1" },
+      { maxResults: 50 },
+    ]);
+    await expect(control.listMicrovmsPage({ maxResults: 51 })).rejects.toBeInstanceOf(RangeError);
+    await expect(control.listMicrovmsPage({ maxResults: 0 })).rejects.toBeInstanceOf(RangeError);
+    expect(recorder.sent).toHaveLength(2);
+  });
+
   test("template names resolve through one cached GetCallerIdentity", async () => {
     const sts = new Recorder().answer({
       Account: "123456789012",
@@ -419,6 +456,18 @@ describe("LambdaMicrovmsControlPlane", () => {
     expect(info.idle).toBeUndefined();
     expect(info.terminatedAt).toEqual(STARTED_AT);
     expect(info.templateVersion).toBe("1.0");
+    expect([info.ingress, info.egress]).toEqual([[], []]);
+    const connected = sandboxInfoFromResponse({
+      ...microvmResponse("RUNNING"),
+      ingressNetworkConnectors: ["arn:aws:lambda:us-east-1:aws:network-connector:x:ALL_INGRESS"],
+      egressNetworkConnectors: ["arn:aws:lambda:us-east-1:aws:network-connector:x:INTERNET_EGRESS"],
+    });
+    expect(connected.ingress).toEqual([
+      "arn:aws:lambda:us-east-1:aws:network-connector:x:ALL_INGRESS",
+    ]);
+    expect(connected.egress).toEqual([
+      "arn:aws:lambda:us-east-1:aws:network-connector:x:INTERNET_EGRESS",
+    ]);
   });
 
   test("sharedControlPlane is one adapter per region and Sandbox honours controlPlane > client", () => {
@@ -428,5 +477,60 @@ describe("LambdaMicrovmsControlPlane", () => {
     expect(sharedControlPlane("us-east-2")).not.toBe(first);
     expect(first.region).toBe("eu-west-1");
     expect(() => LambdaMicrovmsControlPlane.fromRegion("ap-south-1")).not.toThrow();
+  });
+});
+
+describe("control-plane client settings (retries, proxy, integration)", () => {
+  test("retries: 2 gives maxAttempts 3 and the integration joins the user agent", async () => {
+    const config = clientConfig(REGION, { retries: 2, integration: "acme/1.0" });
+    expect(config.maxAttempts).toBe(3);
+    expect(config.retryMode).toBe("standard");
+    expect(config.customUserAgent).toContainEqual(["rayito-integration", "acme/1.0"]);
+    const defaults = clientConfig(REGION);
+    expect(defaults.maxAttempts).toBe(DEFAULT_MAX_ATTEMPTS);
+    expect(defaults.customUserAgent.map(([key]) => key)).toEqual(["rayito"]);
+    const plane = LambdaMicrovmsControlPlane.fromRegion(REGION, {
+      retries: 2,
+      integration: "acme/1.0",
+    });
+    const resolved = (plane.client as unknown as { config: { maxAttempts: () => Promise<number> } })
+      .config;
+    expect(await resolved.maxAttempts()).toBe(3);
+  });
+
+  test("invalid retries or integration are refused before building a client", () => {
+    for (const retries of [-1, 1.5, true, "2"]) {
+      expect(() => clientConfig(REGION, { retries: retries as never })).toThrow(
+        InvalidArgumentError,
+      );
+    }
+    expect(() => clientConfig(REGION, { integration: "acme 1" })).toThrow(InvalidArgumentError);
+  });
+
+  test("the proxy puts a ProxyTunnelAgent in the NodeHttpHandler", async () => {
+    const config = clientConfig(REGION, { proxy: "http://u:p@127.0.0.1:3128" });
+    const handlerConfig = await (
+      config.requestHandler as unknown as { configProvider: Promise<{ httpsAgent: unknown }> }
+    ).configProvider;
+    expect(handlerConfig.httpsAgent).toBeInstanceOf(ProxyTunnelAgent);
+  });
+
+  test("any setting builds a dedicated shared plane; with an explicit plane it is an error", () => {
+    process.env.AWS_REGION ??= REGION;
+    const plain = sharedControlPlane("eu-west-3");
+    const retried = sharedControlPlane("eu-west-3", { retries: 2 });
+    expect(retried).not.toBe(plain);
+    expect(sharedControlPlane("eu-west-3", { retries: 2 })).toBe(retried);
+    expect(sharedControlPlane("eu-west-3", { integration: "acme/1.0" })).not.toBe(retried);
+    expect(resolveControlPlane({ region: "eu-west-3", retries: 2 })).toBe(retried);
+    const explicit = plane(new Recorder());
+    expect(() => resolveControlPlane({ controlPlane: explicit, retries: 1 })).toThrow(
+      new InvalidArgumentError(
+        "retries/proxy/integration no se combinan con controlPlane ni con client",
+      ),
+    );
+    expect(() =>
+      resolveControlPlane({ client: new Recorder(), proxy: "http://127.0.0.1:3128" }),
+    ).toThrow(InvalidArgumentError);
   });
 });

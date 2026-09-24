@@ -4,8 +4,11 @@
 //! (`TIOCSCTTY`) before the M2 limits and privilege drop; the master is
 //! non-blocking under tokio's `AsyncFd`. Both descriptors are marked
 //! close-on-exec right after `openpty` (which hands back inheritable
-//! ones): the shell and everything it runs see the slave only as fds
-//! 0/1/2, never the master. `process_group(0)` is deliberately not used:
+//! ones), and the shared `PreExecPlan` marks every descriptor above stdio
+//! close-on-exec in the child right before `exec`, which also covers a
+//! concurrent spawn forking between another terminal's `openpty` and its
+//! `F_SETFD`: the shell and everything it runs see the slave only as fds
+//! 0/1/2, never a master. `process_group(0)` is deliberately not used:
 //! `std` would `setpgid` before `pre_exec` and `setsid` fails with `EPERM`
 //! for a group leader. Off Linux every open answers `Unsupported` so the
 //! gRPC surface still routes.
@@ -90,10 +93,11 @@ mod unix {
                 .stdout(Stdio::from(stdout))
                 .stderr(Stdio::from(slave))
                 .kill_on_drop(false);
-            // SAFETY: `setsid`, the `TIOCSCTTY` ioctl and `apply` only issue
-            // syscalls on values computed before the fork; they allocate
-            // nothing and take no locks, which is what async-signal-safety
-            // requires here.
+            // SAFETY: `setsid`, the `TIOCSCTTY` ioctl and `apply` (limits,
+            // identity, then close_range or fcntl on every descriptor above
+            // stdio) only issue syscalls on values computed before the fork;
+            // they allocate nothing and take no locks, which is what
+            // async-signal-safety requires here.
             unsafe {
                 command.pre_exec(move || {
                     setsid().map_err(io_error)?;
@@ -133,7 +137,9 @@ mod unix {
     /// to read and write the terminal, keeping `/dev/pts/N` allocated and
     /// defeating the hangup that follows `Kill`). `try_clone` already dups
     /// with `O_CLOEXEC`; the child's `dup2` onto 0/1/2 clears the flag on
-    /// the stdio copies only.
+    /// the stdio copies only. Setting the flag here keeps the pair out of
+    /// `rayd`'s own helpers (`ip`); a user process forked by a concurrent
+    /// spawn before this line runs is covered by the plan's seal instead.
     fn close_on_exec(fd: &OwnedFd) -> Result<(), SpawnError> {
         fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))
             .map(drop)

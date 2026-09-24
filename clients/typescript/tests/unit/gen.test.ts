@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { CodeService } from "../../src/gen/rayito/v1/code_pb.js";
 import { FilesystemService } from "../../src/gen/rayito/v1/filesystem_pb.js";
 import { HealthService } from "../../src/gen/rayito/v1/health_pb.js";
+import { LifecycleService } from "../../src/gen/rayito/v1/lifecycle_pb.js";
 import { ProcessService } from "../../src/gen/rayito/v1/process_pb.js";
 import { PtyServerMessageSchema, PtyService } from "../../src/gen/rayito/v1/pty_pb.js";
 
@@ -35,5 +36,9 @@ describe("generated surface (protoc-gen-es v2.15.0, target=ts)", () => {
   test("HealthService methods are unary", () => {
     expect(HealthService.method.health.methodKind).toBe("unary");
     expect(HealthService.method.metrics.methodKind).toBe("unary");
+  });
+
+  test("LifecycleService.SetTimeout is unary", () => {
+    expect(LifecycleService.method.setTimeout.methodKind).toBe("unary");
   });
 });

@@ -869,7 +869,11 @@ mod unix {
             for (path, kind, data, link) in entries {
                 let mut header = Header::new_gnu();
                 header.set_entry_type(*kind);
-                header.set_mode(0o644);
+                header.set_mode(if *kind == EntryType::Directory {
+                    0o755
+                } else {
+                    0o644
+                });
                 header.set_size(data.len() as u64);
                 if let Some(target) = link {
                     header.set_link_name(target).unwrap();

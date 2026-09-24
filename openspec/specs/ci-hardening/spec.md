@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m7-supply-chain. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Every action is pinned to a full commit SHA with a version comment
 Every `uses:` reference in every file under `.github/workflows/` SHALL name a 40-character commit SHA followed by a comment with the release tag it was resolved from (`owner/repo@<sha> # vX.Y.Z`), including path-scoped actions such as `github/codeql-action/upload-sarif`. No workflow SHALL reference an action by tag, major alias, branch or truncated SHA. The gate SHALL be an allowlist, not a denylist of spellings: `scripts/check_pins.py` SHALL report every `uses:` line of `.github/workflows/*.yml` and `*.yaml` whose reference does not match `[^@\s]+@[0-9a-f]{40}( +#.*)?` in full, skipping only commented lines and local actions whose reference starts with `./`, and SHALL exit 1 when it reports anything. The CI `check` job SHALL run it, and SHALL run `actionlint` 1.7.12 (downloaded from its release with its checksum verified) over every workflow. `make lint` SHALL run `python scripts/check_pins.py` and `actionlint -no-color` when the binary is on `PATH`, printing the install hint for `actionlint` otherwise.
 
@@ -82,10 +84,25 @@ No tracked file SHALL carry an identifier of the environment the project was dev
 - **THEN** the gate reports its file and line and the output does not contain the key
 
 #### Scenario: untracked files are out of scope
-- **WHEN** an untracked, ignored file such as `spike/m0/out/results.jsonl` contains account IDs and MicroVM IDs
+- **WHEN** an untracked, ignored file such as `.claude/notes.jsonl` contains account IDs and MicroVM IDs
 - **THEN** the gate run without arguments does not read it
 
 #### Scenario: the repository is clean
 - **WHEN** `python3 scripts/check_hygiene.py` runs at the root of the repository
 - **THEN** it exits 0
 
+### Requirement: Every download in a Dockerfile is verified against a pinned sha256
+`scripts/check_pins.py` SHALL run a third gate over `image/Dockerfile` (added to its default paths) and over any file named `Dockerfile` it is given. The gate joins backslash-continued lines into instructions and skips comment lines. Every instruction that contains `curl` SHALL:
+- assign a `<NAME>_SHA256=` value of exactly 64 lowercase hex characters;
+- contain `sha256sum -c`;
+- name no floating release (`/releases/latest` or `/latest/download/`).
+
+Any other `curl` instruction SHALL be reported as `KO <path>:<line>` with the reason `la descarga no está verificada contra un sha256 fijado`, and the script SHALL exit 1. The gate SHALL use only the standard library and no network, like the other two gates, and CI and `make lint` SHALL keep running the script.
+
+#### Scenario: the real tree passes
+- **WHEN** `python scripts/check_pins.py` runs from the repository root after the Deno layer landed
+- **THEN** it prints `OK` naming the checked files, `image/Dockerfile` among them, and exits 0
+
+#### Scenario: unpinned downloads are findings
+- **WHEN** the unit test runs `unpinned_downloads` over instructions with a `curl` and no `_SHA256=`, with a sha256 but no `sha256sum -c`, with a 63-hex sha256, and with a `releases/latest` URL
+- **THEN** each yields one finding with the download reason, while the Deno instruction of the Dockerfile and a commented-out `curl` line yield none

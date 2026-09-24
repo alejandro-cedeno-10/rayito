@@ -15,7 +15,7 @@ publish = false
 rayito-proto = { path = "crates/rayito-proto" }
 rayd-core = { path = "crates/rayd-core" }
 
-tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "router", "server"] }
+tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "router", "server", "gzip"] }
 tonic-prost = "=0.14.6"
 tonic-prost-build = { version = "=0.14.6", default-features = false }
 prost = "=0.14.4"
@@ -25,7 +25,7 @@ tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "
 tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
 tokio-util = { version = "=0.7.19", default-features = false, features = ["codec"] }
 axum = { version = "=0.8.9", default-features = false, features = ["tokio", "http1", "json"] }
-hyper = "=1.11.1"
+hyper = { version = "=1.11.1", features = ["client", "http1"] }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 http = "=1.5.0"
 http-body = "=1.1.0"
@@ -54,6 +54,13 @@ aws-config = { version = "=1.12.0", default-features = false, features = ["rt-to
 aws-sdk-s3 = { version = "=1.148.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 tar = "=0.4.46"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+# Presigned S3 transfers (ADR-010): an HTTP/1.1 client over the TLS stack
+# `aws-sdk-s3` already links (no new crate in `Cargo.lock`). `rustls` is
+# direct only to name the crypto provider explicitly.
+hyper-util = { version = "=0.1.20", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "=0.27.9", default-features = false, features = ["http1", "native-tokio", "tls12", "aws-lc-rs"] }
+rustls = { version = "=0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["aws_lc_rs", "tls12"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

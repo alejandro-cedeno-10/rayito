@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from rayito._aws import PortSpec
 from rayito._limits import TERMINAL_STATES
-from rayito._models import SandboxInfo, SandboxListItem
+from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito.cli._publish import IMAGE_HOOKS
 from rayito.cli._session import SERVICE_NAMES, Clients
 from rayito.exceptions import SandboxNotFoundException
@@ -117,6 +117,24 @@ class FakeControlPlane:
                 continue
             yield item
 
+    def list_microvms_page(
+        self,
+        *,
+        image_arn: str | None,
+        image_version: str | None,
+        max_results: int,
+        next_token: str | None,
+    ) -> MicrovmListPage:
+        """Una sola página con todos los `items` de la imagen y versión pedidas
+        (como AWS, sin filtrar por estado): la CLI nunca lista más de 50."""
+        matching = tuple(
+            item
+            for item in self.items
+            if (image_arn is None or item.template == image_arn)
+            and (image_version is None or item.template_version == image_version)
+        )
+        return MicrovmListPage(items=matching[:max_results], next_token=None)
+
     def terminate_microvm(self, sandbox_id: str) -> bool:
         if sandbox_id in self.missing:
             return False
@@ -190,6 +208,14 @@ def clients(stubbed_clients: Stubs, fake_plane: FakeControlPlane) -> Clients:
         control_plane_override=fake_plane,
         account_id_override=ACCOUNT_ID,
     )
+
+
+@pytest.fixture(autouse=True)
+def plain_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Typer fuerza un terminal con colores cuando `GITHUB_ACTIONS`,
+    `FORCE_COLOR` o `PY_COLORS` están definidas; los códigos ANSI partirían
+    los textos que los tests buscan en la salida de uso."""
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", False)
 
 
 @pytest.fixture

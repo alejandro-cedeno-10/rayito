@@ -48,7 +48,7 @@ un `HOME` persistido: `s3://bucket/prefix/name/`.
 
 - `prefix` es la base del operador, la que acota la política IAM del
   execution role: tiene que coincidir con el `PersistencePrefix` del
-  despliegue (`spike/m0/iam.yaml`, por defecto `rayito-home`) o cada
+  despliegue (`infra/iam.yaml`, por defecto `rayito-home`) o cada
   `checkpoint_files()` responde
   `PersistenceException(code="permission_denied")`. **El `prefix="rayito"`
   por defecto del SDK no sirve para un despliegue real**: `rayito/` es el
@@ -131,7 +131,7 @@ dado restaura automáticamente (`sbx.last_restore`) y, si el restore falla por
 algo distinto de "no hay checkpoint", cierra y termina el sandbox como un fallo
 de readiness (salvo `keep_on_failure`).
 
-## `reincarnate()`: la respuesta a `set_timeout`
+## `reincarnate()`: más allá de `max_lifetime`
 
 `sbx.reincarnate(exclude=(), persist_timeout=600)` hace, en este orden:
 `checkpoint_files()` → `Sandbox.create(**mismas opciones de lanzamiento,
@@ -141,12 +141,15 @@ nuevo. El nuevo tiene 8 h frescas, otro `sandbox_id`, otro access token
 `create()` falla, el sandbox viejo sigue vivo y la excepción lleva una nota con
 la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
 `create(persist=)`: un handle de `connect()` no conoce el lanzamiento.
-`rayito.e2b.Sandbox.set_timeout` sigue siendo `UnimplementedError` y ahora
-te manda aquí.
+Desde M9 `set_timeout()` (nativo y en `rayito.e2b`) mueve el plazo lógico
+que impone `rayd`, pero nunca más allá de `max_lifetime` (el tope de la
+plataforma, ≤ 8 h, fijo tras `create()`, ADR-011): pasado ese tope,
+`reincarnate()` sigue siendo el único camino, con los ficheros y sin la
+memoria.
 
 ## IAM y bucket
 
-`spike/m0/iam.yaml` acepta `PersistenceBucket` y `PersistencePrefix`; con el
+`infra/iam.yaml` acepta `PersistenceBucket` y `PersistencePrefix`; con el
 bucket definido, el execution role recibe exactamente:
 
 ```yaml

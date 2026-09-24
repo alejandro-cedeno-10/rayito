@@ -38,7 +38,7 @@ from .conftest import (
     auth_token_response,
     microvm_response,
 )
-from .fake_process import CHUNK_SIZE
+from .fake_process import CHUNK_SIZE, CannedReply
 
 TIMEOUT_LATENCY_BUDGET_SECONDS = 2.0
 DISCONNECT_DELAY_SECONDS = 0.2
@@ -163,6 +163,23 @@ async def test_async_callbacks_and_options(sandbox: AsyncSandbox, fake_rayd: Ray
     request = fake_rayd.process.start_requests[-1]
     assert dict(request.process.envs) == {"A": "1"}
     assert request.process.cwd == "/tmp"
+
+
+async def test_async_wait_awaits_async_callbacks(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when("echo out", CannedReply(stdout="out\n", stderr="err\n"))
+    out: list[str] = []
+    err: list[str] = []
+
+    async def async_append(text: str) -> None:
+        await asyncio.sleep(0)
+        out.append(text)
+
+    handle = await sandbox.commands.run("echo out; echo err >&2", background=True)
+    result = await handle.wait(on_stdout=async_append, on_stderr=err.append)
+    assert (out, err) == (["out\n"], ["err\n"])
+    assert (result.stdout, result.stderr, result.exit_code) == ("out\n", "err\n", 0)
 
 
 async def test_async_exit_timeout_and_kill(sandbox: AsyncSandbox) -> None:

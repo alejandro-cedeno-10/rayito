@@ -37,7 +37,7 @@ import boto3
 
 from rayito._aws import ControlPlane, LaunchRequest, PortSpec
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
-from rayito._models import SandboxInfo, SandboxListItem
+from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._payload import generate_access_token
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
 from rayito._pool_base import (
@@ -124,6 +124,21 @@ class LaunchObserver:
             image_arn=image_arn, image_version=image_version, states=states
         )
 
+    def list_microvms_page(
+        self,
+        *,
+        image_arn: str | None,
+        image_version: str | None,
+        max_results: int,
+        next_token: str | None,
+    ) -> MicrovmListPage:
+        return self._plane.list_microvms_page(
+            image_arn=image_arn,
+            image_version=image_version,
+            max_results=max_results,
+            next_token=next_token,
+        )
+
     def terminate_microvm(self, sandbox_id: str) -> bool:
         return self._plane.terminate_microvm(sandbox_id)
 
@@ -163,6 +178,7 @@ class SandboxPool:
         self._config = config
         self._backend: PoolBackend = backend if backend is not None else InMemoryPoolBackend()
         self._plane = resolve_control_plane(control_plane, session, region)
+        self._session = session
         self._transport = transport or TransportSettings()
         self._monotonic = monotonic
         self._now = now
@@ -187,6 +203,12 @@ class SandboxPool:
     @property
     def config(self) -> PoolConfig:
         return self._config
+
+    @property
+    def session(self) -> boto3.session.Session | None:
+        """La sesión boto3 del pool: con ella firman sus plazas las URLs y
+        las transferencias enrutadas de `transfer=S3Staging(...)`."""
+        return self._session
 
     @property
     def backend(self) -> PoolBackend:

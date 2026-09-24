@@ -14,7 +14,8 @@ console.log(await sbx.isRunning());
 
 Requisitos: Node >= 20, credenciales de AWS en la cadena por defecto del SDK
 v3 (`AWS_PROFILE`/`AWS_REGION` o variables de entorno) y una imagen
-`rayito-base` >= 10.0 (la de M5) en la cuenta.
+`rayito-base` publicada desde este árbol en la cuenta (las novedades de 0.3.0
+exigen el `rayd` de M9; `rayito doctor` lo comprueba).
 
 Estado: M6. `Sandbox.create/connect/kill/list/getInfo/isRunning/getHost/
 pause/resume/getHealth/getMetrics`, `sbx.commands` (`run` en foreground y
@@ -78,8 +79,7 @@ console.log(failed.error?.name); // "ZeroDivisionError", nunca una excepción
 const ctx = await sbx.createCodeContext({ cwd: "/tmp" });
 console.log((await sbx.runCode("x", { context: ctx })).error?.name); // "NameError": otro kernel
 // Kernel bash (variante de imagen rayito-base-poly): arranca en la primera celda
-console.log((await sbx.runCode("echo hi", { language: "bash" })).logs.stdout.join("")); // "hi
-"
+console.log((await sbx.runCode("echo hi", { language: "bash" })).logs.stdout.join("")); // "hi\n"
 
 const pty = await sbx.pty.create({
   size: { cols: 120, rows: 40 },
@@ -127,6 +127,84 @@ autoResume: true }` por defecto; `null` desactiva el auto-suspend), `envs`,
 `client` (un `LambdaMicrovmsClient` propio), `transport` y `logger`. Un
 `logger` opcional recibe ids de sandbox, estados, generaciones y duraciones;
 nunca salida, ficheros, código, tokens ni cabeceras.
+
+## Novedades de 0.3.0 (M9)
+
+Paridad con E2B 2.x. Exige una imagen publicada con el `rayd` de M9 y está
+aceptada contra AWS real (2026-09-24). Qué imagen necesita cada cosa:
+`docs/site/docs/images.md`.
+
+```ts
+import { ALL_TRAFFIC, Sandbox } from "rayito";
+
+// Plazo del servidor (docs/site/docs/lifecycle.md, ADR-011)
+await using sbx = await Sandbox.create({
+  timeoutMs: 600_000,             // plazo lógico que impone rayd
+  maxLifetimeMs: 7_200_000,       // tope de la plataforma, running + suspendido (≤ 8 h)
+  onTimeout: "kill",              // o "pause" (necesita idle)
+  transfer: { bucket: "amzn-s3-demo-bucket" },  // URLs de S3 y ficheros grandes (ADR-010)
+});
+await sbx.setTimeout(1_800_000);  // SetTimeout EXACT: alarga o acorta, hasta maxLifetimeMs
+await sbx.connect({ timeoutMs: 900_000 });     // reanuda si hace falta y sólo alarga
+
+// Transferencias por S3 (docs/site/docs/files.md)
+const ticket = await sbx.files.uploadUrl("/home/user/in.csv", { expiresIn: 900 });
+await fetch(ticket.url, { method: "PUT", body: "a,b\n1,2\n", headers: ticket.headers });
+await ticket.wait();
+const link = await sbx.files.downloadUrl("/home/user/in.csv");
+await sbx.files.write("/home/user/log.txt", "texto", { gzip: true, metadata: { origen: "ci" } });
+
+// Métricas y listado (docs/site/docs/observability.md)
+const history = await sbx.getMetricsHistory({ start: new Date(Date.now() - 600_000) });
+const pages = Sandbox.paginate({ limit: 20, order: "desc" });
+const first = await pages.nextItems();
+
+// Git (docs/site/docs/git.md)
+await sbx.git.clone("https://github.com/octo/demo.git", { path: "/home/user/demo", depth: 1 });
+console.log((await sbx.git.status("/home/user/demo")).currentBranch, link.size, history.length, first.length);
+
+// JavaScript y TypeScript con Deno, sólo rayito-base-poly (docs/site/docs/kernels.md)
+await using poly = await Sandbox.create({ template: "rayito-base-poly" });
+console.log((await poly.runCode("const x: number = 40 + 2; x", { language: "typescript" })).text);
+
+// Red saliente de E2B, sólo rayito-base-caps (docs/site/docs/network.md)
+await using caps = await Sandbox.create({
+  template: "rayito-base-caps",
+  network: { denyOut: [ALL_TRAFFIC], allowOut: ["api.example.com"] },
+});
+await caps.updateNetwork({ denyOut: [ALL_TRAFFIC] });
+```
+
+- `onTimeout: "kill"` hace que `rayd` salga al vencer y la VM termine sin IAM
+  (≈ 15 s después); `"pause"` la suspende. Contra una imagen anterior a M9,
+  pedir un ciclo de vida es `LifecycleUnsupportedError` y el VM se termina.
+- `network: { allowOut, denyOut, egressProxy }` y `allowInternetAccess: false`
+  (con `ALL_TRAFFIC`) aplican la política de E2B dentro del guest de
+  `rayito-base-caps`; en otra imagen el SDK termina el VM y lanza
+  `UnimplementedError`. `updateNetwork()` y `getNetwork()` la cambian y la leen.
+- `signal` (`AbortSignal`) cancela `create`, `connect`, `setTimeout`,
+  `getMetricsHistory`, `updateNetwork` y el resto de llamadas de ciclo de vida.
+- Un disco lleno es ahora `DiskFullError` (antes `RateLimitError`).
+
+### Shim de E2B: `rayito/e2b`
+
+```ts
+// antes: import { Sandbox } from "@e2b/code-interpreter";
+import { Sandbox } from "rayito/e2b";
+
+await using sbx = await Sandbox.create({ timeoutMs: 300_000, metadata: { run: "42" } });
+console.log((await sbx.runCode("1 + 1")).text);
+await sbx.setTimeout(600_000);
+await Sandbox.setTimeout(sbx.sandboxId, 900_000, { accessToken: sbx.native.accessToken });
+```
+
+`rayito/e2b` es el shim de la API JS de E2B 2.x dentro del mismo paquete:
+`Sandbox.create`, estáticos `kill`/`getInfo`/`getFullInfo`/`isRunning`/
+`connect`/`pause`/`betaPause`/`setTimeout`/`getMetrics`/`list`/`updateNetwork`,
+`uploadUrl`/`downloadUrl` (con `RAYITO_TRANSFER_BUCKET`), `git`, `getHost`
+síncrono, `ConnectionConfig`, `E2B`; lo que Lambda MicroVMs no puede hacer
+lanza `UnimplementedError` (tablas en `docs/site/docs/e2b-compat.md` y
+`docs/site/docs/e2b-parity.md`).
 
 ## Desarrollo
 

@@ -5,13 +5,16 @@ de vida, listado, métricas, `UnimplementedError` y avisos)."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 
+import grpc
 import pytest
 
+from rayito import ALL_TRAFFIC, FilesystemEvent
 from rayito import AsyncSandbox as NativeAsyncSandbox
 from rayito.e2b import (
     AsyncSandbox,
@@ -27,7 +30,9 @@ from rayito.e2b import (
     UnimplementedError,
     WriteEntry,
 )
+from rayito.exceptions import InvalidArgumentException, LifecycleUnsupportedException
 from rayito.sandbox_async.pty import AsyncPtyHandle
+from rayito.v1 import lifecycle_pb2, network_pb2
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -43,7 +48,12 @@ from .conftest import (
     microvm_response,
     stub_metadata_probe,
 )
-from .test_e2b_compat_sync import ALL_INGRESS_ARN, INTERNET_EGRESS_ARN, capture_launch
+from .test_e2b_compat_sync import (
+    INTERNET_EGRESS_ARN,
+    assert_e2b_defaults,
+    capture_launch,
+    managed_lifecycle,
+)
 
 HOME = "/home/user"
 READ_BUDGET_SECONDS = 5.0
@@ -108,10 +118,7 @@ async def test_async_hello_world(
         assert isinstance(sandbox.native, NativeAsyncSandbox)
         assert sandbox.sandbox_domain == fake_rayd.host
         assert await sandbox.is_running() is True
-    assert captured["maximumDurationInSeconds"] == 300
-    assert "idlePolicy" not in captured
-    assert captured["ingressNetworkConnectors"] == [ALL_INGRESS_ARN]
-    assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
+    assert_e2b_defaults(captured)
 
 
 async def test_async_commands_and_files(sbx: AsyncSandbox) -> None:
@@ -133,14 +140,15 @@ async def test_async_commands_and_files(sbx: AsyncSandbox) -> None:
     assert await sbx.files.exists(f"{HOME}/c.txt") is True
     assert {entry.name for entry in await sbx.files.list(HOME)} >= {"a.txt", "b.txt", "c.txt"}
     await sbx.files.make_dir(f"{HOME}/watched")
-    watch = await sbx.files.watch_dir(f"{HOME}/watched")
+    seen: list[FilesystemEvent] = []
+    watch = await sbx.files.watch_dir(f"{HOME}/watched", seen.append)
     await watch.stop()
     await sbx.files.remove(f"{HOME}/a.txt")
     assert await sbx.files.exists(f"{HOME}/a.txt") is False
 
 
 async def test_async_pty_with_e2b_size_order(sbx: AsyncSandbox, fake_rayd: RaydEndpoint) -> None:
-    terminal = await sbx.pty.create(PtySize(rows=24, cols=80), timeout=None)
+    terminal = await sbx.pty.create(PtySize(rows=24, cols=80), None, timeout=None)
     started = fake_rayd.pty.ptys[terminal.pid]
     assert (started.cols, started.rows) == (80, 24)
     await sbx.pty.send_stdin(terminal.pid, b"echo hola\n")
@@ -161,7 +169,9 @@ async def test_async_get_info_metrics_and_class_variants(
     assert info.state is SandboxState.RUNNING
     assert info.metadata == {"a": "1"}
     assert info.name == IMAGE_NAME
-    assert info.end_at == info.started_at + timedelta(seconds=3600)
+    assert info.end_at is not None and info.end_at > info.started_at + timedelta(seconds=3600)
+    assert info.lifecycle == {"on_timeout": "kill", "auto_resume": False}
+    assert info.allow_internet_access is True
     metrics = await sbx.get_metrics()
     assert len(metrics) == 1 and isinstance(metrics[0], SandboxMetrics)
     assert metrics[0].mem_total == 2 * 1024**3
@@ -249,7 +259,7 @@ async def test_async_beta_pause_then_connect(
         transport=fake_rayd.transport,
     )
     await sandbox.run_code("x = 40")
-    assert await sandbox.beta_pause() == SANDBOX_ID
+    assert await sandbox.beta_pause() is True
     await sandbox.native.close()
     again = await AsyncSandbox.connect(
         SANDBOX_ID,
@@ -262,55 +272,117 @@ async def test_async_beta_pause_then_connect(
 
 
 def unimplemented_calls(sandbox: AsyncSandbox) -> dict[str, Callable[[], Awaitable[object]]]:
-    async def connection_config() -> object:
-        return sandbox.connection_config
-
     return {
-        "set_timeout": lambda: sandbox.set_timeout(60),
-        "AsyncSandbox.set_timeout": lambda: AsyncSandbox.set_timeout(sandbox.sandbox_id, 60),
         "upload_url": lambda: sandbox.upload_url("/x"),
         "download_url": lambda: sandbox.download_url("/x"),
-        "get_metrics(start=)": lambda: sandbox.get_metrics(start=1),
         "AsyncSandbox.get_metrics": lambda: AsyncSandbox.get_metrics(sandbox.sandbox_id),
         "run_code(language=r)": lambda: sandbox.run_code("1", language="r"),
         "create_code_context(language=java)": lambda: sandbox.create_code_context(language="java"),
-        "list(next_token=)": lambda: AsyncSandbox.list(next_token="x"),
         "list(state=PAUSED, query.metadata)": lambda: AsyncSandbox.list(
             query=SandboxQuery(metadata={"a": "1"}), state=[SandboxState.PAUSED]
         ),
-        "beta_create(auto_pause=)": lambda: AsyncSandbox.beta_create(auto_pause=True),
-        "connection_config": connection_config,
     }
 
 
 UNIMPLEMENTED_FEATURES = [
-    "set_timeout",
-    "AsyncSandbox.set_timeout",
     "upload_url",
     "download_url",
-    "get_metrics(start=)",
     "AsyncSandbox.get_metrics",
     "run_code(language=r)",
     "create_code_context(language=java)",
-    "list(next_token=)",
     "list(state=PAUSED, query.metadata)",
-    "beta_create(auto_pause=)",
-    "connection_config",
 ]
 
 
 @pytest.mark.parametrize("feature", UNIMPLEMENTED_FEATURES)
 async def test_async_unimplemented_features_raise(
-    sbx: AsyncSandbox, fake_rayd: RaydEndpoint, feature: str
+    sbx: AsyncSandbox, fake_rayd: RaydEndpoint, feature: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("RAYITO_ACCESS_TOKEN", raising=False)
     health_calls = len(fake_rayd.servicer.health_calls)
     with pytest.raises(UnimplementedError) as excinfo:
         await unimplemented_calls(sbx)[feature]()
     assert isinstance(excinfo.value, NotImplementedError)
     assert not isinstance(excinfo.value, SandboxException)
-    if feature.endswith("set_timeout"):
-        assert "UpdateMicrovm" in str(excinfo.value) and "reincarnate()" in str(excinfo.value)
     assert len(fake_rayd.servicer.health_calls) == health_calls
+
+
+async def test_async_set_timeout_maps_to_native_exact(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    await sbx.set_timeout(60)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    await AsyncSandbox.set_timeout(
+        sbx.sandbox_id,
+        60,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    assert [(r.timeout_ms, r.mode) for r in fake_rayd.lifecycle.requests] == [
+        (60_000, lifecycle_pb2.TIMEOUT_MODE_EXACT),
+        (60_000, lifecycle_pb2.TIMEOUT_MODE_EXACT),
+    ]
+
+
+async def test_async_connect_timeout_is_at_least(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.lifecycle = managed_lifecycle()
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    sandbox = await AsyncSandbox.connect(
+        SANDBOX_ID,
+        120,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    await sandbox.native.close()
+    request = fake_rayd.lifecycle.requests[-1]
+    assert (request.timeout_ms, request.mode) == (120_000, lifecycle_pb2.TIMEOUT_MODE_AT_LEAST)
+
+
+async def test_async_beta_create_auto_pause_is_lifecycle_pause(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured = capture_launch(control_plane, fake_rayd)
+    sandbox = await AsyncSandbox.beta_create(
+        IMAGE_ARN,
+        timeout=60,
+        auto_pause=True,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    await sandbox.native.close()
+    assert captured["idlePolicy"]["maxIdleDurationSeconds"] == 300
+    assert json.loads(str(captured["runHookPayload"]))["lifecycle"]["on_timeout"] == "pause"
+
+
+async def test_async_older_image_raises_unimplemented_and_terminates(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.lifecycle = None
+    control_plane.microvms.add_response("run_microvm", microvm_response(endpoint=fake_rayd.host))
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    control_plane.microvms.add_response(
+        "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+    )
+    with pytest.raises(UnimplementedError) as excinfo:
+        await AsyncSandbox.create(
+            IMAGE_ARN,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+    assert excinfo.value.feature == "lifecycle"
+    assert isinstance(excinfo.value.__cause__, LifecycleUnsupportedException)
 
 
 async def test_async_ignored_kwargs_warn(
@@ -325,7 +397,10 @@ async def test_async_ignored_kwargs_warn(
             api_key="e2b_x",
             domain="e2b.dev",
             debug=True,
-            proxy="http://p",
+            api_url="https://a",
+            sandbox_url="https://s",
+            validate_api_key=True,
+            api_headers={"k": "v"},
             secure=False,
             access_token=ACCESS_TOKEN,
             control_plane=control_plane.plane,
@@ -333,12 +408,70 @@ async def test_async_ignored_kwargs_warn(
         )
     await sandbox.kill()
     compat = [w for w in caught if issubclass(w.category, RayitoCompatWarning)]
-    assert len(compat) == 5
+    assert len(compat) == 8
     assert not any("e2b_x" in str(w.message) for w in compat)
+    assert_e2b_defaults(captured)
+
+
+async def test_async_internet_access_off_is_the_guest_policy(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.egress_enforcement = network_pb2.EGRESS_ENFORCEMENT_GUEST_ROUTES
+    captured = capture_launch(control_plane, fake_rayd)
+    sandbox = await AsyncSandbox.create(
+        IMAGE_ARN,
+        allow_internet_access=False,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
     assert captured["egressNetworkConnectors"] == [INTERNET_EGRESS_ARN]
-    assert captured["maximumDurationInSeconds"] == 300
-    with pytest.raises(UnimplementedError, match="allow_internet_access=False"):
-        await AsyncSandbox.create(IMAGE_ARN, allow_internet_access=False)
+    assert list(fake_rayd.network.last_policy.deny_out) == [ALL_TRAFFIC]
+    updated = await sandbox.update_network({"allow_out": ["1.1.1.1"]})  # type: ignore[func-returns-value]
+    assert updated is None
+    assert list(fake_rayd.network.last_policy.allow_out) == ["1.1.1.1"]
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+    result = await AsyncSandbox.update_network(  # type: ignore[func-returns-value]
+        sandbox.sandbox_id,
+        {"deny_out": ["10.0.0.0/8"]},
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    assert result is None
+    assert list(fake_rayd.network.last_policy.deny_out) == ["10.0.0.0/8"]
+    await sandbox.native.close()
+
+
+async def test_async_internet_access_off_without_enforcement_terminates(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.egress_enforcement = network_pb2.EGRESS_ENFORCEMENT_NONE
+    capture_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+    )
+    with pytest.raises(UnimplementedError, match="rayito-base-caps"):
+        await AsyncSandbox.create(
+            IMAGE_ARN,
+            allow_internet_access=False,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+
+
+async def test_async_network_keys_without_primitive_and_beta_create_mcp(
+    control_plane: StubbedControlPlane,
+) -> None:
+    with pytest.raises(UnimplementedError, match=r"network\.rules"):
+        await AsyncSandbox.create(IMAGE_ARN, network={"rules": {}})
+    with pytest.raises(UnimplementedError) as excinfo:
+        await AsyncSandbox.beta_create(IMAGE_ARN, mcp={"x": {}})
+    assert excinfo.value.feature == "mcp"
 
 
 async def test_async_list_and_connect_warn_about_api_key(
@@ -360,3 +493,40 @@ async def test_async_shim_forwards_languages(sbx: AsyncSandbox, fake_rayd: RaydE
     assert fake_rayd.code.create_requests[-1].language == "javascript"
     with pytest.raises(UnimplementedError):
         await sbx.run_code("1", language="r")
+
+
+async def test_async_typescript_alias_reaches_the_agent(
+    sbx: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    assert (await sbx.run_code("1 + 1", language="ts")).text == "2"
+    assert fake_rayd.code.execute_requests[-1].language == "typescript"
+    context = await sbx.create_code_context(language="TypeScript")
+    assert context.language == "typescript"
+    assert fake_rayd.code.create_requests[-1].language == "typescript"
+
+
+async def test_async_kernel_not_shipped_is_unimplemented_from_the_native_error(
+    sbx: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.code.languages = frozenset({"python"})
+    with pytest.raises(UnimplementedError) as ran:
+        await sbx.run_code("1 + 1", language="javascript")
+    assert ran.value.feature == "run_code(language='javascript')"
+    assert "rayito-base-poly" in ran.value.reason
+    assert isinstance(ran.value.__cause__, InvalidArgumentException)
+    assert ran.value.__cause__.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    with pytest.raises(UnimplementedError) as created:
+        await sbx.create_code_context(language="ts")
+    assert created.value.feature == "create_code_context(language='ts')"
+    assert isinstance(created.value.__cause__, InvalidArgumentException)
+    executions = len(fake_rayd.code.executions)
+    with pytest.raises(UnimplementedError) as refused:
+        await sbx.run_code("1", language="r")
+    assert refused.value.feature == "run_code(language='r')"
+    assert len(fake_rayd.code.executions) == executions
+
+
+async def test_async_other_native_errors_are_not_remapped(sbx: AsyncSandbox) -> None:
+    with pytest.raises(InvalidArgumentException) as excinfo:
+        await sbx.run_code("echo 1", language="bash", envs={"A": "1"})
+    assert not isinstance(excinfo.value, UnimplementedError)

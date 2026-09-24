@@ -67,6 +67,13 @@ export class SandboxStateError extends SandboxError {}
 
 export class SandboxLifetimeError extends SandboxError {}
 
+/**
+ * Se pidió un plazo lógico (`maxLifetimeMs`, `onTimeout`, `setTimeout`,
+ * `connect({ timeoutMs })`) a un agente anterior a M9, que no lo impone
+ * (ADR-011): hay que publicar una imagen M9 o prescindir del plazo.
+ */
+export class LifecycleUnsupportedError extends InvalidArgumentError {}
+
 /** `take()` sobre un `SandboxPool` que no fue arrancado o ya fue cerrado. */
 export class PoolClosedError extends SandboxError {}
 
@@ -90,6 +97,44 @@ export class PersistenceError extends SandboxError {
     this.code = options.code;
   }
 }
+
+/**
+ * `rayd` no pudo escribir por falta de disco: la reserva de 256 MiB no deja
+ * sitio (`disk_reserve`) o el disco se llenó a mitad (`disk_full`). También
+ * termina así una transferencia con `code` `resource_exhausted`.
+ */
+export class DiskFullError extends SandboxError {}
+
+export interface TransferErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+  readonly reason: string;
+}
+
+/**
+ * Una transferencia por S3 (`downloadUrl`, lectura grande) terminó `FAILED` o
+ * `CANCELLED` con un `code` sin error propio (`failed_precondition`,
+ * `unavailable`, `cancelled`, `internal` o uno desconocido). `reason` es el
+ * token de `rayd` (`checksum_mismatch`, `file_shrank`, `s3_unavailable`…); el
+ * mensaje empieza por `"<reason>: "` y nunca contiene una URL, un bucket, una
+ * clave ni una ruta.
+ */
+export class TransferError extends SandboxError {
+  readonly code: string;
+  readonly reason: string;
+
+  constructor(message: string, options: TransferErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+    this.reason = options.reason;
+  }
+}
+
+/**
+ * La importación de un `UploadTicket` o de una escritura grande terminó
+ * `FAILED` o `CANCELLED` con un `code` sin error propio (el nombre de E2B
+ * para una subida fallida).
+ */
+export class FileUploadError extends TransferError {}
 
 export interface CommandExitErrorOptions {
   readonly exitCode: number;
@@ -154,6 +199,12 @@ export class AuthenticationError extends Error {
   }
 }
 
+/** `sandbox.git` sin credenciales (o con password vacío) contra un remoto que las pide; el mensaje nunca lleva la URL. */
+export class GitAuthError extends AuthenticationError {}
+
+/** `git push`/`pull` sin upstream configurado; el mensaje dice cómo fijarlo. */
+export class GitUpstreamError extends SandboxError {}
+
 export class QuotaExceededError extends Error {
   readonly quotaCode: string | undefined;
 
@@ -170,6 +221,37 @@ export class CapacityError extends Error {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = new.target.name;
+  }
+}
+
+/**
+ * Algo que este sandbox no puede dar: una capacidad de E2B sin primitiva en
+ * Lambda MicroVMs o una imagen anterior a la que la ofrece. Queda fuera de la
+ * jerarquía de `SandboxError`, como `NotImplementedError` en Python;
+ * `feature` nombra lo pedido y `reason` dice qué hacer; `doc` es la página
+ * que lo explica (el shim `rayito/e2b` pasa la de compatibilidad) y `cause`
+ * el error que lo motivó (p. ej. el `Unimplemented` del agente).
+ */
+export class UnimplementedError extends Error {
+  readonly feature: string;
+  readonly reason: string;
+  readonly doc: string | undefined;
+
+  constructor(
+    feature: string,
+    reason: string,
+    doc?: string,
+    options: { readonly cause?: unknown } = {},
+  ) {
+    super(
+      `${feature} no está disponible: ${reason}${doc === undefined ? "" : `. Ver ${doc}`}`,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = new.target.name;
+    this.feature = feature;
+    this.reason = reason;
+    this.doc = doc;
   }
 }
 

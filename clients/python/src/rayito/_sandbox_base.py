@@ -5,19 +5,22 @@ Sin I/O de red ni de disco.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import os
 import random
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from logging import getLogger
-from typing import Any, Final, Literal, cast
+from dataclasses import dataclass, field
+from logging import Logger, getLogger
+from typing import Any, Final, Generic, Literal, TypeVar, cast
 
 import grpc
 
 from rayito._aws import LaunchRequest, PortSpec
+from rayito._lifecycle_base import lifecycle_from_proto, resolve_lifecycle
+from rayito._lifecycle_base import resolve_idle_policy as resolve_idle_policy
 from rayito._limits import (
     DEFAULT_PORT,
     HOOKS_PORT,
@@ -37,6 +40,7 @@ from rayito._models import (
     template_name_from_arn,
     validate_port,
 )
+from rayito._network_base import enforcement_from_proto
 from rayito._payload import (
     build_run_hook_payload,
     generate_access_token,
@@ -76,36 +80,56 @@ LoggingOption = Literal["disabled", "cloudwatch"] | Mapping[str, Any]
 PortLike = int | tuple[int, int]
 
 
+VariantResult = TypeVar("VariantResult")
+
+
 class class_method_variant:
     """Descriptor al estilo de E2B: `sbx.kill()` usa el método de instancia y
-    `Sandbox.kill(sandbox_id)` el classmethod indicado."""
+    `Sandbox.kill(sandbox_id)` el classmethod indicado. Ambas formas
+    devuelven lo mismo, así que el tipo de retorno del método de instancia
+    tipa también la forma de clase (`Sandbox.connect(id)` es un `Sandbox`)."""
 
     def __init__(self, class_method_name: str) -> None:
         self._class_method_name = class_method_name
-        self._method: Callable[..., Any] | None = None
 
-    def __call__(self, method: Callable[..., Any]) -> class_method_variant:
+    def __call__(self, method: Callable[..., VariantResult]) -> ClassMethodVariant[VariantResult]:
+        return ClassMethodVariant(self._class_method_name, method)
+
+
+class ClassMethodVariant(Generic[VariantResult]):
+    """El descriptor que produce `class_method_variant` al decorar."""
+
+    def __init__(self, class_method_name: str, method: Callable[..., VariantResult]) -> None:
+        self._class_method_name = class_method_name
         self._method = method
-        return self
 
-    def __get__(self, instance: object | None, owner: type | None = None) -> Callable[..., Any]:
-        method = self._method
-        if method is None:
-            raise TypeError("class_method_variant sin método decorado")
+    def __get__(
+        self, instance: object | None, owner: type | None = None
+    ) -> Callable[..., VariantResult]:
         if instance is not None:
-            return functools.partial(method, instance)
+            return functools.partial(self._method, instance)
         if owner is None:
             raise TypeError("class_method_variant necesita el owner")
-        return cast("Callable[..., Any]", getattr(owner, self._class_method_name))
+        return cast("Callable[..., VariantResult]", getattr(owner, self._class_method_name))
 
 
 @dataclass(frozen=True)
 class LaunchPlan:
-    """Todo lo que `create()` necesita antes de tocar la red."""
+    """Todo lo que `create()` necesita antes de tocar la red.
+    `lifecycle_requested` es la puerta de agente M9: el payload lleva un
+    bloque `lifecycle` y el `Health` de readiness debe traerlo. El access
+    token es el secreto del sandbox: nunca aparece en `repr()`."""
 
-    access_token: str
+    access_token: str = field(repr=False)
     request: LaunchRequest
     proxy_ports: tuple[PortSpec, ...]
+    lifecycle_requested: bool = False
+
+
+def sandbox_logger(custom: Logger | None) -> Logger:
+    """El logger de los registros de un sandbox: el de `create(logger=)` o
+    `connect(logger=)` si se dio, `rayito.sandbox` si no."""
+    return logger if custom is None else custom
 
 
 def resolve_template(template: str | None) -> str:
@@ -137,11 +161,11 @@ def resolve_access_token(access_token: str | None) -> str:
     return validate_access_token(from_environment)
 
 
-def require_access_token(access_token: str | None) -> str:
+def require_access_token(access_token: str | None, *, operation: str = "connect()") -> str:
     resolved = access_token or os.environ.get(ACCESS_TOKEN_ENV_VAR)
     if not resolved:
         raise AuthenticationException(
-            "connect() necesita el access_token del sandbox: pásalo o define "
+            f"{operation} necesita el access_token del sandbox: pásalo o define "
             f"{ACCESS_TOKEN_ENV_VAR}"
         )
     return validate_access_token(resolved)
@@ -171,23 +195,6 @@ def validate_timeout(timeout: int) -> int:
             f"timeout debe ser >= {MIN_DURATION_SECONDS}, recibido {timeout}"
         )
     return timeout
-
-
-def resolve_idle_policy(idle: IdlePolicy | None, timeout: int) -> IdlePolicy | None:
-    """Rellena `suspended_duration_seconds` con `timeout - max_idle_seconds`."""
-    if idle is None:
-        return None
-    if idle.max_idle_seconds >= timeout:
-        raise InvalidArgumentException(
-            f"idle.max_idle_seconds={idle.max_idle_seconds} debe ser menor que timeout={timeout}"
-        )
-    if idle.suspended_duration_seconds is not None:
-        return idle
-    return IdlePolicy(
-        max_idle_seconds=idle.max_idle_seconds,
-        suspended_duration_seconds=timeout - idle.max_idle_seconds,
-        auto_resume=idle.auto_resume,
-    )
 
 
 def proxy_port_specs(allowed_ports: Sequence[PortLike] | None) -> tuple[PortSpec, ...]:
@@ -277,25 +284,41 @@ def build_launch_plan(
     access_token: str | None,
     metadata: Mapping[str, str] | None = None,
     cpu_time_limit: int | None = None,
+    max_lifetime: int | None = None,
+    on_timeout: str | None = None,
+    network_enforce: bool = False,
 ) -> LaunchPlan:
     token = resolve_access_token(access_token)
-    duration = validate_timeout(timeout)
+    lifecycle = resolve_lifecycle(
+        timeout=validate_timeout(timeout),
+        max_lifetime=max_lifetime,
+        on_timeout=on_timeout,
+        idle=idle,
+    )
     request = LaunchRequest(
         image_arn=image_arn,
         image_version=template_version,
-        maximum_duration_seconds=duration,
+        maximum_duration_seconds=lifecycle.platform_duration,
         run_hook_payload=build_run_hook_payload(
-            access_token=token, envs=envs, metadata=metadata, cpu_time_limit=cpu_time_limit
+            access_token=token,
+            envs=envs,
+            metadata=metadata,
+            cpu_time_limit=cpu_time_limit,
+            lifecycle=lifecycle.block,
+            network_enforce=network_enforce,
         ),
         client_token=uuid.uuid4().hex,
         logging=logging_config(logging, template_name=template_name_from_arn(image_arn)),
         execution_role_arn=execution_role_arn,
-        idle=resolve_idle_policy(idle, duration),
+        idle=lifecycle.idle,
         ingress_connectors=connector_arns(ingress, region=region, field="ingress"),
         egress_connectors=connector_arns(egress, region=region, field="egress"),
     )
     return LaunchPlan(
-        access_token=token, request=request, proxy_ports=proxy_port_specs(allowed_ports)
+        access_token=token,
+        request=request,
+        proxy_ports=proxy_port_specs(allowed_ports),
+        lifecycle_requested=lifecycle.block is not None,
     )
 
 
@@ -404,6 +427,12 @@ def already_suspended(info: SandboxInfo) -> bool:
     return info.state in SUSPENDED_STATES
 
 
+def needs_explicit_resume(info: SandboxInfo) -> bool:
+    """`connect()` reanuda con `resume-microvm` un sandbox `SUSPENDED` sin
+    auto-resume; con auto-resume el propio sondeo de `Health` lo despierta."""
+    return info.state == "SUSPENDED" and not (info.idle and info.idle.auto_resume)
+
+
 def is_suspending_reason(reason: Exception) -> bool:
     """Un corte causado por un `/suspend` (final en-stream `suspending` o el
     phase gate `UNAVAILABLE suspending`): sólo cuenta como reconectado un
@@ -469,6 +498,10 @@ def health_from_proto(response: health_pb2.HealthResponse) -> SandboxHealth:
         metadata=metadata_from_health(response),
         imds_blocked=bool(response.imds_blocked),
         hook_anomalies=int(response.hook_anomalies),
+        lifecycle=lifecycle_from_proto(response),
+        egress_enforcement=enforcement_from_proto(response.egress_enforcement),
+        cpu_count=int(response.cpu_count),
+        memory_total_bytes=int(response.memory_total_bytes),
     )
 
 
@@ -476,6 +509,47 @@ def metadata_from_health(response: health_pb2.HealthResponse) -> dict[str, str]:
     """El mapa `metadata` de `Health` como dict; vacío sobre una imagen
     anterior a M6 (el campo no existe y protobuf lo lee vacío)."""
     return {str(key): str(value) for key, value in response.metadata.items()}
+
+
+MEBIBYTE: Final = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class GuestFacts:
+    """Lo que `SandboxInfo` toma de `Health`: la versión del agente y la
+    vista del guest (CPUs y `MemTotal` en MiB). `None` = no leído o
+    desconocido."""
+
+    agent_version: str | None = None
+    cpu_count: int | None = None
+    memory_mb: int | None = None
+
+
+def guest_facts_from_health(response: health_pb2.HealthResponse) -> GuestFacts:
+    """Un agente anterior a M9 manda `cpu_count` y `memory_total_bytes` a 0,
+    que aquí son `None`: 0 CPUs o 0 MiB nunca es un dato real."""
+    return GuestFacts(
+        agent_version=str(response.agent_version) or None,
+        cpu_count=int(response.cpu_count) or None,
+        memory_mb=int(response.memory_total_bytes) // MEBIBYTE or None,
+    )
+
+
+def ready_guest_facts(response: health_pb2.HealthResponse | None) -> GuestFacts:
+    """Los hechos del guest sólo de un agente que respondió `agent_ready`
+    (la misma regla que los metadatos de `Sandbox.get_info(sandbox_id)`)."""
+    if response is None or not response.agent_ready:
+        return GuestFacts()
+    return guest_facts_from_health(response)
+
+
+def with_guest_facts(info: SandboxInfo, facts: GuestFacts) -> SandboxInfo:
+    return dataclasses.replace(
+        info,
+        agent_version=facts.agent_version,
+        cpu_count=facts.cpu_count,
+        memory_mb=facts.memory_mb,
+    )
 
 
 METADATA_PROBE_TIMEOUT_SECONDS: Final = 5.0
@@ -515,6 +589,21 @@ def metadata_probe_failure(sandbox_id: str, cause: Exception) -> SandboxExceptio
     )
     error.__cause__ = cause
     return error
+
+
+def health_ready(response: health_pb2.HealthResponse | None) -> bool:
+    """Listo para la readiness de `create()`/`connect()`/`resume()`: agente y
+    kernel listos y `sandbox_id` presente. El proxy deja pasar `Health`
+    antes de que `rayd` reciba `/run`; ese `Health` trae el kernel del
+    snapshot sin rotar y ningún `sandbox_id`, y la rotación de `/run` lo
+    pondría `kernel_ready=false` justo después (regresión de M9,
+    `AWS_API_NOTES.md` Q78)."""
+    return (
+        response is not None
+        and response.agent_ready
+        and response.kernel_ready
+        and bool(response.sandbox_id)
+    )
 
 
 def health_reconnected(
@@ -609,10 +698,29 @@ def not_ready_error(
 
 
 def terminal_state_error(info: SandboxInfo) -> SandboxNotFoundException:
-    """Un MicroVM `TERMINATING|TERMINATED` ya no existe para el SDK."""
+    """Un MicroVM `TERMINATING|TERMINATED` ya no existe para el SDK; si
+    `rayd` salió por el plazo lógico (`timed_out`), el mensaje lo dice."""
+    if info.timed_out:
+        return SandboxNotFoundException(
+            f"el sandbox {info.sandbox_id} alcanzó su timeout y está {info.state}: "
+            f"{info.state_reason}"
+        )
     return SandboxNotFoundException(
         f"el sandbox {info.sandbox_id} está {info.state}: {info.state_reason or 'sin stateReason'}"
     )
+
+
+def info_with_health(info: SandboxInfo, response: health_pb2.HealthResponse | None) -> SandboxInfo:
+    """`Sandbox.get_info(sandbox_id)`: los metadatos y el plazo lógico del
+    único `Health` sondeado; sin respuesta (el sandbox no está `RUNNING`)
+    ninguno de los dos, y metadatos `None` mientras el agente arranca."""
+    if response is None:
+        return dataclasses.replace(info, metadata=None)
+    lifecycle = lifecycle_from_proto(response)
+    if not response.agent_ready:
+        logger.info("sandbox %s aún arrancando: sin metadatos", info.sandbox_id)
+        return dataclasses.replace(info, metadata=None, lifecycle=lifecycle)
+    return dataclasses.replace(info, metadata=metadata_from_health(response), lifecycle=lifecycle)
 
 
 def terminated_during_boot_error(info: SandboxInfo) -> SandboxNotReadyException:

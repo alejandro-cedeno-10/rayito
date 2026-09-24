@@ -14,8 +14,9 @@ message User {
 //
 // Códigos cerrados: "not_found", "permission_denied", "invalid_argument",
 // "unimplemented", "deadline_exceeded", "output_truncated", "suspending",
-// "resumed_state_lost", "kernel_died", "internal". Un cliente trata cualquier
-// código desconocido como "internal".
+// "resumed_state_lost", "kernel_died", "internal", "resource_exhausted",
+// "failed_precondition", "unavailable", "cancelled", "sandbox_timeout". Un
+// cliente trata cualquier código desconocido como "internal".
 message StreamError {
   string code = 1;
   string message = 2;
@@ -44,4 +45,7 @@ message EntryInfo {
   string group = 8;
   int64 modified_time_unix_ms = 9;
   optional string symlink_target = 10;
+  // Metadatos del fichero: xattrs `user.rayito.<clave>` con la clave en
+  // minúsculas; vacío si no hay o si el sistema de ficheros no los admite.
+  map<string, string> metadata = 11;
 }

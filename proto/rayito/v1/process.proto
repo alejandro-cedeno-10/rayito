@@ -82,10 +82,13 @@ message EndEvent {
   // 128 + señal cuando el proceso muere por señal.
   sint32 exit_code = 1;
   bool exited = 2;
-  // "exited" | "signaled" | "timeout" | "suspending" | "output_truncated".
+  // "exited" | "signaled" | "timeout" | "suspending" | "output_truncated" |
+  // "sandbox_timeout".
   // "output_truncated" cierra sólo este stream (el proceso sigue vivo) cuando
   // el suscriptor no consume durante 30 s; error.code = "output_truncated" y
   // el cliente puede volver con Connect(pid, from_seq).
+  // "sandbox_timeout" cierra el stream al vencer el plazo lógico (ADR-011);
+  // error.code = "sandbox_timeout".
   string status = 3;
   optional StreamError error = 4;
   optional int32 signal = 5;

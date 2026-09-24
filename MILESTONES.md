@@ -13,13 +13,14 @@ de vida y retiene 2 GB de la cuota de memoria de la región.
 ## M0 — Spike de validación (manual, sin código de producción)
 
 No escribir nada en `crates/` ni `clients/` en este hito. El objetivo es
-responder las **22 preguntas de `AWS_API_NOTES.md` §16** con el runbook
-`spike/m0/run_m0.py` y la imagen sonda `spike/m0/image/`.
+responder las **22 preguntas de `AWS_API_NOTES.md` §16** con un runbook y una
+imagen sonda propios (hito cerrado: el spike ya no está en el árbol y sigue en
+el historial de git; la plantilla IAM que creó vive hoy en `infra/iam.yaml`).
 
 Tareas:
 
 1. Tarea 0: credenciales válidas (`aws sso login`, `aws sts get-caller-identity`
-   en `us-east-1`), bucket S3 en la región, stack `spike/m0/iam.yaml` (build
+   en `us-east-1`), bucket S3 en la región, stack `infra/iam.yaml` (build
    role, execution role sólo-logs, managed policy del caller) y volcado de las
    cuotas **aplicadas** de la cuenta (`servicequotas`), que en cuentas nuevas
    pueden ser menores que las documentadas.
@@ -40,7 +41,7 @@ Tareas:
    `list-microvms` tras terminate.
 5. Segunda pasada con `PROBE_FAIL_SUSPEND=1` para Q10 (`/suspend` → 500).
 
-**Criterio de aceptación:** las 22 filas de `spike/m0/M0_RESULTS.md` están
+**Criterio de aceptación:** las 22 filas de la tabla de resultados del spike (`M0_RESULTS.md`, historial de git) están
 rellenas con el valor medido, o con "no medible en M0" y el motivo (8 y 22
 dependen de Cost Explorer con ~24 h de retraso). Coste de la pasada completa
 < $3.
@@ -854,9 +855,9 @@ apalancamiento de producto, 6–7 si queda capacidad.
 | # | Cambio OpenSpec | Alcance | Test de aceptación | Tamaño | Estado |
 |---|---|---|---|---|---|
 | 1 | `m7-oss-hygiene` | Apache-2.0 en los 5 sitios, `LICENSE`/`NOTICE`/`CONTRIBUTING` (DCO)/`CODE_OF_CONDUCT` (CC 3.0)/sección de reporte en `SECURITY`/`CODEOWNERS`/plantillas/`dependabot.yml`; metadatos PEP 639; insignias; "Qué corre dónde" en `ARCHITECTURE.md`, "Cómo funciona" en el README y tabla de lenguajes en `concepts.md`; `docs/RELEASING.md` (sin reservar nombres ni publicar) | `check_license.py` OK; la wheel de `uv build` lleva `License-Expression: Apache-2.0` + `NOTICE`; `pnpm pack` contiene `LICENSE` + `NOTICE`; `mkdocs --strict` y todos los gates previos verdes (el check DCO en PR es paso manual hasta que el repo esté en GitHub) | S | **aceptado 2026-09-17** (implementado 2026-09-16; evidencia: el conjunto de gates de `design.md` D16 repetido en la aceptación de M7 sobre el árbol 0.2.0 —`check_license.py` OK, wheel `rayito-0.2.0` con `License-Expression: Apache-2.0` + `licenses/NOTICE`, `pnpm pack:check` con `LICENSE` + `NOTICE`, `mkdocs --strict`—; sin superficie AWS) |
-| 2 | `m7-supply-chain` | Acciones fijadas por SHA (17 acciones, comentario de versión, gate `grep` + `actionlint`), `permissions: contents: read`, harden-runner (audit), `scorecard.yml`, `deny.toml` + `cargo-deny`, `cargo auditable` (+2 240 B: 4 700 984 B frente a 4 698 744 B, 145 paquetes en `.dep-v0`) + SBOM CycloneDX 1.5 (113 componentes), `pip-audit` ×3 + `pnpm audit --prod` (+ `audit.yml` semanal; vitest 3.2.7 → 4.1.11 cierra los dos moderados de dev), job `ubuntu-24.04-arm`, `e2e.yml` con OIDC (`infra/ci-oidc-role.yaml`, no desplegada) + guardas de coste (≈ $0,03/run), release-please manifest + `linked-versions` (`release-please.yml`), `release.yml` por tag (PyPI attestations, npm trusted publishing con npm ≥ 11.5.1, `rayd` firmado con cosign keyless + `SHA256SUMS`), `Dockerfile` `FROM` por digest + `--base-image-version` obligatoria | CI verde con todos los checks (`deny`, `audit`, `arm`, `actionlint`); `scorecard.yml` corrió en `main`; `e2e.yml` asumió el rol y dejó cero VMs; release-please abre un PR que sube los tres componentes a la vez y `cosign verify-blob` pasa sobre el zip de la release `rayd-v*` desde una máquina limpia | M | **aceptado en local 2026-09-17; aceptación en GitHub pendiente** (gates locales repetidos sobre el árbol 0.2.0: `actionlint`, `cargo deny check`, `pip-audit` ×4, `pnpm audit`, `cfn-lint` 1.56.3 sobre `spike/m0/iam.yaml` + `infra/*.yaml`, `cargo auditable` con `.dep-v0` de 256 crates y SBOM CycloneDX 1.5 de 217 componentes para `rayd` 0.2.0; implementado 2026-09-16 con `rayito-base` **17.0** publicada desde el `Dockerfile` fijado por digest con `--base-image-version 1` (Q52, build 205,7 s) y e2e verde sobre ella: 13 passed, 2 skipped, 537 s, cero VMs vivos; aceptación en GitHub pendiente: CI/Scorecard/`e2e.yml` con el rol OIDC, PR de release-please, `cosign verify-blob` desde una máquina limpia, coste del run en Cost Explorer) |
+| 2 | `m7-supply-chain` | Acciones fijadas por SHA (17 acciones, comentario de versión, gate `grep` + `actionlint`), `permissions: contents: read`, harden-runner (audit), `scorecard.yml`, `deny.toml` + `cargo-deny`, `cargo auditable` (+2 240 B: 4 700 984 B frente a 4 698 744 B, 145 paquetes en `.dep-v0`) + SBOM CycloneDX 1.5 (113 componentes), `pip-audit` ×3 + `pnpm audit --prod` (+ `audit.yml` semanal; vitest 3.2.7 → 4.1.11 cierra los dos moderados de dev), job `ubuntu-24.04-arm`, `e2e.yml` con OIDC (`infra/ci-oidc-role.yaml`, no desplegada) + guardas de coste (≈ $0,03/run), release-please manifest + `linked-versions` (`release-please.yml`), `release.yml` por tag (PyPI attestations, npm trusted publishing con npm ≥ 11.5.1, `rayd` firmado con cosign keyless + `SHA256SUMS`), `Dockerfile` `FROM` por digest + `--base-image-version` obligatoria | CI verde con todos los checks (`deny`, `audit`, `arm`, `actionlint`); `scorecard.yml` corrió en `main`; `e2e.yml` asumió el rol y dejó cero VMs; release-please abre un PR que sube los tres componentes a la vez y `cosign verify-blob` pasa sobre el zip de la release `rayd-v*` desde una máquina limpia | M | **aceptado en local 2026-09-17; aceptación en GitHub pendiente** (gates locales repetidos sobre el árbol 0.2.0: `actionlint`, `cargo deny check`, `pip-audit` ×4, `pnpm audit`, `cfn-lint` 1.56.3 sobre la plantilla IAM (entonces en el spike de M0, hoy `infra/iam.yaml`) + `infra/*.yaml`, `cargo auditable` con `.dep-v0` de 256 crates y SBOM CycloneDX 1.5 de 217 componentes para `rayd` 0.2.0; implementado 2026-09-16 con `rayito-base` **17.0** publicada desde el `Dockerfile` fijado por digest con `--base-image-version 1` (Q52, build 205,7 s) y e2e verde sobre ella: 13 passed, 2 skipped, 537 s, cero VMs vivos; aceptación en GitHub pendiente: CI/Scorecard/`e2e.yml` con el rol OIDC, PR de release-please, `cosign verify-blob` desde una máquina limpia, coste del run en Cost Explorer) |
 | 3 | `m7-suspended-pool` | Decidido en ADR-008: pool en cliente de VMs suspendidos con traspaso de token | `Sandbox.create(pool=…)` p95 hasta la primera celda < 1,5 s en 20 tomas; slots reciclados antes de las 8 h | M | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; implementado 2026-09-16: `SandboxPool`/`AsyncSandboxPool`/`PoolConfig` + `Sandbox.create(pool=)` en Python, `SandboxPool` en TypeScript, backends en memoria y JSON `rayito.pool/1`; e2e `test_m7_pool.py` verde en un run de 336 s sobre `rayito-base` 17.0: **`T_take` p50 0,770 / p95 0,897 s** (min 0,739, max 0,922; `hits` 20, `misses` 0) frente a **`T_create` p50 6,151 / p95 6,488 s**, RTT 109 ms, reciclado 121 s tras aparcar con plaza de reemplazo y la primera terminal, recuperación desde JSON con `launched == 0` y toma 0,726 s, cero VMs vivos al terminar, ≈ 46 lanzamientos ≈ $0,25; 88 tests unitarios Python (44 sync + 44 async) y 34 TypeScript sobre un plano de control falso; hallazgo Q56 sobre la ventana `/run` → rotación de `rayd` cerrada con una celda de asentado; e2e TypeScript `pool.e2e.test.ts` verde en 34,5 s: cinco tomas 0,645–0,687 s, `hits` 5, `misses` 0, cero VMs vivos; pendiente sólo la aceptación formal 9.x) |
-| 4 | `m7-s3-persistence` | Checkpoint/restore de `/home/user` en S3 nativo en `rayd` (execution role como root, IMDS sigue bloqueado para uid 1000), `Sandbox.create(persist=)`, patrón `reincarnate()` para el muro de 8 h | Escribir 50 MB, `checkpoint_files()`, kill, `create(persist=)` → mismo sha256; `imds_blocked` sigue `true`; delta del binario medido | L | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; ADR-009; escalera D6 resuelta en el primer peldaño: `rustls` + `aws-lc-rs` compilados con `zig cc` sin ningún ajuste; build limpio ARM64 `T0`/`T1` **106 → 222 s**, binario auditable `S0`/`S1` **4 700 984 → 12 524 384 B** (+7,8 MB, ×2,66; 256 paquetes en `.dep-v0`); `rayito-base` **19.0** y `rayito-base-caps` **7.0** publicadas (`snapshotBuild` 19.0: 922 832 896 / 1 321 267 200 / 37 998 592 B); `test_m7_persistence.py` verde contra AWS real sobre caps 7.0 + base 19.0: 50 MB en 21 entradas, checkpoint #1 **1,50 s de agente (31,4 MB/s)** frente a #2 **1,40 s (35,0 MB/s)** —el page-in del código TLS/S3 cuesta ≈ 0,1 s—, `kill()` y `create(persist=)` con restore **0,67 s (78 MB/s)** → mismo sha256 y el directorio excluido ausente, `reincarnate()` 8,85 s de pared con la VM vieja `TERMINATING`, `imds_blocked` `true` antes y después del checkpoint, `NotFoundException` en 0,11 s sin checkpoint, `permission_denied` en 1,35 s sin execution role (repetido dentro de la suite completa: 32,9/36,0 MB/s de subida, 87,9 MB/s de bajada, `reincarnate()` 9,47 s); suite Python M1–M6 + M7 persistencia sobre 19.0/7.0: **17 passed, 2 skipped** (`test_egress_allowlist` sin conector de egress y el test `slow` de 55 min), 1 deselected (`bench`), 626,7 s; e2e TypeScript `m7.e2e.test.ts` (20 MB + `reincarnate()`) y `m6.e2e.test.ts` verdes en 223,5 s; cero VMs vivos y cero objetos ni multipart bajo `rayito-e2e/` al terminar; 283 tests de `rayd-core` + 81 de `rayd` (9 gRPC en loopback) + 11 `cfg(unix)` del tar bajo Docker, 74 unit Python de persistencia (1043 en total) y 48 TypeScript (384 en total); IAM del execution role parametrizado en `spike/m0/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`, stack actualizado y simulado); Q53/Q54/§17 en `AWS_API_NOTES.md`, T15 en `SECURITY.md`; pendiente sólo la aceptación formal 9.3 y el test opcional 8.5) |
+| 4 | `m7-s3-persistence` | Checkpoint/restore de `/home/user` en S3 nativo en `rayd` (execution role como root, IMDS sigue bloqueado para uid 1000), `Sandbox.create(persist=)`, patrón `reincarnate()` para el muro de 8 h | Escribir 50 MB, `checkpoint_files()`, kill, `create(persist=)` → mismo sha256; `imds_blocked` sigue `true`; delta del binario medido | L | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; ADR-009; escalera D6 resuelta en el primer peldaño: `rustls` + `aws-lc-rs` compilados con `zig cc` sin ningún ajuste; build limpio ARM64 `T0`/`T1` **106 → 222 s**, binario auditable `S0`/`S1` **4 700 984 → 12 524 384 B** (+7,8 MB, ×2,66; 256 paquetes en `.dep-v0`); `rayito-base` **19.0** y `rayito-base-caps` **7.0** publicadas (`snapshotBuild` 19.0: 922 832 896 / 1 321 267 200 / 37 998 592 B); `test_m7_persistence.py` verde contra AWS real sobre caps 7.0 + base 19.0: 50 MB en 21 entradas, checkpoint #1 **1,50 s de agente (31,4 MB/s)** frente a #2 **1,40 s (35,0 MB/s)** —el page-in del código TLS/S3 cuesta ≈ 0,1 s—, `kill()` y `create(persist=)` con restore **0,67 s (78 MB/s)** → mismo sha256 y el directorio excluido ausente, `reincarnate()` 8,85 s de pared con la VM vieja `TERMINATING`, `imds_blocked` `true` antes y después del checkpoint, `NotFoundException` en 0,11 s sin checkpoint, `permission_denied` en 1,35 s sin execution role (repetido dentro de la suite completa: 32,9/36,0 MB/s de subida, 87,9 MB/s de bajada, `reincarnate()` 9,47 s); suite Python M1–M6 + M7 persistencia sobre 19.0/7.0: **17 passed, 2 skipped** (`test_egress_allowlist` sin conector de egress y el test `slow` de 55 min), 1 deselected (`bench`), 626,7 s; e2e TypeScript `m7.e2e.test.ts` (20 MB + `reincarnate()`) y `m6.e2e.test.ts` verdes en 223,5 s; cero VMs vivos y cero objetos ni multipart bajo `rayito-e2e/` al terminar; 283 tests de `rayd-core` + 81 de `rayd` (9 gRPC en loopback) + 11 `cfg(unix)` del tar bajo Docker, 74 unit Python de persistencia (1043 en total) y 48 TypeScript (384 en total); IAM del execution role parametrizado en `infra/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`, stack actualizado y simulado); Q53/Q54/§17 en `AWS_API_NOTES.md`, T15 en `SECURITY.md`; pendiente sólo la aceptación formal 9.3 y el test opcional 8.5) |
 | 5 | `m7-mcp-server` | `rayito.mcp` dentro de la wheel `rayito` tras el extra `rayito[mcp]` (SDK oficial `mcp` 2.2): `python -m rayito.mcp` / `rayito-mcp` (stdio) y `--http` (streamable HTTP en loopback, sin auth); seis herramientas `run_code` (JSON + PNG/JPEG como `ImageContent`, SVG como recurso), `run_command`, `read_file`, `write_file`, `list_files`, `list_sandboxes`; un sandbox por proceso (creado en la primera llamada, `idlePolicy` de AWS, `terminate-microvm` al cerrar); configuración sólo por entorno; adaptadores de ejemplo LangChain y Vercel AI SDK en `docs/examples/` | `tests/e2e/test_m7_mcp.py` verde contra AWS (cliente stdio del SDK `mcp` sobre `python -m rayito.mcp`) + Inspector/Claude Code a mano | S | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; implementado 2026-09-16: `test_m7_mcp.py` verde sobre `rayito-base` 17.0, primera llamada con creación 15,9 s, total 19,6 s, VM `TERMINATING` 0,12 s tras cerrar el cliente, cero VMs vivos; 65 tests unitarios nuevos (fake `rayd` + Stubber, HTTP real con uvicorn) en 8,8 s; wheel `OK` con el extra y el entry point; suite e2e completa 16 passed / 2 skipped y 1 fallo ajeno en la PTY de M5 (`DEADLINE_EXCEEDED`, con el pool de M7 lanzando 23 VMs en la misma sesión), `test_m7_mcp.py` verde de nuevo (creación 8,0 s, total 11,3 s); Inspector CLI en modo URL sobre `--http`: seis herramientas y el PNG de matplotlib (20 282 B); Claude Code pendiente de la revisión manual) |
 | 6 | `m7-cli` | CLI `rayito` (typer, extra `rayito[cli]`, entry point `rayito`): `image publish|list|prune|zip`, `sandbox list|info|kill|logs`, `doctor` (diez comprobaciones `OK|WARN|FAIL|SKIP`, `--launch` opcional, `--json`); los cuatro scripts de `scripts/` como shims con el mismo argv; tabla de compatibilidad SDK ↔ `rayd` ↔ imagen en `limits.md` con test de deriva | `rayito doctor` informa de todos los checks en una cuenta nueva; `rayito image publish` reproduce `make image-publish` (reuse sin build); `tests/e2e/test_m7_cli.py` verde con cero VMs vivos al final | S | **aceptado 2026-09-16** (`tests/e2e/test_m7_cli.py`: 6 passed en 83 s sobre `rayito-base` 17.0 con execution role; `doctor --launch` 16,2 s con 8 OK + 2 WARN (`lambda:PassNetworkConnector` `implicitDeny` en el simulador aunque `run-microvm` funciona; la fixture RUNNING) y 0 FAIL, `agent_version` 0.1.0, compatibilidad OK, sandbox de `--launch` `microvm-<id>` TERMINATING; `doctor` sin `--launch` 10,2 s contra la fixture sin crear VMs; `image publish` reutilizó 17.0 (`rayd-45037c481630.zip`, 4,1 s, sin build); `sandbox logs` encontró el stream `2026/09/17[17.0]<id>` por nombre exacto (Q55); `sandbox kill` → cero RUNNING de la imagen. Suite M1–M6 + m7-cli: 17 passed, 2 skipped, 2 failed ajenos (`test_auto_resume` pasó al repetirlo solo; `test_e2b_shim_cookbook` exige la imagen `-poly` de `m7-poly-kernels`). Unit: 107 tests de `tests/unit/cli/` + 57 de `scripts/tests`; wheel con `Provides-Extra: cli`; `mkdocs --strict` verde. Hallazgo corregido durante la aceptación: el stack `rayito-m0-iam` había quedado con `LogGroupPrefix=C:/Program Files/Git/rayito` (conversión MSYS) y ningún MicroVM escribía logs desde las 23:18Z; restaurado a `/rayito` con `update-stack --use-previous-template`). Revisión post-aceptación 2026-09-16: la comprobación `compatibility` ya no exige un `imageVersion` mínimo (es el contador de builds por imagen y cuenta: `rayito-base-poly` 3.0 fallaba con el mismo `rayd` 0.1.0) y `bucket` es un solo `head-bucket` (`s3:ListBucket`, concedido ahora por la `CallerPolicy`) con la región de `x-amz-bucket-region`; medido `doctor --template rayito-base-poly --launch`: 7 OK, 3 WARN, 0 FAIL, compatibilidad OK sobre la imagen 3.0 |
 | 7 | `m7-poly-kernels` | `language` en `CreateContextRequest` **y en `ExecuteRequest`** (campo 5, contexto por defecto por lenguaje creado perezosamente por `rayd`); kernelspec `bash` (`bash_kernel` 0.10.0) en la variante `rayito-base-poly` (marcador `kernels_variant` + capa condicional del mismo `Dockerfile`); `javascript` reservado como nombre (`UNIMPLEMENTED`: `ijavascript` necesita compilador en al2023 ARM64, Q57); SDKs `run_code(language=)`/`runCode({ language })` + shim E2B | `run_code("echo hi", language="bash")` devuelve `hi` en la variante; `javascript` es `UNIMPLEMENTED` nombrando la variante; el snapshot de `rayito-base` queda en la banda de D5 | M | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; evidencia de la implementación: `rayito-base-poly` 3.0 y `rayito-base` 18.0 publicadas, `test_m7_poly_kernels.py` 6 passed y `poly.e2e.test.ts` 1 passed contra AWS real, `m7_poly.rs` 9/9 + `m4_code` 19/19 bajo Docker, sidecar 80 host + 13 kernel (bash 2,88 s), clientes Python/TS y gates locales verdes; Q57 con tamaños y latencias; e2e Python completo sobre 18.0: 26 passed, 4 skipped, 1 obsoleto corregido —`test_e2b_shim_cookbook` esperaba `UnimplementedError` para `language="js"`, ahora `UNIMPLEMENTED` del agente— y verde al repetirlo; cero VMs vivos) |
@@ -929,7 +930,7 @@ scripts`, `gen_limits.py --check`, `check_license.py` OK, `uv build` →
 (`check_wheel.py` OK, `twine check` PASSED), `mkdocs build --strict`;
 TypeScript `pnpm lint` (77), `typecheck`, `test` **386**, `build`, `pack:check`
 (`LICENSE` + `NOTICE`), `pnpm audit` limpio; `actionlint`, `pip-audit` ×4,
-`cfn-lint` 1.56.3 sobre `spike/m0/iam.yaml` + `infra/*.yaml`, `openspec
+`cfn-lint` 1.56.3 sobre la plantilla IAM (entonces en el spike de M0, hoy `infra/iam.yaml`) + `infra/*.yaml`, `openspec
 validate --all --strict` (23 items). Corregido durante la aceptación:
 `rayito.cli._artifact` comprobaba `is_file()` antes de la lista de exclusión y
 un symlink de Linux dentro de `kernel-sidecar/.venv` (creado por la sesión
@@ -937,7 +938,7 @@ Docker) rompía `copy_sidecar.py` en Windows (`WinError 1920`); ahora la
 exclusión se evalúa primero (test de regresión). Poda: `image_prune.py --keep
 2` sobre `rayito-base` (15.0–18.0 borradas), `rayito-base-caps` (6.0) y
 `rayito-base-poly` (1.0 y 2.0); `rayito-m0-probe` borrada entera
-(`delete-microvm-image`; `spike/m0/README.md` la reconstruye). Quedan
+(`delete-microvm-image`; el README del spike de M0, en el historial de git, la reconstruye). Quedan
 **`rayito-base` 19.0 + 20.0, `rayito-base-caps` 7.0 + 8.0 y `rayito-base-poly`
 3.0 + 4.0**; `list-microvms`: **0 vivos** al terminar; S3 `rayito-e2e/` vacío.
 Coste: Cost Explorer (16:15 UTC, `SERVICE = AWS Lambda` por `USAGE_TYPE`,
@@ -987,8 +988,8 @@ Python `pytest tests/unit` **1082 passed, 3 skipped** (base 1066), `ruff check`,
 `ruff format --check` (143 ficheros), `mypy src tests` (141 ficheros),
 `scripts/tests` **77** (incluye el módulo nuevo `test_iam_template.py`);
 TypeScript `pnpm lint`, `typecheck`, `test` **388 passed, 2 skipped** (base
-386), `build`, `pack:check`; `uvx cfn-lint==1.56.3` sobre `spike/m0/iam.yaml` +
-`infra/*.yaml`, `actionlint` sobre los seis workflows, `python
+386), `build`, `pack:check`; `uvx cfn-lint==1.56.3` sobre la plantilla IAM (entonces en el spike de
+M0, hoy `infra/iam.yaml`) + `infra/*.yaml`, `actionlint` sobre los seis workflows, `python
 scripts/check_pins.py` (`OK 7 ficheros`), `gen_limits.py --check`,
 `check_license.py`, `uv build` + `check_wheel.py` + `uvx twine==7.0.0 check`,
 `mkdocs build --strict` y `openspec validate --all --strict` (31 items). Las
@@ -1011,6 +1012,120 @@ llamada al sistema) queda **aceptado** con razón documentada; `openat2` con
 el gemelo TypeScript del aviso de C-08 y la medición del `/etc/passwd` de
 `public.ecr.aws/lambda/microvms:al2023-minimal`, de la que depende la mitad de
 C-05.
+
+---
+
+## M9 — Paridad con E2B
+
+Seis cambios OpenSpec (`openspec/changes/archive/2026-09-24-m9-*`) que
+cierran la tabla de paridad con E2B 2.51 (113 filas,
+`docs/site/docs/e2b-parity.md`).
+
+**Estado: M9 cerrado el 2026-09-24.** Aceptado contra AWS real, gates
+finales verdes sobre el árbol definitivo y los seis cambios archivados; queda
+sólo la release 0.3.0 por release-please al mergear (abajo). Los números
+medidos van a `AWS_API_NOTES.md` §16 con marcadores de posición
+(`microvm-<id>`, nombres de imagen, sin cuenta, bucket ni ARN).
+
+| # | Cambio OpenSpec | Alcance | Aceptación en AWS real (2026-09-24) | Estado |
+|---|---|---|---|---|
+| 1 | `m9-deno-kernels` | `javascript` y `typescript` con Deno 2.9.7 en `rayito-base-poly` (ADR-013) | `test_m9_deno_kernels.py` **8/8** y `test_m7_poly_kernels.py` **5/5** (bandas de tamaño revisadas, D12), `poly.e2e.test.ts` **2/2**; `kernel_ready_s` p50 poly 6,62 s frente a base 5,81 s; fila Q77 | cerrado; archivado 2026-09-24 |
+| 2 | `m9-file-transfer` | `upload_url`/`download_url` y ficheros grandes por S3 con las credenciales del llamante (ADR-010, T16) | `test_m9_transfer.py` **14/14**, `m9-transfer.e2e.test.ts` **6/6** (regresión de TS en `rayito-base` 22.0); filas Q70–Q75 (Q74: gzip 0,80 → 52,34 MB/s por el proxy) | cerrado; archivado 2026-09-24 |
+| 3 | `m9-server-timeout` | plazo lógico en `rayd`, `set_timeout`, `connect(timeout=)`, `on_timeout` (ADR-011, sustituye a ADR-007) | `test_m9_server_timeout.py` **12/12**, `test_set_timeout_beyond_cap` **3/3** aislado, `m9-timeout.e2e.test.ts` **5/5**; filas Q63 (salida 124, se mantiene), Q64 (pausa al vencer) y Q65 (auto-resume suelto) | cerrado; archivado 2026-09-24 |
+| 4 | `m9-sandbox-observability` | `MetricsHistory`, `paginate()`, hechos del guest en `Health` | `test_m9_observability.py` **4/4**, `m9-observability.e2e.test.ts` **2/2** (regresión de TS en 22.0); fila Q68 (`memory_mb` = `MemTotal` del guest, 8016 MiB con una imagen de 2048) | cerrado; archivado 2026-09-24 |
+| 5 | `m9-egress-policy` | política de egress en el guest de `rayito-base-caps` (ADR-012, T17) | QE1 (Q66) con su regla de parada, resuelta con la adenda de ADR-012 (opción C: bajo deny-all el DNS puede resolver, la conexión falla); QE2 (Q67): el proxy **no** reenvía TLS a un puerto del guest, `https_ports` sigue `UnimplementedError`; `test_m9_egress.py` **14/14**, `m9-egress.e2e.test.ts` verde | cerrado; archivado 2026-09-24 (motivo de `https_ports` citando Q67 en los dos SDK; el job `arm` de CI va al PR) |
+| 6 | `m9-e2b-v2-surface` | shims de E2B 2.x en Python y TypeScript (`rayito/e2b`), `git`, CLI `sandbox create\|connect\|exec\|metrics` | corpus E2B **18/18** en Python (9 sync + 9 async) y **8** programas de TS (`m9-e2b.e2e.test.ts` **11/11**), `fork()` vivo → `UnimplementedError`; `test_m9_git.py` **1/1** (`git` 2.50.1), `test_m9_cli_sandbox.py` **4/4** (PTY real), cookbook de M6 **2/2**; fila Q76 (`git-core`) | cerrado; archivado 2026-09-24 |
+
+**Estado de aceptación (M9, 2026-09-24, cuenta de pruebas, us-east-1):**
+verde contra AWS real. Regresión e2e de Python sobre **`rayito-base` 23.0,
+`rayito-base-caps` 12.0 y `rayito-base-poly` 7.0**: **62 passed de 62**
+(server-timeout 12, observability 4, deno 8, egress 14, transfer 14, M4 1, M5
+2, M6 2, M7 poly 5); la pasada completa anterior (84 tests sobre 22.0) dejó 73
+verdes y 11 rojos, todos en esos ficheros y todos verdes en la de 23.0 (2
+skipped opt-in: conector de egress propio y la rotación lenta de
+credenciales). Corpus, git y CLI: 23/26 en 23.0 con `watch` en rojo; tras el
+arreglo, corpus + M3 **22/22** en **24.0**. TypeScript **26/26** en 24.0 /
+caps 13.0 / poly 8.0 (corpus, timeout, M6, egress, poly); transfer y
+observability de TS verdes en la regresión completa de TS sobre 22.0.
+Imágenes republicadas desde el `rayd` final: **`rayito-base` 25.0** (build
+217,6 s; `snapshotBuild` 939 683 840 / 1 362 808 832 / 38 539 264 B),
+**`rayito-base-caps` 14.0** (200,1 s; 931 258 368 / 1 361 743 872 /
+36 409 344 B) y **`rayito-base-poly` 9.0** (207,9 s; 929 677 312 /
+1 500 737 536 / 36 425 728 B), las tres `SUCCESSFUL`/`ACTIVE`; la re-corrida
+de las suites afectadas sobre 25.0 (Python: timeout, egress, observability,
+corpus E2B y M4; TS: timeout, egress, corpus, observability) estaba en curso
+al escribir esto: `test_m9_server_timeout.py` ya dio **12/12** en 25.0
+(`terminatedAt − plazo` 14,2–18,8 s, pausa al vencer 2,45 s, auto-resume
+1,07 s, cliente muerto 251,2 s). Re-corrida terminada: Python **52/52** de
+las suites afectadas y TypeScript **24/24** sobre 25.0 / caps 14.0 / poly 9.0
+(con el arreglo tardío del timer del deadline de los streams de TS, en
+`clients/typescript/CHANGELOG.md`), más la aceptación de paquete con
+instalación limpia (Python y TS: subida y descarga de 50 MB con sha256
+coincidente, `set_timeout` → `TERMINATED`).
+
+**Cierre (2026-09-24):**
+
+- Motivo de `network.https_ports` citando Q67 en los dos SDK y en
+  `e2b-compat.md` (`m9-egress-policy` 7.2): hecho.
+- Gates finales sobre el árbol definitivo, verdes: Rust en la VM Lima
+  (`cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace
+  --locked` como uid 1500 con 856 passed y 2 ignored, `m9_egress` como root
+  en `unshare --net` 1 passed, `cargo deny check`, zigbuild auditable de
+  13 764 024 B con `.dep-v0` de 257 paquetes); Python unit 2115 passed, ruff
+  y mypy limpios; sidecar 85 passed; TypeScript 863 passed más lint,
+  typecheck, build y `pack:check`; `buf lint`,
+  `check_pins`/`check_license`/`check_hygiene`, `gen_limits --check`,
+  `scripts/tests` 186 passed y `mkdocs build --strict`.
+- `openspec/changes/m9-handoff` borrado y los seis cambios archivados en
+  orden (deno-kernels, file-transfer, server-timeout, sandbox-observability,
+  egress-policy, e2b-v2-surface): 0 escenarios perdidos (635 → 872 en 30 →
+  36 capabilities, `e2b-compat` 20 → 59) y `openspec validate --all --strict`
+  36/36.
+
+**Tras el merge:** release 0.3.0 en lockstep por release-please
+(`docs/RELEASING.md`) y coste de M9 en Cost Explorer (con el retardo de
+facturación).
+
+**Diferido con razón escrita (siguiente ciclo):**
+
+- **Egress, opción A**: bloquear el DNS de uid ≥ 1000 bajo deny-all en caps.
+  QE1 (Q66) midió que los resolvedores de la plataforma escuchan dentro del
+  guest, así que en M9 los nombres pueden resolverse bajo deny-all aunque toda
+  conexión fuera del VM falle (adenda de ADR-012, opción C; riesgo residual en
+  `SECURITY.md` T17). La opción A es una regla `ip rule` para el puerto 53 de
+  uid ≥ 1000 antes de la regla `local`, con cambio atómico y rollback.
+- **Fixtures TLS de los tests de `rayd` con `rcgen`**: la clave y el
+  certificado autofirmados de prueba de `crates/rayd/tests/fixtures/tls/`
+  están fijos en el repositorio y los escáneres los marcan; generarlos en
+  tiempo de test no cambia ningún comportamiento publicado.
+- **Ventana de rotación del kernel en `rayd` tras `/run`**: hoy la cierran
+  los SDK exigiendo `sandbox_id` en la readiness (Q78); cerrarla en el propio
+  agente (marcar `Rotating` de forma síncrona, residuo del orden de 100 µs)
+  exige republicar las tres imágenes.
+- **Reconexión tras un reset de stream del proxy** (`RST_STREAM`, "Stream
+  removed" antes del plazo real): tratarlo como corte reconectable
+  (`Connect(pid, from_seq)`); visto una vez en la regresión, no reproducido en
+  4 intentos.
+- **Mensaje amable de `rayito-mcp` sin el extra**: `rayito-mcp` y `python -m
+  rayito.mcp` sin `rayito[mcp]` acaban en un `ModuleNotFoundError` de `mcp`;
+  la CLI `rayito` ya imprime cómo instalar su extra. Documentado en el
+  `README.md`; no afecta a quien instala el extra.
+- **`--remap-path-prefix` en `ci.yml` y `release.yml`**: `make build` quita
+  del binario `rayd` las rutas del constructor, pero los jobs `rayd` de CI y
+  de release compilan sin ese `rustflags`, así que el `rayd` publicado lleva
+  rutas del runner. Sólo se puede verificar con un run de GitHub Actions.
+- **Job `arm` de CI con el paso de netns de `m9_egress`**
+  (`m9-egress-policy` 9.5): necesita el PR de M9 en GitHub; su equivalente
+  local (root en `unshare --net` en la VM Lima) está verde. Gate de merge.
+- **Salida del sidecar real dentro de la gracia de `SIGTERM`**
+  (`m9-server-timeout` 4.1): la secuencia manda `SIGKILL` a los 5 s de todas
+  formas y la e2e real termina con código 124; confirmarlo exige leer el log
+  de `rayd` en CloudWatch de una VM en modo `kill`.
+- Las filas diferidas de `docs/SECURITY_AUDIT.md` §8 siguen diferidas;
+  ningún cambio de M9 las empeora.
+- Revisión de arquitectura hexagonal/DDD: 32 hallazgos reales diferidos (la mayoría en `rayd`, cuyo cambio obliga a republicar y repetir la aceptación), listados con fichero, principio y arreglo en [`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md); 12 se corrigieron antes de 0.3.0.
+- Corregido: los descriptores de `rayd` ya no llegan al código de usuario. Cada hijo de usuario (proceso, shell PTY, sidecar) marca close-on-exec todo descriptor >= 3 justo antes de `exec` (`close_range` con `CLOSE_RANGE_CLOEXEC`, bucle `fcntl` acotado en kernels < 5.11), lo que cierra tanto los pipes heredados del padre como la carrera `openpty`/`F_SETFD` entre spawns concurrentes que vio la CI aarch64; el harness de tests ya no los sella (`crates/rayd/CHANGELOG.md`, Security).
+- CI: las suites de integración de `rayd` congelan el runner x86_64 de GitHub (ni `timeout` ni la cancelación responden; en aarch64 pasan siempre). El job x86 corre sólo `--lib --bins` y el job aarch64 la suite completa; averiguar qué test lo provoca (recursos o señales a procesos del runner).
 
 ---
 

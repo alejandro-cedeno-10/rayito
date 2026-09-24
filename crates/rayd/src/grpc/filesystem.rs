@@ -2,10 +2,14 @@
 //! conversion, the gRPC status table of design D10, the keepalive wrapper
 //! on `WatchDir` and the suspend close (design D7): `Read` and `WatchDir`
 //! end with `UNAVAILABLE suspending`, a `Write` in flight is aborted (its
-//! temporary removed) and answered the same way. `Checkpoint` and
-//! `Restore` are delegated to `PersistenceGrpc` (ADR-009). Error messages
-//! and log lines carry codes, counts and errno names, never a path, a
-//! name, a target or file bytes.
+//! temporary removed) and answered the same way; at the logical deadline
+//! (ADR-011) all three get `FAILED_PRECONDITION sandbox_timeout` instead. `Checkpoint` and
+//! `Restore` are delegated to `PersistenceGrpc` (ADR-009), the five
+//! presigned-transfer RPCs to `TransferGrpc` (ADR-010); `Read`, `Stat`
+//! and `ListDir` pass the read-after-upload barrier first, and entries
+//! carry their `user.rayito.*` metadata. Error messages and log lines
+//! carry codes, counts and errno names, never a path, a name, a target,
+//! file bytes or metadata.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,11 +19,13 @@ use rayd_core::filesystem::{
 };
 use rayito_proto::v1::filesystem_service_server::FilesystemService;
 use rayito_proto::v1::{
-    CheckpointEvent, CheckpointRequest, EntryInfo, FileType, FilesystemEvent, FilesystemEventType,
-    KeepAlive, ListDirRequest, ListDirResponse, MakeDirRequest, MakeDirResponse, MoveRequest,
-    MoveResponse, ReadRequest, ReadResponse, RemoveRequest, RemoveResponse, RestoreEvent,
-    RestoreRequest, StatRequest, StatResponse, User, WatchDirRequest, WatchDirResponse,
-    WatchStarted, WriteRequest, WriteResponse, watch_dir_response,
+    CancelTransferRequest, CancelTransferResponse, CheckpointEvent, CheckpointRequest, EntryInfo,
+    FileType, FilesystemEvent, FilesystemEventType, GetTransferRequest, KeepAlive, ListDirRequest,
+    ListDirResponse, MakeDirRequest, MakeDirResponse, MoveRequest, MoveResponse, ReadRequest,
+    ReadResponse, RemoveRequest, RemoveResponse, RestoreEvent, RestoreRequest, StartExportRequest,
+    StartImportRequest, StartTransferResponse, StatRequest, StatResponse, TransferEvent,
+    TransferState, User, WatchDirRequest, WatchDirResponse, WatchStarted, WatchTransferRequest,
+    WriteRequest, WriteResponse, watch_dir_response,
 };
 use tokio_stream::StreamExt;
 use tonic::codegen::BoxStream;
@@ -28,11 +34,12 @@ use tonic::{Code, Request, Response, Status, Streaming};
 use super::client_abort::ClientAbort;
 use super::keepalive::{DEFAULT_KEEPALIVE_INTERVAL, KeepAliveStream};
 use super::persistence::PersistenceGrpc;
+use super::transfer::TransferGrpc;
 use crate::filesystem::write::drain_after_error;
 use crate::filesystem::{FilesystemManager, WatchItem, WriteFailure, WriteMessageWithChunk};
-use crate::lifecycle::suspend::suspending_status;
-use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream};
+use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream, close_status};
 use crate::persistence::{PersistenceBackend, UnavailablePersistence};
+use crate::transfer::{TransferBackend, TransferBarrier};
 
 /// A silent watch stream sends a keepalive at this cadence so bytes keep
 /// crossing the proxy (`AWS_API_NOTES.md` Q15).
@@ -46,6 +53,8 @@ pub struct FilesystemGrpc {
     suspend: Arc<SuspendSignal>,
     watch_keepalive_interval: Duration,
     persistence: PersistenceGrpc,
+    transfers: TransferGrpc,
+    barrier: TransferBarrier,
 }
 
 impl FilesystemGrpc {
@@ -68,6 +77,8 @@ impl FilesystemGrpc {
             DEFAULT_KEEPALIVE_INTERVAL,
         );
         Self {
+            transfers: TransferGrpc::unavailable(suspend.clone()),
+            barrier: TransferBarrier::disabled(),
             manager,
             suspend,
             watch_keepalive_interval: interval,
@@ -86,6 +97,21 @@ impl FilesystemGrpc {
         self.persistence = PersistenceGrpc::new(backend, self.suspend.clone(), keepalive_interval);
         self
     }
+
+    /// The backend behind the five transfer RPCs and the barrier `Read`,
+    /// `Stat` and `ListDir` pass; without it the RPCs answer
+    /// `UNIMPLEMENTED` and the barrier is a no-op.
+    #[must_use]
+    pub fn with_transfers(
+        mut self,
+        backend: Arc<dyn TransferBackend>,
+        barrier: TransferBarrier,
+        keepalive_interval: Duration,
+    ) -> Self {
+        self.transfers = TransferGrpc::new(backend, self.suspend.clone(), keepalive_interval);
+        self.barrier = barrier;
+        self
+    }
 }
 
 #[tonic::async_trait]
@@ -94,6 +120,42 @@ impl FilesystemService for FilesystemGrpc {
     type WatchDirStream = BoxStream<WatchDirResponse>;
     type CheckpointStream = BoxStream<CheckpointEvent>;
     type RestoreStream = BoxStream<RestoreEvent>;
+    type WatchTransferStream = BoxStream<TransferEvent>;
+
+    async fn start_import(
+        &self,
+        request: Request<StartImportRequest>,
+    ) -> Result<Response<StartTransferResponse>, Status> {
+        self.transfers.start_import(request).await
+    }
+
+    async fn start_export(
+        &self,
+        request: Request<StartExportRequest>,
+    ) -> Result<Response<StartTransferResponse>, Status> {
+        self.transfers.start_export(request).await
+    }
+
+    async fn get_transfer(
+        &self,
+        request: Request<GetTransferRequest>,
+    ) -> Result<Response<TransferState>, Status> {
+        self.transfers.get_transfer(&request)
+    }
+
+    async fn watch_transfer(
+        &self,
+        request: Request<WatchTransferRequest>,
+    ) -> Result<Response<Self::WatchTransferStream>, Status> {
+        self.transfers.watch_transfer(&request)
+    }
+
+    async fn cancel_transfer(
+        &self,
+        request: Request<CancelTransferRequest>,
+    ) -> Result<Response<CancelTransferResponse>, Status> {
+        self.transfers.cancel_transfer(&request)
+    }
 
     async fn checkpoint(
         &self,
@@ -114,9 +176,13 @@ impl FilesystemService for FilesystemGrpc {
         request: Request<ReadRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
         let request = request.into_inner();
+        let user = username(request.user);
+        self.barrier
+            .before_path("Read", &self.manager, user.as_deref(), &request.path, false)
+            .await;
         let stream = self
             .manager
-            .read(username(request.user), request.path)
+            .read(user, request.path)
             .await
             .map_err(|error| rejected("Read", &error))?;
         let responses = SuspendableStream::new(
@@ -126,7 +192,7 @@ impl FilesystemService for FilesystemGrpc {
                 item.map(|chunk| ReadResponse { chunk })
                     .map_err(|error| status_for(&error))
             },
-            || SuspendClose::Status,
+            |_| SuspendClose::Status,
         );
         Ok(Response::new(Box::pin(responses)))
     }
@@ -145,9 +211,10 @@ impl FilesystemService for FilesystemGrpc {
         let outcome = tokio::select! {
             outcome = self.manager.write(&mut messages, move || abort.aborted()) => outcome,
             () = watch.suspended() => {
-                tracing::info!(rpc = "Write", "write aborted by suspend");
+                let reason = watch.close_reason();
+                tracing::info!(rpc = "Write", reason = reason.as_str(), "write aborted by stream close");
                 drain_after_error(&mut messages, usize::MAX, WRITE_SUSPEND_DRAIN_TIMEOUT).await;
-                return Err(suspending_status());
+                return Err(close_status(reason));
             }
         };
         let entries = outcome.map_err(|failure| match failure {
@@ -162,9 +229,13 @@ impl FilesystemService for FilesystemGrpc {
 
     async fn stat(&self, request: Request<StatRequest>) -> Result<Response<StatResponse>, Status> {
         let request = request.into_inner();
+        let user = username(request.user);
+        self.barrier
+            .before_path("Stat", &self.manager, user.as_deref(), &request.path, false)
+            .await;
         let entry = self
             .manager
-            .stat(username(request.user), request.path)
+            .stat(user, request.path)
             .await
             .map_err(|error| rejected("Stat", &error))?;
         Ok(Response::new(StatResponse {
@@ -177,9 +248,19 @@ impl FilesystemService for FilesystemGrpc {
         request: Request<ListDirRequest>,
     ) -> Result<Response<ListDirResponse>, Status> {
         let request = request.into_inner();
+        let user = username(request.user);
+        self.barrier
+            .before_path(
+                "ListDir",
+                &self.manager,
+                user.as_deref(),
+                &request.path,
+                true,
+            )
+            .await;
         let entries = self
             .manager
-            .list_dir(username(request.user), request.path, request.depth)
+            .list_dir(user, request.path, request.depth)
             .await
             .map_err(|error| rejected("ListDir", &error))?;
         Ok(Response::new(ListDirResponse {
@@ -249,10 +330,12 @@ impl FilesystemService for FilesystemGrpc {
             self.suspend.subscribe(),
             |item| match item {
                 Ok(WatchItem::Started) => Ok(started_response()),
-                Ok(WatchItem::Event { event, entry }) => Ok(event_response(event, entry)),
+                Ok(WatchItem::Event { event, entry }) => {
+                    Ok(event_response(event, entry.map(|entry| *entry)))
+                }
                 Err(error) => Err(status_for(&error)),
             },
-            || SuspendClose::Status,
+            |_| SuspendClose::Status,
         );
         Ok(Response::new(Box::pin(KeepAliveStream::new(
             responses,
@@ -262,7 +345,7 @@ impl FilesystemService for FilesystemGrpc {
     }
 }
 
-fn username(user: Option<User>) -> Option<String> {
+pub(super) fn username(user: Option<User>) -> Option<String> {
     user.map(|user| user.username)
         .filter(|name| !name.is_empty())
 }
@@ -273,13 +356,14 @@ fn write_message(request: WriteRequest) -> WriteMessageWithChunk {
             path: request.path,
             user: username(request.user),
             mode: request.mode,
+            metadata: request.metadata.into_iter().collect(),
             chunk_len: request.chunk.len(),
         },
         chunk: request.chunk,
     }
 }
 
-fn to_entry_info(entry: Entry) -> EntryInfo {
+pub(super) fn to_entry_info(entry: Entry) -> EntryInfo {
     EntryInfo {
         name: entry.name,
         r#type: i32::from(file_type(entry.kind)),
@@ -291,6 +375,7 @@ fn to_entry_info(entry: Entry) -> EntryInfo {
         group: entry.group,
         modified_time_unix_ms: entry.modified_ms,
         symlink_target: entry.symlink_target,
+        metadata: entry.metadata.into_map().into_iter().collect(),
     }
 }
 
@@ -349,7 +434,7 @@ fn rejected(rpc: &'static str, error: &FilesystemError) -> Status {
     status
 }
 
-fn status_for(error: &FilesystemError) -> Status {
+pub(super) fn status_for(error: &FilesystemError) -> Status {
     let message = error.to_string();
     match error {
         FilesystemError::InvalidPath(_)
@@ -361,6 +446,9 @@ fn status_for(error: &FilesystemError) -> Status {
         | FilesystemError::MissingPath
         | FilesystemError::UserWithoutPath
         | FilesystemError::ModeWithoutPath
+        | FilesystemError::MetadataWithoutPath
+        | FilesystemError::InvalidMetadata
+        | FilesystemError::MetadataTooLarge
         | FilesystemError::NoFiles
         | FilesystemError::NotADirectory
         | FilesystemError::UnknownUser => Status::invalid_argument(message),
@@ -372,7 +460,8 @@ fn status_for(error: &FilesystemError) -> Status {
         FilesystemError::AlreadyExists => Status::already_exists(message),
         FilesystemError::NotEmpty
         | FilesystemError::DestinationConflict
-        | FilesystemError::CrossDevice => Status::failed_precondition(message),
+        | FilesystemError::CrossDevice
+        | FilesystemError::MetadataUnsupported => Status::failed_precondition(message),
         FilesystemError::TooManyEntries { .. }
         | FilesystemError::TooManyWatches { .. }
         | FilesystemError::WatchLimitReached
@@ -404,7 +493,9 @@ fn code_name(code: Code) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use rayd_core::filesystem::PathRejection;
+    use std::collections::HashMap;
+
+    use rayd_core::filesystem::{FileMetadata, PathRejection};
     use rayd_core::lifecycle::HookPhase;
 
     use super::*;
@@ -427,6 +518,13 @@ mod tests {
             (FilesystemError::MissingPath, Code::InvalidArgument),
             (FilesystemError::UserWithoutPath, Code::InvalidArgument),
             (FilesystemError::NoFiles, Code::InvalidArgument),
+            (FilesystemError::MetadataWithoutPath, Code::InvalidArgument),
+            (FilesystemError::InvalidMetadata, Code::InvalidArgument),
+            (FilesystemError::MetadataTooLarge, Code::InvalidArgument),
+            (
+                FilesystemError::MetadataUnsupported,
+                Code::FailedPrecondition,
+            ),
             (FilesystemError::NotADirectory, Code::InvalidArgument),
             (FilesystemError::UnknownUser, Code::InvalidArgument),
             (FilesystemError::Denied, Code::PermissionDenied),
@@ -503,11 +601,16 @@ mod tests {
             group: "user".to_owned(),
             modified_ms: 42,
             symlink_target: Some("big.bin".to_owned()),
+            metadata: FileMetadata::parse([("owner", "alice")]).unwrap(),
         };
         let info = to_entry_info(entry.clone());
         assert_eq!(info.r#type, i32::from(FileType::Symlink));
         assert_eq!(info.symlink_target.as_deref(), Some("big.bin"));
         assert_eq!(info.modified_time_unix_ms, 42);
+        assert_eq!(
+            info.metadata,
+            HashMap::from([("owner".to_owned(), "alice".to_owned())])
+        );
         assert_eq!(file_type(EntryKind::Other), FileType::Unspecified);
         let response = event_response(
             WatchEvent {
@@ -543,11 +646,16 @@ mod tests {
             }),
             mode: Some(0o600),
             chunk: vec![1, 2, 3],
+            metadata: HashMap::from([("Owner".to_owned(), "alice".to_owned())]),
         });
         assert_eq!(message.message.path.as_deref(), Some("/tmp/a"));
         assert_eq!(message.message.user, None);
         assert_eq!(message.message.mode, Some(0o600));
         assert_eq!(message.message.chunk_len, 3);
+        assert_eq!(
+            message.message.metadata,
+            vec![("Owner".to_owned(), "alice".to_owned())]
+        );
         assert_eq!(message.chunk, vec![1, 2, 3]);
     }
 }

@@ -1,7 +1,16 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-const PROTO_FILES: [&str; 6] = ["common", "health", "process", "filesystem", "pty", "code"];
+const PROTO_FILES: [&str; 8] = [
+    "common",
+    "lifecycle",
+    "network",
+    "health",
+    "process",
+    "filesystem",
+    "pty",
+    "code",
+];
 
 fn main() -> Result<(), Box<dyn Error>> {
     let proto_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../proto");

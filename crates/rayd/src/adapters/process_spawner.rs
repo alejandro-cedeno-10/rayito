@@ -1,7 +1,8 @@
 //! `fork`/`exec` adapter. On Linux the child gets its own process group, a
-//! from-scratch environment, resource limits and the privilege drop, all in
-//! one `pre_exec` (design D3). Off Linux every spawn answers `Unsupported`
-//! so the gRPC surface still routes and the domain tests still run.
+//! from-scratch environment, resource limits, the privilege drop and every
+//! descriptor above stdio marked close-on-exec, all in one `pre_exec`
+//! (design D3). Off Linux every spawn answers `Unsupported` so the gRPC
+//! surface still routes and the domain tests still run.
 
 use std::fmt;
 use std::sync::Arc;
@@ -60,6 +61,7 @@ pub use unsupported::{detect_spawn_platform, inherited_nofile_limits};
 mod unix {
     use std::ffi::CString;
     use std::io;
+    use std::os::fd::RawFd;
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Stdio};
     use std::sync::Arc;
@@ -191,9 +193,10 @@ mod unix {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(false);
-            // SAFETY: `apply` only issues setrlimit/setgroups/setgid/setuid on
-            // values computed before the fork; it allocates nothing and takes
-            // no locks, which is what async-signal-safety requires here.
+            // SAFETY: `apply` only issues setrlimit/setgroups/setgid/setuid and
+            // close_range (or fcntl) on values computed before the fork; it
+            // allocates nothing and takes no locks, which is what
+            // async-signal-safety requires here.
             unsafe { command.pre_exec(move || plan.apply()) };
             let child = command.spawn().map_err(|error| spawn_error(&error))?;
             let pid = child
@@ -217,15 +220,26 @@ mod unix {
         }
     }
 
+    /// First descriptor a child must not inherit: 0/1/2 are its stdio.
+    const FIRST_NON_STDIO_FD: RawFd = 3;
+
+    /// Upper bound of the `fcntl` fallback when `close_range` is missing,
+    /// so a huge `NOFILE` soft limit cannot stall every spawn.
+    const FALLBACK_DESCRIPTOR_CEILING: RawFd = 4096;
+
     /// Everything the child does between `fork` and `exec`, precomputed in
     /// the parent. Order matters: limits first (raising the hard `NOFILE`
-    /// needs privilege), then `setgroups`, `setgid`, `setuid`. Shared with
-    /// the kernel sidecar launcher so both children get the same posture;
-    /// only the sandbox's own processes and PTYs carry a CPU budget.
+    /// needs privilege), then `setgroups`, `setgid`, `setuid`, and last
+    /// every descriptor above stdio marked close-on-exec. Shared by the
+    /// three launchers of user code (processes, PTY shells and the kernel
+    /// sidecar, which receives nothing but its three pipes) so all of them
+    /// get the same posture; only the sandbox's own processes and PTYs
+    /// carry a CPU budget.
     pub(crate) struct PreExecPlan {
         limits: [(Resource, rlim_t, rlim_t); 3],
         cpu: Option<(rlim_t, rlim_t)>,
         identity: Option<(Vec<Gid>, Gid, Uid)>,
+        descriptor_ceiling: RawFd,
     }
 
     impl PreExecPlan {
@@ -253,6 +267,7 @@ mod unix {
                 limits,
                 cpu,
                 identity,
+                descriptor_ceiling: fallback_descriptor_ceiling(),
             })
         }
 
@@ -261,7 +276,8 @@ mod unix {
         /// it is clamped to the inherited hard limit instead of failing the
         /// spawn. `RLIMIT_CPU` only ever lowers (soft `N`, hard `N + grace`),
         /// so it never needs the clamp: `SIGXCPU` at the soft limit,
-        /// `SIGKILL` at the hard one.
+        /// `SIGKILL` at the hard one. The descriptor seal comes last, right
+        /// before `exec`.
         pub(crate) fn apply(&self) -> io::Result<()> {
             for (resource, desired, clamped) in &self.limits {
                 setrlimit(*resource, *desired, *desired)
@@ -276,8 +292,74 @@ mod unix {
                 setgid(*gid).map_err(io_error)?;
                 setuid(*uid).map_err(io_error)?;
             }
+            seal_descriptors_above_stdio(self.descriptor_ceiling);
             Ok(())
         }
+    }
+
+    /// `rayd` opens descriptors without `O_CLOEXEC` for an instant (`openpty`
+    /// hands back an inheritable master and slave that only become
+    /// close-on-exec a few instructions later) and may itself inherit some
+    /// (a runner's pipes). A `fork` from a concurrent spawn landing in that
+    /// window would hand another terminal's master to user code. Runs in
+    /// the child: `std` has already `dup2`ed stdin/stdout/stderr onto 0/1/2
+    /// (which clears their flag) and its own exec-error pipe is already
+    /// close-on-exec, so marking every descriptor from 3 up leaves stdio
+    /// intact and closes the window without closing anything before `exec`.
+    /// `close_range(CLOSE_RANGE_CLOEXEC)` (Linux 5.11) does it in one
+    /// syscall; any refusal (`ENOSYS` or `EINVAL` before 5.11, `EPERM` from
+    /// a seccomp profile older than the syscall) gets the bounded `fcntl`
+    /// loop instead of failing the spawn. Neither allocates.
+    #[cfg(target_os = "linux")]
+    fn seal_descriptors_above_stdio(ceiling: RawFd) {
+        if close_range_close_on_exec().is_err() {
+            mark_close_on_exec_below(ceiling);
+        }
+    }
+
+    /// Only the `fcntl` loop off Linux.
+    #[cfg(not(target_os = "linux"))]
+    fn seal_descriptors_above_stdio(ceiling: RawFd) {
+        mark_close_on_exec_below(ceiling);
+    }
+
+    /// Raw `syscall` because musl has no `close_range` wrapper; the call
+    /// takes three integers and touches no memory, and reading `errno`
+    /// afterwards is async-signal-safe.
+    #[cfg(target_os = "linux")]
+    fn close_range_close_on_exec() -> Result<(), Errno> {
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                FIRST_NON_STDIO_FD.unsigned_abs(),
+                libc::c_uint::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        };
+        if result == -1 {
+            return Err(Errno::last());
+        }
+        Ok(())
+    }
+
+    /// `F_SETFD` takes a plain integer and touches no memory; a number that
+    /// is not open answers `EBADF`, which is exactly "nothing to seal".
+    fn mark_close_on_exec_below(ceiling: RawFd) {
+        for fd in FIRST_NON_STDIO_FD..ceiling {
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
+    }
+
+    /// `rayd`'s own `NOFILE` soft limit bounds the numbers it can hold,
+    /// capped at [`FALLBACK_DESCRIPTOR_CEILING`]; read in the parent so
+    /// the child's lowered limit does not matter.
+    fn fallback_descriptor_ceiling() -> RawFd {
+        getrlimit(Resource::RLIMIT_NOFILE)
+            .ok()
+            .and_then(|(soft, _)| RawFd::try_from(soft).ok())
+            .map_or(FALLBACK_DESCRIPTOR_CEILING, |soft| {
+                soft.min(FALLBACK_DESCRIPTOR_CEILING)
+            })
     }
 
     fn limit_plan(resource: Resource, desired: u64) -> io::Result<(Resource, rlim_t, rlim_t)> {
@@ -354,6 +436,52 @@ mod unix {
 
     fn errno_name(errno: Errno) -> String {
         format!("{errno:?}")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+        use super::{
+            FALLBACK_DESCRIPTOR_CEILING, FIRST_NON_STDIO_FD, fallback_descriptor_ceiling,
+            mark_close_on_exec_below,
+        };
+
+        /// `/dev/null` without `O_CLOEXEC`, as `openpty` hands its pair back.
+        fn inheritable() -> OwnedFd {
+            let raw = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+            assert!(raw >= FIRST_NON_STDIO_FD, "open /dev/null");
+            let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+            assert!(!close_on_exec(&fd));
+            fd
+        }
+
+        fn close_on_exec(fd: &OwnedFd) -> bool {
+            let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+            flags & libc::FD_CLOEXEC != 0
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn close_range_marks_an_inheritable_descriptor() {
+            let fd = inheritable();
+            super::close_range_close_on_exec().unwrap();
+            assert!(close_on_exec(&fd));
+        }
+
+        #[test]
+        fn the_old_kernel_fallback_marks_an_inheritable_descriptor() {
+            let fd = inheritable();
+            mark_close_on_exec_below(fd.as_raw_fd() + 1);
+            assert!(close_on_exec(&fd));
+        }
+
+        #[test]
+        fn the_fallback_ceiling_is_bounded() {
+            let ceiling = fallback_descriptor_ceiling();
+            assert!(ceiling > FIRST_NON_STDIO_FD);
+            assert!(ceiling <= FALLBACK_DESCRIPTOR_CEILING);
+        }
     }
 }
 

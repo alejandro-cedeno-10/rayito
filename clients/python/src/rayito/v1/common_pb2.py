@@ -24,15 +24,17 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16rayito/v1/common.proto\x12\trayito.v1\"\"\n\x04User\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\";\n\x0bStreamError\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x02 \x01(\tR\x07message\"\x0b\n\tKeepAlive\"\xc4\x02\n\tEntryInfo\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\'\n\x04type\x18\x02 \x01(\x0e\x32\x13.rayito.v1.FileTypeR\x04type\x12\x12\n\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n\x04size\x18\x04 \x01(\x04R\x04size\x12\x12\n\x04mode\x18\x05 \x01(\rR\x04mode\x12 \n\x0bpermissions\x18\x06 \x01(\tR\x0bpermissions\x12\x14\n\x05owner\x18\x07 \x01(\tR\x05owner\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x31\n\x15modified_time_unix_ms\x18\t \x01(\x03R\x12modifiedTimeUnixMs\x12*\n\x0esymlink_target\x18\n \x01(\tH\x00R\rsymlinkTarget\x88\x01\x01\x42\x11\n\x0f_symlink_target*i\n\x08\x46ileType\x12\x19\n\x15\x46ILE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x46ILE_TYPE_FILE\x10\x01\x12\x17\n\x13\x46ILE_TYPE_DIRECTORY\x10\x02\x12\x15\n\x11\x46ILE_TYPE_SYMLINK\x10\x03\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16rayito/v1/common.proto\x12\trayito.v1\"\"\n\x04User\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\";\n\x0bStreamError\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x02 \x01(\tR\x07message\"\x0b\n\tKeepAlive\"\xc1\x03\n\tEntryInfo\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\'\n\x04type\x18\x02 \x01(\x0e\x32\x13.rayito.v1.FileTypeR\x04type\x12\x12\n\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n\x04size\x18\x04 \x01(\x04R\x04size\x12\x12\n\x04mode\x18\x05 \x01(\rR\x04mode\x12 \n\x0bpermissions\x18\x06 \x01(\tR\x0bpermissions\x12\x14\n\x05owner\x18\x07 \x01(\tR\x05owner\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x31\n\x15modified_time_unix_ms\x18\t \x01(\x03R\x12modifiedTimeUnixMs\x12*\n\x0esymlink_target\x18\n \x01(\tH\x00R\rsymlinkTarget\x88\x01\x01\x12>\n\x08metadata\x18\x0b \x03(\x0b\x32\".rayito.v1.EntryInfo.MetadataEntryR\x08metadata\x1a;\n\rMetadataEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\x42\x11\n\x0f_symlink_target*i\n\x08\x46ileType\x12\x19\n\x15\x46ILE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x46ILE_TYPE_FILE\x10\x01\x12\x17\n\x13\x46ILE_TYPE_DIRECTORY\x10\x02\x12\x15\n\x11\x46ILE_TYPE_SYMLINK\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.common_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_FILETYPE']._serialized_start=474
-  _globals['_FILETYPE']._serialized_end=579
+  _globals['_ENTRYINFO_METADATAENTRY']._loaded_options = None
+  _globals['_ENTRYINFO_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_FILETYPE']._serialized_start=599
+  _globals['_FILETYPE']._serialized_end=704
   _globals['_USER']._serialized_start=37
   _globals['_USER']._serialized_end=71
   _globals['_STREAMERROR']._serialized_start=73
@@ -40,5 +42,7 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_KEEPALIVE']._serialized_start=134
   _globals['_KEEPALIVE']._serialized_end=145
   _globals['_ENTRYINFO']._serialized_start=148
-  _globals['_ENTRYINFO']._serialized_end=472
+  _globals['_ENTRYINFO']._serialized_end=597
+  _globals['_ENTRYINFO_METADATAENTRY']._serialized_start=519
+  _globals['_ENTRYINFO_METADATAENTRY']._serialized_end=578
 # @@protoc_insertion_point(module_scope)

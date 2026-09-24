@@ -11,14 +11,17 @@ from datetime import UTC, datetime
 import grpc
 import pytest
 
-from rayito import IdlePolicy, SandboxHealth
+from rayito import EgressEnforcement, IdlePolicy, SandboxHealth
 from rayito._models import SandboxInfo
 from rayito._sandbox_base import (
     ACCESS_TOKEN_ENV_VAR,
     DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+    GuestFacts,
     ReadinessPoll,
     ReconnectOutcome,
     ReconnectPoll,
+    build_launch_plan,
+    guest_facts_from_health,
     health_from_proto,
     health_reconnected,
     is_suspending_reason,
@@ -26,18 +29,21 @@ from rayito._sandbox_base import (
     metadata_from_health,
     metadata_matches,
     metadata_probe_failure,
+    ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_access_token,
     warn_shared_access_token,
+    with_guest_facts,
 )
 from rayito.exceptions import (
+    AuthenticationException,
     InvalidArgumentException,
     SandboxException,
     SandboxNotFoundException,
     SandboxStateException,
 )
-from rayito.v1 import health_pb2
+from rayito.v1 import health_pb2, network_pb2
 
 from .conftest import ACCESS_TOKEN, FakeClock, FakeRpcError
 
@@ -275,3 +281,90 @@ def test_connect_path_never_warns(
         assert require_access_token(None) == ACCESS_TOKEN
 
     assert caplog.records == []
+
+
+GUEST_MEMORY_BYTES = 8_405_385_216
+
+
+def test_health_from_proto_maps_the_guest_facts() -> None:
+    response = health_pb2.HealthResponse(cpu_count=2, memory_total_bytes=GUEST_MEMORY_BYTES)
+    health = health_from_proto(response)
+    assert (health.cpu_count, health.memory_total_bytes) == (2, GUEST_MEMORY_BYTES)
+    bare = health_from_proto(health_pb2.HealthResponse())
+    assert (bare.cpu_count, bare.memory_total_bytes) == (0, 0)
+
+
+def test_guest_facts_turn_zeros_and_empty_strings_into_unknown() -> None:
+    current = health_pb2.HealthResponse(
+        agent_version="0.3.0", cpu_count=2, memory_total_bytes=GUEST_MEMORY_BYTES
+    )
+    assert guest_facts_from_health(current) == GuestFacts("0.3.0", 2, 8016)
+    pre_m9 = health_pb2.HealthResponse(agent_version="0.2.0")
+    assert guest_facts_from_health(pre_m9) == GuestFacts("0.2.0", None, None)
+    assert guest_facts_from_health(health_pb2.HealthResponse()) == GuestFacts()
+    tiny = health_pb2.HealthResponse(memory_total_bytes=1024)
+    assert guest_facts_from_health(tiny).memory_mb is None
+
+
+def test_guest_facts_come_only_from_a_ready_agent() -> None:
+    response = health_pb2.HealthResponse(
+        agent_ready=True, agent_version="0.3.0", cpu_count=2, memory_total_bytes=GUEST_MEMORY_BYTES
+    )
+    assert ready_guest_facts(None) == GuestFacts()
+    assert ready_guest_facts(response) == GuestFacts("0.3.0", 2, 8016)
+    booting = health_pb2.HealthResponse(agent_ready=False, agent_version="0.3.0", cpu_count=2)
+    assert ready_guest_facts(booting) == GuestFacts()
+
+
+def test_with_guest_facts_replaces_only_the_three_fields() -> None:
+    base = info("RUNNING")
+    filled = with_guest_facts(base, GuestFacts("0.3.0", 2, 8016))
+    assert (filled.agent_version, filled.cpu_count, filled.memory_mb) == ("0.3.0", 2, 8016)
+    assert filled.sandbox_id == base.sandbox_id and filled.state == base.state
+    cleared = with_guest_facts(filled, GuestFacts())
+    assert (cleared.agent_version, cleared.cpu_count, cleared.memory_mb) == (None, None, None)
+
+
+def test_require_access_token_names_the_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(ACCESS_TOKEN_ENV_VAR, raising=False)
+    with pytest.raises(AuthenticationException, match="get_metrics_history"):
+        require_access_token(None, operation="get_metrics_history()")
+    with pytest.raises(AuthenticationException, match="connect"):
+        require_access_token(None)
+
+
+def test_health_from_proto_fills_egress_enforcement() -> None:
+    enforced = health_pb2.HealthResponse(
+        egress_enforcement=network_pb2.EGRESS_ENFORCEMENT_GUEST_ROUTES
+    )
+    assert health_from_proto(enforced).egress_enforcement is EgressEnforcement.GUEST_ROUTES
+    older = health_from_proto(health_pb2.HealthResponse())
+    assert older.egress_enforcement is EgressEnforcement.UNSPECIFIED
+
+
+def test_launch_plan_repr_hides_the_access_token_and_the_payload() -> None:
+    """`LaunchPlan` lleva el access token y su `LaunchRequest` el
+    `runHookPayload` con los `envs`: ninguno sale en `repr()` (logs,
+    trazas de pytest, depuradores)."""
+    env_secret = "env-secret-value-1234"
+    plan = build_launch_plan(
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        region="us-east-1",
+        template_version=None,
+        timeout=300,
+        idle=None,
+        envs={"API_KEY": env_secret},
+        execution_role_arn=None,
+        allowed_ports=None,
+        ingress=None,
+        egress=None,
+        logging="disabled",
+        access_token=ACCESS_TOKEN,
+    )
+    assert plan.access_token == ACCESS_TOKEN
+    assert env_secret in plan.request.run_hook_payload
+    text = repr(plan)
+    assert ACCESS_TOKEN not in text
+    assert env_secret not in text
+    assert "access_token" not in text and "run_hook_payload" not in text
+    assert "rayito-base" in text

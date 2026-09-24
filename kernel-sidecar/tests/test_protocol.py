@@ -14,6 +14,7 @@ from rayito_kernel_sidecar.protocol import (
     MAX_RESULT_BYTES,
     OMITTED_MIME,
     OPS,
+    PLAIN_TEXT_MIME,
     REQUEST_FIELDS,
     ProtocolError,
     decode_request,
@@ -26,6 +27,7 @@ from rayito_kernel_sidecar.protocol import (
     serialise_mime,
     split_text_chunks,
     strip_ansi,
+    strip_plain_text_ansi,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "protocol_v1.jsonl"
@@ -148,6 +150,16 @@ def test_split_text_chunks_respects_utf8_boundaries() -> None:
 def test_strip_ansi() -> None:
     assert strip_ansi("\x1b[0;31mZeroDivisionError\x1b[0m: x") == "ZeroDivisionError: x"
     assert strip_ansi("plain") == "plain"
+
+
+def test_strip_plain_text_ansi() -> None:
+    bundle = {"text/plain": "\x1b[33m42\x1b[39m", "text/html": "<b>\x1b[1m</b>"}
+    assert strip_plain_text_ansi(bundle) == {"text/plain": "42", "text/html": "<b>\x1b[1m</b>"}
+    assert bundle["text/plain"] == "\x1b[33m42\x1b[39m"
+    assert strip_plain_text_ansi({"image/png": "iVBOR"}) == {"image/png": "iVBOR"}
+    omitted = {OMITTED_MIME: "text/plain: 9 bytes"}
+    assert strip_plain_text_ansi(omitted) == omitted
+    assert PLAIN_TEXT_MIME == "text/plain"
 
 
 class _Scalar:

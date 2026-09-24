@@ -8,8 +8,8 @@
 use std::time::{Duration, Instant};
 
 use rayd_core::filesystem::{
-    Entry, FilesystemError, FsIdentity, NameCache, RequestPath, WriteMessage, WriteSession,
-    WriteSink, WriteStep, build_entry,
+    Entry, FileMetadata, FilesystemError, FsIdentity, NameCache, RequestPath, WriteMessage,
+    WriteSession, WriteSink, WriteStep, build_entry, metadata_error,
 };
 use tokio_stream::{Stream, StreamExt};
 
@@ -43,6 +43,7 @@ struct OpenFile {
     path: RequestPath,
     name: String,
     identity: FsIdentity,
+    metadata: FileMetadata,
 }
 
 impl FilesystemManager {
@@ -64,6 +65,10 @@ impl FilesystemManager {
             tracing::info!(
                 rpc = "Write",
                 files = entries.len(),
+                metadata_keys = entries
+                    .iter()
+                    .map(|entry| entry.metadata.len())
+                    .sum::<usize>(),
                 duration_ms = started.elapsed().as_millis(),
                 "write completed"
             );
@@ -119,7 +124,12 @@ impl FilesystemManager {
         chunk: &mut Option<Vec<u8>>,
     ) -> Result<(), FilesystemError> {
         match step {
-            WriteStep::Begin { path, user, mode } => {
+            WriteStep::Begin {
+                path,
+                user,
+                mode,
+                metadata,
+            } => {
                 let identity = self.identity(user.as_deref())?;
                 let id = identity.clone();
                 let target = self
@@ -130,6 +140,7 @@ impl FilesystemManager {
                     path: target.path,
                     name: target.name,
                     identity,
+                    metadata,
                 });
             }
             WriteStep::Append { .. } => {
@@ -145,15 +156,28 @@ impl FilesystemManager {
         Ok(())
     }
 
+    /// The metadata goes on the temp file's descriptor right before the
+    /// rename, so the committed entry reports exactly the set it carries.
     async fn commit_file(&self, file: OpenFile) -> Result<Entry, FilesystemError> {
         let names = self.names();
         tokio::task::spawn_blocking(move || {
-            let raw = file
-                .sink
-                .commit(&file.name, &file.identity)
+            let OpenFile {
+                mut sink,
+                path,
+                name,
+                identity,
+                metadata,
+            } = file;
+            if !metadata.is_empty() {
+                sink.set_metadata(&metadata).map_err(metadata_error)?;
+            }
+            let raw = sink
+                .commit(&name, &identity)
                 .map_err(|error| FilesystemError::from_io("commit", error))?;
             let mut cache = NameCache::new(names.as_ref());
-            Ok(build_entry(raw, &file.path, &mut cache))
+            let mut entry = build_entry(raw, &path, &mut cache);
+            entry.metadata = metadata;
+            Ok(entry)
         })
         .await
         .unwrap_or_else(|error| Err(join_error(&error)))

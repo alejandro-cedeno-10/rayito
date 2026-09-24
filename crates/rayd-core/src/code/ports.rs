@@ -34,6 +34,9 @@ pub trait SidecarLink: Send + Sync {
     fn send(&self, line: &str) -> Result<(), SidecarIoError>;
     /// `SIGKILL` to the sidecar's process group; the exit sink still fires.
     fn kill(&self);
+    /// `SIGTERM` to the sidecar's process group: its own handler stops the
+    /// server and its kernels; the exit sink still fires.
+    fn terminate(&self);
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]

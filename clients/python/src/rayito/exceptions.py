@@ -44,6 +44,13 @@ class InvalidArgumentException(SandboxException):
     pass
 
 
+class LifecycleUnsupportedException(InvalidArgumentException):
+    """El agente del sandbox es anterior a M9 y no impone el timeout del
+    servidor (`Health` sin `lifecycle`, o `UNIMPLEMENTED` en `SetTimeout`):
+    hace falta publicar una imagen M9 o crear el sandbox sin `max_lifetime`
+    ni `on_timeout`."""
+
+
 class NotFoundException(SandboxException):
     pass
 
@@ -133,6 +140,33 @@ class DiskFullException(SandboxException):
     (`disk_full`); `grpc_code` es `RESOURCE_EXHAUSTED` en ambos casos."""
 
 
+class TransferException(SandboxException):
+    """Una transferencia por S3 (`download_url`, lectura grande) terminó
+    `FAILED` o `CANCELLED` con un `code` sin excepción propia
+    (`failed_precondition`, `unavailable`, `cancelled`, `internal` o uno
+    desconocido). `reason` es el token de `rayd` (`checksum_mismatch`,
+    `file_shrank`, `s3_unavailable`...); el mensaje empieza por `"<reason>: "`
+    y nunca contiene una URL, un bucket, una clave ni una ruta."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        reason: str,
+        grpc_code: grpc.StatusCode | None = None,
+    ) -> None:
+        super().__init__(message, grpc_code=grpc_code)
+        self.code = code
+        self.reason = reason
+
+
+class FileUploadException(TransferException):
+    """La importación de un `UploadTicket` o de una escritura grande terminó
+    `FAILED` o `CANCELLED` con un `code` sin excepción propia (el nombre de
+    E2B para una subida fallida)."""
+
+
 class RateLimitException(SandboxException):
     def __init__(
         self,
@@ -168,6 +202,18 @@ class AuthenticationException(Exception):
         self.aws_code = aws_code
 
 
+class GitAuthException(AuthenticationException):
+    """Un comando git del módulo `sandbox.git` falló por credenciales: el
+    remoto pidió usuario y contraseña (`GIT_TERMINAL_PROMPT=0` no deja
+    preguntar) o los rechazó. El mensaje nombra la acción de git y nunca
+    contiene la URL ni las credenciales."""
+
+
+class GitUpstreamException(SandboxException):
+    """`git push`/`git pull` sin rama remota configurada: el mensaje explica
+    cómo fijarla (`set_upstream=True` o `remote`/`branch` explícitos)."""
+
+
 class QuotaExceededException(Exception):
     def __init__(self, message: str, *, quota_code: str | None = None) -> None:
         super().__init__(message)
@@ -176,3 +222,23 @@ class QuotaExceededException(Exception):
 
 class CapacityException(Exception):
     pass
+
+
+class UnimplementedError(NotImplementedError):
+    """Una feature que este sandbox no puede ofrecer: falta configuración
+    (`upload_url` sin `transfer=S3Staging(...)`), la imagen corre un `rayd`
+    anterior o AWS no tiene la primitiva.
+
+    No es `SandboxException` a propósito, como `NotImplementedError`: un
+    `except SandboxException` no debe tragarse una feature ausente.
+    `feature` y `reason` describen qué falta y por qué; `doc` es la página
+    que lo explica (el shim de E2B pasa la de compatibilidad). El mensaje
+    nunca contiene datos del usuario.
+    """
+
+    def __init__(self, feature: str, reason: str, doc: str | None = None) -> None:
+        reference = "" if doc is None else f". Ver {doc}"
+        super().__init__(f"{feature} no está disponible en Rayito: {reason}{reference}")
+        self.feature = feature
+        self.reason = reason
+        self.doc = doc

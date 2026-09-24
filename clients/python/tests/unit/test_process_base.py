@@ -218,6 +218,16 @@ def test_outcome_special_statuses(event: process_pb2.EndEvent, expected: type[Ex
     assert not isinstance(outcome, CommandExitException)
 
 
+@pytest.mark.parametrize("error", [None, "sandbox_timeout"])
+def test_sandbox_timeout_end_is_a_timeout_and_terminal(error: str | None) -> None:
+    event = end("sandbox_timeout", exit_code=143, exited=False, signal=15, error=error)
+    outcome = outcome_from_end(event, "", "")
+    assert isinstance(outcome, TimeoutException)
+    assert "sandbox_timeout" in str(outcome)
+    message = process_pb2.ProcessEvent(end=event)
+    assert isinstance(ProcessEvents().consume(message, OutputAccumulator()), Ended)
+
+
 def test_truncated_outcome_names_the_recovery_path() -> None:
     outcome = outcome_from_end(
         end("output_truncated", exited=False, error="output_truncated"), "", ""
@@ -359,6 +369,12 @@ def test_metrics_mapping_uses_utc_timestamps() -> None:
     assert metrics.cpu_count == 2
     assert metrics.timestamp == datetime.fromtimestamp(1_789_000_000.123, tz=UTC)
     assert metrics.timestamp.tzinfo is UTC
+    assert metrics.mem_cache_bytes == 0
+
+
+def test_metrics_mapping_reads_the_page_cache() -> None:
+    response = health_pb2.MetricsResponse(cpu_count=1, mem_cache_bytes=512_000 * 1024)
+    assert metrics_from_proto(response).mem_cache_bytes == 512_000 * 1024
 
 
 def rpc_error(code: grpc.StatusCode, details: str = "boom", debug: str = "") -> FakeRpcError:

@@ -43,10 +43,9 @@ pub const ROOT_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 pub const IMDS_ROUTE_TABLE: &str = "100";
 pub const IMDS_RULE_PRIORITY: &str = "100";
 /// The sandbox user and anything it could become; never the platform's
-/// agent uids (991-994) nor root.
-pub const SANDBOX_UID_RANGE: &str = "1000-65535";
-/// `ip` as found on `PATH`, then where AL2023 keeps it for root.
-pub const IP_BINARIES: [&str; 2] = ["ip", "/usr/sbin/ip"];
+/// agent uids (991-994) nor root. The egress policy rules share it.
+pub const SANDBOX_UID_RANGE: &str = rayd_core::network::route_plan::SANDBOX_UID_RANGE;
+pub use super::ip_command::IP_BINARIES;
 /// The IPv6 IMDS endpoint (best effort, never part of `imds_blocked`).
 pub const IMDS_ADDRESS_V6: &str = "fd00:ec2::254";
 
@@ -170,17 +169,13 @@ pub use unsupported::{install_imds_block, probe_root, rule_present};
 
 #[cfg(unix)]
 mod unix {
-    use std::io;
-    use std::process::Stdio;
-
     use tokio::net::TcpStream;
-    use tokio::process::Command;
 
     use super::{
-        IMDS_ADDRESS, IMDS_ADDRESS_V6, IMDS_PORT, IMDS_ROUTE_TABLE, IMDS_RULE_PRIORITY,
-        IP_BINARIES, ImdsBlock, ROOT_CONNECT_TIMEOUT, SANDBOX_UID_RANGE, route_signature,
-        rule_signature,
+        IMDS_ADDRESS, IMDS_ADDRESS_V6, IMDS_PORT, IMDS_ROUTE_TABLE, IMDS_RULE_PRIORITY, ImdsBlock,
+        ROOT_CONNECT_TIMEOUT, SANDBOX_UID_RANGE, route_signature, rule_signature,
     };
+    use crate::adapters::ip_command::{IpOutput, run_ip};
 
     #[derive(Debug, Clone, Copy)]
     enum Family {
@@ -211,37 +206,13 @@ mod unix {
         }
     }
 
-    struct Completed {
-        code: i32,
-        stdout: String,
-    }
-
-    /// Runs `ip <family> <args>` with the first binary that exists; stdout
-    /// comes back for the `show` checks, stderr is discarded.
-    async fn ip(family: Family, args: &[&str]) -> Result<Completed, String> {
-        let mut missing = None;
-        for binary in IP_BINARIES {
-            let output = Command::new(binary)
-                .arg(family.flag())
-                .args(args)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .await;
-            match output {
-                Ok(output) => {
-                    return Ok(Completed {
-                        code: output.status.code().unwrap_or(-1),
-                        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    missing = Some(format!("{binary} not found"));
-                }
-                Err(error) => return Err(format!("{binary} spawn failed: {}", error.kind())),
-            }
-        }
-        Err(missing.unwrap_or_else(|| "ip not found".to_owned()))
+    /// Runs `ip <family> <args>` through the shared runner; stdout comes
+    /// back for the `show` checks, stderr is discarded.
+    async fn ip(family: Family, args: &[&str]) -> Result<IpOutput, String> {
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.push(family.flag());
+        full.extend_from_slice(args);
+        run_ip(&full).await
     }
 
     async fn rule_installed(family: Family) -> bool {
@@ -288,7 +259,7 @@ mod unix {
         expect_success(family, "route replace", &ip(family, &route).await?)
     }
 
-    fn expect_success(family: Family, step: &str, completed: &Completed) -> Result<(), String> {
+    fn expect_success(family: Family, step: &str, completed: &IpOutput) -> Result<(), String> {
         if completed.code == 0 {
             Ok(())
         } else {

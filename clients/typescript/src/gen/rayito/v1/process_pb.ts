@@ -229,10 +229,13 @@ export type EndEvent = Message<"rayito.v1.EndEvent"> & {
   exited: boolean;
 
   /**
-   * "exited" | "signaled" | "timeout" | "suspending" | "output_truncated".
+   * "exited" | "signaled" | "timeout" | "suspending" | "output_truncated" |
+   * "sandbox_timeout".
    * "output_truncated" cierra sólo este stream (el proceso sigue vivo) cuando
    * el suscriptor no consume durante 30 s; error.code = "output_truncated" y
    * el cliente puede volver con Connect(pid, from_seq).
+   * "sandbox_timeout" cierra el stream al vencer el plazo lógico (ADR-011);
+   * error.code = "sandbox_timeout".
    *
    * @generated from field: string status = 3;
    */

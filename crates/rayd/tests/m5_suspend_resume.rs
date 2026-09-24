@@ -31,7 +31,7 @@ use rayd::adapters::{
     OsRandomSource, PlatformMetricsProbe, TokioSidecarLauncher, detect_spawn_platform,
 };
 use rayd::code::{
-    CodeManager, CodeSettings, KernelKiller, OpTimeouts, SidecarSupervisor, sidecar_identity,
+    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
 };
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{Services, StreamSettings};
@@ -220,9 +220,12 @@ async fn harness_with(options: Options) -> Harness {
             files,
             code: manager.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
             suspend: suspend.clone(),
             imds: Arc::new(rayd::adapters::ImdsState::default()),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+            network: rayd::network::NetworkManager::unavailable(session.clone()),
         },
         StreamSettings {
             keepalive_interval: KEEPALIVE,
@@ -275,7 +278,7 @@ fn code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let kernel_killer: KernelKiller = Arc::new(|_| {});
+    let kernel_killer: KernelSignaller = Arc::new(|_, _| {});
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
@@ -771,6 +774,7 @@ impl Harness {
                 user: None,
                 mode: None,
                 chunk: vec![7; 1024],
+                metadata: HashMap::new(),
             })
             .await
             .unwrap();
@@ -1093,10 +1097,15 @@ async fn a_lost_kernel_is_restarted_and_kernel_state_lost_clears_on_the_next_pro
     let (_, resumed) = harness.post(Hook::Resume, None).await;
     assert_eq!(resumed.kernel_state_lost, Some(true));
     assert!(harness.health().await.kernel_state_lost);
-    let restart = harness
-        .wait_for_request("restart_context", Duration::from_secs(3))
-        .await;
-    assert_eq!(restart["context_id"], ctx);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !harness
+        .requests_of("restart_context")
+        .iter()
+        .any(|request| request["context_id"] == ctx)
+    {
+        assert!(Instant::now() < deadline, "no restart_context for {ctx}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut reattached = harness.reattach(&ctx, &execution_id, 1).await.unwrap();
     let tail = drain_execute(&mut reattached).await;

@@ -506,6 +506,8 @@ class LaunchKwargDefaults:
     template: object = None
     template_version: object = None
     timeout: object = DEFAULT_TIMEOUT_SECONDS
+    max_lifetime: object = None
+    on_timeout: object = None
     idle: object = DEFAULT_IDLE_POLICY
     envs: object = None
     metadata: object = None
@@ -514,6 +516,8 @@ class LaunchKwargDefaults:
     allowed_ports: object = None
     ingress: object = None
     egress: object = None
+    network: object = None
+    allow_internet_access: object = True
     logging: object = "disabled"
     region: object = None
     session: object = None

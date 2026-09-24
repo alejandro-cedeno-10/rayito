@@ -60,7 +60,9 @@ class PersistenceClient:
         destination = resolve_target(target, bound)
         deadline = validate_persist_timeout(timeout)
         request = checkpoint_request(destination, exclude, user)
-        logger.info("sandbox %s: checkpoint hacia %s", self._sandbox.sandbox_id, destination.uri)
+        self._sandbox._logger_or(logger).info(
+            "sandbox %s: checkpoint hacia %s", self._sandbox.sandbox_id, destination.uri
+        )
         call, first = self._open(
             lambda stub: stub.Checkpoint(request, timeout=deadline), rpc="Checkpoint"
         )
@@ -68,7 +70,7 @@ class PersistenceClient:
             for event in self._events(call, first):
                 result = handle_checkpoint_event(event, destination, on_progress)
                 if result is not None:
-                    logger.info(
+                    self._sandbox._logger_or(logger).info(
                         "sandbox %s: checkpoint completo en %s (%d ficheros, %d bytes)",
                         self._sandbox.sandbox_id,
                         destination.uri,
@@ -94,7 +96,9 @@ class PersistenceClient:
         origin = resolve_target(source, bound)
         deadline = validate_persist_timeout(timeout)
         request = restore_request(origin, user)
-        logger.info("sandbox %s: restore desde %s", self._sandbox.sandbox_id, origin.uri)
+        self._sandbox._logger_or(logger).info(
+            "sandbox %s: restore desde %s", self._sandbox.sandbox_id, origin.uri
+        )
         call, first = self._open(
             lambda stub: stub.Restore(request, timeout=deadline), rpc="Restore"
         )
@@ -102,7 +106,7 @@ class PersistenceClient:
             for event in self._events(call, first):
                 result = handle_restore_event(event, origin, on_progress)
                 if result is not None:
-                    logger.info(
+                    self._sandbox._logger_or(logger).info(
                         "sandbox %s: restore completo desde %s (%d ficheros, %d bytes)",
                         self._sandbox.sandbox_id,
                         origin.uri,

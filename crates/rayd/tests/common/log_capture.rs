@@ -40,6 +40,8 @@ impl<'a> MakeWriter<'a> for LogCapture {
 
 /// Installs the capturing subscriber once per test binary; it must run
 /// before anything calls `rayd::logging::init()` or the stderr writer wins.
+/// The shared harness calls it first thing, so with parallel tests the
+/// capture is the binary's subscriber whichever test starts first.
 pub fn log_capture() -> LogCapture {
     static CAPTURE: OnceLock<LogCapture> = OnceLock::new();
     CAPTURE

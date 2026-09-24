@@ -4,9 +4,12 @@
 //! is one non-recursive watch per directory, so the translator also picks
 //! the directories that appeared inside the root (for the pump to follow)
 //! and drops the self events (`IN_DELETE_SELF`, `IN_MOVE_SELF`) of a
-//! followed directory, which its parent's watch already reported.
+//! followed directory, which its parent's watch already reported. An
+//! atomic `Write` lands its temp file over the destination with one
+//! rename; the translator pairs the two halves by their rename cookie and
+//! reports the landing as the `WRITE` an E2B `files.write` produces.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use super::TEMP_PREFIX;
 use super::path::DenyList;
@@ -64,11 +67,20 @@ pub enum RawWatchKind {
     Other,
 }
 
+/// `cookie` is the backend's rename cookie (inotify `cookie`), shared by
+/// the `RenameFrom` and `RenameTo` halves of one `rename(2)`; `None` for
+/// every other kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawWatchEvent {
     pub kind: RawWatchKind,
     pub paths: Vec<String>,
+    pub cookie: Option<usize>,
 }
+
+/// Temp-file renames whose destination half has not arrived yet. Renames
+/// in different directories of a recursive watch may interleave, so more
+/// than one can be pending; the oldest is forgotten past this bound.
+const MAX_PENDING_LANDINGS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchEnd {
@@ -89,6 +101,7 @@ pub struct WatchTranslator {
     deny: DenyList,
     followed: BTreeSet<String>,
     pending_self_removal: Option<String>,
+    pending_landings: VecDeque<usize>,
 }
 
 impl WatchTranslator {
@@ -99,6 +112,7 @@ impl WatchTranslator {
             deny,
             followed: BTreeSet::new(),
             pending_self_removal: None,
+            pending_landings: VecDeque::new(),
         }
     }
 
@@ -138,7 +152,8 @@ impl WatchTranslator {
     /// of atomic writes are dropped; a removal or rename of the root itself
     /// ends the watch; `RenameBoth` yields the `from` event before the `to`
     /// event; the second removal a followed directory reports for itself
-    /// is dropped.
+    /// is dropped; the `RenameTo` that lands an atomic write's temp file
+    /// (same cookie as a temp-name `RenameFrom`) becomes a `WRITE`.
     #[must_use]
     pub fn translate(&mut self, raw: &RawWatchEvent) -> Translation {
         match raw.kind {
@@ -160,6 +175,7 @@ impl WatchTranslator {
                     return Translation::Ignore;
                 }
                 self.track_followed(kind, &raw.paths);
+                let kind = self.landing_kind(kind, raw);
                 let events = self.events_for(kind, &raw.paths);
                 if events.is_empty() {
                     Translation::Ignore
@@ -210,6 +226,37 @@ impl WatchTranslator {
             for path in paths {
                 self.followed.remove(path);
             }
+        }
+    }
+
+    /// A temp-name `RenameFrom` with a cookie is remembered; the `RenameTo`
+    /// carrying the same cookie is the destination of an atomic write and
+    /// is reported as a data modification. Any other rename keeps its kind.
+    fn landing_kind(&mut self, kind: RawWatchKind, raw: &RawWatchEvent) -> RawWatchKind {
+        match (kind, raw.cookie) {
+            (RawWatchKind::RenameFrom, Some(cookie))
+                if !raw.paths.is_empty() && raw.paths.iter().all(|path| is_temp_name(path)) =>
+            {
+                if self.pending_landings.len() == MAX_PENDING_LANDINGS {
+                    self.pending_landings.pop_front();
+                }
+                self.pending_landings.push_back(cookie);
+                kind
+            }
+            (RawWatchKind::RenameTo, Some(cookie)) => {
+                match self
+                    .pending_landings
+                    .iter()
+                    .position(|pending| *pending == cookie)
+                {
+                    Some(index) => {
+                        self.pending_landings.remove(index);
+                        RawWatchKind::DataModified
+                    }
+                    None => kind,
+                }
+            }
+            _ => kind,
         }
     }
 
@@ -264,6 +311,26 @@ mod tests {
         RawWatchEvent {
             kind,
             paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+            cookie: None,
+        }
+    }
+
+    fn renamed(kind: RawWatchKind, path: &str, cookie: usize) -> RawWatchEvent {
+        RawWatchEvent {
+            kind,
+            paths: vec![path.to_owned()],
+            cookie: Some(cookie),
+        }
+    }
+
+    fn typed(translation: Translation) -> Vec<(String, WatchEventKind)> {
+        match translation {
+            Translation::Events(events) => events
+                .into_iter()
+                .map(|event| (event.name, event.kind))
+                .collect(),
+            Translation::Ignore => Vec::new(),
+            Translation::End(end) => panic!("unexpected end {end:?}"),
         }
     }
 
@@ -366,6 +433,102 @@ mod tests {
         assert_eq!(
             events(RawWatchKind::RenameBoth, &[&temp, &to]),
             vec![("new.txt".to_owned(), WatchEventKind::Rename)]
+        );
+    }
+
+    #[test]
+    fn an_atomic_write_landing_is_one_write_of_the_destination() {
+        let temp = format!("{ROOT}/.rayito-tmp-abc123");
+        let file = format!("{ROOT}/note.txt");
+        let mut translator = translator();
+        let mut seen = Vec::new();
+        for raw in [
+            raw(RawWatchKind::Create, &[&temp]),
+            raw(RawWatchKind::DataModified, &[&temp]),
+            raw(RawWatchKind::MetadataModified, &[&temp]),
+            renamed(RawWatchKind::RenameFrom, &temp, 9),
+            renamed(RawWatchKind::RenameTo, &file, 9),
+        ] {
+            seen.extend(typed(translator.translate(&raw)));
+        }
+        assert_eq!(seen, vec![("note.txt".to_owned(), WatchEventKind::Write)]);
+        assert_eq!(
+            typed(translator.translate(&renamed(RawWatchKind::RenameTo, &file, 9))),
+            vec![("note.txt".to_owned(), WatchEventKind::Rename)],
+            "a cookie lands once"
+        );
+    }
+
+    #[test]
+    fn interleaved_landings_pair_by_cookie_and_plain_moves_stay_renames() {
+        let mut translator = translator();
+        let first = format!("{ROOT}/.rayito-tmp-one");
+        let second = format!("{ROOT}/sub/.rayito-tmp-two");
+        let _ = translator.translate(&renamed(RawWatchKind::RenameFrom, &first, 1));
+        let _ = translator.translate(&renamed(RawWatchKind::RenameFrom, &second, 2));
+        assert_eq!(
+            typed(translator.translate(&renamed(
+                RawWatchKind::RenameTo,
+                &format!("{ROOT}/sub/b.txt"),
+                2
+            ))),
+            vec![("sub/b.txt".to_owned(), WatchEventKind::Write)]
+        );
+        assert_eq!(
+            typed(translator.translate(&renamed(
+                RawWatchKind::RenameTo,
+                &format!("{ROOT}/a.txt"),
+                1
+            ))),
+            vec![("a.txt".to_owned(), WatchEventKind::Write)]
+        );
+        let old = format!("{ROOT}/old.txt");
+        let new = format!("{ROOT}/new.txt");
+        let mut moved = Vec::new();
+        moved.extend(typed(translator.translate(&renamed(
+            RawWatchKind::RenameFrom,
+            &old,
+            3,
+        ))));
+        moved.extend(typed(translator.translate(&renamed(
+            RawWatchKind::RenameTo,
+            &new,
+            3,
+        ))));
+        moved.extend(typed(translator.translate(&raw(
+            RawWatchKind::RenameTo,
+            &[&format!("{ROOT}/moved-in.txt")],
+        ))));
+        assert_eq!(
+            moved,
+            vec![
+                ("old.txt".to_owned(), WatchEventKind::Rename),
+                ("new.txt".to_owned(), WatchEventKind::Rename),
+                ("moved-in.txt".to_owned(), WatchEventKind::Rename),
+            ]
+        );
+    }
+
+    #[test]
+    fn pending_landings_are_bounded() {
+        let mut translator = translator();
+        let temp = format!("{ROOT}/.rayito-tmp-x");
+        for cookie in 0..=MAX_PENDING_LANDINGS {
+            let _ = translator.translate(&renamed(RawWatchKind::RenameFrom, &temp, cookie));
+        }
+        let file = format!("{ROOT}/f.txt");
+        assert_eq!(
+            typed(translator.translate(&renamed(RawWatchKind::RenameTo, &file, 0))),
+            vec![("f.txt".to_owned(), WatchEventKind::Rename)],
+            "the oldest pending landing was forgotten"
+        );
+        assert_eq!(
+            typed(translator.translate(&renamed(
+                RawWatchKind::RenameTo,
+                &file,
+                MAX_PENDING_LANDINGS
+            ))),
+            vec![("f.txt".to_owned(), WatchEventKind::Write)]
         );
     }
 

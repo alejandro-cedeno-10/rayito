@@ -6,9 +6,24 @@ medición Q44 (un MicroVM sin conector de egress, ¿sale a internet?).
 
 Sigue `openspec/changes/m6-e2b-compat/design.md` D13 en el mismo orden; cada
 bloque es una función para que un fallo diga qué contrato se rompió. Dos
-sandboxes (900 s y 300 s), un ciclo suspend/resume, ≈ $0.03. Los tiempos se
+sandboxes (900 s y 300 s) más el que termina la compuerta de egress (tope
+900 s), un ciclo suspend/resume, ≈ $0.03. Los tiempos se
 imprimen con su nombre de `AWS_API_NOTES.md` §16 (`kernel_ready_s`,
 `get_info_metadata_s`, `list_metadata_s`, `list_metadata_n`).
+
+Ajustes de M9 (`m9-e2b-v2-surface`, tarea 11.6), sólo donde la semántica
+2.x cambió: `timeout` es el plazo lógico de `rayd` bajo `max_lifetime`
+(840 s bajo un tope de 900 s, el guardrail de `conftest.py`), así que
+`end_at` es ese plazo con una tolerancia de arranque; `pause()` devuelve un
+bool; `get_metrics()` es una serie; `set_timeout` está mapeado (se acorta
+a 300 s, dentro del tope); `upload_url` firma en S3 (lo cubre
+`test_m9_transfer.py`), así que el miembro sin equivalente que se comprueba
+es `create_snapshot`; y un kernel `js` que la imagen base no trae es
+`UnimplementedError` nombrando `rayito-base-poly`. En `test_no_egress_connector`
+(`m9-egress-policy` D1 y plan de migración) `allow_internet_access=False` ya
+no se rechaza antes de AWS: en `rayito-base`, sin aplicación de egress en el
+guest, la compuerta del SDK termina el MicroVM y lanza `UnimplementedError`
+(falla cerrado; nunca queda un sandbox con la red abierta en silencio).
 """
 
 from __future__ import annotations
@@ -18,7 +33,6 @@ import time
 import uuid
 from collections.abc import Callable
 
-import grpc
 import pytest
 
 import rayito
@@ -39,7 +53,10 @@ from rayito.exceptions import InvalidArgumentException, SandboxException, Timeou
 from .conftest import BootTimings, E2ESettings
 from .test_m5_pty_suspend_resume import output_line, read_until
 
-COOKBOOK_SANDBOX_TIMEOUT_SECONDS = 900
+COOKBOOK_MAX_LIFETIME_SECONDS = 900
+COOKBOOK_SANDBOX_TIMEOUT_SECONDS = 840
+END_AT_TOLERANCE_SECONDS = 60
+SET_TIMEOUT_SECONDS = 300
 EGRESS_SANDBOX_TIMEOUT_SECONDS = 300
 EGRESS_PROBE_TIMEOUT_SECONDS = 15
 PTY_ECHO_BUDGET_SECONDS = 10.0
@@ -90,6 +107,7 @@ def test_e2b_shim_cookbook(
     sbx = Sandbox(
         template_arn,
         timeout=COOKBOOK_SANDBOX_TIMEOUT_SECONDS,
+        max_lifetime=COOKBOOK_MAX_LIFETIME_SECONDS,
         metadata=metadata,
         envs={"E2B_TEST": "1"},
         execution_role_arn=e2e_settings.execution_role_arn,
@@ -165,7 +183,10 @@ def step_6_instance_get_info(sbx: Sandbox, metadata: dict[str, str], template_ar
     assert info.template_id == template_arn
     assert info.name == template_arn.rsplit(":", 1)[-1]
     assert info.end_at is not None
-    assert (info.end_at - info.started_at).total_seconds() == COOKBOOK_SANDBOX_TIMEOUT_SECONDS
+    deadline_s = (info.end_at - info.started_at).total_seconds()
+    assert abs(deadline_s - COOKBOOK_SANDBOX_TIMEOUT_SECONDS) <= END_AT_TOLERANCE_SECONDS, (
+        deadline_s
+    )
 
 
 def step_7_class_get_info(
@@ -227,23 +248,22 @@ def step_9_native_list(
 
 def step_10_metrics_and_unimplemented(sbx: Sandbox) -> None:
     metrics = sbx.get_metrics()
-    assert len(metrics) == 1 and metrics[0].mem_total > 0 and metrics[0].cpu_count >= 1
+    assert len(metrics) >= 1 and metrics[-1].mem_total > 0 and metrics[-1].cpu_count >= 1
+    sbx.set_timeout(SET_TIMEOUT_SECONDS)
     with pytest.raises(UnimplementedError):
-        sbx.set_timeout(60)
-    with pytest.raises(UnimplementedError):
-        sbx.upload_url("/x")
+        sbx.create_snapshot()
     with pytest.raises(UnimplementedError):
         sbx.run_code("1", language="r")
-    with pytest.raises(InvalidArgumentException) as not_shipped:
+    with pytest.raises(UnimplementedError, match="rayito-base-poly"):
         sbx.run_code("1", language="js")
-    assert not_shipped.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
-    assert "rayito-base-poly" in str(not_shipped.value)
 
 
 def step_11_pause_then_connect(
     sbx: Sandbox, metadata: dict[str, str], control_plane: LambdaMicrovmsControlPlane
 ) -> Sandbox:
-    pause_s = timed("beta_pause() -> SUSPENDED (pause_s)", sbx.beta_pause)
+    paused: list[bool] = []
+    pause_s = timed("beta_pause() -> SUSPENDED (pause_s)", lambda: paused.append(sbx.beta_pause()))
+    assert paused == [True]
     assert pause_s < PAUSE_BUDGET_SECONDS
     assert sbx.native.info.state == "SUSPENDED"
     started = time.perf_counter()
@@ -287,12 +307,15 @@ def test_no_egress_connector(
 ) -> None:
     """Q44 (medido 2026-09-16): un MicroVM lanzado sin `egressNetworkConnectors`
     hereda el conector de egress de la versión de imagen (`INTERNET_EGRESS`
-    en `rayito-base`) y **sigue saliendo a internet**. Por eso el shim rechaza
-    `allow_internet_access=False` con `UnimplementedError` antes de tocar AWS
-    (design D11) y la medición se repite aquí con el SDK nativo, para que un
-    cambio de comportamiento de AWS se note en la primera pasada."""
-    with pytest.raises(UnimplementedError, match="allow_internet_access=False"):
-        Sandbox(template_arn, allow_internet_access=False, control_plane=control_plane)
+    en `rayito-base`) y **sigue saliendo a internet**. Desde `m9-egress-policy`
+    (D1, plan de migración) el shim mapea `allow_internet_access=False` a
+    `deny_out=[ALL_TRAFFIC]`: en `rayito-base-caps` se aplica en el guest y en
+    `rayito-base` (la plantilla de este e2e, sin `CAP_NET_ADMIN`) la compuerta
+    del SDK termina el MicroVM y lanza `UnimplementedError`. Aquí se comprueba
+    ese fallo cerrado (error y ningún MicroVM nuevo vivo) con el tope de 900 s,
+    y la medición Q44 se repite con el SDK nativo, para que un cambio de
+    comportamiento de AWS se note en la primera pasada."""
+    step_internet_off_fails_closed(e2e_settings, control_plane, template_arn)
 
     started = time.perf_counter()
     with rayito.Sandbox.create(
@@ -321,6 +344,56 @@ def test_no_egress_connector(
         f"Q44 cambió ({outcome}): sin conector de egress ya no hay salida a internet; "
         "revisa AWS_API_NOTES.md Q44 y vuelve a mapear allow_internet_access=False"
     )
+
+
+def live_ids(control_plane: LambdaMicrovmsControlPlane, template_arn: str) -> set[str]:
+    """Los MicroVMs de la imagen que no están `TERMINATING`/`TERMINATED`."""
+    return {item.sandbox_id for item in control_plane.list_microvms(image_arn=template_arn)}
+
+
+def step_internet_off_fails_closed(
+    e2e_settings: E2ESettings,
+    control_plane: LambdaMicrovmsControlPlane,
+    template_arn: str,
+) -> None:
+    """`allow_internet_access=False` en una imagen sin aplicación de egress:
+    `UnimplementedError` y el MicroVM lanzado queda terminado."""
+    before = live_ids(control_plane, template_arn)
+    started = time.perf_counter()
+    try:
+        leaked = Sandbox.create(
+            template_arn,
+            timeout=EGRESS_SANDBOX_TIMEOUT_SECONDS,
+            allow_internet_access=False,
+            max_lifetime=COOKBOOK_MAX_LIFETIME_SECONDS,
+            execution_role_arn=e2e_settings.execution_role_arn,
+            logging=e2e_settings.logging,
+            control_plane=control_plane,
+        )
+    except UnimplementedError as error:
+        gate = error
+    else:
+        with contextlib.suppress(Exception):
+            leaked.kill()
+        pytest.fail(
+            f"allow_internet_access=False en {e2e_settings.template} devolvió un sandbox: "
+            "la imagen aplica egress en el guest o la compuerta de m9-egress-policy no saltó"
+        )
+    report(
+        "allow_internet_access=False -> UnimplementedError (compuerta)",
+        time.perf_counter() - started,
+    )
+    assert gate.feature == "allow_internet_access=False", gate
+    assert "rayito-base-caps" in gate.reason, gate
+    assert "el sandbox se ha terminado" in gate.reason, gate
+
+    def no_new_live() -> bool:
+        return not (live_ids(control_plane, template_arn) - before)
+
+    seconds = wait_until(
+        no_new_live, TERMINATE_BUDGET_SECONDS, "terminar el MicroVM de la compuerta"
+    )
+    report("compuerta -> ningún MicroVM nuevo vivo", seconds)
 
 
 def egress_probe_outcome(sbx: rayito.Sandbox) -> str:

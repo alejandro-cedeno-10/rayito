@@ -48,6 +48,7 @@ markdown_extensions:
 nav:
   - Inicio: index.md
   - Quickstart: quickstart.md
+  - Imágenes e IAM: images.md
   - CLI: cli.md
   - Conceptos: concepts.md
   - Referencia de API: api.md
@@ -55,8 +56,14 @@ nav:
   - Seguridad: security.md
   - Límites: limits.md
   - Compatibilidad con E2B: e2b-compat.md
+  - Paridad con E2B: e2b-parity.md
   - Servidor MCP: mcp.md
   - Modelo de costes: cost.md
   - Pool de sandboxes: pool.md
   - Persistencia: persistence.md
+  - Plazo del servidor: lifecycle.md
+  - Ficheros y transferencias: files.md
+  - Red saliente: network.md
+  - Métricas y listado: observability.md
+  - Git: git.md
   - Verificar una release: verify.md

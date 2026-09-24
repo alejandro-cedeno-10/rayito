@@ -6,6 +6,7 @@ tras un suspend/resume es la de `CommandHandle` como corrutinas."""
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -23,6 +24,7 @@ from rayito._process_base import (
     OutputAccumulator,
     OutputCallback,
     OutputChunk,
+    WaitCallbacks,
     build_start_request,
     deadline_at,
     encode_stdin,
@@ -282,9 +284,20 @@ class AsyncCommandHandle:
     def reconnects(self) -> int:
         return self._reconnects
 
-    async def wait(self) -> CommandResult:
-        async for _ in self:
-            pass
+    async def wait(
+        self,
+        on_pty: Callable[[bytes], Any] | None = None,
+        on_stdout: Callable[[str], Any] | None = None,
+        on_stderr: Callable[[str], Any] | None = None,
+    ) -> CommandResult:
+        """Como `CommandHandle.wait`; los callbacks pueden ser síncronos o
+        `async` (su resultado se espera si es awaitable antes del siguiente
+        chunk)."""
+        callbacks = WaitCallbacks(on_pty=on_pty, on_stdout=on_stdout, on_stderr=on_stderr)
+        async for chunk in self:
+            for result in callbacks.deliver(chunk):
+                if inspect.isawaitable(result):
+                    await result
         return self._progress.resolve()
 
     async def kill(self) -> bool:
@@ -373,7 +386,7 @@ class AsyncCommandHandle:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise self._progress.fail(exc) from exc
-                logger.info(
+                self._sandbox._logger_or(logger).info(
                     "pid %s: el gate del agente sigue cerrado (%s); reintento", self.pid, exc
                 )
                 await asyncio.sleep(delay)
@@ -384,7 +397,7 @@ class AsyncCommandHandle:
         return reason
 
     async def _resubscribe_from_live(self, exc: NotFoundException) -> Any:
-        logger.warning(
+        self._sandbox._logger_or(logger).warning(
             "pid %s: se perdió salida entre el seq %s y lo que el agente retiene; "
             "se sigue desde la salida nueva",
             self.pid,

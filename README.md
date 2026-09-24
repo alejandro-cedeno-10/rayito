@@ -36,16 +36,17 @@ with SandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
     sbx.kill()
 ```
 
-Si vienes del SDK de E2B, `rayito.e2b` es un drop-in a nivel de import: lo
-que Lambda MicroVMs no puede hacer lanza `UnimplementedError` en vez de
-aproximarse en silencio (`docs/site/docs/e2b-compat.md`).
+Si vienes del SDK de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
+son un drop-in a nivel de import de E2B 2.x: lo que Lambda MicroVMs no puede
+hacer lanza `UnimplementedError` en vez de aproximarse en silencio
+(`docs/site/docs/e2b-compat.md`). Desde M9 el shim exige una imagen M9.
 
 ```python
 from rayito.e2b import Sandbox          # antes: from e2b_code_interpreter import Sandbox
 
-with Sandbox(timeout=300, metadata={"run": "42"}) as sbx:
+with Sandbox.create(timeout=300, metadata={"run": "42"}) as sbx:
     print(sbx.run_code("1 + 1").text)
-    sbx.set_timeout(600)                # UnimplementedError: no existe UpdateMicrovm
+    sbx.set_timeout(600)                # SetTimeout: rayd mueve el plazo (tope max_lifetime, 3600 s por defecto)
 ```
 
 ## Cómo funciona
@@ -70,7 +71,8 @@ tu proceso (Python / TypeScript)                AWS, tu cuenta
   como uid 1000. `rayd` corre como root y es el único que toca los hooks de
   Lambda. Con `run_code(code, language="bash")` la celda va a un kernel bash
   que la variante de imagen `rayito-base-poly` arranca en la primera celda
-  (`docs/site/docs/kernels.md`); `javascript` queda reservado como nombre.
+  (`docs/site/docs/kernels.md`); desde M9 esa misma variante sirve
+  `language="javascript"` y `"typescript"` con el kernel de Deno.
 - **Desde qué lenguajes.** Hoy, Python y TypeScript. Cualquier otro lenguaje
   con un cliente gRPC puede hablar con `rayd` generando el cliente desde
   `proto/rayito/v1/`: el contrato es la fuente de verdad y los SDKs añaden
@@ -199,9 +201,9 @@ except DiskFullException:               # reserva de 256 MiB comprobada antes de
 Un MicroVM vive como mucho 8 h y `kill()` borra su disco. Con `persist=`,
 `rayd` guarda el `HOME` del usuario en tu bucket de S3 (como root, con el
 execution role; el código del sandbox sigue sin ver IMDS en `rayito-base-caps`)
-y lo restaura en el sandbox siguiente. `reincarnate()` es la respuesta al
-`set_timeout` de E2B: checkpoint, VM nueva con las mismas opciones, restore y
-`kill()` de la vieja. Sobreviven los ficheros; no las variables del kernel ni
+y lo restaura en el sandbox siguiente. `reincarnate()` es la respuesta a lo
+que `set_timeout` no puede dar, pasar de `max_lifetime` (ADR-011): checkpoint,
+VM nueva con las mismas opciones, restore y `kill()` de la vieja. Sobreviven los ficheros; no las variables del kernel ni
 los procesos. Detalles, lista de exclusión e IAM en
 [`docs/site/docs/persistence.md`](docs/site/docs/persistence.md).
 
@@ -215,6 +217,43 @@ sbx = Sandbox.create(
 )
 sbx.checkpoint_files(exclude=["data/raw"])          # home.tar.gz + manifest.json
 sbx = sbx.reincarnate()                               # 8 h frescas, mismo HOME
+```
+
+## Novedades de 0.3.0: paridad con E2B (M9)
+
+Rayito 0.3.0 cierra la tabla de paridad con E2B 2.x (113 filas,
+[`docs/site/docs/e2b-parity.md`](docs/site/docs/e2b-parity.md)). Todo está en
+el árbol con tests unitarios y **aceptado contra AWS real** el 2026-09-24
+(`MILESTONES.md`, M9); notas de la release en
+[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md).
+
+| Feature | Qué hace | Imagen | Documentación |
+|---|---|---|---|
+| **Plazo del servidor** (ADR-011) | `create(timeout=, max_lifetime=, on_timeout="kill" \| "pause")`: `rayd` hace cumplir el plazo aunque tu proceso muera; `set_timeout()` lo mueve y `connect(timeout=)` lo alarga | M9 | [`lifecycle.md`](docs/site/docs/lifecycle.md) |
+| **Transferencias por S3** (ADR-010) | `files.upload_url()`/`download_url()` firmadas con tus credenciales (`rayd` no guarda ninguna); con `transfer=S3Staging(...)` los ficheros grandes de `files.write`/`read` van por S3 (55–106 MB/s medidos frente a 0,68 MB/s por el proxy); `gzip=`, `metadata=` | M9 | [`files.md`](docs/site/docs/files.md) |
+| **Kernels JavaScript y TypeScript** (ADR-013) | `run_code(code, language="javascript" \| "typescript")` con el kernel de Deno 2.9.7 | `rayito-base-poly` | [`kernels.md`](docs/site/docs/kernels.md) |
+| **Red saliente** (ADR-012) | `network={"allow_out", "deny_out", "egress_proxy"}`, `allow_internet_access=False` y `update_network()` con la semántica de E2B, aplicados en el guest; en otra imagen fallan cerrados | `rayito-base-caps` | [`network.md`](docs/site/docs/network.md) |
+| **Métricas y listado** | `get_metrics_history()` (una muestra cada 5 s, 8 h), `Sandbox.paginate()` con `order`, `started_after`, `states` y un cursor reanudable | M9 | [`observability.md`](docs/site/docs/observability.md) |
+| **Git** | `sbx.git`: la API git de E2B (`clone`, `status`, `commit`, `push`, `pull`...) sobre `commands.run` | M9 | [`git.md`](docs/site/docs/git.md) |
+| **CLI** | `rayito sandbox create \| connect \| exec \| metrics`, con el access token sólo por fichero o entorno | M9 | [`cli.md`](docs/site/docs/cli.md) |
+| **Shims de E2B 2.x** | `rayito.e2b` (Python) y la nueva entrada `rayito/e2b` (TypeScript): cambia un import | M9 | [`e2b-compat.md`](docs/site/docs/e2b-compat.md) |
+
+Qué imagen necesita cada cosa y el IAM que añade M9 (sólo para las
+transferencias): [`docs/site/docs/images.md`](docs/site/docs/images.md).
+
+```python
+import requests
+from rayito import S3Staging, Sandbox
+
+staging = S3Staging("amzn-s3-demo-bucket")             # o RAYITO_TRANSFER_BUCKET
+with Sandbox.create(timeout=600, max_lifetime=3600, transfer=staging) as sbx:
+    ticket = sbx.files.upload_url("/home/user/in.csv")  # PUT desde cualquier cliente
+    with open("in.csv", "rb") as source:
+        requests.put(ticket, data=source, headers=ticket.headers).raise_for_status()
+    ticket.wait()
+    sbx.set_timeout(1800)
+    link = sbx.files.download_url("/home/user/in.csv", expires_in=600)
+    print(sbx.get_metrics_history(max_points=12))
 ```
 
 ## Verificar una release
@@ -264,36 +303,62 @@ matplotlib sube de 0,14 a 0,79 s.
 | `AWS_API_NOTES.md` | Superficie verificada de la API de AWS. **Leer antes de tocar `src/`** |
 | `docs/aws-api/` | Apéndice crudo: modelo `service-2.json`, `help` de los 25 comandos, resumen de shapes |
 | `MILESTONES.md` | Hitos y criterios de aceptación |
-| `spike/m0/` | Imagen probe, runbook, IAM y tabla de resultados del hito M0 |
+| `infra/` | Plantillas de CloudFormation: IAM de build, ejecución y cliente (`iam.yaml`), conector de egress, rol OIDC del e2e ([`infra/README.md`](infra/README.md)) |
 | `CLAUDE.md` | Reglas para trabajar con Claude Code |
-| `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2 y Windows, convenciones, DCO |
+| `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2, macOS (VM Linux) y Windows, e2e en tu cuenta, convenciones, DCO y commits firmados |
 | `SECURITY.md` | Cómo reportar una vulnerabilidad y el modelo de amenazas |
 | `GOVERNANCE.md` | Quién decide y cómo (ADRs, cambios OpenSpec, mantenedores) |
 | `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, atribuciones de terceros y los changelogs por componente |
 | `docs/RELEASING.md` | Pasos manuales de publicación (PyPI, npm, GitHub Release, tags) |
 | `proto/rayito/v1/` | El contrato gRPC. Fuente de verdad de toda la API |
 
-## Estructura prevista
+## Empezar en tu cuenta de AWS
+
+Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
+
+1. **IAM**: despliega los roles de build y ejecución y la política del
+   cliente ([`infra/README.md`](infra/README.md)):
+
+   ```bash
+   aws cloudformation deploy --stack-name rayito-m0-iam \
+     --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides ArtifactBucket=<tu-bucket> LogGroupPrefix=/rayito
+   ```
+
+   Asigna la política `rayito-m0-caller-<región>` (output `CallerPolicyArn` de la pila) al rol o
+   usuario que ejecutará el SDK. Para las transferencias por S3 añade
+   `TransferBucket`/`TransferPrefix` ([`images.md`](docs/site/docs/images.md)).
+
+2. **Imagen**: publica `rayito-base` (y, si las usas, `-caps` para la red
+   saliente y `-poly` para JavaScript/TypeScript):
+
+   ```bash
+   make image-publish BUCKET=<tu-bucket>        # también image-publish-caps / -poly
+   ```
+
+   Compila `rayd` para `aarch64-unknown-linux-musl`: hazlo en Linux o WSL2
+   (en macOS, dentro de una VM Linux) con `cargo-zigbuild`
+   ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
+
+3. **Diagnóstico**: `pip install "rayito[cli]" && rayito doctor --template rayito-base`
+   comprueba credenciales, cuotas, IAM, bucket, imagen y versión del agente.
+
+4. **Primer sandbox**: el [quickstart](docs/site/docs/quickstart.md) y el
+   resto de la documentación en [`docs/site/docs/`](docs/site/docs/).
+
+## Estructura del repositorio
 
 ```
-proto/rayito/v1/         contrato gRPC (package rayito.v1)
+proto/rayito/v1/         contrato gRPC (package rayito.v1), fuente de verdad
 crates/rayd/             agente Rust (tonic) que corre dentro del MicroVM
+crates/rayd-core/        dominio puro del agente (sin IO; puertos como traits)
 crates/rayito-proto/     código Rust generado desde proto/
-kernel-sidecar/          sidecar Python con jupyter_client
-clients/python/          SDK Python (paquete `rayito`)
-clients/typescript/      SDK TypeScript
-image/                   Dockerfile ARM64 de la imagen base
-spike/m0/                spike de validación de la plataforma (sin código de producto)
+kernel-sidecar/          sidecar Python con jupyter_client (y Deno en -poly)
+clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`)
+clients/typescript/      SDK TypeScript (paquete `rayito`, entrada `rayito/e2b`)
+image/                   Dockerfile ARM64 de las imágenes
+infra/                   plantillas de CloudFormation (IAM, egress, CI OIDC)
+docs/site/               documentación de usuario (mkdocs)
 docs/aws-api/            volcado crudo de la API de Lambda MicroVMs
+openspec/                specs y changes archivados de cada hito
 ```
-
-## Primer paso
-
-```bash
-aws sso login --profile <perfil>
-export AWS_PROFILE=<perfil> AWS_REGION=us-east-1 RAYITO_BUCKET=<bucket>
-uv run --with "boto3>=1.43.82" --with requests --with "httpx[http2]" python spike/m0/run_m0.py all
-```
-
-Rellenar `spike/m0/M0_RESULTS.md` con lo medido. Sin eso, el resto del repo es
-especulación.

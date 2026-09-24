@@ -108,3 +108,42 @@ async def test_a_blocked_emit_keeps_the_inbox_depth_bounded() -> None:
     assert emitted[-1]["event"] == "end"
     assert sum(e["event"] == "stdout" for e in emitted) == chunks
     assert io.inbox.qsize() == 0
+
+
+COLOURED_42 = "\x1b[33m42\x1b[39m"
+COLOURED_STREAM = "\x1b[31mred\x1b[0m\n"
+
+
+async def run_scripted(script: list[InboxItem], **options: Any) -> list[dict[str, Any]]:
+    io = ScriptedIo(capacity=len(script))
+    emitted: list[dict[str, Any]] = []
+
+    async def emit(event: dict[str, Any]) -> None:
+        emitted.append(event)
+
+    await pump(io.inbox, script)
+    outcome = await asyncio.wait_for(run_execution(io, 1, "exec-1", "x", {}, emit, **options), 5.0)
+    assert outcome.ended_by == "kernel"
+    return emitted
+
+
+async def test_plain_text_ansi_stripped_only_when_asked() -> None:
+    """Deno colours its ``execute_result`` (AWS_API_NOTES.md Q61); only the
+    ``text/plain`` of result bundles is cleaned, stream text is user data."""
+    script = [
+        iopub("execute_input", code="x", execution_count=1),
+        iopub("stream", name="stdout", text=COLOURED_STREAM),
+        iopub("display_data", data={"text/plain": COLOURED_42, "text/html": "<b>\x1b[1m</b>"}),
+        iopub("execute_result", data={"text/plain": COLOURED_42}, execution_count=1),
+        shell_reply(),
+        iopub("status", execution_state="idle"),
+    ]
+    for strip, plain in ((True, "42"), (False, COLOURED_42)):
+        events = await run_scripted(script, strip_plain_text_ansi=strip)
+        results = [e for e in events if e["event"] == "result"]
+        assert [r["mime"]["text/plain"] for r in results] == [plain, plain]
+        assert results[0]["mime"]["text/html"] == "<b>\x1b[1m</b>"
+        assert [e["text"] for e in events if e["event"] == "stdout"] == [COLOURED_STREAM]
+    default = await run_scripted(script)
+    main = next(e for e in default if e["event"] == "result" and e["is_main_result"])
+    assert main["mime"] == {"text/plain": COLOURED_42}

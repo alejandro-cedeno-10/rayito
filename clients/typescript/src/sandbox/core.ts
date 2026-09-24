@@ -15,6 +15,7 @@ import {
   createClient,
   type Transport,
 } from "@connectrpc/connect";
+import { abortReasonOr, raceAbort } from "../abort.js";
 import type { ControlPlane } from "../aws/control-plane.js";
 import {
   AuthenticationError,
@@ -29,15 +30,18 @@ import {
   type HealthResponse,
   HealthService,
 } from "../gen/rayito/v1/health_pb.js";
+import { LifecycleService, TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { ProcessService } from "../gen/rayito/v1/process_pb.js";
 import { PtyService } from "../gen/rayito/v1/pty_pb.js";
+import { defineHidden } from "../hidden.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
-import type { SandboxInfo } from "../models.js";
+import type { ResolvedS3Staging, SandboxInfo, SandboxLifecycle } from "../models.js";
 import {
   isNotYetReachable,
   isProxyForbidden,
   isReconnectable,
+  isSandboxTimeout,
   isStreamReset,
   translateRpcError,
 } from "../transport/errors.js";
@@ -45,23 +49,37 @@ import { proxyAuthInterceptor } from "../transport/headers.js";
 import type { TokenRefresher } from "../transport/tokens.js";
 import {
   type OpenedTransport,
+  openGzipTransport,
   openTransport,
   type TransportSettings,
 } from "../transport/transport.js";
 import { STREAM_PROBE_TIMEOUT_MS, streamFailureError } from "./commands.js";
+import { DeadlineTrigger } from "./deadline-trigger.js";
+import {
+  autoResumeReopenMs,
+  lifecycleFromProto,
+  pauseTriggerDelayMs,
+  setTimeoutRequest,
+} from "./lifecycle.js";
 import {
   CLOCK_OFFSET_WARN_MS,
   closedDuringReconnect,
   formatSeconds,
+  type GuestFacts,
+  guestFactsFromHealth,
+  healthReady,
   healthReconnected,
   isSuspendingReason,
+  metadataFromHealth,
   notReadyError,
   ReadinessPoll,
   type ReconnectOutcome,
   ReconnectPoll,
   reconnectFailure,
   terminatedDuringBootError,
+  UNKNOWN_GUEST_FACTS,
 } from "./readiness.js";
+import type { S3ClientOverrides } from "./transfer.js";
 
 export type StreamStarter<S extends DescService, T> = (
   client: Client<S>,
@@ -88,6 +106,61 @@ export interface OpenStreamOptions<S extends DescService> {
   readonly reconnect?: boolean | undefined;
   /** Sustituye la tabla unaria para un status que no es un corte (persistencia). */
   readonly translate?: ((error: unknown) => Error) | undefined;
+  /** El `AbortSignal` del caller: abortarlo cancela el stream y rechaza con su `reason`. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/**
+ * Enlaza el `signal` del caller con el `AbortController` de un stream:
+ * abortar uno aborta el otro con el mismo `reason`, y el listener se suelta
+ * cuando el stream termina (su controller se aborta al liberarlo).
+ */
+export function linkAbortSignal(
+  signal: AbortSignal | undefined,
+  controller: AbortController,
+): void {
+  if (signal === undefined) {
+    return;
+  }
+  const onAbort = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  controller.signal.addEventListener("abort", () => signal.removeEventListener("abort", onAbort), {
+    once: true,
+  });
+}
+
+/**
+ * Suelta el timer del deadline de un server-stream en cuanto se aborta su
+ * controller. En `@connectrpc/connect` 2.x el `setTimeout` de `timeoutMs`
+ * (con ref) solo se limpia cuando la respuesta llega a `done` o cuando un
+ * `next()` encuentra la llamada abortada; abortar sin volver a leer —lo que
+ * hace todo consumidor que ya tiene su `EndEvent`, o que se rinde— lo deja
+ * vivo hasta el deadline, y con él el proceso de Node (315 s tras un
+ * `runCode`, 65 s tras un `commands.run`). Al abortar se pide un `next()`
+ * más, que connect contesta limpiando el timer (o con `done` si el stream ya
+ * había terminado); ese resultado se guarda para el primer `next()` posterior
+ * del consumidor, que ve lo mismo que habría visto sin este drenaje.
+ */
+export function drainOnAbort<T>(iterator: AsyncIterator<T>, signal: AbortSignal): AsyncIterator<T> {
+  let drained: Promise<IteratorResult<T>> | undefined;
+  signal.addEventListener(
+    "abort",
+    () => {
+      drained = iterator.next();
+      drained.catch(() => undefined);
+    },
+    { once: true },
+  );
+  return {
+    next: () => {
+      const pending = drained;
+      if (pending === undefined) {
+        return iterator.next();
+      }
+      drained = undefined;
+      return pending;
+    },
+  };
 }
 
 export interface SandboxCoreInit {
@@ -110,6 +183,11 @@ export interface Abortable {
 /** `grpc-timeout` es un entero: todo deadline derivado de `performance.now()` se redondea hacia arriba. */
 export function withTimeout(options: CallOptions, timeoutMs: number | undefined): CallOptions {
   return timeoutMs === undefined ? options : { ...options, timeoutMs: Math.ceil(timeoutMs) };
+}
+
+/** `CallOptions` de una unaria: el deadline y, si lo hay, el `signal` del caller. */
+export function callOptions(timeoutMs: number, signal: AbortSignal | undefined): CallOptions {
+  return signal === undefined ? { timeoutMs } : { timeoutMs, signal };
 }
 
 interface Deferred {
@@ -140,11 +218,25 @@ function sleep(ms: number): { promise: Promise<void>; cancel: () => void } {
   };
 }
 
+/** El disparador vuelve a armarse sólo si `rayd` movió el plazo a un instante futuro. */
+function stillActiveAhead(lifecycle: SandboxLifecycle | undefined): boolean {
+  return (
+    lifecycle?.phase === "active" &&
+    lifecycle.deadline !== undefined &&
+    lifecycle.deadline.getTime() > Date.now()
+  );
+}
+
+/** Sólo el nombre de la clase: el mensaje de un error de red o del plano nunca va al log del disparador. */
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 export class SandboxCore {
   info: SandboxInfo;
   /** La `SandboxInfo` con la que se abrió el handle, nunca refrescada. */
   readonly launchInfo: SandboxInfo;
-  readonly accessToken: string;
+  declare readonly accessToken: string;
   readonly controlPlane: ControlPlane;
   readonly transportSettings: TransportSettings;
   readonly refresher: TokenRefresher;
@@ -157,10 +249,21 @@ export class SandboxCore {
   closed = false;
   resumeGeneration = 0;
   paused = false;
+  /** El último plazo lógico leído de `Health` o de `SetTimeout`; `undefined` en un agente anterior a M9. */
+  lifecycle: SandboxLifecycle | undefined;
+  /** Versión, CPUs y memoria del guest del último `Health`, se lea en el arranque, en `getHealth` o al reconectar. */
+  guestFacts: GuestFacts = UNKNOWN_GUEST_FACTS;
+  /** Los metadatos de `create({ metadata })` del último `Health`; `undefined` hasta leer uno. */
+  metadata: Readonly<Record<string, string>> | undefined;
+  /** El bucket de transferencias de `create`/`connect({ transfer })`; `undefined` sin staging. */
+  transfer: ResolvedS3Staging | undefined;
+  /** Configuración extra de los clientes S3 del SDK: sólo la fijan los tests, hacia un S3 falso local. */
+  s3ClientOverrides: S3ClientOverrides | undefined;
 
   readonly unaryTransport: Transport;
   readonly #unarySession: OpenedTransport;
   #streamSession: OpenedTransport | undefined;
+  #gzipFilesystem: Client<typeof FilesystemService> | undefined;
   readonly #unaryClients = new Map<string, unknown>();
   readonly #streamClients = new Map<string, unknown>();
   readonly clients: {
@@ -169,17 +272,23 @@ export class SandboxCore {
     readonly filesystem: Client<typeof FilesystemService>;
     readonly code: Client<typeof CodeService>;
     readonly pty: Client<typeof PtyService>;
+    readonly lifecycle: Client<typeof LifecycleService>;
   };
 
   readonly #liveStreams = new Set<AbortController>();
   readonly #watches = new Set<Abortable>();
   #reconnectLock: Promise<void> | undefined;
   #resumed: Deferred = deferred();
+  readonly #deadlineTrigger = new DeadlineTrigger(() => this.#onDeadline());
+  #deadlineFiring = false;
+  #deadlinePauseGeneration: number | undefined;
+  #reopenInFlight: Promise<boolean> | undefined;
+  #reopens = 0;
 
   constructor(init: SandboxCoreInit) {
     this.info = init.info;
     this.launchInfo = init.info;
-    this.accessToken = init.accessToken;
+    defineHidden(this, "accessToken", init.accessToken);
     this.controlPlane = init.controlPlane;
     this.transportSettings = init.transport;
     this.refresher = init.refresher;
@@ -195,6 +304,7 @@ export class SandboxCore {
       filesystem: this.clientFor(FilesystemService, false),
       code: this.clientFor(CodeService, false),
       pty: this.clientFor(PtyService, false),
+      lifecycle: this.clientFor(LifecycleService, false),
     };
   }
 
@@ -210,12 +320,38 @@ export class SandboxCore {
     return this.#liveStreams.size;
   }
 
+  get deadlineTriggerArmed(): boolean {
+    return this.#deadlineTrigger.armed;
+  }
+
   #openTransport(): OpenedTransport {
-    const interceptor = proxyAuthInterceptor(this.refresher.store, {
+    return openTransport(this.info.endpoint, this.transportSettings, this.#proxyInterceptor());
+  }
+
+  #proxyInterceptor() {
+    return proxyAuthInterceptor(this.refresher.store, {
       port: DEFAULT_PORT,
       accessToken: this.accessToken,
+      extraHeaders: this.transportSettings.extraHeaders,
     });
-    return openTransport(this.info.endpoint, this.transportSettings, interceptor);
+  }
+
+  /**
+   * `FilesystemService` con los mensajes del cliente comprimidos con gzip
+   * (`write({ gzip: true })`), creado en el primer uso sobre la sesión de los
+   * unarios: nunca abre una tercera conexión HTTP/2.
+   */
+  gzipFilesystemClient(): Client<typeof FilesystemService> {
+    this.#gzipFilesystem ??= createClient(
+      FilesystemService,
+      openGzipTransport(
+        this.info.endpoint,
+        this.transportSettings,
+        this.#proxyInterceptor(),
+        this.#unarySession,
+      ),
+    );
+    return this.#gzipFilesystem;
   }
 
   /** El transporte de streams se abre en el primer uso: es el segundo y último del sandbox. */
@@ -264,12 +400,25 @@ export class SandboxCore {
   }
 
   /** Un 403 del proxy se reintenta tras reacuñar; un corte reconectable espera la reconexión y reintenta una vez. */
-  async callUnary<T>(call: () => Promise<T>): Promise<T> {
+  callUnary<T>(call: () => Promise<T>): Promise<T> {
+    return this.#callUnary(call, true);
+  }
+
+  /**
+   * `reopen: false` es el `SetTimeout` de la propia reapertura tras la pausa
+   * del plazo: pasa por la reconexión como cualquier unaria pero no puede
+   * disparar otra reapertura.
+   */
+  async #callUnary<T>(call: () => Promise<T>, reopen: boolean): Promise<T> {
     const seenGeneration = this.resumeGeneration;
+    const seenReopens = this.#reopens;
     let reason: ConnectError;
     try {
       return await this.callUnaryOnce(call);
     } catch (error) {
+      if (reopen && (await this.#reopenedAfterDeadlinePause(error, seenReopens))) {
+        return this.callUnaryOnce(call);
+      }
       if (!this.isReconnectable(error)) {
         throw error;
       }
@@ -282,14 +431,38 @@ export class SandboxCore {
     return call();
   }
 
-  async translatedUnary<T>(
+  /**
+   * La unaria con la tabla de errores. Con `signal`, uno ya abortado rechaza
+   * antes de enviar nada y abortarlo durante la llamada rechaza con su
+   * `reason` (el `Canceled` de Connect nunca llega al caller).
+   */
+  translatedUnary<T>(
     call: () => Promise<T>,
-    options: { readonly filesystem?: boolean | undefined } = {},
+    options: {
+      readonly filesystem?: boolean | undefined;
+      readonly signal?: AbortSignal | undefined;
+    } = {},
   ): Promise<T> {
+    return this.signalledUnary(call, options.signal, (error) =>
+      translateRpcError(error, { filesystem: options.filesystem }),
+    );
+  }
+
+  /**
+   * `callUnary` con `signal` y una tabla de errores propia: uno ya abortado
+   * rechaza antes de enviar nada y abortarlo durante la llamada rechaza con
+   * su `reason` sin pasar por `translate`.
+   */
+  async signalledUnary<T>(
+    call: () => Promise<T>,
+    signal: AbortSignal | undefined,
+    translate: (error: unknown) => unknown,
+  ): Promise<T> {
+    signal?.throwIfAborted();
     try {
       return await this.callUnary(call);
     } catch (error) {
-      throw translateRpcError(error, { filesystem: options.filesystem });
+      throw abortReasonOr(signal, translate(error));
     }
   }
 
@@ -300,39 +473,53 @@ export class SandboxCore {
   processCall<T>(
     invoke: UnaryInvoker<typeof ProcessService, T>,
     requestTimeoutMs: number | undefined,
+    signal?: AbortSignal,
   ): Promise<T> {
     const timeoutMs = this.resolveRequestTimeout(requestTimeoutMs);
-    return this.translatedUnary(() => invoke(this.clients.process, { timeoutMs }));
+    return this.translatedUnary(
+      () => invoke(this.clients.process, callOptions(timeoutMs, signal)),
+      {
+        signal,
+      },
+    );
   }
 
   ptyCall<T>(
     invoke: UnaryInvoker<typeof PtyService, T>,
     requestTimeoutMs: number | undefined,
+    signal?: AbortSignal,
   ): Promise<T> {
     const timeoutMs = this.resolveRequestTimeout(requestTimeoutMs);
-    return this.translatedUnary(() => invoke(this.clients.pty, { timeoutMs }));
+    return this.translatedUnary(() => invoke(this.clients.pty, callOptions(timeoutMs, signal)), {
+      signal,
+    });
   }
 
   filesCall<T>(
     invoke: UnaryInvoker<typeof FilesystemService, T>,
     requestTimeoutMs: number | undefined,
+    signal?: AbortSignal,
   ): Promise<T> {
     const timeoutMs = this.resolveRequestTimeout(requestTimeoutMs);
-    return this.translatedUnary(() => invoke(this.clients.filesystem, { timeoutMs }), {
-      filesystem: true,
-    });
+    return this.translatedUnary(
+      () => invoke(this.clients.filesystem, callOptions(timeoutMs, signal)),
+      { filesystem: true, signal },
+    );
   }
 
   codeCall<T>(
     invoke: UnaryInvoker<typeof CodeService, T>,
     requestTimeoutMs: number | undefined,
     defaultTimeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<T> {
     const timeoutMs =
       requestTimeoutMs === undefined && defaultTimeoutMs !== undefined
         ? defaultTimeoutMs
         : this.resolveRequestTimeout(requestTimeoutMs);
-    return this.translatedUnary(() => invoke(this.clients.code, { timeoutMs }));
+    return this.translatedUnary(() => invoke(this.clients.code, callOptions(timeoutMs, signal)), {
+      signal,
+    });
   }
 
   // ---------------------------------------------------------------- streams
@@ -347,24 +534,41 @@ export class SandboxCore {
     start: StreamStarter<S, T>,
     options: OpenStreamOptions<S>,
   ): Promise<OpenedStream<T>> {
+    options.signal?.throwIfAborted();
+    try {
+      return await this.#openStream(start, options);
+    } catch (error) {
+      throw abortReasonOr(options.signal, error);
+    }
+  }
+
+  async #openStream<S extends DescService, T>(
+    start: StreamStarter<S, T>,
+    options: OpenStreamOptions<S>,
+  ): Promise<OpenedStream<T>> {
     const client = this.clientFor(options.service, options.stream);
     const seenGeneration = this.resumeGeneration;
+    const seenReopens = this.#reopens;
     const reconnect = options.reconnect ?? true;
-    let reason: ConnectError;
+    const allowEmpty = options.allowEmpty ?? false;
+    let failure: unknown;
     try {
-      return await this.#firstMessageReminting(start, client, options.allowEmpty ?? false);
+      return await this.#firstMessageReminting(start, client, allowEmpty, options.signal);
     } catch (error) {
-      if (!(reconnect && this.isReconnectable(error))) {
-        throw await this.#openFailure(error, options);
-      }
-      reason = error as ConnectError;
+      failure = error;
     }
-    const outcome = await this.reconnect(reason, seenGeneration, { wake: true });
-    if (!outcome.resumed) {
-      throw this.reconnectError(outcome, reason);
+    if (!(await this.#reopenedAfterDeadlinePause(failure, seenReopens))) {
+      if (!(reconnect && this.isReconnectable(failure))) {
+        throw await this.#openFailure(failure, options);
+      }
+      const reason = failure as ConnectError;
+      const outcome = await this.reconnect(reason, seenGeneration, { wake: true });
+      if (!outcome.resumed) {
+        throw this.reconnectError(outcome, reason);
+      }
     }
     try {
-      return await this.#firstMessage(start, client, options.allowEmpty ?? false);
+      return await this.#firstMessage(start, client, allowEmpty, options.signal);
     } catch (error) {
       throw await this.#openFailure(error, options);
     }
@@ -384,9 +588,10 @@ export class SandboxCore {
     start: StreamStarter<S, T>,
     client: Client<S>,
     allowEmpty: boolean,
+    signal: AbortSignal | undefined,
   ): Promise<OpenedStream<T>> {
     try {
-      return await this.#firstMessage(start, client, allowEmpty);
+      return await this.#firstMessage(start, client, allowEmpty, signal);
     } catch (error) {
       if (!isProxyForbidden(error)) {
         throw error;
@@ -396,16 +601,21 @@ export class SandboxCore {
       sandboxId: this.sandboxId,
     });
     await this.refresher.refreshAll();
-    return this.#firstMessage(start, client, allowEmpty);
+    return this.#firstMessage(start, client, allowEmpty, signal);
   }
 
   async #firstMessage<S extends DescService, T>(
     start: StreamStarter<S, T>,
     client: Client<S>,
     allowEmpty: boolean,
+    signal: AbortSignal | undefined,
   ): Promise<OpenedStream<T>> {
     const controller = new AbortController();
-    const iterator = start(client, { signal: controller.signal })[Symbol.asyncIterator]();
+    linkAbortSignal(signal, controller);
+    const iterator = drainOnAbort(
+      start(client, { signal: controller.signal })[Symbol.asyncIterator](),
+      controller.signal,
+    );
     let result: IteratorResult<T>;
     try {
       result = await iterator.next();
@@ -462,31 +672,41 @@ export class SandboxCore {
     return this.info.state;
   }
 
-  async probeHealth(timeoutMs: number): Promise<HealthResponse | undefined> {
+  async probeHealth(timeoutMs: number, signal?: AbortSignal): Promise<HealthResponse | undefined> {
+    signal?.throwIfAborted();
     try {
       return await this.callUnaryOnce(() =>
-        this.clients.health.health(create(HealthRequestSchema, {}), withTimeout({}, timeoutMs)),
+        this.clients.health.health(
+          create(HealthRequestSchema, {}),
+          withTimeout(signal === undefined ? {} : { signal }, timeoutMs),
+        ),
       );
     } catch (error) {
-      if (isNotYetReachable(error)) {
+      if (!signal?.aborted && isNotYetReachable(error)) {
         return undefined;
       }
-      throw translateRpcError(error);
+      throw abortReasonOr(signal, translateRpcError(error));
     }
   }
 
   // -------------------------------------------------------------- readiness
 
-  /** `readiness` es el calendario del sondeo: `create()`, `connect()` y `resume()` usan `ReadinessPoll`; el pool pasa `TakePoll`. */
+  /**
+   * `readiness` es el calendario del sondeo: `create()`, `connect()` y
+   * `resume()` usan `ReadinessPoll`; el pool pasa `TakePoll`. `signal`
+   * abortado corta el sondeo entre intentos con su `reason`.
+   */
   async waitUntilReady(options: {
     readonly terminateOnFailure: boolean;
     readonly readiness?: typeof ReadinessPoll | undefined;
+    readonly signal?: AbortSignal | undefined;
   }): Promise<HealthResponse> {
     const Poll = options.readiness ?? ReadinessPoll;
     const poll = new Poll({ timeoutMs: this.readyTimeoutMs });
     while (true) {
-      const response = await this.probeHealth(poll.rpcTimeoutMs());
-      if (response?.agentReady && response.kernelReady) {
+      options.signal?.throwIfAborted();
+      const response = await raceAbort(this.probeHealth(poll.rpcTimeoutMs()), options.signal);
+      if (healthReady(response)) {
         this.recordHealth(response);
         this.logger?.info?.("agente listo", {
           sandboxId: this.sandboxId,
@@ -500,11 +720,19 @@ export class SandboxCore {
       if (poll.timedOut()) {
         throw await this.#notReady(options.terminateOnFailure);
       }
-      await sleep(poll.nextDelayMs()).promise;
+      const delay = sleep(poll.nextDelayMs());
+      try {
+        await raceAbort(delay.promise, options.signal);
+      } finally {
+        delay.cancel();
+      }
     }
   }
 
   recordHealth(response: HealthResponse): void {
+    this.recordLifecycle(lifecycleFromProto(response.lifecycle));
+    this.guestFacts = guestFactsFromHealth(response);
+    this.metadata = metadataFromHealth(response);
     const generation = Number(response.resumeGeneration);
     if (generation === this.resumeGeneration) {
       return;
@@ -554,6 +782,173 @@ export class SandboxCore {
 
   foregroundStreamWakes(): boolean {
     return !this.paused;
+  }
+
+  // ---------------------------------------------------------------- deadline
+
+  /**
+   * Todo plazo leído (de `Health` o de `SetTimeout`) rearma el disparador del
+   * modo `pause` (design D7), salvo mientras el propio disparador corre: su
+   * `Health` decide al terminar si hay que rearmar.
+   */
+  recordLifecycle(lifecycle: SandboxLifecycle | undefined): void {
+    this.lifecycle = lifecycle;
+    if (this.closed || this.#deadlineFiring) {
+      return;
+    }
+    this.#deadlineTrigger.arm(pauseTriggerDelayMs(lifecycle, Date.now()));
+  }
+
+  /**
+   * `rayd` sigue siendo la fuente de verdad: nunca sondea `Health` si
+   * `get-microvm` no dice `RUNNING` (lo despertaría), sólo suspende si
+   * `Health` dice `expired` y rearma si sigue `active` con un plazo futuro.
+   * Cualquier fallo se registra y se traga: la política de idle de la
+   * plataforma es el respaldo. El log nunca lleva el token ni el JWE.
+   */
+  async #onDeadline(): Promise<void> {
+    this.#deadlineFiring = true;
+    try {
+      await this.#suspendIfExpired();
+    } catch (error) {
+      this.logger?.warn?.(
+        "el disparador del plazo falló; la política de idle de la plataforma lo suspenderá",
+        { sandboxId: this.sandboxId, reason: errorName(error) },
+      );
+    } finally {
+      this.#deadlineFiring = false;
+    }
+    if (!this.closed && stillActiveAhead(this.lifecycle)) {
+      this.#deadlineTrigger.arm(pauseTriggerDelayMs(this.lifecycle, Date.now()));
+    }
+  }
+
+  async #suspendIfExpired(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.info = await this.controlPlane.getMicrovm(this.sandboxId);
+    if (this.info.state !== "RUNNING") {
+      return;
+    }
+    const response = await this.callUnaryOnce(() =>
+      this.clients.health.health(
+        create(HealthRequestSchema, {}),
+        withTimeout({}, ReadinessPoll.maxRpcTimeoutMs),
+      ),
+    );
+    this.recordHealth(response);
+    if (this.lifecycle?.phase === "expired") {
+      await this.#suspendForDeadline();
+    }
+  }
+
+  /**
+   * `suspend-microvm` (el bucket de 2 TPS del plano) sin la marca de pausa
+   * pendiente: la próxima petición auto-reanuda el sandbox igual que tras una
+   * suspensión por idle (AWS_API_NOTES.md Q40).
+   */
+  async #suspendForDeadline(): Promise<void> {
+    const generation = this.resumeGeneration;
+    const suspended = await this.controlPlane.suspendMicrovm(this.sandboxId);
+    if (suspended) {
+      this.#deadlinePauseGeneration = generation;
+    }
+    this.logger?.info?.("plazo lógico vencido en modo pause: suspend-microvm", {
+      sandboxId: this.sandboxId,
+      accepted: suspended,
+    });
+  }
+
+  /**
+   * Tras una suspensión por el plazo de este cliente, el primer
+   * `sandbox_timeout` de un sandbox ya reanudado aplica la regla del
+   * auto-resume con `SetTimeout` (`autoResumeReopenMs`): `rayd` no la aplica
+   * si la congelación duró menos de 2 s. Una sola reapertura por suspensión,
+   * compartida: los callers concurrentes esperan la misma promesa y quien
+   * llega tras una reapertura hecha desde que empezó su llamada
+   * (`seenReopens`) reintenta sin otro `SetTimeout`. Si no toca o falla, el
+   * caller ve el error original.
+   */
+  async #reopenedAfterDeadlinePause(error: unknown, seenReopens: number): Promise<boolean> {
+    if (this.closed || !isSandboxTimeout(error)) {
+      return false;
+    }
+    if (this.#reopens > seenReopens) {
+      return true;
+    }
+    if (this.#reopenInFlight === undefined) {
+      const pausedGeneration = this.#deadlinePauseGeneration;
+      if (pausedGeneration === undefined) {
+        return false;
+      }
+      const inFlight = this.#reopenAfterDeadlinePause(pausedGeneration);
+      this.#reopenInFlight = inFlight;
+      void inFlight.finally(() => {
+        if (this.#reopenInFlight === inFlight) {
+          this.#reopenInFlight = undefined;
+        }
+      });
+    }
+    return this.#reopenInFlight;
+  }
+
+  /**
+   * El cuerpo de la reapertura. La marca sólo se consume cuando la
+   * `resumeGeneration` ya avanzó (un `sandbox_timeout` anterior a la
+   * congelación no la gasta) y el `SetTimeout`, por la unaria que reconecta,
+   * respondió. El log nunca lleva el token.
+   */
+  async #reopenAfterDeadlinePause(pausedGeneration: number): Promise<boolean> {
+    try {
+      const response = await this.probeHealth(
+        Math.min(ReadinessPoll.maxRpcTimeoutMs, this.requestTimeoutMs),
+      );
+      if (response !== undefined) {
+        this.recordHealth(response);
+      }
+      if (this.resumeGeneration <= pausedGeneration) {
+        return false;
+      }
+      const timeoutMs = autoResumeReopenMs(this.lifecycle, {
+        pausedGeneration,
+        generation: this.resumeGeneration,
+        nowUnixMs: Date.now(),
+      });
+      if (timeoutMs === undefined) {
+        this.#consumeDeadlinePause(pausedGeneration);
+        return false;
+      }
+      const state = await this.#callUnary(
+        () =>
+          this.clients.lifecycle.setTimeout(
+            setTimeoutRequest(TimeoutMode.EXACT, timeoutMs),
+            withTimeout({}, this.requestTimeoutMs),
+          ),
+        false,
+      );
+      this.recordLifecycle(lifecycleFromProto(state));
+      this.#consumeDeadlinePause(pausedGeneration);
+      this.#reopens += 1;
+      this.logger?.info?.("reanudado tras la pausa del plazo; plazo reabierto", {
+        sandboxId: this.sandboxId,
+        timeoutMs,
+      });
+      return true;
+    } catch (failure) {
+      this.logger?.warn?.("no se pudo reabrir tras la pausa del plazo", {
+        sandboxId: this.sandboxId,
+        reason: errorName(failure),
+      });
+      return false;
+    }
+  }
+
+  /** Una suspensión posterior del disparador pone su propia marca: sólo se borra la de esta. */
+  #consumeDeadlinePause(pausedGeneration: number): void {
+    if (this.#deadlinePauseGeneration === pausedGeneration) {
+      this.#deadlinePauseGeneration = undefined;
+    }
   }
 
   // -------------------------------------------------------------- reconnect
@@ -831,6 +1226,7 @@ export class SandboxCore {
       return;
     }
     this.closed = true;
+    this.#deadlineTrigger.cancel();
     this.#notifyResumed();
     this.refresher.stop();
     for (const watch of [...this.#watches]) {

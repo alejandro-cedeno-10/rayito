@@ -42,6 +42,7 @@ fn scaled_session() -> SessionSettings {
         suspend_gate_timeout: Duration::from_secs(1),
         freeze_threshold: Duration::from_millis(400),
         watchdog_tick: Duration::from_millis(100),
+        ..SessionSettings::default()
     }
 }
 

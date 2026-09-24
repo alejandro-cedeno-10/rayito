@@ -11,7 +11,7 @@ use super::error::FilesystemError;
 use super::identity::FsIdentity;
 use super::listing::{ListingLimits, ListingRequest, walk_listing};
 use super::path::{DenyList, RequestPath, join_canonical, split_canonical};
-use super::ports::{FileSystem, FsIoError, NameResolver, WriteSink};
+use super::ports::{FileSystem, FsIoError, NameResolver, SnapshotFile, WriteSink};
 use super::write::check_disk_reserve;
 use super::{DEFAULT_DIR_MODE, MAX_WATCH_DIRECTORIES};
 
@@ -29,6 +29,25 @@ pub struct WriteTarget {
     pub name: String,
 }
 
+/// Where an import lands, resolved like a `Write` destination: the request
+/// path to report, its would-be canonical form (deny-checked) and the
+/// directory and final name the temp file and the rename use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportDestination {
+    pub path: RequestPath,
+    pub canonical: String,
+    pub dir: String,
+    pub name: String,
+}
+
+/// The source of an export: the open file, its entry as measured by
+/// `fstat` when it was opened, and the request path.
+pub struct ExportSource {
+    pub file: Box<dyn SnapshotFile>,
+    pub entry: Entry,
+    pub path: RequestPath,
+}
+
 /// A watch root plus, for a recursive watch, every directory below it the
 /// identity may read and the deny list allows; symlinks are never followed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,11 +63,15 @@ impl<'a> FilesystemOps<'a> {
         Self { fs, deny, names }
     }
 
+    /// The entry carries the file's metadata; an unreadable set is empty,
+    /// never an error.
     pub fn stat(&self, id: &FsIdentity, raw: &str) -> Result<Entry, FilesystemError> {
         let path = RequestPath::parse(raw, &id.home)?;
         let canonical = self.canonical_existing(id, &path)?;
         let entry = self.fs.lstat(id, &canonical).map_err(lookup_error)?;
-        Ok(self.entry(entry, &path))
+        let mut entry = self.entry(entry, &path);
+        entry.metadata = self.fs.read_metadata(id, &canonical).unwrap_or_default();
+        Ok(entry)
     }
 
     pub fn list_dir(
@@ -175,6 +198,88 @@ impl<'a> FilesystemOps<'a> {
             name: name.to_owned(),
             path,
         })
+    }
+
+    /// Resolves an import destination the way `write_target` does (parents
+    /// may not exist yet, deny list on the would-be canonical path) and
+    /// refuses an existing directory as the final component. Called when
+    /// the import is accepted and again right before its temp file is
+    /// created, so a symlink swapped in meanwhile is seen.
+    pub fn import_destination(
+        &self,
+        id: &FsIdentity,
+        raw: &str,
+    ) -> Result<ImportDestination, FilesystemError> {
+        let path = RequestPath::parse(raw, &id.home)?;
+        if path.is_root() {
+            return Err(FilesystemError::IsADirectory);
+        }
+        let canonical = self.canonical_creating(id, &path)?;
+        match self.fs.lstat(id, &canonical) {
+            Ok(existing) if existing.kind == EntryKind::Directory => {
+                return Err(FilesystemError::IsADirectory);
+            }
+            Ok(_) | Err(FsIoError::NotFound | FsIoError::NotADirectory) => {}
+            Err(error) => return Err(FilesystemError::from_io("lstat", error)),
+        }
+        let (dir, name) = split_canonical(&canonical);
+        Ok(ImportDestination {
+            dir: dir.to_owned(),
+            name: name.to_owned(),
+            path,
+            canonical,
+        })
+    }
+
+    /// Free bytes of the filesystem an import destination lands on.
+    pub fn free_bytes(&self, id: &FsIdentity, dir: &str) -> Result<u64, FilesystemError> {
+        self.fs
+            .free_bytes(id, dir)
+            .map_err(|error| FilesystemError::from_io("statvfs", error))
+    }
+
+    /// The temp file of an import, opened after its admit checks passed.
+    pub fn begin_import(
+        &self,
+        id: &FsIdentity,
+        destination: &ImportDestination,
+        mode: u32,
+    ) -> Result<Box<dyn WriteSink>, FilesystemError> {
+        self.fs
+            .begin_write(id, &destination.dir, mode)
+            .map_err(|error| FilesystemError::from_io("begin_write", error))
+    }
+
+    /// Opens the export source under `id`: regular files only (a symlink,
+    /// a directory or a FIFO is refused without following or blocking),
+    /// measured by `fstat` on the open descriptor.
+    pub fn export_source(
+        &self,
+        id: &FsIdentity,
+        raw: &str,
+    ) -> Result<ExportSource, FilesystemError> {
+        let path = RequestPath::parse(raw, &id.home)?;
+        let canonical = self.canonical_existing(id, &path)?;
+        let opened = self
+            .fs
+            .open_snapshot(id, &canonical)
+            .map_err(lookup_error)?;
+        let entry = self.entry(opened.entry, &path);
+        Ok(ExportSource {
+            file: opened.file,
+            entry,
+            path,
+        })
+    }
+
+    /// The would-be canonical target of a request path under `id`, for the
+    /// read-after-upload barrier; `None` whenever the path could not be
+    /// resolved or is denied (the operation itself then reports why).
+    #[must_use]
+    pub fn barrier_target(&self, id: &FsIdentity, raw: &str) -> Option<(RequestPath, String)> {
+        let path = RequestPath::parse(raw, &id.home).ok()?;
+        let canonical = self.canonical_creating(id, &path).ok()?;
+        Some((path, canonical))
     }
 
     /// The watch root must be a readable directory under the requesting
@@ -366,6 +471,17 @@ fn lookup_error(error: FsIoError) -> FilesystemError {
     match error {
         FsIoError::NotADirectory => FilesystemError::NotFound,
         other => FilesystemError::from_io("lookup", other),
+    }
+}
+
+/// `set_metadata` failures: a filesystem without user xattrs and a set that
+/// does not fit have their own details; the rest is the default mapping.
+#[must_use]
+pub fn metadata_error(error: FsIoError) -> FilesystemError {
+    match error {
+        FsIoError::Unsupported => FilesystemError::MetadataUnsupported,
+        FsIoError::NoSpace => FilesystemError::MetadataTooLarge,
+        other => FilesystemError::from_io("fsetxattr", other),
     }
 }
 
@@ -856,5 +972,158 @@ mod tests {
         assert!(!ops.is_watchable_directory(&user(), "/home/user/m3/big.bin"));
         assert!(!ops.is_watchable_directory(&user(), "/home/user/m3/nope"));
         assert!(!ops.is_watchable_directory(&user(), "/etc"));
+    }
+
+    #[test]
+    fn stat_and_listings_carry_the_metadata_the_filesystem_holds() {
+        let fixture = Fixture::new();
+        fixture.fs.set_metadata(
+            "/home/user/m3/big.bin",
+            crate::filesystem::FileMetadata::parse([("owner", "alice")]).unwrap(),
+        );
+        let ops = fixture.ops();
+        let entry = ops.stat(&user(), "/home/user/m3/big.bin").unwrap();
+        assert_eq!(
+            entry.metadata.iter().collect::<Vec<_>>(),
+            vec![("owner", "alice")]
+        );
+        assert!(
+            ops.stat(&user(), "/home/user/m3/many")
+                .unwrap()
+                .metadata
+                .is_empty()
+        );
+        let listed = ops
+            .list_dir(&user(), "/home/user/m3", 1, ListingLimits::default())
+            .unwrap();
+        let big = listed.iter().find(|entry| entry.name == "big.bin").unwrap();
+        assert_eq!(big.metadata.len(), 1);
+    }
+
+    #[test]
+    fn metadata_errors_have_their_own_details() {
+        assert_eq!(
+            metadata_error(FsIoError::Unsupported),
+            FilesystemError::MetadataUnsupported
+        );
+        assert_eq!(
+            metadata_error(FsIoError::NoSpace),
+            FilesystemError::MetadataTooLarge
+        );
+        assert_eq!(
+            metadata_error(FsIoError::PermissionDenied),
+            FilesystemError::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn import_destinations_resolve_like_writes_and_refuse_directories() {
+        let fixture = Fixture::new();
+        let ops = fixture.ops();
+        let destination = ops
+            .import_destination(&user(), "m3/new/deep/file.bin")
+            .unwrap();
+        assert_eq!(destination.canonical, "/home/user/m3/new/deep/file.bin");
+        assert_eq!(destination.dir, "/home/user/m3/new/deep");
+        assert_eq!(destination.name, "file.bin");
+        assert_eq!(destination.path.as_str(), "/home/user/m3/new/deep/file.bin");
+        assert!(
+            !fixture.fs.exists("/home/user/m3/new"),
+            "nothing is created"
+        );
+        assert_eq!(
+            ops.import_destination(&user(), "/home/user/m3/many"),
+            Err(FilesystemError::IsADirectory)
+        );
+        assert_eq!(
+            ops.import_destination(&user(), "/home/user/m3/sys/passwd"),
+            Err(FilesystemError::Denied)
+        );
+        assert_eq!(
+            ops.import_destination(&user(), "/"),
+            Err(FilesystemError::IsADirectory)
+        );
+        let via_link = ops
+            .import_destination(&user(), "/home/user/m3/link")
+            .unwrap();
+        assert_eq!(via_link.canonical, "/home/user/m3/link");
+    }
+
+    #[test]
+    fn export_sources_are_regular_files_measured_when_opened() {
+        let fixture = Fixture::new();
+        let ops = fixture.ops();
+        let source = ops.export_source(&user(), "/home/user/m3/big.bin").unwrap();
+        assert_eq!(source.entry.size, 600);
+        assert_eq!(source.path.as_str(), "/home/user/m3/big.bin");
+        let mut buffer = [0u8; 16];
+        assert_eq!(source.file.read_at(&mut buffer, 590).unwrap(), 10);
+        assert_eq!(source.file.read_at(&mut buffer, 600).unwrap(), 0);
+        assert_eq!(
+            ops.export_source(&user(), "/home/user/m3/link")
+                .err()
+                .map(|e| e.to_string()),
+            Some(FilesystemError::IsSymlink.to_string())
+        );
+        assert!(matches!(
+            ops.export_source(&user(), "/home/user/m3/fifo"),
+            Err(FilesystemError::NotARegularFile)
+        ));
+        assert!(matches!(
+            ops.export_source(&user(), "/home/user/m3/many"),
+            Err(FilesystemError::IsADirectory)
+        ));
+        assert!(matches!(
+            ops.export_source(&user(), "/home/user/m3/nope"),
+            Err(FilesystemError::NotFound)
+        ));
+        assert!(matches!(
+            ops.export_source(&user(), "/etc/passwd"),
+            Err(FilesystemError::Denied)
+        ));
+    }
+
+    #[test]
+    fn an_import_sink_commits_its_metadata_and_an_overwrite_without_clears_it() {
+        let fixture = Fixture::new();
+        let ops = fixture.ops();
+        let destination = ops.import_destination(&user(), "m3/new.bin").unwrap();
+        let mut sink = ops.begin_import(&user(), &destination, 0o600).unwrap();
+        sink.write_chunk(b"abc").unwrap();
+        let owner = crate::filesystem::FileMetadata::parse([("Owner", "alice")]).unwrap();
+        sink.set_metadata(&owner).unwrap();
+        sink.commit(&destination.name, &user()).unwrap();
+        assert_eq!(fixture.fs.metadata("/home/user/m3/new.bin"), Some(owner));
+        let again = ops.begin_import(&user(), &destination, 0o600).unwrap();
+        again.commit(&destination.name, &user()).unwrap();
+        assert_eq!(
+            fixture.fs.metadata("/home/user/m3/new.bin"),
+            Some(crate::filesystem::FileMetadata::default())
+        );
+        assert_eq!(fixture.fs.open_temps(), 0);
+    }
+
+    #[test]
+    fn an_export_source_reads_the_file_as_it_is_now() {
+        let fixture = Fixture::new();
+        let ops = fixture.ops();
+        let source = ops.export_source(&user(), "/home/user/m3/big.bin").unwrap();
+        fixture.fs.truncate("/home/user/m3/big.bin", 100);
+        let mut buffer = [0u8; 64];
+        assert_eq!(source.file.read_at(&mut buffer, 64).unwrap(), 36);
+        assert_eq!(source.file.read_at(&mut buffer, 100).unwrap(), 0);
+        assert_eq!(source.entry.size, 600, "the entry is the size at open");
+    }
+
+    #[test]
+    fn barrier_targets_match_import_destinations() {
+        let fixture = Fixture::new();
+        let ops = fixture.ops();
+        let (path, canonical) = ops.barrier_target(&user(), "m3/new/file.bin").unwrap();
+        let destination = ops.import_destination(&user(), "m3/new/file.bin").unwrap();
+        assert_eq!(path, destination.path);
+        assert_eq!(canonical, destination.canonical);
+        assert_eq!(ops.barrier_target(&user(), "/etc/passwd"), None);
+        assert_eq!(ops.barrier_target(&user(), "a/../b"), None);
     }
 }

@@ -13,6 +13,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { InvalidArgumentError } from "./errors.js";
 import { RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
+import { type LifecycleBlock, lifecycleBlockToWire } from "./sandbox/lifecycle.js";
 
 export const PAYLOAD_VERSION = 1;
 export const DEFAULT_USER = "user";
@@ -63,6 +64,14 @@ export interface RunHookPayloadOptions {
   readonly cpuTimeLimit?: number | undefined;
   readonly user?: string | undefined;
   readonly workdir?: string | undefined;
+  /**
+   * `"network": {"enforce": true}` sólo cuando es `true`: `rayd` instala
+   * deny-all antes de responder a `/run`. Nunca lleva reglas ni credenciales
+   * (viajan después por `UpdateNetwork`, autenticado con el token).
+   */
+  readonly networkEnforce?: boolean | undefined;
+  /** El plazo lógico (ADR-011), ya validado por `resolveLifecycle`; sin él no viaja la clave. */
+  readonly lifecycle?: LifecycleBlock | undefined;
 }
 
 /**
@@ -71,6 +80,8 @@ export interface RunHookPayloadOptions {
  * `envs` y `metadata` se omiten del JSON cuando están vacíos para no gastar
  * caracteres; `cpuTimeLimit` (segundos de CPU, `1..=28800`) viaja como
  * `limits: {"cpu_seconds": N}` sólo cuando se pasa, igual que en Python.
+ * `lifecycle` (≈ 80 caracteres) sólo viaja cuando se pidió un plazo lógico:
+ * un `rayd` anterior a M9 ignora la clave y `v` sigue siendo 1.
  */
 export function buildRunHookPayload(options: RunHookPayloadOptions): string {
   if (!options.accessToken) {
@@ -90,6 +101,12 @@ export function buildRunHookPayload(options: RunHookPayloadOptions): string {
   }
   if (options.cpuTimeLimit !== undefined) {
     payload.limits = { cpu_seconds: validatedCpuTimeLimit(options.cpuTimeLimit) };
+  }
+  if (options.networkEnforce === true) {
+    payload.network = { enforce: true };
+  }
+  if (options.lifecycle !== undefined) {
+    payload.lifecycle = lifecycleBlockToWire(options.lifecycle);
   }
   const text = asciiJson(sortedKeys(payload));
   if (text.length > RUN_HOOK_PAYLOAD_MAX_CHARS) {

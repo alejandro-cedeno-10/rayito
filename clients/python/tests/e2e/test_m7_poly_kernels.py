@@ -1,78 +1,43 @@
 """M7 `m7-poly-kernels` contra AWS real (design D8): un sandbox de la variante
-`rayito-base-poly` (`RAYITO_TEMPLATE_POLY`, ARN o nombre) corre celdas bash
-con arranque perezoso del kernel, `javascript` es un lenguaje conocido que
-ninguna imagen trae (`ijavascript` necesita compilador en al2023 ARM64,
-AWS_API_NOTES.md Q57), el timeout sigue la regla genérica, Python no cambia
-en la variante y `rayito-base` responde `UNIMPLEMENTED` nombrando
-`rayito-base-poly`. `test_snapshot_sizes` compara los `snapshotBuild` de las
-dos publicaciones (`RAYITO_BASE_SIZES`/`RAYITO_POLY_SIZES`, `memoria,code,
-disco` en bytes) con la banda de D5 sin crear ningún MicroVM.
+`rayito-base-poly` (`RAYITO_TEMPLATE_POLY`, ARN o nombre; fixture
+`poly_sandbox` de `conftest.py`) corre celdas bash con arranque perezoso del
+kernel, el timeout sigue la regla genérica, Python no cambia en la variante y
+`rayito-base` responde `UNIMPLEMENTED` nombrando `rayito-base-poly`.
+`javascript` y `typescript` (Deno, M9) los cubre `test_m9_deno_kernels.py`.
+`test_snapshot_sizes` compara los `snapshotBuild` de las dos publicaciones
+(`RAYITO_BASE_SIZES`/`RAYITO_POLY_SIZES`, `memoria,code,disco` en bytes) con
+la banda de D5 sin crear ningún MicroVM. Desde M9 la banda de code install
+frente a 17.0 es de 70 MB (medido 56 285 288 B en `rayito-base` 22.0): git-core
+(`m9-e2b-v2-surface` D16, Q76, ≈ 38 MB) y el crecimiento de `rayd` desde
+17.0 que `RAYITO_RAYD_BYTES_DELTA`, medido ahora frente a la versión
+anterior, ya no descuenta.
 """
 
 from __future__ import annotations
 
-import contextlib
 import os
 import time
-from collections.abc import Iterator
 
 import grpc
 import pytest
 
 from rayito import Sandbox
-from rayito._aws import LambdaMicrovmsControlPlane
-from rayito.exceptions import (
-    CommandExitException,
-    InvalidArgumentException,
-    SandboxNotFoundException,
-)
-
-from .conftest import E2ESettings
+from rayito.exceptions import CommandExitException, InvalidArgumentException
 
 pytestmark = pytest.mark.e2e
 
-POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY"
 BASE_SIZES_VAR = "RAYITO_BASE_SIZES"
 POLY_SIZES_VAR = "RAYITO_POLY_SIZES"
 RAYD_DELTA_VAR = "RAYITO_RAYD_BYTES_DELTA"
 POLY_IMAGE = "rayito-base-poly"
 BASELINE_17_0 = (928_100_352, 1_305_825_280, 37_998_592)
 MEMORY_BAND_BYTES = 20 * 1_000_000
-CODE_BAND_BYTES = 10 * 1_000_000
+CODE_BAND_BYTES = 70 * 1_000_000
 BASH_TIMEOUT_SECONDS = 2
 
 
 def report(label: str, value: object) -> None:
     print(f"\n[m7] {label}: {value}", flush=True)
-
-
-def poly_template() -> str | None:
-    return os.environ.get(POLY_TEMPLATE_VAR) or None
-
-
-@pytest.fixture
-def poly_sandbox(
-    e2e_settings: E2ESettings, control_plane: LambdaMicrovmsControlPlane
-) -> Iterator[Sandbox]:
-    template = poly_template()
-    if not template:
-        pytest.skip(f"exporta {POLY_TEMPLATE_VAR}=<arn|nombre> para probar los kernels poly")
-    started = time.perf_counter()
-    created = Sandbox.create(
-        control_plane.resolve_template_arn(template),
-        timeout=900,
-        idle=None,
-        execution_role_arn=e2e_settings.execution_role_arn,
-        ingress=["ALL_INGRESS"],
-        logging=e2e_settings.logging,
-        control_plane=control_plane,
-    )
-    report("poly image kernel_ready_s", f"{time.perf_counter() - started:.2f}")
-    try:
-        yield created
-    finally:
-        with contextlib.suppress(SandboxNotFoundException):
-            created.kill()
 
 
 def test_bash_cell(poly_sandbox: Sandbox) -> None:
@@ -101,15 +66,6 @@ def test_bash_cell(poly_sandbox: Sandbox) -> None:
     failed = poly_sandbox.run_code("false", language="bash")
     report("bash non-zero exit error", failed.error)
     poly_sandbox.remove_code_context(context)
-
-
-def test_javascript_is_known_but_not_shipped(poly_sandbox: Sandbox) -> None:
-    with pytest.raises(InvalidArgumentException) as excinfo:
-        poly_sandbox.run_code("1 + 1", language="javascript")
-    assert excinfo.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
-    assert POLY_IMAGE in str(excinfo.value)
-    report("javascript on the poly image", str(excinfo.value))
-    assert "default-javascript" not in [item.id for item in poly_sandbox.list_code_contexts()]
 
 
 def test_bash_timeout(poly_sandbox: Sandbox) -> None:

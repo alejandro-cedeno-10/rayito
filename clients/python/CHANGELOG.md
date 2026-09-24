@@ -6,8 +6,190 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+Rayito 0.3.0 (M9, paridad con E2B 2.x). Notas completas en
+`docs/RELEASE_NOTES_0.3.0.md`; todo lo de M9 exige una imagen publicada con
+el `rayd` de M9.
+
+### Cambios que rompen
+
+- **`rayito.e2b` pasa de E2B 1.x a 2.x y exige una imagen M9**: `create()`
+  siempre pide un plazo lógico a `rayd` y, contra una imagen anterior,
+  termina el VM y lanza `UnimplementedError("lifecycle")`. `timeout` deja de
+  ser la vida inmutable del MicroVM (ahora es el plazo lógico; el tope es
+  `max_lifetime`). Detalle en "Changed (shim)".
+- `rayito.e2b`: `sbx.pause()` devuelve `bool` (antes el id del sandbox);
+  `files.watch_dir(path, on_event)` y `pty.create(size, on_data)` toman el
+  callback por nombre (el segundo posicional es `user`, como en E2B 2.x).
+- `rayito.e2b`: `set_timeout`, `upload_url`/`download_url`,
+  `get_metrics(start=, end=)`, `list(next_token=)` y
+  `allow_internet_access=False` ya no lanzan `UnimplementedError`, y
+  `mcp=`, `network=` y `lifecycle=` ya no son `TypeError`: el código que
+  capturaba esos errores para degradar cambia de camino.
+
+### Added
+
+- **Transferencias por S3 prefirmado** (`m9-file-transfer`, ADR-010):
+  `S3Staging(bucket, prefix="rayito-transfer", region=None,
+  max_expires_in=86400, threshold_bytes=8 MiB, multipart_threshold_bytes=5 GiB)`
+  (o `RAYITO_TRANSFER_BUCKET`/`RAYITO_TRANSFER_PREFIX`/`RAYITO_TRANSFER_REGION`;
+  sin bucket por defecto), `create(transfer=)`, `connect(transfer=)` y
+  `sbx.transfer`. `files.upload_url(path, user=, expires_in=3600,
+  max_bytes=, form=)` devuelve un `UploadTicket` (un `str` con la URL, más
+  `headers`, `fields`, `expires_at`, `wait()`, `status()`, `cancel()`; de un
+  solo uso, con la importación ya armada en el sandbox) y
+  `files.download_url(path, user=, expires_in=3600, filename=)` un
+  `DownloadLink` (`str` con `size`, `sha256` y `expires_at`; una foto del
+  fichero al llamar, multiparte desde `multipart_threshold_bytes`).
+  `Sandbox.upload_url/download_url(path, user, use_signature_expiration)`
+  con la forma de E2B. El SDK firma con tus credenciales (SigV4, host
+  virtual regional, vida `min(expires_in, max_expires_in, 604800)`); `rayd`
+  no guarda ninguna. `repr` nunca muestra la URL y `pickle` la rechaza.
+  Nuevos `TransferStatus`, `AsyncUploadTicket`, `TransferException(code,
+  reason)`, `FileUploadException` y `UnimplementedError(feature, reason,
+  doc=None)` nativo (sin staging: "configura transfer=S3Staging(...) o
+  RAYITO_TRANSFER_BUCKET"; con una imagen anterior: "actualiza la imagen").
+- **Ficheros grandes por S3**: con `transfer`, `files.write`/`write_files`
+  suben lo que mide al menos `threshold_bytes` (y todo stream binario no
+  buscable) directamente a S3 y `rayd` lo importa verificando su sha256;
+  `files.read` exporta y descarga verificando el sha256. Sin `transfer`,
+  el camino gRPC no cambia. `request_timeout` (o `60 s + 1 s por MB`)
+  acota también la pata S3 y `stream_idle_timeout` rige entre trozos de la
+  descarga en `format="bytes"`/`"text"`: una subida o descarga colgada
+  falla con `TimeoutException` sin esperar a los reintentos de botocore.
+  `create(pool=..., transfer=...)` firma con la sesión boto3 del pool.
+- `files.read(gzip=, stream_idle_timeout=)`, `files.write`/`write_files(gzip=,
+  metadata=, use_octet_stream=)` y `EntryInfo.metadata` (mapa de sólo
+  lectura, claves en minúsculas). `gzip` y `metadata` en una escritura
+  exigen una imagen M9 (`UnimplementedError` antes de mover bytes);
+  `use_octet_stream` se acepta sin efecto. Nuevos códigos de `StreamError`:
+  `resource_exhausted` (`DiskFullException` o `RateLimitException`) y
+  `failed_precondition` (`InvalidArgumentException`).
+
+- **Plazo del servidor** (`m9-server-timeout`, ADR-011; exige una imagen M9):
+  `create(max_lifetime=, on_timeout="kill" | "pause")`. Con cualquiera de los
+  dos, `timeout` es un plazo lógico que `rayd` hace cumplir aunque el cliente
+  muera y `max_lifetime` (120–28 800 s, por defecto `timeout + 60`) es
+  `maximumDurationInSeconds`. `set_timeout(timeout)` (instancia y clase, con
+  el access token) lo fija con `SetTimeout` EXACT (puede acortarlo; más allá
+  del tope, `InvalidArgumentException`) y `connect(timeout=)` (instancia y
+  clase) lo alarga con `AT_LEAST`. `on_timeout="pause"` suspende al vencer y
+  `idle.auto_resume` reanuda con un plazo nuevo de `max(timeout, 300 s)`.
+  Nuevos `SandboxLifecycle` (en `get_health().lifecycle` y
+  `get_info().lifecycle`) y `LifecycleUnsupportedException` (una imagen
+  anterior a M9 con un ciclo de vida pedido: el VM se termina salvo
+  `keep_on_failure`). Sin `max_lifetime` ni `on_timeout` el cable y la
+  semántica son los de siempre. `TimeoutException` también cuando una llamada
+  choca con el plazo (`sandbox_timeout`).
+- **Historial de métricas y listado reanudable**
+  (`m9-sandbox-observability`): `get_metrics_history(start=, end=,
+  max_points=)` (instancia y clase con el access token; una muestra cada 5 s,
+  anillo de 8 h, hueco mientras está suspendido; `UnimplementedError` en una
+  imagen anterior, como las transferencias y el plazo, con el
+  `UNIMPLEMENTED` de gRPC en `__cause__`),
+  `SandboxMetrics.mem_cache_bytes`, `SandboxHealth.cpu_count` y
+  `memory_total_bytes`, `SandboxInfo.agent_version`/`cpu_count`/`memory_mb`
+  en `get_info()`. `Sandbox.paginate(limit=, next_token=, order=,
+  started_after=, states=, metadata=)` → `SandboxListPaginator`
+  (`next_items()`, `has_next`, `next_token` opaco) y `list(order=,
+  started_after=)`.
+- **Política de egress** (`m9-egress-policy`, ADR-012): `create(network=,
+  allow_internet_access=)`, `update_network()` (instancia y clase),
+  `get_network()`, `NetworkPolicy`, `NetworkOptions`, `EgressProxy`,
+  `NetworkState`, `EgressEnforcement`, `ALL_TRAFFIC` y
+  `SandboxHealth.egress_enforcement`. Se aplica en el guest de
+  `rayito-base-caps`; en cualquier otra imagen el SDK termina el VM (también
+  con `keep_on_failure`) y lanza `UnimplementedError`.
+- **Kernels JavaScript y TypeScript** (`m9-deno-kernels`): `language`
+  acepta `typescript` (alias `ts`) además de `javascript` (`js`), servidos
+  por el kernel de Deno de `rayito-base-poly`.
+- **Git** (`m9-e2b-v2-surface`): `sbx.git` (`Git`/`AsyncGit`) con la API git
+  de E2B sobre `commands.run` (`clone`, `status`, `commit`, `push`, `pull`,
+  `dangerously_authenticate`, ...), `GitStatus`, `GitBranches`,
+  `GitFileStatus`, `GitAuthException` y `GitUpstreamException`; las
+  credenciales nunca se registran y se redactan de la salida.
+- **CLI** (`rayito[cli]`): `rayito sandbox create [--detach --token-file]`,
+  `connect`, `exec -- CMD` y `metrics [--follow]`, con terminal interactiva
+  (POSIX y consola de Windows) y el token sólo por fichero o
+  `RAYITO_ACCESS_TOKEN`, nunca por argv.
+- `create()`/`connect()` aceptan `logger=` (los logs de ese sandbox van al
+  `logging.Logger` dado), `is_running(request_timeout=)` y
+  `CommandHandle.wait(on_pty=, on_stdout=, on_stderr=)`.
+- **Shim `rayito.e2b` 2.x** (`m9-e2b-v2-surface`, contrato `e2b` 2.51.0 y
+  `e2b-code-interpreter` 2.10.0): `set_timeout`, `connect(timeout)` y la
+  instancia `sbx.connect()`, `lifecycle`, `beta_create(auto_pause=True)`,
+  `upload_url`/`download_url`, `get_metrics(start, end)` y la forma de clase
+  con el access token, `list(limit, next_token, order)` con
+  `SandboxQuery.state/started_after/template`, `allow_internet_access=False`
+  y `network` (en `rayito-base-caps`), `update_network`, `git`,
+  `run_code(language="typescript")`, `E2B`, `ConnectionConfig`,
+  `sbx.connection_config`, `proxy=`, `headers=`, `retries=`, `logger=`,
+  `traffic_access_token`, `envd_api_url` y las excepciones
+  `FileNotFoundException`, `SandboxNotFoundException`,
+  `ServiceBusyException`, `FileUploadException`, `BuildException`.
+  `UnimplementedError` explícito (nunca `TypeError` ni `AttributeError`) para
+  `fork`, snapshots, `pause(keep_memory=False)`, `network.rules`,
+  `mask_request_host`, `allow_public_traffic=True`, `mcp`, `iam`, volúmenes,
+  secretos y templates.
+
+### Changed (shim)
+
+- **`rayito.e2b` exige una imagen M9**: `create()` siempre pide un plazo
+  lógico; contra una imagen anterior termina el VM y lanza
+  `UnimplementedError("lifecycle")`. `timeout` es ahora el plazo lógico y
+  `maximumDurationInSeconds` es `max_lifetime` (por defecto
+  `max(3600, min(timeout + 60, 28800))`).
+- `rayito.e2b.Sandbox.set_timeout` deja de lanzar `UnimplementedError` (lo
+  que decía la entrada de 0.2.0): mueve el plazo lógico hasta
+  `max_lifetime`.
+- `sbx.pause()` devuelve `bool` (antes el id); `files.watch_dir` y
+  `pty.create` toman el callback por nombre (el segundo posicional es
+  `user`); `proxy=` se honra; `NotEnoughSpaceException` es
+  `DiskFullException` y se lanza; `rayito.e2b.UnimplementedError` es la
+  misma clase que `rayito.UnimplementedError`.
+
+### Fixed
+
+- **Auto-resume tras una pausa por el plazo con el cliente vivo**: en modo
+  `on_timeout="pause"` con `auto_resume`, si este cliente suspendió el
+  sandbox al vencer y la suspensión real duró menos de 2 s (el vigilante de
+  `rayd` no la reconoce como congelación), el sandbox volvía `expired` y la
+  siguiente llamada fallaba con `sandbox_timeout`. Ahora el SDK aplica la
+  regla de E2B (`max(timeout, 300 s)`, acotada al tope menos 5 s) con un
+  `SetTimeout` en el primer `sandbox_timeout` tras reanudar, una vez por
+  suspensión. La marca de un solo uso sólo se consume cuando la
+  `resume_generation` ya avanzó y el `SetTimeout` respondió (un
+  `sandbox_timeout` que llega antes de la congelación ya no la gasta), y los
+  callers concurrentes comparten una sola reapertura (un lock en `Sandbox`,
+  una tarea compartida en `AsyncSandbox`): un único `SetTimeout` y todos
+  reintentan.
+- `rayito doctor`: la tabla de compatibilidad gana la fila `0.3` (`rayd`
+  mínimo `0.3.0`); sin ella la comprobación `compatibility` daba `FAIL` con
+  el SDK 0.3.0.
+- Las URLs y la pata S3 de las transferencias se firman con la sesión del
+  plano de control (`LambdaMicrovmsControlPlane.session`) cuando no se pasa
+  `session=`, también en un sandbox tomado de un pool (`pool.session`); antes
+  caían a la cadena por defecto de boto3 y podían firmar con otro principal.
+- `get_info()` devuelve los hechos del guest (`agent_version`, `cpu_count`,
+  `memory_mb`) en el valor que retorna sin guardarlos en `sbx.info`.
+- `UnimplementedError` de una política de egress en una imagen sin
+  `CAP_NET_ADMIN` nombra `allow_internet_access=False` sólo cuando ese flag,
+  y no `network=`, es lo que pide la política (la misma regla que TS).
+- CLI: al salir de `rayito sandbox connect`/`create` el hilo que lee la
+  terminal local se detiene (antes podía seguir consumiendo la entrada y, en
+  macOS, bloquear el cierre del descriptor de la PTY).
+- `Result.extra` se lee del proto con las claves ordenadas: el orden de un
+  mapa protobuf no está garantizado.
+- La readiness de `create()`, `connect()` y `resume()` exige además un
+  `Health` con `sandbox_id`: el proxy deja pasar `Health` antes de que
+  `rayd` reciba `/run`, y ese `Health` (kernel del snapshot sin rotar) daba
+  por listo un sandbox cuya rotación de `/run` ponía `kernel_ready=false`
+  justo después (AWS_API_NOTES.md Q78, visto en la regresión de M9 con `create()` en 2,35 s).
+
 ### Security
 
+- `repr()` de `LaunchPlan` ya no muestra el access token ni el de
+  `LaunchRequest` el `runHookPayload` (que lleva los `envs` de `create()`):
+  ambos campos quedan fuera de `repr` (`field(repr=False)`).
 - **`JsonFilePoolBackend` escribe por un temporal exclusivo**
   (auditoría interna H-01…H-06, fila H-03): el fichero del pool se escribía
   por `<path>.tmp`, un nombre fijo que otro usuario del sistema podía crear
@@ -25,6 +207,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   C-08): `create()` también lee la variable, así que exportarla convierte el
   secreto por sandbox en uno de toda la flota del proceso. El SDK lo avisa
   una vez por proceso (`logger.warning`, nunca el valor).
+- **Los errores de AWS ya no encadenan el `ClientError` crudo**: botocore no
+  cuelga la petición firmada de un `ClientError`, pero lo que AWS devuelve
+  repite la firma: un `SignatureDoesNotMatch` de S3 trae `AWSAccessKeyId` y
+  `CanonicalRequest` (con el valor de `x-amz-security-token`) en
+  `response["Error"]`, y un `InvalidSignatureException`/`SignatureDoesNotMatch`
+  de lambda-microvms o STS mete la cadena canónica en el mensaje, que acababa
+  en el mensaje de la excepción traducida y, por `raise ... from exc`, en
+  cualquier traceback (también el `logger.debug(..., exc_info=True)` de la
+  reconexión). Ahora el plano de control y las transferencias por S3 lanzan
+  fuera del `except` y desde un `AwsErrorSummary`
+  (`rayito._aws_sanitize.sanitize_aws_error`) con sólo `name`, `code`, el
+  mensaje redactado, `status_code`, `request_id`, `extended_request_id` y
+  `attempts` (S3 sin mensaje: un `EndpointConnectionError` nombra el
+  bucket); ni `__cause__` ni `__context__` guardan el error de botocore. El
+  mensaje traducido pierde la cadena canónica, las cabeceras de firma, los
+  parámetros `X-Amz-*` y los ids de clave. `status_code`, `aws_code`,
+  `retry_after` y `quota_code` no cambian.
 
 ## [0.2.0] - 2026-09-17
 

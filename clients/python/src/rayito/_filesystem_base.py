@@ -6,19 +6,35 @@ troceado del stream de `Write`, conversión de protos y el estado de un
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import logging
+import string
 import threading
+import time
 from collections import deque
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Literal
 
 import grpc
 
-from rayito._models import EntryInfo, FilesystemEvent, FilesystemEventType, FileType, WriteEntry
+from rayito._limits import (
+    COMPRESSION_OPT_IN_HEADER,
+    METADATA_MAX_BYTES,
+    METADATA_MAX_KEYS,
+    METADATA_XATTR_PREFIX,
+)
+from rayito._models import (
+    EntryInfo,
+    FilesystemEvent,
+    FilesystemEventType,
+    FileType,
+    WriteEntry,
+    frozen_mapping,
+)
 from rayito._transport import rpc_status, translate_rpc_error
-from rayito.exceptions import InvalidArgumentException, SandboxException
+from rayito.exceptions import InvalidArgumentException, SandboxException, TimeoutException
 from rayito.v1 import common_pb2, filesystem_pb2
 
 logger = logging.getLogger("rayito.files")
@@ -35,6 +51,11 @@ READ_FORMATS: Final = ("text", "bytes", "stream")
 UNIX_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 EARLIEST_MODIFIED_TIME: Final = datetime.min.replace(tzinfo=UTC)
 LATEST_MODIFIED_TIME: Final = datetime.max.replace(tzinfo=UTC)
+METADATA_KEY_MAX_CHARS: Final = 255
+METADATA_KEY_CHARS: Final = frozenset(string.ascii_letters + string.digits + "!#$%&'*+-.^_`|~")
+METADATA_VALUE_CHARS: Final = frozenset(chr(code) for code in range(0x20, 0x7F))
+COMPRESSION_GZIP: Final = "gzip"
+GZIP_READ_METADATA: Final = ((COMPRESSION_OPT_IN_HEADER, COMPRESSION_GZIP),)
 
 ReadFormat = Literal["text", "bytes", "stream"]
 EventCallback = Callable[[FilesystemEvent], None]
@@ -118,6 +139,92 @@ def validate_read_format(format: object) -> ReadFormat:
             f"format debe ser 'text', 'bytes' o 'stream', recibido {format!r}"
         )
     return format
+
+
+def validate_stream_idle_timeout(timeout: object) -> float | None:
+    """`None` y `0` significan sin guardia; `> 0` son los segundos que `read`
+    espera como mucho entre dos chunks antes de cancelar la llamada."""
+    if timeout is None:
+        return None
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+        raise InvalidArgumentException(
+            f"stream_idle_timeout debe ser un número de segundos o None, recibido {timeout!r}"
+        )
+    if timeout < 0:
+        raise InvalidArgumentException(
+            f"stream_idle_timeout no puede ser negativo, recibido {timeout!r}"
+        )
+    return None if timeout == 0 else float(timeout)
+
+
+def validate_metadata(metadata: Mapping[str, str] | None) -> dict[str, str]:
+    """Las reglas de `rayd` para `WriteRequest.metadata`, antes de cualquier
+    RPC: claves de 1-255 caracteres token de HTTP (se envían en minúsculas,
+    dos iguales tras bajar a minúsculas se rechazan), valores ASCII
+    imprimible, como mucho 64 claves y 4000 bytes contando `user.rayito.`.
+    Los mensajes nunca repiten una clave ni un valor."""
+    if metadata is None:
+        return {}
+    if not isinstance(metadata, Mapping):
+        raise InvalidArgumentException("metadata debe ser un mapa de str a str")
+    if len(metadata) > METADATA_MAX_KEYS:
+        raise InvalidArgumentException(
+            f"metadatos inválidos: como mucho {METADATA_MAX_KEYS} claves"
+        )
+    normalized: dict[str, str] = {}
+    for key, value in metadata.items():
+        lowered = validate_metadata_key(key)
+        if lowered in normalized:
+            raise InvalidArgumentException(
+                "metadatos inválidos: dos claves coinciden al pasarlas a minúsculas"
+            )
+        normalized[lowered] = validate_metadata_value(value)
+    if metadata_size(normalized) > METADATA_MAX_BYTES:
+        raise InvalidArgumentException(
+            f"metadatos inválidos: superan {METADATA_MAX_BYTES} bytes contando el prefijo "
+            f"{METADATA_XATTR_PREFIX}"
+        )
+    return normalized
+
+
+def validate_metadata_key(key: object) -> str:
+    if not isinstance(key, str) or not 1 <= len(key) <= METADATA_KEY_MAX_CHARS:
+        raise InvalidArgumentException(
+            f"metadatos inválidos: cada clave es una cadena de 1 a {METADATA_KEY_MAX_CHARS} "
+            "caracteres"
+        )
+    if any(char not in METADATA_KEY_CHARS for char in key):
+        raise InvalidArgumentException(
+            "metadatos inválidos: las claves sólo admiten caracteres token de HTTP "
+            "(letras, dígitos y !#$%&'*+-.^_`|~)"
+        )
+    return key.lower()
+
+
+def validate_metadata_value(value: object) -> str:
+    if not isinstance(value, str) or any(char not in METADATA_VALUE_CHARS for char in value):
+        raise InvalidArgumentException(
+            "metadatos inválidos: los valores son cadenas de ASCII imprimible (0x20-0x7E)"
+        )
+    return value
+
+
+def metadata_size(metadata: Mapping[str, str]) -> int:
+    return sum(
+        len(METADATA_XATTR_PREFIX) + len(key) + len(value) for key, value in metadata.items()
+    )
+
+
+def read_call_options(gzip: bool) -> dict[str, Any]:
+    """Kwargs extra del `Read`: `rayito-compress: gzip` pide a `rayd` la
+    respuesta comprimida (sin ella responde siempre `identity`, aunque el
+    cliente anuncie gzip). Sin `gzip` la llamada queda como en 0.2.0."""
+    return {"metadata": GZIP_READ_METADATA} if gzip else {}
+
+
+def write_call_options(gzip: bool) -> dict[str, Any]:
+    """Kwargs extra del `Write`: el stream viaja con `grpc-encoding: gzip`."""
+    return {"compression": grpc.Compression.Gzip} if gzip else {}
 
 
 def coerce_data(data: object) -> bytes:
@@ -225,16 +332,20 @@ def watch_dir_request(
 
 
 def build_write_requests(
-    entries: Sequence[PreparedWrite], user: str | None
+    entries: Sequence[PreparedWrite],
+    user: str | None,
+    metadata: Mapping[str, str] | None = None,
 ) -> Iterator[filesystem_pb2.WriteRequest]:
-    """Un `WriteRequest` con `path` (y `user`/`mode` si los hay) abre cada
-    fichero con su primer chunk, posiblemente vacío; el resto viaja en
-    chunks de 1 MiB sin `path`. Es un generador nuevo por llamada, que es
-    lo que el reintento del 403 necesita."""
+    """Un `WriteRequest` con `path` (y `user`/`mode`/`metadata` si los hay)
+    abre cada fichero con su primer chunk, posiblemente vacío; el resto
+    viaja en chunks de 1 MiB sin `path`. Es un generador nuevo por llamada,
+    que es lo que el reintento del 403 necesita."""
     for path, data, mode in entries:
         first = filesystem_pb2.WriteRequest(path=path, chunk=data[:WRITE_CHUNK_BYTES])
         if mode is not None:
             first.mode = mode
+        if metadata:
+            first.metadata.update(metadata)
         apply_user(first, user)
         yield first
         for offset in range(WRITE_CHUNK_BYTES, len(data), WRITE_CHUNK_BYTES):
@@ -273,6 +384,7 @@ def entry_info_from_proto(entry: common_pb2.EntryInfo) -> EntryInfo:
         group=str(entry.group),
         modified_time=modified_time_from_ms(int(entry.modified_time_unix_ms)),
         symlink_target=str(entry.symlink_target) if entry.HasField("symlink_target") else None,
+        metadata=frozen_mapping({str(key): str(value) for key, value in entry.metadata.items()}),
     )
 
 
@@ -315,6 +427,114 @@ def require_watch_started(response: Any) -> None:
 
 def is_already_exists(exc: grpc.RpcError) -> bool:
     return rpc_status(exc) is grpc.StatusCode.ALREADY_EXISTS
+
+
+# ------------------------------------------------------------ idle streams
+
+
+def idle_timeout_error(timeout: float) -> TimeoutException:
+    return TimeoutException(
+        f"stream_idle_timeout: no llegó ningún chunk en {timeout:g} s; la llamada se canceló"
+    )
+
+
+class IdleWatchdog:
+    """`stream_idle_timeout` en el árbol síncrono: un hilo daemon cancela la
+    llamada cuando un `arm()` (justo antes de esperar el siguiente mensaje)
+    lleva `timeout` segundos sin su `disarm()`. Sólo cuenta la espera del
+    siguiente chunk, nunca el tiempo que el consumidor tarda en procesarlo.
+    `fired` dice si la cancelación fue suya, para traducirla a
+    `TimeoutException`; `close()` libera el hilo."""
+
+    def __init__(
+        self,
+        timeout: float,
+        cancel: Callable[[], object],
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.timeout = timeout
+        self.fired = False
+        self._cancel = cancel
+        self._monotonic = monotonic
+        self._condition = threading.Condition()
+        self._deadline: float | None = None
+        self._closed = False
+        self._thread = threading.Thread(target=self._run, name="rayito-idle-watchdog", daemon=True)
+        self._thread.start()
+
+    def arm(self) -> None:
+        with self._condition:
+            self._deadline = self._monotonic() + self.timeout
+            self._condition.notify_all()
+
+    def disarm(self) -> None:
+        with self._condition:
+            self._deadline = None
+            self._condition.notify_all()
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    def _run(self) -> None:
+        if self._wait_for_expiry():
+            self._cancel()
+
+    def _wait_for_expiry(self) -> bool:
+        with self._condition:
+            while not self._closed:
+                if self._deadline is None:
+                    self._condition.wait()
+                    continue
+                remaining = self._deadline - self._monotonic()
+                if remaining <= 0:
+                    self.fired = True
+                    return True
+                self._condition.wait(remaining)
+        return False
+
+
+def guarded_messages(
+    messages: Iterator[Any], idle: float | None, cancel: Callable[[], object]
+) -> Iterator[Any]:
+    """Itera `messages` y, con `idle`, llama a `cancel` si el siguiente tarda
+    más de `idle` segundos; el error que deja la cancelación se levanta como
+    `TimeoutException("stream_idle_timeout: ...")`."""
+    if idle is None:
+        yield from messages
+        return
+    watchdog = IdleWatchdog(idle, cancel)
+    try:
+        while True:
+            watchdog.arm()
+            try:
+                message = next(messages)
+            except StopIteration:
+                return
+            except Exception as exc:
+                if watchdog.fired:
+                    raise idle_timeout_error(idle) from exc
+                raise
+            finally:
+                watchdog.disarm()
+            yield message
+    finally:
+        watchdog.close()
+
+
+async def read_guarded(call: Any, idle: float | None) -> Any:
+    """`call.read()` de `grpc.aio` con `stream_idle_timeout`: si el siguiente
+    mensaje tarda más de `idle` segundos cancela la llamada y levanta
+    `TimeoutException("stream_idle_timeout: ...")`."""
+    if idle is None:
+        return await call.read()
+    try:
+        return await asyncio.wait_for(call.read(), idle)
+    except TimeoutError as exc:
+        call.cancel()
+        raise idle_timeout_error(idle) from exc
 
 
 # ------------------------------------------------------------------- watching

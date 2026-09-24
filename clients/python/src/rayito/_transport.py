@@ -42,7 +42,7 @@ from rayito.exceptions import (
     TimeoutException,
 )
 
-logger = logging.getLogger("rayito.transport")
+module_logger = logging.getLogger("rayito.transport")
 
 PROXY_AUTH_KEY: Final = "x-aws-proxy-auth"
 PROXY_PORT_KEY: Final = "x-aws-proxy-port"
@@ -60,6 +60,8 @@ STREAM_RESET_MARKERS: Final = (
 PHASE_GATE_DETAILS: Final = ("suspending", "terminating")
 DISK_FULL_DETAILS: Final = ("disk_reserve", "disk_full")
 KERNEL_GATE_PREFIX: Final = "kernel not ready"
+SANDBOX_TIMEOUT_DETAIL: Final = "sandbox_timeout"
+SANDBOX_TIMEOUT_MESSAGE: Final = "el sandbox alcanzó su timeout (sandbox_timeout)"
 TOKEN_REFRESH_AFTER_SECONDS: Final = TOKEN_REFRESH_AFTER_MINUTES * 60
 
 CHANNEL_OPTIONS: Final[tuple[tuple[str, int], ...]] = (
@@ -126,11 +128,16 @@ class TokenStore:
             self._tokens = []
 
 
+MetadataPairs = tuple[tuple[str, str], ...]
+
+
 class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
     """Añade las cuatro cabeceras del proxy a cada RPC (unarios y streams).
 
     `access_token=None` omite `x-access-token`: sólo tiene sentido para
-    `HealthService.Health`, el único RPC anónimo.
+    `HealthService.Health`, el único RPC anónimo. `extra` son cabeceras del
+    usuario ya validadas (`headers=` del shim de E2B) y van siempre después
+    de las reservadas, así que nunca las sustituyen.
     """
 
     def __init__(
@@ -139,10 +146,12 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
         *,
         port: int = DEFAULT_PORT,
         access_token: str | None,
+        extra: MetadataPairs = (),
     ) -> None:
         self._store = store
         self._port = port
         self._access_token = access_token
+        self._extra = extra
 
     def __call__(
         self,
@@ -162,6 +171,7 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
         ]
         if self._access_token:
             metadata.append((ACCESS_TOKEN_KEY, self._access_token))
+        metadata.extend(self._extra)
         callback(tuple(metadata), None)
 
 
@@ -170,7 +180,11 @@ class TransportSettings:
     """Cómo se abre el canal al MicroVM. El default es TLS al 443 del proxy.
 
     Los tests apuntan a un `rayd` falso en loopback con
-    `grpc.local_channel_credentials()`.
+    `grpc.local_channel_credentials()`. `extra_metadata` viaja en cada RPC
+    detrás de las cabeceras reservadas (cada `ProxyAuthPlugin` construido
+    con estos ajustes lo recibe) y `http_proxy` (`http://host:puerto`, sólo
+    HTTP CONNECT) se pasa a grpc-core como `grpc.http_proxy`; ninguno de los
+    dos se loguea.
     """
 
     channel_credentials: grpc.ChannelCredentials = field(
@@ -178,6 +192,8 @@ class TransportSettings:
     )
     port: int = ENDPOINT_TLS_PORT
     options: tuple[tuple[str, int | str], ...] = CHANNEL_OPTIONS
+    extra_metadata: MetadataPairs = field(default=(), repr=False)
+    http_proxy: str | None = field(default=None, repr=False)
 
     def target(self, host: str) -> str:
         return f"{host}:{self.port}"
@@ -187,14 +203,20 @@ class TransportSettings:
             self.channel_credentials, grpc.metadata_call_credentials(plugin)
         )
 
+    def channel_options(self) -> list[tuple[str, int | str]]:
+        proxy: list[tuple[str, int | str]] = (
+            [] if self.http_proxy is None else [("grpc.http_proxy", self.http_proxy)]
+        )
+        return [*self.options, *proxy]
+
     def open_channel(self, host: str, plugin: ProxyAuthPlugin) -> grpc.Channel:
         return grpc.secure_channel(
-            self.target(host), self.credentials(plugin), options=list(self.options)
+            self.target(host), self.credentials(plugin), options=self.channel_options()
         )
 
     def open_aio_channel(self, host: str, plugin: ProxyAuthPlugin) -> grpc.aio.Channel:
         return grpc.aio.secure_channel(
-            self.target(host), self.credentials(plugin), options=list(self.options)
+            self.target(host), self.credentials(plugin), options=self.channel_options()
         )
 
 
@@ -213,16 +235,22 @@ class TokenRefresher:
         mint: TokenMinter,
         *,
         clock: WallClock = time.time,
+        logger: logging.Logger | None = None,
     ) -> None:
         self._store = store
         self._mint = mint
         self._clock = clock
+        self._logger = module_logger if logger is None else logger
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     @property
     def store(self) -> TokenStore:
         return self._store
+
+    def route_logs_to(self, logger: logging.Logger) -> None:
+        """Los avisos de refresco fallido van a `logger` (el del sandbox)."""
+        self._logger = logger
 
     def mint(self, ports: Sequence[PortSpec]) -> ProxyToken:
         token = ProxyToken(jwe=self._mint(ports), ports=tuple(ports), minted_at=self._clock())
@@ -248,7 +276,7 @@ class TokenRefresher:
             try:
                 self.mint(token.ports)
             except Exception:
-                logger.warning(
+                self._logger.warning(
                     "no se pudo renovar el token del proxy; reintento en %s s",
                     TOKEN_REFRESH_RETRY_SECONDS,
                     exc_info=True,
@@ -304,6 +332,9 @@ class AsyncTokenRefresher:
     @property
     def store(self) -> TokenStore:
         return self._refresher.store
+
+    def route_logs_to(self, logger: logging.Logger) -> None:
+        self._refresher.route_logs_to(logger)
 
     async def mint(self, ports: Sequence[PortSpec]) -> ProxyToken:
         return await asyncio.to_thread(self._refresher.mint, ports)
@@ -384,6 +415,17 @@ def is_kernel_gate(exc: grpc.RpcError) -> bool:
     )
 
 
+def is_sandbox_timeout(exc: grpc.RpcError) -> bool:
+    """`rayd` responde `FAILED_PRECONDITION sandbox_timeout` a todo RPC salvo
+    `Health` y `SetTimeout` con el plazo lógico vencido (ADR-011), y cierra
+    así los streams abiertos. No es `UNAVAILABLE` a propósito: el agente
+    vive y reconectar no cambia nada."""
+    return (
+        rpc_status(exc) is grpc.StatusCode.FAILED_PRECONDITION
+        and rpc_details(exc) == SANDBOX_TIMEOUT_DETAIL
+    )
+
+
 def is_stream_reset(exc: grpc.RpcError) -> bool:
     """Un stream cortado por debajo de gRPC: `UNAVAILABLE` (proxy o conexión
     caída) o `INTERNAL` con las marcas de reset HTTP/2 que grpc-core deja en
@@ -417,6 +459,8 @@ def translate_rpc_error(exc: grpc.RpcError, *, filesystem: bool = False) -> Exce
         )
     if is_kernel_gate(exc):
         return SandboxException(f"el kernel no está listo: {message}", grpc_code=code)
+    if is_sandbox_timeout(exc):
+        return TimeoutException(SANDBOX_TIMEOUT_MESSAGE, grpc_code=code)
     if code in (grpc.StatusCode.INVALID_ARGUMENT, grpc.StatusCode.FAILED_PRECONDITION):
         return InvalidArgumentException(message, grpc_code=code)
     if code is grpc.StatusCode.UNAUTHENTICATED:
@@ -452,8 +496,14 @@ def translate_stream_error(code: str, message: str, *, filesystem: bool = False)
         return AuthenticationException(message)
     if code == "deadline_exceeded":
         return TimeoutException(message)
-    if code in ("unimplemented", "invalid_argument"):
+    if code == SANDBOX_TIMEOUT_DETAIL:
+        return TimeoutException(SANDBOX_TIMEOUT_MESSAGE)
+    if code in ("unimplemented", "invalid_argument", "failed_precondition"):
         return InvalidArgumentException(message)
+    if code == "resource_exhausted":
+        if message in DISK_FULL_DETAILS:
+            return DiskFullException(message)
+        return RateLimitException(message)
     if code == "suspending":
         return SandboxStateException(message)
     if code == "output_truncated":

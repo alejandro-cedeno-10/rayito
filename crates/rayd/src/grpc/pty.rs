@@ -1,7 +1,8 @@
 //! `PtyService` over `PtyManager`: proto <-> domain conversion, the gRPC
 //! status table of design D5 for everything that fails before the first
 //! message, the keepalive on both streams and the suspend close with the
-//! `exited{suspending}` terminal. Error messages and log lines carry pids,
+//! `exited{suspending}` terminal (`exited{sandbox_timeout}` at the logical
+//! deadline, ADR-011). Error messages and log lines carry pids,
 //! sizes and errno names, never terminal bytes, the shell's arguments or
 //! its environment.
 
@@ -25,14 +26,16 @@ use tonic::codegen::BoxStream;
 use tonic::{Request, Response, Status};
 
 use super::keepalive::{DEFAULT_KEEPALIVE_INTERVAL, KeepAliveStream};
-use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream};
+use crate::lifecycle::{StreamCloseReason, SuspendClose, SuspendSignal, SuspendableStream};
 use crate::process::SubscriberStream;
 use crate::pty::{PtyManager, PtySpawner};
+use crate::transfer::TransferBarrier;
 
 pub struct PtyGrpc<B: PtySpawner> {
     manager: Arc<PtyManager<B>>,
     suspend: Arc<SuspendSignal>,
     keepalive_interval: Duration,
+    barrier: TransferBarrier,
 }
 
 impl<B: PtySpawner> PtyGrpc<B> {
@@ -49,7 +52,16 @@ impl<B: PtySpawner> PtyGrpc<B> {
             manager,
             suspend,
             keepalive_interval: interval,
+            barrier: TransferBarrier::disabled(),
         }
+    }
+
+    /// The read-after-upload barrier consulted before every terminal
+    /// (ADR-010); disabled unless a transfer manager is wired.
+    #[must_use]
+    pub fn with_barrier(mut self, barrier: TransferBarrier) -> Self {
+        self.barrier = barrier;
+        self
     }
 
     fn wrap(&self, stream: SubscriberStream) -> BoxStream<PtyServerMessage> {
@@ -57,7 +69,7 @@ impl<B: PtySpawner> PtyGrpc<B> {
             stream,
             self.suspend.subscribe(),
             |event| Ok(to_proto(event)),
-            || SuspendClose::Terminal(suspending_message()),
+            |reason| SuspendClose::Terminal(closing_message(reason)),
         );
         Box::pin(KeepAliveStream::new(
             closing,
@@ -77,6 +89,7 @@ impl<B: PtySpawner> PtyService for PtyGrpc<B> {
         request: Request<PtyStart>,
     ) -> Result<Response<Self::CreateStream>, Status> {
         let input = spawn_input(request.into_inner());
+        self.barrier.before_workload("Create").await;
         let (_, stream) = self
             .manager
             .create(input)
@@ -191,6 +204,13 @@ fn suspending_message() -> PtyServerMessage {
             message: "sandbox suspending; reconnect with Connect(pid, from_seq)".to_owned(),
         }),
     })
+}
+
+fn closing_message(reason: StreamCloseReason) -> PtyServerMessage {
+    match reason {
+        StreamCloseReason::Suspending => suspending_message(),
+        StreamCloseReason::SandboxTimeout => exited_message(&ProcessEnd::sandbox_timeout()),
+    }
 }
 
 fn keepalive_message() -> PtyServerMessage {
@@ -312,6 +332,19 @@ mod tests {
                 assert!(!end.exited);
                 assert_eq!(end.exit_code, 0);
                 assert_eq!(end.error.unwrap().code, "suspending");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(
+            closing_message(StreamCloseReason::Suspending),
+            suspending_message()
+        );
+        match closing_message(StreamCloseReason::SandboxTimeout).message {
+            Some(pty_server_message::Message::Exited(end)) => {
+                assert_eq!(end.status, "sandbox_timeout");
+                assert!(!end.exited);
+                assert_eq!(end.exit_code, 0);
+                assert_eq!(end.error.unwrap().code, "sandbox_timeout");
             }
             other => panic!("unexpected {other:?}"),
         }

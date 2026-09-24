@@ -24,7 +24,7 @@ fija por versiones y por las tres imágenes publicadas desde ese árbol.
 | Imagen `rayito-base` | **20.0** | `image/Dockerfile`, `--base-image-version 1`, `FROM …@sha256:05cb9b38…` |
 | Imagen `rayito-base-caps` | **8.0** | mismo zip con `additionalOsCapabilities: ["ALL"]` |
 | Imagen `rayito-base-poly` | **4.0** | capa condicional `kernels_variant=poly` |
-| Infraestructura y CI | del mismo árbol | `spike/m0/iam.yaml`, `infra/egress-connector.yaml`, `infra/ci-oidc-role.yaml`, `.github/workflows/*`, `Makefile`, `scripts/` |
+| Infraestructura y CI | del mismo árbol | `infra/iam.yaml`, `infra/egress-connector.yaml`, `infra/ci-oidc-role.yaml`, `.github/workflows/*`, `Makefile`, `scripts/` |
 
 Las tres imágenes son las publicadas en la cuenta de pruebas (us-east-1)
 durante la aceptación de M7 el 2026-09-17 (`MILESTONES.md`, bloque de aceptación
@@ -34,8 +34,9 @@ de M7).
 termina TLS y valida el JWE, el clonado del snapshot) se toma como TCB, tal y
 como declara la tabla de confianza de `SECURITY.md`; los directorios `target*/`
 y `.venv`; las dependencias vendorizadas de terceros salvo
-`kernel-sidecar/src/rayito_kernel_sidecar/_vendor/e2b_charts`; y todo `spike/`
-excepto `spike/m0/iam.yaml`.
+`kernel-sidecar/src/rayito_kernel_sidecar/_vendor/e2b_charts`; y el spike de M0
+(entonces bajo `spike/`, hoy sólo en el historial de git) salvo su plantilla
+IAM, hoy `infra/iam.yaml`.
 
 ## 2. Método
 
@@ -122,7 +123,7 @@ No se encontró ningún escape del MicroVM, ninguna revelación del
 
 - **Severidad**: mayor (propuesto como bloqueante; ambos refutadores lo bajaron a
   mayor).
-- **Fichero**: `spike/m0/iam.yaml:117` (y `:30`, `:64`, `:124`, `:187`;
+- **Fichero**: `infra/iam.yaml:117` (y `:30`, `:64`, `:124`, `:187`;
   `infra/README.md:159-160`;
   `clients/python/src/rayito/cli/_publish.py:74,198,215-224`).
 - **Atacante**: código que corre dentro del sandbox como uid 1000 sobre la imagen
@@ -660,7 +661,7 @@ responde el refutador, y la recomendación de este informe.
 
 ### C-09 — `CallerPolicy` concede crear/actualizar/borrar imágenes a máquinas que sólo necesitan lanzar sandboxes
 
-- **Fichero**: `spike/m0/iam.yaml:143` (`PassRoles` en `:165-170`, recurso en
+- **Fichero**: `infra/iam.yaml:143` (`PassRoles` en `:165-170`, recurso en
   `:164`).
 - **Auditor**: el statement `ImagesAndMicrovms` concede
   `lambda:CreateMicrovmImage`, `UpdateMicrovmImage`, `DeleteMicrovmImage`,
@@ -772,7 +773,7 @@ responde el refutador, y la recomendación de este informe.
 
 ### C-13 — El `AllowedPattern` de `PersistencePrefix` permite `*`, ensanchando el recurso IAM que debía acotar
 
-- **Fichero**: `spike/m0/iam.yaml:31`.
+- **Fichero**: `infra/iam.yaml:31`.
 - **Auditor**: el patrón incluye `*` en las tres clases de caracteres, así que
   `PersistencePrefix=*` es un valor válido y renderiza
   `Resource: arn:aws:s3:::${PersistenceBucket}/*/*` (`:117`) y `s3:prefix: */*`
@@ -1164,10 +1165,10 @@ local. Cuentas de tests del árbol corregido: **Rust 388**, **Python 1082**,
 
 | Id | Corrección (`file:line`) | Prueba que la fija |
 |---|---|---|
-| H-01 | `spike/m0/iam.yaml:30` (`Default: rayito-home`, disjunto de `rayito/` por construcción) y `:127-132` (`Deny` `NeverTheImageArtifacts` sobre `<ArtifactBucket>/rayito/*`); receta corregida en `infra/README.md:160-180` | `scripts/tests/test_iam_template.py::test_persistence_prefix_default_is_disjoint_from_the_artifact_namespace` y `::test_execution_role_is_denied_the_artifact_prefix`; `scripts/tests/test_security_docs.py::test_persistence_quickstart_stays_out_of_the_artifact_namespace`; `uvx cfn-lint==1.56.3` |
+| H-01 | `infra/iam.yaml:30` (`Default: rayito-home`, disjunto de `rayito/` por construcción) y `:127-132` (`Deny` `NeverTheImageArtifacts` sobre `<ArtifactBucket>/rayito/*`); receta corregida en `infra/README.md:160-180` | `scripts/tests/test_iam_template.py::test_persistence_prefix_default_is_disjoint_from_the_artifact_namespace` y `::test_execution_role_is_denied_the_artifact_prefix`; `scripts/tests/test_security_docs.py::test_persistence_quickstart_stays_out_of_the_artifact_namespace`; `uvx cfn-lint==1.56.3` |
 | H-02 | Todo `uvx` clavado: `Makefile:103,123,186,187,243`, `.github/workflows/ci.yml:63,81,127,128`, `release.yml:139`, `audit.yml:51-61`; gate nuevo `scripts/check_pins.py` (puerta 2: `uvx <herramienta>==<versión>`) corriendo en `.github/workflows/ci.yml:45` | `scripts/tests/test_check_pins.py::test_uvx_without_a_version_is_a_finding` y `::test_the_repository_itself_is_clean` |
 | C-05 | `crates/rayd-core/src/process/identity.rs:62-74` (comprobación positiva) con `is_unprivileged` en `:86-90` (`uid >= 1000 && gid >= 1000` y sin el grupo 0); la puerta duplicada desaparece — `crates/rayd-core/src/persistence/mod.rs:106-112` llama a la misma política con `without_root()` | `rayd_core`: `process::identity::tests::system_accounts_are_refused`, `::without_root_drops_the_image_opt_in`, `persistence::tests::a_system_account_is_never_a_persistence_identity` |
-| C-13 | `spike/m0/iam.yaml:31`: `AllowedPattern` sin `*` ni comillas, paréntesis o `!`. `clients/python/src/rayito/_models.py` y `crates/rayd-core/src/persistence/keys.rs` sin tocar, como pedía la fila | `scripts/tests/test_iam_template.py::test_persistence_prefix_pattern_refuses_a_wildcard` |
+| C-13 | `infra/iam.yaml:31`: `AllowedPattern` sin `*` ni comillas, paréntesis o `!`. `clients/python/src/rayito/_models.py` y `crates/rayd-core/src/persistence/keys.rs` sin tocar, como pedía la fila | `scripts/tests/test_iam_template.py::test_persistence_prefix_pattern_refuses_a_wildcard` |
 | H-03 | `clients/python/src/rayito/_pool_backends.py:110-126`: `tempfile.mkstemp()` (`O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW`) y `fchmod` sobre el descriptor antes de escribir, después `os.replace` | `test_pool_backends.py::test_json_write_ignores_a_pre_created_temp`, `::test_json_write_never_follows_a_symlink`, `::test_json_file_mode_is_0600` |
 | H-04 | `clients/typescript/src/pool/backend.ts:135-153`: `open(temp, "wx", FILE_MODE)` y `handle.chmod(FILE_MODE)`, escritura por el handle y `rename`; lectura con `O_NOFOLLOW` (`:26`) | `tests/unit/pool.test.ts`: «a pre-created temporary is never reused», «round trip, atomic write, schema and permissions», «no temporary is left behind» |
 | H-05 | `clients/python/src/rayito/mcp/_cli.py:108-119` (`TransportSecuritySettings` siempre explícito) y `:158` (se pasa al servidor); `--host` comodín rechazado con exit 2 (`:121-127`); frase corregida en `docs/site/docs/mcp.md:175-190` | `test_mcp_main.py::test_run_http_always_passes_explicit_transport_security`, `::test_parse_args_rejects_a_wildcard_host`, `::test_http_authority_brackets_ipv6` |
@@ -1179,7 +1180,7 @@ local. Cuentas de tests del árbol corregido: **Rust 388**, **Python 1082**,
 | C-04 | `SECURITY.md:56` (T4) y `docs/site/docs/security.md`: la propia carga de trabajo del sandbox lee `Health.metadata` sin credencial alguna; el conjunto de campos se acepta con razón escrita | `scripts/tests/test_security_docs.py::test_metadata_is_readable_from_inside_the_vm` |
 | C-07 | `SECURITY.md:67` (T15) y `docs/site/docs/persistence.md`: el prefijo de S3 **no separa inquilinos**; aislarlos exige un execution role y un prefijo por inquilino | `scripts/tests/test_security_docs.py::test_prefix_is_not_a_tenant_boundary` |
 | C-08 | `docs/site/docs/concepts.md:115` y `SECURITY.md:56` (T4): `create()` también lee `RAYITO_ACCESS_TOKEN`; aviso de una sola vez por proceso en `clients/python/src/rayito/_sandbox_base.py:119-125` (nunca el valor) | `scripts/tests/test_security_docs.py::test_access_token_env_var_is_shared_by_create`; `test_sandbox_base.py::test_environment_token_warns_once`, `::test_explicit_and_generated_tokens_never_warn`, `::test_connect_path_never_warns` |
-| C-09 | `SECURITY.md:85`: `CallerPolicy` es la política del **publicador**, con `infra/ci-oidc-role.yaml` como forma mínima de runtime; `lambda:DeleteMicrovmImage` fuera de `spike/m0/iam.yaml` (`ImagesAndMicrovms`, `:150-168`), que ningún camino de código usaba | `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy`; `scripts/tests/test_iam_template.py::test_caller_policy_never_deletes_a_whole_image` |
+| C-09 | `SECURITY.md:85`: `CallerPolicy` es la política del **publicador**, con `infra/ci-oidc-role.yaml` como forma mínima de runtime; `lambda:DeleteMicrovmImage` fuera de `infra/iam.yaml` (`ImagesAndMicrovms`, `:150-168`), que ningún camino de código usaba | `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy`; `scripts/tests/test_iam_template.py::test_caller_policy_never_deletes_a_whole_image` |
 
 Cada test de la tercera columna se escribió para **fallar sin su corrección**:
 los de `scripts/tests/test_security_docs.py` comprueban a la vez que el texto

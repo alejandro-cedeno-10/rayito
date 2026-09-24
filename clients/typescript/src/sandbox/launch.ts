@@ -1,12 +1,14 @@
 /**
  * Todo lo que `Sandbox.create()` valida y construye antes de tocar la red:
- * template, access token, `timeoutMs`, política de idle, puertos del proxy,
+ * template, access token, `timeoutMs`, ciclo de vida (plazo lógico, tope de
+ * la plataforma y política de idle, en `lifecycle.ts`), puertos del proxy,
  * conectores, logging y el `LaunchRequest`. Sin I/O.
  */
 
 import { randomUUID } from "node:crypto";
 import { LaunchRequest, type LoggingConfig, PortSpec } from "../aws/control-plane.js";
 import { AuthenticationError, InvalidArgumentError, SandboxLifetimeError } from "../errors.js";
+import { defineHidden } from "../hidden.js";
 import {
   DEFAULT_PORT,
   HOOKS_PORT,
@@ -17,14 +19,11 @@ import {
   MIN_DURATION_SECONDS,
   NETWORK_CONNECTORS_MAX,
 } from "../limits.js";
-import {
-  type IdlePolicy,
-  type IdlePolicyInput,
-  templateNameFromArn,
-  validateIdlePolicy,
-  validatePort,
-} from "../models.js";
+import { type IdlePolicyInput, templateNameFromArn, validatePort } from "../models.js";
 import { buildRunHookPayload, generateAccessToken, validateAccessToken } from "../payload.js";
+import { type OnTimeout, resolveLifecycle } from "./lifecycle.js";
+
+export { resolveIdlePolicy } from "./lifecycle.js";
 
 export const TEMPLATE_ENV_VAR = "RAYITO_TEMPLATE";
 export const ACCESS_TOKEN_ENV_VAR = "RAYITO_ACCESS_TOKEN";
@@ -39,11 +38,17 @@ export const MIN_DURATION_MS = MIN_DURATION_SECONDS * 1000;
 export type LoggingOption = "disabled" | "cloudwatch" | LoggingConfig;
 export type PortLike = number | readonly [number, number];
 
-/** Todo lo que `create()` necesita antes de tocar la red. */
+/**
+ * Todo lo que `create()` necesita antes de tocar la red. `lifecycleRequested`:
+ * el payload lleva un bloque `lifecycle`, así que la readiness exige un agente
+ * M9 (su `Health` trae `lifecycle`). `accessToken` no es enumerable: no sale
+ * al inspeccionar ni al serializar el plan.
+ */
 export interface LaunchPlan {
   readonly accessToken: string;
   readonly request: LaunchRequest;
   readonly proxyPorts: readonly PortSpec[];
+  readonly lifecycleRequested: boolean;
 }
 
 export function resolveTemplate(template: string | undefined): string {
@@ -68,11 +73,11 @@ export function resolveAccessToken(accessToken: string | undefined): string {
   return validateAccessToken(provided);
 }
 
-export function requireAccessToken(accessToken: string | undefined): string {
+export function requireAccessToken(accessToken: string | undefined, caller = "connect()"): string {
   const resolved = accessToken || process.env[ACCESS_TOKEN_ENV_VAR];
   if (!resolved) {
     throw new AuthenticationError(
-      `connect() necesita el accessToken del sandbox: pásalo o define ${ACCESS_TOKEN_ENV_VAR}`,
+      `${caller} necesita el accessToken del sandbox: pásalo o define ${ACCESS_TOKEN_ENV_VAR}`,
     );
   }
   return validateAccessToken(resolved);
@@ -109,30 +114,6 @@ export function validateTimeoutMs(timeoutMs: unknown): number {
     );
   }
   return Math.ceil(timeoutMs / 1000);
-}
-
-/** Rellena `suspendedDurationSeconds` con `timeout − maxIdleSeconds`. */
-export function resolveIdlePolicy(
-  idle: IdlePolicyInput | null | undefined,
-  timeoutSeconds: number,
-): IdlePolicy | undefined {
-  if (idle === null) {
-    return undefined;
-  }
-  const validated = validateIdlePolicy(idle ?? {});
-  if (validated.maxIdleSeconds >= timeoutSeconds) {
-    throw new InvalidArgumentError(
-      `idle.maxIdleSeconds=${validated.maxIdleSeconds} debe ser menor que el timeout de ${timeoutSeconds} s`,
-    );
-  }
-  if (validated.suspendedDurationSeconds !== undefined) {
-    return validated;
-  }
-  return Object.freeze({
-    maxIdleSeconds: validated.maxIdleSeconds,
-    suspendedDurationSeconds: timeoutSeconds - validated.maxIdleSeconds,
-    autoResume: validated.autoResume,
-  });
 }
 
 export function portSpec(entry: PortLike): PortSpec {
@@ -239,31 +220,42 @@ export interface LaunchPlanInput {
   readonly egress?: readonly string[] | undefined;
   readonly logging?: LoggingOption | undefined;
   readonly accessToken?: string | undefined;
+  readonly networkEnforce?: boolean | undefined;
+  readonly maxLifetimeMs?: number | undefined;
+  readonly onTimeout?: OnTimeout | undefined;
 }
 
 export function buildLaunchPlan(input: LaunchPlanInput): LaunchPlan {
   const token = resolveAccessToken(input.accessToken);
-  const durationSeconds = validateTimeoutMs(input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const lifecycle = resolveLifecycle({
+    timeoutSeconds: validateTimeoutMs(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    maxLifetimeMs: input.maxLifetimeMs,
+    onTimeout: input.onTimeout,
+    idle: input.idle,
+  });
   const request = new LaunchRequest({
     imageArn: input.imageArn,
     imageVersion: input.templateVersion,
-    maximumDurationSeconds: durationSeconds,
+    maximumDurationSeconds: lifecycle.platformDurationSeconds,
     runHookPayload: buildRunHookPayload({
       accessToken: token,
       envs: input.envs,
       metadata: input.metadata,
       cpuTimeLimit: input.cpuTimeLimit,
+      networkEnforce: input.networkEnforce,
+      lifecycle: lifecycle.block,
     }),
     clientToken: randomUUID().replaceAll("-", ""),
     logging: loggingConfig(input.logging ?? "disabled", templateNameFromArn(input.imageArn)),
     executionRoleArn: input.executionRoleArn,
-    idle: resolveIdlePolicy(input.idle, durationSeconds),
+    idle: lifecycle.idle,
     ingressConnectors: connectorArns(input.ingress, input.region, "ingress"),
     egressConnectors: connectorArns(input.egress, input.region, "egress"),
   });
-  return Object.freeze({
-    accessToken: token,
+  const plan = {
     request,
     proxyPorts: Object.freeze(proxyPortSpecs(input.allowedPorts)),
-  });
+    lifecycleRequested: lifecycle.block !== undefined,
+  };
+  return Object.freeze(defineHidden(plan, "accessToken", token));
 }

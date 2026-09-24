@@ -19,10 +19,12 @@ export const file_rayito_v1_code: GenFile = /*@__PURE__*/
  */
 export type CreateContextRequest = Message<"rayito.v1.CreateContextRequest"> & {
   /**
-   * Vacío, "python", "bash" o "javascript". El kernel bash sólo existe en la
-   * variante de imagen rayito-base-poly (UNIMPLEMENTED en las demás) y
-   * arranca en la primera celda. "javascript" es un nombre reservado: hoy
-   * ninguna imagen trae ese kernel (UNIMPLEMENTED en todas).
+   * Vacío, "python", "bash", "javascript" o "typescript". bash, javascript y
+   * typescript sólo existen en la variante de imagen rayito-base-poly
+   * (UNIMPLEMENTED con un mensaje que nombra rayito-base-poly en las demás)
+   * y su kernel arranca en la primera celda, nunca antes de /ready.
+   * "javascript" y "typescript" los sirve el kernel Jupyter integrado de
+   * Deno, un proceso por contexto (los dos aceptan sintaxis TypeScript).
    *
    * @generated from field: string language = 1;
    */
@@ -99,7 +101,9 @@ export type ExecuteRequest = Message<"rayito.v1.ExecuteRequest"> & {
 
   /**
    * Selecciona el contexto por defecto de ese lenguaje ("python", "bash",
-   * "javascript"), creándolo si no existe. Incompatible con context_id.
+   * "javascript", "typescript"), creándolo si no existe
+   * ("default-<lenguaje>"; los no Python sólo en rayito-base-poly,
+   * UNIMPLEMENTED en las demás imágenes). Incompatible con context_id.
    * Vacío = el contexto indicado o el de Python.
    *
    * @generated from field: optional string language = 5;

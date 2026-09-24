@@ -445,6 +445,27 @@ async def test_async_create_waits_for_kernel_ready(
     assert fake_rayd.servicer.kernel_not_ready_calls == 0
 
 
+async def test_async_create_ignores_a_health_served_before_the_run_hook(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.before_run_calls = 2
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response(
+        "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}
+    )
+    async with await AsyncSandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        ready_timeout=20,
+    ) as sandbox:
+        assert (await sandbox.run_code("1+1")).text == "2"
+    assert len(fake_rayd.servicer.health_calls) == 3
+    assert fake_rayd.servicer.before_run_calls == 0
+
+
 # ------------------------------------------------------------ M7: languages
 
 
@@ -469,3 +490,19 @@ async def test_async_language_parity(sandbox: AsyncSandbox, fake_rayd: RaydEndpo
         await sandbox.run_code("1 + 1", language="javascript")
     assert excinfo.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
     assert "rayito-base-poly" in str(excinfo.value)
+    with pytest.raises(InvalidArgumentException) as typescript:
+        await sandbox.create_code_context(language="ts")
+    assert typescript.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+
+
+async def test_async_typescript_alias_travels_canonical(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    assert (await sandbox.run_code("1 + 1", language="ts")).text == "2"
+    assert fake_rayd.code.execute_requests[-1].language == "typescript"
+    assert fake_rayd.code.executions[-1].context_id == "default-typescript"
+    listed = [(item.id, item.language) for item in await sandbox.list_code_contexts()]
+    assert ("default-typescript", "typescript") in listed
+    context = await sandbox.create_code_context(language="TypeScript")
+    assert context.language == "typescript"
+    assert fake_rayd.code.create_requests[-1].language == "typescript"

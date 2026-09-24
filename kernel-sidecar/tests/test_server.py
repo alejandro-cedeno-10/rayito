@@ -490,6 +490,12 @@ async def test_unknown_and_unavailable_languages_are_refused(harness: Harness) -
     await harness.send(64, "create_context", context_id="ctx-js", language="javascript", cwd="/")
     reply = await harness.reply(64)
     assert reply["error"] == {"code": "invalid_argument", "message": "language not installed"}
+    await harness.send(71, "create_context", context_id="ctx-ts", language="typescript", cwd="/")
+    reply = await harness.reply(71)
+    assert reply["error"] == {"code": "invalid_argument", "message": "language not installed"}
+    await harness.send(72, "create_context", context_id="ctx-alias", language="ts", cwd="/")
+    reply = await harness.reply(72)
+    assert reply["error"] == {"code": "invalid_argument", "message": "unknown language"}
     await harness.send(65, "list_contexts")
     contexts = (await harness.reply(65))["payload"]["contexts"]
     assert [c["context_id"] for c in contexts] == ["default"]

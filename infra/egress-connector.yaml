@@ -175,5 +175,5 @@ Outputs:
   OperatorRoleArn:
     Value: !GetAtt OperatorRole.Arn
   CallerPolicyStatement:
-    Description: The statement the SDK caller needs on top of spike/m0/iam.yaml (or pass the ARN as NetworkConnectorArns).
+    Description: The statement the SDK caller needs on top of infra/iam.yaml (or pass the ARN as NetworkConnectorArns).
     Value: !Sub '{"Effect":"Allow","Action":"lambda:PassNetworkConnector","Resource":"${Connector.Arn}"}'

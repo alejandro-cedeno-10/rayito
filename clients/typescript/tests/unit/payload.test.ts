@@ -97,6 +97,31 @@ describe("runHookPayload", () => {
     );
   });
 
+  test("the lifecycle block is sorted snake_case, byte-identical to the Python payload", () => {
+    const text = buildRunHookPayload({
+      accessToken: ACCESS_TOKEN,
+      lifecycle: { timeoutS: 60, capS: 900, onTimeout: "kill", autoResume: false },
+    });
+    expect(text).toBe(
+      '{"lifecycle":{"auto_resume":false,"cap_s":900,"on_timeout":"kill","timeout_s":60},' +
+        '"token_sha256":"859e5de6b4aec7dd6f241f258e87bbe1bed8483bac575e01a020a85a6af7ee14",' +
+        '"user":"user","v":1,"workdir":"/home/user"}',
+    );
+    expect(buildRunHookPayload({ accessToken: ACCESS_TOKEN })).not.toContain("lifecycle");
+  });
+
+  test("the network block is present only when enforcing, and never carries rules", () => {
+    const text = buildRunHookPayload({ accessToken: ACCESS_TOKEN, networkEnforce: true });
+    expect(text).toBe(
+      '{"network":{"enforce":true},' +
+        '"token_sha256":"859e5de6b4aec7dd6f241f258e87bbe1bed8483bac575e01a020a85a6af7ee14",' +
+        '"user":"user","v":1,"workdir":"/home/user"}',
+    );
+    const plain = buildRunHookPayload({ accessToken: ACCESS_TOKEN });
+    expect(buildRunHookPayload({ accessToken: ACCESS_TOKEN, networkEnforce: false })).toBe(plain);
+    expect(plain).not.toContain("network");
+  });
+
   test("an empty access token is refused", () => {
     expect(() => buildRunHookPayload({ accessToken: "" })).toThrow(InvalidArgumentError);
   });

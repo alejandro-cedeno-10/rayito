@@ -32,7 +32,7 @@ pub enum WatchItem {
     Started,
     Event {
         event: WatchEvent,
-        entry: Option<Entry>,
+        entry: Option<Box<Entry>>,
     },
 }
 
@@ -279,7 +279,10 @@ impl WatchPump {
                             None => None,
                         };
                         if output
-                            .send(Ok(WatchItem::Event { event, entry }))
+                            .send(Ok(WatchItem::Event {
+                                event,
+                                entry: entry.map(Box::new),
+                            }))
                             .await
                             .is_err()
                         {
@@ -413,6 +416,22 @@ mod tests {
             Err(FsIoError::Unsupported)
         }
 
+        fn open_snapshot(
+            &self,
+            _id: &FsIdentity,
+            _path: &str,
+        ) -> Result<rayd_core::filesystem::OpenedSnapshot, FsIoError> {
+            Err(FsIoError::Unsupported)
+        }
+
+        fn read_metadata(
+            &self,
+            _id: &FsIdentity,
+            _path: &str,
+        ) -> Result<rayd_core::filesystem::FileMetadata, FsIoError> {
+            Err(FsIoError::Unsupported)
+        }
+
         fn free_bytes(&self, _id: &FsIdentity, _dir: &str) -> Result<u64, FsIoError> {
             Err(FsIoError::Unsupported)
         }
@@ -461,6 +480,7 @@ mod tests {
         RawWatchEvent {
             kind,
             paths: vec![path.to_owned()],
+            cookie: None,
         }
     }
 

@@ -83,7 +83,7 @@ es un error de uso (2). La biblioteca no trae ningún bucket por defecto: el
 bucket es de la cuenta que publica.
 
 Permisos S3 del principal que publica (la `CallerPolicy` de
-`spike/m0/iam.yaml` los concede tal cual): `s3:PutObject` y `s3:GetObject`
+`infra/iam.yaml` los concede tal cual): `s3:PutObject` y `s3:GetObject`
 sobre `arn:aws:s3:::<bucket>/rayito/*` y `s3:ListBucket` sobre
 `arn:aws:s3:::<bucket>`. `s3:ListBucket` es lo que hace que el `head-object`
 de un artefacto nuevo responda `404` en vez de `403` (sin él la CLI sube el
@@ -135,6 +135,10 @@ rayito sandbox list [--template T] [--template-version V] [--all-states]
 rayito sandbox info ID [--no-metadata]
 rayito sandbox kill ID… | rayito sandbox kill --all [--template T] [--yes]
 rayito sandbox logs ID [--log-group G] [--limit 1000] [--since 30m|2h|1d|ISO]
+rayito sandbox create [TEMPLATE] [--timeout S] [--metadata K=V]… [--env K=V]… [--detach] [--token-file F] [--user U] [--cwd D]
+rayito sandbox connect ID [--user U] [--cwd D] [--env K=V]… [--token-file F]
+rayito sandbox exec ID [--background] [--cwd D] [--user U] [--env K=V]… [--timeout 0] [--token-file F] -- CMD…
+rayito sandbox metrics ID [--follow] [--interval 5] [--token-file F]
 ```
 
 - `list` omite `TERMINATING` y `TERMINATED` (AWS los sigue listando unos 20
@@ -154,6 +158,61 @@ rayito sandbox logs ID [--log-group G] [--limit 1000] [--since 30m|2h|1d|ISO]
   sandbox se lanzó con `execution_role_arn` y `logging="cloudwatch"`**; si no
   hay stream ni grupo: `sin logs: el sandbox se lanzó con logging disabled,
   sin executionRoleArn, o en otro grupo (--log-group)` y salida 1.
+
+### `create`, `connect`, `exec` y `metrics` (M9)
+
+Los cuatro comandos operativos de la CLI de E2B que Lambda MicroVMs puede
+servir. Los que necesitan hablar con `rayd` usan el **access token** del
+sandbox, que nunca viaja por argv (se vería en `ps`) ni se imprime:
+
+- `--token-file F` (el contenido del fichero, sin espacios alrededor) o
+  `RAYITO_ACCESS_TOKEN`; si están los dos, gana el fichero. Sin ninguno,
+  salida 2 con `falta el access token: --token-file o RAYITO_ACCESS_TOKEN`.
+- `create --detach` escribe el token en `--token-file` **antes** de
+  `run-microvm` (con `O_CREAT | O_EXCL` y modo `0600`: un fichero existente
+  es salida 2), así un fallo al escribirlo nunca deja un VM huérfano. Sin
+  `RAYITO_ACCESS_TOKEN` ni `--token-file`, `--detach` es salida 2. En Windows
+  el modo lo ignora el sistema: deja el fichero en tu perfil de usuario.
+
+Comportamiento:
+
+- `create` sin `--detach` abre una terminal interactiva en el sandbox y lo
+  termina al salir (como `e2b sandbox create`); con `--detach` imprime el
+  `sandbox_id` (`--json`: `sandbox_id`, `endpoint`, `template`,
+  `template_version` y `expires_at`, nunca el token) y sale con 0.
+  `--timeout` es el `timeout` nativo (3600 por defecto).
+- `connect` reanuda un sandbox suspendido y abre la terminal; no lo termina.
+- `exec` corre `CMD…` (unido con `shlex.join`) y reenvía stdout y stderr a
+  medida que llegan; sale con el código remoto, o 124 si venció el
+  `--timeout` del servidor (`timeout del comando` por stderr). Con
+  `--background` imprime el `pid` y sale con 0.
+- `metrics` imprime la instantánea de `get_metrics()` (tabla, o un objeto
+  JSON con `--json`); `--follow` repite cada `--interval` segundos hasta
+  Ctrl-C (salida 0) o hasta que el sandbox desaparezca (salida 1). Conectar
+  despierta un sandbox suspendido.
+
+Un recorrido completo, con el token en un fichero que sólo lee tu usuario:
+
+```bash
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+mkdir -p ~/.rayito && chmod 700 ~/.rayito           # --detach crea el fichero, no el directorio
+rayito sandbox create rayito-base --detach --timeout 1800 \
+    --metadata equipo=datos --token-file ~/.rayito/demo.token      # imprime microvm-<id>
+rayito sandbox exec microvm-<id> --token-file ~/.rayito/demo.token -- python3 -c 'print(40 + 2)'
+rayito sandbox exec microvm-<id> --background --token-file ~/.rayito/demo.token -- sleep 600
+rayito --json sandbox metrics microvm-<id> --token-file ~/.rayito/demo.token
+rayito sandbox connect microvm-<id> --token-file ~/.rayito/demo.token   # terminal; Ctrl-D para salir
+rayito sandbox kill microvm-<id>
+```
+
+El mismo token sirve en los SDKs: `Sandbox.connect("microvm-<id>",
+access_token=open(ruta).read().strip())`.
+
+La terminal pone la tuya en modo raw en POSIX (restaurado al salir; Ctrl-C
+viaja al sandbox como `\x03`, nunca como SIGINT local) y reenvía los cambios
+de tamaño (`SIGWINCH`); en una consola de Windows traduce las flechas y
+sondea el tamaño cada segundo; con stdin por tubería reenvía los bytes tal
+cual y manda `\x04` al acabar. El código de salida es el del shell remoto.
 
 ## `rayito doctor`
 
@@ -200,7 +259,11 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
   "account": "123456789012",
   "principal_kind": "assumed-role",
   "checks": [{"name": "credentials", "status": "OK", "summary": "…", "details": {}}],
-  "compatibility": [{"sdk_series": "0.1", "min_agent_version": "0.1.0", "note": "…"}, {"sdk_series": "0.2", "min_agent_version": "0.2.0", "note": "…"}],
+  "compatibility": [
+    {"sdk_series": "0.1", "min_agent_version": "0.1.0", "note": "…"},
+    {"sdk_series": "0.2", "min_agent_version": "0.2.0", "note": "…"},
+    {"sdk_series": "0.3", "min_agent_version": "0.3.0", "note": "…"}
+  ],
   "launched_sandbox_id": null,
   "exit_code": 0
 }
@@ -233,8 +296,10 @@ imprimen el comando `uv run --project clients/python …` y salen con 2.
   se construye desde `image/Dockerfile` con `create-microvm-image`, como
   siempre (`SPEC.md` §4).
 - Construir la imagen más allá del zip: el Dockerfile lo construye AWS.
-- `sandbox logs --follow`, `sandbox create`, `sandbox exec` o una terminal
-  interactiva: para eso están los SDKs y el [servidor MCP](mcp.md).
+- `sandbox logs --follow`: para eso están los SDKs y el
+  [servidor MCP](mcp.md).
+- `auth`, `template`, `snapshots` y `fork` de la CLI de E2B: no tienen
+  primitiva o quedan fuera por `SPEC.md` §4 ([Compatibilidad con E2B](e2b-compat.md)).
 - Envolver las herramientas de desarrollo (`bench_cold_start.py`,
   `hooks-sim.py`, `gen_limits.py`, `check_*.py`).
 - Una CLI en TypeScript ni completado de shell.

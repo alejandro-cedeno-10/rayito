@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rayito._aws import ClientSettings
 from rayito._charts import (
     BarChart,
     BarData,
@@ -17,11 +18,18 @@ from rayito._charts import (
     ScatterChart,
     SuperChart,
 )
+from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
+from rayito._listing_base import ListOrder
 from rayito._models import (
+    ALL_TRAFFIC,
+    AsyncUploadTicket,
     CheckpointProgress,
     CheckpointResult,
     CodeContext,
     CommandResult,
+    DownloadLink,
+    EgressEnforcement,
+    EgressProxy,
     EntryInfo,
     Execution,
     ExecutionError,
@@ -32,6 +40,11 @@ from rayito._models import (
     IdlePolicy,
     LaunchOptions,
     Logs,
+    MicrovmListPage,
+    NetworkOptions,
+    NetworkPolicy,
+    NetworkSelectorContext,
+    NetworkState,
     OutputMessage,
     ProcessInfo,
     PtySize,
@@ -39,10 +52,14 @@ from rayito._models import (
     RestoreResult,
     Result,
     S3Prefix,
+    S3Staging,
     SandboxHealth,
     SandboxInfo,
+    SandboxLifecycle,
     SandboxListItem,
     SandboxMetrics,
+    TransferStatus,
+    UploadTicket,
     WriteEntry,
 )
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
@@ -55,7 +72,11 @@ from rayito.exceptions import (
     CommandExitException,
     DiskFullException,
     FileNotFoundException,
+    FileUploadException,
+    GitAuthException,
+    GitUpstreamException,
     InvalidArgumentException,
+    LifecycleUnsupportedException,
     NotFoundException,
     PersistenceException,
     PoolClosedException,
@@ -67,23 +88,33 @@ from rayito.exceptions import (
     SandboxNotReadyException,
     SandboxStateException,
     TimeoutException,
+    TransferException,
+    UnimplementedError,
 )
 from rayito.sandbox_async.commands import AsyncCommandHandle
 from rayito.sandbox_async.filesystem import AsyncWatchHandle
+from rayito.sandbox_async.git import AsyncGit
+from rayito.sandbox_async.listing import AsyncSandboxListPaginator
 from rayito.sandbox_async.main import AsyncSandbox
 from rayito.sandbox_async.pool import AsyncSandboxPool
 from rayito.sandbox_async.pty import AsyncPtyHandle
 from rayito.sandbox_sync.commands import CommandHandle
 from rayito.sandbox_sync.filesystem import WatchHandle
+from rayito.sandbox_sync.git import Git
+from rayito.sandbox_sync.listing import SandboxListPaginator
 from rayito.sandbox_sync.main import Sandbox
 from rayito.sandbox_sync.pool import SandboxPool
 from rayito.sandbox_sync.pty import PtyHandle
 
 __all__ = [
+    "ALL_TRAFFIC",
     "AsyncCommandHandle",
+    "AsyncGit",
     "AsyncPtyHandle",
     "AsyncSandbox",
+    "AsyncSandboxListPaginator",
     "AsyncSandboxPool",
+    "AsyncUploadTicket",
     "AsyncWatchHandle",
     "AuthenticationException",
     "BarChart",
@@ -95,26 +126,45 @@ __all__ = [
     "ChartType",
     "CheckpointProgress",
     "CheckpointResult",
+    "ClientSettings",
     "CodeContext",
     "CommandExitException",
     "CommandHandle",
     "CommandResult",
     "DiskFullException",
+    "DownloadLink",
+    "EgressEnforcement",
+    "EgressProxy",
     "EntryInfo",
     "Execution",
     "ExecutionError",
     "FileNotFoundException",
     "FileType",
+    "FileUploadException",
     "FilesystemEvent",
     "FilesystemEventType",
+    "Git",
+    "GitAuthException",
+    "GitBranches",
+    "GitFileStatus",
+    "GitResetMode",
+    "GitStatus",
+    "GitUpstreamException",
     "HostAccess",
     "IdlePolicy",
     "InMemoryPoolBackend",
     "InvalidArgumentException",
     "JsonFilePoolBackend",
     "LaunchOptions",
+    "LifecycleUnsupportedException",
     "LineChart",
+    "ListOrder",
     "Logs",
+    "MicrovmListPage",
+    "NetworkOptions",
+    "NetworkPolicy",
+    "NetworkSelectorContext",
+    "NetworkState",
     "NotFoundException",
     "OutputMessage",
     "PersistenceException",
@@ -135,12 +185,15 @@ __all__ = [
     "RestoreResult",
     "Result",
     "S3Prefix",
+    "S3Staging",
     "Sandbox",
     "SandboxException",
     "SandboxHealth",
     "SandboxInfo",
+    "SandboxLifecycle",
     "SandboxLifetimeException",
     "SandboxListItem",
+    "SandboxListPaginator",
     "SandboxMetrics",
     "SandboxNotFoundException",
     "SandboxNotReadyException",
@@ -150,7 +203,11 @@ __all__ = [
     "ScatterChart",
     "SuperChart",
     "TimeoutException",
+    "TransferException",
+    "TransferStatus",
     "TransportSettings",
+    "UnimplementedError",
+    "UploadTicket",
     "WatchHandle",
     "WriteEntry",
     "__version__",

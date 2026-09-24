@@ -43,9 +43,12 @@ pub struct SpawnSpec {
     pub limits: ResourceLimits,
 }
 
+/// `egress_env` is the local proxy's variables (empty until it runs),
+/// layered under the payload and request `envs`.
 pub fn plan_spawn(
     input: &SpawnInput,
     defaults: &RunDefaults,
+    egress_env: &BTreeMap<String, String>,
     policy: UserPolicy,
     lookup: &dyn UserLookup,
 ) -> Result<SpawnSpec, ProcessError> {
@@ -56,7 +59,7 @@ pub fn plan_spawn(
     policy.authorize(&username)?;
     let identity = lookup.lookup(&username).map_err(lookup_error)?;
     policy.authorize_identity(&identity)?;
-    let env = build_child_env(&identity, &defaults.envs, &input.config.envs);
+    let env = build_child_env(&identity, egress_env, &defaults.envs, &input.config.envs);
     let cwd = resolve_cwd(
         input.config.cwd.as_deref(),
         defaults.workdir.as_deref(),
@@ -150,7 +153,13 @@ mod tests {
     }
 
     fn plan(input: &SpawnInput, defaults: &RunDefaults) -> Result<SpawnSpec, ProcessError> {
-        plan_spawn(input, defaults, UserPolicy::default(), &FakeUserLookup)
+        plan_spawn(
+            input,
+            defaults,
+            &BTreeMap::new(),
+            UserPolicy::default(),
+            &FakeUserLookup,
+        )
     }
 
     #[test]
@@ -198,6 +207,7 @@ mod tests {
         let spec = plan_spawn(
             &request,
             &RunDefaults::default(),
+            &BTreeMap::new(),
             UserPolicy { allow_root: true },
             &FakeUserLookup,
         )
@@ -221,6 +231,7 @@ mod tests {
         let spec = plan_spawn(
             &request,
             &RunDefaults::default(),
+            &BTreeMap::new(),
             UserPolicy { allow_root: true },
             &FakeUserLookup,
         )
@@ -247,6 +258,33 @@ mod tests {
         assert!(spec.env.contains(&("FOO".to_owned(), "sandbox".to_owned())));
         assert!(spec.env.contains(&("BAR".to_owned(), "req".to_owned())));
         assert_eq!(spec.limits.cpu_seconds, None);
+    }
+
+    #[test]
+    fn the_egress_proxy_variables_reach_the_spawn_under_the_request_envs() {
+        let egress: BTreeMap<String, String> = [
+            ("HTTPS_PROXY".to_owned(), "http://127.0.0.1:4000".to_owned()),
+            ("NO_PROXY".to_owned(), "localhost".to_owned()),
+        ]
+        .into();
+        let mut request = input("/bin/sh");
+        request
+            .config
+            .envs
+            .insert("NO_PROXY".to_owned(), "*".to_owned());
+        let spec = plan_spawn(
+            &request,
+            &RunDefaults::default(),
+            &egress,
+            UserPolicy::default(),
+            &FakeUserLookup,
+        )
+        .unwrap();
+        assert!(
+            spec.env
+                .contains(&("HTTPS_PROXY".to_owned(), "http://127.0.0.1:4000".to_owned()))
+        );
+        assert!(spec.env.contains(&("NO_PROXY".to_owned(), "*".to_owned())));
     }
 
     #[test]

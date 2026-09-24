@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
 import grpc
@@ -27,21 +27,27 @@ from rayito._filesystem_base import (
     move_request,
     next_watch_name,
     notify_exit,
-    prepare_write_entries,
+    read_call_options,
+    read_guarded,
     read_request,
     remove_request,
     require_regular_file,
     require_watch_started,
     stat_request,
     total_write_bytes,
+    validate_metadata,
     validate_read_format,
+    validate_stream_idle_timeout,
     validate_watch_timeout,
     watch_dir_request,
     watch_failure,
+    write_call_options,
 )
-from rayito._models import EntryInfo, FilesystemEvent, WriteEntry
+from rayito._limits import TRANSFER_DEFAULT_EXPIRES_IN_SECONDS
+from rayito._models import AsyncUploadTicket, DownloadLink, EntryInfo, FilesystemEvent, WriteEntry
 from rayito._process_base import STREAM_EOF, deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._transfer_base import WritePlan, plan_writes
 from rayito._transport import is_stream_reset, translate_rpc_error
 from rayito.exceptions import FileNotFoundException, SandboxException, TimeoutException
 from rayito.v1 import filesystem_pb2, filesystem_pb2_grpc
@@ -67,6 +73,8 @@ class AsyncFilesystem:
         path: str,
         *,
         format: Literal["text"] = "text",
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> str: ...
@@ -77,6 +85,8 @@ class AsyncFilesystem:
         path: str,
         *,
         format: Literal["bytes"],
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> bytes: ...
@@ -87,6 +97,8 @@ class AsyncFilesystem:
         path: str,
         *,
         format: Literal["stream"],
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> AsyncIterator[bytes]: ...
@@ -96,18 +108,34 @@ class AsyncFilesystem:
         path: str,
         *,
         format: str = "text",
+        gzip: bool = False,
+        stream_idle_timeout: float | None = None,
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> str | bytes | AsyncIterator[bytes]:
-        """Misma semántica que `Filesystem.read`; `format="stream"` devuelve
-        un `AsyncIterator[bytes]`."""
+        """Misma semántica que `Filesystem.read` (incluidos `gzip`,
+        `stream_idle_timeout` y el enrutado por S3); `format="stream"`
+        devuelve un `AsyncIterator[bytes]`."""
         read_format = validate_read_format(format)
+        idle = validate_stream_idle_timeout(stream_idle_timeout)
         request = read_request(path, user)
         entry = require_regular_file(
             await self.get_info(path, user=user, request_timeout=request_timeout)
         )
+        if await self._routes(entry.size):
+            return await self._sandbox._transfers.read_routed(
+                path,
+                entry,
+                read_format=read_format,
+                user=user,
+                request_timeout=request_timeout,
+                idle=idle,
+            )
         chunks = await self._read_chunks(
-            request, file_request_deadline(entry.size, request_timeout)
+            request,
+            file_request_deadline(entry.size, request_timeout),
+            options=read_call_options(gzip),
+            idle=idle,
         )
         if read_format == "stream":
             return chunks
@@ -121,10 +149,18 @@ class AsyncFilesystem:
         *,
         user: str | None = None,
         mode: int | None = None,
+        gzip: bool = False,
+        metadata: Mapping[str, str] | None = None,
+        use_octet_stream: bool = False,
         request_timeout: float | None = None,
     ) -> EntryInfo:
         entries = await self.write_files(
-            [WriteEntry(path, data, mode)], user=user, request_timeout=request_timeout
+            [WriteEntry(path, data, mode)],
+            user=user,
+            gzip=gzip,
+            metadata=metadata,
+            use_octet_stream=use_octet_stream,
+            request_timeout=request_timeout,
         )
         return entries[0]
 
@@ -133,17 +169,75 @@ class AsyncFilesystem:
         files: Sequence[WriteEntry],
         *,
         user: str | None = None,
+        gzip: bool = False,
+        metadata: Mapping[str, str] | None = None,
+        use_octet_stream: bool = False,
         request_timeout: float | None = None,
     ) -> list[EntryInfo]:
         """Misma semántica que `Filesystem.write_files`: un solo stream, cada
-        fichero atómico por separado."""
-        prepared = prepare_write_entries(files)
-        deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
-        response = await self._sandbox._files_call(
-            lambda stub, timeout: stub.Write(build_write_requests(prepared, user), timeout=timeout),
-            deadline,
+        fichero atómico por separado, `gzip`/`metadata` con agente M9 y lo
+        grande por S3 con `transfer`."""
+        normalized = validate_metadata(metadata)
+        await self._require_m9_write(gzip=gzip, metadata=normalized)
+        plan = await self._plan(files)
+        results: dict[int, EntryInfo] = {}
+        if plan.grpc:
+            prepared = plan.grpc_entries
+            deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
+            response = await self._sandbox._files_call(
+                lambda stub, timeout: stub.Write(
+                    build_write_requests(prepared, user, normalized),
+                    timeout=timeout,
+                    **write_call_options(gzip),
+                ),
+                deadline,
+            )
+            for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
+                results[index] = entry_info_from_proto(entry)
+        for routed in plan.routed:
+            results[routed.index] = await self._sandbox._transfers.write_routed(
+                routed, user=user, metadata=normalized, request_timeout=request_timeout
+            )
+        return [results[index] for index in range(plan.count)]
+
+    async def upload_url(
+        self,
+        path: str,
+        *,
+        user: str | None = None,
+        expires_in: int = TRANSFER_DEFAULT_EXPIRES_IN_SECONDS,
+        max_bytes: int | None = None,
+        form: bool = False,
+        request_timeout: float | None = None,
+    ) -> AsyncUploadTicket:
+        """Misma semántica que `Filesystem.upload_url`; el ticket tiene
+        `wait()`, `status()` y `cancel()` como corrutinas."""
+        return await self._sandbox._transfers.upload_url(
+            path,
+            user=user,
+            expires_in=expires_in,
+            max_bytes=max_bytes,
+            form=form,
+            request_timeout=request_timeout,
         )
-        return [entry_info_from_proto(entry) for entry in response.entries]
+
+    async def download_url(
+        self,
+        path: str,
+        *,
+        user: str | None = None,
+        expires_in: int = TRANSFER_DEFAULT_EXPIRES_IN_SECONDS,
+        filename: str | None = None,
+        request_timeout: float | None = None,
+    ) -> DownloadLink:
+        """Misma semántica que `Filesystem.download_url`."""
+        return await self._sandbox._transfers.download_url(
+            path,
+            user=user,
+            expires_in=expires_in,
+            filename=filename,
+            request_timeout=request_timeout,
+        )
 
     async def list(
         self,
@@ -265,24 +359,33 @@ class AsyncFilesystem:
             raise
         return call
 
-    async def _read_chunks(self, request: Any, deadline: float) -> AsyncIterator[bytes]:
+    async def _read_chunks(
+        self,
+        request: Any,
+        deadline: float,
+        *,
+        options: dict[str, Any] | None = None,
+        idle: float | None = None,
+    ) -> AsyncIterator[bytes]:
         call, first = await self._sandbox._open_stream(
-            lambda stub: stub.Read(request, timeout=deadline),
+            lambda stub: stub.Read(request, timeout=deadline, **(options or {})),
             service=FILES_STUB,
             stream=False,
             allow_empty=True,
             filesystem=True,
         )
-        return self._remaining_chunks(call, first)
+        return self._remaining_chunks(call, first, idle)
 
-    async def _remaining_chunks(self, call: Any, first: Any) -> AsyncIterator[bytes]:
+    async def _remaining_chunks(
+        self, call: Any, first: Any, idle: float | None = None
+    ) -> AsyncIterator[bytes]:
         if first is None:
             return
         try:
             yield bytes(first.chunk)
             while True:
                 try:
-                    response = await call.read()
+                    response = await read_guarded(call, idle)
                 except grpc.RpcError as exc:
                     raise await self._stream_failure(exc) from exc
                 if response is STREAM_EOF:
@@ -293,6 +396,27 @@ class AsyncFilesystem:
 
     async def _stream_failure(self, exc: grpc.RpcError) -> Exception:
         return await self._sandbox._stream_failure(exc, filesystem=True)
+
+    async def _routes(self, size: int) -> bool:
+        staging = self._sandbox.transfer
+        return (
+            staging is not None
+            and size >= staging.threshold_bytes
+            and await self._sandbox._transfers.supports_transfers()
+        )
+
+    async def _plan(self, files: Sequence[WriteEntry]) -> WritePlan:
+        """Misma regla que `Filesystem._plan`: sin `transfer` no se sondea."""
+        plan = plan_writes(files, self._sandbox.transfer)
+        if plan.routed and not await self._sandbox._transfers.supports_transfers():
+            return plan.without_routing()
+        return plan
+
+    async def _require_m9_write(self, *, gzip: bool, metadata: Mapping[str, str]) -> None:
+        if metadata:
+            await self._sandbox._transfers.require_support("files.write(metadata=)")
+        if gzip:
+            await self._sandbox._transfers.require_support("files.write(gzip=True)")
 
     def _track(self, handle: AsyncWatchHandle) -> None:
         self._watches.add(handle)
@@ -440,7 +564,7 @@ class AsyncWatchHandle:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise
-                logger.info(
+                self._sandbox._logger_or(logger).info(
                     "watch %s: el gate del agente sigue cerrado (%s); reintento", self._path, exc
                 )
                 await asyncio.sleep(delay)

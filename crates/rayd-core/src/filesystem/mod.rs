@@ -1,7 +1,7 @@
 //! Files inside the sandbox: how a request path is normalised and checked
 //! against the deny list, what an entry looks like, how a listing walks a
-//! tree, how a multi-file write stream is sequenced and how raw watch
-//! events become the wire events. Pure data and rules over the
+//! tree, how a multi-file write stream is sequenced, what file metadata
+//! may hold and how raw watch events become the wire events. Pure data and rules over the
 //! `FileSystem`, `Watcher` and `NameResolver` ports; every syscall and the
 //! per-thread filesystem identity live in the `rayd` adapters.
 
@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod identity;
 pub mod listing;
+pub mod metadata;
 pub mod ops;
 pub mod path;
 pub mod ports;
@@ -25,12 +26,19 @@ pub use events::{
 };
 pub use identity::{FsIdentity, resolve_identity};
 pub use listing::{ListingLimits, effective_depth, walk_listing};
-pub use ops::{FilesystemOps, WatchTarget, WriteTarget};
+pub use metadata::{
+    FileMetadata, InvalidMetadata, METADATA_KEY_MAX_BYTES, METADATA_MAX_BYTES, METADATA_MAX_KEYS,
+    METADATA_XATTR_PREFIX,
+};
+pub use ops::{
+    ExportSource, FilesystemOps, ImportDestination, WatchTarget, WriteTarget, metadata_error,
+};
 pub use path::{
     DEFAULT_DENIED_PREFIXES, DenyList, PathRejection, RAYD_BINARY, RequestPath, join_canonical,
 };
 pub use ports::{
-    FileSystem, FsIoError, NameResolver, WatchError, WatchSubscription, Watcher, WriteSink,
+    FileSystem, FsIoError, NameResolver, OpenedSnapshot, SnapshotFile, WatchError,
+    WatchSubscription, Watcher, WriteSink,
 };
 pub use write::{DISK_RESERVE_BYTES, WriteMessage, WriteSession, WriteStep, check_disk_reserve};
 

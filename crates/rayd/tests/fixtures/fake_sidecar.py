@@ -23,10 +23,12 @@ timeout without counting it towards the kill switch). The ``reseed`` reply
 carries the M6 ``deferred`` list (always empty here: the fake never has a
 cell in flight when it reseeds) and the M7 ``skipped`` list (every
 non-Python context). ``--languages python,bash`` is what ``ready``
-announces (M7; ``none`` omits the field like a pre-M7 sidecar);
-``create_context`` honours ``language`` (unknown names are
-``invalid_argument`` ``unknown language``, names outside the list
-``language not installed``) and ``list_contexts`` echoes it.
+announces (M7; ``none`` omits the field like a pre-M7 sidecar; M9's
+``python,javascript,typescript`` stands for the Deno kernels of
+rayito-base-poly); ``create_context`` honours ``language`` (the known names
+are the four of rayd's catalog, so ``default-typescript`` can be created;
+unknown names are ``invalid_argument`` ``unknown language``, names outside
+the list ``language not installed``) and ``list_contexts`` echoes it.
 """
 
 from __future__ import annotations
@@ -113,7 +115,7 @@ class Execution:
         return {"id": self.request_id, "execution_id": self.execution_id}
 
 
-KNOWN_LANGUAGES = ("python", "bash", "javascript")
+KNOWN_LANGUAGES = ("python", "bash", "javascript", "typescript")
 
 
 def announced_languages() -> list[str] | None:

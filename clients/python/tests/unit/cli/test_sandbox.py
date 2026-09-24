@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 from rayito.sandbox_sync import main as sync_main
+from rayito.v1 import health_pb2
 
 from .conftest import IMAGE_ARN, FakeControlPlane, list_item, sandbox_info
 
@@ -59,11 +60,13 @@ def test_info_prints_metadata_and_no_metadata_skips_the_probe(
     fake_plane.infos["microvm-a"] = sandbox_info("microvm-a")
     probes: list[str] = []
 
-    def fake_probe(plane: Any, info: Any, transport: Any, timeout: float) -> dict[str, str]:
+    def fake_probe(
+        plane: Any, info: Any, transport: Any, timeout: float
+    ) -> health_pb2.HealthResponse:
         probes.append(info.sandbox_id)
-        return {"env": "ci"}
+        return health_pb2.HealthResponse(agent_ready=True, metadata={"env": "ci"})
 
-    monkeypatch.setattr(sync_main, "probe_metadata", fake_probe)
+    monkeypatch.setattr(sync_main, "probe_health", fake_probe)
     result = runner.invoke(app, ["--json", "sandbox", "info", "microvm-a"], obj=clients)
     assert result.exit_code == 0, result.stderr
     document = json.loads(result.stdout)

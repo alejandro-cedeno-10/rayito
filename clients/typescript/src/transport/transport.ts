@@ -10,11 +10,24 @@
 
 import type { SecureClientSessionOptions } from "node:http2";
 import type { Interceptor, Transport } from "@connectrpc/connect";
-import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
+import {
+  compressionGzip,
+  createGrpcTransport,
+  Http2SessionManager,
+} from "@connectrpc/connect-node";
 import { InvalidArgumentError } from "../errors.js";
 import { ENDPOINT_TLS_PORT } from "../limits.js";
+import { validateExtraHeaders } from "./headers.js";
+import {
+  type ProxyEndpoint,
+  ProxyTunnelSocket,
+  parseProxyUrl,
+  tunnelledTlsConnection,
+  validateProxyUrl,
+} from "./proxy-tunnel.js";
 
 export const IDLE_CONNECTION_TIMEOUT_MS = 15 * 60_000;
+export const GZIP_MIN_BYTES = 1024;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
 
 /**
@@ -32,6 +45,13 @@ export interface TransportSettings {
   readonly pingIdleConnection: boolean;
   readonly readMaxBytes: number;
   readonly nodeOptions?: SecureClientSessionOptions | undefined;
+  /**
+   * Metadata gRPC extra en cada request, detrás de las cuatro cabeceras del
+   * proxy (`validateExtraHeaders`: nunca `x-aws-proxy-*` ni `x-access-token`).
+   */
+  readonly extraHeaders?: Readonly<Record<string, string>> | undefined;
+  /** `http://[user:pass@]host:puerto`: cada sesión HTTP/2 abre un túnel `CONNECT` por ese proxy. */
+  readonly proxy?: string | undefined;
 }
 
 /**
@@ -62,10 +82,45 @@ export interface OpenedTransport {
   readonly sessionManager: Http2SessionManager;
 }
 
+/** `extraHeaders` y `proxy` se validan aquí, antes de cualquier llamada a AWS o al agente. */
 export function resolveTransportSettings(
   overrides: Partial<TransportSettings> | undefined,
 ): TransportSettings {
-  return Object.freeze({ ...DEFAULT_TRANSPORT_SETTINGS, ...(overrides ?? {}) });
+  const extraHeaders = validateExtraHeaders(overrides?.extraHeaders);
+  validateProxyUrl(overrides?.proxy);
+  return Object.freeze({
+    ...DEFAULT_TRANSPORT_SETTINGS,
+    ...(overrides ?? {}),
+    ...(extraHeaders === undefined ? {} : { extraHeaders }),
+  });
+}
+
+function targetPort(host: string, settings: TransportSettings): number {
+  const match = EXPLICIT_PORT.exec(host);
+  return match === null ? settings.port : Number(match[2]);
+}
+
+function tunnelFactory(host: string, settings: TransportSettings, proxy: ProxyEndpoint) {
+  const target = hostWithoutPort(host).replace(/^\[(.*)\]$/, "$1");
+  const port = targetPort(host, settings);
+  return () =>
+    settings.scheme === "http"
+      ? new ProxyTunnelSocket(proxy, target, port)
+      : tunnelledTlsConnection(proxy, target, port, ["h2"], settings.nodeOptions);
+}
+
+/** Con `proxy`, la sesión HTTP/2 nace sobre el túnel `CONNECT` (`createConnection`). */
+export function sessionOptions(
+  host: string,
+  settings: TransportSettings,
+): SecureClientSessionOptions | undefined {
+  if (settings.proxy === undefined) {
+    return settings.nodeOptions;
+  }
+  return {
+    ...(settings.nodeOptions ?? {}),
+    createConnection: tunnelFactory(host, settings, parseProxyUrl(settings.proxy)),
+  };
 }
 
 const EXPLICIT_PORT = /^(\[[^\]]+\]|[^:]+):(\d+)$/;
@@ -111,7 +166,7 @@ export function openTransport(
       pingIdleConnection: settings.pingIdleConnection,
       idleConnectionTimeoutMs: IDLE_CONNECTION_TIMEOUT_MS,
     },
-    settings.nodeOptions,
+    sessionOptions(host, settings),
   );
   const transport = createGrpcTransport({
     baseUrl: url,
@@ -120,4 +175,26 @@ export function openTransport(
     sessionManager,
   });
   return { transport, sessionManager };
+}
+
+/**
+ * Un segundo transporte sobre la sesión HTTP/2 de `opened` que comprime con
+ * gzip cada mensaje del cliente de al menos `GZIP_MIN_BYTES`: lo usa
+ * `write({ gzip: true })` sin abrir una tercera conexión. `rayd` descomprime
+ * lo que llega con `grpc-encoding: gzip` en `FilesystemService`.
+ */
+export function openGzipTransport(
+  host: string,
+  settings: TransportSettings,
+  interceptor: Interceptor,
+  opened: OpenedTransport,
+): Transport {
+  return createGrpcTransport({
+    baseUrl: baseUrl(host, settings),
+    interceptors: [interceptor],
+    readMaxBytes: settings.readMaxBytes,
+    sessionManager: opened.sessionManager,
+    sendCompression: compressionGzip,
+    compressMinBytes: GZIP_MIN_BYTES,
+  });
 }

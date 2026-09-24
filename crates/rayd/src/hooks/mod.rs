@@ -17,7 +17,13 @@
 //! `SuspendSignal`, quiesces the sidecar and syncs the page cache, without
 //! killing a process, a PTY or a kernel; `/resume` (D10) probes every
 //! kernel inside a hard cap, restarts the lost ones in the background and
-//! reseeds the rest. Both always answer 200.
+//! reseeds the rest. Both always answer 200, in every lifecycle phase.
+//!
+//! The logical deadline (ADR-011): an accepted `/run` that installed a
+//! lifecycle wakes the watcher thread, and a changed `/resume` hands the
+//! deadline the watcher's freeze verdict (`timeout_resumed`) before the
+//! kernel probe, so the resume grace or the auto-resume rule applies only
+//! after a real checkpoint.
 //!
 //! Hooks cannot be authenticated by origin (they arrive from `127.0.0.1`
 //! like proxied client traffic), so after the first accepted `/run` every
@@ -46,6 +52,7 @@ use rayd_core::hooks::{
     HookCallOutcome, QUIESCE_TIMEOUT, RESUME_PROBE_BUDGET, STREAM_CLOSE_GRACE, suspend_actions,
 };
 use rayd_core::lifecycle::{Hook, LifecycleError, Transition};
+use rayd_core::network::{EgressEnforcement, RESUME_VERIFY_BUDGET, RUN_ENFORCE_BUDGET};
 use rayd_core::session::{RunHookInput, RunOutcome, SandboxSession};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -54,7 +61,8 @@ use crate::adapters::{
     IMDS_VERIFY_BUDGET, ImdsState, UserConnectProbe, rule_present, verify_imds_block,
 };
 use crate::code::CodeManager;
-use crate::lifecycle::{SuspendSignal, suspend_watchdog};
+use crate::lifecycle::{SuspendSignal, TimeoutWatcher, suspend_watchdog};
+use crate::network::NetworkManager;
 
 /// `warn!` threshold for the wall-clock drift recorded at `/resume`.
 pub const CLOCK_OFFSET_WARN_MS: i64 = 5_000;
@@ -88,7 +96,10 @@ pub fn hook_path(hook: Hook) -> String {
 /// gRPC streams subscribe to; `shutdown` is cancelled after `/terminate` is
 /// acknowledged so both listeners drain and exit; `imds` is the IMDS block
 /// state shared with `Health` and `user_probe` the uid-1000 connect probe
-/// (`None` where no sandbox process can be spawned).
+/// (`None` where no sandbox process can be spawned); `timeout` is the
+/// deadline watcher (`TimeoutWatcher::detached` where no lifecycle is ever
+/// installed); `network` is the egress manager `/run` and `/resume` drive
+/// (`NetworkManager::unavailable` where the guest cannot enforce).
 pub struct HookServices {
     pub session: Arc<SandboxSession>,
     pub code: Arc<CodeManager>,
@@ -96,6 +107,8 @@ pub struct HookServices {
     pub shutdown: CancellationToken,
     pub imds: Arc<ImdsState>,
     pub user_probe: Option<UserConnectProbe>,
+    pub timeout: Arc<TimeoutWatcher>,
+    pub network: Arc<NetworkManager>,
 }
 
 #[derive(Clone)]
@@ -106,16 +119,19 @@ struct HooksState {
     shutdown: CancellationToken,
     imds: Arc<ImdsState>,
     user_probe: Option<UserConnectProbe>,
+    timeout: Arc<TimeoutWatcher>,
+    network: Arc<NetworkManager>,
 }
 
-/// The router without an IMDS block or a user probe (the integration
-/// tests and hosts where the block is never attempted).
+/// The router without an IMDS block, a user probe or a deadline watcher
+/// (the integration tests and hosts where neither is ever used).
 pub fn router(
     session: Arc<SandboxSession>,
     code: Arc<CodeManager>,
     suspend_signal: Arc<SuspendSignal>,
     shutdown: CancellationToken,
 ) -> Router {
+    let session_for_network = session.clone();
     router_with(HookServices {
         session,
         code,
@@ -123,6 +139,8 @@ pub fn router(
         shutdown,
         imds: Arc::new(ImdsState::default()),
         user_probe: None,
+        timeout: TimeoutWatcher::detached(),
+        network: NetworkManager::unavailable(session_for_network),
     })
 }
 
@@ -135,6 +153,8 @@ pub fn router_with(services: HookServices) -> Router {
         shutdown: services.shutdown,
         imds: services.imds,
         user_probe: services.user_probe,
+        timeout: services.timeout,
+        network: services.network,
     };
     Router::new()
         .route(&hook_path(Hook::Ready), post(ready))
@@ -268,13 +288,16 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
                 .filter(|payload| !payload.is_empty()),
         });
         if outcome == RunOutcome::Installed {
+            state.timeout.wake();
             let defaults = state.session.spawn_defaults();
             tracing::info!(
                 hook = %Hook::Run,
                 metadata_keys = state.session.metadata().len(),
                 cpu_seconds = defaults.cpu_seconds,
+                lifecycle_phase = state.session.lifecycle().phase.as_str(),
                 "run defaults applied"
             );
+            enforce_egress_at_run(&state).await;
             state.code.spawn_run_rotation(defaults.envs);
             spawn_imds_verification(&state);
         }
@@ -430,10 +453,10 @@ async fn close_client_streams(state: &HooksState) -> usize {
     closed
 }
 
-/// Design D10: transition, probe every kernel inside the hard cap (lost
-/// ones are restarted in the background), reseed in the background, 200.
-/// A `/resume` after a stale-suspend recovery is the real one
-/// (`resume_after_stale_recovery`).
+/// Design D10: transition, hand the deadline the freeze verdict (ADR-011),
+/// probe every kernel inside the hard cap (lost ones are restarted in the
+/// background), reseed in the background, 200. A `/resume` after a
+/// stale-suspend recovery is the real one (`resume_after_stale_recovery`).
 async fn resume(State(state): State<HooksState>) -> Response {
     within_budget_extras(Hook::Resume, state.session.clone(), async move {
         let transition = state.session.resume();
@@ -464,6 +487,8 @@ async fn resume(State(state): State<HooksState>) -> Response {
                 },
             );
         }
+        resume_deadline(&state);
+        reverify_egress(&state).await;
         let probe_started = Instant::now();
         let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
         let probe_ms = millis(probe_started.elapsed());
@@ -480,6 +505,7 @@ async fn resume(State(state): State<HooksState>) -> Response {
             kernels_alive = probe.alive.len(),
             kernels_lost = probe.lost.len(),
             kernel_state_lost,
+            lifecycle_phase = health.lifecycle.phase.as_str(),
             "resume recorded"
         );
         if health.clock_offset_ms.abs() > CLOCK_OFFSET_WARN_MS {
@@ -498,6 +524,55 @@ async fn resume(State(state): State<HooksState>) -> Response {
         )
     })
     .await
+}
+
+/// `/run` with `network.enforce` (ADR-012): deny-all is installed and
+/// verified before the 200, so no user code runs unprotected, and the
+/// kernel rotation that follows already gets the proxy variables. The
+/// work outlives an expired sub-budget (enforcement stays `None` and
+/// `Health` not ready until it settles); the hook answers 200 either way.
+async fn enforce_egress_at_run(state: &HooksState) {
+    if !state.session.network_enforce() {
+        return;
+    }
+    if !state.network.net_admin() {
+        tracing::warn!(reason = "no CAP_NET_ADMIN", "egress_enforce_unavailable");
+        state.session.egress_settled();
+        return;
+    }
+    let enforced =
+        tokio::time::timeout(RUN_ENFORCE_BUDGET, state.network.enforce_deny_all_at_run()).await;
+    if let Ok(enforcement) = enforced {
+        tracing::info!(hook = %Hook::Run, enforcement = enforcement.as_str(), "egress enforced");
+    } else {
+        tracing::warn!(step = "budget", "egress_enforce_failed");
+    }
+}
+
+/// `/resume`: the installed policy is re-verified synchronously. An
+/// expired sub-budget reports `None` (the SDK sees it in `Health`) and
+/// still answers 200: a non-200 hook answer is never used.
+async fn reverify_egress(state: &HooksState) {
+    let verified =
+        tokio::time::timeout(RESUME_VERIFY_BUDGET, state.network.reverify_after_resume()).await;
+    if verified.is_err() {
+        state
+            .session
+            .set_egress_enforcement(EgressEnforcement::None);
+        tracing::warn!(
+            budget_ms = millis(RESUME_VERIFY_BUDGET),
+            "egress_resume_verify_timeout"
+        );
+    }
+}
+
+/// Only a `/resume` right after a freeze the watcher saw may open the
+/// deadline's one resume grace or apply the auto-resume rule; the watcher
+/// is woken so the new phase is evaluated at once.
+fn resume_deadline(state: &HooksState) {
+    let now = state.session.clock().monotonic();
+    state.session.timeout_resumed(state.timeout.frozen(now));
+    state.timeout.wake();
 }
 
 async fn terminate(State(state): State<HooksState>) -> Response {
@@ -708,8 +783,166 @@ mod tests {
         assert_eq!(budget(Hook::Resume), Duration::from_secs(24));
         assert!(rayd_core::hooks::RESUME_PROBE_BUDGET < budget(Hook::Resume));
         assert!(
+            rayd_core::hooks::RESUME_PROBE_BUDGET + RESUME_VERIFY_BUDGET < budget(Hook::Resume)
+        );
+        assert!(RUN_ENFORCE_BUDGET < budget(Hook::Run));
+        assert!(
             rayd_core::hooks::STREAM_CLOSE_GRACE + rayd_core::hooks::QUIESCE_TIMEOUT
                 < budget(Hook::Suspend)
         );
+    }
+
+    mod egress {
+        use axum::body::Body;
+        use axum::http::Request;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::network::Family;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::adapters::OsRandomSource;
+        use crate::network::ProxySeams;
+        use crate::network::fake_kernel::FakeKernel;
+
+        const DIGEST_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        fn hooks(kernel: Arc<FakeKernel>) -> (Arc<SandboxSession>, Router) {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let network = NetworkManager::new(session.clone(), kernel, true, ProxySeams::default());
+            let router = router_with(HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network,
+            });
+            (session, router)
+        }
+
+        async fn post(router: &Router, hook: Hook, body: String) -> StatusCode {
+            let request = Request::post(hook_path(hook))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            router.clone().oneshot(request).await.unwrap().status()
+        }
+
+        fn run_body(network: &str) -> String {
+            let payload = format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"{network}}}");
+            serde_json::json!({"microvmId": "mvm-1", "runHookPayload": payload}).to_string()
+        }
+
+        #[tokio::test]
+        async fn run_with_enforce_verifies_deny_all_before_answering() {
+            let kernel = Arc::new(FakeKernel::new(true, Vec::new()));
+            let (session, router) = hooks(kernel.clone());
+            let status = post(
+                &router,
+                Hook::Run,
+                run_body(",\"network\":{\"enforce\":true}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+            assert_eq!(kernel.rule_priorities(Family::V4), [150]);
+            assert_eq!(kernel.rule_priorities(Family::V6), [150]);
+            assert!(session.egress_env().contains_key("HTTPS_PROXY"));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn health_waits_for_a_deny_all_that_outlives_the_run_budget() {
+            let kernel = Arc::new(FakeKernel::new(true, Vec::new()));
+            kernel.delay_local_addresses(Duration::from_millis(2_763));
+            let (session, router) = hooks(kernel);
+            let status = post(
+                &router,
+                Hook::Run,
+                run_body(",\"network\":{\"enforce\":true}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+            assert!(!session.health().agent_ready);
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+            assert!(session.health().agent_ready);
+        }
+
+        #[tokio::test]
+        async fn an_image_without_net_admin_is_ready_after_run() {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let network = NetworkManager::unavailable(session.clone());
+            let router = router_with(HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network,
+            });
+            let status = post(
+                &router,
+                Hook::Run,
+                run_body(",\"network\":{\"enforce\":true}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+            assert!(session.health().agent_ready);
+        }
+
+        #[tokio::test]
+        async fn run_without_enforce_touches_nothing() {
+            let kernel = Arc::new(FakeKernel::new(false, Vec::new()));
+            let (session, router) = hooks(kernel.clone());
+            assert_eq!(post(&router, Hook::Run, run_body("")).await, StatusCode::OK);
+            assert!(kernel.executed().is_empty());
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+            assert!(session.egress_env().is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_failing_executor_still_answers_200_with_none() {
+            let kernel = Arc::new(FakeKernel::new(false, Vec::new()));
+            kernel.fail_everything();
+            let (session, router) = hooks(kernel);
+            let status = post(
+                &router,
+                Hook::Run,
+                run_body(",\"network\":{\"enforce\":true}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+        }
+
+        #[tokio::test]
+        async fn resume_reinstalls_a_lost_table_before_answering() {
+            let kernel = Arc::new(FakeKernel::new(false, Vec::new()));
+            let (session, router) = hooks(kernel.clone());
+            post(
+                &router,
+                Hook::Run,
+                run_body(",\"network\":{\"enforce\":true}"),
+            )
+            .await;
+            assert_eq!(
+                post(&router, Hook::Suspend, String::new()).await,
+                StatusCode::OK
+            );
+            kernel.drop_table(Family::V4, 101);
+            assert_eq!(
+                post(&router, Hook::Resume, String::new()).await,
+                StatusCode::OK
+            );
+            assert!(kernel.table(Family::V4, 101).is_some());
+            assert!(kernel.blocked("1.1.1.1".parse().unwrap()));
+            assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+        }
     }
 }

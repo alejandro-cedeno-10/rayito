@@ -7,6 +7,7 @@ with no arguments inside the client environment (typer's usage error, exit
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import zipfile
@@ -59,6 +60,7 @@ def isolated(*args: str) -> subprocess.CompletedProcess[str]:
 def in_client_env(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, *args],
+        env={**os.environ, "_TYPER_FORCE_DISABLE_TERMINAL": "1"},
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -116,11 +116,13 @@ mod unix {
                         .iter()
                         .map(|path| path.to_string_lossy().into_owned())
                         .collect(),
+                    cookie: event.tracker(),
                 })
             }
             Err(error) if matches!(error.kind, ErrorKind::MaxFilesWatch) => Some(RawWatchEvent {
                 kind: RawWatchKind::LimitReached,
                 paths: Vec::new(),
+                cookie: None,
             }),
             Err(error) => {
                 tracing::debug!(reason = error_label(&error.kind), "watcher error ignored");
@@ -250,6 +252,56 @@ mod unix {
             assert_eq!(raw_kind(&tracked_from), RawWatchKind::RenameFrom);
             let overflow = event(EventKind::Other).set_flag(Flag::Rescan);
             assert_eq!(raw_kind(&overflow), RawWatchKind::QueueOverflow);
+        }
+
+        /// A temp file renamed over its destination, as `Write` commits,
+        /// reaches the sink as a `RenameFrom` and a `RenameTo` sharing one
+        /// cookie, which is what lets the translator report the landing.
+        #[test]
+        fn a_rename_reaches_the_sink_with_one_cookie_on_both_halves() {
+            let dir = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(dir.path())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let temp = format!("{root}/.rayito-tmp-cookie");
+            std::fs::write(&temp, b"x").unwrap();
+            let (sender, receiver) = std::sync::mpsc::channel::<RawWatchEvent>();
+            let id = FsIdentity {
+                uid: nix::unistd::getuid().as_raw(),
+                gid: nix::unistd::getgid().as_raw(),
+                home: root.clone(),
+            };
+            let _subscription = NotifyWatcher::new(IdentitySwitch::KeepCurrent)
+                .watch(
+                    &id,
+                    &root,
+                    &[],
+                    Box::new(move |raw| {
+                        let _ = sender.send(raw);
+                    }),
+                )
+                .unwrap();
+            std::fs::rename(&temp, format!("{root}/note.txt")).unwrap();
+            let mut from = None;
+            let mut to = None;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while to.is_none() && std::time::Instant::now() < deadline {
+                let Ok(raw) = receiver.recv_timeout(std::time::Duration::from_millis(200)) else {
+                    continue;
+                };
+                match raw.kind {
+                    RawWatchKind::RenameFrom => from = Some(raw),
+                    RawWatchKind::RenameTo => to = Some(raw),
+                    _ => {}
+                }
+            }
+            let from = from.unwrap();
+            let to = to.unwrap();
+            assert_eq!(from.paths, vec![temp]);
+            assert_eq!(to.paths, vec![format!("{root}/note.txt")]);
+            assert!(from.cookie.is_some());
+            assert_eq!(from.cookie, to.cookie);
         }
 
         /// A non-recursive watch on a real temp directory, dropped and

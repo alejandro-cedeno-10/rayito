@@ -139,7 +139,13 @@ impl<S: Spawner> ProcessManager<S> {
     ) -> Result<(Pid, SubscriberStream), ProcessError> {
         self.session.accepts_new_streams()?;
         let defaults = self.session.spawn_defaults();
-        let spec = plan_spawn(&input, &defaults, self.policy, self.lookup.as_ref())?;
+        let spec = plan_spawn(
+            &input,
+            &defaults,
+            &self.session.egress_env(),
+            self.policy,
+            self.lookup.as_ref(),
+        )?;
         ensure_directory(&spec.cwd).await?;
         let started_at = self.session.running_now();
         let (mut child, pid, stream) = self.spawn_registered(&spec, input.config, input.tag)?;
@@ -228,6 +234,17 @@ impl<S: Spawner> ProcessManager<S> {
         self.spawner
             .signal_group(pid, signal)
             .map_err(|error| signal_error(pid, error))
+    }
+
+    /// `signal` to the group of every live entry of the shared registry,
+    /// processes and PTYs alike (the logical deadline's exit, ADR-011).
+    /// Returns how many groups took it; a group that vanished in between
+    /// is skipped.
+    pub fn signal_all(&self, signal: i32) -> usize {
+        let pids: Vec<Pid> = self.list().into_iter().map(|summary| summary.pid).collect();
+        pids.into_iter()
+            .filter(|pid| self.send_signal(*pid, signal).is_ok())
+            .count()
     }
 
     #[must_use]

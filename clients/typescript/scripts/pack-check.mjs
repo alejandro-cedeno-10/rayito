@@ -15,6 +15,10 @@ const REQUIRED_ENTRIES = [
   "package/dist/index.cjs",
   "package/dist/index.d.mts",
   "package/dist/index.d.cts",
+  "package/dist/e2b.mjs",
+  "package/dist/e2b.cjs",
+  "package/dist/e2b.d.mts",
+  "package/dist/e2b.d.cts",
 ];
 
 /**

@@ -25,8 +25,11 @@ with Sandbox.create(template="base-2gb", timeout=3600) as sbx:
 ```
 
 `template` es el nombre (o ARN) de una imagen de MicroVM; el tamaño va en la
-imagen, no en `create()`. `timeout` es la vida máxima del sandbox en segundos
-(running + suspendido), inmutable tras crearlo y con tope de 8 h.
+imagen, no en `create()`. `timeout` es el plazo lógico del sandbox, impuesto
+por `rayd` y movible con `set_timeout()` / `connect(timeout=)`; `max_lifetime`
+es el tope de la plataforma (running + suspendido, ≤ 8 h), fijo tras crear
+(ADR-011). Sin `max_lifetime` ni `on_timeout`, `timeout` sigue siendo la vida
+máxima e inmutable de ADR-007.
 
 ## 2. Por qué existe
 
@@ -51,7 +54,7 @@ Rayito ocupa el hueco con estos diferenciales, en este orden:
 
 El pitch es compliance + cuenta propia, **no precio** (ver §7).
 
-## 3. Alcance del slice ejecutable (M1–M7)
+## 3. Alcance del slice ejecutable (M1–M9)
 
 Todo lo siguiente entra en el contrato `.proto` desde el día uno. La
 implementación se secuencia en `MILESTONES.md`, no se hace en paralelo. Los
@@ -68,13 +71,17 @@ emulan.
 | Código | `run_code(code, context, on_stdout, on_stderr, on_result, on_error, envs, timeout=300) -> Execution(results, logs, error, execution_count)`; `.text` = resultado principal; `create_code_context`, `list_code_contexts`, `remove_code_context`, `restart_code_context` | M4 |
 | PTY | `pty.create(size, user, cwd, envs, shell, timeout, on_data) -> PtyHandle` (mismo handle que comandos), `send_input`, `resize`, `kill`, `connect(pid)` | M5 |
 | Persistencia | `pause(wait)`, `resume(wait)`; hooks `/suspend` y `/resume` reales; reconexión por `resume_generation` | M5 |
-| Salud | `is_running`; `get_metrics` | M2 / M6 |
+| Salud | `is_running`; `get_metrics`; `get_metrics_history(start, end, max_points)` (serie de 5 s que `rayd` muestrea desde `/run`, anillo de 8 h, hueco en pausa; forma de clase con el access token) | M2 / M6 / M9 |
+| Ciclo de vida (M9) | `create(max_lifetime=, on_timeout=)` (`'kill'` o `'pause'`), `set_timeout` (`SetTimeout` EXACT), `connect(timeout=)` (AT_LEAST), `SandboxLifecycle` en `get_health()`/`get_info()`, `LifecycleUnsupportedException` en imágenes anteriores a M9 (ADR-011); `paginate(limit, next_token, order, started_after)` con cursor opaco sobre `nextToken` | M9 |
+| Transferencias (M9) | `S3Staging` en `create`/`connect`, `files.upload_url`/`download_url` (URLs de S3 prefirmadas con las credenciales del llamante, ADR-010), ficheros grandes por S3, `files.write/read(gzip=)`, `metadata` por fichero (xattrs), `stream_idle_timeout` | M9 |
+| Red saliente (M9) | `create(network=, allow_internet_access=)`, `update_network`, `get_network`, `EgressProxy`, `Health.egress_enforcement`: política de E2B aplicada en el guest de `rayito-base-caps`, falla cerrado en otras imágenes (ADR-012) | M9 |
+| Git (M9) | `sbx.git` (`Git`/`AsyncGit`, TS `Git`): la superficie git de E2B sobre `commands.run`, con `git-core` en `rayito-base` | M9 |
 | Metadatos | `create(metadata=)` en el `runHookPayload` (4096 chars junto a `envs`), `rayd` lo devuelve en `Health`; `sbx.metadata`, `get_info().metadata`, `Sandbox.get_info(id)` (JWE + `Health` sobre `RUNNING`), `list(metadata=)` filtrado en cliente, O(n) y sólo `RUNNING` | M6 |
-| Shim E2B | `rayito.e2b`: `Sandbox`/`AsyncSandbox` y los nombres del SDK de E2B 1.x sobre el nativo; kwargs de E2B mapeados o ignorados con aviso; `UnimplementedError` donde AWS no tiene primitiva | M6 |
+| Shim E2B | `rayito.e2b`: `Sandbox`/`AsyncSandbox` y los nombres del SDK de E2B 1.x sobre el nativo; kwargs de E2B mapeados o ignorados con aviso; `UnimplementedError` donde AWS no tiene primitiva. M9: superficie de E2B **2.x** en Python y en TypeScript (`rayito/e2b`), con `set_timeout`, `connect(timeout)`, `lifecycle`, `upload_url`/`download_url`, `get_metrics(start, end)`, `list(next_token)`, `allow_internet_access=False` y `network` (en `rayito-base-caps`; falla cerrado en otras imágenes), `update_network`, `git` y `run_code(language="typescript")` mapeados | M6 / M9 |
 | Pool de suspendidos | `SandboxPool`/`AsyncSandboxPool` (`PoolConfig`, backends en memoria y JSON `rayito.pool/1`), `take()` con `resume-microvm` y el token de la plaza, `Sandbox.create(pool=)`; TypeScript `SandboxPool` | M7 |
 | Persistencia S3 | `FilesystemService.Checkpoint`/`Restore` en `rayd` (tar.gz del `HOME`, credenciales IMDSv2 del execution role como root); `Sandbox.create(persist=S3Prefix)`, `connect(persist=)`, `checkpoint_files`, `restore_files`, `reincarnate()` | M7 |
-| Kernels | `run_code(language=)` / `create_code_context(language=)` (`python`, `bash` en la variante `rayito-base-poly`; `javascript` reservado, `UNIMPLEMENTED`) | M7 |
-| MCP y CLI | `rayito.mcp` (`rayito[mcp]`: seis herramientas por stdio o streamable HTTP, un sandbox por proceso); CLI `rayito` (`rayito[cli]`: `image`, `sandbox`, `doctor`) | M7 |
+| Kernels | `run_code(language=)` / `create_code_context(language=)`: `python`; `bash`, `javascript` (alias `js`) y `typescript` (alias `ts`) en la variante `rayito-base-poly` (JS/TS con el kernel Jupyter de Deno 2.9.7, arranque perezoso, ADR-013); en otra imagen `UNIMPLEMENTED` nombrando `rayito-base-poly` | M7 / M9 |
+| MCP y CLI | `rayito.mcp` (`rayito[mcp]`: seis herramientas por stdio o streamable HTTP, un sandbox por proceso); CLI `rayito` (`rayito[cli]`: `image`, `sandbox`, `doctor`); M9: `rayito sandbox create`, `connect`, `exec` y `metrics` (fichero de token, terminal interactiva) | M7 / M9 |
 
 ## 4. No-objetivos (explícitos)
 
@@ -85,13 +92,19 @@ Se rechazan en review si aparecen antes de M6:
   imagen se construye con un Dockerfile a mano y `create-microvm-image`. M7
   (`m7-cli`) entrega una CLI **operativa** (`rayito image|sandbox|doctor`)
   sobre el flujo Dockerfile existente; los templates declarativos
-  (`rayito.toml`) siguen fuera.
+  (`rayito.toml`) siguen fuera. M9 añade `rayito sandbox
+  create/connect/exec/metrics`, también operativos; `auth`, `template`,
+  `snapshots` y `fork` de la CLI de E2B siguen fuera.
 - Soporte multi-cloud. AWS-only por diseño (ADR-003).
 - Kernels que no sean Python en `rayito-base`. `bash` llega en M7
   (`m7-poly-kernels`) como variante `rayito-base-poly` con arranque perezoso;
-  `javascript` queda reservado como nombre (UNIMPLEMENTED en toda imagen:
-  `ijavascript` necesita compilador en al2023 ARM64, AWS_API_NOTES.md Q57);
-  R y Java siguen fuera.
+  `javascript` y `typescript` llegan en M9 (`m9-deno-kernels`) a esa misma
+  variante con el kernel de Deno (`ijavascript` necesita compilador en al2023
+  ARM64, AWS_API_NOTES.md Q57 y Q61). R y Java siguen fuera, con números
+  medidos: R por conda-forge (`r-base` + `r-irkernel`) ocupa 1,4 GB
+  instalado, y R-core por `dnf` 127 MB más cairo/pango/harfbuzz/tk/fuentes;
+  Java serían 262 MB de Corretto 21 headless más IJava sin mantenimiento (una
+  release desde 2023, no compila en JDK 17/18).
 - Pool de MicroVMs **pre-calentados** (`RUNNING`, $0,126/h cada uno). Decidido en
   M6 con datos (`docs/benchmarks/2026-09-cold-start.md`, ADR-008): el p95 de
   `kernel_ready` en una ráfaga de 20 por el SDK fue 8,57 s (≥ 8 s, regla D11)
@@ -109,8 +122,6 @@ Se rechazan en review si aparecen antes de M6:
 - **Tamaño por sandbox** (`cpu=`/`memory=`): el tamaño es propiedad de la imagen
   (`resources[0].minimumMemoryInMiB`) tanto en Rayito como, de hecho, en E2B.
   Un template = un tamaño (`base-2gb`, `base-4gb`).
-- **`set_timeout()`** de E2B: no existe `UpdateMicrovm` (ADR-007). No se emula:
-  `rayito.e2b` lo lanza como `UnimplementedError`.
 - ~~Persistencia de filesystem entre sesiones (S3/EFS)~~ (era candidata a M6):
   entregada en M7 (`m7-s3-persistence`, ADR-009): checkpoint/restore de
   `/home/user` en S3 desde `rayd` (`Sandbox.create(persist=)`,
@@ -128,18 +139,18 @@ Se rechazan en review si aparecen antes de M6:
 | Codegen Python / TS | `buf` con plugins pinneados (`protocolbuffers/python:v36.1`, `grpc/python:v1.84.0`, `bufbuild/es:v2.15.0`) | reproducible; el suelo de `protobuf` en `pyproject` = versión del plugin |
 | Stack Python | `grpcio` + `protobuf` + `boto3`, `uv_build`, `>= 3.11`, sync y async con la misma superficie | mínimo de dependencias; `grpc.aio` reutiliza los stubs |
 | Cliente TypeScript | Connect-ES v2 (`@connectrpc/connect-node` `createGrpcTransport`) + `protoc-gen-es` | un solo plugin genera tipos y servicios; el interceptor inyecta las cabeceras del proxy |
-| Kernel Jupyter | sidecar Python con `jupyter_client` (`AsyncKernelManager`, transporte `ipc`), JSON lines por stdio (ADR-002) | el trabajo real (formatters, warm-up, supervisión) es Python de todas formas; consolidar en Rust es opción M6 |
+| Kernel Jupyter | sidecar Python con `jupyter_client` (`AsyncKernelManager`, transporte `ipc`; TCP de loopback con HMAC sólo para Deno, ADR-013), JSON lines por stdio (ADR-002) | el trabajo real (formatters, warm-up, supervisión) es Python de todas formas; consolidar en Rust es opción M6 |
 | PTY | `nix::pty::openpty` + `tokio::process::Command` (ADR-005) | cambio de uid nativo, lectura async, una sola versión de `nix`; `portable-pty` descartado |
 | Hooks | puerto dedicado 9000, `axum` HTTP/1.1, nunca en `allowedPorts` (ADR-006) | no mezclar HTTP/1.1 con h2c ni exponer los hooks a tokens del 8080 |
 | Token del agente | sha256 del secreto en `runHookPayload` → `POST /run`; `x-access-token` en cada RPC salvo `Health` (ADR-004) | `run-microvm` no tiene env vars; es el único canal per-VM |
-| Vida del sandbox | inmutable, `maximumDurationInSeconds` ≤ 28800 (ADR-007) | no existe `UpdateMicrovm` |
+| Vida del sandbox | plazo lógico en `rayd` + `maximumDurationInSeconds` ≤ 28800 como tope (ADR-011) | no existe `UpdateMicrovm`; `rayd` es PID 1 y su salida termina la VM sin IAM (Q58) |
 | Estructura de `rayd` | hexagonal: `rayito-proto` (generado) / `rayd-core` (dominio + puertos, sin tonic ni axum) / `rayd` (adaptadores + main) | el dominio se testea en Windows con puertos falsos; los adaptadores sólo en Linux |
 | Clientes | Python primero, TypeScript después | generados desde `.proto`, no escritos a mano |
 | Plano de control | librería en el cliente (boto3), no servicio | cada MicroVM tiene su endpoint propio; nada que un servicio añada en M1–M5 |
 | Readiness | `HealthService.Health` a través del endpoint, nunca `get-microvm.state` | el estado es eventualmente consistente por documentación |
 | Imagen | zip (Dockerfile + `rayd` precompilado + sidecar) → S3 → `create/update-microvm-image` → gate de tres estados | AWS construye la imagen; Docker local fuera del camino crítico |
 | Compatibilidad E2B | misma superficie; lo que no existe se declara `unimplemented` | patrón Dormice; sin promesas falsas de paridad |
-| Shim `rayito.e2b` (M6) | drop-in a nivel de import por composición sobre `rayito.Sandbox`: defaults de E2B (`timeout=300`, sin idle, `ALL_INGRESS` + `INTERNET_EGRESS`), `RayitoCompatWarning` por kwarg ignorado, `UnimplementedError(NotImplementedError)` para `set_timeout`, URLs firmadas, rangos de métricas, kernels no Python, templates/`fork` y `allow_internet_access=False` (Q44: sin conector de egress el MicroVM sigue saliendo a internet) | nunca sombrear la distribución `e2b`; un `except SandboxException` de E2B no debe tragarse una feature ausente |
+| Shim `rayito.e2b` (M6; 2.x y `rayito/e2b` en TypeScript desde M9) | drop-in a nivel de import por composición sobre `rayito.Sandbox`: defaults de E2B (`timeout=300` como plazo lógico con `on_timeout='kill'`, sin idle, `ALL_INGRESS` + `INTERNET_EGRESS`), `RayitoCompatWarning` por kwarg ignorado, `UnimplementedError(NotImplementedError)` (el nativo re-exportado) para lo que no tiene primitiva: `fork`/snapshots, `pause(keep_memory=False)`, `network.rules`, `mask_request_host`, `allow_public_traffic=True`, MCP, volúmenes, templates, kernels R/Java; `allow_internet_access=False` y `network` sólo en `rayito-base-caps` (en otras imágenes: `UnimplementedError` tras terminar el VM, porque sin conector de egress el MicroVM sigue saliendo, Q44/Q60) | nunca sombrear la distribución `e2b`; un `except SandboxException` de E2B no debe tragarse una feature ausente |
 
 ## 6. Definición de "hecho" para el slice
 
@@ -208,8 +219,9 @@ Se resuelven midiendo, no diseñando. Ver `MILESTONES.md` M0 y
   por valor). Decisión sobre el pool en §4 y ADR-008 (`B20` supera el umbral
   por menos que esa incertidumbre; la regla se aplicó tal cual).
 - **Tope duro de 8 h** (running + suspendido), no ajustable, sin `UpdateMicrovm`.
-  Diferencia visible con E2B: sin `set_timeout`, `connect()` no extiende la
-  vida.
+  Diferencia visible con E2B: `set_timeout` y `connect(timeout=)` mueven el
+  plazo lógico, pero nunca más allá de `max_lifetime` (ADR-011); pasado ese
+  tope sólo queda `reincarnate()`.
 - **TTL del token JWE de 60 min.** Refresh automático a los 45 min, también
   durante la pausa. No es opcional.
 - **`runHookPayload`: 4096 caracteres** según el modelo (botocore rechaza más en
@@ -221,5 +233,5 @@ Se resuelven midiendo, no diseñando. Ver `MILESTONES.md` M0 y
 - **gRPC a través del proxy** (Q17): trailers y streams largos con
   `x-aws-proxy-force-h2` sobre tonic h2c se confirman en M1 con el primer
   binario; si falla, `rayd` necesitaría TLS y cae la premisa "sin crate TLS".
-- **Alcance del puerto de hooks desde fuera** con un token `allPorts` (fila sin numerar de `spike/m0/M0_RESULTS.md`,
+- **Alcance del puerto de hooks desde fuera** con un token `allPorts` (fila sin numerar de la tabla de resultados medida en el spike de M0, historial de git;
   riesgo T2 de `SECURITY.md`).

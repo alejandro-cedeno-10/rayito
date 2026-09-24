@@ -71,6 +71,43 @@ E2B_NAMES = [
     "BoxAndWhiskerData",
 ]
 
+E2B_V2_NAMES = [
+    "ALL_TRAFFIC",
+    "AsyncCommandHandle",
+    "AsyncWatchHandle",
+    "AsyncSecret",
+    "AsyncTemplate",
+    "AsyncVolume",
+    "BuildException",
+    "Chart2D",
+    "ConnectionConfig",
+    "E2B",
+    "FileNotFoundException",
+    "FileUploadException",
+    "Git",
+    "GitAuthException",
+    "GitBranches",
+    "GitFileStatus",
+    "GitResetMode",
+    "GitStatus",
+    "GitUpstreamException",
+    "MIMEType",
+    "OutputHandler",
+    "PtyOutput",
+    "RunCodeLanguage",
+    "SandboxNotFoundException",
+    "Secret",
+    "ServiceBusyException",
+    "Stderr",
+    "Stdout",
+    "Template",
+    "Username",
+    "Volume",
+    "get_signature",
+]
+
+E2B_SIBLING_NAMES = ["UploadTicket", "DownloadLink"]
+
 E2B_EXCEPTION_NAMES = [
     "SandboxException",
     "TimeoutException",
@@ -83,6 +120,13 @@ E2B_EXCEPTION_NAMES = [
     "TemplateException",
     "UnimplementedError",
     "RayitoCompatWarning",
+    "BuildException",
+    "FileNotFoundException",
+    "FileUploadException",
+    "GitAuthException",
+    "GitUpstreamException",
+    "SandboxNotFoundException",
+    "ServiceBusyException",
 ]
 
 
@@ -112,7 +156,7 @@ def test_license_is_apache_2_expression() -> None:
     assert not [c for c in project["classifiers"] if c.startswith("License ::")]
 
 
-@pytest.mark.parametrize("name", E2B_NAMES)
+@pytest.mark.parametrize("name", [*E2B_NAMES, *E2B_V2_NAMES, *E2B_SIBLING_NAMES])
 def test_e2b_names_importable(name: str) -> None:
     module = importlib.import_module("rayito.e2b")
     assert getattr(module, name) is not None
@@ -125,7 +169,7 @@ def test_e2b_exception_names_importable(name: str) -> None:
 
 
 def test_e2b_all_matches_the_proposal_list() -> None:
-    assert set(rayito.e2b.__all__) == set(E2B_NAMES)
+    assert set(rayito.e2b.__all__) == {*E2B_NAMES, *E2B_V2_NAMES, *E2B_SIBLING_NAMES}
     assert set(rayito.e2b.exceptions.__all__) == set(E2B_EXCEPTION_NAMES)
 
 

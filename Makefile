@@ -1,7 +1,11 @@
 .PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket
 
 TARGET        := aarch64-unknown-linux-musl
-RAYD_BIN      := target/$(TARGET)/release/rayd
+# Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
+# `build` los reescribe en el binario como /target y /cargo.
+BUILD_TARGET_DIR := $(abspath $(or $(CARGO_TARGET_DIR),target))
+CARGO_HOME_DIR   := $(abspath $(or $(CARGO_HOME),$(HOME)/.cargo))
+RAYD_BIN      := $(BUILD_TARGET_DIR)/$(TARGET)/release/rayd
 IMAGE_ZIP     := image/rayito-image.zip
 IMAGE_ZIP_SLIM := image/rayito-image-slim.zip
 IMAGE_ZIP_POLY := image/rayito-image-poly.zip
@@ -22,7 +26,7 @@ PUBLISH_ARGS  ?=
 PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
-IAM_TEMPLATE  := spike/m0/iam.yaml
+IAM_TEMPLATE  := infra/iam.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
@@ -45,14 +49,20 @@ proto:
 # Con cargo-auditable en el PATH (`cargo install --locked cargo-auditable@0.7.6`)
 # el grafo exacto de crates queda embebido en la sección ELF `.dep-v0` y
 # scripts/check_auditable.py lo verifica; sin él, `cargo zigbuild` normal.
+# `--remap-path-prefix` (vía `--config build.rustflags`, que se suma a los
+# rustflags de los ficheros de configuración; un RUSTFLAGS exportado lo
+# anula) quita del binario las rutas del constructor: las de los crates del
+# registro en CARGO_HOME (ubicaciones de pánico) y la del directorio de
+# compilación (código generado en OUT_DIR). `.dep-v0` no lleva rutas.
+REMAP_CONFIG := --config 'build.rustflags=["--remap-path-prefix=$(CARGO_HOME_DIR)=/cargo","--remap-path-prefix=$(BUILD_TARGET_DIR)=/target"]'
 build:
 	@if command -v cargo-auditable >/dev/null 2>&1; then \
 	  echo "build: cargo auditable zigbuild (.dep-v0 embebido)"; \
-	  cargo auditable zigbuild --release --locked --target $(TARGET) -p rayd && \
+	  cargo auditable zigbuild --release --locked --target $(TARGET) -p rayd $(REMAP_CONFIG) && \
 	  python scripts/check_auditable.py $(RAYD_BIN); \
 	else \
 	  echo "build: cargo zigbuild sin cargo-auditable (instala cargo-auditable@0.7.6 para embeber .dep-v0)"; \
-	  cargo zigbuild --release --locked --target $(TARGET) -p rayd; \
+	  cargo zigbuild --release --locked --target $(TARGET) -p rayd $(REMAP_CONFIG); \
 	fi
 	@ls -la $(RAYD_BIN)
 
@@ -155,11 +165,11 @@ image-publish: require-bucket image-zip
 image-publish-slim: require-bucket image-zip-slim
 	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_SLIM) --variant slim --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
 
-# Variante poly (M7): mismo Dockerfile, marcador `kernels_variant` sólo dentro
-# del zip; la capa condicional instala el kernel bash (`javascript` queda
-# reservado: ijavascript necesita compilador en al2023 ARM64, AWS_API_NOTES.md
-# Q57) y el sidecar lo arranca en la primera celda de ese lenguaje. Imagen
-# aparte `rayito-base-poly`; rayito-base no cambia.
+# Variante poly (M7, Deno en M9): mismo Dockerfile, marcador `kernels_variant`
+# sólo dentro del zip; la capa condicional instala el kernel bash y Deno
+# (`javascript` y `typescript`, ADR-013) y el sidecar arranca cada kernel en
+# la primera celda de su lenguaje. Imagen aparte `rayito-base-poly`;
+# rayito-base no cambia.
 image-zip-poly: build
 	cp $(RAYD_BIN) image/rayd
 	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
@@ -181,8 +191,9 @@ image-publish-caps: require-bucket image-zip
 image-prune:
 	$(PY) python scripts/image_prune.py --image-name rayito-base $(PRUNE_ARGS)
 
-# Valida las plantillas de infra/ (conector de egress y rol OIDC del e2e) y
-# el IAM del spike (`PersistenceBucket`/`PersistencePrefix` de M7):
+# Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e y el
+# IAM de build/ejecución/cliente con los parámetros de persistencia y
+# transferencias):
 # validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).

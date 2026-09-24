@@ -10,6 +10,7 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
@@ -162,9 +163,12 @@ async fn harness_with(options: Options) -> Harness {
             files: manager.clone(),
             code: code.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
             suspend: suspend.clone(),
             imds: Arc::new(rayd::adapters::ImdsState::default()),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+            network: rayd::network::NetworkManager::unavailable(session.clone()),
         },
         StreamSettings {
             keepalive_interval: Duration::from_millis(200),
@@ -240,6 +244,7 @@ fn write_request(path: Option<&str>, mode: Option<u32>, chunk: &[u8]) -> WriteRe
         user: None,
         mode,
         chunk: chunk.to_vec(),
+        metadata: HashMap::new(),
     }
 }
 
@@ -693,6 +698,7 @@ async fn write_client_failure_discards_the_open_file() {
                 path: Some(path.clone()),
                 user: None,
                 mode: None,
+                metadata: Vec::new(),
                 chunk_len: 1024,
             },
             chunk: vec![1; 1024],
@@ -714,6 +720,7 @@ async fn write_client_failure_discards_the_open_file() {
                 path: Some(path.clone()),
                 user: None,
                 mode: None,
+                metadata: Vec::new(),
                 chunk_len: 3,
             },
             chunk: b"abc".to_vec(),
@@ -1154,31 +1161,44 @@ async fn include_entry_reports_the_mode_after_chmod() {
 }
 
 #[tokio::test]
-async fn write_rpc_into_a_watched_directory_surfaces_as_one_rename() {
+async fn write_rpc_into_a_watched_directory_surfaces_as_one_write_with_its_entry() {
     let harness = harness().await;
     fs::create_dir(harness.path("watch")).unwrap();
-    let mut stream = harness.watch_started(&harness.path("watch"), false).await;
+    let mut stream = harness
+        .watch(&harness.path("watch"), false, true)
+        .await
+        .unwrap();
+    expect_started(&mut stream).await;
     harness
         .write(&harness.path("watch/w.txt"), b"w")
         .await
         .unwrap();
     fs::write(harness.path("watch/marker"), b"m").unwrap();
-    let events = collect_until(&mut stream, ("marker", FilesystemEventType::Create)).await;
-    let renames: Vec<_> = events
+    let mut events = Vec::new();
+    loop {
+        let event = next_event(&mut stream).await.unwrap().unwrap();
+        let done = typed(&event) == ("marker".to_owned(), FilesystemEventType::Create);
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    let landed: Vec<_> = events
         .iter()
-        .filter(|(name, kind)| name == "w.txt" && *kind == FilesystemEventType::Rename)
+        .filter(|event| event.name == "w.txt")
         .collect();
-    assert_eq!(renames.len(), 1, "{events:?}");
+    assert_eq!(landed.len(), 1, "{events:?}");
+    assert_eq!(
+        typed(landed[0]),
+        ("w.txt".to_owned(), FilesystemEventType::Write)
+    );
+    let entry = landed[0].entry.as_ref().expect("entry of the landed file");
+    assert_eq!(entry.name, "w.txt");
+    assert_eq!(entry.size, 1);
     assert!(
         events
             .iter()
-            .all(|(name, _)| !name.starts_with(TEMP_PREFIX))
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|(name, kind)| name == "w.txt" && *kind != FilesystemEventType::Rename),
-        "{events:?}"
+            .all(|event| !event.name.starts_with(TEMP_PREFIX))
     );
 }
 
@@ -1500,6 +1520,7 @@ async fn identity_is_enforced_per_thread_when_root() {
             user: Some(user("user")),
             mode: None,
             chunk: b"mine".to_vec(),
+            metadata: HashMap::new(),
         }])))
         .await
         .unwrap()

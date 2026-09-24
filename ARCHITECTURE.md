@@ -65,12 +65,14 @@ AWS Lambda MicroVM (Firecracker, ARM64)
 ├─ rayd (Rust, estático musl, root)
 │    :8080  gRPC h2c  ── lo llama el SDK a través del proxy de AWS
 │    :9000  HTTP/1.1  ── lo llama sólo Lambda (hooks /ready /run /suspend /resume /terminate)
+│    127.0.0.1:<efímero>  proxy de egress (M9, sólo rayito-base-caps con política, ADR-012)
 │    │
 │    └─ hijo: kernel-sidecar (Python 3.12, uid 1000)
 │         stdin/stdout JSON lines  ◄──►  rayd
 │         │
-│         └─ hijos: ipykernel × contexto (Python, uid 1000)
-│              ZMQ ipc:// bajo /run/rayito/k/<contexto>/
+│         └─ hijos: un kernel Jupyter por contexto (uid 1000)
+│              ipykernel / bash_kernel: ZMQ ipc:// bajo /run/rayito/k/<contexto>/
+│              Deno (javascript/typescript, sólo rayito-base-poly): ZMQ tcp://127.0.0.1 (ADR-013)
 │              ►► aquí corre el código del usuario (run_code)
 │
 └─ procesos y PTYs de commands.run / pty.create (uid 1000, hijos directos de rayd)
@@ -80,7 +82,7 @@ AWS Lambda MicroVM (Firecracker, ARM64)
 |---|---|---|---|
 | `rayd` | Rust | dentro del MicroVM, como root, un proceso por VM | el SDK (gRPC :8080) y Lambda (hooks :9000) |
 | kernel-sidecar | Python 3.12 | dentro del MicroVM, hijo de `rayd`, uid 1000 | sólo `rayd` (JSON lines por stdio) |
-| ipykernel (uno por contexto) | Python | dentro del MicroVM, hijo del sidecar, uid 1000; **aquí corre el código del usuario** | el sidecar (`jupyter_client`, ZMQ `ipc://`) |
+| Kernel Jupyter (uno por contexto) | ipykernel (Python), `bash_kernel` y, en `rayito-base-poly`, Deno 2.9.7 (`javascript`/`typescript`) | dentro del MicroVM, hijo del sidecar, uid 1000; **aquí corre el código del usuario** | el sidecar (`jupyter_client`): ZMQ `ipc://` para Python y bash, TCP de loopback `127.0.0.1` con HMAC para Deno, que no sabe abrir endpoints `ipc` ([ADR-013](#adr-013--kernels-deno-sobre-tcp-de-loopback-con-hmac)) |
 | procesos y PTYs (`commands`, `pty`) | lo que el usuario lance | dentro del MicroVM, hijos de `rayd`, uid 1000 | el SDK vía `ProcessService` / `PtyService` |
 | SDK Python (`rayito`) | Python ≥ 3.11 | **fuera** del MicroVM, en el proceso del cliente (tu app, tu agente, tu CI) | tu código |
 | SDK TypeScript (`rayito`) | TypeScript / Node ≥ 20 | **fuera**, en el proceso del cliente | tu código |
@@ -124,6 +126,16 @@ CMD ["/usr/local/bin/rayd", "--grpc-port", "8080", "--hooks-port", "9000"]
 
 **Nunca se compila Rust dentro del Dockerfile.** El binario `rayd` llega
 precompilado en el zip; AWS ejecuta el Dockerfile en su propia VM Graviton.
+
+El Dockerfile real añade a ese esqueleto (M9) `git-core` fijado por NEVRA
+(`git-core-2.50.1-1.amzn2023.0.1`, para `sbx.git`) y, sólo con el marcador
+`kernels_variant` de la variante poly, `bash_kernel` y **Deno 2.9.7**: el zip
+oficial `deno-aarch64-unknown-linux-gnu.zip` descargado con `curl -o`,
+comprobado con `sha256sum -c` contra un sha256 fijado en el propio fichero y
+extraído a `/opt/rayito/deno/deno` (root, 0755). `scripts/check_pins.py` exige
+esa forma a cada descarga del Dockerfile (`SECURITY.md` T10) y la versión
+exacta de cada paquete dnf vigilado; subir Deno es cambiar versión y sha256 y
+publicar una versión de imagen nueva.
 
 ### Pipeline de imagen
 
@@ -189,6 +201,15 @@ el flag. Medido el 2026-09-16 (`docs/benchmarks/2026-09-cold-start.md`):
 al arrancar; el resto del delta con la imagen 4.0 de Q34 es la page cache de
 los wheels instalados, que la slim conserva), build 174,8 s frente a 215,8 s.
 
+Desde M9, caps es además la única variante que **aplica una política de
+egress en el guest** (ADR-012): con `CAP_NET_ADMIN` en `CapEff`, `rayd`
+instala las tablas de rutas por uid y arranca el proxy local cuando el SDK
+pide `network=`/`allow_internet_access=False`; en full y slim `rayd` publica
+`Health.egress_enforcement = NONE` y el SDK termina el VM y lanza
+`UnimplementedError` antes de devolver un sandbox sin la política pedida. La
+variante **poly** (`rayito-base-poly`, M7) es la única que lleva `bash_kernel`
+y, desde M9, los kernels Deno de `javascript` y `typescript` (ADR-013).
+
 ### Configuración `hooks` en `create-microvm-image`
 
 ```json
@@ -249,7 +270,7 @@ Rust, binario estático `aarch64-unknown-linux-musl`. Dos listeners:
 
 | Puerto | Protocolo | Quién lo usa | Qué sirve |
 |---|---|---|---|
-| `:8080` | gRPC h2c (`tonic`) | el SDK, a través del proxy de AWS | los cinco servicios del `.proto` |
+| `:8080` | gRPC h2c (`tonic`) | el SDK, a través del proxy de AWS | los siete servicios del `.proto` |
 | `:9000` | HTTP/1.1 (`axum`) | sólo Lambda (hooks de ciclo de vida) | `POST /aws/lambda-microvms/runtime/v1/<hook>` |
 
 El puerto 9000 **nunca entra en `allowedPorts` de ningún token** (ADR-006).
@@ -260,9 +281,11 @@ Ver `proto/rayito/v1/`. Resumen:
 
 | Servicio | RPCs | Notas de implementación |
 |---|---|---|
-| `HealthService` | `Health`, `Metrics` | `Health` es el único RPC sin `x-access-token`: sonda de readiness/liveness del SDK (`get-microvm` es eventualmente consistente). Expone `resume_generation`, `clock_offset_ms`, `kernel_state_lost`, `sandbox_id` y, desde M6, `imds_blocked` (campo 9: ruta de IMDS instalada **y** verificada), `hook_anomalies` (campo 10) y `metadata` (campo 11, el mapa del `runHookPayload`, vacío antes de `/run`) |
+| `HealthService` | `Health`, `Metrics`, `MetricsHistory` (M9) | `Health` es el único RPC sin `x-access-token`: sonda de readiness/liveness del SDK (`get-microvm` es eventualmente consistente). Expone `resume_generation`, `clock_offset_ms`, `kernel_state_lost`, `sandbox_id` y, desde M6, `imds_blocked` (campo 9: ruta de IMDS instalada **y** verificada), `hook_anomalies` (campo 10) y `metadata` (campo 11, el mapa del `runHookPayload`, vacío antes de `/run`); M9: `lifecycle` (campo 12, el plazo lógico de ADR-011: fase, `deadline`, `cap`, `extensions`), `egress_enforcement` (13, ADR-012), `cpu_count` y `memory_total_bytes` (14 y 15, la vista del guest, que la carga de trabajo ya lee de `/proc`). `MetricsHistory` exige `x-access-token` y sirve el anillo que el muestreador de métricas (`lifecycle/metrics_sampler.rs`) llena cada 5 s **sólo** en `running`/`resumed` (5 760 muestras = 8 h; sin red, así que no cuenta como actividad para la política de idle; una suspensión deja un hueco), con rango inclusivo y reducción a `max_points` |
 | `ProcessService` | `Start` (server-stream), `Connect(pid, from_seq)`, `SendInput`, `CloseStdin`, `SendSignal`, `List` | `tokio::process::Command` + `process_group(0)`; `timeout_ms` impuesto por el agente sobre el **reloj de ejecución** (monotónico menos el tiempo suspendido, M5: un `timeout=60` pausado a los 10 s conserva 50 s tras el resume; SIGTERM al grupo, SIGKILL 5 s después, `EndEvent{status:"timeout"}`); `stdin=false` ⇒ `/dev/null`; ring de 1 MiB por pid para `from_seq`; canal acotado por suscriptor (64 eventos × 32 KiB) con backpressure real: si sigue lleno 30 s el suscriptor se desengancha con `EndEvent{status:"output_truncated"}` y el proceso sigue; máx. 8 suscriptores por pid; `StartEvent`+`EndEvent` retenidos 30 s tras salir (máx. 256 entradas terminadas) |
-| `FilesystemService` | `Read` (stream 256 KiB), `Write` (client-stream multi-fichero), `Stat`, `ListDir`, `MakeDir`, `Move`, `Remove`, `WatchDir` (server-stream) | `std::fs` bloqueante bajo `spawn_blocking` con identidad de fichero por hilo (`setfsuid`/`setfsgid` del usuario, nunca root; `tokio::fs` no puede fijar la identidad de un hilo entre awaits); lista de denegación sobre la ruta **canónica** (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, `/run/rayito`, `/opt/rayito`, el binario de `rayd`; `/root` y los `HOME` ajenos quedan cubiertos por los permisos POSIX bajo la identidad del usuario, …) ⇒ `PERMISSION_DENIED`, `..` ⇒ `INVALID_ARGUMENT`, rutas relativas al `HOME` del usuario; `Read` con `O_NOFOLLOW` y sólo ficheros regulares; escritura a temporal `.rayito-tmp-*` en el mismo directorio + fsync + fchmod/fchown + rename, padres creados, temporal borrado en cualquier fallo o cancelación; chunks ≤ 1 MiB; `ListDir` nunca sigue symlinks y corta a 10 000 entradas (`RESOURCE_EXHAUSTED`); `WatchDir` con `notify` (inotify, un watch por directorio, sin seguir symlinks), primer mensaje `WatchStarted` sólo con el watch instalado, sin debounce, cola de 1024 eventos con `RESOURCE_EXHAUSTED` al desbordar, máx. 64 watches por sandbox, `KeepAlive` cada 50 s; los mensajes de error nunca incluyen la ruta. M7 (ADR-009): `Checkpoint(CheckpointRequest) → stream CheckpointEvent` y `Restore(RestoreRequest) → stream RestoreEvent`: tar.gz del `HOME` del usuario (lista de exclusión fija + `exclude` ≤ 64, symlinks tal cual, especiales y no legibles contados en `skipped`, leído bajo `FsIdentityGuard`) subido/bajado por `rayd` como root a `s3://<bucket>/<key_prefix>/home.tar.gz` + `manifest.json` con las credenciales IMDSv2 del execution role; un checkpoint o restore a la vez (`FAILED_PRECONDITION`), `NOT_FOUND` sin manifest, `PERMISSION_DENIED` sin rol o `user=root`, `started → progress* → done | error`, `KeepAlive` cada 30 s, `/suspend` cierra con `suspending` y aborta el multipart |
+| `FilesystemService` | `Read` (stream 256 KiB), `Write` (client-stream multi-fichero), `Stat`, `ListDir`, `MakeDir`, `Move`, `Remove`, `WatchDir` (server-stream) | `std::fs` bloqueante bajo `spawn_blocking` con identidad de fichero por hilo (`setfsuid`/`setfsgid` del usuario, nunca root; `tokio::fs` no puede fijar la identidad de un hilo entre awaits); lista de denegación sobre la ruta **canónica** (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, `/run/rayito`, `/opt/rayito`, el binario de `rayd`; `/root` y los `HOME` ajenos quedan cubiertos por los permisos POSIX bajo la identidad del usuario, …) ⇒ `PERMISSION_DENIED`, `..` ⇒ `INVALID_ARGUMENT`, rutas relativas al `HOME` del usuario; `Read` con `O_NOFOLLOW` y sólo ficheros regulares; escritura a temporal `.rayito-tmp-*` en el mismo directorio + fsync + fchmod/fchown + rename, padres creados, temporal borrado en cualquier fallo o cancelación; chunks ≤ 1 MiB; `ListDir` nunca sigue symlinks y corta a 10 000 entradas (`RESOURCE_EXHAUSTED`); `WatchDir` con `notify` (inotify, un watch por directorio, sin seguir symlinks), primer mensaje `WatchStarted` sólo con el watch instalado, sin debounce, cola de 1024 eventos con `RESOURCE_EXHAUSTED` al desbordar, máx. 64 watches por sandbox, `KeepAlive` cada 50 s; los mensajes de error nunca incluyen la ruta. M7 (ADR-009): `Checkpoint(CheckpointRequest) → stream CheckpointEvent` y `Restore(RestoreRequest) → stream RestoreEvent`: tar.gz del `HOME` del usuario (lista de exclusión fija + `exclude` ≤ 64, symlinks tal cual, especiales y no legibles contados en `skipped`, leído bajo `FsIdentityGuard`) subido/bajado por `rayd` como root a `s3://<bucket>/<key_prefix>/home.tar.gz` + `manifest.json` con las credenciales IMDSv2 del execution role; un checkpoint o restore a la vez (`FAILED_PRECONDITION`), `NOT_FOUND` sin manifest, `PERMISSION_DENIED` sin rol o `user=root`, `started → progress* → done | error`, `KeepAlive` cada 30 s, `/suspend` cierra con `suspending` y aborta el multipart. M9 (ADR-010): `StartImport`, `StartExport`, `GetTransfer`, `WatchTransfer` (server-stream) y `CancelTransfer` mueven bytes entre el fichero y **URLs de S3 prefirmadas por el SDK** con las credenciales del llamante (`rayd` no guarda ninguna): la política de URL (`transfer::url_policy`: https, puerto 443, host virtual-hosted regional exacto del bucket, ruta = la clave ligada al sandbox, SigV4, sin literales IP) se aplica antes de cualquier E/S, el adaptador `HyperSignedHttp` resuelve con un filtro que descarta loopback, link-local e IMDS y no sigue redirecciones; la importación sondea el `GET` (1 s los primeros 600 s, luego 5 s) y escribe por el mismo `WriteSink` que `Write`; la exportación hace `pread` sobre un descriptor abierto con `O_NOFOLLOW` como el usuario; 16 transferencias activas, 2 en curso, 64 terminadas retenidas 30 min; `GetTransfer("")` = `NOT_FOUND` es la sonda de capacidad del SDK; barrera de lectura tras subida (`Read`, `Stat`, `ListDir`, `Process.Start`, `Execute` y `Pty.Create` esperan hasta 2 s a una importación armada). `Write`/`Read` aceptan además `grpc-encoding: gzip` sólo si el cliente lo pide (cabecera `rayito-compress`), y `Write` y `Stat`/`ListDir` llevan `metadata` por fichero como xattrs `user.rayito.*` (≤ 64 claves, ≤ 4 000 B) aplicados sobre el descriptor |
+| `LifecycleService` (M9) | `SetTimeout` | el plazo lógico de ADR-011 (`sandbox_timeout` en `rayd-core`): `EXACT` (`set_timeout`) o `AT_LEAST` (`connect(timeout=)`), exige `x-access-token` (el código del sandbox no puede alargarse a sí mismo); más allá del tope `INVALID_ARGUMENT` "timeout beyond cap; cap_unix_ms=<n>", sin bloque `lifecycle` en el `runHookPayload` `FAILED_PRECONDITION` `lifecycle_unmanaged`. Pasado el plazo, la capa `timeout_gate` (dentro de la del token) responde `FAILED_PRECONDITION` `sandbox_timeout` a todo RPC salvo `Health` y `SetTimeout` |
+| `NetworkService` (M9) | `UpdateNetwork`, `GetNetwork` | la política de egress en el guest de ADR-012 (`network` en `rayd-core`, `network::manager` en `rayd`): valida `allow_out`/`deny_out` (CIDR, IP o nombre de host, un permitido gana a un denegado), planifica las rutas por uid, las cambia de forma atómica y las verifica; `FAILED_PRECONDITION` sin `CAP_NET_ADMIN` para una política que restringe; los mensajes nunca llevan una entrada, una dirección ni una credencial; `NetworkState` nunca devuelve la dirección ni las credenciales del proxy del operador |
 | `PtyService` | `Create` (server-stream), `Connect(pid, from_seq)`, `SendInput`, `Resize`, `Kill` | forma server-stream + unarios como `envd` (M5 ✔); backend `nix::pty::openpty` con el `Winsize` inicial + `tokio::process::Command` (ADR-005): el esclavo se `fchown`/`fchmod 0o620` al usuario, el hijo hace `setsid` + `ioctl(TIOCSCTTY)` en `pre_exec` (sin `process_group(0)`: la sesión de la terminal es el grupo) y arranca el shell de login del usuario (`pw_shell`, `/bin/sh` si falta) con `-i -l`, `TERM=xterm-256color`, `LANG=LC_ALL=C.UTF-8`, `SHELL`, más los `envs` de la petición; el maestro se bombea en chunks de 16 KiB al mismo registro que los procesos (`ProcessKind::Pty`, `List` los muestra, `Connect(from_seq)` con el mismo ring y `OUT_OF_RANGE`, máx. 8 suscriptores, 256 vivos entre procesos y PTYs); `Resize` = `TIOCSWINSZ`; `Kill` = SIGKILL al grupo (`PtyExited{signal:9}`); `timeout_ms` en el reloj de ejecución; `EIO` del maestro = EOF + 500 ms de drenaje; cruzar servicios (`SendInput` de proceso a una PTY o viceversa) ⇒ `FAILED_PRECONDITION`; reutiliza `ConnectRequest`/`SendInputRequest` de `process.proto`; `PtyServerMessage.seq` numera `data` |
 | `CodeService` | `CreateContext`, `Execute` (server-stream), `Reattach`, `ListContexts`, `DestroyContext`, `RestartContext` | proxy al sidecar (M4 ✔); `Execute` emite `ExecutionStarted`, `OutputChunk` (≤ 64 KiB), `ExecutionResult`, `ExecutionError` (nunca terminal), `ExecutionEnd` y `KeepAlive` cada 5 s (`seq` 0); cola de 256 eventos por suscriptor y `OutputTruncated` inmediato para el suscriptor cuya cola se llena (el recorder nunca espera a un cliente); `timeout_ms` = interrupt al kernel y, si no queda idle en 5 s, `RestartContext` + `ExecutionError{name:"ExecutionTimeout"}`; cancelar el stream `Execute` de origen interrumpe la ejecución (un suscriptor de `Reattach` nunca); máx. 8 contextos, `default` indestructible, código ≤ 1 MiB. Cada ejecución vive fuera de su stream (M5 ✔): un `ExecutionRecorder` por ejecución graba los eventos en un **ring de 4 MiB** por ejecución (≤ 32 retenidas, 30 s de reloj de ejecución tras el `End`) y `Reattach(context_id, execution_id, from_seq)` reengancha desde `last_seq + 1` (`OUT_OF_RANGE` si el ring ya no lo tiene, `NOT_FOUND` si expiró o el contexto no coincide, `RESOURCE_EXHAUSTED` al noveno suscriptor) |
 
@@ -288,9 +311,9 @@ o no se invoca. Tabla completa, JSON de configuración y roles: `AWS_API_NOTES.m
 |---|---|---|---|---|---|
 | `/ready` | build | build role | 1–3600 s | ninguno | 200 sólo cuando el sidecar tiene el contexto por defecto **idle tras el warm-up**; hasta entonces **503 inmediato** (`kernel_warming`, nunca retener la petición). Válvula de escape: a los 300 s devuelve 200 y lo loguea como error (`ready_escape`). Medido: `warmup_ms` 9,3–9,7 s en la VM de build, 200 tras dos 503 |
 | `/validate` | build, en una VM nueva desde el snapshot | build role | 1–3600 s | ninguno | reinicia el kernel por defecto (el mismo `restart_context` que hará `/run`) y ejecuta una celda real con pandas + matplotlib; responde 503 (`validating`) hasta terminar y 200 (`validated`/`validate_failed`), para que Lambda prefetchee esas páginas. Sin el reinicio aquí la rotación en `/run` costaba 45 s (`AWS_API_NOTES.md` §16 Q35); con él, 2–4 s |
-| `/run` | arranque desde el snapshot; **el tráfico externo sólo llega tras el 200** | execution role | 1–60 s | `{"microvmId": "...", "runHookPayload": "..."}` | parsea el envelope, instala `sandbox_id`, el hash del token, `metadata` y `limits.cpu_seconds` (M6), responde 200; se acepta **una vez por arranque** (los siguientes devuelven 200 `already_ran`, se auditan como anomalía y no tocan nada). Tras el 200: rotación del kernel y, si el bloqueo de IMDS está instalado, la verificación `imds_probe` (≤ 10 s). Si falla o expira, el MicroVM pasa a `TERMINATING` sin haber estado `RUNNING` (`stateReason`) |
-| `/suspend` | antes del checkpoint | execution role | 1–60 s | ninguno | checklist de la sección "Suspend / resume"; desde M6 se audita (`hook_audit`; los repetidos son `unchanged` y no cuentan; ninguna transición se rechaza) y arma el watchdog de suspensión estancada (20 s sin salto de `CLOCK_MONOTONIC` ⇒ `stale_suspend_recovered`: puerta reabierta, sin nueva generación, +1 anomalía) |
-| `/resume` | tras restaurar; la VM sigue `SUSPENDED` hasta el 200 | execution role | 1–60 s | ninguno | ídem; el reseed es advisory (el sidecar responde en el acto `reseeded`/`deferred`/`failed`, su timeout nunca cuenta para el kill switch) y se recomprueba la ruta de IMDS (`imds_rule_missing` si desapareció) |
+| `/run` | arranque desde el snapshot; **el tráfico externo sólo llega tras el 200** | execution role | 1–60 s | `{"microvmId": "...", "runHookPayload": "..."}` | parsea el envelope, instala `sandbox_id`, el hash del token, `metadata` y `limits.cpu_seconds` (M6), responde 200; se acepta **una vez por arranque** (los siguientes devuelven 200 `already_ran`, se auditan como anomalía y no tocan nada). Tras el 200: rotación del kernel y, si el bloqueo de IMDS está instalado, la verificación `imds_probe` (≤ 10 s). Si falla o expira, el MicroVM pasa a `TERMINATING` sin haber estado `RUNNING` (`stateReason`). M9: si el payload trae el bloque `lifecycle` instala el plazo lógico (ADR-011) y despierta a su vigilante; si trae `network.enforce` y hay `CAP_NET_ADMIN`, **antes** del 200 arranca el proxy local e instala y verifica el deny-all de egress en 1,5 s (ADR-012); en cualquier caso responde 200, y mientras ese deny-all no se asienta `Health` dice `agent_ready=false` (medido: `Health` llega durante `/run`, `AWS_API_NOTES.md` §16 fila 66); la tarea lo asienta al terminar de cualquier modo, también si entra en pánico, y cada `ip` que lanza muere a los 5 s, así que un `ip` colgado no deja `Health` sin listo para siempre |
+| `/suspend` | antes del checkpoint | execution role | 1–60 s | ninguno | checklist de la sección "Suspend / resume" (M9: también recoloca en espera las transferencias en curso; sigue respondiendo **siempre** 200); desde M6 se audita (`hook_audit`; los repetidos son `unchanged` y no cuentan; ninguna transición se rechaza) y arma el watchdog de suspensión estancada (20 s sin salto de `CLOCK_MONOTONIC` ⇒ `stale_suspend_recovered`: puerta reabierta, sin nueva generación, +1 anomalía) |
+| `/resume` | tras restaurar; la VM sigue `SUSPENDED` hasta el 200 | execution role | 1–60 s | ninguno | ídem; el reseed es advisory (el sidecar responde en el acto `reseeded`/`deferred`/`failed`, su timeout nunca cuenta para el kill switch) y se recomprueba la ruta de IMDS (`imds_rule_missing` si desapareció). M9: llama a `timeout_resumed` con el veredicto del vigilante del plazo (sólo un salto de `CLOCK_MONOTONIC` ≥ 2 s abre la gracia de 30 s o aplica la regla de auto-resume; una sola gracia por plazo y nunca más allá del tope), re-verifica la política de egress en ≤ 3 s y despierta los sondeos de las importaciones armadas |
 | `/terminate` | antes de liberar recursos | execution role | 1–60 s | ninguno | ACK 200; nada que persistir |
 
 **Origen de los hooks (M6, `SECURITY.md` T2).** No es validable: hooks y
@@ -410,13 +433,21 @@ cliente y los reexpide el contrato de reconexión.
    hasta 2 s y loguea `streams_closed`/`streams_pending`. **Sin** matar
    procesos, PTYs ni kernels; las grabadoras de ejecución siguen grabando.
 
-   | Stream | Cierre en `/suspend` |
-   |---|---|
-   | `Process.Start`/`Connect` | `EndEvent{exited:false, status:"suspending", error:{code:"suspending"}}` y fin OK |
-   | `Pty.Create`/`Connect` | `PtyExited{…status:"suspending"…}` y fin OK |
-   | `WatchDir`, `Read` | status gRPC `UNAVAILABLE` `suspending` (no hay mensaje terminal en el esquema) |
-   | `Execute`, `Reattach` | status gRPC `UNAVAILABLE` `suspending`, **sin `ExecutionEnd`** (`ExecutionError` sigue sin ser terminal) |
-   | `Write` (client-stream) | la sesión de escritura se aborta (temporal borrado, destino intacto), el resto del body se drena ≤ 200 ms, `UNAVAILABLE` `suspending` |
+   | Stream | Cierre en `/suspend` | Cierre al vencer el plazo (`sandbox_timeout`, M9, ADR-011) |
+   |---|---|---|
+   | `Process.Start`/`Connect` | `EndEvent{exited:false, status:"suspending", error:{code:"suspending"}}` y fin OK | `EndEvent{exited:false, status:"sandbox_timeout", error:{code:"sandbox_timeout"}}` y fin OK |
+   | `Pty.Create`/`Connect` | `PtyExited{…status:"suspending"…}` y fin OK | `PtyExited{exited:false, status:"sandbox_timeout", error.code:"sandbox_timeout"}` y fin OK |
+   | `WatchDir`, `Read`, `Checkpoint`, `Restore`, `WatchTransfer` | status gRPC `UNAVAILABLE` `suspending` (no hay mensaje terminal en el esquema) | `FAILED_PRECONDITION` `sandbox_timeout` (nunca `UNAVAILABLE`: arrancaría el bucle de reconexión del SDK) |
+   | `Execute`, `Reattach` | status gRPC `UNAVAILABLE` `suspending`, **sin `ExecutionEnd`** (`ExecutionError` sigue sin ser terminal) | `FAILED_PRECONDITION` `sandbox_timeout`, sin `ExecutionEnd` |
+   | `Write` (client-stream) | la sesión de escritura se aborta (temporal borrado, destino intacto), el resto del body se drena ≤ 200 ms, `UNAVAILABLE` `suspending` | la misma aborción, `FAILED_PRECONDITION` `sandbox_timeout` |
+
+   Al vencer el plazo con `on_timeout='kill'`, `rayd` cierra así los
+   streams, manda `SIGTERM` a cada grupo de procesos, PTYs, kernels y al
+   sidecar (sin relanzarlo), `SIGKILL` tras la gracia y sale con código 124:
+   es PID 1, así que la VM pasa a `TERMINATED` ≈ 15 s después sin llamada al
+   plano de control ni IAM (`AWS_API_NOTES.md` Q58). Con `on_timeout='pause'`
+   cierra los streams y el SDK (o, sin cliente, la política de idle) suspende
+   el VM.
 
 3. `quiesce` al sidecar (≤ 2 s, mejor esfuerzo).
 4. `libc::sync()`.
@@ -505,13 +536,18 @@ crates/rayd             adaptadores + main. Único sitio con tonic/axum/tokio-pr
 | `process` | `ProcessRegistry`: pids, `ProcessKind`, tag, ring de salida con `seq`, retención 30 s (máx. 256 entradas terminadas, se desalojan las más antiguas), límite de 256 vivos, slots de suscriptor reclamados en cuanto el cliente se va (`SubscriberSlot`), máquina de estados del timeout (SIGTERM → SIGKILL) |
 | `pty` | `PtySize` (1–4096 validado, 80×24 por defecto), `resolve_shell` (shell de login del usuario, `/bin/sh` de respaldo, nunca root sin `RAYITO_ALLOW_ROOT`), `pty_base_env` (`TERM`, `LANG`/`LC_ALL`, `SHELL`, `PATH`, `HOME`, `USER`, `LOGNAME` + `envs`, el último gana), `plan_pty` → `SpawnSpec` con `["-i","-l"]`, `PtyError` sin envs ni bytes; puerto `PtyBackend`/`PtyChild`; la PTY vive en el mismo `ProcessRegistry` que los procesos (`ProcessKind::Pty`, `kind(pid)`, `WrongKind`) |
 | `filesystem` | `RequestPath` (vacío, NUL y `..` rechazados; relativas → `HOME`), `DenyList` por componentes sobre la ruta canónica, `FsIdentity{uid, gid, home}`, `Entry`/`EntryKind`/`permissions_string` (forma `ls -l`) con `NameCache` sobre el puerto `NameResolver`, `walk_listing` (DFS preorden, nombres por bytes, profundidad, sin descender en symlinks ni directorios denegados, tope `MAX_LIST_ENTRIES`), `WriteSession` (máquina de estados de un stream con N ficheros: `Begin`/`Append`/`Commit`, `MissingPath`, `ChunkTooLarge`, `InvalidMode`), `FilesystemOps` (parse → canónica → deny → puerto) sobre los puertos `FileSystem`/`WriteSink`, `FilesystemError` sin rutas en los mensajes |
-| `watch` (en `filesystem::events`) | `WatchTranslator` sobre el puerto `Watcher`/`WatchSubscription`: nombres relativos a la raíz canónica, fuera de la raíz y temporales `.rayito-tmp-*` descartados, `RawWatchKind` → `Create`/`Write`/`Remove`/`Rename`/`Chmod`, `RootGone`/`QueueOverflow` terminan el stream |
+| `watch` (en `filesystem::events`) | `WatchTranslator` sobre el puerto `Watcher`/`WatchSubscription`: nombres relativos a la raíz canónica, fuera de la raíz y temporales `.rayito-tmp-*` descartados, `RawWatchKind` → `Create`/`Write`/`Remove`/`Rename`/`Chmod`, el rename que aterriza un temporal sobre su destino (emparejado por la cookie de inotify) → un único `Write` (M9), `RootGone`/`QueueOverflow` terminan el stream |
 | `code` | `protocol` (JSON lines v1 con el sidecar: `SidecarRequest`/`SidecarOp`/`SidecarEvent`, golden en `kernel-sidecar/tests/fixtures/protocol_v1.jsonl`), `context` (`ContextId` `ctx-<12 hex>`, `ContextRegistry` con tope 8 y `default` protegido), `execution` (`ExecutionId`, `ExecuteOutput` con `seq`, `ResultBundle::from_mime`, `ExecutionTracker` que antepone `ExecutionTimeout` al `End` y sintetiza `KernelDied`/`ContextDestroyed`/`OutputTruncated`), `timeout` (`plan_timeout`: interrupt en `timeout_ms`, restart a +5 s, tope 8 h), `readiness` (`SidecarState` `Starting → Warming → Ready → Rotating`/`Exited{attempt, backoff}` y la decisión de `/ready`), `hooks` (spec de spawn del sidecar, `RESEED_CELL`, `VALIDATE_CELL`, `probe_outcome`/`restart_after_resume` para `/resume`), `ring` (`ExecuteRing` de 4 MiB por ejecución: coste por evento, desalojo del más antiguo, `replay_from` con `ReplayOutOfRange`), `executions` (`ExecutionRegistry` con `ExecutionLimits{8 suscriptores, 30 s, 32 retenidas}`: `register`/`push`/`attach`/`detach`/`mark_ended`/`reap_expired`), `CodeError` sin código ni `envs` en los mensajes |
 | `hooks` | estado del ciclo de vida y los checklists de `/run`, `/suspend` (`suspend_actions`: cerrar streams sólo cuando la transición cambió) y `/resume` como funciones puras sobre `SandboxSession`; `lifecycle` acumula `suspended_total` y `clock` define `Deadline` en el reloj de ejecución. M6: `HookAudit` (contador por hook desde el `/run` aceptado, `AuditEntry`, `hook_anomalies`; sin limitador: ninguna transición se rechaza); `lifecycle` añade `SUSPEND_GATE_TIMEOUT` 20 s / `FREEZE_THRESHOLD` 5 s / `WATCHDOG_TICK` 1 s, `Transition::after_stale_recovery` y `recover_from_stale_suspend` (`Suspending → Resumed` sin generación nueva; el `/resume` posterior sí cuenta como real, sin sumar nada a `suspended_total`) |
 | `capabilities` | `CapSet::from_mask`/`parse_cap_eff` sobre `/proc/self/status` (`CAP_NET_ADMIN` 12, `SYS_PTRACE` 19, `SYS_ADMIN` 21, `SYS_RESOURCE` 24) para la línea `capabilities` del arranque |
 | `process::budget` | `OutputBudget`: presupuesto de bytes de salida por sandbox (128 MiB, marca alta 96 MiB) compartido por todos los rings de procesos, PTYs y ejecuciones; `charge`/`release` atómicos, cada ring desaloja primero sus propios chunks y el reaper suelta entradas terminadas por encima de la marca alta; la entrega en vivo nunca se toca |
 | `process::limits` | `ResourceLimits.cpu_seconds` (`RunDefaults.cpu_seconds` del payload, 1–28 800, `cpu_rlimit()` = soft y hard = soft + 5 s) aplicado a procesos y PTYs, nunca al sidecar ni a los kernels |
 | `persistence` (M7) | `BucketName`/`KeyPrefix`/`ObjectKeys` (reglas D2 de `m7-s3-persistence`), `ArchivePlan`+`IgnoreRules`+`ExcludeList` (`should_skip` por componentes), `Manifest` v1 (serde, claves desconocidas ignoradas), `Counters`/`ProgressSampler` (una muestra por tick y sólo al cambiar), `PersistenceGate` (una operación por sandbox, lease liberado en `Drop`), `PersistenceError` → `StatusKind` antes de `started` / código de `StreamError` después, y los dos flujos en dos mitades: `prepare_checkpoint`/`prepare_restore` (validación, identidad sin root, lease, sonda de credenciales, pre-walk o manifest) y `run_checkpoint`/`run_restore` (archivo en hilo bloqueante ↔ multipart por un `PartSource`, descarga por un `ChunkSink` ↔ unpack, manifest al final, sha256 verificado) |
+| `transfer` (M9, ADR-010) | `url_policy` (la guardia SSRF sobre cada URL prefirmada: https, 443, host virtual-hosted regional exacto, ruta = la clave ligada al sandbox, SigV4, sin literales IP; `is_forbidden_address` para el resolvedor del adaptador), `request` (comprobaciones sin URL: caducidad, `max_bytes`, modo, sha256, partes), `poll` (calendario de sondeo del `GET` de una importación armada), `s3_error` (primer `<Code>`/`<Message>`/`<RequestId>` de un cuerpo de error, sin crate XML), `import` (clasificación de cada respuesta y comprobaciones de admisión antes de escribir un byte), `export` (plan de partes, `file_shrank`, sha256 por parte aceptada), `registry` (`TransferRegistry`: 16 activas, 2 en curso, 64 terminadas durante 30 min), `barrier` (qué tickets armados espera cada RPC), puerto `SignedHttp` |
+| `sandbox_timeout` (M9, ADR-011) | `SandboxTimeout`: máquina de fases (`Unmanaged → Active → Expired`, `ResumeGrace`), `LifecycleSpec` del `runHookPayload`, `TimeoutPolicy`/`TimeoutAction`/`TimeoutMode`, `set_timeout` `EXACT`/`AT_LEAST` acotado por `cap = max_lifetime − 60 s`, `admits` (qué RPC pasa tras el plazo), todo en el lado monotónico **crudo** del `Clock` (el tiempo suspendido cuenta, como en el tope de la plataforma); puerto `SelfTerminator` |
+| `network` (M9, ADR-012) | gramática de `allow_out`/`deny_out` (`cidr`, `entry`: CIDR, IP, `*.dominio`, `ALL_TRAFFIC`), `policy` (semántica de E2B: un permitido gana, sin `deny_out` no se restringe nada; modos `Unrestricted`/`Routes`/`ProxyOnly`; `UpstreamProxy` con credenciales `Zeroizing`), `route_plan` (tablas 101/102/103, prioridades 150/151/149), `swap` (cambio atómico, rollback, recuperación con deny-all de emergencia), `probe` (`ip route get` por uid, `ip -o addr show`), `guard` (`TargetGuard`: loopback, link-local, IMDS, multicast y las direcciones propias del guest; `UpstreamGuard`), `proxy_protocol` (HTTP CONNECT/forward, SOCKS5 servidor y cliente RFC 1928/1929), `proxy_env` (las ocho variables `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`), `state` (`EgressEnforcement`) |
+| `metrics_history` (M9) | `MetricsHistory`: anillo de 5 760 muestras procfs (5 s × 8 h), rango inclusivo, reducción a `max_points` (última muestra de cada tramo con `cpu_used_pct` promediado) y el estado puro del muestreador |
+| `filesystem::metadata` (M9) | `FileMetadata`: claves de caracteres de token HTTP en minúsculas, valores ASCII imprimible, ≤ 64 claves y ≤ 4 000 B, nombre `user.rayito.<clave>`; errores fijos que nunca citan una clave ni un valor |
 | `filesystem::write` | `DISK_RESERVE_BYTES` 256 MiB: `check_disk_reserve(free)` con el `free_bytes` del puerto (`statvfs` del ancestro existente más profundo) antes de crear el temporal (`DiskReserve`/`DiskFull` → `RESOURCE_EXHAUSTED` con detalle `disk_reserve`/`disk_full`) |
 
 Puertos (traits) que el dominio necesita del mundo exterior:
@@ -520,7 +556,7 @@ Puertos (traits) que el dominio necesita del mundo exterior:
 |---|---|
 | `ProcessSpawner` | lanzar un proceso con uid/gid, cwd, env construido desde cero, rlimits, grupo de procesos; señalar al grupo |
 | `PtyBackend` | `openpty`, lanzar el shell con la PTY como terminal de control, `resize`, lectura/escritura |
-| `FileSystem` | operaciones de fichero con identidad de usuario, escritura atómica, `free_bytes` (M6) |
+| `FileSystem` / `WriteSink` | operaciones de fichero con identidad de usuario, escritura atómica, `free_bytes` (M6); M9: `WriteSink::set_metadata` (`fsetxattr` sobre el temporal antes del rename), `FileSystem::read_metadata` (`llistxattr`/`lgetxattr` sin seguir symlinks) y `FileSystem::open_snapshot` (`O_RDONLY | O_NOFOLLOW`, sólo ficheros regulares, `pread` para exportar) |
 | `Watcher` | instalar/quitar watches y entregar eventos |
 | `NameResolver` | uid/gid → nombre de usuario/grupo para `EntryInfo` (con fallback numérico) |
 | `KernelSidecar` / `SidecarLink` | lanzar el sidecar con identidad (`SpawnSpec`) y hablarle por su `SidecarLink` (`send` de líneas JSON con backpressure, `kill` al grupo de procesos); los eventos y la salida llegan por `SidecarEventSink`/`SidecarExitSink` |
@@ -530,6 +566,9 @@ Puertos (traits) que el dominio necesita del mundo exterior:
 | `HomeArchiver` (M7) | `count` (pre-walk), `archive` (tar+gzip nivel 1 hacia un `ArchiveSink`, sha256 del comprimido) y `extract` (desde un `Read`) del `HOME` bajo la identidad del usuario |
 | `ObjectStore` / `ObjectBody` / `PartSource` / `ChunkSink` (M7) | `probe_credentials`, `get`, `put`, `put_multipart` (partes secuenciales de 8 MiB, abort en todo fallo, interrupción o drop) contra `StoreTarget{bucket, region}`; los extremos de los dos canales acotados sin `tokio` en el dominio |
 | `BlockingRunner` (M7) | ejecuta el archivado/unpack en el pool bloqueante y devuelve un futuro (`spawn_blocking` en `rayd`, un hilo std en los tests del dominio) |
+| `SignedHttp` (M9) | `send(SignedRequest{GET/PUT/DELETE, url Zeroizing}, body)` → cabecera + cuerpo en streaming; `HttpError{kind}` sin URL, host ni dirección (ADR-010) |
+| `SelfTerminator` (M9) | `begin`/`force` la salida de `rayd` al vencer el plazo en modo `kill` (ADR-011) |
+| `MetricsProbe` (M9) | una lectura procfs (CPU, memoria con caché, disco) para el muestreador de `MetricsHistory` |
 
 **`rayd` (adaptadores)**:
 
@@ -579,12 +618,83 @@ Puertos (traits) que el dominio necesita del mundo exterior:
   línea → status, el resto en una tarea que alimenta el stream de eventos con
   muestreo de progreso cada 1 s; `PartWriter`/`ChannelParts` y
   `ChannelSink`/`ChunkReader` con marco `End` explícito; `TokioRunner`).
+  M9: `HyperSignedHttp` (`adapters/signed_http.rs`: `hyper-util` + `hyper-rustls`
+  con el proveedor `aws-lc-rs` nombrado explícitamente, sólo HTTPS y HTTP/1.1,
+  `FilteringResolver` que descarta toda dirección que `is_forbidden_address`
+  rechaza, sin redirecciones, 5 s de conexión y 30 s de inactividad) y
+  `transfer/` (`TransferManager`, importación, exportación, `WatchTransfer` y
+  la barrera); `lifecycle/timeout_watcher.rs` (hilo `rayd-timeout` fuera del
+  runtime que avanza el plazo cada 500 ms y decide si hubo un checkpoint real),
+  `lifecycle/exit_terminator.rs` (`ExitTerminator`, la salida con código 124),
+  `grpc/timeout_gate.rs` (la capa `sandbox_timeout`) y `grpc/lifecycle.rs`;
+  `lifecycle/metrics_sampler.rs` (la tarea de 5 s de `MetricsHistory`) y
+  `adapters/procfs_metrics.rs`; `adapters/ip_command.rs` (el ejecutor de `ip`
+  compartido con `imds_block`), `adapters/egress_routes.rs` (tablas, reglas y
+  sondas de ADR-012) y `network/` (`NetworkManager`, el proxy local
+  `127.0.0.1:0` con 128 conexiones, la cadena SOCKS5 al proxy del operador y
+  los contadores `egress_proxy_stats`); `grpc/compression.rs`
+  (`CompressionOptInLayer`: gzip sólo con `rayito-compress: gzip`).
 - `main.rs`: parseo de flags, wiring, arranque de los dos listeners, `anyhow`
   sólo aquí.
 
 Reglas: `unwrap_used`/`expect_used` denegados en el workspace (permitidos en
 tests vía `clippy.toml`); los tests de dominio corren en Windows con puertos
 falsos; los de adaptadores necesitan Linux (WSL2 o CI).
+
+### Política de egress (M9)
+
+[ADR-012](#adr-012--política-de-egress-en-el-guest-sobre-rayito-base-caps-conectores-de-plataforma-sólo-por-vpc-del-cliente).
+Dos capas que comparten un único objeto de política en `rayd`, y sólo donde
+`CapEff` tiene `CAP_NET_ADMIN` (`rayito-base-caps`):
+
+1. **Rutas del kernel**: una tabla por uid (`uidrange 1000-65535`) decide cada
+   paquete del código del sandbox. Sólo hacen falta `blackhole`s: tras restar
+   los permitidos de los denegados, lo que no casa cae a `main` (permitido), y
+   un permitido gana aunque sea más amplio que el denegado.
+2. **Proxy local de `rayd`** (root, `127.0.0.1:<efímero>`): decide las reglas
+   por nombre de host (sólo puertos 80/443) y encadena al proxy SOCKS5 del
+   operador (`egress_proxy`).
+
+| Hueco | Tabla | Prioridad de la regla | Uso |
+|---|---|---|---|
+| `A` | 101 | 150 | política activa o siguiente |
+| `B` | 102 | 151 | política activa o siguiente |
+| emergencia | 103 | 149 | deny-all transitorio durante una recuperación |
+
+Las prioridades 149–151 van detrás de `local` (0) y de la regla de IMDS de
+M6 (100, tabla 100) y antes de `main` (32766); la regla de IMDS y su tabla no
+se tocan nunca. Un cambio instala la política nueva en el hueco libre, cambia
+la regla y borra el viejo: nunca hay un instante sin tabla completa, y un
+fallo deja la anterior o, si tampoco se puede, el deny-all de emergencia.
+
+| Modo | Cuándo | Qué instala |
+|---|---|---|
+| `Unrestricted` | sin `deny_out` ni `egress_proxy` | nada |
+| `Routes` | `deny_out` sin reglas de nombre de host | `blackhole`s de `deny_out \ allow_out` |
+| `ProxyOnly` | nombres de host permitidos o `egress_proxy` | `blackhole` de todo lo directo; sólo sale el proxy |
+
+El proxy lee el primer byte (`0x05` = SOCKS5, si no HTTP/1.x `CONNECT` o
+forma absoluta), aplica la guardia **después** de resolver (loopback,
+link-local e IMDS, multicast, las direcciones propias del guest y
+`localhost`), marca contra la dirección comprobada sin volver a resolver y,
+bajo deny-by-default, nunca convierte un nombre denegado en una consulta DNS
+(T17). El DNS directo de uid ≥ 1000 no pasa por las rutas: los resolvedores
+de la plataforma escuchan dentro del guest, así que bajo deny-all un nombre
+puede resolverse aunque ninguna conexión salga (adenda de ADR-012). En la
+forma absoluta `http://` el proxy reescribe `Host` con la autoridad que
+comprobó (RFC 9112 §3.2.2) y rechaza las líneas plegadas (obs-fold), así que
+un nombre permitido no sirve de fachada para otro host virtual de la misma
+IP; las direcciones IPv4-mapeadas (`::ffff:a.b.c.d`) e IPv4-compatibles
+(`::a.b.c.d`) se juzgan y se marcan como su IPv4. **Residual**: `CONNECT` y
+SOCKS5 llevan TLS que el proxy no inspecciona, así que el SNI y el `Host`
+interior los pone el cliente y un nombre permitido en 443 puede servir de
+fachada para otro nombre servido desde la misma dirección (CDN compartidas;
+T17). Una vez arrancado, `rayd` exporta `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY` y `NO_PROXY` (y sus minúsculas) a cada proceso, PTY y kernel que
+lance después, **debajo** de los `envs` del usuario; el sidecar no las
+recibe. Un cliente que no honra el proxy falla cerrado en modo `ProxyOnly`.
+`Health.egress_enforcement` publica `GUEST_ROUTES` o
+`GUEST_ROUTES_AND_PROXY` sólo con la política verificada por `ip route get`.
 
 ### Kernel sidecar
 
@@ -685,6 +795,17 @@ backpressure).
 
 Generado desde `.proto` con `buf` (`buf.gen.yaml`, plugins pinneados). No se
 escribe transporte a mano.
+
+Los dos shims de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript, M9,
+superficie de E2B 2.x), son capas de composición sobre los SDKs nativos: no
+hablan con `rayd` ni con AWS por su cuenta, traducen nombres, valores por
+defecto y errores, y lanzan `UnimplementedError` donde Lambda MicroVMs no
+tiene primitiva. Desde M9 los SDKs también firman URLs de S3 con las
+credenciales del llamante (boto3 en Python; `@aws-sdk/client-s3`,
+`@aws-sdk/s3-request-presigner`, `@aws-sdk/s3-presigned-post` y
+`@aws-sdk/lib-storage` en TypeScript, cargados bajo demanda) para
+`upload_url`/`download_url` y los ficheros grandes (ADR-010); `rayd` nunca ve
+esas credenciales.
 
 ### Python (`clients/python`, paquete `rayito`)
 
@@ -1106,7 +1227,7 @@ con un JWE del puerto 8080.
 `0.0.0.0:9000`, separado del gRPC h2c en `:8080`. El SDK nunca acuña tokens con
 `allPorts` por defecto ni incluye 9000 en `allowedPorts`.
 
-**Consecuencia.** Si M0 (fila "hooks alcanzables vía proxy" de `spike/m0/M0_RESULTS.md`) demuestra que un token `allPorts` alcanza el 9000
+**Consecuencia.** Si M0 (fila "hooks alcanzables vía proxy" de la tabla de resultados medida en el spike de M0, historial de git) demuestra que un token `allPorts` alcanza el 9000
 desde fuera, se documenta como riesgo T2 en `SECURITY.md`; la mitigación
 principal sigue siendo no acuñar `allPorts` y aceptar `/run` una sola vez.
 Esa mitigación acota el origen **externo** y sólo ése: el listener es
@@ -1120,6 +1241,8 @@ runtime (`/ready` y `/validate` nunca pasan por `audit()`). Autenticar
 ---
 
 ## ADR-007 — Sin `set_timeout`: la vida del sandbox es inmutable, tope 8 h
+
+> **Sustituida por ADR-011** (`m9-server-timeout`).
 
 **Contexto.** E2B expone `set_timeout()` para extender la vida de un sandbox.
 La API de Lambda MicroVMs no tiene `UpdateMicrovm`: `maximumDurationInSeconds`
@@ -1215,7 +1338,7 @@ deny check` pasa con la allowlist existente. El SDK expone
 `checkpoint_files()`, `restore_files()` y `reincarnate()` = checkpoint →
 `create(persist=)` con las mismas opciones → `kill()` de la VM vieja; la
 misma superficie en TypeScript. La política IAM del execution role es un
-parámetro de `spike/m0/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`):
+parámetro de `infra/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`):
 `s3:PutObject/GetObject/AbortMultipartUpload` sobre `<bucket>/<prefix>/*` y
 `s3:ListBucket` acotado con `s3:prefix`, sin `DeleteObject`.
 
@@ -1230,9 +1353,228 @@ páginas del cliente S3 no se tocan hasta el primer `Checkpoint` (medido
 S3; con `persist=` el operador lo sabe y `SECURITY.md` T15 lo registra; en
 `rayito-base-caps` uid 1000 sigue sin IMDS. (3) Un restore que falla a mitad
 deja el `HOME` parcial; la recuperación documentada es otra `create(persist=)`.
-(4) `reincarnate()` es la respuesta honesta a `set_timeout`: sobreviven los
-ficheros, no la memoria del kernel. (5) Fuera: EFS, URLs firmadas,
+(4) `reincarnate()` es la respuesta honesta a lo que `set_timeout` no puede
+dar: pasar de `max_lifetime` (ADR-011); sobreviven los ficheros, no la
+memoria del kernel. (5) Fuera: EFS, URLs firmadas (M9 las entrega por otro
+camino, con las credenciales del llamante y sin execution role: ADR-010),
 checkpoints incrementales, snapshots con historia, checkpoints automáticos,
 proveedores S3 compatibles (el endpoint no es configurable) e IMDSv1. (6) La
 constitución (`openspec/project.md`) pasa de "sin crate TLS" a "sin TLS en
-los listeners; el único cliente TLS es el adaptador S3".
+los listeners; el único cliente TLS es el adaptador S3" (M9 añade el segundo,
+`HyperSignedHttp`, que reutiliza la misma pila TLS: ADR-010).
+
+## ADR-010 — Transferencias S3 prefirmadas con las credenciales del llamante; rayd no guarda credenciales
+
+**Contexto.** Las URLs de E2B (`upload_url`/`download_url`) llevan su
+autenticación en la query string; el proxy del MicroVM sólo la lee de una
+cabecera o de un subprotocolo WebSocket (`AWS_API_NOTES.md` §7), así que
+ninguna URL puede llegar a `rayd` a través del endpoint. El camino de bytes
+más rápido medido es VM ↔ S3 (Q59: 55,7–106,2 MB/s de subida y 84,2–99,0 MB/s
+de bajada frente a 0,68 / 4,77 MB/s por el proxy).
+
+**Decisión.** El SDK firma con las credenciales del llamante; `rayd` recibe
+las URLs por petición (nunca en `envs`, argv, `runHookPayload` ni logs), valida
+cada una contra el objeto nombrado (`transfer::url_policy`: https, puerto 443,
+host virtual-hosted regional exacto del bucket, ruta igual a una clave ligada
+al sandbox `…/<sandbox_id>/<up|down>/<id>`, SigV4, sin literales IP) y mueve
+los bytes con un cliente HTTPS sin credenciales (puerto `SignedHttp`, adaptador
+`HyperSignedHttp` con un resolvedor que descarta loopback, link-local e IMDS y
+sin redirecciones). Subida = importación armada que sondea el `GET` y escribe
+por el camino de `Write` (`FsIdentityGuard`, temporal + rename); descarga =
+exportación de una foto del fichero abierto con `O_NOFOLLOW` como el usuario;
+los ficheros grandes de `files.write`/`files.read` (desde
+`S3Staging.threshold_bytes`, 8 MiB por defecto) van por la misma maquinaria.
+La configuración es `S3Staging(bucket, prefix, region)` en `create`/`connect`
+(o `RAYITO_TRANSFER_BUCKET`/`RAYITO_TRANSFER_PREFIX`/`RAYITO_TRANSFER_REGION`).
+
+**Alternativas descartadas.** (a) `rayd` usando el execution role para S3 (el
+camino de ADR-009): exige un rol en cada sandbox, reabre C-07 (el objeto no
+quedaría ligado al sandbox) y T1 en la imagen por defecto; (b) un listener
+`/files` HTTP en `rayd`: sólo alcanzable con la cabecera del JWE, así que no
+entrega URLs sin cabeceras y añade una superficie de la clase de T2; (c) el
+usuario del sandbox corriendo `curl` con la URL: la URL quedaría en argv y en
+`/proc`, visible para el código del usuario, y la importación correría sin
+política de tamaño, reserva de disco ni identidad.
+
+**Consecuencias.** Hace falta un bucket de transferencias (sin él,
+`upload_url`/`download_url` lanzan `UnimplementedError`); las URLs son
+credenciales al portador (`SECURITY.md` T16); las subidas aterrizan de forma
+asíncrona (barrera de lectura tras subida y `ticket.wait()`); los tickets son
+de un solo uso; las descargas son una foto tomada al llamar; la caducidad
+siempre está fijada (≤ 7 días y ≤ la vida de las credenciales del llamante);
+el binario crece sólo en el código del adaptador, porque la pila TLS
+(`rustls` + `aws-lc-rs`) ya estaba enlazada por ADR-009. Medido en
+`rayito-base` 21.0 (filas Q71–Q75 de `AWS_API_NOTES.md`): dentro del VM
+`rayd` exporta 50 MB en 1,2-1,6 s y 200 MB en 2,3 s (32-86 MB/s), importa
+200 MB en 2,9 s (68 MB/s) y un fichero subido es visible entre 0,3 y 0,9 s
+después del `200` del `PUT`; fuera del VM manda el enlace del desarrollador,
+no el proxy del endpoint. `rayd` crece 1 230 744 B (+9,8 %) con todo M9.
+
+## ADR-011 — Plazo lógico impuesto por rayd; el tope de la plataforma se elige en create()
+
+Sustituye a ADR-007.
+
+**Contexto.** ADR-007 hizo de `maximumDurationInSeconds` la vida del sandbox
+porque no existe `UpdateMicrovm` (`AWS_API_NOTES.md` §1, §2, §11), así que
+`set_timeout` era `UnimplementedError`. Q58 midió que cuando `rayd`, PID 1 de
+la imagen, sale por su cuenta, el endpoint responde 502 en menos de 1 s y la
+VM pasa a `TERMINATED` ≈ 15 s después sin llamada al plano de control. §15
+(Q19, Q41): `CLOCK_MONOTONIC` avanza durante una suspensión y AWS corrige el
+reloj de pared al reanudar, así que un plazo en el monotónico crudo cuenta el
+tiempo suspendido, igual que el `end_at` de E2B y que el tope de la
+plataforma.
+
+**Decisión.**
+
+- El `runHookPayload` gana un bloque `lifecycle` (`timeout_ms`, `on_timeout`,
+  `auto_resume`); `rayd-core::sandbox_timeout` lleva el plazo lógico en el
+  monotónico crudo y el vigilante `rayd-timeout` (un hilo fuera del runtime)
+  lo hace cumplir aunque el cliente muera.
+- `max_lifetime` = `maximumDurationInSeconds` (120–28800 s, por defecto
+  `timeout + 60`) es el **tope**; `timeout` es el **plazo lógico**, que
+  `set_timeout` fija con exactitud (puede acortarlo) y `connect(timeout=)`
+  sólo alarga (`LifecycleService.SetTimeout`, `EXACT`/`AT_LEAST`). El plazo
+  nunca pasa de `max_lifetime − 60 s` desde el arranque.
+- `on_timeout='kill'`: `rayd` cierra los streams con `sandbox_timeout`, señala
+  a cada grupo y sale con código 124 (sin IAM). `on_timeout='pause'`: el SDK
+  con cliente vivo suspende en cuanto vence; sin cliente, la política de idle
+  lo hace en `max_idle`; `auto_resume` sigue a E2B, con un plazo nuevo de
+  `max(timeout, 300 s)` tras un auto-resume.
+- Un `create()` nativo sin `max_lifetime` ni `on_timeout` se comporta
+  exactamente como ADR-007: fase `UNMANAGED`, el tope es el `timeout`, el
+  cable es idéntico.
+- Pedir un ciclo de vida a una imagen anterior a M9 falla cerrado:
+  `LifecycleUnsupportedException` y el VM se termina.
+
+**Consecuencias.** Costes honestos, también en `e2b-compat.md` y
+`concepts.md`: (1) el tope sigue contando el tiempo suspendido: 8 h como
+mucho desde el arranque, mientras E2B guarda sandboxes pausados sin límite;
+(2) en modo `pause` los procesos siguen corriendo entre el vencimiento y la
+suspensión (≈ 3 s con cliente vivo, hasta `max_idle` sin él); (3) en modo
+`pause` la política de idle puede suspender antes del plazo, así que un
+trabajo desenganchado se congela tras `max_idle` sin tráfico; (4) tras una
+salida en modo `kill` se facturan ≈ 15 s de 502 (Q58); (5) el plazo nunca
+pasa de `max_lifetime − 60 s`; (6) en modo `kill` con idle, un sandbox
+suspendido a través de su plazo que nadie reanuda sólo lo retira la
+plataforma (`suspendedDurationSeconds` o el tope), al coste del snapshot
+guardado; (7) una suspensión real de menos de 2 s que cruza el plazo no se
+reconoce como congelación; (8) dejar sin CPU al hilo vigilante justo al
+vencer imita esa congelación desde dentro del sandbox: le vale la única
+gracia de 30 s de ese plazo (o, con `auto_resume`, la regla de 5 min una
+vez), nunca más allá del tope; sólo `SetTimeout`, que exige el token, o la
+propia regla de auto-resume devuelven la gracia al mover el plazo. El shim `rayito.e2b` exige una imagen M9. Más allá
+de `max_lifetime` el único camino sigue siendo `reincarnate()` (ADR-009).
+Los números de la salida con código 124 y de la pausa al vencer son las filas
+Q63–Q65 de `AWS_API_NOTES.md`: la plataforma propaga el 124
+(`Container Stopped with Exit Code: 124`) y la VM termina sola, así que el
+fallback a 0 de `m9-server-timeout` D6 no se aplica.
+
+## ADR-012 — Política de egress en el guest sobre rayito-base-caps; conectores de plataforma sólo por VPC del cliente
+
+**Contexto.** `allow_internet_access=False` y `network=` de E2B no tienen
+primitiva en `run-microvm`: omitir `egressNetworkConnectors` o pasar `[]`
+hereda el conector de la versión de imagen y el VM sigue saliendo (Q44, Q60);
+`NO_EGRESS` no existe (`ValidationException`, Q60). El único control fuera
+del guest es un conector VPC del cliente con un security group deny-all
+(`infra/egress-connector.yaml`, T8), que no filtra el DNS de Amazon. En
+`rayito-base-caps` `rayd` tiene `CAP_NET_ADMIN` y ya instala una ruta de
+política por uid para IMDS (Q48).
+
+**Decisión.** El guest aplica la política con dos capas que comparten un
+objeto de política en `rayd` (sección "Política de egress (M9)"): (1) rutas
+del kernel en una tabla por `uidrange 1000-65535`; (2) un proxy local de
+`rayd` (root) que decide las reglas por nombre de host y encadena al SOCKS5
+del operador. Modos: `Unrestricted` (nada), `Routes` (`blackhole`s de
+`deny_out \ allow_out`) y `ProxyOnly` (todo lo directo bloqueado; sólo sale el
+proxy). Sólo corre donde `CapEff` tiene `CAP_NET_ADMIN`; en cualquier otra
+imagen el SDK termina el VM y lanza `UnimplementedError` antes de devolver un
+sandbox sin la política pedida (falla cerrado, nunca se aproxima).
+`update_network` cambia la política en caliente (`NetworkService`).
+
+**Consecuencias.** Las capas del guest caen ante un exploit del kernel del
+guest o ante root dentro del guest (`RAYITO_ALLOW_ROOT`) y no afectan a los
+uids exentos del agente de la plataforma (`SECURITY.md` T17). En modo proxy
+los clientes que no honran `HTTPS_PROXY` fallan cerrados. El DNS de uid ≥ 1000
+**no** queda bloqueado en `rayito-base-caps`: sus resolvedores escuchan dentro
+del guest (QE1, fila Q66 de `AWS_API_NOTES.md`; ver la adenda siguiente).
+UDP/QUIC no pasan por el proxy. Un cambio de política afecta a las conexiones
+nuevas. La alternativa de plataforma (conector VPC del cliente con security
+group deny-all) sigue siendo el único control fuera del guest, con su
+salvedad de DNS.
+
+### Adenda: DNS bajo deny-all en caps
+
+**Contexto.** La regla de parada de `m9-egress-policy` D17 se disparó en QE1
+(fila Q66, medida en `rayito-base-caps` con `allow_internet_access=False`):
+`/etc/resolv.conf` lista dos resolvedores de la plataforma, uno de loopback
+(`127.0.0.0/8`) y otro link-local (`169.254.0.0/16`), y **los dos escuchan
+UDP 53 dentro del guest**. Una consulta de uid 1000 a esas direcciones se
+enruta por la tabla `local` (regla de prioridad 0), que va antes que la
+regla `uidrange` de la política (150/151), así que los `blackhole`s no la
+alcanzan: bajo deny-all `getaddrinfo` como uid 1000 resuelve, mientras un
+`sendto` directo a un resolvedor externo y toda conexión fuera del VM fallan
+(`EINVAL`, ruta `blackhole`).
+
+**Decisión (opción C).** En M9 la aplicación no cambia: bajo deny-all en caps
+los nombres **pueden resolverse** a través de los resolvedores de la
+plataforma dentro del guest, y **toda conexión fuera del VM sigue bloqueada**.
+La aceptación de DNS pasa de "la resolución falla" a "resuelve o no, pero
+ninguna dirección resuelta conecta". El modo proxy y las reglas por nombre de
+host no cambian: el proxy decide por nombre y, bajo deny-by-default, nunca
+resuelve un nombre denegado.
+
+**Consecuencias.** Queda un canal residual de exfiltración por DNS: el código
+de uid ≥ 1000 puede codificar datos en consultas que los resolvedores de la
+plataforma reenvían hacia fuera. Es un canal estrecho y de sólo consultas,
+pero existe (`SECURITY.md` T17). La aplicación en el guest sigue siendo de
+mejor esfuerzo; el control duro sigue siendo el conector VPC del cliente, con
+su propia salvedad (un security group no filtra el DNS de Amazon).
+
+**Alternativas consideradas.** (A) Una regla `ip rule` con `uidrange
+1000-65535`, `ipproto udp`/`ipproto tcp` y `dport 53` con acción `prohibit`
+**antes** de la regla `local` de prioridad 0: exige mover la regla `local` a
+otra prioridad, y un fallo a mitad del cambio (o una recuperación que no la
+repone) deja el guest sin enrutamiento local (loopback, `rayd`, el proxy).
+Queda **diferida al siguiente ciclo** como endurecimiento, con su propio
+diseño de cambio atómico y rollback y su e2e (`MILESTONES.md`, M9, diferidos).
+(B) Un `resolv.conf` por proceso con un espacio de nombres de montaje para
+los procesos de uid ≥ 1000: complejo (cada proceso, PTY y kernel que lanza
+`rayd`, más lo que ellos lancen) y no cierra el canal: los resolvedores del
+guest siguen alcanzables por su dirección aunque no estén en `resolv.conf`;
+descartada para M9.
+
+**Reversible.** Sí: la opción A se añade después sin tocar el contrato
+(`NetworkService`, `EgressEnforcement`) ni la semántica de la política;
+cuando llegue, la aceptación vuelve a exigir que la resolución falle bajo
+deny-all.
+
+## ADR-013 — Kernels Deno sobre TCP de loopback con HMAC
+
+**Contexto.** `javascript` y `typescript` llegan en M9 con el kernel Jupyter de
+Deno 2.9.7 (Q61: `ijavascript` no instala en al2023 ARM64 sin compilador;
+Deno es un único binario con su propio ZeroMQ). El kernel de Deno sólo abre
+sockets TCP (`Deno.listen({ hostname, port })`): no sabe abrir endpoints
+`ipc`, así que el diseño M4 de "un ipykernel por contexto sobre `ipc` bajo
+`/run/rayito/k`" no es posible para Deno.
+
+**Decisión.** Los contextos Deno usan `transport="tcp"` e `ip="127.0.0.1"`,
+con los puertos que elige `jupyter_client`. El connection file (y su clave
+HMAC) sigue en `/run/rayito/k/<context_id>/kernel.json` (directorio 0700 de
+uid 1000). Python y bash siguen en `ipc`. El sidecar lo decide por lenguaje
+(`KernelLanguage.transport`, `kernel_endpoint()`); `rayd` no toca los sockets
+de los kernels.
+
+**Consecuencias.** Cualquier proceso local puede abrir los cinco puertos.
+shell/control/stdin exigen la clave HMAC, que Deno verifica; el socket PUB de
+iopub no exige clave para suscribirse, así que un proceso local puede leer las
+salidas de las celdas Deno. Todo proceso que alcanza 127.0.0.1 ya corre dentro
+del mismo sandbox: uid 1000 (el mismo uid que posee el kernel y puede leer su
+connection file, T12), `rayd` como root, o el agente de la plataforma (uids
+991–994). El proxy de AWS alcanza listeners de loopback (Q18), pero sólo con un
+JWE cuyo `allowedPorts` contenga ese puerto efímero; habla HTTP, no ZMTP, y el
+SDK nunca acuña `allPorts` por defecto (T2/T3). El residual se acepta y queda
+en `SECURITY.md` T12. Deno corre con todos los permisos (`allow_all`), el mismo
+poder de uid 1000 que el kernel de Python.
+
+**Reversible.** Si una versión futura de Deno abre `ipc`, basta con cambiar
+`KernelLanguage.transport`; ni el cable ni los SDKs cambian.

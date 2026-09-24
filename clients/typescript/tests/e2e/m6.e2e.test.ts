@@ -3,7 +3,10 @@
  * real, con los bloques de paridad M1–M5 en forma compacta y el auto-resume
  * (`openspec/changes/m6-typescript-sdk/design.md` "Acceptance test list").
  * Un MicroVM de ≈ 6 min y otro de ≈ 4 min; cuatro ciclos suspend/resume. Cada
- * tiempo medido se imprime con su nombre de `MILESTONES.md`.
+ * tiempo medido se imprime con su nombre de `MILESTONES.md`. `get-microvm` es
+ * eventualmente consistente: tras un resume puede seguir en `PENDING` cuando
+ * `Health` ya trae la generación nueva (regresión de M9, 2026-09-24), así que
+ * `RUNNING` se sondea con plazo.
  */
 
 import { describe, expect, test } from "vitest";
@@ -55,6 +58,7 @@ const REATTACH_BUDGET_MS = 90_000;
 const IDLE_SUSPEND_BUDGET_MS = 240_000;
 const IDLE_POLL_MS = 5000;
 const AUTO_RESUME_BUDGET_MS = 30_000;
+const RUNNING_STATE_BUDGET_MS = 30_000;
 const TERMINATE_VISIBLE_MS = 30_000;
 const TERMINATED_BUDGET_MS = 120_000;
 const CLOCK_OFFSET_TOLERANCE_MS = 5000;
@@ -123,7 +127,7 @@ describe.skipIf(!e2eEnabled())("m6 typescript sdk", () => {
     expect(autoResume).toBeLessThanOrEqual(AUTO_RESUME_BUDGET_MS / 1000);
     expect((await sbx.runCode("z")).text).toBe("9");
     expect((await sbx.getHealth()).resumeGeneration).toBe(1);
-    expect((await sbx.getInfo()).state).toBe("RUNNING");
+    await waitRunning(sbx, "auto-resume -> get-microvm RUNNING (running_after_resume_s)");
     expect(await sbx.kill()).toBe(true);
   });
 });
@@ -350,7 +354,16 @@ async function checkResume(sbx: Sandbox, state: StateBeforePause): Promise<void>
   expect(health.kernelStateLost).toBe(false);
   report(`Q41 clockOffsetMs = ${health.clockOffsetMs}`, 0);
   expect(Math.abs(health.clockOffsetMs)).toBeLessThan(CLOCK_OFFSET_TOLERANCE_MS);
-  expect((await sbx.getInfo()).state).toBe("RUNNING");
+  await waitRunning(sbx, "resume() -> get-microvm RUNNING (running_after_resume_s)");
+}
+
+async function waitRunning(sbx: Sandbox, label: string): Promise<void> {
+  const runningSeconds = await waitUntil(
+    async () => (await sbx.getInfo()).state === "RUNNING",
+    RUNNING_STATE_BUDGET_MS,
+    "get-microvm RUNNING",
+  );
+  report(label, runningSeconds);
 }
 
 async function checkKernelAlive(sbx: Sandbox): Promise<void> {

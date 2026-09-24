@@ -1,15 +1,31 @@
-"""`rayito sandbox list | info | kill | logs` sobre el plano de control del SDK."""
+"""`rayito sandbox list | info | kill | logs` sobre el plano de control del
+SDK, y `create | connect | exec | metrics` sobre el agente del sandbox.
+
+Los cuatro últimos usan el access token del sandbox, que llega sólo por
+`--token-file` o `RAYITO_ACCESS_TOKEN` (nunca por argv) y nunca se imprime.
+Códigos de salida: el del comando o del shell remoto en `exec`, `connect` y
+`create` sin `--detach` (124 si el agente lo cortó por timeout); 1 si la
+operación falla; 2 para uso o entorno (sin token, par `K=V` mal formado,
+fichero de token existente).
+"""
 
 from __future__ import annotations
 
 import dataclasses
-from typing import Annotated, Any
+import json
+import os
+import shlex
+import sys
+import time
+from pathlib import Path
+from typing import Annotated, Any, NoReturn
 
 import typer
 
-from rayito._limits import MICROVM_STATES
-from rayito._models import SandboxInfo, SandboxListItem
-from rayito.cli._console import age, echo, emit_json, iso_utc, table
+from rayito._limits import MICROVM_STATES, TERMINAL_STATES
+from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
+from rayito._payload import generate_access_token
+from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
 from rayito.cli._logs import (
     DEFAULT_EVENT_LIMIT,
     LogsNotFound,
@@ -21,10 +37,27 @@ from rayito.cli._logs import (
     parse_since,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
-from rayito.exceptions import SandboxNotFoundException
+from rayito.cli._terminal import EXIT_TIMEOUT, run_terminal
+from rayito.cli._tokens import (
+    TOKEN_ENV_VAR,
+    InvalidPairError,
+    TokenFileError,
+    parse_pairs,
+    resolve_token,
+    write_token_file,
+)
+from rayito.exceptions import (
+    CommandExitException,
+    SandboxException,
+    SandboxNotFoundException,
+    TimeoutException,
+)
 from rayito.sandbox_sync.main import Sandbox
 
-sandbox_app = typer.Typer(no_args_is_help=True, help="MicroVMs vivos: list, info, kill, logs.")
+sandbox_app = typer.Typer(
+    no_args_is_help=True,
+    help="MicroVMs: list, info, kill, logs, create, connect, exec, metrics.",
+)
 
 LIST_COLUMNS = ("sandbox_id", "state", "template", "template_version", "started_at", "age")
 
@@ -218,3 +251,333 @@ def collect_events(
             )
         )
     return events
+
+
+DEFAULT_CREATE_TIMEOUT_SECONDS = 3600
+DEFAULT_METRICS_INTERVAL_SECONDS = 5.0
+MISSING_TOKEN_MESSAGE = f"falta el access token: --token-file o {TOKEN_ENV_VAR}"
+DETACH_NEEDS_TOKEN_FILE_MESSAGE = (
+    f"sin {TOKEN_ENV_VAR}, --detach necesita --token-file para poder volver a conectarte"
+)
+COMMAND_TIMEOUT_MESSAGE = "timeout del comando"
+SANDBOX_GONE_MESSAGE = "el sandbox ya no existe"
+METRICS_COLUMNS = (
+    "timestamp",
+    "cpu_used_pct",
+    "cpu_count",
+    "mem_used",
+    "mem_total",
+    "disk_used",
+    "disk_total",
+)
+
+TokenFileOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--token-file",
+        help=f"Fichero con el access token (gana a {TOKEN_ENV_VAR}); nunca por argv.",
+    ),
+]
+EnvOption = Annotated[list[str] | None, typer.Option("--env", "-e", help="K=V; repetible.")]
+UserOption = Annotated[str | None, typer.Option("--user", "-u", help="Usuario del sandbox.")]
+CwdOption = Annotated[str | None, typer.Option("--cwd", "-c", help="Directorio de trabajo.")]
+
+
+def usage_failure(message: str) -> NoReturn:
+    fail(message, code=EXIT_USAGE)
+
+
+def pairs_or_exit(values: list[str] | None, option: str) -> dict[str, str]:
+    try:
+        return parse_pairs(values, option=option)
+    except InvalidPairError as exc:
+        usage_failure(str(exc))
+
+
+def token_or_exit(token_file: Path | None) -> str:
+    try:
+        token = resolve_token(token_file, os.environ)
+    except TokenFileError as exc:
+        usage_failure(str(exc))
+    if token is None:
+        usage_failure(MISSING_TOKEN_MESSAGE)
+    return token
+
+
+def launch_token(*, detach: bool, token_file: Path | None) -> str:
+    """El token de `create`: `RAYITO_ACCESS_TOKEN` o uno nuevo. Con
+    `--detach` se guarda en `--token-file` antes de `run-microvm`, así un
+    fallo al escribirlo nunca deja un VM huérfano."""
+    existing = os.environ.get(TOKEN_ENV_VAR) or None
+    if detach and existing is None and token_file is None:
+        usage_failure(DETACH_NEEDS_TOKEN_FILE_MESSAGE)
+    token = existing or generate_access_token()
+    if detach and token_file is not None:
+        try:
+            write_token_file(token_file, token)
+        except TokenFileError as exc:
+            usage_failure(str(exc))
+    return token
+
+
+def connect_sandbox(clients: Clients, sandbox_id: str, token: str) -> Sandbox:
+    """`Sandbox.connect`: despierta un sandbox suspendido."""
+    return Sandbox.connect(
+        sandbox_id,
+        access_token=token,
+        control_plane=clients.control_plane,
+        transport=clients.transport,
+    )
+
+
+def launch_document(sandbox: Sandbox) -> dict[str, Any]:
+    info = sandbox.info
+    return {
+        "sandbox_id": info.sandbox_id,
+        "endpoint": info.endpoint,
+        "template": info.template_name,
+        "template_version": info.template_version,
+        "expires_at": iso_utc(info.expires_at),
+    }
+
+
+@sandbox_app.command("create")
+def create_command(
+    ctx: typer.Context,
+    template: Annotated[
+        str | None,
+        typer.Argument(metavar="[TEMPLATE]", help="Nombre o ARN; por defecto RAYITO_TEMPLATE."),
+    ] = None,
+    timeout: Annotated[
+        int, typer.Option("--timeout", help="Vida máxima del sandbox en segundos.")
+    ] = DEFAULT_CREATE_TIMEOUT_SECONDS,
+    metadata: Annotated[
+        list[str] | None, typer.Option("--metadata", help="K=V no secreto; repetible.")
+    ] = None,
+    env: EnvOption = None,
+    detach: Annotated[
+        bool,
+        typer.Option("--detach", "-d", help="Crea y sale sin terminal; imprime el sandbox_id."),
+    ] = False,
+    token_file: TokenFileOption = None,
+    user: UserOption = None,
+    cwd: CwdOption = None,
+) -> None:
+    """Crea un sandbox. Sin --detach abre una terminal y lo termina al salir
+    (el código de salida es el del shell)."""
+    clients = clients_of(ctx)
+    metadata_pairs = pairs_or_exit(metadata, "--metadata")
+    env_pairs = pairs_or_exit(env, "--env")
+    token = launch_token(detach=detach, token_file=token_file)
+    sandbox = Sandbox.create(
+        template,
+        timeout=timeout,
+        metadata=metadata_pairs or None,
+        envs=env_pairs or None,
+        access_token=token,
+        control_plane=clients.control_plane,
+        transport=clients.transport,
+    )
+    if detach:
+        report_launch(ctx, sandbox)
+        sandbox.close()
+        return
+    try:
+        code = run_terminal(sandbox, user=user, cwd=cwd)
+    finally:
+        sandbox.kill()
+    raise typer.Exit(code)
+
+
+def report_launch(ctx: typer.Context, sandbox: Sandbox) -> None:
+    if json_mode(ctx):
+        emit_json(launch_document(sandbox))
+        return
+    echo(sandbox.sandbox_id)
+
+
+@sandbox_app.command("connect")
+def connect_command(
+    ctx: typer.Context,
+    sandbox_id: Annotated[str, typer.Argument(metavar="ID")],
+    user: UserOption = None,
+    cwd: CwdOption = None,
+    env: EnvOption = None,
+    token_file: TokenFileOption = None,
+) -> None:
+    """Terminal interactiva en un sandbox existente (lo reanuda si está
+    suspendido y no lo termina al salir)."""
+    envs = pairs_or_exit(env, "--env")
+    token = token_or_exit(token_file)
+    sandbox = connect_sandbox(clients_of(ctx), sandbox_id, token)
+    try:
+        code = run_terminal(sandbox, user=user, cwd=cwd, envs=envs or None)
+    finally:
+        sandbox.close()
+    raise typer.Exit(code)
+
+
+@sandbox_app.command("exec")
+def exec_command(
+    ctx: typer.Context,
+    sandbox_id: Annotated[str, typer.Argument(metavar="ID")],
+    command: Annotated[
+        list[str], typer.Argument(metavar="-- CMD...", help="Comando y argumentos.")
+    ],
+    background: Annotated[
+        bool, typer.Option("--background", "-b", help="No espera: imprime el pid.")
+    ] = False,
+    cwd: CwdOption = None,
+    user: UserOption = None,
+    env: EnvOption = None,
+    timeout: Annotated[
+        float, typer.Option("--timeout", help="Segundos; 0 es sin plazo de servidor.")
+    ] = 0,
+    token_file: TokenFileOption = None,
+) -> None:
+    """Ejecuta `shlex.join(CMD)` en el sandbox con la salida en streaming;
+    sale con el código remoto (124 si venció el timeout)."""
+    envs = pairs_or_exit(env, "--env")
+    token = token_or_exit(token_file)
+    sandbox = connect_sandbox(clients_of(ctx), sandbox_id, token)
+    try:
+        code = run_remote_command(
+            sandbox,
+            shlex.join(command),
+            background=background,
+            envs=envs or None,
+            user=user,
+            cwd=cwd,
+            timeout=None if timeout == 0 else timeout,
+        )
+    finally:
+        sandbox.close()
+    if code:
+        raise typer.Exit(code)
+
+
+def run_remote_command(
+    sandbox: Sandbox,
+    cmd: str,
+    *,
+    background: bool,
+    envs: dict[str, str] | None,
+    user: str | None,
+    cwd: str | None,
+    timeout: float | None,
+) -> int:
+    if background:
+        handle = sandbox.commands.run(
+            cmd, background=True, envs=envs, user=user, cwd=cwd, timeout=timeout
+        )
+        echo(str(handle.pid))
+        return 0
+    try:
+        sandbox.commands.run(
+            cmd,
+            envs=envs,
+            user=user,
+            cwd=cwd,
+            timeout=timeout,
+            on_stdout=stream_writer(sys.stdout),
+            on_stderr=stream_writer(sys.stderr),
+        )
+    except CommandExitException as exc:
+        return exc.exit_code
+    except TimeoutException:
+        echo(COMMAND_TIMEOUT_MESSAGE, err=True)
+        return EXIT_TIMEOUT
+    return 0
+
+
+def stream_writer(stream: Any) -> Any:
+    """Cada chunk tal como llega, en UTF-8 (lo no codificable se sustituye)."""
+    binary = getattr(stream, "buffer", None)
+
+    def write(text: str) -> None:
+        if binary is not None:
+            binary.write(text.encode("utf-8", errors="replace"))
+            binary.flush()
+            return
+        stream.write(text)
+        stream.flush()
+
+    return write
+
+
+def metrics_document(metrics: SandboxMetrics) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "timestamp": iso_utc(metrics.timestamp),
+        "cpu_used_pct": metrics.cpu_used_pct,
+        "cpu_count": metrics.cpu_count,
+        "mem_used": metrics.mem_used_bytes,
+        "mem_total": metrics.mem_total_bytes,
+        "disk_used": metrics.disk_used_bytes,
+        "disk_total": metrics.disk_total_bytes,
+    }
+    if metrics.mem_cache_bytes:
+        document["mem_cache"] = metrics.mem_cache_bytes
+    return document
+
+
+@sandbox_app.command("metrics")
+def metrics_command(
+    ctx: typer.Context,
+    sandbox_id: Annotated[str, typer.Argument(metavar="ID")],
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Repite hasta Ctrl-C o hasta que muera.")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", help="Segundos entre muestras con --follow.")
+    ] = DEFAULT_METRICS_INTERVAL_SECONDS,
+    token_file: TokenFileOption = None,
+) -> None:
+    """Una muestra de CPU, memoria y disco (`HealthService.Metrics`);
+    conectar despierta un sandbox suspendido."""
+    token = token_or_exit(token_file)
+    clients = clients_of(ctx)
+    sandbox = connect_sandbox(clients, sandbox_id, token)
+    try:
+        print_metrics(ctx, clients, sandbox, follow=follow, interval=interval)
+    finally:
+        sandbox.close()
+
+
+def print_metrics(
+    ctx: typer.Context, clients: Clients, sandbox: Sandbox, *, follow: bool, interval: float
+) -> None:
+    try:
+        while True:
+            show_metrics(ctx, metrics_document(read_metrics(clients, sandbox)), follow=follow)
+            if not follow:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
+def read_metrics(clients: Clients, sandbox: Sandbox) -> SandboxMetrics:
+    try:
+        return sandbox.get_metrics()
+    except SandboxException:
+        if sandbox_gone(clients, sandbox.sandbox_id):
+            fail(SANDBOX_GONE_MESSAGE)
+        raise
+
+
+def sandbox_gone(clients: Clients, sandbox_id: str) -> bool:
+    try:
+        return clients.control_plane.get_microvm(sandbox_id).state in TERMINAL_STATES
+    except SandboxNotFoundException:
+        return True
+
+
+def show_metrics(ctx: typer.Context, document: dict[str, Any], *, follow: bool) -> None:
+    if json_mode(ctx) and follow:
+        echo(json.dumps(document))
+        return
+    if json_mode(ctx):
+        emit_json(document)
+        return
+    columns = (*METRICS_COLUMNS, *(("mem_cache",) if "mem_cache" in document else ()))
+    table(columns, [[document[column] for column in columns]])

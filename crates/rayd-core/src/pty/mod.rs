@@ -144,10 +144,12 @@ pub struct PtyPlan {
 
 /// Size, identity, shell, environment and cwd, in that order, with no
 /// filesystem or process access. Environment layers, last wins: identity
-/// variables, PTY defaults, `/run` payload envs, request envs.
+/// variables, the egress proxy variables, PTY defaults, `/run` payload
+/// envs, request envs.
 pub fn plan_pty(
     input: &PtySpawnInput,
     defaults: &RunDefaults,
+    egress_env: &BTreeMap<String, String>,
     policy: UserPolicy,
     lookup: &dyn UserLookup,
 ) -> Result<PtyPlan, PtyError> {
@@ -159,7 +161,7 @@ pub fn plan_pty(
     let shell = resolve_shell(input.shell.as_deref(), &identity)?;
     let mut layered = pty_base_env(&shell);
     layered.extend(defaults.envs.clone());
-    let env = build_child_env(&identity, &layered, &input.envs);
+    let env = build_child_env(&identity, egress_env, &layered, &input.envs);
     let cwd = resolve_cwd(
         input.cwd.as_deref(),
         defaults.workdir.as_deref(),
@@ -243,7 +245,13 @@ mod tests {
     }
 
     fn plan(input: &PtySpawnInput, defaults: &RunDefaults) -> Result<PtyPlan, PtyError> {
-        plan_pty(input, defaults, UserPolicy::default(), &FakeUserLookup)
+        plan_pty(
+            input,
+            defaults,
+            &BTreeMap::new(),
+            UserPolicy::default(),
+            &FakeUserLookup,
+        )
     }
 
     fn env_of<'a>(spec: &'a SpawnSpec, key: &str) -> Option<&'a str> {
@@ -365,6 +373,29 @@ mod tests {
     }
 
     #[test]
+    fn the_egress_proxy_variables_reach_the_shell_under_the_request_envs() {
+        let egress = envs(&[("ALL_PROXY", "socks5h://127.0.0.1:4000"), ("FOO", "egress")]);
+        let input = PtySpawnInput {
+            envs: envs(&[("FOO", "request")]),
+            ..PtySpawnInput::default()
+        };
+        let plan = plan_pty(
+            &input,
+            &RunDefaults::default(),
+            &egress,
+            UserPolicy::default(),
+            &FakeUserLookup,
+        )
+        .unwrap();
+        assert_eq!(
+            env_of(&plan.spec, "ALL_PROXY"),
+            Some("socks5h://127.0.0.1:4000")
+        );
+        assert_eq!(env_of(&plan.spec, "FOO"), Some("request"));
+        assert_eq!(plan.config.envs, input.envs);
+    }
+
+    #[test]
     fn requested_shell_size_cwd_and_user_are_honoured() {
         let input = PtySpawnInput {
             size: Some((100, 30)),
@@ -420,6 +451,7 @@ mod tests {
         let allowed = plan_pty(
             &root,
             &RunDefaults::default(),
+            &BTreeMap::new(),
             UserPolicy { allow_root: true },
             &FakeUserLookup,
         )

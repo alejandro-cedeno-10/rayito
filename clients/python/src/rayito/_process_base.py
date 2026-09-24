@@ -20,6 +20,8 @@ from rayito._limits import SUSPENDED_STATES, TERMINAL_STATES
 from rayito._models import CommandResult, ProcessInfo, ProcessKindName, SandboxMetrics
 from rayito._payload import validated_envs
 from rayito._transport import (
+    SANDBOX_TIMEOUT_DETAIL,
+    SANDBOX_TIMEOUT_MESSAGE,
     is_stream_reset,
     rpc_details,
     rpc_status,
@@ -49,6 +51,7 @@ STATUS_SIGNALED: Final = "signaled"
 STATUS_TIMEOUT: Final = "timeout"
 STATUS_SUSPENDING: Final = "suspending"
 STATUS_OUTPUT_TRUNCATED: Final = "output_truncated"
+STATUS_SANDBOX_TIMEOUT: Final = SANDBOX_TIMEOUT_DETAIL
 
 STREAM_EOF: Final[object] = grpc.aio.EOF  # type: ignore[attr-defined]
 
@@ -233,11 +236,14 @@ def outcome_from_end(end: process_pb2.EndEvent, stdout: str, stderr: str) -> Com
     """Tabla cerrada de `EndEvent.status`: `exited`/`signaled` con exit 0 →
     `CommandResult`; distinto de cero → `CommandExitException`; `timeout` →
     `TimeoutException`; `output_truncated` → `SandboxException`; `suspending`
-    → `SandboxStateException`. Un status desconocido con `error` sigue la
-    tabla de `StreamError.code`."""
+    → `SandboxStateException`; `sandbox_timeout` (el plazo lógico del
+    sandbox venció, ADR-011) → `TimeoutException`. Un status desconocido con
+    `error` sigue la tabla de `StreamError.code`."""
     status = str(end.status)
     exit_code = int(end.exit_code)
     detail = end_error_message(end)
+    if status == STATUS_SANDBOX_TIMEOUT:
+        return TimeoutException(SANDBOX_TIMEOUT_MESSAGE)
     if status == STATUS_TIMEOUT:
         return TimeoutException(
             f"el comando superó su timeout y fue terminado por el agente "
@@ -298,6 +304,29 @@ class Chunk:
         if self.pty is not None:
             return None, None, self.pty
         return self.stdout, self.stderr, None
+
+
+@dataclass(frozen=True)
+class WaitCallbacks:
+    """Los callbacks de `wait(on_pty, on_stdout, on_stderr)` (contrato de
+    E2B 2.x): reciben cada chunk que `wait()` consume, después de los de
+    `run()`, y nunca los ya consumidos antes. Pueden devolver algo; el handle
+    async espera los resultados awaitables."""
+
+    on_pty: Callable[[bytes], Any] | None = None
+    on_stdout: Callable[[str], Any] | None = None
+    on_stderr: Callable[[str], Any] | None = None
+
+    def deliver(self, chunk: OutputChunk) -> list[Any]:
+        stdout, stderr, pty = chunk
+        results: list[Any] = []
+        if stdout is not None and self.on_stdout is not None:
+            results.append(self.on_stdout(stdout))
+        if stderr is not None and self.on_stderr is not None:
+            results.append(self.on_stderr(stderr))
+        if pty is not None and self.on_pty is not None:
+            results.append(self.on_pty(pty))
+        return results
 
 
 @dataclass(frozen=True)
@@ -461,6 +490,7 @@ def metrics_from_proto(response: Any) -> SandboxMetrics:
         disk_total_bytes=int(response.disk_total_bytes),
         cpu_count=int(response.cpu_count),
         timestamp=datetime.fromtimestamp(int(response.timestamp_unix_ms) / 1000, tz=UTC),
+        mem_cache_bytes=int(response.mem_cache_bytes),
     )
 
 

@@ -5,9 +5,14 @@
 //! `/suspend` or `/resume` is never refused: the phase machine cannot tell
 //! a forged call from the genuine one that follows it, and refusing the
 //! genuine one would skip the checklist of a real checkpoint.
+//!
+//! The logical deadline (`sandbox_timeout`) lives behind its own lock,
+//! never held together with the phase machine's: the watcher thread reads
+//! the hook phase first and then ticks the deadline.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use crate::auth::{self, AccessTokenGate, AuthError, InstallOutcome};
@@ -18,8 +23,13 @@ use crate::lifecycle::{
     FREEZE_THRESHOLD, Hook, HookPhase, LifecycleError, LifecycleState, RunClaim,
     SUSPEND_GATE_TIMEOUT, Transition, WATCHDOG_TICK,
 };
+use crate::network::EgressEnforcement;
 use crate::process::ProcessError;
 use crate::run_payload::{RunDefaults, RunPayloadError, parse_run_payload};
+use crate::sandbox_timeout::{
+    DeadlineAction, LifecycleSpec, LifecycleView, SandboxTimeout, SandboxTimeoutError, TimeoutMode,
+    TimeoutSettings,
+};
 
 /// Knobs the integration tests shrink; production uses the constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +37,7 @@ pub struct SessionSettings {
     pub suspend_gate_timeout: Duration,
     pub freeze_threshold: Duration,
     pub watchdog_tick: Duration,
+    pub timeout: TimeoutSettings,
 }
 
 impl Default for SessionSettings {
@@ -35,6 +46,7 @@ impl Default for SessionSettings {
             suspend_gate_timeout: SUSPEND_GATE_TIMEOUT,
             freeze_threshold: FREEZE_THRESHOLD,
             watchdog_tick: WATCHDOG_TICK,
+            timeout: TimeoutSettings::default(),
         }
     }
 }
@@ -64,6 +76,11 @@ pub struct SandboxSession {
     audit: Mutex<HookAudit>,
     defaults: Mutex<Option<RunDefaults>>,
     metadata: Mutex<BTreeMap<String, String>>,
+    timeout: Mutex<SandboxTimeout>,
+    network_enforce: AtomicBool,
+    egress_settling: AtomicBool,
+    egress_env: RwLock<BTreeMap<String, String>>,
+    egress_enforcement: AtomicU8,
     gate: AccessTokenGate,
     clock: Arc<dyn Clock>,
     booted_at: ClockReading,
@@ -87,6 +104,11 @@ impl SandboxSession {
             audit: Mutex::new(HookAudit::default()),
             defaults: Mutex::new(None),
             metadata: Mutex::new(BTreeMap::new()),
+            timeout: Mutex::new(SandboxTimeout::new(&settings.timeout)),
+            network_enforce: AtomicBool::new(false),
+            egress_settling: AtomicBool::new(false),
+            egress_env: RwLock::new(BTreeMap::new()),
+            egress_enforcement: AtomicU8::new(EgressEnforcement::None.to_code()),
             gate: AccessTokenGate::new(),
             clock,
             booted_at,
@@ -220,6 +242,59 @@ impl SandboxSession {
         self.defaults().unwrap_or_default()
     }
 
+    /// Whether the accepted `/run` payload asked for deny-all before the
+    /// hook is answered (ADR-012).
+    #[must_use]
+    pub fn network_enforce(&self) -> bool {
+        self.network_enforce.load(Ordering::Acquire)
+    }
+
+    /// Whether the deny-all the accepted `/run` asked for is still being
+    /// installed. The platform lets `Health` through before the `/run` 200,
+    /// so `agent_ready` stays false until the outcome is published.
+    #[must_use]
+    pub fn egress_settling(&self) -> bool {
+        self.egress_settling.load(Ordering::Acquire)
+    }
+
+    /// The `/run` deny-all finished, verified or not: `Health` may report
+    /// the agent ready with the enforcement it published.
+    pub fn egress_settled(&self) {
+        self.egress_settling.store(false, Ordering::Release);
+    }
+
+    /// The local-proxy variables every child spawned from now on gets
+    /// under its payload and request `envs` (empty until the proxy runs).
+    #[must_use]
+    pub fn egress_env(&self) -> BTreeMap<String, String> {
+        self.egress_env
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// How the egress policy is enforced right now; `None` until a
+    /// verified policy restricts anything (an M9 agent never reports
+    /// `Unspecified`).
+    #[must_use]
+    pub fn egress_enforcement(&self) -> EgressEnforcement {
+        EgressEnforcement::from_code(self.egress_enforcement.load(Ordering::Acquire))
+    }
+
+    /// Published by the egress manager after every verification.
+    pub fn set_egress_enforcement(&self, enforcement: EgressEnforcement) {
+        self.egress_enforcement
+            .store(enforcement.to_code(), Ordering::Release);
+    }
+
+    /// Published by the egress manager once the local proxy listens.
+    pub fn set_egress_env(&self, env: BTreeMap<String, String>) {
+        *self
+            .egress_env
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = env;
+    }
+
     /// New process streams are only opened while the sandbox is `Running` or
     /// `Resumed`; during a suspend or a terminate the answer is `UNAVAILABLE`
     /// with the phase as the message.
@@ -242,18 +317,63 @@ impl SandboxSession {
         self.clock.clone()
     }
 
+    /// The logical deadline as `Health` and `SetTimeout` report it.
+    #[must_use]
+    pub fn lifecycle(&self) -> LifecycleView {
+        let reading = self.clock.read();
+        self.sandbox_timeout().view(reading)
+    }
+
+    pub fn set_timeout(
+        &self,
+        mode: TimeoutMode,
+        timeout: Duration,
+    ) -> Result<LifecycleView, SandboxTimeoutError> {
+        let reading = self.clock.read();
+        self.sandbox_timeout().set_timeout(reading, mode, timeout)
+    }
+
+    /// One watcher tick; `thawed` is its freeze verdict since the previous
+    /// tick. The hook phase is read before the deadline lock is taken.
+    pub fn tick_timeout(&self, thawed: bool) -> Option<DeadlineAction> {
+        let suspending = self.phase() == HookPhase::Suspending;
+        let now = self.clock.monotonic();
+        self.sandbox_timeout().tick(now, suspending, thawed)
+    }
+
+    /// Called after a changed `/resume`; `frozen` is the watcher's verdict.
+    pub fn timeout_resumed(&self, frozen: bool) {
+        let now = self.clock.monotonic();
+        self.sandbox_timeout().resumed(now, frozen);
+    }
+
+    /// Whether the deadline lets this RPC through right now.
+    #[must_use]
+    pub fn admits_rpc(&self, rpc_path: &str) -> bool {
+        self.sandbox_timeout().admits(rpc_path)
+    }
+
+    /// Whether `/run` installed a lifecycle block.
+    #[must_use]
+    pub fn timeout_managed(&self) -> bool {
+        self.sandbox_timeout().is_managed()
+    }
+
     #[must_use]
     pub fn health(&self) -> HealthSnapshot {
+        let lifecycle = self.lifecycle();
         let now = self.clock.read();
         let state = self.state();
         HealthSnapshot::builder(self.agent_version)
-            .agent_ready(state.phase() != HookPhase::Terminating)
+            .agent_ready(state.phase() != HookPhase::Terminating && !self.egress_settling())
             .uptime(now.monotonic.saturating_sub(self.booted_at.monotonic))
             .sandbox_id(state.sandbox_id())
             .resume_generation(state.resume_generation())
             .clock_offset_ms(state.clock_offset_ms())
             .hook_anomalies(self.hook_anomalies())
             .metadata(self.metadata())
+            .lifecycle(lifecycle)
+            .egress_enforcement(self.egress_enforcement())
             .build()
     }
 
@@ -272,15 +392,35 @@ impl SandboxSession {
         match parse_run_payload(raw) {
             Err(error) => RunOutcome::Tokenless(error),
             Ok(parsed) => {
+                let lifecycle = parsed.lifecycle;
+                self.network_enforce
+                    .store(parsed.network_enforce, Ordering::Release);
+                self.egress_settling
+                    .store(parsed.network_enforce, Ordering::Release);
                 *self.defaults.lock().unwrap_or_else(PoisonError::into_inner) =
                     Some(parsed.defaults);
                 *self.metadata.lock().unwrap_or_else(PoisonError::into_inner) = parsed.metadata;
                 match self.gate.install_once(parsed.token_digest) {
-                    InstallOutcome::Installed => RunOutcome::Installed,
+                    InstallOutcome::Installed => {
+                        self.install_lifecycle(lifecycle);
+                        RunOutcome::Installed
+                    }
                     InstallOutcome::AlreadyInstalled => RunOutcome::AlreadyRan,
                 }
             }
         }
+    }
+
+    fn install_lifecycle(&self, lifecycle: Option<LifecycleSpec>) {
+        let Some(spec) = lifecycle else {
+            return;
+        };
+        let now = self.clock.monotonic();
+        self.sandbox_timeout().install(spec, now);
+    }
+
+    fn sandbox_timeout(&self) -> MutexGuard<'_, SandboxTimeout> {
+        self.timeout.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn state(&self) -> MutexGuard<'_, LifecycleState> {
@@ -513,6 +653,69 @@ mod tests {
     }
 
     #[test]
+    fn network_enforce_comes_from_the_accepted_payload() {
+        let (_, session) = session();
+        assert!(!session.network_enforce());
+        let payload = format!(
+            "{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\",\"network\":{{\"enforce\":true}}}}"
+        );
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&payload),
+        });
+        assert!(session.network_enforce());
+    }
+
+    #[test]
+    fn health_reports_the_published_egress_enforcement() {
+        let (_, session) = session();
+        assert_eq!(session.health().egress_enforcement, EgressEnforcement::None);
+        session.set_egress_enforcement(EgressEnforcement::GuestRoutesAndProxy);
+        assert_eq!(
+            session.health().egress_enforcement,
+            EgressEnforcement::GuestRoutesAndProxy
+        );
+    }
+
+    #[test]
+    fn health_is_not_ready_while_the_run_deny_all_settles() {
+        let (_, session) = session();
+        let payload = format!(
+            "{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\",\"network\":{{\"enforce\":true}}}}"
+        );
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&payload),
+        });
+        assert!(session.egress_settling());
+        assert!(!session.health().agent_ready);
+        session.egress_settled();
+        assert!(session.health().agent_ready);
+    }
+
+    #[test]
+    fn a_run_without_enforce_never_settles() {
+        let (_, session) = session();
+        let payload = format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"}}");
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&payload),
+        });
+        assert!(!session.egress_settling());
+        assert!(session.health().agent_ready);
+    }
+
+    #[test]
+    fn the_egress_env_is_empty_until_published() {
+        let (_, session) = session();
+        assert!(session.egress_env().is_empty());
+        let env: BTreeMap<String, String> =
+            [("HTTPS_PROXY".to_owned(), "http://127.0.0.1:1".to_owned())].into();
+        session.set_egress_env(env.clone());
+        assert_eq!(session.egress_env(), env);
+    }
+
+    #[test]
     fn suspend_before_run_reports_the_illegal_hook() {
         let (_, session) = session();
         assert_eq!(
@@ -650,5 +853,81 @@ mod tests {
         );
         assert_eq!(session.metadata().get("a").map(String::as_str), Some("1"));
         assert!(!session.metadata().contains_key("b"));
+    }
+
+    fn run_with_lifecycle(session: &SandboxSession, block: &str) -> RunOutcome {
+        let payload = format!(
+            "{{\"v\":1,\"token_sha256\":\"{}\",\"lifecycle\":{block}}}",
+            digest_hex_of(SECRET)
+        );
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&payload),
+        })
+    }
+
+    #[test]
+    fn run_installs_the_lifecycle_and_health_reports_it() {
+        use crate::sandbox_timeout::{LifecyclePhase, TimeoutAction};
+        let (clock, session) = session();
+        clock.advance(5);
+        let outcome = run_with_lifecycle(
+            &session,
+            "{\"auto_resume\":false,\"cap_s\":900,\"on_timeout\":\"kill\",\"timeout_s\":60}",
+        );
+        assert_eq!(outcome, RunOutcome::Installed);
+        assert!(session.timeout_managed());
+        let lifecycle = session.health().lifecycle;
+        assert_eq!(lifecycle.phase, LifecyclePhase::Active);
+        assert_eq!(lifecycle.deadline_unix_ms, (1_000 + 5 + 60) * 1_000);
+        assert_eq!(lifecycle.cap_unix_ms, (1_000 + 5 + 900 - 60) * 1_000);
+        assert_eq!(lifecycle.on_timeout, Some(TimeoutAction::Kill));
+        assert_eq!(lifecycle.timeout, Duration::from_mins(1));
+        let moved = session
+            .set_timeout(TimeoutMode::Exact, Duration::from_secs(120))
+            .unwrap();
+        assert_eq!(moved.extensions, 1);
+        assert_eq!(session.health().lifecycle, moved);
+        assert_eq!(session.tick_timeout(false), None);
+        clock.advance(120);
+        assert_eq!(session.tick_timeout(false), Some(DeadlineAction::Terminate));
+        assert!(!session.admits_rpc("/rayito.v1.ProcessService/List"));
+        assert!(session.admits_rpc(crate::auth::ANONYMOUS_RPC_PATH));
+        assert_eq!(
+            session.set_timeout(TimeoutMode::AtLeast, Duration::from_secs(60)),
+            Err(SandboxTimeoutError::Expired)
+        );
+    }
+
+    #[test]
+    fn health_reports_unmanaged_without_a_block() {
+        let (clock, session) = session();
+        assert_eq!(run_with_secret(&session, SECRET), RunOutcome::Installed);
+        assert!(!session.timeout_managed());
+        assert_eq!(session.health().lifecycle, LifecycleView::default());
+        assert_eq!(
+            session.set_timeout(TimeoutMode::Exact, Duration::from_secs(60)),
+            Err(SandboxTimeoutError::Unmanaged)
+        );
+        clock.advance(100_000);
+        assert_eq!(session.tick_timeout(true), None);
+        session.timeout_resumed(true);
+        assert!(session.admits_rpc("/rayito.v1.ProcessService/List"));
+        assert_eq!(session.health().lifecycle, LifecycleView::default());
+    }
+
+    #[test]
+    fn an_invalid_lifecycle_leaves_the_agent_tokenless_and_unmanaged() {
+        let (_, session) = session();
+        let outcome = run_with_lifecycle(
+            &session,
+            "{\"auto_resume\":true,\"cap_s\":900,\"on_timeout\":\"kill\",\"timeout_s\":60}",
+        );
+        assert!(matches!(
+            outcome,
+            RunOutcome::Tokenless(RunPayloadError::InvalidLifecycle(_))
+        ));
+        assert!(!session.has_access_token());
+        assert!(!session.timeout_managed());
     }
 }

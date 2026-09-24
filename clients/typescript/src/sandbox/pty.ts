@@ -215,6 +215,7 @@ export class Pty {
         deadlineMs: deadline,
         onData: options.onData,
         requestTimeoutMs: options.requestTimeoutMs,
+        signal: options.signal,
       },
     );
   }
@@ -226,6 +227,7 @@ export class Pty {
       deadlineMs: deadline,
       onData: options.onData,
       requestTimeoutMs: options.requestTimeoutMs,
+      signal: options.signal,
     });
   }
 
@@ -238,6 +240,7 @@ export class Pty {
     await this.core.ptyCall(
       (client, callOptions) => client.sendInput(request, callOptions),
       options.requestTimeoutMs,
+      options.signal,
     );
   }
 
@@ -250,6 +253,7 @@ export class Pty {
     await this.core.ptyCall(
       (client, callOptions) => client.resize(request, callOptions),
       options.requestTimeoutMs,
+      options.signal,
     );
   }
 
@@ -259,6 +263,7 @@ export class Pty {
       await this.core.ptyCall(
         (client, callOptions) => client.kill(request, callOptions),
         options.requestTimeoutMs,
+        options.signal,
       );
     } catch (error) {
       if (error instanceof NotFoundError) {
@@ -282,10 +287,12 @@ export class Pty {
     pid: number,
     fromSeq: number,
     deadlineMs: number | undefined,
+    signal?: AbortSignal,
   ): Promise<OpenedStream<PtyServerMessage>> {
     const opened = await this.core.openStream(this.connectStarter(pid, fromSeq, deadlineMs), {
       service: PtyService,
       stream: true,
+      signal,
     });
     if (pidFromPtyStarted(opened.first) !== pid) {
       opened.controller.abort();
@@ -300,9 +307,14 @@ export class Pty {
       readonly deadlineMs: number | undefined;
       readonly onData: PtyDataCallback | undefined;
       readonly requestTimeoutMs: number | undefined;
+      readonly signal?: AbortSignal | undefined;
     },
   ): Promise<PtyHandle> {
-    const opened = await this.core.openStream(start, { service: PtyService, stream: true });
+    const opened = await this.core.openStream(start, {
+      service: PtyService,
+      stream: true,
+      signal: options.signal,
+    });
     const adapter = new PtyMessages(options.onData);
     const progress = new CommandProgress<PtyServerMessage>(
       adapter.pid(opened.first),
@@ -317,6 +329,7 @@ export class Pty {
       requestTimeoutMs: options.requestTimeoutMs,
       deadlineAt: deadlineAt(options.deadlineMs, this.core.now),
       foreground: false,
+      signal: options.signal,
     });
   }
 }
@@ -329,6 +342,7 @@ export interface PtyHandleInit {
   readonly requestTimeoutMs: number | undefined;
   readonly deadlineAt: number | undefined;
   readonly foreground: boolean;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Handle de una PTY: `for await` entrega `{ pty: Uint8Array }`; `sendInput`, `resize` y `kill` van por `PtyService`. */
@@ -357,6 +371,6 @@ export class PtyHandle extends CommandHandle<PtyServerMessage> {
   }
 
   protected override resubscribe(fromSeq: number): Promise<OpenedStream<PtyServerMessage>> {
-    return this.#pty.openConnect(this.pid, fromSeq, this.remainingDeadline());
+    return this.#pty.openConnect(this.pid, fromSeq, this.remainingDeadline(), this.signal);
   }
 }

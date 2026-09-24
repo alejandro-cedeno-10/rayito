@@ -2,7 +2,7 @@
 //! parsers are pure so they run against fixtures on any host; the probe port
 //! is what the Linux adapter implements.
 
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
@@ -33,6 +33,8 @@ pub struct CpuTimes {
 pub struct MemoryInfo {
     pub total: u64,
     pub available: u64,
+    /// `Cached:` (page cache); `0` when the kernel does not report it.
+    pub cached: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,7 @@ pub struct MetricsSnapshot {
     pub cpu_used_pct: f64,
     pub mem_used: u64,
     pub mem_total: u64,
+    pub mem_cache: u64,
     pub disk_used: u64,
     pub disk_total: u64,
     pub cpu_count: u32,
@@ -85,7 +88,21 @@ pub fn parse_proc_stat(text: &str) -> Result<CpuTimes, MetricsError> {
 pub fn parse_meminfo(text: &str) -> Result<MemoryInfo, MetricsError> {
     let total = meminfo_field(text, "MemTotal:")?;
     let available = meminfo_field(text, "MemAvailable:")?;
-    Ok(MemoryInfo { total, available })
+    let cached = optional_meminfo_field(text, "Cached:")?.unwrap_or(0);
+    Ok(MemoryInfo {
+        total,
+        available,
+        cached,
+    })
+}
+
+/// Milliseconds since the Unix epoch: `0` before the epoch, saturating at
+/// `i64::MAX`.
+#[must_use]
+pub fn unix_millis(wall: SystemTime) -> i64 {
+    wall.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+    })
 }
 
 /// Share of the sampling window spent busy, clamped to `0..=100`; `0` when
@@ -116,6 +133,7 @@ pub fn snapshot(
         cpu_used_pct: cpu_used_pct(first, second),
         mem_used: memory.total.saturating_sub(memory.available),
         mem_total: memory.total,
+        mem_cache: memory.cached,
         disk_used: disk.used,
         disk_total: disk.total,
         cpu_count: cpu_count.max(1),
@@ -124,16 +142,21 @@ pub fn snapshot(
 }
 
 fn meminfo_field(text: &str, label: &'static str) -> Result<u64, MetricsError> {
-    let line = text
-        .lines()
-        .find(|line| line.starts_with(label))
-        .ok_or(malformed("/proc/meminfo", "missing field"))?;
+    optional_meminfo_field(text, label)?.ok_or(malformed("/proc/meminfo", "missing field"))
+}
+
+/// `None` when the line is absent; the label match is a prefix, so
+/// `Cached:` never picks up `SwapCached:`.
+fn optional_meminfo_field(text: &str, label: &'static str) -> Result<Option<u64>, MetricsError> {
+    let Some(line) = text.lines().find(|line| line.starts_with(label)) else {
+        return Ok(None);
+    };
     let kib: u64 = line
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse().ok())
         .ok_or(malformed("/proc/meminfo", "non-numeric field"))?;
-    Ok(kib.saturating_mul(1024))
+    Ok(Some(kib.saturating_mul(1024)))
 }
 
 fn malformed(source_name: &'static str, reason: &'static str) -> MetricsError {
@@ -146,7 +169,7 @@ fn malformed(source_name: &'static str, reason: &'static str) -> MetricsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::UNIX_EPOCH;
+    use std::time::Duration;
 
     const PROC_STAT: &str = "cpu  4705 150 1120 16250 1 0 45 3 0 0\n\
 cpu0 1200 40 300 4100 0 0 12 1 0 0\n\
@@ -193,6 +216,55 @@ Buffers:           12000 kB\n";
     }
 
     #[test]
+    fn meminfo_reads_cached_and_defaults_it_to_zero() {
+        let with_cache = "MemTotal:  4000 kB\n\
+MemAvailable:  3000 kB\n\
+SwapCached:  7 kB\n\
+Cached:  512 kB\n";
+        assert_eq!(parse_meminfo(with_cache).unwrap().cached, 512 * 1024);
+        let swap_cached_only = "MemTotal:  4000 kB\n\
+MemAvailable:  3000 kB\n\
+SwapCached:  7 kB\n";
+        assert_eq!(parse_meminfo(swap_cached_only).unwrap().cached, 0);
+        assert_eq!(parse_meminfo(MEMINFO).unwrap().cached, 0);
+    }
+
+    #[test]
+    fn snapshot_carries_mem_cache() {
+        let snapshot = snapshot(
+            CpuTimes { busy: 0, idle: 0 },
+            CpuTimes { busy: 1, idle: 1 },
+            MemoryInfo {
+                total: 1000,
+                available: 400,
+                cached: 300,
+            },
+            DiskUsage { total: 1, used: 0 },
+            2,
+            UNIX_EPOCH,
+        );
+        assert_eq!(snapshot.mem_cache, 300);
+        assert_eq!(snapshot.mem_used, 600);
+    }
+
+    /// The saturation case only exists where `SystemTime` can hold more than
+    /// `i64::MAX` milliseconds (Unix `timespec`); a Windows `FILETIME` tops
+    /// out long before, so `checked_add` yields `None` there.
+    #[test]
+    fn unix_millis_saturates_and_clamps_pre_epoch() {
+        assert_eq!(unix_millis(UNIX_EPOCH), 0);
+        assert_eq!(
+            unix_millis(UNIX_EPOCH + Duration::from_millis(1_790_000_000_123)),
+            1_790_000_000_123
+        );
+        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
+        let past_i64_millis = Duration::from_secs(9_223_372_036_854_776);
+        if let Some(far_future) = UNIX_EPOCH.checked_add(past_i64_millis) {
+            assert_eq!(unix_millis(far_future), i64::MAX);
+        }
+    }
+
+    #[test]
     fn cpu_percentage_edge_cases() {
         let prev = CpuTimes {
             busy: 100,
@@ -221,6 +293,7 @@ Buffers:           12000 kB\n";
             MemoryInfo {
                 total: 1000,
                 available: 250,
+                cached: 0,
             },
             DiskUsage {
                 total: 8000,

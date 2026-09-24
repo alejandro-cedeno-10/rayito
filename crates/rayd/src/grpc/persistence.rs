@@ -1,7 +1,8 @@
 //! `FilesystemService.Checkpoint` / `Restore` (design D7/D8/D13): proto
 //! <-> domain conversion, the status table before the first message, the
 //! `StreamError` code after it, the suspend close (`StreamError
-//! suspending` in-stream) and the keepalive wrapper. Log lines carry the
+//! suspending` in-stream; a trailing `FAILED_PRECONDITION sandbox_timeout`
+//! at the logical deadline, ADR-011) and the keepalive wrapper. Log lines carry the
 //! rpc, the outcome and counts, never the bucket, the prefix or a path.
 
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use tonic::codegen::BoxStream;
 use tonic::{Code, Request, Response, Status};
 
 use super::keepalive::KeepAliveStream;
-use crate::lifecycle::{SuspendClose, SuspendSignal, SuspendableStream};
+use crate::lifecycle::{StreamCloseReason, SuspendClose, SuspendSignal, SuspendableStream};
 use crate::persistence::{CheckpointItem, PersistenceBackend, RestoreItem};
 
 pub const SUSPENDING_CODE: &str = "suspending";
@@ -64,7 +65,12 @@ impl PersistenceGrpc {
             stream,
             self.suspend.subscribe(),
             |item| Ok(checkpoint_event(item)),
-            || SuspendClose::Terminal(checkpoint_error(SUSPENDING_CODE, SUSPENDING_CODE)),
+            |reason| match reason {
+                StreamCloseReason::Suspending => {
+                    SuspendClose::Terminal(checkpoint_error(SUSPENDING_CODE, SUSPENDING_CODE))
+                }
+                StreamCloseReason::SandboxTimeout => SuspendClose::Status,
+            },
         );
         Ok(Response::new(Box::pin(KeepAliveStream::new(
             responses,
@@ -92,7 +98,12 @@ impl PersistenceGrpc {
             stream,
             self.suspend.subscribe(),
             |item| Ok(restore_event(item)),
-            || SuspendClose::Terminal(restore_error(SUSPENDING_CODE, SUSPENDING_CODE)),
+            |reason| match reason {
+                StreamCloseReason::Suspending => {
+                    SuspendClose::Terminal(restore_error(SUSPENDING_CODE, SUSPENDING_CODE))
+                }
+                StreamCloseReason::SandboxTimeout => SuspendClose::Status,
+            },
         );
         Ok(Response::new(Box::pin(KeepAliveStream::new(
             responses,

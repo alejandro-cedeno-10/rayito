@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file rayito/v1/common.proto.
  */
 export const file_rayito_v1_common: GenFile = /*@__PURE__*/
-  fileDesc("ChZyYXlpdG8vdjEvY29tbW9uLnByb3RvEglyYXlpdG8udjEiGAoEVXNlchIQCgh1c2VybmFtZRgBIAEoCSIsCgtTdHJlYW1FcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiCwoJS2VlcEFsaXZlIugBCglFbnRyeUluZm8SDAoEbmFtZRgBIAEoCRIhCgR0eXBlGAIgASgOMhMucmF5aXRvLnYxLkZpbGVUeXBlEgwKBHBhdGgYAyABKAkSDAoEc2l6ZRgEIAEoBBIMCgRtb2RlGAUgASgNEhMKC3Blcm1pc3Npb25zGAYgASgJEg0KBW93bmVyGAcgASgJEg0KBWdyb3VwGAggASgJEh0KFW1vZGlmaWVkX3RpbWVfdW5peF9tcxgJIAEoAxIbCg5zeW1saW5rX3RhcmdldBgKIAEoCUgAiAEBQhEKD19zeW1saW5rX3RhcmdldCppCghGaWxlVHlwZRIZChVGSUxFX1RZUEVfVU5TUEVDSUZJRUQQABISCg5GSUxFX1RZUEVfRklMRRABEhcKE0ZJTEVfVFlQRV9ESVJFQ1RPUlkQAhIVChFGSUxFX1RZUEVfU1lNTElOSxADYgZwcm90bzM");
+  fileDesc("ChZyYXlpdG8vdjEvY29tbW9uLnByb3RvEglyYXlpdG8udjEiGAoEVXNlchIQCgh1c2VybmFtZRgBIAEoCSIsCgtTdHJlYW1FcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiCwoJS2VlcEFsaXZlIs8CCglFbnRyeUluZm8SDAoEbmFtZRgBIAEoCRIhCgR0eXBlGAIgASgOMhMucmF5aXRvLnYxLkZpbGVUeXBlEgwKBHBhdGgYAyABKAkSDAoEc2l6ZRgEIAEoBBIMCgRtb2RlGAUgASgNEhMKC3Blcm1pc3Npb25zGAYgASgJEg0KBW93bmVyGAcgASgJEg0KBWdyb3VwGAggASgJEh0KFW1vZGlmaWVkX3RpbWVfdW5peF9tcxgJIAEoAxIbCg5zeW1saW5rX3RhcmdldBgKIAEoCUgAiAEBEjQKCG1ldGFkYXRhGAsgAygLMiIucmF5aXRvLnYxLkVudHJ5SW5mby5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIRCg9fc3ltbGlua190YXJnZXQqaQoIRmlsZVR5cGUSGQoVRklMRV9UWVBFX1VOU1BFQ0lGSUVEEAASEgoORklMRV9UWVBFX0ZJTEUQARIXChNGSUxFX1RZUEVfRElSRUNUT1JZEAISFQoRRklMRV9UWVBFX1NZTUxJTksQA2IGcHJvdG8z");
 
 /**
  * Identidad de usuario bajo la que se ejecuta una operación dentro del sandbox.
@@ -39,8 +39,9 @@ export const UserSchema: GenMessage<User> = /*@__PURE__*/
  *
  * Códigos cerrados: "not_found", "permission_denied", "invalid_argument",
  * "unimplemented", "deadline_exceeded", "output_truncated", "suspending",
- * "resumed_state_lost", "kernel_died", "internal". Un cliente trata cualquier
- * código desconocido como "internal".
+ * "resumed_state_lost", "kernel_died", "internal", "resource_exhausted",
+ * "failed_precondition", "unavailable", "cancelled", "sandbox_timeout". Un
+ * cliente trata cualquier código desconocido como "internal".
  *
  * @generated from message rayito.v1.StreamError
  */
@@ -133,6 +134,14 @@ export type EntryInfo = Message<"rayito.v1.EntryInfo"> & {
    * @generated from field: optional string symlink_target = 10;
    */
   symlinkTarget?: string | undefined;
+
+  /**
+   * Metadatos del fichero: xattrs `user.rayito.<clave>` con la clave en
+   * minúsculas; vacío si no hay o si el sistema de ficheros no los admite.
+   *
+   * @generated from field: map<string, string> metadata = 11;
+   */
+  metadata: { [key: string]: string };
 };
 
 /**

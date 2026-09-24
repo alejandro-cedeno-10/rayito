@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,7 @@ import pytest
 
 from rayito import AsyncSandbox
 from rayito._limits import DEFAULT_PORT
+from rayito._sandbox_base import ReadinessPoll
 from rayito._transport import (
     ACCESS_TOKEN_KEY,
     PROXY_AUTH_KEY,
@@ -19,6 +21,7 @@ from rayito._transport import (
 )
 from rayito.exceptions import AuthenticationException, SandboxNotReadyException
 from rayito.sandbox_async.pty import AsyncPty
+from rayito.v1 import health_pb2
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -32,6 +35,7 @@ from .conftest import (
     list_item,
     microvm_response,
 )
+from .log_capture import capture_logs
 
 
 def proxy_forbidden() -> FakeRpcError:
@@ -235,3 +239,56 @@ async def test_async_genuine_permission_denied_is_not_retried(
             await sandbox.is_running()
         assert excinfo.value.proxy_rejected is False
     control_plane.microvms.assert_no_pending_responses()
+
+
+async def test_async_is_running_request_timeout_bounds_the_health_deadline(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El plazo se verifica en el stub y no en `time_remaining()` del
+    servidor: gRPC redondea el deadline al milisegundo hacia arriba y un
+    `Health` real de 0.5 s puede caducar con el GIL ocupado."""
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    timeouts: list[float | None] = []
+
+    async def health(
+        request: health_pb2.HealthRequest, timeout: float | None = None
+    ) -> health_pb2.HealthResponse:
+        timeouts.append(timeout)
+        return health_pb2.HealthResponse(agent_ready=True)
+
+    async with await AsyncSandbox.create(
+        IMAGE_ARN,
+        idle=None,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ) as sandbox:
+        monkeypatch.setattr(sandbox._health, "Health", health)
+        assert await sandbox.is_running(request_timeout=0.5) is True
+        assert await sandbox.is_running() is True
+        assert timeouts == [0.5, ReadinessPoll.MAX_RPC_TIMEOUT]
+
+
+async def test_async_logger_receives_the_create_and_readiness_records(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.servicer.unavailable_calls = 1
+    stub_launch(control_plane, fake_rayd)
+    control_plane.microvms.add_response("terminate_microvm", {})
+    custom = logging.getLogger("tests.custom.async")
+    with capture_logs("tests.custom.async") as mine, capture_logs("rayito.sandbox") as default:
+        sandbox = await AsyncSandbox.create(
+            IMAGE_ARN,
+            idle=None,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+            logger=custom,
+        )
+        await sandbox.kill()
+    messages = mine.messages()
+    assert f"run-microvm aceptado: {SANDBOX_ID} (PENDING)" in messages
+    assert any("Health aún no alcanzable" in message for message in messages)
+    assert default.messages() == []
+    assert sandbox._logger_or(logging.getLogger("rayito.commands")) is custom

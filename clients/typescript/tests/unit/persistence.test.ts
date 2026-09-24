@@ -195,6 +195,15 @@ describe("persistence rules", () => {
       TimeoutError,
     );
   });
+
+  it("the sandbox deadline closes Checkpoint and Restore with TimeoutError", () => {
+    const gated = new ConnectError("sandbox_timeout", Code.FailedPrecondition);
+    expect(statusError(gated)).toBeInstanceOf(TimeoutError);
+    expect(midStreamError(gated)).toBeInstanceOf(TimeoutError);
+    expect(
+      streamErrorFrom(create(StreamErrorSchema, { code: "sandbox_timeout", message: "x" })),
+    ).toBeInstanceOf(TimeoutError);
+  });
 });
 
 // ------------------------------------------------------------- create rules

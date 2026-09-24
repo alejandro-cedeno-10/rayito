@@ -99,8 +99,12 @@ impl Walk<'_, '_> {
             let descend = child.kind == EntryKind::Directory
                 && remaining > 1
                 && !self.deny.is_denied(&child_canonical);
-            self.entries
-                .push(build_entry(child, &child_request, self.names));
+            let mut entry = build_entry(child, &child_request, self.names);
+            entry.metadata = self
+                .fs
+                .read_metadata(self.id, &child_canonical)
+                .unwrap_or_default();
+            self.entries.push(entry);
             if descend {
                 self.descend(&child_request, &child_canonical, remaining - 1)?;
             }

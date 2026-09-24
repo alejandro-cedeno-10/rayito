@@ -27,6 +27,11 @@ class HealthServiceStub:
                 request_serializer=rayito_dot_v1_dot_health__pb2.MetricsRequest.SerializeToString,
                 response_deserializer=rayito_dot_v1_dot_health__pb2.MetricsResponse.FromString,
                 _registered_method=True)
+        self.MetricsHistory = channel.unary_unary(
+                '/rayito.v1.HealthService/MetricsHistory',
+                request_serializer=rayito_dot_v1_dot_health__pb2.MetricsHistoryRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_health__pb2.MetricsHistoryResponse.FromString,
+                _registered_method=True)
 
 
 class HealthServiceServicer:
@@ -47,6 +52,16 @@ class HealthServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def MetricsHistory(self, request, context):
+        """Serie de métricas que `rayd` muestrea cada 5 s desde `/run`, en un
+        anillo de 5760 muestras (8 h, el techo de vida del MicroVM). Exige
+        `x-access-token`, como `Metrics`. Mientras la VM está suspendida no se
+        muestrea: la serie tiene un hueco, como la de E2B con un sandbox pausado.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HealthServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -59,6 +74,11 @@ def add_HealthServiceServicer_to_server(servicer, server):
                     servicer.Metrics,
                     request_deserializer=rayito_dot_v1_dot_health__pb2.MetricsRequest.FromString,
                     response_serializer=rayito_dot_v1_dot_health__pb2.MetricsResponse.SerializeToString,
+            ),
+            'MetricsHistory': grpc.unary_unary_rpc_method_handler(
+                    servicer.MetricsHistory,
+                    request_deserializer=rayito_dot_v1_dot_health__pb2.MetricsHistoryRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_health__pb2.MetricsHistoryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -118,6 +138,33 @@ class HealthService:
             '/rayito.v1.HealthService/Metrics',
             rayito_dot_v1_dot_health__pb2.MetricsRequest.SerializeToString,
             rayito_dot_v1_dot_health__pb2.MetricsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MetricsHistory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rayito.v1.HealthService/MetricsHistory',
+            rayito_dot_v1_dot_health__pb2.MetricsHistoryRequest.SerializeToString,
+            rayito_dot_v1_dot_health__pb2.MetricsHistoryResponse.FromString,
             options,
             channel_credentials,
             insecure,

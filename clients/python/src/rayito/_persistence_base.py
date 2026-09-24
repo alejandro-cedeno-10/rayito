@@ -23,7 +23,9 @@ from rayito._models import (
     S3Prefix,
 )
 from rayito._transport import (
+    SANDBOX_TIMEOUT_MESSAGE,
     is_proxy_forbidden,
+    is_sandbox_timeout,
     is_stream_reset,
     rpc_details,
     rpc_status,
@@ -144,7 +146,7 @@ def require_role_for_persist(persist: S3Prefix | None, execution_role_arn: str |
     if persist is not None and execution_role_arn is None:
         raise InvalidArgumentException(
             "create(persist=) requiere execution_role_arn: rayd lee S3 con las credenciales "
-            "del execution role (política `persistence` de spike/m0/iam.yaml)"
+            "del execution role (política `persistence` de infra/iam.yaml)"
         )
 
 
@@ -188,6 +190,8 @@ def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
         "template": options.template,
         "template_version": options.template_version,
         "timeout": options.timeout,
+        "max_lifetime": options.max_lifetime,
+        "on_timeout": options.on_timeout,
         "idle": options.idle,
         "envs": options.envs,
         "metadata": options.metadata,
@@ -196,6 +200,7 @@ def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
         "allowed_ports": options.allowed_ports,
         "ingress": options.ingress,
         "egress": options.egress,
+        "network": options.network,
         "logging": options.logging,
         "access_token": options.access_token,
         "ready_timeout": options.ready_timeout,
@@ -339,6 +344,8 @@ def status_exception(exc: grpc.RpcError) -> Exception:
     """Status gRPC antes del primer mensaje (tabla D8) y cortes a mitad."""
     code = rpc_status(exc)
     message = rpc_details(exc)
+    if is_sandbox_timeout(exc):
+        return TimeoutException(SANDBOX_TIMEOUT_MESSAGE, grpc_code=code)
     if code is grpc.StatusCode.NOT_FOUND:
         return NotFoundException(message, grpc_code=code)
     if code is grpc.StatusCode.INVALID_ARGUMENT:
@@ -371,6 +378,8 @@ def status_exception(exc: grpc.RpcError) -> Exception:
 def mid_stream_exception(exc: grpc.RpcError) -> Exception:
     """Un `RpcError` después de `started`: nunca se reconecta."""
     code = rpc_status(exc)
+    if is_sandbox_timeout(exc):
+        return TimeoutException(SANDBOX_TIMEOUT_MESSAGE, grpc_code=code)
     if code is grpc.StatusCode.DEADLINE_EXCEEDED:
         return TimeoutException(rpc_details(exc), grpc_code=code)
     if code is grpc.StatusCode.CANCELLED:

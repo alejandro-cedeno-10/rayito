@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::HashMap;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -81,6 +82,35 @@ fn running_as_root() -> bool {
     nix::unistd::geteuid().is_root()
 }
 
+/// `/dev/null` opened by the test process without `O_CLOEXEC` once the
+/// harness is up, then moved to a number at or above
+/// [`INHERITABLE_FLOOR`] so it cannot be mistaken for the lister's own
+/// directory descriptor: what a concurrent `openpty` or a runner's pipe
+/// looks like to a `fork` that lands before close-on-exec is set. Closed
+/// on drop.
+struct InheritableDescriptor(OwnedFd);
+
+const INHERITABLE_FLOOR: i32 = 200;
+
+impl InheritableDescriptor {
+    /// `open` and `fcntl(F_DUPFD)` hand back fresh descriptors this
+    /// function alone owns; the first is closed once duplicated.
+    fn open() -> Self {
+        let first = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(first >= 0, "open /dev/null");
+        let raised = unsafe { libc::fcntl(first, libc::F_DUPFD, INHERITABLE_FLOOR) };
+        unsafe { libc::close(first) };
+        assert!(raised >= INHERITABLE_FLOOR, "F_DUPFD");
+        let flags = unsafe { libc::fcntl(raised, libc::F_GETFD) };
+        assert_eq!(flags & libc::FD_CLOEXEC, 0, "the copy must be inheritable");
+        Self(unsafe { OwnedFd::from_raw_fd(raised) })
+    }
+
+    fn number(&self) -> String {
+        self.0.as_raw_fd().to_string()
+    }
+}
+
 struct Harness {
     processes: ProcessServiceClient<Channel>,
     health: HealthServiceClient<Channel>,
@@ -136,9 +166,12 @@ async fn harness_with(options: Options) -> Harness {
             files,
             code: code.clone(),
             metrics: Arc::new(PlatformMetricsProbe::default()),
+            metrics_history: Arc::new(rayd_core::metrics_history::MetricsHistory::default()),
             suspend: suspend.clone(),
             imds: Arc::new(rayd::adapters::ImdsState::default()),
             persistence: Arc::new(rayd::persistence::UnavailablePersistence),
+            timeout: rayd::lifecycle::TimeoutWatcher::detached(),
+            network: rayd::network::NetworkManager::unavailable(session.clone()),
         },
         StreamSettings {
             keepalive_interval: options.keepalive,
@@ -940,6 +973,26 @@ async fn resource_limits_are_applied_or_clamped() {
         "nproc {nproc} (hard {nproc_hard})"
     );
     assert_eq!(core, "0");
+}
+
+/// A descriptor `rayd` holds without close-on-exec (a PTY half between
+/// `openpty` and `F_SETFD` in another task, a pipe the runner left open)
+/// never reaches a user process: the child marks everything above stdio
+/// close-on-exec right before `exec`, so it sees 0/1/2 and the directory
+/// `ls` opens, nothing else.
+#[tokio::test]
+async fn processes_inherit_no_descriptor_beyond_stdio() {
+    let harness = harness().await;
+    let leaked = InheritableDescriptor::open();
+    let collected = harness.run("ls /proc/self/fd").await;
+    let listed = collected.stdout_text();
+    let fds: Vec<&str> = listed.lines().collect();
+    assert!(
+        !fds.contains(&leaked.number().as_str()),
+        "fd {} leaked into {fds:?}",
+        leaked.number()
+    );
+    assert_eq!(fds, ["0", "1", "2", "3"]);
 }
 
 #[tokio::test]

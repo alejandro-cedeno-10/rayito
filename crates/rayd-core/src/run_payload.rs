@@ -3,21 +3,37 @@
 //! per-MicroVM input channel (ADR-004). Wire shape, versioned by `rayd`:
 //!
 //! `{"v":1,"token_sha256":"<64 hex>","envs":{...},"user":"user","workdir":"/home/user",
-//!  "metadata":{...},"limits":{"cpu_seconds":N}}`
+//!  "metadata":{...},"limits":{"cpu_seconds":N},
+//!  "lifecycle":{"auto_resume":false,"cap_s":900,"on_timeout":"kill","timeout_s":60},
+//!  "network":{"enforce":true}}`
 //!
-//! `metadata` (client labels echoed by `Health`) and `limits` (per-process
-//! `RLIMIT_CPU` for the sandbox's processes and PTYs) are optional; `v`
-//! stays 1 because an agent that ignores them still behaves.
+//! `network.enforce` (ADR-012) asks for deny-all before `/run` is
+//! answered; absent means `false`, anything but a JSON bool is an error,
+//! and unknown keys inside `network` are ignored.
+//!
+//! `metadata` (client labels echoed by `Health`), `limits` (per-process
+//! `RLIMIT_CPU` for the sandbox's processes and PTYs) and `lifecycle` (the
+//! logical deadline of ADR-011) are optional; `v` stays 1 because an agent
+//! that ignores them still behaves, and the SDK recognises an agent that
+//! ignored `lifecycle` by its absence from `Health`. Inside `lifecycle` all
+//! four keys are required: `timeout_s` in `1..=28800`, `cap_s` in
+//! `120..=28800`, `timeout_s <= cap_s`, `on_timeout` `"kill"` or `"pause"`,
+//! and `auto_resume: true` only with `"pause"`.
 //!
 //! Errors never quote payload content: the payload may carry a digest and
 //! environment values, and hook logs must stay free of both.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::auth::{AuthError, TokenDigest};
+use crate::sandbox_timeout::{
+    LifecycleSpec, MAX_LIFETIME_SECONDS, MIN_CAP_SECONDS, MIN_TIMEOUT_SECONDS, TimeoutAction,
+    TimeoutPolicy,
+};
 
 /// Hard limit of the `runHookPayload` field in the service model.
 pub const RUN_HOOK_PAYLOAD_MAX_CHARS: usize = 4096;
@@ -44,6 +60,11 @@ pub enum RunPayloadError {
     InvalidDigest(AuthError),
     #[error("payload field `limits.cpu_seconds` is outside {MIN_CPU_SECONDS}..={MAX_CPU_SECONDS}")]
     InvalidLimits,
+    /// Names the violated rule, never a value.
+    #[error("payload field `lifecycle` is invalid: {0}")]
+    InvalidLifecycle(&'static str),
+    #[error("payload field `network.enforce` is not a boolean")]
+    InvalidNetwork,
 }
 
 /// Sandbox-wide defaults carried by the payload, consumed from M2 on when
@@ -63,6 +84,11 @@ pub struct RunPayload {
     pub token_digest: TokenDigest,
     pub defaults: RunDefaults,
     pub metadata: BTreeMap<String, String>,
+    /// `None`: no lifecycle block, the sandbox life is the platform's.
+    pub lifecycle: Option<LifecycleSpec>,
+    /// `network.enforce`: install deny-all before answering `/run`
+    /// (ADR-012). The payload never carries rules or credentials.
+    pub network_enforce: bool,
 }
 
 #[derive(Deserialize)]
@@ -76,11 +102,31 @@ struct RunPayloadWire {
     #[serde(default)]
     metadata: BTreeMap<String, String>,
     limits: Option<LimitsWire>,
+    lifecycle: Option<LifecycleWire>,
+    network: Option<NetworkWire>,
+}
+
+/// `enforce` is read as any JSON value so a wrong type is this field's
+/// own error instead of a whole-payload parse failure; unknown keys are
+/// ignored.
+#[derive(Deserialize)]
+struct NetworkWire {
+    enforce: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct LimitsWire {
     cpu_seconds: Option<u64>,
+}
+
+/// `on_timeout` is read as a plain string and matched, so an unknown value
+/// is a rule violation that never reaches an error message.
+#[derive(Deserialize)]
+struct LifecycleWire {
+    timeout_s: Option<u64>,
+    cap_s: Option<u64>,
+    on_timeout: Option<String>,
+    auto_resume: Option<bool>,
 }
 
 fn validated_cpu_seconds(limits: Option<LimitsWire>) -> Result<Option<u64>, RunPayloadError> {
@@ -90,6 +136,50 @@ fn validated_cpu_seconds(limits: Option<LimitsWire>) -> Result<Option<u64>, RunP
             Ok(Some(seconds))
         }
         Some(_) => Err(RunPayloadError::InvalidLimits),
+    }
+}
+
+fn validated_lifecycle(
+    lifecycle: Option<LifecycleWire>,
+) -> Result<Option<LifecycleSpec>, RunPayloadError> {
+    lifecycle.map(LifecycleWire::validated).transpose()
+}
+
+impl LifecycleWire {
+    fn validated(self) -> Result<LifecycleSpec, RunPayloadError> {
+        let invalid = RunPayloadError::InvalidLifecycle;
+        let (Some(timeout_s), Some(cap_s), Some(on_timeout), Some(auto_resume)) = (
+            self.timeout_s,
+            self.cap_s,
+            self.on_timeout,
+            self.auto_resume,
+        ) else {
+            return Err(invalid(
+                "timeout_s, cap_s, on_timeout and auto_resume are all required",
+            ));
+        };
+        if !(MIN_TIMEOUT_SECONDS..=MAX_LIFETIME_SECONDS).contains(&timeout_s) {
+            return Err(invalid("timeout_s is outside 1..=28800"));
+        }
+        if !(MIN_CAP_SECONDS..=MAX_LIFETIME_SECONDS).contains(&cap_s) {
+            return Err(invalid("cap_s is outside 120..=28800"));
+        }
+        if timeout_s > cap_s {
+            return Err(invalid("timeout_s is greater than cap_s"));
+        }
+        let on_timeout = TimeoutAction::parse(&on_timeout)
+            .ok_or_else(|| invalid("on_timeout is neither \"kill\" nor \"pause\""))?;
+        if auto_resume && on_timeout != TimeoutAction::Pause {
+            return Err(invalid("auto_resume requires on_timeout \"pause\""));
+        }
+        Ok(LifecycleSpec {
+            timeout: Duration::from_secs(timeout_s),
+            cap: Duration::from_secs(cap_s),
+            policy: TimeoutPolicy {
+                on_timeout,
+                auto_resume,
+            },
+        })
     }
 }
 
@@ -113,6 +203,8 @@ pub fn parse_run_payload(raw: &str) -> Result<RunPayload, RunPayloadError> {
     let token_digest =
         TokenDigest::from_hex(&digest_hex).map_err(RunPayloadError::InvalidDigest)?;
     let cpu_seconds = validated_cpu_seconds(wire.limits)?;
+    let lifecycle = validated_lifecycle(wire.lifecycle)?;
+    let network_enforce = validated_network_enforce(wire.network)?;
     Ok(RunPayload {
         token_digest,
         defaults: RunDefaults {
@@ -122,7 +214,17 @@ pub fn parse_run_payload(raw: &str) -> Result<RunPayload, RunPayloadError> {
             cpu_seconds,
         },
         metadata: wire.metadata,
+        lifecycle,
+        network_enforce,
     })
+}
+
+fn validated_network_enforce(network: Option<NetworkWire>) -> Result<bool, RunPayloadError> {
+    match network.and_then(|network| network.enforce) {
+        None => Ok(false),
+        Some(serde_json::Value::Bool(enforce)) => Ok(enforce),
+        Some(_) => Err(RunPayloadError::InvalidNetwork),
+    }
 }
 
 #[cfg(test)]
@@ -133,6 +235,27 @@ mod tests {
 
     fn payload(fields: &str) -> String {
         format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"{fields}}}")
+    }
+
+    #[test]
+    fn network_enforce_is_an_optional_boolean() {
+        let enforce = |fields: &str| parse_run_payload(&payload(fields)).map(|p| p.network_enforce);
+        assert_eq!(enforce(""), Ok(false));
+        assert_eq!(enforce(",\"network\":{}"), Ok(false));
+        assert_eq!(enforce(",\"network\":{\"enforce\":true}"), Ok(true));
+        assert_eq!(enforce(",\"network\":{\"enforce\":false}"), Ok(false));
+        assert_eq!(
+            enforce(",\"network\":{\"enforce\":true,\"rules\":[\"x\"],\"future\":1}"),
+            Ok(true)
+        );
+        for bad in [
+            ",\"network\":{\"enforce\":\"yes\"}",
+            ",\"network\":{\"enforce\":1}",
+            ",\"network\":{\"enforce\":[true]}",
+        ] {
+            assert_eq!(enforce(bad), Err(RunPayloadError::InvalidNetwork), "{bad}");
+        }
+        assert!(!RunPayloadError::InvalidNetwork.to_string().contains("yes"));
     }
 
     #[test]
@@ -248,6 +371,91 @@ mod tests {
         let non_string = parse_run_payload(&payload(",\"metadata\":{\"n\":1}"));
         assert!(matches!(
             non_string,
+            Err(RunPayloadError::MalformedJson { .. })
+        ));
+    }
+
+    fn lifecycle_block(
+        timeout_s: &str,
+        cap_s: &str,
+        on_timeout: &str,
+        auto_resume: &str,
+    ) -> String {
+        format!(
+            ",\"lifecycle\":{{\"auto_resume\":{auto_resume},\"cap_s\":{cap_s},\"on_timeout\":{on_timeout},\"timeout_s\":{timeout_s}}}"
+        )
+    }
+
+    #[test]
+    fn lifecycle_is_optional_and_validated() {
+        assert_eq!(parse_run_payload(&payload("")).unwrap().lifecycle, None);
+        let kill = parse_run_payload(&payload(&lifecycle_block("60", "900", "\"kill\"", "false")))
+            .unwrap();
+        assert_eq!(
+            kill.lifecycle,
+            Some(LifecycleSpec {
+                timeout: Duration::from_secs(60),
+                cap: Duration::from_mins(15),
+                policy: TimeoutPolicy {
+                    on_timeout: TimeoutAction::Kill,
+                    auto_resume: false,
+                },
+            })
+        );
+        let pause = parse_run_payload(&payload(&lifecycle_block("60", "900", "\"pause\"", "true")))
+            .unwrap();
+        assert_eq!(
+            pause.lifecycle.map(|spec| spec.policy),
+            Some(TimeoutPolicy {
+                on_timeout: TimeoutAction::Pause,
+                auto_resume: true,
+            })
+        );
+        let edges =
+            parse_run_payload(&payload(&lifecycle_block("1", "120", "\"kill\"", "false"))).unwrap();
+        assert_eq!(edges.lifecycle.map(|spec| spec.cap.as_secs()), Some(120));
+        let widest = parse_run_payload(&payload(&lifecycle_block(
+            "28800",
+            "28800",
+            "\"pause\"",
+            "false",
+        )))
+        .unwrap();
+        assert_eq!(
+            widest.lifecycle.map(|spec| spec.timeout.as_secs()),
+            Some(28_800)
+        );
+        let rejected = [
+            lifecycle_block("0", "900", "\"kill\"", "false"),
+            lifecycle_block("60", "119", "\"kill\"", "false"),
+            lifecycle_block("60", "28801", "\"kill\"", "false"),
+            lifecycle_block("28801", "28801", "\"kill\"", "false"),
+            lifecycle_block("901", "900", "\"kill\"", "false"),
+            lifecycle_block("60", "900", "\"freeze\"", "false"),
+            lifecycle_block("60", "900", "\"kill\"", "true"),
+            ",\"lifecycle\":{\"cap_s\":900,\"on_timeout\":\"kill\",\"auto_resume\":false}"
+                .to_owned(),
+            ",\"lifecycle\":{\"timeout_s\":60,\"on_timeout\":\"kill\",\"auto_resume\":false}"
+                .to_owned(),
+            ",\"lifecycle\":{\"timeout_s\":60,\"cap_s\":900,\"auto_resume\":false}".to_owned(),
+            ",\"lifecycle\":{\"timeout_s\":60,\"cap_s\":900,\"on_timeout\":\"kill\"}".to_owned(),
+        ];
+        for block in &rejected {
+            let error = parse_run_payload(&payload(block)).unwrap_err();
+            assert!(
+                matches!(error, RunPayloadError::InvalidLifecycle(_)),
+                "{block}: {error:?}"
+            );
+            let message = error.to_string();
+            assert!(!message.contains("freeze"), "{message}");
+            assert!(!message.contains("token"), "{message}");
+            assert!(!message.contains(DIGEST_HEX), "{message}");
+        }
+        let wrong_type = parse_run_payload(&payload(&lifecycle_block(
+            "\"60\"", "900", "\"kill\"", "false",
+        )));
+        assert!(matches!(
+            wrong_type,
             Err(RunPayloadError::MalformedJson { .. })
         ));
     }

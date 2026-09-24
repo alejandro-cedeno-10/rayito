@@ -73,10 +73,12 @@ class CodeClient:
     ) -> Execution:
         """Ejecuta `code` en el kernel del contexto (el `default` si se omite)
         o, con `language`, en el contexto por defecto de ese kernel
-        (`default-bash`, sólo en `rayito-base-poly`), que el agente crea en la
-        primera celda; `javascript` es un nombre reservado sin kernel en
-        ninguna imagen (`UNIMPLEMENTED`). `language` y `context` son
-        excluyentes.
+        (`default-bash`, `default-javascript`, `default-typescript`), que el
+        agente crea en la primera celda. `bash` y `javascript`/`typescript`
+        (alias `js`/`ts`, el kernel Jupyter de Deno) sólo existen en la
+        variante `rayito-base-poly`, con arranque perezoso; en las demás
+        imágenes el agente responde `UNIMPLEMENTED` nombrando
+        `rayito-base-poly`. `language` y `context` son excluyentes.
 
         `timeout` lo impone el agente: al vencer interrumpe la celda y, si el
         kernel no queda idle en 5 s, reinicia el contexto; en ambos casos la
@@ -115,14 +117,13 @@ class CodeClient:
         request_timeout: float | None = None,
     ) -> CodeContext:
         """Arranca un kernel nuevo (≈ segundos; deadline de 90 s por defecto).
-        `language` es `python` (por defecto), `bash` o `javascript` (alias
-        `js`); el kernel `bash` sólo existe en la variante de imagen
-        `rayito-base-poly` (`InvalidArgumentException` con `grpc_code`
-        `UNIMPLEMENTED` en las demás) y `javascript` es un nombre reservado
-        sin kernel en ninguna imagen (`UNIMPLEMENTED` en todas). `cwd` debe
-        existir en el sandbox;
-        `envs` forman parte del entorno del kernel. Como máximo 8 contextos
-        por sandbox."""
+        `language` es `python` (por defecto), `bash`, `javascript` (alias
+        `js`) o `typescript` (alias `ts`). `bash` y los dos de Deno sólo
+        existen en la variante de imagen `rayito-base-poly`, donde ningún
+        kernel suyo arranca antes de que se pida (`InvalidArgumentException`
+        con `grpc_code` `UNIMPLEMENTED` nombrando `rayito-base-poly` en las
+        demás). `cwd` debe existir en el sandbox; `envs` forman parte del
+        entorno del kernel. Como máximo 8 contextos por sandbox."""
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         response = self._sandbox._code_call(
             lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
@@ -242,7 +243,7 @@ class ExecutionFeed:
         except NotFoundException as exc:
             raise reattach_failure(exc) from exc
         self._builder.reattached += 1
-        logger.info(
+        self._client._sandbox._logger_or(logger).info(
             "ejecución %s continuada con Reattach desde el seq %s (resume_generation %s)",
             self._builder.execution_id,
             request.from_seq,
@@ -267,7 +268,7 @@ class ExecutionFeed:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise
-                logger.info(
+                self._client._sandbox._logger_or(logger).info(
                     "ejecución %s: el gate del agente sigue cerrado (%s); reintento",
                     self._builder.execution_id,
                     exc,

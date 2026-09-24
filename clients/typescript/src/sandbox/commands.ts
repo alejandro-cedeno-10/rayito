@@ -38,7 +38,12 @@ import {
 import { SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { CommandResult, OutputChunk, ProcessInfo, SandboxMetrics } from "../models.js";
 import { validatedEnvs } from "../payload.js";
-import { isStreamReset, translateRpcError, translateStreamError } from "../transport/errors.js";
+import {
+  isStreamReset,
+  sandboxTimeoutError,
+  translateRpcError,
+  translateStreamError,
+} from "../transport/errors.js";
 import { type OpenedStream, type SandboxCore, type StreamStarter, withTimeout } from "./core.js";
 import { ReconnectBudget } from "./readiness.js";
 
@@ -55,6 +60,7 @@ export const STATUS_SIGNALED = "signaled";
 export const STATUS_TIMEOUT = "timeout";
 export const STATUS_SUSPENDING = "suspending";
 export const STATUS_OUTPUT_TRUNCATED = "output_truncated";
+export const STATUS_SANDBOX_TIMEOUT = "sandbox_timeout";
 
 export type OutputCallback = (text: string) => void;
 export type CommandOutcome = CommandResult | Error;
@@ -62,6 +68,12 @@ export type Monotonic = () => number;
 
 export interface RequestOptions {
   readonly requestTimeoutMs?: number | undefined;
+  /**
+   * Cancela la llamada (unaria o stream): uno ya abortado rechaza sin enviar
+   * nada y abortarlo después rechaza con `signal.reason` (por defecto un
+   * `DOMException` `AbortError`, la convención de `fetch`), sin envolverlo.
+   */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface CommandOptions extends RequestOptions {
@@ -290,13 +302,17 @@ export class OutputAccumulator {
  * Tabla cerrada de `EndEvent.status`: `exited`/`signaled` con exit 0 →
  * `CommandResult`; distinto de cero → `CommandExitError`; `timeout` →
  * `TimeoutError`; `output_truncated` → `SandboxError`; `suspending` →
- * `SandboxStateError`. Un status desconocido con `error` sigue la tabla de
- * `StreamError.code`.
+ * `SandboxStateError`; `sandbox_timeout` (el plazo lógico del sandbox venció,
+ * ADR-011) → `TimeoutError`, terminal. Un status desconocido con `error` sigue
+ * la tabla de `StreamError.code`.
  */
 export function outcomeFromEnd(end: EndEvent, stdout: string, stderr: string): CommandOutcome {
   const status = end.status;
   const exitCode = end.exitCode;
   const detail = endErrorMessage(end);
+  if (status === STATUS_SANDBOX_TIMEOUT) {
+    return sandboxTimeoutError();
+  }
   if (status === STATUS_TIMEOUT) {
     return new TimeoutError(
       `el comando superó su timeout y fue terminado por el agente ` +
@@ -512,6 +528,7 @@ export function metricsFromProto(response: MetricsResponse): SandboxMetrics {
     diskTotalBytes: Number(response.diskTotalBytes),
     cpuCount: response.cpuCount,
     timestamp: new Date(Number(response.timestampUnixMs)),
+    memCacheBytes: Number(response.memCacheBytes),
   });
 }
 
@@ -579,6 +596,7 @@ export class Commands {
         onStderr: options.onStderr,
         requestTimeoutMs: options.requestTimeoutMs,
         foreground: !background,
+        signal: options.signal,
       },
     );
     return background ? handle : handle.wait();
@@ -595,6 +613,7 @@ export class Commands {
       onStderr: options.onStderr,
       requestTimeoutMs: options.requestTimeoutMs,
       foreground: false,
+      signal: options.signal,
     });
   }
 
@@ -602,6 +621,7 @@ export class Commands {
     const response = await this.core.processCall(
       (client, callOptions) => client.list(create(ListRequestSchema, {}), callOptions),
       options.requestTimeoutMs,
+      options.signal,
     );
     return response.processes.map(processInfoFromProto);
   }
@@ -613,6 +633,7 @@ export class Commands {
       await this.core.processCall(
         (client, callOptions) => client.sendSignal(request, callOptions),
         options.requestTimeoutMs,
+        options.signal,
       );
     } catch (error) {
       if (error instanceof NotFoundError) {
@@ -635,6 +656,7 @@ export class Commands {
     await this.core.processCall(
       (client, callOptions) => client.sendInput(request, callOptions),
       options.requestTimeoutMs,
+      options.signal,
     );
   }
 
@@ -643,6 +665,7 @@ export class Commands {
     await this.core.processCall(
       (client, callOptions) => client.closeStdin(request, callOptions),
       options.requestTimeoutMs,
+      options.signal,
     );
   }
 
@@ -662,10 +685,12 @@ export class Commands {
     pid: number,
     fromSeq: number,
     deadlineMs: number | undefined,
+    signal?: AbortSignal,
   ): Promise<OpenedStream<ProcessEvent>> {
     const opened = await this.core.openStream(this.connectStarter(pid, fromSeq, deadlineMs), {
       service: ProcessService,
       stream: true,
+      signal,
     });
     if (pidFromStartEvent(opened.first) !== pid) {
       opened.controller.abort();
@@ -683,11 +708,13 @@ export class Commands {
       readonly onStderr: OutputCallback | undefined;
       readonly requestTimeoutMs: number | undefined;
       readonly foreground: boolean;
+      readonly signal?: AbortSignal | undefined;
     },
   ): Promise<CommandHandle> {
     const opened = await this.core.openStream(start, {
       service: ProcessService,
       stream: options.stream,
+      signal: options.signal,
     });
     const accumulator = new OutputAccumulator({
       onStdout: options.onStdout,
@@ -706,6 +733,7 @@ export class Commands {
       requestTimeoutMs: options.requestTimeoutMs,
       deadlineAt: deadlineAt(options.deadlineMs, this.core.now),
       foreground: options.foreground,
+      signal: options.signal,
     });
   }
 }
@@ -717,6 +745,8 @@ export interface CommandHandleInit<T> {
   readonly requestTimeoutMs: number | undefined;
   readonly deadlineAt: number | undefined;
   readonly foreground: boolean;
+  /** El `signal` del caller, ya enlazado al stream: abortado, `wait()`/`for await` rechazan con su `reason`. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
@@ -732,6 +762,7 @@ export class CommandHandle<T = ProcessEvent> implements AsyncIterable<OutputChun
   protected readonly requestTimeoutMs: number | undefined;
   protected readonly deadlineAtMs: number | undefined;
   protected readonly foreground: boolean;
+  protected readonly signal: AbortSignal | undefined;
   protected generation: number;
   protected pendingCut: ConnectError | undefined;
   protected reconnectCount = 0;
@@ -744,6 +775,7 @@ export class CommandHandle<T = ProcessEvent> implements AsyncIterable<OutputChun
     this.requestTimeoutMs = init.requestTimeoutMs;
     this.deadlineAtMs = init.deadlineAt;
     this.foreground = init.foreground;
+    this.signal = init.signal;
     this.generation = init.commands.core.resumeGeneration;
     init.commands.core.trackStream(init.opened.controller);
   }
@@ -837,6 +869,9 @@ export class CommandHandle<T = ProcessEvent> implements AsyncIterable<OutputChun
         result = await this.opened.iterator.next();
       } catch (error) {
         this.releaseStream();
+        if (this.signal?.aborted) {
+          throw this.signal.reason;
+        }
         if (progress.disconnected) {
           return;
         }
@@ -914,9 +949,12 @@ export class CommandHandle<T = ProcessEvent> implements AsyncIterable<OutputChun
   }
 
   protected resubscribe(fromSeq: number): Promise<OpenedStream<T>> {
-    return this.commands.openConnect(this.pid, fromSeq, this.remainingDeadline()) as Promise<
-      OpenedStream<T>
-    >;
+    return this.commands.openConnect(
+      this.pid,
+      fromSeq,
+      this.remainingDeadline(),
+      this.signal,
+    ) as Promise<OpenedStream<T>>;
   }
 
   protected remainingDeadline(): number | undefined {

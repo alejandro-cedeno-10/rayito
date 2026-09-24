@@ -102,7 +102,13 @@ impl<B: PtySpawner> PtyManager<B> {
     ) -> Result<(Pid, SubscriberStream), PtyError> {
         self.session.accepts_new_streams()?;
         let defaults = self.session.spawn_defaults();
-        let plan = plan_pty(&input, &defaults, self.policy, self.lookup.as_ref())?;
+        let plan = plan_pty(
+            &input,
+            &defaults,
+            &self.session.egress_env(),
+            self.policy,
+            self.lookup.as_ref(),
+        )?;
         ensure_directory(&plan.spec.cwd).await?;
         if !self.pty_devices {
             return Err(PtyError::NoPtyDevices);

@@ -33,8 +33,7 @@ node_modules/
 # aportan nada al que clona el repositorio.
 /.claude/
 
-# Salida cruda del spike M0: lleva IDs de cuenta, ARNs, endpoints e IDs de
-# MicroVM del entorno donde se corrió. Se regenera localmente con
-# `spike/m0/run_m0.py` y nunca se versiona; las cifras medidas viven en
-# `spike/m0/M0_RESULTS.md`.
-/spike/m0/out/
+# El spike de M0 ya no está en el árbol (historial de git), pero un clon
+# antiguo puede conservar su salida cruda, que lleva IDs de cuenta, ARNs,
+# endpoints e IDs de MicroVM del entorno donde se corrió: nunca se versiona.
+/spike/

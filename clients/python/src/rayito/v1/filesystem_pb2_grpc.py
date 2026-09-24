@@ -64,6 +64,31 @@ class FilesystemServiceStub:
                 request_serializer=rayito_dot_v1_dot_filesystem__pb2.RestoreRequest.SerializeToString,
                 response_deserializer=rayito_dot_v1_dot_filesystem__pb2.RestoreEvent.FromString,
                 _registered_method=True)
+        self.StartImport = channel.unary_unary(
+                '/rayito.v1.FilesystemService/StartImport',
+                request_serializer=rayito_dot_v1_dot_filesystem__pb2.StartImportRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.FromString,
+                _registered_method=True)
+        self.StartExport = channel.unary_unary(
+                '/rayito.v1.FilesystemService/StartExport',
+                request_serializer=rayito_dot_v1_dot_filesystem__pb2.StartExportRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.FromString,
+                _registered_method=True)
+        self.GetTransfer = channel.unary_unary(
+                '/rayito.v1.FilesystemService/GetTransfer',
+                request_serializer=rayito_dot_v1_dot_filesystem__pb2.GetTransferRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_filesystem__pb2.TransferState.FromString,
+                _registered_method=True)
+        self.WatchTransfer = channel.unary_stream(
+                '/rayito.v1.FilesystemService/WatchTransfer',
+                request_serializer=rayito_dot_v1_dot_filesystem__pb2.WatchTransferRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_filesystem__pb2.TransferEvent.FromString,
+                _registered_method=True)
+        self.CancelTransfer = channel.unary_unary(
+                '/rayito.v1.FilesystemService/CancelTransfer',
+                request_serializer=rayito_dot_v1_dot_filesystem__pb2.CancelTransferRequest.SerializeToString,
+                response_deserializer=rayito_dot_v1_dot_filesystem__pb2.CancelTransferResponse.FromString,
+                _registered_method=True)
 
 
 class FilesystemServiceServicer:
@@ -147,6 +172,49 @@ class FilesystemServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StartImport(self, request, context):
+        """Transferencias por URLs prefirmadas de S3 (ADR-010). rayd no guarda
+        credenciales: el SDK firma cada petición con las credenciales del
+        llamante y rayd sólo llama a URLs cuyo host y ruta coinciden con el
+        S3Object de la petición (INVALID_ARGUMENT antes de cualquier I/O de red).
+        Como mucho 16 transferencias esperando o en curso por sandbox
+        (RESOURCE_EXHAUSTED); NOT_FOUND para un transfer_id desconocido.
+
+        Importa un objeto a `path`: con `wait_for_object` sondea `get` hasta que
+        el objeto exista o venza `expires_at_unix_ms`; sin él lo pide una vez.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StartExport(self, request, context):
+        """Exporta `path` tal como está ahora (se abre y se mide al aceptar la
+        petición): un PUT o las partes de una subida multiparte.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTransfer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchTransfer(self, request, context):
+        """Primero el estado actual; después una foto completa en cada cambio;
+        termina tras DONE, FAILED o CANCELLED.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CancelTransfer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_FilesystemServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -199,6 +267,31 @@ def add_FilesystemServiceServicer_to_server(servicer, server):
                     servicer.Restore,
                     request_deserializer=rayito_dot_v1_dot_filesystem__pb2.RestoreRequest.FromString,
                     response_serializer=rayito_dot_v1_dot_filesystem__pb2.RestoreEvent.SerializeToString,
+            ),
+            'StartImport': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartImport,
+                    request_deserializer=rayito_dot_v1_dot_filesystem__pb2.StartImportRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.SerializeToString,
+            ),
+            'StartExport': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartExport,
+                    request_deserializer=rayito_dot_v1_dot_filesystem__pb2.StartExportRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.SerializeToString,
+            ),
+            'GetTransfer': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTransfer,
+                    request_deserializer=rayito_dot_v1_dot_filesystem__pb2.GetTransferRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_filesystem__pb2.TransferState.SerializeToString,
+            ),
+            'WatchTransfer': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchTransfer,
+                    request_deserializer=rayito_dot_v1_dot_filesystem__pb2.WatchTransferRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_filesystem__pb2.TransferEvent.SerializeToString,
+            ),
+            'CancelTransfer': grpc.unary_unary_rpc_method_handler(
+                    servicer.CancelTransfer,
+                    request_deserializer=rayito_dot_v1_dot_filesystem__pb2.CancelTransferRequest.FromString,
+                    response_serializer=rayito_dot_v1_dot_filesystem__pb2.CancelTransferResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -471,6 +564,141 @@ class FilesystemService:
             '/rayito.v1.FilesystemService/Restore',
             rayito_dot_v1_dot_filesystem__pb2.RestoreRequest.SerializeToString,
             rayito_dot_v1_dot_filesystem__pb2.RestoreEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartImport(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rayito.v1.FilesystemService/StartImport',
+            rayito_dot_v1_dot_filesystem__pb2.StartImportRequest.SerializeToString,
+            rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartExport(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rayito.v1.FilesystemService/StartExport',
+            rayito_dot_v1_dot_filesystem__pb2.StartExportRequest.SerializeToString,
+            rayito_dot_v1_dot_filesystem__pb2.StartTransferResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTransfer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rayito.v1.FilesystemService/GetTransfer',
+            rayito_dot_v1_dot_filesystem__pb2.GetTransferRequest.SerializeToString,
+            rayito_dot_v1_dot_filesystem__pb2.TransferState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchTransfer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/rayito.v1.FilesystemService/WatchTransfer',
+            rayito_dot_v1_dot_filesystem__pb2.WatchTransferRequest.SerializeToString,
+            rayito_dot_v1_dot_filesystem__pb2.TransferEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CancelTransfer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rayito.v1.FilesystemService/CancelTransfer',
+            rayito_dot_v1_dot_filesystem__pb2.CancelTransferRequest.SerializeToString,
+            rayito_dot_v1_dot_filesystem__pb2.CancelTransferResponse.FromString,
             options,
             channel_credentials,
             insecure,

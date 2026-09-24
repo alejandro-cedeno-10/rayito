@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import boto3
 import pytest
 
 from rayito import (
@@ -20,11 +21,13 @@ from rayito import (
     JsonFilePoolBackend,
     PoolClosedException,
     PoolConfig,
+    S3Staging,
     Sandbox,
     SandboxPool,
 )
 from rayito._payload import access_token_sha256
 from rayito._pool_base import SlotRecord
+from rayito._s3 import S3Gateway
 from rayito._transport import ACCESS_TOKEN_KEY
 from rayito.exceptions import (
     AuthenticationException,
@@ -130,6 +133,7 @@ def make_pool(
 
     def factory(size: int = 2, **overrides: Any) -> SandboxPool:
         backend = overrides.pop("backend", None)
+        session = overrides.pop("session", None)
         config = PoolConfig(
             size=size,
             template=IMAGE_ARN,
@@ -141,6 +145,7 @@ def make_pool(
         pool = SandboxPool(
             config,
             backend=backend,
+            session=session,
             control_plane=plane,
             transport=transport,
             monotonic=clock,
@@ -656,6 +661,45 @@ def test_create_with_pool_is_sugar_for_take(make_pool: PoolFactory) -> None:
         sandbox.kill()
     with pytest.raises(InvalidArgumentException, match="`envs`"):
         Sandbox.create(pool=pool, envs={"A": "1"})
+
+
+def test_create_with_pool_keeps_transfer_as_client_configuration(make_pool: PoolFactory) -> None:
+    """`transfer` no viaja al VM: una plaza del pool lo acepta como un
+    sandbox recién creado (`m9-file-transfer` D3)."""
+    pool = make_pool(size=1).start()
+    wait_idle(pool, 1)
+    staging = S3Staging(bucket="amzn-s3-demo-bucket")
+
+    sandbox = Sandbox.create(pool=pool, transfer=staging)
+    try:
+        assert sandbox.transfer == staging
+    finally:
+        sandbox.kill()
+
+
+def test_create_with_pool_signs_transfers_with_the_pool_session(
+    make_pool: PoolFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Las URLs y las transferencias enrutadas de una plaza se firman con la
+    sesión boto3 del pool, no con la cadena por defecto."""
+    session = boto3.session.Session(region_name="us-east-1")
+    built: list[object] = []
+
+    def from_session(cls: type[S3Gateway], given: object, region: str) -> S3Gateway:
+        built.append(given)
+        return cls(None)
+
+    monkeypatch.setattr("rayito._s3.S3Gateway.from_session", classmethod(from_session))
+    pool = make_pool(size=1, session=session).start()
+    wait_idle(pool, 1)
+    staging = S3Staging(bucket="amzn-s3-demo-bucket")
+
+    sandbox = Sandbox.create(pool=pool, transfer=staging)
+    try:
+        sandbox._transfers._gateway_for(staging)
+        assert built == [session]
+    finally:
+        sandbox.kill()
 
 
 @pytest.mark.parametrize(

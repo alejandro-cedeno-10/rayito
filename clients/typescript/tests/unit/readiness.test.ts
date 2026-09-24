@@ -9,10 +9,17 @@ import {
 } from "../../src/errors.js";
 import { HealthResponseSchema } from "../../src/gen/rayito/v1/health_pb.js";
 import {
+  LifecyclePhase,
+  LifecycleStateSchema,
+  TimeoutAction,
+} from "../../src/gen/rayito/v1/lifecycle_pb.js";
+import {
   alreadySuspended,
+  guestFactsFromHealth,
   healthFromProto,
   healthReconnected,
   isSuspendingReason,
+  metadataFromHealth,
   notReadyError,
   ReadinessPoll,
   ReconnectBudget,
@@ -199,6 +206,73 @@ describe("reconnect helpers", () => {
       resumeGeneration: 2,
       clockOffsetMs: -3,
       kernelStateLost: true,
+      egressEnforcement: "unspecified",
+      lifecycle: undefined,
+      cpuCount: 0,
+      memoryTotalBytes: 0,
+    });
+  });
+
+  test("healthFromProto carries the guest CPUs and memory", () => {
+    const health = healthFromProto(
+      create(HealthResponseSchema, { cpuCount: 2, memoryTotalBytes: 8_405_385_216n }),
+    );
+    expect(health.cpuCount).toBe(2);
+    expect(health.memoryTotalBytes).toBe(8_405_385_216);
+  });
+
+  test("guestFactsFromHealth maps zeros and an empty version to undefined", () => {
+    expect(
+      guestFactsFromHealth(
+        create(HealthResponseSchema, {
+          agentVersion: "0.3.0",
+          cpuCount: 2,
+          memoryTotalBytes: 8016n * 1024n * 1024n + 1023n,
+        }),
+      ),
+    ).toEqual({ agentVersion: "0.3.0", cpuCount: 2, memoryMb: 8016 });
+    expect(guestFactsFromHealth(create(HealthResponseSchema, { agentVersion: "0.2.0" }))).toEqual({
+      agentVersion: "0.2.0",
+      cpuCount: undefined,
+      memoryMb: undefined,
+    });
+    expect(
+      guestFactsFromHealth(create(HealthResponseSchema, { memoryTotalBytes: 1024n * 1024n - 1n })),
+    ).toEqual({ agentVersion: undefined, cpuCount: undefined, memoryMb: undefined });
+  });
+
+  test("metadataFromHealth copies and freezes the map, empty on an older agent", () => {
+    const metadata = metadataFromHealth(create(HealthResponseSchema, { metadata: { a: "1" } }));
+    expect(metadata).toEqual({ a: "1" });
+    expect(Object.isFrozen(metadata)).toBe(true);
+    expect(metadataFromHealth(create(HealthResponseSchema, {}))).toEqual({});
+  });
+
+  test("healthFromProto carries the lifecycle, undefined on an older agent", () => {
+    const older = healthFromProto(create(HealthResponseSchema, { agentReady: true }));
+    expect(older.lifecycle).toBeUndefined();
+    const managed = healthFromProto(
+      create(HealthResponseSchema, {
+        agentReady: true,
+        lifecycle: create(LifecycleStateSchema, {
+          phase: LifecyclePhase.EXPIRED,
+          deadlineUnixMs: 1_789_000_000_000n,
+          capUnixMs: 1_789_000_600_000n,
+          timeoutMs: 60_000n,
+          onTimeout: TimeoutAction.PAUSE,
+          autoResume: true,
+          extensions: 3,
+        }),
+      }),
+    );
+    expect(managed.lifecycle).toEqual({
+      phase: "expired",
+      deadline: new Date(1_789_000_000_000),
+      cap: new Date(1_789_000_600_000),
+      timeoutMs: 60_000,
+      onTimeout: "pause",
+      autoResume: true,
+      extensions: 3,
     });
   });
 

@@ -95,6 +95,7 @@ class AsyncCodeClient:
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
     ) -> CodeContext:
+        """Misma semántica que `CodeClient.create_context`."""
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         response = await self._sandbox._code_call(
             lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
@@ -208,7 +209,7 @@ class AsyncExecutionFeed:
         except NotFoundException as exc:
             raise reattach_failure(exc) from exc
         self._builder.reattached += 1
-        logger.info(
+        self._client._sandbox._logger_or(logger).info(
             "ejecución %s continuada con Reattach desde el seq %s (resume_generation %s)",
             self._builder.execution_id,
             request.from_seq,
@@ -233,7 +234,7 @@ class AsyncExecutionFeed:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise
-                logger.info(
+                self._client._sandbox._logger_or(logger).info(
                     "ejecución %s: el gate del agente sigue cerrado (%s); reintento",
                     self._builder.execution_id,
                     exc,

@@ -1,7 +1,8 @@
 //! In-memory `FileSystem` for the host tests: a tree of nodes keyed by
 //! canonical path, symlinks resolved by `canonicalize`, a per-path
-//! "unreadable" flag that answers `PermissionDenied`, and temp-file
-//! accounting so tests can assert nothing leaks on error.
+//! "unreadable" flag that answers `PermissionDenied`, per-file metadata
+//! that a commit replaces as a whole, and temp-file accounting so tests
+//! can assert nothing leaks on error.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
@@ -9,8 +10,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::entry::{EntryKind, RawEntry};
 use super::identity::FsIdentity;
+use super::metadata::FileMetadata;
 use super::path::{join_canonical, split_canonical};
-use super::ports::{FileSystem, FsIoError, NameResolver, WriteSink};
+use super::ports::{FileSystem, FsIoError, NameResolver, OpenedSnapshot, SnapshotFile, WriteSink};
 
 /// The unprivileged sandbox user of the image.
 pub fn user() -> FsIdentity {
@@ -44,6 +46,7 @@ struct Node {
     uid: u32,
     gid: u32,
     target: Option<String>,
+    metadata: FileMetadata,
 }
 
 impl Node {
@@ -55,6 +58,7 @@ impl Node {
             uid: id.uid,
             gid: id.gid,
             target: None,
+            metadata: FileMetadata::default(),
         }
     }
 }
@@ -240,6 +244,7 @@ impl FakeFileSystem {
                 uid: user().uid,
                 gid: user().gid,
                 target: None,
+                metadata: FileMetadata::default(),
             },
         );
     }
@@ -254,6 +259,7 @@ impl FakeFileSystem {
                 uid: user().uid,
                 gid: user().gid,
                 target: Some(target.to_owned()),
+                metadata: FileMetadata::default(),
             },
         );
     }
@@ -268,6 +274,7 @@ impl FakeFileSystem {
                 uid: user().uid,
                 gid: user().gid,
                 target: None,
+                metadata: FileMetadata::default(),
             },
         );
     }
@@ -305,6 +312,27 @@ impl FakeFileSystem {
     /// Temp files begun and neither committed nor dropped.
     pub fn open_temps(&self) -> usize {
         self.tree().open_temps
+    }
+
+    /// Replaces the metadata a node carries, as a sandbox process could.
+    pub fn set_metadata(&self, path: &str, metadata: FileMetadata) {
+        if let Some(node) = self.tree().nodes.get_mut(path) {
+            node.metadata = metadata;
+        }
+    }
+
+    pub fn metadata(&self, path: &str) -> Option<FileMetadata> {
+        self.tree()
+            .nodes
+            .get(path)
+            .map(|node| node.metadata.clone())
+    }
+
+    /// Truncates a file in place, as a writer racing an export would.
+    pub fn truncate(&self, path: &str, len: usize) {
+        if let Some(node) = self.tree().nodes.get_mut(path) {
+            node.bytes.truncate(len);
+        }
     }
 
     /// What `free_bytes` answers for every directory from now on.
@@ -367,6 +395,27 @@ impl FileSystem for FakeFileSystem {
         }
     }
 
+    fn open_snapshot(&self, id: &FsIdentity, path: &str) -> Result<OpenedSnapshot, FsIoError> {
+        self.open_read(id, path)?;
+        let entry = self.tree().raw_entry(path)?;
+        Ok(OpenedSnapshot {
+            file: Box::new(FakeSnapshot {
+                tree: self.tree.clone(),
+                path: path.to_owned(),
+            }),
+            entry,
+        })
+    }
+
+    fn read_metadata(&self, _id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError> {
+        Ok(self
+            .tree()
+            .nodes
+            .get(path)
+            .map(|node| node.metadata.clone())
+            .unwrap_or_default())
+    }
+
     fn free_bytes(&self, _id: &FsIdentity, _canonical_dir: &str) -> Result<u64, FsIoError> {
         Ok(self.tree().free_bytes)
     }
@@ -388,6 +437,7 @@ impl FileSystem for FakeFileSystem {
             dir: dir.to_owned(),
             mode,
             buffer: Vec::new(),
+            metadata: FileMetadata::default(),
         }))
     }
 
@@ -459,16 +509,46 @@ impl FileSystem for FakeFileSystem {
     }
 }
 
+/// Reads the node's current bytes on every call, so a truncation after
+/// the open is visible like it is through a real descriptor.
+struct FakeSnapshot {
+    tree: Arc<Mutex<Tree>>,
+    path: String,
+}
+
+impl SnapshotFile for FakeSnapshot {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize, FsIoError> {
+        let tree = self.tree.lock().unwrap_or_else(PoisonError::into_inner);
+        let bytes = tree
+            .nodes
+            .get(&self.path)
+            .map(|node| node.bytes.as_slice())
+            .unwrap_or_default();
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        let len = buf.len().min(bytes.len() - start);
+        buf[..len].copy_from_slice(&bytes[start..start + len]);
+        Ok(len)
+    }
+}
+
 struct FakeSink {
     tree: Arc<Mutex<Tree>>,
     dir: String,
     mode: u32,
     buffer: Vec<u8>,
+    metadata: FileMetadata,
 }
 
 impl WriteSink for FakeSink {
     fn write_chunk(&mut self, bytes: &[u8]) -> Result<(), FsIoError> {
         self.buffer.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn set_metadata(&mut self, metadata: &FileMetadata) -> Result<(), FsIoError> {
+        self.metadata = metadata.clone();
         Ok(())
     }
 
@@ -491,6 +571,7 @@ impl WriteSink for FakeSink {
                 uid: id.uid,
                 gid: id.gid,
                 target: None,
+                metadata: self.metadata.clone(),
             },
         );
         tree.raw_entry(&final_path)

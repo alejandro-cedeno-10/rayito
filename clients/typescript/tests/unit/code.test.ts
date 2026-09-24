@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { Code } from "@connectrpc/connect";
 import { describe, expect, test } from "vitest";
 import { ChartType, type LineChart } from "../../src/charts.js";
 import {
@@ -87,6 +88,35 @@ describe("pure helpers", () => {
     expect(reattach.fromSeq).toBe(4n);
     expect(() => buildReattachRequest("default", "bad", 0)).toThrow(InvalidArgumentError);
     expect(() => buildReattachRequest("default", "exec-0123456789abcdef", -1)).toThrow(
+      InvalidArgumentError,
+    );
+  });
+
+  test.each([
+    ["python", "python"],
+    ["Bash", "bash"],
+    ["javascript", "javascript"],
+    ["JS", "javascript"],
+    ["typescript", "typescript"],
+    ["TypeScript", "typescript"],
+    ["ts", "typescript"],
+    ["TS", "typescript"],
+  ])("normalizeLanguage(%j) is %j", (given, canonical) => {
+    expect(normalizeLanguage(given)).toBe(canonical);
+    expect(validateLanguage(given)).toBe(canonical);
+  });
+
+  test.each(["tsx", "r", "java", "ruby", " bash"])("normalizeLanguage rejects %j", (given) => {
+    expect(() => normalizeLanguage(given)).toThrow(InvalidArgumentError);
+  });
+
+  test("typescript routes to its lazy default context", () => {
+    const request = buildExecuteRequest("1", { language: "ts" });
+    expect(request.language).toBe("typescript");
+    expect(request.contextId).toBeUndefined();
+    expect(languageDefaultContextId(request)).toBe("default-typescript");
+    expect(buildCreateContextRequest({ language: "TypeScript" }).language).toBe("typescript");
+    expect(() => buildExecuteRequest("1", { contextId: "default", language: "ts" })).toThrow(
       InvalidArgumentError,
     );
   });
@@ -294,13 +324,26 @@ describe("languages (M7)", () => {
       expect(javascript.text).toBe("2");
       expect(rayd.code.executeRequests.at(-1)?.language).toBe("javascript");
       expect(rayd.code.executions.at(-1)?.contextId).toBe("default-javascript");
+      const typescript = await sandbox.runCode("1 + 1", { language: "ts" });
+      expect(typescript.text).toBe("2");
+      expect(rayd.code.executeRequests.at(-1)?.language).toBe("typescript");
+      expect(rayd.code.executeRequests.at(-1)?.contextId).toBeUndefined();
+      expect(rayd.code.executions.at(-1)?.contextId).toBe("default-typescript");
       await sandbox.runCode("x");
       expect(rayd.code.executeRequests.at(-1)?.language).toBeUndefined();
-      expect(rayd.code.lazyContexts).toEqual(["default-bash", "default-javascript"]);
+      expect(rayd.code.lazyContexts).toEqual([
+        "default-bash",
+        "default-javascript",
+        "default-typescript",
+      ]);
       const listed = (await sandbox.listCodeContexts()).map((ctx) => [ctx.id, ctx.language]);
       expect(listed[0]).toEqual(["default", "python"]);
       expect(listed).toContainEqual(["default-bash", "bash"]);
       expect(listed).toContainEqual(["default-javascript", "javascript"]);
+      expect(listed).toContainEqual(["default-typescript", "typescript"]);
+      const tsContext = await sandbox.createCodeContext({ language: "TypeScript" });
+      expect(tsContext.language).toBe("typescript");
+      expect(rayd.code.createRequests.at(-1)?.language).toBe("typescript");
       const ctx = await sandbox.createCodeContext({ language: "bash" });
       expect(ctx.language).toBe("bash");
       expect(rayd.code.createRequests.at(-1)?.language).toBe("bash");
@@ -314,13 +357,24 @@ describe("languages (M7)", () => {
     const { sandbox, rayd } = await createTestSandbox();
     {
       const executes = rayd.code.executeRequests.length;
+      const creates = rayd.code.createRequests.length;
       await expect(sandbox.runCode("1", { language: "r" })).rejects.toBeInstanceOf(
+        InvalidArgumentError,
+      );
+      await expect(sandbox.runCode("1", { language: "tsx" })).rejects.toBeInstanceOf(
+        InvalidArgumentError,
+      );
+      await expect(sandbox.createCodeContext({ language: "tsx" })).rejects.toBeInstanceOf(
         InvalidArgumentError,
       );
       await expect(
         sandbox.runCode("1", { language: "bash", context: "default" }),
       ).rejects.toBeInstanceOf(InvalidArgumentError);
+      await expect(
+        sandbox.runCode("1", { language: "ts", context: "default" }),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
       expect(rayd.code.executeRequests.length).toBe(executes);
+      expect(rayd.code.createRequests.length).toBe(creates);
       await sandbox.runCode("echo hi", { language: "bash" });
       const executions = rayd.code.executions.length;
       await expect(
@@ -330,18 +384,23 @@ describe("languages (M7)", () => {
     }
   });
 
-  test("a language the image does not ship is InvalidArgumentError naming the poly image", async () => {
-    const { sandbox, rayd } = await createTestSandbox();
-    {
+  test.each(["bash", "javascript", "typescript"])(
+    "%s on an image that does not ship it is InvalidArgumentError naming the poly image",
+    async (language) => {
+      const { sandbox, rayd } = await createTestSandbox();
       rayd.code.languages = new Set(["python"]);
-      const error = await sandbox.runCode("1 + 1", { language: "javascript" }).catch((e) => e);
+      const error = await sandbox.runCode("1 + 1", { language }).catch((e) => e);
       expect(error).toBeInstanceOf(InvalidArgumentError);
+      expect((error as InvalidArgumentError).grpcCode).toBe(Code.Unimplemented);
       expect((error as Error).message).toContain("rayito-base-poly");
+      expect(rayd.code.executeRequests.at(-1)?.language).toBe(language);
       expect(rayd.code.lazyContexts).toEqual([]);
-      const created = await sandbox.createCodeContext({ language: "bash" }).catch((e) => e);
+      const created = await sandbox.createCodeContext({ language }).catch((e) => e);
       expect(created).toBeInstanceOf(InvalidArgumentError);
+      expect((created as InvalidArgumentError).grpcCode).toBe(Code.Unimplemented);
       expect((created as Error).message).toContain("rayito-base-poly");
+      expect(rayd.code.createRequests.at(-1)?.language).toBe(language);
       expect((await sandbox.listCodeContexts()).map((ctx) => ctx.id)).toEqual(["default"]);
-    }
-  });
+    },
+  );
 });

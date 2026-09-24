@@ -37,6 +37,25 @@ service FilesystemService {
   // extrae en el HOME del usuario (sin seguir ni escapar del HOME).
   // NOT_FOUND si no hay manifest bajo el prefijo.
   rpc Restore(RestoreRequest) returns (stream RestoreEvent);
+
+  // Transferencias por URLs prefirmadas de S3 (ADR-010). rayd no guarda
+  // credenciales: el SDK firma cada petición con las credenciales del
+  // llamante y rayd sólo llama a URLs cuyo host y ruta coinciden con el
+  // S3Object de la petición (INVALID_ARGUMENT antes de cualquier I/O de red).
+  // Como mucho 16 transferencias esperando o en curso por sandbox
+  // (RESOURCE_EXHAUSTED); NOT_FOUND para un transfer_id desconocido.
+  //
+  // Importa un objeto a `path`: con `wait_for_object` sondea `get` hasta que
+  // el objeto exista o venza `expires_at_unix_ms`; sin él lo pide una vez.
+  rpc StartImport(StartImportRequest) returns (StartTransferResponse);
+  // Exporta `path` tal como está ahora (se abre y se mide al aceptar la
+  // petición): un PUT o las partes de una subida multiparte.
+  rpc StartExport(StartExportRequest) returns (StartTransferResponse);
+  rpc GetTransfer(GetTransferRequest) returns (TransferState);
+  // Primero el estado actual; después una foto completa en cada cambio;
+  // termina tras DONE, FAILED o CANCELLED.
+  rpc WatchTransfer(WatchTransferRequest) returns (stream TransferEvent);
+  rpc CancelTransfer(CancelTransferRequest) returns (CancelTransferResponse);
 }
 
 message ReadRequest {
@@ -53,6 +72,11 @@ message WriteRequest {
   optional User user = 2;
   optional uint32 mode = 3;
   bytes chunk = 4;
+  // Sólo en el primer mensaje de cada fichero (el que lleva `path`):
+  // sustituye el conjunto entero de metadatos del fichero. Claves: caracteres
+  // token de HTTP, se guardan en minúsculas; valores: ASCII imprimible; como
+  // máximo 64 claves y 4000 bytes contando `user.rayito.` + clave + valor.
+  map<string, string> metadata = 5;
 }
 message WriteResponse {
   // Una entrada por fichero escrito, en orden.
@@ -212,4 +236,110 @@ message RestoreDone {
   string sha256 = 4;
   uint64 skipped = 5;
   uint32 duration_ms = 6;
+}
+
+message S3Object {
+  // Nombre DNS sin puntos.
+  string bucket = 1;
+  string key = 2;
+  string region = 3;
+}
+
+message PresignedRequest {
+  // Nunca se registra en logs.
+  string url = 1;
+  // Cabeceras firmadas que rayd envía tal cual; hoy sólo `content-type`.
+  map<string, string> headers = 2;
+}
+
+message PresignedMultipart {
+  uint64 part_size = 1;
+  // Una URL de UploadPart por parte, en orden (PartNumber 1..N).
+  repeated PresignedRequest parts = 2;
+}
+
+message StartImportRequest {
+  string path = 1;
+  optional User user = 2;
+  optional uint32 mode = 3;
+  S3Object object = 4;
+  PresignedRequest get = 5;
+  optional PresignedRequest delete = 6;
+  bool wait_for_object = 7;
+  int64 expires_at_unix_ms = 8;
+  // 0 = sin tope propio (sigue valiendo la reserva de disco).
+  uint64 max_bytes = 9;
+  // Hex en minúsculas; vacío = no se comprueba.
+  string expected_sha256 = 10;
+  // Mismas reglas que WriteRequest.metadata.
+  map<string, string> metadata = 11;
+}
+
+message StartExportRequest {
+  string path = 1;
+  optional User user = 2;
+  S3Object object = 3;
+  oneof target {
+    PresignedRequest put = 4;
+    PresignedMultipart multipart = 5;
+  }
+  int64 expires_at_unix_ms = 6;
+}
+
+message StartTransferResponse {
+  string transfer_id = 1;
+}
+
+message GetTransferRequest {
+  string transfer_id = 1;
+}
+
+message WatchTransferRequest {
+  string transfer_id = 1;
+}
+
+message CancelTransferRequest {
+  string transfer_id = 1;
+}
+
+message CancelTransferResponse {}
+
+enum TransferDirection {
+  TRANSFER_DIRECTION_UNSPECIFIED = 0;
+  TRANSFER_DIRECTION_IMPORT = 1;
+  TRANSFER_DIRECTION_EXPORT = 2;
+}
+
+enum TransferPhase {
+  TRANSFER_PHASE_UNSPECIFIED = 0;
+  TRANSFER_PHASE_WAITING = 1;
+  TRANSFER_PHASE_RUNNING = 2;
+  TRANSFER_PHASE_DONE = 3;
+  TRANSFER_PHASE_FAILED = 4;
+  TRANSFER_PHASE_CANCELLED = 5;
+}
+
+message TransferState {
+  string transfer_id = 1;
+  TransferDirection direction = 2;
+  TransferPhase phase = 3;
+  uint64 bytes_done = 4;
+  uint64 bytes_total = 5;
+  // Sondeos del GET hechos por una importación.
+  uint32 probes = 6;
+  // Importación: el fichero escrito; exportación: el origen al aceptarla.
+  optional EntryInfo entry = 7;
+  // Hex del sha256 de los bytes transferidos (en DONE).
+  string sha256 = 8;
+  // ETag de cada parte, en orden (exportación multiparte en DONE).
+  repeated string part_etags = 9;
+  uint32 duration_ms = 10;
+  optional StreamError error = 11;
+}
+
+message TransferEvent {
+  oneof event {
+    TransferState state = 1;
+    KeepAlive keepalive = 2;
+  }
 }

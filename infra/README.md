@@ -1,11 +1,11 @@
 # infra — plantillas de infraestructura de Rayito
 
-Plantillas CloudFormation que un operador despliega en su propia cuenta. El
-IAM mínimo del SDK sigue en `spike/m0/iam.yaml` (build role, execution role,
-`CallerPolicy`); esta carpeta añade lo que M6 necesita y que el spike no cubría.
+Plantillas CloudFormation que un operador despliega en su propia cuenta: el
+IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 
 | Plantilla | Qué crea | Cuándo |
 |---|---|---|
+| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`) y la managed policy `CallerPolicy` del publicador (S3 de transferencias con `TransferBucket`) | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
 
@@ -66,7 +66,7 @@ print(sbx.get_info().ingress)  # el ALL_INGRESS gestionado que la plataforma añ
 Quien llama a `run-microvm` necesita `lambda:PassNetworkConnector` sobre el
 ARN del conector (además del que ya tiene sobre los gestionados). La salida
 `CallerPolicyStatement` de la pila imprime la sentencia exacta; con
-`spike/m0/iam.yaml` basta pasar el ARN en el parámetro `NetworkConnectorArns`
+`infra/iam.yaml` basta pasar el ARN en el parámetro `NetworkConnectorArns`
 (lista, por defecto vacía) al desplegar o actualizar `rayito-m0-iam`.
 
 El rol operador (`OperatorRole`) lo asume `lambda.amazonaws.com` para crear,
@@ -150,9 +150,9 @@ proveedor `token.actions.githubusercontent.com` que ya exista en la cuenta,
 sólo puede haber uno), `ExecutionRoleArn` (vacío: sin `iam:PassRole`; el
 workflow no exporta `RAYITO_EXECUTION_ROLE_ARN`) y `RoleName`
 (`rayito-e2e-github`). La plantilla se valida con `make infra-lint`
-(`validate-template` + `cfn-lint` sobre las dos plantillas de esta carpeta).
+(`validate-template` + `cfn-lint` sobre las plantillas de esta carpeta).
 
-## Persistencia en S3 (`spike/m0/iam.yaml`, M7)
+## Persistencia en S3 (`infra/iam.yaml`, M7)
 
 `Sandbox.create(persist=S3Prefix(bucket, prefix, name))` hace que `rayd`, como
 root y con el execution role, suba y baje el `HOME` del usuario a
@@ -162,7 +162,7 @@ execution role no recibe ningún permiso de S3:
 
 ```bash
 aws cloudformation deploy --stack-name rayito-m0-iam \
-  --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides ArtifactBucket=<bucket-de-artefactos> LogGroupPrefix=/rayito \
       PersistenceBucket=<bucket-de-persistencia> PersistencePrefix=rayito-home
 ```
@@ -231,3 +231,121 @@ Estado 2026-09-16: plantilla validada (`cfn-lint` 1.56.3 y
 environment, las variables y el presupuesto son los pasos manuales del
 Migration Plan de `m7-supply-chain`.
 
+
+## Transferencias de ficheros (`infra/iam.yaml`, M9)
+
+`files.upload_url`/`download_url` y los ficheros grandes de
+`files.write`/`files.read` (`Sandbox.create(transfer=S3Staging(bucket,
+prefix))`, ADR-010) usan un bucket tuyo. Las URLs las firma el SDK con las
+credenciales **del llamante** (tu proceso); el execution role no recibe
+nada y `rayd` no guarda ninguna credencial (`SECURITY.md` T16). Los
+parámetros `TransferBucket` y `TransferPrefix` de la plantilla añaden a
+`CallerPolicy` exactamente lo necesario; con `TransferBucket` vacío (por
+defecto) no hay ningún permiso de transferencia:
+
+```bash
+aws cloudformation deploy --stack-name rayito-m0-iam \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --profile <tu-perfil> \
+  --parameter-overrides ArtifactBucket=<bucket-de-artefactos> LogGroupPrefix=/rayito \
+      TransferBucket=amzn-s3-demo-bucket TransferPrefix=rayito-transfer
+```
+
+- `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` y
+  `s3:AbortMultipartUpload` sobre `arn:aws:s3:::<TransferBucket>/<TransferPrefix>/*`
+  (`CreateMultipartUpload`, `UploadPart` y `CompleteMultipartUpload` los
+  autoriza `s3:PutObject`) y `s3:ListBucket` con `s3:prefix =
+  <TransferPrefix>/*`, para que una clave que falta dé 404 y no 403.
+- `TransferPrefix` sigue el patrón de `PersistencePrefix` y **nunca** puede
+  ser `rayito` (los artefactos de imagen) ni igual a `PersistencePrefix`: la
+  regla `TransferPrefixIsDisjoint` de la plantilla lo rechaza, porque la
+  regla de ciclo de vida de 1 día borraría esos objetos. Debe coincidir con
+  el `prefix` de `S3Staging` (`rayito-transfer` por defecto).
+- El bucket en la **misma región** que los sandboxes (o `S3Staging(region=)`):
+  el SDK firma con el host virtual regional y `rayd` rechaza cualquier otro.
+  Nombres de bucket sin puntos.
+
+**Ciclo de vida** sobre el prefijo: los objetos de transferencia son de un
+solo uso y los multipart a medias se facturan. S3 redondea la expiración a la
+siguiente medianoche UTC, así que un objeto vive entre 24 y 48 h:
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "rayito-transfer",
+      "Filter": { "Prefix": "rayito-transfer/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 1 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
+```
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket amzn-s3-demo-bucket \
+  --lifecycle-configuration file://lifecycle.json --profile <tu-perfil>
+```
+
+**Política del bucket**: rechaza las firmas que no sean SigV4 (una URL SigV2
+podría vivir más y no la acepta `rayd`) y las peticiones sin TLS:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlySigV4",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": "arn:aws:s3:::amzn-s3-demo-bucket/rayito-transfer/*",
+      "Condition": { "StringNotEquals": { "s3:signatureversion": "AWS4-HMAC-SHA256" } }
+    },
+    {
+      "Sid": "OnlyTls",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::amzn-s3-demo-bucket",
+        "arn:aws:s3:::amzn-s3-demo-bucket/*"
+      ],
+      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+    }
+  ]
+}
+```
+
+**CORS**, sólo si un navegador sube o baja directamente (`PUT` con el cuerpo
+o el formulario `POST` de `upload_url(form=True)`), con orígenes explícitos,
+nunca `*`:
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://app.example.com"],
+      "AllowedMethods": ["PUT", "POST", "GET"],
+      "AllowedHeaders": ["Content-Type"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
+```
+
+**Cifrado**: el SSE-S3 por defecto basta. Con SSE-KMS, las credenciales del
+llamante necesitan además `kms:GenerateDataKey` (subidas) y `kms:Decrypt`
+(descargas) sobre la clave; la plantilla no lo incluye. `rayd` no envía
+parámetros de cifrado.
+
+**Red**: con un conector de egress propio (`egress-connector.yaml`) el VM
+necesita alcanzar S3 (gateway endpoint de S3 en la VPC o NAT); con
+`INTERNET_EGRESS` no hay que hacer nada. Con la política de egress en el
+guest de ADR-012, `rayd` (root) no está sujeto a las rutas por uid.
+
+Estado: parámetros y reglas validados con `cfn-lint` 1.56.3 y
+`scripts/tests/test_iam_template.py`; el despliegue y la medida contra AWS
+real están *pendientes de aceptación en AWS* (`m9-file-transfer` 8.x).

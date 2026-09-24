@@ -25,6 +25,14 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./e2b": {
+      "types": "./dist/e2b.d.mts",
+      "import": "./dist/e2b.mjs",
+      "require": {
+        "types": "./dist/e2b.d.cts",
+        "default": "./dist/e2b.cjs"
+      }
     }
   },
   "files": [
@@ -52,8 +60,12 @@
     "e2b"
   ],
   "dependencies": {
-    "@aws-sdk/client-lambda-microvms": "^3.1133.0",
-    "@aws-sdk/client-sts": "^3.1133.0",
+    "@aws-sdk/client-lambda-microvms": "^3.1138.0",
+    "@aws-sdk/client-s3": "^3.1138.0",
+    "@aws-sdk/client-sts": "^3.1138.0",
+    "@aws-sdk/lib-storage": "^3.1138.0",
+    "@aws-sdk/s3-presigned-post": "^3.1138.0",
+    "@aws-sdk/s3-request-presigner": "^3.1138.0",
     "@bufbuild/protobuf": "^2.15.0",
     "@connectrpc/connect": "^2.2.0",
     "@connectrpc/connect-node": "^2.2.0",

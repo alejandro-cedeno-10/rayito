@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file rayito/v1/filesystem.proto.
  */
 export const file_rayito_v1_filesystem: GenFile = /*@__PURE__*/
-  fileDesc("ChpyYXlpdG8vdjEvZmlsZXN5c3RlbS5wcm90bxIJcmF5aXRvLnYxIkgKC1JlYWRSZXF1ZXN0EgwKBHBhdGgYASABKAkSIgoEdXNlchgCIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQFCBwoFX3VzZXIiHQoMUmVhZFJlc3BvbnNlEg0KBWNodW5rGAEgASgMIoIBCgxXcml0ZVJlcXVlc3QSEQoEcGF0aBgBIAEoCUgAiAEBEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgBiAEBEhEKBG1vZGUYAyABKA1IAogBARINCgVjaHVuaxgEIAEoDEIHCgVfcGF0aEIHCgVfdXNlckIHCgVfbW9kZSI2Cg1Xcml0ZVJlc3BvbnNlEiUKB2VudHJpZXMYASADKAsyFC5yYXlpdG8udjEuRW50cnlJbmZvIkgKC1N0YXRSZXF1ZXN0EgwKBHBhdGgYASABKAkSIgoEdXNlchgCIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQFCBwoFX3VzZXIiMwoMU3RhdFJlc3BvbnNlEiMKBWVudHJ5GAEgASgLMhQucmF5aXRvLnYxLkVudHJ5SW5mbyJaCg5MaXN0RGlyUmVxdWVzdBIMCgRwYXRoGAEgASgJEg0KBWRlcHRoGAIgASgNEiIKBHVzZXIYAyABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBQgcKBV91c2VyIjgKD0xpc3REaXJSZXNwb25zZRIlCgdlbnRyaWVzGAEgAygLMhQucmF5aXRvLnYxLkVudHJ5SW5mbyJLCg5NYWtlRGlyUmVxdWVzdBIMCgRwYXRoGAEgASgJEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBQgcKBV91c2VyIjYKD01ha2VEaXJSZXNwb25zZRIjCgVlbnRyeRgBIAEoCzIULnJheWl0by52MS5FbnRyeUluZm8iXwoLTW92ZVJlcXVlc3QSDgoGc291cmNlGAEgASgJEhMKC2Rlc3RpbmF0aW9uGAIgASgJEiIKBHVzZXIYAyABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBQgcKBV91c2VyIjMKDE1vdmVSZXNwb25zZRIjCgVlbnRyeRgBIAEoCzIULnJheWl0by52MS5FbnRyeUluZm8iXQoNUmVtb3ZlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhEKCXJlY3Vyc2l2ZRgCIAEoCBIiCgR1c2VyGAMgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBAUIHCgVfdXNlciIQCg5SZW1vdmVSZXNwb25zZSJ2Cg9XYXRjaERpclJlcXVlc3QSDAoEcGF0aBgBIAEoCRIRCglyZWN1cnNpdmUYAiABKAgSIgoEdXNlchgDIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQESFQoNaW5jbHVkZV9lbnRyeRgEIAEoCEIHCgVfdXNlciKkAQoQV2F0Y2hEaXJSZXNwb25zZRIqCgdzdGFydGVkGAEgASgLMhcucmF5aXRvLnYxLldhdGNoU3RhcnRlZEgAEjAKCmZpbGVzeXN0ZW0YAiABKAsyGi5yYXlpdG8udjEuRmlsZXN5c3RlbUV2ZW50SAASKQoJa2VlcGFsaXZlGAMgASgLMhQucmF5aXRvLnYxLktlZXBBbGl2ZUgAQgcKBWV2ZW50Ig4KDFdhdGNoU3RhcnRlZCKBAQoPRmlsZXN5c3RlbUV2ZW50EgwKBG5hbWUYASABKAkSLAoEdHlwZRgCIAEoDjIeLnJheWl0by52MS5GaWxlc3lzdGVtRXZlbnRUeXBlEigKBWVudHJ5GAMgASgLMhQucmF5aXRvLnYxLkVudHJ5SW5mb0gAiAEBQggKBl9lbnRyeSJQCgpTM0xvY2F0aW9uEg4KBmJ1Y2tldBgBIAEoCRISCgprZXlfcHJlZml4GAIgASgJEhMKBnJlZ2lvbhgDIAEoCUgAiAEBQgkKB19yZWdpb24ieAoRQ2hlY2twb2ludFJlcXVlc3QSJQoGdGFyZ2V0GAEgASgLMhUucmF5aXRvLnYxLlMzTG9jYXRpb24SIgoEdXNlchgCIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQESDwoHZXhjbHVkZRgDIAMoCUIHCgVfdXNlciL9AQoPQ2hlY2twb2ludEV2ZW50Ei8KB3N0YXJ0ZWQYASABKAsyHC5yYXlpdG8udjEuQ2hlY2twb2ludFN0YXJ0ZWRIABIxCghwcm9ncmVzcxgCIAEoCzIdLnJheWl0by52MS5DaGVja3BvaW50UHJvZ3Jlc3NIABIpCgRkb25lGAMgASgLMhkucmF5aXRvLnYxLkNoZWNrcG9pbnREb25lSAASJwoFZXJyb3IYBCABKAsyFi5yYXlpdG8udjEuU3RyZWFtRXJyb3JIABIpCglrZWVwYWxpdmUYBSABKAsyFC5yYXlpdG8udjEuS2VlcEFsaXZlSABCBwoFZXZlbnQiMQoRQ2hlY2twb2ludFN0YXJ0ZWQSDQoFZmlsZXMYASABKAQSDQoFYnl0ZXMYAiABKAQiVAoSQ2hlY2twb2ludFByb2dyZXNzEhIKCmZpbGVzX2RvbmUYASABKAQSEgoKYnl0ZXNfcmVhZBgCIAEoBBIWCg5ieXRlc191cGxvYWRlZBgDIAEoBCKAAQoOQ2hlY2twb2ludERvbmUSDQoFZmlsZXMYASABKAQSEgoKYnl0ZXNfcmVhZBgCIAEoBBIVCg1hcmNoaXZlX2J5dGVzGAMgASgEEg4KBnNoYTI1NhgEIAEoCRIPCgdza2lwcGVkGAUgASgEEhMKC2R1cmF0aW9uX21zGAYgASgNImQKDlJlc3RvcmVSZXF1ZXN0EiUKBnNvdXJjZRgBIAEoCzIVLnJheWl0by52MS5TM0xvY2F0aW9uEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBQgcKBV91c2VyIvEBCgxSZXN0b3JlRXZlbnQSLAoHc3RhcnRlZBgBIAEoCzIZLnJheWl0by52MS5SZXN0b3JlU3RhcnRlZEgAEi4KCHByb2dyZXNzGAIgASgLMhoucmF5aXRvLnYxLlJlc3RvcmVQcm9ncmVzc0gAEiYKBGRvbmUYAyABKAsyFi5yYXlpdG8udjEuUmVzdG9yZURvbmVIABInCgVlcnJvchgEIAEoCzIWLnJheWl0by52MS5TdHJlYW1FcnJvckgAEikKCWtlZXBhbGl2ZRgFIAEoCzIULnJheWl0by52MS5LZWVwQWxpdmVIAEIHCgVldmVudCI2Cg5SZXN0b3JlU3RhcnRlZBIVCg1hcmNoaXZlX2J5dGVzGAEgASgEEg0KBWZpbGVzGAIgASgEIj8KD1Jlc3RvcmVQcm9ncmVzcxISCgpmaWxlc19kb25lGAEgASgEEhgKEGJ5dGVzX2Rvd25sb2FkZWQYAiABKAQigAEKC1Jlc3RvcmVEb25lEg0KBWZpbGVzGAEgASgEEhUKDWJ5dGVzX3dyaXR0ZW4YAiABKAQSFQoNYXJjaGl2ZV9ieXRlcxgDIAEoBBIOCgZzaGEyNTYYBCABKAkSDwoHc2tpcHBlZBgFIAEoBBITCgtkdXJhdGlvbl9tcxgGIAEoDSrkAQoTRmlsZXN5c3RlbUV2ZW50VHlwZRIlCiFGSUxFU1lTVEVNX0VWRU5UX1RZUEVfVU5TUEVDSUZJRUQQABIgChxGSUxFU1lTVEVNX0VWRU5UX1RZUEVfQ1JFQVRFEAESHwobRklMRVNZU1RFTV9FVkVOVF9UWVBFX1dSSVRFEAISIAocRklMRVNZU1RFTV9FVkVOVF9UWVBFX1JFTU9WRRADEiAKHEZJTEVTWVNURU1fRVZFTlRfVFlQRV9SRU5BTUUQBBIfChtGSUxFU1lTVEVNX0VWRU5UX1RZUEVfQ0hNT0QQBTKTBQoRRmlsZXN5c3RlbVNlcnZpY2USOQoEUmVhZBIWLnJheWl0by52MS5SZWFkUmVxdWVzdBoXLnJheWl0by52MS5SZWFkUmVzcG9uc2UwARI8CgVXcml0ZRIXLnJheWl0by52MS5Xcml0ZVJlcXVlc3QaGC5yYXlpdG8udjEuV3JpdGVSZXNwb25zZSgBEjcKBFN0YXQSFi5yYXlpdG8udjEuU3RhdFJlcXVlc3QaFy5yYXlpdG8udjEuU3RhdFJlc3BvbnNlEkAKB0xpc3REaXISGS5yYXlpdG8udjEuTGlzdERpclJlcXVlc3QaGi5yYXlpdG8udjEuTGlzdERpclJlc3BvbnNlEkAKB01ha2VEaXISGS5yYXlpdG8udjEuTWFrZURpclJlcXVlc3QaGi5yYXlpdG8udjEuTWFrZURpclJlc3BvbnNlEjcKBE1vdmUSFi5yYXlpdG8udjEuTW92ZVJlcXVlc3QaFy5yYXlpdG8udjEuTW92ZVJlc3BvbnNlEj0KBlJlbW92ZRIYLnJheWl0by52MS5SZW1vdmVSZXF1ZXN0GhkucmF5aXRvLnYxLlJlbW92ZVJlc3BvbnNlEkUKCFdhdGNoRGlyEhoucmF5aXRvLnYxLldhdGNoRGlyUmVxdWVzdBobLnJheWl0by52MS5XYXRjaERpclJlc3BvbnNlMAESSAoKQ2hlY2twb2ludBIcLnJheWl0by52MS5DaGVja3BvaW50UmVxdWVzdBoaLnJheWl0by52MS5DaGVja3BvaW50RXZlbnQwARI/CgdSZXN0b3JlEhkucmF5aXRvLnYxLlJlc3RvcmVSZXF1ZXN0GhcucmF5aXRvLnYxLlJlc3RvcmVFdmVudDABYgZwcm90bzM", [file_rayito_v1_common]);
+  fileDesc("ChpyYXlpdG8vdjEvZmlsZXN5c3RlbS5wcm90bxIJcmF5aXRvLnYxIkgKC1JlYWRSZXF1ZXN0EgwKBHBhdGgYASABKAkSIgoEdXNlchgCIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQFCBwoFX3VzZXIiHQoMUmVhZFJlc3BvbnNlEg0KBWNodW5rGAEgASgMIuwBCgxXcml0ZVJlcXVlc3QSEQoEcGF0aBgBIAEoCUgAiAEBEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgBiAEBEhEKBG1vZGUYAyABKA1IAogBARINCgVjaHVuaxgEIAEoDBI3CghtZXRhZGF0YRgFIAMoCzIlLnJheWl0by52MS5Xcml0ZVJlcXVlc3QuTWV0YWRhdGFFbnRyeRovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCBwoFX3BhdGhCBwoFX3VzZXJCBwoFX21vZGUiNgoNV3JpdGVSZXNwb25zZRIlCgdlbnRyaWVzGAEgAygLMhQucmF5aXRvLnYxLkVudHJ5SW5mbyJICgtTdGF0UmVxdWVzdBIMCgRwYXRoGAEgASgJEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBQgcKBV91c2VyIjMKDFN0YXRSZXNwb25zZRIjCgVlbnRyeRgBIAEoCzIULnJheWl0by52MS5FbnRyeUluZm8iWgoOTGlzdERpclJlcXVlc3QSDAoEcGF0aBgBIAEoCRINCgVkZXB0aBgCIAEoDRIiCgR1c2VyGAMgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBAUIHCgVfdXNlciI4Cg9MaXN0RGlyUmVzcG9uc2USJQoHZW50cmllcxgBIAMoCzIULnJheWl0by52MS5FbnRyeUluZm8iSwoOTWFrZURpclJlcXVlc3QSDAoEcGF0aBgBIAEoCRIiCgR1c2VyGAIgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBAUIHCgVfdXNlciI2Cg9NYWtlRGlyUmVzcG9uc2USIwoFZW50cnkYASABKAsyFC5yYXlpdG8udjEuRW50cnlJbmZvIl8KC01vdmVSZXF1ZXN0Eg4KBnNvdXJjZRgBIAEoCRITCgtkZXN0aW5hdGlvbhgCIAEoCRIiCgR1c2VyGAMgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBAUIHCgVfdXNlciIzCgxNb3ZlUmVzcG9uc2USIwoFZW50cnkYASABKAsyFC5yYXlpdG8udjEuRW50cnlJbmZvIl0KDVJlbW92ZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIRCglyZWN1cnNpdmUYAiABKAgSIgoEdXNlchgDIAEoCzIPLnJheWl0by52MS5Vc2VySACIAQFCBwoFX3VzZXIiEAoOUmVtb3ZlUmVzcG9uc2UidgoPV2F0Y2hEaXJSZXF1ZXN0EgwKBHBhdGgYASABKAkSEQoJcmVjdXJzaXZlGAIgASgIEiIKBHVzZXIYAyABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBEhUKDWluY2x1ZGVfZW50cnkYBCABKAhCBwoFX3VzZXIipAEKEFdhdGNoRGlyUmVzcG9uc2USKgoHc3RhcnRlZBgBIAEoCzIXLnJheWl0by52MS5XYXRjaFN0YXJ0ZWRIABIwCgpmaWxlc3lzdGVtGAIgASgLMhoucmF5aXRvLnYxLkZpbGVzeXN0ZW1FdmVudEgAEikKCWtlZXBhbGl2ZRgDIAEoCzIULnJheWl0by52MS5LZWVwQWxpdmVIAEIHCgVldmVudCIOCgxXYXRjaFN0YXJ0ZWQigQEKD0ZpbGVzeXN0ZW1FdmVudBIMCgRuYW1lGAEgASgJEiwKBHR5cGUYAiABKA4yHi5yYXlpdG8udjEuRmlsZXN5c3RlbUV2ZW50VHlwZRIoCgVlbnRyeRgDIAEoCzIULnJheWl0by52MS5FbnRyeUluZm9IAIgBAUIICgZfZW50cnkiUAoKUzNMb2NhdGlvbhIOCgZidWNrZXQYASABKAkSEgoKa2V5X3ByZWZpeBgCIAEoCRITCgZyZWdpb24YAyABKAlIAIgBAUIJCgdfcmVnaW9uIngKEUNoZWNrcG9pbnRSZXF1ZXN0EiUKBnRhcmdldBgBIAEoCzIVLnJheWl0by52MS5TM0xvY2F0aW9uEiIKBHVzZXIYAiABKAsyDy5yYXlpdG8udjEuVXNlckgAiAEBEg8KB2V4Y2x1ZGUYAyADKAlCBwoFX3VzZXIi/QEKD0NoZWNrcG9pbnRFdmVudBIvCgdzdGFydGVkGAEgASgLMhwucmF5aXRvLnYxLkNoZWNrcG9pbnRTdGFydGVkSAASMQoIcHJvZ3Jlc3MYAiABKAsyHS5yYXlpdG8udjEuQ2hlY2twb2ludFByb2dyZXNzSAASKQoEZG9uZRgDIAEoCzIZLnJheWl0by52MS5DaGVja3BvaW50RG9uZUgAEicKBWVycm9yGAQgASgLMhYucmF5aXRvLnYxLlN0cmVhbUVycm9ySAASKQoJa2VlcGFsaXZlGAUgASgLMhQucmF5aXRvLnYxLktlZXBBbGl2ZUgAQgcKBWV2ZW50IjEKEUNoZWNrcG9pbnRTdGFydGVkEg0KBWZpbGVzGAEgASgEEg0KBWJ5dGVzGAIgASgEIlQKEkNoZWNrcG9pbnRQcm9ncmVzcxISCgpmaWxlc19kb25lGAEgASgEEhIKCmJ5dGVzX3JlYWQYAiABKAQSFgoOYnl0ZXNfdXBsb2FkZWQYAyABKAQigAEKDkNoZWNrcG9pbnREb25lEg0KBWZpbGVzGAEgASgEEhIKCmJ5dGVzX3JlYWQYAiABKAQSFQoNYXJjaGl2ZV9ieXRlcxgDIAEoBBIOCgZzaGEyNTYYBCABKAkSDwoHc2tpcHBlZBgFIAEoBBITCgtkdXJhdGlvbl9tcxgGIAEoDSJkCg5SZXN0b3JlUmVxdWVzdBIlCgZzb3VyY2UYASABKAsyFS5yYXlpdG8udjEuUzNMb2NhdGlvbhIiCgR1c2VyGAIgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBAUIHCgVfdXNlciLxAQoMUmVzdG9yZUV2ZW50EiwKB3N0YXJ0ZWQYASABKAsyGS5yYXlpdG8udjEuUmVzdG9yZVN0YXJ0ZWRIABIuCghwcm9ncmVzcxgCIAEoCzIaLnJheWl0by52MS5SZXN0b3JlUHJvZ3Jlc3NIABImCgRkb25lGAMgASgLMhYucmF5aXRvLnYxLlJlc3RvcmVEb25lSAASJwoFZXJyb3IYBCABKAsyFi5yYXlpdG8udjEuU3RyZWFtRXJyb3JIABIpCglrZWVwYWxpdmUYBSABKAsyFC5yYXlpdG8udjEuS2VlcEFsaXZlSABCBwoFZXZlbnQiNgoOUmVzdG9yZVN0YXJ0ZWQSFQoNYXJjaGl2ZV9ieXRlcxgBIAEoBBINCgVmaWxlcxgCIAEoBCI/Cg9SZXN0b3JlUHJvZ3Jlc3MSEgoKZmlsZXNfZG9uZRgBIAEoBBIYChBieXRlc19kb3dubG9hZGVkGAIgASgEIoABCgtSZXN0b3JlRG9uZRINCgVmaWxlcxgBIAEoBBIVCg1ieXRlc193cml0dGVuGAIgASgEEhUKDWFyY2hpdmVfYnl0ZXMYAyABKAQSDgoGc2hhMjU2GAQgASgJEg8KB3NraXBwZWQYBSABKAQSEwoLZHVyYXRpb25fbXMYBiABKA0iNwoIUzNPYmplY3QSDgoGYnVja2V0GAEgASgJEgsKA2tleRgCIAEoCRIOCgZyZWdpb24YAyABKAkiigEKEFByZXNpZ25lZFJlcXVlc3QSCwoDdXJsGAEgASgJEjkKB2hlYWRlcnMYAiADKAsyKC5yYXlpdG8udjEuUHJlc2lnbmVkUmVxdWVzdC5IZWFkZXJzRW50cnkaLgoMSGVhZGVyc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiUwoSUHJlc2lnbmVkTXVsdGlwYXJ0EhEKCXBhcnRfc2l6ZRgBIAEoBBIqCgVwYXJ0cxgCIAMoCzIbLnJheWl0by52MS5QcmVzaWduZWRSZXF1ZXN0IsgDChJTdGFydEltcG9ydFJlcXVlc3QSDAoEcGF0aBgBIAEoCRIiCgR1c2VyGAIgASgLMg8ucmF5aXRvLnYxLlVzZXJIAIgBARIRCgRtb2RlGAMgASgNSAGIAQESIwoGb2JqZWN0GAQgASgLMhMucmF5aXRvLnYxLlMzT2JqZWN0EigKA2dldBgFIAEoCzIbLnJheWl0by52MS5QcmVzaWduZWRSZXF1ZXN0EjAKBmRlbGV0ZRgGIAEoCzIbLnJheWl0by52MS5QcmVzaWduZWRSZXF1ZXN0SAKIAQESFwoPd2FpdF9mb3Jfb2JqZWN0GAcgASgIEhoKEmV4cGlyZXNfYXRfdW5peF9tcxgIIAEoAxIRCgltYXhfYnl0ZXMYCSABKAQSFwoPZXhwZWN0ZWRfc2hhMjU2GAogASgJEj0KCG1ldGFkYXRhGAsgAygLMisucmF5aXRvLnYxLlN0YXJ0SW1wb3J0UmVxdWVzdC5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIHCgVfdXNlckIHCgVfbW9kZUIJCgdfZGVsZXRlIvoBChJTdGFydEV4cG9ydFJlcXVlc3QSDAoEcGF0aBgBIAEoCRIiCgR1c2VyGAIgASgLMg8ucmF5aXRvLnYxLlVzZXJIAYgBARIjCgZvYmplY3QYAyABKAsyEy5yYXlpdG8udjEuUzNPYmplY3QSKgoDcHV0GAQgASgLMhsucmF5aXRvLnYxLlByZXNpZ25lZFJlcXVlc3RIABIyCgltdWx0aXBhcnQYBSABKAsyHS5yYXlpdG8udjEuUHJlc2lnbmVkTXVsdGlwYXJ0SAASGgoSZXhwaXJlc19hdF91bml4X21zGAYgASgDQggKBnRhcmdldEIHCgVfdXNlciIsChVTdGFydFRyYW5zZmVyUmVzcG9uc2USEwoLdHJhbnNmZXJfaWQYASABKAkiKQoSR2V0VHJhbnNmZXJSZXF1ZXN0EhMKC3RyYW5zZmVyX2lkGAEgASgJIisKFFdhdGNoVHJhbnNmZXJSZXF1ZXN0EhMKC3RyYW5zZmVyX2lkGAEgASgJIiwKFUNhbmNlbFRyYW5zZmVyUmVxdWVzdBITCgt0cmFuc2Zlcl9pZBgBIAEoCSIYChZDYW5jZWxUcmFuc2ZlclJlc3BvbnNlItoCCg1UcmFuc2ZlclN0YXRlEhMKC3RyYW5zZmVyX2lkGAEgASgJEi8KCWRpcmVjdGlvbhgCIAEoDjIcLnJheWl0by52MS5UcmFuc2ZlckRpcmVjdGlvbhInCgVwaGFzZRgDIAEoDjIYLnJheWl0by52MS5UcmFuc2ZlclBoYXNlEhIKCmJ5dGVzX2RvbmUYBCABKAQSEwoLYnl0ZXNfdG90YWwYBSABKAQSDgoGcHJvYmVzGAYgASgNEigKBWVudHJ5GAcgASgLMhQucmF5aXRvLnYxLkVudHJ5SW5mb0gAiAEBEg4KBnNoYTI1NhgIIAEoCRISCgpwYXJ0X2V0YWdzGAkgAygJEhMKC2R1cmF0aW9uX21zGAogASgNEioKBWVycm9yGAsgASgLMhYucmF5aXRvLnYxLlN0cmVhbUVycm9ySAGIAQFCCAoGX2VudHJ5QggKBl9lcnJvciJuCg1UcmFuc2ZlckV2ZW50EikKBXN0YXRlGAEgASgLMhgucmF5aXRvLnYxLlRyYW5zZmVyU3RhdGVIABIpCglrZWVwYWxpdmUYAiABKAsyFC5yYXlpdG8udjEuS2VlcEFsaXZlSABCBwoFZXZlbnQq5AEKE0ZpbGVzeXN0ZW1FdmVudFR5cGUSJQohRklMRVNZU1RFTV9FVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASIAocRklMRVNZU1RFTV9FVkVOVF9UWVBFX0NSRUFURRABEh8KG0ZJTEVTWVNURU1fRVZFTlRfVFlQRV9XUklURRACEiAKHEZJTEVTWVNURU1fRVZFTlRfVFlQRV9SRU1PVkUQAxIgChxGSUxFU1lTVEVNX0VWRU5UX1RZUEVfUkVOQU1FEAQSHwobRklMRVNZU1RFTV9FVkVOVF9UWVBFX0NITU9EEAUqdQoRVHJhbnNmZXJEaXJlY3Rpb24SIgoeVFJBTlNGRVJfRElSRUNUSU9OX1VOU1BFQ0lGSUVEEAASHQoZVFJBTlNGRVJfRElSRUNUSU9OX0lNUE9SVBABEh0KGVRSQU5TRkVSX0RJUkVDVElPTl9FWFBPUlQQAiq5AQoNVHJhbnNmZXJQaGFzZRIeChpUUkFOU0ZFUl9QSEFTRV9VTlNQRUNJRklFRBAAEhoKFlRSQU5TRkVSX1BIQVNFX1dBSVRJTkcQARIaChZUUkFOU0ZFUl9QSEFTRV9SVU5OSU5HEAISFwoTVFJBTlNGRVJfUEhBU0VfRE9ORRADEhkKFVRSQU5TRkVSX1BIQVNFX0ZBSUxFRBAEEhwKGFRSQU5TRkVSX1BIQVNFX0NBTkNFTExFRBAFMqAIChFGaWxlc3lzdGVtU2VydmljZRI5CgRSZWFkEhYucmF5aXRvLnYxLlJlYWRSZXF1ZXN0GhcucmF5aXRvLnYxLlJlYWRSZXNwb25zZTABEjwKBVdyaXRlEhcucmF5aXRvLnYxLldyaXRlUmVxdWVzdBoYLnJheWl0by52MS5Xcml0ZVJlc3BvbnNlKAESNwoEU3RhdBIWLnJheWl0by52MS5TdGF0UmVxdWVzdBoXLnJheWl0by52MS5TdGF0UmVzcG9uc2USQAoHTGlzdERpchIZLnJheWl0by52MS5MaXN0RGlyUmVxdWVzdBoaLnJheWl0by52MS5MaXN0RGlyUmVzcG9uc2USQAoHTWFrZURpchIZLnJheWl0by52MS5NYWtlRGlyUmVxdWVzdBoaLnJheWl0by52MS5NYWtlRGlyUmVzcG9uc2USNwoETW92ZRIWLnJheWl0by52MS5Nb3ZlUmVxdWVzdBoXLnJheWl0by52MS5Nb3ZlUmVzcG9uc2USPQoGUmVtb3ZlEhgucmF5aXRvLnYxLlJlbW92ZVJlcXVlc3QaGS5yYXlpdG8udjEuUmVtb3ZlUmVzcG9uc2USRQoIV2F0Y2hEaXISGi5yYXlpdG8udjEuV2F0Y2hEaXJSZXF1ZXN0GhsucmF5aXRvLnYxLldhdGNoRGlyUmVzcG9uc2UwARJICgpDaGVja3BvaW50EhwucmF5aXRvLnYxLkNoZWNrcG9pbnRSZXF1ZXN0GhoucmF5aXRvLnYxLkNoZWNrcG9pbnRFdmVudDABEj8KB1Jlc3RvcmUSGS5yYXlpdG8udjEuUmVzdG9yZVJlcXVlc3QaFy5yYXlpdG8udjEuUmVzdG9yZUV2ZW50MAESTgoLU3RhcnRJbXBvcnQSHS5yYXlpdG8udjEuU3RhcnRJbXBvcnRSZXF1ZXN0GiAucmF5aXRvLnYxLlN0YXJ0VHJhbnNmZXJSZXNwb25zZRJOCgtTdGFydEV4cG9ydBIdLnJheWl0by52MS5TdGFydEV4cG9ydFJlcXVlc3QaIC5yYXlpdG8udjEuU3RhcnRUcmFuc2ZlclJlc3BvbnNlEkYKC0dldFRyYW5zZmVyEh0ucmF5aXRvLnYxLkdldFRyYW5zZmVyUmVxdWVzdBoYLnJheWl0by52MS5UcmFuc2ZlclN0YXRlEkwKDVdhdGNoVHJhbnNmZXISHy5yYXlpdG8udjEuV2F0Y2hUcmFuc2ZlclJlcXVlc3QaGC5yYXlpdG8udjEuVHJhbnNmZXJFdmVudDABElUKDkNhbmNlbFRyYW5zZmVyEiAucmF5aXRvLnYxLkNhbmNlbFRyYW5zZmVyUmVxdWVzdBohLnJheWl0by52MS5DYW5jZWxUcmFuc2ZlclJlc3BvbnNlYgZwcm90bzM", [file_rayito_v1_common]);
 
 /**
  * @generated from message rayito.v1.ReadRequest
@@ -78,6 +78,16 @@ export type WriteRequest = Message<"rayito.v1.WriteRequest"> & {
    * @generated from field: bytes chunk = 4;
    */
   chunk: Uint8Array;
+
+  /**
+   * Sólo en el primer mensaje de cada fichero (el que lleva `path`):
+   * sustituye el conjunto entero de metadatos del fichero. Claves: caracteres
+   * token de HTTP, se guardan en minúsculas; valores: ASCII imprimible; como
+   * máximo 64 claves y 4000 bytes contando `user.rayito.` + clave + valor.
+   *
+   * @generated from field: map<string, string> metadata = 5;
+   */
+  metadata: { [key: string]: string };
 };
 
 /**
@@ -794,6 +804,392 @@ export const RestoreDoneSchema: GenMessage<RestoreDone> = /*@__PURE__*/
   messageDesc(file_rayito_v1_filesystem, 28);
 
 /**
+ * @generated from message rayito.v1.S3Object
+ */
+export type S3Object = Message<"rayito.v1.S3Object"> & {
+  /**
+   * Nombre DNS sin puntos.
+   *
+   * @generated from field: string bucket = 1;
+   */
+  bucket: string;
+
+  /**
+   * @generated from field: string key = 2;
+   */
+  key: string;
+
+  /**
+   * @generated from field: string region = 3;
+   */
+  region: string;
+};
+
+/**
+ * Describes the message rayito.v1.S3Object.
+ * Use `create(S3ObjectSchema)` to create a new message.
+ */
+export const S3ObjectSchema: GenMessage<S3Object> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 29);
+
+/**
+ * @generated from message rayito.v1.PresignedRequest
+ */
+export type PresignedRequest = Message<"rayito.v1.PresignedRequest"> & {
+  /**
+   * Nunca se registra en logs.
+   *
+   * @generated from field: string url = 1;
+   */
+  url: string;
+
+  /**
+   * Cabeceras firmadas que rayd envía tal cual; hoy sólo `content-type`.
+   *
+   * @generated from field: map<string, string> headers = 2;
+   */
+  headers: { [key: string]: string };
+};
+
+/**
+ * Describes the message rayito.v1.PresignedRequest.
+ * Use `create(PresignedRequestSchema)` to create a new message.
+ */
+export const PresignedRequestSchema: GenMessage<PresignedRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 30);
+
+/**
+ * @generated from message rayito.v1.PresignedMultipart
+ */
+export type PresignedMultipart = Message<"rayito.v1.PresignedMultipart"> & {
+  /**
+   * @generated from field: uint64 part_size = 1;
+   */
+  partSize: bigint;
+
+  /**
+   * Una URL de UploadPart por parte, en orden (PartNumber 1..N).
+   *
+   * @generated from field: repeated rayito.v1.PresignedRequest parts = 2;
+   */
+  parts: PresignedRequest[];
+};
+
+/**
+ * Describes the message rayito.v1.PresignedMultipart.
+ * Use `create(PresignedMultipartSchema)` to create a new message.
+ */
+export const PresignedMultipartSchema: GenMessage<PresignedMultipart> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 31);
+
+/**
+ * @generated from message rayito.v1.StartImportRequest
+ */
+export type StartImportRequest = Message<"rayito.v1.StartImportRequest"> & {
+  /**
+   * @generated from field: string path = 1;
+   */
+  path: string;
+
+  /**
+   * @generated from field: optional rayito.v1.User user = 2;
+   */
+  user?: User | undefined;
+
+  /**
+   * @generated from field: optional uint32 mode = 3;
+   */
+  mode?: number | undefined;
+
+  /**
+   * @generated from field: rayito.v1.S3Object object = 4;
+   */
+  object?: S3Object | undefined;
+
+  /**
+   * @generated from field: rayito.v1.PresignedRequest get = 5;
+   */
+  get?: PresignedRequest | undefined;
+
+  /**
+   * @generated from field: optional rayito.v1.PresignedRequest delete = 6;
+   */
+  delete?: PresignedRequest | undefined;
+
+  /**
+   * @generated from field: bool wait_for_object = 7;
+   */
+  waitForObject: boolean;
+
+  /**
+   * @generated from field: int64 expires_at_unix_ms = 8;
+   */
+  expiresAtUnixMs: bigint;
+
+  /**
+   * 0 = sin tope propio (sigue valiendo la reserva de disco).
+   *
+   * @generated from field: uint64 max_bytes = 9;
+   */
+  maxBytes: bigint;
+
+  /**
+   * Hex en minúsculas; vacío = no se comprueba.
+   *
+   * @generated from field: string expected_sha256 = 10;
+   */
+  expectedSha256: string;
+
+  /**
+   * Mismas reglas que WriteRequest.metadata.
+   *
+   * @generated from field: map<string, string> metadata = 11;
+   */
+  metadata: { [key: string]: string };
+};
+
+/**
+ * Describes the message rayito.v1.StartImportRequest.
+ * Use `create(StartImportRequestSchema)` to create a new message.
+ */
+export const StartImportRequestSchema: GenMessage<StartImportRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 32);
+
+/**
+ * @generated from message rayito.v1.StartExportRequest
+ */
+export type StartExportRequest = Message<"rayito.v1.StartExportRequest"> & {
+  /**
+   * @generated from field: string path = 1;
+   */
+  path: string;
+
+  /**
+   * @generated from field: optional rayito.v1.User user = 2;
+   */
+  user?: User | undefined;
+
+  /**
+   * @generated from field: rayito.v1.S3Object object = 3;
+   */
+  object?: S3Object | undefined;
+
+  /**
+   * @generated from oneof rayito.v1.StartExportRequest.target
+   */
+  target: {
+    /**
+     * @generated from field: rayito.v1.PresignedRequest put = 4;
+     */
+    value: PresignedRequest;
+    case: "put";
+  } | {
+    /**
+     * @generated from field: rayito.v1.PresignedMultipart multipart = 5;
+     */
+    value: PresignedMultipart;
+    case: "multipart";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * @generated from field: int64 expires_at_unix_ms = 6;
+   */
+  expiresAtUnixMs: bigint;
+};
+
+/**
+ * Describes the message rayito.v1.StartExportRequest.
+ * Use `create(StartExportRequestSchema)` to create a new message.
+ */
+export const StartExportRequestSchema: GenMessage<StartExportRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 33);
+
+/**
+ * @generated from message rayito.v1.StartTransferResponse
+ */
+export type StartTransferResponse = Message<"rayito.v1.StartTransferResponse"> & {
+  /**
+   * @generated from field: string transfer_id = 1;
+   */
+  transferId: string;
+};
+
+/**
+ * Describes the message rayito.v1.StartTransferResponse.
+ * Use `create(StartTransferResponseSchema)` to create a new message.
+ */
+export const StartTransferResponseSchema: GenMessage<StartTransferResponse> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 34);
+
+/**
+ * @generated from message rayito.v1.GetTransferRequest
+ */
+export type GetTransferRequest = Message<"rayito.v1.GetTransferRequest"> & {
+  /**
+   * @generated from field: string transfer_id = 1;
+   */
+  transferId: string;
+};
+
+/**
+ * Describes the message rayito.v1.GetTransferRequest.
+ * Use `create(GetTransferRequestSchema)` to create a new message.
+ */
+export const GetTransferRequestSchema: GenMessage<GetTransferRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 35);
+
+/**
+ * @generated from message rayito.v1.WatchTransferRequest
+ */
+export type WatchTransferRequest = Message<"rayito.v1.WatchTransferRequest"> & {
+  /**
+   * @generated from field: string transfer_id = 1;
+   */
+  transferId: string;
+};
+
+/**
+ * Describes the message rayito.v1.WatchTransferRequest.
+ * Use `create(WatchTransferRequestSchema)` to create a new message.
+ */
+export const WatchTransferRequestSchema: GenMessage<WatchTransferRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 36);
+
+/**
+ * @generated from message rayito.v1.CancelTransferRequest
+ */
+export type CancelTransferRequest = Message<"rayito.v1.CancelTransferRequest"> & {
+  /**
+   * @generated from field: string transfer_id = 1;
+   */
+  transferId: string;
+};
+
+/**
+ * Describes the message rayito.v1.CancelTransferRequest.
+ * Use `create(CancelTransferRequestSchema)` to create a new message.
+ */
+export const CancelTransferRequestSchema: GenMessage<CancelTransferRequest> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 37);
+
+/**
+ * @generated from message rayito.v1.CancelTransferResponse
+ */
+export type CancelTransferResponse = Message<"rayito.v1.CancelTransferResponse"> & {
+};
+
+/**
+ * Describes the message rayito.v1.CancelTransferResponse.
+ * Use `create(CancelTransferResponseSchema)` to create a new message.
+ */
+export const CancelTransferResponseSchema: GenMessage<CancelTransferResponse> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 38);
+
+/**
+ * @generated from message rayito.v1.TransferState
+ */
+export type TransferState = Message<"rayito.v1.TransferState"> & {
+  /**
+   * @generated from field: string transfer_id = 1;
+   */
+  transferId: string;
+
+  /**
+   * @generated from field: rayito.v1.TransferDirection direction = 2;
+   */
+  direction: TransferDirection;
+
+  /**
+   * @generated from field: rayito.v1.TransferPhase phase = 3;
+   */
+  phase: TransferPhase;
+
+  /**
+   * @generated from field: uint64 bytes_done = 4;
+   */
+  bytesDone: bigint;
+
+  /**
+   * @generated from field: uint64 bytes_total = 5;
+   */
+  bytesTotal: bigint;
+
+  /**
+   * Sondeos del GET hechos por una importación.
+   *
+   * @generated from field: uint32 probes = 6;
+   */
+  probes: number;
+
+  /**
+   * Importación: el fichero escrito; exportación: el origen al aceptarla.
+   *
+   * @generated from field: optional rayito.v1.EntryInfo entry = 7;
+   */
+  entry?: EntryInfo | undefined;
+
+  /**
+   * Hex del sha256 de los bytes transferidos (en DONE).
+   *
+   * @generated from field: string sha256 = 8;
+   */
+  sha256: string;
+
+  /**
+   * ETag de cada parte, en orden (exportación multiparte en DONE).
+   *
+   * @generated from field: repeated string part_etags = 9;
+   */
+  partEtags: string[];
+
+  /**
+   * @generated from field: uint32 duration_ms = 10;
+   */
+  durationMs: number;
+
+  /**
+   * @generated from field: optional rayito.v1.StreamError error = 11;
+   */
+  error?: StreamError | undefined;
+};
+
+/**
+ * Describes the message rayito.v1.TransferState.
+ * Use `create(TransferStateSchema)` to create a new message.
+ */
+export const TransferStateSchema: GenMessage<TransferState> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 39);
+
+/**
+ * @generated from message rayito.v1.TransferEvent
+ */
+export type TransferEvent = Message<"rayito.v1.TransferEvent"> & {
+  /**
+   * @generated from oneof rayito.v1.TransferEvent.event
+   */
+  event: {
+    /**
+     * @generated from field: rayito.v1.TransferState state = 1;
+     */
+    value: TransferState;
+    case: "state";
+  } | {
+    /**
+     * @generated from field: rayito.v1.KeepAlive keepalive = 2;
+     */
+    value: KeepAlive;
+    case: "keepalive";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message rayito.v1.TransferEvent.
+ * Use `create(TransferEventSchema)` to create a new message.
+ */
+export const TransferEventSchema: GenMessage<TransferEvent> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_filesystem, 40);
+
+/**
  * @generated from enum rayito.v1.FilesystemEventType
  */
 export enum FilesystemEventType {
@@ -833,6 +1229,73 @@ export enum FilesystemEventType {
  */
 export const FilesystemEventTypeSchema: GenEnum<FilesystemEventType> = /*@__PURE__*/
   enumDesc(file_rayito_v1_filesystem, 0);
+
+/**
+ * @generated from enum rayito.v1.TransferDirection
+ */
+export enum TransferDirection {
+  /**
+   * @generated from enum value: TRANSFER_DIRECTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TRANSFER_DIRECTION_IMPORT = 1;
+   */
+  IMPORT = 1,
+
+  /**
+   * @generated from enum value: TRANSFER_DIRECTION_EXPORT = 2;
+   */
+  EXPORT = 2,
+}
+
+/**
+ * Describes the enum rayito.v1.TransferDirection.
+ */
+export const TransferDirectionSchema: GenEnum<TransferDirection> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_filesystem, 1);
+
+/**
+ * @generated from enum rayito.v1.TransferPhase
+ */
+export enum TransferPhase {
+  /**
+   * @generated from enum value: TRANSFER_PHASE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TRANSFER_PHASE_WAITING = 1;
+   */
+  WAITING = 1,
+
+  /**
+   * @generated from enum value: TRANSFER_PHASE_RUNNING = 2;
+   */
+  RUNNING = 2,
+
+  /**
+   * @generated from enum value: TRANSFER_PHASE_DONE = 3;
+   */
+  DONE = 3,
+
+  /**
+   * @generated from enum value: TRANSFER_PHASE_FAILED = 4;
+   */
+  FAILED = 4,
+
+  /**
+   * @generated from enum value: TRANSFER_PHASE_CANCELLED = 5;
+   */
+  CANCELLED = 5,
+}
+
+/**
+ * Describes the enum rayito.v1.TransferPhase.
+ */
+export const TransferPhaseSchema: GenEnum<TransferPhase> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_filesystem, 2);
 
 /**
  * @generated from service rayito.v1.FilesystemService
@@ -942,6 +1405,62 @@ export const FilesystemService: GenService<{
     methodKind: "server_streaming";
     input: typeof RestoreRequestSchema;
     output: typeof RestoreEventSchema;
+  },
+  /**
+   * Transferencias por URLs prefirmadas de S3 (ADR-010). rayd no guarda
+   * credenciales: el SDK firma cada petición con las credenciales del
+   * llamante y rayd sólo llama a URLs cuyo host y ruta coinciden con el
+   * S3Object de la petición (INVALID_ARGUMENT antes de cualquier I/O de red).
+   * Como mucho 16 transferencias esperando o en curso por sandbox
+   * (RESOURCE_EXHAUSTED); NOT_FOUND para un transfer_id desconocido.
+   *
+   * Importa un objeto a `path`: con `wait_for_object` sondea `get` hasta que
+   * el objeto exista o venza `expires_at_unix_ms`; sin él lo pide una vez.
+   *
+   * @generated from rpc rayito.v1.FilesystemService.StartImport
+   */
+  startImport: {
+    methodKind: "unary";
+    input: typeof StartImportRequestSchema;
+    output: typeof StartTransferResponseSchema;
+  },
+  /**
+   * Exporta `path` tal como está ahora (se abre y se mide al aceptar la
+   * petición): un PUT o las partes de una subida multiparte.
+   *
+   * @generated from rpc rayito.v1.FilesystemService.StartExport
+   */
+  startExport: {
+    methodKind: "unary";
+    input: typeof StartExportRequestSchema;
+    output: typeof StartTransferResponseSchema;
+  },
+  /**
+   * @generated from rpc rayito.v1.FilesystemService.GetTransfer
+   */
+  getTransfer: {
+    methodKind: "unary";
+    input: typeof GetTransferRequestSchema;
+    output: typeof TransferStateSchema;
+  },
+  /**
+   * Primero el estado actual; después una foto completa en cada cambio;
+   * termina tras DONE, FAILED o CANCELLED.
+   *
+   * @generated from rpc rayito.v1.FilesystemService.WatchTransfer
+   */
+  watchTransfer: {
+    methodKind: "server_streaming";
+    input: typeof WatchTransferRequestSchema;
+    output: typeof TransferEventSchema;
+  },
+  /**
+   * @generated from rpc rayito.v1.FilesystemService.CancelTransfer
+   */
+  cancelTransfer: {
+    methodKind: "unary";
+    input: typeof CancelTransferRequestSchema;
+    output: typeof CancelTransferResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_rayito_v1_filesystem, 0);

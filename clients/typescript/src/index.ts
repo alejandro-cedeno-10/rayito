@@ -15,6 +15,7 @@ export {
   type ControlPlane,
   LambdaMicrovmsControlPlane,
   type ListMicrovmsOptions,
+  type ListMicrovmsPageOptions,
   PortSpec,
 } from "./aws/control-plane.js";
 export {
@@ -37,8 +38,13 @@ export {
   AuthenticationError,
   CapacityError,
   CommandExitError,
+  DiskFullError,
   FileNotFoundError,
+  FileUploadError,
+  GitAuthError,
+  GitUpstreamError,
   InvalidArgumentError,
+  LifecycleUnsupportedError,
   NotFoundError,
   PersistenceError,
   type PersistenceErrorOptions,
@@ -51,12 +57,18 @@ export {
   SandboxNotReadyError,
   SandboxStateError,
   TimeoutError,
+  TransferError,
+  type TransferErrorOptions,
+  UnimplementedError,
 } from "./errors.js";
 export type { Logger } from "./logger.js";
 export {
+  ALL_TRAFFIC,
   type CodeContext,
   type CommandResult,
   defaultIdlePolicy,
+  EgressEnforcement,
+  type EgressProxyInput,
   type EntryInfo,
   Execution,
   type ExecutionError,
@@ -67,15 +79,26 @@ export {
   type IdlePolicy,
   type IdlePolicyInput,
   type Logs,
+  type MicrovmListPage,
+  type NetworkPolicyInput,
+  type NetworkSelector,
+  type NetworkSelectorContext,
+  type NetworkState,
   type OutputChunk,
   type OutputMessage,
   type ProcessInfo,
   type PtySize,
+  type ResolvedS3Staging,
   Result,
+  type S3Staging,
   type SandboxHealth,
   type SandboxInfo,
+  type SandboxLifecycle,
   type SandboxListItem,
   type SandboxMetrics,
+  type TransferDirectionName,
+  type TransferPhaseName,
+  type TransferStatus,
   type WriteData,
   type WriteEntry,
 } from "./models.js";
@@ -116,13 +139,43 @@ export {
   type ListOptions,
   type ReadFormat,
   type ReadOptions,
+  type ReadResult,
   type RemoveOptions,
   type UserOptions,
   WatchHandle,
   type WatchOptions,
+  type WriteFilesOptions,
   type WriteOptions,
 } from "./sandbox/filesystem.js";
+export {
+  Git,
+  type GitAddOpts,
+  type GitCloneOpts,
+  type GitCommitOpts,
+  type GitConfigOpts,
+  type GitDangerouslyAuthenticateOpts,
+  type GitDeleteBranchOpts,
+  type GitInitOpts,
+  type GitPullOpts,
+  type GitPushOpts,
+  type GitRemoteAddOpts,
+  type GitRequestOpts,
+  type GitResetOpts,
+  type GitRestoreOpts,
+} from "./sandbox/git.js";
+export type {
+  GitBranches,
+  GitConfigScope,
+  GitFileStatus,
+  GitResetMode,
+  GitStatus,
+  GitStatusLabel,
+} from "./sandbox/git-args.js";
 export type { LoggingOption, PortLike } from "./sandbox/launch.js";
+export type { OnTimeout } from "./sandbox/lifecycle.js";
+export type { ListOrder } from "./sandbox/listing.js";
+export type { MetricsHistoryOptions } from "./sandbox/metrics.js";
+export { SandboxListPaginator } from "./sandbox/paginator.js";
 export {
   type CheckpointFilesOptions,
   type CheckpointProgress,
@@ -147,12 +200,26 @@ export {
 } from "./sandbox/pty.js";
 export {
   type ControlPlaneOptions,
+  type InstanceConnectOptions,
   type PauseOptions,
   Sandbox,
   type SandboxConnectOptions,
   type SandboxCreateOptions,
   type SandboxListOptions,
+  type SandboxPaginateOptions,
+  type SandboxSetTimeoutOptions,
+  type SignedUrlOptions,
+  type StaticMetricsHistoryOptions,
   type StaticPauseOptions,
+  type StaticUpdateNetworkOptions,
+  type UpdateNetworkOptions,
 } from "./sandbox/sandbox.js";
+export {
+  DownloadLink,
+  type DownloadUrlOptions,
+  UploadTicket,
+  type UploadUrlOptions,
+  type WaitOptions,
+} from "./sandbox/transfer.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";

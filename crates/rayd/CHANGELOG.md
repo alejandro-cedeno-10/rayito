@@ -10,6 +10,114 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+`rayd` 0.3.0 (M9). Todos los cambios del contrato (`proto/rayito/v1/`) son
+aditivos y compatibles con `buf breaking` (FILE): un SDK 0.2 sigue hablando
+con este agente. Los SDK 0.3 necesitan este agente para las features de M9.
+
+### Added
+
+- **`FilesystemService`: transferencias por URLs prefirmadas**
+  (`m9-file-transfer`, ADR-010): `StartImport`, `StartExport`,
+  `GetTransfer`, `WatchTransfer` y `CancelTransfer`; `rayd` mueve bytes con
+  un cliente HTTPS sin credenciales (`HyperSignedHttp`) sólo hacia URLs cuyo
+  host y ruta son los del objeto nombrado (`transfer::url_policy`), con un
+  resolvedor que descarta loopback, link-local e IMDS; barrera de lectura
+  tras subida; `Write`/`Read` con gzip opcional (`rayito-compress: gzip`) y
+  metadatos por fichero como xattrs `user.rayito.*`.
+- **`LifecycleService.SetTimeout`** y `HealthResponse.lifecycle` (campo 12)
+  (`m9-server-timeout`, ADR-011): el plazo lógico del bloque `lifecycle` del
+  `runHookPayload`, vigilado por el hilo `rayd-timeout`; al vencer en modo
+  `kill`, streams cerrados con `sandbox_timeout`, `SIGTERM`/`SIGKILL` a
+  todos los grupos y salida con código 124; la capa `timeout_gate` responde
+  `FAILED_PRECONDITION sandbox_timeout` a todo RPC salvo `Health` y
+  `SetTimeout`.
+- **`HealthService.MetricsHistory`**, `MetricsResponse.mem_cache_bytes` y
+  `HealthResponse.cpu_count`/`memory_total_bytes` (campos 14 y 15)
+  (`m9-sandbox-observability`): muestreo procfs cada 5 s sólo en
+  `running`/`resumed`, anillo de 5 760 muestras.
+- **`NetworkService`** (`UpdateNetwork`, `GetNetwork`) y
+  `HealthResponse.egress_enforcement` (campo 13) (`m9-egress-policy`,
+  ADR-012): política de egress en el guest con `CAP_NET_ADMIN` (tablas de
+  rutas por `uidrange 1000-65535`, cambio atómico, verificación), proxy local
+  HTTP CONNECT/SOCKS5 en `127.0.0.1` con guardia contra IMDS y las
+  direcciones propias del guest, cadena al SOCKS5 del operador, deny-all en
+  `/run` con `network.enforce` y re-verificación en `/resume`.
+- `language = "typescript"` en `CodeService` (`m9-deno-kernels`): el
+  catálogo del agente conoce los cuatro nombres; en una imagen sin el kernel,
+  `UNIMPLEMENTED` nombrando `rayito-base-poly`.
+
+### Fixed
+
+- **Un `Write` en un directorio observado llega como `WRITE`**
+  (`m9-e2b-v2-surface`): el rename del temporal `.rayito-tmp-*` sobre el
+  destino se emparejaba como un `RENAME` sin `entry`, y el código portado
+  de E2B que espera `WRITE` tras `files.write` (el ejemplo de
+  docs.e2b.dev) no veía nada. `WatchTranslator` empareja las dos mitades
+  del rename por su cookie de inotify (`RawWatchEvent.cookie`) y emite un
+  único `WRITE` del destino, con `entry` si se pidió `include_entry`. Los
+  `mv`/`files.rename` corrientes siguen siendo `RENAME`.
+- **El plazo en milisegundos ya no oscila**: `deadline_unix_ms` y
+  `cap_unix_ms` (en `Health.lifecycle` y en el detalle de `SetTimeout` más
+  allá del tope) se calculaban redondeando por separado el reloj de pared y
+  el monotónico, y dos lecturas seguidas podían diferir en 1 ms. Ahora la
+  suma se hace en nanosegundos y se redondea una sola vez hacia abajo
+  (también antes de la época).
+- **`Health` no dice `agent_ready` mientras se instala el deny-all de
+  `/run`** (`egress_settling`): la plataforma deja pasar `Health` antes del
+  200 de `/run`, y con `network.enforce` el SDK podía dar por listo un
+  sandbox cuya política aún no estaba aplicada (el primer `ip` de un guest
+  recién restaurado tarda segundos). `agent_ready` espera a que la política
+  quede publicada, verificada o no; una imagen sin `CAP_NET_ADMIN` queda
+  lista tras `/run` como siempre.
+- **La salida por el plazo no cuenta como reinicio del sidecar**: el sidecar
+  y los kernels parados para la salida con código 124 (o cualquier apagado)
+  no suben `sidecar_restarts` ni se registran como caída.
+- **Egress en un guest recién creado**: `ip route flush|show table <T>`
+  responde "FIB table does not exist" (salida 2) si la tabla de la política
+  nunca se creó; ahora se trata como una tabla vacía en vez de como un fallo
+  que hacía fracasar la instalación de la primera política. `ip` nunca se registra: su stderr sólo se
+  lee para reconocer esa frase.
+- **Una sola gracia de reanudación por plazo, nunca más allá del tope**
+  (`m9-server-timeout`, revisión independiente): el hilo vigilante toma
+  cualquier hueco ≥ 2 s entre dos ticks por una congelación, y dejarlo sin
+  CPU desde dentro del sandbox lo imita; seguido de un `/suspend` +
+  `/resume` forjado, la gracia de 30 s podía reabrirse una y otra vez y, en
+  modo `kill`, pasar del tope. Ahora cada gracia acaba como mucho en el
+  tope (ninguna se abre en él o después) y un plazo abre una sola; sólo un
+  plazo que se mueve (`SetTimeout`, que exige el token, o la regla de
+  auto-resume de 5 min, que sigue igual) vuelve a tenerla.
+- **El proxy de egress reescribe `Host` en la forma absoluta `http://`**
+  (`m9-egress-policy`): conservaba el `Host` del cliente, así que un nombre
+  permitido podía servir de fachada para otro host virtual de la misma IP.
+  Ahora el `Host` es la autoridad comprobada (RFC 9112 §3.2.2) y las líneas
+  plegadas (obs-fold) se rechazan con `400`. `CONNECT` y SOCKS5 no
+  inspeccionan TLS: el SNI sigue siendo del cliente (residual en T17).
+- **Las direcciones IPv4-compatibles (`::a.b.c.d`) se juzgan como IPv4** en
+  la guardia y la política del proxy (`canonical_ip`, con
+  `Ipv6Addr::to_ipv4` como la política de URLs de transferencia): antes
+  sólo `::ffff:a.b.c.d`, y `::169.254.169.254` o `::127.0.0.1` pasaban la
+  guardia. `::` y `::1` siguen siendo IPv6.
+- **`Health` ya no puede quedarse sin `agent_ready` para siempre**: si la
+  tarea del deny-all de `/run` entraba en pánico, `egress_settling` no se
+  limpiaba nunca; ahora lo limpia un guardián al terminar la tarea de
+  cualquier modo. Además cada invocación de `ip` tiene un tope de 5 s
+  (`IP_COMMAND_TIMEOUT`, por encima de los 2,76 s medidos para el primer
+  `ip` tras un restore): pasado, el hijo se mata y se recoge y la llamada
+  falla como `timed out`, en vez de retener el lock del gestor de egress.
+
+### Dependencies
+
+- **`zlib-rs` aparece en `Cargo.lock` y en el SBOM, pero no se enlaza**
+  (`m9-file-transfer`, ADR-010): la feature `gzip` de `tonic` 0.14.6 pide
+  `flate2` con sus features por defecto, y la feature débil
+  `runtime_detection` (`zlib-rs?/std`) basta para que Cargo anote la
+  dependencia opcional `zlib-rs` en el lockfile aunque nadie la active. El
+  workspace ya fija `flate2` con `default-features = false` y
+  `rust_backend`, pero las features son aditivas y no pueden quitar el
+  `default` que pide `tonic`, así que el lock no cambia. El binario enlaza
+  sólo `miniz_oxide` (`cargo tree -i zlib-rs` no encuentra la crate en el
+  grafo resuelto).
+
 ### Security
 
 - **`user=` sólo acepta cuentas sin privilegio** (auditoría interna, fila
@@ -21,6 +129,19 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `PrivilegedAccount`. La puerta duplicada de `persistence` desaparece: ese
   camino llama a la misma política con el opt-in de root retirado
   (`UserPolicy::without_root`).
+- **Ningún proceso de usuario hereda descriptores más allá de 0/1/2**:
+  `openpty` devuelve master y slave heredables y `rayd` sólo los marcaba
+  close-on-exec unas instrucciones después; un spawn concurrente (otro PTY,
+  un proceso o el sidecar) que hiciera `fork` en esa ventana entregaba el
+  master o el slave de otra terminal a la shell o al proceso del usuario
+  (visto en la CI aarch64 de GitHub: la shell listaba `0 1 142 145 2 255
+  3`). Ahora el `PreExecPlan` común a procesos, shells PTY y sidecar marca
+  close-on-exec todo descriptor >= 3 en el hijo justo antes de `exec`
+  (`close_range(3, ~0U, CLOSE_RANGE_CLOEXEC)`, con un bucle acotado de
+  `fcntl(F_SETFD)` hasta el `NOFILE` blando, máximo 4096, si el kernel es
+  anterior a 5.11), después de que `std` haya colocado stdio en 0/1/2. Cubre
+  también los descriptores que `rayd` hereda de su padre. El harness de
+  tests deja de sellarlos por su cuenta.
 
 ## [0.2.0] - 2026-09-17
 

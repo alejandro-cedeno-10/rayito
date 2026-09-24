@@ -23,6 +23,7 @@ from rayito_kernel_sidecar.protocol import (
     serialise_mime,
     split_text_chunks,
     strip_ansi,
+    strip_plain_text_ansi,
 )
 
 Emit = Callable[[Event], Awaitable[None]]
@@ -135,10 +136,15 @@ async def run_execution(
     code: str,
     envs: Mapping[str, str],
     emit: Emit,
+    *,
+    strip_plain_text_ansi: bool = False,
 ) -> ExecutionOutcome:
     """Runs one user cell (with its silent env set/restore cells around it
     when ``envs`` is non-empty) and emits ``started``, ``stdout``/``stderr``,
-    ``result``, ``error`` and exactly one ``end``."""
+    ``result``, ``error`` and exactly one ``end``. ``strip_plain_text_ansi``
+    removes ANSI escapes from the ``text/plain`` of every ``result`` bundle,
+    for kernels whose inspector colours results (Deno, AWS_API_NOTES.md
+    Q61); stream text is left alone because colours there are the user's."""
     if envs:
         silent = await run_silent(io, set_envs_cell(envs))
         if silent.ended_by != "kernel":
@@ -146,7 +152,9 @@ async def run_execution(
                 request_id, execution_id, silent.ended_by, emit, silent.detail, False
             )
             return silent
-    outcome = await _run_user_cell(io, request_id, execution_id, code, emit)
+    outcome = await _run_user_cell(
+        io, request_id, execution_id, code, emit, strips_plain_text_ansi=strip_plain_text_ansi
+    )
     if envs and outcome.ended_by == "kernel":
         await run_silent(io, RESTORE_ENVS_CELL)
     return outcome
@@ -175,7 +183,13 @@ async def run_silent(io: KernelIo, code: str) -> ExecutionOutcome:
 
 
 async def _run_user_cell(
-    io: KernelIo, request_id: int, execution_id: str, code: str, emit: Emit
+    io: KernelIo,
+    request_id: int,
+    execution_id: str,
+    code: str,
+    emit: Emit,
+    *,
+    strips_plain_text_ansi: bool,
 ) -> ExecutionOutcome:
     msg_id = io.submit(code, silent=False, store_history=True)
     state = _CellState(msg_id=msg_id)
@@ -196,7 +210,7 @@ async def _run_user_cell(
         if kind == KIND_SHELL:
             await _on_shell(state, payload, request_id, execution_id, emit)
         else:
-            await _on_iopub(state, payload, request_id, execution_id, emit)
+            await _on_iopub(state, payload, request_id, execution_id, emit, strips_plain_text_ansi)
         if state.complete():
             count = state.execution_count or state.started_count
             if not state.started_emitted:
@@ -236,7 +250,12 @@ async def _on_shell(
 
 
 async def _on_iopub(
-    state: _CellState, msg: Mapping[str, Any], request_id: int, execution_id: str, emit: Emit
+    state: _CellState,
+    msg: Mapping[str, Any],
+    request_id: int,
+    execution_id: str,
+    emit: Emit,
+    strips_plain_text_ansi: bool,
 ) -> None:
     msg_type = msg.get("msg_type")
     content = msg.get("content", {})
@@ -261,7 +280,7 @@ async def _on_iopub(
                 }
             )
     elif msg_type in ("display_data", "execute_result", "update_display_data"):
-        mime = serialise_mime(content.get("data", {}))
+        mime = _result_mime(content.get("data", {}), strips_plain_text_ansi)
         state.results += 1
         state.mime_types.update(mime)
         await emit(
@@ -284,6 +303,11 @@ async def _on_iopub(
                 "traceback": [strip_ansi(str(line)) for line in content.get("traceback", [])],
             }
         )
+
+
+def _result_mime(data: Mapping[str, Any], strips_plain_text_ansi: bool) -> dict[str, str]:
+    mime = serialise_mime(data)
+    return strip_plain_text_ansi(mime) if strips_plain_text_ansi else mime
 
 
 async def _emit_started(

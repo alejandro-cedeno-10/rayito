@@ -2,8 +2,9 @@
 
 Gracias por querer contribuir. Este documento explica cómo se trabaja en el
 repositorio: qué leer antes, cómo se propone un cambio, cómo se ejecutan los
-gates en Linux/WSL2 y en Windows, qué convenciones sigue el código y cómo se
-firman los commits. Las decisiones de licencia y gobernanza están en
+gates en Linux/WSL2, en macOS (con una VM Linux para `rayd`) y en Windows,
+cómo se corre el e2e contra tu propia cuenta de AWS, qué convenciones sigue
+el código y cómo se firman los commits. Las decisiones de licencia y gobernanza están en
 `LICENSE`, `NOTICE` y `GOVERNANCE.md`; las normas de conducta en
 `CODE_OF_CONDUCT.md`.
 
@@ -46,25 +47,32 @@ especificaciones delta en `specs/<capacidad>/spec.md`. Antes de implementar:
 openspec validate <nombre> --strict --no-interactive
 ```
 
-debe pasar. Quien implementa marca las tareas de `tasks.md` a medida que las
-termina. La aceptación (el e2e contra AWS real, o el conjunto de gates cuando
-el cambio no toca runtime) se archiva con:
+debe pasar, y antes de abrir el PR también el repositorio entero:
+
+```bash
+openspec validate --all --strict --no-interactive
+```
+
+El repositorio no fija la versión de la CLI de OpenSpec y CI no la ejecuta:
+es un gate local. Quien implementa marca las tareas de `tasks.md` a medida
+que las termina. La aceptación (el e2e contra AWS real, o el conjunto de
+gates cuando el cambio no toca runtime) se archiva con:
 
 ```bash
 openspec archive <nombre> --yes
 ```
 
-Los cambios archivados viven en `openspec/changes/archive/` y las
-especificaciones vigentes en `openspec/specs/`. Los cambios de arquitectura se
-escriben como ADR en `ARCHITECTURE.md` (ver `GOVERNANCE.md`).
+Los cambios archivados viven en `openspec/changes/archive/` (historia: no
+se editan) y las especificaciones vigentes en `openspec/specs/`. Los cambios
+de arquitectura se escriben como ADR en `ARCHITECTURE.md` (ver
+`GOVERNANCE.md`).
 
 ## 3. Toolchain y gates
 
-### Linux / macOS / WSL2
+### Linux / WSL2
 
-Linux (o WSL2) es el entorno de referencia: coincide con CI (`ubuntu-24.04`).
-En macOS se usan las mismas herramientas y los mismos comandos; CI sólo
-verifica Linux. Con `make`:
+Linux (o WSL2) es el entorno de referencia: coincide con CI (`ubuntu-24.04`
+y `ubuntu-24.04-arm`). Con `make`:
 
 ```bash
 make lint       # buf lint + fmt + clippy + ruff + gen_limits --check + check_license + mypy + biome
@@ -85,6 +93,40 @@ compilar `rayd` para ese target desde cualquier host; `buf` 1.73.0; `uv`
 Los tests de adaptadores de `rayd` marcados `#[cfg(unix)]` y los tests del
 sidecar con un ipykernel real (`pytest -m kernel`) necesitan Linux o WSL2: en
 Windows se omiten.
+
+Dos requisitos de los tests de integración de `rayd` (`crates/rayd/tests/`):
+
+- `cargo test --workspace` corre como un usuario **sin privilegios con uid
+  ≥ 1000**.
+- `m9_egress` (rutas de política de ADR-012) necesita **root con
+  `CAP_NET_ADMIN` en un network namespace nuevo**. Sin eso se salta; CI lo
+  ejecuta así, y con `RAYITO_REQUIRE_EGRESS_NETNS=1` saltarse es un fallo:
+
+  ```bash
+  binary="$(cargo test -p rayd --test m9_egress --locked --no-run --message-format=json \
+    | jq -r 'select(.reason == "compiler-artifact" and .target.name == "m9_egress" and .executable != null) | .executable')"
+  sudo env RAYITO_REQUIRE_EGRESS_NETNS=1 unshare --net -- "$binary" --test-threads=1
+  ```
+
+### macOS
+
+`rayd` no compila en macOS. Los SDKs (Python y TypeScript), el sidecar (salvo
+`pytest -m kernel`), `scripts/`, OpenSpec y el sitio de documentación se
+trabajan en macOS con los mismos comandos que en Linux; todo lo que compila o
+prueba el workspace de Rust (`cargo clippy`, `cargo test`, `make build`,
+`make image-zip` y los `make image-publish*`) se ejecuta **dentro de una VM
+Linux**, por ejemplo con
+[Lima](https://lima-vm.io/) y una imagen Ubuntu 24.04, con las mismas
+herramientas que en Linux. Dos detalles de Lima:
+
+- Por defecto monta tu home de macOS en sólo lectura: clona el repositorio
+  dentro de la VM, o apunta `CARGO_TARGET_DIR` a un directorio del disco de
+  la VM.
+- El usuario de la VM hereda tu uid de macOS (501), por debajo de 1000: crea
+  un usuario con uid ≥ 1000 (por ejemplo 1500) para `cargo test` y ejecuta
+  `m9_egress` con `sudo … unshare --net` como en Linux.
+
+CI sólo verifica Linux; el PR dice en qué sistema corrieron los gates.
 
 ### Windows
 
@@ -210,6 +252,60 @@ Sitio de documentación:
 cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
 ```
 
+Gates locales que CI no ejecuta:
+
+```bash
+openspec validate --all --strict --no-interactive
+uvx cfn-lint==1.56.3 infra/*.yaml
+```
+
+`make infra-lint` añade `aws cloudformation validate-template` sobre las
+mismas plantillas (necesita credenciales de AWS; la llamada es gratuita).
+
+### Plantilla IAM y e2e contra tu cuenta de AWS
+
+Las plantillas de CloudFormation viven en `infra/` (`infra/README.md`). El
+IAM de build, ejecución y cliente es `infra/iam.yaml`; la pila y los recursos
+que crea conservan los nombres `rayito-m0-iam` y `rayito-m0-*` con los que
+nacieron en M0, porque renombrarlos rompería los despliegues existentes. En
+tu propia cuenta, con marcadores en lugar de tus valores:
+
+```bash
+aws cloudformation deploy --stack-name rayito-m0-iam \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --profile <tu-perfil> \
+  --parameter-overrides ArtifactBucket=<tu-bucket> LogGroupPrefix=/rayito
+make image-publish BUCKET=<tu-bucket>          # y image-publish-caps / -poly
+```
+
+El e2e cuesta dinero y nunca corre sin `RAYITO_E2E=1` y `RAYITO_TEMPLATE`
+(`clients/python/tests/e2e/conftest.py`). El resto de variables es opcional
+y, si falta, el test que la necesita se salta:
+
+```bash
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export RAYITO_E2E=1
+export RAYITO_TEMPLATE=rayito-base               # nombre o ARN de la imagen
+export RAYITO_TEMPLATE_VERSION=<versión>         # vacío: la última ACTIVE
+export RAYITO_EXECUTION_ROLE_ARN=arn:aws:iam::123456789012:role/rayito-m0-execution-us-east-1
+export RAYITO_TEMPLATE_CAPS=rayito-base-caps     # IMDS, egress y persistencia
+export RAYITO_TEMPLATE_POLY=rayito-base-poly     # kernels bash/JavaScript/TypeScript
+export RAYITO_PERSIST_BUCKET=<tu-bucket>         # RAYITO_PERSIST_PREFIX: rayito-e2e
+export RAYITO_E2E_TRANSFER_BUCKET=<tu-bucket>    # RAYITO_E2E_TRANSFER_PREFIX: rayito-e2e-transfer
+make test-e2e
+make test-e2e-typescript
+```
+
+Los módulos de `clients/python/tests/e2e/` y `clients/typescript/tests/e2e/`
+documentan en su cabecera las variables propias de cada uno.
+
+**Nunca se versionan** IDs de cuenta, ARNs con cuenta real, nombres de
+bucket, perfiles de AWS/SSO, IDs de MicroVM ni rutas locales:
+`scripts/check_hygiene.py` (gate de CI) los rechaza. En documentación, tests
+y fixtures se usan los marcadores de AWS (`123456789012`,
+`amzn-s3-demo-bucket`, `microvm-00000000-0000-0000-0000-000000000001`,
+`vpc-0123456789abcdef0`) o `<tu-…>`.
+
 ## 4. Convenciones
 
 - **Identificadores siempre en inglés**: ficheros, módulos, clases,
@@ -243,7 +339,10 @@ cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.
 - **Ramas**: `feature/`, `bugfix/` o `chore/` + slug descriptivo.
 - **DCO, no CLA.** Cada commit lleva un trailer `Signed-off-by:` con tu
   nombre y correo, que `git` añade por ti con la opción `-s` (ver "Firma de
-  los commits" más abajo). Firmar significa aceptar el Developer Certificate
+  los commits" más abajo).
+- **Commits firmados.** Además del trailer DCO, cada commit va firmado
+  criptográficamente (GPG o SSH, opción `-S`) con una clave registrada en tu
+  cuenta de GitHub, para que aparezca como *Verified*. Firmar significa aceptar el Developer Certificate
   of Origin 1.1, reproducido ahí. Cuando el repositorio sea público, la app
   DCO de GitHub será un check obligatorio en cada PR (paso manual en
   `docs/RELEASING.md`).
@@ -260,10 +359,18 @@ cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.
   costó. Nunca dos sesiones e2e contra la misma imagen a la vez (el sweeper
   del `conftest` termina todos los MicroVMs vivos de la imagen).
 
-### Firma de los commits (DCO)
+### Firma de los commits (DCO y firma)
 
 ```bash
-git commit -s -m "feat: ..."
+git commit -s -S -m "feat: ..."
+```
+
+Para no repetir `-S`, con una clave SSH (o GPG con `gpg.format openpgp`):
+
+```bash
+git config commit.gpgsign true
+git config gpg.format ssh
+git config user.signingkey <ruta-a-tu-clave-publica.pub>
 ```
 
 El trailer `Signed-off-by: Nombre <correo>` certifica lo siguiente

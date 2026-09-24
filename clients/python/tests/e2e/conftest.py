@@ -11,7 +11,8 @@
   sweeper de fin de sesión termina lo que quede vivo, a <= 10/s (token bucket).
 
 Variables opcionales: `AWS_REGION`/`AWS_PROFILE` (boto3), `RAYITO_EXECUTION_ROLE_ARN`
-(activa `logging="cloudwatch"`; sin rol no hay logs de runtime).
+(activa `logging="cloudwatch"`; sin rol no hay logs de runtime), `RAYITO_TEMPLATE_POLY`
+(la variante `rayito-base-poly` de la fixture `poly_sandbox`).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ E2E_FLAG_VAR = "RAYITO_E2E"
 TEMPLATE_VAR = "RAYITO_TEMPLATE"
 TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_VERSION"
 EXECUTION_ROLE_VAR = "RAYITO_EXECUTION_ROLE_ARN"
+POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY"
 TEST_SANDBOX_TIMEOUT_SECONDS = 900
 MAX_TEST_SANDBOX_TIMEOUT_SECONDS = 1800
 MAX_LIVE_TEST_SANDBOXES = 10
@@ -154,6 +156,38 @@ def sandbox(
     boot_timings: BootTimings,
 ) -> Iterator[Sandbox]:
     created = create_test_sandbox(e2e_settings, control_plane, template_arn, boot_timings)
+    try:
+        yield created
+    finally:
+        with contextlib.suppress(SandboxNotFoundException):
+            created.kill()
+
+
+def poly_template() -> str | None:
+    return os.environ.get(POLY_TEMPLATE_VAR) or None
+
+
+@pytest.fixture
+def poly_sandbox(
+    e2e_settings: E2ESettings, control_plane: LambdaMicrovmsControlPlane
+) -> Iterator[Sandbox]:
+    """Un sandbox de la variante `rayito-base-poly` (`RAYITO_TEMPLATE_POLY`,
+    ARN o nombre), compartido por los e2e de kernels de M7 y M9; se salta si
+    la variable falta y se termina en teardown."""
+    template = poly_template()
+    if not template:
+        pytest.skip(f"exporta {POLY_TEMPLATE_VAR}=<arn|nombre> para probar los kernels poly")
+    started = time.perf_counter()
+    created = Sandbox.create(
+        control_plane.resolve_template_arn(template),
+        timeout=TEST_SANDBOX_TIMEOUT_SECONDS,
+        idle=None,
+        execution_role_arn=e2e_settings.execution_role_arn,
+        ingress=["ALL_INGRESS"],
+        logging=e2e_settings.logging,
+        control_plane=control_plane,
+    )
+    print(f"\n[poly] poly image kernel_ready_s: {time.perf_counter() - started:.2f}", flush=True)
     try:
         yield created
     finally:

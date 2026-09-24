@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import itertools
+import json
+import pickle
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -8,11 +10,22 @@ import pytest
 from rayito._limits import HOOKS_PORT, MAX_DURATION_SECONDS
 from rayito._models import (
     CheckpointResult,
+    CodeContext,
+    DownloadLink,
+    EgressProxy,
+    EntryInfo,
+    Execution,
+    ExecutionError,
     HostAccess,
     IdlePolicy,
+    Logs,
+    MicrovmListPage,
     RestoreResult,
     S3Prefix,
+    S3Staging,
     SandboxInfo,
+    SandboxMetrics,
+    TransferStatus,
 )
 from rayito._sandbox_base import (
     ReadinessPoll,
@@ -231,3 +244,103 @@ def test_results_expose_the_uri() -> None:
         duration=0.5,
     )
     assert checkpoint.uri == restore.uri == "s3://b-1/p/n"
+
+
+def test_sandbox_metrics_keeps_positional_construction_and_defaults_mem_cache() -> None:
+    metrics = SandboxMetrics(1.0, 2, 3, 4, 5, 1, STARTED_AT)
+    assert metrics.mem_cache_bytes == 0
+    assert SandboxMetrics(1.0, 2, 3, 4, 5, 1, STARTED_AT, 7).mem_cache_bytes == 7
+
+
+def test_sandbox_info_guest_facts_default_to_unknown() -> None:
+    info = SandboxInfo(
+        sandbox_id=SANDBOX_ID,
+        state="RUNNING",
+        endpoint="host",
+        template=IMAGE_ARN,
+        template_version="1",
+        started_at=STARTED_AT,
+        maximum_duration_seconds=900,
+    )
+    assert (info.agent_version, info.cpu_count, info.memory_mb) == (None, None, None)
+
+
+def test_microvm_list_page_is_a_frozen_page_with_an_optional_token() -> None:
+    page = MicrovmListPage(items=())
+    assert page.next_token is None
+    with pytest.raises(AttributeError):
+        page.next_token = "t"  # type: ignore[misc]
+
+
+def test_egress_proxy_repr_hides_the_password() -> None:
+    proxy = EgressProxy("10.0.0.5:1080", username="operator", password="s3cr3t-value")
+    assert "s3cr3t-value" not in repr(proxy)
+    assert "s3cr3t-value" not in str(proxy)
+    assert "operator" in repr(proxy)
+
+
+def test_logs_to_json_round_trips() -> None:
+    logs = Logs(stdout=["a\n", "b"], stderr=["err"])
+    assert json.loads(logs.to_json()) == {"stdout": ["a\n", "b"], "stderr": ["err"]}
+    assert Logs(**json.loads(logs.to_json())) == logs
+
+
+def test_execution_error_to_json_round_trips() -> None:
+    error = ExecutionError(name="ZeroDivisionError", value="division by zero", traceback="t")
+    assert ExecutionError(**json.loads(error.to_json())) == error
+
+
+def test_execution_nests_logs_as_a_json_string_like_e2b() -> None:
+    logs = Logs(stdout=["hola\n"], stderr=[])
+    execution = Execution(logs=logs)
+    assert json.loads(execution.to_json())["logs"] == logs.to_json()
+
+
+def test_code_context_from_json_round_trips() -> None:
+    context = CodeContext(id="ctx-1", language="python", cwd="/home/user")
+    data = {"id": context.id, "language": context.language, "cwd": context.cwd}
+    assert CodeContext.from_json(data) == context
+
+
+@pytest.mark.parametrize("missing", ["id", "language", "cwd"])
+def test_code_context_from_json_names_the_missing_key(missing: str) -> None:
+    data = {"id": "ctx-1", "language": "python", "cwd": "/home/user"}
+    del data[missing]
+    with pytest.raises(InvalidArgumentException, match=missing):
+        CodeContext.from_json(data)
+
+
+def test_download_link_is_the_url_but_never_shows_or_pickles_it() -> None:
+    url = "https://amzn-s3-demo-bucket.s3.us-east-1.amazonaws.com/k?X-Amz-Signature=abc"
+    expires = datetime(2026, 1, 1, tzinfo=UTC)
+    link = DownloadLink(url, path="/a", expires_at=expires, transfer_id="t", size=3, sha256="f")
+    assert str(link) == url == link.url
+    assert (link.path, link.size, link.sha256, link.transfer_id) == ("/a", 3, "f", "t")
+    assert "Signature" not in repr(link) and "amzn-s3-demo-bucket" not in repr(link)
+    with pytest.raises(TypeError, match="credencial"):
+        pickle.dumps(link)
+
+
+def test_entry_info_metadata_defaults_empty_and_is_read_only() -> None:
+    entry = EntryInfo(
+        name="a",
+        type=None,
+        path="/a",
+        size=0,
+        mode=0o644,
+        permissions="-rw-r--r--",
+        owner="user",
+        group="user",
+        modified_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert dict(entry.metadata) == {}
+    with pytest.raises(TypeError):
+        entry.metadata["k"] = "v"  # type: ignore[index]
+
+
+def test_transfer_status_and_staging_defaults() -> None:
+    status = TransferStatus("t", "import", "running", 1, 2, 0)
+    assert (status.error_code, status.error_reason) == (None, None)
+    staging = S3Staging(bucket="amzn-s3-demo-bucket")
+    assert staging.region is None
+    assert staging.threshold_bytes <= staging.multipart_threshold_bytes

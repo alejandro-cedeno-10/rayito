@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// Plazo lógico del sandbox impuesto por rayd (ADR-011). SetTimeout exige
+// x-access-token: el código del sandbox no puede alargarse a sí mismo.
+// Más allá del tope (cap) responde INVALID_ARGUMENT con
+// "timeout beyond cap; cap_unix_ms=<n>"; sobre un sandbox sin bloque
+// lifecycle en el runHookPayload, FAILED_PRECONDITION "lifecycle_unmanaged".
+service LifecycleService {
+  rpc SetTimeout(SetTimeoutRequest) returns (LifecycleState);
+}
+
+enum TimeoutMode {
+  TIMEOUT_MODE_UNSPECIFIED = 0;
+  // Fija el plazo en ahora + timeout_ms; puede acortarlo (set_timeout).
+  TIMEOUT_MODE_EXACT = 1;
+  // max(plazo actual, ahora + timeout_ms); nunca acorta (connect(timeout)).
+  TIMEOUT_MODE_AT_LEAST = 2;
+}
+
+enum TimeoutAction {
+  TIMEOUT_ACTION_UNSPECIFIED = 0;
+  TIMEOUT_ACTION_KILL = 1;
+  TIMEOUT_ACTION_PAUSE = 2;
+}
+
+enum LifecyclePhase {
+  LIFECYCLE_PHASE_UNSPECIFIED = 0;
+  // El runHookPayload no trajo bloque lifecycle: la vida es la de la
+  // plataforma (maximumDurationInSeconds, ADR-007).
+  LIFECYCLE_PHASE_UNMANAGED = 1;
+  LIFECYCLE_PHASE_ACTIVE = 2;
+  // Reanudado después del plazo: 30 s para que connect() mande
+  // SetTimeout(AT_LEAST); sólo Health y SetTimeout responden.
+  LIFECYCLE_PHASE_RESUME_GRACE = 3;
+  // Plazo vencido: sólo Health y SetTimeout responden (FAILED_PRECONDITION
+  // "sandbox_timeout" al resto); en modo kill rayd está saliendo.
+  LIFECYCLE_PHASE_EXPIRED = 4;
+}
+
+message SetTimeoutRequest {
+  uint64 timeout_ms = 1;
+  TimeoutMode mode = 2;
+}
+
+message LifecycleState {
+  LifecyclePhase phase = 1;
+  // Reloj de pared; 0 en UNMANAGED.
+  int64 deadline_unix_ms = 2;
+  int64 cap_unix_ms = 3;
+  uint64 timeout_ms = 4;
+  TimeoutAction on_timeout = 5;
+  bool auto_resume = 6;
+  // SetTimeout que movieron el plazo en este arranque.
+  uint32 extensions = 7;
+}

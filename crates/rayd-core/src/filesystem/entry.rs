@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use super::MODE_MASK;
+use super::metadata::FileMetadata;
 use super::path::RequestPath;
 use super::ports::NameResolver;
 
@@ -32,7 +33,8 @@ pub struct RawEntry {
 }
 
 /// The wire `EntryInfo`. `path` is the normalised request path, never the
-/// symlink-resolved one.
+/// symlink-resolved one; `metadata` is empty unless the operation read or
+/// wrote it (`Stat`, `ListDir`, `Write`, a transfer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
@@ -45,6 +47,7 @@ pub struct Entry {
     pub group: String,
     pub modified_ms: i64,
     pub symlink_target: Option<String>,
+    pub metadata: FileMetadata,
 }
 
 /// The 10-character `ls -l` form: type letter plus three `rwx` triplets
@@ -131,6 +134,7 @@ pub fn build_entry(raw: RawEntry, path: &RequestPath, names: &mut NameCache<'_>)
         group: names.group(raw.gid),
         modified_ms: raw.modified_ms,
         symlink_target: raw.symlink_target,
+        metadata: FileMetadata::default(),
     }
 }
 

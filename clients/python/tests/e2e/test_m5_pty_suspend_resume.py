@@ -9,7 +9,10 @@ Los 15 bloques de `test_pty_suspend_resume` y el test de auto-resume siguen
 `openspec/changes/m5-pty-suspend-resume/design.md` "Acceptance test list",
 en el mismo orden; cada bloque es una función para que un fallo diga qué
 contrato se rompió. Cada tiempo medido se imprime con su nombre de
-`MILESTONES.md`/`AWS_API_NOTES.md` (Q37-Q41)."""
+`MILESTONES.md`/`AWS_API_NOTES.md` (Q37-Q41). `get-microvm` es eventualmente
+consistente: tras un resume puede seguir en `PENDING` cuando `rayd` ya
+respondió el `/resume` y `Health` trae la generación nueva (regresión de M9,
+2026-09-24), así que `RUNNING` se sondea con plazo (§6)."""
 
 from __future__ import annotations
 
@@ -71,6 +74,7 @@ REATTACH_PAUSED_FOR_SECONDS = 5.0
 IDLE_SUSPEND_BUDGET_SECONDS = 240.0
 IDLE_POLL_SECONDS = 5.0
 AUTO_RESUME_BUDGET_SECONDS = 30.0
+RUNNING_STATE_BUDGET_SECONDS = 30.0
 TERMINATE_BUDGET_SECONDS = 60.0
 CLOCK_OFFSET_TOLERANCE_MS = 5000
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -96,6 +100,15 @@ def wait_until(predicate: Callable[[], bool], budget: float, what: str) -> float
         assert elapsed < budget, f"{what} no ocurrió en {budget:g} s"
         time.sleep(POLL_SECONDS)
     return time.perf_counter() - started
+
+
+def wait_running(sbx: Sandbox, label: str) -> None:
+    running_s = wait_until(
+        lambda: sbx.get_info().state == "RUNNING",
+        RUNNING_STATE_BUDGET_SECONDS,
+        "get-microvm RUNNING",
+    )
+    report(label, running_s)
 
 
 Needle = bytes | re.Pattern[bytes]
@@ -308,7 +321,7 @@ def check_resume(sbx: Sandbox, generation_before: int) -> None:
     assert health.kernel_state_lost is False
     report(f"Q41 clock_offset_ms = {health.clock_offset_ms}", 0.0)
     assert abs(health.clock_offset_ms) <= CLOCK_OFFSET_TOLERANCE_MS
-    assert sbx.get_info().state == "RUNNING"
+    wait_running(sbx, "resume() -> get-microvm RUNNING (running_after_resume_s)")
 
 
 def check_kernel_alive(sbx: Sandbox) -> None:
@@ -549,7 +562,7 @@ def test_auto_resume(
         assert auto_resume_s <= AUTO_RESUME_BUDGET_SECONDS
         assert sbx.run_code("y").text == "7"
         assert sbx.get_health().resume_generation == 1
-        assert sbx.get_info().state == "RUNNING"
+        wait_running(sbx, "auto-resume -> get-microvm RUNNING (running_after_resume_s)")
         assert sbx.kill() is True
     finally:
         with contextlib.suppress(SandboxNotFoundException):
