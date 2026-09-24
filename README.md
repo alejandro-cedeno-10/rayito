@@ -312,27 +312,54 @@ matplotlib sube de 0,14 a 0,79 s.
 | `docs/RELEASING.md` | Pasos manuales de publicación (PyPI, npm, GitHub Release, tags) |
 | `proto/rayito/v1/` | El contrato gRPC. Fuente de verdad de toda la API |
 
-## Estructura prevista
+## Empezar en tu cuenta de AWS
+
+Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
+
+1. **IAM**: despliega los roles de build y ejecución y la política del
+   cliente ([`infra/README.md`](infra/README.md)):
+
+   ```bash
+   aws cloudformation deploy --stack-name rayito-m0-iam \
+     --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides ArtifactBucket=<tu-bucket> LogGroupPrefix=/rayito
+   ```
+
+   Asigna la política `rayito-m0-caller-<región>` (output `CallerPolicyArn` de la pila) al rol o
+   usuario que ejecutará el SDK. Para las transferencias por S3 añade
+   `TransferBucket`/`TransferPrefix` ([`images.md`](docs/site/docs/images.md)).
+
+2. **Imagen**: publica `rayito-base` (y, si las usas, `-caps` para la red
+   saliente y `-poly` para JavaScript/TypeScript):
+
+   ```bash
+   make image-publish BUCKET=<tu-bucket>        # también image-publish-caps / -poly
+   ```
+
+   Compila `rayd` para `aarch64-unknown-linux-musl`: hazlo en Linux o WSL2
+   (en macOS, dentro de una VM Linux) con `cargo-zigbuild`
+   ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
+
+3. **Diagnóstico**: `pip install "rayito[cli]" && rayito doctor --template rayito-base`
+   comprueba credenciales, cuotas, IAM, bucket, imagen y versión del agente.
+
+4. **Primer sandbox**: el [quickstart](docs/site/docs/quickstart.md) y el
+   resto de la documentación en [`docs/site/docs/`](docs/site/docs/).
+
+## Estructura del repositorio
 
 ```
-proto/rayito/v1/         contrato gRPC (package rayito.v1)
+proto/rayito/v1/         contrato gRPC (package rayito.v1), fuente de verdad
 crates/rayd/             agente Rust (tonic) que corre dentro del MicroVM
+crates/rayd-core/        dominio puro del agente (sin IO; puertos como traits)
 crates/rayito-proto/     código Rust generado desde proto/
-kernel-sidecar/          sidecar Python con jupyter_client
-clients/python/          SDK Python (paquete `rayito`)
-clients/typescript/      SDK TypeScript
-image/                   Dockerfile ARM64 de la imagen base
-spike/m0/                spike de validación de la plataforma (sin código de producto)
+kernel-sidecar/          sidecar Python con jupyter_client (y Deno en -poly)
+clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`)
+clients/typescript/      SDK TypeScript (paquete `rayito`, entrada `rayito/e2b`)
+image/                   Dockerfile ARM64 de las imágenes
+infra/                   plantillas de CloudFormation (egress, CI OIDC)
+spike/m0/                spike de validación de la plataforma y la plantilla IAM
+docs/site/               documentación de usuario (mkdocs)
 docs/aws-api/            volcado crudo de la API de Lambda MicroVMs
+openspec/                specs y changes archivados de cada hito
 ```
-
-## Primer paso
-
-```bash
-aws sso login --profile <perfil>
-export AWS_PROFILE=<perfil> AWS_REGION=us-east-1 RAYITO_BUCKET=<bucket>
-uv run --with "boto3>=1.43.82" --with requests --with "httpx[http2]" python spike/m0/run_m0.py all
-```
-
-Rellenar `spike/m0/M0_RESULTS.md` con lo medido. Sin eso, el resto del repo es
-especulación.
