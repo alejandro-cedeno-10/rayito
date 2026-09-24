@@ -220,10 +220,10 @@ def test_readmes_show_a_working_set_timeout() -> None:
     )
 
 
-def test_unreleased_changelogs_name_the_m9_surfaces() -> None:
-    python = section(read("clients/python/CHANGELOG.md"), "## [Unreleased]")
+def test_release_0_3_0_changelogs_name_the_m9_surfaces() -> None:
+    python = section(read("clients/python/CHANGELOG.md"), "## [0.3.0]")
     assert_says(
-        "clients/python/CHANGELOG.md [Unreleased]",
+        "clients/python/CHANGELOG.md [0.3.0]",
         python,
         (
             "max_lifetime",
@@ -236,13 +236,13 @@ def test_unreleased_changelogs_name_the_m9_surfaces() -> None:
         ),
     )
     assert_silent(
-        "clients/python/CHANGELOG.md [Unreleased]",
+        "clients/python/CHANGELOG.md [0.3.0]",
         python,
         ("`rayito.e2b.Sandbox.set_timeout` sigue siendo `UnimplementedError`",),
     )
-    typescript = section(read("clients/typescript/CHANGELOG.md"), "## [Unreleased]")
+    typescript = section(read("clients/typescript/CHANGELOG.md"), "## [0.3.0]")
     assert_says(
-        "clients/typescript/CHANGELOG.md [Unreleased]",
+        "clients/typescript/CHANGELOG.md [0.3.0]",
         typescript,
         (
             "setTimeout",
@@ -253,9 +253,9 @@ def test_unreleased_changelogs_name_the_m9_surfaces() -> None:
             "updateNetwork",
         ),
     )
-    rayd = section(read("crates/rayd/CHANGELOG.md"), "## [Unreleased]")
+    rayd = section(read("crates/rayd/CHANGELOG.md"), "## [0.3.0]")
     assert_says(
-        "crates/rayd/CHANGELOG.md [Unreleased]",
+        "crates/rayd/CHANGELOG.md [0.3.0]",
         rayd,
         ("LifecycleService", "MetricsHistory", "NetworkService", "StartImport"),
     )
