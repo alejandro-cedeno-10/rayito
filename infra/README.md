@@ -1,11 +1,11 @@
 # infra — plantillas de infraestructura de Rayito
 
-Plantillas CloudFormation que un operador despliega en su propia cuenta. El
-IAM mínimo del SDK sigue en `spike/m0/iam.yaml` (build role, execution role,
-`CallerPolicy`); esta carpeta añade lo que M6 necesita y que el spike no cubría.
+Plantillas CloudFormation que un operador despliega en su propia cuenta: el
+IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 
 | Plantilla | Qué crea | Cuándo |
 |---|---|---|
+| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`) y la managed policy `CallerPolicy` del publicador (S3 de transferencias con `TransferBucket`) | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
 
@@ -66,7 +66,7 @@ print(sbx.get_info().ingress)  # el ALL_INGRESS gestionado que la plataforma añ
 Quien llama a `run-microvm` necesita `lambda:PassNetworkConnector` sobre el
 ARN del conector (además del que ya tiene sobre los gestionados). La salida
 `CallerPolicyStatement` de la pila imprime la sentencia exacta; con
-`spike/m0/iam.yaml` basta pasar el ARN en el parámetro `NetworkConnectorArns`
+`infra/iam.yaml` basta pasar el ARN en el parámetro `NetworkConnectorArns`
 (lista, por defecto vacía) al desplegar o actualizar `rayito-m0-iam`.
 
 El rol operador (`OperatorRole`) lo asume `lambda.amazonaws.com` para crear,
@@ -150,9 +150,9 @@ proveedor `token.actions.githubusercontent.com` que ya exista en la cuenta,
 sólo puede haber uno), `ExecutionRoleArn` (vacío: sin `iam:PassRole`; el
 workflow no exporta `RAYITO_EXECUTION_ROLE_ARN`) y `RoleName`
 (`rayito-e2e-github`). La plantilla se valida con `make infra-lint`
-(`validate-template` + `cfn-lint` sobre las dos plantillas de esta carpeta).
+(`validate-template` + `cfn-lint` sobre las plantillas de esta carpeta).
 
-## Persistencia en S3 (`spike/m0/iam.yaml`, M7)
+## Persistencia en S3 (`infra/iam.yaml`, M7)
 
 `Sandbox.create(persist=S3Prefix(bucket, prefix, name))` hace que `rayd`, como
 root y con el execution role, suba y baje el `HOME` del usuario a
@@ -162,7 +162,7 @@ execution role no recibe ningún permiso de S3:
 
 ```bash
 aws cloudformation deploy --stack-name rayito-m0-iam \
-  --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides ArtifactBucket=<bucket-de-artefactos> LogGroupPrefix=/rayito \
       PersistenceBucket=<bucket-de-persistencia> PersistencePrefix=rayito-home
 ```
@@ -232,7 +232,7 @@ environment, las variables y el presupuesto son los pasos manuales del
 Migration Plan de `m7-supply-chain`.
 
 
-## Transferencias de ficheros (`spike/m0/iam.yaml`, M9)
+## Transferencias de ficheros (`infra/iam.yaml`, M9)
 
 `files.upload_url`/`download_url` y los ficheros grandes de
 `files.write`/`files.read` (`Sandbox.create(transfer=S3Staging(bucket,
@@ -245,7 +245,7 @@ defecto) no hay ningún permiso de transferencia:
 
 ```bash
 aws cloudformation deploy --stack-name rayito-m0-iam \
-  --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
   --profile <tu-perfil> \
   --parameter-overrides ArtifactBucket=<bucket-de-artefactos> LogGroupPrefix=/rayito \
       TransferBucket=amzn-s3-demo-bucket TransferPrefix=rayito-transfer

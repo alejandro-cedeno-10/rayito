@@ -278,7 +278,7 @@ ya iguala ese enlace. No se ha medido desde un cliente en la misma región.
 
 Las credenciales que firman son las de **tu** proceso (el llamante), nunca un
 execution role: `rayd` no guarda ninguna (T16). La política mínima del
-llamante está parametrizada en `spike/m0/iam.yaml` (`TransferBucket`,
+llamante está parametrizada en `infra/iam.yaml` (`TransferBucket`,
 `TransferPrefix`): `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` y
 `s3:AbortMultipartUpload` sobre `<bucket>/<prefix>/*` y `s3:ListBucket`
 acotado a ese prefijo (sin él, una clave que falta da 403 en vez de 404). La

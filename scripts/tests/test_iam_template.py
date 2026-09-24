@@ -1,4 +1,4 @@
-"""Las tres filas del triaje de 2026-09-22 que viven en `spike/m0/iam.yaml`
+"""Las tres filas del triaje de 2026-09-22 que viven en `infra/iam.yaml`
 (H-01, C-13 y la mitad de código de C-09) y los statements de transferencias
 de ADR-010 (sólo con `TransferBucket`, nunca en el execution role), fijados
 sobre la plantilla ya parseada y no sobre su texto: `cfn-lint` valida la
@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE = REPO_ROOT / "spike" / "m0" / "iam.yaml"
+TEMPLATE = REPO_ROOT / "infra" / "iam.yaml"
 LIMITS_JSON = REPO_ROOT / "limits.json"
 ARTIFACT_NAMESPACE = "rayito"
 ARTIFACT_DENY_SID = "NeverTheImageArtifacts"

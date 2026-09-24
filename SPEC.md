@@ -233,5 +233,5 @@ Se resuelven midiendo, no diseñando. Ver `MILESTONES.md` M0 y
 - **gRPC a través del proxy** (Q17): trailers y streams largos con
   `x-aws-proxy-force-h2` sobre tonic h2c se confirman en M1 con el primer
   binario; si falla, `rayd` necesitaría TLS y cae la premisa "sin crate TLS".
-- **Alcance del puerto de hooks desde fuera** con un token `allPorts` (fila sin numerar de `spike/m0/M0_RESULTS.md`,
+- **Alcance del puerto de hooks desde fuera** con un token `allPorts` (fila sin numerar de la tabla de resultados medida en el spike de M0, historial de git;
   riesgo T2 de `SECURITY.md`).

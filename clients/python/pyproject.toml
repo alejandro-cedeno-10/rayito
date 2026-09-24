@@ -49,7 +49,7 @@ dev = [
     "grpc-stubs>=1.53",
     "typer>=0.15,<1",
     "rayito[mcp]",
-    # scripts/tests/test_iam_template.py parsea spike/m0/iam.yaml (CI corre
+    # scripts/tests/test_iam_template.py parsea infra/iam.yaml (CI corre
     # scripts/tests con este entorno).
     "pyyaml>=6.0",
 ]

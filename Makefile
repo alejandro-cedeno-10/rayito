@@ -26,7 +26,7 @@ PUBLISH_ARGS  ?=
 PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
-IAM_TEMPLATE  := spike/m0/iam.yaml
+IAM_TEMPLATE  := infra/iam.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
@@ -191,8 +191,9 @@ image-publish-caps: require-bucket image-zip
 image-prune:
 	$(PY) python scripts/image_prune.py --image-name rayito-base $(PRUNE_ARGS)
 
-# Valida las plantillas de infra/ (conector de egress y rol OIDC del e2e) y
-# el IAM del spike (`PersistenceBucket`/`PersistencePrefix` de M7):
+# Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e y el
+# IAM de build/ejecución/cliente con los parámetros de persistencia y
+# transferencias):
 # validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).

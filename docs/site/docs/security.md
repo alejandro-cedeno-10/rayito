@@ -76,7 +76,7 @@ Con `Sandbox.create(persist=S3Prefix(...))` el `HOME` del usuario viaja a tu
 bucket. Lo hace `rayd` como root con el execution role (que `persist=` exige
 explícitamente), no el código del sandbox: en `rayito-base-caps` uid 1000
 sigue sin alcanzar IMDS. El rol sólo puede escribir y leer bajo
-`<bucket>/<prefix>/*` (`spike/m0/iam.yaml`), nunca borrar; ese prefijo **no
+`<bucket>/<prefix>/*` (`infra/iam.yaml`), nunca borrar; ese prefijo **no
 separa inquilinos**: `rayd` no liga el destino al sandbox que lo pide, así
 que quien tenga el access token de un sandbox alcanza cualquier `name` bajo
 el mismo prefijo. El restore corre con

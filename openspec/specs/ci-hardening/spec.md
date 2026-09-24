@@ -84,7 +84,7 @@ No tracked file SHALL carry an identifier of the environment the project was dev
 - **THEN** the gate reports its file and line and the output does not contain the key
 
 #### Scenario: untracked files are out of scope
-- **WHEN** an untracked, ignored file such as `spike/m0/out/results.jsonl` contains account IDs and MicroVM IDs
+- **WHEN** an untracked, ignored file such as `.claude/notes.jsonl` contains account IDs and MicroVM IDs
 - **THEN** the gate run without arguments does not read it
 
 #### Scenario: the repository is clean

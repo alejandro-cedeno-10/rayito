@@ -60,7 +60,7 @@ for sbx in (base, caps, poly):
 ## IAM del llamante
 
 El SDK corre con **tus** credenciales (la cadena de boto3 / AWS SDK v3). La
-`CallerPolicy` de `spike/m0/iam.yaml` es la política mínima; M9 sólo añade
+`CallerPolicy` de `infra/iam.yaml` es la política mínima; M9 sólo añade
 permisos para las transferencias:
 
 | Feature de M9 | Permisos nuevos |
@@ -76,7 +76,7 @@ transferencia):
 
 ```bash
 aws cloudformation deploy --stack-name rayito-m0-iam \
-  --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
   --profile <tu-perfil> \
   --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito \
       TransferBucket=amzn-s3-demo-bucket TransferPrefix=rayito-transfer

@@ -61,7 +61,7 @@ LARGE_REGIONS = frozenset({"us-east-1", "us-east-2", "us-west-2", "ap-northeast-
 ADVISORY_SUMMARY = "simulación orientativa: las comprobaciones 2, 5, 6 y 8 son las que cuentan"
 BUCKET_PERMISSIONS_HINT = (
     "publish necesita s3:ListBucket sobre el bucket y s3:GetObject/s3:PutObject "
-    f"sobre {S3_KEY_PREFIX}/* (CallerPolicy de spike/m0/iam.yaml)"
+    f"sobre {S3_KEY_PREFIX}/* (CallerPolicy de infra/iam.yaml)"
 )
 CAPS_IMAGE_SUFFIX = "-caps"
 

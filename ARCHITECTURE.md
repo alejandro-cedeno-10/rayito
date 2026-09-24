@@ -1227,7 +1227,7 @@ con un JWE del puerto 8080.
 `0.0.0.0:9000`, separado del gRPC h2c en `:8080`. El SDK nunca acuña tokens con
 `allPorts` por defecto ni incluye 9000 en `allowedPorts`.
 
-**Consecuencia.** Si M0 (fila "hooks alcanzables vía proxy" de `spike/m0/M0_RESULTS.md`) demuestra que un token `allPorts` alcanza el 9000
+**Consecuencia.** Si M0 (fila "hooks alcanzables vía proxy" de la tabla de resultados medida en el spike de M0, historial de git) demuestra que un token `allPorts` alcanza el 9000
 desde fuera, se documenta como riesgo T2 en `SECURITY.md`; la mitigación
 principal sigue siendo no acuñar `allPorts` y aceptar `/run` una sola vez.
 Esa mitigación acota el origen **externo** y sólo ése: el listener es
@@ -1338,7 +1338,7 @@ deny check` pasa con la allowlist existente. El SDK expone
 `checkpoint_files()`, `restore_files()` y `reincarnate()` = checkpoint →
 `create(persist=)` con las mismas opciones → `kill()` de la VM vieja; la
 misma superficie en TypeScript. La política IAM del execution role es un
-parámetro de `spike/m0/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`):
+parámetro de `infra/iam.yaml` (`PersistenceBucket`/`PersistencePrefix`):
 `s3:PutObject/GetObject/AbortMultipartUpload` sobre `<bucket>/<prefix>/*` y
 `s3:ListBucket` acotado con `s3:prefix`, sin `DeleteObject`.
 

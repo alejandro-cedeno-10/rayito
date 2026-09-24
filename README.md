@@ -303,9 +303,9 @@ matplotlib sube de 0,14 a 0,79 s.
 | `AWS_API_NOTES.md` | Superficie verificada de la API de AWS. **Leer antes de tocar `src/`** |
 | `docs/aws-api/` | Apéndice crudo: modelo `service-2.json`, `help` de los 25 comandos, resumen de shapes |
 | `MILESTONES.md` | Hitos y criterios de aceptación |
-| `spike/m0/` | Imagen probe, runbook, IAM y tabla de resultados del hito M0 |
+| `infra/` | Plantillas de CloudFormation: IAM de build, ejecución y cliente (`iam.yaml`), conector de egress, rol OIDC del e2e ([`infra/README.md`](infra/README.md)) |
 | `CLAUDE.md` | Reglas para trabajar con Claude Code |
-| `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2 y Windows, convenciones, DCO |
+| `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2, macOS (VM Linux) y Windows, e2e en tu cuenta, convenciones, DCO y commits firmados |
 | `SECURITY.md` | Cómo reportar una vulnerabilidad y el modelo de amenazas |
 | `GOVERNANCE.md` | Quién decide y cómo (ADRs, cambios OpenSpec, mantenedores) |
 | `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, atribuciones de terceros y los changelogs por componente |
@@ -321,7 +321,7 @@ Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
 
    ```bash
    aws cloudformation deploy --stack-name rayito-m0-iam \
-     --template-file spike/m0/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ArtifactBucket=<tu-bucket> LogGroupPrefix=/rayito
    ```
 
@@ -357,8 +357,7 @@ kernel-sidecar/          sidecar Python con jupyter_client (y Deno en -poly)
 clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`)
 clients/typescript/      SDK TypeScript (paquete `rayito`, entrada `rayito/e2b`)
 image/                   Dockerfile ARM64 de las imágenes
-infra/                   plantillas de CloudFormation (egress, CI OIDC)
-spike/m0/                spike de validación de la plataforma y la plantilla IAM
+infra/                   plantillas de CloudFormation (IAM, egress, CI OIDC)
 docs/site/               documentación de usuario (mkdocs)
 docs/aws-api/            volcado crudo de la API de Lambda MicroVMs
 openspec/                specs y changes archivados de cada hito

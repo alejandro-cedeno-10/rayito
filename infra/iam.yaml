@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Rayito M0 spike: build role, execution role (logs only) and a least-privilege
+  Rayito IAM: build role, execution role (logs only) and a least-privilege
   managed policy for the SDK caller. Action names come from
   https://docs.aws.amazon.com/lambda/latest/dg/microvms-security.html and the
   aws-samples templates; see AWS_API_NOTES.md section 10.

@@ -380,7 +380,7 @@ export function requireRoleForPersist(
   if (persist !== undefined && executionRoleArn === undefined) {
     throw new InvalidArgumentError(
       "create({ persist }) requiere executionRoleArn: rayd lee S3 con las credenciales del " +
-        "execution role (política `persistence` de spike/m0/iam.yaml)",
+        "execution role (política `persistence` de infra/iam.yaml)",
     );
   }
 }

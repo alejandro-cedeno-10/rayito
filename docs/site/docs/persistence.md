@@ -48,7 +48,7 @@ un `HOME` persistido: `s3://bucket/prefix/name/`.
 
 - `prefix` es la base del operador, la que acota la política IAM del
   execution role: tiene que coincidir con el `PersistencePrefix` del
-  despliegue (`spike/m0/iam.yaml`, por defecto `rayito-home`) o cada
+  despliegue (`infra/iam.yaml`, por defecto `rayito-home`) o cada
   `checkpoint_files()` responde
   `PersistenceException(code="permission_denied")`. **El `prefix="rayito"`
   por defecto del SDK no sirve para un despliegue real**: `rayito/` es el
@@ -149,7 +149,7 @@ memoria.
 
 ## IAM y bucket
 
-`spike/m0/iam.yaml` acepta `PersistenceBucket` y `PersistencePrefix`; con el
+`infra/iam.yaml` acepta `PersistenceBucket` y `PersistencePrefix`; con el
 bucket definido, el execution role recibe exactamente:
 
 ```yaml

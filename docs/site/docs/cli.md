@@ -83,7 +83,7 @@ es un error de uso (2). La biblioteca no trae ningún bucket por defecto: el
 bucket es de la cuenta que publica.
 
 Permisos S3 del principal que publica (la `CallerPolicy` de
-`spike/m0/iam.yaml` los concede tal cual): `s3:PutObject` y `s3:GetObject`
+`infra/iam.yaml` los concede tal cual): `s3:PutObject` y `s3:GetObject`
 sobre `arn:aws:s3:::<bucket>/rayito/*` y `s3:ListBucket` sobre
 `arn:aws:s3:::<bucket>`. `s3:ListBucket` es lo que hace que el `head-object`
 de un artefacto nuevo responda `404` en vez de `403` (sin él la CLI sube el

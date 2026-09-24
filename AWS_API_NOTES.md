@@ -17,10 +17,9 @@
 >    mediciones de terceros marcadas como *(tercero)*.
 >
 > Lo marcado **medido 2026-09-15** se comprobó contra una cuenta de pruebas
-> (us-east-1) con `spike/m0/run_m0.py`; los valores están en
-> `spike/m0/M0_RESULTS.md` (el crudo de `spike/m0/out/` se regenera en local y
-> no se versiona). Lo que queda marcado
-> `[M0]` sigue sin medir. La sección 16 tiene la columna "Medida" rellena.
+> (us-east-1): medido en el spike de M0 (historial de git: el runbook, la
+> imagen sonda y la tabla de resultados ya no están en el árbol). Lo que queda
+> marcado `[M0]` sigue sin medir. La sección 16 tiene la columna "Medida" rellena.
 
 ## Contradicciones conocidas entre artefactos de AWS
 
@@ -343,7 +342,7 @@ Acciones (prefijo `lambda:`, case-insensitive): `RunMicrovm, GetMicrovm, ListMic
 - Build role mínimo: `s3:GetObject` sobre el artefacto + `logs:CreateLogGroup/CreateLogStream/PutLogEvents`. Execution role mínimo para logs: el mismo trío de `logs:*`.
 - CloudTrail: `Create/Update/Delete*Image*` y `List*/Get*` son eventos de gestión; `RunMicrovm, TerminateMicrovm, SuspendMicrovm, ResumeMicrovm, CreateMicrovmAuthToken, CreateMicrovmShellAuthToken` son **eventos de datos** (opt-in, `resources.type = AWS::Lambda::MicrovmImage`). Si `runHookPayload` queda registrado: `[M0]` → nunca meter secretos en claro, sólo hashes.
 
-Plantillas listas en `spike/m0/iam.yaml`.
+Plantillas listas en `infra/iam.yaml`.
 
 ## 11. Cuotas y límites
 
@@ -408,7 +407,7 @@ Fuente: <https://docs.aws.amazon.com/lambda/latest/dg/microvms-images-snapshots.
 
 ## 16. Preguntas abiertas → medir en M0
 
-Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 (cuenta de pruebas, us-east-1, imagen sonda de 2 GB); detalle y veredictos en `spike/m0/M0_RESULTS.md` (el crudo de `spike/m0/out/` se regenera en local con el runbook y no se versiona). Runbook: `spike/m0/run_m0.py`. El criterio de parada de `MILESTONES.md` (1 y 7) está **superado**.
+Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (historial de git; cuenta de pruebas, us-east-1, imagen sonda de 2 GB): el runbook, la tabla de resultados con el detalle de cada veredicto y la imagen sonda ya no están en el árbol, y el crudo nunca se versionó. El criterio de parada de `MILESTONES.md` (1 y 7) está **superado**.
 
 | # | Pregunta | Desde docs (2026-09-14) | Medida (2026-09-15) |
 |---|---|---|---|
@@ -513,7 +512,7 @@ bucket (SSE-S3 desde 2023; la política del bucket es del operador).
 | `CompleteMultipartUpload` | `Bucket`, `Key`, `UploadId`, `MultipartUpload{Parts[{ETag, PartNumber}]}` | fin del archivo | <https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html> |
 | `AbortMultipartUpload` | `Bucket`, `Key`, `UploadId` | cualquier fallo o cancelación tras `CreateMultipartUpload` | <https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html> |
 
-No hay `ListObjectsV2`: `s3:ListBucket` se concede en `spike/m0/iam.yaml`
+No hay `ListObjectsV2`: `s3:ListBucket` se concede en `infra/iam.yaml`
 sólo para que una clave ausente responda `404 NoSuchKey` en vez de `403
 AccessDenied` (<https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html#API_GetObject_Errors>),
 de lo que depende el `NOT_FOUND` del restore. Códigos de error que `rayd`
@@ -622,7 +621,7 @@ Límites y comportamientos:
   sobre el bucket, `403 AccessDenied` si no
   (<https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html#API_GetObject_Errors>);
   por eso `CallerPolicy` concede `s3:ListBucket` con `s3:prefix` =
-  `<prefijo>/*` (`spike/m0/iam.yaml`, sids `TransferObjects` y
+  `<prefijo>/*` (`infra/iam.yaml`, sids `TransferObjects` y
   `TransferMissingKeyIs404`). Q70.
 - **`ExpiredToken`** (`400`, "The provided token has expired."): código de la
   lista de errores de S3; la ancla

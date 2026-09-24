@@ -754,7 +754,7 @@ class S3Prefix:
     """Dónde vive un `HOME` persistido: `s3://bucket/prefix/name/`.
 
     `prefix` es la base del operador (la que acota la política IAM del
-    execution role, `spike/m0/iam.yaml`); `name` identifica un home concreto y
+    execution role, `infra/iam.yaml`); `name` identifica un home concreto y
     `Sandbox.create(persist=)` lo rellena con el `sandbox_id` si viene vacío.
     `region` sólo si el bucket no está en la región del sandbox. Se valida en
     cliente con las mismas reglas que aplica `rayd`.

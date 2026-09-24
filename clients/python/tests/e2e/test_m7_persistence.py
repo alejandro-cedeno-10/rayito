@@ -2,7 +2,7 @@
 
 Requiere, además de `RAYITO_E2E=1` y `RAYITO_TEMPLATE`, `RAYITO_TEMPLATE_CAPS`
 (la imagen `rayito-base-caps`), `RAYITO_EXECUTION_ROLE_ARN` (con la política
-`persistence` de `spike/m0/iam.yaml`) y `RAYITO_PERSIST_BUCKET`;
+`persistence` de `infra/iam.yaml`) y `RAYITO_PERSIST_BUCKET`;
 `RAYITO_PERSIST_PREFIX` es `rayito-e2e` por defecto; `RAYITO_TEMPLATE_DEFAULT`
 (y `RAYITO_TEMPLATE_DEFAULT_VERSION`) nombran la imagen sin caps del test 4
 cuando `RAYITO_TEMPLATE` apunta a la caps (así el sweeper de la sesión sólo

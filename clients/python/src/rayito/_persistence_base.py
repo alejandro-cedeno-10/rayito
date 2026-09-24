@@ -146,7 +146,7 @@ def require_role_for_persist(persist: S3Prefix | None, execution_role_arn: str |
     if persist is not None and execution_role_arn is None:
         raise InvalidArgumentException(
             "create(persist=) requiere execution_role_arn: rayd lee S3 con las credenciales "
-            "del execution role (política `persistence` de spike/m0/iam.yaml)"
+            "del execution role (política `persistence` de infra/iam.yaml)"
         )
 
 

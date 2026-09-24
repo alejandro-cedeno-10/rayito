@@ -123,7 +123,7 @@ La tabla de migración del shim 1.x al 2.x está en
    SigV4 + TLS) y añade al llamante `s3:PutObject`, `s3:GetObject`,
    `s3:DeleteObject`, `s3:AbortMultipartUpload` sobre
    `<bucket>/rayito-transfer/*` y `s3:ListBucket` acotado al prefijo
-   (parámetros `TransferBucket`/`TransferPrefix` de `spike/m0/iam.yaml`;
+   (parámetros `TransferBucket`/`TransferPrefix` de `infra/iam.yaml`;
    receta en `infra/README.md`). Configúralo con
    `transfer=S3Staging("amzn-s3-demo-bucket")` o
    `RAYITO_TRANSFER_BUCKET=amzn-s3-demo-bucket` (la única vía en el shim).
