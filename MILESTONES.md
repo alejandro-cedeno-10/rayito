@@ -1125,6 +1125,7 @@ facturación).
   ningún cambio de M9 las empeora.
 - Revisión de arquitectura hexagonal/DDD: 32 hallazgos reales diferidos (la mayoría en `rayd`, cuyo cambio obliga a republicar y repetir la aceptación), listados con fichero, principio y arreglo en [`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md); 12 se corrigieron antes de 0.3.0.
 - Corregido: los descriptores de `rayd` ya no llegan al código de usuario. Cada hijo de usuario (proceso, shell PTY, sidecar) marca close-on-exec todo descriptor >= 3 justo antes de `exec` (`close_range` con `CLOSE_RANGE_CLOEXEC`, bucle `fcntl` acotado en kernels < 5.11), lo que cierra tanto los pipes heredados del padre como la carrera `openpty`/`F_SETFD` entre spawns concurrentes que vio la CI aarch64; el harness de tests ya no los sella (`crates/rayd/CHANGELOG.md`, Security).
+- CI: las suites de integración de `rayd` congelan el runner x86_64 de GitHub (ni `timeout` ni la cancelación responden; en aarch64 pasan siempre). El job x86 corre sólo `--lib --bins` y el job aarch64 la suite completa; averiguar qué test lo provoca (recursos o señales a procesos del runner).
 
 ---
 

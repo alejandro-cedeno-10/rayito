@@ -62,11 +62,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: cargo test (output to a file so an orphaned test process cannot hold the step open)
+      - name: cargo test (unit and domain; rayd's integration suites run on the aarch64 job, the only target rayd ships for)
         timeout-minutes: 25
         run: |
           status=0
-          timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
+          timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast --lib --bins > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
           cat "$RUNNER_TEMP/cargo-test.log"
           exit "$status"
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
