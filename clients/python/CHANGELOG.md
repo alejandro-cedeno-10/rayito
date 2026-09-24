@@ -4,6 +4,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado
 [SemVer](https://semver.org/lang/es/).
 
+## [0.3.0](https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.2.0...python-v0.3.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* el shim rayito.e2b / rayito/e2b sigue la superficie de E2B 2.x (pause devuelve bool, set_timeout ya no lanza UnimplementedError, nuevos órdenes posicionales); ver la sección de cambios incompatibles de los CHANGELOG de Python y TypeScript.
+
+### Added
+
+* M9, paridad con E2B (Rayito 0.3.0) ([8409453](https://github.com/alejandro-cedeno-10/rayito/commit/8409453792b8f34cc1d61ecaed0c388542eac91f))
+* Rayito 0.2.0, SDK de sandboxes para agentes sobre AWS Lambda MicroVMs ([dde681c](https://github.com/alejandro-cedeno-10/rayito/commit/dde681c4858ae548aa550b2e7ab58f21ef8a29d3))
+
+
+### Fixed
+
+* **sdk:** no exponer credenciales de AWS en los errores traducidos ([815b03d](https://github.com/alejandro-cedeno-10/rayito/commit/815b03d89987c5a5a6d44e3e23ed0148766a225c))
+
 ## [Unreleased]
 
 Rayito 0.3.0 (M9, paridad con E2B 2.x). Notas completas en
