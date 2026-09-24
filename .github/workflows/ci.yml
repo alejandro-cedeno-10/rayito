@@ -23,6 +23,7 @@ jobs:
   check:
     name: lint + test (x86_64)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -61,8 +62,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked --no-fail-fast
+      - name: cargo test (output to a file so an orphaned test process cannot hold the step open)
         timeout-minutes: 25
+        run: |
+          status=0
+          timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
+          cat "$RUNNER_TEMP/cargo-test.log"
+          exit "$status"
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uvx ruff==0.16.7 check scripts
       - name: limits.json renders _limits.py and limits.ts without drift
@@ -196,6 +202,7 @@ jobs:
   arm:
     name: test on aarch64 (ubuntu-24.04-arm)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -207,8 +214,12 @@ jobs:
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: cargo test natively on aarch64 (cfg(unix) adapter suites, non-root self-skips)
-        run: cargo test --workspace --locked --no-fail-fast
         timeout-minutes: 25
+        run: |
+          status=0
+          timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
+          cat "$RUNNER_TEMP/cargo-test.log"
+          exit "$status"
       - name: m9_egress policy routes as root in a fresh network namespace (ADR-012)
         run: |
           binary="$(cargo test -p rayd --test m9_egress --locked --no-run --message-format=json \
