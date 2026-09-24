@@ -1809,7 +1809,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rayd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "rayd-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "serde",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "rayito-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "prost",
  "protox",
