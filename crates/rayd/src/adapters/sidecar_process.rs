@@ -178,9 +178,10 @@ mod unix {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(false);
-            // SAFETY: `apply` only issues setrlimit/setgroups/setgid/setuid on
-            // values computed before the fork; it allocates nothing and takes
-            // no locks, which is what async-signal-safety requires here.
+            // SAFETY: `apply` only issues setrlimit/setgroups/setgid/setuid and
+            // close_range (or fcntl) on values computed before the fork; it
+            // allocates nothing and takes no locks, which is what
+            // async-signal-safety requires here.
             unsafe { command.pre_exec(move || plan.apply()) };
             let mut child = command.spawn().map_err(|error| spawn_error(&error))?;
             let pid = child

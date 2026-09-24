@@ -16,6 +16,7 @@
 )]
 
 use std::collections::HashMap;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -234,6 +235,35 @@ fn shell_process(script: &str) -> StartRequest {
         timeout_ms: 0,
         stdin: true,
         tag: None,
+    }
+}
+
+/// `/dev/null` opened by the test process without `O_CLOEXEC` once the
+/// harness is up, then moved to a number at or above
+/// [`INHERITABLE_FLOOR`] so it cannot be mistaken for the lister's own
+/// directory descriptor: what a concurrent `openpty` or a runner's pipe
+/// looks like to a `fork` that lands before close-on-exec is set. Closed
+/// on drop.
+struct InheritableDescriptor(OwnedFd);
+
+const INHERITABLE_FLOOR: i32 = 200;
+
+impl InheritableDescriptor {
+    /// `open` and `fcntl(F_DUPFD)` hand back fresh descriptors this
+    /// function alone owns; the first is closed once duplicated.
+    fn open() -> Self {
+        let first = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(first >= 0, "open /dev/null");
+        let raised = unsafe { libc::fcntl(first, libc::F_DUPFD, INHERITABLE_FLOOR) };
+        unsafe { libc::close(first) };
+        assert!(raised >= INHERITABLE_FLOOR, "F_DUPFD");
+        let flags = unsafe { libc::fcntl(raised, libc::F_GETFD) };
+        assert_eq!(flags & libc::FD_CLOEXEC, 0, "the copy must be inheritable");
+        Self(unsafe { OwnedFd::from_raw_fd(raised) })
+    }
+
+    fn number(&self) -> String {
+        self.0.as_raw_fd().to_string()
     }
 }
 
@@ -905,6 +935,41 @@ async fn jobs_and_processes_inherit_neither_end_of_the_terminal() {
         .start_process(shell_process("ls /proc/self/fd"))
         .await;
     let process_fds = process_stdout(&mut process).await;
+    assert_eq!(process_fds, "0\n1\n2\n3\n");
+    harness.kill(pid).await.unwrap();
+    collect_until_exit(&mut stream).await;
+}
+
+/// A descriptor `rayd` holds without close-on-exec when a shell starts
+/// (the other terminal's master or slave between `openpty` and `F_SETFD`
+/// in a concurrent open, a pipe the runner left open) reaches neither the
+/// shell nor a process started next to it: every child marks everything
+/// above stdio close-on-exec right before `exec`.
+#[tokio::test]
+async fn a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process() {
+    let harness = harness().await;
+    let leaked = InheritableDescriptor::open();
+    let (pid, mut stream) = harness.bash().await;
+    harness
+        .send(pid, "echo she''ll=$(ls /proc/$$/fd | tr '\\n' ' ')\n")
+        .await
+        .unwrap();
+    let shell_fds = read_line_after(&mut stream, b"shell=").await;
+    assert!(
+        !shell_fds.split_whitespace().any(|fd| fd == leaked.number()),
+        "fd {} leaked into the shell: {shell_fds:?}",
+        leaked.number()
+    );
+    assert_eq!(shell_fds.trim(), "0 1 2 255 3");
+    let (_, mut process) = harness
+        .start_process(shell_process("ls /proc/self/fd"))
+        .await;
+    let process_fds = process_stdout(&mut process).await;
+    assert!(
+        !process_fds.lines().any(|fd| fd == leaked.number()),
+        "fd {} leaked into the process: {process_fds:?}",
+        leaked.number()
+    );
     assert_eq!(process_fds, "0\n1\n2\n3\n");
     harness.kill(pid).await.unwrap();
     collect_until_exit(&mut stream).await;

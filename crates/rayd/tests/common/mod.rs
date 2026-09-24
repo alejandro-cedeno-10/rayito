@@ -23,7 +23,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::Router;
@@ -300,30 +300,6 @@ pub fn workspace_root() -> PathBuf {
         .unwrap()
 }
 
-/// Marks every descriptor this test process inherited (a CI runner can leave
-/// pipes open past stdio) close-on-exec, so the agent's children see only
-/// what the agent itself hands them, as they do inside the sandbox VM.
-fn seal_inherited_descriptors() {
-    static SEAL: Once = Once::new();
-    SEAL.call_once(|| {
-        let descriptors: Vec<i32> = fs::read_dir("/proc/self/fd")
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
-                    .filter(|fd| *fd > 2)
-                    .collect()
-            })
-            .unwrap_or_default();
-        for fd in descriptors {
-            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-            if flags >= 0 {
-                unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
-            }
-        }
-    });
-}
-
 pub fn running_as_root() -> bool {
     nix::unistd::geteuid().is_root()
 }
@@ -333,8 +309,7 @@ pub async fn harness() -> Harness {
 }
 
 pub async fn harness_with(options: Options) -> Harness {
-    seal_inherited_descriptors();
-    let _ = rayd::logging::init();
+    let _ = log_capture::log_capture();
     let tempdir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(tempdir.path())
         .unwrap()

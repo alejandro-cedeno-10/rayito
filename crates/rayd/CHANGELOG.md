@@ -129,6 +129,19 @@ con este agente. Los SDK 0.3 necesitan este agente para las features de M9.
   `PrivilegedAccount`. La puerta duplicada de `persistence` desaparece: ese
   camino llama a la misma política con el opt-in de root retirado
   (`UserPolicy::without_root`).
+- **Ningún proceso de usuario hereda descriptores más allá de 0/1/2**:
+  `openpty` devuelve master y slave heredables y `rayd` sólo los marcaba
+  close-on-exec unas instrucciones después; un spawn concurrente (otro PTY,
+  un proceso o el sidecar) que hiciera `fork` en esa ventana entregaba el
+  master o el slave de otra terminal a la shell o al proceso del usuario
+  (visto en la CI aarch64 de GitHub: la shell listaba `0 1 142 145 2 255
+  3`). Ahora el `PreExecPlan` común a procesos, shells PTY y sidecar marca
+  close-on-exec todo descriptor >= 3 en el hijo justo antes de `exec`
+  (`close_range(3, ~0U, CLOSE_RANGE_CLOEXEC)`, con un bucle acotado de
+  `fcntl(F_SETFD)` hasta el `NOFILE` blando, máximo 4096, si el kernel es
+  anterior a 5.11), después de que `std` haya colocado stdio en 0/1/2. Cubre
+  también los descriptores que `rayd` hereda de su padre. El harness de
+  tests deja de sellarlos por su cuenta.
 
 ## [0.2.0] - 2026-09-17
 
