@@ -1097,10 +1097,15 @@ async fn a_lost_kernel_is_restarted_and_kernel_state_lost_clears_on_the_next_pro
     let (_, resumed) = harness.post(Hook::Resume, None).await;
     assert_eq!(resumed.kernel_state_lost, Some(true));
     assert!(harness.health().await.kernel_state_lost);
-    let restart = harness
-        .wait_for_request("restart_context", Duration::from_secs(3))
-        .await;
-    assert_eq!(restart["context_id"], ctx);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !harness
+        .requests_of("restart_context")
+        .iter()
+        .any(|request| request["context_id"] == ctx)
+    {
+        assert!(Instant::now() < deadline, "no restart_context for {ctx}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut reattached = harness.reattach(&ctx, &execution_id, 1).await.unwrap();
     let tail = drain_execute(&mut reattached).await;
