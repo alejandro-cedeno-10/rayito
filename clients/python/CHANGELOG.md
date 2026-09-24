@@ -207,6 +207,23 @@ el `rayd` de M9.
   C-08): `create()` también lee la variable, así que exportarla convierte el
   secreto por sandbox en uno de toda la flota del proceso. El SDK lo avisa
   una vez por proceso (`logger.warning`, nunca el valor).
+- **Los errores de AWS ya no encadenan el `ClientError` crudo**: botocore no
+  cuelga la petición firmada de un `ClientError`, pero lo que AWS devuelve
+  repite la firma: un `SignatureDoesNotMatch` de S3 trae `AWSAccessKeyId` y
+  `CanonicalRequest` (con el valor de `x-amz-security-token`) en
+  `response["Error"]`, y un `InvalidSignatureException`/`SignatureDoesNotMatch`
+  de lambda-microvms o STS mete la cadena canónica en el mensaje, que acababa
+  en el mensaje de la excepción traducida y, por `raise ... from exc`, en
+  cualquier traceback (también el `logger.debug(..., exc_info=True)` de la
+  reconexión). Ahora el plano de control y las transferencias por S3 lanzan
+  fuera del `except` y desde un `AwsErrorSummary`
+  (`rayito._aws_sanitize.sanitize_aws_error`) con sólo `name`, `code`, el
+  mensaje redactado, `status_code`, `request_id`, `extended_request_id` y
+  `attempts` (S3 sin mensaje: un `EndpointConnectionError` nombra el
+  bucket); ni `__cause__` ni `__context__` guardan el error de botocore. El
+  mensaje traducido pierde la cadena canónica, las cabeceras de firma, los
+  parámetros `X-Amz-*` y los ids de clave. `status_code`, `aws_code`,
+  `retry_after` y `quota_code` no cambian.
 
 ## [0.2.0] - 2026-09-17
 

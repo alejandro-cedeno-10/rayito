@@ -19,6 +19,7 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { awsClientSettingsOf, type ControlPlane } from "../aws/control-plane.js";
+import { redactAwsText, sanitizeAwsError } from "../aws/sanitize.js";
 import {
   AuthenticationError,
   DiskFullError,
@@ -786,7 +787,11 @@ function isOwnError(error: Error): boolean {
 /**
  * Errores de las llamadas del SDK a S3 con las credenciales del llamante, por
  * código: el mensaje nunca lleva bucket, clave ni host (un error de red de
- * Node nombra el host, que contiene el bucket), sólo el nombre del error.
+ * Node nombra el host, que contiene el bucket), sólo el nombre del error. El
+ * `cause` es `sanitizeAwsError` sin mensaje (nombre, `$fault` y el `requestId`
+ * de `$metadata`), nunca el error crudo: su `$response` lleva la petición
+ * firmada y un `SignatureDoesNotMatch` repite `AWSAccessKeyId` y la
+ * `CanonicalRequest` con el token de sesión.
  */
 export function translateS3Error(error: unknown): Error {
   if (!(error instanceof Error)) {
@@ -795,29 +800,37 @@ export function translateS3Error(error: unknown): Error {
   if (isOwnError(error)) {
     return error;
   }
+  const cause = sanitizeAwsError(error, { includeMessage: false });
   if (error.name === CREDENTIALS_PROVIDER_ERROR) {
-    return new AuthenticationError("no hay credenciales de AWS para firmar la transferencia");
+    return new AuthenticationError("no hay credenciales de AWS para firmar la transferencia", {
+      cause,
+    });
   }
-  const code = awsErrorCode(error);
+  const code = redactAwsText(awsErrorCode(error));
   if (S3_CREDENTIAL_ERRORS.has(code)) {
     return new AuthenticationError(`S3 rechazó las credenciales del llamante (${code})`, {
       awsCode: code,
+      cause,
     });
   }
   if (code === "NoSuchBucket") {
     return new InvalidArgumentError("el bucket de transferencias no existe (NoSuchBucket)", {
       awsCode: code,
+      cause,
     });
   }
   if (S3_REGION_ERRORS.has(code)) {
     return new InvalidArgumentError(`S3Staging.region no es la región del bucket (${code})`, {
       awsCode: code,
+      cause,
     });
   }
   if (isServiceException(error)) {
-    return new SandboxError(`S3 respondió ${code} a una transferencia`, { awsCode: code });
+    return new SandboxError(`S3 respondió ${code} a una transferencia`, { awsCode: code, cause });
   }
-  return new SandboxError(`fallo al hablar con S3 en una transferencia (${error.name})`);
+  return new SandboxError(`fallo al hablar con S3 en una transferencia (${cause.name})`, {
+    cause,
+  });
 }
 
 /**

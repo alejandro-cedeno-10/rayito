@@ -44,6 +44,7 @@ import {
 import { ProxyTunnelAgent, validateProxyUrl } from "../transport/proxy-tunnel.js";
 import { validateIntegration, validateRetries } from "../validation.js";
 import { VERSION } from "../version.js";
+import { redactAwsText, sanitizeAwsError } from "./sanitize.js";
 
 export const AUTH_TOKEN_RESPONSE_KEY = "X-aws-proxy-auth";
 const IMAGE_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -829,7 +830,12 @@ function httpStatusCode(error: AwsErrorShape): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
-/** Tabla de errores por `name` (nunca por status HTTP). */
+/**
+ * Tabla de errores por `name` (nunca por status HTTP). El `cause` es el
+ * resumen de `sanitizeAwsError`, nunca el error crudo del SDK: su
+ * `$response` lleva la petición firmada (`authorization`,
+ * `x-amz-security-token`) y `util.inspect` la imprimiría.
+ */
 export function translateAwsError(error: unknown): Error {
   if (
     error instanceof SandboxError ||
@@ -840,28 +846,29 @@ export function translateAwsError(error: unknown): Error {
     return error;
   }
   if (!isAwsErrorShape(error)) {
-    return error instanceof Error ? error : new SandboxError(String(error));
+    return new SandboxError(redactAwsText(String(error)));
   }
-  const code = typeof error.name === "string" ? error.name : "";
-  const message = typeof error.message === "string" && error.message ? error.message : code;
+  const cause = sanitizeAwsError(error);
+  const code = typeof error.name === "string" ? redactAwsText(error.name) : "";
+  const message = cause.message || code;
   const statusCode = httpStatusCode(error);
   switch (code) {
     case "ResourceNotFoundException":
-      return new SandboxNotFoundError(message, { statusCode, awsCode: code, cause: error });
+      return new SandboxNotFoundError(message, { statusCode, awsCode: code, cause });
     case "ValidationException":
-      return new InvalidArgumentError(message, { statusCode, awsCode: code, cause: error });
+      return new InvalidArgumentError(message, { statusCode, awsCode: code, cause });
     case "AccessDeniedException":
-      return new AuthenticationError(message, { awsCode: code, cause: error });
+      return new AuthenticationError(message, { awsCode: code, cause });
     case "ThrottlingException":
       return new RateLimitError(message, {
         retryAfter:
           typeof error.retryAfterSeconds === "number" ? error.retryAfterSeconds : undefined,
         statusCode,
         awsCode: code,
-        cause: error,
+        cause,
       });
     case "ConflictException":
-      return new SandboxStateError(message, { statusCode, awsCode: code, cause: error });
+      return new SandboxStateError(message, { statusCode, awsCode: code, cause });
     case "ServiceQuotaExceededException":
       return new QuotaExceededError(message, {
         quotaCode: typeof error.quotaCode === "string" ? error.quotaCode : undefined,
@@ -872,7 +879,7 @@ export function translateAwsError(error: unknown): Error {
       return new SandboxError(message, {
         statusCode,
         awsCode: code || undefined,
-        cause: error,
+        cause,
       });
   }
 }

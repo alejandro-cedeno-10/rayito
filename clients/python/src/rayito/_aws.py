@@ -18,6 +18,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from rayito._aws_sanitize import AwsErrorSummary, redact_aws_text, sanitize_aws_error
 from rayito._limits import (
     API_TPS,
     LIST_MAX_RESULTS,
@@ -329,8 +330,10 @@ class LambdaMicrovmsControlPlane:
                 for item in page.get("items", []):
                     if _listed_state_wanted(item["state"], wanted):
                         yield sandbox_list_item_from_response(item)
+            return
         except ClientError as exc:
-            raise translate_client_error(exc) from exc
+            translated, cause = sanitized_client_error(exc)
+        raise translated from cause
 
     def list_microvms_page(
         self,
@@ -410,17 +413,22 @@ class LambdaMicrovmsControlPlane:
         try:
             return method(**params)
         except ClientError as exc:
-            raise translate_client_error(exc) from exc
+            translated, cause = sanitized_client_error(exc)
+        raise translated from cause
 
     def _identity(self) -> dict[str, str]:
         with self._identity_lock:
             if self._caller_identity is None:
-                try:
-                    response = self._sts().get_caller_identity()
-                except ClientError as exc:
-                    raise translate_client_error(exc) from exc
+                response = self._fetch_caller_identity()
                 self._caller_identity = {"Account": response["Account"], "Arn": response["Arn"]}
             return self._caller_identity
+
+    def _fetch_caller_identity(self) -> Any:
+        try:
+            return self._sts().get_caller_identity()
+        except ClientError as exc:
+            translated, cause = sanitized_client_error(exc)
+        raise translated from cause
 
     def _sts(self) -> Any:
         if self._sts_client is None and self._sts_client_factory is not None:
@@ -536,10 +544,20 @@ def proxy_jwe_from_response(parts: dict[str, str]) -> str:
     )
 
 
+def sanitized_client_error(exc: ClientError) -> tuple[Exception, AwsErrorSummary]:
+    """La excepción propia y el resumen seguro que va en su `__cause__`. El
+    caller la lanza fuera del `except` (`raise translated from cause`): así
+    ni `__cause__` ni `__context__` guardan el `ClientError`, cuyo
+    `response` puede repetir la firma y el token de sesión."""
+    return translate_client_error(exc), sanitize_aws_error(exc)
+
+
 def translate_client_error(exc: ClientError) -> Exception:
+    """Tabla por `Code`; el mensaje pasa por `redact_aws_text` (un
+    `InvalidSignatureException` trae la cadena canónica con el token)."""
     error = exc.response.get("Error", {})
     code = str(error.get("Code", ""))
-    message = str(error.get("Message") or exc)
+    message = redact_aws_text(str(error.get("Message") or exc))
     status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     if code == "ResourceNotFoundException":
         return SandboxNotFoundException(message, status_code=status, aws_code=code)

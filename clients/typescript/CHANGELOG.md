@@ -165,6 +165,22 @@ el `rayd` de M9.
   con `open(temp, "wx", 0o600)` sobre un nombre aleatorio, se fija el modo con
   `handle.chmod()` antes de escribir y se renombra al destino. La lectura usa
   `O_NOFOLLOW`. Sin esto la promesa de `0600` de T14 no era cierta.
+- **Los errores de AWS ya no exponen la petición firmada**: el `cause` de
+  los errores que traduce el plano de control (`translateAwsError`) era el
+  error crudo del SDK v3, cuyo `$response` arrastra la petición HTTP y los
+  buffers del socket; `util.inspect`, `console.error` o el "Serialized
+  Error" de vitest imprimían `authorization: AWS4-HMAC-SHA256
+  Credential=ASIA…` y `x-amz-security-token`. Ahora el `cause` es un
+  resumen (`sanitizeAwsError`, `src/aws/sanitize.ts`) con sólo `name`,
+  `code`, el mensaje redactado, `$fault` y `$metadata.{httpStatusCode,
+  requestId, extendedRequestId, attempts}`. Los errores de S3 de las
+  transferencias (`translateS3Error`), que no llevaban `cause`, ganan el
+  mismo resumen sin mensaje (para conservar el `requestId`). El mensaje de
+  un `InvalidSignatureException`/`SignatureDoesNotMatch`, que AWS devuelve
+  con la cadena canónica (y el token de sesión dentro), pierde esa parte y
+  cualquier cabecera de firma, parámetro `X-Amz-*` de una URL prefirmada o
+  id de clave de acceso. `statusCode`, `awsCode`, `retryAfter` y
+  `quotaCode` no cambian.
 
 ## [0.2.0] - 2026-09-17
 

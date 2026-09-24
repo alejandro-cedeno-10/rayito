@@ -21,6 +21,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
+from rayito._aws_sanitize import sanitize_aws_error
 from rayito._filesystem_base import guarded_messages
 from rayito._transfer_base import (
     OBJECT_READ_CHUNK_BYTES,
@@ -46,10 +47,17 @@ T = TypeVar("T")
 
 
 def s3_call(invoke: Callable[[], T]) -> T:
+    """Traduce los errores de botocore. Se lanza fuera del `except` y desde
+    `sanitize_aws_error` sin mensaje: ni `__cause__` ni `__context__` guardan
+    el `ClientError` (un `SignatureDoesNotMatch` repite `AWSAccessKeyId` y la
+    `CanonicalRequest` con el token de sesión) ni el texto de un
+    `BotoCoreError` (que nombra el endpoint, con el bucket)."""
     try:
         return invoke()
     except (ClientError, BotoCoreError) as exc:
-        raise translate_s3_error(exc) from exc
+        translated = translate_s3_error(exc)
+        cause = sanitize_aws_error(exc, include_message=False)
+    raise translated from cause
 
 
 class S3Gateway:
