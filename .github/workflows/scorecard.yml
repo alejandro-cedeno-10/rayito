@@ -4,7 +4,8 @@ name: scorecard
 # `main` y al cambiar la protección de ramas. `publish_results: true` exige
 # repositorio público y rama por defecto; mientras el repo sea privado el
 # análisis corre igual y sólo la publicación es rechazada por la acción.
-# El SARIF sube como artefacto (5 días) y a code scanning.
+# El SARIF sube como artefacto (5 días) y a code scanning. `workflow_dispatch`
+# permite lanzarlo a mano (p. ej. si los eventos automáticos no se disparan).
 
 on:
   branch_protection_rule:
@@ -12,6 +13,7 @@ on:
     - cron: "23 6 * * 1"
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
