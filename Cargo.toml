@@ -51,14 +51,14 @@ getrandom = "=0.4.3"
 # S3 persistence (ADR-009): the only TLS client in the binary. `sigv4a`,
 # `sso` and `credentials-process` stay out; the trust store is the OS bundle.
 aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
-aws-sdk-s3 = { version = "=1.148.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+aws-sdk-s3 = { version = "=1.149.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 tar = "=0.4.46"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 # Presigned S3 transfers (ADR-010): an HTTP/1.1 client over the TLS stack
 # `aws-sdk-s3` already links (no new crate in `Cargo.lock`). `rustls` is
 # direct only to name the crypto provider explicitly.
 hyper-util = { version = "=0.1.20", default-features = false, features = ["client-legacy", "http1", "tokio"] }
-hyper-rustls = { version = "=0.27.9", default-features = false, features = ["http1", "native-tokio", "tls12", "aws-lc-rs"] }
+hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "native-tokio", "tls12", "aws-lc-rs"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["aws_lc_rs", "tls12"] }
 # Test-only CA and leaf for the transfer client's unit tests, generated at
