@@ -95,7 +95,7 @@ jobs:
             --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text | wc -w)
           echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE"
           test "$live" -le 10 || { echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE (> 10)"; exit 1; }
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
       - name: pytest tests/e2e -m e2e
