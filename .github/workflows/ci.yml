@@ -56,7 +56,11 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: buf breaking --against ".git#branch=${BASE_REF},subdir=proto"
+        # actions/checkout only creates origin/<base>; buf clones the local
+        # repo and needs a local branch to compare against.
+        run: |
+          git branch -f "${BASE_REF}" "origin/${BASE_REF}"
+          buf breaking --against ".git#branch=${BASE_REF},subdir=proto"
       - name: Toolchain from rust-toolchain.toml
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
