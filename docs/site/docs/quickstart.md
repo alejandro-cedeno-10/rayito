@@ -8,6 +8,15 @@ pip install rayito        # o: uv add rayito
 
 Python ≥ 3.11. Dependencias de runtime: `grpcio`, `protobuf` y `boto3`.
 
+Para TypeScript (Node ≥ 20):
+
+```bash
+pnpm add rayito           # o: npm i rayito / yarn add rayito / bun add rayito
+```
+
+El SDK TypeScript usa la cadena de credenciales por defecto del AWS SDK v3
+(`AWS_PROFILE`/`AWS_REGION` o variables de entorno).
+
 ## Credenciales
 
 El SDK usa las credenciales de AWS de la sesión de `boto3`: un perfil, variables
