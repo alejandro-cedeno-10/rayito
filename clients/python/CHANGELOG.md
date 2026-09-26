@@ -4,6 +4,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado
 [SemVer](https://semver.org/lang/es/).
 
+## [0.3.1](https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.3.0...python-v0.3.1) (2026-09-26)
+
+
+### Miscellaneous
+
+* **python:** Synchronize rayito versions
+
 ## [Unreleased]
 
 ## [0.3.0] - 2026-09-24

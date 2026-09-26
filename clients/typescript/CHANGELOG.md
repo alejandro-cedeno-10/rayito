@@ -4,6 +4,14 @@ Todos los cambios notables del paquete `rayito` (SDK TypeScript). El formato
 sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el
 versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.3.1](https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.3.0...typescript-v0.3.1) (2026-09-26)
+
+
+### Documentation
+
+* instalación del SDK TypeScript con pnpm (y npm, yarn, bun) ([131ed60](https://github.com/alejandro-cedeno-10/rayito/commit/131ed60b7546e183ee177c4e2f778185fbcf86ce))
+* instalación del SDK TypeScript con pnpm (y npm, yarn, bun) ([d8bef37](https://github.com/alejandro-cedeno-10/rayito/commit/d8bef3703eee1b29d1313410a8b59544abcda323))
+
 ## [Unreleased]
 
 ## [0.3.0] - 2026-09-24

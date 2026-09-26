@@ -1,6 +1,6 @@
 {
   "name": "rayito",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta.",
   "license": "Apache-2.0",
   "repository": {

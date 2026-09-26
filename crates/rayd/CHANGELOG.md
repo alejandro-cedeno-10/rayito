@@ -8,6 +8,13 @@ Todos los cambios notables del agente `rayd` (`crates/rayd`, con
 distribuye como binario estático `aarch64-unknown-linux-musl` dentro de la
 imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
+## [0.3.1](https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.3.0...rayd-v0.3.1) (2026-09-26)
+
+
+### Miscellaneous
+
+* **rayd:** Synchronize rayito versions
+
 ## [Unreleased]
 
 ## [0.3.0] - 2026-09-24
