@@ -13,6 +13,7 @@ clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
 ```bash
 pip install rayito          # SDK Python (clients/python); Python >= 3.11
 pnpm add rayito             # SDK TypeScript (clients/typescript); Node >= 20
+                            # o: npm i rayito / yarn add rayito / bun add rayito
 ```
 
 ```python
