@@ -5,6 +5,13 @@ AWS Lambda MicroVMs, dentro de tu propia cuenta. La misma superficie que el
 SDK Python (`clients/python`) en camelCase y milisegundos, generada desde el
 mismo `.proto` y validando los mismos límites (`limits.json`).
 
+```bash
+pnpm add rayito        # o: npm i rayito / yarn add rayito / bun add rayito
+```
+
+El paquete trae ESM y CommonJS con sus tipos, y el shim de E2B en
+`rayito/e2b`.
+
 ```ts
 import { Sandbox } from "rayito";
 

@@ -533,9 +533,10 @@ impl HyperSignedHttp<StaticResolver> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
 
     use rayd_core::transfer::{NoBody, OCTET_STREAM, PresignedUrl};
+    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
     use rustls::ServerConfig;
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -545,10 +546,38 @@ mod tests {
 
     use super::*;
 
-    const CA: &[u8] = include_bytes!("../../tests/fixtures/tls/ca.pem");
-    const LEAF: &[u8] = include_bytes!("../../tests/fixtures/tls/leaf.pem");
-    const LEAF_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/leaf.key");
     const HOST: &str = "amzn-s3-demo-bucket.s3.us-east-1.amazonaws.com";
+
+    /// A test-only P-256 CA and a leaf for `HOST` it signed, as PEM. Made
+    /// once per test process, so no private key lives in the repository.
+    struct Pki {
+        ca: Vec<u8>,
+        leaf: Vec<u8>,
+        leaf_key: Vec<u8>,
+    }
+
+    static PKI: LazyLock<Pki> = LazyLock::new(|| {
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::default();
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "rayito test-only CA");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let leaf_key = KeyPair::generate().unwrap();
+        let mut leaf_params = CertificateParams::new(vec![HOST.to_owned()]).unwrap();
+        leaf_params
+            .distinguished_name
+            .push(DnType::CommonName, HOST);
+        let leaf = leaf_params
+            .signed_by(&leaf_key, &Issuer::new(ca_params, ca_key))
+            .unwrap();
+        Pki {
+            ca: ca.pem().into_bytes(),
+            leaf: leaf.pem().into_bytes(),
+            leaf_key: leaf_key.serialize_pem().into_bytes(),
+        }
+    });
 
     /// What the fake S3 does with each connection it accepts.
     #[derive(Clone)]
@@ -564,10 +593,10 @@ mod tests {
     }
 
     fn acceptor() -> TlsAcceptor {
-        let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(LEAF)
+        let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&PKI.leaf)
             .map(Result::unwrap)
             .collect();
-        let key = PrivateKeyDer::from_pem_slice(LEAF_KEY).unwrap();
+        let key = PrivateKeyDer::from_pem_slice(&PKI.leaf_key).unwrap();
         let config = ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
@@ -687,7 +716,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\ncontent-length: 5\r\netag: \"e1\"\r\nx-amz-request-id: R1\r\nconnection: close\r\n\r\nhello",
         ))
         .await;
-        let http = HyperSignedHttp::for_tests(CA, TRANSFER_IDLE_TIMEOUT);
+        let http = HyperSignedHttp::for_tests(&PKI.ca, TRANSFER_IDLE_TIMEOUT);
         let (head, mut body) = http
             .send::<NoBody>(request(HttpMethod::Get, server.port, None), None)
             .await
@@ -710,7 +739,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\ncontent-length: 0\r\netag: \"p1\"\r\nconnection: close\r\n\r\n",
         ))
         .await;
-        let http = HyperSignedHttp::for_tests(CA, TRANSFER_IDLE_TIMEOUT);
+        let http = HyperSignedHttp::for_tests(&PKI.ca, TRANSFER_IDLE_TIMEOUT);
         let body = Chunks(vec![Bytes::from_static(b"abc"), Bytes::from_static(b"de")]);
         let (head, _) = http
             .send(request(HttpMethod::Put, server.port, Some(5)), Some(body))
@@ -734,7 +763,7 @@ mod tests {
             "HTTP/1.1 302 Found\r\nlocation: https://169.254.169.254/\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
         ))
         .await;
-        let http = HyperSignedHttp::for_tests(CA, TRANSFER_IDLE_TIMEOUT);
+        let http = HyperSignedHttp::for_tests(&PKI.ca, TRANSFER_IDLE_TIMEOUT);
         let error = http
             .send::<NoBody>(request(HttpMethod::Get, server.port, None), None)
             .await
@@ -747,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn a_stalled_server_times_out_on_the_idle_timer() {
         let server = serve(Script::Stall).await;
-        let http = HyperSignedHttp::for_tests(CA, Duration::from_millis(300));
+        let http = HyperSignedHttp::for_tests(&PKI.ca, Duration::from_millis(300));
         let started = std::time::Instant::now();
         let error = http
             .send::<NoBody>(request(HttpMethod::Get, server.port, None), None)
@@ -761,7 +790,7 @@ mod tests {
     #[tokio::test]
     async fn an_untrusted_certificate_is_a_tls_error() {
         let server = serve(Script::Respond("HTTP/1.1 200 OK\r\n\r\n")).await;
-        let http = HyperSignedHttp::for_tests(UNRELATED_ROOT, TRANSFER_IDLE_TIMEOUT);
+        let http = HyperSignedHttp::for_tests(unrelated_root(), TRANSFER_IDLE_TIMEOUT);
         let error = http
             .send::<NoBody>(request(HttpMethod::Get, server.port, None), None)
             .await
@@ -772,7 +801,9 @@ mod tests {
 
     /// A root that did not sign the server's leaf: the leaf itself, whose
     /// subject is not the leaf's issuer, so the chain cannot validate.
-    const UNRELATED_ROOT: &[u8] = LEAF;
+    fn unrelated_root() -> &'static [u8] {
+        &PKI.leaf
+    }
 
     #[tokio::test]
     async fn the_production_client_refuses_a_name_that_resolves_to_loopback_without_connecting() {

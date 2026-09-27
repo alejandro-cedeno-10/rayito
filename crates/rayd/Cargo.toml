@@ -51,6 +51,7 @@ tempfile = { workspace = true }
 [dev-dependencies]
 tonic = { workspace = true, features = ["channel"] }
 tokio-rustls = { workspace = true }
+rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }

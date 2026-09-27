@@ -1094,10 +1094,10 @@ facturación).
   conexión fuera del VM falle (adenda de ADR-012, opción C; riesgo residual en
   `SECURITY.md` T17). La opción A es una regla `ip rule` para el puerto 53 de
   uid ≥ 1000 antes de la regla `local`, con cambio atómico y rollback.
-- **Fixtures TLS de los tests de `rayd` con `rcgen`**: la clave y el
-  certificado autofirmados de prueba de `crates/rayd/tests/fixtures/tls/`
-  están fijos en el repositorio y los escáneres los marcan; generarlos en
-  tiempo de test no cambia ningún comportamiento publicado.
+- ~~**Fixtures TLS de los tests de `rayd` con `rcgen`**~~: hecho. La CA y
+  el certificado de prueba se generan con `rcgen` (sobre `aws-lc-rs`) una vez
+  por proceso de test, así que ya no hay clave privada en el repositorio
+  (`crates/rayd/tests/fixtures/tls/` borrado); el binario publicado no cambia.
 - **Ventana de rotación del kernel en `rayd` tras `/run`**: hoy la cierran
   los SDK exigiendo `sandbox_id` en la readiness (Q78); cerrarla en el propio
   agente (marcar `Rotating` de forma síncrona, residuo del orden de 100 µs)

@@ -376,6 +376,52 @@ fn line_after(buffer: &[u8], prefix: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(&rest[..end]).into_owned())
 }
 
+/// The shell's own descriptors, each with what it points to, read from
+/// `/proc` by the test while the shell sits in the `read` builtin (no child,
+/// no pipe of its own) and released afterwards. Listing them from inside
+/// the shell (`ls /proc/$$/fd` in a command substitution) is racy: until
+/// its side of the `fork` returns, bash still holds the substitution pipe's
+/// write end and its job-control process-group pipe, so a lister that runs
+/// first sees `3 4 5 6` instead of `3`.
+async fn parked_shell_descriptors(
+    harness: &Harness,
+    pid: u32,
+    stream: &mut Streaming<PtyServerMessage>,
+) -> Vec<(String, String)> {
+    harness
+        .send(pid, "echo pa''rked; read -r _\n")
+        .await
+        .unwrap();
+    read_until(stream, b"parked\r\n").await;
+    let mut descriptors: Vec<(String, String)> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            let target = std::fs::read_link(entry.path()).unwrap();
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                target.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    descriptors.sort_by_key(|(fd, _)| fd.parse::<u32>().unwrap());
+    harness.send(pid, "\n").await.unwrap();
+    descriptors
+}
+
+/// Stdio plus bash's own copy at 255, all four the shell's terminal (never
+/// its master, `/dev/ptmx`), and nothing else.
+fn assert_only_the_terminal(descriptors: &[(String, String)]) {
+    let numbers: Vec<&str> = descriptors.iter().map(|(fd, _)| fd.as_str()).collect();
+    assert_eq!(numbers, ["0", "1", "2", "255"], "{descriptors:?}");
+    let terminal = &descriptors[0].1;
+    assert!(terminal.starts_with("/dev/pts/"), "{descriptors:?}");
+    assert!(
+        descriptors.iter().all(|(_, target)| target == terminal),
+        "{descriptors:?}"
+    );
+}
+
 /// A zombie counts as gone: the shell that would reap it is dead and the
 /// test process is nobody's subreaper.
 fn process_is_gone(pid: i32) -> bool {
@@ -911,20 +957,14 @@ async fn a_background_child_holding_the_slave_does_not_delay_the_end() {
 }
 
 /// Both ends of the terminal are close-on-exec: the shell holds the slave
-/// as its stdio plus its own fd 255 copy (fd 3 is the substitution pipe),
-/// a job sees the slave as its stdio only (fd 3 is the directory being
-/// listed), and a plain process started while the PTY lives inherits
-/// nothing from it either.
+/// as its stdio plus its own fd 255 copy, a job sees the slave as its
+/// stdio only (fd 3 is the directory being listed), and a plain process
+/// started while the PTY lives inherits nothing from it either.
 #[tokio::test]
 async fn jobs_and_processes_inherit_neither_end_of_the_terminal() {
     let harness = harness().await;
     let (pid, mut stream) = harness.bash().await;
-    harness
-        .send(pid, "echo she''ll=$(ls /proc/$$/fd | tr '\\n' ' ')\n")
-        .await
-        .unwrap();
-    let shell_fds = read_line_after(&mut stream, b"shell=").await;
-    assert_eq!(shell_fds.trim(), "0 1 2 255 3");
+    assert_only_the_terminal(&parked_shell_descriptors(&harness, pid, &mut stream).await);
     harness
         .send(pid, "echo fd''s=$(ls /proc/self/fd | tr '\\n' ' ')\n")
         .await
@@ -950,17 +990,13 @@ async fn a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process() 
     let harness = harness().await;
     let leaked = InheritableDescriptor::open();
     let (pid, mut stream) = harness.bash().await;
-    harness
-        .send(pid, "echo she''ll=$(ls /proc/$$/fd | tr '\\n' ' ')\n")
-        .await
-        .unwrap();
-    let shell_fds = read_line_after(&mut stream, b"shell=").await;
+    let shell_fds = parked_shell_descriptors(&harness, pid, &mut stream).await;
     assert!(
-        !shell_fds.split_whitespace().any(|fd| fd == leaked.number()),
+        !shell_fds.iter().any(|(fd, _)| *fd == leaked.number()),
         "fd {} leaked into the shell: {shell_fds:?}",
         leaked.number()
     );
-    assert_eq!(shell_fds.trim(), "0 1 2 255 3");
+    assert_only_the_terminal(&shell_fds);
     let (_, mut process) = harness
         .start_process(shell_process("ls /proc/self/fd"))
         .await;

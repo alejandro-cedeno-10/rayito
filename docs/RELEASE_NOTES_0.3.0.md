@@ -1,12 +1,12 @@
-# Rayito 0.3.0 — notas de la release (borrador)
+# Rayito 0.3.0 — notas de la release (2026-09-24)
 
-**Borrador.** Tercera release: M9 ("paridad con E2B"). Los seis cambios
+Tercera release: M9 ("paridad con E2B"). Los seis cambios
 OpenSpec están **aceptados contra AWS real** (2026-09-24, `MILESTONES.md`,
 M9): regresión e2e de Python 62/62 sobre las imágenes M9, corpus de
 programas de E2B 18/18 (Python) y 8 de TypeScript, git y CLI verdes, y
 TypeScript 26/26. Los números vienen de `AWS_API_NOTES.md` §16 (Q58–Q78) y
-lo dicen. Queda el cierre: gates finales, archivo de los cambios y la
-release; esta nota deja de ser borrador con ella.
+lo dicen. Publicada el 2026-09-24 en PyPI y npm (`rayito` 0.3.0) y en
+GitHub Releases (`rayd` 0.3.0).
 
 ## Versiones
 
@@ -15,9 +15,8 @@ SDK Python `rayito` 0.2.0 → 0.3.0, SDK TypeScript `rayito` 0.2.0 → 0.3.0 y
 `rayd` 0.2.0 → 0.3.0. La fila `0.3` de la tabla de compatibilidad
 (`rayd` mínimo 0.3.0, en `docs/site/docs/limits.md` y
 `rayito.cli._compat.COMPATIBILITY`, que un test mantiene iguales) ya está
-en el árbol para que `rayito doctor` no dé `FAIL` con el SDK 0.3.0; el salto
-de versión en los manifiestos y los tags son un paso aparte del proceso de
-release; este borrador no los toca.
+en el árbol para que `rayito doctor` no dé `FAIL` con el SDK 0.3.0. Tags:
+`python-v0.3.0`, `typescript-v0.3.0` y `rayd-v0.3.0`.
 
 Los SDK 0.3 necesitan una imagen publicada con el `rayd` de M9 para
 cualquier feature nueva. Todo el contrato gRPC nuevo es aditivo y compatible
