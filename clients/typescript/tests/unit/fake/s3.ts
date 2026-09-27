@@ -111,7 +111,13 @@ export class FakeS3 {
   static async start(): Promise<FakeS3> {
     let fake: FakeS3 | undefined;
     const server = http.createServer((request, response) => {
-      void (fake as FakeS3).handle(request, response);
+      // Un cliente que corta a medio cuerpo (el plazo de un PUT estancado)
+      // deja `readBody` en `ECONNRESET`: no hay a quién responder.
+      (fake as FakeS3).handle(request, response).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") {
+          throw error;
+        }
+      });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     fake = new FakeS3(server, (server.address() as AddressInfo).port);
