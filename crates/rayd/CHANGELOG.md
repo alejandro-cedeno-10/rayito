@@ -10,6 +10,18 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-28
+
+Versión de mantenimiento, sin cambios en el contrato gRPC.
+
+### Changed
+
+- Dependencias de Cargo actualizadas (versiones menores y de parche).
+- Los tests generan sus certificados TLS con `rcgen`: el repositorio ya no
+  contiene claves privadas de prueba.
+- Tests de descriptores de la PTY sin la carrera de bash (`$(...)`) que los
+  hacía intermitentes.
+
 ## [0.3.0] - 2026-09-24
 
 
