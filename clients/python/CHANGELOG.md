@@ -6,6 +6,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-28
+
+Versión de mantenimiento, sin cambios de API; se publica para mantener las
+versiones de los tres componentes sincronizadas.
+
+### Changed
+
+- `boto3`/`botocore` 1.43.103 en el lockfile de desarrollo y rango de
+  `uv-build` ampliado a `<0.13`.
+
 ## [0.3.0] - 2026-09-24
 
 

@@ -6,6 +6,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-28
+
+Versión de mantenimiento, sin cambios de API.
+
+### Documentation
+
+- Instalación del SDK con pnpm, npm, yarn o bun en el README del paquete
+  (el de npmjs.com) y en el quickstart; probado en un proyecto limpio con
+  ESM, CommonJS, `rayito/e2b` y `tsc --strict`.
+
+### Changed
+
+- Dependencias del AWS SDK v3 actualizadas a 3.1140.0 en el lockfile.
+
 ## [0.3.0] - 2026-09-24
 
 
