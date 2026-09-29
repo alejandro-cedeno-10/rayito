@@ -99,10 +99,7 @@ def test_every_pnpm_install_carries_ignore_scripts() -> None:
     jobs = load_jobs()
 
     installs = [
-        run
-        for job in jobs.values()
-        for run in step_runs(job)
-        if "pnpm install" in run
+        run for job in jobs.values() for run in step_runs(job) if "pnpm install" in run
     ]
 
     assert installs, "no pnpm install found in release.yml"
@@ -113,10 +110,7 @@ def test_npm_publish_carries_ignore_scripts() -> None:
     jobs = load_jobs()
 
     publishes = [
-        run
-        for job in jobs.values()
-        for run in step_runs(job)
-        if "npm publish" in run
+        run for job in jobs.values() for run in step_runs(job) if "npm publish" in run
     ]
 
     assert publishes, "no npm publish found in release.yml"
@@ -130,11 +124,11 @@ def test_publish_jobs_are_gated_and_verify_a_sha256_first() -> None:
         job = jobs[name]
         assert PUBLISH_GATE in (job.get("if") or ""), name
         runs = step_runs(job)
-        publish_index = next(
-            i
-            for i, run in enumerate(runs)
-            if "npm publish" in run
-        ) if name == "typescript-publish" else None
+        publish_index = (
+            next(i for i, run in enumerate(runs) if "npm publish" in run)
+            if name == "typescript-publish"
+            else None
+        )
         assert any("sha256sum -c" in run for run in runs), name
         if publish_index is not None:
             verify_index = next(

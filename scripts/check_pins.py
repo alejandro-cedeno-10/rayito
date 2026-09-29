@@ -104,8 +104,16 @@ SHELL_SEPARATORS = re.compile(r"&&|\|\||[;|]")
 VERSION_START = re.compile(r"-(?=\d)")
 PIP = "pip"
 PIP_INSTALL = "install"
-PYTHON_MODULE_PIP = re.compile(r"^python3(\.\d+)?$")
+PIP_EXECUTABLE = re.compile(r"^pip(3(\.\d+)?)?$")
+PYTHON_MODULE_PIP = re.compile(r"^python(3(\.\d+)?)?$")
 MODULE_FLAG = "-m"
+# Palabras que pueden preceder a un comando sin cambiar cuál es: palabras
+# reservadas de la shell tras un `if ...;`/`for ...;`, envoltorios y
+# asignaciones de entorno (`A=1 pip ...`, `env A=1 pip ...`).
+COMMAND_PREFIXES = frozenset(
+    {"then", "else", "do", "!", "sudo", "exec", "command", "nohup", "env", "time"}
+)
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 REQUIRE_HASHES_FLAG = "--require-hashes"
 NO_DEPS_FLAG = "--no-deps"
 ONLY_BINARY_PREFIX = "--only-binary"
@@ -350,14 +358,24 @@ def pip_installs(instruction: str) -> list[list[str]]:
         words = split_words(command)
         if words[:1] == [DOCKERFILE_RUN]:
             words = words[1:]
-        if (
-            len(words) >= 2
-            and PYTHON_MODULE_PIP.match(words[0])
-            and words[1] == MODULE_FLAG
+        while words and (
+            words[0] in COMMAND_PREFIXES or ENV_ASSIGNMENT.match(words[0])
         ):
-            words = words[2:]
-        if words[:2] == [PIP, PIP_INSTALL]:
-            commands.append(words[2:])
+            words = words[1:]
+        program = words[0].rsplit("/", 1)[-1] if words else ""
+        if (
+            len(words) >= 3
+            and PYTHON_MODULE_PIP.match(program)
+            and words[1] == MODULE_FLAG
+            and PIP_EXECUTABLE.match(words[2])
+        ):
+            words = words[3:]
+        elif PIP_EXECUTABLE.match(program):
+            words = words[1:]
+        else:
+            continue
+        if words[:1] == [PIP_INSTALL]:
+            commands.append(words[1:])
     return commands
 
 
@@ -370,7 +388,9 @@ def unhashed_pip_installs(text: str) -> list[Finding]:
                 or NO_DEPS_FLAG not in arguments
                 or not has_only_binary_all(arguments)
             ):
-                findings.append((instruction.number, instruction.first_line, PIP_FLAGS_REASON))
+                findings.append(
+                    (instruction.number, instruction.first_line, PIP_FLAGS_REASON)
+                )
     return findings
 
 
@@ -435,7 +455,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 1
     checked = ", ".join(displayed(path, base) for path in paths)
     print(
-        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga y todo paquete dnf vigilado clavados ({checked})"
+        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga, todo paquete dnf vigilado y todo pip install con hashes clavados ({checked})"
     )
     return 0
 

@@ -30,6 +30,7 @@ FULL_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 DENO_SHA256 = "c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf"
 DENO_LAYER = f"""RUN if [ "$(cat /opt/rayito/sidecar/kernels_variant 2>/dev/null)" = "poly" ]; then \\
       python3 -m pip install --no-cache-dir --break-system-packages \\
+           --require-hashes --no-deps --only-binary=:all: \\
            -r /opt/rayito/sidecar/requirements-poly.txt \\
       && python3 -m pip check \\
       && su user -c "python3 -c 'import bash_kernel'" \\
@@ -369,3 +370,29 @@ def test_the_repository_itself_is_clean() -> None:
     assert code == 0, stdout.getvalue()
     assert stdout.getvalue().startswith("OK ")
     assert "image/Dockerfile" in stdout.getvalue()
+
+
+def test_pip_install_is_found_behind_shell_keywords_wrappers_and_other_spellings() -> (
+    None
+):
+    text = """RUN if [ "$VARIANT" = poly ]; then \\
+      python3 -m pip install -r requirements-poly.txt; fi
+RUN pip3 install -r req.txt
+RUN python -m pip install -r req.txt
+RUN /usr/bin/python3 -m pip install -r req.txt
+RUN sudo pip install -r req.txt
+RUN env PIP_NO_CACHE_DIR=1 pip install -r req.txt
+RUN PIP_NO_CACHE_DIR=1 python3.12 -m pip3 install -r req.txt"""
+    findings = check_pins.unhashed_pip_installs(text)
+    assert [number for number, _, _ in findings] == [1, 3, 4, 5, 6, 7, 8]
+
+
+def test_the_real_dockerfile_poly_layer_is_seen_by_the_gate() -> None:
+    dockerfile = (REPO_ROOT / "image" / "Dockerfile").read_text(encoding="utf-8")
+    installs = [
+        arguments
+        for instruction in check_pins.dockerfile_instructions(dockerfile)
+        for arguments in check_pins.pip_installs(instruction.text)
+    ]
+    assert len(installs) == 2
+    assert check_pins.unhashed_pip_installs(dockerfile) == []
