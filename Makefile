@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -87,6 +87,11 @@ test-python:
 	  echo "test-python: $(PYTHON_CLIENT) sin tests unitarios todavía, se omite"; \
 	fi
 	$(MAKE) test-scripts
+
+# Deja el PR de release-please listo: lockfiles, CHANGELOG (Keep a Changelog)
+# y un único commit firmado sobre origin/main (docs/RELEASING.md §6).
+release-pr:
+	python3 scripts/prepare_release_pr.py $(RELEASE_PR_ARGS)
 
 # Tests unitarios de scripts/ (bench_cold_start, check_auditable, check_license
 # y los shims image_zip/copy_sidecar/publish_image/image_prune): corren con el

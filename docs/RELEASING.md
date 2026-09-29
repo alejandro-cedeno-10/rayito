@@ -150,11 +150,16 @@ cargo publish --dry-run -p rayito-proto
 
 ## 6. Checklist de release (los tres componentes a la vez)
 
-1. Revisar el PR de release-please: changelogs generados desde los commits
-   (completar a mano lo que falte, en el propio PR) y versiones en
-   `pyproject.toml`, `src/rayito/_version.py`, `package.json`,
-   `src/version.ts`, `Cargo.toml` `[workspace.package]` y `Cargo.lock`
-   idénticas.
+1. Preparar el PR de release-please con `make release-pr`
+   (`scripts/prepare_release_pr.py`; `RELEASE_PR_ARGS=--dry-run` para ver
+   el diff sin subir nada). Pone la versión en `Cargo.lock` (rayd,
+   rayd-core, rayito-proto) y en `clients/python/uv.lock`, convierte el
+   `## [Unreleased]` escrito a mano durante el ciclo en `## [x.y.z] - fecha`
+   (descartando las notas que genera release-please) y rehace el PR como un
+   único commit firmado: el ruleset de `main` exige firmas y los commits
+   que crea release-please por la API no lo están. Revisar después que las
+   versiones de `pyproject.toml`, `src/rayito/_version.py`, `package.json`,
+   `src/version.ts`, `Cargo.toml` y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
    `python scripts/check_license.py`, `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please
