@@ -74,6 +74,7 @@ ignore = ["RUF012"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
 "src/rayito/cli/**" = ["T20"]
+"src/rayito/mcp/__main__.py" = ["T20"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rayito"]

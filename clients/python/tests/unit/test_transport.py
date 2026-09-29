@@ -80,11 +80,17 @@ def test_kernel_gate_is_unavailable_with_the_prefix_and_never_a_reset() -> None:
         (FakeRpcError(grpc.StatusCode.UNAVAILABLE, details="terminating"), True),
         (FakeRpcError(grpc.StatusCode.INTERNAL, details="RST_STREAM received"), True),
         (FakeRpcError(grpc.StatusCode.INTERNAL, details="x", debug="Connection reset"), True),
+        (FakeRpcError(grpc.StatusCode.CANCELLED, details="Stream removed"), True),
+        (FakeRpcError(grpc.StatusCode.CANCELLED, details="x", debug="Stream removed"), True),
         (FakeRpcError(grpc.StatusCode.UNAVAILABLE, details=f"{KERNEL_GATE_PREFIX}: x"), False),
         (FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED, details="Deadline Exceeded"), False),
         (FakeRpcError(grpc.StatusCode.NOT_FOUND, details="pid 1 not found"), False),
         (FakeRpcError(grpc.StatusCode.INTERNAL, details="panic in rayd"), False),
         (FakeRpcError(grpc.StatusCode.CANCELLED, details="Locally cancelled"), False),
+        (
+            FakeRpcError(grpc.StatusCode.CANCELLED, details="Locally cancelled by application!"),
+            False,
+        ),
         (
             FakeRpcError(
                 grpc.StatusCode.PERMISSION_DENIED,
