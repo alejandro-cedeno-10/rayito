@@ -22,8 +22,8 @@ pip install "rayito[mcp]"      # o: uv add "rayito[mcp]"
 python -m rayito.mcp --help     # equivalente al script rayito-mcp
 ```
 
-El extra instala el SDK oficial `mcp` 2.x. Hasta que el paquete esté en PyPI,
-desde un checkout del repositorio:
+El extra instala el SDK oficial `mcp` 2.x (`pip install "rayito[mcp]"`, el
+paquete está en PyPI). Desde un checkout del repositorio:
 
 ```bash
 uv run --project <repo>/clients/python --extra mcp rayito-mcp
