@@ -1,9 +1,11 @@
 """`python -m rayito.mcp`: `parse_args`, `run` con un runner que graba los
-argumentos exactos, `main` con un entorno malformado y el aviso de HTTP sin
-autenticación fuera de loopback (design D9)."""
+argumentos exactos, `main` con un entorno malformado, el aviso de HTTP sin
+autenticación fuera de loopback (design D9) y el mensaje amable sin el extra
+`rayito[mcp]` (M10)."""
 
 from __future__ import annotations
 
+import importlib
 import logging
 import subprocess
 import sys
@@ -23,6 +25,22 @@ from rayito.mcp._cli import (
     run,
 )
 from rayito.mcp._settings import IDLE_ENV_VAR, TIMEOUT_ENV_VAR
+
+MCP_MODULES = ("rayito.mcp", "rayito.mcp.__main__", "rayito.mcp._cli")
+
+
+def block_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Aísla el paquete `mcp` como si no estuviera instalado: borra los
+    módulos de `rayito.mcp` para que se re-importen y anula cada `mcp`/
+    `mcp.*` ya cacheado, porque `sys.modules["mcp"] = None` por sí solo no
+    basta cuando un submódulo (`mcp.server`, ya importado por otro test) se
+    sirve directamente de la caché sin volver a mirar a su paquete padre."""
+    for name in MCP_MODULES:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    blocked = {name for name in sys.modules if name == "mcp" or name.startswith("mcp.")}
+    for name in blocked | {"mcp"}:
+        monkeypatch.setitem(sys.modules, name, None)
+
 
 Call = tuple[tuple[Any, ...], dict[str, Any]]
 
@@ -171,6 +189,53 @@ def test_main_builds_the_server_from_the_environment_and_runs_it(
     settings, options = seen[0]
     assert settings.timeout_seconds == 900
     assert options == RunOptions(http=True, port=9001)
+
+
+def test_entry_point_without_mcp_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`rayito-mcp` (el script real hace `from rayito.mcp.__main__ import
+    main`) sin el extra imprime un aviso de una línea y sale con 2, sin
+    traza."""
+    block_mcp(monkeypatch)
+    main_module = importlib.import_module("rayito.mcp.__main__")
+    assert main_module.main() == 2
+    captured = capsys.readouterr()
+    assert "rayito[mcp]" in captured.err
+    assert captured.out == ""
+
+
+def test_package_import_survives_without_the_mcp_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Importar el paquete (lo que hace `python -m rayito.mcp` antes de
+    ejecutar `__main__.py`) no debe fallar sin el extra: sólo acceder a uno
+    de sus cuatro nombres sí, con el mismo mensaje amable."""
+    block_mcp(monkeypatch)
+    module = importlib.import_module("rayito.mcp")
+    with pytest.raises(ModuleNotFoundError, match=r"rayito\[mcp\]"):
+        _ = module.main
+
+
+def test_module_without_mcp_extra_prints_a_friendly_message_and_exits_2() -> None:
+    """`python -m rayito.mcp` real, en un intérprete nuevo, sin `mcp`
+    instalado: nada de traza, salida 2, el comando de instalación en
+    stderr."""
+    script = (
+        "import sys\n"
+        "sys.modules['mcp'] = None\n"
+        "import runpy\n"
+        "runpy.run_module('rayito.mcp', run_name='__main__')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 2
+    assert "rayito[mcp]" in completed.stderr
+    assert completed.stdout == ""
+    assert "Traceback" not in completed.stderr
 
 
 def test_module_help_lists_the_transport_flags_without_double_import() -> None:

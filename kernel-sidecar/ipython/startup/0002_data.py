@@ -4,7 +4,11 @@ with numpy scalars turned into plain Python values.
 The pandas types are matched by module and class name at lookup time, so
 this script imports no pandas module at kernel start (the ``slim`` variant
 starts with no scientific package loaded); the full warm-up imports pandas
-anyway."""
+anyway. Two module paths are registered per class: pandas < 3 reports
+``DataFrame``/``Series`` under their private ``pandas.core.frame``/
+``pandas.core.series`` modules, pandas >= 3 reports both as ``pandas``
+directly (its public re-export cleanup); both are matched so the pin bump
+does not change what ``e2b/data`` resolves for the same object."""
 
 
 def _rayito_install_data_formatter():
@@ -36,6 +40,8 @@ def _rayito_install_data_formatter():
     printers = {
         ("pandas.core.frame", "DataFrame"): _frame_repr,
         ("pandas.core.series", "Series"): _series_repr,
+        ("pandas", "DataFrame"): _frame_repr,
+        ("pandas", "Series"): _series_repr,
     }
 
     def _printer_for(typ):

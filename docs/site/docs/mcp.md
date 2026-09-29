@@ -29,8 +29,11 @@ desde un checkout del repositorio:
 uv run --project <repo>/clients/python --extra mcp rayito-mcp
 ```
 
-Sin el extra, `import rayito.mcp` falla con un `ModuleNotFoundError` que
-indica el comando de instalación; `import rayito` no cambia.
+Sin el extra, `rayito-mcp` y `python -m rayito.mcp` imprimen un aviso de una
+línea con el comando de instalación y salen con 2 (sin traza), igual que la
+CLI `rayito` sin `rayito[cli]`; `import rayito` no cambia. Acceder a un
+nombre de `rayito.mcp` directamente (`McpSettings`, `build_server`, …) sin
+el extra falla con un `ModuleNotFoundError` que indica el mismo comando.
 
 ## Variables de entorno
 

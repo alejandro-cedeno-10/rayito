@@ -25,7 +25,7 @@ from rayito.exceptions import (
     SandboxStateException,
     TimeoutException,
 )
-from rayito.v1 import process_pb2
+from rayito.v1 import process_pb2, process_pb2_grpc
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -343,6 +343,53 @@ async def test_async_stream_reset_classification(
         await sandbox.commands.run("echo hola")
     assert not isinstance(excinfo.value, SandboxNotFoundException)
     assert "resume()" in str(excinfo.value)
+
+
+async def test_async_cancelled_stream_removed_resubscribes_with_connect(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El equivalente async de `test_cancelled_stream_removed_with_live_agent_
+    resubscribes_with_connect`: `CANCELLED "Stream removed"` (el `RST_STREAM`
+    del proxy visto en AWS_API_NOTES.md #33) es un corte reconectable."""
+    reset = FakeRpcError(grpc.StatusCode.CANCELLED, details="Stream removed")
+    monkeypatch.setattr(
+        sandbox._process,
+        "Start",
+        start_failing_first(sandbox._process.Start, [lambda: resetting_call(reset)]),
+    )
+    with pytest.raises(NotFoundException):
+        await sandbox.commands.run("echo hola")
+    assert fake_rayd.process.connect_requests[-1].pid == 1
+
+
+async def test_async_local_cancel_is_never_reconnected_even_disguised_as_stream_removed(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reset = FakeRpcError(grpc.StatusCode.CANCELLED, details="Locally cancelled by application!")
+    monkeypatch.setattr(
+        sandbox._process,
+        "Start",
+        start_failing_first(sandbox._process.Start, [lambda: resetting_call(reset)]),
+    )
+    with pytest.raises(SandboxException, match="llamada cancelada por el cliente"):
+        await sandbox.commands.run("echo hola")
+    assert fake_rayd.process.connect_requests == []
+
+
+async def test_async_disconnect_wins_the_race_against_a_cancelled_stream_removed(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Igual que la versión sync: `disconnect()` marca el handle antes de
+    cancelar, así que un `CANCELLED "Stream removed"` posterior no reconecta."""
+    reset = FakeRpcError(grpc.StatusCode.CANCELLED, details="Stream removed")
+    stream_stub = sandbox._stub(process_pb2_grpc.ProcessServiceStub, stream=True)
+    monkeypatch.setattr(stream_stub, "Start", lambda request, timeout=None: resetting_call(reset))
+    handle = await sandbox.commands.run("sleep 30", background=True, timeout=None)
+    handle.disconnect()
+    with pytest.raises(SandboxException, match="desconectado"):
+        await handle.wait()
+    assert fake_rayd.process.connect_requests == []
+    assert handle.reconnects == 0
 
 
 async def test_async_at_most_two_channels(sandbox: AsyncSandbox, fake_rayd: RaydEndpoint) -> None:

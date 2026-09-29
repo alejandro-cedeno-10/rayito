@@ -725,11 +725,14 @@ backpressure).
   `ipython/startup/` (`0001_charts.py` formatter `e2b/chart`, `0002_data.py`
   `e2b/data` para `DataFrame`/`Series`, `0003_images.py` PNG/JPEG de PIL,
   `0004_warmup.py`). **No** fijar `MPLBACKEND`; `OPENBLAS_NUM_THREADS=1`.
-- Pins en `kernel-sidecar/requirements.txt` (aarch64 cp312 wheels, sin
-  compiladores en la imagen): `ipykernel==6.31.0`, `jupyter_client==8.10.0`,
-  `ipython==9.15.0`, `pyzmq==27.2.0`, `matplotlib==3.10.9`, `pandas==2.2.3`,
-  `numpy==2.3.5`, `scipy==1.18.1`, `scikit-learn==1.9.1`, `pillow==12.3.0`,
-  `pydantic==2.13.5` (lo importa `e2b_charts`).
+- Pins en `kernel-sidecar/requirements.txt`, reproducibles desde
+  `kernel-sidecar/requirements.in` con `uv pip compile --only-binary :all:
+  --python-platform aarch64-manylinux_2_28 --python-version 3.12` (aarch64
+  cp312 wheels, sin compiladores en la imagen): `ipykernel==7.3.0`,
+  `jupyter_client==8.10.0`, `ipython==9.17.1`, `pyzmq==27.2.0`,
+  `matplotlib==3.11.2`, `pandas==3.0.6`, `numpy==2.5.3`, `scipy==1.18.1`,
+  `scikit-learn==1.9.1`, `pillow==12.3.0`, `pydantic==2.13.5` (lo importa
+  `e2b_charts`).
 - `e2b_charts` vendorizado (MIT, `_vendor/e2b_charts`) para que `chart` (JSON
   de matplotlib) y `data` (DataFrame, `orient=list`) se produzcan en el kernel
   y viajen como mime types.

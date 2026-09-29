@@ -56,6 +56,7 @@ STREAM_RESET_MARKERS: Final = (
     "Received RST",
     "Socket closed",
     "Connection reset",
+    "Stream removed",
 )
 PHASE_GATE_DETAILS: Final = ("suspending", "terminating")
 DISK_FULL_DETAILS: Final = ("disk_reserve", "disk_full")
@@ -428,13 +429,17 @@ def is_sandbox_timeout(exc: grpc.RpcError) -> bool:
 
 def is_stream_reset(exc: grpc.RpcError) -> bool:
     """Un stream cortado por debajo de gRPC: `UNAVAILABLE` (proxy o conexión
-    caída) o `INTERNAL` con las marcas de reset HTTP/2 que grpc-core deja en
-    `details`/`debug_error_string`. Se clasifica sondeando `Health`. Los
-    `UNAVAILABLE` del phase gate y del kernel gate de `rayd` no son resets."""
+    caída), `INTERNAL` o `CANCELLED` con las marcas de reset HTTP/2 que
+    grpc-core deja en `details`/`debug_error_string`. Un `RST_STREAM` del
+    proxy de AWS antes del plazo real llega como `CANCELLED` con
+    `"Stream removed"` (AWS_API_NOTES.md #33): distinto del `CANCELLED` que
+    deja un `call.cancel()` propio (`"Locally cancelled..."`, sin marca), que
+    nunca es un reset. Se clasifica sondeando `Health`. Los `UNAVAILABLE` del
+    phase gate y del kernel gate de `rayd` no son resets."""
     code = rpc_status(exc)
     if code is grpc.StatusCode.UNAVAILABLE:
         return not (is_phase_gate(exc) or is_kernel_gate(exc))
-    if code is not grpc.StatusCode.INTERNAL:
+    if code not in (grpc.StatusCode.INTERNAL, grpc.StatusCode.CANCELLED):
         return False
     text = rpc_details(exc) + rpc_debug_string(exc)
     return any(marker in text for marker in STREAM_RESET_MARKERS)

@@ -1,0 +1,24 @@
+# Direct runtime dependencies of the kernel sidecar (Python 3.12,
+# aarch64 manylinux_2_28). Compiled into `requirements.txt` with:
+#   uv pip compile --only-binary :all: \
+#     --python-platform aarch64-manylinux_2_28 --python-version 3.12 \
+#     requirements.in -o requirements.txt
+#
+# ipykernel/ipython/jupyter_client/pyzmq run the Python kernel itself;
+# matplotlib/pandas/numpy/scipy/scikit-learn/matplotlib-inline/pillow are the
+# scientific stack the warm-up imports (`ipython/startup/0004_warmup.py`);
+# pydantic is pinned here too because the vendored `e2b_charts` extractor
+# (`src/rayito_kernel_sidecar/_vendor/e2b_charts`) imports it and is not
+# otherwise declared as a dependency anywhere.
+ipykernel==7.3.0
+ipython==9.17.1
+jupyter_client==8.10.0
+pyzmq==27.2.0
+matplotlib==3.11.2
+pandas==3.0.6
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.9.1
+matplotlib-inline==0.2.2
+pillow==12.3.0
+pydantic==2.13.5

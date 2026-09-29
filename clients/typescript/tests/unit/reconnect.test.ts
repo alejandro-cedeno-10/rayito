@@ -95,6 +95,73 @@ describe("reconnection contract", () => {
     expect(sandbox.resumeGeneration).toBe(1);
   });
 
+  test("a live command reconnects through Connect after a Canceled RST_STREAM, not the client's own abort", async () => {
+    // El proxy de AWS puede cortar un stream con un RST_STREAM(CANCEL) antes
+    // del plazo real; connect-node lo presenta como `Canceled` con el
+    // prefijo `http/2 stream closed` (node-error.ts de connect-node), nunca
+    // como el `Canceled` de un `AbortSignal` propio ("This operation was
+    // aborted"). `isStreamReset` distingue por ese mensaje (M10, paridad con
+    // el `CANCELLED "Stream removed"` de grpcio en el SDK de Python,
+    // AWS_API_NOTES.md #33).
+    const { sandbox, rayd } = await running();
+    const handle = await sandbox.commands.run("seq 40", { background: true, timeoutMs: 0 });
+    const collector = new Collector(handle);
+    await waitUntil(() => collector.chunks.length >= 2);
+    const seenBefore = handle.lastSeq;
+    const healthBefore = healthCalls(rayd);
+    rayd.process.processes
+      .get(handle.pid)
+      ?.cut(Code.Canceled, "http/2 stream closed with error code CANCEL (0x8)");
+    await collector.join();
+    expect(collector.error).toBeUndefined();
+    expect(collector.text).toBe(Array.from({ length: 40 }, (_, i) => `${i + 1}\n`).join(""));
+    expect((await handle.wait()).exitCode).toBe(0);
+    expect(handle.reconnects).toBe(1);
+    const [pid, fromSeq] = rayd.process.connectCalls.at(-1) as [number, number];
+    expect(pid).toBe(handle.pid);
+    expect(fromSeq).toBeGreaterThan(seenBefore);
+    expect(fromSeq).toBeLessThanOrEqual(handle.lastSeq + 1);
+    expect(healthCalls(rayd) - healthBefore).toBeGreaterThanOrEqual(1);
+  });
+
+  test("three Canceled RST_STREAM cuts end the handle with the M2 classification", async () => {
+    const { sandbox, rayd } = await running();
+    const handle = await sandbox.commands.run("sleep 30", { background: true, timeoutMs: 0 });
+    const collector = new Collector(handle);
+    await sleep(50);
+    const process = rayd.process.processes.get(handle.pid);
+    if (process === undefined) {
+      throw new Error("el fake no registró el proceso");
+    }
+    for (let cut = 0; cut < 4; cut += 1) {
+      await waitUntil(() => process.subscribers.length === 1);
+      process.cut(Code.Canceled, "http/2 stream closed with error code CANCEL (0x8)");
+    }
+    await collector.join(15_000);
+    expect(collector.error).toBeInstanceOf(SandboxError);
+    expect(collector.error?.message).toContain("commands.connect(pid)");
+    expect(handle.reconnects).toBe(3);
+    expect(rayd.process.connectCalls).toHaveLength(3);
+  });
+
+  test("disconnect wins the race against a Canceled RST_STREAM cut", async () => {
+    // `disconnect()` marca `progress.disconnected` y aborta el stream antes
+    // de que llegue cualquier corte; ese chequeo va antes que `isReconnectable`
+    // en `consumeStream`, así que un `RST_STREAM` que llegara justo después
+    // nunca reconecta un handle ya desconectado.
+    const { sandbox, rayd } = await running();
+    const handle = await sandbox.commands.run("sleep 30", { background: true, timeoutMs: 0 });
+    const process = rayd.process.processes.get(handle.pid);
+    if (process === undefined) {
+      throw new Error("el fake no registró el proceso");
+    }
+    handle.disconnect();
+    process.cut(Code.Canceled, "http/2 stream closed with error code CANCEL (0x8)");
+    await expect(handle.wait()).rejects.toThrow(/desconectado/);
+    expect(rayd.process.connectCalls).toEqual([]);
+    expect(handle.reconnects).toBe(0);
+  });
+
   test("an unread handle reconnects on its first wait", async () => {
     const { sandbox, rayd } = await running();
     const handle = await sandbox.commands.run("sleep 1", { background: true, timeoutMs: 0 });
