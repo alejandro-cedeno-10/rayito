@@ -115,7 +115,7 @@ fn blocked_sample(prefix: &Cidr) -> Option<IpAddr> {
     (!answered_before_policy(candidate)).then_some(candidate)
 }
 
-pub(crate) fn answered_before_policy(ip: IpAddr) -> bool {
+fn answered_before_policy(ip: IpAddr) -> bool {
     matches!(
         SpecialAddress::of(ip),
         SpecialAddress::Loopback

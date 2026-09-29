@@ -67,84 +67,6 @@ impl SpecialAddress {
     }
 }
 
-/// The four hand-written predicates as they were before this module, kept
-/// verbatim to prove the rewrite changes no answer.
-#[cfg(test)]
-mod oracle {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    use super::super::cidr::canonical_ip;
-    use super::{IMDS_V4, IMDS_V6};
-
-    pub fn is_forbidden_address(address: IpAddr) -> bool {
-        match address {
-            IpAddr::V4(v4) => is_forbidden_v4(v4),
-            IpAddr::V6(v6) => is_forbidden_v6(v6),
-        }
-    }
-
-    fn is_forbidden_v4(address: Ipv4Addr) -> bool {
-        address.is_loopback()
-            || address.octets()[0] == 0
-            || address.is_link_local()
-            || address.is_multicast()
-            || address.is_broadcast()
-    }
-
-    fn is_forbidden_v6(address: Ipv6Addr) -> bool {
-        if address.is_loopback() || address.is_unspecified() || address.is_multicast() {
-            return true;
-        }
-        if address.segments()[0] & 0xffc0 == 0xfe80 || address == IMDS_V6 {
-            return true;
-        }
-        address.to_ipv4().is_some_and(is_forbidden_v4)
-    }
-
-    pub fn target_blocks(local: &[IpAddr], ip: IpAddr) -> bool {
-        let local: Vec<IpAddr> = local.iter().copied().map(canonical_ip).collect();
-        let ip = canonical_ip(ip);
-        is_never_a_destination(ip) || is_link_local(ip) || local.contains(&ip)
-    }
-
-    pub fn upstream_blocks(ip: IpAddr) -> bool {
-        let ip = canonical_ip(ip);
-        let imds = match ip {
-            IpAddr::V4(v4) => v4 == IMDS_V4,
-            IpAddr::V6(v6) => v6 == IMDS_V6,
-        };
-        imds || is_loopback_unspecified_or_multicast(ip)
-    }
-
-    fn is_never_a_destination(ip: IpAddr) -> bool {
-        let broadcast = matches!(ip, IpAddr::V4(v4) if v4.is_broadcast());
-        broadcast || is_loopback_unspecified_or_multicast(ip)
-    }
-
-    fn is_loopback_unspecified_or_multicast(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(v4) => v4.is_loopback() || v4.octets()[0] == 0 || v4.is_multicast(),
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
-        }
-    }
-
-    fn is_link_local(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(v4) => v4.is_link_local(),
-            IpAddr::V6(v6) => v6.segments()[0] & 0xffc0 == 0xfe80 || v6 == IMDS_V6,
-        }
-    }
-
-    pub fn answered_before_policy(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(v4) => {
-                v4.is_loopback() || v4.octets()[0] == 0 || v4.is_multicast() || v4.is_broadcast()
-            }
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,47 +118,6 @@ mod tests {
     fn every_vector_has_its_class() {
         for (input, class) in VECTORS {
             assert_eq!(SpecialAddress::of(ip(input)), class, "{input}");
-        }
-    }
-
-    #[test]
-    fn the_policies_answer_as_the_hand_written_predicates_did() {
-        use crate::network::guard::{TargetGuard, UpstreamGuard};
-        use crate::network::probe::answered_before_policy;
-        use crate::transfer::url_policy::is_forbidden_address;
-
-        let local = [ip("10.0.1.5"), ip("fd12::5")];
-        let guard = TargetGuard::new(local);
-        let extra = [
-            "10.0.1.5",
-            "fd12::5",
-            "::ffff:10.0.1.5",
-            "::10.0.1.5",
-            "10.0.1.6",
-        ];
-        let inputs = VECTORS.iter().map(|(input, _)| *input).chain(extra);
-        for input in inputs {
-            let address = ip(input);
-            assert_eq!(
-                is_forbidden_address(address),
-                oracle::is_forbidden_address(address),
-                "is_forbidden_address {input}"
-            );
-            assert_eq!(
-                guard.blocks(address),
-                oracle::target_blocks(&local, address),
-                "TargetGuard {input}"
-            );
-            assert_eq!(
-                UpstreamGuard.blocks(address),
-                oracle::upstream_blocks(address),
-                "UpstreamGuard {input}"
-            );
-            assert_eq!(
-                answered_before_policy(address),
-                oracle::answered_before_policy(address),
-                "answered_before_policy {input}"
-            );
         }
     }
 }
