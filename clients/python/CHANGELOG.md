@@ -6,6 +6,39 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- Reconexión tras un reset de stream del proxy de AWS (`RST_STREAM` antes
+  del plazo real): grpcio lo presenta como `CANCELLED "Stream removed"`
+  (`AWS_API_NOTES.md` #33), que `is_stream_reset` no clasificaba como corte
+  reconectable (sólo miraba `UNAVAILABLE`/`INTERNAL`), así que
+  `commands.connect`/`pty.connect`, `watch_dir` y el reenganche de
+  `run_code` fallaban en vez de reconectar. Ahora `CANCELLED` con esa marca
+  (u otra de `STREAM_RESET_MARKERS`) reconecta igual que un `Socket closed`;
+  un `CANCELLED` sin la marca (el propio `call.cancel()`, p. ej.
+  `CommandHandle.disconnect()`) nunca reconecta, y el chequeo del handle
+  desconectado sigue yendo antes que la clasificación, así que un corte que
+  llegara disfrazado de reset justo después de `disconnect()` tampoco
+  reconecta (`_transport.py`).
+- `rayito-mcp` y `python -m rayito.mcp` sin el extra `rayito[mcp]`: antes
+  fallaban con un `ModuleNotFoundError` sin capturar (traza completa) porque
+  `rayito.mcp/__init__.py` importaba todo el paquete de forma ansiosa, así
+  que cualquier import de `rayito.mcp` (incluido `rayito.mcp.__main__`)
+  disparaba el fallo antes de que su propio `try`/`except` pudiera
+  atraparlo. Ahora `rayito.mcp` resuelve sus cuatro nombres con
+  `__getattr__` perezoso (PEP 562) y `rayito.mcp.__main__` imprime un aviso
+  de una línea con el comando de instalación y sale con 2, sin traza, igual
+  que la CLI `rayito` con `rayito[cli]`.
+
+### Changed
+
+- `tests/e2e/test_m3_filesystem.py`: `UPLOAD_BUDGET_SECONDS` (20 s fijos
+  para 8 MB) fallaba en uplinks lentos (0,25-0,44 MB/s medidos). El
+  presupuesto ahora se deriva de una línea base medida en el propio run
+  (una escritura de prueba de 300 KB) escalada a los 8 MB con un margen de
+  3x, acotada entre 5 s y 120 s: el test comprueba una regresión de
+  throughput, no la red de quien lo corre.
+
 ## [0.3.1] - 2026-09-28
 
 Versión de mantenimiento, sin cambios de API; se publica para mantener las
