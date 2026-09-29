@@ -51,10 +51,13 @@ from rayito.e2b._connection import (
     IGNORED_API_PARAMS,
     RESERVED_METADATA_KEYS,
     ConnectionSettings,
-    connection_overrides,
+    bind_control_plane,
     merge_bound_params,
+    plane_settings,
     resolve_retries,
+    snapshot_config,
     split_api_params,
+    transport_override,
     validate_extra_headers,
     validate_proxy_url,
 )
@@ -292,6 +295,7 @@ def test_native_call_kwargs_merges_warns_and_resolves() -> None:
         {"region": None, "access_token": None},
         {"request_timeout": 7, "domain": "x"},
         call="get_info",
+        integration=None,
     )
     assert call.kwargs == {
         "region": "us-east-1",
@@ -299,60 +303,80 @@ def test_native_call_kwargs_merges_warns_and_resolves() -> None:
         "control_plane": "plane",
         "request_timeout": 7,
     }
+    assert call.plane_settings is None
     assert call.warnings == ("domain ignorado: el endpoint lo asigna Lambda MicroVMs por sandbox",)
     without = native_call_kwargs(
-        {}, {"region": "r"}, {"request_timeout": 7}, call="kill", with_request_timeout=False
+        {},
+        {"region": "r"},
+        {"request_timeout": 7},
+        call="kill",
+        integration=None,
+        with_request_timeout=False,
     )
     assert without.kwargs == {"region": "r"}
     with pytest.raises(TypeError, match="pool"):
-        native_call_kwargs({}, {}, {"pool": 1}, call="create")
+        native_call_kwargs({}, {}, {"pool": 1}, call="create", integration=None)
 
 
 # -------------------------------------------------------- connection plane
 
 
-def test_connection_overrides_without_settings_return_what_was_given() -> None:
+def test_transport_override_without_settings_returns_what_was_given() -> None:
     transport = TransportSettings()
-    assert connection_overrides(
-        ConnectionSettings(request_timeout=3),
-        transport=transport,
-        control_plane="plane",
-        session=None,
-        region=None,
-        integration=None,
-    ) == (transport, "plane")
+    assert transport_override(ConnectionSettings(request_timeout=3), transport) is transport
 
 
-def test_connection_overrides_build_the_transport_and_a_dedicated_plane() -> None:
+def test_plane_settings_without_anything_to_apply_is_none() -> None:
+    settings = ConnectionSettings(request_timeout=3)
+    assert plane_settings(settings, control_plane="plane", integration=None) is None
+
+
+def test_transport_override_applies_metadata_and_proxy() -> None:
     settings = ConnectionSettings(retries=2, headers=(("x-trace", "1"),), proxy="http://h:3128")
-    transport, plane = connection_overrides(
-        settings,
-        transport=None,
-        control_plane=None,
-        session=None,
-        region="us-east-1",
-        integration="acme/1.0",
-    )
+    transport = transport_override(settings, None)
     assert isinstance(transport, TransportSettings)
     assert transport.extra_metadata == (("x-trace", "1"),)
     assert transport.http_proxy == "http://h:3128"
-    assert isinstance(plane, LambdaMicrovmsControlPlane)
-    config = plane._client.meta.config
+
+
+def test_plane_settings_builds_the_client_settings_to_share() -> None:
+    settings = ConnectionSettings(retries=2, proxy="http://h:3128")
+    assert plane_settings(settings, control_plane=None, integration="acme/1.0") == ClientSettings(
+        retries=2, proxy="http://h:3128", integration="acme/1.0"
+    )
+
+
+def test_bind_control_plane_builds_and_reuses_the_shared_plane() -> None:
+    settings = ConnectionSettings(retries=2, proxy="http://h:3128")
+    plane = plane_settings(settings, control_plane=None, integration="acme/1.0")
+    assert plane is not None
+    call = compat.NativeCall(
+        kwargs={"region": "us-east-1"},
+        warnings=(),
+        settings=settings,
+        integration="acme/1.0",
+        plane_settings=plane,
+    )
+    resolved = bind_control_plane(call)
+    built = resolved.kwargs["control_plane"]
+    assert isinstance(built, LambdaMicrovmsControlPlane)
+    config = built._client.meta.config
     assert config.retries["total_max_attempts"] == 3
     assert config.proxies == {"http": "http://h:3128", "https": "http://h:3128"}
     assert config.user_agent_extra.endswith("acme/1.0")
-    again = connection_overrides(
-        settings,
-        transport=None,
-        control_plane=None,
-        session=None,
-        region="us-east-1",
-        integration="acme/1.0",
-    )[1]
-    assert again is plane
-    assert ClientSettings(2, "http://h:3128", "acme/1.0") == ClientSettings(
-        retries=2, proxy="http://h:3128", integration="acme/1.0"
+    again = bind_control_plane(call).kwargs["control_plane"]
+    assert again is built
+
+
+def test_bind_control_plane_leaves_the_call_unchanged_without_plane_settings() -> None:
+    call = compat.NativeCall(
+        kwargs={"region": "us-east-1"},
+        warnings=(),
+        settings=ConnectionSettings(),
+        integration=None,
+        plane_settings=None,
     )
+    assert bind_control_plane(call) is call
 
 
 def test_settings_with_an_explicit_control_plane_are_refused() -> None:
@@ -362,14 +386,86 @@ def test_settings_with_an_explicit_control_plane_are_refused() -> None:
         (ConnectionSettings(), "acme"),
     ):
         with pytest.raises(InvalidArgumentException, match="control_plane"):
-            connection_overrides(
-                settings,
-                transport=None,
-                control_plane="plane",
-                session=None,
-                region=None,
-                integration=integration,
-            )
+            plane_settings(settings, control_plane="plane", integration=integration)
+
+
+def test_native_call_kwargs_resolves_plane_settings_without_touching_aws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`native_call_kwargs` es puro: nunca llama a `shared_control_plane`,
+    aunque `retries`/`proxy`/`integration` pidan un plano nuevo."""
+
+    def boom(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("native_call_kwargs no debe tocar AWS")
+
+    monkeypatch.setattr("rayito.e2b._connection.shared_control_plane", boom)
+    call = native_call_kwargs(
+        {},
+        {},
+        {"retries": 2, "proxy": "http://h:3128"},
+        call="create",
+        integration="acme/1.0",
+    )
+    expected = ClientSettings(retries=2, proxy="http://h:3128", integration="acme/1.0")
+    assert call.plane_settings == expected
+    assert "control_plane" not in call.kwargs
+
+
+def test_native_call_kwargs_ignores_the_global_integration_state() -> None:
+    """El resultado depende sólo del `integration` recibido, nunca del
+    estado global de `ConnectionConfig.set_integration`."""
+    ConnectionConfig.set_integration("global/1.0")
+    call = native_call_kwargs({}, {}, {}, call="get_info", integration=None)
+    assert call.plane_settings is None
+    assert call.integration is None
+
+
+def test_bind_control_plane_calls_shared_control_plane_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, str | None, ClientSettings]] = []
+
+    def fake_shared_control_plane(
+        session: Any, *, region: str | None, settings: ClientSettings
+    ) -> str:
+        calls.append((session, region, settings))
+        return "built-plane"
+
+    monkeypatch.setattr("rayito.e2b._connection.shared_control_plane", fake_shared_control_plane)
+    settings = ClientSettings(retries=1, proxy=None, integration=None)
+    call = compat.NativeCall(
+        kwargs={"session": "sess", "region": "us-east-1"},
+        warnings=(),
+        settings=ConnectionSettings(retries=1),
+        integration=None,
+        plane_settings=settings,
+    )
+    resolved = bind_control_plane(call)
+    assert resolved.kwargs["control_plane"] == "built-plane"
+    assert calls == [("sess", "us-east-1", settings)]
+
+    passthrough = compat.NativeCall(
+        kwargs={"region": "us-east-1"},
+        warnings=(),
+        settings=ConnectionSettings(),
+        integration=None,
+        plane_settings=None,
+    )
+    assert bind_control_plane(passthrough) is passthrough
+    assert len(calls) == 1
+
+
+def test_native_call_kwargs_conflict_raises_before_building_a_plane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("no debe construirse un plano ante un conflicto")
+
+    monkeypatch.setattr("rayito.e2b._connection.shared_control_plane", boom)
+    with pytest.raises(InvalidArgumentException, match="control_plane"):
+        native_call_kwargs(
+            {}, {"control_plane": "given"}, {"retries": 1}, call="kill", integration=None
+        )
 
 
 # -------------------------------------------------------- ConnectionConfig
@@ -405,6 +501,17 @@ def test_connection_config_warns_for_ignored_keys() -> None:
     messages = [str(w.message) for w in caught if issubclass(w.category, RayitoCompatWarning)]
     assert [message.split(" ")[0] for message in messages] == ["api_key", "domain"]
     assert not any("e2b_secreto" in message for message in messages)
+
+
+def test_snapshot_config_carries_the_given_integration() -> None:
+    config = snapshot_config(
+        ConnectionSettings(retries=1), region="us-east-1", logger=None, integration="acme/1.0"
+    )
+    assert config.integration == "acme/1.0"
+    assert config.region == "us-east-1"
+    assert config.retries == 1
+    with pytest.raises(TypeError):
+        ConnectionConfig(integration="acme/1.0")
 
 
 def test_set_integration_snapshot_and_validation() -> None:

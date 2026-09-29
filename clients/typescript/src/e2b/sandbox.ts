@@ -7,7 +7,7 @@
  * cualquier llamada. `new E2B(opts).Sandbox` es una subclase ligada a `opts`.
  */
 
-import { InvalidArgumentError, LifecycleUnsupportedError, UnimplementedError } from "../errors.js";
+import { InvalidArgumentError, UnimplementedError } from "../errors.js";
 import type {
   CodeContext,
   Execution,
@@ -18,17 +18,19 @@ import type { ContextLike, CreateContextOptions, RunCodeOptions } from "../sandb
 import type { Commands, RequestOptions } from "../sandbox/commands.js";
 import type { Git } from "../sandbox/git.js";
 import { validateHostPort } from "../sandbox/launch.js";
-import { HISTORY_UNIMPLEMENTED_REASON, isHistoryUnavailable } from "../sandbox/metrics.js";
 import type { SandboxListPaginator } from "../sandbox/paginator.js";
 import { Sandbox as NativeSandbox } from "../sandbox/sandbox.js";
 import {
   emitIgnoredWarnings,
+  historyImageError,
   infoFromNative,
+  lifecycleImageError,
   mapCreateOptions,
   mapListOptions,
   mapNetworkUpdate,
   mergeBoundOpts,
   metricsFromNative,
+  metricsHistoryOrSnapshot,
   type NativeConnection,
   normalizedLanguageOrUnimplemented,
   splitConnectionOpts,
@@ -51,12 +53,12 @@ import type {
   SandboxPauseOpts,
   SandboxUrlOpts,
 } from "./types.js";
-import { COMPAT_DOC_PATH, rejectUnimplemented, unimplemented } from "./unimplemented.js";
+import { rejectUnimplemented, unimplemented } from "./unimplemented.js";
+
+export { LIFECYCLE_IMAGE_REASON } from "./compat.js";
 
 /** El puerto de `rayd`: el JWE de `trafficAccessToken` es el que cubre este puerto. */
 export const ENVD_PORT = 8080;
-export const LIFECYCLE_IMAGE_REASON =
-  "la imagen no impone el timeout del servidor: publica una imagen M9 (ADR-011)";
 export const UPLOAD_URL_PATH_MESSAGE =
   "uploadUrl necesita la ruta de destino: la URL de S3 no lleva el nombre del fichero";
 
@@ -94,21 +96,6 @@ function nativeConnection(bound: ConnectionOpts, call: ConnectionOpts): NativeCo
   return connection;
 }
 
-function historyImageError(feature: string, error: unknown): unknown {
-  if (!isHistoryUnavailable(error)) {
-    return error;
-  }
-  return new UnimplementedError(feature, HISTORY_UNIMPLEMENTED_REASON, COMPAT_DOC_PATH, {
-    cause: error,
-  });
-}
-
-function lifecycleImageError(error: unknown): unknown {
-  return error instanceof LifecycleUnsupportedError
-    ? new UnimplementedError("lifecycle", LIFECYCLE_IMAGE_REASON, COMPAT_DOC_PATH)
-    : error;
-}
-
 export class Sandbox implements AsyncDisposable {
   /** El `Sandbox` nativo de `rayito`: `checkpointFiles`, `reincarnate`, `getHealth`... */
   readonly native: NativeSandbox;
@@ -123,7 +110,7 @@ export class Sandbox implements AsyncDisposable {
 
   protected constructor(native: NativeSandbox, bound: ConnectionOpts, config: ConnectionConfig) {
     this.native = native;
-    this.files = new Filesystem(native.files.core);
+    this.files = new Filesystem(native.files.core, native.files);
     this.commands = native.commands;
     this.pty = new Pty(native.pty);
     this.git = native.git;
@@ -442,30 +429,23 @@ export class Sandbox implements AsyncDisposable {
    */
   async getMetrics(opts: SandboxMetricsOpts = {}): Promise<SandboxMetrics[]> {
     const connection = this.#connection(opts);
-    const unbounded = opts.start === undefined && opts.end === undefined;
     const { requestTimeoutMs, signal } = connection;
-    let history: SandboxMetrics[];
-    try {
-      const native = await this.native.getMetricsHistory({
-        start: opts.start,
-        end: opts.end,
-        requestTimeoutMs,
-        signal,
-      });
-      history = native.map(metricsFromNative);
-    } catch (error) {
-      if (!isHistoryUnavailable(error)) {
-        throw error;
-      }
-      if (!unbounded) {
-        throw historyImageError("getMetrics({ start, end })", error);
-      }
-      history = [];
-    }
-    if (history.length > 0 || !unbounded) {
-      return history;
-    }
-    return [metricsFromNative(await this.native.getMetrics({ requestTimeoutMs, signal }))];
+    return metricsHistoryOrSnapshot(
+      async () => {
+        const native = await this.native.getMetricsHistory({
+          start: opts.start,
+          end: opts.end,
+          requestTimeoutMs,
+          signal,
+        });
+        return native.map(metricsFromNative);
+      },
+      async () => metricsFromNative(await this.native.getMetrics({ requestTimeoutMs, signal })),
+      {
+        ranged: !(opts.start === undefined && opts.end === undefined),
+        feature: "getMetrics({ start, end })",
+      },
+    );
   }
 
   // -------------------------------------------------------------- transfers

@@ -169,11 +169,52 @@ pub fn classify_probe_error(kind: HttpErrorKind) -> ProbeOutcome {
 #[must_use]
 pub fn one_shot_verdict(outcome: ProbeOutcome, retries_done: u32) -> ProbeOutcome {
     match outcome {
-        ProbeOutcome::Transient if retries_done >= TRANSFER_REQUEST_RETRIES => {
+        ProbeOutcome::Transient if retries_exhausted(retries_done) => {
             ProbeOutcome::Failed(TransferFailure::of(FailureReason::S3Unavailable))
         }
         other => other,
     }
+}
+
+/// What to do after one more transient answer to the same request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryDecision {
+    Retry,
+    GiveUp(TransferFailure),
+}
+
+/// The retries of one request (the single `GET` of an import without
+/// wait, each `PUT` of an export): a transient answer is retried
+/// `TRANSFER_REQUEST_RETRIES` times, the next one ends it `unavailable`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RequestRetries {
+    done: u32,
+}
+
+impl RequestRetries {
+    #[must_use]
+    pub fn done(self) -> u32 {
+        self.done
+    }
+
+    /// The 1-based number of the request about to be (or just) sent.
+    #[must_use]
+    pub fn attempt(self) -> u32 {
+        self.done + 1
+    }
+
+    #[must_use]
+    pub fn after_transient(&mut self) -> RetryDecision {
+        if retries_exhausted(self.done) {
+            return RetryDecision::GiveUp(TransferFailure::of(FailureReason::S3Unavailable));
+        }
+        self.done += 1;
+        RetryDecision::Retry
+    }
+}
+
+fn retries_exhausted(retries_done: u32) -> bool {
+    retries_done >= TRANSFER_REQUEST_RETRIES
 }
 
 /// The checks between "the object is there" and the first byte written.
@@ -556,6 +597,48 @@ mod tests {
         assert_eq!(
             one_shot_verdict(ProbeOutcome::Found, 9),
             ProbeOutcome::Found
+        );
+    }
+
+    #[test]
+    fn a_request_retries_a_transient_answer_twice_then_gives_up() {
+        let mut retries = RequestRetries::default();
+        let mut attempts = vec![retries.attempt()];
+        for _ in 0..TRANSFER_REQUEST_RETRIES {
+            assert_eq!(retries.after_transient(), RetryDecision::Retry);
+            attempts.push(retries.attempt());
+        }
+        assert_eq!(attempts, vec![1, 2, 3]);
+        assert_eq!(retries.done(), TRANSFER_REQUEST_RETRIES);
+        assert_eq!(
+            retries.after_transient(),
+            RetryDecision::GiveUp(TransferFailure::of(FailureReason::S3Unavailable))
+        );
+        assert_eq!(retries.done(), TRANSFER_REQUEST_RETRIES);
+        assert_eq!(retries.attempt(), TRANSFER_REQUEST_RETRIES + 1);
+    }
+
+    #[test]
+    fn the_one_shot_verdict_only_turns_an_exhausted_transient_into_unavailable() {
+        let denied = failed(FailureReason::AccessDenied);
+        for done in [0, TRANSFER_REQUEST_RETRIES] {
+            assert_eq!(
+                one_shot_verdict(ProbeOutcome::Found, done),
+                ProbeOutcome::Found
+            );
+            assert_eq!(
+                one_shot_verdict(ProbeOutcome::Pending, done),
+                ProbeOutcome::Pending
+            );
+            assert_eq!(one_shot_verdict(denied, done), denied);
+        }
+        assert_eq!(
+            one_shot_verdict(ProbeOutcome::Transient, 0),
+            ProbeOutcome::Transient
+        );
+        assert_eq!(
+            one_shot_verdict(ProbeOutcome::Transient, TRANSFER_REQUEST_RETRIES),
+            failed(FailureReason::S3Unavailable)
         );
     }
 

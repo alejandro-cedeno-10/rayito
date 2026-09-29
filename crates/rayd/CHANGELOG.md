@@ -23,6 +23,37 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   es exhaustivo (`status_class`); la tabla y prioridad de IMDS son
   constantes tipadas con su invariante de orden; `ConnectFailure` y sus
   respuestas HTTP/SOCKS pasan a `rayd-core`.
+- Transferencias (refactor interno, sin cambio de comportamiento): toda
+  mutación del registro pasa por un único punto que refresca el contador de
+  la barrera de lectura tras subida; importación y exportación comparten el
+  cierre de la tarea (`TaskEnding`); el presupuesto de reintentos de una
+  petición a S3 vive en `rayd-core` (`RequestRetries`); el plan de una
+  exportación lleva la URL de cada parte y un `UploadPart` correcto lleva
+  siempre su `ETag` (`PutOutcome::PartStored`).
+### Security
+
+- Imagen: las dos capas `pip install -r` de `image/Dockerfile` (el stack
+  científico principal y la variante `poly`) llevan ahora `--require-hashes
+  --no-deps --only-binary=:all:`. `kernel-sidecar/requirements.txt` y
+  `requirements-poly.txt` se regeneraron con `uv pip compile
+  --generate-hashes` sin cambiar ninguna versión (diff de `nombre==versión`
+  vacío); un fichero añadido a una release ya publicada, o un sdist que
+  compilase en la VM de build, se rechazan en vez de instalarse en
+  silencio. Cierra C-12 (`docs/SECURITY_AUDIT.md`); gate nuevo en
+  `scripts/check_pins.py` (puerta 5). Sin cambio de comportamiento en
+  tiempo de ejecución.
+### Fixed
+
+- CI: el job x86_64 (`check`) vuelve a correr la suite completa del
+  workspace, incluidas las suites de integración de `rayd`. El runner no se
+  congelaba por `rayd`: `a_stalled_second_subscriber_is_truncated_alone`
+  (`tests/m5_pty.rs`) buscaba el final de 3 MB de salida reescaneando todo
+  el buffer en cada trozo (cuadrático, ~30 s en debug en x86 frente a un
+  plazo de 30 s) y, al vencer, imprimía el buffer entero en el panic: una
+  línea de ~2.9 MB en el log que dejaba mudo al runner (ni `timeout` ni la
+  cancelación respondían). La búsqueda ahora es lineal (1-2 s) y los panics
+  muestran sólo la longitud y los últimos 512 bytes. Investigación en
+  [`docs/research/2026-10-ci-x86-freeze.md`](../../docs/research/2026-10-ci-x86-freeze.md).
 
 ## [0.3.2] - 2026-09-29
 

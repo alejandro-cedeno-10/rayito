@@ -14,14 +14,16 @@ use std::time::{Duration, Instant};
 use rayd_core::filesystem::FsIdentity;
 use rayd_core::transfer::{
     DeleteOutcome, DoneOutcome, FailureReason, HttpHead, ImportPlan, ImportRequest, PollStep,
-    ProbeOutcome, ProbeResponse, ResponseBody, ResponseLog, SignedHttp, TransferDirection,
-    TransferFailure, TransferId, attempts_exhausted, delete_object, is_expired, one_shot_verdict,
-    probe, verify_checksum,
+    ProbeOutcome, ProbeResponse, RequestRetries, ResponseBody, ResponseLog, RetryDecision,
+    SignedHttp, TransferDirection, TransferFailure, TransferId, attempts_exhausted, delete_object,
+    is_expired, lower_hex, probe, verify_checksum,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedSemaphorePermit;
 
-use super::manager::{Gate, Interrupt, Interrupts, RecordHandle, TransferContext, lower_hex};
+use super::manager::{
+    Gate, Interrupt, Interrupts, RecordHandle, TaskEnding, TransferContext, publish_ending,
+};
 
 pub(crate) struct ImportJob {
     pub(crate) id: TransferId,
@@ -29,15 +31,6 @@ pub(crate) struct ImportJob {
     pub(crate) request: ImportRequest,
     pub(crate) identity: FsIdentity,
     pub(crate) admitted_at: Duration,
-}
-
-/// How the task ended; `Cancelled` means the cancel RPC already wrote the
-/// state, `Terminated` that `/terminate` arrived.
-enum Ending {
-    Done(Box<DoneOutcome>),
-    Failed(TransferFailure),
-    Cancelled,
-    Terminated,
 }
 
 /// How one attempt at writing the body ended.
@@ -56,37 +49,25 @@ pub(crate) async fn run_import<H: SignedHttp>(context: Arc<TransferContext<H>>, 
         .hub
         .snapshot(job.id.as_str())
         .is_ok_and(|snapshot| snapshot.object_seen);
-    if observed && !matches!(ending, Ending::Terminated) {
+    if observed && !matches!(ending, TaskEnding::Terminated) {
         cleanup(&context, &job).await;
     }
-    let (phase, reason) = match ending {
-        Ending::Done(outcome) => {
-            let bytes = outcome.bytes;
-            context.hub.apply(&job.id, |registry, now| {
-                registry.finish_done(&job.id, *outcome, now)
-            });
-            tracing::info!(
-                transfer_id = %job.id,
-                direction = TransferDirection::Import.as_str(),
-                phase = "done",
-                bytes,
-                duration_ms = millis(started.elapsed()),
-                "transfer finished"
-            );
-            return;
-        }
-        Ending::Failed(failure) => {
-            context.hub.apply(&job.id, |registry, now| {
-                registry.finish_failed(&job.id, failure, now)
-            });
-            ("failed", failure.reason.token())
-        }
-        Ending::Cancelled => ("cancelled", FailureReason::Cancelled.token()),
-        Ending::Terminated => {
-            context.hub.terminate(&job.id);
-            ("cancelled", "terminating")
-        }
+    let done_bytes = match &ending {
+        TaskEnding::Done(outcome) => Some(outcome.bytes),
+        _ => None,
     };
+    let (phase, reason) = publish_ending(&context.hub, &job.id, ending);
+    if let Some(bytes) = done_bytes {
+        tracing::info!(
+            transfer_id = %job.id,
+            direction = TransferDirection::Import.as_str(),
+            phase,
+            bytes,
+            duration_ms = millis(started.elapsed()),
+            "transfer finished"
+        );
+        return;
+    }
     tracing::info!(
         transfer_id = %job.id,
         direction = TransferDirection::Import.as_str(),
@@ -97,22 +78,22 @@ pub(crate) async fn run_import<H: SignedHttp>(context: Arc<TransferContext<H>>, 
     );
 }
 
-async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ImportJob) -> Ending {
+async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ImportJob) -> TaskEnding {
     let mut permit: Option<OwnedSemaphorePermit> = None;
     let mut interrupted = 0u32;
-    let mut retries = 0u32;
+    let mut retries = RequestRetries::default();
     loop {
         let mut interrupts = match arm(context, job).await {
             Ok(interrupts) => interrupts,
             Err(ending) => return ending,
         };
         if is_expired(context.hub.wall_ms(), job.request.expires_at_unix_ms) {
-            return Ending::Failed(TransferFailure::of(FailureReason::Expired));
+            return TaskEnding::Failed(TransferFailure::of(FailureReason::Expired));
         }
         let (response, log) = tokio::select! {
             probed = probe(&context.http, &job.request.get, job.request.wait_for_object) => probed,
             interrupt = interrupts.fired() => match interrupt {
-                Interrupt::Cancelled => return Ending::Cancelled,
+                Interrupt::Cancelled => return TaskEnding::Cancelled,
                 Interrupt::Suspended => {
                     permit = None;
                     continue;
@@ -139,19 +120,19 @@ async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ImportJob) -> 
                             permit = Some(acquired);
                             continue;
                         }
-                        Err(Interrupt::Cancelled) => return Ending::Cancelled,
+                        Err(Interrupt::Cancelled) => return TaskEnding::Cancelled,
                         Err(Interrupt::Suspended) => continue,
                     }
                 };
                 match write_object(context, job, head, body, held, &mut interrupts).await {
-                    WriteEnd::Done(outcome) => return Ending::Done(outcome),
-                    WriteEnd::Failed(failure) => return Ending::Failed(failure),
-                    WriteEnd::Cancelled => return Ending::Cancelled,
+                    WriteEnd::Done(outcome) => return TaskEnding::Done(outcome),
+                    WriteEnd::Failed(failure) => return TaskEnding::Failed(failure),
+                    WriteEnd::Cancelled => return TaskEnding::Cancelled,
                     WriteEnd::Suspended => requeue(context, job, "suspending", interrupted),
                     WriteEnd::Interrupted => {
                         interrupted += 1;
                         if attempts_exhausted(interrupted) {
-                            return Ending::Failed(TransferFailure::of(
+                            return TaskEnding::Failed(TransferFailure::of(
                                 FailureReason::S3Unavailable,
                             ));
                         }
@@ -163,14 +144,14 @@ async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ImportJob) -> 
                 permit = None;
                 let wait = match next_wait(context, job, outcome, &mut retries) {
                     Ok(wait) => wait,
-                    Err(failure) => return Ending::Failed(failure),
+                    Err(failure) => return TaskEnding::Failed(failure),
                 };
                 tokio::select! {
                     () = tokio::time::sleep(wait) => {}
                     () = job.handle.poll_now.notified() => {}
                     interrupt = interrupts.fired() => {
                         if interrupt == Interrupt::Cancelled {
-                            return Ending::Cancelled;
+                            return TaskEnding::Cancelled;
                         }
                     }
                 }
@@ -181,12 +162,12 @@ async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ImportJob) -> 
 
 /// Waits for the gate, then subscribes; a `/terminate` or a cancel while
 /// parked ends the task.
-async fn arm<H>(context: &TransferContext<H>, job: &ImportJob) -> Result<Interrupts, Ending> {
+async fn arm<H>(context: &TransferContext<H>, job: &ImportJob) -> Result<Interrupts, TaskEnding> {
     loop {
         match context.hub.wait_for_gate(&job.handle.cancel).await {
             Gate::Open => {}
-            Gate::Terminated => return Err(Ending::Terminated),
-            Gate::Cancelled => return Err(Ending::Cancelled),
+            Gate::Terminated => return Err(TaskEnding::Terminated),
+            Gate::Cancelled => return Err(TaskEnding::Cancelled),
         }
         if let Some(interrupts) = context.hub.interrupts(&context.suspend, &job.handle.cancel) {
             return Ok(interrupts);
@@ -201,19 +182,19 @@ fn next_wait<H>(
     context: &TransferContext<H>,
     job: &ImportJob,
     outcome: ProbeOutcome,
-    retries: &mut u32,
+    retries: &mut RequestRetries,
 ) -> Result<Duration, TransferFailure> {
-    let verdict = if job.request.wait_for_object {
-        outcome
-    } else {
-        one_shot_verdict(outcome, *retries)
+    let verdict = match outcome {
+        ProbeOutcome::Transient if !job.request.wait_for_object => {
+            match retries.after_transient() {
+                RetryDecision::Retry => return Ok(context.hub.settings.retry_delay),
+                RetryDecision::GiveUp(failure) => ProbeOutcome::Failed(failure),
+            }
+        }
+        other => other,
     };
     match verdict {
         ProbeOutcome::Failed(failure) => Err(failure),
-        ProbeOutcome::Transient if !job.request.wait_for_object => {
-            *retries += 1;
-            Ok(context.hub.settings.retry_delay)
-        }
         ProbeOutcome::Found | ProbeOutcome::Pending | ProbeOutcome::Transient => {
             let since = context.hub.now().saturating_sub(job.admitted_at);
             match context.hub.settings.poll.next(

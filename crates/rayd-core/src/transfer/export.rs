@@ -113,20 +113,29 @@ pub struct PartRange {
     pub len: u64,
 }
 
+/// One `PUT` of the plan with the presigned URL it goes to.
+#[derive(Debug)]
+pub struct PlannedPart {
+    pub range: PartRange,
+    pub url: PresignedUrl,
+}
+
 /// The plan for a file of `size` bytes: a single `PUT` refuses more than
 /// 5 GiB, a multipart plan must have exactly `max(1, ceil(size /
-/// part_size))` URLs or the file changed since the SDK measured it.
-pub fn plan_parts(size: u64, target: &ExportTarget) -> Result<Vec<PartRange>, TransferError> {
-    match target {
+/// part_size))` URLs or the file changed since the SDK measured it. Each
+/// part carries the URL of its `PartNumber`, so the adapter never looks
+/// one up again.
+pub fn plan_parts(size: u64, target: &ExportTarget) -> Result<Vec<PlannedPart>, TransferError> {
+    let ranges = match target {
         ExportTarget::Put(_) => {
             if size > TRANSFER_SINGLE_PUT_MAX_BYTES {
                 return Err(TransferError::TooLargeForPut);
             }
-            Ok(vec![PartRange {
+            vec![PartRange {
                 number: 1,
                 offset: 0,
                 len: size,
-            }])
+            }]
         }
         ExportTarget::Multipart { part_size, parts } => {
             let part_size = (*part_size).max(1);
@@ -134,7 +143,7 @@ pub fn plan_parts(size: u64, target: &ExportTarget) -> Result<Vec<PartRange>, Tr
             if u64::try_from(parts.len()).ok() != Some(expected) {
                 return Err(TransferError::FileChanged);
             }
-            Ok((0..expected)
+            (0..expected)
                 .zip(1u32..)
                 .map(|(index, number)| {
                     let offset = index * part_size;
@@ -144,15 +153,31 @@ pub fn plan_parts(size: u64, target: &ExportTarget) -> Result<Vec<PartRange>, Tr
                         len: part_size.min(size - offset),
                     }
                 })
-                .collect())
+                .collect()
         }
-    }
+    };
+    ranges
+        .into_iter()
+        .map(|range| {
+            // Unreachable after the count check; the same answer if it were.
+            let url = target.url(range.number).ok_or(TransferError::FileChanged)?;
+            Ok(PlannedPart {
+                range,
+                url: PresignedUrl::new(url.url.as_str().to_owned(), url.headers.clone()),
+            })
+        })
+        .collect()
 }
 
 /// What S3 said to one `PUT`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PutOutcome {
-    Stored { etag: Option<String> },
+    /// A single `PUT` stored the object.
+    Stored,
+    /// An `UploadPart` stored its part and returned its `ETag`.
+    PartStored {
+        etag: String,
+    },
     Transient,
     Failed(TransferFailure),
 }
@@ -172,9 +197,10 @@ pub fn classify_put(
             None if needs_etag => {
                 PutOutcome::Failed(TransferFailure::of(FailureReason::UnexpectedResponse))
             }
-            _ => PutOutcome::Stored {
-                etag: etag.map(str::to_owned),
+            Some(etag) if needs_etag => PutOutcome::PartStored {
+                etag: etag.to_owned(),
             },
+            _ => PutOutcome::Stored,
         };
     }
     if let Some(failure) = error.terminal_failure(status) {
@@ -355,16 +381,20 @@ mod tests {
     #[test]
     fn a_single_put_covers_the_whole_file_up_to_five_gibibytes() {
         let put = ExportTarget::Put(url(""));
+        let empty = plan_parts(0, &put).unwrap();
+        assert_eq!(empty.len(), 1);
         assert_eq!(
-            plan_parts(0, &put).unwrap(),
-            vec![PartRange {
+            empty[0].range,
+            PartRange {
                 number: 1,
                 offset: 0,
                 len: 0
-            }]
+            }
         );
         assert_eq!(
-            plan_parts(TRANSFER_SINGLE_PUT_MAX_BYTES, &put).unwrap()[0].len,
+            plan_parts(TRANSFER_SINGLE_PUT_MAX_BYTES, &put).unwrap()[0]
+                .range
+                .len,
             TRANSFER_SINGLE_PUT_MAX_BYTES
         );
         assert_eq!(
@@ -378,8 +408,8 @@ mod tests {
         let size = 8 * MIB;
         let one = multipart(size, 1);
         assert_eq!(plan_parts(0, &one).unwrap().len(), 1);
-        assert_eq!(plan_parts(1, &one).unwrap()[0].len, 1);
-        assert_eq!(plan_parts(size, &one).unwrap()[0].len, size);
+        assert_eq!(plan_parts(1, &one).unwrap()[0].range.len, 1);
+        assert_eq!(plan_parts(size, &one).unwrap()[0].range.len, size);
         assert_eq!(
             plan_parts(size + 1, &one).unwrap_err(),
             TransferError::FileChanged
@@ -388,16 +418,41 @@ mod tests {
         let plan = plan_parts(3 * size, &three).unwrap();
         assert_eq!(
             plan.iter()
-                .map(|part| (part.number, part.offset, part.len))
+                .map(|part| (part.range.number, part.range.offset, part.range.len))
                 .collect::<Vec<_>>(),
             vec![(1, 0, size), (2, size, size), (3, 2 * size, size)]
         );
         let ragged = plan_parts(2 * size + 5, &three).unwrap();
-        assert_eq!(ragged[2].len, 5);
+        assert_eq!(ragged[2].range.len, 5);
         assert_eq!(
             plan_parts(2 * size, &three).unwrap_err(),
             TransferError::FileChanged
         );
+    }
+
+    #[test]
+    fn every_planned_part_carries_the_url_of_its_part_number() {
+        let single = ExportTarget::Put(url(""));
+        let plan = plan_parts(3, &single).unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            plan[0].url.url.as_str(),
+            single.url(1).unwrap().url.as_str()
+        );
+        let size = 8 * MIB;
+        let three = multipart(size, 3);
+        let plan = plan_parts(2 * size + 5, &three).unwrap();
+        assert_eq!(plan.len(), 3);
+        for part in &plan {
+            let presigned = three.url(part.range.number).unwrap();
+            assert_eq!(part.url.url.as_str(), presigned.url.as_str());
+            assert_eq!(part.url.headers, presigned.headers);
+            assert!(
+                part.url
+                    .url
+                    .contains(&format!("partNumber={}&", part.range.number))
+            );
+        }
     }
 
     #[test]
@@ -406,13 +461,14 @@ mod tests {
         let parse = |body: &str| S3Error::parse(body.as_bytes(), None);
         assert_eq!(
             classify_put(200, Some("\"e1\""), true, &none),
-            PutOutcome::Stored {
-                etag: Some("\"e1\"".to_owned())
+            PutOutcome::PartStored {
+                etag: "\"e1\"".to_owned()
             }
         );
+        assert_eq!(classify_put(200, None, false, &none), PutOutcome::Stored);
         assert_eq!(
-            classify_put(200, None, false, &none),
-            PutOutcome::Stored { etag: None }
+            classify_put(200, Some("\"e1\""), false, &none),
+            PutOutcome::Stored
         );
         assert_eq!(
             classify_put(200, None, true, &none),
@@ -457,8 +513,8 @@ mod tests {
         let (outcome, log) = block_on(put_part(&http, &parts(1)[0], body, 4, true));
         assert_eq!(
             outcome,
-            PutOutcome::Stored {
-                etag: Some("\"etag-1\"".to_owned())
+            PutOutcome::PartStored {
+                etag: "\"etag-1\"".to_owned()
             }
         );
         assert_eq!(log.http_status, Some(200));

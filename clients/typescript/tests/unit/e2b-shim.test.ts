@@ -30,10 +30,15 @@ import { HISTORY_UNIMPLEMENTED_REASON } from "../../src/sandbox/metrics.js";
 import { FakeControlPlane, IMAGE_ARN, JWE } from "./fake/control-plane.js";
 import { HOME } from "./fake/filesystem.js";
 import { managedLifecycle } from "./fake/lifecycle.js";
+import { FakeS3 } from "./fake/s3.js";
 import type { FakeRayd } from "./fake/server.js";
 import { ACCESS_TOKEN, RecordingLogger, startRayd, waitUntil } from "./helpers.js";
 
 const SECRET_HEADER = "valor-secreto";
+const FAKE_CREDENTIALS = {
+  accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+};
 const PROXY_PASSWORD = "clave";
 const GIT_PASSWORD = "gitclave123";
 
@@ -46,15 +51,20 @@ interface ShimTest {
 
 const rayds: FakeRayd[] = [];
 const sandboxes: Sandbox[] = [];
+const s3Fakes: FakeS3[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   ConnectionConfig.setIntegration(undefined);
   for (const sandbox of sandboxes.splice(0)) {
     sandbox.close();
   }
   for (const rayd of rayds.splice(0)) {
     await rayd.close();
+  }
+  for (const s3 of s3Fakes.splice(0)) {
+    await s3.close();
   }
 });
 
@@ -599,6 +609,23 @@ describe("instance surface", () => {
     expect((await sandbox.listCodeContexts()).map((item) => item.id)).toContain(context.id);
     await sandbox.restartCodeContext(context);
     await sandbox.removeCodeContext(context.id);
+  });
+});
+
+describe("sbx.files and sbx.native.files share one TransferClient", () => {
+  test("the transfer-support probe runs exactly once for both handles", async () => {
+    const s3 = await FakeS3.start();
+    s3Fakes.push(s3);
+    vi.stubEnv("RAYITO_TRANSFER_BUCKET", "amzn-s3-demo-bucket");
+    const { sandbox, rayd } = await shimSandbox();
+    sandbox.native.files.core.s3ClientOverrides = {
+      endpoint: s3.endpoint,
+      forcePathStyle: true,
+      credentials: FAKE_CREDENTIALS,
+    };
+    await sandbox.files.uploadUrl("up/from-shim.bin");
+    await sandbox.native.files.uploadUrl("up/from-native.bin");
+    expect(rayd.filesystem.headers.GetTransfer).toHaveLength(1);
   });
 });
 
