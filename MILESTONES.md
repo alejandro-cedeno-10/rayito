@@ -1129,6 +1129,38 @@ facturación).
 
 ---
 
+## M10 — Mantenimiento y deuda de M9 (oleada 1, Rayito 0.3.2)
+
+Tres cambios OpenSpec, archivados el 2026-09-29 tras la aceptación contra AWS
+real:
+
+| Cambio | Alcance |
+|---|---|
+| `m10-rayd-hardening` | Egress opción A (DNS bloqueado para uid >= 1000 bajo deny-all en caps, `ip rule` atómico con rollback); rotación del kernel marcada de forma síncrona en `/run`; los hijos de `rayd` restauran las señales a `SIG_DFL` antes de `exec` |
+| `m10-sdk-reliability` | Reconexión tras `RST_STREAM` / `CANCELLED "Stream removed"` (Python; TypeScript ya lo hacía, con cobertura nueva); `rayito-mcp` sin el extra sale con un aviso de una línea; presupuesto de subida del e2e de M3 medido |
+| `m10-deps-ci` | Pines del sidecar con pandas 3.0.6 e ipykernel 7.3.0 (sustituye a los Dependabot #28/#17/#16); TypeScript 7.0.2 (#6, `.d.ts` idénticos); `--remap-path-prefix` en los builds de `rayd` de CI y release |
+
+Seguimiento de la aceptación (PR #35): `e2b/data` convierte los valores
+ausentes (`None`/`NaN`/`NaT`/`pd.NA`) en `null` (un `NaT` tumbaba la celda,
+bug previo); los e2e de egress exigen el DNS bloqueado; banda asimétrica del
+tamaño de snapshot (el bump de pines encogió `rayito-base` 28 MB).
+
+**Estado de aceptación (2026-09-29, cuenta de pruebas, us-east-1):** completa
+sobre `rayito-base` 27.0 / `-caps` 16.0 / `-poly` 11.0 (Python e2e 109/1/2, con
+el único fallo en la banda de tamaños, ya corregida; TypeScript 25/25; corpus
+E2B 21/21 Python y 11/11 TypeScript; git, CLI y `doctor --launch` sin FAIL) y
+dirigida sobre 28.0 / 17.0 / 12.0 tras #35 (deno/tamaños 8/8, egress 14/14 y
+6/6, corpus 21/21 y 11/11, poly y compat de E2B verdes). DNS bajo deny-all
+verificado en caps: `getaddrinfo` falla para uid 1000 y vuelve al relajar la
+política. Coste de ambas < $1,5; sólo se terminaron las VMs de la prueba.
+
+**Pendiente (oleada 2):** los 32 hallazgos de
+[`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md);
+la congelación del runner x86_64 con las suites de integración de `rayd`;
+las filas diferidas de `docs/SECURITY_AUDIT.md` §8.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
