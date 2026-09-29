@@ -10,6 +10,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Changed
+
+- Transferencias (refactor interno, sin cambio de comportamiento): toda
+  mutación del registro pasa por un único punto que refresca el contador de
+  la barrera de lectura tras subida; importación y exportación comparten el
+  cierre de la tarea (`TaskEnding`); el presupuesto de reintentos de una
+  petición a S3 vive en `rayd-core` (`RequestRetries`); el plan de una
+  exportación lleva la URL de cada parte y un `UploadPart` correcto lleva
+  siempre su `ETag` (`PutOutcome::PartStored`).
 ### Security
 
 - Imagen: las dos capas `pip install -r` de `image/Dockerfile` (el stack

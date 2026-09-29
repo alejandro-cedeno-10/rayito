@@ -29,13 +29,13 @@ pub use error::{
     FailureCode, FailureReason, RequestRejection, TransferError, TransferFailure, UnaryKind,
 };
 pub use export::{
-    ExportInput, ExportRequest, ExportTarget, PartRange, PutOutcome, classify_put,
+    ExportInput, ExportRequest, ExportTarget, PartRange, PlannedPart, PutOutcome, classify_put,
     classify_put_error, plan_parts, put_part,
 };
 pub use import::{
     DeleteOutcome, ImportInput, ImportPlan, ImportRequest, ProbeOutcome, ProbeResponse,
-    attempts_exhausted, classify_probe, classify_probe_error, delete_object, one_shot_verdict,
-    probe, verify_checksum,
+    RequestRetries, RetryDecision, attempts_exhausted, classify_probe, classify_probe_error,
+    delete_object, one_shot_verdict, probe, verify_checksum,
 };
 pub use poll::{PollSchedule, PollStep, is_expired, time_left, unix_millis};
 pub use ports::{
@@ -44,7 +44,7 @@ pub use ports::{
 };
 pub use registry::{
     CancelOutcome, DoneOutcome, NewTransfer, RegistryError, RegistryLimits, TransferId,
-    TransferPhase, TransferRegistry, TransferSnapshot,
+    TransferPhase, TransferRegistry, TransferSnapshot, lower_hex,
 };
 pub use request::{CLOCK_SKEW_ALLOWANCE_MS, ObjectRef, PresignedUrl, check_expiry};
 pub use s3_error::{REQUEST_EXPIRED_MESSAGE, ResponseLog, S3Error, read_s3_error};
