@@ -5,9 +5,12 @@ comment and a local ``./`` action are not, every ``uvx`` without ``==`` is a
 finding in both the bare and the ``--from`` form, every ``curl`` of a
 ``Dockerfile`` needs a pinned ``<NAME>_SHA256=`` checked by ``sha256sum -c``
 and no floating release, a ``dnf install`` of a package in
-``PINNED_DNF_PACKAGES`` needs ``-<version>-<release>``, ``main`` reports every
-file and exits 1 — and the real repository is clean and ships the pinned
-``git-core``."""
+``PINNED_DNF_PACKAGES`` needs ``-<version>-<release>``, a ``pip install -r``
+of a ``Dockerfile`` needs ``--require-hashes``, ``--no-deps`` and
+``--only-binary=:all:`` and every pin of ``kernel-sidecar/requirements*.txt``
+needs a ``--hash=sha256:``, ``main`` reports every file and exits 1 — and the
+real repository is clean and ships the pinned ``git-core`` and hash-pinned
+sidecar requirements."""
 
 from __future__ import annotations
 
@@ -267,6 +270,51 @@ def test_the_image_installs_the_pinned_git_core_and_checks_git() -> None:
 
     assert GIT_CORE_NEVRA in check_pins.dnf_install_packages(first_dnf)
     assert "git" in checked_tools
+
+
+def test_pip_install_without_the_three_flags_is_a_finding() -> None:
+    text = """RUN python3 -m pip install --no-cache-dir --break-system-packages \\
+         -r /opt/rayito/sidecar/requirements.txt \\
+    && python3 -m pip check
+RUN pip install --require-hashes -r req.txt
+RUN pip install --no-deps -r req.txt
+RUN pip install --only-binary=:all: -r req.txt
+RUN pip install pandas"""
+
+    findings = check_pins.unhashed_pip_installs(text)
+
+    assert [number for number, _, _ in findings] == [1, 4, 5, 6]
+    assert all(reason == check_pins.PIP_FLAGS_REASON for _, _, reason in findings)
+
+
+def test_pip_install_with_the_three_flags_is_clean() -> None:
+    text = """RUN python3 -m pip install --no-cache-dir --break-system-packages \\
+         --require-hashes --no-deps --only-binary=:all: \\
+         -r /opt/rayito/sidecar/requirements.txt \\
+    && python3 -m pip check
+RUN pip install --require-hashes --no-deps --only-binary all -r req.txt"""
+
+    assert check_pins.unhashed_pip_installs(text) == []
+
+
+def test_an_unhashed_requirement_pin_is_a_finding() -> None:
+    text = """# a header comment, skipped like in a Dockerfile
+annotated-types==0.8.0 \\
+    --hash=sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7
+unhashed-package==1.2.3
+another-pin==2.0.0 \\
+    --hash=sha256:""" + ("a" * 64)
+
+    findings = check_pins.unhashed_requirement_pins(text)
+
+    assert [number for number, _, _ in findings] == [4]
+    assert findings[0][2] == check_pins.UNHASHED_PIN_REASON
+
+
+def test_the_sidecar_requirements_are_hash_pinned_and_version_stable() -> None:
+    for name in ("requirements.txt", "requirements-poly.txt"):
+        text = (REPO_ROOT / "kernel-sidecar" / name).read_text(encoding="utf-8")
+        assert check_pins.unhashed_requirement_pins(text) == [], name
 
 
 def test_main_reports_every_finding_and_exits_one(tmp_path: Path) -> None:

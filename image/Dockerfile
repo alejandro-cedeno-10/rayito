@@ -2,9 +2,13 @@
 # + kernel-sidecar con el stack científico pineado. Lambda construye este
 # Dockerfile en su propia VM Graviton a partir del zip (scripts/image_zip.py):
 # nunca se compila Rust aquí y los pines llegan como wheels manylinux aarch64
-# (sin compiladores). Tras arrancar CMD, Lambda espera el 200 de /ready (el
-# kernel por defecto ya calentado por el sidecar) y toma el snapshot con los
-# procesos vivos; /validate corre una celda real de pandas + matplotlib en una
+# (sin compiladores); las dos capas de `pip install` del sidecar exigen
+# `--require-hashes --no-deps --only-binary=:all:` contra los pines de
+# kernel-sidecar (C-12), así que un fichero añadido a una release existente
+# o un sdist de repuesto se rechazan en vez de instalarse en silencio. Tras
+# arrancar CMD, Lambda espera el 200 de /ready (el kernel por defecto ya
+# calentado por el sidecar) y toma el snapshot con los procesos vivos;
+# /validate corre una celda real de pandas + matplotlib en una
 # VM desechable (ARCHITECTURE.md, Capa 1). M5 añadió PtyService, Code.Reattach
 # y los hooks /suspend y /resume reales. M6 (endurecimiento) añade iproute:
 # la misma imagen publicada con additionalOsCapabilities ALL
@@ -89,12 +93,18 @@ RUN for tool in /bin/bash whoami id sleep head tr env python3 /usr/bin/python3 p
     && { test -c /dev/ptmx && echo "pty devices: /dev/ptmx present at build" \
          || echo "pty devices: /dev/ptmx not visible at build (informative)"; }
 
-# Sidecar + pines exactos (kernel-sidecar/requirements.txt) en el site-packages
-# del sistema, legibles por `user`; `pip check` falla la build ante cualquier
-# conflicto de versiones en vez de dejarlo para el arranque.
+# Sidecar + pines exactos y clavados por hash (kernel-sidecar/requirements.txt)
+# en el site-packages del sistema, legibles por `user`; `--require-hashes`
+# rechaza cualquier fichero que no coincida con uno de los sha256 clavados
+# (un añadido silencioso a una release existente), `--no-deps` no resuelve
+# nada por su cuenta (todo el árbol ya está en el fichero) y
+# `--only-binary=:all:` nunca compila un sdist (C-12); `pip check` falla la
+# build ante cualquier conflicto de versiones en vez de dejarlo para el
+# arranque.
 COPY kernel-sidecar/ /opt/rayito/sidecar/
 RUN chmod -R a+rX /opt/rayito/sidecar \
     && python3 -m pip install --no-cache-dir --break-system-packages \
+         --require-hashes --no-deps --only-binary=:all: \
          -r /opt/rayito/sidecar/requirements.txt \
     && python3 -m pip check
 
@@ -105,7 +115,9 @@ RUN chmod -R a+rX /opt/rayito/sidecar \
 # marcador y no ejecuta nada de esto (su snapshot no cambia, no existe
 # /opt/rayito/deno y el sidecar no publica los kernelspecs de Deno). Con el
 # marcador:
-#   - instala bash_kernel con los pines de requirements-poly.txt;
+#   - instala bash_kernel con los pines de requirements-poly.txt, clavados
+#     por hash igual que requirements.txt (C-12: --require-hashes --no-deps
+#     --only-binary=:all:);
 #   - descarga Deno 2.9.7 (aarch64-unknown-linux-gnu, un único binario sin
 #     npm, node-gyp ni zeromq, que corre sobre la glibc 2.34 de la imagen,
 #     AWS_API_NOTES.md Q61), fijado por versión exacta y sha256, verificado
@@ -130,6 +142,7 @@ RUN chmod -R a+rX /opt/rayito/sidecar \
 # republicar rayito-base-poly y repetir su e2e; Dependabot no lo sigue.
 RUN if [ "$(cat /opt/rayito/sidecar/kernels_variant 2>/dev/null)" = "poly" ]; then \
       python3 -m pip install --no-cache-dir --break-system-packages \
+           --require-hashes --no-deps --only-binary=:all: \
            -r /opt/rayito/sidecar/requirements-poly.txt \
       && python3 -m pip check \
       && su user -c "python3 -c 'import bash_kernel'" \
