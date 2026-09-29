@@ -15,6 +15,7 @@ import {
   emitIgnoredWarnings,
   HTTPS_PORTS_REASON,
   HTTPS_PORTS_SUPPORTED,
+  historyImageError,
   IGNORED_CONNECTION_OPTS,
   infoFromNative,
   LIST_METADATA_STATE_FEATURE,
@@ -24,6 +25,7 @@ import {
   mapNetworkUpdate,
   mergeBoundOpts,
   metricsFromNative,
+  metricsHistoryOrSnapshot,
   normalizedLanguageOrUnimplemented,
   POLY_KERNELS_REASON,
   rejectUnsupportedNetworkKeys,
@@ -34,7 +36,7 @@ import {
   validateOnResume,
 } from "../../src/e2b/compat.js";
 import { ConnectionConfig } from "../../src/e2b/connection.js";
-import type { SandboxLifecycle, SandboxOpts } from "../../src/e2b/types.js";
+import type { SandboxLifecycle, SandboxMetrics, SandboxOpts } from "../../src/e2b/types.js";
 import {
   COMPAT_DOC_PATH,
   UNIMPLEMENTED_REASONS,
@@ -60,6 +62,7 @@ import {
   MAX_LIFETIME_MS,
   defaultMaxLifetimeMs as nativeDefaultMaxLifetimeMs,
 } from "../../src/sandbox/lifecycle.js";
+import { HISTORY_UNIMPLEMENTED_REASON } from "../../src/sandbox/metrics.js";
 
 const IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-2gb";
 const STARTED_AT = new Date(Date.UTC(2026, 8, 15, 14, 39, 2));
@@ -638,5 +641,99 @@ describe("settleAsyncCallback", () => {
       (error) => rejected.push(error),
     );
     expect(() => sync(3)).toThrow("sync");
+  });
+});
+
+describe("metricsHistoryOrSnapshot", () => {
+  const Sample: SandboxMetrics = {
+    timestamp: new Date(),
+    cpuUsedPct: 12.5,
+    cpuCount: 2,
+    memUsed: 10,
+    memTotal: 20,
+    memCache: 3,
+    diskUsed: 30,
+    diskTotal: 40,
+  };
+  const Unavailable = new UnimplementedError("x", HISTORY_UNIMPLEMENTED_REASON, undefined);
+
+  test("a non-empty history is returned as-is, unbounded or ranged, and snapshot is never called", async () => {
+    const snapshot = vi.fn(async (): Promise<SandboxMetrics> => {
+      throw new Error("snapshot must not be called");
+    });
+    for (const ranged of [false, true]) {
+      const result = await metricsHistoryOrSnapshot(async () => [Sample], snapshot, {
+        ranged,
+        feature: "getMetrics({ start, end })",
+      });
+      expect(result).toEqual([Sample]);
+    }
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  test("an empty ranged history is returned as-is (no snapshot fallback for a ranged query)", async () => {
+    const snapshot = vi.fn(async (): Promise<SandboxMetrics> => {
+      throw new Error("snapshot must not be called");
+    });
+    const result = await metricsHistoryOrSnapshot(async () => [], snapshot, {
+      ranged: true,
+      feature: "getMetrics({ start, end })",
+    });
+    expect(result).toEqual([]);
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  test("an empty unbounded history falls back to a one-element snapshot", async () => {
+    const result = await metricsHistoryOrSnapshot(
+      async () => [],
+      async () => Sample,
+      {
+        ranged: false,
+        feature: "getMetrics({ start, end })",
+      },
+    );
+    expect(result).toEqual([Sample]);
+  });
+
+  test("history unavailable and ranged: historyImageError, snapshot never called", async () => {
+    const snapshot = vi.fn(async (): Promise<SandboxMetrics> => {
+      throw new Error("snapshot must not be called");
+    });
+    await expect(
+      metricsHistoryOrSnapshot(
+        async () => {
+          throw Unavailable;
+        },
+        snapshot,
+        { ranged: true, feature: "getMetrics({ start, end })" },
+      ),
+    ).rejects.toEqual(historyImageError("getMetrics({ start, end })", Unavailable));
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  test("history unavailable and unbounded: treated as empty, falls back to snapshot", async () => {
+    const result = await metricsHistoryOrSnapshot(
+      async () => {
+        throw Unavailable;
+      },
+      async () => Sample,
+      { ranged: false, feature: "getMetrics({ start, end })" },
+    );
+    expect(result).toEqual([Sample]);
+  });
+
+  test("a non-history error propagates unchanged, by identity, regardless of ranged", async () => {
+    const other = new SandboxError("boom");
+    for (const ranged of [false, true]) {
+      await expect(
+        metricsHistoryOrSnapshot(
+          async () => {
+            throw other;
+          },
+          async () => Sample,
+          { ranged, feature: "getMetrics({ start, end })" },
+        ),
+      ).rejects.toBe(other);
+    }
   });
 });

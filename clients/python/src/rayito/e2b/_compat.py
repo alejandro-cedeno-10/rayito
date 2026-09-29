@@ -13,6 +13,7 @@ from typing import Any, Final, cast
 
 import grpc
 
+from rayito._aws import ClientSettings
 from rayito._code_base import DEFAULT_LANGUAGE, normalize_language
 from rayito._limits import (
     LIFECYCLE_CAP_MARGIN_SECONDS,
@@ -28,13 +29,13 @@ from rayito._models import SandboxMetrics as NativeSandboxMetrics
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR, LoggingOption, PortLike
 from rayito.e2b._connection import (
     API_PARAM_NAMES,
-    ConnectionConfig,
     ConnectionSettings,
-    connection_overrides,
     ignored_param_warnings,
     merge_bound_params,
+    plane_settings,
     reject_unknown_params,
     split_api_params,
+    transport_override,
 )
 from rayito.e2b._models import (
     PtySize,
@@ -121,14 +122,17 @@ class CreateMapping:
 
 @dataclass(frozen=True)
 class NativeCall:
-    """Kwargs de una llamada nativa con el `transport` y el `control_plane`
-    resueltos desde los `ApiParams`, los avisos de los ignorados y los
-    ajustes aplicados (para `connection_config`)."""
+    """Kwargs de una llamada nativa con el `transport` resuelto desde los
+    `ApiParams`, los avisos de los ignorados y los ajustes aplicados (para
+    `connection_config`). Si hace falta un plano de control nuevo, sus
+    `ClientSettings` van en `plane_settings` (`control_plane` no está en
+    `kwargs` todavía); `bind_control_plane` lo construye y lo añade."""
 
     kwargs: dict[str, Any]
     warnings: tuple[str, ...]
     settings: ConnectionSettings
     integration: str | None
+    plane_settings: ClientSettings | None
 
 
 @dataclass(frozen=True)
@@ -367,32 +371,30 @@ def native_call_kwargs(
     api_params: Mapping[str, Any],
     *,
     call: str,
+    integration: str | None,
     with_transport: bool = True,
     with_request_timeout: bool = True,
 ) -> NativeCall:
     """Los kwargs nativos de una llamada del shim: valida los `ApiParams` de
     la llamada (una clave desconocida es `TypeError`), mezcla debajo los del
     cliente `E2B` (`bound`), avisa sólo de los ignorados de esta llamada (los
-    del cliente avisaron al construirlo) y resuelve `transport` y
-    `control_plane`."""
+    del cliente avisaron al construirlo) y resuelve `transport`; si hace
+    falta un plano de control nuevo, deja sus `ClientSettings` en
+    `plane_settings` sin construirlo (eso es I/O: lo hace `bind_control_plane`
+    sobre el resultado). Puro: `integration` lo trae el llamante, nunca lee
+    `ConnectionConfig.current_integration()` por su cuenta."""
     reject_unknown_params(api_params, call=call)
     bound_api = {key: value for key, value in bound.items() if key in API_PARAM_NAMES}
     bound_native = {key: value for key, value in bound.items() if key not in API_PARAM_NAMES}
     native = merge_bound_params(bound_native, native_kwargs)
     settings, _ = split_api_params(merge_bound_params(bound_api, api_params), call=call)
-    integration = ConnectionConfig.current_integration()
-    transport, plane = connection_overrides(
-        settings,
-        transport=native.pop("transport", None),
-        control_plane=native.pop("control_plane", None),
-        session=native.get("session"),
-        region=native.get("region"),
-        integration=integration,
-    )
+    given_control_plane = native.pop("control_plane", None)
+    transport = transport_override(settings, native.pop("transport", None))
+    plane = plane_settings(settings, control_plane=given_control_plane, integration=integration)
     if with_transport and transport is not None:
         native["transport"] = transport
-    if plane is not None:
-        native["control_plane"] = plane
+    if plane is None and given_control_plane is not None:
+        native["control_plane"] = given_control_plane
     if with_request_timeout and settings.request_timeout is not None:
         native["request_timeout"] = settings.request_timeout
     return NativeCall(
@@ -400,6 +402,7 @@ def native_call_kwargs(
         warnings=ignored_param_warnings(api_params),
         settings=settings,
         integration=integration,
+        plane_settings=plane,
     )
 
 

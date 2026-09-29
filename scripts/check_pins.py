@@ -1,6 +1,6 @@
 """Comprueba que todo lo que la automatización de este repo ejecuta está clavado.
 
-Cuatro puertas, todas en lista blanca (fallan salvo que la línea demuestre estar
+Cinco puertas, todas en lista blanca (fallan salvo que la línea demuestre estar
 clavada), sin red y sólo con la biblioteca estándar:
 
 1. **Acciones**: cada `uses:` de `.github/workflows/` tiene que nombrar un SHA
@@ -34,6 +34,20 @@ clavada), sin red y sólo con la biblioteca estándar:
    paquetes de la línea siguen sin clavar: la línea base de M1 (SECURITY.md
    T10). El hallazgo cuenta desde la primera línea de la instrucción y cita el
    paquete.
+5. **pip**: en esos mismos `Dockerfile`, cada instrucción con un `pip install`
+   (o `python3 -m pip install`), con `-r`/`--requirement` o con paquetes
+   sueltos, tiene que llevar `--require-hashes`, `--no-deps` y
+   `--only-binary=:all:` (`--only-binary all` también vale): sin esas tres
+   banderas un fichero añadido a una release existente, o un sdist que
+   compile en la VM de build, se instala en silencio (C-12). Un `pip install
+   paquete==x` suelto con las tres banderas lo rechaza el propio pip, porque
+   `--require-hashes` exige un `--hash=` que solo cabe en un fichero de
+   requisitos. Y cada línea de requisito (`nombre==versión
+   [--hash=...]...`) de `kernel-sidecar/requirements.txt` y
+   `requirements-poly.txt` tiene que llevar al menos un `--hash=sha256:` de 64
+   hex; una línea sin ninguno es un hallazgo. El hallazgo del `pip install`
+   cuenta desde la primera línea de la instrucción; el de la línea de
+   requisito, desde esa misma línea del fichero de pines.
 
 Las recetas de instalación para usuarios de `docs/site/` quedan fuera: instalan
 Rayito publicado, no una herramienta de esta construcción.
@@ -63,6 +77,7 @@ DEFAULT_PATHS = (
     ".github/workflows/*.yaml",
     "Makefile",
     "image/Dockerfile",
+    "kernel-sidecar/requirements*.txt",
 )
 ACTION_REASON = "la acción no está clavada a un SHA de 40 hex"
 UVX_REASON = "la herramienta de uvx no lleva ==<versión>"
@@ -87,6 +102,29 @@ DNF_INSTALL = "install"
 DOCKERFILE_RUN = "RUN"
 SHELL_SEPARATORS = re.compile(r"&&|\|\||[;|]")
 VERSION_START = re.compile(r"-(?=\d)")
+PIP = "pip"
+PIP_INSTALL = "install"
+PIP_EXECUTABLE = re.compile(r"^pip(3(\.\d+)?)?$")
+PYTHON_MODULE_PIP = re.compile(r"^python(3(\.\d+)?)?$")
+MODULE_FLAG = "-m"
+# Palabras que pueden preceder a un comando sin cambiar cuál es: palabras
+# reservadas de la shell tras un `if ...;`/`for ...;`, envoltorios y
+# asignaciones de entorno (`A=1 pip ...`, `env A=1 pip ...`).
+COMMAND_PREFIXES = frozenset(
+    {"then", "else", "do", "!", "sudo", "exec", "command", "nohup", "env", "time"}
+)
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+REQUIRE_HASHES_FLAG = "--require-hashes"
+NO_DEPS_FLAG = "--no-deps"
+ONLY_BINARY_PREFIX = "--only-binary"
+PIP_FLAGS_REASON = (
+    "el pip install no lleva --require-hashes, --no-deps y --only-binary=:all:"
+)
+REQUIREMENT_PIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*==\S")
+HASH_PIN = re.compile(r"--hash=sha256:[0-9a-f]{64}\b")
+UNHASHED_PIN_REASON = "el pin no lleva --hash=sha256:"
+REQUIREMENTS_FILE_PREFIX = "requirements"
+REQUIREMENTS_FILE_SUFFIX = ".txt"
 
 Finding = tuple[int, str, str]
 
@@ -297,6 +335,83 @@ def unpinned_dnf_packages(text: str) -> list[Finding]:
     return findings
 
 
+def has_only_binary_all(words: list[str]) -> bool:
+    """`--only-binary=:all:`, `--only-binary :all:` o `--only-binary all`."""
+    for index, word in enumerate(words):
+        if word == ONLY_BINARY_PREFIX:
+            value = words[index + 1] if index + 1 < len(words) else ""
+        elif word.startswith(ONLY_BINARY_PREFIX + "="):
+            value = word.removeprefix(ONLY_BINARY_PREFIX + "=")
+        else:
+            continue
+        if value.strip(":").lower() == "all":
+            return True
+    return False
+
+
+def pip_installs(instruction: str) -> list[list[str]]:
+    """Las palabras que siguen a cada `pip install`/`python3[.x] -m pip
+    install` de una instrucción (cortada en `&&`, `||`, `;` y `|`), instale
+    desde un fichero de requisitos o nombre paquetes sueltos."""
+    commands: list[list[str]] = []
+    for command in SHELL_SEPARATORS.split(instruction):
+        words = split_words(command)
+        if words[:1] == [DOCKERFILE_RUN]:
+            words = words[1:]
+        while words and (
+            words[0] in COMMAND_PREFIXES or ENV_ASSIGNMENT.match(words[0])
+        ):
+            words = words[1:]
+        program = words[0].rsplit("/", 1)[-1] if words else ""
+        if (
+            len(words) >= 3
+            and PYTHON_MODULE_PIP.match(program)
+            and words[1] == MODULE_FLAG
+            and PIP_EXECUTABLE.match(words[2])
+        ):
+            words = words[3:]
+        elif PIP_EXECUTABLE.match(program):
+            words = words[1:]
+        else:
+            continue
+        if words[:1] == [PIP_INSTALL]:
+            commands.append(words[1:])
+    return commands
+
+
+def unhashed_pip_installs(text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for instruction in dockerfile_instructions(text):
+        for arguments in pip_installs(instruction.text):
+            if (
+                REQUIRE_HASHES_FLAG not in arguments
+                or NO_DEPS_FLAG not in arguments
+                or not has_only_binary_all(arguments)
+            ):
+                findings.append(
+                    (instruction.number, instruction.first_line, PIP_FLAGS_REASON)
+                )
+    return findings
+
+
+def unhashed_requirement_pins(text: str) -> list[Finding]:
+    """Cada línea de pin (`nombre==versión`, con sus continuaciones `\\` de
+    `--hash=...` unidas) de un fichero de requisitos que no lleve ningún
+    `--hash=sha256:` de 64 hex."""
+    return [
+        (line.number, line.first_line, UNHASHED_PIN_REASON)
+        for line in dockerfile_instructions(text)
+        if REQUIREMENT_PIN.match(line.text) and HASH_PIN.search(line.text) is None
+    ]
+
+
+def is_requirements_file(path: Path) -> bool:
+    return (
+        path.name.startswith(REQUIREMENTS_FILE_PREFIX)
+        and path.suffix == REQUIREMENTS_FILE_SUFFIX
+    )
+
+
 def findings_for(path: Path) -> list[Finding]:
     text = path.read_text(encoding="utf-8")
     findings = set(unpinned_uvx(text))
@@ -305,6 +420,9 @@ def findings_for(path: Path) -> list[Finding]:
     if path.name == DOCKERFILE_NAME:
         findings.update(unpinned_downloads(text))
         findings.update(unpinned_dnf_packages(text))
+        findings.update(unhashed_pip_installs(text))
+    if is_requirements_file(path):
+        findings.update(unhashed_requirement_pins(text))
     return sorted(findings)
 
 
@@ -337,7 +455,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 1
     checked = ", ".join(displayed(path, base) for path in paths)
     print(
-        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga y todo paquete dnf vigilado clavados ({checked})"
+        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga, todo paquete dnf vigilado y todo pip install con hashes clavados ({checked})"
     )
     return 0
 

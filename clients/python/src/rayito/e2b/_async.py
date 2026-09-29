@@ -67,6 +67,7 @@ from rayito.e2b._connection import (
     ApiParams,
     ConnectionConfig,
     ConnectionParams,
+    bind_control_plane,
     snapshot_config,
     split_api_params,
 )
@@ -126,13 +127,16 @@ class AsyncSandbox:
         with_transport: bool = True,
         with_request_timeout: bool = True,
     ) -> NativeCall:
-        resolved = native_call_kwargs(
-            cls._bound_params,
-            native_kwargs,
-            api_params,
-            call=call,
-            with_transport=with_transport,
-            with_request_timeout=with_request_timeout,
+        resolved = bind_control_plane(
+            native_call_kwargs(
+                cls._bound_params,
+                native_kwargs,
+                api_params,
+                call=call,
+                integration=ConnectionConfig.current_integration(),
+                with_transport=with_transport,
+                with_request_timeout=with_request_timeout,
+            )
         )
         emit_warnings(resolved.warnings)
         return resolved
