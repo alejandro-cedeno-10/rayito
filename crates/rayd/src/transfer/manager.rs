@@ -21,11 +21,11 @@ use rayd_core::code::RandomSource;
 use rayd_core::lifecycle::HookPhase;
 use rayd_core::session::SandboxSession;
 use rayd_core::transfer::{
-    BarrierTicket, CancelOutcome, ExportInput, ExportRequest, FailureReason, ImportInput,
-    ImportRequest, NewTransfer, PollSchedule, RegistryError, RegistryLimits, SignedHttp,
-    TRANSFER_PROBE_BUDGET, TRANSFER_PROGRESS_INTERVAL, TRANSFER_RETRY_DELAY, TransferDirection,
-    TransferError, TransferFailure, TransferId, TransferRegistry, TransferSnapshot, plan_parts,
-    unix_millis,
+    BarrierTicket, CancelOutcome, DoneOutcome, ExportInput, ExportRequest, FailureReason,
+    ImportInput, ImportRequest, NewTransfer, PollSchedule, RegistryError, RegistryLimits,
+    SignedHttp, TRANSFER_PROBE_BUDGET, TRANSFER_PROGRESS_INTERVAL, TRANSFER_RETRY_DELAY,
+    TransferDirection, TransferError, TransferFailure, TransferId, TransferRegistry,
+    TransferSnapshot, plan_parts, unix_millis,
 };
 use tokio::sync::{Notify, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
@@ -188,18 +188,12 @@ impl TransferHub {
         new: NewTransfer,
     ) -> Result<(TransferId, Arc<RecordHandle>), TransferError> {
         let id = TransferId::generate(random).map_err(|_| TransferError::Internal)?;
-        let snapshot = {
-            let mut registry = self.registry();
-            let snapshot =
-                registry
-                    .admit(id.clone(), new, self.now())
-                    .map_err(|error| match error {
-                        RegistryError::Full => TransferError::Full,
-                        _ => TransferError::Internal,
-                    })?;
-            self.armed.store(registry.armed_count(), Ordering::SeqCst);
-            snapshot
-        };
+        let snapshot = self
+            .with_registry(|registry| registry.admit(id.clone(), new, self.now()))
+            .map_err(|error| match error {
+                RegistryError::Full => TransferError::Full,
+                _ => TransferError::Internal,
+            })?;
         let handle = Arc::new(RecordHandle {
             snapshots: watch::Sender::new(snapshot),
             poll_now: Notify::new(),
@@ -217,13 +211,7 @@ impl TransferHub {
         id: &TransferId,
         change: impl FnOnce(&mut TransferRegistry, Duration) -> Result<TransferSnapshot, RegistryError>,
     ) -> Option<TransferSnapshot> {
-        let outcome = {
-            let mut registry = self.registry();
-            let outcome = change(&mut registry, self.now());
-            self.armed.store(registry.armed_count(), Ordering::SeqCst);
-            outcome
-        };
-        match outcome {
+        match self.with_registry(|registry| change(registry, self.now())) {
             Ok(snapshot) => {
                 self.publish(&snapshot);
                 Some(snapshot)
@@ -274,16 +262,13 @@ impl TransferHub {
             return Err(TransferError::UnknownTransfer);
         }
         self.bound_sandbox_id()?;
-        let outcome = {
-            let mut registry = self.registry();
-            let outcome = registry.cancel(
+        let outcome = self.with_registry(|registry| {
+            registry.cancel(
                 raw_id,
                 TransferFailure::of(FailureReason::Cancelled),
                 self.now(),
-            );
-            self.armed.store(registry.armed_count(), Ordering::SeqCst);
-            outcome
-        };
+            )
+        });
         match outcome {
             Ok(CancelOutcome::Cancelled(snapshot)) => {
                 if let Some(handle) = self.handle(&snapshot.id) {
@@ -348,12 +333,56 @@ impl TransferHub {
         }
     }
 
+    /// Every registry mutation goes through here: the barrier's fast-path
+    /// count is refreshed before the lock is released, so it can never lag
+    /// behind the records it summarises (design D11).
+    fn with_registry<R>(&self, change: impl FnOnce(&mut TransferRegistry) -> R) -> R {
+        let mut registry = self.registry();
+        let result = change(&mut registry);
+        self.armed.store(registry.armed_count(), Ordering::SeqCst);
+        result
+    }
+
+    /// Read-only uses; mutations go through `with_registry`.
     fn registry(&self) -> MutexGuard<'_, TransferRegistry> {
         self.registry.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn handles(&self) -> MutexGuard<'_, HashMap<TransferId, Arc<RecordHandle>>> {
         self.handles.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// How a task ended; `Cancelled` means the cancel RPC already wrote the
+/// state, `Terminated` that `/terminate` arrived.
+pub(crate) enum TaskEnding {
+    Done(Box<DoneOutcome>),
+    Failed(TransferFailure),
+    Cancelled,
+    Terminated,
+}
+
+/// Writes a task's ending to the registry (and so to its watchers) and
+/// returns the `phase` and `reason` its "transfer finished" log carries.
+pub(crate) fn publish_ending(
+    hub: &TransferHub,
+    id: &TransferId,
+    ending: TaskEnding,
+) -> (&'static str, &'static str) {
+    match ending {
+        TaskEnding::Done(outcome) => {
+            hub.apply(id, |registry, now| registry.finish_done(id, *outcome, now));
+            ("done", "none")
+        }
+        TaskEnding::Failed(failure) => {
+            hub.apply(id, |registry, now| registry.finish_failed(id, failure, now));
+            ("failed", failure.reason.token())
+        }
+        TaskEnding::Cancelled => ("cancelled", FailureReason::Cancelled.token()),
+        TaskEnding::Terminated => {
+            hub.terminate(id);
+            ("cancelled", "terminating")
+        }
     }
 }
 
@@ -533,13 +562,200 @@ impl<H: SignedHttp> TransferBackend for TransferManager<H> {
     }
 }
 
-/// Lowercase hex of a digest.
-pub(crate) fn lower_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU8;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use rayd_core::code::RandomError;
+    use rayd_core::session::RunHookInput;
+    use rayd_core::transfer::TransferPhase;
+
+    use super::*;
+
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn monotonic(&self) -> Duration {
+            Duration::from_secs(1)
+        }
+
+        fn wall(&self) -> SystemTime {
+            UNIX_EPOCH + Duration::from_secs(1_790_000_000)
+        }
+    }
+
+    /// Every id differs: each call fills with the next byte.
+    struct CountingRandom(AtomicU8);
+
+    impl RandomSource for CountingRandom {
+        fn fill(&self, buf: &mut [u8]) -> Result<(), RandomError> {
+            buf.fill(self.0.fetch_add(1, Ordering::SeqCst));
+            Ok(())
+        }
+    }
+
+    fn hub() -> TransferHub {
+        let session = Arc::new(SandboxSession::new(Arc::new(FixedClock), "test"));
+        let payload = "{\"v\":1,\"token_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}";
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(payload),
+        });
+        TransferHub::new(session, TransferSettings::default())
+    }
+
+    fn admit_import(hub: &TransferHub, random: &CountingRandom, armed: bool) -> TransferId {
+        let (id, _) = hub
+            .admit(
+                random,
+                NewTransfer {
+                    direction: TransferDirection::Import,
+                    armed,
+                    bytes_total: 0,
+                    entry: None,
+                    request_path: "/home/user/in.bin".to_owned(),
+                    destination: "/home/user/in.bin".to_owned(),
+                },
+            )
+            .unwrap();
+        id
+    }
+
+    fn registry_count(hub: &TransferHub) -> usize {
+        hub.registry().armed_count()
+    }
+
+    fn done() -> TaskEnding {
+        TaskEnding::Done(Box::new(DoneOutcome {
+            entry: None,
+            sha256: "0".repeat(64),
+            bytes: 3,
+            part_etags: Vec::new(),
+        }))
+    }
+
+    fn phase(hub: &TransferHub, id: &TransferId) -> TransferPhase {
+        hub.snapshot(id.as_str()).unwrap().phase
+    }
+
+    #[test]
+    fn admitting_an_armed_import_refreshes_the_armed_count() {
+        let hub = hub();
+        let random = CountingRandom(AtomicU8::new(1));
+        assert_eq!(hub.armed_count(), 0);
+        admit_import(&hub, &random, true);
+        assert_eq!(hub.armed_count(), 1);
+        assert_eq!(hub.armed_count(), registry_count(&hub));
+        admit_import(&hub, &random, false);
+        assert_eq!(hub.armed_count(), 1);
+    }
+
+    #[test]
+    fn running_then_done_disarms_the_ticket() {
+        let hub = hub();
+        let random = CountingRandom(AtomicU8::new(1));
+        let id = admit_import(&hub, &random, true);
+        assert!(
+            hub.apply(&id, |registry, now| registry.start_running(&id, now))
+                .is_some()
+        );
+        assert_eq!(hub.armed_count(), 1);
+        let outcome = DoneOutcome {
+            entry: None,
+            sha256: "0".repeat(64),
+            bytes: 3,
+            part_etags: Vec::new(),
+        };
+        assert!(
+            hub.apply(&id, |registry, now| registry.finish_done(&id, outcome, now))
+                .is_some()
+        );
+        assert_eq!(hub.armed_count(), 0);
+        assert_eq!(hub.armed_count(), registry_count(&hub));
+        assert!(hub.handle(&id).is_none());
+    }
+
+    #[test]
+    fn cancel_disarms_once_and_a_second_cancel_changes_nothing() {
+        let hub = hub();
+        let random = CountingRandom(AtomicU8::new(1));
+        let id = admit_import(&hub, &random, true);
+        let handle = hub.handle(&id).unwrap();
+        assert_eq!(hub.cancel(id.as_str()), Ok(()));
+        assert!(handle.cancel.is_cancelled());
+        assert_eq!(hub.armed_count(), 0);
+        let first = hub.snapshot(id.as_str()).unwrap();
+        assert_eq!(first.phase, TransferPhase::Cancelled);
+        assert_eq!(hub.cancel(id.as_str()), Ok(()));
+        assert_eq!(hub.armed_count(), 0);
+        assert_eq!(hub.snapshot(id.as_str()).unwrap(), first);
+        assert_eq!(
+            hub.cancel(&"0".repeat(32)),
+            Err(TransferError::UnknownTransfer)
+        );
+    }
+
+    #[test]
+    fn apply_on_an_unknown_id_changes_nothing() {
+        let hub = hub();
+        let random = CountingRandom(AtomicU8::new(1));
+        admit_import(&hub, &random, true);
+        let unknown = TransferId::parse(&"f".repeat(32)).unwrap();
+        assert!(
+            hub.apply(&unknown, |registry, now| registry
+                .start_running(&unknown, now))
+                .is_none()
+        );
+        assert_eq!(hub.armed_count(), 1);
+        assert_eq!(hub.armed_count(), registry_count(&hub));
+    }
+
+    #[test]
+    fn every_ending_publishes_its_phase_and_names_its_log_fields() {
+        let hub = hub();
+        let random = CountingRandom(AtomicU8::new(1));
+
+        let id = admit_import(&hub, &random, true);
+        hub.apply(&id, |registry, now| registry.start_running(&id, now));
+        assert_eq!(publish_ending(&hub, &id, done()), ("done", "none"));
+        assert_eq!(phase(&hub, &id), TransferPhase::Done);
+
+        let id = admit_import(&hub, &random, true);
+        let failure = TransferFailure::of(FailureReason::Expired);
+        assert_eq!(
+            publish_ending(&hub, &id, TaskEnding::Failed(failure)),
+            ("failed", FailureReason::Expired.token())
+        );
+        let failed = hub.snapshot(id.as_str()).unwrap();
+        assert_eq!(failed.phase, TransferPhase::Failed);
+        assert_eq!(failed.failure, Some(failure));
+
+        let id = admit_import(&hub, &random, true);
+        assert_eq!(
+            publish_ending(&hub, &id, TaskEnding::Cancelled),
+            ("cancelled", FailureReason::Cancelled.token())
+        );
+        assert_eq!(phase(&hub, &id), TransferPhase::Waiting);
+        hub.cancel(id.as_str()).unwrap();
+        let cancelled = hub.snapshot(id.as_str()).unwrap();
+        assert_eq!(
+            publish_ending(&hub, &id, TaskEnding::Cancelled).0,
+            "cancelled"
+        );
+        assert_eq!(hub.snapshot(id.as_str()).unwrap(), cancelled);
+
+        let id = admit_import(&hub, &random, true);
+        assert_eq!(
+            publish_ending(&hub, &id, TaskEnding::Terminated),
+            ("cancelled", "terminating")
+        );
+        let terminated = hub.snapshot(id.as_str()).unwrap();
+        assert_eq!(terminated.phase, TransferPhase::Cancelled);
+        assert_eq!(
+            terminated.failure,
+            Some(TransferFailure::of(FailureReason::Cancelled))
+        );
+        assert_eq!(hub.armed_count(), 0);
+    }
 }
