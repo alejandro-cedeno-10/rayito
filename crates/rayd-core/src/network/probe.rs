@@ -14,6 +14,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use super::cidr::{Cidr, Family};
 use super::policy::{EgressMode, EgressPolicy, IpVerdict};
 use super::route_plan::{RoutePlan, SANDBOX_UID_RANGE, Slot};
+use super::special_address::SpecialAddress;
 
 pub const MAX_BLOCKED_SAMPLES: usize = 3;
 pub const LOOPBACK_SAMPLE: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -115,12 +116,13 @@ fn blocked_sample(prefix: &Cidr) -> Option<IpAddr> {
 }
 
 fn answered_before_policy(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback() || v4.octets()[0] == 0 || v4.is_multicast() || v4.is_broadcast()
-        }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
-    }
+    matches!(
+        SpecialAddress::of(ip),
+        SpecialAddress::Loopback
+            | SpecialAddress::Unspecified
+            | SpecialAddress::Multicast
+            | SpecialAddress::Broadcast
+    )
 }
 
 /// `(priority, table)` of every `from all uidrange 1000-65535 lookup <T>`
@@ -185,6 +187,94 @@ pub fn blackhole_count(stdout: &str) -> usize {
         .lines()
         .filter(|line| line.trim_start().starts_with("blackhole"))
         .count()
+}
+
+/// Which check of the verification (design D6, ADR-012) failed: the
+/// `failed_check` of the `egress_verify` log line. A failed verification
+/// publishes enforcement `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyFailure {
+    /// `ip rule show` could not be read.
+    RuleShow,
+    /// The policy rules are not exactly the installed slot's.
+    Rule,
+    /// `ip route show table <T>` could not be read.
+    TableShow,
+    /// The slot's table does not hold one blackhole per planned prefix.
+    Table,
+    /// `ip route get` could not be run.
+    RouteGet,
+    /// A sample destination did not get its expected verdict.
+    Sample,
+    /// Proxy-only mode and the local proxy does not accept connections.
+    Proxy,
+}
+
+impl VerifyFailure {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RuleShow => "rule_show",
+            Self::Rule => "rule",
+            Self::TableShow => "table_show",
+            Self::Table => "table",
+            Self::RouteGet => "route_get",
+            Self::Sample => "sample",
+            Self::Proxy => "proxy",
+        }
+    }
+}
+
+/// The families the verification reads: the plan's, or the guest's when
+/// nothing is planned.
+#[must_use]
+pub fn verification_ipv6(plan: Option<&RoutePlan>, ipv6_present: bool) -> bool {
+    plan.map_or(ipv6_present, RoutePlan::ipv6)
+}
+
+/// The policy rule priorities `ip rule show` must list: the installed
+/// slot's, or none.
+#[must_use]
+pub fn expected_rule_priorities(slot: Option<Slot>) -> Vec<u32> {
+    slot.map(Slot::priority).into_iter().collect()
+}
+
+/// One family's `ip rule show` against `expected`.
+pub fn check_rules(expected: &[u32], rules_stdout: &str) -> Result<(), VerifyFailure> {
+    if policy_rule_priorities(rules_stdout) == expected {
+        Ok(())
+    } else {
+        Err(VerifyFailure::Rule)
+    }
+}
+
+/// One family's `ip route show table <T>`: one blackhole per prefix of
+/// `plan` for that family.
+pub fn check_table(
+    plan: &RoutePlan,
+    family: Family,
+    table_stdout: &str,
+) -> Result<(), VerifyFailure> {
+    if blackhole_count(table_stdout) == plan.prefixes(family).len() {
+        Ok(())
+    } else {
+        Err(VerifyFailure::Table)
+    }
+}
+
+/// One `ip route get` answer against the verdict its sample expects.
+pub fn check_sample(expected: RouteVerdict, code: i32, stdout: &str) -> Result<(), VerifyFailure> {
+    if classify_route_get(code, stdout) == expected {
+        Ok(())
+    } else {
+        Err(VerifyFailure::Sample)
+    }
+}
+
+/// Proxy-only mode also proves the local proxy accepts connections.
+#[must_use]
+pub fn requires_proxy_connect(policy: &EgressPolicy) -> bool {
+    policy.mode() == EgressMode::ProxyOnly
 }
 
 /// The kernel's extack text when a routing table was never created. A
@@ -409,6 +499,115 @@ garbage line\n";
             "RTNETLINK answers: Operation not permitted\n"
         ));
         assert!(!table_missing(2, ""));
+    }
+
+    #[test]
+    fn every_verify_failure_has_its_token() {
+        for (failure, token) in [
+            (VerifyFailure::RuleShow, "rule_show"),
+            (VerifyFailure::Rule, "rule"),
+            (VerifyFailure::TableShow, "table_show"),
+            (VerifyFailure::Table, "table"),
+            (VerifyFailure::RouteGet, "route_get"),
+            (VerifyFailure::Sample, "sample"),
+            (VerifyFailure::Proxy, "proxy"),
+        ] {
+            assert_eq!(failure.as_str(), token);
+        }
+    }
+
+    #[test]
+    fn expected_rule_priorities_per_slot() {
+        assert!(expected_rule_priorities(None).is_empty());
+        assert_eq!(expected_rule_priorities(Some(Slot::A)), [150]);
+        assert_eq!(expected_rule_priorities(Some(Slot::B)), [151]);
+        assert_eq!(expected_rule_priorities(Some(Slot::Emergency)), [149]);
+    }
+
+    #[test]
+    fn check_rules_wants_exactly_the_expected_priorities() {
+        let imds = "100:\tfrom all uidrange 1000-65535 lookup 100\n";
+        let slot_a = "150:\tfrom all uidrange 1000-65535 lookup 101\n";
+        let slot_b = "151:\tfrom all uidrange 1000-65535 lookup 102\n";
+        let both = format!("{slot_a}{slot_b}");
+        for (expected, stdout, verdict) in [
+            (&[150][..], format!("{imds}{slot_a}"), Ok(())),
+            (&[][..], imds.to_owned(), Ok(())),
+            (&[150][..], imds.to_owned(), Err(VerifyFailure::Rule)),
+            (&[150][..], both.clone(), Err(VerifyFailure::Rule)),
+            (&[150][..], slot_b.to_owned(), Err(VerifyFailure::Rule)),
+            (&[][..], slot_a.to_owned(), Err(VerifyFailure::Rule)),
+            (&[150, 151][..], both, Ok(())),
+        ] {
+            assert_eq!(
+                check_rules(expected, &stdout),
+                verdict,
+                "{expected:?} {stdout:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_table_counts_one_blackhole_per_prefix_and_family() {
+        let plan = RoutePlan::deny_all(true);
+        let one = "blackhole default \n";
+        let two = "blackhole default \nblackhole 10.0.0.0/8 \n";
+        for family in Family::ALL {
+            assert_eq!(check_table(&plan, family, one), Ok(()), "{family:?}");
+            assert_eq!(
+                check_table(&plan, family, ""),
+                Err(VerifyFailure::Table),
+                "{family:?}"
+            );
+            assert_eq!(
+                check_table(&plan, family, two),
+                Err(VerifyFailure::Table),
+                "{family:?}"
+            );
+        }
+        let v4_only = RoutePlan::deny_all(false);
+        assert_eq!(check_table(&v4_only, Family::V6, ""), Ok(()));
+        assert_eq!(
+            check_table(&v4_only, Family::V6, one),
+            Err(VerifyFailure::Table)
+        );
+    }
+
+    #[test]
+    fn check_sample_compares_the_verdict() {
+        let routable = "1.1.1.1 via 169.254.0.1 dev eth0 src 169.254.0.5 uid 1000 \n";
+        assert_eq!(check_sample(RouteVerdict::Blocked, 2, ""), Ok(()));
+        assert_eq!(
+            check_sample(RouteVerdict::Blocked, 0, routable),
+            Err(VerifyFailure::Sample)
+        );
+        assert_eq!(check_sample(RouteVerdict::Routable, 0, routable), Ok(()));
+        assert_eq!(
+            check_sample(RouteVerdict::Routable, 2, ""),
+            Err(VerifyFailure::Sample)
+        );
+        assert_eq!(
+            check_sample(RouteVerdict::Local, 0, ""),
+            Err(VerifyFailure::Sample)
+        );
+    }
+
+    #[test]
+    fn only_proxy_only_requires_the_proxy_connect() {
+        assert!(requires_proxy_connect(&policy(
+            &["api.example.com"],
+            &[ALL_TRAFFIC]
+        )));
+        assert!(!requires_proxy_connect(&policy(&[], &[ALL_TRAFFIC])));
+        assert!(!requires_proxy_connect(&EgressPolicy::default()));
+    }
+
+    #[test]
+    fn verification_reads_the_plans_families_first() {
+        assert!(verification_ipv6(Some(&RoutePlan::deny_all(true)), false));
+        assert!(!verification_ipv6(Some(&RoutePlan::deny_all(false)), true));
+        assert!(verification_ipv6(None, true));
+        assert!(!verification_ipv6(None, false));
     }
 
     #[test]

@@ -68,14 +68,95 @@ pub enum NetworkError {
     VerifyFailed,
 }
 
+/// Which gRPC status class an error maps to (design D11): the caller sent
+/// something malformed (`INVALID_ARGUMENT`), the image cannot enforce it
+/// (`FAILED_PRECONDITION`) or the guest failed to (`INTERNAL`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkStatusClass {
+    InvalidArgument,
+    FailedPrecondition,
+    Internal,
+}
+
 impl NetworkError {
-    /// Whether the caller sent something malformed (`INVALID_ARGUMENT`), as
-    /// opposed to the guest refusing or failing to enforce it.
+    /// Exhaustive on purpose: a new variant must pick its class here.
     #[must_use]
-    pub fn is_invalid_argument(&self) -> bool {
-        !matches!(
-            self,
-            Self::NoNetAdmin | Self::InstallFailed { .. } | Self::VerifyFailed
-        )
+    pub fn status_class(&self) -> NetworkStatusClass {
+        match self {
+            Self::InvalidEntry { .. }
+            | Self::HostnameInDenyOut { .. }
+            | Self::TooManyEntries { .. }
+            | Self::TooManyHostnames
+            | Self::PolicyTooComplex
+            | Self::InvalidProxyAddress
+            | Self::InvalidProxyCredentials
+            | Self::ProxyForbiddenAddress
+            | Self::ProxyUnresolvable => NetworkStatusClass::InvalidArgument,
+            Self::NoNetAdmin => NetworkStatusClass::FailedPrecondition,
+            Self::InstallFailed { .. } | Self::VerifyFailed => NetworkStatusClass::Internal,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_variant_has_its_status_class() {
+        for (error, class) in [
+            (
+                NetworkError::InvalidEntry {
+                    list: EgressList::AllowOut,
+                    index: 0,
+                },
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::HostnameInDenyOut { index: 0 },
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::TooManyEntries {
+                    list: EgressList::DenyOut,
+                },
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::TooManyHostnames,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::PolicyTooComplex,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::InvalidProxyAddress,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::InvalidProxyCredentials,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::ProxyForbiddenAddress,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::ProxyUnresolvable,
+                NetworkStatusClass::InvalidArgument,
+            ),
+            (
+                NetworkError::NoNetAdmin,
+                NetworkStatusClass::FailedPrecondition,
+            ),
+            (
+                NetworkError::InstallFailed { step: "add_rule" },
+                NetworkStatusClass::Internal,
+            ),
+            (NetworkError::VerifyFailed, NetworkStatusClass::Internal),
+        ] {
+            assert_eq!(error.status_class(), class, "{error:?}");
+        }
     }
 }

@@ -52,7 +52,6 @@ use rayd_core::hooks::{
     HookCallOutcome, QUIESCE_TIMEOUT, RESUME_PROBE_BUDGET, STREAM_CLOSE_GRACE, suspend_actions,
 };
 use rayd_core::lifecycle::{Hook, LifecycleError, Transition};
-use rayd_core::network::{EgressEnforcement, RESUME_VERIFY_BUDGET, RUN_ENFORCE_BUDGET};
 use rayd_core::session::{RunHookInput, RunOutcome, SandboxSession};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -305,7 +304,7 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
                 lifecycle_phase = state.session.lifecycle().phase.as_str(),
                 "run defaults applied"
             );
-            enforce_egress_at_run(&state).await;
+            state.network.on_run().await;
             state.code.spawn_run_rotation(defaults.envs);
             spawn_imds_verification(&state);
         }
@@ -496,7 +495,7 @@ async fn resume(State(state): State<HooksState>) -> Response {
             );
         }
         resume_deadline(&state);
-        reverify_egress(&state).await;
+        state.network.on_resume().await;
         let probe_started = Instant::now();
         let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
         let probe_ms = millis(probe_started.elapsed());
@@ -532,46 +531,6 @@ async fn resume(State(state): State<HooksState>) -> Response {
         )
     })
     .await
-}
-
-/// `/run` with `network.enforce` (ADR-012): deny-all is installed and
-/// verified before the 200, so no user code runs unprotected, and the
-/// kernel rotation that follows already gets the proxy variables. The
-/// work outlives an expired sub-budget (enforcement stays `None` and
-/// `Health` not ready until it settles); the hook answers 200 either way.
-async fn enforce_egress_at_run(state: &HooksState) {
-    if !state.session.network_enforce() {
-        return;
-    }
-    if !state.network.net_admin() {
-        tracing::warn!(reason = "no CAP_NET_ADMIN", "egress_enforce_unavailable");
-        state.session.egress_settled();
-        return;
-    }
-    let enforced =
-        tokio::time::timeout(RUN_ENFORCE_BUDGET, state.network.enforce_deny_all_at_run()).await;
-    if let Ok(enforcement) = enforced {
-        tracing::info!(hook = %Hook::Run, enforcement = enforcement.as_str(), "egress enforced");
-    } else {
-        tracing::warn!(step = "budget", "egress_enforce_failed");
-    }
-}
-
-/// `/resume`: the installed policy is re-verified synchronously. An
-/// expired sub-budget reports `None` (the SDK sees it in `Health`) and
-/// still answers 200: a non-200 hook answer is never used.
-async fn reverify_egress(state: &HooksState) {
-    let verified =
-        tokio::time::timeout(RESUME_VERIFY_BUDGET, state.network.reverify_after_resume()).await;
-    if verified.is_err() {
-        state
-            .session
-            .set_egress_enforcement(EgressEnforcement::None);
-        tracing::warn!(
-            budget_ms = millis(RESUME_VERIFY_BUDGET),
-            "egress_resume_verify_timeout"
-        );
-    }
 }
 
 /// Only a `/resume` right after a freeze the watcher saw may open the
@@ -723,6 +682,8 @@ fn flush_page_cache() -> impl Future<Output = ()> {
 
 #[cfg(test)]
 mod tests {
+    use rayd_core::network::{EgressEnforcement, RESUME_VERIFY_BUDGET, RUN_ENFORCE_BUDGET};
+
     use super::*;
 
     #[test]

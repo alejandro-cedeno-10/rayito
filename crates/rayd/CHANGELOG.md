@@ -12,6 +12,17 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Changed
 
+- Egress (refactor interno, sin cambio de comportamiento): los casos de uso
+  de egress de `/run` y `/resume` pasan del adaptador de hooks a
+  `NetworkManager` (`on_run`/`on_resume`); el estado instalado (política,
+  plan, slot, guardia DNS) vive en `rayd-core` (`Installation`) y el
+  veredicto de verificación se decide con comprobaciones puras
+  (`VerifyFailure`); una sola clasificación de direcciones especiales
+  (`SpecialAddress`) sirve a la guardia SSRF de transferencias, a las dos
+  guardias del proxy y a la sonda; el mapeo de `NetworkError` a código gRPC
+  es exhaustivo (`status_class`); la tabla y prioridad de IMDS son
+  constantes tipadas con su invariante de orden; `ConnectFailure` y sus
+  respuestas HTTP/SOCKS pasan a `rayd-core`.
 - Transferencias (refactor interno, sin cambio de comportamiento): toda
   mutación del registro pasa por un único punto que refresca el contador de
   la barrera de lectura tras subida; importación y exportación comparten el

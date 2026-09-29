@@ -6,11 +6,12 @@
 //! address predicate the adapter's resolver applies lives here too.
 
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr};
 
 use thiserror::Error;
 
 use super::TRANSFER_URL_MAX_BYTES;
+use crate::network::{SpecialAddress, canonical_ip};
 
 pub const KEY_MAX_BYTES: usize = 1024;
 pub const BUCKET_MIN_BYTES: usize = 3;
@@ -225,30 +226,7 @@ pub fn validate_request(
 /// S3 interface endpoints keep working.
 #[must_use]
 pub fn is_forbidden_address(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(v4) => is_forbidden_v4(v4),
-        IpAddr::V6(v6) => is_forbidden_v6(v6),
-    }
-}
-
-fn is_forbidden_v4(address: Ipv4Addr) -> bool {
-    address.is_loopback()
-        || address.octets()[0] == 0
-        || address.is_link_local()
-        || address.is_multicast()
-        || address.is_broadcast()
-}
-
-const IMDS_V6: Ipv6Addr = Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254);
-
-fn is_forbidden_v6(address: Ipv6Addr) -> bool {
-    if address.is_loopback() || address.is_unspecified() || address.is_multicast() {
-        return true;
-    }
-    if address.segments()[0] & 0xffc0 == 0xfe80 || address == IMDS_V6 {
-        return true;
-    }
-    address.to_ipv4().is_some_and(is_forbidden_v4)
+    SpecialAddress::of(canonical_ip(address)) != SpecialAddress::Ordinary
 }
 
 fn is_valid_bucket(bucket: &str) -> bool {
