@@ -53,7 +53,6 @@ import {
   openTransport,
   type TransportSettings,
 } from "../transport/transport.js";
-import { STREAM_PROBE_TIMEOUT_MS, streamFailureError } from "./commands.js";
 import { DeadlineTrigger } from "./deadline-trigger.js";
 import {
   autoResumeReopenMs,
@@ -79,6 +78,7 @@ import {
   terminatedDuringBootError,
   UNKNOWN_GUEST_FACTS,
 } from "./readiness.js";
+import { STREAM_PROBE_TIMEOUT_MS, streamFailureError } from "./stream-errors.js";
 import type { S3ClientOverrides } from "./transfer.js";
 
 export type StreamStarter<S extends DescService, T> = (
