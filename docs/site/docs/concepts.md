@@ -148,12 +148,16 @@ PTYs, `watch_dir`). Rotar el JWE no reconstruye canales ni corta streams.
 ## Streams y reconexión
 
 Los comandos, las PTYs, `watch_dir` y `run_code` son server-streams. Cuando un
-`pause()`, el auto-resume o un 502 del proxy los corta, cada handle se
-reengancha por su cuenta la próxima vez que se lee (`Connect(from_seq)`,
-`Pty.Connect`, `WatchDir` de nuevo, `Reattach` para una celda en curso), y un
-unario cortado se reintenta una vez. `reconnect_timeout` (60 s) acota cuánto
-espera el SDK al agente una vez que el MicroVM vuelve a `RUNNING`; mientras
-está suspendido, leer un handle en background **no** lo despierta.
+`pause()`, el auto-resume, un 502 del proxy o un `RST_STREAM` del proxy antes
+del plazo real (`CANCELLED "Stream removed"` en grpcio, `Canceled` con
+`http/2 stream closed` en Connect-ES) los corta, cada handle se reengancha
+por su cuenta la próxima vez que se lee (`Connect(from_seq)`, `Pty.Connect`,
+`WatchDir` de nuevo, `Reattach` para una celda en curso), y un unario cortado
+se reintenta una vez. Un handle que el propio cliente cancela (`disconnect()`,
+un `AbortSignal`) nunca reconecta, aunque el corte llegara justo después con
+la forma de un reset. `reconnect_timeout` (60 s) acota cuánto espera el SDK
+al agente una vez que el MicroVM vuelve a `RUNNING`; mientras está
+suspendido, leer un handle en background **no** lo despierta.
 
 `get_health().resume_generation` cuenta los `/resume` aceptados;
 `kernel_state_lost` avisa si un kernel no sobrevivió al resume.
