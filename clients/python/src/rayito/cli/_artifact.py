@@ -39,7 +39,7 @@ EXCLUDED_SUFFIXES = (".zip", ".pyc")
 EXCLUDED_DIRECTORIES = frozenset(
     {"__pycache__", "tests", ".venv", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
 )
-EXCLUDED_FILES = frozenset({"uv.lock", ".gitignore"})
+EXCLUDED_FILES = frozenset({"uv.lock", ".gitignore", "requirements.in"})
 VARIANTS = ("full", "slim", "poly")
 WARMUP_MARKER_ENTRY = "kernel-sidecar/ipython/startup/warmup_variant"
 KERNELS_MARKER_ENTRY = "kernel-sidecar/kernels_variant"

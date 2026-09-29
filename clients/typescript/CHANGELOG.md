@@ -6,6 +6,13 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+
+- `typescript` (dependencia de desarrollo) actualizado de 5.9.3 a 7.0.2 (el
+  compilador nativo, `tsgo`, vía `rolldown-plugin-dts`): `pnpm lint
+  typecheck build test pack:check` verdes y los `.d.mts`/`.d.cts` generados
+  byte a byte idénticos a los de 5.9.3. Sin cambios de API pública.
+
 ### Tests
 
 - Cobertura explícita de reconexión tras un `RST_STREAM(CANCEL)` del proxy
