@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-29
+
 ### Changed
 
 - `typescript` (dependencia de desarrollo) actualizado de 5.9.3 a 7.0.2 (el
@@ -41,7 +43,6 @@ Versión de mantenimiento, sin cambios de API.
 - Dependencias del AWS SDK v3 actualizadas a 3.1140.0 en el lockfile.
 
 ## [0.3.0] - 2026-09-24
-
 
 Rayito 0.3.0 (M9, paridad con E2B 2.x). Notas completas en
 `docs/RELEASE_NOTES_0.3.0.md`; todo lo de M9 exige una imagen publicada con

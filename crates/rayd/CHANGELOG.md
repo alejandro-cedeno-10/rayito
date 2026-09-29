@@ -10,14 +10,14 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-29
+
 ### Fixed
 
 - Imagen: `e2b/data` convierte los valores ausentes (`None`, `NaN`, `NaT`,
   `pd.NA`) en `null`. Un `DataFrame` con un `NaT` junto a otras columnas
   hacía fallar la celda entera (`NaTType does not support strftime`), y con
   pandas 3 un texto ausente salía como `'nan'`.
-
-### Fixed
 
 - Con la política de egress en deny-all (imagen `rayito-base-caps`), el DNS
   (puerto 53, UDP y TCP) queda bloqueado para uid >= 1000 con reglas
@@ -49,7 +49,6 @@ Versión de mantenimiento, sin cambios en el contrato gRPC.
   hacía intermitentes.
 
 ## [0.3.0] - 2026-09-24
-
 
 `rayd` 0.3.0 (M9). Todos los cambios del contrato (`proto/rayito/v1/`) son
 aditivos y compatibles con `buf breaking` (FILE): un SDK 0.2 sigue hablando

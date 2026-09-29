@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-29
+
 ### Fixed
 
 - Reconexión tras un reset de stream del proxy de AWS (`RST_STREAM` antes
@@ -50,7 +52,6 @@ versiones de los tres componentes sincronizadas.
   `uv-build` ampliado a `<0.13`.
 
 ## [0.3.0] - 2026-09-24
-
 
 Rayito 0.3.0 (M9, paridad con E2B 2.x). Notas completas en
 `docs/RELEASE_NOTES_0.3.0.md`; todo lo de M9 exige una imagen publicada con
