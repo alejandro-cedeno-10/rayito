@@ -20,6 +20,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use http::Request;
 use nix::sys::resource::{Resource, getrlimit};
+use nix::sys::signal::{SigHandler, Signal, signal};
 use rayd::adapters::{OsRandomSource, PlatformMetricsProbe, detect_spawn_platform};
 use rayd::code::CodeManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
@@ -1028,4 +1029,37 @@ async fn metrics_report_procfs_values_and_require_a_token() {
         .await
         .unwrap_err();
     assert_eq!(anonymous.code(), Code::Unauthenticated);
+}
+
+/// Restores whatever `SIGHUP` disposition the test process had before it
+/// borrowed the slot below, even if an assertion panics first.
+struct RestoreSighup(SigHandler);
+
+impl Drop for RestoreSighup {
+    fn drop(&mut self) {
+        // SAFETY: undoes exactly the override this test installed.
+        let _ = unsafe { signal(Signal::SIGHUP, self.0) };
+    }
+}
+
+/// The scenario `PreExecPlan::apply` closes: a spawned child must never
+/// inherit a signal the parent (here, the test process standing in for
+/// `rayd`, exactly as `nohup` leaves it) has set to ignore. `exec` alone
+/// would not have fixed this: it only resets a *caught* signal back to
+/// default, never one already `SIG_IGN`.
+#[tokio::test]
+async fn a_sighup_ignored_by_the_parent_does_not_reach_the_child() {
+    let harness = harness().await;
+    // SAFETY: only this process's own `SIGHUP` disposition changes,
+    // restored by `_restore` (even on panic) before the test ends.
+    let previous = unsafe { signal(Signal::SIGHUP, SigHandler::SigIgn) }.unwrap();
+    let _restore = RestoreSighup(previous);
+    let collected = harness.run("kill -HUP $$; echo survived").await;
+    let end = collected.end();
+    assert_eq!(end.status, "signaled", "{end:?}");
+    assert_eq!(end.signal, Some(1));
+    assert!(
+        collected.stdout_text().is_empty(),
+        "the shell must die from its own SIGHUP before it can print"
+    );
 }

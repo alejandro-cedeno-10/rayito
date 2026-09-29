@@ -208,6 +208,32 @@ pub fn running_session() -> Arc<SandboxSession> {
     session
 }
 
+/// A supervisor whose loop launched the fake, before it has seen `ready`:
+/// `state()` reads `Warming`. For tests of what happens to a request made
+/// in that window; the caller drives `ready()` on the returned `Launched`
+/// itself.
+pub async fn starting_supervisor(
+    settings: SupervisorSettings,
+) -> (Arc<SidecarSupervisor>, Launched) {
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let registry = Arc::new(Mutex::new(ContextRegistry::default()));
+    let session = running_session();
+    let supervisor = SidecarSupervisor::new(
+        Arc::new(FakeSidecar { launches: sender }),
+        spawn_spec(),
+        session,
+        registry,
+        settings,
+        Arc::new(|_, _| {}),
+    );
+    drop(supervisor.spawn());
+    let launched = receiver
+        .recv()
+        .await
+        .expect("the supervisor loop launches the fake");
+    (supervisor, launched)
+}
+
 /// A supervisor whose loop already launched the fake and saw its `ready`.
 pub async fn ready_supervisor(settings: SupervisorSettings) -> ReadySupervisor {
     ready_supervisor_with(settings, Arc::new(|_, _| {})).await

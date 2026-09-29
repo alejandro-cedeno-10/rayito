@@ -3,13 +3,16 @@
 //! blackhole in a looked-up table refuses the lookup, a table with no
 //! covering route falls through to the next rule and finally to `main`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use rayd_core::network::{Cidr, Family, RouteStep, canonical_ip};
+use rayd_core::network::{
+    Cidr, DEFAULT_LOCAL_PRIORITY, DnsGuardStep, DnsProto, Family, MOVED_LOCAL_PRIORITY, RouteStep,
+    canonical_ip,
+};
 
 use crate::adapters::egress_routes::{EgressRoutes, RouteCommandError};
 
@@ -17,6 +20,10 @@ use crate::adapters::egress_routes::{EgressRoutes, RouteCommandError};
 struct KernelState {
     rules: BTreeMap<(Family, u32), u32>,
     tables: BTreeMap<(Family, u32), Vec<Cidr>>,
+    /// `local`-table rules by `(family, priority)`; seeded with the
+    /// kernel's own default at boot (`FakeKernel::new`).
+    local_rules: BTreeSet<(Family, u32)>,
+    dns_block: BTreeSet<(Family, DnsProto)>,
     executed: Vec<String>,
     failing_step: Option<(&'static str, usize)>,
     fail_everything: bool,
@@ -32,11 +39,29 @@ pub struct FakeKernel {
 
 impl FakeKernel {
     pub fn new(ipv6: bool, local: Vec<IpAddr>) -> Self {
+        let mut state = KernelState::default();
+        state
+            .local_rules
+            .insert((Family::V4, DEFAULT_LOCAL_PRIORITY));
+        if ipv6 {
+            state
+                .local_rules
+                .insert((Family::V6, DEFAULT_LOCAL_PRIORITY));
+        }
         Self {
-            state: Mutex::new(KernelState::default()),
+            state: Mutex::new(state),
             ipv6,
             local,
         }
+    }
+
+    /// Whether both transports are blocked for `family`: what the manager
+    /// should reach exactly when the installed policy denies all traffic.
+    pub fn dns_guard_active(&self, family: Family) -> bool {
+        let state = self.state();
+        DnsProto::ALL
+            .iter()
+            .all(|proto| state.dns_block.contains(&(family, *proto)))
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, KernelState> {
@@ -154,6 +179,45 @@ impl EgressRoutes for FakeKernel {
             }
             RouteStep::DelRule { slot, family } => {
                 if state.rules.remove(&(*family, slot.priority())).is_none() {
+                    return Err(failure("rule del exit 2"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute_dns_guard(&self, step: &DnsGuardStep) -> Result<(), RouteCommandError> {
+        let mut state = self.state();
+        state.executed.push(format!(
+            "dns_guard:{}:{}",
+            step.name(),
+            step.family().as_str()
+        ));
+        if Self::should_fail(&mut state, step.name()) {
+            return Err(failure("injected"));
+        }
+        match *step {
+            DnsGuardStep::AddMovedLocal { family } => {
+                state.local_rules.insert((family, MOVED_LOCAL_PRIORITY));
+            }
+            DnsGuardStep::DelDefaultLocal { family } => {
+                if !state.local_rules.remove(&(family, DEFAULT_LOCAL_PRIORITY)) {
+                    return Err(failure("rule del exit 2"));
+                }
+            }
+            DnsGuardStep::AddDefaultLocal { family } => {
+                state.local_rules.insert((family, DEFAULT_LOCAL_PRIORITY));
+            }
+            DnsGuardStep::DelMovedLocal { family } => {
+                if !state.local_rules.remove(&(family, MOVED_LOCAL_PRIORITY)) {
+                    return Err(failure("rule del exit 2"));
+                }
+            }
+            DnsGuardStep::AddDnsBlock { family, proto } => {
+                state.dns_block.insert((family, proto));
+            }
+            DnsGuardStep::DelDnsBlock { family, proto } => {
+                if !state.dns_block.remove(&(family, proto)) {
                     return Err(failure("rule del exit 2"));
                 }
             }

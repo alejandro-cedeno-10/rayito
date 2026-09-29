@@ -19,17 +19,22 @@ reglas por nombre de host, un proxy local.
 
 !!! note "DNS bajo deny-all"
     En `rayito-base-caps` los resolvedores DNS de la plataforma escuchan
-    **dentro** del guest, así que con `allow_internet_access=False` (o
-    cualquier deny-all) un nombre **puede seguir resolviéndose**, pero
-    **ninguna conexión sale del VM**: `getaddrinfo` puede devolver una
-    dirección y el `connect` a ella falla. Es un riesgo residual conocido (un
-    canal de exfiltración por consultas DNS, `SECURITY.md` T17) y una
-    decisión escrita: la adenda de ADR-012, **opción C**, acepta en M9 que un
-    nombre resuelva siempre que ninguna dirección resuelta conecte. Bloquear
-    el DNS de uid ≥ 1000 bajo deny-all (la **opción A**, una regla `ip rule`
-    para el puerto 53 antes de la regla `local`) queda para el siguiente
-    ciclo. Si necesitas cerrarlo hoy, usa además el conector VPC de
-    [la alternativa de plataforma](#la-alternativa-de-plataforma).
+    **dentro** del guest, en direcciones que la tabla `local` del kernel
+    resuelve antes que cualquier regla de la política (uidrange
+    150/151). M9 aceptó eso como un riesgo residual conocido (adenda de
+    ADR-012, opción C: un nombre puede resolver mientras ninguna conexión
+    real sale del VM). Este ciclo cierra la opción A: bajo deny-all `rayd`
+    mueve la regla `local` a la prioridad 1 e instala, en la prioridad que
+    deja libre, una regla `ip rule ... uidrange 1000-65535 ipproto
+    udp/tcp dport 53 prohibit` — cambio atómico, con rollback si falla a
+    medio camino y sin ventana sin enrutamiento local. Con eso,
+    `getaddrinfo` como uid 1000 también falla bajo deny-all, no sólo el
+    `connect`. Sigue siendo aplicación en el guest, de mejor esfuerzo (cae
+    ante un exploit del kernel del guest o ante root con
+    `RAYITO_ALLOW_ROOT`, `SECURITY.md` T17); para un control fuera del
+    guest usa además el conector VPC de
+    [la alternativa de plataforma](#la-alternativa-de-plataforma) (con su
+    propia salvedad: un security group no filtra el DNS de Amazon).
 
 ## Modos y semántica
 
@@ -58,8 +63,8 @@ solo no cierra la red).
     ```python
     from rayito import ALL_TRAFFIC, EgressProxy, Sandbox
 
-    # Sin internet (deny-all): ninguna conexión sale del VM (los nombres aún
-    # pueden resolverse, ver «DNS bajo deny-all»).
+    # Sin internet (deny-all): ninguna conexión sale del VM, y en
+    # rayito-base-caps tampoco resuelven los nombres (ver «DNS bajo deny-all»).
     sbx = Sandbox.create("rayito-base-caps", allow_internet_access=False)
 
     # Sólo la red interna y un servicio por nombre.
@@ -159,11 +164,13 @@ en `create()`.
   transparente fuera del VM.
 - Las reglas por nombre de host sólo valen en los puertos 80 y 443 y a través
   del proxy.
-- El DNS de uid ≥ 1000 no se bloquea: los resolvedores de la plataforma
-  escuchan dentro del guest (medido, fila Q66, QE1), así que bajo deny-all
-  (`allow_internet_access=False` incluido) un nombre puede resolverse aunque
-  ninguna conexión salga. El proxy resuelve por ti los nombres permitidos y
-  nunca consulta uno denegado.
+- Bajo deny-all en `rayito-base-caps` el DNS de uid ≥ 1000 se bloquea (opción
+  A de la adenda de ADR-012): los resolvedores de la plataforma siguen
+  escuchando dentro del guest (medido, fila Q66, QE1), pero una regla `ip
+  rule` de puerto 53 los intercepta antes de que la tabla `local` los
+  resuelva. Fuera de deny-all (una política parcial en modo rutas) el DNS no
+  se toca: el proxy resuelve por ti los nombres permitidos y nunca consulta
+  uno denegado.
 - UDP y QUIC no pasan por el proxy.
 - Un cambio de política afecta a las conexiones nuevas; las que ya existían
   pueden seguir.
