@@ -18,6 +18,13 @@ use super::policy::{EgressMode, EgressPolicy};
 /// platform agent's uids 991-994 (Q48). Shared with the IMDS block.
 pub const SANDBOX_UID_RANGE: &str = "1000-65535";
 
+/// The IMDS block's routing table and rule priority (`rayd`'s
+/// `imds_block` adapter): the rule must sort before every egress slot, so
+/// uid ≥ 1000 never reaches IMDS whatever policy is installed, and the
+/// table is none of theirs.
+pub const IMDS_TABLE: u32 = 100;
+pub const IMDS_PRIORITY: u32 = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     A,
@@ -170,6 +177,14 @@ mod tests {
         );
         assert_eq!(Slot::A.other(), Slot::B);
         assert_eq!(Slot::B.other(), Slot::A);
+    }
+
+    #[test]
+    fn imds_rule_sorts_before_every_egress_slot() {
+        for slot in [Slot::A, Slot::B, Slot::Emergency] {
+            assert!(IMDS_PRIORITY < slot.priority(), "{slot:?}");
+            assert_ne!(IMDS_TABLE, slot.table(), "{slot:?}");
+        }
     }
 
     #[test]

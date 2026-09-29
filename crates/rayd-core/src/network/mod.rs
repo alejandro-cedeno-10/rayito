@@ -14,11 +14,13 @@ pub mod dns_guard;
 pub mod entry;
 pub mod error;
 pub mod guard;
+pub mod installation;
 pub mod policy;
 pub mod probe;
 pub mod proxy_env;
 pub mod proxy_protocol;
 pub mod route_plan;
+pub mod special_address;
 pub mod state;
 pub mod swap;
 
@@ -31,17 +33,20 @@ pub use dns_guard::{
     plan_dns_guard_rollback,
 };
 pub use entry::{ALL_TRAFFIC, EgressEntry, HostPattern};
-pub use error::{EgressList, NetworkError};
+pub use error::{EgressList, NetworkError, NetworkStatusClass};
 pub use guard::{TargetGuard, UpstreamGuard};
+pub use installation::Installation;
 pub use policy::{
     DenyReason, EgressMode, EgressPolicy, IpVerdict, PolicyInput, ProxyCredentials, ResolveKind,
     TargetDecision, TargetHost, UpstreamHost, UpstreamInput, UpstreamProxy,
 };
 pub use probe::{RouteVerdict, classify_route_get, rule_present, samples};
 pub use proxy_env::egress_proxy_env;
+pub use proxy_protocol::ConnectFailure;
 pub use route_plan::{RoutePlan, Slot};
+pub use special_address::SpecialAddress;
 pub use state::{EgressEnforcement, NetworkSnapshot};
-pub use swap::{PlannedStep, RouteStep, SwapPlan, plan_recovery, plan_swap};
+pub use swap::{PlannedStep, RECOVERY_SLOT, RouteStep, SwapPlan, plan_recovery, plan_swap};
 /// Re-exported so the gRPC adapter can wrap credentials without a direct
 /// dependency on `zeroize`.
 pub use zeroize::Zeroizing;

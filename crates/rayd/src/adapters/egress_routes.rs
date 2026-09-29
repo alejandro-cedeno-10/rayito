@@ -24,7 +24,7 @@ use rayd_core::network::{
     Family, LOCAL_TABLE, MOVED_LOCAL_PRIORITY, RouteStep, Slot,
 };
 
-use super::ip_command::{IpOutput, run_ip, run_ip_with_input};
+use super::ip_command::{IpOutput, family_flag, run_ip, run_ip_for, run_ip_with_input};
 
 /// `/proc/net/if_inet6` exists only when the guest kernel has IPv6.
 pub const IF_INET6: &str = "/proc/net/if_inet6";
@@ -76,18 +76,8 @@ pub trait EgressRoutes: Send + Sync {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IpEgressRoutes;
 
-fn family_flag(family: Family) -> &'static str {
-    match family {
-        Family::V4 => "-4",
-        Family::V6 => "-6",
-    }
-}
-
 async fn ip(family: Family, args: &[&str]) -> Result<IpOutput, RouteCommandError> {
-    let mut full = Vec::with_capacity(args.len() + 1);
-    full.push(family_flag(family));
-    full.extend_from_slice(args);
-    run_ip(&full)
+    run_ip_for(family, args)
         .await
         .map_err(|reason| RouteCommandError { reason })
 }

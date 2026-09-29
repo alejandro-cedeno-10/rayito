@@ -16,9 +16,9 @@ use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use rayd_core::network::proxy_protocol::{
-    HttpProxyRequest, HttpStatus, SocksReply, SocksTarget, http_head_end, http_response,
-    parse_http_request, parse_socks_greeting, parse_socks_request, socks_method_selection,
-    socks_reply,
+    ConnectFailure, HttpProxyRequest, HttpStatus, SocksReply, SocksTarget, http_head_end,
+    http_response, parse_http_request, parse_socks_greeting, parse_socks_request,
+    socks_method_selection, socks_reply,
 };
 use rayd_core::network::{
     DenyReason, EgressPolicy, LOCAL_PROXY_MAX_CONNECTIONS, PROXY_CONNECT_TIMEOUT,
@@ -284,40 +284,6 @@ async fn refuse_busy(client: &mut TcpStream) -> io::Result<()> {
     client
         .write_all(&socks_reply(SocksReply::GeneralFailure))
         .await
-}
-
-/// Why a target could not be reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConnectFailure {
-    Denied(DenyReason),
-    Unresolved,
-    Refused,
-    Unreachable,
-    TimedOut,
-    Upstream,
-}
-
-impl ConnectFailure {
-    fn http_status(self) -> HttpStatus {
-        match self {
-            Self::Denied(DenyReason::Invalid) => HttpStatus::BadRequest,
-            Self::Denied(_) => HttpStatus::Forbidden,
-            Self::TimedOut => HttpStatus::GatewayTimeout,
-            Self::Unresolved | Self::Refused | Self::Unreachable | Self::Upstream => {
-                HttpStatus::BadGateway
-            }
-        }
-    }
-
-    fn socks_reply(self) -> SocksReply {
-        match self {
-            Self::Denied(_) => SocksReply::NotAllowedByRuleset,
-            Self::Unresolved | Self::Unreachable => SocksReply::HostUnreachable,
-            Self::Refused => SocksReply::ConnectionRefused,
-            Self::TimedOut => SocksReply::TtlExpired,
-            Self::Upstream => SocksReply::GeneralFailure,
-        }
-    }
 }
 
 async fn serve_http(

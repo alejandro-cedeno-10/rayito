@@ -134,8 +134,12 @@ pub fn plan_swap(active: Option<Slot>, next: Option<&RoutePlan>, ipv6_present: b
     }
 }
 
-/// Emergency deny-all, both slots cleared, slot `A` rebuilt with `plan`,
-/// emergency removed. The result holds `plan` in slot `A`.
+/// The policy slot a recovery rebuilds: after `plan_recovery` the plan
+/// lives here, whichever slot held the policy before.
+pub const RECOVERY_SLOT: Slot = Slot::A;
+
+/// Emergency deny-all, both slots cleared, `RECOVERY_SLOT` rebuilt with
+/// `plan`, emergency removed. The result holds `plan` in `RECOVERY_SLOT`.
 #[must_use]
 pub fn plan_recovery(plan: &RoutePlan) -> Vec<PlannedStep> {
     let families = plan.families();
@@ -173,10 +177,14 @@ pub fn plan_recovery(plan: &RoutePlan) -> Vec<PlannedStep> {
                 .map(tolerant),
         );
     }
-    steps.extend(fill_steps(Slot::A, plan, families).into_iter().map(strict));
+    steps.extend(
+        fill_steps(RECOVERY_SLOT, plan, families)
+            .into_iter()
+            .map(strict),
+    );
     steps.extend(
         per_family(families, |family| RouteStep::AddRule {
-            slot: Slot::A,
+            slot: RECOVERY_SLOT,
             family,
         })
         .into_iter()
