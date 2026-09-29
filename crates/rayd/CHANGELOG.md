@@ -10,6 +10,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Changed
+
+- Plazo del sandbox (refactor interno, sin cambio de comportamiento): el
+  veredicto de congelación de ADR-011 (`is_thaw`/`was_frozen`) pasa a
+  `rayd-core` (`sandbox_timeout::freeze`) como funciones puras con tests de
+  tabla, y el hilo del plazo sólo guarda los instantes; una sola conversión
+  de `SystemTime` a milisegundos Unix (`clock::unix_millis`, reexportada
+  desde `metrics`) sustituye la copia privada del hilo del plazo.
+
 ## [0.3.2] - 2026-09-29
 
 ### Fixed
