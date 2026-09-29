@@ -6,6 +6,19 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Tests
+
+- Cobertura explícita de reconexión tras un `RST_STREAM(CANCEL)` del proxy
+  de AWS (`Canceled` con el prefijo `http/2 stream closed`, ya distinguido
+  de un `AbortSignal`/`Canceled` propio por `isStreamReset`/`isOwnAbort` en
+  `transport/errors.ts`, sin cambio de comportamiento): un stream de
+  comandos en vivo reconecta con `Connect(pid, from_seq)`, agota el mismo
+  presupuesto de tres reintentos que un `Unavailable`, y `disconnect()`
+  sigue ganando la carrera aunque el corte llegue con la forma de un reset
+  reconectable justo después (`tests/unit/reconnect.test.ts`), en paridad
+  con el arreglo del SDK de Python para el `CANCELLED "Stream removed"` de
+  grpcio (`AWS_API_NOTES.md` #33).
+
 ## [0.3.1] - 2026-09-28
 
 Versión de mantenimiento, sin cambios de API.
