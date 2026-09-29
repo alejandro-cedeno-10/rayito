@@ -3,12 +3,24 @@ name: ci-x86-probe
 # THROWAWAY: sondeo del cuelgue de crates/rayd/tests/** en runners x86_64
 # (openspec m10-ci-x86). Vive sólo en la rama ci/x86-freeze-probe, nunca se
 # fusiona a main y se borra antes de que el cambio real llegue a main. Mismas
-# acciones y SHAs que ci.yml; permissions: contents: read; sólo pull_request
-# en esta rama y workflow_dispatch, nunca push a main/develop.
+# acciones y SHAs que ci.yml; permissions: contents: read.
+#
+# `pull_request.branches` filtra por la rama BASE del PR, no por la rama de
+# origen (GitHub evalúa el fichero con el contenido de la rama de origen
+# cuando ésta introduce un workflow nuevo, pero el filtro de ramas sigue
+# siendo sobre la base). El único PR de este sondeo tiene base `main` y
+# origen `ci/x86-freeze-probe`, así que el filtro es `[main]`: sólo hace
+# match para este PR, porque el fichero no existe en ninguna otra rama.
+# `workflow_dispatch` no es invocable por CLI/API aquí — GitHub exige que un
+# workflow con ese trigger ya exista en la rama por defecto para poder
+# despacharlo, y este fichero nunca llega a `main`; se deja declarado como
+# documentación de intención y las re-ejecuciones reales se hacen con
+# "Re-run all jobs" sobre las corridas de este PR o con nuevos commits
+# (`synchronize`) a esta rama.
 
 on:
   pull_request:
-    branches: [ci/x86-freeze-probe]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
