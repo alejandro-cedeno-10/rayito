@@ -110,9 +110,10 @@ URLLIB_PROBE = (
 )
 DNS_PROBE = "python3 -c \"import socket; socket.getaddrinfo('{host}', 443)\""
 # Adenda de ADR-012 (QE1, fila Q66): en caps los resolvedores de la plataforma
-# escuchan dentro del guest, así que bajo deny-all el nombre puede resolverse.
-# Lo que se exige es que ninguna dirección resuelta sea alcanzable: sale con 0
-# e imprime `unresolved` o `blocked`, y con 1 (`connected`) si alguna conecta.
+# escuchan dentro del guest; desde M10 (opción A) `rayd` bloquea el puerto 53
+# para uid >= 1000 bajo deny-all, así que el nombre ya no se resuelve: sale con
+# 0 e imprime `unresolved` (o `blocked` si resolviera y no conectara), y con 1
+# (`connected`) si alguna dirección conecta.
 RESOLVE_CONNECT_PROBE = """\
 import socket, sys
 try:
@@ -378,6 +379,7 @@ def test_guest_network_facts(
         report("QE1 (a) nameserver kinds", resolver_kinds(resolv.stdout))
         dns = run(sbx, DNS_PROBE.format(host=ALLOWED_HOST))
         report("QE1 (b) getaddrinfo as uid 1000 under deny-all", f"exit={dns.exit_code}")
+        assert dns.exit_code != 0, "M10: DNS is blocked for uid 1000 under deny-all"
         for target, uid in (("1.1.1.1", 1000), ("127.0.0.1", 1000), ("1.1.1.1", 0)):
             probe = run(sbx, f"ip route get {target} uid {uid}")
             report(
@@ -425,7 +427,7 @@ def test_internet_off(e2e_settings: E2ESettings, control_plane: LambdaMicrovmsCo
         unreachable = run(sbx, f"python3 /home/user/resolve_connect_probe.py {ALLOWED_HOST}")
         report("resolve + connect as uid 1000 under deny-all", unreachable.stdout.strip())
         assert unreachable.ok, unreachable.stdout
-        assert unreachable.stdout.strip() in {"unresolved", "blocked"}
+        assert unreachable.stdout.strip() == "unresolved"
         server = sbx.commands.run(
             f"python3 -m http.server {LOCAL_SERVER_PORT} --bind 127.0.0.1",
             background=True,

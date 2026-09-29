@@ -17,12 +17,20 @@ def _rayito_install_data_formatter():
     from traitlets import ObjectName, Unicode
 
     def _plain(value):
+        # A missing value (None, NaN, pandas NaT/NA) is JSON null: NaT would
+        # reach the Jupyter JSON cleaner and fail the whole cell on
+        # `.strftime`, and pandas 3 string columns hold NaN for missing.
+        if value is None or type(value).__name__ in ("NaTType", "NAType"):
+            return None
+        if isinstance(value, float) and value != value:
+            return None
         item = getattr(value, "item", None)
         if callable(item):
             try:
-                return item()
+                plain = item()
             except (TypeError, ValueError):
                 return str(value)
+            return None if isinstance(plain, float) and plain != plain else plain
         return value
 
     def _frame_repr(frame):

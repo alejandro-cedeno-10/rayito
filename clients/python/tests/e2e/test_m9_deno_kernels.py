@@ -50,6 +50,10 @@ DENO_CODE_MIN_BYTES = 110_000_000
 DENO_CODE_MAX_BYTES = 160_000_000
 DENO_MEMORY_BAND_BYTES = 40_000_000
 MEMORY_BAND_BYTES = 20_000_000
+# A runtime-pin bump can legitimately shrink the snapshot (M10: pandas 3 /
+# ipykernel 7 took 28 MB off rayito-base 27.0); a much larger drop means the
+# warm-up stopped loading the scientific stack.
+MEMORY_SHRINK_BAND_BYTES = 80_000_000
 BASE_CODE_BAND_BYTES = 50_000_000
 ENDLESS_LOOP_TIMEOUT_SECONDS = 2
 PROBE_TIMEOUT_SECONDS = 30
@@ -275,5 +279,5 @@ def test_deno_snapshot_sizes() -> None:
     report("rayito-base code delta vs previous net of rayd (bytes)", base_code_delta)
     assert DENO_CODE_MIN_BYTES <= deno_code <= DENO_CODE_MAX_BYTES
     assert abs(deno_memory) <= DENO_MEMORY_BAND_BYTES
-    assert abs(base_memory_delta) <= MEMORY_BAND_BYTES
+    assert -MEMORY_SHRINK_BAND_BYTES <= base_memory_delta <= MEMORY_BAND_BYTES
     assert abs(base_code_delta) <= BASE_CODE_BAND_BYTES
