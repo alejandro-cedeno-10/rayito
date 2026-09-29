@@ -712,9 +712,19 @@ export class Filesystem {
   readonly core: SandboxCore;
   readonly #transfers: TransferClient;
 
-  constructor(core: SandboxCore) {
+  /**
+   * `sharedWith` es interno a rayito/e2b: cuando el shim de E2B envuelve este
+   * mismo `SandboxCore` (`e2b/filesystem.ts`), reutiliza el `TransferClient`
+   * de `sharedWith` en vez de crear uno nuevo, para que la caché de soporte
+   * de transferencias (`#supported`) y los clientes S3 no se dupliquen entre
+   * `sbx.files` y `sbx.native.files`.
+   */
+  constructor(core: SandboxCore, sharedWith?: Filesystem) {
     this.core = core;
-    this.#transfers = new TransferClient(core, entryInfoFromProto);
+    this.#transfers =
+      sharedWith === undefined
+        ? new TransferClient(core, entryInfoFromProto)
+        : sharedWith.#transfers;
   }
 
   read(path: string, options?: ReadOptionsFor<{ format?: "text" | undefined }>): Promise<string>;

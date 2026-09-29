@@ -6,6 +6,38 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+
+- `sbx.files` y `sbx.native.files` del shim de E2B comparten ahora un único
+  `TransferClient` (y por tanto una sola caché de soporte de transferencias
+  y un solo cliente S3 por sandbox): el `Filesystem` nativo acepta un
+  segundo parámetro interno `sharedWith` que reutiliza el `TransferClient`
+  del `Filesystem` nativo del que el shim parte, en vez de construir uno
+  nuevo sobre el mismo `SandboxCore`. Sin cambio de comportamiento para
+  quien sólo use `sbx.files`; `sbx.native.files` deja de duplicar la sonda
+  y los clientes S3 (`.d.ts` publicado: sólo gana un parámetro de
+  constructor opcional).
+- El puerto `ControlPlane` declara ahora `readonly awsClientSettings?:
+  AwsClientSettings`: las credenciales y el proxy que los clientes S3 de
+  las transferencias heredan del plano de control (ADR-010) ya no llegan
+  por un downcast estructural (`AwsClientSettingsSource`, eliminada), sino
+  por un campo explícito del puerto que cualquier decorador debe reenviar.
+  `awsClientSettingsOf` sigue exportada con el mismo nombre y la misma
+  firma; sin cambio de comportamiento.
+
+### Internal
+
+- `sandbox/core.ts` ya no depende de `sandbox/commands.ts`: la clasificación
+  de fallos de stream (`STREAM_PROBE_TIMEOUT_MS`, `streamFailureError`) vive
+  en el nuevo `sandbox/stream-errors.ts`, sin ciclo con `core.ts` ni con
+  `commands.ts`; `commands.ts` reexporta ambos nombres, así que ningún
+  import existente cambia. Sin cambio de comportamiento.
+- `e2b/compat.ts` (el mapeo puro que refleja `_compat.py`) absorbe
+  `historyImageError`, `lifecycleImageError`, `LIFECYCLE_IMAGE_REASON` y la
+  nueva `metricsHistoryOrSnapshot`, antes en la clase IO `e2b/sandbox.ts`;
+  `Sandbox.getMetrics` y `Sandbox.metricsFor` (estático) llaman a las
+  versiones movidas. Sin cambio de comportamiento.
+
 ## [0.3.2] - 2026-09-29
 
 ### Changed

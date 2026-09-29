@@ -1,0 +1,10 @@
+schema: spec-driven
+created: "2026-09-29"
+goal: >-
+  M10 TypeScript reliability: one TransferClient per sandbox, the
+  ControlPlane port carries awsClientSettings explicitly, core.ts has no
+  import cycle with commands.ts, and compat.ts stays pure — all with no
+  observable behaviour change.
+affected_areas:
+  - clients/typescript
+skip_specs: true
