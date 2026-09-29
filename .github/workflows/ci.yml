@@ -258,11 +258,18 @@ jobs:
         with:
           version: 0.16.0
       - run: cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.6 cargo-cyclonedx@0.5.9
-      - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0)
-        run: cargo auditable zigbuild --release --locked --target aarch64-unknown-linux-musl -p rayd
+      - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0, same --remap-path-prefix rustflags as `make build`'s REMAP_CONFIG)
+        run: |
+          cargo auditable zigbuild --release --locked --target aarch64-unknown-linux-musl -p rayd \
+            --config "build.rustflags=[\"--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo\",\"--remap-path-prefix=${CARGO_TARGET_DIR:-$PWD/target}=/target\"]"
       - run: file target/aarch64-unknown-linux-musl/release/rayd
       - name: .dep-v0 names root rayd at the workspace version with tonic, tokio, axum, nix
         run: python3 scripts/check_auditable.py target/aarch64-unknown-linux-musl/release/rayd
+      - name: rayd embeds no /home/runner build path (--remap-path-prefix, same rustflags as `make build`)
+        run: |
+          count="$(strings target/aarch64-unknown-linux-musl/release/rayd | grep -c '/home/runner' || true)"
+          echo "/home/runner matches: $count"
+          test "$count" -eq 0
       - name: CycloneDX 1.5 SBOM of the aarch64 crate graph (crates/rayd/rayd.cdx.json)
         run: |
           cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5

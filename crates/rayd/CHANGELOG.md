@@ -10,6 +10,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `ci.yml` (job `build`) y `release.yml` (job `rayd`) compilan `rayd` con el
+  mismo `--remap-path-prefix` que `make build` (`REMAP_CONFIG` del
+  Makefile): el binario publicado ya no incrusta las rutas del runner
+  (`/home/runner/...`) de `CARGO_HOME` ni del directorio de compilación. Un
+  paso nuevo en ambos jobs falla el build si `strings` encuentra
+  `/home/runner` en el binario.
+
 ## [0.3.1] - 2026-09-28
 
 Versión de mantenimiento, sin cambios en el contrato gRPC.
