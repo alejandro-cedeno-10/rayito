@@ -85,3 +85,23 @@ def test_data_formatter_resolves_frames_and_series_lazily(shell: Any) -> None:
     assert all(type(v) in (int, float) for vs in data["e2b/data"].values() for v in vs)
     series, _ = shell.display_formatter.format(pd.Series([3, 4], name="s"))
     assert series["e2b/data"] == {"s": [3, 4]}
+
+
+def test_data_formatter_turns_missing_values_into_null(shell: Any) -> None:
+    run_formatter_scripts()
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "when": [pd.Timestamp("2026-01-01"), pd.NaT],
+            "name": ["a", None],
+            "x": [1.5, float("nan")],
+            "n": pd.array([1, None], dtype="Int64"),
+        }
+    )
+    data, _ = shell.display_formatter.format(frame)
+    assert data["e2b/data"]["name"] == ["a", None]
+    assert data["e2b/data"]["x"] == [1.5, None]
+    assert data["e2b/data"]["n"] == [1, None]
+    assert data["e2b/data"]["when"][1] is None
+    assert "text/html" in data

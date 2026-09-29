@@ -296,10 +296,11 @@ describe.skipIf(!m9Enabled)(
       expect(Number(elapsed)).toBeLessThan(REFUSAL_BUDGET_S);
       note("urllib bloqueado (uid 1000)", `${elapsed} s`);
 
-      // Adenda de ADR-012: el nombre puede resolverse; ninguna dirección conecta.
+      // Adenda de ADR-012, opción A (M10): bajo deny-all el DNS de uid >= 1000
+      // está bloqueado, así que el nombre ya no se resuelve.
       const unreached = await probe(sandbox, `unreachable ${ALLOWED_HOST}`);
       expect(unreached, `unreachable: ${unreached.stdout}`).not.toBeInstanceOf(CommandExitError);
-      expect(["unresolved", "blocked"]).toContain(unreached.stdout.trim());
+      expect(unreached.stdout.trim()).toBe("unresolved");
       note("resolver + conectar (uid 1000)", unreached.stdout.trim());
 
       await sandbox.commands.run(
