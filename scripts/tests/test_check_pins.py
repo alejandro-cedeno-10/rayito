@@ -279,11 +279,15 @@ def test_pip_install_without_the_three_flags_is_a_finding() -> None:
 RUN pip install --require-hashes -r req.txt
 RUN pip install --no-deps -r req.txt
 RUN pip install --only-binary=:all: -r req.txt
-RUN pip install pandas"""
+RUN pip install pandas
+RUN pip install --require-hashes --no-deps --only-binary=:all: pandas==2.3.3"""
 
     findings = check_pins.unhashed_pip_installs(text)
 
-    assert [number for number, _, _ in findings] == [1, 4, 5, 6]
+    # `pip install pandas` has no requirements file and none of the flags; the
+    # last one carries the three flags, so the gate leaves it to pip itself,
+    # whose `--require-hashes` rejects a bare pin that has no `--hash=`.
+    assert [number for number, _, _ in findings] == [1, 4, 5, 6, 7]
     assert all(reason == check_pins.PIP_FLAGS_REASON for _, _, reason in findings)
 
 
@@ -311,7 +315,7 @@ another-pin==2.0.0 \\
     assert findings[0][2] == check_pins.UNHASHED_PIN_REASON
 
 
-def test_the_sidecar_requirements_are_hash_pinned_and_version_stable() -> None:
+def test_the_sidecar_requirements_are_hash_pinned() -> None:
     for name in ("requirements.txt", "requirements-poly.txt"):
         text = (REPO_ROOT / "kernel-sidecar" / name).read_text(encoding="utf-8")
         assert check_pins.unhashed_requirement_pins(text) == [], name

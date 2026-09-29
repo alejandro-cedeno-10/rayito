@@ -184,19 +184,23 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-dist-${{ needs.resolve.outputs.version }}
-          path: ${{ runner.temp }}/python
+          # Inside the workspace (created by the runner, no checkout needed),
+          # not runner.temp: gh-action-pypi-publish runs twine in a Docker
+          # container action that only mounts GITHUB_WORKSPACE, so a host
+          # path under runner.temp does not exist in there.
+          path: python-dist
       - name: SHA256SUMS is the one python-build produced
-        working-directory: ${{ runner.temp }}/python
+        working-directory: python-dist
         env:
           SHA256SUMS_SHA256: ${{ needs.python-build.outputs.sha256sums_sha256 }}
         run: echo "${SHA256SUMS_SHA256}  SHA256SUMS" | sha256sum -c -
       - name: dist/ matches SHA256SUMS
-        working-directory: ${{ runner.temp }}/python
+        working-directory: python-dist
         run: sha256sum -c SHA256SUMS
       - name: Publish to PyPI (OIDC, attestations on by default)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: ${{ runner.temp }}/python/dist
+          packages-dir: python-dist/dist
 
   typescript-build:
     name: typescript → build tarball (no publishing credential)

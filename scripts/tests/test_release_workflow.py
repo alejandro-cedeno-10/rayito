@@ -15,7 +15,11 @@ this file pins:
 - every ``pnpm install`` carries ``--ignore-scripts`` (belt-and-suspenders
   with ``clients/typescript/.npmrc``), ``npm publish`` too, and both publish
   jobs are gated on ``needs.resolve.outputs.publish == 'true'`` and verify a
-  ``sha256sum -c`` before publishing anything."""
+  ``sha256sum -c`` before publishing anything;
+- ``python-publish`` downloads its artifact inside ``GITHUB_WORKSPACE`` and
+  points ``packages-dir`` there: ``pypa/gh-action-pypi-publish`` runs twine
+  in a Docker container action that mounts only the workspace, so a
+  ``runner.temp`` path would not exist inside it."""
 
 from __future__ import annotations
 
@@ -35,6 +39,10 @@ FORBIDDEN_IN_PUBLISH_RUN = re.compile(
 )
 CHECKOUT_ACTION = "actions/checkout"
 PUBLISH_GATE = "needs.resolve.outputs.publish == 'true'"
+PYPI_PUBLISH_ACTION = "pypa/gh-action-pypi-publish"
+DOWNLOAD_ACTION = "actions/download-artifact"
+RUNNER_TEMP = "runner.temp"
+GITHUB_WORKSPACE_PREFIX = "${{ github.workspace }}/"
 
 
 def load_jobs() -> dict[str, dict[str, Any]]:
@@ -150,6 +158,42 @@ def test_python_publish_verifies_before_the_publish_action() -> None:
 
     assert verify_indices, "python-publish never runs sha256sum -c"
     assert all(i < publish_index for i in verify_indices)
+
+
+def is_inside_the_workspace(path: str) -> bool:
+    """Relative (the runner resolves it against ``GITHUB_WORKSPACE``) or under
+    ``${{ github.workspace }}``; never ``runner.temp`` nor absolute."""
+    if RUNNER_TEMP in path:
+        return False
+    if path.startswith(GITHUB_WORKSPACE_PREFIX):
+        return True
+    return not path.startswith(("/", "~", "$"))
+
+
+def test_python_publish_packages_dir_is_inside_the_workspace() -> None:
+    steps = load_jobs()["python-publish"]["steps"]
+    publish = next(
+        step for step in steps if step.get("uses", "").startswith(PYPI_PUBLISH_ACTION)
+    )
+    download = next(
+        step for step in steps if step.get("uses", "").startswith(DOWNLOAD_ACTION)
+    )
+    packages_dir = publish["with"]["packages-dir"]
+    download_path = download["with"]["path"]
+
+    assert is_inside_the_workspace(packages_dir), packages_dir
+    assert is_inside_the_workspace(download_path), download_path
+    assert packages_dir.startswith(download_path.rstrip("/") + "/")
+    for step in steps:
+        if "working-directory" in step:
+            assert is_inside_the_workspace(step["working-directory"])
+
+
+def test_workspace_check_rejects_runner_temp_and_absolute_paths() -> None:
+    assert not is_inside_the_workspace("${{ runner.temp }}/python/dist")
+    assert not is_inside_the_workspace("/home/runner/work/_temp/python/dist")
+    assert is_inside_the_workspace("python-dist/dist")
+    assert is_inside_the_workspace("${{ github.workspace }}/python-dist/dist")
 
 
 def test_the_repository_itself_is_clean() -> None:

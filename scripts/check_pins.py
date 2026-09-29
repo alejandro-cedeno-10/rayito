@@ -35,11 +35,14 @@ clavada), sin red y sólo con la biblioteca estándar:
    T10). El hallazgo cuenta desde la primera línea de la instrucción y cita el
    paquete.
 5. **pip**: en esos mismos `Dockerfile`, cada instrucción con un `pip install`
-   (o `python3 -m pip install`) que lleve `-r`/`--requirement` tiene que
-   llevar también `--require-hashes`, `--no-deps` y `--only-binary=:all:`
-   (`--only-binary all` también vale): sin esas tres banderas un fichero
-   añadido a una release existente, o un sdist que compile en la VM de build,
-   se instala en silencio (C-12). Y cada línea de requisito (`nombre==versión
+   (o `python3 -m pip install`), con `-r`/`--requirement` o con paquetes
+   sueltos, tiene que llevar `--require-hashes`, `--no-deps` y
+   `--only-binary=:all:` (`--only-binary all` también vale): sin esas tres
+   banderas un fichero añadido a una release existente, o un sdist que
+   compile en la VM de build, se instala en silencio (C-12). Un `pip install
+   paquete==x` suelto con las tres banderas lo rechaza el propio pip, porque
+   `--require-hashes` exige un `--hash=` que solo cabe en un fichero de
+   requisitos. Y cada línea de requisito (`nombre==versión
    [--hash=...]...`) de `kernel-sidecar/requirements.txt` y
    `requirements-poly.txt` tiene que llevar al menos un `--hash=sha256:` de 64
    hex; una línea sin ninguno es un hallazgo. El hallazgo del `pip install`
@@ -103,8 +106,6 @@ PIP = "pip"
 PIP_INSTALL = "install"
 PYTHON_MODULE_PIP = re.compile(r"^python3(\.\d+)?$")
 MODULE_FLAG = "-m"
-REQUIREMENT_SHORT_FLAG = "-r"
-REQUIREMENT_LONG_PREFIX = "--requirement"
 REQUIRE_HASHES_FLAG = "--require-hashes"
 NO_DEPS_FLAG = "--no-deps"
 ONLY_BINARY_PREFIX = "--only-binary"
@@ -340,10 +341,10 @@ def has_only_binary_all(words: list[str]) -> bool:
     return False
 
 
-def pip_requirement_installs(instruction: str) -> list[list[str]]:
+def pip_installs(instruction: str) -> list[list[str]]:
     """Las palabras que siguen a cada `pip install`/`python3[.x] -m pip
-    install` de una instrucción (cortada en `&&`, `||`, `;` y `|`) que instala
-    desde un fichero de requisitos (`-r`/`--requirement`)."""
+    install` de una instrucción (cortada en `&&`, `||`, `;` y `|`), instale
+    desde un fichero de requisitos o nombre paquetes sueltos."""
     commands: list[list[str]] = []
     for command in SHELL_SEPARATORS.split(instruction):
         words = split_words(command)
@@ -355,22 +356,15 @@ def pip_requirement_installs(instruction: str) -> list[list[str]]:
             and words[1] == MODULE_FLAG
         ):
             words = words[2:]
-        if words[:2] != [PIP, PIP_INSTALL]:
-            continue
-        arguments = words[2:]
-        names_a_requirements_file = any(
-            word == REQUIREMENT_SHORT_FLAG or word.startswith(REQUIREMENT_LONG_PREFIX)
-            for word in arguments
-        )
-        if names_a_requirements_file:
-            commands.append(arguments)
+        if words[:2] == [PIP, PIP_INSTALL]:
+            commands.append(words[2:])
     return commands
 
 
 def unhashed_pip_installs(text: str) -> list[Finding]:
     findings: list[Finding] = []
     for instruction in dockerfile_instructions(text):
-        for arguments in pip_requirement_installs(instruction.text):
+        for arguments in pip_installs(instruction.text):
             if (
                 REQUIRE_HASHES_FLAG not in arguments
                 or NO_DEPS_FLAG not in arguments

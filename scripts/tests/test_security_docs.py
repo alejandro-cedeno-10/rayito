@@ -359,7 +359,7 @@ def test_c10_and_c12_are_closed_in_the_security_audit() -> None:
             "| C-10 |",
             "test_release_workflow.py",
             "| C-12 |",
-            "test_the_sidecar_requirements_are_hash_pinned_and_version_stable",
+            "test_the_sidecar_requirements_are_hash_pinned",
         ),
     )
 

@@ -48,7 +48,7 @@ registry.
       `unhashed_requirement_pins`), documentado en el docstring del módulo,
       `kernel-sidecar/requirements*.txt` en `DEFAULT_PATHS`
 - [x] 2.6 `scripts/tests/test_check_pins.py`: casos nuevos para la gate 5 +
-      `test_the_sidecar_requirements_are_hash_pinned_and_version_stable`
+      `test_the_sidecar_requirements_are_hash_pinned`
 
 > **Evidencia.** Diff de versiones vacío (idéntico antes/después) para ambos
 > ficheros. `uv run --with-requirements requirements.txt pytest`: **86
@@ -129,3 +129,20 @@ registry.
 ## 5. [openspec] Validación
 
 - [x] 5.1 `openspec validate m10-security-supply-chain --strict`
+
+## 6. [review] Hallazgos de la revisión del PR #43
+
+- [x] 6.1 (bloqueante) `python-publish` descarga el artefacto dentro de
+      `GITHUB_WORKSPACE` (`path: python-dist`) y pasa
+      `packages-dir: python-dist/dist`: `gh-action-pypi-publish` corre twine
+      en un contenedor Docker que sólo monta el workspace, así que una ruta
+      bajo `runner.temp` no existe dentro. Test nuevo
+      `test_python_publish_packages_dir_is_inside_the_workspace`
+- [x] 6.2 `test_the_sidecar_requirements_are_hash_pinned_and_version_stable`
+      pasa a `test_the_sidecar_requirements_are_hash_pinned` (sólo comprueba
+      hashes); cabecera de `kernel-sidecar/requirements.txt` y fila C-12 de
+      §9 corregidas: la identidad de versiones la comprobó el diff manual,
+      no un test
+- [x] 6.3 Puerta 5: el chequeo de banderas aplica a todo `pip install` de un
+      `RUN` del `Dockerfile`, con `-r` o con paquetes sueltos;
+      `RUN pip install pandas` es ahora un hallazgo

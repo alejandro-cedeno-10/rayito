@@ -56,6 +56,22 @@ their common ancestor, so the downloaded artefact reproduces the same
 layout (`<download>/SHA256SUMS` next to `<download>/dist/*.whl` and
 `*.tar.gz`) and `packages-dir: <download>/dist` never sees `SHA256SUMS`.
 
+**Why `python-publish` downloads into the workspace (`path: python-dist`),
+not `runner.temp`** (review of PR #43): at the pinned SHA (v1.14.2)
+`pypa/gh-action-pypi-publish` is a composite wrapper around a generated
+Docker container action, and `twine-upload.sh` reads `INPUT_PACKAGES_DIR`
+inside the container. The runner mounts only `GITHUB_WORKSPACE` (as
+`/github/workspace`) plus a few `_temp` subdirectories into a container
+action, so a host path such as `${{ runner.temp }}/python/dist` does not
+exist in there and the first real `python-v*` release would fail after
+every sha256 check passed. The workspace directory exists without a
+checkout, so the artifact lands in `python-dist/` (relative, resolved
+against the workspace), both `sha256sum -c` steps run there and
+`packages-dir: python-dist/dist`. Dry runs skip `python-publish`, so no
+dry run can exercise this; `test_python_publish_packages_dir_is_inside_the_workspace`
+pins it instead. `typescript-publish` stays on `runner.temp`: `npm publish`
+runs on the host.
+
 **Why `actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c #
 v8.0.1`**: the repository's `actions/upload-artifact` pin is already v7.0.1;
 `download-artifact` needs v4+ to read a v7 artifact (GitHub's own
@@ -135,10 +151,13 @@ path) so the file keeps its own hand-written header, now describing the
 hash-pinning; the `-c /tmp/pins.txt` constraint is the current file, so the
 regeneration only adds hashes and cannot silently move a version.
 
-**Version identity, asserted before committing and pinned by
-`test_the_sidecar_requirements_are_hash_pinned_and_version_stable`**: a
+**Version identity, asserted by hand before committing**: a
 `name==version` diff between the old and new files, ignoring hash lines, is
-empty. `requirements-poly.txt` is regenerated the same way but with
+empty (48 pins in `requirements.txt`, 4 in `requirements-poly.txt`). No test
+pins the versions: a frozen list would break on every Dependabot bump, which
+is exactly the change the pins are meant to accept.
+`test_the_sidecar_requirements_are_hash_pinned` only asserts that every pin
+carries a hash. `requirements-poly.txt` is regenerated the same way but with
 `--no-deps` and itself as the only input (no `requirements-poly.in` exists;
 the four pins already carry exact versions, so compiling the file against
 itself with `--no-deps` re-resolves nothing beyond what it already says).
@@ -225,9 +244,15 @@ lines — it only cares about line continuation and comment-skipping, not
 about `RUN`):
 
 - `unhashed_pip_installs`: every `pip install`/`python3[.x] -m pip install`
-  naming `-r`/`--requirement` in a Dockerfile instruction must carry
-  `--require-hashes`, `--no-deps` and some spelling of `--only-binary
-  :all:`/`--only-binary=:all:`/`--only-binary all`.
+  in a Dockerfile instruction, whether it names `-r`/`--requirement` or bare
+  packages, must carry `--require-hashes`, `--no-deps` and some spelling of
+  `--only-binary :all:`/`--only-binary=:all:`/`--only-binary all`. A first
+  version only checked `-r` installs, so a future bare `pip install
+  foo==1.0` would have slipped past without hashes; the review of PR #43
+  asked for the plan's wording ("every `pip install` in a RUN instruction")
+  and `RUN pip install pandas` is now a finding. A bare pin that does carry
+  the three flags is left to pip, whose `--require-hashes` rejects it for
+  lacking a `--hash=` (only expressible in a requirements file).
 - `unhashed_requirement_pins`: every `name==version` line of a file
   `scripts/check_pins.py` is given whose name starts with `requirements` and
   ends in `.txt` must carry at least one `--hash=sha256:<64 hex>`.

@@ -8,9 +8,9 @@
 #     --generate-hashes --no-header --no-annotate \
 #     -c /tmp/pins.txt requirements.in -o requirements.txt
 # The `-c` constraint pins every version to the current file so the
-# regeneration only adds hashes (asserted by
-# scripts/tests/test_check_pins.py and the version-identity diff run before
-# committing). Each pin's hash list covers every wheel PyPI has for that
+# regeneration only adds hashes (checked by a `name==version` diff against
+# the previous file before committing; scripts/check_pins.py only asserts
+# that every pin carries a hash). Each pin's hash list covers every wheel PyPI has for that
 # release (aarch64 and x86_64 manylinux, musllinux, macOS and Windows), not
 # only the aarch64 platform the image installs: the sidecar test suites also
 # run this same file on CI's x86_64 `sidecar` job and on macOS locally

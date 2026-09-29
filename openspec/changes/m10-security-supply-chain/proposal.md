@@ -46,11 +46,13 @@ neither needs an AWS call, an image build or an e2e.
 - **Hash-pinned, wheels-only sidecar installs (C-12).**
   `kernel-sidecar/requirements.txt` and `requirements-poly.txt` are
   regenerated with `uv pip compile --generate-hashes`, pinning no version
-  differently than before (asserted by a version-identity diff and by a new
-  unit test); `image/Dockerfile`'s two `pip install -r` layers gain
+  differently than before (asserted by a `name==version` diff before
+  committing; a new unit test asserts every pin carries a hash);
+  `image/Dockerfile`'s two `pip install -r` layers gain
   `--require-hashes --no-deps --only-binary=:all:`. `scripts/check_pins.py`
-  gains a fifth gate: every Dockerfile `pip install -r` needs those three
-  flags, and every pin of a `requirements*.txt` needs a `--hash=sha256:`.
+  gains a fifth gate: every Dockerfile `pip install` (with `-r` or bare
+  packages) needs those three flags, and every pin of a `requirements*.txt`
+  needs a `--hash=sha256:`.
 - **Docs.** `docs/SECURITY_AUDIT.md` marks C-10 and C-12 done in §8 and adds
   their rows to §9, dropping them from "Lo que sigue abierto" (C-06 and
   every other open row untouched); `SECURITY.md` T10 names the hash-pinned,
