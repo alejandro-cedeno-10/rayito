@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use rayd_core::clock::SystemClock;
 use rayd_core::network::{
-    ALL_TRAFFIC, EgressEnforcement, EgressPolicy, Family, NetworkError, PolicyInput, Slot,
-    TargetGuard, UpstreamInput, Zeroizing,
+    ALL_TRAFFIC, EgressEnforcement, EgressPolicy, Family, NetworkError, PolicyInput,
+    RESUME_VERIFY_BUDGET, Slot, TargetGuard, UpstreamInput, Zeroizing,
 };
 use rayd_core::session::{RunHookInput, SandboxSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -918,4 +918,64 @@ fn logs_never_carry_targets_proxy_addresses_or_credentials() {
     ] {
         assert!(!captured.contains(secret), "{secret} leaked: {captured}");
     }
+}
+
+fn run_with_enforce(session: &SandboxSession, enforce: bool) {
+    let payload = format!(
+        "{{\"v\":1,\"token_sha256\":\"{}\",\"network\":{{\"enforce\":{enforce}}}}}",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    session.run(RunHookInput {
+        sandbox_id: Some("mvm-test"),
+        payload: Some(&payload),
+    });
+}
+
+/// The `/run` use case without `network.enforce` touches nothing.
+#[tokio::test]
+async fn on_run_without_enforce_touches_nothing() {
+    let (session, kernel, manager) = managed(true);
+    run_with_enforce(&session, false);
+    assert!(!session.egress_settling());
+    manager.on_run().await;
+    assert!(!session.egress_settling());
+    assert!(kernel.executed().is_empty());
+    assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+    assert!(session.egress_env().is_empty());
+}
+
+/// Without `CAP_NET_ADMIN` the `/run` use case settles `Health` at once
+/// with enforcement `None` and runs no step.
+#[tokio::test]
+async fn on_run_without_net_admin_settles_with_none() {
+    let session = session();
+    let kernel = Arc::new(FakeKernel::new(false, vec![ip(OWN_ADDRESS)]));
+    let manager = NetworkManager::new(
+        session.clone(),
+        kernel.clone(),
+        false,
+        ProxySeams::default(),
+    );
+    run_with_enforce(&session, true);
+    assert!(session.egress_settling());
+    manager.on_run().await;
+    assert!(!session.egress_settling());
+    assert!(kernel.executed().is_empty());
+    assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
+    assert!(session.health().agent_ready);
+}
+
+/// The `/resume` use case answers within its budget and publishes `None`
+/// when the re-verification outlives it.
+#[tokio::test(start_paused = true)]
+async fn on_resume_past_the_budget_publishes_none_in_time() {
+    let (session, kernel, manager) = managed(false);
+    run_with_enforce(&session, true);
+    manager.on_run().await;
+    assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+    kernel.delay_local_addresses(RESUME_VERIFY_BUDGET + Duration::from_secs(1));
+    let started = tokio::time::Instant::now();
+    manager.on_resume().await;
+    assert!(started.elapsed() <= RESUME_VERIFY_BUDGET + Duration::from_millis(10));
+    assert_eq!(session.egress_enforcement(), EgressEnforcement::None);
 }

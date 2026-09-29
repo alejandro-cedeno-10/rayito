@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use rayd_core::network::{
-    EgressEnforcement as DomainEnforcement, NetworkError, NetworkSnapshot, PolicyInput,
-    UpstreamInput, Zeroizing,
+    EgressEnforcement as DomainEnforcement, NetworkError, NetworkSnapshot, NetworkStatusClass,
+    PolicyInput, UpstreamInput, Zeroizing,
 };
 use rayito_proto::v1::network_service_server::NetworkService;
 use rayito_proto::v1::{
@@ -80,12 +80,10 @@ fn upstream_input(proxy: EgressProxy) -> UpstreamInput {
 /// The error table of design D11.
 #[must_use]
 pub fn status_for(error: &NetworkError) -> Status {
-    match error {
-        NetworkError::NoNetAdmin => Status::failed_precondition(error.to_string()),
-        NetworkError::InstallFailed { .. } | NetworkError::VerifyFailed => {
-            Status::internal(error.to_string())
-        }
-        _ => Status::invalid_argument(error.to_string()),
+    match error.status_class() {
+        NetworkStatusClass::InvalidArgument => Status::invalid_argument(error.to_string()),
+        NetworkStatusClass::FailedPrecondition => Status::failed_precondition(error.to_string()),
+        NetworkStatusClass::Internal => Status::internal(error.to_string()),
     }
 }
 
@@ -164,7 +162,7 @@ mod tests {
             assert_eq!(status.code(), code, "{error:?}");
             assert_eq!(status.message(), error.to_string());
             assert_eq!(
-                error.is_invalid_argument(),
+                error.status_class() == NetworkStatusClass::InvalidArgument,
                 code == tonic::Code::InvalidArgument
             );
         }

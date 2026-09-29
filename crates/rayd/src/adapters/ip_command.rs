@@ -11,7 +11,7 @@ use std::io;
 use std::process::Stdio;
 use std::time::Duration;
 
-use rayd_core::network::IP_COMMAND_TIMEOUT;
+use rayd_core::network::{Family, IP_COMMAND_TIMEOUT};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 
@@ -36,6 +36,23 @@ impl IpOutput {
 /// `IP_COMMAND_TIMEOUT`.
 pub async fn run_ip(args: &[&str]) -> Result<IpOutput, String> {
     run_ip_with_input(args, None).await
+}
+
+/// The `ip` flag that selects `family`.
+#[must_use]
+pub fn family_flag(family: Family) -> &'static str {
+    match family {
+        Family::V4 => "-4",
+        Family::V6 => "-6",
+    }
+}
+
+/// `ip -4|-6 <args>`: `run_ip` with the family flag prepended.
+pub async fn run_ip_for(family: Family, args: &[&str]) -> Result<IpOutput, String> {
+    let mut full = Vec::with_capacity(args.len() + 1);
+    full.push(family_flag(family));
+    full.extend_from_slice(args);
+    run_ip(&full).await
 }
 
 /// `ip <args>` with `input` on stdin (`ip -batch -`).
@@ -118,6 +135,12 @@ async fn drain(pipe: Option<impl AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_family_has_its_flag() {
+        assert_eq!(family_flag(Family::V4), "-4");
+        assert_eq!(family_flag(Family::V6), "-6");
+    }
 
     #[test]
     fn success_is_exit_zero() {

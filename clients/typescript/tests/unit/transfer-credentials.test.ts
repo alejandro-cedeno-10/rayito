@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { ControlPlane } from "../../src/aws/control-plane.js";
 import { awsClientSettingsOf, LambdaMicrovmsControlPlane } from "../../src/aws/control-plane.js";
 import { LaunchObserver } from "../../src/pool/pool.js";
 import { s3ClientOverridesFor } from "../../src/sandbox/transfer.js";
@@ -23,6 +24,29 @@ function planeCredentials() {
   }));
   return provider;
 }
+
+function notImplemented(): never {
+  throw new Error("not used in this test: only awsClientSettings and the port field matter here");
+}
+
+/**
+ * Un `ControlPlane` mínimo, sólo para probar que `awsClientSettingsOf` y
+ * `s3ClientOverridesFor` leen el campo del puerto (`plane.awsClientSettings`)
+ * y no un downcast estructural: cualquier objeto que cumpla el `interface`
+ * basta, sin heredar de `LambdaMicrovmsControlPlane` ni de `FakeControlPlane`.
+ */
+const notImplementedPlane: ControlPlane = {
+  region: REGION,
+  resolveTemplateArn: notImplemented,
+  runMicrovm: notImplemented,
+  getMicrovm: notImplemented,
+  listMicrovms: notImplemented,
+  listMicrovmsPage: notImplemented,
+  terminateMicrovm: notImplemented,
+  suspendMicrovm: notImplemented,
+  resumeMicrovm: notImplemented,
+  createAuthToken: notImplemented,
+};
 
 const fakes: FakeS3[] = [];
 
@@ -62,6 +86,20 @@ describe("S3 client settings derived from the control plane", () => {
     const inner = LambdaMicrovmsControlPlane.fromRegion(REGION, { credentials });
     const observed = new LaunchObserver(inner, async () => undefined);
     expect(s3ClientOverridesFor(observed).credentials).toBe(credentials);
+  });
+
+  test("a bare object literal implementing ControlPlane is honoured through the port field, not a downcast", () => {
+    const credentials = planeCredentials();
+    const withSettings: ControlPlane = {
+      ...notImplementedPlane,
+      awsClientSettings: { credentials },
+    };
+    expect(awsClientSettingsOf(withSettings)).toEqual({ credentials });
+    expect(s3ClientOverridesFor(withSettings).credentials).toBe(credentials);
+
+    const withoutSettings: ControlPlane = { ...notImplementedPlane };
+    expect(awsClientSettingsOf(withoutSettings)).toEqual({});
+    expect(s3ClientOverridesFor(withoutSettings)).toEqual({});
   });
 
   test("uploadUrl is signed with the control plane's credentials, not the default chain", async () => {

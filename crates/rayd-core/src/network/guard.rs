@@ -4,12 +4,11 @@
 //! or `rayd`'s own `:8080` through a guest address, all of which the
 //! routes alone would never let it touch.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 
 use super::cidr::canonical_ip;
-
-pub const IMDS_V4: Ipv4Addr = Ipv4Addr::new(169, 254, 169, 254);
-pub const IMDS_V6: Ipv6Addr = Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254);
+use super::special_address::SpecialAddress;
+pub use super::special_address::{IMDS_V4, IMDS_V6};
 
 /// The client-facing guard: loopback, unspecified, link-local (IMDS
 /// included), multicast, broadcast and every address currently assigned to
@@ -30,7 +29,7 @@ impl TargetGuard {
     #[must_use]
     pub fn blocks(&self, ip: IpAddr) -> bool {
         let ip = canonical_ip(ip);
-        is_never_a_destination(ip) || is_link_local(ip) || self.local.contains(&ip)
+        SpecialAddress::of(ip) != SpecialAddress::Ordinary || self.local.contains(&ip)
     }
 }
 
@@ -45,31 +44,13 @@ pub struct UpstreamGuard;
 impl UpstreamGuard {
     #[must_use]
     pub fn blocks(self, ip: IpAddr) -> bool {
-        let ip = canonical_ip(ip);
-        let imds = match ip {
-            IpAddr::V4(v4) => v4 == IMDS_V4,
-            IpAddr::V6(v6) => v6 == IMDS_V6,
-        };
-        imds || is_loopback_unspecified_or_multicast(ip)
-    }
-}
-
-fn is_never_a_destination(ip: IpAddr) -> bool {
-    let broadcast = matches!(ip, IpAddr::V4(v4) if v4.is_broadcast());
-    broadcast || is_loopback_unspecified_or_multicast(ip)
-}
-
-fn is_loopback_unspecified_or_multicast(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_loopback() || v4.octets()[0] == 0 || v4.is_multicast(),
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
-    }
-}
-
-fn is_link_local(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_link_local(),
-        IpAddr::V6(v6) => v6.segments()[0] & 0xffc0 == 0xfe80 || v6 == IMDS_V6,
+        matches!(
+            SpecialAddress::of(canonical_ip(ip)),
+            SpecialAddress::Imds
+                | SpecialAddress::Loopback
+                | SpecialAddress::Unspecified
+                | SpecialAddress::Multicast
+        )
     }
 }
 

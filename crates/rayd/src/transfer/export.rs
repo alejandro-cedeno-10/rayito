@@ -16,29 +16,24 @@ use bytes::Bytes;
 use rayd_core::filesystem::SnapshotFile;
 use rayd_core::transfer::{
     DoneOutcome, EXPORT_CHUNK_BYTES, EXPORT_CHUNK_QUEUE, ExportTarget, FailureReason, HttpError,
-    HttpErrorKind, PartRange, PutOutcome, RequestBody, SignedHttp, TRANSFER_REQUEST_RETRIES,
-    TransferDirection, TransferFailure, TransferId, put_part,
+    HttpErrorKind, PartRange, PlannedPart, PutOutcome, RequestBody, RequestRetries, RetryDecision,
+    SignedHttp, TransferDirection, TransferFailure, TransferId, lower_hex, put_part,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use super::import::millis;
-use super::manager::{Gate, Interrupt, Interrupts, RecordHandle, TransferContext, lower_hex};
+use super::manager::{
+    Gate, Interrupt, Interrupts, RecordHandle, TaskEnding, TransferContext, publish_ending,
+};
 
 pub(crate) struct ExportJob {
     pub(crate) id: TransferId,
     pub(crate) handle: Arc<RecordHandle>,
     pub(crate) target: ExportTarget,
-    pub(crate) plan: Vec<PartRange>,
+    pub(crate) plan: Vec<PlannedPart>,
     pub(crate) file: Arc<dyn SnapshotFile>,
     pub(crate) size: u64,
-}
-
-enum Ending {
-    Done(Box<DoneOutcome>),
-    Failed(TransferFailure),
-    Cancelled,
-    Terminated,
 }
 
 /// One pass over every part, from a held permit to the last `PUT`.
@@ -51,25 +46,8 @@ enum Pass {
 
 pub(crate) async fn run_export<H: SignedHttp>(context: Arc<TransferContext<H>>, job: ExportJob) {
     let started = Instant::now();
-    let (phase, reason) = match drive(&context, &job).await {
-        Ending::Done(outcome) => {
-            context.hub.apply(&job.id, |registry, now| {
-                registry.finish_done(&job.id, *outcome, now)
-            });
-            ("done", "none")
-        }
-        Ending::Failed(failure) => {
-            context.hub.apply(&job.id, |registry, now| {
-                registry.finish_failed(&job.id, failure, now)
-            });
-            ("failed", failure.reason.token())
-        }
-        Ending::Cancelled => ("cancelled", FailureReason::Cancelled.token()),
-        Ending::Terminated => {
-            context.hub.terminate(&job.id);
-            ("cancelled", "terminating")
-        }
-    };
+    let ending = drive(&context, &job).await;
+    let (phase, reason) = publish_ending(&context.hub, &job.id, ending);
     tracing::info!(
         transfer_id = %job.id,
         direction = TransferDirection::Export.as_str(),
@@ -81,12 +59,12 @@ pub(crate) async fn run_export<H: SignedHttp>(context: Arc<TransferContext<H>>, 
     );
 }
 
-async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ExportJob) -> Ending {
+async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ExportJob) -> TaskEnding {
     loop {
         match context.hub.wait_for_gate(&job.handle.cancel).await {
             Gate::Open => {}
-            Gate::Terminated => return Ending::Terminated,
-            Gate::Cancelled => return Ending::Cancelled,
+            Gate::Terminated => return TaskEnding::Terminated,
+            Gate::Cancelled => return TaskEnding::Cancelled,
         }
         let Some(mut interrupts) = context.hub.interrupts(&context.suspend, &job.handle.cancel)
         else {
@@ -95,10 +73,10 @@ async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ExportJob) -> 
         let permit = tokio::select! {
             acquired = context.hub.permits.clone().acquire_owned() => match acquired {
                 Ok(permit) => permit,
-                Err(_) => return Ending::Cancelled,
+                Err(_) => return TaskEnding::Cancelled,
             },
             interrupt = interrupts.fired() => match interrupt {
-                Interrupt::Cancelled => return Ending::Cancelled,
+                Interrupt::Cancelled => return TaskEnding::Cancelled,
                 Interrupt::Suspended => continue,
             },
         };
@@ -109,14 +87,14 @@ async fn drive<H: SignedHttp>(context: &TransferContext<H>, job: &ExportJob) -> 
             })
             .is_none()
         {
-            return Ending::Cancelled;
+            return TaskEnding::Cancelled;
         }
         let pass = upload(context, job, &mut interrupts).await;
         drop(permit);
         match pass {
-            Pass::Done(outcome) => return Ending::Done(outcome),
-            Pass::Failed(failure) => return Ending::Failed(failure),
-            Pass::Cancelled => return Ending::Cancelled,
+            Pass::Done(outcome) => return TaskEnding::Done(outcome),
+            Pass::Failed(failure) => return TaskEnding::Failed(failure),
+            Pass::Cancelled => return TaskEnding::Cancelled,
             Pass::Suspended => {
                 context
                     .hub
@@ -141,11 +119,8 @@ async fn upload<H: SignedHttp>(
     let mut hasher = Sha256::new();
     let mut part_etags = Vec::new();
     let mut completed = 0u64;
-    for part in &job.plan {
-        let Some(url) = job.target.url(part.number) else {
-            return Pass::Failed(TransferFailure::of(FailureReason::UnexpectedResponse));
-        };
-        let mut retries = 0u32;
+    for PlannedPart { range: part, url } in &job.plan {
+        let mut retries = RequestRetries::default();
         loop {
             let body = SnapshotBody::spawn(job.file.clone(), *part, hasher.clone());
             let (part_hasher, shrank, sent) =
@@ -179,38 +154,43 @@ async fn upload<H: SignedHttp>(
                 transfer_id = %job.id,
                 direction = TransferDirection::Export.as_str(),
                 part = part.number,
-                attempt = retries + 1,
+                attempt = retries.attempt(),
                 http_status = log.http_status,
                 s3_error_code = log.s3_error_code.as_deref(),
                 s3_request_id = log.s3_request_id.as_deref(),
                 "transfer part"
             );
             match outcome {
-                PutOutcome::Stored { etag } => {
+                PutOutcome::Stored => {
                     hasher = part_hasher
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
                         .clone();
-                    if job.target.is_multipart() {
-                        part_etags.push(etag.unwrap_or_default());
-                    }
+                    completed += part.len;
+                    break;
+                }
+                PutOutcome::PartStored { etag } => {
+                    hasher = part_hasher
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone();
+                    part_etags.push(etag);
                     completed += part.len;
                     break;
                 }
                 PutOutcome::Failed(failure) => return Pass::Failed(failure),
-                PutOutcome::Transient if retries >= TRANSFER_REQUEST_RETRIES => {
-                    return Pass::Failed(TransferFailure::of(FailureReason::S3Unavailable));
-                }
-                PutOutcome::Transient => {
-                    retries += 1;
-                    tokio::select! {
-                        () = tokio::time::sleep(context.hub.settings.retry_delay) => {}
-                        interrupt = interrupts.fired() => return match interrupt {
-                            Interrupt::Cancelled => Pass::Cancelled,
-                            Interrupt::Suspended => Pass::Suspended,
-                        },
+                PutOutcome::Transient => match retries.after_transient() {
+                    RetryDecision::GiveUp(failure) => return Pass::Failed(failure),
+                    RetryDecision::Retry => {
+                        tokio::select! {
+                            () = tokio::time::sleep(context.hub.settings.retry_delay) => {}
+                            interrupt = interrupts.fired() => return match interrupt {
+                                Interrupt::Cancelled => Pass::Cancelled,
+                                Interrupt::Suspended => Pass::Suspended,
+                            },
+                        }
                     }
-                }
+                },
             }
         }
     }

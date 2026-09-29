@@ -1,6 +1,7 @@
 """Opciones de conexión de E2B 2.51 (`ApiParams`, `ConnectionConfig`) sobre
-Rayito. Puro salvo `connection_overrides`, que sólo construye objetos
-(el plano compartido y unos `TransportSettings`) sin llamar a AWS.
+Rayito. Puro salvo `bind_control_plane`, la única función que toca AWS
+(construye el plano compartido con `shared_control_plane`); `transport_override`
+y `plane_settings` sólo deciden qué haría falta, sin construirlo.
 
 - `headers` son metadatos gRPC extra en cada RPC, detrás de las cabeceras
   reservadas; los mensajes de error nombran la clave, nunca el valor.
@@ -21,13 +22,19 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, TypedDict
 from urllib.parse import urlsplit
 
 from rayito._aws import ClientSettings, shared_control_plane
 from rayito._transport import TransportSettings
 from rayito.e2b.exceptions import RayitoCompatWarning
 from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    # Sólo para el type hint de `bind_control_plane`: `_compat` importa de
+    # este módulo, así que la importación en tiempo de ejecución sería
+    # circular.
+    from rayito.e2b._compat import NativeCall
 
 
 class ConnectionParams(TypedDict, total=False):
@@ -227,37 +234,50 @@ def merge_bound_params(bound: Mapping[str, Any], call: Mapping[str, Any]) -> dic
     return merged
 
 
-def connection_overrides(
-    settings: ConnectionSettings,
-    *,
-    transport: TransportSettings | None,
-    control_plane: Any | None,
-    session: Any | None,
-    region: str | None,
-    integration: str | None,
-) -> tuple[TransportSettings | None, Any | None]:
-    """El `transport` con los metadatos extra y el proxy del canal, y el
-    plano con reintentos, proxy e integración (uno compartido por
-    `(session, region, settings)`). Sin nada que aplicar devuelve lo dado."""
-    resolved_transport = transport
-    if settings.touches_transport:
-        resolved_transport = dataclasses.replace(
-            transport or TransportSettings(),
-            extra_metadata=settings.headers,
-            http_proxy=settings.proxy,
-        )
+def transport_override(
+    settings: ConnectionSettings, transport: TransportSettings | None
+) -> TransportSettings | None:
+    """El `transport` con los metadatos extra y el proxy del canal aplicados,
+    si `settings` toca el transporte; si no, el `transport` dado, sin tocar."""
+    if not settings.touches_transport:
+        return transport
+    return dataclasses.replace(
+        transport or TransportSettings(), extra_metadata=settings.headers, http_proxy=settings.proxy
+    )
+
+
+def plane_settings(
+    settings: ConnectionSettings, *, control_plane: Any | None, integration: str | None
+) -> ClientSettings | None:
+    """Los `ClientSettings` de un plano compartido que hace falta construir
+    (uno por `(session, region, settings)`, ver `bind_control_plane`), o
+    `None` si `retries`/`proxy`/`integration` no piden ninguno. Con un
+    `control_plane` ya dado y algo que pedir, el conflicto de siempre."""
     if settings.retries is None and settings.proxy is None and integration is None:
-        return resolved_transport, control_plane
+        return None
     if control_plane is not None:
         raise InvalidArgumentException(CONTROL_PLANE_CONFLICT_MESSAGE)
-    plane = shared_control_plane(
-        session,
-        region=region,
-        settings=ClientSettings(
-            retries=settings.retries, proxy=settings.proxy, integration=integration
-        ),
+    return ClientSettings(retries=settings.retries, proxy=settings.proxy, integration=integration)
+
+
+def bind_control_plane(call: NativeCall) -> NativeCall:
+    """El único punto de I/O de este módulo: si la llamada pidió un plano
+    nuevo (`call.plane_settings`), lo construye (o reusa el compartido de su
+    `(session, region, settings)`) y lo añade a los kwargs; si no, `call` tal
+    cual."""
+    if call.plane_settings is None:
+        return call
+    return dataclasses.replace(
+        call,
+        kwargs={
+            **call.kwargs,
+            "control_plane": shared_control_plane(
+                call.kwargs.get("session"),
+                region=call.kwargs.get("region"),
+                settings=call.plane_settings,
+            ),
+        },
     )
-    return resolved_transport, plane
 
 
 class ConnectionConfig:
@@ -300,6 +320,32 @@ class ConnectionConfig:
     @classmethod
     def current_integration(cls) -> str | None:
         return ConnectionConfig._integration
+
+    @classmethod
+    def _snapshot(
+        cls,
+        *,
+        request_timeout: float | None,
+        retries: int | None,
+        headers: Mapping[str, str],
+        proxy: str | None,
+        logger: logging.Logger | None,
+        region: str | None,
+        integration: str | None,
+    ) -> ConnectionConfig:
+        """El `connection_config` de un sandbox: como `cls(...)` pero con la
+        integración vigente *al construirlo* (no la de `set_integration` en
+        el instante en que alguien lea la propiedad después)."""
+        config = cls(
+            request_timeout=request_timeout,
+            retries=retries,
+            headers=headers,
+            proxy=proxy,
+            logger=logger,
+            region=region,
+        )
+        config._integration_snapshot = integration
+        return config
 
     @property
     def request_timeout(self) -> float:
@@ -353,13 +399,12 @@ def snapshot_config(
 ) -> ConnectionConfig:
     """El `connection_config` de un sandbox: lo dado en create/connect más
     la región nativa y la integración vigente al crearlo."""
-    config = ConnectionConfig(
+    return ConnectionConfig._snapshot(
         request_timeout=settings.request_timeout,
         retries=settings.retries,
         headers=dict(settings.headers),
         proxy=settings.proxy,
         logger=logger,
         region=region,
+        integration=integration,
     )
-    config._integration_snapshot = integration
-    return config

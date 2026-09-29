@@ -169,63 +169,40 @@ pub use unsupported::{install_imds_block, probe_root, rule_present};
 
 #[cfg(unix)]
 mod unix {
+    use rayd_core::network::Family;
     use tokio::net::TcpStream;
 
     use super::{
         IMDS_ADDRESS, IMDS_ADDRESS_V6, IMDS_PORT, IMDS_ROUTE_TABLE, IMDS_RULE_PRIORITY, ImdsBlock,
         ROOT_CONNECT_TIMEOUT, SANDBOX_UID_RANGE, route_signature, rule_signature,
     };
-    use crate::adapters::ip_command::{IpOutput, run_ip};
+    use crate::adapters::ip_command::{IpOutput, family_flag, run_ip_for};
 
-    #[derive(Debug, Clone, Copy)]
-    enum Family {
-        V4,
-        V6,
-    }
-
-    impl Family {
-        fn flag(self) -> &'static str {
-            match self {
-                Self::V4 => "-4",
-                Self::V6 => "-6",
-            }
-        }
-
-        fn prefix(self) -> String {
-            match self {
-                Self::V4 => format!("{IMDS_ADDRESS}/32"),
-                Self::V6 => format!("{IMDS_ADDRESS_V6}/128"),
-            }
-        }
-
-        fn blackhole_signature(self) -> String {
-            match self {
-                Self::V4 => route_signature(),
-                Self::V6 => format!("blackhole {IMDS_ADDRESS_V6}"),
-            }
+    fn prefix(family: Family) -> String {
+        match family {
+            Family::V4 => format!("{IMDS_ADDRESS}/32"),
+            Family::V6 => format!("{IMDS_ADDRESS_V6}/128"),
         }
     }
 
-    /// Runs `ip <family> <args>` through the shared runner; stdout comes
-    /// back for the `show` checks, stderr is discarded.
-    async fn ip(family: Family, args: &[&str]) -> Result<IpOutput, String> {
-        let mut full = Vec::with_capacity(args.len() + 1);
-        full.push(family.flag());
-        full.extend_from_slice(args);
-        run_ip(&full).await
+    fn blackhole_signature(family: Family) -> String {
+        match family {
+            Family::V4 => route_signature(),
+            Family::V6 => format!("blackhole {IMDS_ADDRESS_V6}"),
+        }
     }
 
     async fn rule_installed(family: Family) -> bool {
         matches!(
-            ip(family, &["rule", "show"]).await,
+            run_ip_for(family, &["rule", "show"]).await,
             Ok(completed) if completed.code == 0 && completed.stdout.contains(&rule_signature())
         )
     }
 
     async fn route_installed(family: Family) -> bool {
-        let signature = family.blackhole_signature();
+        let signature = blackhole_signature(family);
         matches!(
-            ip(family, &["route", "show", "table", IMDS_ROUTE_TABLE]).await,
+            run_ip_for(family, &["route", "show", "table", IMDS_ROUTE_TABLE]).await,
             Ok(completed) if completed.code == 0 && completed.stdout.contains(&signature)
         )
     }
@@ -245,9 +222,9 @@ mod unix {
                 "priority",
                 IMDS_RULE_PRIORITY,
             ];
-            expect_success(family, "rule add", &ip(family, &rule).await?)?;
+            expect_success(family, "rule add", &run_ip_for(family, &rule).await?)?;
         }
-        let prefix = family.prefix();
+        let prefix = prefix(family);
         let route = [
             "route",
             "replace",
@@ -256,7 +233,7 @@ mod unix {
             "table",
             IMDS_ROUTE_TABLE,
         ];
-        expect_success(family, "route replace", &ip(family, &route).await?)
+        expect_success(family, "route replace", &run_ip_for(family, &route).await?)
     }
 
     fn expect_success(family: Family, step: &str, completed: &IpOutput) -> Result<(), String> {
@@ -265,7 +242,7 @@ mod unix {
         } else {
             Err(format!(
                 "ip {} {step} exit {}",
-                family.flag(),
+                family_flag(family),
                 completed.code
             ))
         }
@@ -377,6 +354,13 @@ mod tests {
         assert!(USER_PROBE_CODE.contains("sys.exit(1)"));
         assert!(USER_PROBE_CODE.contains(IMDS_ADDRESS));
         assert!(!USER_PROBE_CODE.contains("security-credentials"));
+    }
+
+    #[test]
+    fn the_imds_strings_are_the_core_numbers() {
+        use rayd_core::network::route_plan::{IMDS_PRIORITY, IMDS_TABLE};
+        assert_eq!(IMDS_ROUTE_TABLE, IMDS_TABLE.to_string());
+        assert_eq!(IMDS_RULE_PRIORITY, IMDS_PRIORITY.to_string());
     }
 
     #[test]

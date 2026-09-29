@@ -48,7 +48,9 @@ impl TransferId {
     }
 }
 
-fn lower_hex(bytes: &[u8]) -> String {
+/// Lowercase hex of `bytes` (transfer ids, digests).
+#[must_use]
+pub fn lower_hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     bytes
         .iter()
@@ -612,6 +614,18 @@ mod tests {
 
     fn cancelled() -> TransferFailure {
         TransferFailure::of(FailureReason::Cancelled)
+    }
+
+    #[test]
+    fn lower_hex_writes_two_lowercase_digits_per_byte() {
+        let every: Vec<u8> = (0..=u8::MAX).collect();
+        let expected = every.iter().fold(String::new(), |mut out, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02x}");
+            out
+        });
+        assert_eq!(lower_hex(&every), expected);
+        assert_eq!(lower_hex(&[]), "");
     }
 
     #[test]

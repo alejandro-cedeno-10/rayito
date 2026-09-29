@@ -18,16 +18,17 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rayd_core::lifecycle::HookPhase;
+use rayd_core::lifecycle::{Hook, HookPhase};
 use rayd_core::network::probe::{
-    blackhole_count, classify_route_get, policy_rule_priorities, samples,
+    VerifyFailure, check_rules, check_sample, check_table, expected_rule_priorities,
+    requires_proxy_connect, samples, verification_ipv6,
 };
 use rayd_core::network::route_plan::managed_families;
 use rayd_core::network::{
-    DnsGuardStep, EgressEnforcement, EgressMode, EgressPolicy, NetworkError, NetworkSnapshot,
-    PlannedStep, PolicyInput, RoutePlan, RouteStep, Slot, TargetGuard, egress_proxy_env,
-    plan_dns_guard_install, plan_dns_guard_remove, plan_dns_guard_rollback, plan_recovery,
-    plan_swap,
+    DnsGuardStep, EgressEnforcement, EgressPolicy, Installation, NetworkError, NetworkSnapshot,
+    PlannedStep, PolicyInput, RESUME_VERIFY_BUDGET, RUN_ENFORCE_BUDGET, RoutePlan, RouteStep,
+    TargetGuard, egress_proxy_env, plan_dns_guard_install, plan_dns_guard_remove,
+    plan_dns_guard_rollback, plan_recovery, plan_swap,
 };
 use rayd_core::session::SandboxSession;
 use tokio::net::TcpStream;
@@ -39,18 +40,10 @@ use crate::adapters::egress_routes::{EgressRoutes, IpEgressRoutes};
 /// The proxy self-connect of a proxy-only verification.
 const PROXY_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// What is installed right now. `slot` holds the rules of `plan`.
+/// What is installed right now: the domain state and the running proxy.
 struct Installed {
-    policy: EgressPolicy,
-    plan: Option<RoutePlan>,
-    slot: Option<Slot>,
+    state: Installation,
     proxy: Option<LocalProxy>,
-    /// Egress option A (ADR-012 addendum, `SECURITY.md` T17): whether the
-    /// DNS block for uid ≥ 1000 is installed. Tracked apart from `plan`
-    /// because it survives `plan` changing to another deny-all policy
-    /// (nothing to redo) and only moves when denying-all itself starts or
-    /// stops.
-    dns_guard: bool,
 }
 
 /// Clears the session's `egress_settling` when the `/run` deny-all task
@@ -96,11 +89,8 @@ impl NetworkManager {
             net_admin,
             seams,
             installed: tokio::sync::Mutex::new(Installed {
-                policy: EgressPolicy::default(),
-                plan: None,
-                slot: None,
+                state: Installation::default(),
                 proxy: None,
-                dns_guard: false,
             }),
         })
     }
@@ -138,6 +128,47 @@ impl NetworkManager {
     /// and `Resumed` are served; the refusing phase comes back.
     pub fn phase_gate(&self) -> Result<(), HookPhase> {
         self.session.stream_gate()
+    }
+
+    /// The `/run` egress use case (ADR-012): with `network.enforce`,
+    /// deny-all is installed and verified before the hook answers, so no
+    /// user code runs unprotected, and the kernel rotation that follows
+    /// already gets the proxy variables. The work outlives an expired
+    /// sub-budget (enforcement stays `None` and `Health` not ready until it
+    /// settles); the hook answers 200 either way.
+    pub async fn on_run(self: &Arc<Self>) {
+        if !self.session.network_enforce() {
+            return;
+        }
+        if !self.net_admin {
+            tracing::warn!(reason = "no CAP_NET_ADMIN", "egress_enforce_unavailable");
+            self.session.egress_settled();
+            return;
+        }
+        let enforced =
+            tokio::time::timeout(RUN_ENFORCE_BUDGET, self.enforce_deny_all_at_run()).await;
+        if let Ok(enforcement) = enforced {
+            tracing::info!(hook = %Hook::Run, enforcement = enforcement.as_str(), "egress enforced");
+        } else {
+            tracing::warn!(step = "budget", "egress_enforce_failed");
+        }
+    }
+
+    /// The `/resume` egress use case: the installed policy is re-verified
+    /// synchronously. An expired sub-budget reports `None` (the SDK sees it
+    /// in `Health`) and the hook still answers 200: a non-200 hook answer
+    /// is never used. The re-verification task keeps running and may still
+    /// publish after that `None` (reported, not changed here).
+    pub async fn on_resume(self: &Arc<Self>) {
+        let verified =
+            tokio::time::timeout(RESUME_VERIFY_BUDGET, self.reverify_after_resume()).await;
+        if verified.is_err() {
+            self.session.set_egress_enforcement(EgressEnforcement::None);
+            tracing::warn!(
+                budget_ms = u64::try_from(RESUME_VERIFY_BUDGET.as_millis()).unwrap_or(u64::MAX),
+                "egress_resume_verify_timeout"
+            );
+        }
     }
 
     /// `/run` with `network.enforce`: local proxy up, deny-all installed and
@@ -192,7 +223,7 @@ impl NetworkManager {
     async fn update_locked(&self, policy: EgressPolicy) -> Result<NetworkSnapshot, NetworkError> {
         let mut installed = self.installed.lock().await;
         if !self.net_admin {
-            installed.policy = policy;
+            installed.state.set_policy_only(policy);
             self.session.set_egress_enforcement(EgressEnforcement::None);
             return Ok(self.snapshot_of(&installed));
         }
@@ -214,7 +245,7 @@ impl NetworkManager {
 
     fn snapshot_of(&self, installed: &Installed) -> NetworkSnapshot {
         NetworkSnapshot::of(
-            &installed.policy,
+            installed.state.policy(),
             self.enforcement(),
             installed.proxy.as_ref().map(LocalProxy::port),
         )
@@ -232,7 +263,11 @@ impl NetworkManager {
 
     async fn reverify_locked(&self) -> EgressEnforcement {
         let mut installed = self.installed.lock().await;
-        if !self.net_admin || (installed.slot.is_none() && installed.proxy.is_none()) {
+        if !self.net_admin
+            || installed
+                .state
+                .nothing_to_reverify(installed.proxy.is_some())
+        {
             return self.enforcement();
         }
         let Ok(local) = self.routes.local_addresses().await else {
@@ -243,15 +278,11 @@ impl NetworkManager {
         if self.verify_and_publish(&installed).await {
             return self.enforcement();
         }
-        let plan = installed
-            .plan
-            .clone()
-            .unwrap_or_else(|| RoutePlan::deny_all(self.routes.ipv6_present()));
+        let plan = installed.state.reinstall_plan(self.routes.ipv6_present());
         let reinstalled = self.run_planned(&plan_recovery(&plan)).await;
-        installed.slot = Some(Slot::A);
-        installed.plan = Some(plan);
+        installed.state.after_reinstall(plan);
         if reinstalled.is_ok() {
-            let want = wants_dns_guard(installed.plan.as_ref(), self.routes.ipv6_present());
+            let want = installed.state.wants_dns_guard(self.routes.ipv6_present());
             self.ensure_dns_guard(&mut installed, want).await;
         }
         if reinstalled.is_ok() && self.verify_and_publish(&installed).await {
@@ -280,22 +311,20 @@ impl NetworkManager {
                 .await
                 .map_err(ApplyError::Refused)?;
         }
-        let swap = plan_swap(installed.slot, plan.as_ref(), ipv6);
+        let swap = plan_swap(installed.state.slot(), plan.as_ref(), ipv6);
         if let Err(step) = self.run_steps(&swap.fill).await {
             let _ = self.run_steps(&swap.rollback()).await;
             tracing::warn!(step, "egress_update_failed");
             return Err(ApplyError::RolledBack(step));
         }
         let committed = self.run_steps(&swap.commit).await;
-        installed.slot = swap.next_slot;
-        installed.plan = plan;
-        installed.policy = policy;
+        installed.state.after_swap(policy, plan, swap.next_slot);
         publish_proxy_policy(installed, &local);
         if let Err(step) = committed {
             tracing::warn!(step, "egress_update_failed");
             return Err(ApplyError::Broken(NetworkError::InstallFailed { step }));
         }
-        let want_dns_guard = wants_dns_guard(installed.plan.as_ref(), ipv6);
+        let want_dns_guard = installed.state.wants_dns_guard(ipv6);
         self.ensure_dns_guard(installed, want_dns_guard).await;
         if !self.verify_and_publish(installed).await {
             return Err(ApplyError::Broken(NetworkError::VerifyFailed));
@@ -313,7 +342,7 @@ impl NetworkManager {
             return Ok(());
         }
         let initial = ProxyPolicy {
-            policy: installed.policy.clone(),
+            policy: installed.state.policy().clone(),
             guard: TargetGuard::new(local.iter().copied()),
         };
         let proxy = LocalProxy::start(initial, self.seams.clone())
@@ -327,14 +356,12 @@ impl NetworkManager {
         Ok(())
     }
 
-    /// Emergency deny-all, both slots cleared, deny-all in slot `A`,
+    /// Emergency deny-all, both slots cleared, deny-all in `RECOVERY_SLOT`,
     /// verified; `None` when any of it fails.
     async fn recover(&self, installed: &mut Installed) {
         let deny_all = RoutePlan::deny_all(self.routes.ipv6_present());
         let recovered = self.run_planned(&plan_recovery(&deny_all)).await;
-        installed.policy = EgressPolicy::deny_all();
-        installed.plan = Some(deny_all);
-        installed.slot = Some(Slot::A);
+        installed.state.after_recovery(deny_all);
         let local = self.routes.local_addresses().await.unwrap_or_default();
         publish_proxy_policy(installed, &local);
         if let Err(step) = recovered {
@@ -351,7 +378,7 @@ impl NetworkManager {
 
     /// Egress option A (ADR-012 addendum, `SECURITY.md` T17): installs or
     /// removes the DNS block for uid ≥ 1000, best effort. Failures are
-    /// logged and leave `installed.dns_guard` at its previous value (so
+    /// logged and leave the installation's `dns_guard` at its previous value (so
     /// the next transition retries); they never fail the caller, matching
     /// the in-guest enforcement's own "best effort" framing (`ip rule
     /// ipproto`/`dport` support, or the underlying routes/proxy, are the
@@ -359,7 +386,7 @@ impl NetworkManager {
     /// rolled back to the exact pre-install state; a failed removal is left
     /// as-is, always a safe (if over-blocking) intermediate step.
     async fn ensure_dns_guard(&self, installed: &mut Installed, want: bool) {
-        if installed.dns_guard == want {
+        if installed.state.dns_guard() == want {
             return;
         }
         let families = managed_families(self.routes.ipv6_present());
@@ -384,7 +411,7 @@ impl NetworkManager {
                 }
             }
         }
-        installed.dns_guard = want;
+        installed.state.set_dns_guard(want);
         tracing::info!(installed = want, "egress_dns_guard_applied");
     }
 
@@ -412,7 +439,7 @@ impl NetworkManager {
     async fn verify_and_publish(&self, installed: &Installed) -> bool {
         let verdict = self.verify(installed).await;
         let enforcement = match verdict {
-            Ok(_) => EgressEnforcement::verified(installed.policy.mode()),
+            Ok(_) => EgressEnforcement::verified(installed.state.policy().mode()),
             Err(_) => EgressEnforcement::None,
         };
         self.session.set_egress_enforcement(enforcement);
@@ -429,22 +456,18 @@ impl NetworkManager {
     }
 
     async fn verify(&self, installed: &Installed) -> Result<usize, &'static str> {
-        let ipv6 = installed
-            .plan
-            .as_ref()
-            .map_or_else(|| self.routes.ipv6_present(), RoutePlan::ipv6);
-        let expected: Vec<u32> = installed.slot.map(Slot::priority).into_iter().collect();
+        let state = &installed.state;
+        let ipv6 = verification_ipv6(state.plan(), self.routes.ipv6_present());
+        let expected = expected_rule_priorities(state.slot());
         for family in managed_families(ipv6) {
             let rules = self
                 .routes
                 .show_rules(*family)
                 .await
-                .map_err(|_| "rule_show")?;
-            if policy_rule_priorities(&rules) != expected {
-                return Err("rule");
-            }
+                .map_err(|_| VerifyFailure::RuleShow.as_str())?;
+            check_rules(&expected, &rules).map_err(VerifyFailure::as_str)?;
         }
-        let (Some(plan), Some(slot)) = (&installed.plan, installed.slot) else {
+        let (Some(plan), Some(slot)) = (state.plan(), state.slot()) else {
             return Ok(0);
         };
         for family in plan.families() {
@@ -452,55 +475,39 @@ impl NetworkManager {
                 .routes
                 .show_table(*family, slot.table())
                 .await
-                .map_err(|_| "table_show")?;
-            if blackhole_count(&table) != plan.prefixes(*family).len() {
-                return Err("table");
-            }
+                .map_err(|_| VerifyFailure::TableShow.as_str())?;
+            check_table(plan, *family, &table).map_err(VerifyFailure::as_str)?;
         }
-        let expectations = samples(&installed.policy, plan);
+        let expectations = samples(state.policy(), plan);
         for (destination, expected) in &expectations {
             let (code, stdout) = self
                 .routes
                 .route_get(*destination)
                 .await
-                .map_err(|_| "route_get")?;
-            if classify_route_get(code, &stdout) != *expected {
-                return Err("sample");
-            }
+                .map_err(|_| VerifyFailure::RouteGet.as_str())?;
+            check_sample(*expected, code, &stdout).map_err(VerifyFailure::as_str)?;
         }
-        if installed.policy.mode() == EgressMode::ProxyOnly {
+        if requires_proxy_connect(state.policy()) {
             let port = installed
                 .proxy
                 .as_ref()
                 .map(LocalProxy::port)
-                .ok_or("proxy")?;
+                .ok_or(VerifyFailure::Proxy.as_str())?;
             let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
             let connected =
                 tokio::time::timeout(PROXY_PROBE_TIMEOUT, TcpStream::connect(target)).await;
             if !matches!(connected, Ok(Ok(_))) {
-                return Err("proxy");
+                return Err(VerifyFailure::Proxy.as_str());
             }
         }
         Ok(expectations.len())
     }
 }
 
-/// Egress option A applies exactly under "deny-all" (`SECURITY.md` T17):
-/// every family the guest manages has nothing left to allow through
-/// directly.
-fn wants_dns_guard(plan: Option<&RoutePlan>, ipv6: bool) -> bool {
-    let Some(plan) = plan else {
-        return false;
-    };
-    managed_families(ipv6)
-        .iter()
-        .all(|family| plan.denies_all(*family))
-}
-
 fn publish_proxy_policy(installed: &Installed, local: &[IpAddr]) {
     if let Some(proxy) = &installed.proxy {
         proxy.set_policy(ProxyPolicy {
-            policy: installed.policy.clone(),
+            policy: installed.state.policy().clone(),
             guard: TargetGuard::new(local.iter().copied()),
         });
     }
@@ -511,16 +518,24 @@ fn step_name(error: &NetworkError) -> &'static str {
         NetworkError::InstallFailed { step } => step,
         NetworkError::VerifyFailed => "verify",
         NetworkError::NoNetAdmin => "no_net_admin",
-        _ => "plan",
+        NetworkError::InvalidEntry { .. }
+        | NetworkError::HostnameInDenyOut { .. }
+        | NetworkError::TooManyEntries { .. }
+        | NetworkError::TooManyHostnames
+        | NetworkError::PolicyTooComplex
+        | NetworkError::InvalidProxyAddress
+        | NetworkError::InvalidProxyCredentials
+        | NetworkError::ProxyForbiddenAddress
+        | NetworkError::ProxyUnresolvable => "plan",
     }
 }
 
 fn log_applied(installed: &Installed, elapsed: Duration) {
-    let policy = &installed.policy;
+    let policy = installed.state.policy();
     let routes = |family| {
         installed
-            .plan
-            .as_ref()
+            .state
+            .plan()
             .map_or(0, |plan| plan.prefixes(family).len())
     };
     tracing::info!(

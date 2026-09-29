@@ -13,7 +13,6 @@ import {
   InvalidArgumentError,
   NotFoundError,
   SandboxError,
-  SandboxNotFoundError,
   SandboxStateError,
   TimeoutError,
 } from "../errors.js";
@@ -35,21 +34,16 @@ import {
   type StartRequest,
   StartRequestSchema,
 } from "../gen/rayito/v1/process_pb.js";
-import { SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { CommandResult, OutputChunk, ProcessInfo, SandboxMetrics } from "../models.js";
 import { validatedEnvs } from "../payload.js";
-import {
-  isStreamReset,
-  sandboxTimeoutError,
-  translateRpcError,
-  translateStreamError,
-} from "../transport/errors.js";
+import { sandboxTimeoutError, translateStreamError } from "../transport/errors.js";
 import { type OpenedStream, type SandboxCore, type StreamStarter, withTimeout } from "./core.js";
 import { ReconnectBudget } from "./readiness.js";
 
+export { STREAM_PROBE_TIMEOUT_MS, streamFailureError } from "./stream-errors.js";
+
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 export const STREAM_DEADLINE_GRACE_MS = 5000;
-export const STREAM_PROBE_TIMEOUT_MS = 5000;
 export const SIGKILL = 9;
 export const SHELL = "/bin/bash";
 export const SHELL_ARGS = ["-l", "-c"] as const;
@@ -530,39 +524,6 @@ export function metricsFromProto(response: MetricsResponse): SandboxMetrics {
     timestamp: new Date(Number(response.timestampUnixMs)),
     memCacheBytes: Number(response.memCacheBytes),
   });
-}
-
-/**
- * Clasifica un fallo de stream con lo que el sandbox ya averiguó: si no es
- * un reset, la tabla unaria; si `Health` respondió, el sandbox vive y el
- * cliente puede reengancharse; si no, el estado de `get-microvm` decide.
- */
-export function streamFailureError(
-  error: ConnectError,
-  options: { readonly healthOk: boolean; readonly state: string | undefined },
-): Error {
-  if (!isStreamReset(error)) {
-    return translateRpcError(error);
-  }
-  const base = { grpcCode: error.code, cause: error };
-  const detail = error.rawMessage;
-  if (options.healthOk) {
-    return new SandboxError(
-      `stream cortado (${detail}) pero el sandbox responde; reconecta con commands.connect(pid)`,
-      base,
-    );
-  }
-  const state = options.state;
-  if (state !== undefined && TERMINAL_STATES.has(state)) {
-    return new SandboxNotFoundError(`el sandbox está ${state}: stream cortado (${detail})`, base);
-  }
-  if (state !== undefined && SUSPENDED_STATES.has(state)) {
-    return new SandboxStateError(`el sandbox está ${state}: stream cortado (${detail})`, base);
-  }
-  return new SandboxError(
-    `stream cortado (${detail}) y el agente no responde (estado ${state ?? "desconocido"})`,
-    base,
-  );
 }
 
 // ------------------------------------------------------------------ commands

@@ -24,7 +24,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use super::PROXY_HEAD_MAX_BYTES;
-use super::policy::parse_port;
+use super::policy::{DenyReason, parse_port};
 
 pub const SOCKS_VERSION: u8 = 0x05;
 pub const SOCKS_METHOD_NO_AUTH: u8 = 0x00;
@@ -55,6 +55,44 @@ impl HttpRequestError {
         match self {
             Self::Malformed | Self::UnsupportedTarget => HttpStatus::BadRequest,
             Self::HeadTooLarge => HttpStatus::HeaderFieldsTooLarge,
+        }
+    }
+}
+
+/// Why the proxy could not reach a target: the client-visible reply of
+/// each failure, for both front ends. Classifying an I/O error into one
+/// of these stays in the adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectFailure {
+    Denied(DenyReason),
+    Unresolved,
+    Refused,
+    Unreachable,
+    TimedOut,
+    Upstream,
+}
+
+impl ConnectFailure {
+    #[must_use]
+    pub fn http_status(self) -> HttpStatus {
+        match self {
+            Self::Denied(DenyReason::Invalid) => HttpStatus::BadRequest,
+            Self::Denied(_) => HttpStatus::Forbidden,
+            Self::TimedOut => HttpStatus::GatewayTimeout,
+            Self::Unresolved | Self::Refused | Self::Unreachable | Self::Upstream => {
+                HttpStatus::BadGateway
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn socks_reply(self) -> SocksReply {
+        match self {
+            Self::Denied(_) => SocksReply::NotAllowedByRuleset,
+            Self::Unresolved | Self::Unreachable => SocksReply::HostUnreachable,
+            Self::Refused => SocksReply::ConnectionRefused,
+            Self::TimedOut => SocksReply::TtlExpired,
+            Self::Upstream => SocksReply::GeneralFailure,
         }
     }
 }
@@ -486,6 +524,55 @@ pub fn decode_client_connect_reply(buffer: &[u8]) -> Result<Option<usize>, Upstr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_connect_failure_has_its_http_status_and_socks_reply() {
+        for (failure, status, reply) in [
+            (
+                ConnectFailure::Denied(DenyReason::Invalid),
+                HttpStatus::BadRequest,
+                SocksReply::NotAllowedByRuleset,
+            ),
+            (
+                ConnectFailure::Denied(DenyReason::Policy),
+                HttpStatus::Forbidden,
+                SocksReply::NotAllowedByRuleset,
+            ),
+            (
+                ConnectFailure::Denied(DenyReason::Guard),
+                HttpStatus::Forbidden,
+                SocksReply::NotAllowedByRuleset,
+            ),
+            (
+                ConnectFailure::Unresolved,
+                HttpStatus::BadGateway,
+                SocksReply::HostUnreachable,
+            ),
+            (
+                ConnectFailure::Refused,
+                HttpStatus::BadGateway,
+                SocksReply::ConnectionRefused,
+            ),
+            (
+                ConnectFailure::Unreachable,
+                HttpStatus::BadGateway,
+                SocksReply::HostUnreachable,
+            ),
+            (
+                ConnectFailure::TimedOut,
+                HttpStatus::GatewayTimeout,
+                SocksReply::TtlExpired,
+            ),
+            (
+                ConnectFailure::Upstream,
+                HttpStatus::BadGateway,
+                SocksReply::GeneralFailure,
+            ),
+        ] {
+            assert_eq!(failure.http_status(), status, "{failure:?}");
+            assert_eq!(failure.socks_reply(), reply, "{failure:?}");
+        }
+    }
 
     fn connect(target: &str) -> Result<HttpProxyRequest, HttpRequestError> {
         parse_http_request(
