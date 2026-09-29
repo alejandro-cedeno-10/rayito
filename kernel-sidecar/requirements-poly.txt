@@ -12,6 +12,13 @@
 #     --python-platform aarch64-manylinux_2_28 --python-version 3.12 \
 #     --generate-hashes --no-header --no-annotate \
 #     requirements-poly.txt -o requirements-poly.txt
+# `-r requirements.txt` (added by hand after compiling) makes the file a
+# closed, fully hashed set on its own: pip-audit 2.10.1 resolves hashed
+# files through `pip install --dry-run` even with `--no-deps`, and
+# bash_kernel's ipykernel dependency must then be pinned and hashed in the
+# same input. In the image those pins are already installed by the previous
+# layer, so the poly layer only adds the four pins below.
+-r requirements.txt
 bash_kernel==0.10.0 \
     --hash=sha256:2ed5a0a416c418d1d751e71505bd6c889e12157444b50c4287a685da775c28ca \
     --hash=sha256:da28513230f5307c7a49e87352366304dc52b66faa207d6caed1b2bdec03c1fa

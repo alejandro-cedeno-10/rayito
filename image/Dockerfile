@@ -117,7 +117,8 @@ RUN chmod -R a+rX /opt/rayito/sidecar \
 # marcador:
 #   - instala bash_kernel con los pines de requirements-poly.txt, clavados
 #     por hash igual que requirements.txt (C-12: --require-hashes --no-deps
-#     --only-binary=:all:);
+#     --only-binary=:all:); el fichero incluye `-r requirements.txt`, cuyos
+#     pines ya instaló la capa anterior, así que sólo añade los suyos;
 #   - descarga Deno 2.9.7 (aarch64-unknown-linux-gnu, un único binario sin
 #     npm, node-gyp ni zeromq, que corre sobre la glibc 2.34 de la imagen,
 #     AWS_API_NOTES.md Q61), fijado por versión exacta y sha256, verificado

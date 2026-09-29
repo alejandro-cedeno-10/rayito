@@ -195,6 +195,26 @@ for `requirements-poly.txt`). CI's `audit` job runs on `ubuntu-24.04`, where
 runs (`--no-deps --strict`, no `--disable-pip`) is unaffected by this local
 artefact.
 
+**`requirements-poly.txt` includes `-r requirements.txt` (found by the PR's
+CI `audit` job, not assumed)**: once a requirements file carries hashes,
+pip-audit 2.10.1 resolves it through `pip install --dry-run` in
+`--require-hashes` mode even with `--no-deps`, so every transitive
+dependency must be pinned and hashed *in the same input*. The four poly pins
+alone fail on Linux because `bash_kernel` requires `ipykernel`, which lives
+in `requirements.txt`. Instead of duplicating ipykernel's closure (a second
+copy of ~30 pins for Dependabot to keep in sync), the poly file now starts
+with `-r requirements.txt`, making it a closed, fully hashed set. No version
+changes: in the image the previous layer already installed every
+`requirements.txt` pin, so the poly layer's `pip install --require-hashes
+--no-deps -r requirements-poly.txt` reports them as already satisfied and
+only adds the four poly pins; CI's `uv run --with-requirements
+requirements.txt --with-requirements requirements-poly.txt` sees identical
+duplicate pins. `check_pins.py`'s requirements gate only inspects
+`name==version` lines, so the `-r` line is neither a finding nor needs a
+hash. Verified in the Linux (aarch64, Python 3.12) VM: `uvx
+pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps
+--strict` → `No known vulnerabilities found`.
+
 ## D5 — C-12: `scripts/check_pins.py` gate 5
 
 Two related checks, wired into `findings_for` next to gates 3 (Dockerfile

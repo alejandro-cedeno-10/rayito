@@ -65,6 +65,17 @@ registry.
 > install --dry-run --require-hashes --no-deps --only-binary=:all: -r
 > requirements.txt` (venv Python 3.12 real): resuelve y valida los 55
 > paquetes sin ningún hash ausente; lo mismo para `-poly` (4 paquetes).
+>
+> **Corrección tras CI.** El job `dependency audit` del PR falló en Linux:
+> con hashes, pip-audit resuelve `requirements-poly.txt` con `pip install
+> --dry-run` en modo `--require-hashes` y `ipykernel` (dependencia de
+> `bash_kernel`) no estaba en ese fichero.
+
+- [x] 2.7 `requirements-poly.txt` empieza por `-r requirements.txt` (conjunto
+      cerrado y con hashes; sin cambiar versiones; design.md D4). `uvx
+      pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps
+      --strict` en la VM Linux aarch64 (Python 3.12): **"No known
+      vulnerabilities found"**
 
 ## 3. [C-10] `release.yml` build/publish split
 
