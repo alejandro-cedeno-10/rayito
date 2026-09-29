@@ -1140,8 +1140,8 @@ documentación publicada afirma algo que el código no hace.
 | C-04 | `Health` anónimo entrega `metadata` al propio sandbox | menor | **Arreglar ahora** T4 y `docs/site/docs/security.md`. **Aceptar** el conjunto de campos: partirlo rompe la sonda de readiness y el contrato del `.proto` 0.2.0 | ✔ §9 |
 | C-08 | `RAYITO_ACCESS_TOKEN` compartido por `create()` | menor | **Arreglar ahora** `concepts.md:115` y T4, más un `logger.warning` de una sola vez. El opt-out del servidor MCP, en M8 | ✔ §9 |
 | C-09 | `CallerPolicy` con verbos de imagen | menor | **Arreglar ahora**: la frase de `SECURITY.md:85` (es la política del *publicador*) y quitar `lambda:DeleteMicrovmImage`, que no usa nadie. Acotar el recurso a imágenes nombradas y el split runtime/publicador, en M8 | ✔ §9 |
-| C-10 | Scripts de ciclo de vida de npm junto al token OIDC | menor | **M8**: separar build y publish (misma corrección que el residuo de H-02). `.npmrc` con `ignore-scripts=true` es barato pero por sí solo es cosmético | — |
-| C-12 | `pip install` sin `--require-hashes` en la imagen | menor | **M8**: regenerar los dos ficheros de pines con `--generate-hashes` y añadir `--require-hashes` y `--no-deps` | — |
+| C-10 | Scripts de ciclo de vida de npm junto al token OIDC | menor | **M8**: separar build y publish (misma corrección que el residuo de H-02). `.npmrc` con `ignore-scripts=true` es barato pero por sí solo es cosmético | ✔ §9 |
+| C-12 | `pip install` sin `--require-hashes` en la imagen | menor | **M8**: regenerar los dos ficheros de pines con `--generate-hashes` y añadir `--require-hashes` y `--no-deps` | ✔ §9 |
 | C-06 | TOCTOU entre `realpath` y la llamada al sistema | menor | **Aceptar con razón documentada**, corrigiendo la frase de D2 (la carrera **sí** alcanza `/proc/self/{maps,smaps,numa_maps}`). `openat2` con `RESOLVE_BENEATH`, en la lista de endurecimiento de M8 | — |
 
 Resumen del triaje: **11 antes de publicar** (de las cuales 6 son cambios de una
@@ -1181,6 +1181,8 @@ local. Cuentas de tests del árbol corregido: **Rust 388**, **Python 1082**,
 | C-07 | `SECURITY.md:67` (T15) y `docs/site/docs/persistence.md`: el prefijo de S3 **no separa inquilinos**; aislarlos exige un execution role y un prefijo por inquilino | `scripts/tests/test_security_docs.py::test_prefix_is_not_a_tenant_boundary` |
 | C-08 | `docs/site/docs/concepts.md:115` y `SECURITY.md:56` (T4): `create()` también lee `RAYITO_ACCESS_TOKEN`; aviso de una sola vez por proceso en `clients/python/src/rayito/_sandbox_base.py:119-125` (nunca el valor) | `scripts/tests/test_security_docs.py::test_access_token_env_var_is_shared_by_create`; `test_sandbox_base.py::test_environment_token_warns_once`, `::test_explicit_and_generated_tokens_never_warn`, `::test_connect_path_never_warns` |
 | C-09 | `SECURITY.md:85`: `CallerPolicy` es la política del **publicador**, con `infra/ci-oidc-role.yaml` como forma mínima de runtime; `lambda:DeleteMicrovmImage` fuera de `infra/iam.yaml` (`ImagesAndMicrovms`, `:150-168`), que ningún camino de código usaba | `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy`; `scripts/tests/test_iam_template.py::test_caller_policy_never_deletes_a_whole_image` |
+| C-10 | `.github/workflows/release.yml:121` (`python-build`, sin `environment` ni `id-token`) y `:171` (`python-publish`, con el token OIDC pero sin checkout, verificando `sha256sum -c` antes de publicar); `:201`/`:250` el mismo split para `typescript-build`/`typescript-publish`; `clients/typescript/.npmrc` (`ignore-scripts=true`) | `scripts/tests/test_release_workflow.py` (los `id-token: write` son exactamente `{python-publish, typescript-publish, rayd}`, ningún job de publish hace checkout ni corre `pnpm`/`uv`/`npm install`) |
+| C-12 | `image/Dockerfile:106-107` (capa principal) y `:144-145` (capa `poly`): `--require-hashes --no-deps --only-binary=:all:`; `kernel-sidecar/requirements.txt` y `requirements-poly.txt` regenerados con `uv pip compile --generate-hashes` sin cambiar ninguna versión; gate 5 de `scripts/check_pins.py` | `scripts/tests/test_check_pins.py` (pip install sin las tres banderas es un hallazgo, un pin sin `--hash=` es un hallazgo, y `test_the_sidecar_requirements_are_hash_pinned`); las versiones no cambiaron (diff `nombre==versión` hecho a mano antes del commit, no fijado por ningún test) |
 
 Cada test de la tercera columna se escribió para **fallar sin su corrección**:
 los de `scripts/tests/test_security_docs.py` comprueban a la vez que el texto
@@ -1190,9 +1192,8 @@ corregido está y que la frase retirada no ha vuelto, y los de
 
 ### Lo que sigue abierto
 
-De las filas de §8: **C-10** (split build/publish de npm, que también cierra el
-residuo de H-02), **C-12** (`--require-hashes` en la imagen), el binding del
-`S3Location` al sandbox (**C-07**), la autenticación por uid del par en
+De las filas de §8: el binding del `S3Location` al sandbox (**C-07**), la
+autenticación por uid del par en
 `/terminate` y `/validate` (**C-01**), la guarda por fase de `/validate`
 (**C-02**), las dos llamadas a `audit()` de **C-03**, el opt-out del servidor
 MCP de **C-08**, el split runtime/publicador y el recurso acotado de **C-09**,

@@ -6,6 +6,18 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Security
+
+- `clients/typescript/.npmrc` nuevo (`ignore-scripts=true`): ningún `pnpm
+  install` local o de CI ejecuta scripts de ciclo de vida de dependencias.
+  `.github/workflows/release.yml`: el job `typescript` se parte en
+  `typescript-build` (sin `environment` ni `id-token`, `pnpm install
+  --frozen-lockfile --ignore-scripts`) y `typescript-publish` (con el token
+  OIDC de npm, sin checkout ni `pnpm`, que verifica con `sha256sum -c` que
+  el `.tgz` descargado es el que produjo `typescript-build` antes de `npm
+  publish --ignore-scripts`) — cierra C-10/H-02 residuo
+  (`docs/SECURITY_AUDIT.md`). Sin cambio de comportamiento en lo publicado
+  ni en el Trusted Publisher de npm.
 ### Changed
 
 - `sbx.files` y `sbx.native.files` del shim de E2B comparten ahora un único

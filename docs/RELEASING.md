@@ -11,8 +11,8 @@ muestran "not found": es el comportamiento esperado, no un fallo.
 
 | Componente | Dónde | Tag | Quién lo sube |
 |---|---|---|---|
-| `clients/python` (paquete `rayito`) | PyPI | `python-v<versión>` | `.github/workflows/release.yml` con Trusted Publishing |
-| `clients/typescript` (paquete `rayito`) | npm | `typescript-v<versión>` | la primera vez el mantenedor a mano (§3); después el job `typescript` de `.github/workflows/release.yml` (npm trusted publishing) |
+| `clients/python` (paquete `rayito`) | PyPI | `python-v<versión>` | `.github/workflows/release.yml` con Trusted Publishing (jobs `python-build` + `python-publish`) |
+| `clients/typescript` (paquete `rayito`) | npm | `typescript-v<versión>` | la primera vez el mantenedor a mano (§3); después los jobs `typescript-build` + `typescript-publish` de `.github/workflows/release.yml` (npm trusted publishing) |
 | `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | el job `rayd` de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
 | imagen `rayito-base` | tu cuenta de AWS | ninguno | `make image-publish` (`rayito image publish`, `scripts/publish_image.py` como shim); la versión de imagen es un número de build opaco de AWS, anotado en `MILESTONES.md` |
 
@@ -54,7 +54,19 @@ otros workflows. Dos caminos, los dos soportados:
 **Ensayo.** `Run workflow` con `dry_run` = true (por defecto) desde cualquier
 rama cuyos manifiestos ya lleven la versión del `tag` (la rama del PR de
 release, por ejemplo): construye, comprueba, firma (`rayd`) y sube los
-artefactos al run sin publicar nada.
+artefactos al run sin publicar nada. Para `python` y `typescript` (M10, C-10)
+esto se ve en dos jobs: `python-build`/`typescript-build` corren siempre y
+suben su artefacto, y `python-publish`/`typescript-publish` (los únicos con
+el token OIDC) se marcan **skipped** por su propio `if:` — ningún job de
+publish llega a ejecutarse en un ensayo, así que tampoco descarga ni verifica
+nada.
+
+**Sin reconfigurar nada al partir build y publish.** El *Trusted Publisher*
+de PyPI y de npm liga el token OIDC al fichero de workflow
+(`.github/workflows/release.yml`) y al `environment` del job
+(`pypi`/`npm`), nunca al nombre del job: mover la publicación de `python`
+a `python-publish` (o de `typescript` a `typescript-publish`) no exige tocar
+nada en pypi.org ni en npmjs.com.
 
 **Verificación** de lo publicado: `docs/site/docs/verify.md` (cosign,
 `cargo audit bin`, attestations de PyPI, `npm view … dist.attestations`).
@@ -81,10 +93,14 @@ uvx twine==7.0.0 check clients/python/dist/*
 git tag python-v<versión> && git push origin python-v<versión>
 ```
 
-El job `build` de `release.yml` repite las tres comprobaciones y verifica
-que el tag coincide con `pyproject.toml`; el job `publish` sube con OIDC. Las
-attestations PEP 740 son automáticas con `pypa/gh-action-pypi-publish` ≥
-v1.11. `workflow_dispatch` ensaya sólo el `build`.
+El job `python-build` de `release.yml` repite las tres comprobaciones,
+verifica que el tag coincide con `pyproject.toml` y sube `dist/` más un
+`SHA256SUMS`; el job `python-publish` (el único con el token OIDC, sin
+checkout ni `uv`) descarga ese artefacto, comprueba con `sha256sum -c` que
+es el que produjo `python-build` y sube con OIDC. Las attestations PEP 740
+son automáticas con `pypa/gh-action-pypi-publish` ≥ v1.11.
+`workflow_dispatch` con `dry_run: true` corre siempre `python-build` y deja
+`python-publish` en **skipped**.
 
 ## 3. npm (`rayito`, TypeScript)
 
@@ -110,9 +126,13 @@ ya existente**, así que la primera publicación es manual:
    Actions, cuenta `alejandro-cedeno-10`, repositorio `rayito`, workflow
    `release.yml`, environment `npm`.
 3. Crear el environment `npm` en GitHub (con required reviewers). El job
-   `typescript` de `release.yml` (disparado por `typescript-v*`) publica con
-   `npm publish` sobre Node 24 (npm ≥ 11.5.1, comprobado en el job); a partir
-   de ahí no se vuelve a usar ningún token.
+   `typescript-build` de `release.yml` (disparado por `typescript-v*`)
+   empaqueta con `pnpm install --frozen-lockfile --ignore-scripts` y `pnpm
+   pack`; el job `typescript-publish` (el único con el token OIDC, sin
+   checkout ni `pnpm`) descarga ese `.tgz`, comprueba con `sha256sum -c` que
+   es el que produjo `typescript-build` y publica con `npm publish
+   --ignore-scripts` sobre Node 24 (npm ≥ 11.5.1, comprobado en el mismo
+   job); a partir de ahí no se vuelve a usar ningún token.
 
 ## 4. crates.io
 

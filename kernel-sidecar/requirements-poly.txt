@@ -5,7 +5,29 @@
 # 2026-09-16 from PyPI (bash_kernel 0.10.0 requires pexpect>=4.0, ipykernel and
 # filetype; pexpect/ptyprocess match the pins of requirements.txt so `pip
 # check` stays clean); every wheel is pure Python (py2.py3-none-any).
-bash_kernel==0.10.0
-filetype==1.2.0
-pexpect==4.9.0
-ptyprocess==0.7.0
+# Hash-pinned without changing any version (C-12, uv 0.12.18, 2026-09-29),
+# `--no-deps` so the file keeps only its own four pins (ipykernel comes from
+# requirements.txt, not from here):
+#   uv pip compile --only-binary :all: --no-deps \
+#     --python-platform aarch64-manylinux_2_28 --python-version 3.12 \
+#     --generate-hashes --no-header --no-annotate \
+#     requirements-poly.txt -o requirements-poly.txt
+# `-r requirements.txt` (added by hand after compiling) makes the file a
+# closed, fully hashed set on its own: pip-audit 2.10.1 resolves hashed
+# files through `pip install --dry-run` even with `--no-deps`, and
+# bash_kernel's ipykernel dependency must then be pinned and hashed in the
+# same input. In the image those pins are already installed by the previous
+# layer, so the poly layer only adds the four pins below.
+-r requirements.txt
+bash_kernel==0.10.0 \
+    --hash=sha256:2ed5a0a416c418d1d751e71505bd6c889e12157444b50c4287a685da775c28ca \
+    --hash=sha256:da28513230f5307c7a49e87352366304dc52b66faa207d6caed1b2bdec03c1fa
+filetype==1.2.0 \
+    --hash=sha256:66b56cd6474bf41d8c54660347d37afcc3f7d1970648de365c102ef77548aadb \
+    --hash=sha256:7ce71b6880181241cf7ac8697a2f1eb6a8bd9b429f7ad6d27b8db9ba5f1c2d25
+pexpect==4.9.0 \
+    --hash=sha256:7236d1e080e4936be2dc3e326cec0af72acf9212a7e1d060210e70a47e253523 \
+    --hash=sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f
+ptyprocess==0.7.0 \
+    --hash=sha256:4b41f3967fce3af57cc7e94b888626c18bf37a083e3651ca8feeb66d492fef35 \
+    --hash=sha256:5c5d0a3b48ceee0b48485e0c26037c0acd7d29765ca3fbb5cb3831d347423220
