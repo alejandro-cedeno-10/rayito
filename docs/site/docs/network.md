@@ -23,7 +23,7 @@ reglas por nombre de host, un proxy local.
     resuelve antes que cualquier regla de la política (uidrange
     150/151). M9 aceptó eso como un riesgo residual conocido (adenda de
     ADR-012, opción C: un nombre puede resolver mientras ninguna conexión
-    real sale del VM). Este ciclo cierra la opción A: bajo deny-all `rayd`
+    real sale del VM). Desde 0.3.2 (M10, opción A): bajo deny-all `rayd`
     mueve la regla `local` a la prioridad 1 e instala, en la prioridad que
     deja libre, una regla `ip rule ... uidrange 1000-65535 ipproto
     udp/tcp dport 53 prohibit` — cambio atómico, con rollback si falla a
