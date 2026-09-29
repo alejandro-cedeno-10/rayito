@@ -6,6 +6,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Security
+
+- `.github/workflows/release.yml`: el job `python` se parte en `python-build`
+  (sin `environment` ni `id-token`, el único que hace checkout y corre `uv
+  build`) y `python-publish` (con el token OIDC de PyPI, sin checkout y sin
+  `uv`, que verifica con `sha256sum -c` que el `dist/` descargado es el que
+  produjo `python-build` antes de publicar) — cierra C-10/H-02 residuo
+  (`docs/SECURITY_AUDIT.md`). Sin cambio de comportamiento en lo publicado
+  ni en el Trusted Publisher de PyPI.
+
 ## [0.3.2] - 2026-09-29
 
 ### Fixed

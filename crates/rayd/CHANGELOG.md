@@ -10,6 +10,19 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- Imagen: las dos capas `pip install -r` de `image/Dockerfile` (el stack
+  científico principal y la variante `poly`) llevan ahora `--require-hashes
+  --no-deps --only-binary=:all:`. `kernel-sidecar/requirements.txt` y
+  `requirements-poly.txt` se regeneraron con `uv pip compile
+  --generate-hashes` sin cambiar ninguna versión (diff de `nombre==versión`
+  vacío); un fichero añadido a una release ya publicada, o un sdist que
+  compilase en la VM de build, se rechazan en vez de instalarse en
+  silencio. Cierra C-12 (`docs/SECURITY_AUDIT.md`); gate nuevo en
+  `scripts/check_pins.py` (puerta 5). Sin cambio de comportamiento en
+  tiempo de ejecución.
+
 ## [0.3.2] - 2026-09-29
 
 ### Fixed

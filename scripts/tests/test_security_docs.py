@@ -47,6 +47,10 @@ def site_doc(name: str) -> str:
     return read(f"docs/site/docs/{name}.md")
 
 
+def security_audit_md() -> str:
+    return read("docs/SECURITY_AUDIT.md")
+
+
 def heading_index(lines: list[str], heading: str) -> int:
     for index, line in enumerate(lines):
         if line.startswith(heading):
@@ -339,3 +343,34 @@ def test_oidc_trust_has_no_branch_component() -> None:
 def test_retired_sentences_are_gone() -> None:
     for relative, sentences in RETIRED_SENTENCES.items():
         assert_silent(relative, flatten(read(relative)), sentences)
+
+
+def test_c10_and_c12_are_closed_in_the_security_audit() -> None:
+    """M10 (`m10-security-supply-chain`) cierra C-10 y C-12: §9 gana sus
+    filas y "Lo que sigue abierto" ya no las nombra, sin tocar C-06 ni el
+    resto de filas todavía abiertas."""
+    audit = security_audit_md()
+
+    fixes = section(audit, "## 9. Estado de las correcciones")
+    assert_says(
+        "docs/SECURITY_AUDIT.md §9",
+        fixes,
+        (
+            "| C-10 |",
+            "test_release_workflow.py",
+            "| C-12 |",
+            "test_the_sidecar_requirements_are_hash_pinned_and_version_stable",
+        ),
+    )
+
+    still_open = section(audit, "### Lo que sigue abierto")
+    assert_silent(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("**C-10**", "**C-12**"),
+    )
+    assert_says(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("**C-07**", "**C-06** queda aceptado con razón escrita"),
+    )
