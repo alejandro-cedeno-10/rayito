@@ -1154,10 +1154,39 @@ dirigida sobre 28.0 / 17.0 / 12.0 tras #35 (deno/tamaños 8/8, egress 14/14 y
 verificado en caps: `getaddrinfo` falla para uid 1000 y vuelve al relajar la
 política. Coste de ambas < $1,5; sólo se terminaron las VMs de la prueba.
 
-**Pendiente (oleada 2):** los 32 hallazgos de
-[`docs/research/2026-09-m9-architecture-review.md`](docs/research/2026-09-m9-architecture-review.md);
-la congelación del runner x86_64 con las suites de integración de `rayd`;
-las filas diferidas de `docs/SECURITY_AUDIT.md` §8.
+### Oleadas 2 y 3 (Rayito 0.3.3)
+
+Siete cambios OpenSpec, archivados el 2026-09-29 tras la aceptación contra
+AWS real (plan de Opus por hallazgo, implementación por grupo, revisión
+adversarial de cada PR):
+
+| Cambio | Alcance |
+|---|---|
+| `m10-security-supply-chain` | C-10: `release.yml` separa build (sin credencial) y publish (OIDC, sin checkout ni instalación, verifica el sha256 del artefacto); `--ignore-scripts` en pnpm y npm. C-12: la imagen instala el sidecar con `--require-hashes --no-deps --only-binary=:all:`; puerta en `check_pins.py` |
+| `m10-python-shim` | Shim E2B de Python: `_compat` puro, sin estado global; el shim sólo usa el puerto público del SDK nativo |
+| `m10-typescript` | Shim E2B de TypeScript construido sobre el SDK nativo; sin downcast del puerto `ControlPlane` |
+| `m10-rayd-transfer` | Máquina de estados de transferencias total, reintentos y política de URLs en `rayd-core` |
+| `m10-rayd-network` | Una sola regla de direcciones especiales; el veredicto de verificación de egress en el dominio |
+| `m10-rayd-lifecycle` | Veredicto de congelación/descongelación del plazo en el dominio puro |
+| `m10-ci-x86` | Causa de la congelación del runner x86: una línea de varios MB en el log. Las suites de integración de `rayd` vuelven a x86 (883 tests) |
+
+De los 32 hallazgos de la revisión de arquitectura, 18 se implementaron como
+refactors sin cambio de comportamiento; 14 quedan documentados como
+"sólo informe" en `docs/research/2026-09-m9-architecture-review.md`, porque
+arreglarlos cambiaría comportamiento. C-06 de `docs/SECURITY_AUDIT.md` sigue
+aceptado con su razón.
+
+**Estado de aceptación (2026-09-29, cuenta de pruebas, us-east-1):** completa
+a la primera sobre `rayito-base` 29.0 / `-caps` 18.0 / `-poly` 13.0, las tres
+con la instalación con hashes: Python e2e 110/0/2 (los dos skips de siempre),
+TypeScript 36/36, corpus E2B 21/21 y 11/11, `doctor --launch` sin FAIL,
+`rayito-mcp` sin el extra, `NaT`/`None`/`NaN` → `null` y DNS bajo deny-all
+verificados. 208 MicroVMs, coste < $1; sólo se borraron las VMs y las
+versiones de imagen de la prueba (la última versión de caps y poly no se
+puede borrar sin borrar la imagen).
+
+**Pendiente:** los 14 hallazgos "sólo informe" (requieren decidir un cambio
+de comportamiento).
 
 ---
 
