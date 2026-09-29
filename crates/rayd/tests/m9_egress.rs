@@ -2,10 +2,14 @@
 //! `m9_egress`): as root inside a fresh network namespace (CI runs this
 //! binary under `sudo unshare --net`), `lo` up, a dummy `rtest0` with
 //! `192.0.2.1/24` and a default route through it. Then the IMDS block plus
-//! the `/run` deny-all, a swap to `deny 198.51.100.0/24, allow
-//! 198.51.100.7/32`, a swap to unrestricted, and injected failures while
-//! filling and while committing, each checked with `ip route get <addr>
-//! uid <n>` (no packet is sent).
+//! the `/run` deny-all — including egress option A's DNS guard
+//! (`SECURITY.md` T17): the moved `local` rule, the two `prohibit` rules at
+//! priority 0, and that a uid-1000 DNS query no longer resolves while
+//! ordinary loopback routing and other ports are untouched — a swap to
+//! `deny 198.51.100.0/24, allow 198.51.100.7/32` (where the guard comes
+//! back off, checked once the policy returns to unrestricted), and injected
+//! failures while filling and while committing, each checked with `ip route
+//! get <addr> uid <n>` (no packet is sent).
 //!
 //! It self-skips unless it runs as root with `CAP_NET_ADMIN` in a
 //! namespace whose only interface is `lo`, so a developer's root shell or
@@ -33,7 +37,7 @@ use rayd::network::{NetworkManager, ProxySeams};
 use rayd_core::clock::SystemClock;
 use rayd_core::network::probe::{RouteVerdict, classify_route_get};
 use rayd_core::network::{
-    ALL_TRAFFIC, EgressEnforcement, Family, NetworkError, PolicyInput, RouteStep,
+    ALL_TRAFFIC, DnsGuardStep, EgressEnforcement, Family, NetworkError, PolicyInput, RouteStep,
 };
 use rayd_core::session::SandboxSession;
 
@@ -71,6 +75,10 @@ impl EgressRoutes for FailingRoutes {
             });
         }
         self.inner.execute(step).await
+    }
+
+    async fn execute_dns_guard(&self, step: &DnsGuardStep) -> Result<(), RouteCommandError> {
+        self.inner.execute_dns_guard(step).await
     }
 
     async fn show_rules(&self, family: Family) -> Result<String, RouteCommandError> {
@@ -128,6 +136,37 @@ async fn policy_priorities() -> Vec<u32> {
     rayd_core::network::probe::policy_rule_priorities(&rules)
 }
 
+/// Egress option A (ADR-012 addendum): whether a uid-1000 DNS query (port
+/// 53, `proto`) to `destination` would resolve to a route at all right
+/// now (no packet sent, exactly like `route()` above).
+async fn dns_query_resolves(destination: &str, proto: &str) -> bool {
+    let output = run_ip(&[
+        "route",
+        "get",
+        destination,
+        "uid",
+        "1000",
+        "ipproto",
+        proto,
+        "dport",
+        "53",
+    ])
+    .await
+    .unwrap();
+    output.code == 0
+}
+
+/// The lines of `ip -4 rule show` at `priority`.
+async fn rule_lines_at(priority: u32) -> Vec<String> {
+    let prefix = format!("{priority}:");
+    ip_ok(&["-4", "rule", "show"])
+        .await
+        .lines()
+        .filter(|line| line.trim_start().starts_with(&prefix))
+        .map(str::to_owned)
+        .collect()
+}
+
 #[tokio::test]
 async fn policy_routes_swap_verify_and_recover_in_a_network_namespace() {
     let root = nix::unistd::geteuid().is_root();
@@ -170,6 +209,52 @@ async fn policy_routes_swap_verify_and_recover_in_a_network_namespace() {
     );
     assert_eq!(policy_priorities().await, [150]);
 
+    // Egress option A (ADR-012 addendum, `SECURITY.md` T17): under this
+    // deny-all, uid 1000's own DNS queries must not resolve either,
+    // closing the Q66 residual (`getaddrinfo` succeeding while every
+    // actual connection is blocked).
+    let local_lines = rule_lines_at(0).await;
+    assert_eq!(local_lines.len(), 2, "{local_lines:?}");
+    assert!(
+        local_lines
+            .iter()
+            .all(|line| line.contains("prohibit") && line.contains("dport 53")),
+        "{local_lines:?}"
+    );
+    let moved_local = rule_lines_at(1).await;
+    assert_eq!(moved_local.len(), 1, "{moved_local:?}");
+    assert!(moved_local[0].contains("lookup local"), "{moved_local:?}");
+    assert!(
+        !dns_query_resolves("127.0.0.53", "udp").await,
+        "a loopback resolver's DNS port must not resolve under deny-all"
+    );
+    assert!(
+        !dns_query_resolves("127.0.0.53", "tcp").await,
+        "the TCP fallback path must not resolve either"
+    );
+    assert_eq!(
+        route("127.0.0.53", "1000").await,
+        RouteVerdict::Local,
+        "ordinary loopback routing (no port selector) is untouched"
+    );
+    let other_port = run_ip(&[
+        "route",
+        "get",
+        "127.0.0.53",
+        "uid",
+        "1000",
+        "ipproto",
+        "udp",
+        "dport",
+        "80",
+    ])
+    .await
+    .unwrap();
+    assert_eq!(
+        other_port.code, 0,
+        "only port 53 is blocked, not the rest of loopback: {other_port:?}"
+    );
+
     let swapped = manager
         .update(input(&["198.51.100.7/32"], &["198.51.100.0/24"]))
         .await
@@ -188,6 +273,19 @@ async fn policy_routes_swap_verify_and_recover_in_a_network_namespace() {
         route("169.254.169.254", "1000").await,
         RouteVerdict::Blocked,
         "the IMDS rule is never touched"
+    );
+    assert!(
+        rule_lines_at(1).await.is_empty(),
+        "the moved local rule is dropped once the guard uninstalls"
+    );
+    assert_eq!(
+        rule_lines_at(0).await.len(),
+        1,
+        "priority 0 is back to exactly the kernel's own local rule"
+    );
+    assert!(
+        dns_query_resolves("127.0.0.53", "udp").await,
+        "dns resolves again once deny-all lifts"
     );
 
     manager.update(input(&[], &[ALL_TRAFFIC])).await.unwrap();

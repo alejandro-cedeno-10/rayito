@@ -12,6 +12,16 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Fixed
 
+- Con la política de egress en deny-all (imagen `rayito-base-caps`), el DNS
+  (puerto 53, UDP y TCP) queda bloqueado para uid >= 1000 con reglas
+  `ip rule` instaladas de forma atómica y con rollback (egress, opción A de
+  ADR-012): antes los nombres se resolvían aunque toda conexión fallara.
+- `/run` marca la rotación del kernel de forma síncrona, así que una sonda de
+  readiness durante la restauración ya no ve el contexto anterior como listo.
+- Los hijos de `rayd` (procesos, shell PTY, sidecar) restauran todas las
+  señales a `SIG_DFL` y vacían la máscara antes de `exec`: un `SIGHUP`
+  ignorado por el padre ya no impide que el job en primer plano muera con la
+  shell.
 - `ci.yml` (job `build`) y `release.yml` (job `rayd`) compilan `rayd` con el
   mismo `--remap-path-prefix` que `make build` (`REMAP_CONFIG` del
   Makefile): el binario publicado ya no incrusta las rutas del runner

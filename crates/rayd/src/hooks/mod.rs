@@ -277,6 +277,13 @@ async fn validate(State(state): State<HooksState>) -> Response {
 /// fresh seeds, payload envs) and the IMDS verification run in the
 /// background (design D11, D4). A `/run` after the accepted one is an
 /// audited anomaly that changes nothing.
+///
+/// `mark_rotation_pending` runs before the first `await`, closing the
+/// kernel rotation window (`MILESTONES.md` M9 deferred list): no readiness
+/// probe landing anywhere from here on can see the previous sandbox's
+/// kernel as ready. The actual restart request, `spawn_run_rotation`,
+/// stays after egress enforcement so the rotated kernel still picks up the
+/// settled proxy env.
 async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
     within_budget(Hook::Run, state.session.clone(), async move {
         let envelope = parse_envelope(&body);
@@ -288,6 +295,7 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
                 .filter(|payload| !payload.is_empty()),
         });
         if outcome == RunOutcome::Installed {
+            state.code.mark_rotation_pending();
             state.timeout.wake();
             let defaults = state.session.spawn_defaults();
             tracing::info!(

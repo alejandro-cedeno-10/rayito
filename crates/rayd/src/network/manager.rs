@@ -24,8 +24,9 @@ use rayd_core::network::probe::{
 };
 use rayd_core::network::route_plan::managed_families;
 use rayd_core::network::{
-    EgressEnforcement, EgressMode, EgressPolicy, NetworkError, NetworkSnapshot, PlannedStep,
-    PolicyInput, RoutePlan, RouteStep, Slot, TargetGuard, egress_proxy_env, plan_recovery,
+    DnsGuardStep, EgressEnforcement, EgressMode, EgressPolicy, NetworkError, NetworkSnapshot,
+    PlannedStep, PolicyInput, RoutePlan, RouteStep, Slot, TargetGuard, egress_proxy_env,
+    plan_dns_guard_install, plan_dns_guard_remove, plan_dns_guard_rollback, plan_recovery,
     plan_swap,
 };
 use rayd_core::session::SandboxSession;
@@ -44,6 +45,12 @@ struct Installed {
     plan: Option<RoutePlan>,
     slot: Option<Slot>,
     proxy: Option<LocalProxy>,
+    /// Egress option A (ADR-012 addendum, `SECURITY.md` T17): whether the
+    /// DNS block for uid ≥ 1000 is installed. Tracked apart from `plan`
+    /// because it survives `plan` changing to another deny-all policy
+    /// (nothing to redo) and only moves when denying-all itself starts or
+    /// stops.
+    dns_guard: bool,
 }
 
 /// Clears the session's `egress_settling` when the `/run` deny-all task
@@ -93,6 +100,7 @@ impl NetworkManager {
                 plan: None,
                 slot: None,
                 proxy: None,
+                dns_guard: false,
             }),
         })
     }
@@ -242,6 +250,10 @@ impl NetworkManager {
         let reinstalled = self.run_planned(&plan_recovery(&plan)).await;
         installed.slot = Some(Slot::A);
         installed.plan = Some(plan);
+        if reinstalled.is_ok() {
+            let want = wants_dns_guard(installed.plan.as_ref(), self.routes.ipv6_present());
+            self.ensure_dns_guard(&mut installed, want).await;
+        }
         if reinstalled.is_ok() && self.verify_and_publish(&installed).await {
             tracing::warn!(step = "reinstall", "egress_policy_reinstalled_after_resume");
             return self.enforcement();
@@ -283,6 +295,8 @@ impl NetworkManager {
             tracing::warn!(step, "egress_update_failed");
             return Err(ApplyError::Broken(NetworkError::InstallFailed { step }));
         }
+        let want_dns_guard = wants_dns_guard(installed.plan.as_ref(), ipv6);
+        self.ensure_dns_guard(installed, want_dns_guard).await;
         if !self.verify_and_publish(installed).await {
             return Err(ApplyError::Broken(NetworkError::VerifyFailed));
         }
@@ -328,10 +342,50 @@ impl NetworkManager {
             tracing::error!(step, "egress_recovery_failed");
             return;
         }
+        self.ensure_dns_guard(installed, true).await;
         if !self.verify_and_publish(installed).await {
             self.session.set_egress_enforcement(EgressEnforcement::None);
             tracing::error!(step = "verify", "egress_recovery_failed");
         }
+    }
+
+    /// Egress option A (ADR-012 addendum, `SECURITY.md` T17): installs or
+    /// removes the DNS block for uid ≥ 1000, best effort. Failures are
+    /// logged and leave `installed.dns_guard` at its previous value (so
+    /// the next transition retries); they never fail the caller, matching
+    /// the in-guest enforcement's own "best effort" framing (`ip rule
+    /// ipproto`/`dport` support, or the underlying routes/proxy, are the
+    /// hard boundary, not this hardening on top of it). A failed install is
+    /// rolled back to the exact pre-install state; a failed removal is left
+    /// as-is, always a safe (if over-blocking) intermediate step.
+    async fn ensure_dns_guard(&self, installed: &mut Installed, want: bool) {
+        if installed.dns_guard == want {
+            return;
+        }
+        let families = managed_families(self.routes.ipv6_present());
+        if want {
+            let steps = plan_dns_guard_install(families);
+            let mut applied: Vec<DnsGuardStep> = Vec::with_capacity(steps.len());
+            for step in &steps {
+                if self.routes.execute_dns_guard(step).await.is_err() {
+                    for undo in plan_dns_guard_rollback(&applied) {
+                        let _ = self.routes.execute_dns_guard(&undo).await;
+                    }
+                    tracing::warn!(step = step.name(), want, "egress_dns_guard_failed");
+                    return;
+                }
+                applied.push(*step);
+            }
+        } else {
+            for step in &plan_dns_guard_remove(families) {
+                if self.routes.execute_dns_guard(step).await.is_err() {
+                    tracing::warn!(step = step.name(), want, "egress_dns_guard_failed");
+                    return;
+                }
+            }
+        }
+        installed.dns_guard = want;
+        tracing::info!(installed = want, "egress_dns_guard_applied");
     }
 
     async fn run_steps(&self, steps: &[RouteStep]) -> Result<(), &'static str> {
@@ -429,6 +483,18 @@ impl NetworkManager {
         }
         Ok(expectations.len())
     }
+}
+
+/// Egress option A applies exactly under "deny-all" (`SECURITY.md` T17):
+/// every family the guest manages has nothing left to allow through
+/// directly.
+fn wants_dns_guard(plan: Option<&RoutePlan>, ipv6: bool) -> bool {
+    let Some(plan) = plan else {
+        return false;
+    };
+    managed_families(ipv6)
+        .iter()
+        .all(|family| plan.denies_all(*family))
 }
 
 fn publish_proxy_policy(installed: &Installed, local: &[IpAddr]) {

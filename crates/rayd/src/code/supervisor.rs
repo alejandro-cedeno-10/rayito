@@ -143,6 +143,10 @@ pub struct SidecarSupervisor {
     control: mpsc::UnboundedSender<Control>,
     control_receiver: Mutex<Option<mpsc::UnboundedReceiver<Control>>>,
     rotation_envs: Mutex<Option<BTreeMap<String, String>>>,
+    /// Single-flight guard for `begin_rotation`'s actual restart, decoupled
+    /// from the visible `SidecarState` now that `mark_rotation_pending` can
+    /// set it to `Rotating` before a restart is even requested.
+    rotation_inflight: AtomicBool,
     consecutive_timeouts: AtomicU32,
     dispatch_blocked: AtomicBool,
     restarts: AtomicU64,
@@ -184,6 +188,7 @@ impl SidecarSupervisor {
             control,
             control_receiver: Mutex::new(Some(control_receiver)),
             rotation_envs: Mutex::new(None),
+            rotation_inflight: AtomicBool::new(false),
             consecutive_timeouts: AtomicU32::new(0),
             dispatch_blocked: AtomicBool::new(false),
             restarts: AtomicU64::new(0),
@@ -264,11 +269,40 @@ impl SidecarSupervisor {
         self.stopping.load(Ordering::SeqCst)
     }
 
+    /// The synchronous half of `/run`'s rotation, callable the instant the
+    /// hook confirms it installed (design D8 follow-up, "the kernel
+    /// rotation window"): if the default kernel reads `Ready` right now
+    /// (leftover from before this `/run`, e.g. a restored snapshot) it is
+    /// flipped to `Rotating` before this call returns, no `await` involved.
+    /// Otherwise there is nothing to hide yet: `Starting`/`Exited` already
+    /// read `kernel_ready() == false`, and the sidecar's own `ready`
+    /// handler rotates once it comes up. A readiness probe racing `/run`
+    /// can therefore never observe the previous sandbox's kernel as ready;
+    /// `request_rotation`, which actually restarts it, is free to run
+    /// later (after egress enforcement settles, so the restarted kernel
+    /// picks up the right proxy env).
+    pub fn mark_rotation_pending(&self) {
+        let _ = self.state.send_if_modified(|state| {
+            if matches!(state, SidecarState::Ready) {
+                *state = SidecarState::Rotating;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
     /// `/run` happened: rotate the default kernel now if the sidecar is
-    /// serving, or right after the next `ready` otherwise.
+    /// serving, or right after the next `ready` otherwise. Always preceded
+    /// by [`Self::mark_rotation_pending`], directly or (after a relaunch)
+    /// through the `ready` handler, so the visible state never lags behind
+    /// this request; `begin_rotation`'s own dedup no longer reads that
+    /// state; it would otherwise see the eager `Rotating` and skip the
+    /// restart entirely.
     pub fn request_rotation(&self, envs: BTreeMap<String, String>) {
         let mut slot = lock(&self.rotation_envs);
         *slot = Some(envs.clone());
+        self.mark_rotation_pending();
         if matches!(self.state(), SidecarState::Ready | SidecarState::Rotating) {
             let _ = self.control.send(Control::Rotate(envs));
         }
@@ -540,9 +574,16 @@ impl SidecarSupervisor {
 
     /// `Rotating` until the default kernel came back with a fresh
     /// connection file; runs as its own task so an exit during the restart
-    /// is still noticed by the loop.
+    /// is still noticed by the loop. Single-flight on `rotation_inflight`,
+    /// not on `state`: `mark_rotation_pending` may already have set
+    /// `Rotating` before this ever runs (the `/run` path), so gating on
+    /// "was `Ready`" here would see its own eager mark and skip the actual
+    /// restart.
     fn begin_rotation(self: &Arc<Self>, envs: BTreeMap<String, String>) {
-        let started = self.state.send_if_modified(|state| {
+        if self.rotation_inflight.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        self.state.send_if_modified(|state| {
             if matches!(state, SidecarState::Ready) {
                 *state = SidecarState::Rotating;
                 true
@@ -550,9 +591,6 @@ impl SidecarSupervisor {
                 false
             }
         });
-        if !started {
-            return;
-        }
         let context_id = ContextId::default_context();
         {
             let mut registry = lock(&self.registry);
@@ -585,6 +623,7 @@ impl SidecarSupervisor {
                     false
                 }
             });
+            supervisor.rotation_inflight.store(false, Ordering::Release);
         });
     }
 
@@ -994,5 +1033,57 @@ mod tests {
         assert_eq!(execute_request["envs"], serde_json::json!({}));
         fixture.supervisor.unregister_execution(handle.request_id);
         restart.abort();
+    }
+
+    /// The kernel rotation window (`MILESTONES.md` M9 deferred list): a
+    /// readiness probe racing `/run` must never observe the previous
+    /// sandbox's kernel as ready. `request_rotation` is synchronous up to
+    /// the state flip; nothing here is awaited before the assertion, so a
+    /// pass proves the flip does not wait for the control loop to run.
+    #[tokio::test(start_paused = true)]
+    async fn request_rotation_marks_rotating_before_anything_is_awaited() {
+        let fixture = ready_supervisor(settings()).await;
+        let supervisor = fixture.supervisor.clone();
+        assert!(matches!(supervisor.state(), SidecarState::Ready));
+        supervisor.request_rotation(BTreeMap::new());
+        assert!(matches!(supervisor.state(), SidecarState::Rotating));
+        assert!(!supervisor.state().kernel_ready());
+    }
+
+    /// The eager mark above must not stop the real restart from happening:
+    /// `begin_rotation`'s dedup used to key off `state == Ready`, which the
+    /// eager mark now hides. Advancing the loop once here proves the
+    /// restart request still reaches the sidecar.
+    #[tokio::test(start_paused = true)]
+    async fn the_eager_mark_does_not_skip_the_real_restart() {
+        let fixture = ready_supervisor(settings()).await;
+        let supervisor = fixture.supervisor.clone();
+        supervisor.request_rotation(BTreeMap::from([("A".to_owned(), "1".to_owned())]));
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let requests = fixture.launched.log.requests();
+        assert!(
+            requests
+                .iter()
+                .any(|request| request["op"] == "restart_context"),
+            "{requests:?}"
+        );
+    }
+
+    /// A rotation requested while the sidecar is still coming up (nothing
+    /// yet to hide) is deferred to the `ready` handler, exactly as before:
+    /// `mark_rotation_pending` must not force a state neither `begin_rotation`
+    /// nor the readiness machinery expects.
+    #[tokio::test(start_paused = true)]
+    async fn a_rotation_requested_before_ready_is_applied_once_ready() {
+        let (supervisor, mut launched) =
+            super::super::fake_sidecar::starting_supervisor(settings()).await;
+        assert!(matches!(supervisor.state(), SidecarState::Warming { .. }));
+        supervisor.request_rotation(BTreeMap::new());
+        assert!(!matches!(supervisor.state(), SidecarState::Rotating));
+        launched.ready().await;
+        let mut state = supervisor.watch_state();
+        let _ = state
+            .wait_for(|state| matches!(state, SidecarState::Rotating))
+            .await;
     }
 }

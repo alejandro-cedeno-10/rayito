@@ -765,6 +765,77 @@ async fn resume_without_any_policy_changes_nothing() {
     assert!(kernel.executed().is_empty());
 }
 
+/// Egress option A (ADR-012 addendum, `SECURITY.md` T17): `/run`'s
+/// deny-all is exactly the condition the DNS guard targets.
+#[tokio::test]
+async fn run_installs_the_dns_guard_under_deny_all() {
+    let (_, kernel, manager) = managed(true);
+    assert!(!kernel.dns_guard_active(Family::V4));
+    manager.enforce_deny_all_at_run().await;
+    assert!(kernel.dns_guard_active(Family::V4));
+    assert!(kernel.dns_guard_active(Family::V6));
+}
+
+/// A policy that still allows something directly (`Routes`, not
+/// `ProxyOnly`) is not "deny-all": the guard must not install then, and
+/// must come back off once an installed one relaxes to it.
+#[tokio::test]
+async fn a_partial_policy_never_gets_the_dns_guard_and_relaxing_removes_it() {
+    let (_, kernel, manager) = managed(false);
+    manager
+        .update(input(&["198.51.100.7/32"], &["198.51.100.0/24"]))
+        .await
+        .unwrap();
+    assert!(!kernel.dns_guard_active(Family::V4));
+    manager.enforce_deny_all_at_run().await;
+    assert!(kernel.dns_guard_active(Family::V4));
+    manager
+        .update(input(&["198.51.100.7/32"], &["198.51.100.0/24"]))
+        .await
+        .unwrap();
+    assert!(!kernel.dns_guard_active(Family::V4));
+}
+
+/// The emergency recovery always lands on deny-all, so it must always
+/// bring the DNS guard with it, even starting from a policy that never
+/// had it.
+#[tokio::test]
+async fn a_commit_failure_recovers_the_dns_guard_too() {
+    let (_, kernel, manager) = managed(false);
+    manager
+        .update(input(&[], &["203.0.113.0/24"]))
+        .await
+        .unwrap();
+    assert!(!kernel.dns_guard_active(Family::V4));
+    kernel.fail_step("del_rule", 1);
+    manager
+        .update(input(&[], &["198.51.100.0/24"]))
+        .await
+        .unwrap_err();
+    assert!(kernel.dns_guard_active(Family::V4), "recovery is deny-all");
+}
+
+/// A failure partway through installing the guard rolls all the way back:
+/// the guard ends up either fully installed or not installed at all,
+/// never a stray block or moved rule, and the route enforcement itself
+/// (unrelated to the guard) is unaffected.
+#[tokio::test]
+async fn a_failed_dns_guard_install_is_rolled_back_and_does_not_fail_the_update() {
+    let (session, kernel, manager) = managed(false);
+    kernel.fail_step("add_dns_block", 1);
+    assert_eq!(
+        manager.enforce_deny_all_at_run().await,
+        EgressEnforcement::GuestRoutes,
+        "the DNS guard is best effort; routes/proxy must still verify"
+    );
+    assert!(!kernel.dns_guard_active(Family::V4));
+    assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+    assert!(
+        kernel.blocked(ip("1.1.1.1")),
+        "routes themselves still deny-all"
+    );
+}
+
 /// Collects everything the fmt subscriber writes.
 #[derive(Clone, Default)]
 struct CapturedLogs(Arc<Mutex<Vec<u8>>>);

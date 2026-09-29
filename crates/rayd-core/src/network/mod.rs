@@ -10,6 +10,7 @@
 //! target, a proxy address or a credential.
 
 pub mod cidr;
+pub mod dns_guard;
 pub mod entry;
 pub mod error;
 pub mod guard;
@@ -24,6 +25,11 @@ pub mod swap;
 use std::time::Duration;
 
 pub use cidr::{Cidr, Family, canonical_ip};
+pub use dns_guard::{
+    DEFAULT_LOCAL_PRIORITY, DNS_BLOCK_PORT, DNS_BLOCK_PRIORITY, DnsGuardStep, DnsProto,
+    LOCAL_TABLE, MOVED_LOCAL_PRIORITY, plan_dns_guard_install, plan_dns_guard_remove,
+    plan_dns_guard_rollback,
+};
 pub use entry::{ALL_TRAFFIC, EgressEntry, HostPattern};
 pub use error::{EgressList, NetworkError};
 pub use guard::{TargetGuard, UpstreamGuard};

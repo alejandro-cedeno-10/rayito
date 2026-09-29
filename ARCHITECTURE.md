@@ -679,8 +679,9 @@ link-local e IMDS, multicast, las direcciones propias del guest y
 `localhost`), marca contra la dirección comprobada sin volver a resolver y,
 bajo deny-by-default, nunca convierte un nombre denegado en una consulta DNS
 (T17). El DNS directo de uid ≥ 1000 no pasa por las rutas: los resolvedores
-de la plataforma escuchan dentro del guest, así que bajo deny-all un nombre
-puede resolverse aunque ninguna conexión salga (adenda de ADR-012). En la
+de la plataforma escuchan dentro del guest, pero bajo deny-all una regla
+`ip rule` de puerto 53 los intercepta antes de que la tabla `local` los
+resuelva (adenda de ADR-012, opción A, `m10-rayd-hardening`). En la
 forma absoluta `http://` el proxy reescribe `Host` con la autoridad que
 comprobó (RFC 9112 §3.2.2) y rechaza las líneas plegadas (obs-fold), así que
 un nombre permitido no sirve de fachada para otro host virtual de la misma
@@ -1550,6 +1551,38 @@ descartada para M9.
 (`NetworkService`, `EgressEnforcement`) ni la semántica de la política;
 cuando llegue, la aceptación vuelve a exigir que la resolución falle bajo
 deny-all.
+
+### Adenda M10: opción A implementada
+
+La opción A descrita arriba está implementada (`m10-rayd-hardening`):
+`NetworkManager` instala y desinstala el bloqueo de DNS exactamente cuando el
+plan de rutas activo deniega todo el tráfico directo en cada familia
+gestionada (`RoutePlan::denies_all`), en el mismo punto donde hoy aplica el
+resto de la política (`/run` en modo deny-all, `UpdateNetwork` y la
+recuperación de emergencia, que siempre termina en deny-all). El cambio
+atómico y su rollback viven en `rayd_core::network::dns_guard` (puro,
+`crates/rayd-core/src/network/dns_guard.rs`): primero se añade una segunda
+regla `local` en la prioridad 1 (duplicado inofensivo), después se borra la
+regla `local` original de la prioridad 0 (el enrutamiento local depende ya
+sólo del duplicado, sin hueco) y sólo entonces se instalan las reglas
+`uidrange 1000-65535 ipproto udp|tcp dport 53 prohibit` en la prioridad 0,
+ya sola (dos reglas de la misma prioridad se desempatan por orden de
+inserción, así que compartir la prioridad con la regla original del kernel
+le habría perdido siempre a ella). Un fallo a mitad de la instalación
+deshace exactamente los pasos que ya se aplicaron, en orden inverso
+(`plan_dns_guard_rollback`), nunca deja el guest sin enrutamiento local. La
+adaptación a `ip` vive en `crates/rayd/src/adapters/egress_routes.rs`
+(`EgressRoutes::execute_dns_guard`), idempotente en ambos sentidos. E2e en
+`crates/rayd/tests/m9_egress.rs`: bajo deny-all real en una VM Lima con
+`unshare --net`, una consulta DNS de uid 1000 (`ip route get ... ipproto udp
+dport 53`) deja de resolver, mientras el resto del tráfico de loopback y de
+otros puertos no se toca; al volver a una política sin deny-all las reglas
+se retiran y el DNS vuelve a resolver. `SECURITY.md` T17 actualizado: el
+residual ya no es "el DNS de uid ≥ 1000 no se bloquea bajo deny-all", queda
+sólo el marco general de aplicación de mejor esfuerzo en el guest. Pendiente
+de aceptación en AWS real: republicar `rayito-base-caps` con el `rayd`
+final y repetir `test_m9_egress.py`/`m9-egress.e2e.test.ts` sobre la imagen
+republicada.
 
 ## ADR-013 — Kernels Deno sobre TCP de loopback con HMAC
 

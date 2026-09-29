@@ -579,6 +579,18 @@ impl CodeManager {
         }
     }
 
+    /// The instant `/run` is confirmed installed, before egress enforcement
+    /// or anything else awaits: closes the kernel rotation window
+    /// (`MILESTONES.md` M9 deferred list) synchronously, so no readiness
+    /// probe racing the rest of `/run` can see the previous sandbox's
+    /// kernel as ready. A no-op without a sidecar (`kernel_ready` is
+    /// already `false` forever in that case).
+    pub fn mark_rotation_pending(&self) {
+        if let Some(supervisor) = &self.supervisor {
+            supervisor.mark_rotation_pending();
+        }
+    }
+
     /// `/run` accepted: the pre-warmed default kernel gets a fresh
     /// connection file, fresh seeds and the payload's environment.
     pub fn spawn_run_rotation(&self, envs: BTreeMap<String, String>) {
