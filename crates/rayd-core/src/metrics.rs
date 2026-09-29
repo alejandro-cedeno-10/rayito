@@ -2,7 +2,7 @@
 //! parsers are pure so they run against fixtures on any host; the probe port
 //! is what the Linux adapter implements.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use thiserror::Error;
 
@@ -96,14 +96,9 @@ pub fn parse_meminfo(text: &str) -> Result<MemoryInfo, MetricsError> {
     })
 }
 
-/// Milliseconds since the Unix epoch: `0` before the epoch, saturating at
-/// `i64::MAX`.
-#[must_use]
-pub fn unix_millis(wall: SystemTime) -> i64 {
-    wall.duration_since(UNIX_EPOCH).map_or(0, |since| {
-        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-    })
-}
+/// Kept here so `metrics::unix_millis` callers keep compiling; the
+/// conversion lives with the other clock helpers.
+pub use crate::clock::unix_millis;
 
 /// Share of the sampling window spent busy, clamped to `0..=100`; `0` when
 /// no jiffy elapsed between the samples.
@@ -169,7 +164,7 @@ fn malformed(source_name: &'static str, reason: &'static str) -> MetricsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::UNIX_EPOCH;
 
     const PROC_STAT: &str = "cpu  4705 150 1120 16250 1 0 45 3 0 0\n\
 cpu0 1200 40 300 4100 0 0 12 1 0 0\n\
@@ -245,23 +240,6 @@ SwapCached:  7 kB\n";
         );
         assert_eq!(snapshot.mem_cache, 300);
         assert_eq!(snapshot.mem_used, 600);
-    }
-
-    /// The saturation case only exists where `SystemTime` can hold more than
-    /// `i64::MAX` milliseconds (Unix `timespec`); a Windows `FILETIME` tops
-    /// out long before, so `checked_add` yields `None` there.
-    #[test]
-    fn unix_millis_saturates_and_clamps_pre_epoch() {
-        assert_eq!(unix_millis(UNIX_EPOCH), 0);
-        assert_eq!(
-            unix_millis(UNIX_EPOCH + Duration::from_millis(1_790_000_000_123)),
-            1_790_000_000_123
-        );
-        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
-        let past_i64_millis = Duration::from_secs(9_223_372_036_854_776);
-        if let Some(far_future) = UNIX_EPOCH.checked_add(past_i64_millis) {
-            assert_eq!(unix_millis(far_future), i64::MAX);
-        }
     }
 
     #[test]

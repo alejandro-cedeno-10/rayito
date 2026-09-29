@@ -4,7 +4,7 @@
 //! minus suspended time, `SandboxSession::running_now`), which is what every
 //! server deadline is measured on (design D6).
 
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Monotonic and wall clocks read together.
 pub trait Clock: Send + Sync {
@@ -49,6 +49,15 @@ fn signed_millis(from: SystemTime, to: SystemTime) -> i64 {
 
 fn millis(duration: Duration) -> i64 {
     i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// Milliseconds since the Unix epoch: `0` before the epoch, saturating at
+/// `i64::MAX`.
+#[must_use]
+pub fn unix_millis(wall: SystemTime) -> i64 {
+    wall.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+    })
 }
 
 /// An instant on the running clock. Comparing it with a later
@@ -110,7 +119,6 @@ impl Clock for SystemClock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::UNIX_EPOCH;
 
     fn reading(monotonic_secs: u64, wall_secs: u64) -> ClockReading {
         ClockReading {
@@ -145,6 +153,23 @@ mod tests {
         let before = reading(10, 1_000);
         let after = reading(12, 999);
         assert_eq!(after.offset_ms_since(&before), -3_000);
+    }
+
+    /// The saturation case only exists where `SystemTime` can hold more than
+    /// `i64::MAX` milliseconds (Unix `timespec`); a Windows `FILETIME` tops
+    /// out long before, so `checked_add` yields `None` there.
+    #[test]
+    fn unix_millis_saturates_and_clamps_pre_epoch() {
+        assert_eq!(unix_millis(UNIX_EPOCH), 0);
+        assert_eq!(
+            unix_millis(UNIX_EPOCH + Duration::from_millis(1_790_000_000_123)),
+            1_790_000_000_123
+        );
+        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
+        let past_i64_millis = Duration::from_secs(9_223_372_036_854_776);
+        if let Some(far_future) = UNIX_EPOCH.checked_add(past_i64_millis) {
+            assert_eq!(unix_millis(far_future), i64::MAX);
+        }
     }
 
     #[test]
