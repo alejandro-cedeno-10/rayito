@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-29
+
 ### Security
 
 - `.github/workflows/release.yml`: el job `python` se parte en `python-build`
@@ -15,6 +17,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   produjo `python-build` antes de publicar) — cierra C-10/H-02 residuo
   (`docs/SECURITY_AUDIT.md`). Sin cambio de comportamiento en lo publicado
   ni en el Trusted Publisher de PyPI.
+
 ### Changed
 
 - Shim E2B: `native_call_kwargs` (`rayito.e2b._compat`) ya no lee

@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-29
+
 ### Changed
 
 - Plazo del sandbox (refactor interno, sin cambio de comportamiento): el
@@ -36,6 +38,7 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   petición a S3 vive en `rayd-core` (`RequestRetries`); el plan de una
   exportación lleva la URL de cada parte y un `UploadPart` correcto lleva
   siempre su `ETag` (`PutOutcome::PartStored`).
+
 ### Security
 
 - Imagen: las dos capas `pip install -r` de `image/Dockerfile` (el stack
@@ -48,6 +51,7 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   silencio. Cierra C-12 (`docs/SECURITY_AUDIT.md`); gate nuevo en
   `scripts/check_pins.py` (puerta 5). Sin cambio de comportamiento en
   tiempo de ejecución.
+
 ### Fixed
 
 - CI: el job x86_64 (`check`) vuelve a correr la suite completa del

@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-29
+
 ### Security
 
 - `clients/typescript/.npmrc` nuevo (`ignore-scripts=true`): ningún `pnpm
@@ -18,6 +20,7 @@ versionado [SemVer](https://semver.org/lang/es/).
   publish --ignore-scripts`) — cierra C-10/H-02 residuo
   (`docs/SECURITY_AUDIT.md`). Sin cambio de comportamiento en lo publicado
   ni en el Trusted Publisher de npm.
+
 ### Changed
 
 - `sbx.files` y `sbx.native.files` del shim de E2B comparten ahora un único
