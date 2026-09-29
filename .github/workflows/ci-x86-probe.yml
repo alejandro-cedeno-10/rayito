@@ -1,0 +1,106 @@
+name: ci-x86-probe
+
+# THROWAWAY: sondeo del cuelgue de crates/rayd/tests/** en runners x86_64
+# (openspec m10-ci-x86). Vive sólo en la rama ci/x86-freeze-probe, nunca se
+# fusiona a main y se borra antes de que el cambio real llegue a main. Mismas
+# acciones y SHAs que ci.yml; permissions: contents: read; sólo pull_request
+# en esta rama y workflow_dispatch, nunca push a main/develop.
+
+on:
+  pull_request:
+    branches: [ci/x86-freeze-probe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  probe:
+    name: probe ${{ matrix.bin }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        bin:
+          - m1_hello
+          - m2_process
+          - m3_filesystem
+          - m4_code
+          - m5_pty
+          - m5_suspend_resume
+          - m6_hooks
+          - m6_imds
+          - m6_limits
+          - m7_poly
+          - m9_deno
+          - m9_egress
+          - m9_metrics_history
+          - m9_network
+          - m9_timeout
+          - m9_transfer
+          - s3_store
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Diagnóstico del runner antes de correr nada
+        run: |
+          id
+          ulimit -a
+          nproc
+          free -m
+          df -h
+          cat /proc/sys/kernel/pid_max /proc/sys/kernel/threads-max
+          ps -eo user,pid,ppid,pgid,sid,stat,etime,cmd --forest | head -80
+
+      - name: Compilar el binario de test (sin correrlo)
+        id: build
+        run: |
+          binary="$(cargo test -p rayd --test ${{ matrix.bin }} --locked --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "${{ matrix.bin }}" and .executable != null) | .executable')"
+          test -x "$binary"
+          echo "bin_path=$binary" >> "$GITHUB_OUTPUT"
+
+      - name: Muestreador de fondo (cada 10s, al log en vivo — sobrevive a un cuelgue)
+        run: |
+          {
+            while true; do
+              date
+              uptime
+              free -m | sed -n 2p
+              ps -e --no-headers | wc -l
+              ps -u "$USER" --no-headers | wc -l
+              find /proc/self/fd -mindepth 1 | wc -l
+              df -h / | tail -1
+              echo "---"
+              sleep 10
+            done
+          } &
+          echo "sampler_pid=$!" >> "$GITHUB_ENV"
+
+      - name: Correr ${{ matrix.bin }} (timeout duro, salida en vivo)
+        run: |
+          timeout --kill-after=15s 10m "${{ steps.build.outputs.bin_path }}" --test-threads=2 2>&1 \
+            | tee "$RUNNER_TEMP/${{ matrix.bin }}.log"
+
+      - name: Parar el muestreador de fondo
+        if: always()
+        run: kill "$sampler_pid" 2>/dev/null || true
+
+      - name: dmesg y árbol de procesos (evidencia de OOM/hung task tras un cuelgue)
+        if: always()
+        run: |
+          sudo dmesg -T | tail -100
+          ps -eo user,pid,ppid,pgid,sid,stat,etime,cmd --forest | head -200
