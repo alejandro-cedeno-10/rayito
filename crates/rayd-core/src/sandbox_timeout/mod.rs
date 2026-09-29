@@ -10,12 +10,14 @@
 //! machine of `lifecycle` stays untouched: the adapters hand this module
 //! the hook phase and the freeze signature they observe.
 
+pub mod freeze;
 mod machine;
 mod policy;
 mod ports;
 
 use std::time::Duration;
 
+pub use freeze::{is_thaw, was_frozen};
 pub use machine::{
     DeadlineAction, LifecyclePhase, LifecycleView, SandboxTimeout, SandboxTimeoutError, admits,
 };

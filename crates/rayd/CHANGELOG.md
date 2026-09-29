@@ -12,6 +12,12 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Changed
 
+- Plazo del sandbox (refactor interno, sin cambio de comportamiento): el
+  veredicto de congelación de ADR-011 (`is_thaw`/`was_frozen`) pasa a
+  `rayd-core` (`sandbox_timeout::freeze`) como funciones puras con tests de
+  tabla, y el hilo del plazo sólo guarda los instantes; una sola conversión
+  de `SystemTime` a milisegundos Unix (`clock::unix_millis`, reexportada
+  desde `metrics`) sustituye la copia privada del hilo del plazo.
 - Egress (refactor interno, sin cambio de comportamiento): los casos de uso
   de egress de `/run` y `/resume` pasan del adaptador de hooks a
   `NetworkManager` (`on_run`/`on_resume`); el estado instalado (política,

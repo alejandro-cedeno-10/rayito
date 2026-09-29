@@ -19,11 +19,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, Thread};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use rayd_core::clock::unix_millis;
 use rayd_core::sandbox_timeout::{
     DeadlineAction, SelfTerminator, TIMEOUT_FREEZE_THRESHOLD, TerminationReason, TimeoutAction,
-    TimeoutSettings,
+    TimeoutSettings, is_thaw, was_frozen,
 };
 use rayd_core::session::SandboxSession;
 
@@ -147,7 +148,7 @@ impl TickRecord {
     /// a thaw.
     fn tick(&self, now: Duration) -> bool {
         let previous = self.last_tick_ms.swap(millis(now), Ordering::SeqCst);
-        let thawed = since(now, previous).is_some_and(|gap| gap >= self.freeze_threshold);
+        let thawed = is_thaw(since(now, previous), self.freeze_threshold);
         if thawed {
             self.last_thaw_ms.store(millis(now), Ordering::SeqCst);
         }
@@ -157,8 +158,7 @@ impl TickRecord {
     fn frozen(&self, now: Duration) -> bool {
         let since_tick = since(now, self.last_tick_ms.load(Ordering::SeqCst));
         let since_thaw = since(now, self.last_thaw_ms.load(Ordering::SeqCst));
-        since_tick.is_some_and(|gap| gap >= self.freeze_threshold)
-            || since_thaw.is_some_and(|gap| gap < self.freeze_threshold)
+        was_frozen(since_tick, since_thaw, self.freeze_threshold)
     }
 }
 
@@ -247,16 +247,10 @@ fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(NEVER - 1)
 }
 
-fn unix_millis(wall: SystemTime) -> i64 {
-    wall.duration_since(UNIX_EPOCH).map_or(0, |since| {
-        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::time::Instant;
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     use rayd_core::clock::Clock;
     use rayd_core::session::{RunHookInput, SessionSettings};
