@@ -17,10 +17,25 @@ name: release
 # pero no publica nada: sirve para ensayar desde cualquier rama cuyos
 # manifiestos ya lleven la versión del tag (p. ej. la rama del PR de release).
 #
+# python y typescript están partidos en build/publish (M10, C-10 + residuo de
+# H-02): el job `*-build` no lleva `environment` ni `id-token: write` y es el
+# único que hace checkout e instala/ejecuta código de terceros (`pnpm
+# install`, `uv build`); el job `*-publish` lleva el token OIDC pero no hace
+# checkout, no instala nada y no ejecuta más que la propia acción de
+# publicación, tras verificar con `sha256sum -c` que el artefacto descargado
+# es bit a bit el que produjo `*-build`. Así un paquete o `build-backend`
+# comprometido puede como mucho falsificar el `.tgz`/`dist/` que sube el
+# `upload-artifact` del build (que no lleva ningún secreto), pero nunca ve el
+# token OIDC. El *Trusted Publisher* de PyPI y de npm liga el token al
+# fichero de workflow y al `environment` del job que lo pide, no al nombre
+# del job: mover la publicación a `python-publish`/`typescript-publish` no
+# exige tocar nada en PyPI ni en npmjs.com (docs/RELEASING.md).
+#
 # `npm publish` es la ÚNICA invocación de npm del repositorio (pnpm es el
 # gestor para todo lo demás): el trusted publishing de npm está implementado
 # sólo en el CLI de npm ≥ 11.5.1 (pnpm 9.15.4 no hace el intercambio OIDC).
-# Node 24 trae npm 11.x; el job lo comprueba y falla con un mensaje claro.
+# Node 24 trae npm 11.x; el job de publicación lo comprueba y falla con un
+# mensaje claro.
 #
 # Pasos manuales, una sola vez (docs/RELEASING.md):
 #   1. PyPI → Trusted Publisher para `rayito`: repo alejandro-cedeno-10/rayito, workflow
@@ -103,15 +118,15 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "component=$component version=$version publish=$publish"
 
-  python:
-    name: python → PyPI (Trusted Publishing)
+  python-build:
+    name: python → build sdist and wheel (no publishing credential)
     needs: resolve
     if: needs.resolve.outputs.component == 'python'
     runs-on: ubuntu-24.04
-    environment: pypi
     permissions:
-      id-token: write
       contents: read
+    outputs:
+      sha256sums_sha256: ${{ steps.digest.outputs.sha256 }}
     env:
       VERSION: ${{ needs.resolve.outputs.version }}
     steps:
@@ -137,26 +152,61 @@ jobs:
         run: python3 scripts/check_wheel.py clients/python/dist/*.whl
       - name: twine check
         run: uvx twine==7.0.0 check clients/python/dist/*
+      - name: SHA256SUMS next to dist/ (not inside it, so packages-dir stays distribution-only)
+        working-directory: clients/python
+        run: |
+          sha256sum dist/*.whl dist/*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - id: digest
+        working-directory: clients/python
+        run: echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-dist-${{ needs.resolve.outputs.version }}
-          path: clients/python/dist/
+          path: |
+            clients/python/dist/
+            clients/python/SHA256SUMS
           if-no-files-found: error
-      - name: Publish to PyPI (OIDC, attestations on by default)
-        if: needs.resolve.outputs.publish == 'true'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: clients/python/dist
 
-  typescript:
-    name: typescript → npm (trusted publishing)
-    needs: resolve
-    if: needs.resolve.outputs.component == 'typescript'
+  python-publish:
+    name: python → PyPI (Trusted Publishing)
+    needs: [resolve, python-build]
+    if: needs.resolve.outputs.component == 'python' && needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-24.04
-    environment: npm
+    environment: pypi
     permissions:
       id-token: write
       contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-dist-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/python
+      - name: SHA256SUMS is the one python-build produced
+        working-directory: ${{ runner.temp }}/python
+        env:
+          SHA256SUMS_SHA256: ${{ needs.python-build.outputs.sha256sums_sha256 }}
+        run: echo "${SHA256SUMS_SHA256}  SHA256SUMS" | sha256sum -c -
+      - name: dist/ matches SHA256SUMS
+        working-directory: ${{ runner.temp }}/python
+        run: sha256sum -c SHA256SUMS
+      - name: Publish to PyPI (OIDC, attestations on by default)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: ${{ runner.temp }}/python/dist
+
+  typescript-build:
+    name: typescript → build tarball (no publishing credential)
+    needs: resolve
+    if: needs.resolve.outputs.component == 'typescript'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tgz_sha256: ${{ steps.digest.outputs.sha256 }}
     defaults:
       run:
         working-directory: clients/typescript
@@ -175,6 +225,46 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      - name: Tag matches package.json version
+        run: |
+          actual="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$actual" ]; then
+            echo "el tag typescript-v$VERSION no coincide con package.json ($actual)"
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build
+      - run: pnpm pack:check
+      - name: pnpm pack → rayito-<version>.tgz
+        run: |
+          pnpm pack
+          test -f "rayito-$VERSION.tgz"
+      - id: digest
+        run: echo "sha256=$(sha256sum "rayito-$VERSION.tgz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-tarball-${{ needs.resolve.outputs.version }}
+          path: clients/typescript/rayito-${{ needs.resolve.outputs.version }}.tgz
+          if-no-files-found: error
+
+  typescript-publish:
+    name: typescript → npm (trusted publishing)
+    needs: [resolve, typescript-build]
+    if: needs.resolve.outputs.component == 'typescript' && needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - name: npm ≥ 11.5.1 (trusted publishing lives in the npm CLI)
         run: |
@@ -186,28 +276,18 @@ jobs:
             exit 1
           fi
           echo "npm $actual"
-      - name: Tag matches package.json version
-        run: |
-          actual="$(node -p "require('./package.json').version")"
-          if [ "$VERSION" != "$actual" ]; then
-            echo "el tag typescript-v$VERSION no coincide con package.json ($actual)"
-            exit 1
-          fi
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm pack:check
-      - name: pnpm pack → rayito-<version>.tgz
-        run: |
-          pnpm pack
-          test -f "rayito-$VERSION.tgz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-tarball-${{ needs.resolve.outputs.version }}
-          path: clients/typescript/rayito-${{ needs.resolve.outputs.version }}.tgz
-          if-no-files-found: error
+          path: ${{ runner.temp }}/npm
+      - name: rayito-<version>.tgz is the one typescript-build produced
+        working-directory: ${{ runner.temp }}/npm
+        env:
+          TGZ_SHA256: ${{ needs.typescript-build.outputs.tgz_sha256 }}
+        run: echo "${TGZ_SHA256}  rayito-$VERSION.tgz" | sha256sum -c -
       - name: npm publish (OIDC, provenance attached automatically; the only npm call in the repo)
-        if: needs.resolve.outputs.publish == 'true'
-        run: npm publish "rayito-$VERSION.tgz" --access public
+        working-directory: ${{ runner.temp }}/npm
+        run: npm publish "rayito-$VERSION.tgz" --access public --ignore-scripts
 
   rayd:
     name: rayd → signed release assets
