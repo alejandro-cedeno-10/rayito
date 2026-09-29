@@ -11,6 +11,9 @@ name: ci-x86-probe
 # fichero nunca llega a la rama por defecto): las repeticiones son
 # "Re-run all jobs" o commits nuevos a esta rama.
 #
+# Fase 2 (36615379135): congelaron aislado a_stalled_second_subscriber_is_truncated_alone
+# y los 3 sin-harden; fase 2b (linea-larga): la misma prueba con la salida a fichero.
+#
 # Fase 1 (17 binarios, 3 intentos): sólo m5_pty congeló (intento 3 de
 # 36609832898: el job superó sus 20 min, ni timeout ni cancel respondieron,
 # sin log). Fase 2, sólo m5_pty:
@@ -40,38 +43,20 @@ env:
 
 jobs:
   probe:
-    name: ${{ matrix.mode }} ${{ matrix.test || matrix.rep }}
+    name: ${{ matrix.mode }} ${{ matrix.rep }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { mode: aislado, test: echo_round_trip_size_tty_uid_and_env }
-          - { mode: aislado, test: default_shell_is_the_login_shell_and_request_envs_win }
-          - { mode: aislado, test: kinds_are_enforced_across_both_services_and_signal_works_on_a_pty }
-          - { mode: aislado, test: output_is_chunked_at_16_kib_and_replayable_from_the_ring }
-          - { mode: aislado, test: a_stalled_second_subscriber_is_truncated_alone }
-          - { mode: aislado, test: kill_ends_with_137_and_a_second_kill_is_not_found }
-          - { mode: aislado, test: a_typed_exit_is_retained_and_replayable }
-          - { mode: aislado, test: timeout_sends_sigterm_first_and_reports_deadline_exceeded }
-          - { mode: aislado, test: invalid_sizes_shells_and_a_failing_shell }
-          - { mode: aislado, test: the_live_cap_is_shared_with_processes }
-          - { mode: aislado, test: create_is_refused_while_suspending }
-          - { mode: aislado, test: keepalives_flow_on_a_silent_shell }
-          - { mode: aislado, test: a_background_child_holding_the_slave_does_not_delay_the_end }
-          - { mode: aislado, test: jobs_and_processes_inherit_neither_end_of_the_terminal }
-          - { mode: aislado, test: a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process }
-          - { mode: aislado, test: kill_takes_the_foreground_job_down_with_the_shell }
-          - { mode: completo, rep: 1 }
-          - { mode: completo, rep: 2 }
-          - { mode: contenido, rep: 1 }
-          - { mode: contenido, rep: 2 }
-          - { mode: sin-harden, rep: 1 }
-          - { mode: sin-harden, rep: 2 }
-          - { mode: sin-harden, rep: 3 }
+          - { mode: linea-larga, rep: 1 }
+          - { mode: linea-larga, rep: 2 }
+          - { mode: linea-larga, rep: 3 }
+          - { mode: linea-larga-harden, rep: 1 }
+          - { mode: linea-larga-harden, rep: 2 }
     steps:
-      - if: matrix.mode != 'sin-harden'
+      - if: matrix.mode != 'sin-harden' && matrix.mode != 'linea-larga'
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
@@ -127,17 +112,32 @@ jobs:
         env:
           BIN: ${{ steps.build.outputs.bin_path }}
           MODE: ${{ matrix.mode }}
-          TEST: ${{ matrix.test }}
         run: |
           status=0
           case "$MODE" in
             aislado)
               for i in $(seq 1 10); do
                 echo "::group::$TEST repetición $i"
-                timeout --kill-after=10s 120s "$BIN" --exact "$TEST" --test-threads=1 2>&1 || status=$?
+                timeout --kill-after=10s 120s "$BIN" --exact "${TEST:?}" --test-threads=1 2>&1 || status=$?
                 echo "::endgroup::"
                 echo "repetición $i -> $status"
                 [ "$status" -eq 0 ] || break
+              done
+              ;;
+            linea-larga|linea-larga-harden)
+              # Misma prueba que congeló (aislado a_stalled...), pero la
+              # salida cruda va a fichero y al log del runner sólo llegan
+              # líneas recortadas a 300 caracteres + la línea más larga.
+              for i in $(seq 1 10); do
+                start=$(date +%s)
+                rc=0
+                timeout --kill-after=10s 120s "$BIN" --exact a_stalled_second_subscriber_is_truncated_alone \
+                  --test-threads=1 > "$RUNNER_TEMP/raw-$i.log" 2>&1 < /dev/null || rc=$?
+                echo "::group::repetición $i (rc=$rc, $(( $(date +%s) - start )) s)"
+                cut -c1-300 "$RUNNER_TEMP/raw-$i.log"
+                echo "::endgroup::"
+                echo "repetición $i -> rc=$rc, $(( $(date +%s) - start )) s, línea más larga: $(wc -L < "$RUNNER_TEMP/raw-$i.log") bytes, total $(wc -c < "$RUNNER_TEMP/raw-$i.log") bytes"
+                [ "$rc" -eq 0 ] || status=$rc
               done
               ;;
             completo|sin-harden)
