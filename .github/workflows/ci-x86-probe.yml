@@ -12,7 +12,9 @@ name: ci-x86-probe
 # "Re-run all jobs" o commits nuevos a esta rama.
 #
 # Fase 2 (36615379135): congelaron aislado a_stalled_second_subscriber_is_truncated_alone
-# y los 3 sin-harden; fase 2b (linea-larga): la misma prueba con la salida a fichero.
+# y los 3 sin-harden; fase 2b (linea-larga, 36618847164): la misma prueba con la salida a
+# fichero no congela: falla a los 30 s y deja una línea de ~2.9 MB. Fase 3: m5_pty.rs
+# arreglado (búsqueda lineal, panics acotados) + 3 suites completas de x86.
 #
 # Fase 1 (17 binarios, 3 intentos): sólo m5_pty congeló (intento 3 de
 # 36609832898: el job superó sus 20 min, ni timeout ni cancel respondieron,
@@ -45,16 +47,17 @@ jobs:
   probe:
     name: ${{ matrix.mode }} ${{ matrix.rep }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.mode == 'suite' && 45 || 20 }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { mode: linea-larga, rep: 1 }
           - { mode: linea-larga, rep: 2 }
-          - { mode: linea-larga, rep: 3 }
           - { mode: linea-larga-harden, rep: 1 }
-          - { mode: linea-larga-harden, rep: 2 }
+          - { mode: suite, rep: 1 }
+          - { mode: suite, rep: 2 }
+          - { mode: suite, rep: 3 }
     steps:
       - if: matrix.mode != 'sin-harden' && matrix.mode != 'linea-larga'
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -82,6 +85,7 @@ jobs:
           ps -eo user,pid,ppid,pgid,sid,stat,etime,cmd --forest | head -80
 
       - name: Compilar m5_pty (sin correrlo)
+        if: matrix.mode != 'suite'
         id: build
         run: |
           binary="$(cargo test -p rayd --test m5_pty --locked --no-run --message-format=json \
@@ -108,7 +112,19 @@ jobs:
           } &
           echo "sampler_pid=$!" >> "$GITHUB_ENV"
 
+      - name: Suite completa de x86 (mismo comando que propone ci.yml)
+        if: matrix.mode == 'suite'
+        timeout-minutes: 25
+        run: |
+          status=0
+          timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
+          echo "línea más larga: $(wc -L < "$RUNNER_TEMP/cargo-test.log") bytes"
+          grep -E '^test a_stalled|^test result|Running tests/' "$RUNNER_TEMP/cargo-test.log" || true
+          cut -c1-2000 "$RUNNER_TEMP/cargo-test.log"
+          exit "$status"
+
       - name: Correr (${{ matrix.mode }})
+        if: matrix.mode != 'suite'
         env:
           BIN: ${{ steps.build.outputs.bin_path }}
           MODE: ${{ matrix.mode }}
