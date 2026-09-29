@@ -275,6 +275,23 @@ fn say(word: &str) -> String {
     format!("echo {head}''{tail}\n")
 }
 
+/// What a failure message shows of a terminal buffer: its length and its
+/// last bytes, never the whole buffer. The stalled-subscriber test pushes
+/// 3 MB of `x` with no newline through the terminal; printed whole in a
+/// timeout panic that became a single ~2.9 MB line in the `x86_64` GitHub
+/// runner's log, after which the runner went silent (no log upload, and
+/// neither `timeout` nor the job's cancel answered). m10-ci-x86,
+/// docs/research/2026-10-ci-x86-freeze.md.
+fn shown(buffer: &[u8]) -> String {
+    const SHOWN_BYTES: usize = 512;
+    let start = buffer.len().saturating_sub(SHOWN_BYTES);
+    format!(
+        "{} bytes, ending {:?}",
+        buffer.len(),
+        String::from_utf8_lossy(&buffer[start..])
+    )
+}
+
 async fn first_pid(stream: &mut Streaming<PtyServerMessage>) -> u32 {
     let first = stream.message().await.unwrap().expect("first message");
     assert_eq!(first.seq, 0);
@@ -303,17 +320,17 @@ async fn read_until_with(
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
             !remaining.is_zero(),
-            "needle {:?} not found in {:?}",
+            "needle {:?} not found in {}",
             String::from_utf8_lossy(needle),
-            String::from_utf8_lossy(&buffer)
+            shown(&buffer)
         );
         let message = tokio::time::timeout(remaining, stream.message())
             .await
             .unwrap_or_else(|_| {
                 panic!(
-                    "timed out waiting for {:?}; got {:?}",
+                    "timed out waiting for {:?}; got {}",
                     String::from_utf8_lossy(needle),
-                    String::from_utf8_lossy(&buffer)
+                    shown(&buffer)
                 )
             })
             .unwrap()
@@ -323,8 +340,16 @@ async fn read_until_with(
                 assert!(message.seq > 0);
                 assert!(bytes.len() <= PTY_CHUNK_BYTES);
                 last_seq = message.seq;
+                // Only the new bytes (plus a needle's worth of overlap) are
+                // searched: rescanning the whole buffer per chunk is
+                // quadratic, and over 3 MB of debug-build `windows` it ate
+                // most of the stalled-subscriber test's 30 s budget on x86.
+                let from = buffer.len().saturating_sub(needle.len() - 1);
                 buffer.extend(bytes);
-                if buffer.windows(needle.len()).any(|window| window == needle) {
+                if buffer[from..]
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+                {
                     return (buffer, keepalives, last_seq);
                 }
             }
@@ -351,9 +376,9 @@ async fn read_line_after(stream: &mut Streaming<PtyServerMessage>, prefix: &[u8]
             .await
             .unwrap_or_else(|_| {
                 panic!(
-                    "timed out waiting for a line after {:?}; got {:?}",
+                    "timed out waiting for a line after {:?}; got {}",
                     String::from_utf8_lossy(prefix),
-                    String::from_utf8_lossy(&buffer)
+                    shown(&buffer)
                 )
             })
             .unwrap()
@@ -462,12 +487,7 @@ async fn collect_until_exit(
         let remaining = deadline.saturating_duration_since(Instant::now());
         let message = tokio::time::timeout(remaining, stream.message())
             .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "no PtyExited within 15 s; got {:?}",
-                    String::from_utf8_lossy(&buffer)
-                )
-            })
+            .unwrap_or_else(|_| panic!("no PtyExited within 15 s; got {}", shown(&buffer)))
             .unwrap()
             .expect("stream ended without PtyExited");
         match message.message {
