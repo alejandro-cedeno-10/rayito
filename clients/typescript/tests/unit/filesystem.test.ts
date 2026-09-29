@@ -11,6 +11,7 @@ import { FilesystemEventType as EventTypeProto } from "../../src/gen/rayito/v1/f
 import { FilesystemEventType, FileType } from "../../src/models.js";
 import {
   buildWriteRequests,
+  Filesystem,
   fileRequestDeadlineMs,
   materialiseWriteData,
   modifiedTimeFromMs,
@@ -25,9 +26,14 @@ import {
 } from "../../src/sandbox/filesystem.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { entryInfo, FakeDirectory } from "./fake/filesystem.js";
+import { FakeS3 } from "./fake/s3.js";
 import { createTestSandbox, sleep, waitUntil } from "./helpers.js";
 
 const HOME = "/home/user";
+const FAKE_CREDENTIALS = {
+  accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+};
 
 /** `toEqual` recorre un `Uint8Array` elemento a elemento: con MB tarda segundos y agota el timeout. */
 function sameBytes(actual: Uint8Array, expected: Uint8Array): boolean {
@@ -515,5 +521,25 @@ describe("M9 filesystem surface (gzip, metadata, blob, idle timeout)", () => {
       ["p.txt"],
     ]);
     expect(rayd.filesystem.headers.GetTransfer).toBeUndefined();
+  });
+
+  test("new Filesystem(core) without a second argument probes on its own", async () => {
+    const { sandbox, rayd } = await createTestSandbox({
+      create: { transfer: { bucket: "amzn-s3-demo-bucket" } },
+    });
+    const s3 = await FakeS3.start();
+    try {
+      Sandbox.coreOf(sandbox).s3ClientOverrides = {
+        endpoint: s3.endpoint,
+        forcePathStyle: true,
+        credentials: FAKE_CREDENTIALS,
+      };
+      const other = new Filesystem(sandbox.files.core);
+      await sandbox.files.uploadUrl("up/one.bin");
+      await other.uploadUrl("up/two.bin");
+      expect(rayd.filesystem.headers.GetTransfer).toHaveLength(2);
+    } finally {
+      await s3.close();
+    }
   });
 });

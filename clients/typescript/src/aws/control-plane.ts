@@ -229,6 +229,14 @@ export interface ControlPlane {
     ports: readonly PortSpec[],
     options?: ControlPlaneCallOptions,
   ): Promise<string>;
+  /**
+   * Las credenciales y el proxy del cliente del SDK de este plano, para que
+   * los clientes S3 de las transferencias los hereden (ADR-010). Un
+   * decorador que envuelve un plano (p. ej. `LaunchObserver`) DEBE
+   * reenviarlo; si no, S3 usa la cadena de credenciales por defecto y
+   * rodea el proxy en silencio. `undefined` = el plano no expone nada.
+   */
+  readonly awsClientSettings?: AwsClientSettings | undefined;
 }
 
 export type MonotonicClock = () => number;
@@ -332,15 +340,9 @@ export interface AwsClientSettings {
   readonly proxy?: string | undefined;
 }
 
-/** Un plano que expone esos ajustes (`LambdaMicrovmsControlPlane` y los que lo envuelven). */
-export interface AwsClientSettingsSource {
-  readonly awsClientSettings: AwsClientSettings;
-}
-
 /** Los `AwsClientSettings` de un plano, o `{}` si no los expone (un plano falso o uno construido sobre `client`). */
 export function awsClientSettingsOf(plane: ControlPlane): AwsClientSettings {
-  const settings = (plane as Partial<AwsClientSettingsSource>).awsClientSettings;
-  return settings ?? {};
+  return plane.awsClientSettings ?? {};
 }
 
 export const DEFAULT_MAX_ATTEMPTS = 5;

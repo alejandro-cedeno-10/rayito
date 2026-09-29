@@ -15,6 +15,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   produjo `python-build` antes de publicar) — cierra C-10/H-02 residuo
   (`docs/SECURITY_AUDIT.md`). Sin cambio de comportamiento en lo publicado
   ni en el Trusted Publisher de PyPI.
+### Changed
+
+- Shim E2B: `native_call_kwargs` (`rayito.e2b._compat`) ya no lee
+  `ConnectionConfig.current_integration()` ni construye un plano de
+  control compartido (`shared_control_plane`) — la construcción con AWS
+  se mueve al nuevo `bind_control_plane` (`rayito.e2b._connection`), el
+  único punto de I/O; `native_call_kwargs` recibe `integration` como
+  parámetro y sólo describe, en `NativeCall.plane_settings`, si hace
+  falta un plano nuevo. `snapshot_config` ya no escribe el atributo
+  privado de `ConnectionConfig` desde fuera de la clase; ahora pasa por
+  el nuevo `ConnectionConfig._snapshot`. Sin cambio de comportamiento
+  observable ni de ninguna firma pública (`ConnectionConfig`, `Sandbox`,
+  `AsyncSandbox`, `E2B`); ver `openspec/changes/m10-python-shim`.
 
 ## [0.3.2] - 2026-09-29
 

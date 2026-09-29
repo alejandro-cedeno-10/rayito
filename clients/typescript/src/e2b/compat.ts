@@ -8,6 +8,7 @@
 import { Code } from "@connectrpc/connect";
 import {
   InvalidArgumentError,
+  LifecycleUnsupportedError,
   SandboxError,
   SandboxNotFoundError,
   UnimplementedError,
@@ -24,6 +25,7 @@ import {
 } from "../models.js";
 import { DEFAULT_LANGUAGE, normalizeLanguage } from "../sandbox/code.js";
 import { CAP_MARGIN_MS, MAX_LIFETIME_MS } from "../sandbox/lifecycle.js";
+import { HISTORY_UNIMPLEMENTED_REASON, isHistoryUnavailable } from "../sandbox/metrics.js";
 import type { SandboxCreateOptions, SandboxPaginateOptions } from "../sandbox/sandbox.js";
 import { validateExtraHeaders } from "../transport/headers.js";
 import { validateProxyUrl } from "../transport/proxy-tunnel.js";
@@ -679,4 +681,60 @@ export function settleAsyncCallback<A>(
   return (arg: A): void => {
     void Promise.resolve(callback(arg)).catch(onRejected);
   };
+}
+
+export const LIFECYCLE_IMAGE_REASON =
+  "la imagen no impone el timeout del servidor: publica una imagen M9 (ADR-011)";
+
+/**
+ * Envuelve un error de `getMetricsHistory`/`getMetrics(sandboxId)` que
+ * viene de una imagen sin historial (pre-M9) en el `UnimplementedError` de
+ * la tabla D14; cualquier otro error pasa sin tocar.
+ */
+export function historyImageError(feature: string, error: unknown): unknown {
+  if (!isHistoryUnavailable(error)) {
+    return error;
+  }
+  return new UnimplementedError(feature, HISTORY_UNIMPLEMENTED_REASON, COMPAT_DOC_PATH, {
+    cause: error,
+  });
+}
+
+/** Envuelve el `LifecycleUnsupportedError` nativo (agente sin M9) en el `UnimplementedError` de E2B. */
+export function lifecycleImageError(error: unknown): unknown {
+  return error instanceof LifecycleUnsupportedError
+    ? new UnimplementedError("lifecycle", LIFECYCLE_IMAGE_REASON, COMPAT_DOC_PATH)
+    : error;
+}
+
+/**
+ * La política "historial o instantánea" de `Sandbox.getMetrics` de E2B:
+ * llama a `history()`; un error que no sea "imagen sin historial" se
+ * relanza tal cual; si la imagen no lo soporta y la consulta es acotada
+ * (`ranged`), lanza `historyImageError`; si no es acotada, trata la serie
+ * como vacía. Con serie no vacía o consulta acotada devuelve el historial;
+ * si no, cae a `snapshot()` (la instantánea actual, como una serie de un
+ * elemento).
+ */
+export async function metricsHistoryOrSnapshot(
+  history: () => Promise<SandboxMetrics[]>,
+  snapshot: () => Promise<SandboxMetrics>,
+  opts: { readonly ranged: boolean; readonly feature: string },
+): Promise<SandboxMetrics[]> {
+  let result: SandboxMetrics[];
+  try {
+    result = await history();
+  } catch (error) {
+    if (!isHistoryUnavailable(error)) {
+      throw error;
+    }
+    if (opts.ranged) {
+      throw historyImageError(opts.feature, error);
+    }
+    result = [];
+  }
+  if (result.length > 0 || opts.ranged) {
+    return result;
+  }
+  return [await snapshot()];
 }
