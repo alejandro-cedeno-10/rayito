@@ -5,18 +5,26 @@ name: ci-x86-probe
 # fusiona a main y se borra antes de que el cambio real llegue a main. Mismas
 # acciones y SHAs que ci.yml; permissions: contents: read.
 #
-# `pull_request.branches` filtra por la rama BASE del PR, no por la rama de
-# origen (GitHub evalúa el fichero con el contenido de la rama de origen
-# cuando ésta introduce un workflow nuevo, pero el filtro de ramas sigue
-# siendo sobre la base). El único PR de este sondeo tiene base `main` y
-# origen `ci/x86-freeze-probe`, así que el filtro es `[main]`: sólo hace
-# match para este PR, porque el fichero no existe en ninguna otra rama.
-# `workflow_dispatch` no es invocable por CLI/API aquí — GitHub exige que un
-# workflow con ese trigger ya exista en la rama por defecto para poder
-# despacharlo, y este fichero nunca llega a `main`; se deja declarado como
-# documentación de intención y las re-ejecuciones reales se hacen con
-# "Re-run all jobs" sobre las corridas de este PR o con nuevos commits
-# (`synchronize`) a esta rama.
+# `pull_request.branches` filtra por la rama BASE del PR (main); el fichero
+# sólo existe en esta rama, así que sólo corre en el PR en borrador del
+# sondeo. `workflow_dispatch` queda declarado pero no es invocable (el
+# fichero nunca llega a la rama por defecto): las repeticiones son
+# "Re-run all jobs" o commits nuevos a esta rama.
+#
+# Fase 1 (17 binarios, 3 intentos): sólo m5_pty congeló (intento 3 de
+# 36609832898: el job superó sus 20 min, ni timeout ni cancel respondieron,
+# sin log). Fase 2, sólo m5_pty:
+#   aislado     cada test solo (`--exact`, 1 hilo), 10 repeticiones, 120 s
+#               de timeout cada una: el job que congele nombra el test.
+#   completo    binario entero, 5 repeticiones seguidas (línea base).
+#   contenido   binario entero dentro de `systemd-run --scope` con TasksMax
+#               y MemoryMax: si es agotamiento de pids/memoria, falla en vez
+#               de congelar.
+#   sin-harden  binario entero, 5 repeticiones, SIN harden-runner: en x86
+#               instala un agente (auditd + eBPF "Armour" con
+#               ENFORCE_KILL_BLOCK); en arm64 imprime "ARM runners are not
+#               supported in the Harden-Runner community tier" y no instala
+#               nada, y arm64 nunca ha congelado.
 
 on:
   pull_request:
@@ -32,32 +40,39 @@ env:
 
 jobs:
   probe:
-    name: probe ${{ matrix.bin }}
+    name: ${{ matrix.mode }} ${{ matrix.test || matrix.rep }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        bin:
-          - m1_hello
-          - m2_process
-          - m3_filesystem
-          - m4_code
-          - m5_pty
-          - m5_suspend_resume
-          - m6_hooks
-          - m6_imds
-          - m6_limits
-          - m7_poly
-          - m9_deno
-          - m9_egress
-          - m9_metrics_history
-          - m9_network
-          - m9_timeout
-          - m9_transfer
-          - s3_store
+        include:
+          - { mode: aislado, test: echo_round_trip_size_tty_uid_and_env }
+          - { mode: aislado, test: default_shell_is_the_login_shell_and_request_envs_win }
+          - { mode: aislado, test: kinds_are_enforced_across_both_services_and_signal_works_on_a_pty }
+          - { mode: aislado, test: output_is_chunked_at_16_kib_and_replayable_from_the_ring }
+          - { mode: aislado, test: a_stalled_second_subscriber_is_truncated_alone }
+          - { mode: aislado, test: kill_ends_with_137_and_a_second_kill_is_not_found }
+          - { mode: aislado, test: a_typed_exit_is_retained_and_replayable }
+          - { mode: aislado, test: timeout_sends_sigterm_first_and_reports_deadline_exceeded }
+          - { mode: aislado, test: invalid_sizes_shells_and_a_failing_shell }
+          - { mode: aislado, test: the_live_cap_is_shared_with_processes }
+          - { mode: aislado, test: create_is_refused_while_suspending }
+          - { mode: aislado, test: keepalives_flow_on_a_silent_shell }
+          - { mode: aislado, test: a_background_child_holding_the_slave_does_not_delay_the_end }
+          - { mode: aislado, test: jobs_and_processes_inherit_neither_end_of_the_terminal }
+          - { mode: aislado, test: a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process }
+          - { mode: aislado, test: kill_takes_the_foreground_job_down_with_the_shell }
+          - { mode: completo, rep: 1 }
+          - { mode: completo, rep: 2 }
+          - { mode: contenido, rep: 1 }
+          - { mode: contenido, rep: 2 }
+          - { mode: sin-harden, rep: 1 }
+          - { mode: sin-harden, rep: 2 }
+          - { mode: sin-harden, rep: 3 }
     steps:
-      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+      - if: matrix.mode != 'sin-harden'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,17 +90,21 @@ jobs:
           free -m
           df -h
           cat /proc/sys/kernel/pid_max /proc/sys/kernel/threads-max
+          echo "descriptores que el runner deja al shell del paso:"
+          ls -l /proc/$$/fd
+          sudo auditctl -s || true
+          sudo auditctl -l | head -40 || true
           ps -eo user,pid,ppid,pgid,sid,stat,etime,cmd --forest | head -80
 
-      - name: Compilar el binario de test (sin correrlo)
+      - name: Compilar m5_pty (sin correrlo)
         id: build
         run: |
-          binary="$(cargo test -p rayd --test ${{ matrix.bin }} --locked --no-run --message-format=json \
-            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "${{ matrix.bin }}" and .executable != null) | .executable')"
+          binary="$(cargo test -p rayd --test m5_pty --locked --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "m5_pty" and .executable != null) | .executable')"
           test -x "$binary"
           echo "bin_path=$binary" >> "$GITHUB_OUTPUT"
 
-      - name: Muestreador de fondo (cada 10s, al log en vivo — sobrevive a un cuelgue)
+      - name: Muestreador de fondo (cada 10s, al log en vivo)
         run: |
           {
             while true; do
@@ -95,6 +114,8 @@ jobs:
               ps -e --no-headers | wc -l
               ps -u "$USER" --no-headers | wc -l
               find /proc/self/fd -mindepth 1 | wc -l
+              find /dev/pts -mindepth 1 | wc -l
+              sudo auditctl -s 2>/dev/null | grep -E '^(lost|backlog) ' | tr '\n' ' '; echo
               df -h / | tail -1
               echo "---"
               sleep 10
@@ -102,17 +123,52 @@ jobs:
           } &
           echo "sampler_pid=$!" >> "$GITHUB_ENV"
 
-      - name: Correr ${{ matrix.bin }} (timeout duro, salida en vivo)
+      - name: Correr (${{ matrix.mode }})
+        env:
+          BIN: ${{ steps.build.outputs.bin_path }}
+          MODE: ${{ matrix.mode }}
+          TEST: ${{ matrix.test }}
         run: |
-          timeout --kill-after=15s 10m "${{ steps.build.outputs.bin_path }}" --test-threads=2 2>&1 \
-            | tee "$RUNNER_TEMP/${{ matrix.bin }}.log"
+          status=0
+          case "$MODE" in
+            aislado)
+              for i in $(seq 1 10); do
+                echo "::group::$TEST repetición $i"
+                timeout --kill-after=10s 120s "$BIN" --exact "$TEST" --test-threads=1 2>&1 || status=$?
+                echo "::endgroup::"
+                echo "repetición $i -> $status"
+                [ "$status" -eq 0 ] || break
+              done
+              ;;
+            completo|sin-harden)
+              for i in $(seq 1 5); do
+                echo "::group::m5_pty completo repetición $i"
+                timeout --kill-after=15s 10m "$BIN" --test-threads=2 2>&1 || status=$?
+                echo "::endgroup::"
+                echo "repetición $i -> $status"
+                [ "$status" -eq 0 ] || break
+              done
+              ;;
+            contenido)
+              for i in $(seq 1 5); do
+                echo "::group::m5_pty contenido repetición $i"
+                sudo systemd-run --scope --uid=runner -p TasksMax=4096 -p MemoryMax=10G -- \
+                  timeout --kill-after=15s 10m "$BIN" --test-threads=2 2>&1 || status=$?
+                echo "::endgroup::"
+                echo "repetición $i -> $status"
+                [ "$status" -eq 0 ] || break
+              done
+              ;;
+          esac
+          exit "$status"
 
       - name: Parar el muestreador de fondo
         if: always()
         run: kill "$sampler_pid" 2>/dev/null || true
 
-      - name: dmesg y árbol de procesos (evidencia de OOM/hung task tras un cuelgue)
+      - name: dmesg, audit y árbol de procesos
         if: always()
         run: |
           sudo dmesg -T | tail -100
+          sudo auditctl -s || true
           ps -eo user,pid,ppid,pgid,sid,stat,etime,cmd --forest | head -200
