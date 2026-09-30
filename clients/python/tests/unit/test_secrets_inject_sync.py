@@ -341,7 +341,7 @@ def test_without_secrets_no_secretsmanager_client_is_ever_built(
         plain.commands.run("env")
         plain.run_code("1+1")
         assert plain._secrets is None
-        assert relaunch_secrets(plain._secrets) == {"secrets": None, "secret_cache": None}
+        assert relaunch_secrets(plain._secrets) == (None, None)
     finally:
         control_plane.microvms.add_response(
             "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}

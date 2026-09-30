@@ -935,13 +935,15 @@ def rebind_secrets(
     return SecretBinding(refs=current.refs, cache=binding.cache)
 
 
-def relaunch_secrets(binding: SecretBinding | None) -> dict[str, Any]:
-    """Los `secrets=`/`secret_cache=` con los que `reincarnate()` relanza:
+def relaunch_secrets(
+    binding: SecretBinding | None,
+) -> tuple[dict[str, SecretRef] | None, SecretCache | None]:
+    """Los `secrets=` y `secret_cache=` con los que `reincarnate()` relanza:
     los que el handle tiene AHORA (tras `take()` o `connect(secrets=)`), no
     los del `create()` original. Sólo referencias, nunca valores."""
     if binding is None:
-        return {"secrets": None, "secret_cache": None}
-    return {"secrets": dict(binding.refs) or None, "secret_cache": binding.cache}
+        return None, None
+    return dict(binding.refs) or None, binding.cache
 
 
 CacheFactory: TypeAlias = "Callable[[], SecretCache]"

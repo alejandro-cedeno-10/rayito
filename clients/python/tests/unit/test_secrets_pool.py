@@ -98,10 +98,10 @@ def test_reincarnate_after_take_keeps_the_secrets_of_take(
     wait_idle(pool, 1)
     sandbox = pool.take(secrets={"OPENAI_API_KEY": SENTINEL_NAME}, secret_cache=cache)
     try:
-        assert relaunch_secrets(sandbox._secrets) == {
-            "secrets": {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)},
-            "secret_cache": cache,
-        }
+        assert relaunch_secrets(sandbox._secrets) == (
+            {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)},
+            cache,
+        )
     finally:
         sandbox.kill()
 

@@ -1367,12 +1367,14 @@ class AsyncSandbox:
         if persist is None:
             raise reincarnate_requires_persist_error()
         await self.checkpoint_files(exclude=exclude, timeout=persist_timeout)
+        secret_refs, secret_cache = relaunch_secrets(self._secrets)
         try:
             successor = await type(self).create(
                 **launch_kwargs(options),
                 persist=persist,
                 persist_timeout=persist_timeout,
-                **relaunch_secrets(self._secrets),
+                secrets=secret_refs,
+                secret_cache=secret_cache,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)
