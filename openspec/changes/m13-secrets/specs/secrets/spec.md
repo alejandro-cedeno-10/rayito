@@ -1,0 +1,64 @@
+## ADDED Requirements
+
+### Requirement: Secrets are off by default and only explicit SDK options turn them on
+The SDKs SHALL make zero Secrets Manager calls, build no boto3 `secretsmanager` client and import no `@aws-sdk/client-secrets-manager` module unless the caller passes `secrets=`/`secret_cache=` (TS `secrets`/`secretCache`) or calls a `SecretStore` (or E2B `Secret`) method. Constructing `SecretStore` or `SecretCache` SHALL NOT call AWS. No environment variable, configuration file or global setter SHALL enable the feature. In TypeScript `@aws-sdk/client-secrets-manager` SHALL be an optional peerDependency loaded only through `loadOptionalPeer`.
+
+#### Scenario: a sandbox without secrets builds no Secrets Manager client
+- **WHEN** `Sandbox.create()` runs commands and code without `secrets=`
+- **THEN** no `secretsmanager` client is constructed (Python) and `loadOptionalPeer` is never called (TypeScript), and no shared secret cache is created
+
+#### Scenario: constructing the configuration objects is free
+- **WHEN** `SecretStore(...)` or `SecretCache(...)` is constructed
+- **THEN** no AWS call is made and no client is built until the first method call
+
+### Requirement: SecretStore is a CRUD over Secrets Manager restricted to AWS_API_NOTES.md §19
+`SecretStore(region=, session=, prefix='rayito/', kms_key_id=)` (TS `new SecretStore({ region, credentials, prefix, kmsKeyId })`) SHALL resolve a name to `SecretId = prefix + name` (an `arn:` reference is used as-is), store values as `SecretString`, encode the integer version as `ClientRequestToken` `rayito-secret-version-{n:020d}` (1 on create, current + 1 on update, the current read from the `AWSCURRENT` entry of `VersionIdsToStages`), store metadata as `rayito:v1:` + compact JSON in `Description` validated to ≤ 2048 characters before calling AWS, list with the `name` prefix filter and `IncludePlannedDeletion=false`, and destroy with `ForceDeleteWithoutRecovery=true` returning `False` when the secret did not exist. A create that fails because the name is still scheduled for deletion SHALL retry with bounded backoff (≤ 30 s, same token) and then raise `SecretException`. Updating the same secret more often than once every 600 s in a process SHALL warn once. Only operations and parameters listed in `AWS_API_NOTES.md` §19 SHALL be used.
+
+#### Scenario: create sends only the documented parameters
+- **WHEN** `SecretStore(kms_key_id="alias/x").create("openai", value, metadata={"team": "ml"})` runs against a botocore `Stubber`
+- **THEN** `CreateSecret` receives exactly `Name`, `SecretString`, `Description`, `KmsKeyId` and `ClientRequestToken` with version 1
+
+#### Scenario: update writes version n + 1
+- **WHEN** the current version is 2 and `update` is called
+- **THEN** `DescribeSecret` is followed by `PutSecretValue` with the version-3 token, and `UpdateSecret(Description)` only when `metadata` is given
+
+#### Scenario: errors never repeat the name or the value
+- **WHEN** any Secrets Manager call fails
+- **THEN** the raised error (and its cause) contains neither the secret name nor its value, maps by AWS error code (`ResourceNotFoundException` → `SecretNotFoundException`, `ThrottlingException` → `RateLimitException`, others → `SecretException`)
+
+### Requirement: SecretCache never fetches a secret on every call
+`SecretCache(ttl_seconds=300)` (TS `new SecretCache({ ttlSeconds: 300 })`) SHALL key values by (region, credentials identity, resolved `SecretId`, `VersionId` or `VersionStage`, `AWSCURRENT` by default), accept a TTL only in 1..86400 seconds, allow a single in-flight fetch per key, serve hits with zero AWS calls, refetch only on TTL expiry or explicit `refresh()`/`invalidate()`, never cache a not-found result, keep values only in process memory and never show them in `repr`/`str`/`toJSON`/`inspect`. Without `secret_cache=`, `secrets=` SHALL use one lazily created, process-wide cache per (region, session) with TTL 300.
+
+#### Scenario: N reads within the TTL make one call
+- **WHEN** a secret is read 50 times within its TTL
+- **THEN** exactly one `GetSecretValue` is made; after the TTL the next read makes a second one
+
+#### Scenario: concurrent readers share one fetch
+- **WHEN** ten threads (or tasks, or promises) read the same key at once
+- **THEN** exactly one `GetSecretValue` is made
+
+#### Scenario: a zero TTL is rejected
+- **WHEN** `SecretCache(ttl_seconds=0)` is constructed
+- **THEN** it raises `InvalidArgumentException`
+
+### Requirement: secrets= injects values through the existing per-call envs, never through the run payload
+`secrets={"ENV": "name" | SecretRef}` on `create()` (also with `pool=`), both forms of `connect()`, `SandboxPool.take()`, and per call on `commands.run`, `pty.create`, `run_code` and `create_code_context` SHALL deliver the resolved values only in the per-call `envs` of `ProcessService`, `PtyService` and `CodeService`. The handle SHALL store only references. Each call SHALL merge handle and call secrets (the call wins on a repeated key) and SHALL reject a key present both in `envs` and in `secrets` with `InvalidArgumentException` naming the key. `run_code` with call-level `secrets=` on a non-Python language SHALL raise `InvalidArgumentException` pointing to `create_code_context(secrets=)`; handle secrets SHALL NOT be added to non-Python cells. The handle's secrets SHALL be resolved before `run-microvm` (or before a pool slot is claimed). Values SHALL never appear in the `runHookPayload`, `metadata`, tags, image env, pool slot records, `LaunchOptions`, logs, `repr` or errors, and `reincarnate()` SHALL reuse the references. The first use in a process SHALL emit a `RayitoCompatWarning` stating that the value is visible to sandbox code.
+
+#### Scenario: three commands, one read
+- **WHEN** a sandbox created with `secrets={"K": "name"}` runs three commands
+- **THEN** each `StartRequest.envs["K"]` carries the value and Secrets Manager is read once
+
+#### Scenario: the run payload stays clean
+- **WHEN** `Sandbox.create(envs=..., secrets=...)` launches a MicroVM
+- **THEN** the `runHookPayload` sent to `RunMicrovm` contains neither the value, the secret name nor the variable name
+
+#### Scenario: a missing secret launches nothing
+- **WHEN** `create(secrets={"K": "missing"})` runs
+- **THEN** it raises `SecretNotFoundException` and `RunMicrovm` is never called
+
+### Requirement: An optional CloudFormation template grants least-privilege secrets IAM
+`infra/secrets-access.yaml` SHALL create only two `AWS::IAM::ManagedPolicy` resources (`RayitoSecretsReader`: `GetSecretValue`, `DescribeSecret`; `RayitoSecretsAdmin`: reader + `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DeleteSecret` on `secret:<SecretPrefix>*`, and `ListSecrets` on `*`), with KMS statements only when `KmsKeyArn` is set and conditioned on `kms:ViaService = secretsmanager.<region>.amazonaws.com`. It SHALL never be deployed automatically and SHALL pass `cfn-lint`.
+
+#### Scenario: the template is policies only
+- **WHEN** `scripts/tests/test_secrets_template.py` parses the template
+- **THEN** every resource is a managed policy, every action is on the allow list, only `ListSecrets` uses `Resource: "*"`, and KMS statements live behind `HasKmsKey` with `kms:ViaService`

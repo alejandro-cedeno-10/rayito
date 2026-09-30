@@ -374,3 +374,25 @@ def test_c10_and_c12_are_closed_in_the_security_audit() -> None:
         still_open,
         ("**C-07**", "**C-06** queda aceptado con razón escrita"),
     )
+
+
+def test_t18_user_secret_custody_is_in_the_threat_model() -> None:
+    """M13a: la fila T18 existe y dice las cuatro cosas que no pueden
+    desaparecer en silencio: nunca en `runHookPayload`, caché sólo en
+    memoria, el código del sandbox puede leer el valor (fase 1) y la
+    recomendación para código no confiable."""
+    rows = [line for line in security_md().splitlines() if line.startswith("| T18 |")]
+    assert len(rows) == 1, "SECURITY.md: falta la fila T18 (custodia de secretos del usuario)"
+    row = flatten(rows[0])
+    for fragment in (
+        "custodia de secretos del usuario",
+        "Nunca** en `runHookPayload`",
+        "sólo en la memoria del proceso del SDK",
+        "cualquier código de uid 1000 del sandbox puede leer un secreto inyectado",
+        "vida corta y mínimo privilegio",
+        "snapshot de memoria",
+    ):
+        assert fragment in row, f"SECURITY.md T18: falta «{fragment}»"
+    site = flatten(site_doc("security"))
+    assert "## Custodia de secretos del usuario (T18)" in site_doc("security")
+    assert "el código del sandbox puede leer un secreto inyectado" in site

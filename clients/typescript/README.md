@@ -138,6 +138,27 @@ autoResume: true }` por defecto; `null` desactiva el auto-suspend), `envs`,
 `logger` opcional recibe ids de sandbox, estados, generaciones y duraciones;
 nunca salida, ficheros, código, tokens ni cabeceras.
 
+## Secretos (opcional, con coste)
+
+Apagado por defecto: sólo `secrets`/`secretCache` o `new SecretStore(...)`
+lo encienden, y sólo entonces se carga `@aws-sdk/client-secrets-manager`
+(peerDependency **opcional**: `npm install @aws-sdk/client-secrets-manager`).
+Guarda secretos en AWS Secrets Manager de tu cuenta ($0,40/secreto-mes hasta
+`destroy` + $0,05/10 000 llamadas) y los entrega como variables de entorno
+con una caché (TTL 300 s: una lectura por secreto y TTL, nunca una por
+comando). **El código del sandbox puede leer un secreto inyectado**: para
+código no confiable, sólo tokens de vida corta y mínimo privilegio.
+
+```ts
+import { Sandbox, SecretStore } from "rayito";
+
+await new SecretStore({ region: "us-east-1" }).create("openai", process.env.OPENAI_API_KEY!);
+const sbx = await Sandbox.create({ secrets: { OPENAI_API_KEY: "openai" } });
+await sbx.commands.run("python agent.py");
+```
+
+IAM, reglas de la caché y el shim `Secret` de E2B: [Secretos](../../docs/site/docs/secrets.md).
+
 ## Novedades de 0.3.0 (M9)
 
 Paridad con E2B 2.x. Exige una imagen publicada con el `rayd` de M9 y está

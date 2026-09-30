@@ -17,8 +17,8 @@ página sólo dice **qué hay** y dónde está documentado.
 | Estado | Qué significa | Filas |
 |---|---|---|
 | implementado | la feature de E2B funciona con el mismo contrato; "antes de M9" si ya estaba en 0.2.0 | 72 (24 antes de M9, 48 en M9) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto) | 18 |
-| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 12 |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto) | 20 |
+| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 10 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
 Ninguna fila se aproxima en silencio: lo que no está implementado lanza
@@ -101,7 +101,7 @@ se explica cómo usarlo.
 | 53 | `sbx.sandbox_id` / `sbx.sandbox_domain` | implementado (antes de M9) | — | `sandbox_domain` es el hostname del endpoint | [Compatibilidad](e2b-compat.md) |
 | 54 | `sbx.envd_api_url` / `sbx.envd_direct_url` | implementado (M9) | `m9-e2b-v2-surface` | `https://<endpoint>`; las peticiones necesitan las cabeceras del proxy; sólo Python | [Compatibilidad](e2b-compat.md) |
 | 55 | `with Sandbox() as sbx` / `async with` | implementado (antes de M9) | — | — | [Compatibilidad](e2b-compat.md) |
-| 56 | cliente ligado `E2B(api_key, domain, ...)` con `.Sandbox` / `.AsyncSandbox` / `.Template` / `.Volume` / `.Secret` | implementado (M9) | `m9-e2b-v2-surface` | liga `region`/`session`/`control_plane`; `.Template`, `.Volume` y `.Secret` lanzan `UnimplementedError` | [Compatibilidad](e2b-compat.md) |
+| 56 | cliente ligado `E2B(api_key, domain, ...)` con `.Sandbox` / `.AsyncSandbox` / `.Template` / `.Volume` / `.Secret` | implementado (M9) | `m9-e2b-v2-surface`, `m13-secrets` | liga `region`/`session`/`control_plane`; desde 0.5.0 `.Secret`/`.AsyncSecret` funcionan (Secrets Manager con esa `region`/`session`); `.Template` y `.Volume` lanzan `UnimplementedError` | [Compatibilidad](e2b-compat.md) |
 | 57 | `commands.run(cmd, background, envs, user, cwd, on_stdout, on_stderr, stdin, timeout, request_timeout)` con argumentos posicionales | implementado (M9) | `m9-e2b-v2-surface` | la llamada nativa ya funcionaba; el shim acepta ahora el orden posicional de E2B | [Compatibilidad](e2b-compat.md) |
 | 58 | `commands.connect` / `commands.list` / `ProcessInfo` / `commands.kill` / `send_stdin` / `close_stdin` | implementado (antes de M9) | — | — | [Compatibilidad](e2b-compat.md) |
 | 59 | `CommandHandle.wait(on_pty, on_stdout, on_stderr)` (sync) | implementado (M9) | `m9-e2b-v2-surface` | — | [Compatibilidad](e2b-compat.md) |
@@ -125,7 +125,7 @@ se explica cómo usarlo.
 | 77 | JS `files.read(format: "blob")` | implementado (M9) | `m9-file-transfer` | — | [Ficheros](files.md) |
 | 78 | JS `files.watchDir(path, onEvent, opts)` | implementado (M9) | `m9-e2b-v2-surface` | `onEvent` posicional en el shim de TS | [Compatibilidad](e2b-compat.md) |
 | 79 | `sandbox.git` (`clone`, `init`, `remote_add`, `remote_get`, `status`, `branches`, `create_branch`, `checkout_branch`, `delete_branch`, `add`, `commit`, `reset`, `restore`, `push`, `pull`, `set_config`, `get_config`, `dangerously_authenticate`, `configure_user`; `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode`) | implementado (M9) | `m9-e2b-v2-surface` | envoltorio en cliente sobre `commands.run`, con `git-core` en `rayito-base`; E2B marca el módulo como obsoleto | [Git](git.md) |
-| 80 | `Secret` / `AsyncSecret` (`create`, `update`, `get_info`, `list`, `exists`, `destroy`, `fill`; `SecretInfo`, `SecretPaginator`) | fuera por SPEC | `m9-e2b-v2-surface` | necesita un almacén de secretos en un plano de control y un inyector de egress en el host (`SPEC.md` §4); `UnimplementedError` explícito | [Compatibilidad](e2b-compat.md) |
+| 80 | `Secret` / `AsyncSecret` (`create`, `update`, `get_info`, `list`, `exists`, `destroy`, `fill`; `SecretInfo`, `SecretPaginator`) | divergente (0.5.0) | `m13-secrets` | CRUD sobre AWS Secrets Manager en tu cuenta (ADR-014, opcional, $0,40/secreto-mes); `secret_id` es el ARN, no `sec_…`; `metadata` ≤ 2048 caracteres (E2B: 8 KiB), sin tope de 100; sin inyector de `network.rules`: `fill()` devuelve el placeholder, que nada resuelve (la entrega es `secrets=` del SDK nativo, visible para el código del sandbox); `iam_token` sigue en `UnimplementedError` (fila 24) | [Secretos](secrets.md), [Compatibilidad](e2b-compat.md#secretos-secret-asyncsecret) |
 | 81 | API de build de templates (`TemplateBase`, `TemplateBuilder`, `Template.build`, ...) | fuera por SPEC | `m9-e2b-v2-surface` | `SPEC.md` §4 excluye los templates declarativos; el análogo es el Dockerfile más `rayito image publish` | [Compatibilidad](e2b-compat.md) |
 | 82 | `cpu_count` / `memory_mb` por sandbox | divergente | `m12-sizes-proxy` | por imagen, como E2B por build de template: publica una imagen por tamaño (`rayito image publish --memory-mib`) y elige el template; `Template.build(cpu_count=, memory_mb=)` sigue en `UnimplementedError`; `cpu_count`/`memory_mb` de `SandboxInfo` son la vista del guest (Q68) | [Límites](limits.md#tamano-cpuram) |
 | 83 | excepciones `AuthenticationException`, `CommandExitException`, `InvalidArgumentException`, `NotFoundException`, `RateLimitException`, `SandboxException`, `TimeoutException` | implementado (antes de M9) | — | `TimeoutException` cubre ahora también `sandbox_timeout` (`m9-server-timeout`) | [Compatibilidad](e2b-compat.md) |
@@ -135,7 +135,7 @@ se explica cómo usarlo.
 | 87 | `FileUploadException` | implementado (M9) | `m9-e2b-v2-surface` | se lanza cuando falla una importación (`m9-file-transfer`) | [Compatibilidad](e2b-compat.md) |
 | 88 | `GitAuthException` / `GitUpstreamException` | implementado (M9) | `m9-e2b-v2-surface` | — | [Git](git.md) |
 | 89 | `TemplateException` / `BuildException` | fuera por SPEC | `m9-e2b-v2-surface` | las clases existen y nunca se lanzan (no hay API de templates) | [Compatibilidad](e2b-compat.md) |
-| 90 | `Volume*Exception` / `Secret*Exception` | fuera por SPEC | — | sus APIs están fuera de alcance | [Compatibilidad](e2b-compat.md) |
+| 90 | `Volume*Exception` / `Secret*Exception` | divergente (0.5.0) | `m13-secrets` | `SecretException`/`SecretNotFoundException` (TS: `SecretError`/`SecretNotFoundError`) existen y los lanza `Secret`, con la jerarquía de E2B más una diferencia: `SecretException` hereda de `SandboxException` (TS: `SandboxError`) y, en Python, `SecretNotFoundException` también es `NotFoundException`; los `Volume*Exception` no existen porque su API sigue fuera por SPEC (fila 26) | [Compatibilidad](e2b-compat.md#secretos-secret-asyncsecret) |
 | 91 | `SandboxState` `RUNNING` / `PAUSED` | implementado (antes de M9) | — | — | [Compatibilidad](e2b-compat.md) |
 | 92 | paridad completa de `AsyncSandbox` | implementado (M9) | `m9-e2b-v2-surface` | los mismos huecos cerrados que en el shim síncrono | [Compatibilidad](e2b-compat.md) |
 | 93 | `run_code(code, language / context, on_stdout, on_stderr, on_result, on_error, envs, timeout, request_timeout)` → `Execution` | implementado (antes de M9) | — | — | [Compatibilidad](e2b-compat.md) |
@@ -167,7 +167,8 @@ se explica cómo usarlo.
 | `fork`, snapshots, `pause(keep_memory=False)` | `checkpoint_files()` + `create(persist=)` o `reincarnate()`: sobreviven los ficheros, con un id nuevo ([Persistencia](persistence.md)) |
 | `Volume`, `volume_mounts`, montajes s3fs | `persist=` (S3) y `upload_url`/`download_url` ([Ficheros](files.md)) |
 | `Template.build` | un `Dockerfile` y `rayito image publish` ([CLI](cli.md)) |
-| `Secret`, `network.rules` | pasa las credenciales en `envs` de un comando o usa un proxy tuyo fuera del VM; no hay inyector de egress fuera del guest |
+| `Secret` (el CRUD) | `Secret`/`AsyncSecret` del shim o `SecretStore`, sobre AWS Secrets Manager en tu cuenta ([Secretos](secrets.md)) |
+| `network.rules` con `Secret.fill()` | `secrets={"ENV": "nombre"}` del SDK nativo: entrega el valor como variable de entorno (visible para el código del sandbox, fase 1); no hay inyector de egress fuera del guest ([Secretos](secrets.md)) |
 | `mcp=` | el servidor [`rayito-mcp`](mcp.md), en el cliente |
 | `iam=` | `execution_role_arn` (IMDSv2); en `rayito-base-caps` el código del sandbox no ve IMDS ([Seguridad](security.md)) |
 | webhooks de ciclo de vida, OTel | eventos de datos de CloudTrail, logs de runtime en CloudWatch y `get_metrics_history()` ([Observabilidad](observability.md)) |
