@@ -6,6 +6,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- `rayito doctor` tiene la fila `0.4` de la tabla de compatibilidad (SDK 0.4
+  exige `rayd` 0.4.0); sin ella la comprobación `compatibility` daba FAIL.
+
 ### Cambios que rompen
 
 - `LifecycleUnsupportedException` pasa a ser subclase de `UnimplementedError`

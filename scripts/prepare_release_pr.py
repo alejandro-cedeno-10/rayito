@@ -45,6 +45,7 @@ CHANGELOGS = (
 CARGO_LOCK = "Cargo.lock"
 WORKSPACE_CRATES = ("rayd", "rayd-core", "rayito-proto")
 PYTHON_CLIENT = "clients/python"
+COMPAT_TABLE = "clients/python/src/rayito/cli/_compat.py"
 UNRELEASED = "## [Unreleased]\n"
 
 
@@ -90,6 +91,16 @@ def _merge_subsections(body: str) -> str:
 
 def _squeeze(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def has_compat_row(compat_source: str, version: str) -> bool:
+    """La tabla de `rayito doctor` tiene la fila de la serie `MAJOR.MINOR`
+    de `version` (docs/RELEASING.md §6.7; sin ella `doctor` da FAIL)."""
+    series = ".".join(version.split(".")[:2])
+    return (
+        re.search(r'CompatibilityRow\(\s*"' + re.escape(series) + r'"', compat_source)
+        is not None
+    )
 
 
 def bump_cargo_lock(text: str, version: str) -> str:
@@ -144,6 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     (version,) = versions
+    if not has_compat_row(Path(COMPAT_TABLE).read_text(encoding="utf-8"), version):
+        print(
+            f"prepare_release_pr: falta la fila {version} en {COMPAT_TABLE} y en "
+            "docs/site/docs/limits.md (RELEASING.md §6.7); abortado",
+            file=sys.stderr,
+        )
+        return 2
 
     lock = Path(CARGO_LOCK)
     lock.write_text(
