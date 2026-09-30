@@ -450,7 +450,11 @@ cliente y los reexpide el contrato de reconexión.
    el VM.
 
 3. `quiesce` al sidecar (≤ 2 s, mejor esfuerzo).
-4. `libc::sync()`.
+4. `syncfs(2)` por sistema de ficheros escribible (uno por dispositivo, de
+   `/proc/self/mountinfo`), cada uno en un hilo desechable; el hook espera
+   como mucho el plazo de `SuspendBudget` (5 s, `rayd_core::suspend_sync`) y
+   lo que siga colgado (un montaje de red o FUSE) no retrasa el 200. Nunca
+   `sync(2)` sin plazo: un `/suspend` fuera de tiempo termina la VM.
 5. 200 con `streams_closed`; `suspend_ms` en el log. No espera ejecuciones
    ni procesos en curso; un `/suspend` repetido no cambia nada.
 
