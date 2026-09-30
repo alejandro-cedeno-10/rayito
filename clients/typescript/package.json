@@ -71,7 +71,16 @@
     "@connectrpc/connect-node": "^2.2.0",
     "@smithy/node-http-handler": "^4.12.1"
   },
+  "peerDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1138.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-secrets-manager": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1138.0",
     "@biomejs/biome": "^2.5.14",
     "@types/node": "^20.19.43",
     "tsdown": "^0.23.0",

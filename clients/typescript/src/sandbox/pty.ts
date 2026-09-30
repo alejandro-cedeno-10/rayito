@@ -25,6 +25,7 @@ import {
 } from "../gen/rayito/v1/pty_pb.js";
 import { type PtySize, validatePtySize } from "../models.js";
 import { validatedEnvs } from "../payload.js";
+import type { SecretEnvs, SecretsInput } from "../secrets/inject.js";
 import {
   CommandHandle,
   CommandProgress,
@@ -58,6 +59,21 @@ export interface PtyCreateOptions extends RequestOptions {
   readonly onData?: PtyDataCallback | undefined;
   /** Timeout del servidor en ms (60 000 por defecto; `0` = sin límite). */
   readonly timeoutMs?: number | undefined;
+  /**
+   * Secretos como variables de entorno del shell (más los del handle).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en esta PTY (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s).
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   const term = await sbx.pty.create({ secrets: { GITHUB_TOKEN: "gh" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export interface PtyConnectOptions extends RequestOptions {
@@ -200,14 +216,17 @@ export class PtyMessages implements StreamAdapter<PtyServerMessage> {
 export class Pty {
   readonly core: SandboxCore;
   readonly #commands: Commands;
+  readonly #secrets: SecretEnvs;
 
-  constructor(core: SandboxCore, commands: Commands) {
+  constructor(core: SandboxCore, commands: Commands, secrets: SecretEnvs) {
     this.core = core;
     this.#commands = commands;
+    this.#secrets = secrets;
   }
 
   async create(options: PtyCreateOptions = {}): Promise<PtyHandle> {
-    const request = buildPtyStartRequest(options);
+    const envs = await this.#secrets.apply(options.envs, options.secrets);
+    const request = buildPtyStartRequest({ ...options, envs });
     const deadline = streamDeadlineMs(options.timeoutMs ?? DEFAULT_PTY_TIMEOUT_MS);
     return this.attach(
       (client, callOptions) => client.create(request, withTimeout(callOptions, deadline)),

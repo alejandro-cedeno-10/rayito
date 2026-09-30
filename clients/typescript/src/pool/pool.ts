@@ -52,6 +52,7 @@ import {
   resolveTemplate,
 } from "../sandbox/launch.js";
 import { type ControlPlaneOptions, resolveControlPlane, Sandbox } from "../sandbox/sandbox.js";
+import { bindSecrets, type SecretOptions, sharedSecretCache, warm } from "../secrets/inject.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
 import { InMemoryPoolBackend, type PoolBackend } from "./backend.js";
 import {
@@ -93,7 +94,13 @@ export interface SandboxPoolOptions extends ControlPlaneOptions {
   readonly random?: (() => number) | undefined;
 }
 
-export interface TakeOptions {
+/**
+ * `secrets`/`secretCache` se enlazan al sandbox que sale del pool (tras
+ * resolverlos, antes de reclamar la plaza): las plazas calientes nunca los
+ * llevan, ni en su lanzamiento ni en su `SlotRecord`. Mismo bloque "Coste y
+ * activación" que `SecretOptions.secrets`.
+ */
+export interface TakeOptions extends SecretOptions {
   /** Cuánto esperar (ms) a que el relleno aparque una plaza antes de caer a `create()`; por defecto 0. */
   readonly waitMs?: number | undefined;
   readonly readyTimeoutMs?: number | undefined;
@@ -313,9 +320,14 @@ export class SandboxPool implements AsyncDisposable {
    */
   async take(options: TakeOptions = {}): Promise<Sandbox> {
     this.#requireOpen();
+    const secrets = await warm(bindSecrets(options.secrets, options.secretCache), () =>
+      sharedSecretCache(this.#plane.region, awsClientSettingsOf(this.#plane).credentials),
+    );
     const record = await this.#claimReadySlot(options.waitMs ?? 0);
-    const sandbox = record === undefined ? undefined : await this.#openSlot(record, options);
-    return sandbox ?? this.#fallback(options);
+    const opened = record === undefined ? undefined : await this.#openSlot(record, options);
+    const sandbox = opened ?? (await this.#fallback(options));
+    Sandbox.attachSecrets(sandbox, secrets);
+    return sandbox;
   }
 
   stats(): PoolStats {

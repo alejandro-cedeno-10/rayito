@@ -8,6 +8,7 @@
 import { create } from "@bufbuild/protobuf";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import {
+  awsClientSettingsOf,
   type CommandSender,
   type ControlPlane,
   type ControlPlaneClientSettings,
@@ -48,6 +49,16 @@ import {
 } from "../models.js";
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
+import type { SecretCache } from "../secrets/cache.js";
+import {
+  bindSecrets,
+  type SecretBinding,
+  SecretEnvs,
+  type SecretOptions,
+  sharedSecretCache,
+  warm,
+} from "../secrets/inject.js";
+import type { SecretRef } from "../secrets/names.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -164,7 +175,7 @@ export interface ControlPlaneOptions extends ControlPlaneClientSettings {
   readonly client?: CommandSender | undefined;
 }
 
-export interface SandboxConnectOptions extends ControlPlaneOptions {
+export interface SandboxConnectOptions extends ControlPlaneOptions, SecretOptions {
   readonly accessToken?: string | undefined;
   readonly readyTimeoutMs?: number | undefined;
   readonly requestTimeoutMs?: number | undefined;
@@ -262,11 +273,16 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
   readonly pool?: SandboxPool | undefined;
 }
 
-/** Los objetos de `create()` que `reincarnate()` reutiliza tal cual (no viajan en `LaunchOptions`). */
+/**
+ * Los objetos de `create()` que `reincarnate()` reutiliza tal cual (no viajan
+ * en `LaunchOptions`): `secrets` son sólo las referencias, nunca valores.
+ */
 interface LaunchContext {
   readonly controlPlane: ControlPlane;
   readonly transport: Partial<TransportSettings> | undefined;
   readonly logger: Logger | undefined;
+  readonly secrets: Readonly<Record<string, SecretRef>> | undefined;
+  readonly secretCache: SecretCache | undefined;
 }
 
 /**
@@ -325,7 +341,7 @@ export interface SandboxSetTimeoutOptions extends ControlPlaneOptions {
 }
 
 /** `sbx.connect({ timeoutMs })`: reabre el handle y extiende el plazo como `Sandbox.connect`. */
-export interface InstanceConnectOptions extends RequestOptions {
+export interface InstanceConnectOptions extends RequestOptions, SecretOptions {
   readonly timeoutMs?: number | undefined;
 }
 
@@ -451,14 +467,21 @@ export class Sandbox implements AsyncDisposable {
   #launchOptions: LaunchOptions | undefined;
   #launchContext: LaunchContext | undefined;
   #readinessHealth: SandboxHealth | undefined;
+  readonly #secrets: SecretEnvs;
 
   private constructor(core: SandboxCore) {
     this.#core = core;
-    this.commands = new Commands(core);
+    this.#secrets = new SecretEnvs(() =>
+      sharedSecretCache(
+        core.controlPlane.region,
+        awsClientSettingsOf(core.controlPlane).credentials,
+      ),
+    );
+    this.commands = new Commands(core, this.#secrets);
     this.files = new Filesystem(core);
-    this.pty = new Pty(core, this.commands);
+    this.pty = new Pty(core, this.commands, this.#secrets);
     this.git = new Git(this.commands);
-    this.#code = new CodeClient(core);
+    this.#code = new CodeClient(core, this.#secrets);
     this.#persistence = new PersistenceClient(core);
   }
 
@@ -466,6 +489,7 @@ export class Sandbox implements AsyncDisposable {
 
   static async create(options: SandboxCreateOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
+    const binding = bindSecrets(options.secrets, options.secretCache);
     const transportSettings = resolveTransportSettings(options.transport);
     requireRoleForPersist(options.persist, options.executionRoleArn);
     const transfer = resolveS3Staging(options.transfer);
@@ -487,12 +511,17 @@ export class Sandbox implements AsyncDisposable {
         requestTimeoutMs: options.requestTimeoutMs,
         reconnectTimeoutMs: options.reconnectTimeoutMs,
         logger: options.logger,
+        secrets: options.secrets,
+        secretCache: options.secretCache,
       });
       taken.#core.transfer = transfer;
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
     const plane = resolveControlPlane(options);
+    const secrets = await warm(binding, () =>
+      sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
+    );
     const imageArn = await plane.resolveTemplateArn(resolveTemplate(options.template), {
       signal: options.signal,
     });
@@ -535,6 +564,7 @@ export class Sandbox implements AsyncDisposable {
       requireLifecycle: plan.lifecycleRequested,
     });
     sandbox.#core.transfer = transfer;
+    sandbox.#secrets.set(secrets);
     if (requiresEnforcement(network)) {
       await sandbox.#applyInitialNetwork(
         network,
@@ -567,6 +597,8 @@ export class Sandbox implements AsyncDisposable {
       controlPlane: plane,
       transport: options.transport,
       logger: options.logger,
+      secrets: secrets?.toRecord(),
+      secretCache: secrets?.cache,
     };
     if (options.persist !== undefined) {
       await sandbox.#bindAndRestore(
@@ -592,7 +624,11 @@ export class Sandbox implements AsyncDisposable {
     const bound = options.persist === undefined ? undefined : requireNamedPersist(options.persist);
     const transfer = resolveS3Staging(options.transfer);
     validateStagingAgainstPersist(transfer, bound);
+    const binding = bindSecrets(options.secrets, options.secretCache);
     const plane = resolveControlPlane(options);
+    const secrets = await warm(binding, () =>
+      sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
+    );
     const info = await plane.getMicrovm(validateSandboxId(sandboxId), { signal: options.signal });
     if (TERMINAL_STATES.has(info.state)) {
       throw terminalStateError(info);
@@ -614,6 +650,7 @@ export class Sandbox implements AsyncDisposable {
     });
     sandbox.#persist = bound;
     sandbox.#core.transfer = transfer;
+    sandbox.#secrets.set(secrets);
     try {
       await sandbox.#extendAfterReadiness(requestedMs, undefined, options.signal);
     } catch (error) {
@@ -673,6 +710,13 @@ export class Sandbox implements AsyncDisposable {
       throw abortReasonOr(options.signal, translateSetTimeoutError(error, validated));
     } finally {
       core.close();
+    }
+  }
+
+  /** Acceso interno para el pool (enlaza los secretos ya resueltos de `take()`); no forma parte de la API pública. */
+  static attachSecrets(sandbox: Sandbox, binding: SecretBinding | undefined): void {
+    if (binding !== undefined) {
+      sandbox.#secrets.set(binding);
     }
   }
 
@@ -971,6 +1015,7 @@ export class Sandbox implements AsyncDisposable {
     const { signal } = options;
     signal?.throwIfAborted();
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
+    await this.#secrets.rebind(options);
     const info = await this.#core.controlPlane.getMicrovm(this.sandboxId, { signal });
     if (TERMINAL_STATES.has(info.state)) {
       throw terminalStateError(info);
@@ -1278,6 +1323,8 @@ export class Sandbox implements AsyncDisposable {
         persist,
         persistTimeoutMs,
         transfer: this.transfer ?? null,
+        secrets: context.secrets,
+        secretCache: context.secretCache,
       });
     } catch (error) {
       throw withReincarnateNote(error, persist.uri);

@@ -192,6 +192,23 @@ export class AuthenticationError extends Error {
   }
 }
 
+/**
+ * Error de un secreto de Secrets Manager (`SecretStore`, `SecretCache`,
+ * `secrets`, y el `Secret` del shim de E2B). El mensaje nunca contiene el
+ * valor ni el nombre del secreto (los nombres son selectores confidenciales,
+ * como en E2B); con `secrets` nombra la clave de la variable de entorno.
+ * Divergencia con E2B: allí `SecretError` extiende `Error`; aquí
+ * `SandboxError`, para que un `catch` de `SandboxError` también lo atrape.
+ */
+export class SecretError extends SandboxError {}
+
+/**
+ * El secreto no existe o está programado para borrarse; nunca se guarda en
+ * `SecretCache`. Extiende `SecretError` como en E2B (en TypeScript no puede
+ * ser además `NotFoundError`: herencia simple; en Python sí lo es).
+ */
+export class SecretNotFoundError extends SecretError {}
+
 /** `sandbox.git` sin credenciales (o con password vacío) contra un remoto que las pide; el mensaje nunca lleva la URL. */
 export class GitAuthError extends AuthenticationError {}
 

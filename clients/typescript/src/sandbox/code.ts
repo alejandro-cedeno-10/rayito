@@ -41,6 +41,7 @@ import {
   type ResultFields,
 } from "../models.js";
 import { DEFAULT_WORKDIR, validatedEnvs } from "../payload.js";
+import { codeSecretsScope, type SecretEnvs, type SecretsInput } from "../secrets/inject.js";
 import { unimplementedRpcError } from "../transport/errors.js";
 import { deadlineAt, type RequestOptions, remainingDeadlineMs, timeoutToMs } from "./commands.js";
 import { type OpenedStream, type SandboxCore, withTimeout } from "./core.js";
@@ -108,6 +109,24 @@ export interface RunCodeOptions extends RequestOptions {
   readonly envs?: Readonly<Record<string, string>> | undefined;
   /** Timeout del agente en ms (300 000 por defecto; `0` = sin límite). */
   readonly timeoutMs?: number | undefined;
+  /**
+   * Secretos en el entorno de esta celda (más los del handle), sólo en
+   * contextos Python (`ExecuteRequest.envs`): con otro `language` es
+   * `InvalidArgumentError` (usa `createCodeContext({ secrets })`), y los del
+   * handle no se añaden a celdas de otros lenguajes.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en esta celda (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s).
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   await sbx.runCode("import os", { secrets: { OPENAI_API_KEY: "openai" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export interface CreateContextOptions extends RequestOptions {
@@ -120,6 +139,22 @@ export interface CreateContextOptions extends RequestOptions {
    */
   readonly language?: string | undefined;
   readonly envs?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Secretos en el entorno del kernel de este contexto, de cualquier lenguaje,
+   * mientras viva (más los del handle).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en el kernel nuevo (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s).
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   const ctx = await sbx.createCodeContext({ language: "bash", secrets: { TOKEN: "gh" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export function validateCode(code: unknown): string {
@@ -498,17 +533,25 @@ function withKernelFeature(error: unknown, name: string, language: string | unde
 /** `CodeService` del sandbox; la superficie pública vive en `Sandbox`. */
 export class CodeClient {
   readonly core: SandboxCore;
+  readonly #secrets: SecretEnvs;
 
-  constructor(core: SandboxCore) {
+  constructor(core: SandboxCore, secrets: SecretEnvs) {
     this.core = core;
+    this.#secrets = secrets;
   }
 
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
+    const contextLanguage =
+      typeof options.context === "object" && options.context !== null
+        ? options.context.language
+        : undefined;
+    const includeBound = codeSecretsScope(options.language, contextLanguage, options.secrets);
+    const envs = await this.#secrets.apply(options.envs, options.secrets, includeBound);
     const request = buildExecuteRequest(code, {
       contextId,
       language: options.language,
-      envs: options.envs,
+      envs,
       timeoutMs: options.timeoutMs,
     });
     const deadline =
@@ -543,7 +586,8 @@ export class CodeClient {
   }
 
   async createContext(options: CreateContextOptions = {}): Promise<CodeContext> {
-    const request = buildCreateContextRequest(options);
+    const envs = await this.#secrets.apply(options.envs, options.secrets);
+    const request = buildCreateContextRequest({ ...options, envs });
     const response = await this.core
       .codeCall(
         (client, callOptions) => client.createContext(request, callOptions),
