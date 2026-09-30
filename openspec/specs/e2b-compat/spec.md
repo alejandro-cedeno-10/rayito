@@ -129,8 +129,8 @@ The shim SHALL raise it before any AWS or agent call, in both `Sandbox` and `Asy
 
 The shim SHALL also raise it in these cases:
 
-- **old agent, metrics:** `get_metrics(start=..., end=...)`, instance or class variant, when the agent answers `MetricsHistory` with `UNIMPLEMENTED` (an image that predates M9), with a reason telling to publish an M9 image.
-- **old agent, kernels:** `run_code(language=)` / `create_code_context(language=)` when the agent answers `UNIMPLEMENTED` because the image does not ship that kernel. The feature is `run_code(language=<given>)` or `create_code_context(language=<given>)`, the reason names `rayito-base-poly`, and the error is chained from the core's `InvalidArgumentException`. Every other core error is re-raised unchanged.
+- **old agent, metrics:** `get_metrics(start=..., end=...)`, instance or class variant, when the agent answers `MetricsHistory` with `UNIMPLEMENTED` (an image that predates M9), with a reason telling to publish an M9 image. The native core already raises `UnimplementedError` for this (the generic unary table), so the shim's translation is a plain re-wrap: it never inspects a status code.
+- **old agent, kernels:** `run_code(language=)` / `create_code_context(language=)` when the agent answers `UNIMPLEMENTED` because the image does not ship that kernel. The feature is `run_code(language=<given>)` or `create_code_context(language=<given>)`, the reason names `rayito-base-poly`, and the error is chained from the core's `UnimplementedError` (the generic unary table's `UNIMPLEMENTED` branch, not `InvalidArgumentException`). The shim only calls its kernel-remapping helper after catching `UnimplementedError` from the core, so there is no status-code check and no `None`-return path left; every other core error (e.g. the `INVALID_ARGUMENT` of an agent older than M9 that does not know `typescript`) is re-raised unchanged.
 
 The following are mapped and SHALL NOT raise it:
 
@@ -180,7 +180,7 @@ No E2B feature SHALL be approximated silently. An unknown kwarg outside E2B's 2.
 #### Scenario: typescript is forwarded and a missing kernel is unimplemented
 - **WHEN** the unit test calls `sbx.run_code("1", language="ts")` against a fake `rayd` that ships the Deno kernels, and then `sbx.run_code("1", language="javascript")` and `sbx.create_code_context(language="typescript")` against a fake that answers `UNIMPLEMENTED` naming `rayito-base-poly`
 - **THEN** the first reaches the fake with `language == "typescript"`
-- **AND** the other two raise `UnimplementedError`, not `InvalidArgumentException`, whose reason names `rayito-base-poly` and whose `__cause__` is the core exception, in the sync and the async shim
+- **AND** the other two raise `UnimplementedError`, not `InvalidArgumentException`, whose reason names `rayito-base-poly` and whose `__cause__` is the core's own `UnimplementedError` (native, from the generic unary table), in the sync and the async shim
 
 #### Scenario: ranged metrics and next_token are mapped, not refused
 - **WHEN** the unit test calls, in order:
@@ -385,7 +385,7 @@ The e2e `tests/e2e/test_m6_e2b_compat.py::test_e2b_shim_cookbook` SHALL run the 
 - `Sandbox.connect(sandbox_id, timeout=None, ...)`, with `timeout` positional after `sandbox_id` as in E2B, SHALL pass `timeout` to the native class `connect` (`AT_LEAST`).
 - `Sandbox.beta_create(auto_pause=True)` SHALL launch in pause mode with `auto_resume=False`.
 - `beta_create(auto_pause=True)` together with `lifecycle` SHALL raise `InvalidArgumentException`.
-- The native `LifecycleUnsupportedException` SHALL be re-raised as `UnimplementedError` with feature `lifecycle` and a reason naming the M9 image, chained to the original.
+- The native `LifecycleUnsupportedException` SHALL be re-raised as `UnimplementedError` with feature `lifecycle` and a reason naming the M9 image, chained to the original. Since `LifecycleUnsupportedException` is itself a subclass of the core `UnimplementedError` (`sandbox-timeout`'s "The SDK fails closed on agents older than M9"), the shim's `except LifecycleUnsupportedException` keeps working unchanged: it discriminates by type, never by `isinstance(_, InvalidArgumentException)` or by inspecting a status code.
 - A beyond-cap `set_timeout` SHALL raise the native `InvalidArgumentException` naming `max_lifetime` and 28800.
 
 #### Scenario: set_timeout and connect through the shim
@@ -394,7 +394,9 @@ The e2e `tests/e2e/test_m6_e2b_compat.py::test_e2b_shim_cookbook` SHALL run the 
 
 #### Scenario: older image through the shim
 - **WHEN** the unit test calls `Sandbox.create()` against a fake `Health` without `lifecycle`
-- **THEN** it raises `UnimplementedError` with `feature == "lifecycle"`, `err.__cause__` is a `LifecycleUnsupportedException`, and the stubbed control plane recorded one `terminate_microvm`
+- **THEN** it raises `UnimplementedError` with `feature == "lifecycle"`, `err.__cause__` is a `LifecycleUnsupportedException`
+- **AND** `isinstance(err.__cause__, UnimplementedError)` is `True` and `isinstance(err.__cause__, InvalidArgumentException)` is `False`
+- **AND** the stubbed control plane recorded one `terminate_microvm`
 
 #### Scenario: beta_create auto_pause
 - **WHEN** the unit test calls `Sandbox.beta_create(auto_pause=True)`
@@ -528,3 +530,24 @@ The e2e SHALL print the per-program wall time.
 #### Scenario: corpus on AWS
 - **WHEN** the e2e runs with `RAYITO_E2E=1`, `RAYITO_TEMPLATE` pointing at the M9 image and `RAYITO_ACCESS_TOKEN` set for the subprocesses
 - **THEN** every sync and async program exits 0, `sbx.fork()` raises `UnimplementedError` against the live sandbox before any agent call, and the output prints `corpus_ok` equal to the number of programs
+
+### Requirement: Instance calls on rayito.e2b warn about ApiParams they cannot apply
+`sbx.kill(**api_params)`, `sbx.pause(keep_memory=None, **api_params)` and `sbx.connect(timeout=None, **api_params)` (sync and async) SHALL validate every `ApiParam` they receive (the same rules as the class variants), then emit one `RayitoCompatWarning` for each of `headers`, `proxy` and `retries` that was given, plus `request_timeout` on `kill`/`pause` (which the native `kill()`/`pause(wait=)` do not accept), because an instance call operates on the channel and control plane this sandbox already built and cannot reconstruct them the way `Sandbox.<call>(sandbox_id, ...)` does. Each warning SHALL name only the parameter, never its value, and the warnings SHALL come in alphabetical order of the parameter name (the same rule as the TypeScript shim). `headers={}` (or any other empty/falsy value) SHALL NOT warn, since nothing was actually given to ignore. `connect()`'s `request_timeout` SHALL be applied, not warned about, and it SHALL reach the underlying resume/extend call. The class variants (`Sandbox.kill(id, ...)`, `Sandbox.pause(id, ...)`, `Sandbox.connect(id, ...)`) SHALL NOT emit these warnings: they apply every given `ApiParam` through the native class call.
+
+#### Scenario: kill and pause warn about the channel/plane params
+- **WHEN** the unit test calls `sbx.kill(retries=3, proxy="http://h:1")` and, separately, `sbx.pause(request_timeout=5)`
+- **THEN** the first emits exactly two `RayitoCompatWarning`s (`retries`, `proxy`) and the sandbox still terminates
+- **AND** the second emits one `RayitoCompatWarning` naming `request_timeout`, and the sandbox still suspends
+
+#### Scenario: connect applies request_timeout and warns about the rest
+- **WHEN** the unit test calls `sbx.connect(request_timeout=5)` and, separately, `sbx.connect(headers={"x-a": "1"})`
+- **THEN** the first emits no `RayitoCompatWarning` and the resume call carries the 5 s timeout
+- **AND** the second emits exactly one `RayitoCompatWarning` naming `headers`, and the warning text never contains `"1"`
+
+#### Scenario: an empty mapping is not "given"
+- **WHEN** the unit test calls `sbx.kill(headers={})` and `sbx.connect(headers={})`
+- **THEN** neither emits a `RayitoCompatWarning` naming `headers`
+
+#### Scenario: class variants apply everything without warning
+- **WHEN** the unit test calls `Sandbox.kill(sbx.sandbox_id, retries=3, proxy="http://h:1", access_token=t)`
+- **THEN** it emits no `RayitoCompatWarning` and the fake control plane received the retried, proxied call

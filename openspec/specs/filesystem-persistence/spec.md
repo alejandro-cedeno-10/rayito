@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m7-s3-persistence. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: FilesystemService exposes Checkpoint and Restore as server-streams
 `proto/rayito/v1/filesystem.proto` SHALL add `rpc Checkpoint(CheckpointRequest) returns (stream CheckpointEvent)` and `rpc Restore(RestoreRequest) returns (stream RestoreEvent)` to `FilesystemService`, with `S3Location{bucket, key_prefix, optional region}`, `CheckpointRequest{target, optional user, repeated exclude}`, `CheckpointEvent` = `oneof {CheckpointStarted started = 1; CheckpointProgress progress = 2; CheckpointDone done = 3; StreamError error = 4; KeepAlive keepalive = 5}`, `CheckpointStarted{files, bytes}`, `CheckpointProgress{files_done, bytes_read, bytes_uploaded}`, `CheckpointDone{files, bytes_read, archive_bytes, sha256, skipped, duration_ms}`, `RestoreRequest{source, optional user}`, `RestoreEvent` with the same envelope shape (`RestoreStarted{archive_bytes, files}`, `RestoreProgress{files_done, bytes_downloaded}`, `RestoreDone{files, bytes_written, archive_bytes, sha256, skipped, duration_ms}`). No new service SHALL be introduced. `buf lint` SHALL pass with the existing `buf.yaml` exceptions and `buf breaking` against the pre-change proto SHALL report nothing; the Rust, Python and TypeScript clients SHALL be regenerated, never hand-edited. Both RPCs SHALL require `x-access-token`, SHALL be wrapped like every server-stream (`SuspendableStream`, `KeepAlive` after 30 s of silence) and SHALL emit `progress` at most once per second and only when a counter changed.
 
@@ -34,7 +36,7 @@ TBD - created by archiving change m7-s3-persistence. Update Purpose after archiv
 
 #### Scenario: no execution role
 - **WHEN** `Checkpoint` is called on a sandbox launched without `executionRoleArn`
-- **THEN** the stream ends with gRPC `PERMISSION_DENIED` and the fixed message `no execution role credentials` before any message, within 5 s, and no S3 request is made
+- **THEN** the stream ends with gRPC `PERMISSION_DENIED` and the fixed message `no hay credenciales del rol de ejecución` before any message, within 5 s, and no S3 request is made
 
 #### Scenario: multipart abort on cancellation
 - **WHEN** the client cancels a `Checkpoint` after the second `UploadPart` in the fake-store test
@@ -45,7 +47,7 @@ TBD - created by archiving change m7-s3-persistence. Update Purpose after archiv
 - **THEN** a 20 MiB body uploads through three parts, downloads byte-identical, and the objects are deleted by the test
 
 ### Requirement: Restore extracts only safe entries into the user's home and verifies the checksum
-`Restore` SHALL fetch `manifest.json` first (`NoSuchKey` → gRPC `NOT_FOUND`, `AccessDenied` → `PERMISSION_DENIED`, `version != 1` or missing `sha256` → `INVALID_ARGUMENT`, all before any message), emit `RestoreStarted` from the manifest, then stream `home.tar.gz` into one blocking thread running under the user's fs identity that unpacks into the user's home (same user rules as the checkpoint; the manifest's `home`/`user` are informative only). It SHALL accept only regular files, directories and symlinks (hard links, devices, FIFOs, sockets, sparse and PAX-global entries skipped and counted), SHALL refuse absolute paths, `..` components and any entry whose canonical parent lies outside the canonical home with `StreamError invalid_argument`, SHALL create everything under the user's uid/gid, SHALL apply header modes masked to `0o777`, SHALL preserve mtime, SHALL overwrite existing files, merge directories and replace (never follow) an existing symlink at an entry's path, and SHALL write symlink targets verbatim. At the end the sha256 of the downloaded bytes SHALL equal the manifest's, else `StreamError internal` with the fixed message `archive checksum mismatch`; `ENOSPC` SHALL end the stream with `StreamError internal` and the message `disk full`. A failure after `started` leaves already-unpacked entries in place (documented; recovery is `kill()` + `create(persist=)`).
+`Restore` SHALL fetch `manifest.json` first (`NoSuchKey` → gRPC `NOT_FOUND`, `AccessDenied` → `PERMISSION_DENIED`, `version != 1` or missing `sha256` → `INVALID_ARGUMENT`, all before any message), emit `RestoreStarted` from the manifest, then stream `home.tar.gz` into one blocking thread running under the user's fs identity that unpacks into the user's home (same user rules as the checkpoint; the manifest's `home`/`user` are informative only). It SHALL accept only regular files, directories and symlinks (hard links, devices, FIFOs, sockets, sparse and PAX-global entries skipped and counted), SHALL refuse absolute paths, `..` components and any entry whose canonical parent lies outside the canonical home with `StreamError invalid_argument`, SHALL create everything under the user's uid/gid, SHALL apply header modes masked to `0o777`, SHALL preserve mtime, SHALL overwrite existing files, merge directories and replace (never follow) an existing symlink at an entry's path, and SHALL write symlink targets verbatim. At the end the sha256 of the downloaded bytes SHALL equal the manifest's, else `StreamError internal` with the fixed message `el checksum del archivo no coincide`; `ENOSPC` SHALL end the stream with `StreamError internal` and the message `disco lleno`. A failure after `started` leaves already-unpacked entries in place (documented; recovery is `kill()` + `create(persist=)`).
 
 #### Scenario: crafted archive
 - **WHEN** the adapter test restores an archive built with entries `../escape`, `/abs`, a character device `dev0`, a file `bin/tool` with mode `0o4755`, and `ok.txt`
@@ -57,10 +59,10 @@ TBD - created by archiving change m7-s3-persistence. Update Purpose after archiv
 
 #### Scenario: checksum mismatch
 - **WHEN** the fake store serves an archive whose bytes differ from the manifest's `sha256`
-- **THEN** the stream emits `started`, then `StreamError{code: "internal", message: "archive checksum mismatch"}`, and the log line has `outcome="checksum_mismatch"`
+- **THEN** the stream emits `started`, then `StreamError{code: "internal", message: "el checksum del archivo no coincide"}`, and the log line has `outcome="checksum_mismatch"`
 
 ### Requirement: One persistence operation at a time, with the documented status and StreamError mapping
-`rayd` SHALL hold one persistence lease per sandbox: a `Checkpoint` or `Restore` while another runs SHALL fail with gRPC `FAILED_PRECONDITION` (`persistence busy`); the lease SHALL be released on every path (success, error, cancellation, suspend) by a drop guard. Other filesystem RPCs SHALL keep working during a checkpoint. Failures before the first message SHALL be gRPC statuses and after it `StreamError` codes: `invalid_argument` (bad input, bad manifest, `PermanentRedirect`), `permission_denied` (`user = "root"`, no credentials, `AccessDenied`, expired or invalid credentials), `not_found` (manifest missing; archive missing although the manifest exists), `internal` (network exhaustion after the SDK's retries, tar/gzip errors, checksum mismatch, disk full), `suspending` (`/suspend`). Messages SHALL be fixed sentences containing no path, entry name, key, bucket or request id. `rayd` SHALL NOT impose a duration or size cap: the client's `grpc-timeout` is the deadline. A `/suspend` during an operation SHALL close the stream with `suspending`, abort any multipart upload and never resume the operation automatically.
+`rayd` SHALL hold one persistence lease per sandbox: a `Checkpoint` or `Restore` while another runs SHALL fail with gRPC `FAILED_PRECONDITION` (`la persistencia está ocupada`); the lease SHALL be released on every path (success, error, cancellation, suspend) by a drop guard. Other filesystem RPCs SHALL keep working during a checkpoint. Failures before the first message SHALL be gRPC statuses and after it `StreamError` codes: `invalid_argument` (bad input, bad manifest, `PermanentRedirect`), `permission_denied` (`user = "root"`, no credentials, `AccessDenied`, expired or invalid credentials), `not_found` (manifest missing; archive missing although the manifest exists), `internal` (network exhaustion after the SDK's retries, tar/gzip errors, checksum mismatch, disk full), `suspending` (`/suspend`). Messages SHALL be fixed Spanish sentences containing no path, entry name, key, bucket or request id. `rayd` SHALL NOT impose a duration or size cap: the client's `grpc-timeout` is the deadline. A `/suspend` during an operation SHALL close the stream with `suspending`, abort any multipart upload and never resume the operation automatically.
 
 #### Scenario: busy
 - **WHEN** a second `Checkpoint` arrives while the first is between `started` and `done`
@@ -121,4 +123,3 @@ TBD - created by archiving change m7-s3-persistence. Update Purpose after archiv
 #### Scenario: regression on the new image
 - **WHEN** `RAYITO_TEMPLATE_VERSION=<new> uv run pytest tests/e2e -m e2e` runs
 - **THEN** every pre-existing e2e test passes as on 17.0 and zero MicroVMs are alive afterwards
-

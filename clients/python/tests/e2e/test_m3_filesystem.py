@@ -49,18 +49,19 @@ PAYLOAD_BYTES = 8_000_000
 MEGABYTE = 1_000_000
 READ_CHUNK_BYTES = 262_144
 MIN_STREAM_CHUNKS = 30
-TRANSFER_BUDGET_SECONDS = 10.0
-# Subida a través del proxy: una ventana HTTP/2 de 64 KiB por RTT del cliente
+# Subida y bajada a través del proxy: una ventana HTTP/2 de 64 KiB por RTT del cliente
 # (≈ 0,66 MB/s a 93 ms, AWS_API_NOTES.md §16 Q32), pero el uplink de quien
 # corre el test varía mucho más que ese margen (0,25-0,44 MB/s medidos en
 # algunos uplinks lentos, por debajo de un presupuesto fijo de 20 s para los
 # 8 MB de `PAYLOAD_BYTES`). El presupuesto se deriva de una línea base medida
-# en el propio run (una escritura pequeña) y se escala: así el test comprueba
-# una regresión de throughput, no la red de quien lo corre.
-UPLOAD_PROBE_BYTES = 300_000
-UPLOAD_BUDGET_SLACK = 3.0
-UPLOAD_BUDGET_FLOOR_SECONDS = 5.0
-UPLOAD_BUDGET_CEILING_SECONDS = 120.0
+# en el propio run (una escritura o lectura pequeña) y se escala: así el test
+# comprueba una regresión de throughput, no la red de quien lo corre. La
+# lectura de 8 MB fallaba igual con un presupuesto fijo de 10 s en un enlace
+# de 0,6-1,0 MB/s (aceptación de 0.4.0).
+PROBE_BYTES = 300_000
+BUDGET_SLACK = 3.0
+BUDGET_FLOOR_SECONDS = 5.0
+BUDGET_CEILING_SECONDS = 120.0
 BATCH_FILES = 50
 BATCH_BUDGET_SECONDS = 5.0
 LIST_BUDGET_SECONDS = 1.0
@@ -127,19 +128,29 @@ def assert_clean_names(events: list[FilesystemEvent]) -> None:
         assert not event.name.startswith(TEMP_PREFIX), event
 
 
-def measure_upload_budget(sandbox: Sandbox) -> float:
-    """Escribe `UPLOAD_PROBE_BYTES` para medir el MB/s real de este run y
-    escala el presupuesto de `check_write_big` a partir de ahí, con un suelo
-    y un techo para no depender de una medición anómala (un run casi
-    instantáneo, o uno tan lento que el test se quedaría esperando minutos)."""
-    probe_path = f"{BASE}/.upload-probe.bin"
-    payload = os.urandom(UPLOAD_PROBE_BYTES)
-    _, elapsed = timed(lambda: sandbox.files.write(probe_path, payload))
+def scaled_budget(label: str, probe_elapsed: float) -> float:
+    """Escala el tiempo de `PROBE_BYTES` a `PAYLOAD_BYTES` con margen, entre
+    un suelo y un techo para no depender de una medición anómala (un probe
+    casi instantáneo, o uno tan lento que el test esperaría minutos)."""
+    report_rate(label, PROBE_BYTES, probe_elapsed)
+    rate_bytes_per_second = PROBE_BYTES / probe_elapsed if probe_elapsed > 0 else float("inf")
+    scaled = (PAYLOAD_BYTES / rate_bytes_per_second) * BUDGET_SLACK
+    return max(BUDGET_FLOOR_SECONDS, min(BUDGET_CEILING_SECONDS, scaled))
+
+
+def measure_budgets(sandbox: Sandbox) -> tuple[float, float]:
+    """Escribe y relee `PROBE_BYTES` para medir la subida y la bajada reales
+    de este run; devuelve los presupuestos de `check_write_big` y
+    `check_read_big`."""
+    probe_path = f"{BASE}/.transfer-probe.bin"
+    payload = os.urandom(PROBE_BYTES)
+    _, write_elapsed = timed(lambda: sandbox.files.write(probe_path, payload))
+    _, read_elapsed = timed(lambda: sandbox.files.read(probe_path, format="bytes"))
     sandbox.files.remove(probe_path)
-    report_rate("probe de subida", UPLOAD_PROBE_BYTES, elapsed)
-    rate_bytes_per_second = UPLOAD_PROBE_BYTES / elapsed if elapsed > 0 else float("inf")
-    scaled = (PAYLOAD_BYTES / rate_bytes_per_second) * UPLOAD_BUDGET_SLACK
-    return max(UPLOAD_BUDGET_FLOOR_SECONDS, min(UPLOAD_BUDGET_CEILING_SECONDS, scaled))
+    return (
+        scaled_budget("probe de subida", write_elapsed),
+        scaled_budget("probe de bajada", read_elapsed),
+    )
 
 
 def check_write_big(sandbox: Sandbox, payload: bytes, budget: float) -> None:
@@ -155,10 +166,10 @@ def check_write_big(sandbox: Sandbox, payload: bytes, budget: float) -> None:
     assert info.mode == 0o644
 
 
-def check_read_big(sandbox: Sandbox, payload: bytes) -> None:
+def check_read_big(sandbox: Sandbox, payload: bytes, budget: float) -> None:
     data, elapsed = timed(lambda: sandbox.files.read(f"{BASE}/big.bin", format="bytes"))
-    report_rate(f"read {PAYLOAD_BYTES} B", PAYLOAD_BYTES, elapsed)
-    assert elapsed <= TRANSFER_BUDGET_SECONDS
+    report_rate(f"read {PAYLOAD_BYTES} B (presupuesto {budget:.2f} s)", PAYLOAD_BYTES, elapsed)
+    assert elapsed <= budget
     assert sha256(data) == sha256(payload)
     chunks = list(sandbox.files.read(f"{BASE}/big.bin", format="stream"))
     assert b"".join(chunks) == payload
@@ -421,9 +432,9 @@ def check_async_parity(sandbox: Sandbox) -> None:
 def test_m3_filesystem(sandbox: Sandbox, control_plane: LambdaMicrovmsControlPlane) -> None:
     assert sandbox.files.make_dir(BASE) is True
     payload = os.urandom(PAYLOAD_BYTES)
-    upload_budget = measure_upload_budget(sandbox)
+    upload_budget, download_budget = measure_budgets(sandbox)
     check_write_big(sandbox, payload, upload_budget)
-    check_read_big(sandbox, payload)
+    check_read_big(sandbox, payload, download_budget)
     check_write_files(sandbox)
     check_list(sandbox)
     check_make_dir(sandbox)

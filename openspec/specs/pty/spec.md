@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m5-pty-suspend-resume. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: PtyService.Create opens a login shell on a real controlling terminal
 `PtyService.Create` SHALL allocate a pseudo-terminal with `openpty`, set its initial window size from `PtyStart.size` (absent → 80×24), and spawn `<shell> -i -l` where `<shell>` is `PtyStart.shell` when present (an absolute path, `INVALID_ARGUMENT` otherwise) or the user's login shell from the image's user database (`/bin/sh` when empty). The child SHALL, in `pre_exec` and in this order, call `setsid`, make the slave its controlling terminal with `TIOCSCTTY`, apply the M2 resource limits and drop privileges to the resolved identity (`user`, uid 1000 by default; root refused unless `RAYITO_ALLOW_ROOT=1`); the slave SHALL be owned by that identity (`fchown`, mode `0620`) before the spawn; stdin, stdout and stderr of the child SHALL all be the slave. The environment SHALL be built from scratch in the order identity variables (`PATH`, `HOME`, `USER`, `LOGNAME`), then `TERM=xterm-256color`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`, `SHELL=<shell>`, then the `/run` payload envs, then `PtyStart.envs`, the last definition winning; `cwd` SHALL follow the M2 resolution rules. The first message of the stream SHALL be `started{pid}`.
 
@@ -20,7 +22,7 @@ TBD - created by archiving change m5-pty-suspend-resume. Update Purpose after ar
 
 #### Scenario: no pty devices in the guest
 - **WHEN** `/dev/ptmx` does not exist where `rayd` runs
-- **THEN** `Create` fails with `FAILED_PRECONDITION` ("pty devices unavailable") before any message
+- **THEN** `Create` fails with `FAILED_PRECONDITION` ("no hay dispositivos PTY disponibles") before any message
 
 ### Requirement: Window size is validated and Resize applies TIOCSWINSZ
 `PtyStart.size` and `ResizeRequest.size` SHALL be accepted only when `1 <= cols <= 4096` and `1 <= rows <= 4096`; otherwise the RPC SHALL fail with `INVALID_ARGUMENT`. `Resize{pid, size}` SHALL issue `TIOCSWINSZ` on the master so the foreground process group receives `SIGWINCH`, and SHALL answer `NOT_FOUND` for an unknown or ended pid. The SDK SHALL expose `PtySize(cols=80, rows=24)` with the same validation.
@@ -116,4 +118,3 @@ The SDK SHALL expose `sbx.pty` with `create(*, size=None, user=None, cwd=None, e
 #### Scenario: no bytes in the log
 - **WHEN** an integration test sends `echo SECRET-M5\n` to a PTY with the log captured
 - **THEN** no log line contains `SECRET-M5`
-
