@@ -19,7 +19,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `x-aws-proxy-*` del cliente, fija `Host`/`X-aws-proxy-auth`/
   `X-aws-proxy-port` y fuerza `Connection: close` salvo en peticiones
   `Upgrade`. Nunca registra el JWE, las cabeceras, los cuerpos ni las rutas.
-  Sin dependencias nuevas.
+  El parseo de la cabecera del cliente es HTTP/1.1 estricto: rechaza (`400`
+  y cierra) cualquier CR/LF suelto fuera de un `\r\n` (contrabando de
+  cabeceras que podía colar un `x-aws-proxy-*` falso), `obs-fold` y nombres
+  fuera de los `tchar` de RFC 9110. `--port` y `--local-port` se validan y
+  el socket local se reserva **antes** de `GetMicrovm`/
+  `CreateMicrovmAuthToken`, así que un puerto inválido u ocupado falla
+  limpio sin gastar ninguna llamada. Sin dependencias nuevas.
 
 ## [0.4.0] - 2026-09-30
 

@@ -242,11 +242,16 @@ curl http://127.0.0.1:8000/
 - El JWE se renueva a los 45 min con el mismo `TokenRefresher` que usa el
   canal gRPC del SDK: no se acuña uno nuevo en cada petición.
 - Un sandbox `SUSPENDED` con auto-resume se despierta con la primera
-  petición que llega al proxy (eso sí factura cómputo).
+  petición que llega al proxy (eso sí factura cómputo, más una lectura de
+  snapshot al reanudar: [Límites](limits.md#tamano-cpuram) y
+  [Costes](cost.md) para el precio por GB).
 - $0 de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos,
   cuota de 50 TPS por cuenta/región; ~1 acuñación cada 45 min por proxy en
   marcha); sin recursos nuevos. Ctrl-C para el refresher y cierra el
   listener.
+- IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el
+  MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`; nada nuevo que
+  desplegar para usar el proxy).
 
 ## `rayito doctor`
 

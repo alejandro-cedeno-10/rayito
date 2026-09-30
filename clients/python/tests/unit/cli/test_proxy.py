@@ -12,11 +12,14 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 
+import boto3
 import pytest
 from typer.testing import CliRunner
 
 from rayito._aws import PortSpec
+from rayito._models import SandboxInfo
 from rayito._transport import TokenRefresher, TokenStore
 from rayito.cli import _proxy
 from rayito.cli._console import EXIT_USAGE
@@ -24,7 +27,7 @@ from rayito.cli._session import Clients
 from rayito.cli.app import app
 from rayito.exceptions import InvalidArgumentException, SandboxStateException
 
-from .conftest import FakeControlPlane, sandbox_info
+from .conftest import REGION, FakeControlPlane, sandbox_info
 
 SANDBOX_ID = "microvm-x"
 
@@ -86,6 +89,45 @@ def test_rewrite_head_keeps_upgrade_and_connection_intact() -> None:
 
 
 # --------------------------------------------------------------------------
+# `parse_http_head`: HTTP/1.1 estricto, contra contrabando de cabeceras
+# (`request smuggling` con un CR o LF suelto)
+# --------------------------------------------------------------------------
+
+
+def test_parse_http_head_rejects_a_bare_lf_that_smuggles_a_fake_header() -> None:
+    """Repro exacto del hallazgo: un `\\n` suelto en el valor de `Foo` no debe
+    colar una línea `X-aws-proxy-port` que `rewrite_head` no vería (su nombre
+    exterior, `Foo`, no empieza por `x-aws-proxy-`)."""
+    raw = b"GET / HTTP/1.1\r\nFoo: a\nX-aws-proxy-port: 9000\r\n\r\n"
+    with pytest.raises(_proxy.MalformedHttpHeadError):
+        _proxy.parse_http_head(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"GET / HTTP/1.1\r\nFoo: a\nX-aws-proxy-port: 9000\r\n\r\n",  # LF suelto
+        b"GET / HTTP/1.1\r\nFoo: a\r\nBar\r\n\r\n",  # línea de cabecera sin ':'
+        b"GET / HTTP/1.1\r\nFoo: a\r\n continuada\r\n\r\n",  # obs-fold (espacio)
+        b"GET / HTTP/1.1\r\nFoo: a\r\n\tcontinuada\r\n\r\n",  # obs-fold (tab)
+        b"GET / HTTP/1.1\r\nFo o: a\r\n\r\n",  # nombre con espacio
+        b"GET / HTTP/1.1\r\nFoo\x01: a\r\n\r\n",  # nombre fuera de los tchar
+        b"",  # sin terminador
+        b"GET / HTTP/1.1\r\nFoo: a\r\n",  # sin línea en blanco final
+    ],
+)
+def test_parse_http_head_rejects_malformed_heads(raw: bytes) -> None:
+    with pytest.raises(_proxy.MalformedHttpHeadError):
+        _proxy.parse_http_head(raw)
+
+
+def test_parse_http_head_accepts_a_well_formed_head_with_no_headers() -> None:
+    parsed = _proxy.parse_http_head(b"GET / HTTP/1.1\r\n\r\n")
+    assert parsed.request_line == "GET / HTTP/1.1"
+    assert parsed.headers == ()
+
+
+# --------------------------------------------------------------------------
 # Validación del puerto
 # --------------------------------------------------------------------------
 
@@ -104,6 +146,18 @@ def test_validate_proxy_port_rejects_out_of_range(port: int) -> None:
 @pytest.mark.parametrize("port", [1, 8080, 65535])
 def test_validate_proxy_port_accepts_valid_ports(port: int) -> None:
     assert _proxy.validate_proxy_port(port) == port
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, 1_000_000])
+def test_validate_local_port_rejects_out_of_range(port: int) -> None:
+    with pytest.raises(InvalidArgumentException):
+        _proxy.validate_local_port(port)
+
+
+def test_validate_local_port_accepts_the_hooks_port() -> None:
+    """`--local-port` es un puerto del operador, no del guest: 9000 no tiene
+    nada de especial aquí (a diferencia de `--port`)."""
+    assert _proxy.validate_local_port(9000) == 9000
 
 
 # --------------------------------------------------------------------------
@@ -233,6 +287,7 @@ async def _start_proxy(
         bind="127.0.0.1",
         local_port=0,
     )
+    listener = _proxy.bind_listener_socket(spec.bind, spec.local_port)
     ready = asyncio.Event()
     box: dict[str, int] = {}
 
@@ -240,7 +295,9 @@ async def _start_proxy(
         box["port"] = server.sockets[0].getsockname()[1]
         ready.set()
 
-    task = asyncio.create_task(_proxy.serve_proxy(spec, lambda: jwe, connector, ready=on_ready))
+    task = asyncio.create_task(
+        _proxy.serve_proxy(spec, lambda: jwe, connector, listener=listener, ready=on_ready)
+    )
     await ready.wait()
     return task, box["port"]
 
@@ -334,6 +391,25 @@ async def test_proxy_server_keeps_upgrade_connections_open_both_ways() -> None:
         await upstream.close()
 
 
+async def test_proxy_server_responds_400_and_closes_on_a_malformed_head() -> None:
+    """Cabecera con un `\\n` suelto que intenta colar un `X-aws-proxy-port`
+    falso: `400`, cierra, y nunca abre conexión al upstream (ni gasta el
+    JWE)."""
+
+    async def connector_never_called() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise AssertionError("no debería conectar al upstream con una cabecera inválida")
+
+    task, proxy_port = await _start_proxy(connector_never_called, "JWE-BAD")
+    try:
+        client_reader, client_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        client_writer.write(b"GET / HTTP/1.1\r\nFoo: a\nX-aws-proxy-port: 9000\r\n\r\n")
+        await client_writer.drain()
+        response = await client_reader.read(-1)
+        assert response == _proxy.BAD_REQUEST_RESPONSE
+    finally:
+        await _stop_proxy(task)
+
+
 async def test_proxy_never_logs_the_jwe(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
     secret = "SUPER-SECRET-JWE-DO-NOT-LOG"
@@ -380,3 +456,107 @@ def test_is_loopback_bind() -> None:
     assert _proxy.is_loopback_bind("localhost")
     assert not _proxy.is_loopback_bind("0.0.0.0")
     assert not _proxy.is_loopback_bind("192.168.1.5")
+
+
+# --------------------------------------------------------------------------
+# `run_proxy` valida (`--port`, `--local-port`) y reserva el socket local
+# ANTES de tocar AWS: un puerto malo o ya ocupado no debe gastar ni
+# `GetMicrovm` ni `CreateMicrovmAuthToken`
+# --------------------------------------------------------------------------
+
+
+def test_run_proxy_rejects_the_hooks_port_without_calling_get_microvm() -> None:
+    """`FakeControlPlane()` no conoce `SANDBOX_ID`: si `get_microvm` se
+    llamara, explotaría con `SandboxNotFoundException`, no con
+    `InvalidArgumentException`."""
+    plane = FakeControlPlane()
+    with pytest.raises(InvalidArgumentException):
+        _proxy.run_proxy(
+            plane,
+            sandbox_id=SANDBOX_ID,
+            port=9000,
+            local_port=9000,
+            bind="127.0.0.1",
+            on_ready=lambda _message: None,
+        )
+    assert plane.tokens == []
+
+
+def test_run_proxy_rejects_an_invalid_local_port_without_calling_get_microvm() -> None:
+    plane = FakeControlPlane()
+    with pytest.raises(InvalidArgumentException):
+        _proxy.run_proxy(
+            plane,
+            sandbox_id=SANDBOX_ID,
+            port=8080,
+            local_port=70000,
+            bind="127.0.0.1",
+            on_ready=lambda _message: None,
+        )
+    assert plane.tokens == []
+
+
+def test_run_proxy_translates_a_bind_failure_without_calling_get_microvm() -> None:
+    """Un `--local-port` ya ocupado falla en el `bind`, no en un traceback
+    crudo de `asyncio.start_server`, y sin haber llamado a `GetMicrovm` ni
+    `CreateMicrovmAuthToken`."""
+    plane = FakeControlPlane()
+    busy = _proxy.bind_listener_socket("127.0.0.1", 0)
+    try:
+        busy_port = busy.getsockname()[1]
+        with pytest.raises(OSError):
+            _proxy.run_proxy(
+                plane,
+                sandbox_id=SANDBOX_ID,
+                port=8080,
+                local_port=busy_port,
+                bind="127.0.0.1",
+                on_ready=lambda _message: None,
+            )
+        assert plane.tokens == []
+    finally:
+        busy.close()
+
+
+@dataclass
+class _CallTrackingControlPlane(FakeControlPlane):
+    """Un `FakeControlPlane` que explota si algo llama a `GetMicrovm` o
+    `CreateMicrovmAuthToken`: prueba de que la CLI valida `--port`/
+    `--local-port` antes de tocar AWS."""
+
+    def get_microvm(self, sandbox_id: str) -> SandboxInfo:
+        raise AssertionError("no debería llamarse a GetMicrovm")
+
+    def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str:
+        raise AssertionError("no debería llamarse a CreateMicrovmAuthToken")
+
+
+def _clients_with_no_call_control_plane() -> Clients:
+    session = boto3.session.Session(
+        region_name=REGION, aws_access_key_id="testing", aws_secret_access_key="testing"
+    )
+    return Clients(
+        session=session, region=REGION, control_plane_override=_CallTrackingControlPlane()
+    )
+
+
+def test_proxy_command_rejects_the_hooks_port_without_touching_the_control_plane(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        app,
+        ["sandbox", "proxy", SANDBOX_ID, "--port", "9000"],
+        obj=_clients_with_no_call_control_plane(),
+    )
+    assert result.exit_code == 1, result.stderr
+
+
+def test_proxy_command_rejects_an_invalid_local_port_without_touching_the_control_plane(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        app,
+        ["sandbox", "proxy", SANDBOX_ID, "--port", "8080", "--local-port", "70000"],
+        obj=_clients_with_no_call_control_plane(),
+    )
+    assert result.exit_code == 1, result.stderr

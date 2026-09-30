@@ -39,3 +39,12 @@
 - [x] 5.5 `python3 scripts/check_pins.py` and `python3 scripts/check_hygiene.py` clean.
 - [x] 5.6 `openspec validate m12-sizes-proxy --strict` clean.
 - [x] 5.7 Real-AWS e2e (`test_sandbox_proxy_e2e.py`) left for CI/manual acceptance with `RAYITO_E2E=1`; not run here (no real AWS in this environment, per the campaign's hard rule).
+
+## 6. Review fixes
+
+- [x] 6.1 `docs/site/docs/limits.md`: the size table is attributed to AWS's own documentation (`AWS_API_NOTES.md` §4), not marked "medida"; only the 2048 bandwidth (§7, 4.54 MB/s) and the guest view (Q68) carry a "medido" label. Added a `$/h en baseline` column derived from `AWS_API_NOTES.md` §12 / `cost.md`. The cost paragraph now states that bursting above baseline is billed on the vCPU/GB actually consumed, and that `nproc`-driven parallelism raises the bill, not only performance.
+- [x] 6.2 `clients/python/src/rayito/cli/_proxy.py`: `parse_http_head` is HTTP/1.1-strict — rejects (`MalformedHttpHeadError`, the caller answers `400` and closes) a bare CR/LF outside a `\r\n`, an `obs-fold` continuation, a header name outside RFC 9110 `tchar`, or a line without `:`. Regression test for the exact LF-smuggling repro from review. Documented that only the first request per connection is rewritten (pipelined bytes are forwarded raw; AWS rejects them for lacking their own auth header).
+- [x] 6.3 `run_proxy` validates `--port` and `--local-port` (1..65535) and binds the local listener socket (`bind_listener_socket`) **before** `GetMicrovm`/`CreateMicrovmAuthToken`; a bad or busy port fails clean (`InvalidArgumentException`/`OSError`) without spending an AWS call. `serve_proxy` now takes the pre-bound socket via `sock=` instead of binding itself.
+- [x] 6.4 `run_proxy` takes an optional `stop_event: threading.Event | None`; the e2e test now calls `run_proxy` directly from a background thread instead of re-implementing its body, so the CLI and the e2e share one code path.
+- [x] 6.5 `docs/site/docs/cli.md`: added the IAM actions (`lambda:GetMicrovm`, `lambda:CreateMicrovmAuthToken`, already in `infra/iam.yaml`) and the snapshot-read cost on an auto-resume wake.
+- [x] 6.6 Merge-order note (PR description): this change references ADR-014 (`m11-optin-adr`, PR #62, not yet merged to `main`); merge after it, or accept the reference as forward-looking text (not a broken mkdocs link) until then.

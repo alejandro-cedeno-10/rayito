@@ -44,19 +44,28 @@ memory_mb=)` (`e2b template create --cpu-count --memory-mb`). Rayito no
 tiene un catálogo de tamaños ni un resolvedor `resources=` en `create()`
 (fuera de alcance de M12; ver `MILESTONES.md`).
 
-Tabla verificada (`AWS_API_NOTES.md` §4, medida el 2026-09-15; ancho de
-banda es del endpoint, entrada + salida):
+Tabla de la **documentación de AWS** (`AWS_API_NOTES.md` §4; ancho de banda
+del endpoint, entrada + salida), con el coste de la hora en baseline
+derivado de los precios de §12 (`AWS_API_NOTES.md` §12 / [Costes](cost.md)):
+**nada de esta tabla salvo lo marcado está medido en una cuenta real**.
 
-| `minimumMemoryInMiB` | baseline | pico (4x) | disco | ancho de banda |
-|---|---|---|---|---|
-| 512 | 0.5 GB / 0.25 vCPU | 2 GB / 1 vCPU | 8 GB | 1 MB/s |
-| 1024 | 1 GB / 0.5 vCPU | 4 GB / 2 vCPU | 8 GB | 2 MB/s |
-| 2048 (default de `rayito image publish`) | 2 GB / 1 vCPU | 8 GB / 4 vCPU | 8 GB | 4 MB/s |
-| 4096 | 4 GB / 2 vCPU | 16 GB / 8 vCPU | 16 GB | 8 MB/s |
-| 8192 | 8 GB / 4 vCPU | 32 GB / 16 vCPU | 32 GB | 16 MB/s |
+| `minimumMemoryInMiB` | baseline | pico (4x) | disco | ancho de banda | $/h en baseline |
+|---|---|---|---|---|---|
+| 512 | 0.5 GB / 0.25 vCPU | 2 GB / 1 vCPU | 8 GB | 1 MB/s | $0.0315 |
+| 1024 | 1 GB / 0.5 vCPU | 4 GB / 2 vCPU | 8 GB | 2 MB/s | $0.0631 |
+| 2048 (default de `rayito image publish`) | 2 GB / 1 vCPU | 8 GB / 4 vCPU | 8 GB | 4 MB/s (**medido** 4.54 MB/s bajando 16 MiB, `AWS_API_NOTES.md` §7) | $0.1261 |
+| 4096 | 4 GB / 2 vCPU | 16 GB / 8 vCPU | 16 GB | 8 MB/s | $0.2522 |
+| 8192 | 8 GB / 4 vCPU | 32 GB / 16 vCPU | 32 GB | 16 MB/s | $0.5044 |
 
-Otros valores de `minimumMemoryInMiB` no están medidos (RES-1): no los
-publiques sin medirlos tú mismo antes en tu cuenta.
+Lo único de esta tabla verificado en una cuenta real (M0/M9, `AWS_API_NOTES.md`
+§7 y Q68) es la fila de 2048: el ancho de banda medido (4.54 MB/s bajando 16
+MiB) y lo que ve el guest (`cpu_count=4`, `memory_mb=8016`, el pico del
+rango, no el baseline). El resto de la tabla —baseline, pico, disco y ancho
+de banda de los otros cuatro tamaños— viene tal cual de la documentación de
+AWS, sin medir; el `$/h` es aritmética sobre esos números y los precios
+verificados de §12, no una factura observada. Otros valores de
+`minimumMemoryInMiB` fuera de esta tabla no están documentados ni medidos
+(RES-1): no los publiques sin medirlos tú mismo antes en tu cuenta.
 
 **Cómo elegir tamaño hoy**: publica una imagen por tamaño, con un nombre que
 lo diga, y crea sandboxes contra esa imagen:
@@ -80,18 +89,24 @@ La CLI no valida `--memory-mib` contra la tabla de arriba (los valores no
 medidos podrían ser válidos igualmente): un valor fuera de lo verificado
 simplemente no tiene número de referencia aquí todavía.
 
-**Coste**: la línea base de la tabla es lo que AWS factura mientras el
-sandbox está `RUNNING` (precios en [Costes](cost.md)); cada versión de
-imagen publicada, sea cual sea su tamaño, cuesta además el storage del
-snapshot (mínimo 1 semana de retención, ver [Costes](cost.md) e [Imágenes e
-IAM](images.md#publicar-las-tres)).
+**Coste**: mientras el sandbox está `RUNNING`, AWS factura por segundo al
+vCPU/GB de **baseline** de la columna de arriba (columna `$/h en baseline`,
+precios en [Costes](cost.md)); si el sandbox consume por encima del
+baseline (hasta el pico 4x), **ese exceso se factura aparte, a los vCPU/GB
+realmente consumidos** (`AWS_API_NOTES.md` §12), no al precio del tamaño
+siguiente de la tabla. Cada versión de imagen publicada, sea cual sea su
+tamaño, cuesta además el storage del snapshot (mínimo 1 semana de
+retención, ver [Costes](cost.md) e [Imágenes e IAM](images.md#publicar-las-tres)).
 
 **Lo que ve el guest no es la línea base**: `SandboxInfo.cpu_count` y
 `SandboxInfo.memory_mb` informan la vista del guest (`nproc` y `MemTotal`),
-no `minimumMemoryInMiB`. Con una imagen de 2048 MiB, `get_info()` midió
+no `minimumMemoryInMiB`. Con una imagen de 2048 MiB, `get_info()` **midió**
 `cpu_count=4` y `memory_mb=8016` — el pico del rango, no el baseline
 (`AWS_API_NOTES.md` Q68). Código que decide su paralelismo mirando `nproc`
-o la memoria total puede sobrepasar la línea base contratada.
+o la memoria total puede sobrepasar la línea base contratada — y, por el
+párrafo anterior, eso **no es sólo una cuestión de rendimiento: ese exceso
+se paga** a los vCPU/GB consumidos por encima del baseline, no sólo corre
+más rápido gratis.
 
 ## Compatibilidad SDK ↔ rayd ↔ imagen
 
