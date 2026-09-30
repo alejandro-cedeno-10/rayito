@@ -52,6 +52,7 @@ from rayito.e2b._connection import (
     RESERVED_METADATA_KEYS,
     ConnectionSettings,
     bind_control_plane,
+    instance_call,
     merge_bound_params,
     plane_settings,
     resolve_retries,
@@ -276,6 +277,52 @@ def test_split_api_params_applies_the_connection_keys() -> None:
 def test_unknown_api_params_are_the_python_type_error() -> None:
     with pytest.raises(TypeError, match=r"create\(\) got an unexpected keyword argument 'pool'"):
         split_api_params({"pool": object()}, call="create")
+
+
+def test_instance_call_warns_for_headers_proxy_retries_never_applying() -> None:
+    """`sbx.<call>()` nunca reconstruye el canal ni el plano de un handle ya
+    enlazado: `headers`/`proxy`/`retries` avisan siempre, y `request_timeout`
+    sólo cuando `applies_request_timeout` es falso."""
+    params = {
+        "headers": {"authorization": "secreto"},
+        "proxy": "http://h:1",
+        "retries": 3,
+        "request_timeout": 5.0,
+    }
+    applies = instance_call(params, call="pause", applies_request_timeout=True)
+    assert applies.request_timeout == 5.0
+    assert [w.split(" ")[0] for w in applies.warnings] == ["headers", "proxy", "retries"]
+    not_applies = instance_call(params, call="kill", applies_request_timeout=False)
+    assert not_applies.request_timeout is None
+    assert [w.split(" ")[0] for w in not_applies.warnings] == [
+        "headers",
+        "proxy",
+        "request_timeout",
+        "retries",
+    ]
+    for warning in not_applies.warnings:
+        assert "secreto" not in warning
+        assert "sbx.kill()" in warning
+        assert "Sandbox.kill(sandbox_id, ...)" in warning
+
+
+def test_instance_call_without_the_three_keys_warns_of_nothing_new() -> None:
+    settings = instance_call({"request_timeout": 5.0}, call="connect", applies_request_timeout=True)
+    assert settings.warnings == ()
+    assert settings.request_timeout == 5.0
+
+
+def test_instance_call_empty_headers_is_not_given() -> None:
+    """`headers={}` no aplica nada y no hay nada que avisar: a diferencia de
+    `proxy`/`retries`, que siempre traen un valor cuando se dan, un mapping
+    vacío no es un `ApiParam` "dado" para el usuario."""
+    settings = instance_call({"headers": {}}, call="kill", applies_request_timeout=False)
+    assert settings.warnings == ()
+
+
+def test_instance_call_rejects_an_unknown_key_like_split_api_params() -> None:
+    with pytest.raises(TypeError, match=r"kill\(\) got an unexpected keyword argument 'pool'"):
+        instance_call({"pool": object()}, call="kill", applies_request_timeout=False)
 
 
 def test_merge_bound_params_follows_e2b() -> None:

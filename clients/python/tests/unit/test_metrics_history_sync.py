@@ -157,8 +157,11 @@ def test_history_on_a_pre_m9_agent_says_so(sandbox: Sandbox, fake_rayd: RaydEndp
     assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON and "M9" in str(excinfo.value)
     assert not isinstance(excinfo.value, SandboxException)
     cause = excinfo.value.__cause__
-    assert isinstance(cause, SandboxException)
-    assert cause.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert isinstance(cause, UnimplementedError)
+    assert not isinstance(cause, SandboxException)
+    grpc_cause = cause.__cause__
+    assert isinstance(grpc_cause, grpc.RpcError)
+    assert grpc_cause.code() is grpc.StatusCode.UNIMPLEMENTED
 
 
 def test_snapshot_get_metrics_is_unchanged_and_maps_mem_cache(
@@ -291,8 +294,11 @@ def test_class_history_on_a_pre_m9_agent_says_so(
     assert excinfo.value.feature == CLASS_HISTORY_FEATURE
     assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON
     cause = excinfo.value.__cause__
-    assert isinstance(cause, SandboxException)
-    assert cause.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert isinstance(cause, UnimplementedError)
+    assert not isinstance(cause, SandboxException)
+    grpc_cause = cause.__cause__
+    assert isinstance(grpc_cause, grpc.RpcError)
+    assert grpc_cause.code() is grpc.StatusCode.UNIMPLEMENTED
 
 
 def proxy_forbidden() -> FakeRpcError:

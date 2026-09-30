@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, cast
 
-import grpc
-
 from rayito._aws import ClientSettings
 from rayito._code_base import DEFAULT_LANGUAGE, normalize_language
 from rayito._limits import (
@@ -46,7 +44,7 @@ from rayito.e2b._models import (
 )
 from rayito.e2b._unimplemented import unimplemented
 from rayito.e2b.exceptions import NotFoundException, UnimplementedError
-from rayito.exceptions import InvalidArgumentException, SandboxException
+from rayito.exceptions import InvalidArgumentException
 
 E2B_DEFAULT_TIMEOUT_SECONDS: Final = 300
 E2B_DEFAULT_MAX_LIFETIME_SECONDS: Final = 3600
@@ -641,15 +639,15 @@ def normalized_language_or_unimplemented(language: str | None, feature: str) -> 
 
 
 def unimplemented_language(
-    error: SandboxException, feature: str, language: str | None
-) -> UnimplementedError | None:
+    error: UnimplementedError, feature: str, language: str | None
+) -> UnimplementedError:
     """El `UnimplementedError` del shim para un agente que respondió
-    `UNIMPLEMENTED` a un kernel que la imagen no trae (`grpc_code`
-    `UNIMPLEMENTED`), o `None` para cualquier otro error, que el shim
-    propaga sin tocar (p. ej. el `INVALID_ARGUMENT` de un agente anterior a
-    M9 que no conoce `typescript`)."""
-    if error.grpc_code is not grpc.StatusCode.UNIMPLEMENTED:
-        return None
+    `UNIMPLEMENTED` a un kernel que la imagen no trae: el núcleo ya lo
+    distingue por tipo (la tabla unaria genérica de `_transport.py`), así que
+    el shim sólo reenvuelve con `POLY_KERNELS_REASON` y `COMPAT_DOC_PATH`. El
+    `INVALID_ARGUMENT` de un agente anterior a M9 que no conoce `typescript`
+    no pasa por aquí: el caller sólo llama a esto tras un `except
+    UnimplementedError`."""
     return unimplemented(f"{feature}(language={language!r})", POLY_KERNELS_REASON)
 
 

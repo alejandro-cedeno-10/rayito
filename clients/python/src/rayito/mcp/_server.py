@@ -35,6 +35,7 @@ from rayito.exceptions import (
     SandboxNotFoundException,
     SandboxStateException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.mcp._lease import MissingTemplateError, SandboxCreationError, SandboxLease
 from rayito.mcp._results import (
@@ -83,6 +84,7 @@ SDK_MESSAGE_EXCEPTIONS = (
     InvalidArgumentException,
     DiskFullException,
     RateLimitException,
+    UnimplementedError,
 )
 
 CodeArg = Annotated[str, Field(description="Código Python que ejecutar en el kernel del sandbox.")]

@@ -30,8 +30,10 @@ from rayito._sandbox_base import build_launch_plan, terminal_state_error
 from rayito.exceptions import (
     InvalidArgumentException,
     LifecycleUnsupportedException,
+    SandboxException,
     SandboxLifetimeException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.v1 import health_pb2, lifecycle_pb2
 
@@ -252,8 +254,10 @@ def test_lifecycle_from_proto_is_none_on_an_older_agent() -> None:
 
 def test_connect_extension_table() -> None:
     assert connect_extension(None, None, NOW_MS) is None
-    with pytest.raises(LifecycleUnsupportedException, match="imagen M9"):
+    with pytest.raises(LifecycleUnsupportedException, match="imagen M9") as raised:
         connect_extension(None, 300, NOW_MS)
+    assert raised.value.feature == "connect(timeout=)"
+    assert isinstance(raised.value, UnimplementedError)
     unmanaged = lifecycle("unmanaged", deadline_in=None)
     assert connect_extension(unmanaged, None, NOW_MS) is None
     with pytest.raises(InvalidArgumentException, match="max_lifetime"):
@@ -364,7 +368,10 @@ def test_set_timeout_rejections_map_to_the_d8_table() -> None:
 def test_older_agent_error_names_template_version_and_the_fix() -> None:
     error = older_agent_error("rayito-base", "0.2.0")
     assert isinstance(error, LifecycleUnsupportedException)
-    assert isinstance(error, InvalidArgumentException)
+    assert isinstance(error, UnimplementedError)
+    assert not isinstance(error, InvalidArgumentException)
+    assert not isinstance(error, SandboxException)
+    assert error.feature == "create(max_lifetime=, on_timeout=)"
     assert "rayito-base" in str(error)
     assert "0.2.0" in str(error)
     assert "publica una imagen M9" in str(error)

@@ -224,6 +224,60 @@ def split_api_params(
     return settings, ignored_param_warnings(params)
 
 
+INSTANCE_UNAPPLIED_REASON: Final = (
+    "sbx.{call}() usa el canal y el plano ya construidos de este sandbox; pásalo al crear o "
+    "conectar, o usa Sandbox.{call}(sandbox_id, ...)"
+)
+INSTANCE_UNAPPLIED_PARAMS: Final = ("headers", "proxy", "retries")
+
+
+@dataclass(frozen=True)
+class InstanceCall:
+    """Lo que una llamada de instancia (`sbx.kill()`, `sbx.pause()`,
+    `sbx.connect()`) aplica de sus `ApiParams`: nunca `headers`, `proxy` ni
+    `retries` (no hay canal ni plano que reconstruir sobre un handle ya
+    enlazado), y `request_timeout` sólo cuando la llamada lo soporta."""
+
+    request_timeout: float | None
+    warnings: tuple[str, ...]
+
+
+def _instance_param_unapplied(
+    name: str, params: Mapping[str, Any], settings: ConnectionSettings
+) -> bool:
+    """`headers={}` (o cualquier mapping vacío) no dio nada que ignorar: a
+    diferencia de `proxy`/`retries`, cuyo valor validado nunca es "vacío",
+    `headers` se juzga por el resultado ya validado (`settings.headers`), no
+    por `is_given`, que un `{}` marcaría como dado."""
+    if name == "headers":
+        return bool(settings.headers)
+    return is_given(params.get(name))
+
+
+def instance_call(
+    params: Mapping[str, Any], *, call: str, applies_request_timeout: bool
+) -> InstanceCall:
+    """Valida los `ApiParams` de una llamada de instancia (`split_api_params`)
+    y añade un aviso por cada `headers`/`proxy`/`retries` presente y, si
+    `applies_request_timeout` es falso, por `request_timeout`: ninguno viaja
+    porque `sbx.<call>()` opera sobre el canal y el plano que el sandbox ya
+    tiene, a diferencia de `Sandbox.<call>(sandbox_id, ...)`, que los
+    reconstruye. El aviso nombra el parámetro, nunca su valor, en orden
+    alfabético (la misma regla que el shim de TypeScript)."""
+    settings, messages = split_api_params(params, call=call)
+    reason = INSTANCE_UNAPPLIED_REASON.format(call=call)
+    unapplied = [
+        name
+        for name in INSTANCE_UNAPPLIED_PARAMS
+        if _instance_param_unapplied(name, params, settings)
+    ]
+    if not applies_request_timeout and is_given(params.get("request_timeout")):
+        unapplied.append("request_timeout")
+    messages = messages + tuple(f"{name} ignorado: {reason}" for name in sorted(unapplied))
+    request_timeout = settings.request_timeout if applies_request_timeout else None
+    return InstanceCall(request_timeout=request_timeout, warnings=messages)
+
+
 def merge_bound_params(bound: Mapping[str, Any], call: Mapping[str, Any]) -> dict[str, Any]:
     """La regla de E2B: gana el valor de la llamada y un `None` cae al del
     cliente; `headers` de la llamada sustituyen a los del cliente."""

@@ -9,18 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Final
 
-import grpc
-
 from rayito._limits import TERMINAL_STATES
 from rayito._models import SandboxInfo, SandboxMetrics
 from rayito._process_base import metrics_from_proto
 from rayito._sandbox_base import terminal_state_error
-from rayito.exceptions import (
-    InvalidArgumentException,
-    SandboxException,
-    SandboxStateException,
-    UnimplementedError,
-)
+from rayito.exceptions import InvalidArgumentException, SandboxStateException, UnimplementedError
 from rayito.v1 import health_pb2
 
 HISTORY_UNIMPLEMENTED_REASON: Final = (
@@ -85,16 +78,10 @@ def metrics_history_from_proto(
     return [metrics_from_proto(sample) for sample in response.samples]
 
 
-def is_history_unimplemented(exc: BaseException) -> bool:
-    """La traducción unaria convierte `UNIMPLEMENTED` (un `rayd` sin el
-    método) en `InvalidArgumentException` conservando `grpc_code`."""
-    return isinstance(exc, SandboxException) and exc.grpc_code is grpc.StatusCode.UNIMPLEMENTED
-
-
-def history_unimplemented_error(cause: SandboxException, feature: str) -> UnimplementedError:
-    """El historial contra un `rayd` anterior a M9 es una feature ausente
-    (`UnimplementedError`, no `SandboxException`), con la causa gRPC
-    encadenada."""
+def history_unimplemented_error(cause: UnimplementedError, feature: str) -> UnimplementedError:
+    """El `UnimplementedError` genérico de la tabla unaria (un `rayd`
+    anterior a M9, sin `MetricsHistory`) reenvuelto en el discriminador
+    tipado del historial, con la causa encadenada."""
     error = MetricsHistoryUnavailable(feature, HISTORY_UNIMPLEMENTED_REASON)
     error.__cause__ = cause
     return error

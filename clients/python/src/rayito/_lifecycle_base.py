@@ -342,8 +342,9 @@ def connect_extension(
     if lifecycle is None:
         if seconds is not None:
             raise LifecycleUnsupportedException(
-                "connect(timeout=) necesita una imagen M9: el agente de este sandbox no impone "
-                "el timeout del servidor"
+                "connect(timeout=)",
+                "necesita una imagen M9: el agente de este sandbox no impone el timeout del "
+                "servidor",
             )
         return None
     if not lifecycle.managed:
@@ -451,8 +452,9 @@ def suspended_set_timeout_error(sandbox_id: str) -> SandboxStateException:
 
 def older_agent_error(template: str, agent_version: str) -> LifecycleUnsupportedException:
     return LifecycleUnsupportedException(
+        "create(max_lifetime=, on_timeout=)",
         f"la imagen {template} (agent_version {agent_version}) no impone el timeout del "
-        "servidor: publica una imagen M9 o crea el sandbox sin max_lifetime ni on_timeout"
+        "servidor: publica una imagen M9 o crea el sandbox sin max_lifetime ni on_timeout",
     )
 
 
@@ -467,9 +469,8 @@ def translate_set_timeout_error(exc: grpc.RpcError, request: TimeoutRequest) -> 
         return unmanaged_error(request.operation)
     if code is grpc.StatusCode.UNIMPLEMENTED:
         return LifecycleUnsupportedException(
-            f"{request.operation} necesita una imagen M9: el agente de este sandbox no tiene "
-            "LifecycleService",
-            grpc_code=code,
+            request.operation,
+            "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
         )
     return translate_rpc_error(exc)
 

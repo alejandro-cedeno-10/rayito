@@ -42,7 +42,12 @@ from rayito._process_base import (
     validate_pid,
 )
 from rayito._sandbox_base import GateRetry, ReconnectBudget
-from rayito.exceptions import NotFoundException, SandboxException, TimeoutException
+from rayito.exceptions import (
+    NotFoundException,
+    SandboxException,
+    TimeoutException,
+    UnimplementedError,
+)
 from rayito.v1 import process_pb2, process_pb2_grpc
 
 if TYPE_CHECKING:
@@ -427,7 +432,7 @@ class CommandHandle:
                 if exc.grpc_code is not grpc.StatusCode.OUT_OF_RANGE:
                     raise self._progress.fail(exc) from exc
                 return self._resubscribe_from_live(exc)
-            except SandboxException as exc:
+            except (SandboxException, UnimplementedError) as exc:
                 delay = retry.retry_delay(exc)
                 if delay is None:
                     raise self._progress.fail(exc) from exc

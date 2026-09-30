@@ -6,6 +6,50 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- `LifecycleUnsupportedException` pasa a ser subclase de `UnimplementedError`
+  (ya no de `InvalidArgumentException`/`SandboxException`), y el kernel
+  ausente en `run_code`/`create_code_context` (y cualquier RPC que el agente
+  no implemente, vía la tabla unaria genérica de `_transport.py`) deja de ser
+  `InvalidArgumentException`/`SandboxException`: ahora es `UnimplementedError`
+  en los tres casos, un único tipo para "esta feature no está disponible en
+  este sandbox". Migración: cambia `except InvalidArgumentException`/`except
+  SandboxException` alrededor de esas llamadas por `except
+  rayito.UnimplementedError` (o `except LifecycleUnsupportedException`, que
+  ahora es subclase suya); `MetricsHistoryUnavailable` sigue siendo
+  `UnimplementedError` para quien la captura, pero su `__cause__` cambia: ya
+  no es la `RpcError` de gRPC directamente, sino el `UnimplementedError`
+  genérico de la tabla unaria (cuya propia `__cause__` sí es la `RpcError`;
+  `__cause__.__cause__` para llegar a ella). `rayito.e2b` no cambia de
+  superficie: seguía lanzando `UnimplementedError` en los tres casos con el
+  mismo `feature`, `reason` y `doc`; sólo se simplifica su traducción
+  interna. La pista "publica una imagen con una versión actual de rayd" de
+  `unimplemented_rpc_error` sólo sale para un RPC de verdad ausente: un
+  kernel ausente en `run_code`/`create_code_context` ya nombra
+  `rayito-base-poly` en el propio detalle de `rayd`, así que ya no repite un
+  consejo que no aplica (la imagen ya está actualizada).
+
+### Changed
+
+- `sbx.kill()`, `sbx.pause()` y `sbx.connect()` (`rayito.e2b`, llamadas de
+  instancia) avisan ahora con `RayitoCompatWarning` cuando se les pasa
+  `headers=`, `proxy=` o `retries=` (y `sbx.kill()`/`sbx.pause()` también con
+  `request_timeout=`), en vez de perderlos en silencio: esta llamada opera
+  sobre el canal y el plano ya construidos de este sandbox y no puede
+  reconstruirlos; usa `Sandbox.<kill|pause|connect>(sandbox_id, ...)` si
+  necesitas aplicarlos.
+
+### Fixed
+
+- `files.read()` de un fichero grande enrutado por S3: si el plazo
+  (`request_timeout`/`stream_idle_timeout`) vencía justo cuando el
+  `get_object` seguía en vuelo, el SDK seguía lanzando ese `get_object` tras
+  una cancelación ya vista, aunque el resultado tardío se descartaba y el
+  llamante siempre recibía `TimeoutException`. `ObjectFetch.run` comprueba
+  ahora la cancelación antes de abrir el cuerpo, así que no sale ningún
+  `get_object` de más una vez vista la cancelación.
+
 ## [0.3.3] - 2026-09-29
 
 ### Security

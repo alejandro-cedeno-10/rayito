@@ -26,13 +26,12 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
-import grpc
 import pytest
 
 import rayito.e2b
 from rayito import Execution, Sandbox
 from rayito._aws import LambdaMicrovmsControlPlane
-from rayito.exceptions import CommandExitException, InvalidArgumentException
+from rayito.exceptions import CommandExitException, InvalidArgumentException, UnimplementedError
 
 from .test_m7_poly_kernels import BASE_SIZES_VAR, POLY_SIZES_VAR, RAYD_DELTA_VAR, parse_sizes
 
@@ -211,8 +210,8 @@ def test_e2b_shim_js_ts_on_poly(
     assert typed == "4"
 
 
-def assert_unimplemented_naming_poly(error: InvalidArgumentException) -> None:
-    assert error.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+def assert_unimplemented_naming_poly(error: UnimplementedError) -> None:
+    assert not isinstance(error, InvalidArgumentException)
     assert POLY_IMAGE in str(error)
 
 
@@ -220,10 +219,10 @@ def test_js_ts_unimplemented_on_base(
     sandbox: Sandbox, control_plane: LambdaMicrovmsControlPlane
 ) -> None:
     for language in DENO_LANGUAGES:
-        with pytest.raises(InvalidArgumentException) as executed:
+        with pytest.raises(UnimplementedError) as executed:
             sandbox.run_code("1", language=language)
         assert_unimplemented_naming_poly(executed.value)
-        with pytest.raises(InvalidArgumentException) as created:
+        with pytest.raises(UnimplementedError) as created:
             sandbox.create_code_context(language=language)
         assert_unimplemented_naming_poly(created.value)
     report("typescript on rayito-base", str(executed.value))

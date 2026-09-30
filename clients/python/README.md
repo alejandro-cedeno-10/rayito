@@ -142,7 +142,8 @@ Sandbox.connect(sbx.sandbox_id, access_token=sbx.access_token, timeout=900)  # s
 
 Con `on_timeout="pause"` (necesita `idle`) el sandbox se suspende al vencer
 en vez de terminar. Contra una imagen anterior a M9 pedir un ciclo de vida es
-`LifecycleUnsupportedException` y el VM se termina.
+`LifecycleUnsupportedException` (subclase de `UnimplementedError`, la
+misma feature ausente que cualquier otra) y el VM se termina.
 
 ## Comandos
 
@@ -227,9 +228,8 @@ with Sandbox.create() as sbx:
 `language` acepta `python`, `bash`, `javascript` (alias `js`) y
 `typescript` (alias `ts`); los tres últimos viven en `rayito-base-poly`
 (JavaScript y TypeScript con el kernel de Deno, M9). En `rayito-base`
-cualquier kernel distinto de Python es `InvalidArgumentException` con
-`grpc_code` `UNIMPLEMENTED` nombrando `rayito-base-poly`
-(`docs/site/docs/kernels.md`).
+cualquier kernel distinto de Python es `UnimplementedError`, con un mensaje
+que nombra `rayito-base-poly` (`docs/site/docs/kernels.md`).
 
 ## PTY
 

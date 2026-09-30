@@ -26,7 +26,7 @@ from rayito import (
 from rayito._limits import DEFAULT_PORT
 from rayito._process_base import STREAM_EOF
 from rayito._sandbox_base import ReconnectPoll
-from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER
+from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER, UNIMPLEMENTED_IMAGE_HINT
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -36,6 +36,7 @@ from rayito.exceptions import (
     SandboxNotFoundException,
     SandboxStateException,
     TimeoutException,
+    UnimplementedError,
 )
 
 from .conftest import (
@@ -486,13 +487,16 @@ async def test_async_language_parity(sandbox: AsyncSandbox, fake_rayd: RaydEndpo
     with pytest.raises(InvalidArgumentException, match="python"):
         await sandbox.run_code("echo $A", language="bash", envs={"A": "1"})
     fake_rayd.code.languages = frozenset({"python"})
-    with pytest.raises(InvalidArgumentException) as excinfo:
+    with pytest.raises(UnimplementedError) as excinfo:
         await sandbox.run_code("1 + 1", language="javascript")
-    assert excinfo.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert not isinstance(excinfo.value, InvalidArgumentException)
+    assert excinfo.value.feature == "run_code(language='javascript')"
     assert "rayito-base-poly" in str(excinfo.value)
-    with pytest.raises(InvalidArgumentException) as typescript:
+    assert UNIMPLEMENTED_IMAGE_HINT not in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, grpc.RpcError)
+    with pytest.raises(UnimplementedError) as typescript:
         await sandbox.create_code_context(language="ts")
-    assert typescript.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert typescript.value.feature == "create_code_context(language='typescript')"
 
 
 async def test_async_typescript_alias_travels_canonical(

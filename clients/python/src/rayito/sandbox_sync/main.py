@@ -62,7 +62,6 @@ from rayito._metrics_base import (
     HISTORY_FEATURE,
     ensure_history_readable,
     history_unimplemented_error,
-    is_history_unimplemented,
     metrics_history_from_proto,
     metrics_history_request,
 )
@@ -185,6 +184,7 @@ from rayito.exceptions import (
     SandboxNotFoundException,
     SandboxNotReadyException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
@@ -1272,10 +1272,8 @@ class Sandbox:
             response = self._translated_unary(
                 lambda: self._health.MetricsHistory(request, timeout=timeout)
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     @classmethod
@@ -1314,10 +1312,8 @@ class Sandbox:
                 token,
                 lambda stub: stub.MetricsHistory(request, timeout=timeout),
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     def close(self) -> None:
@@ -1452,9 +1448,9 @@ class Sandbox:
         dos últimos, que sirve el kernel Jupyter de Deno, viven en la variante
         de imagen `rayito-base-poly` y arrancan en la primera celda de ese
         lenguaje (≈ 1 s dentro del `timeout`); en `rayito-base` la llamada
-        falla con `InvalidArgumentException` (`grpc_code` `UNIMPLEMENTED`,
-        mensaje que nombra `rayito-base-poly`). `language` y `context` son
-        excluyentes; `envs` por ejecución sólo en contextos Python.
+        falla con `UnimplementedError` (el mensaje nombra `rayito-base-poly`).
+        `language` y `context` son excluyentes; `envs` por ejecución sólo en
+        contextos Python.
 
         Devuelve una `Execution` con `results` (mime bundles: `text`, `png`,
         `chart`, `data`...), `logs.stdout`/`logs.stderr`, `error` y
@@ -1757,7 +1753,9 @@ class Sandbox:
     ) -> T:
         """Unario de `CodeService` en el canal de unarios. `default_timeout`
         sustituye al `request_timeout` del sandbox cuando el RPC arranca un
-        kernel (`CreateContext`, `RestartContext`: 90 s)."""
+        kernel (`CreateContext`, `RestartContext`: 90 s). Un `UNIMPLEMENTED`
+        genérico sale con el feature "esta llamada"; el caller que conoce el
+        kernel pedido (`CodeClient`) lo renombra con `kernel_unimplemented_error`."""
         timeout = self._resolve_request_timeout(request_timeout)
         if request_timeout is None and default_timeout is not None:
             timeout = default_timeout
@@ -2069,7 +2067,7 @@ class Sandbox:
                 self._consume_deadline_pause(paused_generation)
                 return False
             self._send_set_timeout(request, request_timeout=None, reopen=False)
-        except (grpc.RpcError, SandboxException) as failure:
+        except (grpc.RpcError, SandboxException, UnimplementedError) as failure:
             self._logger.warning(
                 "sandbox %s: no se pudo reabrir tras la pausa del plazo (%s)",
                 self.sandbox_id,

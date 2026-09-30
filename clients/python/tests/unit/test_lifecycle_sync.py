@@ -280,6 +280,8 @@ def test_create_on_an_older_agent_terminates_and_raises(
     with pytest.raises(LifecycleUnsupportedException, match="publica una imagen M9") as raised:
         launch(control_plane, fake_rayd, timeout=60, on_timeout="kill")
     assert not isinstance(raised.value, SandboxNotReadyException)
+    assert not isinstance(raised.value, InvalidArgumentException)
+    assert raised.value.feature == "create(max_lifetime=, on_timeout=)"
     assert "0.2.0" in str(raised.value)
     assert "lifecycle" in json.loads(str(captured["runHookPayload"]))
 
@@ -569,6 +571,32 @@ def test_a_sandbox_timeout_before_the_freeze_does_not_burn_the_reopen(
         assert [(r.mode, r.timeout_ms) for r in fake_rayd.lifecycle.requests] == [
             (lifecycle_pb2.TIMEOUT_MODE_EXACT, 300_000)
         ]
+    finally:
+        monkeypatch.undo()
+        expect_terminate(control_plane)
+        sandbox.kill()
+
+
+def test_an_unimplemented_reopen_leaves_the_original_sandbox_timeout(
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sandbox = launch_paused_by_deadline(control_plane, fake_rayd, monkeypatch)
+    try:
+        fake_rayd.lifecycle.abort_with = (grpc.StatusCode.UNIMPLEMENTED, "Method not found")
+        fake_rayd.resume()
+        with (
+            caplog.at_level(logging.WARNING, logger="rayito.sandbox"),
+            pytest.raises(TimeoutException, match="sandbox_timeout"),
+        ):
+            sandbox.files.make_dir("/home/user/after-resume")
+        assert len(fake_rayd.lifecycle.requests) == 1
+        assert any(
+            "no se pudo reabrir tras la pausa del plazo" in record.getMessage()
+            for record in caplog.records
+        )
     finally:
         monkeypatch.undo()
         expect_terminate(control_plane)

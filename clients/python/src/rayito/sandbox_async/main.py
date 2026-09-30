@@ -55,7 +55,6 @@ from rayito._metrics_base import (
     HISTORY_FEATURE,
     ensure_history_readable,
     history_unimplemented_error,
-    is_history_unimplemented,
     metrics_history_from_proto,
     metrics_history_request,
 )
@@ -179,6 +178,7 @@ from rayito.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     SandboxNotReadyException,
+    UnimplementedError,
 )
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
@@ -1067,10 +1067,8 @@ class AsyncSandbox:
             response = await self._translated_unary(
                 lambda: self._health.MetricsHistory(request, timeout=timeout)
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     @classmethod
@@ -1105,10 +1103,8 @@ class AsyncSandbox:
                 token,
                 lambda stub: stub.MetricsHistory(request, timeout=timeout),
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     async def close(self) -> None:
@@ -1774,7 +1770,7 @@ class AsyncSandbox:
                 self._consume_deadline_pause(paused_generation)
                 return False
             await self._send_set_timeout(request, request_timeout=None, reopen=False)
-        except (grpc.RpcError, SandboxException) as failure:
+        except (grpc.RpcError, SandboxException, UnimplementedError) as failure:
             self._logger.warning(
                 "sandbox %s: no se pudo reabrir tras la pausa del plazo (%s)",
                 self.sandbox_id,

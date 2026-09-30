@@ -1,0 +1,13 @@
+schema: spec-driven
+created: "2026-09-29"
+goal: >-
+  0.4.0 Python group: UnimplementedError becomes the single type for a
+  missing feature (LifecycleUnsupportedException its subclass, one shared
+  translation helper in _transport.py), instance-call ApiParams the E2B
+  shim's per-call variants silently dropped (headers, proxy, retries,
+  request_timeout) now warn, and the S3 download timeout test becomes
+  deterministic (opened == closed invariant, no GET after a seen
+  cancellation).
+affected_areas:
+  - clients/python
+  - docs/site

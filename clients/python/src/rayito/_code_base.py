@@ -11,6 +11,8 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
+import grpc
+
 from rayito._charts import parse_chart
 from rayito._models import (
     CodeContext,
@@ -22,7 +24,8 @@ from rayito._models import (
 )
 from rayito._payload import DEFAULT_WORKDIR, validated_envs
 from rayito._process_base import timeout_to_ms
-from rayito.exceptions import InvalidArgumentException, SandboxException
+from rayito._transport import unimplemented_rpc_error
+from rayito.exceptions import InvalidArgumentException, SandboxException, UnimplementedError
 from rayito.v1 import code_pb2
 
 DEFAULT_CODE_TIMEOUT_SECONDS: Final = 300.0
@@ -107,6 +110,34 @@ def validate_language(language: str | None) -> str:
     """Como `normalize_language`, con `python` como valor por defecto (lo que
     `create_code_context` envía)."""
     return normalize_language(language) or DEFAULT_LANGUAGE
+
+
+def code_feature(call: str, language: str | None) -> str:
+    """El `feature` que ve `unimplemented_rpc_error` para `run_code`/
+    `create_code_context`: nombra el lenguaje pedido, si lo hay, sin repetir
+    la tabla de kernels que sólo el agente conoce."""
+    canonical = normalize_language(language)
+    return call if canonical is None else f"{call}(language={canonical!r})"
+
+
+def kernel_unimplemented_error(
+    exc: UnimplementedError, call: str, language: str | None
+) -> UnimplementedError:
+    """Renombra el `UNIMPLEMENTED` genérico de `_transport.py` (feature
+    "esta llamada") con el feature del kernel pedido, sin la pista de
+    publicar una imagen actual: el mensaje de `rayd` ya nombra
+    `rayito-base-poly`, la variante que hace falta, no una versión más nueva
+    de la imagen actual. `CodeClient.run_code`/`create_context` capturan el
+    `UnimplementedError` que sale de `_code_call`/`_open_stream` y lo
+    reconstruyen con esto en vez de duplicar la tabla unaria; la `RpcError`
+    original queda en `__cause__`, no el genérico intermedio (paridad con
+    `withKernelFeature` en TypeScript)."""
+    cause = exc.__cause__
+    if not isinstance(cause, grpc.RpcError):
+        return exc
+    error = unimplemented_rpc_error(cause, code_feature(call, language), hint=None)
+    error.__cause__ = cause
+    return error
 
 
 def validate_cwd(cwd: str | None) -> str | None:

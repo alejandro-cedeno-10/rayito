@@ -19,7 +19,7 @@ from typing import Any, NoReturn
 from botocore.exceptions import ClientError
 
 from rayito.cli._session import UsageError
-from rayito.exceptions import SandboxException
+from rayito.exceptions import SandboxException, UnimplementedError
 
 STATUS_WIDTH = 4
 MIN_TABLE_WIDTH = 120
@@ -99,13 +99,14 @@ def client_error_message(exc: ClientError) -> str:
 @contextmanager
 def translated_failures() -> Iterator[None]:
     """Un `ClientError` que ningún comando trató es `AWS error <Code>:
-    <Message>` (salida 1); la familia `SandboxException`, su mensaje (1);
-    `UsageError`, su mensaje (2)."""
+    <Message>` (salida 1); la familia `SandboxException`, su mensaje (1); una
+    feature ausente (`UnimplementedError`, que no es `SandboxException`), su
+    mensaje (1); `UsageError`, su mensaje (2)."""
     try:
         yield
     except UsageError as exc:
         fail(str(exc), code=EXIT_USAGE)
     except ClientError as exc:
         fail(f"AWS error {client_error_code(exc)}: {client_error_message(exc)}")
-    except SandboxException as exc:
+    except (SandboxException, UnimplementedError) as exc:
         fail(str(exc))

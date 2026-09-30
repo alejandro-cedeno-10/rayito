@@ -176,6 +176,8 @@ nada se aproxima en silencio.
 | `api_key`, `domain`, `debug`, `api_url`, `sandbox_url`, `validate_api_key`, `api_headers`, `secure=False` | ignorados con un `RayitoCompatWarning` cada uno: las credenciales son las de AWS |
 | `proxy=` | se honra (sólo `http://host:puerto`) en los canales gRPC y en botocore |
 | `headers=`, `retries=`, `ConnectionConfig.set_integration`, `sbx.connection_config` | cabeceras extra en cada RPC (las del proxy, del token y de gRPC están reservadas), reintentos de botocore y `user_agent_extra` |
+| `headers=`, `proxy=`, `retries=` en `sbx.kill()`, `sbx.pause()` o `sbx.connect()` (llamadas de instancia) | 0.4.0: `RayitoCompatWarning` por cada uno (antes se perdían en silencio); `sbx.<call>()` opera sobre el canal y el plano ya construidos de este sandbox y no puede reconstruirlos, a diferencia de `Sandbox.<call>(sandbox_id, ...)`, que sí los aplica; `sbx.pause()`/`sbx.kill()` avisan también de `request_timeout=` (el nativo no lo acepta ahí), `sbx.connect(request_timeout=)` sí lo aplica; `headers={}` no avisa, y los avisos salen en orden alfabético (igual en TS) |
+| TS: cualquier clave de `ConnectionOpts` en una llamada de instancia que ese método no aplica | 0.4.0: `RayitoCompatWarning` por cada una, mismo motivo que Python. Cubre `kill`, `pause`, `getInfo`, `isRunning`, `setTimeout`, `connect`, `getMetrics` y `updateNetwork`; sólo `signal` se aplica siempre. `kill`/`pause` también avisan de `requestTimeoutMs` (el nativo no lo acepta ahí); `getInfo`/`isRunning`/`setTimeout`/`connect`/`getMetrics`/`updateNetwork` sí lo aplican. El resto de claves propias de la conexión (`headers`, `proxy`, `retries`, `logger`, `region`, `controlPlane`, `accessToken`, `transport`) avisan siempre que aparecen en la llamada de instancia (unos `headers` vacíos, `{}`, no avisan); las variantes estáticas (`Sandbox.<método>(sandboxId, opts)`) las aplican todas, como antes |
 | `logger=` | los logs del SDK de ese sandbox van al `logging.Logger` dado (TS: un `Logger` con `debug`/`info`/`warn`/`error`), distinto del `logging=` nativo, que es CloudWatch |
 | JS `sbx.getHost(port)` | síncrono, devuelve el hostname como E2B; las cabeceras del proxy que toda petición necesita salen de `await sbx.getHostHeaders(port)` |
 | JS `signal` (`AbortSignal`) en `ConnectionOpts` | cancela las llamadas del plano de control y los RPC en curso; rechaza con `signal.reason` |
@@ -231,9 +233,11 @@ El SDK nativo sigue la misma regla: `get_metrics_history()` (TS
 anterior a M9 lanza `UnimplementedError` con el mismo motivo (feature
 `get_metrics_history` / `Sandbox.get_metrics_history(sandbox_id)`; TS
 `getMetricsHistory` / `Sandbox.getMetricsHistory(sandboxId)`), como las
-transferencias y el plazo del servidor; el error gRPC `UNIMPLEMENTED` queda en
-`__cause__` (TS `cause`). Sin rango, el `get_metrics()` del shim sigue cayendo
-en la instantánea.
+transferencias y el plazo del servidor; el `UnimplementedError` genérico de
+la tabla unaria queda en `__cause__` (TS `cause`), y el error gRPC
+`UNIMPLEMENTED` un nivel más abajo, en `__cause__.__cause__` (TS
+`cause.cause`). Sin rango, el `get_metrics()` del shim sigue cayendo en la
+instantánea.
 
 Diferencias reales entre los dos shims:
 

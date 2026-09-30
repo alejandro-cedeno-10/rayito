@@ -314,6 +314,89 @@ def test_connect_get_info_and_kill(
     assert Sandbox.kill("other", control_plane=control_plane.plane) is True
 
 
+def test_instance_kill_warns_for_retries_and_proxy_and_still_terminates(
+    sbx: Sandbox, control_plane: StubbedControlPlane
+) -> None:
+    """`sbx.kill()` opera sobre el canal y el plano ya construidos: `retries`
+    y `proxy` avisan (0.4.0) en vez de perderse en silencio, y el kill sigue
+    terminando de verdad."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with pytest.warns(RayitoCompatWarning) as caught:
+        assert sbx.kill(retries=3, proxy="http://h:1") is True
+    assert [str(w.message).split(" ")[0] for w in caught.list] == ["proxy", "retries"]
+    for warning in caught.list:
+        assert "sbx.kill()" in str(warning.message)
+        assert "Sandbox.kill(sandbox_id, ...)" in str(warning.message)
+
+
+def test_instance_pause_warns_for_request_timeout(
+    sbx: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    """`sbx.pause()` nunca aplica `request_timeout` (el nativo `pause(wait=)`
+    no lo acepta): avisa en vez de perderlo en silencio."""
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("suspend_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="SUSPENDED")
+    )
+    with pytest.warns(RayitoCompatWarning, match="request_timeout") as caught:
+        assert sbx.pause(request_timeout=5) is True
+    assert len(caught) == 1
+
+
+def test_instance_connect_applies_request_timeout_and_warns_only_for_headers(
+    sbx: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    """`sbx.connect()` sí aplica `request_timeout` (a diferencia de `kill`/
+    `pause`): no debe avisar de él, pero sigue avisando de `headers`."""
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sbx.connect(request_timeout=5.0)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with pytest.warns(RayitoCompatWarning, match="headers") as caught:
+        sbx.connect(headers={"x-a": "1"})
+    assert len(caught) == 1
+
+
+def test_instance_kill_does_not_warn_for_empty_headers(
+    sbx: Sandbox, control_plane: StubbedControlPlane
+) -> None:
+    """`headers={}` no dio nada que ignorar (M9.1): a diferencia de un
+    `proxy`/`retries` presentes, un mapping vacío no dispara el aviso."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert sbx.kill(headers={}) is True
+
+
+def test_instance_connect_does_not_warn_for_empty_headers(
+    sbx: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sbx.connect(headers={})
+
+
+def test_class_kill_does_not_emit_a_new_instance_warning(
+    control_plane: StubbedControlPlane,
+) -> None:
+    """La variante de clase sí aplica `retries`/`proxy`: no debe avisar."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert Sandbox.kill(SANDBOX_ID, control_plane=control_plane.plane) is True
+
+
 def test_constructor_with_sandbox_id_connects_and_warns_about_create_kwargs(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
 ) -> None:
@@ -919,12 +1002,18 @@ def test_kernel_not_shipped_is_unimplemented_from_the_native_error(
         sbx.run_code("1 + 1", language="javascript")
     assert ran.value.feature == "run_code(language='javascript')"
     assert "rayito-base-poly" in ran.value.reason
-    assert isinstance(ran.value.__cause__, InvalidArgumentException)
-    assert ran.value.__cause__.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert isinstance(ran.value.__cause__, UnimplementedError)
+    assert not isinstance(ran.value.__cause__, InvalidArgumentException)
+    ran_grpc_cause = ran.value.__cause__.__cause__
+    assert isinstance(ran_grpc_cause, grpc.RpcError)
+    assert ran_grpc_cause.code() is grpc.StatusCode.UNIMPLEMENTED
     with pytest.raises(UnimplementedError) as created:
         sbx.create_code_context(language="ts")
     assert created.value.feature == "create_code_context(language='ts')"
-    assert isinstance(created.value.__cause__, InvalidArgumentException)
+    assert isinstance(created.value.__cause__, UnimplementedError)
+    created_grpc_cause = created.value.__cause__.__cause__
+    assert isinstance(created_grpc_cause, grpc.RpcError)
+    assert created_grpc_cause.code() is grpc.StatusCode.UNIMPLEMENTED
     executions = len(fake_rayd.code.executions)
     with pytest.raises(UnimplementedError) as refused:
         sbx.run_code("1", language="r")
