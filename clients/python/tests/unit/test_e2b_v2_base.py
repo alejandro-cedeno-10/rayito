@@ -312,6 +312,14 @@ def test_instance_call_without_the_three_keys_warns_of_nothing_new() -> None:
     assert settings.request_timeout == 5.0
 
 
+def test_instance_call_empty_headers_is_not_given() -> None:
+    """`headers={}` no aplica nada y no hay nada que avisar: a diferencia de
+    `proxy`/`retries`, que siempre traen un valor cuando se dan, un mapping
+    vacío no es un `ApiParam` "dado" para el usuario."""
+    settings = instance_call({"headers": {}}, call="kill", applies_request_timeout=False)
+    assert settings.warnings == ()
+
+
 def test_instance_call_rejects_an_unknown_key_like_split_api_params() -> None:
     with pytest.raises(TypeError, match=r"kill\(\) got an unexpected keyword argument 'pool'"):
         instance_call({"pool": object()}, call="kill", applies_request_timeout=False)

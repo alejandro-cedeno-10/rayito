@@ -242,6 +242,18 @@ class InstanceCall:
     warnings: tuple[str, ...]
 
 
+def _instance_param_unapplied(
+    name: str, params: Mapping[str, Any], settings: ConnectionSettings
+) -> bool:
+    """`headers={}` (o cualquier mapping vacío) no dio nada que ignorar: a
+    diferencia de `proxy`/`retries`, cuyo valor validado nunca es "vacío",
+    `headers` se juzga por el resultado ya validado (`settings.headers`), no
+    por `is_given`, que un `{}` marcaría como dado."""
+    if name == "headers":
+        return bool(settings.headers)
+    return is_given(params.get(name))
+
+
 def instance_call(
     params: Mapping[str, Any], *, call: str, applies_request_timeout: bool
 ) -> InstanceCall:
@@ -253,7 +265,11 @@ def instance_call(
     reconstruye. El aviso nombra el parámetro, nunca su valor."""
     settings, messages = split_api_params(params, call=call)
     reason = INSTANCE_UNAPPLIED_REASON.format(call=call)
-    unapplied = [name for name in INSTANCE_UNAPPLIED_PARAMS if is_given(params.get(name))]
+    unapplied = [
+        name
+        for name in INSTANCE_UNAPPLIED_PARAMS
+        if _instance_param_unapplied(name, params, settings)
+    ]
     if not applies_request_timeout and is_given(params.get("request_timeout")):
         unapplied.append("request_timeout")
     messages = messages + tuple(f"{name} ignorado: {reason}" for name in unapplied)

@@ -321,6 +321,28 @@ async def test_async_instance_connect_applies_request_timeout_and_warns_only_for
     assert len(caught) == 1
 
 
+async def test_async_instance_kill_does_not_warn_for_empty_headers(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane
+) -> None:
+    """`headers={}` no dio nada que ignorar (M9.1): a diferencia de un
+    `proxy`/`retries` presentes, un mapping vacío no dispara el aviso."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert await sbx.kill(headers={}) is True
+
+
+async def test_async_instance_connect_does_not_warn_for_empty_headers(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        await sbx.connect(headers={})
+
+
 async def test_async_class_kill_does_not_emit_a_new_instance_warning(
     control_plane: StubbedControlPlane,
 ) -> None:
