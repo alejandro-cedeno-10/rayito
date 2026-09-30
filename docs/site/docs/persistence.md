@@ -123,7 +123,7 @@ si no hay ninguno) y extrae el archivo sobre el `HOME`:
 - los bits setuid/setgid/sticky se descartan (`0o777`) y todo lo creado es
   del usuario;
 - el sha256 del archivo se comprueba al final (`internal`,
-  `archive checksum mismatch`).
+  `el checksum del archivo no coincide`).
 
 Un restore que falla a mitad deja el `HOME` **parcialmente restaurado**; la
 recuperación es `kill()` + `create(persist=)`. `create(persist=)` con un `name`
