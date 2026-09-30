@@ -1,4 +1,5 @@
 site_name: Rayito
+site_url: https://alejandro-cedeno-10.github.io/rayito/
 site_description: Sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, en tu propia cuenta.
 docs_dir: docs
 site_dir: _build
