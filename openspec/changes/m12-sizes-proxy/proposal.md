@@ -31,15 +31,22 @@ Two loose ends from the research read for M11–M14
 
 - **Docs: size is a property of the image.** `limits.md` gains a "## Tamaño
   (CPU/RAM)" section (before "## Compatibilidad SDK ↔ rayd ↔ imagen"): the
-  verified `AWS_API_NOTES.md` §4 table (512/1024/2048/4096/8192 →
-  baseline/pico/disco/ancho de banda), the E2B analogy
-  (`Template.build(cpu_count=, memory_mb=)`), how to choose a size today
+  `AWS_API_NOTES.md` §4 table (512/1024/2048/4096/8192 →
+  baseline/pico/disco/ancho de banda), attributed to AWS's own
+  documentation rather than a measurement (only the 2048 bandwidth, §7, and
+  the `Q68` guest view carry a "medido" label), plus a `$/h` baseline
+  column derived from §12/`cost.md`; the E2B analogy
+  (`Template.build(cpu_count=, memory_mb=)`); how to choose a size today
   (`rayito image publish --memory-mib N --image-name <sufijo>` + create
-  against that image), the cost angle (line-item billing while `RUNNING`,
-  plus per-version image storage), and the guest-view caveat
+  against that image); the cost angle (AWS bills the baseline row per
+  second while `RUNNING`, and separately bills anything consumed above
+  baseline at the vCPU/GB actually used, not the next size's price, plus
+  per-version image storage); and the guest-view caveat
   (`SandboxInfo.cpu_count`/`memory_mb` report what the guest sees — the peak
-  of the range, measured `Q68` — not the contracted baseline). `images.md`'s
-  "Publicar las tres" section gets a short cross-reference. No catalog, no
+  of the range, measured `Q68` — not the contracted baseline, so `nproc`-
+  driven parallelism can cross it and pay for the excess, not just run
+  faster). `images.md`'s "Publicar las tres" section gets a short
+  cross-reference, without calling the table "measured". No catalog, no
   resolver, no `--memory-mib` validation: those stay out of scope.
 - **Docs: e2b-parity.md rows 82 and 110, and the status-count table.** Row
   82 flips from "fuera por SPEC" to "divergente" with the per-image
@@ -95,9 +102,8 @@ no existing command's argv or output changes.
   sandbox with `auto_resume` on the first proxied request bills its compute
   like any other resume — this is stated in the CLI and security docs, not
   a new cost this change introduces.
-- **IAM:** `lambda-microvms:GetMicrovm` and
-  `lambda-microvms:CreateMicrovmAuthToken`, already granted by the caller
-  policy in `infra/iam.yaml`. No new permission.
+- **IAM:** `lambda:GetMicrovm` and `lambda:CreateMicrovmAuthToken`, already
+  granted by the caller policy in `infra/iam.yaml`. No new permission.
 
 ## Capabilities
 
