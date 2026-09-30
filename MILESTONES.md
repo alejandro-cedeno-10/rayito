@@ -1247,8 +1247,12 @@ metadatos, trazas OTel del SDK). Un cambio OpenSpec (`m11-optin-adr`).
 ninguna opción nueva del SDK en M11 (`require_module`/`loadOptionalPeer` no
 se llaman desde ningún camino activo por defecto), así que este criterio se
 cumple trivialmente; los tests de `_optional.py`/`optional.ts` lo comprueban
-de todas formas (`sys.modules` tras `import rayito`, `tsdown` mantiene los
-peers futuros como `external`).
+de todas formas: `sys.modules` tras `import rayito` en Python, y un
+escaneo estático de `clients/typescript/src/**/*.ts` en TypeScript que falla
+si algún fichero importa de forma estática (no con `import()` dinámico) uno
+de los paquetes opcionales futuros (`@aws-sdk/client-secrets-manager`,
+`@aws-sdk/client-dynamodb`, `@opentelemetry/api`) — guarda que M13a/M13b/M14
+deben seguir cumpliendo cuando añadan esos paquetes como peerDependencies.
 
 **Presupuesto de aceptación:** $0 (sólo documentación, `mkdocs build
 --strict` y los tests unitarios/de `scripts/tests`; sin AWS).

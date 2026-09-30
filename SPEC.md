@@ -123,9 +123,9 @@ Se rechazan en review si aparecen antes de M6:
   cambiar `list-microvms` como fuente de verdad del estado.
 - **Tamaño por sandbox** (`cpu=`/`memory=`): el tamaño es propiedad de la imagen
   (`resources[0].minimumMemoryInMiB`) tanto en Rayito como, de hecho, en E2B.
-  Un template = un tamaño, como en E2B (tamaño por build de template); ver
-  [`limits.md`](docs/site/docs/limits.md). No hay, ni se promete, un
-  resolvedor de tamaño por sandbox (`base-2gb`, `base-4gb`).
+  Un template = un tamaño, como en E2B (tamaño por build de template, por
+  ejemplo `base-2gb`, `base-4gb`); ver [`limits.md`](docs/site/docs/limits.md).
+  No hay, ni se promete, un resolvedor de tamaño por sandbox.
 - ~~Persistencia de filesystem entre sesiones (S3/EFS)~~ (era candidata a M6):
   entregada en M7 (`m7-s3-persistence`, ADR-009): checkpoint/restore de
   `/home/user` en S3 desde `rayd` (`Sandbox.create(persist=)`,

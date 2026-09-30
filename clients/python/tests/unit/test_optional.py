@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,7 @@ from rayito.exceptions import InvalidArgumentException
 
 MISSING_MODULE = "rayito_test_definitely_not_installed"
 KNOWN_OPTIONAL_PACKAGES = ("opentelemetry", "opentelemetry.trace", "opentelemetry.sdk")
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_missing_module_raises_invalid_argument_with_extra_hint() -> None:
@@ -33,6 +35,21 @@ def test_missing_module_error_chains_the_original_import_error() -> None:
 def test_existing_module_resolves() -> None:
     module = require_module("json", extra="unused", feature="una función existente")
     assert module is sys.modules["json"]
+
+
+def test_missing_transitive_dependency_of_an_installed_package_propagates_as_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un paquete instalado cuya propia dependencia interna falta no debe
+    confundirse con "falta el extra": el `ModuleNotFoundError` real (por
+    `optional_broken_pkg.this_nested_dependency_does_not_exist`, no por
+    `optional_broken_pkg`) se propaga tal cual."""
+    monkeypatch.syspath_prepend(str(FIXTURES_DIR))
+    sys.modules.pop("optional_broken_pkg", None)
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        require_module("optional_broken_pkg", extra="unused", feature="una función")
+    assert not isinstance(excinfo.value, InvalidArgumentException)
+    assert excinfo.value.name == "optional_broken_pkg.this_nested_dependency_does_not_exist"
 
 
 def _probe(import_statement: str) -> str:

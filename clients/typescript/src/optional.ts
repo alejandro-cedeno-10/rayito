@@ -25,11 +25,12 @@ import { InvalidArgumentError } from "./errors.js";
  *
  * Se llama sólo desde dentro de la función que el llamante activó con su
  * propia opción (nunca en el nivel superior de un módulo): así, no tener el
- * peer instalado no afecta a nadie que no use esa función. Un fallo de
- * resolución se traduce a `InvalidArgumentError` nombrando el paquete npm a
- * instalar; cualquier otro error de la importación (por ejemplo un fallo
- * interno del paquete) se propaga tal cual, porque no es un problema de
- * "falta el peer".
+ * peer instalado no afecta a nadie que no use esa función. Sólo se traduce a
+ * `InvalidArgumentError` (nombrando el paquete npm a instalar) el fallo de
+ * resolución del propio `specifier`; cualquier otro error de la importación
+ * (por ejemplo una dependencia transitiva rota de un peer ya instalado, o un
+ * fallo interno del paquete) se propaga tal cual, porque no es un problema
+ * de "falta el peer".
  *
  * @param specifier - especificador del módulo a importar (`@opentelemetry/api`).
  * @param feature - nombre de la función que lo necesita, para el mensaje de error.
@@ -39,7 +40,7 @@ export async function loadOptionalPeer<T>(specifier: string, feature: string): P
   try {
     return (await import(specifier)) as T;
   } catch (cause) {
-    if (!isModuleResolutionFailure(cause)) {
+    if (!isMissingRequestedSpecifier(cause, specifier)) {
       throw cause;
     }
     throw new InvalidArgumentError(
@@ -49,7 +50,18 @@ export async function loadOptionalPeer<T>(specifier: string, feature: string): P
   }
 }
 
-function isModuleResolutionFailure(error: unknown): boolean {
+/**
+ * `true` sólo cuando la resolución falló para `specifier` mismo, nunca para
+ * una dependencia anidada de un paquete que sí está instalado: un
+ * `ERR_MODULE_NOT_FOUND`/`MODULE_NOT_FOUND` de Node nombra en su mensaje el
+ * módulo concreto que no pudo resolver, que es distinto de `specifier`
+ * cuando el problema está más adentro.
+ */
+function isMissingRequestedSpecifier(error: unknown, specifier: string): boolean {
   const code = (error as { code?: unknown } | null)?.code;
-  return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
+  if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") {
+    return false;
+  }
+  const message = (error as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message.includes(specifier);
 }

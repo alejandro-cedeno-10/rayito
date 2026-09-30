@@ -61,9 +61,9 @@ Full context: `SPEC.md` (why/what/scope), `ARCHITECTURE.md` (design + ADRs),
    abstractions. See `SPEC.md` §4 for the explicit non-goals list (no
    desktop/GUI, no declarative templates/CLI, no multi-cloud, no non-Python
    kernels, no pre-warmed VM pools before M6, no billing/dashboard, no
-   per-sandbox metadata or size params, no Rayito-hosted control-plane
-   service — optional customer-account components, off by default, are
-   allowed per ADR-014).
+   mandatory client-side metadata store or per-sandbox size params, no
+   Rayito-hosted control-plane service — optional customer-account
+   components, off by default, are allowed per ADR-014).
 4. **A milestone never closes on mocks.** Its acceptance test runs against
    real AWS.
 5. **ARM64 only.** Everything compiles for `aarch64-unknown-linux-musl`. If a

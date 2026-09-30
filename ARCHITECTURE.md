@@ -1630,7 +1630,7 @@ CRUD de secretos, trazas OpenTelemetry del SDK) sólo son alcanzables con
 estado o llamadas AWS opcionales que van más allá de `create/connect/kill`
 directos contra la API de Lambda MicroVMs; E2B las resuelve con su propio
 plano de control hospedado (Postgres, ClickHouse, Redis, proxies de host).
-La investigación de 2026-09-30
+La investigación de E2B fuera de alcance
 (`docs/research/2026-10-e2b-out-of-scope.md` §2, §5, §6, §8.1) mide el
 esfuerzo, el coste y las alternativas de cada una y propone distinguir entre
 un servicio hospedado por Rayito y componentes opcionales en la cuenta del

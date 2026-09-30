@@ -30,6 +30,15 @@ FUNCTION_ANCHORS = (
 
 DOCSTRING_MARKER = "Coste y activación"
 
+REQUIRED_SUBHEADINGS = (
+    "Activa",
+    "Recursos y llamadas AWS",
+    "Coste aproximado",
+    "IAM",
+    "Cómo apagarla",
+    "Ejemplo",
+)
+
 
 def read(relative: str) -> str:
     return (REPO_ROOT / relative).read_text(encoding="utf-8")
@@ -137,6 +146,20 @@ def test_no_cost_section_lists_the_local_proxy() -> None:
     assert 'id="local-proxy"' in page
 
 
+def cost_and_activation_blocks(content: str, window_lines: int = 40) -> list[str]:
+    """Una ventana de texto por cada aparición del marcador «Coste y
+    activación», desde esa línea hasta `window_lines` líneas después (basta
+    para cubrir sus seis apartados y el ejemplo). Un bloque no relacionado en
+    otra parte del fichero no cuenta: el símbolo y los apartados deben
+    aparecer dentro de esta ventana, no en cualquier sitio del fichero."""
+    lines = content.splitlines()
+    return [
+        "\n".join(lines[i : i + window_lines])
+        for i, line in enumerate(lines)
+        if DOCSTRING_MARKER in line
+    ]
+
+
 def test_available_rows_cite_their_docstring_marker_in_the_named_sdk_file() -> None:
     page = read(OPTIONAL_FEATURES_PAGE)
     rows = parse_markdown_table(page, EXPECTED_TABLE_HEADER)
@@ -150,12 +173,17 @@ def test_available_rows_cite_their_docstring_marker_in_the_named_sdk_file() -> N
         assert paths, f"{function_name}: la columna 'Dónde' no nombra ningún fichero SDK"
         for path in paths:
             content = read(path)
-            assert DOCSTRING_MARKER in content, (
-                f"{function_name}: {path} no lleva el bloque «{DOCSTRING_MARKER}»"
-            )
+            blocks = cost_and_activation_blocks(content)
+            assert blocks, f"{function_name}: {path} no lleva el bloque «{DOCSTRING_MARKER}»"
             for symbol in symbols:
-                assert symbol in content, (
-                    f"{function_name}: {path} no menciona el símbolo de opción «{symbol}»"
+                assert any(symbol in block for block in blocks), (
+                    f"{function_name}: {path} no menciona el símbolo de opción «{symbol}» "
+                    f"dentro del bloque «{DOCSTRING_MARKER}»"
+                )
+            for heading in REQUIRED_SUBHEADINGS:
+                assert any(heading in block for block in blocks), (
+                    f"{function_name}: {path} no lleva el apartado «{heading}» "
+                    f"dentro de su bloque «{DOCSTRING_MARKER}»"
                 )
 
 
