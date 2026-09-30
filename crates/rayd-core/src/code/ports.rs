@@ -41,9 +41,9 @@ pub trait SidecarLink: Send + Sync {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarIoError {
-    #[error("sidecar stdin is closed")]
+    #[error("la stdin del sidecar está cerrada")]
     Closed,
-    #[error("sidecar request queue is full")]
+    #[error("la cola de peticiones al sidecar está llena")]
     QueueFull,
 }
 
@@ -57,7 +57,7 @@ pub trait KernelStatus: Send + Sync {
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("random source failed: {0}")]
+#[error("falló la fuente de aleatoriedad: {0}")]
 pub struct RandomError(pub String);
 
 pub trait RandomSource: Send + Sync {

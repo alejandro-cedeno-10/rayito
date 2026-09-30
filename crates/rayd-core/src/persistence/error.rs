@@ -10,6 +10,7 @@ use thiserror::Error;
 use super::keys::{BucketRejection, KeyPrefixRejection};
 use super::plan::ExcludeRejection;
 use super::ports::{ArchiveError, StoreError, StoreErrorKind};
+use crate::wire_tokens::SUSPENDING;
 
 /// Why `manifest.json` was not accepted; never carries its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,66 +25,66 @@ pub enum ManifestRejection {
 impl fmt::Display for ManifestRejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::TooLarge => "is larger than 64 KiB",
-            Self::Malformed => "is not valid JSON of the expected shape",
-            Self::Version => "has a version other than 1",
-            Self::Checksum => "has no sha256",
-            Self::Archive => "names an archive rayd does not write",
+            Self::TooLarge => "supera 64 KiB",
+            Self::Malformed => "no es un JSON válido con la forma esperada",
+            Self::Version => "tiene una versión distinta de 1",
+            Self::Checksum => "no tiene sha256",
+            Self::Archive => "nombra un archivo que rayd no escribe",
         })
     }
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PersistenceError {
-    #[error("bucket {0}")]
+    #[error("bucket inválido: {0}")]
     InvalidBucket(BucketRejection),
-    #[error("key_prefix {0}")]
+    #[error("key_prefix inválido: {0}")]
     InvalidKeyPrefix(KeyPrefixRejection),
-    #[error("exclude entry {0}")]
+    #[error("entrada de exclude inválida: {0}")]
     InvalidExclude(ExcludeRejection),
-    #[error("more than {max} exclude entries")]
+    #[error("más de {max} entradas en exclude")]
     TooManyExcludes { max: usize },
-    #[error("manifest {0}")]
+    #[error("manifest inválido: {0}")]
     InvalidManifest(ManifestRejection),
-    #[error("unknown user")]
+    #[error("usuario desconocido")]
     UnknownUser,
-    #[error("user lookup failed: {0}")]
+    #[error("falló la búsqueda del usuario: {0}")]
     UserLookupFailed(String),
-    #[error("persistence never archives the root home")]
+    #[error("la persistencia nunca archiva el home de root")]
     RootNotAllowed,
-    #[error("persistence only archives the home of an unprivileged account")]
+    #[error("la persistencia sólo archiva el home de una cuenta sin privilegios")]
     PrivilegedAccount,
-    #[error("no execution role credentials")]
+    #[error("no hay credenciales del rol de ejecución")]
     NoCredentials,
-    #[error("execution role credentials rejected")]
+    #[error("se rechazaron las credenciales del rol de ejecución")]
     CredentialsRejected,
-    #[error("access denied by the bucket or the execution role")]
+    #[error("el bucket o el rol de ejecución denegaron el acceso")]
     AccessDenied,
-    #[error("no checkpoint under the prefix")]
+    #[error("no hay checkpoint bajo el prefijo")]
     NotFound,
-    #[error("archive missing although the manifest exists")]
+    #[error("falta el archivo aunque el manifest existe")]
     ArchiveMissing,
-    #[error("persistence busy")]
+    #[error("la persistencia está ocupada")]
     Busy,
-    #[error("region unknown")]
+    #[error("región desconocida")]
     RegionUnknown,
-    #[error("bucket is in another region")]
+    #[error("el bucket está en otra región")]
     WrongRegion,
-    #[error("object store request failed")]
+    #[error("falló la petición al almacén de objetos")]
     Store,
-    #[error("archive failed: {operation}")]
+    #[error("falló el archivo: {operation}")]
     Archive { operation: &'static str },
-    #[error("archive entry refused")]
+    #[error("entrada del archivo rechazada")]
     EntryRefused,
-    #[error("archive checksum mismatch")]
+    #[error("el checksum del archivo no coincide")]
     ChecksumMismatch,
-    #[error("disk full")]
+    #[error("disco lleno")]
     DiskFull,
-    #[error("operation cancelled")]
+    #[error("operación cancelada")]
     Cancelled,
-    #[error("suspending")]
+    #[error("{SUSPENDING}")]
     Suspending,
-    #[error("persistence is not supported on this platform")]
+    #[error("la persistencia no se admite en esta plataforma")]
     Unsupported,
 }
 
@@ -216,24 +217,27 @@ mod tests {
             assert!(!message.contains('/'), "{message}");
             assert!(!message.is_empty());
         }
-        assert_eq!(PersistenceError::Busy.to_string(), "persistence busy");
+        assert_eq!(
+            PersistenceError::Busy.to_string(),
+            "la persistencia está ocupada"
+        );
         assert_eq!(
             PersistenceError::RegionUnknown.to_string(),
-            "region unknown"
+            "región desconocida"
         );
         assert_eq!(
             PersistenceError::NoCredentials.to_string(),
-            "no execution role credentials"
+            "no hay credenciales del rol de ejecución"
         );
         assert_eq!(
             PersistenceError::CredentialsRejected.to_string(),
-            "execution role credentials rejected"
+            "se rechazaron las credenciales del rol de ejecución"
         );
         assert_eq!(
             PersistenceError::ChecksumMismatch.to_string(),
-            "archive checksum mismatch"
+            "el checksum del archivo no coincide"
         );
-        assert_eq!(PersistenceError::DiskFull.to_string(), "disk full");
+        assert_eq!(PersistenceError::DiskFull.to_string(), "disco lleno");
     }
 
     #[test]

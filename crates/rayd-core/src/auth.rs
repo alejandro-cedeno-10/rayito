@@ -21,13 +21,15 @@ const DIGEST_HEX_LEN: usize = DIGEST_LEN * 2;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AuthError {
-    #[error("no access token installed: /run has not delivered a valid token digest")]
+    #[error("no hay token de acceso instalado: /run no entregó un digest de token válido")]
     TokenNotInstalled,
-    #[error("access token missing from request metadata")]
+    #[error("falta el token de acceso en los metadatos de la petición")]
     TokenMissing,
-    #[error("access token does not match the installed digest")]
+    #[error("el token de acceso no coincide con el digest instalado")]
     TokenMismatch,
-    #[error("token digest must be {DIGEST_HEX_LEN} lowercase hex characters, got {actual}")]
+    #[error(
+        "el digest del token debe tener {DIGEST_HEX_LEN} caracteres hex en minúsculas y tiene {actual}"
+    )]
     MalformedDigest { actual: usize },
 }
 

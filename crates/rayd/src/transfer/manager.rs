@@ -190,10 +190,7 @@ impl TransferHub {
         let id = TransferId::generate(random).map_err(|_| TransferError::Internal)?;
         let snapshot = self
             .with_registry(|registry| registry.admit(id.clone(), new, self.now()))
-            .map_err(|error| match error {
-                RegistryError::Full => TransferError::Full,
-                _ => TransferError::Internal,
-            })?;
+            .map_err(TransferError::from)?;
         let handle = Arc::new(RecordHandle {
             snapshots: watch::Sender::new(snapshot),
             poll_now: Notify::new(),

@@ -66,7 +66,7 @@ fn timeout_mode(raw: i32) -> Result<TimeoutMode, Status> {
     match rayito_proto::v1::TimeoutMode::try_from(raw) {
         Ok(rayito_proto::v1::TimeoutMode::Exact) => Ok(TimeoutMode::Exact),
         Ok(rayito_proto::v1::TimeoutMode::AtLeast) => Ok(TimeoutMode::AtLeast),
-        _ => Err(Status::invalid_argument("mode must be EXACT or AT_LEAST")),
+        _ => Err(Status::invalid_argument("mode debe ser EXACT o AT_LEAST")),
     }
 }
 
@@ -137,7 +137,7 @@ mod tests {
         for raw in [0, 3, -1] {
             let status = timeout_mode(raw).unwrap_err();
             assert_eq!(status.code(), Code::InvalidArgument);
-            assert_eq!(status.message(), "mode must be EXACT or AT_LEAST");
+            assert_eq!(status.message(), "mode debe ser EXACT o AT_LEAST");
         }
     }
 
@@ -177,7 +177,10 @@ mod tests {
         let below = set_timeout(&active, 999).await;
         assert_eq!(zero.code(), Code::InvalidArgument);
         assert_eq!(zero.message(), below.message());
-        assert_eq!(zero.message(), SandboxTimeoutError::InvalidTimeout.to_string());
+        assert_eq!(
+            zero.message(),
+            SandboxTimeoutError::InvalidTimeout.to_string()
+        );
         assert_eq!(active.session.lifecycle().extensions, 0);
     }
 
@@ -188,7 +191,7 @@ mod tests {
         assert_eq!(beyond.message(), "timeout beyond cap; cap_unix_ms=42");
         let below = status_for(SandboxTimeoutError::InvalidTimeout);
         assert_eq!(below.code(), Code::InvalidArgument);
-        assert_eq!(below.message(), "timeout below 1 s");
+        assert_eq!(below.message(), "el timeout debe ser de al menos 1 s");
         let unmanaged = status_for(SandboxTimeoutError::Unmanaged);
         assert_eq!(unmanaged.code(), Code::FailedPrecondition);
         assert_eq!(unmanaged.message(), "lifecycle_unmanaged");

@@ -22,6 +22,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::clock::ClockReading;
+use crate::wire_tokens::{SUSPENDING, TERMINATING};
 
 /// Unfrozen running time after an accepted `/suspend` before the gate is
 /// reopened without a `/resume`.
@@ -50,9 +51,9 @@ impl HookPhase {
             Self::Booting => "booting",
             Self::Ready => "ready",
             Self::Running => "running",
-            Self::Suspending => "suspending",
+            Self::Suspending => SUSPENDING,
             Self::Resumed => "resumed",
-            Self::Terminating => "terminating",
+            Self::Terminating => TERMINATING,
         }
     }
 }
@@ -104,7 +105,7 @@ impl fmt::Display for Hook {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum LifecycleError {
-    #[error("hook `{hook}` is not legal while {phase}")]
+    #[error("el hook `{hook}` no se admite en la fase {phase}")]
     IllegalTransition { hook: Hook, phase: HookPhase },
 }
 

@@ -236,7 +236,7 @@ mod tests {
                     assert_eq!(end.status, EndStatus::OutputTruncated);
                     assert_eq!(
                         end.error.unwrap().message,
-                        "subscriber stalled for 0 s at seq 64"
+                        "el suscriptor se atascó 0 s en la seq 64"
                     );
                     break;
                 }

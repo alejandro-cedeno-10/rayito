@@ -325,7 +325,7 @@ impl CodeManager {
             .language_locks
             .get(&language)
             .cloned()
-            .ok_or_else(|| CodeError::Internal("language lock missing".to_owned()))?;
+            .ok_or_else(|| CodeError::Internal("falta el cerrojo del lenguaje".to_owned()))?;
         let _held = guard.lock().await;
         if lock(&self.registry).contains(&context_id) {
             return Ok(context_id);
@@ -738,7 +738,7 @@ impl CodeManager {
     fn ready_supervisor(&self) -> Result<Arc<SidecarSupervisor>, CodeError> {
         let Some(supervisor) = &self.supervisor else {
             return Err(CodeError::KernelNotReady {
-                reason: "no sidecar configured".to_owned(),
+                reason: "no hay sidecar configurado".to_owned(),
             });
         };
         match supervisor.state() {
@@ -770,7 +770,7 @@ impl CodeManager {
             }
             if tokio::time::Instant::now() >= deadline {
                 return Err(CodeError::KernelNotReady {
-                    reason: "context is restarting".to_owned(),
+                    reason: "el contexto se está reiniciando".to_owned(),
                 });
             }
             tokio::time::sleep(Duration::from_millis(50)).await;

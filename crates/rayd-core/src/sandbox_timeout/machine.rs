@@ -25,6 +25,7 @@ use super::policy::{LifecycleSpec, TimeoutAction, TimeoutMode, TimeoutPolicy};
 use super::{AUTO_RESUME_MIN_TIMEOUT, CAP_MARGIN, MIN_SET_TIMEOUT, SET_TIMEOUT_RPC_PATH};
 use crate::auth::ANONYMOUS_RPC_PATH;
 use crate::clock::ClockReading;
+use crate::wire_tokens::{BEYOND_CAP_PREFIX, CAP_UNIX_MS, LIFECYCLE_UNMANAGED, SANDBOX_TIMEOUT};
 
 /// The phase `Health` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -109,13 +110,13 @@ pub struct LifecycleView {
 /// or payload content.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxTimeoutError {
-    #[error("lifecycle_unmanaged")]
+    #[error("{LIFECYCLE_UNMANAGED}")]
     Unmanaged,
-    #[error("sandbox_timeout")]
+    #[error("{SANDBOX_TIMEOUT}")]
     Expired,
-    #[error("timeout below 1 s")]
+    #[error("el timeout debe ser de al menos 1 s")]
     InvalidTimeout,
-    #[error("timeout beyond cap; cap_unix_ms={cap_unix_ms}")]
+    #[error("{BEYOND_CAP_PREFIX}; {CAP_UNIX_MS}={cap_unix_ms}")]
     BeyondCap { cap_unix_ms: i64 },
 }
 

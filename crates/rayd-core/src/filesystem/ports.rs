@@ -16,27 +16,27 @@ use super::metadata::FileMetadata;
 /// Adapter failures carry an errno *name* (`ENOENT`) at most, never a path.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FsIoError {
-    #[error("no such file or directory")]
+    #[error("no existe el fichero o directorio")]
     NotFound,
-    #[error("permission denied")]
+    #[error("permiso denegado")]
     PermissionDenied,
-    #[error("already exists")]
+    #[error("ya existe")]
     AlreadyExists,
-    #[error("not a directory")]
+    #[error("no es un directorio")]
     NotADirectory,
-    #[error("is a directory")]
+    #[error("es un directorio")]
     IsADirectory,
-    #[error("directory not empty")]
+    #[error("el directorio no está vacío")]
     NotEmpty,
-    #[error("not a regular file")]
+    #[error("no es un fichero regular")]
     NotARegularFile,
-    #[error("is a symlink")]
+    #[error("es un enlace simbólico")]
     IsSymlink,
-    #[error("cross-device")]
+    #[error("entre dispositivos")]
     CrossDevice,
-    #[error("no space left on device")]
+    #[error("no queda espacio en el dispositivo")]
     NoSpace,
-    #[error("filesystem operations are not supported on this platform")]
+    #[error("las operaciones de ficheros no se admiten en esta plataforma")]
     Unsupported,
     #[error("{errno}")]
     Other { errno: String },
@@ -44,15 +44,15 @@ pub enum FsIoError {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum WatchError {
-    #[error("no such directory")]
+    #[error("no existe el directorio")]
     NotFound,
-    #[error("not a directory")]
+    #[error("no es un directorio")]
     NotADirectory,
-    #[error("permission denied")]
+    #[error("permiso denegado")]
     PermissionDenied,
-    #[error("inotify watch limit reached")]
+    #[error("se alcanzó el límite de watches de inotify")]
     LimitReached,
-    #[error("directory watching is not supported on this platform")]
+    #[error("la vigilancia de directorios no se admite en esta plataforma")]
     Unsupported,
     #[error("{0}")]
     Other(String),

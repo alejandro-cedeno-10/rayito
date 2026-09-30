@@ -7,44 +7,45 @@ use thiserror::Error;
 use super::path::PathRejection;
 use super::ports::{FsIoError, WatchError};
 use crate::lifecycle::HookPhase;
+use crate::wire_tokens::{DISK_FULL, DISK_RESERVE, METADATA_TOO_LARGE, METADATA_UNSUPPORTED};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FilesystemError {
-    #[error("path {0}")]
+    #[error("ruta inválida: {0}")]
     InvalidPath(PathRejection),
-    #[error("path is denied by policy")]
+    #[error("la política deniega la ruta")]
     Denied,
-    #[error("no such file or directory")]
+    #[error("no existe el fichero o directorio")]
     NotFound,
-    #[error("directory already exists")]
+    #[error("el directorio ya existe")]
     AlreadyExists,
-    #[error("not a directory")]
+    #[error("no es un directorio")]
     NotADirectory,
-    #[error("path is a directory")]
+    #[error("la ruta es un directorio")]
     IsADirectory,
-    #[error("path is not a regular file")]
+    #[error("la ruta no es un fichero regular")]
     NotARegularFile,
-    #[error("path is a symlink")]
+    #[error("la ruta es un enlace simbólico")]
     IsSymlink,
-    #[error("directory not empty; use recursive")]
+    #[error("el directorio no está vacío; usa recursive")]
     NotEmpty,
-    #[error("destination conflicts with an existing entry")]
+    #[error("el destino choca con una entrada existente")]
     DestinationConflict,
-    #[error("cross-device move")]
+    #[error("movimiento entre dispositivos")]
     CrossDevice,
-    #[error("permission denied")]
+    #[error("permiso denegado")]
     PermissionDenied,
-    #[error("chunk exceeds {max} bytes")]
+    #[error("el fragmento supera {max} bytes")]
     ChunkTooLarge { max: usize },
-    #[error("mode {0:o} is outside 0..=7777")]
+    #[error("mode {0:o} está fuera de 0..=7777")]
     InvalidMode(u32),
-    #[error("first message of a file must carry path")]
+    #[error("el primer mensaje de un fichero debe llevar path")]
     MissingPath,
-    #[error("user may only be set on a message with path")]
+    #[error("user sólo puede ir en un mensaje con path")]
     UserWithoutPath,
-    #[error("mode may only be set on a message with path")]
+    #[error("mode sólo puede ir en un mensaje con path")]
     ModeWithoutPath,
-    #[error("metadata may only be set on a message with path")]
+    #[error("metadata sólo puede ir en un mensaje con path")]
     MetadataWithoutPath,
     /// A key or value outside the rules of `FileMetadata`; the message is
     /// fixed so it never quotes either.
@@ -52,45 +53,45 @@ pub enum FilesystemError {
     InvalidMetadata,
     /// The destination filesystem has no user xattrs; the message is the
     /// status detail the SDK keys on.
-    #[error("metadata_unsupported")]
+    #[error("{METADATA_UNSUPPORTED}")]
     MetadataUnsupported,
     /// The set did not fit the file's xattr space.
-    #[error("metadata_too_large")]
+    #[error("{METADATA_TOO_LARGE}")]
     MetadataTooLarge,
-    #[error("stream carried no files")]
+    #[error("el stream no trajo ficheros")]
     NoFiles,
-    #[error("listing exceeds {max} entries; reduce depth")]
+    #[error("el listado supera {max} entradas; reduce depth")]
     TooManyEntries { max: usize },
-    #[error("max {max} live watches")]
+    #[error("como máximo {max} watches activos")]
     TooManyWatches { max: usize },
-    #[error("inotify watch limit reached")]
+    #[error("se alcanzó el límite de watches de inotify")]
     WatchLimitReached,
-    #[error("watch queue overflowed; re-open the watch")]
+    #[error("la cola del watch se desbordó; vuelve a abrir el watch")]
     WatchOverflow,
-    #[error("watched directory removed")]
+    #[error("se borró el directorio vigilado")]
     WatchRootGone,
     /// Fewer than `DISK_RESERVE_BYTES` free before a file's temporary is
     /// created; the message is the status detail the SDK keys on.
-    #[error("disk_reserve")]
+    #[error("{DISK_RESERVE}")]
     DiskReserve,
     /// `ENOSPC` from a write or a commit; same status, other detail.
-    #[error("disk_full")]
+    #[error("{DISK_FULL}")]
     DiskFull,
-    #[error("running as root is not allowed by this image")]
+    #[error("esta imagen no permite ejecutar como root")]
     RootNotAllowed,
     #[error(
-        "only unprivileged accounts of this image may touch files (uid and gid >= 1000, never in group 0)"
+        "sólo las cuentas sin privilegios de esta imagen pueden tocar ficheros (uid y gid >= 1000, nunca en el grupo 0)"
     )]
     PrivilegedAccount,
-    #[error("unknown user")]
+    #[error("usuario desconocido")]
     UnknownUser,
-    #[error("user lookup failed: {0}")]
+    #[error("falló la búsqueda del usuario: {0}")]
     UserLookupFailed(String),
     #[error("{phase}")]
     NotAcceptingStreams { phase: HookPhase },
-    #[error("filesystem operations are not supported on this platform")]
+    #[error("las operaciones de ficheros no se admiten en esta plataforma")]
     Unsupported,
-    #[error("{operation} failed: {errno}")]
+    #[error("falló {operation}: {errno}")]
     Io {
         operation: &'static str,
         errno: String,
@@ -150,23 +151,23 @@ mod tests {
     fn messages_never_quote_input() {
         assert_eq!(
             FilesystemError::InvalidPath(PathRejection::ParentReference).to_string(),
-            "path contains a parent reference"
+            "ruta inválida: contiene una referencia al directorio padre"
         );
         assert_eq!(
             FilesystemError::Denied.to_string(),
-            "path is denied by policy"
+            "la política deniega la ruta"
         );
         assert_eq!(
             FilesystemError::ChunkTooLarge { max: 1_048_576 }.to_string(),
-            "chunk exceeds 1048576 bytes"
+            "el fragmento supera 1048576 bytes"
         );
         assert_eq!(
             FilesystemError::InvalidMode(0o10000).to_string(),
-            "mode 10000 is outside 0..=7777"
+            "mode 10000 está fuera de 0..=7777"
         );
         assert_eq!(
             FilesystemError::TooManyEntries { max: 10_000 }.to_string(),
-            "listing exceeds 10000 entries; reduce depth"
+            "el listado supera 10000 entradas; reduce depth"
         );
         assert_eq!(
             FilesystemError::NotAcceptingStreams {
@@ -181,7 +182,7 @@ mod tests {
                 errno: "EIO".to_owned()
             }
             .to_string(),
-            "read failed: EIO"
+            "falló read: EIO"
         );
     }
 

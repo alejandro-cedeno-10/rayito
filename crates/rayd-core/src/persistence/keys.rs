@@ -23,11 +23,11 @@ pub enum BucketRejection {
 impl fmt::Display for BucketRejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Length => "must be 3 to 63 characters",
-            Self::Charset => "may only contain lowercase letters, digits, `.` and `-`",
-            Self::Edge => "must start and end with a letter or a digit",
-            Self::DoubleDot => "must not contain `..`",
-            Self::Ipv4Literal => "must not look like an IPv4 address",
+            Self::Length => "debe tener entre 3 y 63 caracteres",
+            Self::Charset => "sólo admite minúsculas, dígitos, `.` y `-`",
+            Self::Edge => "debe empezar y terminar con una letra o un dígito",
+            Self::DoubleDot => "no puede contener `..`",
+            Self::Ipv4Literal => "no puede parecer una dirección IPv4",
         })
     }
 }
@@ -47,13 +47,13 @@ pub enum KeyPrefixRejection {
 impl fmt::Display for KeyPrefixRejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Empty => "is empty",
-            Self::TooLong => "exceeds 900 bytes",
-            Self::LeadingSlash => "starts with `/`",
-            Self::TrailingSlash => "ends with `/`",
-            Self::EmptyComponent => "contains an empty component",
-            Self::DotComponent => "contains a `.` or `..` component",
-            Self::Charset => "contains a character outside the S3 safe set",
+            Self::Empty => "está vacío",
+            Self::TooLong => "supera 900 bytes",
+            Self::LeadingSlash => "empieza por `/`",
+            Self::TrailingSlash => "termina en `/`",
+            Self::EmptyComponent => "contiene un componente vacío",
+            Self::DotComponent => "contiene un componente `.` o `..`",
+            Self::Charset => "contiene un carácter fuera del conjunto seguro de S3",
         })
     }
 }
@@ -208,7 +208,7 @@ mod tests {
         assert!(BucketName::parse("192.168.0.a").is_ok());
         assert_eq!(
             BucketRejection::Ipv4Literal.to_string(),
-            "must not look like an IPv4 address"
+            "no puede parecer una dirección IPv4"
         );
     }
 
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(KeyPrefix::parse("a&b"), Err(KeyPrefixRejection::Charset));
         assert_eq!(
             KeyPrefixRejection::Charset.to_string(),
-            "contains a character outside the S3 safe set"
+            "contiene un carácter fuera del conjunto seguro de S3"
         );
     }
 }

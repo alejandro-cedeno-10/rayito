@@ -678,7 +678,7 @@ async fn kinds_are_enforced_across_both_services_and_signal_works_on_a_pty() {
     assert_eq!(on_pty.code(), Code::FailedPrecondition);
     assert_eq!(
         on_pty.message(),
-        format!("pid {pty} is a PTY; use PtyService")
+        format!("el pid {pty} es una PTY; usa PtyService")
     );
     let stdin = harness
         .processes
@@ -704,7 +704,7 @@ async fn kinds_are_enforced_across_both_services_and_signal_works_on_a_pty() {
         harness.kill(process).await.unwrap_err(),
     ] {
         assert_eq!(status.code(), Code::FailedPrecondition, "{status}");
-        assert_eq!(status.message(), format!("pid {process} is not a PTY"));
+        assert_eq!(status.message(), format!("el pid {process} no es una PTY"));
     }
     harness
         .processes

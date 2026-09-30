@@ -11,6 +11,7 @@ use super::{
     EGRESS_MAX_ENTRIES_PER_LIST, EGRESS_MAX_HOSTNAME_ENTRIES, EGRESS_MAX_ROUTES_PER_FAMILY,
     EGRESS_PROXY_CREDENTIAL_MAX_BYTES,
 };
+use crate::wire_tokens::{EGRESS_UPDATE_FAILED, EGRESS_VERIFY_FAILED};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EgressList {
@@ -62,9 +63,9 @@ pub enum NetworkError {
     ProxyUnresolvable,
     #[error("la imagen no tiene CAP_NET_ADMIN: la política de egress exige rayito-base-caps")]
     NoNetAdmin,
-    #[error("egress_update_failed: {step}")]
+    #[error("{EGRESS_UPDATE_FAILED}: {step}")]
     InstallFailed { step: &'static str },
-    #[error("egress_verify_failed")]
+    #[error("{EGRESS_VERIFY_FAILED}")]
     VerifyFailed,
 }
 

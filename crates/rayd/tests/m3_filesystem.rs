@@ -1322,7 +1322,7 @@ async fn removing_the_watched_root_ends_with_not_found() {
         }
     };
     assert_eq!(trailing.code(), Code::NotFound);
-    assert_eq!(trailing.message(), "watched directory removed");
+    assert_eq!(trailing.message(), "se borró el directorio vigilado");
 }
 
 #[tokio::test]
