@@ -221,7 +221,11 @@ class ObjectFetch:
     """La descarga entera de un objeto de staging (`format="bytes"`/`"text"`)
     con `stream_idle_timeout` entre trozos y cancelable desde otro hilo:
     `cancel` cierra el cuerpo, así un `get_object` que se cuelga no sigue
-    leyendo en segundo plano cuando la operación ya agotó su plazo."""
+    leyendo en segundo plano cuando la operación ya agotó su plazo. `run`
+    comprueba la cancelación antes de abrir el cuerpo, así una cancelación ya
+    vista nunca dispara un `get_object` nuevo (invariante: todo cuerpo
+    abierto se cierra exactamente una vez; tras cancelar no se abre
+    ninguno)."""
 
     def __init__(self, gateway: S3Gateway, target: StagingObject, idle: float | None) -> None:
         self._gateway = gateway
@@ -232,6 +236,7 @@ class ObjectFetch:
         self._cancelled = False
 
     def run(self) -> bytes:
+        self._raise_if_cancelled()
         chunks = self._gateway.open_chunks(self._target)
         with self._lock:
             if self._cancelled:
@@ -242,6 +247,12 @@ class ObjectFetch:
             return b"".join(guarded_messages(chunks, self._idle, chunks.close))
         finally:
             chunks.close()
+
+    def _raise_if_cancelled(self) -> None:
+        with self._lock:
+            cancelled = self._cancelled
+        if cancelled:
+            raise transfer_timeout_error()
 
     def cancel(self) -> None:
         with self._lock:

@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import inspect
 import pickle
-import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
@@ -49,6 +48,8 @@ from .conftest import (
 )
 from .fake_s3 import BUCKET, FAKE_ACCESS_KEY
 from .fake_transfer import FakeTransferFilesystemService
+from .stalled_s3 import StalledS3
+from .stalled_s3 import stalled_s3 as stalled_s3
 from .transfer_support import (
     MIB,
     STAGING,
@@ -383,38 +384,6 @@ async def test_async_stream_idle_timeout_cancels_a_stalled_read(
     assert stalled.cancelled
 
 
-class StalledS3:
-    """Una pata S3 colgada: la subida no vuelve y el cuerpo de `get_object`
-    no entrega el siguiente trozo hasta que lo cierran."""
-
-    def __init__(self) -> None:
-        self.released = threading.Event()
-        self.body_closed = threading.Event()
-
-    def upload(self, *args: Any, **kwargs: Any) -> None:
-        self.released.wait(10)
-
-    def next_chunk(self, *args: Any) -> bytes:
-        self.body_closed.wait(10)
-        raise ValueError("cuerpo cerrado")
-
-    def close_body(self, *args: Any) -> None:
-        self.body_closed.set()
-
-
-@pytest.fixture
-def stalled_s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[StalledS3]:
-    stalled = StalledS3()
-    monkeypatch.setattr("rayito._s3.S3Gateway.upload", stalled.upload)
-    monkeypatch.setattr("rayito._s3.ObjectChunks.__next__", stalled.next_chunk)
-    monkeypatch.setattr("rayito._s3.ObjectChunks.close", stalled.close_body)
-    try:
-        yield stalled
-    finally:
-        stalled.released.set()
-        stalled.body_closed.set()
-
-
 async def test_async_request_timeout_bounds_a_stalled_s3_upload(
     sandbox: AsyncSandbox, fake: FakeTransferFilesystemService, stalled_s3: StalledS3
 ) -> None:
@@ -428,12 +397,20 @@ async def test_async_request_timeout_bounds_a_stalled_s3_upload(
 async def test_async_request_timeout_bounds_a_stalled_s3_download(
     sandbox: AsyncSandbox, fake: FakeTransferFilesystemService, stalled_s3: StalledS3
 ) -> None:
+    """Repro permanente de la causa raíz (M9.4): `open_chunks` retrasado más
+    allá del plazo, así el `get_object` sigue en vuelo cuando `cancel()` ya
+    marcó `_cancelled` y `read_routed` ya borró el objeto de staging. El
+    invariante `opened == closed` se sostiene para cualquier interleaving,
+    a diferencia de "el cuerpo se llegó a abrir", que depende del reloj."""
     fake.add_file("big.bin", b"d" * MIB)
+    stalled_s3.open_gate.clear()
     started = time.monotonic()
     with pytest.raises(TimeoutException, match="plazo"):
-        await sandbox.files.read("big.bin", format="bytes", request_timeout=1.0)
+        await sandbox.files.read("big.bin", format="bytes", request_timeout=0.3)
     assert time.monotonic() - started < 5
-    assert stalled_s3.body_closed.wait(5)
+    stalled_s3.open_gate.set()
+    assert await asyncio.to_thread(stalled_s3.fetch_finished.wait, 5)
+    assert stalled_s3.opened == stalled_s3.closed
     assert fake.s3.keys() == []
 
 
@@ -441,11 +418,14 @@ async def test_async_stream_idle_timeout_bounds_a_stalled_s3_download(
     sandbox: AsyncSandbox, fake: FakeTransferFilesystemService, stalled_s3: StalledS3
 ) -> None:
     fake.add_file("big.txt", b"t" * MIB)
+    stalled_s3.read_gate.clear()
     started = time.monotonic()
     with pytest.raises(TimeoutException, match="stream_idle_timeout"):
         await sandbox.files.read("big.txt", stream_idle_timeout=0.2)
     assert time.monotonic() - started < 5
-    assert stalled_s3.body_closed.wait(5)
+    stalled_s3.read_gate.set()
+    assert await asyncio.to_thread(stalled_s3.fetch_finished.wait, 5)
+    assert stalled_s3.opened == stalled_s3.closed
 
 
 async def test_async_overlapping_transfer_and_persist_fail_before_aws(
