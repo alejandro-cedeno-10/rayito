@@ -61,16 +61,19 @@ aparece en el fichero SDK de su columna "Dónde" junto a ese mismo marcador.
 
 | Función | Estado | Opción Python | Opción TypeScript | Por defecto | Qué activa | Recursos / llamadas AWS | Coste aproximado | IAM necesario | Cómo apagarla | Dónde |
 |---|---|---|---|---|---|---|---|---|---|---|
-| [Inyección de secretos](#secrets-injection) | disponible (0.5.0) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
-| [Secret CRUD (Secrets Manager)](#secrets-crud) | disponible (0.5.0) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
+| [Inyección de secretos](#secrets-injection) | implementado, pendiente de aceptación en AWS real (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
+| [Secret CRUD (Secrets Manager)](#secrets-crud) | implementado, pendiente de aceptación en AWS real (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
 | [Índice de metadatos (DynamoDB)](#metadata-index) | planificado (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Copia inmutable de `metadata` por sandbox en DynamoDB para poder filtrar `list()`/`paginate()` sobre estados no `RUNNING` (por ejemplo `SUSPENDED`) sin sondear `Health` | `dynamodb:PutItem/BatchGetItem` por sandbox creado/listado | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $1,25 por millón de `PutItem` (WRU) + $0,25 por millón de `BatchGetItem` (RRU, ítems ≤ 4 KB) + $0,25/GB-mes almacenado. Ejemplo: 10 000 sandboxes/mes con un `list()` diario cada uno ≈ 10 000 `PutItem` + ~300 000 `BatchGetItem` ≈ $0,09/mes en llamadas, más el almacenamiento (ítems de metadatos son del orden de KB, no de GB) | `dynamodb:PutItem`, `dynamodb:BatchGetItem` sobre la tabla del índice | No pasar `index=` / `index` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index-store.ts` (llega en M14) |
 | [Trazas OpenTelemetry del SDK](#otel-sdk) | planificado (M13b) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (y las demás llamadas del SDK) con spans OTel sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` (llega en M13b) |
 
 Las cuatro filas empezaron en "planificado (Mxx)": cada grupo cambia **su**
 fila a "disponible (0.5.0)" y completa su sección de ejemplo cuando la
 entrega de verdad, aceptada contra AWS real (`MILESTONES.md`). Las dos de
-secretos (M13a) ya lo están; su e2e contra AWS real
-(`clients/python/tests/e2e/test_secrets_e2e.py`) es la puerta de archivo de
+secretos (M13a) están implementadas y probadas con fakes, pero **todavía no
+aceptadas contra AWS real**: su e2e (`clients/python/tests/e2e/test_secrets_e2e.py`
+y `clients/typescript/tests/e2e/secrets.e2e.test.ts`) no se ha ejecutado y
+SEC-9/SEC-10 siguen sin medir (`AWS_API_NOTES.md` §19). Pasarán a
+"disponible (0.5.0)" cuando ese e2e pase; es la puerta de archivo de
 `m13-secrets`.
 
 ## Sin coste AWS
@@ -89,8 +92,9 @@ SDK ya hace), así que no necesita una aceptación de coste independiente.
 
 ### Inyección de secretos
 
-Disponible desde 0.5.0 (`m13-secrets`). Guía completa, reglas de la caché y
-modelo de amenazas en [Secretos](secrets.md).
+Implementada en `m13-secrets` para 0.5.0, **pendiente de aceptación contra
+AWS real** (ver arriba). Guía completa, reglas de la caché y modelo de
+amenazas en [Secretos](secrets.md).
 
 === "Python"
 
@@ -124,7 +128,8 @@ corta vida y mínimo privilegio, nunca credenciales de larga vida.
 
 ### Secret CRUD (Secrets Manager)
 
-Disponible desde 0.5.0 (`m13-secrets`). Cada secreto se factura hasta que lo
+Implementada en `m13-secrets` para 0.5.0, **pendiente de aceptación contra
+AWS real** (ver arriba). Cada secreto se factura hasta que lo
 borras: apagar la función es dejar de instanciar `SecretStore` **y**
 `destroy()` los secretos creados.
 

@@ -58,7 +58,8 @@ with a TTL, refreshed only on expiry or explicit refresh.
   policies (`RayitoSecretsReader`, `RayitoSecretsAdmin`), KMS statements only
   with a key and `kms:ViaService`; `$0`.
 - **Docs**: new `docs/site/docs/secrets.md`; `optional-features.md` rows
-  1–2 → "disponible (0.5.0)" with examples; `e2b-parity.md` rows 56, 80
+  1–2 → "implementado, pendiente de aceptación en AWS real (M13a)" with
+  examples (→ "disponible (0.5.0)" once the real-AWS e2e passes); `e2b-parity.md` rows 56, 80
   (divergente), 90 (divergente: the Volume half has no API and
   `SecretException` extends `SandboxException`), the "qué hacer" footer and
   the status counts; `e2b-compat.md`; `SECURITY.md` T18 and
@@ -104,7 +105,7 @@ place: same class). TypeScript users who want secrets install
 ## Impact
 
 - **Python**: `rayito/_secrets.py` (new), `exceptions.py`, `__init__.py`,
-  `_models.py` (`LaunchOptions.secrets`), `sandbox_{sync,async}/{main,
+  `_models.py`, `sandbox_{sync,async}/{main,
   commands,pty,code,pool}.py`, `e2b/{_secret.py (new),_unimplemented.py,
   _client.py,exceptions.py,__init__.py}`.
 - **TypeScript**: `src/secrets/*` (new), `errors.ts`, `index.ts`,

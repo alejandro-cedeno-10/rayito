@@ -1,7 +1,7 @@
 ## 1. Contract (`AWS_API_NOTES.md` §19, hard rule 1)
 
 - [x] 1.1 §19 "Secrets Manager (M13a, contrato de parámetros)": the seven operations and only their used parameters, output fields read, IAM per operation, error codes, limits, prices; verified offline against botocore 1.43.103 and `@aws-sdk/client-secrets-manager` 3.1140.0.
-- [x] 1.2 SEC-9 marked "A MEDIR" (recreate after forced delete, token clash, `name` filter semantics) and measured by the e2e.
+- [x] 1.2 SEC-9 marked "A MEDIR" (recreate after forced delete, token clash, `name` filter semantics, token reuse on a recreated name) with a "SIN MEDIR" status line; the e2e prints each measurement.
 - [x] 1.3 `test_secrets_store.py::test_every_operation_used_by_both_sdks_is_documented_in_section_19` greps the operations used in `_secrets.py` and the `…Command`s in `src/secrets/*.ts` against §19.
 
 ## 2. Native API (Python `_secrets.py`, TypeScript `src/secrets/*`)
@@ -15,8 +15,8 @@
 
 ## 3. Injection (`secrets=` / `secret_cache=`)
 
-- [x] 3.1 Python sync/async: `create()` (and `pool=`), `connect()` both forms, `SandboxPool.take()`, `commands.run`, `pty.create`, `run_code` (Python only), `create_code_context`; `LaunchOptions.secrets` (refs only) for `reincarnate()`.
-- [x] 3.2 TypeScript: the same surface through `SecretEnvs` shared by `Commands`, `Pty` and `CodeClient`; `LaunchContext` keeps refs for `reincarnate()`; `Sandbox.attachSecrets` for the pool.
+- [x] 3.1 Python sync/async: `create()` (and `pool=`), `connect()` both forms (`secrets=None` keeps the handle refs, a lone `secret_cache=` only swaps the cache), `SandboxPool.take()`, `commands.run`, `pty.create`, `run_code` (Python only), `create_code_context`; `reincarnate()` relaunches with the handle's current refs (after `take`/`connect`), never values.
+- [x] 3.2 TypeScript: the same surface through `SecretEnvs` shared by `Commands`, `Pty` and `CodeClient`; `reincarnate()` takes the refs from the handle's current binding; `Sandbox.attachSecrets` for the pool.
 - [x] 3.3 "Coste y activación" block on every option's docstring/TSDoc with a runnable example.
 - [x] 3.4 Unit tests: `test_secrets_inject_sync.py`, `test_secrets_inject_async.py`, `test_secrets_pool.py`, `secrets-inject.test.ts` (values reach the four request types, 3 commands = 1 read, env conflicts, non-Python `run_code`, clean `runHookPayload`, `LaunchOptions`/slot records without values, no client/import without secrets, first-use warning).
 - [ ] 3.5 e2e `clients/python/tests/e2e/test_secrets_e2e.py` against real AWS (`RAYITO_E2E=1`): CRUD through the shim → `create(secrets=)` → `printenv` ×3 with one `GetSecretValue` → destroy; SEC-9 and SEC-10 recorded. **Gate for archive; not run in this branch (no real AWS).**
@@ -37,7 +37,7 @@
 ## 6. Docs
 
 - [x] 6.1 `docs/site/docs/secrets.md` + nav entry.
-- [x] 6.2 `optional-features.md` rows 1–2 → "disponible (0.5.0)" with examples.
+- [x] 6.2 `optional-features.md` rows 1–2 → "implementado, pendiente de aceptación en AWS real (M13a)" with examples; they flip to "disponible (0.5.0)" only after 3.5 passes (see 8.1).
 - [x] 6.3 `e2b-parity.md` rows 56, 80, 90, footer and counts; `e2b-compat.md` divergence table.
 - [x] 6.4 `SECURITY.md` T18, `docs/site/docs/security.md`, `api.md`, READMEs, CHANGELOGs.
 - [x] 6.5 `mkdocs build --strict` clean; `scripts/tests` green (`test_optional_features_docs.py`, `test_m9_docs.py`, `test_security_docs.py`).
@@ -48,3 +48,15 @@
 - [x] 7.2 TypeScript: `pnpm install --frozen-lockfile`, `lint`, `typecheck`, `build`, `test`, `pack:check`.
 - [x] 7.3 `uv run pytest ../../scripts/tests -q`, `python3 scripts/check_pins.py`, `python3 scripts/check_hygiene.py`.
 - [x] 7.4 `openspec validate m13-secrets --strict`.
+
+## 8. AWS acceptance (before archive)
+
+- [ ] 8.1 Run both e2e suites against real AWS; record SEC-9 (a)–(d) and SEC-10 in `AWS_API_NOTES.md` §19; fix `is_scheduled_for_deletion` / version tokens if the measurement contradicts them; then flip `optional-features.md` rows 1–2 to "disponible (0.5.0)" and drop "pendiente de aceptación en AWS real" from `e2b-parity.md` rows 56, 80, 90, `e2b-compat.md` and `secrets.md`.
+
+## 9. Review fixes
+
+- [x] 9.1 `connect(secret_cache=)` without `secrets=` keeps the handle refs (py sync/async `rebind_secrets`, TS `SecretEnvs.rebind`), with tests in both SDKs.
+- [x] 9.2 `reincarnate()` relaunches with the handle's current binding (after `take(secrets=)` / `connect(secrets=)`); `LaunchOptions.secrets` / `LaunchContext.secrets` removed; tests in both SDKs.
+- [x] 9.3 Shim name lowercasing vs. native `secrets=` documented in `secrets.md` and `e2b-compat.md`.
+- [x] 9.4 `update()` writes max Rayito version in `VersionIdsToStages` + 1 (`latest_version` / `latestVersion`); tests in both SDKs.
+- [x] 9.5 TS `SecretCache.invalidate(name)` forgets only that secret's in-flight reads; a forgotten read never deletes its replacement.

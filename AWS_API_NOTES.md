@@ -752,4 +752,18 @@ aceptarse un `CreateSecret` con el mismo nombre tras un `DeleteSecret` con
 (esperado `InvalidRequestException`); (b) qué código devuelve un
 `PutSecretValue` con un `ClientRequestToken` ya usado y un `SecretString`
 distinto (esperado `ResourceExistsException`); (c) que el filtro `name` de
-`ListSecrets` es un prefijo sensible a mayúsculas.
+`ListSecrets` es un prefijo sensible a mayúsculas; (d) que un nombre
+recreado tras el borrado forzado vuelve a aceptar los tokens
+`rayito-secret-version-…01`/`…02` (esperado: los tokens son por secreto, y
+el recreado es otro secreto con otro ARN).
+
+**Estado de SEC-9 y SEC-10 (2026-09-30): SIN MEDIR.** El e2e
+(`clients/python/tests/e2e/test_secrets_e2e.py`, `RAYITO_E2E=1`) imprime
+(a)–(d) y comprueba SEC-10 (ni el valor ni el nombre en los logs del SDK),
+pero todavía no se ha ejecutado contra AWS real. Hasta que se ejecute:
+`is_scheduled_for_deletion` (código `InvalidRequestException` + "delet" en
+el mensaje) y la reutilización de tokens en un nombre recreado son
+supuestos, y las filas de secretos de `optional-features.md` y
+`e2b-parity.md` dicen "pendiente de aceptación en AWS real". Si la medida
+los contradice, se corrigen el código y esta sección antes de archivar
+`m13-secrets`.

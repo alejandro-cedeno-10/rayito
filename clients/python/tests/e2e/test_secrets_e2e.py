@@ -13,14 +13,17 @@ import contextlib
 import logging
 import secrets as stdlib_secrets
 import time
+import warnings
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 
 from rayito import Sandbox, SecretCache, SecretStore
 from rayito._aws import LambdaMicrovmsControlPlane
+from rayito._secrets import is_scheduled_for_deletion, version_token
 from rayito.e2b import Secret
-from rayito.exceptions import SandboxNotFoundException, SecretException
+from rayito.exceptions import SandboxNotFoundException
 
 from .conftest import TEST_SANDBOX_TIMEOUT_SECONDS, E2ESettings
 
@@ -74,6 +77,7 @@ def test_secret_crud_injection_and_hygiene(
                 assert result.stdout.strip() == value
             assert reads[0] == 1, f"se esperaba 1 GetSecretValue, hubo {reads[0]}"
             assert value not in repr(sandbox._launch_options)
+            assert value not in repr(sandbox._secrets)
         finally:
             with contextlib.suppress(SandboxNotFoundException):
                 sandbox.kill()
@@ -105,16 +109,37 @@ def measure_token_clash(name: str, region: str) -> None:
 
 
 def measure_recreate_after_force_delete(name: str, region: str) -> None:
-    """SEC-9 (a): tiempo hasta que `CreateSecret` acepta el mismo nombre."""
+    """SEC-9 (a): con qué código y mensaje falla un `CreateSecret` inmediato
+    tras el borrado forzado (`is_scheduled_for_deletion` supone
+    `InvalidRequestException` con "delet" en el mensaje) y cuánto tarda en
+    aceptarse con el reintento de `create`. SEC-9 (d): el nombre recreado
+    vuelve a empezar en la versión 1 y `update` escribe el token 2 sin chocar
+    con los tokens del secreto borrado."""
     store = SecretStore(region=region)
     started = time.monotonic()
     try:
-        store.create(name, "recreated")
-    except SecretException as exc:
-        print(f"\nSEC-9 (a): recreación falló tras el reintento: {exc.aws_code}", flush=True)
-        raise
+        store.api().create_secret(
+            Name=f"rayito/{name}", SecretString="probe", ClientRequestToken=version_token(1)
+        )
+        print("\nSEC-9 (a): CreateSecret inmediato aceptado", flush=True)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        print(
+            f"\nSEC-9 (a): CreateSecret inmediato -> {code}; "
+            f"is_scheduled_for_deletion={is_scheduled_for_deletion(exc)}",
+            flush=True,
+        )
+        try:
+            store.create(name, "recreated")
+        finally:
+            elapsed = time.monotonic() - started
+            print(f"\nSEC-9 (a): recreación con reintento en {elapsed:.2f} s", flush=True)
+        assert elapsed < RECREATE_BUDGET_SECONDS
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            recreated = store.update(name, "recreated-2")
+        print(f"\nSEC-9 (d): update tras recrear -> versión {recreated.version}", flush=True)
+        assert recreated.version == 2
     finally:
-        elapsed = time.monotonic() - started
-        print(f"\nSEC-9 (a): recreación aceptada/fallida en {elapsed:.2f} s", flush=True)
-    assert elapsed < RECREATE_BUDGET_SECONDS
-    assert store.destroy(name)
+        assert store.destroy(name)

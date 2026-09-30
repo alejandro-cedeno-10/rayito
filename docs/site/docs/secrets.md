@@ -5,6 +5,12 @@ Rayito puede **guardar** secretos en AWS Secrets Manager de tu cuenta
 a un sandbox como variables de entorno (`secrets=`), con una caché que evita
 traer el secreto en cada llamada (`SecretCache`).
 
+!!! note "Estado: implementado, pendiente de aceptación en AWS real"
+    Probado con fakes de Secrets Manager en los dos SDK; el e2e contra AWS
+    real y las medidas SEC-9/SEC-10 (`AWS_API_NOTES.md` §19) aún no se han
+    ejecutado. Hasta entonces, la fila de
+    [Funciones opcionales](optional-features.md) no dice "disponible".
+
 !!! info "Apagado por defecto; sólo con `secrets=` / `SecretStore`"
     Las dos funciones consumen dinero de AWS y siguen ADR-014
     ([Funciones opcionales y su coste](optional-features.md)): sin pasar
@@ -121,6 +127,12 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
     Secret.destroy("openai-key")
     ```
 
+    El shim pasa los nombres a **minúsculas** (como E2B):
+    `Secret.create("OpenAI", …)` guarda `rayito/openai`. `secrets=` y
+    `SecretStore` del SDK nativo no normalizan, así que ese secreto se
+    inyecta como `secrets={"OPENAI_API_KEY": "openai"}`; con `"OpenAI"` la
+    llamada lanza `SecretNotFoundException`.
+
     Las diferencias con E2B están en
     [Compatibilidad con E2B](e2b-compat.md#secretos-secret-asyncsecret).
 
@@ -128,13 +140,13 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
 
 | Llamada | Python | TypeScript | Notas |
 |---|---|---|---|
-| Crear / conectar | `Sandbox.create(secrets=, secret_cache=)`, `Sandbox.connect(id, secrets=, …)`, `sbx.connect(secrets=, …)` | `Sandbox.create({ secrets, secretCache })`, `Sandbox.connect(id, { secrets })`, `sbx.connect({ secrets })` | el handle guarda sólo las referencias; se resuelven **antes** de `run-microvm`: un secreto que falta falla sin lanzar un VM; `connect` sin `secrets` conserva los del handle |
+| Crear / conectar | `Sandbox.create(secrets=, secret_cache=)`, `Sandbox.connect(id, secrets=, …)`, `sbx.connect(secrets=, …)` | `Sandbox.create({ secrets, secretCache })`, `Sandbox.connect(id, { secrets })`, `sbx.connect({ secrets })` | el handle guarda sólo las referencias; se resuelven **antes** de `run-microvm`: un secreto que falta falla sin lanzar un VM; `connect` sin `secrets` conserva los del handle (un `secret_cache=`/`secretCache` solo cambia la caché, no las referencias) |
 | Pool | `pool.take(secrets=)`, `Sandbox.create(pool=, secrets=)` | `pool.take({ secrets })`, `Sandbox.create({ pool, secrets })` | se enlazan al sandbox que sale del pool; las plazas calientes nunca los llevan (ni en su lanzamiento ni en su `SlotRecord`) |
 | Comandos | `commands.run(..., secrets=)` (también `background=True`) | `commands.run(cmd, { secrets })` | `StartRequest.envs` |
 | PTY | `pty.create(secrets=)` | `pty.create({ secrets })` | `PtyStart.envs` |
 | Código | `run_code(..., secrets=)` | `runCode(code, { secrets })` | `ExecuteRequest.envs`, sólo en contextos **Python** y sólo durante esa celda; con otro `language` es `InvalidArgumentException`, y los del handle no se añaden a celdas de otros lenguajes |
 | Contextos | `create_code_context(secrets=)` | `createCodeContext({ secrets })` | `CreateContextRequest.envs`: el entorno del kernel, de cualquier lenguaje, mientras viva |
-| `reincarnate()` | reutiliza las referencias (y la caché) del `create()` original | igual | |
+| `reincarnate()` | relanza con las referencias (y la caché) que tenga el handle **en ese momento**, incluidas las de `pool.take(secrets=)` o `connect(secrets=)` | igual | sólo referencias, nunca valores |
 
 Reglas:
 
@@ -182,9 +194,14 @@ Reglas:
 
 - La versión entera de E2B se codifica en el `ClientRequestToken` de Secrets
   Manager (`rayito-secret-version-{n:020d}`, 42 caracteres): `create` es la 1
-  y cada `update` escribe `n + 1`, leyendo la actual de `DescribeSecret`.
-  Dos escritores con valores distintos que calculan el mismo `n + 1` chocan:
-  el segundo recibe `SecretException` y debe reintentar.
+  y cada `update` escribe `n + 1`, donde `n` es la mayor versión de Rayito
+  que aún lista `DescribeSecret` (no sólo la `AWSCURRENT`: tras una
+  rotación externa la actual no es de Rayito). Dos escritores con valores
+  distintos que calculan el mismo `n + 1` chocan: el segundo recibe
+  `SecretException` y debe reintentar. Si varias rotaciones externas
+  seguidas dejan las versiones de Rayito sin etiqueta, `DescribeSecret` ya
+  no las lista y `update` puede repetir un número usado: crea un secreto
+  nuevo en ese caso.
 - `update` más de una vez cada 600 s para el mismo secreto avisa una vez
   (Secrets Manager recomienda no escribir más de una vez cada 10 minutos y
   conserva como mucho 100 versiones más las de las últimas 24 h).
@@ -193,7 +210,8 @@ Reglas:
 - `destroy` es `DeleteSecret(ForceDeleteWithoutRecovery=True)`: no hay
   ventana de recuperación. Recrear el mismo nombre justo después puede
   tardar unos segundos (el borrado es asíncrono); `create` reintenta con
-  backoff hasta 30 s.
+  backoff hasta 30 s si AWS responde `InvalidRequestException` mencionando
+  el borrado (supuesto de SEC-9, pendiente de medir en AWS real).
 
 ## Errores
 

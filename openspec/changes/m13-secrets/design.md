@@ -25,8 +25,10 @@ added to non-Python cells (string context ids are sent as-is: rayd answers
 ### D2. The handle stores references, the cache stores values
 
 `SecretBinding` (Python) / `SecretEnvs` (TypeScript) keep ENV → `SecretRef`
-and the cache; `LaunchOptions.secrets` (Python) / `LaunchContext.secrets`
-(TypeScript) keep references for `reincarnate()`. Values live only inside
+and the cache. `reincarnate()` relaunches with the handle's **current**
+binding (so `take(secrets=)` and `connect(secrets=)` carry over), not with
+create-time launch options; `connect()` without `secrets=` keeps the refs
+and a lone `secret_cache=` only swaps the cache. Values live only inside
 `SecretCache`, whose `repr`/`toJSON`/`inspect` print `***`.
 
 ### D3. Resolve before launching

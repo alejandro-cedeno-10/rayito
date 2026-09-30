@@ -22,6 +22,10 @@ The SDKs SHALL make zero Secrets Manager calls, build no boto3 `secretsmanager` 
 - **WHEN** the current version is 2 and `update` is called
 - **THEN** `DescribeSecret` is followed by `PutSecretValue` with the version-3 token, and `UpdateSecret(Description)` only when `metadata` is given
 
+#### Scenario: update after an external rotation skips past Rayito's versions
+- **WHEN** `AWSCURRENT` is a version Rayito did not write and version 2 (a Rayito token) is still listed with `AWSPREVIOUS`
+- **THEN** `update` writes the version-3 token, never re-using token 1
+
 #### Scenario: errors never repeat the name or the value
 - **WHEN** any Secrets Manager call fails
 - **THEN** the raised error (and its cause) contains neither the secret name nor its value, maps by AWS error code (`ResourceNotFoundException` → `SecretNotFoundException`, `ThrottlingException` → `RateLimitException`, others → `SecretException`)
@@ -37,12 +41,16 @@ The SDKs SHALL make zero Secrets Manager calls, build no boto3 `secretsmanager` 
 - **WHEN** ten threads (or tasks, or promises) read the same key at once
 - **THEN** exactly one `GetSecretValue` is made
 
+#### Scenario: invalidating one secret keeps other in-flight reads shared
+- **WHEN** a read of secret B is in flight and `invalidate(A)` is called
+- **THEN** a second reader of B joins the in-flight read and only one `GetSecretValue` for B is made
+
 #### Scenario: a zero TTL is rejected
 - **WHEN** `SecretCache(ttl_seconds=0)` is constructed
 - **THEN** it raises `InvalidArgumentException`
 
 ### Requirement: secrets= injects values through the existing per-call envs, never through the run payload
-`secrets={"ENV": "name" | SecretRef}` on `create()` (also with `pool=`), both forms of `connect()`, `SandboxPool.take()`, and per call on `commands.run`, `pty.create`, `run_code` and `create_code_context` SHALL deliver the resolved values only in the per-call `envs` of `ProcessService`, `PtyService` and `CodeService`. The handle SHALL store only references. Each call SHALL merge handle and call secrets (the call wins on a repeated key) and SHALL reject a key present both in `envs` and in `secrets` with `InvalidArgumentException` naming the key. `run_code` with call-level `secrets=` on a non-Python language SHALL raise `InvalidArgumentException` pointing to `create_code_context(secrets=)`; handle secrets SHALL NOT be added to non-Python cells. The handle's secrets SHALL be resolved before `run-microvm` (or before a pool slot is claimed). Values SHALL never appear in the `runHookPayload`, `metadata`, tags, image env, pool slot records, `LaunchOptions`, logs, `repr` or errors, and `reincarnate()` SHALL reuse the references. The first use in a process SHALL emit a `RayitoCompatWarning` stating that the value is visible to sandbox code.
+`secrets={"ENV": "name" | SecretRef}` on `create()` (also with `pool=`), both forms of `connect()`, `SandboxPool.take()`, and per call on `commands.run`, `pty.create`, `run_code` and `create_code_context` SHALL deliver the resolved values only in the per-call `envs` of `ProcessService`, `PtyService` and `CodeService`. The handle SHALL store only references. Each call SHALL merge handle and call secrets (the call wins on a repeated key) and SHALL reject a key present both in `envs` and in `secrets` with `InvalidArgumentException` naming the key. `run_code` with call-level `secrets=` on a non-Python language SHALL raise `InvalidArgumentException` pointing to `create_code_context(secrets=)`; handle secrets SHALL NOT be added to non-Python cells. The handle's secrets SHALL be resolved before `run-microvm` (or before a pool slot is claimed). Values SHALL never appear in the `runHookPayload`, `metadata`, tags, image env, pool slot records, `LaunchOptions`, logs, `repr` or errors, and `reincarnate()` SHALL reuse the references the handle holds at that moment (including those bound by `SandboxPool.take(secrets=)` or `connect(secrets=)`). `connect()` without `secrets=` SHALL keep the handle's references; a `secret_cache=` alone SHALL only replace the cache. The first use in a process SHALL emit a `RayitoCompatWarning` stating that the value is visible to sandbox code.
 
 #### Scenario: three commands, one read
 - **WHEN** a sandbox created with `secrets={"K": "name"}` runs three commands
@@ -51,6 +59,14 @@ The SDKs SHALL make zero Secrets Manager calls, build no boto3 `secretsmanager` 
 #### Scenario: the run payload stays clean
 - **WHEN** `Sandbox.create(envs=..., secrets=...)` launches a MicroVM
 - **THEN** the `runHookPayload` sent to `RunMicrovm` contains neither the value, the secret name nor the variable name
+
+#### Scenario: connect with only a cache keeps the references
+- **WHEN** a handle created with `secrets={"K": "a"}` is reconnected with `connect(secret_cache=other)`
+- **THEN** `K` is still injected, now resolved through `other`
+
+#### Scenario: reincarnate carries the references bound after create
+- **WHEN** `connect(secrets={"G": "gh"})` (or `SandboxPool.take(secrets=)`) rebinds a handle and `reincarnate()` runs
+- **THEN** the successor is created with `secrets={"G": SecretRef("gh")}` and the handle's cache
 
 #### Scenario: a missing secret launches nothing
 - **WHEN** `create(secrets={"K": "missing"})` runs

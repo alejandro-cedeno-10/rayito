@@ -317,7 +317,8 @@ Diferencias reales entre los dos shims:
 
 ## Secretos (`Secret`, `AsyncSecret`)
 
-Desde 0.5.0 (`m13-secrets`), `Secret`/`AsyncSecret` (TS: `Secret`) ya no
+Desde 0.5.0 (`m13-secrets`; probado con fakes, **pendiente de aceptación en
+AWS real**), `Secret`/`AsyncSecret` (TS: `Secret`) ya no
 lanzan `UnimplementedError`: son el CRUD de E2B sobre **AWS Secrets Manager
 en tu cuenta** (`SecretStore` del SDK nativo, ver [Secretos](secrets.md)).
 Contrato: `e2b` **2.51.0** de PyPI (`e2b/secret/{base,secret_sync,
@@ -332,15 +333,15 @@ que el resto de esta página. Mismos nombres, parámetros y resultados
 |---|---|---|
 | Dónde vive el secreto | la API de E2B (beta privada) | un secreto de Secrets Manager `<secret_prefix><nombre>` en tu cuenta (`rayito/` por defecto); cuesta $0,40/mes hasta `destroy` |
 | `SecretInfo.secret_id` / `secretId` | `sec_…` | el ARN de Secrets Manager (cambia si borras y recreas, como en E2B) |
-| Nombres | 1–128 `[A-Za-z0-9_-]`, minúsculas, `sec_` reservado (lo valida el servidor) | la misma regla, validada en el SDK **antes** de llamar a AWS; el error nunca repite el nombre |
+| Nombres | 1–128 `[A-Za-z0-9_-]`, minúsculas, `sec_` reservado (lo valida el servidor) | la misma regla, validada en el SDK **antes** de llamar a AWS; el error nunca repite el nombre. El shim pasa el nombre a minúsculas (`Secret.create("OpenAI", …)` guarda `rayito/openai`), pero `secrets=` y `SecretStore` del SDK nativo **no** normalizan: refiérete a él en minúsculas (`secrets={"K": "openai"}`), o `"OpenAI"` da `SecretNotFoundException` |
 | `secret` en `update`/`get_info`/`exists`/`destroy` | id o nombre | el nombre o el ARN (`secret_id`) |
 | `metadata` | ≤ 8 KiB | ≤ 2048 caracteres codificados (`Description` de Secrets Manager) |
 | Tope de secretos | 100 por proyecto | sin tope propio (el de tu cuenta de AWS) |
-| `version` | entero creciente | el mismo entero, codificado en el `ClientRequestToken` (`rayito-secret-version-{n:020d}`); 0 si la versión actual no la escribió Rayito |
+| `version` | entero creciente | el mismo entero, codificado en el `ClientRequestToken` (`rayito-secret-version-{n:020d}`); `get_info` da 0 si la versión actual no la escribió Rayito (una rotación externa), y `update` escribe la mayor versión de Rayito que aún lista `DescribeSecret` + 1 |
 | `fill(name)` | placeholder que el proxy de egress de E2B resuelve en cabeceras de `network.rules` | la misma cadena `${e2b.secrets.<name>}`, sin llamar a AWS, pero **nada la resuelve**: no hay inyector de egress (`network.rules` sigue en `UnimplementedError`) y ningún camino del SDK sustituye placeholders dentro de `envs`. Para entregar un secreto usa `secrets=` del SDK nativo ([Secretos](secrets.md)) |
 | `iam_token` / `iamToken` | token de identidad JWT-SVID | `UnimplementedError` (motivo de `iam`) |
 | `update` muy frecuente | sin límite documentado | Secrets Manager recomienda ≤ 1 escritura cada 10 min; el SDK avisa (`UserWarning`/`process.emitWarning`) la primera vez que se supera |
-| `destroy` y recrear el mismo nombre | sin reintento en el SDK | `DeleteSecret` es asíncrono: `create` reintenta con backoff hasta 30 s (medida SEC-9 en el e2e) |
+| `destroy` y recrear el mismo nombre | sin reintento en el SDK | `DeleteSecret` es asíncrono: `create` reintenta con backoff hasta 30 s **si** AWS responde `InvalidRequestException` con un mensaje que menciona el borrado. Ese comportamiento es un supuesto de SEC-9 **aún sin medir** en AWS real (`AWS_API_NOTES.md` §19); hasta entonces, un código o mensaje distinto sale como `SecretException` sin reintento |
 | Opciones de conexión (`api_key`, `domain`, `request_timeout`, …) | las de la API de E2B | no aplican: `RayitoCompatWarning` y se ignoran; las propias son `region`, `session` (TS: `credentials`), `secret_prefix` (TS: `secretPrefix`) y `kms_key_id` (TS: `kmsKeyId`) |
 | `SecretException` | hereda de `Exception` (TS: `SecretError` de `Error`) | hereda de `SandboxException` (TS: `SandboxError`); `SecretNotFoundException` es además la `NotFoundException` nativa en Python (en TS sólo `SecretError`: herencia simple) |
 | `SecretPaginator` (TS) | `new SecretPaginator(opts?)` | acepta un segundo argumento interno (las opciones ligadas de `E2B(...)`) |
