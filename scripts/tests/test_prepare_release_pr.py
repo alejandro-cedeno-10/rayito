@@ -93,3 +93,12 @@ def test_cargo_lock_bumps_only_the_workspace_crates() -> None:
 def test_cargo_lock_missing_crate_is_an_error() -> None:
     with pytest.raises(ValueError):
         prp.bump_cargo_lock('[[package]]\nname = "rayd"\nversion = "0.3.2"\n', "0.4.0")
+
+
+def test_compat_row_is_required_for_the_release_series() -> None:
+    source = (prp.Path(prp.__file__).resolve().parents[1] / prp.COMPAT_TABLE).read_text(
+        encoding="utf-8"
+    )
+    assert prp.has_compat_row(source, "0.3.3")
+    assert prp.has_compat_row(source, "0.4.0")
+    assert not prp.has_compat_row(source, "9.9.0")
