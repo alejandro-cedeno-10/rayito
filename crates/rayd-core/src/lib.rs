@@ -10,7 +10,9 @@
 //! (`persistence`), the guest egress policy and its local proxy
 //! (`network`, ADR-012), how files move through presigned S3 URLs without
 //! a credential in the VM (`transfer`, ADR-010), and what the guest's
-//! capability mask allows (`capabilities`). No
+//! capability mask allows (`capabilities`). The tokens the SDKs parse in
+//! the agent's messages, which are otherwise Spanish, live in
+//! `wire_tokens`. No
 //! transport types live here; the adapters in the `rayd` crate translate
 //! gRPC and HTTP into these calls.
 
@@ -32,3 +34,4 @@ pub mod run_payload;
 pub mod sandbox_timeout;
 pub mod session;
 pub mod transfer;
+pub mod wire_tokens;

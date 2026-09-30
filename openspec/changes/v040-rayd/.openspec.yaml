@@ -1,0 +1,9 @@
+schema: spec-driven
+created: "2026-09-29"
+goal: >-
+  rayd 0.4.0: SetTimeout leaves the timeout rule to the domain only (phase
+  checks before the 1 s minimum), and wire-visible agent messages are
+  Spanish while the tokens the SDKs parse stay frozen in one module.
+affected_areas:
+  - crates/rayd-core
+  - crates/rayd

@@ -162,9 +162,9 @@ impl RangeQuery {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum MetricsHistoryError {
-    #[error("start_unix_ms and end_unix_ms must be >= 0")]
+    #[error("start_unix_ms y end_unix_ms deben ser >= 0")]
     NegativeBound,
-    #[error("start_unix_ms is after end_unix_ms")]
+    #[error("start_unix_ms es posterior a end_unix_ms")]
     InvertedRange,
 }
 

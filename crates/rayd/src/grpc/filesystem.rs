@@ -220,7 +220,7 @@ impl FilesystemService for FilesystemGrpc {
         let entries = outcome.map_err(|failure| match failure {
             WriteFailure::Filesystem(error) => rejected("Write", &error),
             WriteFailure::Client(status) => status,
-            WriteFailure::Aborted => Status::cancelled("upload cancelled by the client"),
+            WriteFailure::Aborted => Status::cancelled("el cliente canceló la subida"),
         })?;
         Ok(Response::new(WriteResponse {
             entries: entries.into_iter().map(to_entry_info).collect(),
@@ -576,7 +576,7 @@ mod tests {
         }
         assert_eq!(
             status_for(&FilesystemError::WatchOverflow).message(),
-            "watch queue overflowed; re-open the watch"
+            "la cola del watch se desbordó; vuelve a abrir el watch"
         );
         assert_eq!(
             status_for(&FilesystemError::DiskReserve).message(),

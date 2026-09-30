@@ -4,21 +4,21 @@
 
 use thiserror::Error;
 
-use crate::process::{Pid, ProcessError};
+use crate::process::{Pid, ProcessError, not_a_pty_message};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PtyError {
-    #[error("size {cols}x{rows} is outside 1..={max}")]
+    #[error("el tamaño {cols}x{rows} está fuera de 1..={max}")]
     InvalidSize { cols: u32, rows: u32, max: u32 },
-    #[error("shell must be an absolute path")]
+    #[error("shell debe ser una ruta absoluta")]
     InvalidShell,
-    #[error("pid {pid} is not a PTY")]
+    #[error("{}", not_a_pty_message(*pid))]
     NotAPty { pid: Pid },
-    #[error("pty devices unavailable")]
+    #[error("no hay dispositivos PTY disponibles")]
     NoPtyDevices,
     #[error(transparent)]
     Process(#[from] ProcessError),
-    #[error("terminals are not supported on this platform")]
+    #[error("las terminales no se admiten en esta plataforma")]
     Unsupported,
 }
 
@@ -55,11 +55,11 @@ mod tests {
                 max: 4096
             }
             .to_string(),
-            "size 0x5000 is outside 1..=4096"
+            "el tamaño 0x5000 está fuera de 1..=4096"
         );
         assert_eq!(
             PtyError::NotAPty { pid: Pid(4) }.to_string(),
-            "pid 4 is not a PTY"
+            "el pid 4 no es una PTY"
         );
     }
 }

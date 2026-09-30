@@ -41,11 +41,11 @@ const FORBIDDEN_BODY: &str = "rayito: destino bloqueado por la política de egre
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum HttpRequestError {
-    #[error("malformed proxy request")]
+    #[error("petición al proxy mal formada")]
     Malformed,
-    #[error("only http:// absolute-form and CONNECT are proxied")]
+    #[error("el proxy sólo admite http:// en forma absoluta y CONNECT")]
     UnsupportedTarget,
-    #[error("request head over the size limit")]
+    #[error("la cabecera de la petición supera el límite de tamaño")]
     HeadTooLarge,
 }
 
@@ -407,17 +407,17 @@ pub fn socks_reply(reply: SocksReply) -> [u8; 10] {
 /// Why the upstream handshake failed; never carries a credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum UpstreamProtocolError {
-    #[error("the upstream did not answer as a SOCKS5 server")]
+    #[error("el proxy de salida no respondió como un servidor SOCKS5")]
     Protocol,
-    #[error("the upstream refused every offered authentication method")]
+    #[error("el proxy de salida rechazó todos los métodos de autenticación ofrecidos")]
     MethodRefused,
-    #[error("the upstream rejected the credentials")]
+    #[error("el proxy de salida rechazó las credenciales")]
     AuthenticationFailed,
-    #[error("the upstream refused the connection (reply {0:#04x})")]
+    #[error("el proxy de salida rechazó la conexión (respuesta {0:#04x})")]
     ConnectRefused(u8),
-    #[error("the target cannot be encoded for the upstream")]
+    #[error("el destino no se puede codificar para el proxy de salida")]
     InvalidTarget,
-    #[error("the credentials cannot be encoded for the upstream")]
+    #[error("las credenciales no se pueden codificar para el proxy de salida")]
     InvalidCredentials,
 }
 

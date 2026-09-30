@@ -243,7 +243,7 @@ async fn language_and_context_are_exclusive() {
     assert_eq!(status.code(), Code::InvalidArgument);
     assert_eq!(
         status.message(),
-        "language cannot be combined with context_id"
+        "language no se puede combinar con context_id"
     );
     let status = open(
         &harness,
@@ -261,7 +261,7 @@ async fn language_and_context_are_exclusive() {
     assert_eq!(unknown.code(), Code::InvalidArgument);
     assert_eq!(
         unknown.message(),
-        "language must be one of python, bash, javascript, typescript"
+        "language debe ser python, bash, javascript o typescript"
     );
     assert_eq!(harness.requests_of("execute").len(), executes_before);
     assert!(create_lines_for(&harness, "default-bash").is_empty());
@@ -317,7 +317,7 @@ async fn per_execution_envs_are_python_only() {
         .unwrap_err();
     assert_eq!(status.code(), Code::InvalidArgument);
     assert!(
-        status.message().contains("python contexts"),
+        status.message().contains("contextos python"),
         "{}",
         status.message()
     );

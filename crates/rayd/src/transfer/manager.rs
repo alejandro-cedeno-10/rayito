@@ -190,10 +190,7 @@ impl TransferHub {
         let id = TransferId::generate(random).map_err(|_| TransferError::Internal)?;
         let snapshot = self
             .with_registry(|registry| registry.admit(id.clone(), new, self.now()))
-            .map_err(|error| match error {
-                RegistryError::Full => TransferError::Full,
-                _ => TransferError::Internal,
-            })?;
+            .map_err(TransferError::from)?;
         let handle = Arc::new(RecordHandle {
             snapshots: watch::Sender::new(snapshot),
             poll_now: Notify::new(),
@@ -241,7 +238,7 @@ impl TransferHub {
         self.bound_sandbox_id()?;
         self.registry()
             .lookup(raw_id, self.now())
-            .map_err(|_| TransferError::UnknownTransfer)
+            .map_err(TransferError::from)
     }
 
     /// `WatchTransfer`: the live channel of an active transfer, or a
@@ -284,7 +281,7 @@ impl TransferHub {
                 Ok(())
             }
             Ok(CancelOutcome::AlreadyFinished(_)) => Ok(()),
-            Err(_) => Err(TransferError::UnknownTransfer),
+            Err(error) => Err(TransferError::from(error)),
         }
     }
 

@@ -21,19 +21,19 @@ use super::progress::Counters;
 pub enum ArchiveError {
     /// The sink or source closed under the archiver: the client went away
     /// or `/suspend` cut the stream.
-    #[error("cancelled")]
+    #[error("cancelado")]
     Cancelled,
-    #[error("no space left on device")]
+    #[error("no queda espacio en el dispositivo")]
     DiskFull,
     /// A restore entry the rules of D4 refuse (absolute path, `..`, a
     /// parent that escapes the home).
-    #[error("entry refused")]
+    #[error("entrada rechazada")]
     EntryRefused,
-    #[error("permission denied")]
+    #[error("permiso denegado")]
     PermissionDenied,
-    #[error("archiving is not supported on this platform")]
+    #[error("el archivado no se admite en esta plataforma")]
     Unsupported,
-    #[error("{operation} failed: {errno}")]
+    #[error("falló {operation}: {errno}")]
     Io {
         operation: &'static str,
         errno: String,

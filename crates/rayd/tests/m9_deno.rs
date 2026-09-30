@@ -27,7 +27,7 @@ use tonic::{Code, Status, Streaming};
 
 const POLY_IMAGE: &str = "rayito-base-poly";
 const DENO_CELL: &str = "print hola-desde-deno";
-const FOUR_NAMES: &str = "language must be one of python, bash, javascript, typescript";
+const FOUR_NAMES: &str = "language debe ser python, bash, javascript o typescript";
 
 fn languages_options(languages: &str) -> Options {
     Options {
@@ -190,7 +190,7 @@ async fn per_execution_envs_are_refused_on_typescript() {
         .unwrap_err();
     assert_eq!(status.code(), Code::InvalidArgument);
     assert!(
-        status.message().contains("python contexts"),
+        status.message().contains("contextos python"),
         "{}",
         status.message()
     );

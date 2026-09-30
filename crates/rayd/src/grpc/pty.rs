@@ -11,10 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use rayd_core::process::{
-    EndStatus, Pid, ProcessEnd, ProcessError, ProcessEvent as DomainEvent, SpawnError,
-    StreamFailure,
-};
+use rayd_core::process::{Pid, ProcessEnd, ProcessError, ProcessEvent as DomainEvent, SpawnError};
 use rayd_core::pty::{PtyError, PtySpawnInput};
 use rayito_proto::v1::pty_service_server::PtyService;
 use rayito_proto::v1::{
@@ -191,19 +188,8 @@ fn exited_message(end: &ProcessEnd) -> PtyServerMessage {
     }
 }
 
-/// The in-stream close of design D7: the terminal is alive, only the
-/// stream ends.
 fn suspending_message() -> PtyServerMessage {
-    exited_message(&ProcessEnd {
-        status: EndStatus::Suspending,
-        exited: false,
-        exit_code: 0,
-        signal: None,
-        error: Some(StreamFailure {
-            code: "suspending",
-            message: "sandbox suspending; reconnect with Connect(pid, from_seq)".to_owned(),
-        }),
-    })
+    exited_message(&ProcessEnd::suspending())
 }
 
 fn closing_message(reason: StreamCloseReason) -> PtyServerMessage {
@@ -458,7 +444,7 @@ mod tests {
                 expected: ProcessKind::Pty
             }))
             .message(),
-            "pid 4 is not a PTY"
+            "el pid 4 no es una PTY"
         );
     }
 }

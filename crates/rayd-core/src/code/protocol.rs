@@ -295,13 +295,13 @@ impl SidecarEvent {
 /// Never quotes the line: a malformed line may carry cell output.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
-    #[error("sidecar line is not a JSON object")]
+    #[error("la línea del sidecar no es un objeto JSON")]
     Malformed,
-    #[error("unknown sidecar event `{0}`")]
+    #[error("evento del sidecar desconocido `{0}`")]
     UnknownEvent(String),
-    #[error("sidecar event is missing field `{0}`")]
+    #[error("al evento del sidecar le falta el campo `{0}`")]
     MissingField(String),
-    #[error("sidecar line of {bytes} bytes exceeds the limit")]
+    #[error("la línea del sidecar de {bytes} bytes supera el límite")]
     LineTooLong { bytes: usize },
 }
 
