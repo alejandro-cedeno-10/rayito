@@ -17,8 +17,8 @@ página sólo dice **qué hay** y dónde está documentado.
 | Estado | Qué significa | Filas |
 |---|---|---|
 | implementado | la feature de E2B funciona con el mismo contrato; "antes de M9" si ya estaba en 0.2.0 | 72 (24 antes de M9, 48 en M9) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto) | 17 |
-| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 13 |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto) | 18 |
+| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 12 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
 Ninguna fila se aproxima en silencio: lo que no está implementado lanza
@@ -127,7 +127,7 @@ se explica cómo usarlo.
 | 79 | `sandbox.git` (`clone`, `init`, `remote_add`, `remote_get`, `status`, `branches`, `create_branch`, `checkout_branch`, `delete_branch`, `add`, `commit`, `reset`, `restore`, `push`, `pull`, `set_config`, `get_config`, `dangerously_authenticate`, `configure_user`; `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode`) | implementado (M9) | `m9-e2b-v2-surface` | envoltorio en cliente sobre `commands.run`, con `git-core` en `rayito-base`; E2B marca el módulo como obsoleto | [Git](git.md) |
 | 80 | `Secret` / `AsyncSecret` (`create`, `update`, `get_info`, `list`, `exists`, `destroy`, `fill`; `SecretInfo`, `SecretPaginator`) | fuera por SPEC | `m9-e2b-v2-surface` | necesita un almacén de secretos en un plano de control y un inyector de egress en el host (`SPEC.md` §4); `UnimplementedError` explícito | [Compatibilidad](e2b-compat.md) |
 | 81 | API de build de templates (`TemplateBase`, `TemplateBuilder`, `Template.build`, ...) | fuera por SPEC | `m9-e2b-v2-surface` | `SPEC.md` §4 excluye los templates declarativos; el análogo es el Dockerfile más `rayito image publish` | [Compatibilidad](e2b-compat.md) |
-| 82 | `cpu_count` / `memory_mb` por sandbox | fuera por SPEC | — | el tamaño es de la imagen (`SPEC.md` §4, `AWS_API_NOTES.md` §2) | [Límites](limits.md) |
+| 82 | `cpu_count` / `memory_mb` por sandbox | divergente | `m12-sizes-proxy` | por imagen, como E2B por build de template: publica una imagen por tamaño (`rayito image publish --memory-mib`) y elige el template; `Template.build(cpu_count=, memory_mb=)` sigue en `UnimplementedError`; `cpu_count`/`memory_mb` de `SandboxInfo` son la vista del guest (Q68) | [Límites](limits.md#tamano-cpuram) |
 | 83 | excepciones `AuthenticationException`, `CommandExitException`, `InvalidArgumentException`, `NotFoundException`, `RateLimitException`, `SandboxException`, `TimeoutException` | implementado (antes de M9) | — | `TimeoutException` cubre ahora también `sandbox_timeout` (`m9-server-timeout`) | [Compatibilidad](e2b-compat.md) |
 | 84 | `FileNotFoundException` / `SandboxNotFoundException` exportadas desde `rayito.e2b` | implementado (M9) | `m9-e2b-v2-surface` | — | [Compatibilidad](e2b-compat.md) |
 | 85 | `NotEnoughSpaceException` | implementado (M9) | `m9-e2b-v2-surface` | alias de `DiskFullException`, que sí se lanza | [Compatibilidad](e2b-compat.md) |
@@ -155,7 +155,7 @@ se explica cómo usarlo.
 | 107 | API REST y webhooks de eventos de ciclo de vida (docs) | fuera por SPEC | — | necesita un servicio de plano de control con almacén y entrega (`SPEC.md` §4); el análogo en tu cuenta son los eventos de datos de CloudTrail (§10) | [Compatibilidad](e2b-compat.md) |
 | 108 | exportación de telemetría OTel (docs, Enterprise) | fuera por SPEC | — | superficie de producto SaaS (`SPEC.md` §4); análogos en tu cuenta: logs de runtime en CloudWatch y el historial de `get_metrics` | [Observabilidad](observability.md) |
 | 109 | receta de acceso SSH (sshd + websocat, docs) | divergente (M9) | `m9-e2b-v2-surface` | `rayito sandbox connect` da una terminal PTY interactiva; una receta con sshd necesita una imagen propia y un cliente que hable la autenticación por subprotocolo WebSocket | [CLI](cli.md) |
-| 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | — | el proxy tendría que guardar credenciales IAM para acuñar JWEs por petición: sería un servicio de plano de control (`SPEC.md` §4) | [Compatibilidad](e2b-compat.md) |
+| 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | `m12-sizes-proxy` | para desarrollo: `rayito sandbox proxy <id> --port N` expone un puerto del guest en localhost; un dominio público queda para un add-on opcional en la cuenta del cliente (ADR-014), no incluido | [CLI](cli.md#proxy) |
 | 111 | montajes de buckets s3fs/gcsfuse (docs) | fuera por SPEC | — | receta de template más montajes compartidos en vivo, fuera por `SPEC.md` §4; FUSE en `rayito-base-caps` no está medido; análogos: persistencia en S3 y transferencias de M9 | [Ficheros](files.md) |
 | 112 | CLI de E2B (`auth`, `sandbox list/create/connect/exec/kill/metrics`, `template`, `snapshots`, `fork`) | divergente (M9) | `m9-e2b-v2-surface` | añade `sandbox create/connect/exec/metrics` a los `list/kill/logs` que ya había ([CLI](cli.md)); `auth`, `template`, `snapshots` y `fork` siguen fuera | [CLI](cli.md) |
 | 113 | SDK de escritorio (`e2b-desktop`) | fuera por SPEC | — | `SPEC.md` §4 (Desktop/GUI) | [Compatibilidad](e2b-compat.md) |

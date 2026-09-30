@@ -46,6 +46,13 @@ bucket es el de los artefactos de imagen (prefijo `rayito/`), no el de
 transferencias. Cada versión nueva cuesta ≈ $0,04/semana de storage
 ([Costes](cost.md)).
 
+El tamaño (CPU/RAM) es también una propiedad de la imagen, con
+`--memory-mib` (`resources[0].minimumMemoryInMiB`, por defecto 2048): para
+tener sandboxes de varios tamaños publica una imagen por tamaño con un
+nombre que lo diga (`--image-name myimg-4gb --memory-mib 4096`) y elige la
+imagen al crear el sandbox. Detalle y la tabla de tamaños medidos en
+[Límites](limits.md#tamano-cpuram).
+
 ```python
 from rayito import Sandbox
 

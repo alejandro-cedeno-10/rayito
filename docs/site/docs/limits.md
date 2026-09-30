@@ -33,6 +33,66 @@ valida en cliente.
 Las cuotas TPS son por cuenta y región (`AWS_API_NOTES.md` §11); cuentas
 nuevas pueden empezar con valores menores.
 
+## Tamaño (CPU/RAM)
+
+El tamaño (memoria y vCPU) **es propiedad de la imagen**
+(`resources[0].minimumMemoryInMiB` en `create-microvm-image`,
+`AWS_API_NOTES.md` §4), no un parámetro de `Sandbox.create()`. Es la misma
+forma que usa E2B: `Sandbox.create()` de E2B tampoco tiene `cpu`/`memoria`;
+el tamaño se fija por **build de template**, con `Template.build(cpu_count=,
+memory_mb=)` (`e2b template create --cpu-count --memory-mb`). Rayito no
+tiene un catálogo de tamaños ni un resolvedor `resources=` en `create()`
+(fuera de alcance de M12; ver `MILESTONES.md`).
+
+Tabla verificada (`AWS_API_NOTES.md` §4, medida el 2026-09-15; ancho de
+banda es del endpoint, entrada + salida):
+
+| `minimumMemoryInMiB` | baseline | pico (4x) | disco | ancho de banda |
+|---|---|---|---|---|
+| 512 | 0.5 GB / 0.25 vCPU | 2 GB / 1 vCPU | 8 GB | 1 MB/s |
+| 1024 | 1 GB / 0.5 vCPU | 4 GB / 2 vCPU | 8 GB | 2 MB/s |
+| 2048 (default de `rayito image publish`) | 2 GB / 1 vCPU | 8 GB / 4 vCPU | 8 GB | 4 MB/s |
+| 4096 | 4 GB / 2 vCPU | 16 GB / 8 vCPU | 16 GB | 8 MB/s |
+| 8192 | 8 GB / 4 vCPU | 32 GB / 16 vCPU | 32 GB | 16 MB/s |
+
+Otros valores de `minimumMemoryInMiB` no están medidos (RES-1): no los
+publiques sin medirlos tú mismo antes en tu cuenta.
+
+**Cómo elegir tamaño hoy**: publica una imagen por tamaño, con un nombre que
+lo diga, y crea sandboxes contra esa imagen:
+
+```bash
+rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
+    --bucket amzn-s3-demo-bucket --image-name myimg-4gb --memory-mib 4096
+```
+
+```python
+from rayito import Sandbox
+
+sbx = Sandbox.create("myimg-4gb")
+```
+
+```typescript
+const sbx = await Sandbox.create({ template: "myimg-4gb" });
+```
+
+La CLI no valida `--memory-mib` contra la tabla de arriba (los valores no
+medidos podrían ser válidos igualmente): un valor fuera de lo verificado
+simplemente no tiene número de referencia aquí todavía.
+
+**Coste**: la línea base de la tabla es lo que AWS factura mientras el
+sandbox está `RUNNING` (precios en [Costes](cost.md)); cada versión de
+imagen publicada, sea cual sea su tamaño, cuesta además el storage del
+snapshot (mínimo 1 semana de retención, ver [Costes](cost.md) e [Imágenes e
+IAM](images.md#publicar-las-tres)).
+
+**Lo que ve el guest no es la línea base**: `SandboxInfo.cpu_count` y
+`SandboxInfo.memory_mb` informan la vista del guest (`nproc` y `MemTotal`),
+no `minimumMemoryInMiB`. Con una imagen de 2048 MiB, `get_info()` midió
+`cpu_count=4` y `memory_mb=8016` — el pico del rango, no el baseline
+(`AWS_API_NOTES.md` Q68). Código que decide su paralelismo mirando `nproc`
+o la memoria total puede sobrepasar la línea base contratada.
+
 ## Compatibilidad SDK ↔ rayd ↔ imagen
 
 Los SDKs (Python y TypeScript) y `rayd` avanzan `MAJOR.MINOR` en lockstep
