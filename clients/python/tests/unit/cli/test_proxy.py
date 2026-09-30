@@ -499,9 +499,14 @@ def test_run_proxy_rejects_an_invalid_local_port_without_calling_get_microvm() -
 def test_run_proxy_translates_a_bind_failure_without_calling_get_microvm() -> None:
     """Un `--local-port` ya ocupado falla en el `bind`, no en un traceback
     crudo de `asyncio.start_server`, y sin haber llamado a `GetMicrovm` ni
-    `CreateMicrovmAuthToken`."""
+    `CreateMicrovmAuthToken`. `busy` tiene que estar en `listen()`, no sólo
+    `bind()`-eado: con `SO_REUSEADDR` en ambos sockets, dos `bind()` al mismo
+    puerto pueden convivir en Linux mientras ninguno escuche (el conflicto no
+    sale hasta el primer `listen()`); un socket ya escuchando sí es un
+    conflicto real en cualquier plataforma."""
     plane = FakeControlPlane()
     busy = _proxy.bind_listener_socket("127.0.0.1", 0)
+    busy.listen(1)
     try:
         busy_port = busy.getsockname()[1]
         with pytest.raises(OSError):
