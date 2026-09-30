@@ -37,6 +37,11 @@ Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
 
 ## Reglas prácticas
 
+- Todo lo de esta página es lo que **crea o llama el propio `create()`/`connect()`**.
+  Las funciones opcionales (secretos, índice de metadatos, trazas OTel del
+  SDK) tienen su propio coste, apagado por defecto y activado sólo con una
+  opción explícita del SDK (ADR-014): [Funciones opcionales y su
+  coste](optional-features.md).
 - Un sandbox olvidado factura hasta `timeout` (3600 s por defecto): usa `with`
   o `kill()`, y un `timeout` acorde a la tarea. Con el plazo del servidor de
   M9 (`max_lifetime` u `on_timeout`) y `on_timeout='kill'`, un huérfano
