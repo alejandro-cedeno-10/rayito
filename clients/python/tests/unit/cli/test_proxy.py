@@ -26,7 +26,7 @@ from rayito.exceptions import InvalidArgumentException, SandboxStateException
 
 from .conftest import FakeControlPlane, sandbox_info
 
-SANDBOX_ID = "microvm-00000000-0000-0000-0000-0000000000aa"
+SANDBOX_ID = "microvm-x"
 
 
 def head(lines: list[str]) -> _proxy.HttpHead:
