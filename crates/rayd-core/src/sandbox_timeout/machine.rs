@@ -534,6 +534,39 @@ mod tests {
         assert_eq!(view_at(&machine, secs(1)).extensions, 0);
     }
 
+    /// The phase rules run before the size rule, so a zero timeout answers
+    /// what the phase says and only a phase that could move the deadline
+    /// reports the invalid timeout; the deadline never moves.
+    #[test]
+    fn a_zero_timeout_is_judged_after_the_phase() {
+        let mut terminating = kill(60, 900);
+        terminating.tick(secs(60), false, false);
+        let mut grace = kill(60, 900);
+        grace.resumed(secs(100), true);
+        let mut expired = pause(60, 900, false);
+        expired.tick(secs(60), false, false);
+        let cases = [
+            (
+                SandboxTimeout::new(&TimeoutSettings::default()),
+                SandboxTimeoutError::Unmanaged,
+            ),
+            (terminating, SandboxTimeoutError::Expired),
+            (kill(60, 900), SandboxTimeoutError::InvalidTimeout),
+            (grace, SandboxTimeoutError::InvalidTimeout),
+            (expired, SandboxTimeoutError::InvalidTimeout),
+        ];
+        for (mut machine, expected) in cases {
+            let before = view_at(&machine, secs(101));
+            for mode in [TimeoutMode::Exact, TimeoutMode::AtLeast] {
+                assert_eq!(
+                    machine.set_timeout(reading_at(secs(101)), mode, Duration::ZERO),
+                    Err(expected)
+                );
+            }
+            assert_eq!(view_at(&machine, secs(101)), before);
+        }
+    }
+
     #[test]
     fn at_least_never_shortens() {
         let mut machine = kill(600, 900);
