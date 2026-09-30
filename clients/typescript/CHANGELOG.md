@@ -9,18 +9,19 @@ versionado [SemVer](https://semver.org/lang/es/).
 ### Cambios que rompen
 
 - `UnimplementedError` es ahora el único tipo para "algo que este sandbox no
-  puede dar": un `Unimplemented` de gRPC (un RPC, un kernel de `runCode`/
-  `createCodeContext` ausente en la imagen, `MetricsHistory` de un `rayd`
-  anterior a M9) ya no es `InvalidArgumentError`/`SandboxError` con
-  `grpcCode: Code.Unimplemented`, sino `UnimplementedError`, fuera de esa
-  jerarquía. `LifecycleUnsupportedError` (un plazo lógico contra un agente
-  anterior a M9) pasa a ser subclase de `UnimplementedError`, no de
-  `InvalidArgumentError` ni `SandboxError`. **Migración**: cambia
-  `catch (error) { if (error instanceof InvalidArgumentError && error.grpcCode
-  === Code.Unimplemented) ... }` o `catch (error) { if (error instanceof
-  SandboxError) ... }` alrededor de esos RPCs por `error instanceof
-  UnimplementedError` (`LifecycleUnsupportedError` sigue distinguiéndose con
-  su propio `instanceof`).
+  puede dar": un `Unimplemented` de gRPC (un RPC o un kernel de `runCode`/
+  `createCodeContext` ausente en la imagen) ya no es `InvalidArgumentError`/
+  `SandboxError` con `grpcCode: Code.Unimplemented`, sino `UnimplementedError`,
+  fuera de esa jerarquía. `LifecycleUnsupportedError` (un plazo lógico contra
+  un agente anterior a M9) pasa a ser subclase de `UnimplementedError`, no de
+  `InvalidArgumentError` ni `SandboxError`. `getMetricsHistory` contra una
+  imagen anterior a M9 ya lanzaba `UnimplementedError`; sólo cambia su
+  `error.cause`, de `InvalidArgumentError` a `UnimplementedError`.
+  **Migración**: cambia `catch (error) { if (error instanceof
+  InvalidArgumentError && error.grpcCode === Code.Unimplemented) ... }` o
+  `catch (error) { if (error instanceof SandboxError) ... }` alrededor de esos
+  RPCs por `error instanceof UnimplementedError` (`LifecycleUnsupportedError`
+  sigue distinguiéndose con su propio `instanceof`).
 - `Sandbox.probedInfo` (el `static` nativo que usaba internamente `rayito/e2b`)
   se elimina de `rayito`: vivía fuera de lugar en el núcleo nativo y su propio
   docblock ya decía que era interno del shim. **Migración**: ninguna para

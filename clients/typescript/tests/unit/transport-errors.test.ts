@@ -13,7 +13,9 @@ import {
   TimeoutError,
   UnimplementedError,
 } from "../../src/errors.js";
+import { LIFECYCLE_FEATURE_SET_TIMEOUT } from "../../src/sandbox/lifecycle.js";
 import {
+  GENERIC_RPC_FEATURE,
   isKernelGate,
   isNotYetReachable,
   isOwnAbort,
@@ -25,6 +27,7 @@ import {
   translateRpcError,
   translateSetTimeoutError,
   translateStreamError,
+  UNIMPLEMENTED_IMAGE_HINT,
 } from "../../src/transport/errors.js";
 import {
   assertPlaintextAllowed,
@@ -184,11 +187,12 @@ describe("translateRpcError", () => {
 
   test("Unimplemented becomes UnimplementedError, outside the SandboxError hierarchy", () => {
     const connect = new ConnectError("nope", Code.Unimplemented);
-    const translated = translateRpcError(connect);
+    const translated = translateRpcError(connect) as UnimplementedError;
     expect(translated).toBeInstanceOf(UnimplementedError);
     expect(translated).not.toBeInstanceOf(SandboxError);
     expect(translated).not.toBeInstanceOf(InvalidArgumentError);
-    expect((translated as UnimplementedError).reason).toBe("nope");
+    expect(translated.feature).toBe(GENERIC_RPC_FEATURE);
+    expect(translated.reason).toBe(`nope; ${UNIMPLEMENTED_IMAGE_HINT}`);
     expect(translated.cause).toBe(connect);
   });
 
@@ -270,9 +274,15 @@ describe("the sandbox deadline (ADR-011)", () => {
     expect(unmanaged).toBeInstanceOf(InvalidArgumentError);
     expect(unmanaged).not.toBeInstanceOf(LifecycleUnsupportedError);
     expect(unmanaged.message).toContain("maxLifetimeMs");
-    expect(
-      translateSetTimeoutError(new ConnectError("nope", Code.Unimplemented), 60_000),
-    ).toBeInstanceOf(LifecycleUnsupportedError);
+    const setTimeoutUnimplemented = translateSetTimeoutError(
+      new ConnectError("nope", Code.Unimplemented),
+      60_000,
+    ) as LifecycleUnsupportedError;
+    expect(setTimeoutUnimplemented).toBeInstanceOf(LifecycleUnsupportedError);
+    expect(setTimeoutUnimplemented).toBeInstanceOf(UnimplementedError);
+    expect(setTimeoutUnimplemented).not.toBeInstanceOf(SandboxError);
+    expect(setTimeoutUnimplemented).not.toBeInstanceOf(InvalidArgumentError);
+    expect(setTimeoutUnimplemented.feature).toBe(LIFECYCLE_FEATURE_SET_TIMEOUT);
     expect(
       translateSetTimeoutError(new ConnectError("sandbox_timeout", Code.FailedPrecondition), 1000),
     ).toBeInstanceOf(TimeoutError);

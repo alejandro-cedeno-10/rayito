@@ -10,6 +10,7 @@ import {
   GitAuthError,
   GitUpstreamError,
   InvalidArgumentError,
+  LifecycleUnsupportedError,
   NotFoundError,
   QuotaExceededError,
   RateLimitError,
@@ -121,6 +122,22 @@ describe("error hierarchy (E2B names)", () => {
     expect(error.message).toContain("actualiza la imagen");
     expect(error.cause).toBeUndefined();
     expect(Object.hasOwn(error, "cause")).toBe(false);
+  });
+
+  test("LifecycleUnsupportedError is UnimplementedError's only public subclass, never SandboxError/InvalidArgumentError", () => {
+    const cause = new Error("connect error stand-in");
+    const error = new LifecycleUnsupportedError(
+      "setTimeout",
+      "el agente del sandbox no implementa SetTimeout (imagen anterior a M9): publica una imagen M9",
+      undefined,
+      { cause },
+    );
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect(error).not.toBeInstanceOf(SandboxError);
+    expect(error).not.toBeInstanceOf(InvalidArgumentError);
+    expect(error.name).toBe("LifecycleUnsupportedError");
+    expect([error.feature, error.cause]).toEqual(["setTimeout", cause]);
+    expect(rayito.LifecycleUnsupportedError).toBe(LifecycleUnsupportedError);
   });
 
   test("UnimplementedError carries an optional cause, like SandboxError", () => {

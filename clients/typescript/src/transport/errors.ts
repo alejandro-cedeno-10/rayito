@@ -37,8 +37,10 @@ import {
 } from "../sandbox/lifecycle.js";
 
 export const PROXY_FORBIDDEN_MESSAGE = "HTTP 403";
-/** El `feature` de `unimplementedRpcError` cuando el caller no nombra la RPC. */
-export const GENERIC_RPC_FEATURE = "RPC";
+/** El `feature` de `unimplementedRpcError` cuando el caller no nombra la RPC (paridad con Python). */
+export const GENERIC_RPC_FEATURE = "esta llamada";
+/** La pista que cierra el `reason` de todo `UnimplementedError` de gRPC; mismo texto que el SDK Python. */
+export const UNIMPLEMENTED_IMAGE_HINT = "publica una imagen con una versión actual de rayd";
 export const PHASE_GATE_DETAILS: ReadonlySet<string> = new Set(["suspending", "terminating"]);
 export const KERNEL_GATE_PREFIX = "kernel not ready";
 export const H2_CLOSED_PREFIX = "http/2 stream closed";
@@ -176,15 +178,22 @@ export function sandboxTimeoutError(options: SandboxErrorOptions = {}): TimeoutE
 /**
  * Único punto que traduce un `Unimplemented` de gRPC a `UnimplementedError`:
  * el motivo es el `rawMessage` crudo del agente (lo que hoy manda un `rayd`
- * anterior a M9 o sin un kernel/RPC concretos) y la causa el `ConnectError`.
- * `translateRpcError` la usa con el `feature` genérico; `code.ts` la reutiliza
- * con el suyo para nombrar el kernel pedido sin duplicar esta tabla.
+ * anterior a M9 o sin un kernel/RPC concretos) más la pista de publicar una
+ * imagen actual, y la causa el `ConnectError`. Mismo contrato que
+ * `unimplemented_rpc_error` en Python. `translateRpcError` la usa con el
+ * `feature` genérico; `code.ts` la reutiliza con el suyo para nombrar el
+ * kernel pedido sin duplicar esta tabla.
  */
 export function unimplementedRpcError(
   connect: ConnectError,
   feature: string = GENERIC_RPC_FEATURE,
 ): UnimplementedError {
-  return new UnimplementedError(feature, connect.rawMessage, undefined, { cause: connect });
+  return new UnimplementedError(
+    feature,
+    `${connect.rawMessage}; ${UNIMPLEMENTED_IMAGE_HINT}`,
+    undefined,
+    { cause: connect },
+  );
 }
 
 /**
@@ -271,8 +280,7 @@ function ownErrorInCause(error: ConnectError): Error | undefined {
     cause instanceof SandboxError ||
     cause instanceof AuthenticationError ||
     cause instanceof QuotaExceededError ||
-    cause instanceof CapacityError ||
-    cause instanceof UnimplementedError
+    cause instanceof CapacityError
   ) {
     return cause;
   }

@@ -15,6 +15,7 @@ import {
 } from "../../src/e2b/compat.js";
 import {
   ConnectionConfig,
+  type ConnectionOpts,
   E2B,
   getSignature,
   Sandbox,
@@ -689,6 +690,64 @@ describe("connection options and log hygiene", () => {
     });
     expect(killSeen).toEqual([]);
   });
+
+  interface InstanceCallRow {
+    readonly name: string;
+    readonly call: (sbx: Sandbox, opts: ConnectionOpts) => Promise<unknown>;
+    readonly timeoutApplicable: boolean;
+    readonly prepare?: (plane: FakeControlPlane) => void;
+  }
+
+  const instanceCallRows: InstanceCallRow[] = [
+    { name: "kill", call: (sbx, opts) => sbx.kill(opts), timeoutApplicable: false },
+    {
+      name: "pause",
+      call: (sbx, opts) => sbx.pause(opts),
+      timeoutApplicable: false,
+      // `pause` sondea el plano hasta ver SUSPENDED; sin esto, se queda en
+      // el "PENDING" fijo de `shimSandbox()` hasta agotar `readyTimeoutMs`.
+      prepare: (plane) => plane.setStates(["RUNNING", "SUSPENDED"]),
+    },
+    { name: "getInfo", call: (sbx, opts) => sbx.getInfo(opts), timeoutApplicable: true },
+    { name: "isRunning", call: (sbx, opts) => sbx.isRunning(opts), timeoutApplicable: true },
+    {
+      name: "setTimeout",
+      call: (sbx, opts) => sbx.setTimeout(60_000, opts),
+      timeoutApplicable: true,
+    },
+    { name: "connect", call: (sbx, opts) => sbx.connect(opts), timeoutApplicable: true },
+    { name: "getMetrics", call: (sbx, opts) => sbx.getMetrics(opts), timeoutApplicable: true },
+    {
+      name: "updateNetwork",
+      call: (sbx, opts) => sbx.updateNetwork({}, opts),
+      timeoutApplicable: true,
+    },
+  ];
+
+  test.each(instanceCallRows)(
+    "$name warns for a key it never applies and follows its own requestTimeoutMs rule",
+    async ({ call, timeoutApplicable, prepare }) => {
+      // El resultado de la RPC no importa aquí (una imagen falsa puede rechazar
+      // updateNetwork, por ejemplo); sólo los avisos que #connection emite antes de llamarla.
+      const silently = async (action: Promise<unknown>): Promise<void> => {
+        await action.catch(() => undefined);
+      };
+
+      const { sandbox: withHeaders, plane: planeForHeaders } = await shimSandbox();
+      prepare?.(planeForHeaders);
+      const headerWarnings = spyWarnings();
+      await silently(call(withHeaders, { headers: { "x-trace": "1" } }));
+      expect(headerWarnings.map((warning) => warning.split(" ignorado")[0])).toEqual(["headers"]);
+
+      const { sandbox: withTimeout, plane: planeForTimeout } = await shimSandbox();
+      prepare?.(planeForTimeout);
+      const timeoutWarnings = spyWarnings();
+      await silently(call(withTimeout, { requestTimeoutMs: 5000 }));
+      expect(timeoutWarnings.map((warning) => warning.split(" ignorado")[0])).toEqual(
+        timeoutApplicable ? [] : ["requestTimeoutMs"],
+      );
+    },
+  );
 
   test("setIntegration with an explicit control plane is refused before any call", async () => {
     const { rayd, plane } = await fakes();

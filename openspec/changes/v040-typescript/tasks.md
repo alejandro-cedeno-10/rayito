@@ -27,10 +27,13 @@
 - [x] 1.7 Tests: `errors.test.ts` (`LifecycleUnsupportedError instanceof
       UnimplementedError`, not `SandboxError`/`InvalidArgumentError`),
       `transport-errors.test.ts` (Unimplemented → `UnimplementedError` with
-      `reason`/`cause`, the `SetTimeout` table unchanged),
-      `lifecycle.test.ts`/`sandbox-timeout.test.ts` (older-agent and
-      `SetTimeout` paths), `code.test.ts`/`e2b-shim.test.ts` (kernel-missing
-      is `UnimplementedError` naming `rayito-base-poly`),
+      `feature`/`reason`/`cause`, incl. the shared `GENERIC_RPC_FEATURE` +
+      `UNIMPLEMENTED_IMAGE_HINT` contract agreed with v040-python, and the
+      `SetTimeout` table's `LIFECYCLE_FEATURE_SET_TIMEOUT`/hierarchy),
+      `lifecycle.test.ts` (`connectExtension`'s `LIFECYCLE_FEATURE_CONNECT`
+      and `olderAgentError`'s `LIFECYCLE_FEATURE_CREATE`, both outside
+      `SandboxError`/`InvalidArgumentError`), `code.test.ts`/`e2b-shim.test.ts`
+      (kernel-missing is `UnimplementedError` naming `rayito-base-poly`),
       `metrics.test.ts` (`isHistoryUnavailable` by `instanceof`, a lookalike
       `UnimplementedError` no longer counts), `e2b-compat.test.ts`
       (`unimplementedLanguage`'s table) — `pnpm test` green
@@ -94,4 +97,49 @@
 - [x] 5.2 `cd clients/python && uv run pytest ../../scripts/tests -q`,
       `python3 scripts/check_pins.py`, `python3 scripts/check_hygiene.py`,
       all green (unaffected by this change, run for completeness)
-- [ ] 5.3 CI green on the PR (GitHub Actions; not runnable locally)
+- [x] 5.3 CI green on the PR (GitHub Actions; not runnable locally)
+
+## 6. Reviewer findings (PR #51, 2026-09-29)
+
+- [x] 6.1 `transport/errors.ts`: `GENERIC_RPC_FEATURE` becomes `"esta
+      llamada"` (was `"RPC"`) and `unimplementedRpcError`'s `reason` appends
+      the new `UNIMPLEMENTED_IMAGE_HINT` ("publica una imagen con una versión
+      actual de rayd") after the `ConnectError`'s raw message, agreed with
+      v040-python's `unimplemented_rpc_error` so both SDKs give the same
+      generic `UnimplementedError` message and `reason` for the same old-rayd
+      RPC; `code.ts`'s kernel-specific reuse of the helper picks up the same
+      hint. `transport-errors.test.ts` and this delta's "translation table"
+      scenario updated
+- [x] 6.2 `sandbox/code.ts`: `kernelFeature` returns the bare method name
+      when `language` is `undefined` (mirrors Python's `code_feature`);
+      `runCode` drops the extra `normalizeLanguage(options.language)` call
+      and reads `request.language`, like `createContext` does
+- [x] 6.3 `e2b/compat.ts`: `CONNECTION_OPT_KEYS` is now derived from an
+      object literal `satisfies Record<keyof ConnectionOpts, true>` (a
+      `ConnectionOpts` key added without updating this list now fails
+      `tsc`), with the always-ignored keys excluded once at the source
+      instead of filtered again inside `unappliedInstanceOpts`
+- [x] 6.4 `transport/errors.ts`: reverted the undocumented, untested
+      `cause instanceof UnimplementedError` branch added to
+      `ownErrorInCause` — nothing in this change makes an interceptor throw
+      `UnimplementedError` before the RPC, so the branch was dead code
+      outside the plan; `translateSetTimeoutError` and any
+      interceptor-wrapped error keep their pre-existing behaviour
+- [x] 6.5 `CHANGELOG.md`/`README.md`: removed `getMetricsHistory` from the
+      breaking-change list (it already raised `UnimplementedError`; only its
+      `cause` changed, from `InvalidArgumentError` to `UnimplementedError`,
+      now called out explicitly) and reworded the README to "única subclase
+      pública" (`MetricsHistoryUnavailableError` is also a subclass,
+      internal)
+- [x] 6.6 `lifecycle.test.ts`/`errors.test.ts`/`transport-errors.test.ts`:
+      added `feature`/hierarchy assertions for all three
+      `LifecycleUnsupportedError` paths (`connectExtension`,
+      `setTimeoutUnsupportedError`, `olderAgentError`); `e2b-shim.test.ts`
+      gained a parametrised test running every instance method
+      (`kill`/`pause`/`getInfo`/`isRunning`/`setTimeout`/`connect`/
+      `getMetrics`/`updateNetwork`) with one never-applicable key and
+      `requestTimeoutMs`
+- [x] 6.7 `tests/unit/fake/lifecycle.ts:116`: reverted to rayd's current
+      message ("timeout below 1 s"); the rayd-side Spanish message from
+      PR #50 (v040/rayd) is scope creep on an unmerged sibling and belongs to
+      that PR or the closing sweep, not here

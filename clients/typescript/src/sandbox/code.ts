@@ -470,9 +470,13 @@ export class ExecutionBuilder {
   }
 }
 
-/** El `feature` de un `UnimplementedError` de kernel: nombra el método y el `language` pedido. */
+/**
+ * El `feature` de un `UnimplementedError` de kernel: nombra el método y, si lo
+ * hay, el `language` pedido; sin `language` (el contexto por defecto, en
+ * Python) es sólo el nombre del método, como `code_feature` en Python.
+ */
 function kernelFeature(name: string, language: string | undefined): string {
-  return `${name}({ language: ${JSON.stringify(language)} })`;
+  return language === undefined ? name : `${name}({ language: ${JSON.stringify(language)} })`;
 }
 
 /**
@@ -499,10 +503,9 @@ export class CodeClient {
 
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
-    const language = normalizeLanguage(options.language);
     const request = buildExecuteRequest(code, {
       contextId,
-      language,
+      language: options.language,
       envs: options.envs,
       timeoutMs: options.timeoutMs,
     });
@@ -522,7 +525,7 @@ export class CodeClient {
         (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
         { service: CodeService, stream: false, reconnect: false, signal: options.signal },
       )
-      .catch((error: unknown) => withKernelFeature(error, "runCode", language));
+      .catch((error: unknown) => withKernelFeature(error, "runCode", request.language));
     try {
       return await this.#consume(
         opened,

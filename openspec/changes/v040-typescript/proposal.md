@@ -40,7 +40,12 @@ Three findings from `docs/research/2026-09-m9-architecture-review.md` land in
   through one shared helper, `unimplementedRpcError(connect, feature?)`; a
   caller that knows which RPC failed (`runCode`/`createCodeContext`'s
   missing-kernel case) passes its own `feature` to the same helper instead
-  of a copy of the table. `LifecycleUnsupportedError` becomes a subclass of
+  of a copy of the table. The default `feature` (`GENERIC_RPC_FEATURE`,
+  `"esta llamada"`) and the `"; " + UNIMPLEMENTED_IMAGE_HINT` suffix on
+  `reason` (`"publica una imagen con una versión actual de rayd"`) match the
+  Python SDK's `unimplemented_rpc_error` byte-for-byte, so the two SDKs give
+  the same generic `UnimplementedError` message for the same old-rayd RPC.
+  `LifecycleUnsupportedError` becomes a subclass of
   `UnimplementedError`, not of `InvalidArgumentError`/`SandboxError`.
   `historyErrorTranslator`'s own `MetricsHistoryUnavailableError` (a private
   subclass of `UnimplementedError`) replaces the reason-text comparison in
@@ -65,13 +70,18 @@ Three findings from `docs/research/2026-09-m9-architecture-review.md` land in
 
 ## Migración
 
-- Un `catch` alrededor de `runCode`/`createCodeContext` (kernel ausente),
-  cualquier otro RPC que un `rayd` anterior no implemente, o el historial de
-  métricas de una imagen anterior a M9, que comprobaba `error instanceof
-  InvalidArgumentError && error.grpcCode === Code.Unimplemented` o `error
-  instanceof SandboxError`, pasa a `error instanceof UnimplementedError`.
+- Un `catch` alrededor de `runCode`/`createCodeContext` (kernel ausente) o
+  cualquier otro RPC que un `rayd` anterior no implemente, que comprobaba
+  `error instanceof InvalidArgumentError && error.grpcCode ===
+  Code.Unimplemented` o `error instanceof SandboxError`, pasa a `error
+  instanceof UnimplementedError`.
 - `LifecycleUnsupportedError` (un plazo lógico contra un agente anterior a
   M9) ya no es `InvalidArgumentError` ni `SandboxError`; es `UnimplementedError`.
+- `getMetricsHistory` contra una imagen anterior a M9 ya lanzaba
+  `UnimplementedError` (sin cambios ahí); sólo cambia su `error.cause`, de
+  `InvalidArgumentError`/`SandboxError` con `grpcCode: Code.Unimplemented` a
+  `UnimplementedError`. Ninguna migración salvo para quien inspeccionara ese
+  `cause`.
 - `Sandbox.probedInfo`/`ProbedInfoOptions` eran internos de `rayito/e2b`
   (documentado así en su propio docblock); quien los llamara directamente
   pasa a `Sandbox.getInfo(sandboxId)` de `rayito/e2b`, que hace exactamente

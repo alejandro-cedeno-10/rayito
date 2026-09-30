@@ -124,7 +124,7 @@ de la jerarquía `AuthenticationError` (`proxyRejected`), `QuotaExceededError`,
 `CapacityError` y `UnimplementedError` (`feature`, `reason`, `doc`): algo que
 este sandbox no puede dar, nunca un fallo del sandbox en marcha.
 `LifecycleUnsupportedError` (un plazo lógico contra un agente anterior a M9)
-es su única subclase. `instanceof` funciona en ESM y en CommonJS.
+es su única subclase pública. `instanceof` funciona en ESM y en CommonJS.
 
 Opciones de `Sandbox.create`: `template` (o `RAYITO_TEMPLATE`), `templateVersion`,
 `timeoutMs` (3 600 000; máximo 28 800 000), `idle` (`{ maxIdleSeconds: 300,

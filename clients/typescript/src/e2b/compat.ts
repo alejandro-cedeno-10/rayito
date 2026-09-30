@@ -174,37 +174,46 @@ export function instanceUnappliedReason(call: string): string {
 }
 
 /**
- * Todas las claves de `ConnectionOpts` (interfaz de `connection.ts`): lo
- * único que `unappliedInstanceOpts` audita. Un `call` de instancia suele ser
- * un tipo más ancho (`SandboxConnectOpts.timeoutMs`, `SandboxPauseOpts.
- * keepMemory`...) cuyas claves propias no son opciones de conexión y no
- * cuentan aquí, aunque no estén en `applicable`.
+ * Todas las claves de `ConnectionOpts` (interfaz de `connection.ts`), vía un
+ * literal `satisfies Record<keyof ConnectionOpts, true>`: si esa interfaz
+ * gana o pierde una clave y esta lista no se actualiza, `tsc` falla en vez de
+ * descartar la clave nueva en silencio (el bug que este ítem corrige).
  */
-const CONNECTION_OPT_KEYS: ReadonlySet<keyof ConnectionOpts> = new Set([
-  "requestTimeoutMs",
-  "retries",
-  "logger",
-  "headers",
-  "proxy",
-  "signal",
-  "apiKey",
-  "validateApiKey",
-  "domain",
-  "debug",
-  "apiUrl",
-  "sandboxUrl",
-  "apiHeaders",
-  "region",
-  "controlPlane",
-  "accessToken",
-  "transport",
-]);
+const ALL_CONNECTION_OPT_KEYS = {
+  requestTimeoutMs: true,
+  retries: true,
+  logger: true,
+  headers: true,
+  proxy: true,
+  signal: true,
+  apiKey: true,
+  validateApiKey: true,
+  domain: true,
+  debug: true,
+  apiUrl: true,
+  sandboxUrl: true,
+  apiHeaders: true,
+  region: true,
+  controlPlane: true,
+  accessToken: true,
+  transport: true,
+} satisfies Record<keyof ConnectionOpts, true>;
+
+/**
+ * Las claves de `ConnectionOpts` que `unappliedInstanceOpts` audita: todas
+ * salvo las de `IGNORED_CONNECTION_OPTS`, que ya avisan por su cuenta y no
+ * deben avisar dos veces.
+ */
+const CONNECTION_OPT_KEYS: ReadonlySet<keyof ConnectionOpts> = new Set(
+  (Object.keys(ALL_CONNECTION_OPT_KEYS) as (keyof ConnectionOpts)[]).filter(
+    (name) => !Object.hasOwn(IGNORED_CONNECTION_OPTS, name),
+  ),
+);
 
 /**
  * Las claves de `ConnectionOpts` definidas en la llamada de instancia
  * (`sbx.<call>(opts)`, nunca el `bound` de la construcción) que no están en
- * `applicable` ni en `IGNORED_CONNECTION_OPTS` (esas ya avisan por su
- * cuenta), en orden alfabético: lo que hoy se descarta en silencio
+ * `applicable`, en orden alfabético: lo que hoy se descarta en silencio
  * (`headers`, `proxy`, `retries`, `logger`, `region`, `controlPlane`,
  * `accessToken`, `transport` según el método).
  */
@@ -215,11 +224,7 @@ export function unappliedInstanceOpts(
   return Object.keys(call)
     .filter((name) => CONNECTION_OPT_KEYS.has(name as keyof ConnectionOpts))
     .filter((name) => (call as Record<string, unknown>)[name] !== undefined)
-    .filter(
-      (name) =>
-        !applicable.has(name as keyof ConnectionOpts) &&
-        !Object.hasOwn(IGNORED_CONNECTION_OPTS, name),
-    )
+    .filter((name) => !applicable.has(name as keyof ConnectionOpts))
     .sort();
 }
 
