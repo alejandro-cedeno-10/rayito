@@ -12,10 +12,12 @@ import rayito
 from rayito._aws import translate_client_error
 from rayito._transport import (
     PROXY_FORBIDDEN_MARKER,
+    UNIMPLEMENTED_IMAGE_HINT,
     is_not_yet_reachable,
     is_proxy_forbidden,
     translate_rpc_error,
     translate_stream_error,
+    unimplemented_rpc_error,
 )
 from rayito.exceptions import (
     AuthenticationException,
@@ -147,6 +149,23 @@ def test_unimplemented_is_the_one_unimplemented_error_type() -> None:
     named = translate_rpc_error(exc, feature="run_code")
     assert isinstance(named, UnimplementedError)
     assert named.feature == "run_code"
+    assert UNIMPLEMENTED_IMAGE_HINT in named.reason
+
+
+def test_unimplemented_rpc_error_hint_is_opt_out_for_a_named_feature() -> None:
+    """La pista de publicar una imagen actual sólo tiene sentido para un RPC
+    de verdad ausente: un caller que ya sabe qué falta (un kernel, que nombra
+    `rayito-base-poly` en el propio detalle de `rayd`) pasa `hint=None` para
+    no repetir un consejo que no aplica (`rayd` ya está actualizado)."""
+    exc = FakeRpcError(
+        grpc.StatusCode.UNIMPLEMENTED,
+        details="el lenguaje bash no está instalado en esta imagen; usa rayito-base-poly",
+    )
+    generic = unimplemented_rpc_error(exc)
+    assert UNIMPLEMENTED_IMAGE_HINT in generic.reason
+    kernel = unimplemented_rpc_error(exc, "run_code(language='bash')", hint=None)
+    assert UNIMPLEMENTED_IMAGE_HINT not in kernel.reason
+    assert "rayito-base-poly" in kernel.reason
 
 
 def test_proxy_403_is_distinguished_from_rayd_permission_denied() -> None:

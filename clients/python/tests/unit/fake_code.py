@@ -49,7 +49,7 @@ from .fake_process import require_access_token
 DEFAULT_CONTEXT_ID = "default"
 DEFAULT_LANGUAGE = "python"
 KNOWN_LANGUAGES = frozenset({"python", "bash", "javascript", "typescript"})
-INVALID_LANGUAGE_MESSAGE = "language must be one of python, bash, javascript, typescript"
+INVALID_LANGUAGE_MESSAGE = "language debe ser python, bash, javascript o typescript"
 POLY_IMAGE = "rayito-base-poly"
 DEFAULT_CWD = "/home/user"
 KNOWN_DIRECTORIES = frozenset({"/", "/tmp", "/home/user"})
@@ -652,7 +652,7 @@ class FakeCodeService(code_pb2_grpc.CodeServiceServicer):
         if language not in self.languages:
             context.abort(
                 grpc.StatusCode.UNIMPLEMENTED,
-                f"language {language} is not installed in this image; use {POLY_IMAGE}",
+                f"el lenguaje {language} no está instalado en esta imagen; usa {POLY_IMAGE}",
             )
         return language
 

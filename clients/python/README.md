@@ -228,9 +228,8 @@ with Sandbox.create() as sbx:
 `language` acepta `python`, `bash`, `javascript` (alias `js`) y
 `typescript` (alias `ts`); los tres últimos viven en `rayito-base-poly`
 (JavaScript y TypeScript con el kernel de Deno, M9). En `rayito-base`
-cualquier kernel distinto de Python es `InvalidArgumentException` con
-`grpc_code` `UNIMPLEMENTED` nombrando `rayito-base-poly`
-(`docs/site/docs/kernels.md`).
+cualquier kernel distinto de Python es `UnimplementedError`, con un mensaje
+que nombra `rayito-base-poly` (`docs/site/docs/kernels.md`).
 
 ## PTY
 

@@ -458,13 +458,21 @@ def is_reconnectable(exc: grpc.RpcError) -> bool:
 
 
 def unimplemented_rpc_error(
-    exc: grpc.RpcError, feature: str = GENERIC_RPC_FEATURE
+    exc: grpc.RpcError,
+    feature: str = GENERIC_RPC_FEATURE,
+    *,
+    hint: str | None = UNIMPLEMENTED_IMAGE_HINT,
 ) -> UnimplementedError:
     """El `UnimplementedError` de la rama genérica `UNIMPLEMENTED`: el
-    detalle de `rayd` (para un kernel ausente nombra `rayito-base-poly`) más
-    la pista de publicar una imagen actual. `feature` deja que un caller
-    concreto (p. ej. `CodeService`) sea más preciso que "esta llamada"."""
-    return UnimplementedError(feature, f"{rpc_details(exc)}; {UNIMPLEMENTED_IMAGE_HINT}")
+    detalle de `rayd`, más `hint` si lo hay. `feature` deja que un caller
+    concreto (p. ej. `CodeService`) sea más preciso que "esta llamada". La
+    pista de publicar una imagen actual sólo tiene sentido para quien no
+    sabe ya qué imagen necesita (un RPC de verdad ausente); un kernel
+    ausente nombra `rayito-base-poly` en el propio detalle de `rayd`, y el
+    caller pasa `hint=None` para no repetir un consejo que ya no aplica
+    (`rayd` ya está actualizado)."""
+    message = rpc_details(exc) if hint is None else f"{rpc_details(exc)}; {hint}"
+    return UnimplementedError(feature, message)
 
 
 def translate_rpc_error(

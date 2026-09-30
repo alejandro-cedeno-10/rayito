@@ -29,10 +29,10 @@ from rayito._code_base import (
     StdoutCallback,
     build_create_context_request,
     build_execute_request,
-    code_feature,
     context_from_proto,
     execute_deadline,
     fallback_context,
+    kernel_unimplemented_error,
     language_default_context_id,
     reattach_failure,
     require_context_id,
@@ -41,7 +41,12 @@ from rayito._code_base import (
 from rayito._models import CodeContext, Execution
 from rayito._process_base import deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
-from rayito.exceptions import NotFoundException, SandboxException, TimeoutException
+from rayito.exceptions import (
+    NotFoundException,
+    SandboxException,
+    TimeoutException,
+    UnimplementedError,
+)
 from rayito.v1 import code_pb2, code_pb2_grpc
 
 if TYPE_CHECKING:
@@ -101,13 +106,15 @@ class CodeClient:
             on_result=on_result,
             on_error=on_error,
         )
-        call, first = self._sandbox._open_stream(
-            lambda stub: stub.Execute(request, timeout=deadline),
-            service=CODE_STUB,
-            stream=False,
-            reconnect=False,
-            feature=code_feature("run_code", language),
-        )
+        try:
+            call, first = self._sandbox._open_stream(
+                lambda stub: stub.Execute(request, timeout=deadline),
+                service=CODE_STUB,
+                stream=False,
+                reconnect=False,
+            )
+        except UnimplementedError as exc:
+            raise kernel_unimplemented_error(exc, "run_code", language) from exc.__cause__
         return self._consume(call, first, builder, deadline_at(deadline, time.monotonic))
 
     def create_context(
@@ -127,12 +134,16 @@ class CodeClient:
         sandbox; `envs` forman parte del
         entorno del kernel. Como máximo 8 contextos por sandbox."""
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
-        response = self._sandbox._code_call(
-            lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
-            request_timeout,
-            default_timeout=CONTEXT_REQUEST_TIMEOUT_SECONDS,
-            feature=code_feature("create_code_context", language),
-        )
+        try:
+            response = self._sandbox._code_call(
+                lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
+                request_timeout,
+                default_timeout=CONTEXT_REQUEST_TIMEOUT_SECONDS,
+            )
+        except UnimplementedError as exc:
+            raise kernel_unimplemented_error(
+                exc, "create_code_context", language
+            ) from exc.__cause__
         context_id = str(response.context_id)
         for listed in self.list_contexts(request_timeout=request_timeout):
             if listed.id == context_id:

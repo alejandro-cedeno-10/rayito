@@ -17,10 +17,18 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   este sandbox". Migración: cambia `except InvalidArgumentException`/`except
   SandboxException` alrededor de esas llamadas por `except
   rayito.UnimplementedError` (o `except LifecycleUnsupportedException`, que
-  ahora es subclase suya); `MetricsHistoryUnavailable` no cambia (ya era
-  `UnimplementedError`). `rayito.e2b` no cambia de superficie: seguía
-  lanzando `UnimplementedError` en los tres casos con el mismo `feature`,
-  `reason` y `doc`; sólo se simplifica su traducción interna.
+  ahora es subclase suya); `MetricsHistoryUnavailable` sigue siendo
+  `UnimplementedError` para quien la captura, pero su `__cause__` cambia: ya
+  no es la `RpcError` de gRPC directamente, sino el `UnimplementedError`
+  genérico de la tabla unaria (cuya propia `__cause__` sí es la `RpcError`;
+  `__cause__.__cause__` para llegar a ella). `rayito.e2b` no cambia de
+  superficie: seguía lanzando `UnimplementedError` en los tres casos con el
+  mismo `feature`, `reason` y `doc`; sólo se simplifica su traducción
+  interna. La pista "publica una imagen con una versión actual de rayd" de
+  `unimplemented_rpc_error` sólo sale para un RPC de verdad ausente: un
+  kernel ausente en `run_code`/`create_code_context` ya nombra
+  `rayito-base-poly` en el propio detalle de `rayd`, así que ya no repite un
+  consejo que no aplica (la imagen ya está actualizada).
 
 ### Changed
 

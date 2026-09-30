@@ -562,7 +562,7 @@ def test_unimplemented_language_always_wraps_with_the_poly_kernels_reason() -> N
     UnimplementedError`: ya no hay `grpc_code` que inspeccionar ni un `None`
     que propagar sin tocar."""
     native = UnimplementedError(
-        "run_code", "language typescript is not installed in this image; use rayito-base-poly"
+        "run_code", "el lenguaje typescript no está instalado en esta imagen; usa rayito-base-poly"
     )
     mapped = unimplemented_language(native, "run_code", "typescript")
     assert isinstance(mapped, UnimplementedError)

@@ -93,8 +93,9 @@ end=, max_points=)` lo devuelve en orden ascendente.
   `getMetricsHistory()`), en instancia y en la forma de clase, lanza
   `UnimplementedError` (no es `SandboxException`) con el motivo «la imagen es
   anterior a M9 (rayd sin MetricsHistory): publica una imagen M9», como las
-  transferencias y el plazo del servidor; el `UNIMPLEMENTED` de gRPC queda en
-  `__cause__` (TS `cause`).
+  transferencias y el plazo del servidor; el `UnimplementedError` genérico
+  queda en `__cause__` (TS `cause`), y el `UNIMPLEMENTED` de gRPC un nivel más
+  abajo, en `__cause__.__cause__` (TS `cause.cause`).
 
 ## Hechos del guest
 

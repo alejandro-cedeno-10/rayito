@@ -26,7 +26,7 @@ from rayito import (
 from rayito._limits import DEFAULT_PORT
 from rayito._process_base import STREAM_EOF
 from rayito._sandbox_base import ReconnectPoll
-from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER
+from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER, UNIMPLEMENTED_IMAGE_HINT
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -492,6 +492,8 @@ async def test_async_language_parity(sandbox: AsyncSandbox, fake_rayd: RaydEndpo
     assert not isinstance(excinfo.value, InvalidArgumentException)
     assert excinfo.value.feature == "run_code(language='javascript')"
     assert "rayito-base-poly" in str(excinfo.value)
+    assert UNIMPLEMENTED_IMAGE_HINT not in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, grpc.RpcError)
     with pytest.raises(UnimplementedError) as typescript:
         await sandbox.create_code_context(language="ts")
     assert typescript.value.feature == "create_code_context(language='typescript')"

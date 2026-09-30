@@ -24,7 +24,7 @@ from rayito import (
 )
 from rayito._limits import DEFAULT_PORT
 from rayito._sandbox_base import ReconnectPoll
-from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER
+from rayito._transport import PROXY_AUTH_KEY, PROXY_FORBIDDEN_MARKER, UNIMPLEMENTED_IMAGE_HINT
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -570,6 +570,8 @@ def test_language_not_shipped_is_unimplemented(sandbox: Sandbox, fake_rayd: Rayd
     assert not isinstance(excinfo.value, InvalidArgumentException)
     assert excinfo.value.feature == "run_code(language='bash')"
     assert "rayito-base-poly" in str(excinfo.value)
+    assert UNIMPLEMENTED_IMAGE_HINT not in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, grpc.RpcError)
     assert fake_rayd.code.lazy_contexts == []
     with pytest.raises(UnimplementedError) as created:
         sandbox.create_code_context(language="javascript")
