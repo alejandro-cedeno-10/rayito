@@ -1,0 +1,10 @@
+schema: spec-driven
+created: "2026-09-29"
+goal: >-
+  0.4.0 TypeScript group: UnimplementedError becomes the single type for
+  gRPC Unimplemented (LifecycleUnsupportedError its subclass, one shared
+  translation helper), instance connection options the E2B shim's
+  per-call variants silently dropped now warn, and probedInfo moves out of
+  the native Sandbox's public surface into rayito/e2b's own module.
+affected_areas:
+  - clients/typescript

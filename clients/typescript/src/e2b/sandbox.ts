@@ -17,13 +17,16 @@ import type {
 import type { ContextLike, CreateContextOptions, RunCodeOptions } from "../sandbox/code.js";
 import type { Commands, RequestOptions } from "../sandbox/commands.js";
 import type { Git } from "../sandbox/git.js";
+import { probeSandboxInfo } from "../sandbox/info-probe.js";
 import { validateHostPort } from "../sandbox/launch.js";
 import type { SandboxListPaginator } from "../sandbox/paginator.js";
 import { Sandbox as NativeSandbox } from "../sandbox/sandbox.js";
 import {
+  emitCompatWarning,
   emitIgnoredWarnings,
   historyImageError,
   infoFromNative,
+  instanceUnappliedReason,
   lifecycleImageError,
   mapCreateOptions,
   mapListOptions,
@@ -34,6 +37,7 @@ import {
   type NativeConnection,
   normalizedLanguageOrUnimplemented,
   splitConnectionOpts,
+  unappliedInstanceOpts,
   unimplementedLanguage,
   validateKeepMemory,
   validateOnResume,
@@ -94,6 +98,31 @@ function nativeConnection(bound: ConnectionOpts, call: ConnectionOpts): NativeCo
   const { connection, ignored } = splitConnectionOpts(mergeBoundOpts(bound, call));
   emitIgnoredWarnings(ignored);
   return connection;
+}
+
+/** Lo único que de verdad llega al nativo en cada método de instancia (auditado contra su cuerpo). */
+const SIGNAL_ONLY: ReadonlySet<keyof ConnectionOpts> = new Set(["signal"]);
+const SIGNAL_AND_TIMEOUT: ReadonlySet<keyof ConnectionOpts> = new Set([
+  "signal",
+  "requestTimeoutMs",
+]);
+
+/**
+ * Avisa, una vez por opción y en orden alfabético, de cada clave de `opts`
+ * que `sbx.<call>()` no aplica: el canal y el plano de este sandbox ya están
+ * construidos, así que `headers`, `proxy`, `retries`... de esta llamada se
+ * perderían en silencio si no avisaran (regla dura 7, paridad con el shim
+ * de Python).
+ */
+function warnUnappliedInstanceOpts(
+  call: string,
+  opts: ConnectionOpts,
+  applicable: ReadonlySet<keyof ConnectionOpts>,
+): void {
+  const reason = instanceUnappliedReason(call);
+  for (const name of unappliedInstanceOpts(opts, applicable)) {
+    emitCompatWarning(name, reason);
+  }
 }
 
 export class Sandbox implements AsyncDisposable {
@@ -250,7 +279,7 @@ export class Sandbox implements AsyncDisposable {
     sandboxId: string,
     opts: ConnectionOpts,
   ): Promise<SandboxInfo> {
-    return infoFromNative(await NativeSandbox.probedInfo(sandboxId, nativeConnection(bound, opts)));
+    return infoFromNative(await probeSandboxInfo(sandboxId, nativeConnection(bound, opts)));
   }
 
   protected static async isRunningFor(
@@ -362,7 +391,7 @@ export class Sandbox implements AsyncDisposable {
   // -------------------------------------------------------------- lifecycle
 
   async kill(opts: ConnectionOpts = {}): Promise<boolean> {
-    this.#connection(opts).signal?.throwIfAborted();
+    this.#connection(opts, "kill", SIGNAL_ONLY).signal?.throwIfAborted();
     return this.native.kill();
   }
 
@@ -373,7 +402,7 @@ export class Sandbox implements AsyncDisposable {
    * fallo de `GetNetwork` se propaga, como en Python.
    */
   async getInfo(opts: ConnectionOpts = {}): Promise<SandboxInfo> {
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "getInfo", SIGNAL_AND_TIMEOUT);
     connection.signal?.throwIfAborted();
     const info = await this.native.getInfo();
     const guest = await this.#guestNetwork(info, connection);
@@ -382,7 +411,7 @@ export class Sandbox implements AsyncDisposable {
 
   /** Un `Health` acotado por `requestTimeoutMs`. */
   isRunning(opts: ConnectionOpts = {}): Promise<boolean> {
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "isRunning", SIGNAL_AND_TIMEOUT);
     return this.native.isRunning({
       requestTimeoutMs: connection.requestTimeoutMs,
       signal: connection.signal,
@@ -391,7 +420,7 @@ export class Sandbox implements AsyncDisposable {
 
   /** Fija el plazo lógico en ahora + `timeoutMs` (puede acortarlo). */
   setTimeout(timeoutMs: number, opts: ConnectionOpts = {}): Promise<void> {
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "setTimeout", SIGNAL_AND_TIMEOUT);
     return this.native.setTimeout(timeoutMs, {
       requestTimeoutMs: connection.requestTimeoutMs,
       signal: connection.signal,
@@ -400,7 +429,7 @@ export class Sandbox implements AsyncDisposable {
 
   async pause(opts: SandboxPauseOpts = {}): Promise<boolean> {
     validateKeepMemory(opts.keepMemory);
-    this.#connection(opts).signal?.throwIfAborted();
+    this.#connection(opts, "pause", SIGNAL_ONLY).signal?.throwIfAborted();
     return this.native.pause();
   }
 
@@ -414,7 +443,7 @@ export class Sandbox implements AsyncDisposable {
    */
   async connect(opts: SandboxInstanceConnectOpts = {}): Promise<this> {
     validateOnResume(opts.onResume);
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "connect", SIGNAL_AND_TIMEOUT);
     await this.native.connect({
       timeoutMs: opts.timeoutMs,
       requestTimeoutMs: connection.requestTimeoutMs,
@@ -428,7 +457,7 @@ export class Sandbox implements AsyncDisposable {
    * serie vacía o una imagen anterior a M9 devuelven la instantánea actual.
    */
   async getMetrics(opts: SandboxMetricsOpts = {}): Promise<SandboxMetrics[]> {
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "getMetrics", SIGNAL_AND_TIMEOUT);
     const { requestTimeoutMs, signal } = connection;
     return metricsHistoryOrSnapshot(
       async () => {
@@ -466,7 +495,7 @@ export class Sandbox implements AsyncDisposable {
 
   async updateNetwork(network: SandboxNetworkUpdate, opts: ConnectionOpts = {}): Promise<void> {
     const { policy, allowInternetAccess } = mapNetworkUpdate(network);
-    const connection = this.#connection(opts);
+    const connection = this.#connection(opts, "updateNetwork", SIGNAL_AND_TIMEOUT);
     await this.native.updateNetwork(policy, {
       allowInternetAccess,
       requestTimeoutMs: connection.requestTimeoutMs,
@@ -552,8 +581,14 @@ export class Sandbox implements AsyncDisposable {
     return `Sandbox(${this.sandboxId})`;
   }
 
-  #connection(opts: ConnectionOpts): NativeConnection {
-    return nativeConnection(this.#bound, opts);
+  #connection(
+    opts: ConnectionOpts,
+    call: string,
+    applicable: ReadonlySet<keyof ConnectionOpts>,
+  ): NativeConnection {
+    const connection = nativeConnection(this.#bound, opts);
+    warnUnappliedInstanceOpts(call, opts, applicable);
+    return connection;
   }
 
   /** Sólo un `UnimplementedError` (imagen sin `GetNetwork`) cuenta como "leído sin política"; el resto se propaga. */

@@ -64,6 +64,12 @@ describe("rayito/e2b exports", () => {
       expect(typeof e2b.Sandbox[name], name).toBe("function");
     }
     expect(Object.keys(exported).filter((name) => name.includes("Pool"))).toEqual([]);
+    expect("probedInfo" in native.Sandbox).toBe(false);
+    expect("probedInfo" in e2b.Sandbox).toBe(false);
+    for (const key of ["probedInfo", "probeSandboxInfo", "ProbedInfoOptions"]) {
+      expect(key in exported).toBe(false);
+      expect(key in nativeExported).toBe(false);
+    }
   });
 
   test("the aliases are the native bindings, so instanceof holds across entries", () => {

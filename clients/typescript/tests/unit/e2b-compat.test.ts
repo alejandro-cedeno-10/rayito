@@ -6,7 +6,6 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Code } from "@connectrpc/connect";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AVAILABLE_KERNELS_REASON,
@@ -18,6 +17,7 @@ import {
   historyImageError,
   IGNORED_CONNECTION_OPTS,
   infoFromNative,
+  instanceUnappliedReason,
   LIST_METADATA_STATE_FEATURE,
   mapCreateOptions,
   mapLifecycle,
@@ -31,6 +31,7 @@ import {
   rejectUnsupportedNetworkKeys,
   settleAsyncCallback,
   splitConnectionOpts,
+  unappliedInstanceOpts,
   unimplementedLanguage,
   validateKeepMemory,
   validateOnResume,
@@ -62,7 +63,10 @@ import {
   MAX_LIFETIME_MS,
   defaultMaxLifetimeMs as nativeDefaultMaxLifetimeMs,
 } from "../../src/sandbox/lifecycle.js";
-import { HISTORY_UNIMPLEMENTED_REASON } from "../../src/sandbox/metrics.js";
+import {
+  HISTORY_UNIMPLEMENTED_REASON,
+  MetricsHistoryUnavailableError,
+} from "../../src/sandbox/metrics.js";
 
 const IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-2gb";
 const STARTED_AT = new Date(Date.UTC(2026, 8, 15, 14, 39, 2));
@@ -352,6 +356,36 @@ describe("connection options", () => {
     });
   });
 
+  test("unappliedInstanceOpts: only the connection keys outside applicable, never the ignored ones", () => {
+    const applicable = new Set<"signal" | "requestTimeoutMs">(["signal", "requestTimeoutMs"]);
+    expect(unappliedInstanceOpts({ signal: new AbortController().signal }, applicable)).toEqual([]);
+    expect(
+      unappliedInstanceOpts({ headers: { a: "1" }, proxy: "http://h:1", retries: 3 }, applicable),
+    ).toEqual(["headers", "proxy", "retries"]);
+    expect(unappliedInstanceOpts({ requestTimeoutMs: 1000 }, applicable)).toEqual([]);
+    expect(unappliedInstanceOpts({ requestTimeoutMs: 1000 }, new Set())).toEqual([
+      "requestTimeoutMs",
+    ]);
+    expect(unappliedInstanceOpts({ apiKey: "k", domain: "x" }, new Set())).toEqual([]);
+    expect(unappliedInstanceOpts({ logger: console, region: "us-east-1" }, new Set())).toEqual([
+      "logger",
+      "region",
+    ]);
+    expect(unappliedInstanceOpts({}, applicable)).toEqual([]);
+  });
+
+  test("unappliedInstanceOpts: empty headers are not given, like Python's headers={}", () => {
+    expect(unappliedInstanceOpts({ headers: {} }, new Set())).toEqual([]);
+    expect(unappliedInstanceOpts({ headers: {}, retries: 3 }, new Set())).toEqual(["retries"]);
+  });
+
+  test("instanceUnappliedReason names the instance and the static alternative", () => {
+    expect(instanceUnappliedReason("kill")).toBe(
+      "sbx.kill() usa el canal y el plano ya construidos de este sandbox; pásalo al crear o " +
+        "conectar, o usa Sandbox.kill(sandboxId, ...)",
+    );
+  });
+
   test("onResume and keepMemory", () => {
     expect(() => validateOnResume("restore")).not.toThrow();
     expect(() => validateOnResume(undefined)).not.toThrow();
@@ -583,19 +617,17 @@ describe("the kernel gate", () => {
     ).toContain("createCodeContext");
   });
 
-  test("unimplementedLanguage maps only an agent Unimplemented", () => {
-    const notShipped = new InvalidArgumentError(
-      "language typescript is not installed in this image; use rayito-base-poly",
-      { grpcCode: Code.Unimplemented },
+  test("unimplementedLanguage maps only a native UnimplementedError", () => {
+    const notShipped = new UnimplementedError(
+      'runCode({ language: "typescript" })',
+      "el lenguaje typescript no está instalado en esta imagen; usa rayito-base-poly",
     );
     const mapped = unimplementedLanguage(notShipped, "runCode", "typescript");
     expect(mapped).toBeInstanceOf(UnimplementedError);
     expect(mapped?.feature).toBe('runCode({ language: "typescript" })');
     expect(mapped?.reason).toBe(POLY_KERNELS_REASON);
     expect(mapped?.cause).toBe(notShipped);
-    const rejected = new InvalidArgumentError("language must be one of python, bash, javascript", {
-      grpcCode: Code.InvalidArgument,
-    });
+    const rejected = new InvalidArgumentError("language must be one of python, bash, javascript");
     expect(unimplementedLanguage(rejected, "runCode", "typescript")).toBeUndefined();
     expect(unimplementedLanguage(new SandboxError("x"), "runCode", "bash")).toBeUndefined();
     expect(unimplementedLanguage(new Error("x"), "runCode", "bash")).toBeUndefined();
@@ -655,7 +687,11 @@ describe("metricsHistoryOrSnapshot", () => {
     diskUsed: 30,
     diskTotal: 40,
   };
-  const Unavailable = new UnimplementedError("x", HISTORY_UNIMPLEMENTED_REASON, undefined);
+  const Unavailable = new MetricsHistoryUnavailableError(
+    "x",
+    HISTORY_UNIMPLEMENTED_REASON,
+    undefined,
+  );
 
   test("a non-empty history is returned as-is, unbounded or ranged, and snapshot is never called", async () => {
     const snapshot = vi.fn(async (): Promise<SandboxMetrics> => {

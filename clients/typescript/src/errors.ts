@@ -67,13 +67,6 @@ export class SandboxStateError extends SandboxError {}
 
 export class SandboxLifetimeError extends SandboxError {}
 
-/**
- * Se pidió un plazo lógico (`maxLifetimeMs`, `onTimeout`, `setTimeout`,
- * `connect({ timeoutMs })`) a un agente anterior a M9, que no lo impone
- * (ADR-011): hay que publicar una imagen M9 o prescindir del plazo.
- */
-export class LifecycleUnsupportedError extends InvalidArgumentError {}
-
 /** `take()` sobre un `SandboxPool` que no fue arrancado o ya fue cerrado. */
 export class PoolClosedError extends SandboxError {}
 
@@ -254,6 +247,15 @@ export class UnimplementedError extends Error {
     this.doc = doc;
   }
 }
+
+/**
+ * Se pidió un plazo lógico (`maxLifetimeMs`, `onTimeout`, `setTimeout`,
+ * `connect({ timeoutMs })`) a un agente anterior a M9, que no lo impone
+ * (ADR-011): hay que publicar una imagen M9 o prescindir del plazo. Es una
+ * subclase de `UnimplementedError` (paridad con Python): fuera de la
+ * jerarquía de `SandboxError`, nunca un `InvalidArgumentError`.
+ */
+export class LifecycleUnsupportedError extends UnimplementedError {}
 
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {

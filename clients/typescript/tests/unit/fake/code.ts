@@ -734,7 +734,7 @@ export class FakeCodeService {
     }
     if (!this.languages.has(language)) {
       throw new ConnectError(
-        `language ${language} is not installed in this image; use ${POLY_IMAGE}`,
+        `el lenguaje ${language} no está instalado en esta imagen; usa ${POLY_IMAGE}`,
         Code.Unimplemented,
       );
     }
