@@ -141,13 +141,11 @@ def unimplemented_triggers(sandbox: Sandbox) -> dict[str, Callable[[], object]]:
         "get_signature": lambda: get_signature("/home/user/a", "write"),
         "Template.build": lambda: Template.build("tpl", alias="x"),
         "Volume.create": lambda: Volume.create("vol"),
-        "Secret.list": lambda: Secret.list(),
+        "Secret.iam_token": lambda: Secret.iam_token(audience="a", token_type="JWT-SVID"),
         "E2B().Template": lambda: E2B().Template,
         "E2B().AsyncTemplate": lambda: E2B().AsyncTemplate,
         "E2B().Volume": lambda: E2B().Volume,
         "E2B().AsyncVolume": lambda: E2B().AsyncVolume,
-        "E2B().Secret": lambda: E2B().Secret,
-        "E2B().AsyncSecret": lambda: E2B().AsyncSecret,
     }
 
 

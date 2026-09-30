@@ -49,9 +49,6 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   getSignature:
     "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo " +
     "WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3",
-  Secret:
-    "necesita un almacén de secretos en un plano de control y un inyector de egress fuera del VM " +
-    "(SPEC.md §4; AWS_API_NOTES.md §7)",
   Template:
     "SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un Dockerfile y " +
     "rayito image publish",

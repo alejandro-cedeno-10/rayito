@@ -7,7 +7,11 @@ lanza el SDK nativo. El shim la construye con `doc=COMPAT_DOC_PATH`.
 `NotEnoughSpaceException` y `ServiceBusyException` son alias de las clases
 que Rayito sí lanza (`DiskFullException`, `CapacityException`);
 `TemplateException` y `BuildException` existen para que los `except` de un
-programa E2B sigan compilando.
+programa E2B sigan compilando. `SecretException` y `SecretNotFoundException`
+son las nativas (las lanza el `Secret`/`AsyncSecret` del shim); a diferencia
+de E2B, `SecretException` es un `SandboxException` y
+`SecretNotFoundException` también es la `NotFoundException` nativa.
+`RayitoCompatWarning` vive en `rayito.exceptions` y se re-exporta aquí.
 
 Divergencia documentada: en E2B `FileUploadException` hereda de
 `BuildException` porque sólo sale de construir templates; en Rayito hereda
@@ -29,8 +33,11 @@ from rayito.exceptions import (
     InvalidArgumentException,
     NotFoundException,
     RateLimitException,
+    RayitoCompatWarning,
     SandboxException,
     SandboxNotFoundException,
+    SecretException,
+    SecretNotFoundException,
     TimeoutException,
     UnimplementedError,
 )
@@ -52,12 +59,6 @@ class BuildException(Exception):
     `UnimplementedError`)."""
 
 
-class RayitoCompatWarning(UserWarning):
-    """Un kwarg de E2B que Rayito ignora (`api_key`, `domain`, `debug`,
-    `api_url`, `sandbox_url`, `validate_api_key`, `api_headers`,
-    `secure=False`). El aviso nombra el kwarg, nunca su valor."""
-
-
 __all__ = [
     "AuthenticationException",
     "BuildException",
@@ -73,6 +74,8 @@ __all__ = [
     "RayitoCompatWarning",
     "SandboxException",
     "SandboxNotFoundException",
+    "SecretException",
+    "SecretNotFoundException",
     "ServiceBusyException",
     "TemplateException",
     "TimeoutException",

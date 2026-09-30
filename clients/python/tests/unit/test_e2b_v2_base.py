@@ -21,7 +21,6 @@ from rayito._metrics_base import HISTORY_FEATURE, MetricsHistoryUnavailable
 from rayito._models import SandboxMetrics as NativeSandboxMetrics
 from rayito._transport import TransportSettings
 from rayito.e2b import (
-    AsyncSecret,
     AsyncTemplate,
     AsyncVolume,
     ConnectionConfig,
@@ -29,7 +28,6 @@ from rayito.e2b import (
     Sandbox,
     SandboxQuery,
     SandboxState,
-    Secret,
     Template,
     UnimplementedError,
     Volume,
@@ -119,7 +117,6 @@ def test_the_table_covers_d14() -> None:
         "volume_mounts",
         "Volume",
         "get_signature",
-        "Secret",
         "Template",
     }
     with pytest.raises(KeyError):
@@ -132,8 +129,6 @@ RESOURCE_CALLS = [
     (AsyncTemplate, "build_in_background", "Template"),
     (Volume, "create", "Volume"),
     (AsyncVolume, "get_info", "Volume"),
-    (Secret, "list", "Secret"),
-    (AsyncSecret, "iam_token", "Secret"),
 ]
 
 

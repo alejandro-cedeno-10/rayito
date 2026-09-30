@@ -97,6 +97,11 @@ E2B_V2_NAMES = [
     "RunCodeLanguage",
     "SandboxNotFoundException",
     "Secret",
+    "SecretInfo",
+    "SecretPaginator",
+    "AsyncSecretPaginator",
+    "SecretException",
+    "SecretNotFoundException",
     "ServiceBusyException",
     "Stderr",
     "Stdout",
@@ -127,6 +132,8 @@ E2B_EXCEPTION_NAMES = [
     "GitUpstreamException",
     "SandboxNotFoundException",
     "ServiceBusyException",
+    "SecretException",
+    "SecretNotFoundException",
 ]
 
 

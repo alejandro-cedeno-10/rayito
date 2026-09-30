@@ -75,10 +75,6 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "
             "firman en S3"
         ),
-        "Secret": (
-            "necesita un almacén de secretos en un plano de control y un inyector de egress "
-            "fuera del VM (SPEC.md §4; AWS_API_NOTES.md §7)"
-        ),
         "Template": (
             "SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un "
             "Dockerfile y rayito image publish"
@@ -99,16 +95,6 @@ TEMPLATE_METHODS: Final = (
     "to_dockerfile",
 )
 VOLUME_METHODS: Final = ("create", "connect", "destroy", "list", "get_info")
-SECRET_METHODS: Final = (
-    "create",
-    "update",
-    "get_info",
-    "list",
-    "exists",
-    "destroy",
-    "fill",
-    "iam_token",
-)
 
 
 def unimplemented(feature: str, reason: str | None = None) -> UnimplementedError:
@@ -140,7 +126,7 @@ class UnimplementedMember:
 
 
 def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> type[Any]:
-    """Una clase de E2B (`Template`, `Volume`, `Secret` y sus `Async*`) cuyo
+    """Una clase de E2B (`Template`, `Volume` y sus `Async*`) cuyo
     constructor y cuyos classmethods públicos lanzan `unimplemented(feature)`:
     nunca `AttributeError`."""
 
@@ -160,8 +146,6 @@ Template: type[Any] = unimplemented_resource("Template", "Template", TEMPLATE_ME
 AsyncTemplate: type[Any] = unimplemented_resource("AsyncTemplate", "Template", TEMPLATE_METHODS)
 Volume: type[Any] = unimplemented_resource("Volume", "Volume", VOLUME_METHODS)
 AsyncVolume: type[Any] = unimplemented_resource("AsyncVolume", "Volume", VOLUME_METHODS)
-Secret: type[Any] = unimplemented_resource("Secret", "Secret", SECRET_METHODS)
-AsyncSecret: type[Any] = unimplemented_resource("AsyncSecret", "Secret", SECRET_METHODS)
 
 
 def get_signature(*args: Any, **kwargs: Any) -> NoReturn:
