@@ -48,6 +48,7 @@ import {
   displayName,
   encodeMetadata,
   LIST_MAX_RESULTS,
+  latestVersion,
   resolveSecretId,
   type SecretRef,
   validatePrefix,
@@ -222,7 +223,7 @@ export function translateError(operation: keyof SecretsManagerApi, error: unknow
       return new SecretError(
         operation === "createSecret"
           ? "ya existe un secreto con ese nombre"
-          : "otro escritor creó ya esa versión con un valor distinto: vuelve a llamar a update",
+          : "esa versión ya existe con otro valor: si fue un update concurrente, vuelve a llamar a update; si se repite, rotaciones externas dejaron versiones de Rayito sin etiqueta y conviene crear un secreto nuevo",
         options,
       );
     case "LimitExceededException":
@@ -350,7 +351,7 @@ export class SecretStore {
     const description =
       options.metadata === undefined ? undefined : encodeMetadata(options.metadata);
     const described = await this.#describe(secretId);
-    const version = currentVersion(described.VersionIdsToStages) + 1;
+    const version = latestVersion(described.VersionIdsToStages) + 1;
     this.#warnIfFrequent(secretId);
     await this.#call("putSecretValue", (api) =>
       api.putSecretValue({

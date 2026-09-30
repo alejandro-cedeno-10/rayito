@@ -210,6 +210,13 @@ def current_version(stages: Mapping[str, Any] | None) -> int:
     return 0
 
 
+def latest_version(stages: Mapping[str, Any] | None) -> int:
+    """La mayor versión escrita por Rayito que aún lista `VersionIdsToStages`
+    (con cualquier etiqueta): `update()` escribe la siguiente. No basta la de
+    `AWSCURRENT`, que es 0 si una rotación externa escribió la actual."""
+    return max((version_from_id(str(version_id)) for version_id in stages or {}), default=0)
+
+
 def encode_metadata(metadata: Mapping[str, str] | None) -> str:
     """`rayito:v1:` + JSON compacto con claves ordenadas, validado contra los
     2048 caracteres de `Description` antes de llamar a AWS."""
@@ -349,7 +356,9 @@ def translate_error(operation: str, exc: BaseException) -> Exception:
         error = SecretException("ya existe un secreto con ese nombre", aws_code=code)
     elif code == "ResourceExistsException":
         error = SecretException(
-            "otro escritor creó ya esa versión con un valor distinto: vuelve a llamar a update",
+            "esa versión ya existe con otro valor: si fue un update concurrente, vuelve a "
+            "llamar a update; si se repite, rotaciones externas dejaron versiones de Rayito "
+            "sin etiqueta y conviene crear un secreto nuevo",
             aws_code=code,
         )
     elif code == "LimitExceededException":
@@ -497,7 +506,7 @@ class SecretStore:
         secret_value = validate_value(value)
         description = None if metadata is None else encode_metadata(metadata)
         described = self._describe(secret_id)
-        version = current_version(described.get("VersionIdsToStages")) + 1
+        version = latest_version(described.get("VersionIdsToStages")) + 1
         self._warn_if_frequent(secret_id)
         self._call(
             "put_secret_value",
@@ -909,6 +918,30 @@ def bind_secrets(
     if not refs and cache is None:
         return None
     return SecretBinding(refs=MappingProxyType(refs), cache=cache)
+
+
+def rebind_secrets(
+    current: SecretBinding | None,
+    secrets: Mapping[str, str | SecretRef] | None,
+    secret_cache: SecretCache | None,
+) -> SecretBinding | None:
+    """Lo que `connect(secrets=, secret_cache=)` deja en un handle ya
+    enlazado: `secrets=` sustituye las referencias; `secrets=None` las
+    conserva (y un `secret_cache=` sólo cambia la caché). `None` si no se
+    pidió nada: el handle no cambia."""
+    binding = bind_secrets(secrets, secret_cache)
+    if binding is None or secrets is not None or current is None:
+        return binding
+    return SecretBinding(refs=current.refs, cache=binding.cache)
+
+
+def relaunch_secrets(binding: SecretBinding | None) -> dict[str, Any]:
+    """Los `secrets=`/`secret_cache=` con los que `reincarnate()` relanza:
+    los que el handle tiene AHORA (tras `take()` o `connect(secrets=)`), no
+    los del `create()` original. Sólo referencias, nunca valores."""
+    if binding is None:
+        return {"secrets": None, "secret_cache": None}
+    return {"secrets": dict(binding.refs) or None, "secret_cache": binding.cache}
 
 
 CacheFactory: TypeAlias = "Callable[[], SecretCache]"

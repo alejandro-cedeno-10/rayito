@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { InvalidArgumentError, SecretNotFoundError } from "../../src/errors.js";
 import * as optional from "../../src/optional.js";
 import { SandboxPool } from "../../src/pool/pool.js";
+import { S3Prefix } from "../../src/sandbox/persistence.js";
+import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { SecretCache } from "../../src/secrets/cache.js";
 import {
   codeSecretsScope,
@@ -142,6 +144,38 @@ describe("secrets on the native Sandbox", () => {
     await sandbox.connect();
     await sandbox.commands.run("env");
     expect(rayd.process.startRequests.at(-1)?.process?.envs.OPENAI_API_KEY).toBe(GH_VALUE);
+  });
+
+  test("connect with only a secretCache keeps the handle secrets", async () => {
+    const { sandbox, rayd, api } = await sandboxWithSecrets();
+    const other = new SecretCache({ ttlSeconds: 60, store: new SecretStore({ client: api }) });
+    await sandbox.connect({ secretCache: other });
+    await sandbox.commands.run("env");
+    expect(rayd.process.startRequests.at(-1)?.process?.envs.OPENAI_API_KEY).toBe(SENTINEL_VALUE);
+  });
+
+  test("reincarnate relaunches with the secrets bound now, not the create-time ones", async () => {
+    const { api, cache } = secretRig();
+    const { sandbox } = await createTestSandbox({
+      create: {
+        executionRoleArn: "arn:aws:iam::123456789012:role/rayito-persist",
+        persist: new S3Prefix({ bucket: "my-bucket" }),
+        secrets: { OPENAI_API_KEY: SENTINEL_NAME },
+        secretCache: cache,
+      },
+    });
+    await sandbox.connect({ secrets: { GH_TOKEN: "gh" }, secretCache: cache });
+    const successor = {} as Sandbox;
+    const create = vi.spyOn(Sandbox, "create").mockResolvedValue(successor);
+    vi.spyOn(sandbox, "checkpointFiles").mockResolvedValue(
+      undefined as unknown as Awaited<ReturnType<Sandbox["checkpointFiles"]>>,
+    );
+    vi.spyOn(sandbox, "kill").mockResolvedValue(true);
+    expect(await sandbox.reincarnate()).toBe(successor);
+    const relaunch = create.mock.calls[0]?.[0];
+    expect(relaunch?.secrets).toEqual({ GH_TOKEN: expect.objectContaining({ name: "gh" }) });
+    expect(relaunch?.secretCache).toBe(cache);
+    expect(api.count("GetSecretValue")).toBeGreaterThan(0);
   });
 
   test("a missing secret fails before runMicrovm", async () => {

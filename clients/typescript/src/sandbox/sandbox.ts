@@ -49,7 +49,6 @@ import {
 } from "../models.js";
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
-import type { SecretCache } from "../secrets/cache.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -58,7 +57,6 @@ import {
   sharedSecretCache,
   warm,
 } from "../secrets/inject.js";
-import type { SecretRef } from "../secrets/names.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -275,14 +273,13 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
 
 /**
  * Los objetos de `create()` que `reincarnate()` reutiliza tal cual (no viajan
- * en `LaunchOptions`): `secrets` son sólo las referencias, nunca valores.
+ * en `LaunchOptions`). Los secretos no están aquí: `reincarnate()` relanza con
+ * los que el handle tenga en ese momento (tras `take()` o `connect()`).
  */
 interface LaunchContext {
   readonly controlPlane: ControlPlane;
   readonly transport: Partial<TransportSettings> | undefined;
   readonly logger: Logger | undefined;
-  readonly secrets: Readonly<Record<string, SecretRef>> | undefined;
-  readonly secretCache: SecretCache | undefined;
 }
 
 /**
@@ -597,8 +594,6 @@ export class Sandbox implements AsyncDisposable {
       controlPlane: plane,
       transport: options.transport,
       logger: options.logger,
-      secrets: secrets?.toRecord(),
-      secretCache: secrets?.cache,
     };
     if (options.persist !== undefined) {
       await sandbox.#bindAndRestore(
@@ -1323,8 +1318,8 @@ export class Sandbox implements AsyncDisposable {
         persist,
         persistTimeoutMs,
         transfer: this.transfer ?? null,
-        secrets: context.secrets,
-        secretCache: context.secretCache,
+        secrets: this.#secrets.binding?.toRecord(),
+        secretCache: this.#secrets.binding?.cache,
       });
     } catch (error) {
       throw withReincarnateNote(error, persist.uri);

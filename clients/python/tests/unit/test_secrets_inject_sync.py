@@ -24,7 +24,7 @@ from rayito import (
     SecretRef,
     SecretStore,
 )
-from rayito._secrets import code_secrets_scope
+from rayito._secrets import code_secrets_scope, relaunch_secrets
 from rayito.exceptions import InvalidArgumentException, SecretNotFoundException
 
 from .conftest import ACCESS_TOKEN, IMAGE_ARN, SANDBOX_ID, RaydEndpoint, StubbedControlPlane
@@ -116,9 +116,10 @@ def test_the_run_hook_payload_never_carries_the_value_or_the_name(
 def test_launch_options_and_repr_hold_only_references(sandbox: Sandbox) -> None:
     options = sandbox._launch_options
     assert options is not None
-    assert options.secrets == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
+    assert not hasattr(options, "secrets")
+    assert sandbox._secrets is not None
+    assert dict(sandbox._secrets.refs) == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
     rendered = repr(options)
-    assert "secrets=<1 keys>" in rendered
     assert SENTINEL_NAME not in rendered
     assert SENTINEL_VALUE not in rendered
     assert SENTINEL_VALUE not in repr(sandbox)
@@ -219,6 +220,60 @@ def test_connect_rebinds_and_none_keeps_the_handle_secrets(
     assert dict(fake_rayd.process.start_requests[-1].process.envs)["OPENAI_API_KEY"] == GH_VALUE
 
 
+def test_connect_with_only_a_cache_keeps_the_handle_secrets(
+    sandbox: Sandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    secret_api: FakeSecretsManager,
+) -> None:
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    other = SecretCache(
+        ttl_seconds=60, store=SecretStore(session=cast(Any, SpySession(api=secret_api)))
+    )
+    sandbox.connect(secret_cache=other)
+    assert sandbox._secrets is not None
+    assert sandbox._secrets.cache is other
+    assert dict(sandbox._secrets.refs) == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
+    sandbox.commands.run("env")
+    envs = dict(fake_rayd.process.start_requests[-1].process.envs)
+    assert envs["OPENAI_API_KEY"] == SENTINEL_VALUE
+
+
+def test_reincarnate_relaunches_with_the_secrets_bound_now(
+    sandbox: Sandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    cache: SecretCache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`connect(secrets=)` (o `take(secrets=)`) cambia lo que `reincarnate()`
+    relanza: los secretos salen del handle, no del `create()` original."""
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    sandbox.connect(secrets={"GH_TOKEN": "gh"}, secret_cache=cache)
+    launched: dict[str, Any] = {}
+    successor = object()
+
+    def fake_create(cls: type[Sandbox], /, **kwargs: Any) -> object:
+        launched.update(kwargs)
+        return successor
+
+    monkeypatch.setattr(Sandbox, "create", classmethod(fake_create))
+    monkeypatch.setattr(sandbox, "checkpoint_files", lambda **_: None)
+    monkeypatch.setattr(sandbox, "_persist", object())
+    # `kill` se restaura a mano: el fixture termina el sandbox de verdad.
+    sandbox.kill = lambda: True
+    try:
+        assert sandbox.reincarnate() is successor
+    finally:
+        del sandbox.kill
+    assert launched["secrets"] == {"GH_TOKEN": SecretRef("gh")}
+    assert launched["secret_cache"] is cache
+
+
 def test_a_missing_secret_fails_before_run_microvm(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, cache: SecretCache
 ) -> None:
@@ -286,7 +341,7 @@ def test_without_secrets_no_secretsmanager_client_is_ever_built(
         plain.commands.run("env")
         plain.run_code("1+1")
         assert plain._secrets is None
-        assert plain._launch_options is not None and plain._launch_options.secrets is None
+        assert relaunch_secrets(plain._secrets) == {"secrets": None, "secret_cache": None}
     finally:
         control_plane.microvms.add_response(
             "terminate_microvm", {}, expected_params={"microvmIdentifier": SANDBOX_ID}

@@ -67,7 +67,8 @@ async def test_three_commands_make_one_read(
         assert f"OPENAI_API_KEY={SENTINEL_VALUE}\n" in result.stdout
     assert secret_api.count("GetSecretValue") == 1
     assert sandbox._launch_options is not None
-    assert sandbox._launch_options.secrets == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
+    assert sandbox._secrets is not None
+    assert dict(sandbox._secrets.refs) == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
     assert SENTINEL_VALUE not in repr(sandbox._launch_options)
 
 
@@ -134,6 +135,64 @@ async def test_connect_rebinds(
     await sandbox.connect(secrets={"OPENAI_API_KEY": "gh"}, secret_cache=cache)
     await sandbox.commands.run("env")
     assert dict(fake_rayd.process.start_requests[-1].process.envs)["OPENAI_API_KEY"] == GH_VALUE
+
+
+async def test_connect_with_only_a_cache_keeps_the_handle_secrets(
+    sandbox: AsyncSandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    secret_api: FakeSecretsManager,
+) -> None:
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    other = SecretCache(
+        ttl_seconds=60, store=SecretStore(session=cast(Any, SpySession(api=secret_api)))
+    )
+    await sandbox.connect(secret_cache=other)
+    assert sandbox._secrets is not None
+    assert sandbox._secrets.cache is other
+    assert dict(sandbox._secrets.refs) == {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)}
+    await sandbox.commands.run("env")
+    envs = dict(fake_rayd.process.start_requests[-1].process.envs)
+    assert envs["OPENAI_API_KEY"] == SENTINEL_VALUE
+
+
+async def test_reincarnate_relaunches_with_the_secrets_bound_now(
+    sandbox: AsyncSandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    cache: SecretCache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    await sandbox.connect(secrets={"GH_TOKEN": "gh"}, secret_cache=cache)
+    launched: dict[str, Any] = {}
+    successor = object()
+
+    async def fake_create(cls: type[AsyncSandbox], /, **kwargs: Any) -> object:
+        launched.update(kwargs)
+        return successor
+
+    async def noop(*_: Any, **__: Any) -> None:
+        return None
+
+    async def fake_kill() -> bool:
+        return True
+
+    monkeypatch.setattr(AsyncSandbox, "create", classmethod(fake_create))
+    monkeypatch.setattr(sandbox, "checkpoint_files", noop)
+    monkeypatch.setattr(sandbox, "_persist", object())
+    # `kill` se restaura a mano: el fixture termina el sandbox de verdad.
+    sandbox.kill = fake_kill
+    try:
+        assert await sandbox.reincarnate() is successor
+    finally:
+        del sandbox.kill
+    assert launched["secrets"] == {"GH_TOKEN": SecretRef("gh")}
+    assert launched["secret_cache"] is cache
 
 
 async def test_a_missing_secret_fails_before_run_microvm(

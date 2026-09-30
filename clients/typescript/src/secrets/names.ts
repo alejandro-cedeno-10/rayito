@@ -107,6 +107,17 @@ export function currentVersion(
   return 0;
 }
 
+/**
+ * La mayor versión escrita por Rayito que aún lista `VersionIdsToStages`
+ * (con cualquier etiqueta): `update()` escribe la siguiente. No basta la de
+ * `AWSCURRENT`, que es 0 si una rotación externa escribió la actual.
+ */
+export function latestVersion(
+  stages: Readonly<Record<string, readonly string[] | undefined>> | undefined,
+): number {
+  return Math.max(0, ...Object.keys(stages ?? {}).map(versionFromId));
+}
+
 /** `rayito:v1:` + JSON compacto con claves ordenadas, validado contra los 2048 caracteres de `Description`. */
 export function encodeMetadata(metadata: Readonly<Record<string, string>> | undefined): string {
   const values = metadata ?? {};

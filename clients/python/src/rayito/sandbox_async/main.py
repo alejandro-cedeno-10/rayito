@@ -160,6 +160,8 @@ from rayito._secrets import (
     asecret_envs,
     awarm,
     bind_secrets,
+    rebind_secrets,
+    relaunch_secrets,
     shared_secret_cache,
 )
 from rayito._transfer_base import (
@@ -605,7 +607,6 @@ class AsyncSandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
-            secrets=None if binding is None else dict(binding.refs),
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -1371,8 +1372,7 @@ class AsyncSandbox:
                 **launch_kwargs(options),
                 persist=persist,
                 persist_timeout=persist_timeout,
-                secrets=options.secrets,
-                secret_cache=None if self._secrets is None else self._secrets.cache,
+                **relaunch_secrets(self._secrets),
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)
@@ -1514,7 +1514,7 @@ class AsyncSandbox:
         secret_cache: SecretCache | None,
     ) -> None:
         """Misma semántica que `Sandbox._rebind_secrets`."""
-        binding = bind_secrets(secrets, secret_cache)
+        binding = rebind_secrets(self._secrets, secrets, secret_cache)
         if binding is None:
             return
         self._secrets = await awarm(binding, self._default_secret_cache)

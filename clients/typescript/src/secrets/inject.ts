@@ -110,7 +110,7 @@ export class SecretBinding {
     Object.freeze(this);
   }
 
-  /** Las referencias como objeto plano (para `LaunchOptions` y `reincarnate()`). */
+  /** Las referencias como objeto plano (para `reincarnate()`, que relanza con las del handle). */
   toRecord(): Record<string, SecretRef> {
     return Object.fromEntries(this.refs);
   }
@@ -305,12 +305,20 @@ export class SecretEnvs {
     this.#binding = binding;
   }
 
-  /** Sustituye los secretos del handle tras resolverlos; sin nada pedido no toca nada. */
+  /**
+   * `connect({ secrets, secretCache })` sobre el handle: `secrets` sustituye
+   * las referencias; sin `secrets` se conservan (y un `secretCache` sólo
+   * cambia la caché). Sin nada pedido no toca nada.
+   */
   async rebind(options: SecretOptions): Promise<void> {
-    const binding = bindSecrets(options.secrets, options.secretCache);
-    if (binding !== undefined) {
-      this.#binding = await warm(binding, this.#defaultCache);
+    let binding = bindSecrets(options.secrets, options.secretCache);
+    if (binding === undefined) {
+      return;
     }
+    if (options.secrets === undefined && this.#binding !== undefined) {
+      binding = new SecretBinding(this.#binding.refs, binding.cache);
+    }
+    this.#binding = await warm(binding, this.#defaultCache);
   }
 
   /** Los `envs` de una llamada con los secretos ya resueltos desde la caché. */

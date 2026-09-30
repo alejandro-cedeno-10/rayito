@@ -74,6 +74,30 @@ describe("SecretCache", () => {
     expect(api.count("GetSecretValue")).toBe(5);
   });
 
+  test("invalidate keeps the in-flight read of other secrets shared", async () => {
+    const { api, cache } = rig();
+    api.put("rayito/other", "o");
+    api.getDelayMs = 50;
+    const first = cache.get("other");
+    cache.invalidate("openai");
+    const second = cache.get("other");
+    expect(await Promise.all([first, second])).toEqual(["o", "o"]);
+    expect(api.count("GetSecretValue")).toBe(1);
+  });
+
+  test("a read forgotten by invalidate does not drop its replacement", async () => {
+    const { api, cache } = rig();
+    api.getDelayMs = 20;
+    const stale = cache.get("openai");
+    cache.invalidate("openai");
+    api.getDelayMs = 60;
+    const fresh = cache.get("openai");
+    await stale;
+    const joined = cache.get("openai");
+    expect(await Promise.all([fresh, joined])).toEqual([SENTINEL_VALUE, SENTINEL_VALUE]);
+    expect(api.count("GetSecretValue")).toBe(2);
+  });
+
   test("versions are separate keys; AWSCURRENT is the default", async () => {
     const { api, cache } = rig();
     api.put("rayito/openai", "v2-value", "v2");

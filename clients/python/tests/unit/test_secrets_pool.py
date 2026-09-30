@@ -13,7 +13,8 @@ from typing import Any, cast
 
 import pytest
 
-from rayito import RayitoCompatWarning, Sandbox, SecretCache, SecretStore
+from rayito import RayitoCompatWarning, Sandbox, SecretCache, SecretRef, SecretStore
+from rayito._secrets import relaunch_secrets
 from rayito.exceptions import SecretNotFoundException
 
 from .fake_control_plane import FakeControlPlane
@@ -84,6 +85,23 @@ def test_take_with_secrets_never_touches_slot_records(
             assert SENTINEL_VALUE not in repr(record)
             assert SENTINEL_NAME not in repr(record)
         assert SENTINEL_VALUE not in repr(pool.stats())
+    finally:
+        sandbox.kill()
+
+
+def test_reincarnate_after_take_keeps_the_secrets_of_take(
+    make_pool: PoolFactory, cache: SecretCache
+) -> None:
+    """Las referencias de `take(secrets=)` viven en el handle, que es de donde
+    `reincarnate()` las toma (no de las opciones de lanzamiento de la plaza)."""
+    pool = make_pool(size=1).start()
+    wait_idle(pool, 1)
+    sandbox = pool.take(secrets={"OPENAI_API_KEY": SENTINEL_NAME}, secret_cache=cache)
+    try:
+        assert relaunch_secrets(sandbox._secrets) == {
+            "secrets": {"OPENAI_API_KEY": SecretRef(SENTINEL_NAME)},
+            "secret_cache": cache,
+        }
     finally:
         sandbox.kill()
 

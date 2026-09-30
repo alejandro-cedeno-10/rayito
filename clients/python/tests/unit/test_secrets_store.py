@@ -23,6 +23,7 @@ from rayito._secrets import (
     current_version,
     decode_metadata,
     encode_metadata,
+    latest_version,
     resolve_secret_id,
     version_from_id,
     version_token,
@@ -76,6 +77,54 @@ def test_current_version_reads_awscurrent_from_version_ids_to_stages() -> None:
     assert current_version(stages) == 2
     assert current_version({}) == 0
     assert current_version(None) == 0
+
+
+def test_latest_version_is_the_highest_rayito_token_with_any_label() -> None:
+    external = "c0ffee00-0000-4000-8000-000000000000"
+    stages = {
+        external: ["AWSCURRENT"],
+        version_token(2): ["AWSPREVIOUS"],
+        version_token(1): [],
+    }
+    assert current_version(stages) == 0
+    assert latest_version(stages) == 2
+    assert latest_version({}) == 0
+    assert latest_version(None) == 0
+
+
+def test_update_after_an_external_rotation_writes_past_the_rayito_versions() -> None:
+    """Una rotación externa deja `AWSCURRENT` en un `VersionId` ajeno: la
+    versión siguiente sale de la mayor de Rayito, no de la actual (si no,
+    `update()` repetiría el token 1 y chocaría con `ResourceExistsException`)."""
+    client = stubbed_client()
+    store = SecretStore(session=cast(Any, SpySession(api=client)))
+    with Stubber(client) as stub, warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        stub.add_response(
+            "describe_secret",
+            {
+                "ARN": arn_for("rayito/openai"),
+                "Name": "rayito/openai",
+                "CreatedDate": CREATED,
+                "VersionIdsToStages": {
+                    "c0ffee00-0000-4000-8000-000000000000": ["AWSCURRENT"],
+                    version_token(2): ["AWSPREVIOUS"],
+                },
+            },
+            expected_params={"SecretId": "rayito/openai"},
+        )
+        stub.add_response(
+            "put_secret_value",
+            {"ARN": arn_for("rayito/openai"), "VersionId": version_token(3)},
+            expected_params={
+                "SecretId": "rayito/openai",
+                "SecretString": "nuevo",
+                "ClientRequestToken": version_token(3),
+            },
+        )
+        info = store.update("openai", "nuevo")
+        stub.assert_no_pending_responses()
+    assert info.version == 3
 
 
 def test_metadata_round_trips_through_a_compact_prefixed_description() -> None:

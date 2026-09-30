@@ -164,6 +164,8 @@ from rayito._secrets import (
     SecretCache,
     SecretRef,
     bind_secrets,
+    rebind_secrets,
+    relaunch_secrets,
     secret_envs,
     shared_secret_cache,
     warm,
@@ -724,7 +726,6 @@ class Sandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
-            secrets=None if binding is None else dict(binding.refs),
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1651,8 +1652,7 @@ class Sandbox:
                 **launch_kwargs(options),
                 persist=persist,
                 persist_timeout=persist_timeout,
-                secrets=options.secrets,
-                secret_cache=None if self._secrets is None else self._secrets.cache,
+                **relaunch_secrets(self._secrets),
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)
@@ -1802,9 +1802,10 @@ class Sandbox:
         secrets: Mapping[str, str | SecretRef] | None,
         secret_cache: SecretCache | None,
     ) -> None:
-        """Sustituye los secretos del handle (tras resolverlos); con los dos
+        """Sustituye los secretos del handle (tras resolverlos) según
+        `rebind_secrets`: `secrets=None` conserva las referencias; con los dos
         a `None` no toca nada."""
-        binding = bind_secrets(secrets, secret_cache)
+        binding = rebind_secrets(self._secrets, secrets, secret_cache)
         if binding is None:
             return
         self._secrets = warm(binding, self._default_secret_cache)

@@ -17,6 +17,7 @@ import {
   DESCRIPTION_MAX_CHARS,
   decodeMetadata,
   encodeMetadata,
+  latestVersion,
   METADATA_PREFIX,
   resolveSecretId,
   SecretRef,
@@ -119,6 +120,30 @@ describe("SecretStore over a fake client", () => {
       ClientRequestToken: versionToken(2),
     });
     expect((await store.getInfo("a")).metadata).toEqual({ team: "ops" });
+  });
+
+  test("update after an external rotation writes past the highest Rayito version", async () => {
+    vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    const api = new FakeSecretsManager();
+    const store = new SecretStore({ client: api });
+    await store.create("a", "v1");
+    await store.update("a", "v2");
+    api.put("rayito/a", "rotated-outside", "c0ffee00-0000-4000-8000-000000000000");
+    const info = await store.update("a", "v3");
+    expect(info.version).toBe(3);
+    expect(api.requests.at(-1)?.[1]).toMatchObject({ ClientRequestToken: versionToken(3) });
+  });
+
+  test("latestVersion is the highest Rayito token with any label", () => {
+    const stages = {
+      "c0ffee00-0000-4000-8000-000000000000": ["AWSCURRENT"],
+      [versionToken(2)]: ["AWSPREVIOUS"],
+      [versionToken(1)]: [],
+    };
+    expect(currentVersion(stages)).toBe(0);
+    expect(latestVersion(stages)).toBe(2);
+    expect(latestVersion({})).toBe(0);
+    expect(latestVersion(undefined)).toBe(0);
   });
 
   test("list filters by the prefix and paginates; destroy is a forced delete", async () => {

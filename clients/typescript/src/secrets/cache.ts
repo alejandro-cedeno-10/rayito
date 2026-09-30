@@ -119,16 +119,22 @@ export class SecretCache {
       return inFlight;
     }
     const generation = this.#generation;
-    const flight = this.#store.readValue(ref).then(
+    const land = (): void => {
+      // Una lectura olvidada por `invalidate()` no borra la que la sustituyó.
+      if (this.#flights.get(key) === flight) {
+        this.#flights.delete(key);
+      }
+    };
+    const flight: Promise<string> = this.#store.readValue(ref).then(
       (value) => {
         if (generation === this.#generation) {
           this.#entries.set(key, { value, expiresAt: this.#now() + this.#ttlMs });
         }
-        this.#flights.delete(key);
+        land();
         return value;
       },
       (error: unknown) => {
-        this.#flights.delete(key);
+        land();
         throw error;
       },
     );
@@ -147,20 +153,29 @@ export class SecretCache {
     }
   }
 
-  /** Descarta los valores de `name` (todas sus versiones si es un string) o de todos. */
+  /**
+   * Descarta los valores de `name` (todas sus versiones si es un string) o de
+   * todos. Sólo se olvidan las lecturas en vuelo de ese secreto: las de otros
+   * siguen compartidas (una sola petición en vuelo por clave), y el contador
+   * de generación impide que una lectura empezada antes guarde su valor.
+   */
   invalidate(name?: SecretLike): void {
     this.#generation += 1;
-    this.#flights.clear();
     if (name === undefined) {
+      this.#flights.clear();
       this.#entries.clear();
       return;
     }
     const ref = asRef(name);
     const secretPart = `|${resolveSecretId(ref.name, this.#store.prefix)}|`;
     const exact = name instanceof SecretRef ? ref.selector : undefined;
-    for (const key of [...this.#entries.keys()]) {
-      if (key.includes(secretPart) && (exact === undefined || key.endsWith(`|${exact}`))) {
-        this.#entries.delete(key);
+    const matches = (key: string): boolean =>
+      key.includes(secretPart) && (exact === undefined || key.endsWith(`|${exact}`));
+    for (const map of [this.#entries, this.#flights]) {
+      for (const key of [...map.keys()]) {
+        if (matches(key)) {
+          map.delete(key);
+        }
       }
     }
   }
