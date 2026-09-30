@@ -95,4 +95,23 @@ Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
 proxy, `envs`, `metadata`, el body de los hooks; desde M9 tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
-credenciales de git. Sólo ids, códigos de estado, recuentos y duraciones.
+credenciales de git; desde M12 tampoco el JWE, las cabeceras, los cuerpos ni
+las rutas de lo que pasa por `rayito sandbox proxy`. Sólo ids, códigos de
+estado, recuentos y duraciones.
+
+## `rayito sandbox proxy` (M12)
+
+El proxy local (`rayito sandbox proxy <id> --port N`, [CLI](cli.md#proxy))
+acuña el mismo JWE que usa el canal gRPC del SDK, pero con alcance a **un
+solo puerto** (`PortSpec.single(N)`, nunca `allPorts`) y **nunca al 9000**
+de los lifecycle hooks (ADR-006): `validate_proxy_port` lo rechaza antes de
+tocar AWS. El listener se enlaza a `127.0.0.1` por defecto; `--bind` fuera
+de loopback exige `--allow-remote` y avisa por stderr. Quita cualquier
+cabecera `x-aws-proxy-*` que traiga el cliente antes de reenviar la
+petición, así que un cliente local no puede suplantar la autenticación del
+proxy de AWS. Riesgo residual, sin mitigación nueva ni número de amenaza
+propio (`SECURITY.md` T2/T3): mientras el proxy está en marcha, cualquier
+proceso que alcance el puerto local reenviado —de la máquina del operador,
+o de otra si se usó `--allow-remote`— tiene el mismo acceso al sandbox que
+el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
+primera petición que le llega (factura cómputo, como cualquier reanudación).

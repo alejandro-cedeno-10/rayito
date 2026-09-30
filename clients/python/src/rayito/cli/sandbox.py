@@ -25,6 +25,7 @@ import typer
 from rayito._limits import MICROVM_STATES, TERMINAL_STATES
 from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
 from rayito._payload import generate_access_token
+from rayito.cli import _proxy
 from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
 from rayito.cli._logs import (
     DEFAULT_EVENT_LIMIT,
@@ -415,6 +416,49 @@ def connect_command(
     finally:
         sandbox.close()
     raise typer.Exit(code)
+
+
+@sandbox_app.command("proxy")
+def proxy_command(
+    ctx: typer.Context,
+    sandbox_id: Annotated[str, typer.Argument(metavar="ID")],
+    port: Annotated[int, typer.Option("--port", help="Puerto del guest a exponer.")],
+    local_port: Annotated[
+        int | None,
+        typer.Option("--local-port", help="Puerto local donde escuchar; por defecto --port."),
+    ] = None,
+    bind: Annotated[
+        str, typer.Option("--bind", help="Dirección local donde escuchar.")
+    ] = _proxy.DEFAULT_BIND,
+    allow_remote: Annotated[
+        bool,
+        typer.Option("--allow-remote", help="Permite --bind fuera de 127.0.0.1/::1/localhost."),
+    ] = False,
+) -> None:
+    """Expone un puerto del guest en `http://<bind>:<local-port>` sin coste
+    de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos;
+    IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken`, ya en
+    `infra/iam.yaml`). Un sandbox `SUSPENDED` con auto-resume se despierta
+    con la primera petición (eso sí factura cómputo, más la lectura de
+    snapshot del resume). Ctrl-C para el refresher del JWE y cierra el
+    listener."""
+    if not _proxy.is_loopback_bind(bind):
+        if not allow_remote:
+            usage_failure(_proxy.BIND_NEEDS_ALLOW_REMOTE_MESSAGE)
+        echo(
+            f"rayito: aviso: --bind {bind} no es loopback; "
+            "cualquiera que llegue a este puerto usa el sandbox mientras el proxy esté vivo",
+            err=True,
+        )
+    clients = clients_of(ctx)
+    _proxy.run_proxy(
+        clients.control_plane,
+        sandbox_id=sandbox_id,
+        port=port,
+        local_port=port if local_port is None else local_port,
+        bind=bind,
+        on_ready=echo,
+    )
 
 
 @sandbox_app.command("exec")

@@ -139,6 +139,7 @@ rayito sandbox create [TEMPLATE] [--timeout S] [--metadata K=V]… [--env K=V]�
 rayito sandbox connect ID [--user U] [--cwd D] [--env K=V]… [--token-file F]
 rayito sandbox exec ID [--background] [--cwd D] [--user U] [--env K=V]… [--timeout 0] [--token-file F] -- CMD…
 rayito sandbox metrics ID [--follow] [--interval 5] [--token-file F]
+rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-remote]
 ```
 
 - `list` omite `TERMINATING` y `TERMINATED` (AWS los sigue listando unos 20
@@ -213,6 +214,44 @@ viaja al sandbox como `\x03`, nunca como SIGINT local) y reenvía los cambios
 de tamaño (`SIGWINCH`); en una consola de Windows traduce las flechas y
 sondea el tamaño cada segundo; con stdin por tubería reenvía los bytes tal
 cual y manda `\x04` al acabar. El código de salida es el del shell remoto.
+
+### `proxy`
+
+Expone un puerto del guest en `http://<bind>:<local-port>` (por defecto
+`--local-port` es igual a `--port`), para desarrollo local: curl, un
+navegador o cualquier cliente HTTP/1.1 (incluido WebSocket) contra un
+servidor que el sandbox ya sirve. Nunca hace falta el access token del
+sandbox, sólo el JWE del proxy.
+
+```bash
+rayito sandbox proxy microvm-<id> --port 8000
+# http://127.0.0.1:8000 → microvm-<id>:8000
+curl http://127.0.0.1:8000/
+```
+
+- Rechaza `--port 9000` (el puerto de los lifecycle hooks, ADR-006) y
+  cualquier valor fuera de 1-65535, sin llamar a AWS.
+- `--bind` fuera de `127.0.0.1`/`::1`/`localhost` necesita `--allow-remote`
+  (si no, salida de uso): cualquiera que llegue a ese puerto usa el sandbox
+  con el mismo acceso que quien lanzó el proxy.
+- Cabeceras: quita cualquier `x-aws-proxy-*` que traiga el cliente, fija
+  `Host` al endpoint del sandbox, añade `X-aws-proxy-auth` (el JWE vigente)
+  y `X-aws-proxy-port`, y fuerza `Connection: close` salvo en una petición
+  `Upgrade` (WebSocket). Nunca registra el JWE, las cabeceras, los cuerpos
+  ni las rutas de lo que pasa por el proxy ([Seguridad](security.md#rayito-sandbox-proxy-m12)).
+- El JWE se renueva a los 45 min con el mismo `TokenRefresher` que usa el
+  canal gRPC del SDK: no se acuña uno nuevo en cada petición.
+- Un sandbox `SUSPENDED` con auto-resume se despierta con la primera
+  petición que llega al proxy (eso sí factura cómputo, más una lectura de
+  snapshot al reanudar: [Límites](limits.md#tamano-cpuram) y
+  [Costes](cost.md) para el precio por GB).
+- $0 de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos,
+  cuota de 50 TPS por cuenta/región; ~1 acuñación cada 45 min por proxy en
+  marcha); sin recursos nuevos. Ctrl-C para el refresher y cierra el
+  listener.
+- IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el
+  MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`; nada nuevo que
+  desplegar para usar el proxy).
 
 ## `rayito doctor`
 
