@@ -27,6 +27,7 @@ from rayito._pty_base import (
     build_send_input_request,
     pid_from_pty_started,
 )
+from rayito._secrets import SecretRef
 from rayito.exceptions import NotFoundException, SandboxException
 from rayito.sandbox_async.commands import AsyncCommandHandle, StreamStarter
 from rayito.v1 import pty_pb2_grpc
@@ -54,8 +55,10 @@ class AsyncPty:
         on_data: PtyDataCallback | None = None,
         timeout: float | None = DEFAULT_PTY_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> AsyncPtyHandle:
         """Misma semántica que `Pty.create`; `on_data` corre en el loop."""
+        envs = await self._sandbox._secret_envs(envs, secrets)
         request = build_pty_start_request(
             size=size, user=user, cwd=cwd, envs=envs, shell=shell, timeout=timeout
         )

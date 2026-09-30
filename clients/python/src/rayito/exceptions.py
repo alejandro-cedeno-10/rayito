@@ -207,6 +207,23 @@ class GitUpstreamException(SandboxException):
     cómo fijarla (`set_upstream=True` o `remote`/`branch` explícitos)."""
 
 
+class SecretException(SandboxException):
+    """Error de un secreto de Secrets Manager (`SecretStore`, `SecretCache`,
+    `secrets=`, y el `Secret`/`AsyncSecret` del shim de E2B). El mensaje
+    nunca contiene el valor ni el nombre del secreto (los nombres son
+    selectores confidenciales, como en E2B); con `secrets=` nombra la clave
+    de la variable de entorno. `aws_code` es el `Code` de AWS, si lo hubo.
+
+    Divergencia con E2B: allí `SecretException` hereda de `Exception`; aquí
+    de `SandboxException`, para que un `except SandboxException` de Rayito
+    también la atrape."""
+
+
+class SecretNotFoundException(SecretException, NotFoundException):
+    """El secreto no existe o está programado para borrarse. También es la
+    `NotFoundException` nativa. Nunca se guarda en `SecretCache`."""
+
+
 class QuotaExceededException(Exception):
     def __init__(self, message: str, *, quota_code: str | None = None) -> None:
         super().__init__(message)
@@ -215,6 +232,14 @@ class QuotaExceededException(Exception):
 
 class CapacityException(Exception):
     pass
+
+
+class RayitoCompatWarning(UserWarning):
+    """Aviso de compatibilidad: un kwarg de E2B que Rayito ignora
+    (`api_key`, `domain`, `debug`, `api_url`, `sandbox_url`,
+    `validate_api_key`, `api_headers`, `secure=False`), o la primera vez que
+    un proceso usa `secrets=` (fase 1: el valor inyectado es visible para el
+    código del sandbox). El aviso nombra el kwarg, nunca su valor."""
 
 
 class UnimplementedError(NotImplementedError):

@@ -19,14 +19,14 @@ import logging
 import random
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from types import TracebackType
 from typing import Any, Final, Self
 
 import boto3
 
-from rayito._aws import ControlPlane, PortSpec
+from rayito._aws import ControlPlane, PortSpec, control_plane_session
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import SandboxInfo
 from rayito._payload import generate_access_token
@@ -55,6 +55,7 @@ from rayito._sandbox_base import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     resolve_template,
 )
+from rayito._secrets import SecretCache, SecretRef, awarm, bind_secrets, shared_secret_cache
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException, SandboxStateException
 from rayito.sandbox_async.main import AsyncSandbox
@@ -202,8 +203,23 @@ class AsyncSandboxPool:
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         reconnect_timeout: float = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> AsyncSandbox:
-        """Misma semántica que `SandboxPool.take`."""
+        """Misma semántica que `SandboxPool.take`, `secrets=` incluido.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` enlaza secretos al sandbox que sale del pool.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL de `SecretCache`, antes de reclamar la plaza.
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
+        Ejemplo:
+            sbx = await pool.take(secrets={"OPENAI_API_KEY": "openai"})
+        """
+        binding = await awarm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = await self._claim_ready_slot(wait)
         sandbox = (
             None
@@ -211,8 +227,16 @@ class AsyncSandboxPool:
             else await self._open_slot(record, ready_timeout, request_timeout, reconnect_timeout)
         )
         if sandbox is None:
-            return await self._fallback(ready_timeout, request_timeout, reconnect_timeout)
+            sandbox = await self._fallback(ready_timeout, request_timeout, reconnect_timeout)
+        if binding is not None:
+            sandbox._secrets = binding
         return sandbox
+
+    def _default_secret_cache(self) -> SecretCache:
+        """La caché compartida para la región y la sesión del pool."""
+        return shared_secret_cache(
+            self._plane.region, self._session or control_plane_session(self._plane)
+        )
 
     def stats(self) -> PoolStats:
         with self._state_lock:

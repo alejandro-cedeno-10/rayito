@@ -159,6 +159,15 @@ from rayito._sandbox_base import (
     validate_sandbox_id,
     with_guest_facts,
 )
+from rayito._secrets import (
+    SecretBinding,
+    SecretCache,
+    SecretRef,
+    bind_secrets,
+    secret_envs,
+    shared_secret_cache,
+    warm,
+)
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -468,6 +477,7 @@ class Sandbox:
         self._transfer: S3Staging | None = None
         self._session: boto3.session.Session | None = None
         self._transfers = Transfers(self)
+        self._secrets: SecretBinding | None = None
         self._git: Git | None = None
 
     # ------------------------------------------------------------------ create
@@ -506,6 +516,8 @@ class Sandbox:
         pool: SandboxPool | None = None,
         transfer: S3Staging | None = None,
         logger: logging.Logger | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Self:
         """`run-microvm` → token del proxy → sondeo de `Health` hasta
         `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
@@ -567,7 +579,35 @@ class Sandbox:
         (ADR-010): configuración del cliente, nada viaja al VM, también con
         `pool=`. Con `persist` en el mismo bucket, los prefijos deben ser
         disjuntos o es `InvalidArgumentException` antes de llamar a AWS.
+
+        `secrets={"ENV": "nombre" | SecretRef}` (M13a) guarda en el handle
+        sólo las referencias y entrega los valores como variables de entorno
+        de cada `commands.run`, `pty.create`, `run_code` (contextos Python) y
+        `create_code_context`, nunca en el `runHookPayload`, `metadata` ni
+        el entorno de la imagen. Se resuelven (y quedan en `SecretCache`)
+        antes de `run-microvm`: un secreto que falta falla sin lanzar un VM.
+        Se admite con `pool=` (lo enlaza `take()`).
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos de Secrets Manager como variables
+            de entorno; `secret_cache=SecretCache(ttl_seconds=300)` fija la
+            caché (si no, una compartida por región y sesión, TTL 300 s).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL (un acierto de caché no llama a AWS); ningún recurso
+            nuevo. Sin `secrets=` no se crea ningún cliente `secretsmanager`.
+        Coste aproximado: $0,05 por 10 000 llamadas + $0,40 por secreto y mes
+            (Secrets Manager, us-east-1, 2026-09-30); ≈ $0,04/mes por secreto
+            y proceso con el TTL por defecto.
+        IAM: `secretsmanager:GetSecretValue` sobre `...:secret:rayito/*` en las
+            credenciales del llamante (no el execution role).
+        Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
+        Ejemplo:
+            SecretStore().create("openai", key)
+            sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"})
+            sbx.commands.run("python agent.py")
         """
+        binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
         staging = resolve_staging(transfer)
@@ -610,12 +650,18 @@ class Sandbox:
                     ready_timeout=ready_timeout,
                     request_timeout=request_timeout,
                     reconnect_timeout=reconnect_timeout,
+                    secrets=secrets,
+                    secret_cache=secret_cache,
                 ),
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
             return taken
         plane = resolve_control_plane(control_plane, session, region)
+        binding = warm(
+            binding,
+            lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
+        )
         image_arn = plane.resolve_template_arn(resolve_template(template))
         plan = build_launch_plan(
             image_arn=image_arn,
@@ -652,6 +698,7 @@ class Sandbox:
             logger=logger,
         )
         sandbox._bind_transfer(staging, session)
+        sandbox._secrets = binding
         if launch.enforce:
             sandbox._apply_initial_network(launch)
         sandbox._launch_options = LaunchOptions(
@@ -677,6 +724,7 @@ class Sandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
+            secrets=None if binding is None else dict(binding.refs),
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -686,11 +734,20 @@ class Sandbox:
 
     @class_method_variant("_class_connect")
     def connect(
-        self, *, timeout: int | None = None, request_timeout: float | None = None
+        self,
+        *,
+        timeout: int | None = None,
+        request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Sandbox:
         """Reabre este handle: `get-microvm`, `resume-microvm` si está
         `SUSPENDED` sin auto-resume, el sondeo de `Health` y la extensión del
-        plazo de `Sandbox.connect(sandbox_id, timeout=)`. Devuelve `self`."""
+        plazo de `Sandbox.connect(sandbox_id, timeout=)`. Devuelve `self`.
+        `secrets=`/`secret_cache=` sustituyen los del handle (como en
+        `create()`, con el mismo bloque "Coste y activación"; `None` los
+        conserva)."""
+        self._rebind_secrets(secrets, secret_cache)
         info = self._control_plane.get_microvm(self.sandbox_id)
         if info.state in TERMINAL_STATES:
             raise terminal_state_error(info)
@@ -720,6 +777,8 @@ class Sandbox:
         persist: S3Prefix | None = None,
         transfer: S3Staging | None = None,
         logger: logging.Logger | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Self:
         """Se engancha a un sandbox existente.
         `persist` (con `name`) sólo enlaza el prefijo para `checkpoint_files()`;
@@ -737,12 +796,33 @@ class Sandbox:
         un sandbox sin `max_lifetime`/`on_timeout` (ADR-007) `timeout` es
         `InvalidArgumentException`, y sobre una imagen anterior a M9
         `LifecycleUnsupportedException`.
+
+        `secrets=`/`secret_cache=` como en `create()`: el handle guarda sólo
+        las referencias y cada comando resuelve desde la caché.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos como variables de entorno de cada
+            comando, PTY o celda de este handle.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL de `SecretCache` (300 s por defecto).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            sbx = Sandbox.connect(sandbox_id, secrets={"GITHUB_TOKEN": "gh"})
+            sbx.commands.run("gh repo list")
         """
         token = require_access_token(access_token)
         bound = None if persist is None else require_named_persist(persist)
         staging = resolve_staging(transfer)
         validate_staging_against_persist(staging, bound)
+        binding = bind_secrets(secrets, secret_cache)
         plane = resolve_control_plane(control_plane, session, region)
+        binding = warm(
+            binding,
+            lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
+        )
         info = plane.get_microvm(validate_sandbox_id(sandbox_id))
         if info.state in TERMINAL_STATES:
             raise terminal_state_error(info)
@@ -762,6 +842,7 @@ class Sandbox:
         )
         sandbox._persist = bound
         sandbox._bind_transfer(staging, session)
+        sandbox._secrets = binding
         try:
             sandbox._extend_after_readiness(timeout, request_timeout=None)
         except BaseException:
@@ -1440,6 +1521,7 @@ class Sandbox:
         envs: Mapping[str, str] | None = None,
         timeout: float | None = DEFAULT_CODE_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> Execution:
         """Ejecuta código en un kernel Jupyter con estado (`CodeService.Execute`).
 
@@ -1462,6 +1544,23 @@ class Sandbox:
         `context` es un `CodeContext` o su id; `None` es el contexto por
         defecto. Si el sandbox se pausa a mitad de la celda, el SDK espera al
         resume y continúa con `Reattach` sin volver a ejecutarla.
+
+        `secrets=` (y los del handle) viajan en `ExecuteRequest.envs` sólo
+        durante esta celda y sólo en contextos Python: con otro `language` es
+        `InvalidArgumentException` (usa `create_code_context(secrets=)`), y
+        los del handle no se añaden a celdas de otros lenguajes.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos como variables de entorno de la celda.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s); un acierto no llama a AWS.
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            sbx.run_code("import os; os.getenv('OPENAI_API_KEY') is not None",
+                         secrets={"OPENAI_API_KEY": "openai"})
         """
         return self._code_client.run_code(
             code,
@@ -1474,6 +1573,7 @@ class Sandbox:
             envs=envs,
             timeout=timeout,
             request_timeout=request_timeout,
+            secrets=secrets,
         )
 
     # ------------------------------------------------------------ persistence
@@ -1548,7 +1648,11 @@ class Sandbox:
         self.checkpoint_files(exclude=exclude, timeout=persist_timeout)
         try:
             successor = type(self).create(
-                **launch_kwargs(options), persist=persist, persist_timeout=persist_timeout
+                **launch_kwargs(options),
+                persist=persist,
+                persist_timeout=persist_timeout,
+                secrets=options.secrets,
+                secret_cache=None if self._secrets is None else self._secrets.cache,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)
@@ -1624,14 +1728,34 @@ class Sandbox:
         language: str | None = None,
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CodeContext:
         """Kernel nuevo con su propio scope, `cwd` y `envs` (máximo 8 por
         sandbox); `language` es `python`, `bash`, `javascript` (alias `js`)
         o `typescript` (alias `ts`). Los tres últimos sólo existen en
         `rayito-base-poly` (JS y TS con el kernel de Deno, arrancado al
-        pedirlo, nunca antes de `/ready`)."""
+        pedirlo, nunca antes de `/ready`). `secrets=` (y los del handle)
+        quedan en el entorno del kernel de este contexto, de cualquier
+        lenguaje, mientras viva.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos en el entorno del kernel nuevo.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            ctx = sbx.create_code_context(language="bash", secrets={"TOKEN": "gh"})
+            sbx.run_code("echo ${#TOKEN}", context=ctx)
+        """
         return self._code_client.create_context(
-            cwd=cwd, language=language, envs=envs, request_timeout=request_timeout
+            cwd=cwd,
+            language=language,
+            envs=envs,
+            request_timeout=request_timeout,
+            secrets=secrets,
         )
 
     def list_code_contexts(
@@ -1667,6 +1791,40 @@ class Sandbox:
         persistencia, transferencias): el del usuario si lo dio, el del
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
+
+    def _default_secret_cache(self) -> SecretCache:
+        """La caché compartida del proceso para la región y la sesión de
+        este handle; sólo se crea si alguna llamada usa `secrets=`."""
+        return shared_secret_cache(self._control_plane.region, self._session)
+
+    def _rebind_secrets(
+        self,
+        secrets: Mapping[str, str | SecretRef] | None,
+        secret_cache: SecretCache | None,
+    ) -> None:
+        """Sustituye los secretos del handle (tras resolverlos); con los dos
+        a `None` no toca nada."""
+        binding = bind_secrets(secrets, secret_cache)
+        if binding is None:
+            return
+        self._secrets = warm(binding, self._default_secret_cache)
+
+    def _secret_envs(
+        self,
+        envs: Mapping[str, str] | None,
+        secrets: Mapping[str, str | SecretRef] | None,
+        *,
+        include_bound: bool = True,
+    ) -> Mapping[str, str] | None:
+        """Los `envs` de una llamada con los secretos del handle y de la
+        llamada ya resueltos desde la caché; sin secretos, `envs` tal cual."""
+        return secret_envs(
+            envs,
+            bound=self._secrets,
+            secrets=secrets,
+            default_cache=self._default_secret_cache,
+            include_bound=include_bound,
+        )
 
     def _bind_transfer(
         self, staging: S3Staging | None, session: boto3.session.Session | None

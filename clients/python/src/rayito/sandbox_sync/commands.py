@@ -42,6 +42,7 @@ from rayito._process_base import (
     validate_pid,
 )
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._secrets import SecretRef
 from rayito.exceptions import (
     NotFoundException,
     SandboxException,
@@ -80,6 +81,7 @@ class Commands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult: ...
 
     @overload
@@ -97,6 +99,7 @@ class Commands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandHandle: ...
 
     @overload
@@ -114,6 +117,7 @@ class Commands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult | CommandHandle: ...
 
     def run(
@@ -130,6 +134,7 @@ class Commands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult | CommandHandle:
         """Ejecuta `cmd` con `/bin/bash -l -c` como `user` (uid 1000 por defecto).
 
@@ -144,7 +149,23 @@ class Commands:
         `output_truncated`. Un stream abierto cuenta como actividad para la
         política de idle del MicroVM. `request_timeout` acota los unarios que
         el handle haga después (`kill`, `send_stdin`, `close_stdin`).
+
+        Coste y activación
+        -------------------
+        Activa: `secrets={"ENV": "nombre" | SecretRef}` inyecta secretos de
+            Secrets Manager como variables de entorno de este comando (más los
+            del handle; una clave que también esté en `envs` es
+            `InvalidArgumentException`).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s): tres comandos seguidos = una
+            lectura. Ningún recurso nuevo.
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            sbx.commands.run("python agent.py", secrets={"OPENAI_API_KEY": "openai"})
         """
+        envs = self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
         )

@@ -35,6 +35,7 @@ from rayito._code_base import (
 from rayito._models import CodeContext, Execution
 from rayito._process_base import STREAM_EOF, deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._secrets import SecretRef, code_secrets_scope
 from rayito.exceptions import (
     NotFoundException,
     SandboxException,
@@ -71,9 +72,14 @@ class AsyncCodeClient:
         envs: Mapping[str, str] | None = None,
         timeout: float | None = DEFAULT_CODE_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> Execution:
         """Misma semántica que `CodeClient.run_code`; los callbacks corren en el loop."""
         context_id = resolve_context_id(context)
+        include_bound = code_secrets_scope(
+            language, context.language if isinstance(context, CodeContext) else None, secrets
+        )
+        envs = await self._sandbox._secret_envs(envs, secrets, include_bound=include_bound)
         request = build_execute_request(
             code, context_id=context_id, language=language, envs=envs, timeout=timeout
         )
@@ -103,8 +109,10 @@ class AsyncCodeClient:
         language: str | None = None,
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CodeContext:
         """Misma semántica que `CodeClient.create_context`."""
+        envs = await self._sandbox._secret_envs(envs, secrets)
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         try:
             response = await self._sandbox._code_call(

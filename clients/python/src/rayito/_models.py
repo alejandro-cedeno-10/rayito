@@ -858,6 +858,8 @@ class LaunchOptions:
 
     `access_token` y los valores de `envs` son secretos y se redactan en
     `repr`/`str`: sólo se muestra si hay token y cuántas variables hay.
+    `secrets` guarda sólo las referencias de `secrets=` (variable →
+    `SecretRef`), nunca valores, para que `reincarnate()` las reutilice.
     """
 
     template: str
@@ -882,14 +884,17 @@ class LaunchOptions:
     max_lifetime: int | None = None
     on_timeout: TimeoutActionName | None = None
     network: NetworkPolicy | None = None
+    secrets: dict[str, Any] | None = None
 
     def __repr__(self) -> str:
         token = None if self.access_token is None else REDACTED
         env_count = 0 if self.envs is None else len(self.envs)
+        secret_count = 0 if self.secrets is None else len(self.secrets)
         return (
             f"LaunchOptions(template={self.template!r}, "
             f"template_version={self.template_version!r}, timeout={self.timeout!r}, "
-            f"access_token={token!r}, envs=<{env_count} keys>)"
+            f"access_token={token!r}, envs=<{env_count} keys>, "
+            f"secrets=<{secret_count} keys>)"
         )
 
 

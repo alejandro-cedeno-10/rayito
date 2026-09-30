@@ -41,6 +41,7 @@ from rayito._code_base import (
 from rayito._models import CodeContext, Execution
 from rayito._process_base import deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._secrets import SecretRef, code_secrets_scope
 from rayito.exceptions import (
     NotFoundException,
     SandboxException,
@@ -76,6 +77,7 @@ class CodeClient:
         envs: Mapping[str, str] | None = None,
         timeout: float | None = DEFAULT_CODE_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> Execution:
         """Ejecuta `code` en el kernel del contexto (el `default` si se omite)
         o, con `language`, en el contexto por defecto de ese kernel
@@ -95,6 +97,10 @@ class CodeClient:
         hace que el agente interrumpa la ejecución.
         """
         context_id = resolve_context_id(context)
+        include_bound = code_secrets_scope(
+            language, context.language if isinstance(context, CodeContext) else None, secrets
+        )
+        envs = self._sandbox._secret_envs(envs, secrets, include_bound=include_bound)
         request = build_execute_request(
             code, context_id=context_id, language=language, envs=envs, timeout=timeout
         )
@@ -124,6 +130,7 @@ class CodeClient:
         language: str | None = None,
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CodeContext:
         """Arranca un kernel nuevo (≈ segundos; deadline de 90 s por defecto).
         `language` es `python` (por defecto), `bash`, `javascript` (alias
@@ -133,6 +140,7 @@ class CodeClient:
         nombrando `rayito-base-poly` en las demás). `cwd` debe existir en el
         sandbox; `envs` forman parte del entorno del kernel. Como máximo 8
         contextos por sandbox."""
+        envs = self._sandbox._secret_envs(envs, secrets)
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         try:
             response = self._sandbox._code_call(
