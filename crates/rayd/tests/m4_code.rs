@@ -986,7 +986,7 @@ async fn context_cap_and_bad_inputs() {
     assert_eq!(language.code(), Code::InvalidArgument);
     assert_eq!(
         language.message(),
-        "language must be one of python, bash, javascript, typescript"
+        "language debe ser python, bash, javascript o typescript"
     );
     let listed = harness.list_contexts().await;
     let ctx = listed[1].clone();

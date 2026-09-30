@@ -846,7 +846,7 @@ impl SidecarSupervisor {
 
 fn reply_error(error: Option<ReplyError>) -> CodeError {
     let Some(error) = error else {
-        return CodeError::Internal("sidecar reply without error".to_owned());
+        return CodeError::Internal("respuesta del sidecar sin error".to_owned());
     };
     match error.code {
         SidecarErrorCode::NotFound => CodeError::ContextNotFound,

@@ -10,6 +10,34 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- `LifecycleService.SetTimeout` con `timeout_ms=0`: la regla del timeout es
+  sólo del dominio, que juzga primero la fase. Un sandbox sin plazo responde
+  `FAILED_PRECONDITION lifecycle_unmanaged` (antes `INVALID_ARGUMENT
+  "timeout_ms must be positive"`) y uno terminando `FAILED_PRECONDITION
+  sandbox_timeout`; con plazo activo, 0 ms da el mismo `INVALID_ARGUMENT`
+  que 1-999 ms. Migración: ninguna para los SDK (validan >= 1 s antes del
+  RPC); un cliente gRPC propio debe tratar `lifecycle_unmanaged` como antes
+  trataba el `INVALID_ARGUMENT`.
+- Los mensajes de error del agente (status gRPC, `StreamError.message` y
+  motivo del `/run` rechazado) pasan al español; `timeout below 1 s` es ahora
+  `el timeout debe ser de al menos 1 s`. Los tokens que parsean los SDK
+  (`suspending`, `terminating`, `sandbox_timeout`, `lifecycle_unmanaged`,
+  `timeout beyond cap; cap_unix_ms=`, `kernel not ready`, `disk_reserve`,
+  `disk_full`, `metadata_unsupported`, `metadata_too_large`, los
+  `<reason>:` de las transferencias, `egress_update_failed`,
+  `egress_verify_failed`) no cambian y viven en `rayd_core::wire_tokens`.
+  Migración: quien compare mensajes por texto debe usar el código gRPC o
+  esos tokens.
+
+### Changed
+
+- `RegistryError::Full`/`Unknown` se convierten en `TransferError`
+  (`From`) y toman su texto de él en lugar de repetirlo; el cierre por
+  suspensión de un stream de proceso o PTY es un solo constructor de
+  dominio (`ProcessEnd::suspending`).
+
 ## [0.3.3] - 2026-09-29
 
 ### Changed

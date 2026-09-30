@@ -17,13 +17,11 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use rayd_core::sandbox_timeout::SANDBOX_TIMEOUT_CODE;
+use rayd_core::wire_tokens::SUSPENDING;
 use tokio_stream::Stream;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tonic::Status;
 
-/// The status message every stream-gate refusal and every suspend close
-/// carries; the SDK classifies it (`is_phase_gate`).
-pub const SUSPENDING_MESSAGE: &str = "suspending";
 const CLOSE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// Why the open client streams are being closed.
@@ -37,7 +35,7 @@ impl StreamCloseReason {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Suspending => SUSPENDING_MESSAGE,
+            Self::Suspending => SUSPENDING,
             Self::SandboxTimeout => SANDBOX_TIMEOUT_CODE,
         }
     }
@@ -226,7 +224,7 @@ pub trait SuspendAware {
 #[must_use]
 pub fn close_status(reason: StreamCloseReason) -> Status {
     match reason {
-        StreamCloseReason::Suspending => Status::unavailable(SUSPENDING_MESSAGE),
+        StreamCloseReason::Suspending => Status::unavailable(SUSPENDING),
         StreamCloseReason::SandboxTimeout => Status::failed_precondition(SANDBOX_TIMEOUT_CODE),
     }
 }

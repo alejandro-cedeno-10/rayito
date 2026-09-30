@@ -21,7 +21,7 @@ pub mod timeout;
 use std::fmt;
 
 pub use budget::{OUTPUT_BUDGET_HIGH_WATER, OutputBudget, SANDBOX_OUTPUT_BUDGET_BYTES};
-pub use error::{CwdRejection, ProcessError};
+pub use error::{CwdRejection, ProcessError, not_a_pty_message, out_of_range_message};
 pub use events::{EndStatus, OutputEvent, OutputStream, ProcessEnd, ProcessEvent, StreamFailure};
 pub use identity::{ProcessIdentity, UserPolicy, resolve_username};
 pub use limits::{CPU_LIMIT_KILL_GRACE_SECONDS, ResourceLimits, StdinMode};

@@ -25,6 +25,7 @@ use super::policy::{LifecycleSpec, TimeoutAction, TimeoutMode, TimeoutPolicy};
 use super::{AUTO_RESUME_MIN_TIMEOUT, CAP_MARGIN, MIN_SET_TIMEOUT, SET_TIMEOUT_RPC_PATH};
 use crate::auth::ANONYMOUS_RPC_PATH;
 use crate::clock::ClockReading;
+use crate::wire_tokens::{BEYOND_CAP_PREFIX, CAP_UNIX_MS, LIFECYCLE_UNMANAGED, SANDBOX_TIMEOUT};
 
 /// The phase `Health` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -109,13 +110,13 @@ pub struct LifecycleView {
 /// or payload content.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxTimeoutError {
-    #[error("lifecycle_unmanaged")]
+    #[error("{LIFECYCLE_UNMANAGED}")]
     Unmanaged,
-    #[error("sandbox_timeout")]
+    #[error("{SANDBOX_TIMEOUT}")]
     Expired,
-    #[error("timeout below 1 s")]
+    #[error("el timeout debe ser de al menos 1 s")]
     InvalidTimeout,
-    #[error("timeout beyond cap; cap_unix_ms={cap_unix_ms}")]
+    #[error("{BEYOND_CAP_PREFIX}; {CAP_UNIX_MS}={cap_unix_ms}")]
     BeyondCap { cap_unix_ms: i64 },
 }
 
@@ -532,6 +533,39 @@ mod tests {
             Err(SandboxTimeoutError::InvalidTimeout)
         );
         assert_eq!(view_at(&machine, secs(1)).extensions, 0);
+    }
+
+    /// The phase rules run before the size rule, so a zero timeout answers
+    /// what the phase says and only a phase that could move the deadline
+    /// reports the invalid timeout; the deadline never moves.
+    #[test]
+    fn a_zero_timeout_is_judged_after_the_phase() {
+        let mut terminating = kill(60, 900);
+        terminating.tick(secs(60), false, false);
+        let mut grace = kill(60, 900);
+        grace.resumed(secs(100), true);
+        let mut expired = pause(60, 900, false);
+        expired.tick(secs(60), false, false);
+        let cases = [
+            (
+                SandboxTimeout::new(&TimeoutSettings::default()),
+                SandboxTimeoutError::Unmanaged,
+            ),
+            (terminating, SandboxTimeoutError::Expired),
+            (kill(60, 900), SandboxTimeoutError::InvalidTimeout),
+            (grace, SandboxTimeoutError::InvalidTimeout),
+            (expired, SandboxTimeoutError::InvalidTimeout),
+        ];
+        for (mut machine, expected) in cases {
+            let before = view_at(&machine, secs(101));
+            for mode in [TimeoutMode::Exact, TimeoutMode::AtLeast] {
+                assert_eq!(
+                    machine.set_timeout(reading_at(secs(101)), mode, Duration::ZERO),
+                    Err(expected)
+                );
+            }
+            assert_eq!(view_at(&machine, secs(101)), before);
+        }
     }
 
     #[test]

@@ -213,7 +213,9 @@ impl ContextRegistry {
     pub fn register(&mut self, entry: ContextEntry) -> Result<(), CodeError> {
         let id = entry.info.context_id.clone();
         if self.entries.contains_key(&id) {
-            return Err(CodeError::Internal("context already registered".to_owned()));
+            return Err(CodeError::Internal(
+                "el contexto ya está registrado".to_owned(),
+            ));
         }
         if !id.is_default() && self.entries.len() >= self.max_contexts {
             return Err(CodeError::TooManyContexts {
@@ -437,7 +439,7 @@ mod tests {
                 &defaults,
                 "/home/user",
             ),
-            Err(CodeError::InvalidCwd("is not an absolute path".to_owned()))
+            Err(CodeError::InvalidCwd("no es una ruta absoluta".to_owned()))
         );
         assert_eq!(
             plan_context(

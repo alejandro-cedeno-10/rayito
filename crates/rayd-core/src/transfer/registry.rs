@@ -12,7 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use super::barrier::BarrierTicket;
-use super::error::TransferFailure;
+use super::error::{TransferError, TransferFailure};
 use super::url_policy::TransferDirection;
 use super::{TRANSFER_MAX_ACTIVE, TRANSFER_MAX_RUNNING, TRANSFER_RETAINED, TRANSFER_RETAINED_MAX};
 use crate::code::{RandomError, RandomSource};
@@ -143,11 +143,13 @@ impl Default for RegistryLimits {
     }
 }
 
+/// `Full` and `Unknown` are the refusals a caller sees; their text is the
+/// `TransferError` they become, never a copy of it.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryError {
-    #[error("demasiadas transferencias activas")]
+    #[error("{}", TransferError::Full)]
     Full,
-    #[error("transferencia desconocida")]
+    #[error("{}", TransferError::UnknownTransfer)]
     Unknown,
     #[error("ya hay {max} transferencias moviendo bytes")]
     RunningFull { max: usize },

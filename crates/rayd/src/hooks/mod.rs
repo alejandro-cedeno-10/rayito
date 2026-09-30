@@ -53,6 +53,7 @@ use rayd_core::hooks::{
 };
 use rayd_core::lifecycle::{Hook, LifecycleError, Transition};
 use rayd_core::session::{RunHookInput, RunOutcome, SandboxSession};
+use rayd_core::wire_tokens::TERMINATING;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -548,11 +549,11 @@ async fn terminate(State(state): State<HooksState>) -> Response {
         audit(
             &state.session,
             Hook::Terminate,
-            "terminating",
+            TERMINATING,
             HookCallOutcome::Nominal,
         );
         schedule_shutdown(state.shutdown.clone());
-        "terminating".to_owned()
+        TERMINATING.to_owned()
     })
     .await
 }

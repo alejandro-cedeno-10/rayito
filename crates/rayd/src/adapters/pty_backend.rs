@@ -108,7 +108,7 @@ mod unix {
             let child = command.spawn().map_err(|error| spawn_error(&error))?;
             let pid = child
                 .id()
-                .ok_or_else(|| SpawnError::Failed("child has no pid".to_owned()))?;
+                .ok_or_else(|| SpawnError::Failed("el hijo no tiene pid".to_owned()))?;
             let master = PtyMaster::new(master)
                 .map_err(|error| SpawnError::Failed(io_error_name(&error)))?;
             Ok(NixPty {
@@ -124,7 +124,7 @@ mod unix {
             let signal =
                 Signal::try_from(signal).map_err(|error| SignalError::Failed(errno_name(error)))?;
             let group = i32::try_from(pid.0)
-                .map_err(|_| SignalError::Failed("pid does not fit pid_t".to_owned()))?;
+                .map_err(|_| SignalError::Failed("el pid no cabe en pid_t".to_owned()))?;
             killpg(nix::unistd::Pid::from_raw(group), signal).map_err(|error| match error {
                 Errno::ESRCH => SignalError::NoSuchProcess,
                 other => SignalError::Failed(errno_name(other)),

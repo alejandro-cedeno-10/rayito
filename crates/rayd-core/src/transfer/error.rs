@@ -6,9 +6,12 @@
 
 use thiserror::Error;
 
+use super::registry::RegistryError;
 use super::url_policy::UrlPolicyError;
 use crate::filesystem::FilesystemError;
 use crate::lifecycle::HookPhase;
+use crate::wire_tokens::transfer as token;
+use crate::wire_tokens::transfer::{FILE_CHANGED, TOO_LARGE_FOR_PUT};
 
 /// The closed `StreamError` codes a transfer state can carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,25 +75,25 @@ impl FailureReason {
     #[must_use]
     pub fn token(self) -> &'static str {
         match self {
-            Self::Expired => "expired",
-            Self::NoObject => "no_object",
-            Self::AccessDenied => "access_denied",
-            Self::SignatureRejected => "signature_rejected",
-            Self::WrongRegion => "wrong_region",
-            Self::BucketMissing => "bucket_missing",
-            Self::S3Unavailable => "s3_unavailable",
-            Self::ForbiddenAddress => "forbidden_address",
-            Self::UnexpectedResponse => "unexpected_response",
-            Self::NoContentLength => "no_content_length",
-            Self::TooLarge => "too_large",
-            Self::DiskReserve => "disk_reserve",
-            Self::DiskFull => "disk_full",
-            Self::ChecksumMismatch => "checksum_mismatch",
-            Self::FileShrank => "file_shrank",
-            Self::Cancelled => "cancelled",
-            Self::DestinationRejected => "destination_rejected",
-            Self::MetadataUnsupported => "metadata_unsupported",
-            Self::MetadataTooLarge => "metadata_too_large",
+            Self::Expired => token::EXPIRED,
+            Self::NoObject => token::NO_OBJECT,
+            Self::AccessDenied => token::ACCESS_DENIED,
+            Self::SignatureRejected => token::SIGNATURE_REJECTED,
+            Self::WrongRegion => token::WRONG_REGION,
+            Self::BucketMissing => token::BUCKET_MISSING,
+            Self::S3Unavailable => token::S3_UNAVAILABLE,
+            Self::ForbiddenAddress => token::FORBIDDEN_ADDRESS,
+            Self::UnexpectedResponse => token::UNEXPECTED_RESPONSE,
+            Self::NoContentLength => token::NO_CONTENT_LENGTH,
+            Self::TooLarge => token::TOO_LARGE,
+            Self::DiskReserve => token::DISK_RESERVE,
+            Self::DiskFull => token::DISK_FULL,
+            Self::ChecksumMismatch => token::CHECKSUM_MISMATCH,
+            Self::FileShrank => token::FILE_SHRANK,
+            Self::Cancelled => token::CANCELLED,
+            Self::DestinationRejected => token::DESTINATION_REJECTED,
+            Self::MetadataUnsupported => token::METADATA_UNSUPPORTED,
+            Self::MetadataTooLarge => token::METADATA_TOO_LARGE,
         }
     }
 
@@ -232,9 +235,9 @@ pub enum TransferError {
     Request(RequestRejection),
     #[error("{0}")]
     Filesystem(FilesystemError),
-    #[error("too_large_for_put: un PUT admite hasta 5 GiB; usa multiparte")]
+    #[error("{TOO_LARGE_FOR_PUT}: un PUT admite hasta 5 GiB; usa multiparte")]
     TooLargeForPut,
-    #[error("file_changed: el fichero cambió desde que el SDK lo midió")]
+    #[error("{FILE_CHANGED}: el fichero cambió desde que el SDK lo midió")]
     FileChanged,
     #[error("demasiadas transferencias activas")]
     Full,
@@ -289,6 +292,20 @@ impl From<UrlPolicyError> for TransferError {
 impl From<RequestRejection> for TransferError {
     fn from(rejection: RequestRejection) -> Self {
         Self::Request(rejection)
+    }
+}
+
+/// A registry refusal as the caller sees it; the other registry errors are
+/// the agent's own bug.
+impl From<RegistryError> for TransferError {
+    fn from(error: RegistryError) -> Self {
+        match error {
+            RegistryError::Full => Self::Full,
+            RegistryError::Unknown => Self::UnknownTransfer,
+            RegistryError::RunningFull { .. }
+            | RegistryError::IllegalTransition { .. }
+            | RegistryError::DuplicateId => Self::Internal,
+        }
     }
 }
 
@@ -419,6 +436,22 @@ mod tests {
             ))
             .code,
             FailureCode::InvalidArgument
+        );
+    }
+
+    /// One text per refusal, whichever path produced it.
+    #[test]
+    fn registry_refusals_become_their_transfer_errors() {
+        for (registry, transfer) in [
+            (RegistryError::Full, TransferError::Full),
+            (RegistryError::Unknown, TransferError::UnknownTransfer),
+        ] {
+            assert_eq!(registry.to_string(), transfer.to_string());
+            assert_eq!(TransferError::from(registry), transfer);
+        }
+        assert_eq!(
+            TransferError::from(RegistryError::DuplicateId),
+            TransferError::Internal
         );
     }
 

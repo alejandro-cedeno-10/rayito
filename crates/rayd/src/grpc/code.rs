@@ -411,7 +411,7 @@ mod tests {
         }
         assert!(
             status_for(&CodeError::KernelNotReady {
-                reason: "no sidecar configured".to_owned()
+                reason: "no hay sidecar configurado".to_owned()
             })
             .message()
             .starts_with("kernel not ready: ")
