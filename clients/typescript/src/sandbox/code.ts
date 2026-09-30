@@ -9,7 +9,13 @@ import { create } from "@bufbuild/protobuf";
 import { ConnectError } from "@connectrpc/connect";
 import { abortReasonOr } from "../abort.js";
 import { parseChart } from "../charts.js";
-import { InvalidArgumentError, NotFoundError, SandboxError, TimeoutError } from "../errors.js";
+import {
+  InvalidArgumentError,
+  NotFoundError,
+  SandboxError,
+  TimeoutError,
+  UnimplementedError,
+} from "../errors.js";
 import {
   CodeService,
   type ContextInfo,
@@ -35,6 +41,7 @@ import {
   type ResultFields,
 } from "../models.js";
 import { DEFAULT_WORKDIR, validatedEnvs } from "../payload.js";
+import { unimplementedRpcError } from "../transport/errors.js";
 import { deadlineAt, type RequestOptions, remainingDeadlineMs, timeoutToMs } from "./commands.js";
 import { type OpenedStream, type SandboxCore, withTimeout } from "./core.js";
 import { ReconnectBudget } from "./readiness.js";
@@ -86,8 +93,8 @@ export interface RunCodeOptions extends RequestOptions {
    * el contexto por defecto de ese lenguaje (`default-bash`,
    * `default-typescript`), que el agente crea en la primera celda. `bash`,
    * `javascript` y `typescript` sólo existen en la variante de imagen
-   * `rayito-base-poly` (`InvalidArgumentError` con `Unimplemented` y un
-   * mensaje que nombra `rayito-base-poly` en las demás). `javascript` y
+   * `rayito-base-poly` (`UnimplementedError` con un mensaje que nombra
+   * `rayito-base-poly` en las demás). `javascript` y
    * `typescript` los sirve el kernel Jupyter de Deno, que arranca en la
    * primera celda y nunca antes de `/ready`; los dos aceptan sintaxis
    * TypeScript. Excluyente con `context`.
@@ -463,6 +470,25 @@ export class ExecutionBuilder {
   }
 }
 
+/** El `feature` de un `UnimplementedError` de kernel: nombra el método y el `language` pedido. */
+function kernelFeature(name: string, language: string | undefined): string {
+  return `${name}({ language: ${JSON.stringify(language)} })`;
+}
+
+/**
+ * Un `Unimplemented` del agente durante `runCode`/`createContext` es el
+ * kernel ausente en la imagen (D14): se renombra con `kernelFeature` en vez
+ * del genérico de `translateRpcError`, reutilizando el mismo `ConnectError`
+ * en `cause` (una sola tabla, sin copiarla). Cualquier otro error se propaga
+ * tal cual.
+ */
+function withKernelFeature(error: unknown, name: string, language: string | undefined): never {
+  if (error instanceof UnimplementedError && error.cause instanceof ConnectError) {
+    throw unimplementedRpcError(error.cause, kernelFeature(name, language));
+  }
+  throw error;
+}
+
 /** `CodeService` del sandbox; la superficie pública vive en `Sandbox`. */
 export class CodeClient {
   readonly core: SandboxCore;
@@ -473,9 +499,10 @@ export class CodeClient {
 
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
+    const language = normalizeLanguage(options.language);
     const request = buildExecuteRequest(code, {
       contextId,
-      language: options.language,
+      language,
       envs: options.envs,
       timeoutMs: options.timeoutMs,
     });
@@ -490,10 +517,12 @@ export class CodeClient {
       onResult: options.onResult,
       onError: options.onError,
     });
-    const opened = await this.core.openStream(
-      (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
-      { service: CodeService, stream: false, reconnect: false, signal: options.signal },
-    );
+    const opened = await this.core
+      .openStream(
+        (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
+        { service: CodeService, stream: false, reconnect: false, signal: options.signal },
+      )
+      .catch((error: unknown) => withKernelFeature(error, "runCode", language));
     try {
       return await this.#consume(
         opened,
@@ -508,12 +537,14 @@ export class CodeClient {
 
   async createContext(options: CreateContextOptions = {}): Promise<CodeContext> {
     const request = buildCreateContextRequest(options);
-    const response = await this.core.codeCall(
-      (client, callOptions) => client.createContext(request, callOptions),
-      options.requestTimeoutMs,
-      CONTEXT_REQUEST_TIMEOUT_MS,
-      options.signal,
-    );
+    const response = await this.core
+      .codeCall(
+        (client, callOptions) => client.createContext(request, callOptions),
+        options.requestTimeoutMs,
+        CONTEXT_REQUEST_TIMEOUT_MS,
+        options.signal,
+      )
+      .catch((error: unknown) => withKernelFeature(error, "createCodeContext", request.language));
     const contextId = response.contextId;
     const contexts = await this.listContexts({
       requestTimeoutMs: options.requestTimeoutMs,

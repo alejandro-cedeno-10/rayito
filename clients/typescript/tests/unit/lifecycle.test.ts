@@ -3,7 +3,9 @@ import { describe, expect, test } from "vitest";
 import {
   InvalidArgumentError,
   LifecycleUnsupportedError,
+  SandboxError,
   SandboxLifetimeError,
+  UnimplementedError,
 } from "../../src/errors.js";
 import {
   LifecyclePhase,
@@ -317,7 +319,9 @@ describe("moving the deadline", () => {
   test("the older-agent error names the template, its agent version and M9", () => {
     const error = olderAgentError("rayito-base", "0.2.0");
     expect(error).toBeInstanceOf(LifecycleUnsupportedError);
-    expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect(error).not.toBeInstanceOf(InvalidArgumentError);
+    expect(error).not.toBeInstanceOf(SandboxError);
     expect(error.message).toContain("rayito-base");
     expect(error.message).toContain("0.2.0");
     expect(error.message).toContain("publica una imagen M9");

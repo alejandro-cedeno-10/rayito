@@ -663,6 +663,33 @@ describe("connection options and log hygiene", () => {
     }
   });
 
+  test("an instance call warns for the connection opts it drops, never their value; applicable opts and static variants stay silent", async () => {
+    const proxy = `http://u:${PROXY_PASSWORD}@127.0.0.1:3128`;
+    const { sandbox: toKill } = await shimSandbox();
+    const killSeen = spyWarnings();
+    await toKill.kill({ retries: 3, proxy });
+    expect(killSeen.map((warning) => warning.split(" ignorado")[0]).sort()).toEqual([
+      "proxy",
+      "retries",
+    ]);
+    for (const warning of killSeen) {
+      expect(warning).not.toContain(PROXY_PASSWORD);
+      expect(warning).toContain("Sandbox.kill(sandboxId, ...)");
+    }
+
+    const { sandbox, rayd, plane } = await shimSandbox();
+    killSeen.length = 0;
+    await sandbox.setTimeout(60_000, { requestTimeoutMs: 5000 });
+    expect(killSeen).toEqual([]);
+    await Sandbox.kill(sandbox.sandboxId, {
+      controlPlane: plane,
+      transport: rayd.transport,
+      headers: { "x-trace": "1" },
+      region: "us-east-1",
+    });
+    expect(killSeen).toEqual([]);
+  });
+
   test("setIntegration with an explicit control plane is refused before any call", async () => {
     const { rayd, plane } = await fakes();
     ConnectionConfig.setIntegration("acme/1.0");
@@ -717,7 +744,7 @@ describe("code language (the E2B kernel contract)", () => {
     expect(run).toBeInstanceOf(UnimplementedError);
     expect(run.feature).toBe('runCode({ language: "ts" })');
     expect(run.reason).toBe(POLY_KERNELS_REASON);
-    expect(run.cause).toBeInstanceOf(InvalidArgumentError);
+    expect(run.cause).toBeInstanceOf(UnimplementedError);
     const context = (await outcome(() =>
       sandbox.createCodeContext({ language: "bash" }),
     )) as UnimplementedError;

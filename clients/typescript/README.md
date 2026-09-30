@@ -120,8 +120,11 @@ E2B: `SandboxError` (raíz) con `TimeoutError`, `InvalidArgumentError`,
 `NotFoundError` (`FileNotFoundError`, `SandboxNotFoundError`),
 `SandboxNotReadyError`, `SandboxStateError`, `SandboxLifetimeError`,
 `CommandExitError` (`exitCode`, `stdout`, `stderr`) y `RateLimitError`; fuera
-de la jerarquía `AuthenticationError` (`proxyRejected`), `QuotaExceededError`
-y `CapacityError`. `instanceof` funciona en ESM y en CommonJS.
+de la jerarquía `AuthenticationError` (`proxyRejected`), `QuotaExceededError`,
+`CapacityError` y `UnimplementedError` (`feature`, `reason`, `doc`): algo que
+este sandbox no puede dar, nunca un fallo del sandbox en marcha.
+`LifecycleUnsupportedError` (un plazo lógico contra un agente anterior a M9)
+es su única subclase. `instanceof` funciona en ESM y en CommonJS.
 
 Opciones de `Sandbox.create`: `template` (o `RAYITO_TEMPLATE`), `templateVersion`,
 `timeoutMs` (3 600 000; máximo 28 800 000), `idle` (`{ maxIdleSeconds: 300,
@@ -211,7 +214,12 @@ await Sandbox.setTimeout(sbx.sandboxId, 900_000, { accessToken: sbx.native.acces
 `uploadUrl`/`downloadUrl` (con `RAYITO_TRANSFER_BUCKET`), `git`, `getHost`
 síncrono, `ConnectionConfig`, `E2B`; lo que Lambda MicroVMs no puede hacer
 lanza `UnimplementedError` (tablas en `docs/site/docs/e2b-compat.md` y
-`docs/site/docs/e2b-parity.md`).
+`docs/site/docs/e2b-parity.md`). Una opción de conexión en una llamada de
+instancia (`sbx.kill({ retries, proxy })`) que esa llamada no aplica —el
+canal y el plano ya están construidos— avisa por `process.emitWarning`
+(`RayitoCompatWarning`, nunca con el valor) en vez de perderse en silencio;
+pásala al crear o conectar, o usa la variante estática (`Sandbox.kill(sandboxId, ...)`),
+que sí la aplica.
 
 ## Desarrollo
 

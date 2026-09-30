@@ -5,11 +5,9 @@
  * I/O salvo `emitCompatWarning`, que sólo llama a `process.emitWarning`.
  */
 
-import { Code } from "@connectrpc/connect";
 import {
   InvalidArgumentError,
   LifecycleUnsupportedError,
-  SandboxError,
   SandboxNotFoundError,
   UnimplementedError,
 } from "../errors.js";
@@ -160,6 +158,69 @@ export function splitConnectionOpts(opts: ConnectionOpts = {}): SplitConnection 
 /** La regla de `merge_api_params` de E2B: gana lo de la llamada salvo `undefined`; `headers` no se fusiona. */
 export function mergeBoundOpts<T extends ConnectionOpts>(bound: ConnectionOpts, call: T): T {
   return { ...bound, ...defined(call) } as T;
+}
+
+/**
+ * El motivo del aviso de una opción de instancia (`sbx.<call>(...)`) que no
+ * se aplica: el canal y el plano de este sandbox ya están construidos, así
+ * que sólo pasarla al crear/conectar o `Sandbox.<call>(sandboxId, ...)` la
+ * respeta. Mismo texto que el shim de Python, en camelCase.
+ */
+export function instanceUnappliedReason(call: string): string {
+  return (
+    `sbx.${call}() usa el canal y el plano ya construidos de este sandbox; pásalo al crear ` +
+    `o conectar, o usa Sandbox.${call}(sandboxId, ...)`
+  );
+}
+
+/**
+ * Todas las claves de `ConnectionOpts` (interfaz de `connection.ts`): lo
+ * único que `unappliedInstanceOpts` audita. Un `call` de instancia suele ser
+ * un tipo más ancho (`SandboxConnectOpts.timeoutMs`, `SandboxPauseOpts.
+ * keepMemory`...) cuyas claves propias no son opciones de conexión y no
+ * cuentan aquí, aunque no estén en `applicable`.
+ */
+const CONNECTION_OPT_KEYS: ReadonlySet<keyof ConnectionOpts> = new Set([
+  "requestTimeoutMs",
+  "retries",
+  "logger",
+  "headers",
+  "proxy",
+  "signal",
+  "apiKey",
+  "validateApiKey",
+  "domain",
+  "debug",
+  "apiUrl",
+  "sandboxUrl",
+  "apiHeaders",
+  "region",
+  "controlPlane",
+  "accessToken",
+  "transport",
+]);
+
+/**
+ * Las claves de `ConnectionOpts` definidas en la llamada de instancia
+ * (`sbx.<call>(opts)`, nunca el `bound` de la construcción) que no están en
+ * `applicable` ni en `IGNORED_CONNECTION_OPTS` (esas ya avisan por su
+ * cuenta), en orden alfabético: lo que hoy se descarta en silencio
+ * (`headers`, `proxy`, `retries`, `logger`, `region`, `controlPlane`,
+ * `accessToken`, `transport` según el método).
+ */
+export function unappliedInstanceOpts(
+  call: ConnectionOpts,
+  applicable: ReadonlySet<keyof ConnectionOpts>,
+): string[] {
+  return Object.keys(call)
+    .filter((name) => CONNECTION_OPT_KEYS.has(name as keyof ConnectionOpts))
+    .filter((name) => (call as Record<string, unknown>)[name] !== undefined)
+    .filter(
+      (name) =>
+        !applicable.has(name as keyof ConnectionOpts) &&
+        !Object.hasOwn(IGNORED_CONNECTION_OPTS, name),
+    )
+    .sort();
 }
 
 /** `onResume`: `"restore"` (o ausente) sigue; `"reboot"` es `UnimplementedError`. */
@@ -646,18 +707,18 @@ export function normalizedLanguageOrUnimplemented(
 }
 
 /**
- * El `UnimplementedError` del shim para un agente que respondió
- * `Unimplemented` a un kernel que la imagen no trae, con el error nativo en
- * `cause`; `undefined` para cualquier otro error, que el shim propaga sin
- * tocar (p. ej. el `InvalidArgument` de un agente anterior a M9 que no
- * conoce `typescript`).
+ * El `UnimplementedError` del shim para un kernel que el agente respondió
+ * ausente de la imagen (el nativo ya lo traduce a `UnimplementedError`, con
+ * el `ConnectError` en su propia `cause`); `undefined` para cualquier otro
+ * error, que el shim propaga sin tocar (p. ej. el `InvalidArgumentError` de
+ * un agente anterior a M9 que no conoce `typescript`).
  */
 export function unimplementedLanguage(
   error: unknown,
   feature: string,
   language: string | undefined,
 ): UnimplementedError | undefined {
-  if (!(error instanceof SandboxError) || error.grpcCode !== Code.Unimplemented) {
+  if (!(error instanceof UnimplementedError)) {
     return undefined;
   }
   return new UnimplementedError(

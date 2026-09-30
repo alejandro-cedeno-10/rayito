@@ -24,11 +24,7 @@ import {
   SandboxNotReadyError,
   TimeoutError,
 } from "../errors.js";
-import {
-  HealthRequestSchema,
-  type HealthResponse,
-  MetricsRequestSchema,
-} from "../gen/rayito/v1/health_pb.js";
+import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
@@ -118,7 +114,6 @@ import {
   type ListingContext,
   listSandboxes,
   METADATA_PROBE_TIMEOUT_MS,
-  metadataProbeFailure,
   SandboxListPaginator,
 } from "./paginator.js";
 import {
@@ -139,14 +134,11 @@ import {
   validatePersistTimeoutMs,
   withReincarnateNote,
 } from "./persistence.js";
-import { probeHealth } from "./probe.js";
 import { Pty } from "./pty.js";
 import {
   alreadySuspended,
   formatSeconds,
-  guestFactsFromHealth,
   healthFromProto,
-  metadataFromHealth,
   ReadinessPoll,
   terminalStateError,
 } from "./readiness.js";
@@ -169,13 +161,6 @@ export interface ControlPlaneOptions extends ControlPlaneClientSettings {
   readonly controlPlane?: ControlPlane | undefined;
   /** Un `LambdaMicrovmsClient` propio: construye un plano privado con sus propios buckets. */
   readonly client?: CommandSender | undefined;
-}
-
-/** Opciones de `Sandbox.probedInfo` (interno de `rayito/e2b`). */
-export interface ProbedInfoOptions extends ControlPlaneOptions {
-  readonly requestTimeoutMs?: number | undefined;
-  readonly transport?: Partial<TransportSettings> | undefined;
-  readonly signal?: AbortSignal | undefined;
 }
 
 export interface SandboxConnectOptions extends ControlPlaneOptions {
@@ -789,50 +774,6 @@ export class Sandbox implements AsyncDisposable {
 
   static async getInfo(sandboxId: string, options: ControlPlaneOptions = {}): Promise<SandboxInfo> {
     return resolveControlPlane(options).getMicrovm(validateSandboxId(sandboxId));
-  }
-
-  /**
-   * Acceso interno para `rayito/e2b` (el espejo de `Sandbox.get_info(sandbox_id)`
-   * de Python); no forma parte de la API pública. `get-microvm` y, sólo sobre
-   * un sandbox `RUNNING`, un JWE más un `Health` anónimo por un transporte
-   * dedicado que rellena `lifecycle` (así `expiresAt` es el plazo lógico) y,
-   * con el agente listo, los metadatos y la vista del guest. En cualquier
-   * otro estado no toca el endpoint: una sonda despertaría un suspendido.
-   */
-  static async probedInfo(
-    sandboxId: string,
-    options: ProbedInfoOptions = {},
-  ): Promise<SandboxInfo> {
-    options.signal?.throwIfAborted();
-    const plane = resolveControlPlane(options);
-    const info = await plane.getMicrovm(validateSandboxId(sandboxId), { signal: options.signal });
-    if (info.state !== "RUNNING") {
-      return info;
-    }
-    let response: HealthResponse;
-    try {
-      response = await raceAbort(
-        probeHealth(
-          plane,
-          info,
-          resolveTransportSettings(options.transport),
-          options.requestTimeoutMs ?? METADATA_PROBE_TIMEOUT_MS,
-        ),
-        options.signal,
-      );
-    } catch (error) {
-      throw abortReasonOr(options.signal, metadataProbeFailure(info.sandboxId, error));
-    }
-    const lifecycle = lifecycleFromProto(response.lifecycle);
-    if (!response.agentReady) {
-      return withLifecycle(info, lifecycle);
-    }
-    return sandboxInfo({
-      ...info,
-      lifecycle,
-      ...guestFactsFromHealth(response),
-      metadata: metadataFromHealth(response),
-    });
   }
 
   static async pause(sandboxId: string, options: StaticPauseOptions = {}): Promise<boolean> {

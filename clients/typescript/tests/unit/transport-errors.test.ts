@@ -11,6 +11,7 @@ import {
   SandboxError,
   SandboxStateError,
   TimeoutError,
+  UnimplementedError,
 } from "../../src/errors.js";
 import {
   isKernelGate,
@@ -164,7 +165,6 @@ describe("translateRpcError", () => {
   const rows: Array<[Code, string, new (...args: never[]) => Error]> = [
     [Code.InvalidArgument, "bad", InvalidArgumentError],
     [Code.FailedPrecondition, "not a pty", InvalidArgumentError],
-    [Code.Unimplemented, "nope", InvalidArgumentError],
     [Code.Unauthenticated, "x-access-token", AuthenticationError],
     [Code.PermissionDenied, "EACCES", AuthenticationError],
     [Code.NotFound, "pid", NotFoundError],
@@ -180,6 +180,16 @@ describe("translateRpcError", () => {
     const translated = translateRpcError(new ConnectError(message, code));
     expect(translated).toBeInstanceOf(expected);
     expect((translated as SandboxError).grpcCode).toBe(code);
+  });
+
+  test("Unimplemented becomes UnimplementedError, outside the SandboxError hierarchy", () => {
+    const connect = new ConnectError("nope", Code.Unimplemented);
+    const translated = translateRpcError(connect);
+    expect(translated).toBeInstanceOf(UnimplementedError);
+    expect(translated).not.toBeInstanceOf(SandboxError);
+    expect(translated).not.toBeInstanceOf(InvalidArgumentError);
+    expect((translated as UnimplementedError).reason).toBe("nope");
+    expect(translated.cause).toBe(connect);
   });
 
   test("phase gate and kernel gate", () => {

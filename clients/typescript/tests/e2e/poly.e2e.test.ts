@@ -7,13 +7,12 @@
  * `Deno.jupyter.html`, errores JS y `envs` de contexto), las opciones
  * excluyentes y `listCodeContexts()` con los contextos por defecto de cada
  * lenguaje. En un sandbox de `RAYITO_TEMPLATE` (`rayito-base`, sin Deno):
- * `javascript` y `typescript` son `InvalidArgumentError` con `Unimplemented`
- * que nombra `rayito-base-poly`. Cada suite se omite sin su variable.
+ * `javascript` y `typescript` son `UnimplementedError` con un mensaje que
+ * nombra `rayito-base-poly`. Cada suite se omite sin su variable.
  */
 
-import { Code } from "@connectrpc/connect";
 import { afterAll, describe, expect, test } from "vitest";
-import { InvalidArgumentError, type Sandbox } from "../../src/index.js";
+import { InvalidArgumentError, type Sandbox, UnimplementedError } from "../../src/index.js";
 import { createTestSandbox, e2eEnabled, timed, useE2E } from "./helpers.js";
 
 const POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY";
@@ -98,12 +97,12 @@ describe.skipIf(!e2eEnabled())("kernels Deno en rayito-base (requiere RAYITO_E2E
     const base = await createTestSandbox(e2e);
     for (const language of DENO_LANGUAGES) {
       const executed = await base.runCode("1", { language }).catch((error) => error);
-      expect(executed).toBeInstanceOf(InvalidArgumentError);
-      expect((executed as InvalidArgumentError).grpcCode).toBe(Code.Unimplemented);
+      expect(executed).toBeInstanceOf(UnimplementedError);
+      expect(executed).not.toBeInstanceOf(InvalidArgumentError);
       expect((executed as Error).message).toContain(POLY_IMAGE);
       const created = await base.createCodeContext({ language }).catch((error) => error);
-      expect(created).toBeInstanceOf(InvalidArgumentError);
-      expect((created as InvalidArgumentError).grpcCode).toBe(Code.Unimplemented);
+      expect(created).toBeInstanceOf(UnimplementedError);
+      expect(created).not.toBeInstanceOf(InvalidArgumentError);
       expect((created as Error).message).toContain(POLY_IMAGE);
       console.log(`\n[m9] ${language} on rayito-base: ${(executed as Error).message}`);
     }

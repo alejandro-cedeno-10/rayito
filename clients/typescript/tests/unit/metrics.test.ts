@@ -7,7 +7,7 @@
  */
 
 import { create } from "@bufbuild/protobuf";
-import { Code } from "@connectrpc/connect";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   AuthenticationError,
@@ -27,6 +27,7 @@ import { ACCESS_TOKEN_ENV_VAR } from "../../src/sandbox/launch.js";
 import {
   HISTORY_FEATURE,
   HISTORY_UNIMPLEMENTED_REASON,
+  isHistoryUnavailable,
   metricsHistoryFromProto,
   metricsHistoryRequest,
   STATIC_HISTORY_FEATURE,
@@ -156,14 +157,24 @@ describe("sandbox.getMetricsHistory", () => {
   test("a pre-M9 agent is UnimplementedError with Python's reason and the gRPC cause", async () => {
     const { sandbox, rayd } = await createTestSandbox();
     rayd.health.historyUnimplemented = true;
-    const error = await sandbox.getMetricsHistory().catch((caught: unknown) => caught);
+    const error = (await sandbox
+      .getMetricsHistory()
+      .catch((caught: unknown) => caught)) as UnimplementedError;
     expect(error).toBeInstanceOf(UnimplementedError);
     expect(error).not.toBeInstanceOf(SandboxError);
     expect(error).toMatchObject({ feature: HISTORY_FEATURE, reason: HISTORY_UNIMPLEMENTED_REASON });
     expect(HISTORY_UNIMPLEMENTED_REASON).toBe(
       "la imagen es anterior a M9 (rayd sin MetricsHistory): publica una imagen M9",
     );
-    expect(((error as Error).cause as SandboxError).grpcCode).toBe(Code.Unimplemented);
+    expect(error.cause).toBeInstanceOf(UnimplementedError);
+    const grpcCause = (error.cause as UnimplementedError).cause;
+    expect(grpcCause).toBeInstanceOf(ConnectError);
+    expect((grpcCause as ConnectError).code).toBe(Code.Unimplemented);
+  });
+
+  test("isHistoryUnavailable only matches its own class, never a lookalike UnimplementedError", () => {
+    const lookalike = new UnimplementedError(HISTORY_FEATURE, HISTORY_UNIMPLEMENTED_REASON);
+    expect(isHistoryUnavailable(lookalike)).toBe(false);
   });
 
   test("the getMetrics snapshot is unchanged and maps memCacheBytes", async () => {
@@ -279,13 +290,18 @@ describe("Sandbox.getMetricsHistory (static)", () => {
 
   test("a pre-M9 agent is UnimplementedError", async () => {
     rayd.health.historyUnimplemented = true;
-    const error = await call({ accessToken: ACCESS_TOKEN }).catch((caught: unknown) => caught);
+    const error = (await call({ accessToken: ACCESS_TOKEN }).catch(
+      (caught: unknown) => caught,
+    )) as UnimplementedError;
     expect(error).toBeInstanceOf(UnimplementedError);
     expect(error).toMatchObject({
       feature: STATIC_HISTORY_FEATURE,
       reason: HISTORY_UNIMPLEMENTED_REASON,
     });
-    expect(((error as Error).cause as SandboxError).grpcCode).toBe(Code.Unimplemented);
+    expect(error.cause).toBeInstanceOf(UnimplementedError);
+    const grpcCause = (error.cause as UnimplementedError).cause;
+    expect(grpcCause).toBeInstanceOf(ConnectError);
+    expect((grpcCause as ConnectError).code).toBe(Code.Unimplemented);
     await expectAllClosed(rayd);
   });
 

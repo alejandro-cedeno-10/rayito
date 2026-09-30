@@ -7,14 +7,8 @@
  */
 
 import { create } from "@bufbuild/protobuf";
-import { Code } from "@connectrpc/connect";
 import type { ControlPlane } from "../aws/control-plane.js";
-import {
-  InvalidArgumentError,
-  SandboxError,
-  SandboxStateError,
-  UnimplementedError,
-} from "../errors.js";
+import { InvalidArgumentError, SandboxStateError, UnimplementedError } from "../errors.js";
 import {
   type MetricsHistoryRequest,
   MetricsHistoryRequestSchema,
@@ -92,15 +86,24 @@ export function metricsHistoryFromProto(response: MetricsHistoryResponse): Sandb
 }
 
 /**
+ * El `UnimplementedError` propio de `historyErrorTranslator`, para que
+ * `isHistoryUnavailable` lo distinga por `instanceof` de cualquier otro
+ * `UnimplementedError` que comparta el mismo `reason`. Se exporta sólo para
+ * los tests de este módulo y de `e2b/compat.ts`; `index.ts` no la reexporta.
+ */
+export class MetricsHistoryUnavailableError extends UnimplementedError {}
+
+/**
  * La tabla unaria, salvo `Unimplemented` (un `rayd` anterior a M9 no conoce
- * el método), que pasa a `UnimplementedError` de `feature` con el motivo de
- * M9 y el error gRPC en `cause`, como las transferencias y el plazo.
+ * el método): `translateRpcError` ya lo traduce a `UnimplementedError`
+ * genérico, y aquí se renombra su `feature` con el motivo de M9, guardando
+ * ese genérico en `cause` (como las transferencias y el plazo).
  */
 export function historyErrorTranslator(feature: string): (error: unknown) => Error {
   return (error: unknown): Error => {
     const translated = translateRpcError(error);
-    if (translated instanceof SandboxError && translated.grpcCode === Code.Unimplemented) {
-      return new UnimplementedError(feature, HISTORY_UNIMPLEMENTED_REASON, undefined, {
+    if (translated instanceof UnimplementedError) {
+      return new MetricsHistoryUnavailableError(feature, HISTORY_UNIMPLEMENTED_REASON, undefined, {
         cause: translated,
       });
     }
@@ -110,7 +113,7 @@ export function historyErrorTranslator(feature: string): (error: unknown) => Err
 
 /** El `UnimplementedError` de `historyErrorTranslator`: el shim de E2B cae en la instantánea. */
 export function isHistoryUnavailable(error: unknown): error is UnimplementedError {
-  return error instanceof UnimplementedError && error.reason === HISTORY_UNIMPLEMENTED_REASON;
+  return error instanceof MetricsHistoryUnavailableError;
 }
 
 /**
