@@ -297,8 +297,8 @@ def test_instance_call_warns_for_headers_proxy_retries_never_applying() -> None:
     assert [w.split(" ")[0] for w in not_applies.warnings] == [
         "headers",
         "proxy",
-        "retries",
         "request_timeout",
+        "retries",
     ]
     for warning in not_applies.warnings:
         assert "secreto" not in warning

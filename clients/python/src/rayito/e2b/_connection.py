@@ -262,7 +262,8 @@ def instance_call(
     `applies_request_timeout` es falso, por `request_timeout`: ninguno viaja
     porque `sbx.<call>()` opera sobre el canal y el plano que el sandbox ya
     tiene, a diferencia de `Sandbox.<call>(sandbox_id, ...)`, que los
-    reconstruye. El aviso nombra el parámetro, nunca su valor."""
+    reconstruye. El aviso nombra el parámetro, nunca su valor, en orden
+    alfabético (la misma regla que el shim de TypeScript)."""
     settings, messages = split_api_params(params, call=call)
     reason = INSTANCE_UNAPPLIED_REASON.format(call=call)
     unapplied = [
@@ -272,7 +273,7 @@ def instance_call(
     ]
     if not applies_request_timeout and is_given(params.get("request_timeout")):
         unapplied.append("request_timeout")
-    messages = messages + tuple(f"{name} ignorado: {reason}" for name in unapplied)
+    messages = messages + tuple(f"{name} ignorado: {reason}" for name in sorted(unapplied))
     request_timeout = settings.request_timeout if applies_request_timeout else None
     return InstanceCall(request_timeout=request_timeout, warnings=messages)
 
