@@ -3,7 +3,9 @@ import { describe, expect, test } from "vitest";
 import {
   InvalidArgumentError,
   LifecycleUnsupportedError,
+  SandboxError,
   SandboxLifetimeError,
+  UnimplementedError,
 } from "../../src/errors.js";
 import {
   LifecyclePhase,
@@ -17,6 +19,8 @@ import {
   capFromDetail,
   connectExtension,
   defaultMaxLifetimeMs,
+  LIFECYCLE_FEATURE_CONNECT,
+  LIFECYCLE_FEATURE_CREATE,
   lifecycleBlockToWire,
   lifecycleFromProto,
   olderAgentError,
@@ -275,6 +279,23 @@ describe("moving the deadline", () => {
     }
   });
 
+  test("connectExtension's LifecycleUnsupportedError names connect({ timeoutMs }) and stays outside SandboxError", () => {
+    let caught: unknown;
+    try {
+      connectExtension(undefined, 300_000, NOW);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LifecycleUnsupportedError);
+    expect(caught).toBeInstanceOf(UnimplementedError);
+    expect(caught).not.toBeInstanceOf(SandboxError);
+    expect(caught).not.toBeInstanceOf(InvalidArgumentError);
+    expect((caught as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_CONNECT);
+    expect((caught as LifecycleUnsupportedError).reason).toBe(
+      "necesita una imagen M9: el agente de este sandbox no impone el timeout del servidor",
+    );
+  });
+
   test("the pause trigger delay", () => {
     expect(pauseTriggerDelayMs(undefined, NOW)).toBeUndefined();
     expect(pauseTriggerDelayMs(lifecycle(), NOW)).toBeUndefined();
@@ -317,9 +338,12 @@ describe("moving the deadline", () => {
   test("the older-agent error names the template, its agent version and M9", () => {
     const error = olderAgentError("rayito-base", "0.2.0");
     expect(error).toBeInstanceOf(LifecycleUnsupportedError);
-    expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect(error).not.toBeInstanceOf(InvalidArgumentError);
+    expect(error).not.toBeInstanceOf(SandboxError);
     expect(error.message).toContain("rayito-base");
     expect(error.message).toContain("0.2.0");
     expect(error.message).toContain("publica una imagen M9");
+    expect(error.feature).toBe(LIFECYCLE_FEATURE_CREATE);
   });
 });

@@ -32,9 +32,9 @@ pub enum PathRejection {
 impl fmt::Display for PathRejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Empty => "is empty",
-            Self::ContainsNul => "contains a NUL byte",
-            Self::ParentReference => "contains a parent reference",
+            Self::Empty => "está vacía",
+            Self::ContainsNul => "contiene un byte NUL",
+            Self::ParentReference => "contiene una referencia al directorio padre",
         })
     }
 }
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(parse("a/../b"), Err(PathRejection::ParentReference));
         assert_eq!(
             PathRejection::ParentReference.to_string(),
-            "contains a parent reference"
+            "contiene una referencia al directorio padre"
         );
     }
 

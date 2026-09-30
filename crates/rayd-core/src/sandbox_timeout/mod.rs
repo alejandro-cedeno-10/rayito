@@ -46,8 +46,9 @@ pub const AUTO_RESUME_MIN_TIMEOUT: Duration = Duration::from_secs(300);
 pub const MIN_SET_TIMEOUT: Duration = Duration::from_secs(MIN_TIMEOUT_SECONDS);
 /// The `timeout(1)` convention; the platform reports it in `stateReason`.
 pub const TIMEOUT_EXIT_CODE: u8 = 124;
-/// Stream close code, status message and log line name of the deadline.
-pub const SANDBOX_TIMEOUT_CODE: &str = "sandbox_timeout";
+/// Stream close code, status message and log line name of the deadline;
+/// the frozen wire token.
+pub const SANDBOX_TIMEOUT_CODE: &str = crate::wire_tokens::SANDBOX_TIMEOUT;
 pub const SET_TIMEOUT_RPC_PATH: &str = "/rayito.v1.LifecycleService/SetTimeout";
 
 pub const TIMEOUT_TICK: Duration = Duration::from_millis(500);

@@ -596,7 +596,7 @@ async fn connect_replays_from_seq_then_follows_live_output() {
     assert_eq!(replayed.stdout_text(), "2\n3\n");
     let out_of_range = harness.connect(pid, 999).await.unwrap_err();
     assert_eq!(out_of_range.code(), Code::OutOfRange);
-    assert!(out_of_range.message().contains("next 4"));
+    assert!(out_of_range.message().contains("siguiente 4"));
     assert_eq!(
         harness.connect(999_999, 0).await.unwrap_err().code(),
         Code::NotFound
@@ -765,7 +765,7 @@ async fn stalled_subscriber_is_truncated_while_the_process_finishes() {
         end.error.as_ref().map(|error| error.code.as_str()),
         Some("output_truncated")
     );
-    assert!(end.error.as_ref().unwrap().message.contains("at seq"));
+    assert!(end.error.as_ref().unwrap().message.contains("en la seq"));
     assert!(truncated.stdout.len() < 5_242_880);
     assert_eq!(
         truncated.seqs.last().copied(),

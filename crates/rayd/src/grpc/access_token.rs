@@ -105,10 +105,10 @@ fn presented_secret(headers: &HeaderMap) -> Result<Option<Vec<u8>>, Status> {
     };
     let encoded = value
         .to_str()
-        .map_err(|_| Status::unauthenticated("x-access-token is not printable ASCII"))?;
+        .map_err(|_| Status::unauthenticated("x-access-token no es ASCII imprimible"))?;
     let decoded = URL_SAFE_NO_PAD
         .decode(encoded.trim_end_matches('='))
-        .map_err(|_| Status::unauthenticated("x-access-token is not base64url"))?;
+        .map_err(|_| Status::unauthenticated("x-access-token no es base64url"))?;
     Ok(Some(decoded))
 }
 

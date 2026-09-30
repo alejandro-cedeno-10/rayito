@@ -186,19 +186,19 @@ mod unix {
             let mut child = command.spawn().map_err(|error| spawn_error(&error))?;
             let pid = child
                 .id()
-                .ok_or_else(|| SpawnError::Failed("child has no pid".to_owned()))?;
+                .ok_or_else(|| SpawnError::Failed("el hijo no tiene pid".to_owned()))?;
             let stdin = child
                 .stdin
                 .take()
-                .ok_or_else(|| SpawnError::Failed("stdin not piped".to_owned()))?;
+                .ok_or_else(|| SpawnError::Failed("stdin sin pipe".to_owned()))?;
             let stdout = child
                 .stdout
                 .take()
-                .ok_or_else(|| SpawnError::Failed("stdout not piped".to_owned()))?;
+                .ok_or_else(|| SpawnError::Failed("stdout sin pipe".to_owned()))?;
             let stderr = child
                 .stderr
                 .take()
-                .ok_or_else(|| SpawnError::Failed("stderr not piped".to_owned()))?;
+                .ok_or_else(|| SpawnError::Failed("stderr sin pipe".to_owned()))?;
             let (sender, receiver) = mpsc::channel::<String>(REQUEST_QUEUE_CAPACITY);
             let closed = Arc::new(AtomicBool::new(false));
             let link = TokioSidecarLink {

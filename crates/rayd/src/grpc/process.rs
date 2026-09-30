@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use rayd_core::process::{
-    EndStatus, Pid, ProcessConfigInfo, ProcessEnd, ProcessError, ProcessEvent as DomainEvent,
-    ProcessKind, ProcessSummary, SpawnError, SpawnInput, StdinMode, StreamFailure,
+    Pid, ProcessConfigInfo, ProcessEnd, ProcessError, ProcessEvent as DomainEvent, ProcessKind,
+    ProcessSummary, SpawnError, SpawnInput, StdinMode,
 };
 use rayito_proto::v1::process_service_server::ProcessService;
 use rayito_proto::v1::{
@@ -223,19 +223,8 @@ fn keepalive_event() -> ProcessEvent {
     }
 }
 
-/// The in-stream close of design D7: the process is alive, only the stream
-/// ends; `Connect(pid, from_seq)` picks it up after the resume.
 fn suspending_event() -> ProcessEvent {
-    to_proto(DomainEvent::Ended(ProcessEnd {
-        status: EndStatus::Suspending,
-        exited: false,
-        exit_code: 0,
-        signal: None,
-        error: Some(StreamFailure {
-            code: "suspending",
-            message: "sandbox suspending; reconnect with Connect(pid, from_seq)".to_owned(),
-        }),
-    }))
+    to_proto(DomainEvent::Ended(ProcessEnd::suspending()))
 }
 
 /// The deadline's close is terminal: the SDK raises instead of
@@ -285,7 +274,7 @@ fn status_for(error: &ProcessError) -> Status {
 mod tests {
     use super::*;
     use rayd_core::lifecycle::HookPhase;
-    use rayd_core::process::{CwdRejection, OutputEvent, OutputStream};
+    use rayd_core::process::{CwdRejection, EndStatus, OutputEvent, OutputStream};
     use rayito_proto::v1::User;
     use tonic::Code;
 
@@ -378,7 +367,7 @@ mod tests {
                 assert_eq!(end.signal, None);
                 let error = end.error.unwrap();
                 assert_eq!(error.code, "sandbox_timeout");
-                assert_eq!(error.message, "sandbox timeout");
+                assert_eq!(error.message, "el sandbox alcanzó su timeout");
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -455,8 +444,10 @@ mod tests {
         }
         assert_eq!(
             status_for(&ProcessError::OutOfRange { oldest: 5, next: 9 }).message(),
-            "from_seq out_of_range"
-                .replace("out_of_range", "out of range: oldest retained 5, next 9")
+            "from_seq out_of_range".replace(
+                "out_of_range",
+                "fuera de rango: el más antiguo retenido es 5 y el siguiente 9"
+            )
         );
     }
 }

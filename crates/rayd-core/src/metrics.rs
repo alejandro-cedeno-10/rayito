@@ -8,14 +8,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum MetricsError {
-    #[error("metrics are not supported on this platform")]
+    #[error("las métricas no se admiten en esta plataforma")]
     Unsupported,
-    #[error("malformed {source_name}: {reason}")]
+    #[error("{source_name} mal formado: {reason}")]
     Malformed {
         source_name: &'static str,
         reason: &'static str,
     },
-    #[error("reading {source_name} failed: {reason}")]
+    #[error("falló la lectura de {source_name}: {reason}")]
     Io {
         source_name: &'static str,
         reason: String,
@@ -68,15 +68,15 @@ pub fn parse_proc_stat(text: &str) -> Result<CpuTimes, MetricsError> {
     let line = text
         .lines()
         .find(|line| line.starts_with("cpu "))
-        .ok_or(malformed("/proc/stat", "no aggregate cpu line"))?;
+        .ok_or(malformed("/proc/stat", "falta la línea cpu agregada"))?;
     let fields: Vec<u64> = line
         .split_whitespace()
         .skip(1)
         .map(str::parse)
         .collect::<Result<_, _>>()
-        .map_err(|_| malformed("/proc/stat", "non-numeric cpu column"))?;
+        .map_err(|_| malformed("/proc/stat", "columna cpu no numérica"))?;
     if fields.len() < 8 {
-        return Err(malformed("/proc/stat", "fewer than 8 cpu columns"));
+        return Err(malformed("/proc/stat", "menos de 8 columnas cpu"));
     }
     let column = |index: usize| fields.get(index).copied().unwrap_or(0);
     Ok(CpuTimes {
@@ -137,7 +137,7 @@ pub fn snapshot(
 }
 
 fn meminfo_field(text: &str, label: &'static str) -> Result<u64, MetricsError> {
-    optional_meminfo_field(text, label)?.ok_or(malformed("/proc/meminfo", "missing field"))
+    optional_meminfo_field(text, label)?.ok_or(malformed("/proc/meminfo", "falta el campo"))
 }
 
 /// `None` when the line is absent; the label match is a prefix, so
@@ -150,7 +150,7 @@ fn optional_meminfo_field(text: &str, label: &'static str) -> Result<Option<u64>
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse().ok())
-        .ok_or(malformed("/proc/meminfo", "non-numeric field"))?;
+        .ok_or(malformed("/proc/meminfo", "campo no numérico"))?;
     Ok(Some(kib.saturating_mul(1024)))
 }
 

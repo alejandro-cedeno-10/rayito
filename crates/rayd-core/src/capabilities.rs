@@ -53,9 +53,9 @@ impl CapSet {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CapabilityError {
-    #[error("no CapEff line in the status text")]
+    #[error("el texto de status no tiene línea CapEff")]
     Missing,
-    #[error("CapEff is not a hexadecimal mask")]
+    #[error("CapEff no es una máscara hexadecimal")]
     Malformed,
 }
 

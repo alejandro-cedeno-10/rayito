@@ -8,6 +8,7 @@ use bytes::Bytes;
 
 use super::Pid;
 use crate::sandbox_timeout::SANDBOX_TIMEOUT_CODE;
+use crate::wire_tokens::SUSPENDING;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputStream {
@@ -42,7 +43,7 @@ impl EndStatus {
             Self::Exited => "exited",
             Self::Signaled => "signaled",
             Self::Timeout => "timeout",
-            Self::Suspending => "suspending",
+            Self::Suspending => SUSPENDING,
             Self::OutputTruncated => "output_truncated",
             Self::SandboxTimeout => SANDBOX_TIMEOUT_CODE,
         }
@@ -115,7 +116,7 @@ impl ProcessEnd {
             signal: Some(signal),
             error: Some(StreamFailure {
                 code: StreamFailure::DEADLINE_EXCEEDED,
-                message: "timeout_ms expired".to_owned(),
+                message: "venció timeout_ms".to_owned(),
             }),
         }
     }
@@ -132,9 +133,27 @@ impl ProcessEnd {
             error: Some(StreamFailure {
                 code: StreamFailure::OUTPUT_TRUNCATED,
                 message: format!(
-                    "subscriber stalled for {} s at seq {last_seq}",
+                    "el suscriptor se atascó {} s en la seq {last_seq}",
                     stall.as_secs()
                 ),
+            }),
+        }
+    }
+
+    /// The in-stream close of design D7: the process (or terminal) is
+    /// alive, only the stream ends; `Connect(pid, from_seq)` picks it up
+    /// after the resume.
+    #[must_use]
+    pub fn suspending() -> Self {
+        Self {
+            status: EndStatus::Suspending,
+            exited: false,
+            exit_code: 0,
+            signal: None,
+            error: Some(StreamFailure {
+                code: SUSPENDING,
+                message: "el sandbox se está suspendiendo; reconecta con Connect(pid, from_seq)"
+                    .to_owned(),
             }),
         }
     }
@@ -151,7 +170,7 @@ impl ProcessEnd {
             signal: None,
             error: Some(StreamFailure {
                 code: StreamFailure::SANDBOX_TIMEOUT,
-                message: "sandbox timeout".to_owned(),
+                message: "el sandbox alcanzó su timeout".to_owned(),
             }),
         }
     }
@@ -166,7 +185,7 @@ impl ProcessEnd {
             signal: None,
             error: Some(StreamFailure {
                 code: StreamFailure::INTERNAL,
-                message: "wait failed".to_owned(),
+                message: "falló wait".to_owned(),
             }),
         }
     }
@@ -207,7 +226,7 @@ mod tests {
         assert_eq!(end.signal, None);
         let error = end.error.unwrap();
         assert_eq!(error.code, "sandbox_timeout");
-        assert_eq!(error.message, "sandbox timeout");
+        assert_eq!(error.message, "el sandbox alcanzó su timeout");
     }
 
     #[test]
@@ -216,7 +235,7 @@ mod tests {
         assert_eq!(end.status.as_str(), "output_truncated");
         assert_eq!(
             end.error.unwrap().message,
-            "subscriber stalled for 30 s at seq 41"
+            "el suscriptor se atascó 30 s en la seq 41"
         );
     }
 }

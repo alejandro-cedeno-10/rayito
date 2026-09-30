@@ -24,11 +24,13 @@ import {
   type SandboxErrorOptions,
   SandboxStateError,
   TimeoutError,
+  UnimplementedError,
 } from "../errors.js";
 import {
   BEYOND_CAP_PREFIX,
   beyondCapError,
   capFromDetail,
+  LIFECYCLE_FEATURE_SET_TIMEOUT,
   LIFECYCLE_UNMANAGED_DETAIL,
   SANDBOX_TIMEOUT_DETAIL,
   setTimeoutUnsupportedError,
@@ -36,6 +38,10 @@ import {
 } from "../sandbox/lifecycle.js";
 
 export const PROXY_FORBIDDEN_MESSAGE = "HTTP 403";
+/** El `feature` de `unimplementedRpcError` cuando el caller no nombra la RPC (paridad con Python). */
+export const GENERIC_RPC_FEATURE = "esta llamada";
+/** La pista que cierra el `reason` de todo `UnimplementedError` de gRPC; mismo texto que el SDK Python. */
+export const UNIMPLEMENTED_IMAGE_HINT = "publica una imagen con una versión actual de rayd";
 export const PHASE_GATE_DETAILS: ReadonlySet<string> = new Set(["suspending", "terminating"]);
 export const KERNEL_GATE_PREFIX = "kernel not ready";
 export const H2_CLOSED_PREFIX = "http/2 stream closed";
@@ -171,6 +177,25 @@ export function sandboxTimeoutError(options: SandboxErrorOptions = {}): TimeoutE
 }
 
 /**
+ * Único punto que traduce un `Unimplemented` de gRPC a `UnimplementedError`:
+ * el motivo es el `rawMessage` crudo del agente (lo que hoy manda un `rayd`
+ * anterior a M9 o sin un kernel/RPC concretos) más `hint` si lo hay, y la
+ * causa el `ConnectError`. Mismo contrato que `unimplemented_rpc_error` en
+ * Python. `translateRpcError` la usa con el `feature` genérico y la pista de
+ * publicar una imagen actual; `code.ts` la reutiliza con el suyo para nombrar
+ * el kernel pedido sin duplicar esta tabla, y pasa `hint = null` porque el
+ * mensaje de `rayd` ya nombra `rayito-base-poly` (la imagen ya está al día).
+ */
+export function unimplementedRpcError(
+  connect: ConnectError,
+  feature: string = GENERIC_RPC_FEATURE,
+  hint: string | null = UNIMPLEMENTED_IMAGE_HINT,
+): UnimplementedError {
+  const reason = hint === null ? connect.rawMessage : `${connect.rawMessage}; ${hint}`;
+  return new UnimplementedError(feature, reason, undefined, { cause: connect });
+}
+
+/**
  * Lo que dispara el contrato de reconexión: un reset por debajo de gRPC o el
  * phase gate `suspending`/`terminating`. Nunca `DeadlineExceeded` (el caller
  * eligió ese plazo), nunca el kernel gate (el agente vive), nunca un 403 del
@@ -217,8 +242,9 @@ export function translateRpcError(error: unknown, options: TranslateOptions = {}
   switch (code) {
     case Code.InvalidArgument:
     case Code.FailedPrecondition:
-    case Code.Unimplemented:
       return new InvalidArgumentError(message, base);
+    case Code.Unimplemented:
+      return unimplementedRpcError(connect);
     case Code.Unauthenticated:
       return new AuthenticationError(message, { grpcCode: code, cause: connect });
     case Code.PermissionDenied:
@@ -302,7 +328,11 @@ export function translateStreamError(
  * tope, sin plazo lógico (`lifecycle_unmanaged`) y un agente anterior a M9
  * (`Unimplemented`) tienen mensaje propio; el resto sigue `translateRpcError`.
  */
-export function translateSetTimeoutError(error: unknown, timeoutMs: number): Error {
+export function translateSetTimeoutError(
+  error: unknown,
+  timeoutMs: number,
+  feature: string = LIFECYCLE_FEATURE_SET_TIMEOUT,
+): Error {
   const connect = asConnectError(error);
   if (connect === undefined || ownErrorInCause(connect) !== undefined) {
     return translateRpcError(error);
@@ -318,7 +348,7 @@ export function translateSetTimeoutError(error: unknown, timeoutMs: number): Err
     return unmanagedLifecycleError(base);
   }
   if (connect.code === Code.Unimplemented) {
-    return setTimeoutUnsupportedError(base);
+    return setTimeoutUnsupportedError(feature, base);
   }
   return translateRpcError(connect);
 }

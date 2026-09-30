@@ -5,6 +5,11 @@
 //! the deadline gate admits past the deadline (the call that reopens the
 //! sandbox). Log lines carry the rpc, the mode, the timeout, the outcome
 //! and the extension count, never the token.
+//!
+//! The adapter only parses the contract (the mode enum); every rule on the
+//! timeout belongs to the domain, which judges the phase first. The gate
+//! admits `SetTimeout` while terminating (reported `EXPIRED`), so that
+//! refusal comes from the domain too, with the same status and message.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,9 +44,6 @@ impl LifecycleService for LifecycleGrpc {
     ) -> Result<Response<LifecycleState>, Status> {
         let request = request.into_inner();
         let mode = timeout_mode(request.mode)?;
-        if request.timeout_ms == 0 {
-            return Err(Status::invalid_argument("timeout_ms must be positive"));
-        }
         let moved = self
             .session
             .set_timeout(mode, Duration::from_millis(request.timeout_ms));
@@ -64,7 +66,7 @@ fn timeout_mode(raw: i32) -> Result<TimeoutMode, Status> {
     match rayito_proto::v1::TimeoutMode::try_from(raw) {
         Ok(rayito_proto::v1::TimeoutMode::Exact) => Ok(TimeoutMode::Exact),
         Ok(rayito_proto::v1::TimeoutMode::AtLeast) => Ok(TimeoutMode::AtLeast),
-        _ => Err(Status::invalid_argument("mode must be EXACT or AT_LEAST")),
+        _ => Err(Status::invalid_argument("mode debe ser EXACT o AT_LEAST")),
     }
 }
 
@@ -122,6 +124,8 @@ fn action_of(action: Option<TimeoutAction>) -> rayito_proto::v1::TimeoutAction {
 
 #[cfg(test)]
 mod tests {
+    use rayd_core::clock::SystemClock;
+    use rayd_core::session::RunHookInput;
     use tonic::Code;
 
     use super::*;
@@ -133,8 +137,51 @@ mod tests {
         for raw in [0, 3, -1] {
             let status = timeout_mode(raw).unwrap_err();
             assert_eq!(status.code(), Code::InvalidArgument);
-            assert_eq!(status.message(), "mode must be EXACT or AT_LEAST");
+            assert_eq!(status.message(), "mode debe ser EXACT o AT_LEAST");
         }
+    }
+
+    const KILL_PAYLOAD: &str = "{\"v\":1,\"token_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"lifecycle\":{\"auto_resume\":false,\"cap_s\":900,\"on_timeout\":\"kill\",\"timeout_s\":60}}";
+
+    fn service(payload: Option<&str>) -> LifecycleGrpc {
+        let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+        if payload.is_some() {
+            session.run(RunHookInput {
+                sandbox_id: Some("mvm-test"),
+                payload,
+            });
+        }
+        LifecycleGrpc::new(session, TimeoutWatcher::detached())
+    }
+
+    async fn set_timeout(service: &LifecycleGrpc, timeout_ms: u64) -> Status {
+        let request = SetTimeoutRequest {
+            mode: i32::from(rayito_proto::v1::TimeoutMode::Exact),
+            timeout_ms,
+        };
+        service
+            .set_timeout(Request::new(request))
+            .await
+            .unwrap_err()
+    }
+
+    /// The adapter only parses the contract: a zero timeout reaches the
+    /// domain, whose phase rules answer before the size rule.
+    #[tokio::test]
+    async fn a_zero_timeout_is_judged_by_the_domain() {
+        let unmanaged = set_timeout(&service(None), 0).await;
+        assert_eq!(unmanaged.code(), Code::FailedPrecondition);
+        assert_eq!(unmanaged.message(), "lifecycle_unmanaged");
+        let active = service(Some(KILL_PAYLOAD));
+        let zero = set_timeout(&active, 0).await;
+        let below = set_timeout(&active, 999).await;
+        assert_eq!(zero.code(), Code::InvalidArgument);
+        assert_eq!(zero.message(), below.message());
+        assert_eq!(
+            zero.message(),
+            SandboxTimeoutError::InvalidTimeout.to_string()
+        );
+        assert_eq!(active.session.lifecycle().extensions, 0);
     }
 
     #[test]
@@ -144,7 +191,7 @@ mod tests {
         assert_eq!(beyond.message(), "timeout beyond cap; cap_unix_ms=42");
         let below = status_for(SandboxTimeoutError::InvalidTimeout);
         assert_eq!(below.code(), Code::InvalidArgument);
-        assert_eq!(below.message(), "timeout below 1 s");
+        assert_eq!(below.message(), "el timeout debe ser de al menos 1 s");
         let unmanaged = status_for(SandboxTimeoutError::Unmanaged);
         assert_eq!(unmanaged.code(), Code::FailedPrecondition);
         assert_eq!(unmanaged.message(), "lifecycle_unmanaged");

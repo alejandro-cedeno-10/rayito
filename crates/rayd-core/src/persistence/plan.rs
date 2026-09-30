@@ -47,8 +47,8 @@ impl std::fmt::Display for ExcludeRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Path(rejection) => write!(f, "{rejection}"),
-            Self::Absolute => f.write_str("is absolute"),
-            Self::TooLong => f.write_str("exceeds 4096 bytes"),
+            Self::Absolute => f.write_str("es absoluta"),
+            Self::TooLong => f.write_str("supera 4096 bytes"),
         }
     }
 }
@@ -241,10 +241,10 @@ mod tests {
             PersistenceError::TooManyExcludes { max: 64 }
         );
         assert!(ExcludeList::parse(&too_many[..64]).is_ok());
-        assert_eq!(ExcludeRejection::Absolute.to_string(), "is absolute");
+        assert_eq!(ExcludeRejection::Absolute.to_string(), "es absoluta");
         assert_eq!(
             ExcludeRejection::Path(PathRejection::ParentReference).to_string(),
-            "contains a parent reference"
+            "contiene una referencia al directorio padre"
         );
     }
 }

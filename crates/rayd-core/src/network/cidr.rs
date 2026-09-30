@@ -45,7 +45,7 @@ impl Family {
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("not a CIDR or an IP address")]
+#[error("no es un CIDR ni una dirección IP")]
 pub struct CidrError;
 
 /// The kernel routes `::ffff:a.b.c.d` as `a.b.c.d`, so every rule compares

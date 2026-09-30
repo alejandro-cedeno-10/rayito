@@ -11,6 +11,7 @@ use std::time::Duration;
 use rayd_core::persistence::{
     CheckpointRequestInfo, LocationRequest, PersistenceError, RestoreRequestInfo, StatusKind,
 };
+use rayd_core::wire_tokens::SUSPENDING;
 use rayito_proto::v1::{
     CheckpointDone, CheckpointEvent, CheckpointProgress, CheckpointRequest, CheckpointStarted,
     KeepAlive, RestoreDone, RestoreEvent, RestoreProgress, RestoreRequest, RestoreStarted,
@@ -22,8 +23,6 @@ use tonic::{Code, Request, Response, Status};
 use super::keepalive::KeepAliveStream;
 use crate::lifecycle::{StreamCloseReason, SuspendClose, SuspendSignal, SuspendableStream};
 use crate::persistence::{CheckpointItem, PersistenceBackend, RestoreItem};
-
-pub const SUSPENDING_CODE: &str = "suspending";
 
 pub struct PersistenceGrpc {
     backend: Arc<dyn PersistenceBackend>,
@@ -67,7 +66,7 @@ impl PersistenceGrpc {
             |item| Ok(checkpoint_event(item)),
             |reason| match reason {
                 StreamCloseReason::Suspending => {
-                    SuspendClose::Terminal(checkpoint_error(SUSPENDING_CODE, SUSPENDING_CODE))
+                    SuspendClose::Terminal(checkpoint_error(SUSPENDING, SUSPENDING))
                 }
                 StreamCloseReason::SandboxTimeout => SuspendClose::Status,
             },
@@ -100,7 +99,7 @@ impl PersistenceGrpc {
             |item| Ok(restore_event(item)),
             |reason| match reason {
                 StreamCloseReason::Suspending => {
-                    SuspendClose::Terminal(restore_error(SUSPENDING_CODE, SUSPENDING_CODE))
+                    SuspendClose::Terminal(restore_error(SUSPENDING, SUSPENDING))
                 }
                 StreamCloseReason::SandboxTimeout => SuspendClose::Status,
             },
@@ -503,7 +502,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), Code::NotFound);
-        assert_eq!(missing.message(), "no checkpoint under the prefix");
+        assert_eq!(missing.message(), "no hay checkpoint bajo el prefijo");
         let mut bad = checkpoint_request("a", &[]);
         bad.target.as_mut().unwrap().bucket = "Bad".to_owned();
         let invalid = fixture.client.checkpoint(bad).await.unwrap_err();
@@ -523,7 +522,10 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(no_role.code(), Code::PermissionDenied);
-        assert_eq!(no_role.message(), "no execution role credentials");
+        assert_eq!(
+            no_role.message(),
+            "no hay credenciales del rol de ejecución"
+        );
         assert!(
             !fixture
                 .store
@@ -555,7 +557,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(busy.code(), Code::FailedPrecondition);
-        assert_eq!(busy.message(), "persistence busy");
+        assert_eq!(busy.message(), "la persistencia está ocupada");
         drop(first);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let again = fixture
@@ -584,7 +586,7 @@ mod tests {
                 assert_eq!(error.code, "permission_denied");
                 assert_eq!(
                     error.message,
-                    "access denied by the bucket or the execution role"
+                    "el bucket o el rol de ejecución denegaron el acceso"
                 );
             }
             other => panic!("unexpected {other:?}"),

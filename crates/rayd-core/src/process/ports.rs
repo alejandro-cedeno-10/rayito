@@ -15,7 +15,7 @@ pub trait UserLookup: Send + Sync {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum LookupError {
-    #[error("unknown user")]
+    #[error("usuario desconocido")]
     UnknownUser,
     #[error("{0}")]
     Failed(String),
@@ -25,19 +25,19 @@ pub enum LookupError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SpawnError {
     /// `exec` refused the program (`ENOENT`, `EACCES`): the client's mistake.
-    #[error("cannot execute: {0}")]
+    #[error("no se puede ejecutar: {0}")]
     CannotExecute(String),
-    #[error("spawn failed: {0}")]
+    #[error("falló el arranque del proceso: {0}")]
     Failed(String),
-    #[error("process spawning is not supported on this platform")]
+    #[error("el arranque de procesos no se admite en esta plataforma")]
     Unsupported,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SignalError {
-    #[error("no such process group")]
+    #[error("no existe el grupo de procesos")]
     NoSuchProcess,
-    #[error("signal failed: {0}")]
+    #[error("falló la señal: {0}")]
     Failed(String),
 }
 

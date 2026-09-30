@@ -46,24 +46,26 @@ pub const MAX_CPU_SECONDS: u64 = 28_800;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum RunPayloadError {
-    #[error("runHookPayload absent from the /run body")]
+    #[error("falta runHookPayload en el cuerpo de /run")]
     Missing,
-    #[error("payload has {actual} characters, the limit is {RUN_HOOK_PAYLOAD_MAX_CHARS}")]
+    #[error("el payload tiene {actual} caracteres y el límite es {RUN_HOOK_PAYLOAD_MAX_CHARS}")]
     TooLarge { actual: usize },
-    #[error("payload is not a JSON object (line {line}, column {column})")]
+    #[error("el payload no es un objeto JSON (línea {line}, columna {column})")]
     MalformedJson { line: usize, column: usize },
-    #[error("payload version {actual} is not supported (expected {SUPPORTED_VERSION})")]
+    #[error("la versión {actual} del payload no se admite (se espera {SUPPORTED_VERSION})")]
     UnsupportedVersion { actual: u64 },
-    #[error("payload field `{0}` is missing")]
+    #[error("falta el campo `{0}` del payload")]
     MissingField(&'static str),
-    #[error("payload field `token_sha256` is invalid: {0}")]
+    #[error("el campo `token_sha256` del payload no es válido: {0}")]
     InvalidDigest(AuthError),
-    #[error("payload field `limits.cpu_seconds` is outside {MIN_CPU_SECONDS}..={MAX_CPU_SECONDS}")]
+    #[error(
+        "el campo `limits.cpu_seconds` del payload está fuera de {MIN_CPU_SECONDS}..={MAX_CPU_SECONDS}"
+    )]
     InvalidLimits,
     /// Names the violated rule, never a value.
-    #[error("payload field `lifecycle` is invalid: {0}")]
+    #[error("el campo `lifecycle` del payload no es válido: {0}")]
     InvalidLifecycle(&'static str),
-    #[error("payload field `network.enforce` is not a boolean")]
+    #[error("el campo `network.enforce` del payload no es un booleano")]
     InvalidNetwork,
 }
 
@@ -155,22 +157,22 @@ impl LifecycleWire {
             self.auto_resume,
         ) else {
             return Err(invalid(
-                "timeout_s, cap_s, on_timeout and auto_resume are all required",
+                "timeout_s, cap_s, on_timeout y auto_resume son obligatorios",
             ));
         };
         if !(MIN_TIMEOUT_SECONDS..=MAX_LIFETIME_SECONDS).contains(&timeout_s) {
-            return Err(invalid("timeout_s is outside 1..=28800"));
+            return Err(invalid("timeout_s está fuera de 1..=28800"));
         }
         if !(MIN_CAP_SECONDS..=MAX_LIFETIME_SECONDS).contains(&cap_s) {
-            return Err(invalid("cap_s is outside 120..=28800"));
+            return Err(invalid("cap_s está fuera de 120..=28800"));
         }
         if timeout_s > cap_s {
-            return Err(invalid("timeout_s is greater than cap_s"));
+            return Err(invalid("timeout_s es mayor que cap_s"));
         }
         let on_timeout = TimeoutAction::parse(&on_timeout)
-            .ok_or_else(|| invalid("on_timeout is neither \"kill\" nor \"pause\""))?;
+            .ok_or_else(|| invalid("on_timeout no es \"kill\" ni \"pause\""))?;
         if auto_resume && on_timeout != TimeoutAction::Pause {
-            return Err(invalid("auto_resume requires on_timeout \"pause\""));
+            return Err(invalid("auto_resume exige on_timeout \"pause\""));
         }
         Ok(LifecycleSpec {
             timeout: Duration::from_secs(timeout_s),

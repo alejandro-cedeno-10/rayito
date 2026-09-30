@@ -7,46 +7,48 @@ use thiserror::Error;
 use super::language::Language;
 use super::protocol::ProtocolError;
 use crate::lifecycle::HookPhase;
+use crate::process::out_of_range_message;
+use crate::wire_tokens::KERNEL_NOT_READY_PREFIX;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CodeError {
-    #[error("context_id must be 1-64 characters of [A-Za-z0-9_-]")]
+    #[error("context_id debe tener de 1 a 64 caracteres de [A-Za-z0-9_-]")]
     InvalidContextId,
-    #[error("code exceeds {max} bytes")]
+    #[error("el código supera {max} bytes")]
     CodeTooLarge { max: usize },
-    #[error("language must be one of python, bash, javascript, typescript")]
+    #[error("language debe ser python, bash, javascript o typescript")]
     InvalidLanguage,
-    #[error("language {0} is not installed in this image; use rayito-base-poly")]
+    #[error("el lenguaje {0} no está instalado en esta imagen; usa rayito-base-poly")]
     LanguageUnavailable(Language),
-    #[error("language cannot be combined with context_id")]
+    #[error("language no se puede combinar con context_id")]
     LanguageWithContext,
     #[error(
-        "envs per execution are only supported on python contexts; pass envs to create_code_context instead"
+        "los envs por ejecución sólo se admiten en contextos python; pasa envs a create_code_context"
     )]
     EnvsPythonOnly,
-    #[error("cwd {0}")]
+    #[error("cwd inválido: {0}")]
     InvalidCwd(String),
-    #[error("envs keys must be non-empty without `=` or NUL and values without NUL")]
+    #[error("las claves de envs deben ser no vacías, sin `=` ni NUL, y los valores sin NUL")]
     InvalidEnvs,
-    #[error("context not found")]
+    #[error("contexto no encontrado")]
     ContextNotFound,
-    #[error("execution not found")]
+    #[error("ejecución no encontrada")]
     ExecutionNotFound,
-    #[error("execution_id must be an exec id of 16 hex digits")]
+    #[error("execution_id debe ser un id de ejecución de 16 dígitos hex")]
     InvalidExecutionId,
-    #[error("from_seq out of range: oldest retained {oldest}, next {next}")]
+    #[error("{}", out_of_range_message(*oldest, *next))]
     ReplayOutOfRange { oldest: u64, next: u64 },
-    #[error("execution already has {max} subscribers")]
+    #[error("la ejecución ya tiene {max} suscriptores")]
     TooManySubscribers { max: usize },
-    #[error("the default context cannot be destroyed; use RestartContext")]
+    #[error("el contexto por defecto no se puede destruir; usa RestartContext")]
     DefaultContextProtected,
-    #[error("context limit reached ({max}); destroy one first")]
+    #[error("se alcanzó el límite de contextos ({max}); destruye uno antes")]
     TooManyContexts { max: usize },
-    #[error("kernel not ready: {reason}")]
+    #[error("{KERNEL_NOT_READY_PREFIX}: {reason}")]
     KernelNotReady { reason: String },
-    #[error("kernel not ready: sidecar unavailable")]
+    #[error("{KERNEL_NOT_READY_PREFIX}: el sidecar no está disponible")]
     SidecarUnavailable,
-    #[error("context is being restarted; retry")]
+    #[error("el contexto se está reiniciando; reintenta")]
     ContextBusy,
     #[error("{0}")]
     SidecarRejected(String),
@@ -54,7 +56,7 @@ pub enum CodeError {
     NotAcceptingStreams { phase: HookPhase },
     #[error(transparent)]
     SidecarProtocol(ProtocolError),
-    #[error("code execution is not supported on this platform")]
+    #[error("la ejecución de código no se admite en esta plataforma")]
     Unsupported,
     #[error("{0}")]
     Internal(String),
@@ -73,7 +75,7 @@ mod tests {
             CodeError::LanguageUnavailable(Language::Bash),
             CodeError::LanguageWithContext,
             CodeError::EnvsPythonOnly,
-            CodeError::InvalidCwd("is not an absolute path".to_owned()),
+            CodeError::InvalidCwd("no es una ruta absoluta".to_owned()),
             CodeError::InvalidEnvs,
             CodeError::ContextNotFound,
             CodeError::ExecutionNotFound,
@@ -114,11 +116,11 @@ mod tests {
         );
         assert_eq!(
             CodeError::LanguageUnavailable(Language::Javascript).to_string(),
-            "language javascript is not installed in this image; use rayito-base-poly"
+            "el lenguaje javascript no está instalado en esta imagen; usa rayito-base-poly"
         );
         assert_eq!(
             CodeError::InvalidLanguage.to_string(),
-            "language must be one of python, bash, javascript, typescript"
+            "language debe ser python, bash, javascript o typescript"
         );
         let typescript = CodeError::LanguageUnavailable(Language::Typescript).to_string();
         assert!(typescript.contains("typescript"), "{typescript}");

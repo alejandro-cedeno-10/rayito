@@ -113,7 +113,7 @@ function moved(current: LifecycleState, request: SetTimeoutRequest): LifecycleSt
     throw new ConnectError("mode must be EXACT or AT_LEAST", Code.InvalidArgument);
   }
   if (request.timeoutMs < 1000n) {
-    throw new ConnectError("timeout below 1 s", Code.InvalidArgument);
+    throw new ConnectError("el timeout debe ser de al menos 1 s", Code.InvalidArgument);
   }
   if (current.phase === LifecyclePhase.UNMANAGED) {
     throw new ConnectError("lifecycle_unmanaged", Code.FailedPrecondition);

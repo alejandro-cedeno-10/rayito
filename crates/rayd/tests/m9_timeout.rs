@@ -323,6 +323,32 @@ async fn set_timeout_beyond_cap_is_invalid_argument_and_keeps_the_deadline() {
     assert_eq!(phase(&after), LifecyclePhase::Active);
 }
 
+/// Zero is no longer an adapter rule: the phase answers first, and an
+/// active sandbox gives the same refusal as any timeout below 1 s.
+#[tokio::test]
+async fn a_zero_timeout_follows_the_phase_rules() {
+    let bare = unmanaged().await;
+    let unmanaged_zero = bare.set_timeout(TimeoutMode::Exact, 0).await.unwrap_err();
+    assert_eq!(unmanaged_zero.code(), Code::FailedPrecondition);
+    assert_eq!(unmanaged_zero.message(), "lifecycle_unmanaged");
+
+    let harness = managed("kill", false).await;
+    let before = harness.lifecycle_state().await;
+    let zero = harness
+        .set_timeout(TimeoutMode::AtLeast, 0)
+        .await
+        .unwrap_err();
+    let below = harness
+        .set_timeout(TimeoutMode::AtLeast, 999)
+        .await
+        .unwrap_err();
+    assert_eq!(zero.code(), Code::InvalidArgument);
+    assert_eq!(zero.message(), below.message());
+    let after = harness.lifecycle_state().await;
+    assert_eq!(after.extensions, before.extensions);
+    assert_eq!(phase(&after), LifecyclePhase::Active);
+}
+
 #[tokio::test]
 async fn health_reports_the_lifecycle_after_run_and_unmanaged_without_it() {
     let harness = managed("kill", false).await;
