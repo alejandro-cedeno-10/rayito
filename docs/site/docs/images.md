@@ -50,8 +50,9 @@ El tamaño (CPU/RAM) es también una propiedad de la imagen, con
 `--memory-mib` (`resources[0].minimumMemoryInMiB`, por defecto 2048): para
 tener sandboxes de varios tamaños publica una imagen por tamaño con un
 nombre que lo diga (`--image-name myimg-4gb --memory-mib 4096`) y elige la
-imagen al crear el sandbox. Detalle y la tabla de tamaños medidos en
-[Límites](limits.md#tamano-cpuram).
+imagen al crear el sandbox. Detalle, la tabla de tamaños (de la
+documentación de AWS, no medida salvo donde se dice) y el `$/h` por tamaño
+en [Límites](limits.md#tamano-cpuram).
 
 ```python
 from rayito import Sandbox
