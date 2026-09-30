@@ -81,16 +81,23 @@ describe("loadOptionalPeer", () => {
   });
 });
 
+// Escapa TODOS los metacaracteres de regex (no sólo `/`) antes de incrustar
+// una cadena arbitraria en un patrón construido dinámicamente.
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe("peerDependencies opcionales futuros", () => {
   test("ningún fichero de src/ importa de forma estática un peer opcional que aún no es dependencia real", () => {
     const offenders: string[] = [];
     for (const file of listTsFilesRecursively(SRC_ROOT)) {
       const content = readFileSync(file, "utf-8");
       for (const peer of FUTURE_OPTIONAL_PEERS) {
+        const escapedPeer = escapeRegExp(peer);
         // Import/export estático o `require`; el `import()` dinámico de
         // `loadOptionalPeer` no cuenta como estático y no debe casar aquí.
         const staticImportPattern = new RegExp(
-          `(^|\\n)\\s*(import|export)\\b[^\\n]*['"]${peer.replace(/[/]/g, "\\/")}['"]|require\\(\\s*['"]${peer.replace(/[/]/g, "\\/")}['"]\\s*\\)`,
+          `(^|\\n)\\s*(import|export)\\b[^\\n]*['"]${escapedPeer}['"]|require\\(\\s*['"]${escapedPeer}['"]\\s*\\)`,
         );
         if (staticImportPattern.test(content)) {
           offenders.push(`${file} -> ${peer}`);
