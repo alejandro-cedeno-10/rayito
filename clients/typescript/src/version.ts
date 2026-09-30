@@ -1,2 +1,2 @@
 /** Versión del paquete; `tests/unit/version.test.ts` la mantiene igual a `package.json`. */
-export const VERSION = "0.3.3"; // x-release-please-version
+export const VERSION = "0.4.0"; // x-release-please-version

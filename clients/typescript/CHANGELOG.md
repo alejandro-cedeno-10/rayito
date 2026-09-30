@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
 ### Cambios que rompen
 
 - `UnimplementedError` es ahora el único tipo para "algo que este sandbox no

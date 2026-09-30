@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
 ### Cambios que rompen
 
 - `LifecycleService.SetTimeout` con `timeout_ms=0`: la regla del timeout es
