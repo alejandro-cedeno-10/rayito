@@ -123,3 +123,27 @@ def test_cancel_while_blocked_in_next_closes_the_body_at_once() -> None:
     assert chunks.close_calls == 1
     thread.join(5)
     assert not thread.is_alive()
+
+
+class ClosedBodyChunks(BlockingChunks):
+    """Como `BlockingChunks`, pero leer tras el cierre falla, como un cuerpo
+    HTTP real ya cerrado, y recuerda si el cierre llegó con el lector aún
+    bloqueado (sólo la guardia de inactividad puede hacerlo: el `finally`
+    de `run()` corre después de que `__next__` vuelva)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed_while_blocked = False
+
+    def __next__(self) -> bytes:
+        self.entered_next.set()
+        self.closed_while_blocked = self._unblocked.wait(10)
+        raise ValueError("cuerpo cerrado")
+
+
+def test_idle_guard_closes_a_body_blocked_in_next() -> None:
+    chunks = ClosedBodyChunks()
+    fetch = ObjectFetch(FakeGateway(chunks).as_s3_gateway(), TARGET, 0.05)
+    with pytest.raises(TimeoutException, match="stream_idle_timeout"):
+        fetch.run()
+    assert chunks.closed_while_blocked

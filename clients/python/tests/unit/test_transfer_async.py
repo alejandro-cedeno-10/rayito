@@ -410,7 +410,7 @@ async def test_async_request_timeout_bounds_a_stalled_s3_download(
     stalled_s3.open_gate.clear()
     started = time.monotonic()
     with pytest.raises(TimeoutException, match="plazo"):
-        await sandbox.files.read("big.bin", format="bytes", request_timeout=0.3)
+        await sandbox.files.read("big.bin", format="bytes", request_timeout=1.0)
     assert time.monotonic() - started < 5
     stalled_s3.open_gate.set()
     assert await asyncio.to_thread(stalled_s3.fetch_finished.wait, 5)
@@ -427,9 +427,10 @@ async def test_async_stream_idle_timeout_bounds_a_stalled_s3_download(
     with pytest.raises(TimeoutException, match="stream_idle_timeout"):
         await sandbox.files.read("big.txt", stream_idle_timeout=0.2)
     assert time.monotonic() - started < 5
-    stalled_s3.read_gate.set()
+    # Sólo `close()` abre `read_gate`: si la guardia de inactividad no cerrara
+    # el cuerpo, el lector seguiría bloqueado más allá de esta espera.
     assert await asyncio.to_thread(stalled_s3.fetch_finished.wait, 5)
-    assert stalled_s3.opened == stalled_s3.closed
+    assert stalled_s3.opened == stalled_s3.closed == 1
 
 
 async def test_async_overlapping_transfer_and_persist_fail_before_aws(
