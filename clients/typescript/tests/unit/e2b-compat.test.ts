@@ -615,7 +615,7 @@ describe("the kernel gate", () => {
   test("unimplementedLanguage maps only a native UnimplementedError", () => {
     const notShipped = new UnimplementedError(
       'runCode({ language: "typescript" })',
-      "language typescript is not installed in this image; use rayito-base-poly",
+      "el lenguaje typescript no está instalado en esta imagen; usa rayito-base-poly",
     );
     const mapped = unimplementedLanguage(notShipped, "runCode", "typescript");
     expect(mapped).toBeInstanceOf(UnimplementedError);
