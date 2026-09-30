@@ -25,6 +25,7 @@ from rayito.exceptions import (
     GitAuthException,
     GitUpstreamException,
     InvalidArgumentException,
+    LifecycleUnsupportedException,
     NotFoundException,
     QuotaExceededException,
     RateLimitException,
@@ -105,7 +106,6 @@ class FakeRpcError(grpc.RpcError):
     ("code", "filesystem", "expected"),
     [
         (grpc.StatusCode.INVALID_ARGUMENT, False, InvalidArgumentException),
-        (grpc.StatusCode.UNIMPLEMENTED, False, InvalidArgumentException),
         (grpc.StatusCode.UNAUTHENTICATED, False, AuthenticationException),
         (grpc.StatusCode.PERMISSION_DENIED, False, AuthenticationException),
         (grpc.StatusCode.NOT_FOUND, False, NotFoundException),
@@ -126,6 +126,27 @@ def test_grpc_errors_map_by_status(
     assert type(mapped) is expected
     assert isinstance(mapped, SandboxException | AuthenticationException)
     assert mapped.grpc_code is code
+
+
+def test_unimplemented_is_the_one_unimplemented_error_type() -> None:
+    """La rama genérica `UNIMPLEMENTED` de la tabla unaria ya no es
+    `InvalidArgumentException`: es `UnimplementedError`, con el detalle de
+    `rayd` en `reason` y la `RpcError` como `__cause__` (encadenada por el
+    caller, aquí simulada con `raise ... from`)."""
+    exc = FakeRpcError(grpc.StatusCode.UNIMPLEMENTED, details="Method not found")
+    try:
+        raise translate_rpc_error(exc) from exc
+    except UnimplementedError as mapped:
+        assert type(mapped) is UnimplementedError
+        assert not isinstance(mapped, SandboxException)
+        assert mapped.feature == "esta llamada"
+        assert "Method not found" in mapped.reason
+        assert mapped.__cause__ is exc
+    else:
+        pytest.fail("translate_rpc_error(UNIMPLEMENTED) debía dar un UnimplementedError")
+    named = translate_rpc_error(exc, feature="run_code")
+    assert isinstance(named, UnimplementedError)
+    assert named.feature == "run_code"
 
 
 def test_proxy_403_is_distinguished_from_rayd_permission_denied() -> None:
@@ -177,6 +198,19 @@ def test_hierarchy_matches_e2b_shape() -> None:
     assert not issubclass(AuthenticationException, SandboxException)
     assert not issubclass(QuotaExceededException, SandboxException)
     assert not issubclass(CapacityException, SandboxException)
+
+
+def test_lifecycle_unsupported_is_only_an_unimplemented_error() -> None:
+    """Un timeout de servidor ausente es EL mismo concepto que cualquier
+    otra feature ausente: `LifecycleUnsupportedException` es sólo un
+    discriminador tipado de `UnimplementedError`, no de `InvalidArgumentException`
+    ni de `SandboxException` (regla aprobada, cambio de comportamiento)."""
+    assert issubclass(LifecycleUnsupportedException, UnimplementedError)
+    assert not issubclass(LifecycleUnsupportedException, SandboxException)
+    assert not issubclass(LifecycleUnsupportedException, InvalidArgumentException)
+    error = LifecycleUnsupportedException("connect(timeout=)", "necesita una imagen M9")
+    assert isinstance(error, UnimplementedError) and isinstance(error, NotImplementedError)
+    assert (error.feature, error.reason) == ("connect(timeout=)", "necesita una imagen M9")
 
 
 def test_git_exceptions_follow_the_e2b_tree() -> None:

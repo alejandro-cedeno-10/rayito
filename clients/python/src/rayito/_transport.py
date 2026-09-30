@@ -40,9 +40,13 @@ from rayito.exceptions import (
     SandboxException,
     SandboxStateException,
     TimeoutException,
+    UnimplementedError,
 )
 
 module_logger = logging.getLogger("rayito.transport")
+
+GENERIC_RPC_FEATURE: Final = "esta llamada"
+UNIMPLEMENTED_IMAGE_HINT: Final = "publica una imagen con una versión actual de rayd"
 
 PROXY_AUTH_KEY: Final = "x-aws-proxy-auth"
 PROXY_PORT_KEY: Final = "x-aws-proxy-port"
@@ -453,7 +457,19 @@ def is_reconnectable(exc: grpc.RpcError) -> bool:
     return is_stream_reset(exc) or is_phase_gate(exc)
 
 
-def translate_rpc_error(exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
+def unimplemented_rpc_error(
+    exc: grpc.RpcError, feature: str = GENERIC_RPC_FEATURE
+) -> UnimplementedError:
+    """El `UnimplementedError` de la rama genérica `UNIMPLEMENTED`: el
+    detalle de `rayd` (para un kernel ausente nombra `rayito-base-poly`) más
+    la pista de publicar una imagen actual. `feature` deja que un caller
+    concreto (p. ej. `CodeService`) sea más preciso que "esta llamada"."""
+    return UnimplementedError(feature, f"{rpc_details(exc)}; {UNIMPLEMENTED_IMAGE_HINT}")
+
+
+def translate_rpc_error(
+    exc: grpc.RpcError, *, filesystem: bool = False, feature: str = GENERIC_RPC_FEATURE
+) -> Exception:
     """Tabla unaria. `CANCELLED` sólo lo produce el propio cliente (cerrar el
     canal o el stream), nunca un timeout, por eso no es `TimeoutException`."""
     code = rpc_status(exc)
@@ -489,7 +505,7 @@ def translate_rpc_error(exc: grpc.RpcError, *, filesystem: bool = False) -> Exce
     if code is grpc.StatusCode.CANCELLED:
         return SandboxException(f"llamada cancelada por el cliente: {message}", grpc_code=code)
     if code is grpc.StatusCode.UNIMPLEMENTED:
-        return InvalidArgumentException(message, grpc_code=code)
+        return unimplemented_rpc_error(exc, feature)
     return SandboxException(message, grpc_code=code)
 
 

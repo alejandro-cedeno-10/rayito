@@ -29,6 +29,7 @@ from rayito._code_base import (
     StdoutCallback,
     build_create_context_request,
     build_execute_request,
+    code_feature,
     context_from_proto,
     execute_deadline,
     fallback_context,
@@ -105,6 +106,7 @@ class CodeClient:
             service=CODE_STUB,
             stream=False,
             reconnect=False,
+            feature=code_feature("run_code", language),
         )
         return self._consume(call, first, builder, deadline_at(deadline, time.monotonic))
 
@@ -120,15 +122,16 @@ class CodeClient:
         `language` es `python` (por defecto), `bash`, `javascript` (alias
         `js`) o `typescript` (alias `ts`). `bash` y los dos de Deno sólo
         existen en la variante de imagen `rayito-base-poly`, donde ningún
-        kernel suyo arranca antes de que se pida (`InvalidArgumentException`
-        con `grpc_code` `UNIMPLEMENTED` nombrando `rayito-base-poly` en las
-        demás). `cwd` debe existir en el sandbox; `envs` forman parte del
+        kernel suyo arranca antes de que se pida (`UnimplementedError`
+        nombrando `rayito-base-poly` en las demás). `cwd` debe existir en el
+        sandbox; `envs` forman parte del
         entorno del kernel. Como máximo 8 contextos por sandbox."""
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         response = self._sandbox._code_call(
             lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
             request_timeout,
             default_timeout=CONTEXT_REQUEST_TIMEOUT_SECONDS,
+            feature=code_feature("create_code_context", language),
         )
         context_id = str(response.context_id)
         for listed in self.list_contexts(request_timeout=request_timeout):

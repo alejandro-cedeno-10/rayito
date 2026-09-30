@@ -62,7 +62,6 @@ from rayito._metrics_base import (
     HISTORY_FEATURE,
     ensure_history_readable,
     history_unimplemented_error,
-    is_history_unimplemented,
     metrics_history_from_proto,
     metrics_history_request,
 )
@@ -166,6 +165,7 @@ from rayito._transfer_base import (
     validate_staging_against_persist,
 )
 from rayito._transport import (
+    GENERIC_RPC_FEATURE,
     ProxyAuthPlugin,
     TokenRefresher,
     TokenStore,
@@ -185,6 +185,7 @@ from rayito.exceptions import (
     SandboxNotFoundException,
     SandboxNotReadyException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
@@ -1272,10 +1273,8 @@ class Sandbox:
             response = self._translated_unary(
                 lambda: self._health.MetricsHistory(request, timeout=timeout)
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     @classmethod
@@ -1314,10 +1313,8 @@ class Sandbox:
                 token,
                 lambda stub: stub.MetricsHistory(request, timeout=timeout),
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     def close(self) -> None:
@@ -1452,8 +1449,8 @@ class Sandbox:
         dos últimos, que sirve el kernel Jupyter de Deno, viven en la variante
         de imagen `rayito-base-poly` y arrancan en la primera celda de ese
         lenguaje (≈ 1 s dentro del `timeout`); en `rayito-base` la llamada
-        falla con `InvalidArgumentException` (`grpc_code` `UNIMPLEMENTED`,
-        mensaje que nombra `rayito-base-poly`). `language` y `context` son
+        falla con `UnimplementedError` (el mensaje nombra `rayito-base-poly`).
+        `language` y `context` son
         excluyentes; `envs` por ejecución sólo en contextos Python.
 
         Devuelve una `Execution` con `results` (mime bundles: `text`, `png`,
@@ -1721,11 +1718,13 @@ class Sandbox:
             raise self._reconnect_error(outcome, reason) from reason
         return call()
 
-    def _translated_unary(self, call: Callable[[], T], *, filesystem: bool = False) -> T:
+    def _translated_unary(
+        self, call: Callable[[], T], *, filesystem: bool = False, feature: str = GENERIC_RPC_FEATURE
+    ) -> T:
         try:
             return self._call_unary(call)
         except grpc.RpcError as exc:
-            raise translate_rpc_error(exc, filesystem=filesystem) from exc
+            raise translate_rpc_error(exc, filesystem=filesystem, feature=feature) from exc
 
     def _resolve_request_timeout(self, request_timeout: float | None) -> float:
         return self._request_timeout if request_timeout is None else request_timeout
@@ -1754,14 +1753,17 @@ class Sandbox:
         request_timeout: float | None,
         *,
         default_timeout: float | None = None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> T:
         """Unario de `CodeService` en el canal de unarios. `default_timeout`
         sustituye al `request_timeout` del sandbox cuando el RPC arranca un
-        kernel (`CreateContext`, `RestartContext`: 90 s)."""
+        kernel (`CreateContext`, `RestartContext`: 90 s). `feature` nombra el
+        `UNIMPLEMENTED` genérico para un caller que lo conoce mejor
+        (`create_code_context`)."""
         timeout = self._resolve_request_timeout(request_timeout)
         if request_timeout is None and default_timeout is not None:
             timeout = default_timeout
-        return self._translated_unary(lambda: invoke(self._code, timeout))
+        return self._translated_unary(lambda: invoke(self._code, timeout), feature=feature)
 
     def _stub(self, service: StubFactory, *, stream: bool) -> Any:
         """El canal de streams se abre en el primer uso: es el segundo y último
@@ -1786,6 +1788,7 @@ class Sandbox:
         filesystem: bool = False,
         reconnect: bool = True,
         translate: Callable[[grpc.RpcError], Exception] | None = None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> tuple[Any, Any]:
         """Abre un server-stream y consume su primer mensaje.
 
@@ -1807,24 +1810,25 @@ class Sandbox:
             reason = exc
         if not self._reopened_after_deadline_pause(reason, seen_reopens):
             if not (reconnect and self._is_reconnectable(reason)):
-                raise self._open_failure(reason, filesystem, translate) from reason
+                raise self._open_failure(reason, filesystem, translate, feature) from reason
             outcome = self._reconnect(reason, seen_generation)
             if not outcome.resumed:
                 raise self._reconnect_error(outcome, reason) from reason
         try:
             return first_stream_message(start(stub), allow_empty=allow_empty)
         except grpc.RpcError as exc:
-            raise self._open_failure(exc, filesystem, translate) from exc
+            raise self._open_failure(exc, filesystem, translate, feature) from exc
 
     def _open_failure(
         self,
         exc: grpc.RpcError,
         filesystem: bool,
         translate: Callable[[grpc.RpcError], Exception] | None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> Exception:
         if translate is not None and not is_stream_reset(exc):
             return translate(exc)
-        return self._stream_failure(exc, filesystem=filesystem)
+        return self._stream_failure(exc, filesystem=filesystem, feature=feature)
 
     def _first_message_reminting(
         self, start: StreamStarter, stub: Any, allow_empty: bool
@@ -1841,13 +1845,15 @@ class Sandbox:
         self._refresher.refresh_all()
         return first_stream_message(start(stub), allow_empty=allow_empty)
 
-    def _stream_failure(self, exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
+    def _stream_failure(
+        self, exc: grpc.RpcError, *, filesystem: bool = False, feature: str = GENERIC_RPC_FEATURE
+    ) -> Exception:
         """Clasificación de M2 para los cortes que no reconectan (`Read` a
         mitad de fichero, o cuando el sondeo de reconexión ya falló): un
         reset se clasifica sondeando `Health` (5 s) y, si no responde, con un
         `get-microvm`; cualquier otro status sigue la tabla unaria."""
         if not is_stream_reset(exc):
-            return translate_rpc_error(exc, filesystem=filesystem)
+            return translate_rpc_error(exc, filesystem=filesystem, feature=feature)
         health_ok = self._health_answers()
         state = None if health_ok else self._state_after_reset()
         return stream_failure_exception(exc, health_ok=health_ok, state=state)

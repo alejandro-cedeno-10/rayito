@@ -44,13 +44,6 @@ class InvalidArgumentException(SandboxException):
     pass
 
 
-class LifecycleUnsupportedException(InvalidArgumentException):
-    """El agente del sandbox es anterior a M9 y no impone el timeout del
-    servidor (`Health` sin `lifecycle`, o `UNIMPLEMENTED` en `SetTimeout`):
-    hace falta publicar una imagen M9 o crear el sandbox sin `max_lifetime`
-    ni `on_timeout`."""
-
-
 class NotFoundException(SandboxException):
     pass
 
@@ -242,3 +235,11 @@ class UnimplementedError(NotImplementedError):
         self.feature = feature
         self.reason = reason
         self.doc = doc
+
+
+class LifecycleUnsupportedException(UnimplementedError):
+    """El agente del sandbox es anterior a M9 y no impone el timeout del
+    servidor (`Health` sin `lifecycle`, o `UNIMPLEMENTED` en `SetTimeout`):
+    hace falta publicar una imagen M9 o crear el sandbox sin `max_lifetime`
+    ni `on_timeout`. Subclase de `UnimplementedError` sólo como discriminador
+    tipado para el shim de E2B (`isinstance`, nunca el texto)."""

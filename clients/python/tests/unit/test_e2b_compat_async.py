@@ -11,7 +11,6 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 
-import grpc
 import pytest
 
 from rayito import ALL_TRAFFIC, FilesystemEvent
@@ -513,12 +512,12 @@ async def test_async_kernel_not_shipped_is_unimplemented_from_the_native_error(
         await sbx.run_code("1 + 1", language="javascript")
     assert ran.value.feature == "run_code(language='javascript')"
     assert "rayito-base-poly" in ran.value.reason
-    assert isinstance(ran.value.__cause__, InvalidArgumentException)
-    assert ran.value.__cause__.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert isinstance(ran.value.__cause__, UnimplementedError)
+    assert not isinstance(ran.value.__cause__, InvalidArgumentException)
     with pytest.raises(UnimplementedError) as created:
         await sbx.create_code_context(language="ts")
     assert created.value.feature == "create_code_context(language='ts')"
-    assert isinstance(created.value.__cause__, InvalidArgumentException)
+    assert isinstance(created.value.__cause__, UnimplementedError)
     executions = len(fake_rayd.code.executions)
     with pytest.raises(UnimplementedError) as refused:
         await sbx.run_code("1", language="r")

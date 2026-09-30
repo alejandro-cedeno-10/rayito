@@ -18,11 +18,10 @@ from __future__ import annotations
 import os
 import time
 
-import grpc
 import pytest
 
 from rayito import Sandbox
-from rayito.exceptions import CommandExitException, InvalidArgumentException
+from rayito.exceptions import CommandExitException, InvalidArgumentException, UnimplementedError
 
 pytestmark = pytest.mark.e2e
 
@@ -90,14 +89,13 @@ def test_python_unchanged_on_poly(poly_sandbox: Sandbox) -> None:
 
 
 def test_language_unimplemented_on_base(sandbox: Sandbox) -> None:
-    with pytest.raises(InvalidArgumentException) as excinfo:
+    with pytest.raises(UnimplementedError) as excinfo:
         sandbox.run_code("echo hi", language="bash")
-    assert excinfo.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
     assert POLY_IMAGE in str(excinfo.value)
     assert [item.id for item in sandbox.list_code_contexts()] == ["default"]
-    with pytest.raises(InvalidArgumentException) as created:
+    with pytest.raises(UnimplementedError) as created:
         sandbox.create_code_context(language="bash")
-    assert created.value.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert POLY_IMAGE in str(created.value)
     assert sandbox.run_code("1 + 1").text == "2"
     with pytest.raises(CommandExitException) as probe:
         sandbox.commands.run("python3 -c 'import bash_kernel'", timeout=30)

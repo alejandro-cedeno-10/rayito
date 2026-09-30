@@ -12,9 +12,13 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
 !!! note "Exige una imagen M9"
     Pedir un ciclo de vida (`max_lifetime` u `on_timeout`) a una imagen
     anterior a M9 termina el VM (salvo `keep_on_failure`) y lanza
-    `LifecycleUnsupportedException` (TS `LifecycleUnsupportedError`). Sin
-    `max_lifetime` ni `on_timeout`, `create()` se comporta exactamente como en
-    0.2.0: `timeout` es la vida de la plataforma y no se mueve.
+    `LifecycleUnsupportedException` (TS `LifecycleUnsupportedError`), la misma
+    feature ausente que cualquier otra: desde 0.4.0 es una subclase de
+    `UnimplementedError` (TS `UnimplementedError`), no de
+    `InvalidArgumentException`; captura `rayito.UnimplementedError` (o el
+    nombre específico) si quieres distinguir el caso. Sin `max_lifetime` ni
+    `on_timeout`, `create()` se comporta exactamente como en 0.2.0: `timeout`
+    es la vida de la plataforma y no se mueve.
 
 ## Crear con plazo
 

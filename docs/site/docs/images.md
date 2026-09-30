@@ -27,8 +27,8 @@ mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
 
 "sí (M9)" significa que hace falta una imagen publicada con el `rayd` de M9
 (en la release, `agent_version` 0.3.0); contra una anterior, cada feature falla cerrado con
-su error (`LifecycleUnsupportedException`, `UnimplementedError("actualiza la
-imagen")`, `InvalidArgumentException` con `grpc_code` `UNIMPLEMENTED`...).
+`UnimplementedError` (`LifecycleUnsupportedException` para el plazo del
+servidor, subclase suya desde 0.4.0; el resto ya lo era).
 No hay una variante que junte `-caps` y `-poly`: ningún objetivo de `make` la
 publica y la combinación no está medida.
 

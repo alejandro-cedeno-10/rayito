@@ -23,6 +23,7 @@ from rayito._code_base import (
     StdoutCallback,
     build_create_context_request,
     build_execute_request,
+    code_feature,
     context_from_proto,
     execute_deadline,
     fallback_context,
@@ -84,6 +85,7 @@ class AsyncCodeClient:
             service=CODE_STUB,
             stream=False,
             reconnect=False,
+            feature=code_feature("run_code", language),
         )
         return await self._consume(call, first, builder, deadline_at(deadline, time.monotonic))
 
@@ -101,6 +103,7 @@ class AsyncCodeClient:
             lambda stub, timeout: stub.CreateContext(request, timeout=timeout),
             request_timeout,
             default_timeout=CONTEXT_REQUEST_TIMEOUT_SECONDS,
+            feature=code_feature("create_code_context", language),
         )
         context_id = str(response.context_id)
         for listed in await self.list_contexts(request_timeout=request_timeout):

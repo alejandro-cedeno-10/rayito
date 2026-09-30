@@ -30,8 +30,10 @@ from rayito._sandbox_base import build_launch_plan, terminal_state_error
 from rayito.exceptions import (
     InvalidArgumentException,
     LifecycleUnsupportedException,
+    SandboxException,
     SandboxLifetimeException,
     TimeoutException,
+    UnimplementedError,
 )
 from rayito.v1 import health_pb2, lifecycle_pb2
 
@@ -364,7 +366,10 @@ def test_set_timeout_rejections_map_to_the_d8_table() -> None:
 def test_older_agent_error_names_template_version_and_the_fix() -> None:
     error = older_agent_error("rayito-base", "0.2.0")
     assert isinstance(error, LifecycleUnsupportedException)
-    assert isinstance(error, InvalidArgumentException)
+    assert isinstance(error, UnimplementedError)
+    assert not isinstance(error, InvalidArgumentException)
+    assert not isinstance(error, SandboxException)
+    assert error.feature == "create(max_lifetime=, on_timeout=)"
     assert "rayito-base" in str(error)
     assert "0.2.0" in str(error)
     assert "publica una imagen M9" in str(error)

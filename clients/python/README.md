@@ -142,7 +142,8 @@ Sandbox.connect(sbx.sandbox_id, access_token=sbx.access_token, timeout=900)  # s
 
 Con `on_timeout="pause"` (necesita `idle`) el sandbox se suspende al vencer
 en vez de terminar. Contra una imagen anterior a M9 pedir un ciclo de vida es
-`LifecycleUnsupportedException` y el VM se termina.
+`LifecycleUnsupportedException` (subclase de `UnimplementedError`, la
+misma feature ausente que cualquier otra) y el VM se termina.
 
 ## Comandos
 

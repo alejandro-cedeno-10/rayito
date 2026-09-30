@@ -9,7 +9,6 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import grpc
 import pytest
 
 from rayito import PtySize as NativePtySize
@@ -55,6 +54,7 @@ from rayito.e2b._compat import (
     unimplemented_language,
 )
 from rayito.e2b._unimplemented import UNIMPLEMENTED_REASONS, unimplemented
+from rayito.e2b.exceptions import COMPAT_DOC_PATH
 from rayito.exceptions import InvalidArgumentException
 
 IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base"
@@ -557,21 +557,18 @@ def test_language_gate_forwards_typescript_and_its_alias() -> None:
     assert "rayito-base-poly" in AVAILABLE_KERNELS_REASON
 
 
-def test_unimplemented_language_maps_only_an_agent_unimplemented() -> None:
-    not_shipped = InvalidArgumentException(
-        "language typescript is not installed in this image; use rayito-base-poly",
-        grpc_code=grpc.StatusCode.UNIMPLEMENTED,
+def test_unimplemented_language_always_wraps_with_the_poly_kernels_reason() -> None:
+    """El caller (`_sync.py`/`_async.py`) sólo llama a esto tras un `except
+    UnimplementedError`: ya no hay `grpc_code` que inspeccionar ni un `None`
+    que propagar sin tocar."""
+    native = UnimplementedError(
+        "run_code", "language typescript is not installed in this image; use rayito-base-poly"
     )
-    mapped = unimplemented_language(not_shipped, "run_code", "typescript")
+    mapped = unimplemented_language(native, "run_code", "typescript")
     assert isinstance(mapped, UnimplementedError)
     assert mapped.feature == "run_code(language='typescript')"
     assert "rayito-base-poly" in mapped.reason
-    rejected = InvalidArgumentException(
-        "language must be one of python, bash, javascript",
-        grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
-    )
-    assert unimplemented_language(rejected, "run_code", "typescript") is None
-    assert unimplemented_language(InvalidArgumentException("x"), "run_code", "bash") is None
+    assert mapped.doc == COMPAT_DOC_PATH
 
 
 def test_unimplemented_is_not_a_sandbox_exception() -> None:

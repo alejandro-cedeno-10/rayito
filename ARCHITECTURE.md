@@ -1448,7 +1448,9 @@ plataforma.
   exactamente como ADR-007: fase `UNMANAGED`, el tope es el `timeout`, el
   cable es idéntico.
 - Pedir un ciclo de vida a una imagen anterior a M9 falla cerrado:
-  `LifecycleUnsupportedException` y el VM se termina.
+  `LifecycleUnsupportedException` (0.4.0: subclase de `UnimplementedError`,
+  no de `InvalidArgumentException`; misma feature ausente que cualquier
+  otra) y el VM se termina.
 
 **Consecuencias.** Costes honestos, también en `e2b-compat.md` y
 `concepts.md`: (1) el tope sigue contando el tiempo suspendido: 8 h como

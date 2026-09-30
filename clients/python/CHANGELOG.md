@@ -6,6 +6,42 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- `LifecycleUnsupportedException` pasa a ser subclase de `UnimplementedError`
+  (ya no de `InvalidArgumentException`/`SandboxException`), y el kernel
+  ausente en `run_code`/`create_code_context` (y cualquier RPC que el agente
+  no implemente, vía la tabla unaria genérica de `_transport.py`) deja de ser
+  `InvalidArgumentException`/`SandboxException`: ahora es `UnimplementedError`
+  en los tres casos, un único tipo para "esta feature no está disponible en
+  este sandbox". Migración: cambia `except InvalidArgumentException`/`except
+  SandboxException` alrededor de esas llamadas por `except
+  rayito.UnimplementedError` (o `except LifecycleUnsupportedException`, que
+  ahora es subclase suya); `MetricsHistoryUnavailable` no cambia (ya era
+  `UnimplementedError`). `rayito.e2b` no cambia de superficie: seguía
+  lanzando `UnimplementedError` en los tres casos con el mismo `feature`,
+  `reason` y `doc`; sólo se simplifica su traducción interna.
+
+### Changed
+
+- `sbx.kill()`, `sbx.pause()` y `sbx.connect()` (`rayito.e2b`, llamadas de
+  instancia) avisan ahora con `RayitoCompatWarning` cuando se les pasa
+  `headers=`, `proxy=` o `retries=` (y `sbx.kill()`/`sbx.pause()` también con
+  `request_timeout=`), en vez de perderlos en silencio: esta llamada opera
+  sobre el canal y el plano ya construidos de este sandbox y no puede
+  reconstruirlos; usa `Sandbox.<kill|pause|connect>(sandbox_id, ...)` si
+  necesitas aplicarlos.
+
+### Fixed
+
+- `files.read()` de un fichero grande enrutado por S3: si el plazo
+  (`request_timeout`/`stream_idle_timeout`) vencía justo cuando el
+  `get_object` seguía en vuelo, el SDK podía lanzar una excepción distinta a
+  `TimeoutException` (un `NoSuchKey` de S3 tras el borrado del objeto de
+  staging) en vez de sólo `TimeoutException`, con un `get_object` de más
+  después de una cancelación ya vista. `ObjectFetch.run` comprueba ahora la
+  cancelación antes de abrir el cuerpo.
+
 ## [0.3.3] - 2026-09-29
 
 ### Security

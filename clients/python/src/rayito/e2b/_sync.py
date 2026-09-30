@@ -76,6 +76,7 @@ from rayito.e2b._connection import (
     ConnectionConfig,
     ConnectionParams,
     bind_control_plane,
+    instance_call,
     snapshot_config,
     split_api_params,
 )
@@ -117,12 +118,16 @@ def emit_warnings(messages: Sequence[str]) -> None:
         warnings.warn(message, RayitoCompatWarning, stacklevel=WARN_STACKLEVEL)
 
 
-def request_timeout_of(api_params: Mapping[str, Any], *, call: str) -> float | None:
-    """Los `ApiParams` de una llamada de instancia: avisa de los ignorados y
-    devuelve el `request_timeout`."""
-    settings, messages = split_api_params(api_params, call=call)
-    emit_warnings(messages)
-    return settings.request_timeout
+def instance_request_timeout(
+    api_params: Mapping[str, Any], *, call: str, applies_request_timeout: bool
+) -> float | None:
+    """Los `ApiParams` de una llamada de instancia (`sbx.kill()`,
+    `sbx.pause()`, `sbx.connect()`): avisa de los ignorados (`headers`,
+    `proxy`, `retries` y, si `applies_request_timeout` es falso,
+    `request_timeout`) y devuelve el `request_timeout` cuando sí se aplica."""
+    resolved = instance_call(api_params, call=call, applies_request_timeout=applies_request_timeout)
+    emit_warnings(resolved.warnings)
+    return resolved.request_timeout
 
 
 class Sandbox:
@@ -516,7 +521,9 @@ class Sandbox:
         extiende el plazo a al menos ahora + `timeout`. Devuelve `self`.
         `on_resume='reboot'` es `UnimplementedError`."""
         validate_on_resume(on_resume)
-        request_timeout = request_timeout_of(api_params, call="connect")
+        request_timeout = instance_request_timeout(
+            api_params, call="connect", applies_request_timeout=True
+        )
         try:
             self._native.connect(timeout=timeout, request_timeout=request_timeout)
         except LifecycleUnsupportedException as exc:
@@ -661,7 +668,7 @@ class Sandbox:
 
     @class_method_variant("_class_kill")
     def kill(self, **api_params: Unpack[ApiParams]) -> bool:
-        request_timeout_of(api_params, call="kill")
+        instance_request_timeout(api_params, call="kill", applies_request_timeout=False)
         return bool(self._native.kill())
 
     @classmethod
@@ -834,7 +841,7 @@ class Sandbox:
         `False` si ya estaba `SUSPENDING|SUSPENDED`. `keep_memory=False` es
         `UnimplementedError` (la pausa siempre guarda memoria y disco)."""
         validate_keep_memory(keep_memory)
-        request_timeout_of(api_params, call="pause")
+        instance_request_timeout(api_params, call="pause", applies_request_timeout=False)
         return self._native.pause(wait=True)
 
     @classmethod
@@ -986,11 +993,8 @@ class Sandbox:
             kwargs["timeout"] = timeout
         try:
             return self._native.run_code(code, **kwargs)
-        except InvalidArgumentException as exc:
-            mapped = unimplemented_language(exc, "run_code", language)
-            if mapped is None:
-                raise
-            raise mapped from exc
+        except UnimplementedError as exc:
+            raise unimplemented_language(exc, "run_code", language) from exc
 
     def create_code_context(
         self,
@@ -1006,11 +1010,8 @@ class Sandbox:
             return self._native.create_code_context(
                 cwd=cwd, language=canonical, request_timeout=request_timeout
             )
-        except InvalidArgumentException as exc:
-            mapped = unimplemented_language(exc, "create_code_context", language)
-            if mapped is None:
-                raise
-            raise mapped from exc
+        except UnimplementedError as exc:
+            raise unimplemented_language(exc, "create_code_context", language) from exc
 
     def list_code_contexts(
         self, request_timeout: float | None = None

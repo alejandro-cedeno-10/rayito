@@ -109,6 +109,14 @@ def validate_language(language: str | None) -> str:
     return normalize_language(language) or DEFAULT_LANGUAGE
 
 
+def code_feature(call: str, language: str | None) -> str:
+    """El `feature` que ve `unimplemented_rpc_error` para `run_code`/
+    `create_code_context`: nombra el lenguaje pedido, si lo hay, sin repetir
+    la tabla de kernels que sólo el agente conoce."""
+    canonical = normalize_language(language)
+    return call if canonical is None else f"{call}(language={canonical!r})"
+
+
 def validate_cwd(cwd: str | None) -> str | None:
     if cwd is None or cwd == "":
         return None

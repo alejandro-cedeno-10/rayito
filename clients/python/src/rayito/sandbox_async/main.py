@@ -55,7 +55,6 @@ from rayito._metrics_base import (
     HISTORY_FEATURE,
     ensure_history_readable,
     history_unimplemented_error,
-    is_history_unimplemented,
     metrics_history_from_proto,
     metrics_history_request,
 )
@@ -160,6 +159,7 @@ from rayito._transfer_base import (
     validate_staging_against_persist,
 )
 from rayito._transport import (
+    GENERIC_RPC_FEATURE,
     AsyncTokenRefresher,
     ProxyAuthPlugin,
     TokenRefresher,
@@ -179,6 +179,7 @@ from rayito.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     SandboxNotReadyException,
+    UnimplementedError,
 )
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
@@ -1067,10 +1068,8 @@ class AsyncSandbox:
             response = await self._translated_unary(
                 lambda: self._health.MetricsHistory(request, timeout=timeout)
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     @classmethod
@@ -1105,10 +1104,8 @@ class AsyncSandbox:
                 token,
                 lambda stub: stub.MetricsHistory(request, timeout=timeout),
             )
-        except SandboxException as exc:
-            if is_history_unimplemented(exc):
-                raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
-            raise
+        except UnimplementedError as exc:
+            raise history_unimplemented_error(exc, CLASS_HISTORY_FEATURE) from exc
         return metrics_history_from_proto(response)
 
     async def close(self) -> None:
@@ -1450,12 +1447,16 @@ class AsyncSandbox:
         return await call()
 
     async def _translated_unary(
-        self, call: Callable[[], Awaitable[T]], *, filesystem: bool = False
+        self,
+        call: Callable[[], Awaitable[T]],
+        *,
+        filesystem: bool = False,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> T:
         try:
             return await self._call_unary(call)
         except grpc.RpcError as exc:
-            raise translate_rpc_error(exc, filesystem=filesystem) from exc
+            raise translate_rpc_error(exc, filesystem=filesystem, feature=feature) from exc
 
     def _resolve_request_timeout(self, request_timeout: float | None) -> float:
         return self._request_timeout if request_timeout is None else request_timeout
@@ -1484,11 +1485,12 @@ class AsyncSandbox:
         request_timeout: float | None,
         *,
         default_timeout: float | None = None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> T:
         timeout = self._resolve_request_timeout(request_timeout)
         if request_timeout is None and default_timeout is not None:
             timeout = default_timeout
-        return await self._translated_unary(lambda: invoke(self._code, timeout))
+        return await self._translated_unary(lambda: invoke(self._code, timeout), feature=feature)
 
     def _stub(self, service: StubFactory, *, stream: bool) -> Any:
         if not stream:
@@ -1511,6 +1513,7 @@ class AsyncSandbox:
         filesystem: bool = False,
         reconnect: bool = True,
         translate: Callable[[grpc.RpcError], Exception] | None = None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> tuple[Any, Any]:
         """Misma política que `Sandbox._open_stream`: un 403 del proxy antes
         del primer mensaje se reintenta una vez tras reacuñar; un corte
@@ -1526,24 +1529,25 @@ class AsyncSandbox:
             reason = exc
         if not await self._reopened_after_deadline_pause(reason, seen_reopens):
             if not (reconnect and self._is_reconnectable(reason)):
-                raise await self._open_failure(reason, filesystem, translate) from reason
+                raise await self._open_failure(reason, filesystem, translate, feature) from reason
             outcome = await self._reconnect(reason, seen_generation)
             if not outcome.resumed:
                 raise self._reconnect_error(outcome, reason) from reason
         try:
             return await first_stream_message_async(start(stub), allow_empty=allow_empty)
         except grpc.RpcError as exc:
-            raise await self._open_failure(exc, filesystem, translate) from exc
+            raise await self._open_failure(exc, filesystem, translate, feature) from exc
 
     async def _open_failure(
         self,
         exc: grpc.RpcError,
         filesystem: bool,
         translate: Callable[[grpc.RpcError], Exception] | None,
+        feature: str = GENERIC_RPC_FEATURE,
     ) -> Exception:
         if translate is not None and not is_stream_reset(exc):
             return translate(exc)
-        return await self._stream_failure(exc, filesystem=filesystem)
+        return await self._stream_failure(exc, filesystem=filesystem, feature=feature)
 
     async def _first_message_reminting(
         self, start: StreamStarter, stub: Any, allow_empty: bool
@@ -1560,9 +1564,11 @@ class AsyncSandbox:
         await self._refresher.refresh_all()
         return await first_stream_message_async(start(stub), allow_empty=allow_empty)
 
-    async def _stream_failure(self, exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
+    async def _stream_failure(
+        self, exc: grpc.RpcError, *, filesystem: bool = False, feature: str = GENERIC_RPC_FEATURE
+    ) -> Exception:
         if not is_stream_reset(exc):
-            return translate_rpc_error(exc, filesystem=filesystem)
+            return translate_rpc_error(exc, filesystem=filesystem, feature=feature)
         health_ok = await self._health_answers()
         state = None if health_ok else await self._state_after_reset()
         return stream_failure_exception(exc, health_ok=health_ok, state=state)

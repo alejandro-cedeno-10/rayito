@@ -208,10 +208,11 @@ nombre vacío y el código de salida como `value` (`false` →
 
 En una imagen sin el kernel, `run_code("echo hi", language="bash")` falla
 antes de crear nada con `UNIMPLEMENTED` y un mensaje que nombra
-`rayito-base-poly`; el SDK Python lo entrega como `InvalidArgumentException`
-con `grpc_code == UNIMPLEMENTED` y el TypeScript como `InvalidArgumentError`.
-El agente sabe qué kernels hay porque el sidecar lo anuncia en `ready`
-(`languages`, según los kernelspecs que pudo instalar al arrancar).
+`rayito-base-poly`; un kernel ausente es `UnimplementedError` tanto en Python
+como en TypeScript (0.4.0: ya no `InvalidArgumentException`/
+`InvalidArgumentError`, porque una feature ausente nunca es un error de
+argumento). El agente sabe qué kernels hay porque el sidecar lo anuncia en
+`ready` (`languages`, según los kernelspecs que pudo instalar al arrancar).
 
 ## Por qué no `ijavascript`
 

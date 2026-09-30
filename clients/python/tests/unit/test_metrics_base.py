@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import grpc
 import pytest
 
 from rayito._metrics_base import (
@@ -17,7 +16,6 @@ from rayito._metrics_base import (
     ensure_history_readable,
     history_unimplemented_error,
     is_history_unavailable,
-    is_history_unimplemented,
     metrics_history_from_proto,
     metrics_history_request,
     unix_ms_or_zero,
@@ -105,11 +103,12 @@ def test_metrics_history_from_proto_keeps_the_order_and_maps_mem_cache() -> None
     assert metrics_history_from_proto(health_pb2.MetricsHistoryResponse()) == []
 
 
-def test_unimplemented_is_translated_to_an_unimplemented_error_keeping_the_cause() -> None:
-    cause = InvalidArgumentException("Method not found", grpc_code=grpc.StatusCode.UNIMPLEMENTED)
-    assert is_history_unimplemented(cause)
-    assert not is_history_unimplemented(SandboxException("x", grpc_code=grpc.StatusCode.INTERNAL))
-    assert not is_history_unimplemented(ValueError("x"))
+def test_unimplemented_is_wrapped_into_a_typed_history_unavailable_keeping_the_cause() -> None:
+    """El `UnimplementedError` genérico de la tabla unaria (un `rayd`
+    anterior a M9, sin `MetricsHistory`) llega ya traducido por
+    `_transport.translate_rpc_error`; este módulo sólo lo reenvuelve en el
+    discriminador tipado del historial."""
+    cause = UnimplementedError("get_metrics_history", "Method not found")
     error = history_unimplemented_error(cause, HISTORY_FEATURE)
     assert isinstance(error, UnimplementedError) and not isinstance(error, SandboxException)
     assert error.feature == HISTORY_FEATURE
@@ -121,7 +120,7 @@ def test_unimplemented_is_translated_to_an_unimplemented_error_keeping_the_cause
 
 
 def test_history_unavailability_is_identified_by_type_not_by_reason_text() -> None:
-    cause = InvalidArgumentException("Method not found", grpc_code=grpc.StatusCode.UNIMPLEMENTED)
+    cause = UnimplementedError("get_metrics_history", "Method not found")
     error = history_unimplemented_error(cause, HISTORY_FEATURE)
     assert type(error) is MetricsHistoryUnavailable
     assert issubclass(MetricsHistoryUnavailable, UnimplementedError)

@@ -86,7 +86,7 @@ from rayito.e2b._sync import (
     EMPTY_PARAMS,
     MISSING_UPLOAD_PATH_MESSAGE,
     emit_warnings,
-    request_timeout_of,
+    instance_request_timeout,
 )
 from rayito.e2b._unimplemented import UnimplementedMember
 from rayito.exceptions import (
@@ -276,7 +276,9 @@ class AsyncSandbox:
     ) -> AsyncSandbox:
         """Misma semántica que `rayito.e2b.Sandbox.connect` (instancia)."""
         validate_on_resume(on_resume)
-        request_timeout = request_timeout_of(api_params, call="connect")
+        request_timeout = instance_request_timeout(
+            api_params, call="connect", applies_request_timeout=True
+        )
         try:
             await self._native.connect(timeout=timeout, request_timeout=request_timeout)
         except LifecycleUnsupportedException as exc:
@@ -422,7 +424,7 @@ class AsyncSandbox:
 
     @class_method_variant("_class_kill")
     async def kill(self, **api_params: Unpack[ApiParams]) -> bool:
-        request_timeout_of(api_params, call="kill")
+        instance_request_timeout(api_params, call="kill", applies_request_timeout=False)
         return bool(await self._native.kill())
 
     @classmethod
@@ -581,7 +583,7 @@ class AsyncSandbox:
     async def pause(self, keep_memory: bool | None = None, **api_params: Unpack[ApiParams]) -> bool:
         """Misma semántica que `rayito.e2b.Sandbox.pause`."""
         validate_keep_memory(keep_memory)
-        request_timeout_of(api_params, call="pause")
+        instance_request_timeout(api_params, call="pause", applies_request_timeout=False)
         return await self._native.pause(wait=True)
 
     @classmethod
@@ -717,11 +719,8 @@ class AsyncSandbox:
             kwargs["timeout"] = timeout
         try:
             return await self._native.run_code(code, **kwargs)
-        except InvalidArgumentException as exc:
-            mapped = unimplemented_language(exc, "run_code", language)
-            if mapped is None:
-                raise
-            raise mapped from exc
+        except UnimplementedError as exc:
+            raise unimplemented_language(exc, "run_code", language) from exc
 
     async def create_code_context(
         self,
@@ -735,11 +734,8 @@ class AsyncSandbox:
             return await self._native.create_code_context(
                 cwd=cwd, language=canonical, request_timeout=request_timeout
             )
-        except InvalidArgumentException as exc:
-            mapped = unimplemented_language(exc, "create_code_context", language)
-            if mapped is None:
-                raise
-            raise mapped from exc
+        except UnimplementedError as exc:
+            raise unimplemented_language(exc, "create_code_context", language) from exc
 
     async def list_code_contexts(
         self, request_timeout: float | None = None

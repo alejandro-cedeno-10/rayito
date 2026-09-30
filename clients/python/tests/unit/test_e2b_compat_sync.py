@@ -11,7 +11,6 @@ from collections.abc import Callable, Iterator
 from datetime import timedelta
 from typing import Any
 
-import grpc
 import pytest
 
 from rayito import ALL_TRAFFIC
@@ -919,12 +918,12 @@ def test_kernel_not_shipped_is_unimplemented_from_the_native_error(
         sbx.run_code("1 + 1", language="javascript")
     assert ran.value.feature == "run_code(language='javascript')"
     assert "rayito-base-poly" in ran.value.reason
-    assert isinstance(ran.value.__cause__, InvalidArgumentException)
-    assert ran.value.__cause__.grpc_code is grpc.StatusCode.UNIMPLEMENTED
+    assert isinstance(ran.value.__cause__, UnimplementedError)
+    assert not isinstance(ran.value.__cause__, InvalidArgumentException)
     with pytest.raises(UnimplementedError) as created:
         sbx.create_code_context(language="ts")
     assert created.value.feature == "create_code_context(language='ts')"
-    assert isinstance(created.value.__cause__, InvalidArgumentException)
+    assert isinstance(created.value.__cause__, UnimplementedError)
     executions = len(fake_rayd.code.executions)
     with pytest.raises(UnimplementedError) as refused:
         sbx.run_code("1", language="r")
