@@ -652,3 +652,104 @@ Límites y comportamientos:
   `Days = 1` un objeto vive entre 24 y 48 h.
   `AbortIncompleteMultipartUpload.DaysAfterInitiation = 1` limpia las
   subidas multiparte abandonadas.
+
+## 19. Secrets Manager (M13a, `m13-secrets`, **contrato de parámetros**)
+
+`SecretStore`/`SecretCache` (Python `rayito/_secrets.py`, TypeScript
+`src/secrets/**`) y el shim `Secret`/`AsyncSecret` de E2B llaman a AWS Secrets
+Manager **con las credenciales del llamante** (nunca con el execution role del
+MicroVM, que no interviene). **Estas son las únicas operaciones y los únicos
+parámetros de Secrets Manager que los SDKs pueden usar**: la regla dura 1
+vale también aquí, y un test unitario de cada SDK comprueba que toda
+operación que el código nombra aparece en esta tabla. Verificado sin red el
+2026-09-30, antes de escribir código: los nombres de Python contra el modelo
+`secretsmanager/2017-10-17` de botocore 1.43.103 (miembros de entrada y de
+salida, `error_shapes` y restricciones `min`/`max`); los de JavaScript contra
+los `.d.ts` publicados de `@aws-sdk/client-secrets-manager` 3.1140.0 (mismos
+miembros, mismos nombres de comando con el sufijo `Command`). Referencia de la
+API: <https://docs.aws.amazon.com/secretsmanager/latest/apireference/> (consultada
+2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `CreateSecret` (`create_secret` / `CreateSecretCommand`) | `Name`, `SecretString`, `Description`, `KmsKeyId` (sólo con `kms_key_id=`/`kmsKeyId`), `ClientRequestToken` | `ARN`, `Name`, `VersionId` | `secretsmanager:CreateSecret` (+ `kms:GenerateDataKey`, `kms:Decrypt` con una CMK) | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html> |
+| `PutSecretValue` (`put_secret_value` / `PutSecretValueCommand`) | `SecretId`, `SecretString`, `ClientRequestToken` | `ARN`, `Name`, `VersionId` | `secretsmanager:PutSecretValue` (+ `kms:GenerateDataKey` con una CMK) | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html> |
+| `GetSecretValue` (`get_secret_value` / `GetSecretValueCommand`) | `SecretId`, `VersionId` o `VersionStage` (como mucho uno; ninguno = `AWSCURRENT`) | `ARN`, `Name`, `VersionId`, `SecretString`, `CreatedDate` | `secretsmanager:GetSecretValue` (+ `kms:Decrypt` con una CMK) | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html> |
+| `DescribeSecret` (`describe_secret` / `DescribeSecretCommand`) | `SecretId` | `ARN`, `Name`, `Description`, `CreatedDate`, `LastChangedDate`, `VersionIdsToStages`, `DeletedDate` | `secretsmanager:DescribeSecret` | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html> |
+| `UpdateSecret` (`update_secret` / `UpdateSecretCommand`) | `SecretId`, `Description` (sólo metadatos: nunca `SecretString` por aquí) | `ARN` | `secretsmanager:UpdateSecret` | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html> |
+| `ListSecrets` (`list_secrets` / `ListSecretsCommand`) | `Filters=[{Key: "name", Values: [<prefijo>]}]` (se omite con prefijo vacío), `MaxResults` (1–100), `NextToken`, `IncludePlannedDeletion=false` | `SecretList[].{ARN, Name, Description, CreatedDate, LastChangedDate, SecretVersionsToStages}`, `NextToken` | `secretsmanager:ListSecrets` (sólo admite `Resource: "*"`) | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html>, <https://docs.aws.amazon.com/secretsmanager/latest/userguide/manage_search-secret.html> |
+| `DeleteSecret` (`delete_secret` / `DeleteSecretCommand`) | `SecretId`, `ForceDeleteWithoutRecovery=true` | — | `secretsmanager:DeleteSecret` | <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html> |
+
+Constructor de cliente: Python `session.client("secretsmanager",
+region_name=…, config=client_config())` (el mismo `Config` que el plano de
+control: reintentos `standard`, User-Agent `rayito/<versión>`); TypeScript
+`new SecretsManagerClient({ region, credentials })` cargado con
+`loadOptionalPeer("@aws-sdk/client-secrets-manager")`. Ningún cliente se
+construye hasta la primera llamada de un método (ADR-014).
+
+Nota de nombres: la **salida** de `DescribeSecret` trae `VersionIdsToStages`,
+la de cada entrada de `ListSecrets` trae `SecretVersionsToStages` (mismo
+contenido: `VersionId` → lista de etiquetas). La versión actual es la que
+lleva la etiqueta `AWSCURRENT`.
+
+Codificación de Rayito sobre estos campos (no son parámetros nuevos):
+
+- **Nombre**: una referencia que empieza por `arn:` se usa tal cual como
+  `SecretId`; si no, `SecretId = <prefijo> + <nombre>`, con prefijo
+  `rayito/` por defecto (`''` permitido). `NameType` 1–512 caracteres
+  ASCII `[A-Za-z0-9/_+=.@-]`
+  (<https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html#SecretsManager-CreateSecret-request-Name>).
+- **Versión entera**: el `ClientRequestToken` (32–64 caracteres, `min`/`max`
+  del modelo) es `rayito-secret-version-{n:020d}` (42 caracteres); `n` es 1 en
+  `CreateSecret` y `n + 1` en `PutSecretValue`, donde `n` se lee del
+  `VersionId` que lleva `AWSCURRENT` en `DescribeSecret`. Un `VersionId` que
+  no sigue ese formato (secreto creado fuera de Rayito) es la versión 0.
+- **Metadatos**: `Description` = `rayito:v1:` + JSON compacto con claves
+  ordenadas; `DescriptionType` ≤ 2048 caracteres (`max` del modelo), validado
+  antes de llamar a AWS. Una `Description` sin ese prefijo son metadatos
+  vacíos.
+- **Valor**: siempre `SecretString` (nunca `SecretBinary`); un secreto sin
+  `SecretString` es `SecretException` al leerlo.
+
+Errores que el SDK trata por **código** (el `Code` del `ClientError`; el
+mensaje de AWS nunca se propaga porque puede nombrar el secreto):
+
+| Código | Dónde | Qué hace el SDK |
+|---|---|---|
+| `ResourceNotFoundException` | todas | `SecretNotFoundException`/`SecretNotFoundError` (no se guarda en caché); `destroy` devuelve `False` |
+| `ResourceExistsException` | `CreateSecret`, `PutSecretValue` | `SecretException`: ya existe (create) o choque de versión entre dos escritores con valores distintos (put, SEC-9) |
+| `InvalidRequestException` | `CreateSecret` | "a secret with this name is already scheduled for deletion": reintento con backoff acotado (≤ 30 s en total) con el mismo `ClientRequestToken`, después `SecretException`; en cualquier otra operación, `SecretException` |
+| `LimitExceededException` | `CreateSecret`, `PutSecretValue`, `UpdateSecret` | `SecretException` que recuerda el límite de versiones y la recomendación de 10 min |
+| `ThrottlingException` | todas (código genérico de AWS, no modelado) | `RateLimitException`/`RateLimitError` tras los reintentos `standard` del SDK de AWS |
+| `AccessDeniedException` | todas (código genérico de AWS, no modelado) | `SecretException` que nombra la acción IAM que falta, nunca el ARN |
+
+Límites (<https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html>,
+consultado 2026-09-30):
+
+- `SecretString` ≤ 65 536 bytes (`SecretStringType` `max`).
+- `Description` ≤ 2048 caracteres; `ClientRequestToken` 32–64.
+- Versiones: Secrets Manager conserva como mucho 100 versiones más todas las
+  creadas en las últimas 24 h; `PutSecretValue` recomienda no escribir de
+  forma sostenida más de una vez cada 10 minutos (API_PutSecretValue.html).
+  `update` avisa (`UserWarning`) la primera vez que se llama más de una vez
+  cada 600 s para el mismo nombre en un proceso.
+- `DeleteSecret` con `ForceDeleteWithoutRecovery=true` borra de forma
+  asíncrona: "if you delete a secret and then immediately create a secret with
+  the same name, use appropriate back off and retry logic" (API_DeleteSecret.html).
+- Cuotas de TPS por operación: <https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html>.
+  La caché del SDK (TTL 300 s por defecto) deja `GetSecretValue` en ≤ 12
+  llamadas/hora por secreto y proceso.
+
+Precios (us-east-1, <https://aws.amazon.com/secrets-manager/pricing/>,
+consultado 2026-09-30): **$0,40 por secreto y mes** (prorrateado por horas,
+se paga hasta el `DeleteSecret`) + **$0,05 por cada 10 000 llamadas a la
+API**. Una CMK de KMS añade su propio coste; la clave gestionada por AWS
+(`aws/secretsmanager`) no.
+
+**A MEDIR (SEC-9, en el e2e de `m13-secrets`)**: (a) cuánto tarda en
+aceptarse un `CreateSecret` con el mismo nombre tras un `DeleteSecret` con
+`ForceDeleteWithoutRecovery=true` y con qué código falla mientras tanto
+(esperado `InvalidRequestException`); (b) qué código devuelve un
+`PutSecretValue` con un `ClientRequestToken` ya usado y un `SecretString`
+distinto (esperado `ResourceExistsException`); (c) que el filtro `name` de
+`ListSecrets` es un prefijo sensible a mayúsculas.
