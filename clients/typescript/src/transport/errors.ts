@@ -30,6 +30,7 @@ import {
   BEYOND_CAP_PREFIX,
   beyondCapError,
   capFromDetail,
+  LIFECYCLE_FEATURE_SET_TIMEOUT,
   LIFECYCLE_UNMANAGED_DETAIL,
   SANDBOX_TIMEOUT_DETAIL,
   setTimeoutUnsupportedError,
@@ -178,22 +179,20 @@ export function sandboxTimeoutError(options: SandboxErrorOptions = {}): TimeoutE
 /**
  * Único punto que traduce un `Unimplemented` de gRPC a `UnimplementedError`:
  * el motivo es el `rawMessage` crudo del agente (lo que hoy manda un `rayd`
- * anterior a M9 o sin un kernel/RPC concretos) más la pista de publicar una
- * imagen actual, y la causa el `ConnectError`. Mismo contrato que
- * `unimplemented_rpc_error` en Python. `translateRpcError` la usa con el
- * `feature` genérico; `code.ts` la reutiliza con el suyo para nombrar el
- * kernel pedido sin duplicar esta tabla.
+ * anterior a M9 o sin un kernel/RPC concretos) más `hint` si lo hay, y la
+ * causa el `ConnectError`. Mismo contrato que `unimplemented_rpc_error` en
+ * Python. `translateRpcError` la usa con el `feature` genérico y la pista de
+ * publicar una imagen actual; `code.ts` la reutiliza con el suyo para nombrar
+ * el kernel pedido sin duplicar esta tabla, y pasa `hint = null` porque el
+ * mensaje de `rayd` ya nombra `rayito-base-poly` (la imagen ya está al día).
  */
 export function unimplementedRpcError(
   connect: ConnectError,
   feature: string = GENERIC_RPC_FEATURE,
+  hint: string | null = UNIMPLEMENTED_IMAGE_HINT,
 ): UnimplementedError {
-  return new UnimplementedError(
-    feature,
-    `${connect.rawMessage}; ${UNIMPLEMENTED_IMAGE_HINT}`,
-    undefined,
-    { cause: connect },
-  );
+  const reason = hint === null ? connect.rawMessage : `${connect.rawMessage}; ${hint}`;
+  return new UnimplementedError(feature, reason, undefined, { cause: connect });
 }
 
 /**
@@ -329,7 +328,11 @@ export function translateStreamError(
  * tope, sin plazo lógico (`lifecycle_unmanaged`) y un agente anterior a M9
  * (`Unimplemented`) tienen mensaje propio; el resto sigue `translateRpcError`.
  */
-export function translateSetTimeoutError(error: unknown, timeoutMs: number): Error {
+export function translateSetTimeoutError(
+  error: unknown,
+  timeoutMs: number,
+  feature: string = LIFECYCLE_FEATURE_SET_TIMEOUT,
+): Error {
   const connect = asConnectError(error);
   if (connect === undefined || ownErrorInCause(connect) !== undefined) {
     return translateRpcError(error);
@@ -345,7 +348,7 @@ export function translateSetTimeoutError(error: unknown, timeoutMs: number): Err
     return unmanagedLifecycleError(base);
   }
   if (connect.code === Code.Unimplemented) {
-    return setTimeoutUnsupportedError(base);
+    return setTimeoutUnsupportedError(feature, base);
   }
   return translateRpcError(connect);
 }

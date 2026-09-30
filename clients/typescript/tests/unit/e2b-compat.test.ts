@@ -374,6 +374,11 @@ describe("connection options", () => {
     expect(unappliedInstanceOpts({}, applicable)).toEqual([]);
   });
 
+  test("unappliedInstanceOpts: empty headers are not given, like Python's headers={}", () => {
+    expect(unappliedInstanceOpts({ headers: {} }, new Set())).toEqual([]);
+    expect(unappliedInstanceOpts({ headers: {}, retries: 3 }, new Set())).toEqual(["retries"]);
+  });
+
   test("instanceUnappliedReason names the instance and the static alternative", () => {
     expect(instanceUnappliedReason("kill")).toBe(
       "sbx.kill() usa el canal y el plano ya construidos de este sandbox; pásalo al crear o " +

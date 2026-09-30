@@ -80,6 +80,7 @@ import {
   type OnTimeout,
   olderAgentError,
   optionalSetTimeoutMs,
+  setTimeoutFeature,
   setTimeoutRequest,
   suspendedSetTimeoutError,
   validateSetTimeoutMs,
@@ -1124,7 +1125,7 @@ export class Sandbox implements AsyncDisposable {
           callOptions(deadlineMs, signal),
         ),
       signal,
-      (error) => translateSetTimeoutError(error, timeoutMs),
+      (error) => translateSetTimeoutError(error, timeoutMs, setTimeoutFeature(mode)),
     );
     this.#core.recordLifecycle(lifecycleFromProto(state));
   }

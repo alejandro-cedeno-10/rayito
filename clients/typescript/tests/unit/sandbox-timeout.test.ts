@@ -18,7 +18,11 @@ import {
 } from "../../src/errors.js";
 import { LifecyclePhase, TimeoutMode } from "../../src/gen/rayito/v1/lifecycle_pb.js";
 import type { SandboxPool } from "../../src/pool/pool.js";
-import { lifecycleFromProto } from "../../src/sandbox/lifecycle.js";
+import {
+  LIFECYCLE_FEATURE_CONNECT,
+  LIFECYCLE_FEATURE_SET_TIMEOUT,
+  lifecycleFromProto,
+} from "../../src/sandbox/lifecycle.js";
 import { S3Prefix } from "../../src/sandbox/persistence.js";
 import { Sandbox, type SandboxCreateOptions } from "../../src/sandbox/sandbox.js";
 import { FakeControlPlane, IMAGE_ARN, SANDBOX_ID } from "./fake/control-plane.js";
@@ -123,6 +127,27 @@ describe("moving the deadline", () => {
     } finally {
       other.close();
     }
+  });
+
+  test("an Unimplemented SetTimeout names the call that sent it, like Python's request.operation", async () => {
+    const managed = await managedSandbox();
+    const { sandbox, rayd, plane } = managed;
+    plane.setStates(["RUNNING"]);
+    rayd.lifecycle.failNext.push(new ConnectError("sin LifecycleService", Code.Unimplemented));
+    const connected = await Sandbox.connect(SANDBOX_ID, {
+      accessToken: ACCESS_TOKEN,
+      controlPlane: plane,
+      transport: rayd.transport,
+      timeoutMs: 10_000,
+    }).catch((error: unknown) => error);
+    expect(connected).toBeInstanceOf(LifecycleUnsupportedError);
+    expect((connected as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_CONNECT);
+    expect((connected as LifecycleUnsupportedError).reason).toBe(
+      "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
+    );
+    rayd.lifecycle.failNext.push(new ConnectError("sin LifecycleService", Code.Unimplemented));
+    const moved = await sandbox.setTimeout(60_000).catch((error: unknown) => error);
+    expect((moved as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_SET_TIMEOUT);
   });
 
   test("the instance connect resumes a suspended sandbox, extends it and resolves to itself", async () => {

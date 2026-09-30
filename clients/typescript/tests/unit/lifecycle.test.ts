@@ -291,6 +291,9 @@ describe("moving the deadline", () => {
     expect(caught).not.toBeInstanceOf(SandboxError);
     expect(caught).not.toBeInstanceOf(InvalidArgumentError);
     expect((caught as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_CONNECT);
+    expect((caught as LifecycleUnsupportedError).reason).toBe(
+      "necesita una imagen M9: el agente de este sandbox no impone el timeout del servidor",
+    );
   });
 
   test("the pause trigger delay", () => {

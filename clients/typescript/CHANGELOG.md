@@ -14,7 +14,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   `SandboxError` con `grpcCode: Code.Unimplemented`, sino `UnimplementedError`,
   fuera de esa jerarquía. `LifecycleUnsupportedError` (un plazo lógico contra
   un agente anterior a M9) pasa a ser subclase de `UnimplementedError`, no de
-  `InvalidArgumentError` ni `SandboxError`. `getMetricsHistory` contra una
+  `InvalidArgumentError` ni `SandboxError`; su `feature` nombra la llamada que
+  pidió el plazo (`connect({ timeoutMs })` también cuando el agente responde
+  `Unimplemented` al `SetTimeout` de `connect`) y su `reason` usa los mismos
+  textos que el SDK Python. El `reason` de un kernel ausente es el mensaje de
+  `rayd` (que ya nombra `rayito-base-poly`), sin la pista de publicar una
+  imagen actual. `getMetricsHistory` contra una
   imagen anterior a M9 ya lanzaba `UnimplementedError`; sólo cambia su
   `error.cause`, de `InvalidArgumentError` a `UnimplementedError`.
   **Migración**: cambia `catch (error) { if (error instanceof

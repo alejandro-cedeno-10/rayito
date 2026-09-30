@@ -128,7 +128,7 @@ describe("error hierarchy (E2B names)", () => {
     const cause = new Error("connect error stand-in");
     const error = new LifecycleUnsupportedError(
       "setTimeout",
-      "el agente del sandbox no implementa SetTimeout (imagen anterior a M9): publica una imagen M9",
+      "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
       undefined,
       { cause },
     );

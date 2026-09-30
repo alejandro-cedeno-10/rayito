@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { ConnectError } from "@connectrpc/connect";
 import { describe, expect, test } from "vitest";
 import { ChartType, type LineChart } from "../../src/charts.js";
 import {
@@ -24,6 +25,7 @@ import {
   validateLanguage,
 } from "../../src/sandbox/code.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { UNIMPLEMENTED_IMAGE_HINT } from "../../src/transport/errors.js";
 import {
   DATAFRAME_DATA,
   DATAFRAME_TEXT,
@@ -396,6 +398,8 @@ describe("languages (M7)", () => {
         `runCode({ language: ${JSON.stringify(language)} })`,
       );
       expect((error as Error).message).toContain("rayito-base-poly");
+      expect((error as UnimplementedError).reason).not.toContain(UNIMPLEMENTED_IMAGE_HINT);
+      expect((error as Error).cause).toBeInstanceOf(ConnectError);
       expect(rayd.code.executeRequests.at(-1)?.language).toBe(language);
       expect(rayd.code.lazyContexts).toEqual([]);
       const created = await sandbox.createCodeContext({ language }).catch((e) => e);
@@ -405,8 +409,17 @@ describe("languages (M7)", () => {
         `createCodeContext({ language: ${JSON.stringify(language)} })`,
       );
       expect((created as Error).message).toContain("rayito-base-poly");
+      expect((created as UnimplementedError).reason).not.toContain(UNIMPLEMENTED_IMAGE_HINT);
       expect(rayd.code.createRequests.at(-1)?.language).toBe(language);
       expect((await sandbox.listCodeContexts()).map((ctx) => ctx.id)).toEqual(["default"]);
     },
   );
+
+  test("createCodeContext() without a language names only the method, like Python", async () => {
+    const { sandbox, rayd } = await createTestSandbox();
+    rayd.code.languages = new Set();
+    const error = await sandbox.createCodeContext().catch((e) => e);
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect((error as UnimplementedError).feature).toBe("createCodeContext");
+  });
 });

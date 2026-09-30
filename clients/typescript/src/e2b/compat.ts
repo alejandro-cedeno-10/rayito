@@ -213,19 +213,29 @@ const CONNECTION_OPT_KEYS: ReadonlySet<keyof ConnectionOpts> = new Set(
 /**
  * Las claves de `ConnectionOpts` definidas en la llamada de instancia
  * (`sbx.<call>(opts)`, nunca el `bound` de la construcción) que no están en
- * `applicable`, en orden alfabético: lo que hoy se descarta en silencio
- * (`headers`, `proxy`, `retries`, `logger`, `region`, `controlPlane`,
- * `accessToken`, `transport` según el método).
+ * `applicable`, en orden alfabético (la misma regla que el shim de Python):
+ * lo que hoy se descarta en silencio (`headers`, `proxy`, `retries`,
+ * `logger`, `region`, `controlPlane`, `accessToken`, `transport` según el
+ * método). Unos `headers` vacíos no dan nada que ignorar, como
+ * `headers={}` en Python.
  */
 export function unappliedInstanceOpts(
   call: ConnectionOpts,
   applicable: ReadonlySet<keyof ConnectionOpts>,
 ): string[] {
-  return Object.keys(call)
-    .filter((name) => CONNECTION_OPT_KEYS.has(name as keyof ConnectionOpts))
-    .filter((name) => (call as Record<string, unknown>)[name] !== undefined)
-    .filter((name) => !applicable.has(name as keyof ConnectionOpts))
+  return (Object.keys(call) as (keyof ConnectionOpts)[])
+    .filter((name) => CONNECTION_OPT_KEYS.has(name))
+    .filter((name) => isGivenInstanceOpt(call, name))
+    .filter((name) => !applicable.has(name))
     .sort();
+}
+
+function isGivenInstanceOpt(call: ConnectionOpts, name: keyof ConnectionOpts): boolean {
+  const value = call[name];
+  if (name === "headers") {
+    return value !== undefined && Object.keys(value as object).length > 0;
+  }
+  return value !== undefined;
 }
 
 /** `onResume`: `"restore"` (o ausente) sigue; `"reboot"` es `UnimplementedError`. */

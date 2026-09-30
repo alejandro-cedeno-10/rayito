@@ -483,12 +483,14 @@ function kernelFeature(name: string, language: string | undefined): string {
  * Un `Unimplemented` del agente durante `runCode`/`createContext` es el
  * kernel ausente en la imagen (D14): se renombra con `kernelFeature` en vez
  * del genérico de `translateRpcError`, reutilizando el mismo `ConnectError`
- * en `cause` (una sola tabla, sin copiarla). Cualquier otro error se propaga
- * tal cual.
+ * en `cause` (una sola tabla, sin copiarla) y sin la pista de publicar una
+ * imagen actual: `rayd` ya nombra `rayito-base-poly`. `language` es el que
+ * pidió el llamante (normalizado, sin el `python` por defecto). Cualquier
+ * otro error se propaga tal cual.
  */
 function withKernelFeature(error: unknown, name: string, language: string | undefined): never {
   if (error instanceof UnimplementedError && error.cause instanceof ConnectError) {
-    throw unimplementedRpcError(error.cause, kernelFeature(name, language));
+    throw unimplementedRpcError(error.cause, kernelFeature(name, language), null);
   }
   throw error;
 }
@@ -525,7 +527,9 @@ export class CodeClient {
         (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
         { service: CodeService, stream: false, reconnect: false, signal: options.signal },
       )
-      .catch((error: unknown) => withKernelFeature(error, "runCode", request.language));
+      .catch((error: unknown) =>
+        withKernelFeature(error, "runCode", normalizeLanguage(options.language)),
+      );
     try {
       return await this.#consume(
         opened,
@@ -547,7 +551,9 @@ export class CodeClient {
         CONTEXT_REQUEST_TIMEOUT_MS,
         options.signal,
       )
-      .catch((error: unknown) => withKernelFeature(error, "createCodeContext", request.language));
+      .catch((error: unknown) =>
+        withKernelFeature(error, "createCodeContext", normalizeLanguage(options.language)),
+      );
     const contextId = response.contextId;
     const contexts = await this.listContexts({
       requestTimeoutMs: options.requestTimeoutMs,

@@ -26,7 +26,7 @@ import {
   type SetTimeoutRequest,
   SetTimeoutRequestSchema,
   TimeoutAction,
-  type TimeoutMode,
+  TimeoutMode,
 } from "../gen/rayito/v1/lifecycle_pb.js";
 import {
   LIFECYCLE_AUTO_RESUME_MIN_SECONDS,
@@ -356,8 +356,7 @@ export function connectExtension(
     if (requested !== undefined) {
       throw new LifecycleUnsupportedError(
         LIFECYCLE_FEATURE_CONNECT,
-        "el agente del sandbox no impone el timeout del servidor (imagen anterior a M9): " +
-          "no puede extender nada; publica una imagen M9",
+        "necesita una imagen M9: el agente de este sandbox no impone el timeout del servidor",
       );
     }
     return undefined;
@@ -420,13 +419,23 @@ export function unmanagedLifecycleError(options: SandboxErrorOptions = {}): Inva
   );
 }
 
+/**
+ * La `feature` de un `SetTimeout` según quién lo mandó: `AT_LEAST` sólo sale
+ * de `connect({ timeoutMs })`/`resume()`, `EXACT` de `setTimeout` (paridad
+ * con `TimeoutRequest.operation` en Python).
+ */
+export function setTimeoutFeature(mode: TimeoutMode): string {
+  return mode === TimeoutMode.AT_LEAST ? LIFECYCLE_FEATURE_CONNECT : LIFECYCLE_FEATURE_SET_TIMEOUT;
+}
+
 /** `SetTimeout` respondió `UNIMPLEMENTED`: el agente es anterior a M9. */
 export function setTimeoutUnsupportedError(
+  feature: string,
   options: SandboxErrorOptions = {},
 ): LifecycleUnsupportedError {
   return new LifecycleUnsupportedError(
-    LIFECYCLE_FEATURE_SET_TIMEOUT,
-    "el agente del sandbox no implementa SetTimeout (imagen anterior a M9): publica una imagen M9",
+    feature,
+    "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
     undefined,
     { cause: options.cause },
   );

@@ -143,3 +143,10 @@
       message ("timeout below 1 s"); the rayd-side Spanish message from
       PR #50 (v040/rayd) is scope creep on an unmerged sibling and belongs to
       that PR or the closing sweep, not here
+
+## 7. Final cross-SDK review (0.4.0 gate)
+
+- [x] 7.1 `transport/errors.ts`: `unimplementedRpcError` gains `hint: string | null = UNIMPLEMENTED_IMAGE_HINT`; `code.ts`'s `withKernelFeature` passes `null`, so a missing kernel's `reason` is rayd's raw message alone (it already names `rayito-base-poly`), matching v040-python's `kernel_unimplemented_error`. Unit: `code.test.ts` asserts the hint is absent and `cause` is the `ConnectError`
+- [x] 7.2 `sandbox/code.ts`: `withKernelFeature` gets the caller's `normalizeLanguage(options.language)`, not `request.language`, so `createCodeContext()` without a language reports the bare `createCodeContext` (reverts 6.2's switch to `request.language`, which carried the `python` default). Unit: `code.test.ts` "createCodeContext() without a language names only the method"
+- [x] 7.3 `e2b/compat.ts`: `unappliedInstanceOpts` does not report an empty `headers` object (Python's `headers={}` rule); both SDKs now order these warnings alphabetically (v040-python sorts too). Unit: `e2b-compat.test.ts` "empty headers are not given"
+- [x] 7.4 `sandbox/lifecycle.ts`: `setTimeoutFeature(mode)` gives `connect({ timeoutMs })` for `AT_LEAST` and `setTimeout` for `EXACT` (Python's `TimeoutRequest.operation`), threaded through `translateSetTimeoutError`; the `connect`/`SetTimeout` reasons use Python's texts. Unit: `sandbox-timeout.test.ts` "an Unimplemented SetTimeout names the call that sent it", `lifecycle.test.ts`
