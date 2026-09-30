@@ -588,10 +588,14 @@ def test_request_timeout_bounds_a_stalled_s3_download(
     sandbox: Sandbox, fake: FakeTransferFilesystemService, stalled_s3: StalledS3
 ) -> None:
     """Repro permanente de la causa raíz (M9.4): `open_chunks` retrasado más
-    allá del plazo, así el `get_object` sigue en vuelo cuando `cancel()` ya
-    marcó `_cancelled` y `read_routed` ya borró el objeto de staging. El
-    invariante `opened == closed` se sostiene para cualquier interleaving,
-    a diferencia de "el cuerpo se llegó a abrir", que depende del reloj."""
+    allá del plazo, así `cancel()` ya se vio para cuando el gate se abre y
+    `read_routed` ya borró el objeto de staging. Da igual que el `get_object`
+    real, ya tarde, llegue a abrir un cuerpo o encuentre el objeto borrado
+    (`NoSuchKey`): el invariante `opened == closed` se sostiene en ambos
+    casos, a diferencia de "el cuerpo se llegó a abrir", que depende del
+    reloj. La comprobación previa a `open_chunks` que evita un `get_object`
+    de más tras una cancelación ya vista la pin `test_s3.py::
+    test_cancel_before_run_never_calls_get_object`, sin depender del reloj."""
     fake.add_file("big.bin", b"d" * MIB)
     stalled_s3.open_gate.clear()
     started = time.monotonic()

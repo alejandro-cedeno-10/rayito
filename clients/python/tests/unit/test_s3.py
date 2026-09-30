@@ -106,6 +106,7 @@ def test_cancel_while_open_chunks_in_flight_closes_the_late_body_once() -> None:
     fetch.cancel()
     gateway.release_open.set()
     thread.join(5)
+    assert not thread.is_alive()
     assert isinstance(outcome.get("error"), TimeoutException)
     assert gateway.open_calls == 1
     assert chunks.close_calls == 1
@@ -121,3 +122,4 @@ def test_cancel_while_blocked_in_next_closes_the_body_at_once() -> None:
     fetch.cancel()
     assert chunks.close_calls == 1
     thread.join(5)
+    assert not thread.is_alive()

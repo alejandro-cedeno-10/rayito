@@ -36,11 +36,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 - `files.read()` de un fichero grande enrutado por S3: si el plazo
   (`request_timeout`/`stream_idle_timeout`) vencía justo cuando el
-  `get_object` seguía en vuelo, el SDK podía lanzar una excepción distinta a
-  `TimeoutException` (un `NoSuchKey` de S3 tras el borrado del objeto de
-  staging) en vez de sólo `TimeoutException`, con un `get_object` de más
-  después de una cancelación ya vista. `ObjectFetch.run` comprueba ahora la
-  cancelación antes de abrir el cuerpo.
+  `get_object` seguía en vuelo, el SDK seguía lanzando ese `get_object` tras
+  una cancelación ya vista, aunque el resultado tardío se descartaba y el
+  llamante siempre recibía `TimeoutException`. `ObjectFetch.run` comprueba
+  ahora la cancelación antes de abrir el cuerpo, así que no sale ningún
+  `get_object` de más una vez vista la cancelación.
 
 ## [0.3.3] - 2026-09-29
 

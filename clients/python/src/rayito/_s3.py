@@ -224,8 +224,9 @@ class ObjectFetch:
     leyendo en segundo plano cuando la operación ya agotó su plazo. `run`
     comprueba la cancelación antes de abrir el cuerpo, así una cancelación ya
     vista nunca dispara un `get_object` nuevo (invariante: todo cuerpo
-    abierto se cierra exactamente una vez; tras cancelar no se abre
-    ninguno)."""
+    abierto se cierra al menos una vez —`cancel`, la guardia de inactividad
+    y el `finally` de `run` pueden coincidir en cerrarlo—; tras una
+    cancelación ya vista no se abre ninguno)."""
 
     def __init__(self, gateway: S3Gateway, target: StagingObject, idle: float | None) -> None:
         self._gateway = gateway
@@ -238,21 +239,29 @@ class ObjectFetch:
     def run(self) -> bytes:
         self._raise_if_cancelled()
         chunks = self._gateway.open_chunks(self._target)
-        with self._lock:
-            if self._cancelled:
-                chunks.close()
-                raise transfer_timeout_error()
-            self._chunks = chunks
+        self._register_or_close(chunks)
         try:
             return b"".join(guarded_messages(chunks, self._idle, chunks.close))
         finally:
             chunks.close()
 
     def _raise_if_cancelled(self) -> None:
-        with self._lock:
-            cancelled = self._cancelled
-        if cancelled:
+        if self._is_cancelled():
             raise transfer_timeout_error()
+
+    def _register_or_close(self, chunks: ObjectChunks) -> None:
+        """Bajo el mismo lock que `cancel`: si ya se canceló mientras
+        `open_chunks` estaba en vuelo, cierra el cuerpo recién abierto en vez
+        de registrarlo, para que `cancel()` no lo pierda de vista."""
+        with self._lock:
+            if self._cancelled:
+                chunks.close()
+                raise transfer_timeout_error()
+            self._chunks = chunks
+
+    def _is_cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
 
     def cancel(self) -> None:
         with self._lock:
