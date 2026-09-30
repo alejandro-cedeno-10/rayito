@@ -254,8 +254,10 @@ def test_lifecycle_from_proto_is_none_on_an_older_agent() -> None:
 
 def test_connect_extension_table() -> None:
     assert connect_extension(None, None, NOW_MS) is None
-    with pytest.raises(LifecycleUnsupportedException, match="imagen M9"):
+    with pytest.raises(LifecycleUnsupportedException, match="imagen M9") as raised:
         connect_extension(None, 300, NOW_MS)
+    assert raised.value.feature == "connect(timeout=)"
+    assert isinstance(raised.value, UnimplementedError)
     unmanaged = lifecycle("unmanaged", deadline_in=None)
     assert connect_extension(unmanaged, None, NOW_MS) is None
     with pytest.raises(InvalidArgumentException, match="max_lifetime"):

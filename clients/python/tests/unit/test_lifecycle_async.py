@@ -284,6 +284,8 @@ async def test_async_create_on_an_older_agent_terminates_and_raises(
     with pytest.raises(LifecycleUnsupportedException, match="publica una imagen M9") as raised:
         await launch(control_plane, fake_rayd, timeout=60, on_timeout="kill")
     assert not isinstance(raised.value, SandboxNotReadyException)
+    assert not isinstance(raised.value, InvalidArgumentException)
+    assert raised.value.feature == "create(max_lifetime=, on_timeout=)"
     assert "lifecycle" in json.loads(str(captured["runHookPayload"]))
 
     capture_launch(control_plane, fake_rayd)

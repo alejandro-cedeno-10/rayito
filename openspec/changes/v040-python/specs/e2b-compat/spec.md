@@ -92,3 +92,51 @@ No E2B feature SHALL be approximated silently. An unknown kwarg outside E2B's 2.
 - **WHEN** the e2e connects `rayito.e2b.Sandbox.connect(id, access_token=...)` to a `rayito-base-poly` sandbox and runs `run_code("1 + 1", language="js")` and `run_code("const n: number = 3; n", language="ts")`, and the async shim runs one `ts` cell
 - **THEN** the texts are `2` and `3`
 - **AND** on a `rayito-base` sandbox, `run_code("1", language="ts")` raises `UnimplementedError` naming `rayito-base-poly`
+
+### Requirement: The E2B timeout surface maps to the server-enforced deadline
+`rayito.e2b.Sandbox` and `rayito.e2b.AsyncSandbox` SHALL map E2B's timeout surface onto the native deadline of the `sandbox-timeout` capability:
+
+- `sbx.set_timeout(timeout, request_timeout=None)` SHALL call the native `set_timeout` (`EXACT`).
+- `Sandbox.set_timeout(sandbox_id, timeout, request_timeout=None, **kwargs)` SHALL call the native class variant with `access_token=` or `RAYITO_ACCESS_TOKEN`.
+- `Sandbox.connect(sandbox_id, timeout=None, ...)`, with `timeout` positional after `sandbox_id` as in E2B, SHALL pass `timeout` to the native class `connect` (`AT_LEAST`).
+- `Sandbox.beta_create(auto_pause=True)` SHALL launch in pause mode with `auto_resume=False`.
+- `beta_create(auto_pause=True)` together with `lifecycle` SHALL raise `InvalidArgumentException`.
+- The native `LifecycleUnsupportedException` SHALL be re-raised as `UnimplementedError` with feature `lifecycle` and a reason naming the M9 image, chained to the original. Since `LifecycleUnsupportedException` is itself a subclass of the core `UnimplementedError` (`sandbox-timeout`'s "The SDK fails closed on agents older than M9"), the shim's `except LifecycleUnsupportedException` keeps working unchanged: it discriminates by type, never by `isinstance(_, InvalidArgumentException)` or by inspecting a status code.
+- A beyond-cap `set_timeout` SHALL raise the native `InvalidArgumentException` naming `max_lifetime` and 28800.
+
+#### Scenario: set_timeout and connect through the shim
+- **WHEN** the unit test calls `sbx.set_timeout(90)`, `Sandbox.set_timeout(sbx.sandbox_id, 120, access_token=t)` and `Sandbox.connect(sbx.sandbox_id, 300, access_token=t)` against the fake `rayd`
+- **THEN** the fake `LifecycleService` recorded `SetTimeout{90000, EXACT}`, `SetTimeout{120000, EXACT}` and `SetTimeout{300000, AT_LEAST}` in that order
+
+#### Scenario: older image through the shim
+- **WHEN** the unit test calls `Sandbox.create()` against a fake `Health` without `lifecycle`
+- **THEN** it raises `UnimplementedError` with `feature == "lifecycle"`, `err.__cause__` is a `LifecycleUnsupportedException`
+- **AND** `isinstance(err.__cause__, UnimplementedError)` is `True` and `isinstance(err.__cause__, InvalidArgumentException)` is `False`
+- **AND** the stubbed control plane recorded one `terminate_microvm`
+
+#### Scenario: beta_create auto_pause
+- **WHEN** the unit test calls `Sandbox.beta_create(auto_pause=True)`
+- **THEN** the payload `lifecycle.on_timeout == "pause"`, `lifecycle.auto_resume` is false and the request carries an `idlePolicy` with `autoResumeEnabled: true`
+
+## ADDED Requirements
+
+### Requirement: Instance calls on rayito.e2b warn about ApiParams they cannot apply
+`sbx.kill(**api_params)`, `sbx.pause(keep_memory=None, **api_params)` and `sbx.connect(timeout=None, **api_params)` (sync and async) SHALL validate every `ApiParam` they receive (the same rules as the class variants), then emit one `RayitoCompatWarning` for each of `headers`, `proxy` and `retries` that was given, plus `request_timeout` on `kill`/`pause` (which the native `kill()`/`pause(wait=)` do not accept), because an instance call operates on the channel and control plane this sandbox already built and cannot reconstruct them the way `Sandbox.<call>(sandbox_id, ...)` does. Each warning SHALL name only the parameter, never its value. `headers={}` (or any other empty/falsy value) SHALL NOT warn, since nothing was actually given to ignore. `connect()`'s `request_timeout` SHALL be applied, not warned about, and it SHALL reach the underlying resume/extend call. The class variants (`Sandbox.kill(id, ...)`, `Sandbox.pause(id, ...)`, `Sandbox.connect(id, ...)`) SHALL NOT emit these warnings: they apply every given `ApiParam` through the native class call.
+
+#### Scenario: kill and pause warn about the channel/plane params
+- **WHEN** the unit test calls `sbx.kill(retries=3, proxy="http://h:1")` and, separately, `sbx.pause(request_timeout=5)`
+- **THEN** the first emits exactly two `RayitoCompatWarning`s (`retries`, `proxy`) and the sandbox still terminates
+- **AND** the second emits one `RayitoCompatWarning` naming `request_timeout`, and the sandbox still suspends
+
+#### Scenario: connect applies request_timeout and warns about the rest
+- **WHEN** the unit test calls `sbx.connect(request_timeout=5)` and, separately, `sbx.connect(headers={"x-a": "1"})`
+- **THEN** the first emits no `RayitoCompatWarning` and the resume call carries the 5 s timeout
+- **AND** the second emits exactly one `RayitoCompatWarning` naming `headers`, and the warning text never contains `"1"`
+
+#### Scenario: an empty mapping is not "given"
+- **WHEN** the unit test calls `sbx.kill(headers={})` and `sbx.connect(headers={})`
+- **THEN** neither emits a `RayitoCompatWarning` naming `headers`
+
+#### Scenario: class variants apply everything without warning
+- **WHEN** the unit test calls `Sandbox.kill(sbx.sandbox_id, retries=3, proxy="http://h:1", access_token=t)`
+- **THEN** it emits no `RayitoCompatWarning` and the fake control plane received the retried, proxied call
