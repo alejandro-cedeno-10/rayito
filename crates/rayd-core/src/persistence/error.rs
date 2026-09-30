@@ -141,7 +141,7 @@ impl PersistenceError {
             StatusKind::PermissionDenied => "permission_denied",
             StatusKind::NotFound => "not_found",
             StatusKind::Cancelled => "cancelled",
-            StatusKind::Unavailable => "suspending",
+            StatusKind::Unavailable => SUSPENDING,
             StatusKind::Unimplemented => "unimplemented",
             StatusKind::FailedPrecondition
             | StatusKind::ResourceExhausted

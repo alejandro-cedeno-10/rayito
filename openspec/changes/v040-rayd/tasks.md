@@ -31,3 +31,23 @@
 - [x] 2.7 Gates: `cargo test --workspace` (as uid 1500 in the VM),
   `cargo clippy --workspace --all-targets -D warnings`, `cargo fmt
   --check`, `cargo deny check`.
+
+## 3. Final review (0.4.0 gate)
+
+- [x] 3.1 `PersistenceError::stream_code` returns `wire_tokens::SUSPENDING`
+  instead of a second `"suspending"` literal.
+- [x] 3.2 `transfer/manager.rs`: `snapshot` (lookup) and `cancel` map
+  registry errors with `TransferError::from`, the single mapping `admit`
+  already uses (both registry calls only return `Unknown` on reachable
+  paths, so the wire answer does not change).
+- [x] 3.3 Spec: the synthetic `ExecutionError.value` texts ("the kernel
+  sidecar exited", "execution exceeded <n> ms"...) are execution data, not
+  status messages; they stay in English in 0.4.0 and the requirement says
+  so (deferred).
+
+Follow-up, report-only and outside 0.4.0 (not a task of this change): generic Spanish texts
+repeated across parallel error enums and adapters (`usuario desconocido`,
+`permiso denegado`, `falló la búsqueda del usuario: {0}`, `el hijo no tiene
+pid`, `el pid no cabe en pid_t`, `las operaciones de ficheros no se admiten
+en esta plataforma`) → shared message helpers or `From` conversions between
+port and domain errors.

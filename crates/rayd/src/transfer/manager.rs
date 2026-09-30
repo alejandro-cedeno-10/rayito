@@ -238,7 +238,7 @@ impl TransferHub {
         self.bound_sandbox_id()?;
         self.registry()
             .lookup(raw_id, self.now())
-            .map_err(|_| TransferError::UnknownTransfer)
+            .map_err(TransferError::from)
     }
 
     /// `WatchTransfer`: the live channel of an active transfer, or a
@@ -281,7 +281,7 @@ impl TransferHub {
                 Ok(())
             }
             Ok(CancelOutcome::AlreadyFinished(_)) => Ok(()),
-            Err(_) => Err(TransferError::UnknownTransfer),
+            Err(error) => Err(TransferError::from(error)),
         }
     }
 
