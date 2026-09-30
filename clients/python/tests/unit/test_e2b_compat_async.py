@@ -270,6 +270,67 @@ async def test_async_beta_pause_then_connect(
     await again.native.close()
 
 
+async def test_async_instance_kill_warns_for_retries_and_proxy_and_still_terminates(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane
+) -> None:
+    """`sbx.kill()` opera sobre el canal y el plano ya construidos: `retries`
+    y `proxy` avisan (0.4.0) en vez de perderse en silencio, y el kill sigue
+    terminando de verdad."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with pytest.warns(RayitoCompatWarning) as caught:
+        assert await sbx.kill(retries=3, proxy="http://h:1") is True
+    assert [str(w.message).split(" ")[0] for w in caught.list] == ["proxy", "retries"]
+    for warning in caught.list:
+        assert "sbx.kill()" in str(warning.message)
+        assert "Sandbox.kill(sandbox_id, ...)" in str(warning.message)
+
+
+async def test_async_instance_pause_warns_for_request_timeout(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    """`sbx.pause()` nunca aplica `request_timeout` (el nativo `pause(wait=)`
+    no lo acepta): avisa en vez de perderlo en silencio."""
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("suspend_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="SUSPENDED")
+    )
+    with pytest.warns(RayitoCompatWarning, match="request_timeout") as caught:
+        assert await sbx.pause(request_timeout=5) is True
+    assert len(caught) == 1
+
+
+async def test_async_instance_connect_applies_request_timeout_and_warns_only_for_headers(
+    sbx: AsyncSandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    """`sbx.connect()` sí aplica `request_timeout` (a diferencia de `kill`/
+    `pause`): no debe avisar de él, pero sigue avisando de `headers`."""
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        await sbx.connect(request_timeout=5.0)
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    with pytest.warns(RayitoCompatWarning, match="headers") as caught:
+        await sbx.connect(headers={"x-a": "1"})
+    assert len(caught) == 1
+
+
+async def test_async_class_kill_does_not_emit_a_new_instance_warning(
+    control_plane: StubbedControlPlane,
+) -> None:
+    """La variante de clase sí aplica `retries`/`proxy`: no debe avisar."""
+    control_plane.microvms.add_response("terminate_microvm", {}, {"microvmIdentifier": SANDBOX_ID})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert await AsyncSandbox.kill(SANDBOX_ID, control_plane=control_plane.plane) is True
+
+
 def unimplemented_calls(sandbox: AsyncSandbox) -> dict[str, Callable[[], Awaitable[object]]]:
     return {
         "upload_url": lambda: sandbox.upload_url("/x"),

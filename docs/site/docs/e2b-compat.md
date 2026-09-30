@@ -176,6 +176,7 @@ nada se aproxima en silencio.
 | `api_key`, `domain`, `debug`, `api_url`, `sandbox_url`, `validate_api_key`, `api_headers`, `secure=False` | ignorados con un `RayitoCompatWarning` cada uno: las credenciales son las de AWS |
 | `proxy=` | se honra (sólo `http://host:puerto`) en los canales gRPC y en botocore |
 | `headers=`, `retries=`, `ConnectionConfig.set_integration`, `sbx.connection_config` | cabeceras extra en cada RPC (las del proxy, del token y de gRPC están reservadas), reintentos de botocore y `user_agent_extra` |
+| `headers=`, `proxy=`, `retries=` en `sbx.kill()`, `sbx.pause()` o `sbx.connect()` (llamadas de instancia) | 0.4.0: `RayitoCompatWarning` por cada uno (antes se perdían en silencio); `sbx.<call>()` opera sobre el canal y el plano ya construidos de este sandbox y no puede reconstruirlos, a diferencia de `Sandbox.<call>(sandbox_id, ...)`, que sí los aplica; `sbx.pause()`/`sbx.kill()` avisan también de `request_timeout=` (el nativo no lo acepta ahí), `sbx.connect(request_timeout=)` sí lo aplica |
 | `logger=` | los logs del SDK de ese sandbox van al `logging.Logger` dado (TS: un `Logger` con `debug`/`info`/`warn`/`error`), distinto del `logging=` nativo, que es CloudWatch |
 | JS `sbx.getHost(port)` | síncrono, devuelve el hostname como E2B; las cabeceras del proxy que toda petición necesita salen de `await sbx.getHostHeaders(port)` |
 | JS `signal` (`AbortSignal`) en `ConnectionOpts` | cancela las llamadas del plano de control y los RPC en curso; rechaza con `signal.reason` |
