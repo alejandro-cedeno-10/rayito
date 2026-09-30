@@ -6,6 +6,21 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Added
+
+- **`rayito sandbox proxy ID --port N`** (`m12-sizes-proxy`): expone un
+  puerto del guest en `http://<bind>:<local-port>` (`--local-port`, por
+  defecto igual a `--port`; `--bind`, por defecto `127.0.0.1`;
+  `--allow-remote` para escuchar fuera de loopback) sin coste de AWS más
+  allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos). Reutiliza el
+  `TokenRefresher`/`TokenStore` del SDK (mismo refresco a los 45 min);
+  siempre acuña `PortSpec.single(N)`, nunca `allPorts`; rechaza el puerto
+  9000 (hooks, ADR-006) antes de llamar a AWS. Quita cualquier cabecera
+  `x-aws-proxy-*` del cliente, fija `Host`/`X-aws-proxy-auth`/
+  `X-aws-proxy-port` y fuerza `Connection: close` salvo en peticiones
+  `Upgrade`. Nunca registra el JWE, las cabeceras, los cuerpos ni las rutas.
+  Sin dependencias nuevas.
+
 ## [0.4.0] - 2026-09-30
 
 ### Fixed
