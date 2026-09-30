@@ -537,6 +537,32 @@ async def test_async_a_sandbox_timeout_before_the_freeze_does_not_burn_the_reope
         await sandbox.kill()
 
 
+async def test_async_an_unimplemented_reopen_leaves_the_original_sandbox_timeout(
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sandbox = await launch_paused_by_deadline(control_plane, fake_rayd, monkeypatch)
+    try:
+        fake_rayd.lifecycle.abort_with = (grpc.StatusCode.UNIMPLEMENTED, "Method not found")
+        fake_rayd.resume()
+        with (
+            caplog.at_level(logging.WARNING, logger="rayito.sandbox"),
+            pytest.raises(TimeoutException, match="sandbox_timeout"),
+        ):
+            await sandbox.files.make_dir("/home/user/after-resume")
+        assert len(fake_rayd.lifecycle.requests) == 1
+        assert any(
+            "no se pudo reabrir tras la pausa del plazo" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        monkeypatch.undo()
+        expect_terminate(control_plane)
+        await sandbox.kill()
+
+
 async def test_async_concurrent_callers_share_one_reopen(
     control_plane: StubbedControlPlane,
     fake_rayd: RaydEndpoint,

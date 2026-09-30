@@ -1449,8 +1449,8 @@ class Sandbox:
         de imagen `rayito-base-poly` y arrancan en la primera celda de ese
         lenguaje (≈ 1 s dentro del `timeout`); en `rayito-base` la llamada
         falla con `UnimplementedError` (el mensaje nombra `rayito-base-poly`).
-        `language` y `context` son
-        excluyentes; `envs` por ejecución sólo en contextos Python.
+        `language` y `context` son excluyentes; `envs` por ejecución sólo en
+        contextos Python.
 
         Devuelve una `Execution` con `results` (mime bundles: `text`, `png`,
         `chart`, `data`...), `logs.stdout`/`logs.stderr`, `error` y
@@ -2067,7 +2067,7 @@ class Sandbox:
                 self._consume_deadline_pause(paused_generation)
                 return False
             self._send_set_timeout(request, request_timeout=None, reopen=False)
-        except (grpc.RpcError, SandboxException) as failure:
+        except (grpc.RpcError, SandboxException, UnimplementedError) as failure:
             self._logger.warning(
                 "sandbox %s: no se pudo reabrir tras la pausa del plazo (%s)",
                 self.sandbox_id,

@@ -131,8 +131,8 @@ class CodeClient:
         existen en la variante de imagen `rayito-base-poly`, donde ningún
         kernel suyo arranca antes de que se pida (`UnimplementedError`
         nombrando `rayito-base-poly` en las demás). `cwd` debe existir en el
-        sandbox; `envs` forman parte del
-        entorno del kernel. Como máximo 8 contextos por sandbox."""
+        sandbox; `envs` forman parte del entorno del kernel. Como máximo 8
+        contextos por sandbox."""
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         try:
             response = self._sandbox._code_call(

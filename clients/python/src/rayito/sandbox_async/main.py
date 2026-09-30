@@ -1770,7 +1770,7 @@ class AsyncSandbox:
                 self._consume_deadline_pause(paused_generation)
                 return False
             await self._send_set_timeout(request, request_timeout=None, reopen=False)
-        except (grpc.RpcError, SandboxException) as failure:
+        except (grpc.RpcError, SandboxException, UnimplementedError) as failure:
             self._logger.warning(
                 "sandbox %s: no se pudo reabrir tras la pausa del plazo (%s)",
                 self.sandbox_id,
