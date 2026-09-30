@@ -436,10 +436,12 @@ def proxy_command(
     ] = False,
 ) -> None:
     """Expone un puerto del guest en `http://<bind>:<local-port>` sin coste
-    de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos).
-    Un sandbox `SUSPENDED` con auto-resume se despierta con la primera
-    petición (eso sí factura cómputo). Ctrl-C para el refresher del JWE y
-    cierra el listener."""
+    de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos;
+    IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken`, ya en
+    `infra/iam.yaml`). Un sandbox `SUSPENDED` con auto-resume se despierta
+    con la primera petición (eso sí factura cómputo, más la lectura de
+    snapshot del resume). Ctrl-C para el refresher del JWE y cierra el
+    listener."""
     if not _proxy.is_loopback_bind(bind):
         if not allow_remote:
             usage_failure(_proxy.BIND_NEEDS_ALLOW_REMOTE_MESSAGE)
