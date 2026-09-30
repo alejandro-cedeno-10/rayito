@@ -27,6 +27,7 @@ PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
 IAM_TEMPLATE  := infra/iam.yaml
+SECRETS_TEMPLATE := infra/secrets-access.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
@@ -196,9 +197,9 @@ image-publish-caps: require-bucket image-zip
 image-prune:
 	$(PY) python scripts/image_prune.py --image-name rayito-base $(PRUNE_ARGS)
 
-# Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e y el
+# Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e, el
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
-# transferencias):
+# transferencias y las políticas opcionales de secretos de M13a):
 # validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).
@@ -206,8 +207,9 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(EGRESS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EGRESS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(CI_OIDC_TEMPLATE) >/dev/null && echo "validate-template ok: $(CI_OIDC_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(IAM_TEMPLATE) >/dev/null && echo "validate-template ok: $(IAM_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	uvx cfn-lint==1.56.3 --version
-	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE)
+	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

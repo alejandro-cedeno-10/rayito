@@ -349,3 +349,57 @@ guest de ADR-012, `rayd` (root) no está sujeto a las rutas por uid.
 Estado: parámetros y reglas validados con `cfn-lint` 1.56.3 y
 `scripts/tests/test_iam_template.py`; el despliegue y la medida contra AWS
 real están *pendientes de aceptación en AWS* (`m9-file-transfer` 8.x).
+
+## Secretos (`infra/secrets-access.yaml`, M13a)
+
+Plantilla **opcional**: sólo hace falta si usas los secretos de Rayito
+(`SecretStore`, `SecretCache`, `secrets=` o el `Secret` del shim de E2B,
+[docs/site/docs/secrets.md](../docs/site/docs/secrets.md)). Nunca se
+despliega sola. Crea **dos políticas IAM gestionadas y nada más** —ningún
+secreto, ningún rol—, así que su **coste es $0 (IAM)**; los secretos que
+crees con el SDK sí cuestan ($0,40/mes cada uno en Secrets Manager hasta que
+los borras). Acciones y parámetros: `AWS_API_NOTES.md` §19.
+
+| Salida | Política | Concede |
+|---|---|---|
+| `ReaderPolicyArn` | `RayitoSecretsReader` | `secretsmanager:GetSecretValue` y `DescribeSecret` sobre `arn:aws:secretsmanager:<región>:<cuenta>:secret:<SecretPrefix>*`; con `KmsKeyArn`, `kms:Decrypt` sobre esa clave sólo vía Secrets Manager (`kms:ViaService`) |
+| `AdminPolicyArn` | `RayitoSecretsAdmin` | lo del lector + `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DeleteSecret` sobre el mismo ARN y `ListSecrets` sobre `*` (la acción no admite otro recurso); con `KmsKeyArn`, `kms:Decrypt` y `kms:GenerateDataKey` vía Secrets Manager |
+
+Se adjuntan a las credenciales del **llamante** del SDK (la máquina o el
+servicio que ejecuta `Sandbox.create(secrets=...)` o administra los
+secretos), nunca al execution role del MicroVM: `rayd` no lee secretos.
+
+### Desplegar
+
+```bash
+aws cloudformation deploy \
+  --stack-name rayito-secrets-access \
+  --template-file infra/secrets-access.yaml \
+  --parameter-overrides SecretPrefix=rayito/
+# con una CMK propia (SecretStore(kms_key_id=...)):
+#   --parameter-overrides SecretPrefix=rayito/ KmsKeyArn=arn:aws:kms:<región>:<cuenta>:key/<id>
+
+aws cloudformation describe-stacks --stack-name rayito-secrets-access \
+  --query "Stacks[0].Outputs" --output table
+```
+
+Parámetros: `SecretPrefix` (`rayito/` por defecto; debe coincidir con
+`SecretStore(prefix=)`/`secret_prefix=`; nunca vacío, porque un prefijo vacío
+concedería todos los secretos de la cuenta y la región) y `KmsKeyArn`
+(vacío por defecto: la clave gestionada por AWS `aws/secretsmanager` no
+necesita permisos KMS aparte). No hace falta `CAPABILITY_NAMED_IAM`: las
+políticas no llevan nombre fijo.
+
+### Borrar
+
+```bash
+aws cloudformation delete-stack --stack-name rayito-secrets-access
+```
+
+Borrar el stack quita las políticas, **no** los secretos: bórralos antes con
+`SecretStore().destroy(nombre)` (o `Secret.destroy`) si ya no los usas.
+
+Estado: validada con `cfn-lint` 1.56.3 y `scripts/tests/test_secrets_template.py`
+(sólo `AWS::IAM::ManagedPolicy`, ninguna acción fuera de la lista, ningún
+`Resource: "*"` salvo `ListSecrets`, KMS sólo con clave y `kms:ViaService`);
+`make infra-lint` la incluye (`validate-template` + `cfn-lint`).
