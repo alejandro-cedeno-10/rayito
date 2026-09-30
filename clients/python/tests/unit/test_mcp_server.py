@@ -14,7 +14,7 @@ from mcp.types import ImageContent
 
 import rayito
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
-from rayito.exceptions import SandboxNotFoundException, SandboxStateException
+from rayito.exceptions import SandboxNotFoundException, SandboxStateException, UnimplementedError
 from rayito.mcp import McpSettings
 from rayito.sandbox_async.commands import AsyncCommands
 
@@ -331,6 +331,32 @@ async def test_suspending_sandbox_asks_to_retry_without_resetting_the_lease(
     assert retried.is_error is False
     assert retried.structured_content is not None
     assert retried.structured_content["stdout"] == "otra\n"
+    control_plane.microvms.assert_no_pending_responses()
+
+
+async def test_unimplemented_feature_is_a_tool_error_without_resetting_the_lease(
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`UnimplementedError` ya no es `SandboxException` (M9.1): sigue en
+    `SDK_MESSAGE_EXCEPTIONS`, así que da un `ToolError` con su mensaje, sin
+    resetear el lease ni pedir reintento (design D7)."""
+
+    async def unimplemented(self: AsyncCommands, cmd: str, **kwargs: Any) -> Any:
+        raise UnimplementedError("run_command", "la imagen es anterior a M9")
+
+    async with launched_client(control_plane, fake_rayd) as client:
+        await client.call_tool("run_command", {"cmd": "echo hola"})
+        with monkeypatch.context() as patched:
+            patched.setattr(AsyncCommands, "run", unimplemented)
+            result = await client.call_tool("run_command", {"cmd": "echo hola"})
+        retried = await client.call_tool("run_command", {"cmd": "echo otra"})
+    text = error_text(result)
+    assert "run_command no está disponible en Rayito" in text
+    assert "ya no existe" not in text
+    assert "en transición" not in text
+    assert retried.is_error is False
     control_plane.microvms.assert_no_pending_responses()
 
 

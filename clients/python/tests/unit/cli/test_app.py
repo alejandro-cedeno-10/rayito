@@ -117,6 +117,19 @@ def test_client_error_maps_to_exit_1(
     assert result.stdout == ""
 
 
+def test_unimplemented_feature_exits_1_with_its_message(capsys: pytest.CaptureFixture[str]) -> None:
+    """`UnimplementedError` no es `SandboxException` (M9.1): un RPC que el
+    agente no implementa debe seguir dando una salida 1 limpia, no una traza
+    de Python sin capturar."""
+    from rayito.cli._console import translated_failures
+    from rayito.exceptions import UnimplementedError
+
+    with pytest.raises(SystemExit) as excinfo, translated_failures():
+        raise UnimplementedError("get_metrics_history", "la imagen es anterior a M9")
+    assert excinfo.value.code == 1
+    assert "get_metrics_history no está disponible en Rayito" in capsys.readouterr().err
+
+
 def test_json_is_a_single_document(
     runner: CliRunner, clients: Clients, stubbed_clients: Stubs, fake_plane: FakeControlPlane
 ) -> None:
