@@ -6,10 +6,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
 ### Fixed
 
 - `rayito doctor` tiene la fila `0.4` de la tabla de compatibilidad (SDK 0.4
   exige `rayd` 0.4.0); sin ella la comprobación `compatibility` daba FAIL.
+
+- `files.read()` de un fichero grande enrutado por S3: si el plazo
+  (`request_timeout`/`stream_idle_timeout`) vencía justo cuando el
+  `get_object` seguía en vuelo, el SDK seguía lanzando ese `get_object` tras
+  una cancelación ya vista, aunque el resultado tardío se descartaba y el
+  llamante siempre recibía `TimeoutException`. `ObjectFetch.run` comprueba
+  ahora la cancelación antes de abrir el cuerpo, así que no sale ningún
+  `get_object` de más una vez vista la cancelación.
 
 ### Cambios que rompen
 
@@ -44,16 +54,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   sobre el canal y el plano ya construidos de este sandbox y no puede
   reconstruirlos; usa `Sandbox.<kill|pause|connect>(sandbox_id, ...)` si
   necesitas aplicarlos.
-
-### Fixed
-
-- `files.read()` de un fichero grande enrutado por S3: si el plazo
-  (`request_timeout`/`stream_idle_timeout`) vencía justo cuando el
-  `get_object` seguía en vuelo, el SDK seguía lanzando ese `get_object` tras
-  una cancelación ya vista, aunque el resultado tardío se descartaba y el
-  llamante siempre recibía `TimeoutException`. `ObjectFetch.run` comprueba
-  ahora la cancelación antes de abrir el cuerpo, así que no sale ningún
-  `get_object` de más una vez vista la cancelación.
 
 ## [0.3.3] - 2026-09-29
 
