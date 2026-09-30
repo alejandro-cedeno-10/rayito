@@ -48,13 +48,13 @@ The `runHookPayload` SHALL accept an optional object `lifecycle` with exactly th
 - `TIMEOUT_MODE_AT_LEAST` SHALL set `deadline = max(deadline, now + timeout)` while `ACTIVE`, and `now + timeout` from `RESUME_GRACE` or `EXPIRED`.
 - Either mode SHALL move the phase to `ACTIVE` and count one extension when the deadline changed.
 
-Errors:
+Errors, in the order they are judged. The gRPC adapter SHALL only parse the contract (the `mode` enum) and map the domain's errors; every rule on `timeout_ms` SHALL be the domain's (`rayd_core::sandbox_timeout`):
 
+- `mode` `UNSPECIFIED` SHALL fail with `INVALID_ARGUMENT` before any phase check (it is contract parsing).
+- A sandbox without a lifecycle SHALL answer `FAILED_PRECONDITION` "lifecycle_unmanaged", whatever `timeout_ms` is (0 included).
+- A kill-mode sandbox already terminating SHALL answer `FAILED_PRECONDITION` "sandbox_timeout", whatever `timeout_ms` is (0 included). The deadline gate admits `SetTimeout` in that phase (reported `EXPIRED`), so this answer comes from the domain.
+- `timeout_ms` below 1000, 0 included, SHALL fail with `INVALID_ARGUMENT` only after the phase checks, with one message for every value below one second: "el timeout debe ser de al menos 1 s".
 - A target beyond the cap SHALL fail with `INVALID_ARGUMENT` "timeout beyond cap; cap_unix_ms=<n>" and change nothing.
-- `timeout_ms` below 1000 SHALL fail with `INVALID_ARGUMENT`.
-- `mode` `UNSPECIFIED` SHALL fail with `INVALID_ARGUMENT`.
-- A sandbox without a lifecycle SHALL answer `FAILED_PRECONDITION` "lifecycle_unmanaged".
-- A kill-mode sandbox already terminating SHALL answer `FAILED_PRECONDITION` "sandbox_timeout".
 
 #### Scenario: exact can shorten, at-least cannot
 - **WHEN** a sandbox with 600 s left receives `SetTimeout(EXACT, 10 000)` and later `SetTimeout(AT_LEAST, 5 000)` with 8 s left
@@ -67,6 +67,10 @@ Errors:
 #### Scenario: token required
 - **WHEN** `SetTimeout` arrives without `x-access-token`
 - **THEN** it fails with `UNAUTHENTICATED` before the service runs
+
+#### Scenario: a zero timeout follows the phase rules
+- **WHEN** `SetTimeout(EXACT, 0)` reaches a sandbox without a lifecycle, and `SetTimeout(AT_LEAST, 0)` and `SetTimeout(AT_LEAST, 999)` reach an active one
+- **THEN** the first fails with `FAILED_PRECONDITION` "lifecycle_unmanaged", the other two fail with `INVALID_ARGUMENT` and the same message, and the deadline and `extensions` are unchanged
 
 ### Requirement: Health reports the lifecycle
 `HealthResponse` SHALL gain `LifecycleState lifecycle = 12`, and every M9 agent SHALL always set it. The message SHALL carry:
@@ -257,7 +261,7 @@ The SDKs SHALL map the deadline's errors as follows:
 | gRPC `FAILED_PRECONDITION` with details `sandbox_timeout` (unary or stream close) | `TimeoutException` (checked before the generic `FAILED_PRECONDITION` → `InvalidArgumentException` rule) | `TimeoutError` |
 | `INVALID_ARGUMENT` starting with `timeout beyond cap` | `InvalidArgumentException` naming `max_lifetime`, 28800 and `reincarnate()` | `InvalidArgumentError` with the same content |
 | `FAILED_PRECONDITION` `lifecycle_unmanaged` | `InvalidArgumentException` naming `max_lifetime` | `InvalidArgumentError` |
-| `UNIMPLEMENTED` from `SetTimeout` | `LifecycleUnsupportedException` (a subclass of `InvalidArgumentException`) | `LifecycleUnsupportedError` (extends `InvalidArgumentError`) |
+| `UNIMPLEMENTED` from `SetTimeout` | `LifecycleUnsupportedException` (a subclass of `UnimplementedError`, not of `InvalidArgumentException`) | `LifecycleUnsupportedError` (extends `UnimplementedError`, not `InvalidArgumentError`) |
 
 None of these SHALL trigger the reconnection contract.
 
@@ -269,16 +273,24 @@ None of these SHALL trigger the reconnection contract.
 - **WHEN** the fake answers `files.read` with `FAILED_PRECONDITION` and details `sandbox_timeout`
 - **THEN** the SDK raises `TimeoutException`, not `InvalidArgumentException`
 
+#### Scenario: an unmanaged agent's UNIMPLEMENTED is caught by the one unimplemented-feature type
+- **WHEN** a unit test calls `SetTimeout` against a fake agent that answers `UNIMPLEMENTED` (an agent older than M9, no `LifecycleService`)
+- **THEN** the SDK raises `LifecycleUnsupportedException`, `isinstance(error, UnimplementedError)` is `True`, `isinstance(error, InvalidArgumentException)` and `isinstance(error, SandboxException)` are both `False`, and a caller that only wrote `except rayito.UnimplementedError` (or the TypeScript equivalent) still catches it
+
 ### Requirement: The SDK fails closed on agents older than M9
-When a launch sent a `lifecycle` block and the readiness `Health` has no `lifecycle` field, `create()` SHALL raise `LifecycleUnsupportedException` / `LifecycleUnsupportedError`. The error SHALL name the template, its `agent_version` and "publica una imagen M9". It SHALL be raised inside the launch's failure path, so the VM is terminated unless `keep_on_failure`, and it SHALL never be a `SandboxNotReadyException`. A launch without a block SHALL NOT check the field.
+When a launch sent a `lifecycle` block and the readiness `Health` has no `lifecycle` field, `create()` SHALL raise `LifecycleUnsupportedException` (Python) / `LifecycleUnsupportedError` (TypeScript) with `reason` naming the template, its `agent_version` and "publica una imagen M9", and `feature` `"create(max_lifetime=, on_timeout=)"` in Python or `"create({ maxLifetimeMs, onTimeout })"` in TypeScript. `LifecycleUnsupportedException`/`LifecycleUnsupportedError` SHALL be a subclass of `UnimplementedError`/`NotImplementedError`, never of `InvalidArgumentException`/`SandboxException`, as `UnimplementedError(feature, reason)`; the same type, with a `feature` naming the call that failed (`"connect(timeout=)"` in Python / `"connect({ timeoutMs })"` in TypeScript for a requested timeout against such an agent, or the `SetTimeout`/`setTimeout` request's own operation when the agent later answers `UNIMPLEMENTED`), SHALL cover every other place this SDK asks an agent older than M9 to manage a deadline it cannot enforce, chained (`from`/`__cause__`, TS `cause`) from the gRPC error when the rejection comes from an RPC rather than from a `Health` already read. The `create()` case SHALL be raised inside the launch's failure path, so the VM is terminated unless `keep_on_failure`, and it SHALL never be a `SandboxNotReadyException`. A launch without a `lifecycle` block SHALL NOT check the field.
 
 #### Scenario: older agent
 - **WHEN** a unit test creates with `on_timeout="kill"` against a fake `Health` that omits `lifecycle`
-- **THEN** `create()` raises `LifecycleUnsupportedException` and the stubbed control plane recorded one `terminate_microvm`
+- **THEN** `create()` raises `LifecycleUnsupportedException` with `feature == "create(max_lifetime=, on_timeout=)"` (TypeScript: `LifecycleUnsupportedError` with `feature === "create({ maxLifetimeMs, onTimeout })"`), `isinstance(error, UnimplementedError)` is `True` and `isinstance(error, InvalidArgumentException)` is `False`, and the stubbed control plane recorded one `terminate_microvm`
 
 #### Scenario: older agent without lifecycle request
 - **WHEN** the same fake serves `create(timeout=300)`
 - **THEN** the sandbox is returned normally
+
+#### Scenario: connect() on an unmanaged agent names its own feature
+- **WHEN** a unit test creates a sandbox against a fake `Health` that omits `lifecycle`, then calls `connect(timeout=60)` on it
+- **THEN** the SDK raises `LifecycleUnsupportedException` with `feature == "connect(timeout=)"` (TypeScript: `feature === "connect({ timeoutMs })"`)
 
 ### Requirement: Deadline logging never exposes secrets
 `rayd` SHALL log each lifecycle transition as one `sandbox_timeout` line, with the fields `phase`, `on_timeout`, `timeout_ms`, `extensions`, `overrun_ms` and `action`. It SHALL log each `SetTimeout` with the fields `rpc`, `mode`, `timeout_ms`, `outcome` and `extensions`. Neither line SHALL contain tokens, payload characters, `envs` or `metadata`. The SDKs SHALL never log the access token or a JWE in the trigger's or the gate's warnings.

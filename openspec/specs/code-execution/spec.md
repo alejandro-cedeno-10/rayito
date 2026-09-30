@@ -392,7 +392,7 @@ Every execution SHALL be recorded by `rayd` independently of the `Execute` strea
 
 #### Scenario: language not shipped by the image
 - **WHEN** the e2e runs `run_code("echo hi", language="bash")` on a sandbox created from `rayito-base` (`RAYITO_TEMPLATE`)
-- **THEN** the SDK raises `InvalidArgumentException` with `grpc_code == UNIMPLEMENTED` and `rayito-base-poly` in the message, and no context was created
+- **THEN** the SDK raises `UnimplementedError` (not `InvalidArgumentException`) with `rayito-base-poly` in the message, and no context was created
 
 #### Scenario: per-execution envs are python-only
 - **WHEN** `run_code("echo $A", language="bash", envs={"A": "1"})` is called
@@ -404,7 +404,7 @@ Every execution SHALL be recorded by `rayd` independently of the `Execute` strea
 
 #### Scenario: Deno languages not shipped by the image
 - **WHEN** the e2e runs `run_code("1", language="javascript")` and `run_code("1", language="typescript")` on a sandbox created from `rayito-base` (`RAYITO_TEMPLATE`)
-- **THEN** each raises `InvalidArgumentException` with `grpc_code == UNIMPLEMENTED` and `rayito-base-poly` in the message, and `list_code_contexts()` still lists only `default`
+- **THEN** each raises `UnimplementedError` (not `InvalidArgumentException`) with `rayito-base-poly` in the message, and `list_code_contexts()` still lists only `default`
 
 #### Scenario: one lazy typescript kernel on the host
 - **WHEN** a host test sends `Execute{language: "typescript"}` to `rayd` whose fake sidecar announced `python,javascript,typescript`

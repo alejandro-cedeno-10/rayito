@@ -1190,6 +1190,40 @@ de comportamiento).
 
 ---
 
+## 0.4.0 — API unificada y mensajes del agente (2026-09-30)
+
+Tres cambios OpenSpec (`v040-python`, `v040-typescript`, `v040-rayd`),
+archivados tras la aceptación contra AWS real. Cambios deliberados, con
+migración en los CHANGELOG ("Cambios que rompen"):
+
+- **Un solo tipo para "la imagen no tiene la feature"**: `UnimplementedError`
+  en Python y TypeScript (`LifecycleUnsupported*` es subclase; un kernel
+  ausente en `rayito-base` es `UnimplementedError` nombrando
+  `rayito-base-poly`). Los shims de E2B lanzan exactamente lo mismo que en
+  0.3.3 (verificado contra 0.3.3 de PyPI y npm).
+- **Avisos de `ApiParams` ignorados** en llamadas de instancia del shim
+  (`RayitoCompatWarning`, orden alfabético, iguales en los dos SDKs).
+- **`probedInfo`** deja de ser API pública del SDK TypeScript.
+- **`rayd`**: `SetTimeout(0)` lo valida el dominio; todos los mensajes de
+  estado del agente en español (tokens que parsean los SDK intactos).
+- `rayito doctor` con la fila `0.4` de compatibilidad; `make release-pr`
+  aborta si falta la fila de la serie que se publica.
+
+**Aceptación (2026-09-30, cuenta de pruebas, us-east-1):** completa sobre
+`rayito-base` 30.0 / `-caps` 1.0 / `-poly` 1.0 (Python 107/3/2 — dos fallos
+por carga que pasan solos y `doctor` sin fila 0.4 —, TypeScript 36/36, corpus
+E2B 21/21 y 11/11) y re-check sobre 31.0 tras la fila de compatibilidad
+(`doctor --launch` 0 FAIL, CLI e2e 10/10). Presupuestos de subida y bajada del
+e2e de M3 medidos en el run. Limpieza: sólo las VMs y las imágenes/versiones
+de la prueba; queda `rayito-base` 20.0.
+
+**Pendiente (sólo informe, decisión del mantenedor):** la regla `>` frente a
+`>=` del veredicto de congelación, el checklist de `/resume` fuera del
+adaptador, mover el plazo en un solo paso, la barrera de transferencias y el
+mapeo común de errores gRPC (`docs/research/2026-09-m9-architecture-review.md`).
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
