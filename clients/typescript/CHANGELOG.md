@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-01
+
 ### Added
 
 - **Spans OpenTelemetry del lado del SDK** (`m13-otel-sdk`, opcional y
