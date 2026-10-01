@@ -1,6 +1,6 @@
 """`Sandbox.get_metrics_history` (instancia y variante de clase) contra el
 `rayd` falso: el request que llega, el mapeo ascendente con
-`mem_cache_bytes`, la validación previa al RPC, un agente anterior a M9 y la
+`mem_cache_bytes`, la validación previa al RPC, un agente anterior a 0.3.0 y la
 variante de clase con el access token por un canal dedicado."""
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ def test_history_on_a_pre_m9_agent_says_so(sandbox: Sandbox, fake_rayd: RaydEndp
     with pytest.raises(UnimplementedError) as excinfo:
         sandbox.get_metrics_history()
     assert excinfo.value.feature == HISTORY_FEATURE
-    assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON and "M9" in str(excinfo.value)
+    assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON and "0.3.0" in str(excinfo.value)
     assert not isinstance(excinfo.value, SandboxException)
     cause = excinfo.value.__cause__
     assert isinstance(cause, UnimplementedError)

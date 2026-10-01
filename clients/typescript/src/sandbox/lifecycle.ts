@@ -254,7 +254,7 @@ function pausePlan(
 
 // ------------------------------------------------------------------ reading
 
-/** `undefined` cuando `Health` no trae `lifecycle`: la puerta de un agente anterior a M9. */
+/** `undefined` cuando `Health` no trae `lifecycle`: la puerta de un agente anterior a 0.3.0. */
 export function lifecycleFromProto(
   state: LifecycleState | undefined,
 ): SandboxLifecycle | undefined {
@@ -343,7 +343,7 @@ export function suspendedSetTimeoutError(sandboxId: string): SandboxStateError {
  * El `SetTimeout(AT_LEAST)` que manda `connect()` tras la readiness, o
  * `undefined` si no manda ninguno. Con `requestedMs` extiende (nunca acorta);
  * sin él sólo reabre un sandbox `resumeGrace`/`expired` con su propio
- * timeout, recortado para que quepa bajo el tope. Un agente anterior a M9 o
+ * timeout, recortado para que quepa bajo el tope. Un agente anterior a 0.3.0 o
  * un sandbox `unmanaged` no admiten `requestedMs`.
  */
 export function connectExtension(
@@ -356,7 +356,7 @@ export function connectExtension(
     if (requested !== undefined) {
       throw new LifecycleUnsupportedError(
         LIFECYCLE_FEATURE_CONNECT,
-        "necesita una imagen M9: el agente de este sandbox no impone el timeout del servidor",
+        "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no impone el timeout del servidor",
       );
     }
     return undefined;
@@ -428,14 +428,14 @@ export function setTimeoutFeature(mode: TimeoutMode): string {
   return mode === TimeoutMode.AT_LEAST ? LIFECYCLE_FEATURE_CONNECT : LIFECYCLE_FEATURE_SET_TIMEOUT;
 }
 
-/** `SetTimeout` respondió `UNIMPLEMENTED`: el agente es anterior a M9. */
+/** `SetTimeout` respondió `UNIMPLEMENTED`: el agente es anterior a 0.3.0. */
 export function setTimeoutUnsupportedError(
   feature: string,
   options: SandboxErrorOptions = {},
 ): LifecycleUnsupportedError {
   return new LifecycleUnsupportedError(
     feature,
-    "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
+    "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no tiene LifecycleService",
     undefined,
     { cause: options.cause },
   );
@@ -446,7 +446,7 @@ export function olderAgentError(template: string, agentVersion: string): Lifecyc
   return new LifecycleUnsupportedError(
     LIFECYCLE_FEATURE_CREATE,
     `la imagen ${template} (agentVersion ${agentVersion}) no impone el timeout del servidor: ` +
-      "publica una imagen M9 o crea el sandbox sin maxLifetimeMs ni onTimeout",
+      "publica una imagen 0.3.0 o posterior o crea el sandbox sin maxLifetimeMs ni onTimeout",
   );
 }
 

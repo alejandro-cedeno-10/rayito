@@ -6,7 +6,7 @@
  * los `UploadPart` de una foto del fichero; `WatchTransfer` emite la foto
  * actual, una foto por cambio y termina tras un estado final;
  * `GetTransfer("")` es la sonda de capacidad (`NotFound`). Con
- * `mode = "unimplemented"` se comporta como un `rayd` anterior a M9.
+ * `mode = "unimplemented"` se comporta como un `rayd` anterior a 0.3.0.
  */
 
 import { createHash, randomBytes } from "node:crypto";

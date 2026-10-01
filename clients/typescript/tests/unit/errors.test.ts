@@ -128,7 +128,7 @@ describe("error hierarchy (E2B names)", () => {
     const cause = new Error("connect error stand-in");
     const error = new LifecycleUnsupportedError(
       "setTimeout",
-      "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
+      "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no tiene LifecycleService",
       undefined,
       { cause },
     );
@@ -142,13 +142,18 @@ describe("error hierarchy (E2B names)", () => {
 
   test("UnimplementedError carries an optional cause, like SandboxError", () => {
     const cause = new SandboxError("rpc", { grpcCode: Code.Unimplemented });
-    const error = new UnimplementedError("getMetrics", "publica una imagen M9", "docs/x.md", {
-      cause,
-    });
+    const error = new UnimplementedError(
+      "getMetrics",
+      "publica una imagen 0.3.0 o posterior",
+      "docs/x.md",
+      {
+        cause,
+      },
+    );
     expect(error.cause).toBe(cause);
     expect(error.doc).toBe("docs/x.md");
     expect(error.message).toBe(
-      "getMetrics no está disponible: publica una imagen M9. Ver docs/x.md",
+      "getMetrics no está disponible: publica una imagen 0.3.0 o posterior. Ver docs/x.md",
     );
   });
 });

@@ -590,7 +590,7 @@ describe("instance surface", () => {
     expect((await sandbox.getInfo()).lifecycle).toBeUndefined();
   });
 
-  test("the static getMetrics on a pre-M9 image is the same UnimplementedError as Python", async () => {
+  test("the static getMetrics on a anterior a 0.3.0 image is the same UnimplementedError as Python", async () => {
     const { sandbox, rayd, plane } = await shimSandbox();
     plane.setStates(["RUNNING"]);
     rayd.health.historyUnimplemented = true;

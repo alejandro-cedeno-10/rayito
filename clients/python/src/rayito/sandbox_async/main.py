@@ -512,7 +512,7 @@ class AsyncSandbox:
             idx = DynamoDbIndex("rayito-sandboxes")
             sbx = await AsyncSandbox.create(metadata={"user": "42"}, index=idx)
 
-        `tracer_provider=` (M13b) como en `Sandbox.create`: `create()` en sí
+        `tracer_provider=` como en `Sandbox.create`: `create()` en sí
         es un único span `rayito.sandbox.create`; el handle instrumenta sus
         demás operaciones. `None` (por defecto) es `NOOP`.
 
@@ -696,7 +696,7 @@ class AsyncSandbox:
         """Misma semántica que `sbx.connect()` de `Sandbox`: reabre este
         handle y extiende el plazo (`AT_LEAST`). Devuelve `self`.
         `secrets=`/`secret_cache=` sustituyen los del handle; `None` los
-        conserva y `secrets={}` los borra todos. `tracer_provider=` (M13b)
+        conserva y `secrets={}` los borra todos. `tracer_provider=`
         sustituye la `Instrumentation` del handle; `None` conserva la que ya
         tenía ($0 de AWS: ver el bloque de `create()`).
 
@@ -777,7 +777,7 @@ class AsyncSandbox:
         Ejemplo:
             sbx = await AsyncSandbox.connect(sandbox_id, secrets={"TOKEN": "gh"})
 
-        `tracer_provider=` (M13b) como en `Sandbox.connect`: guarda en el
+        `tracer_provider=` como en `Sandbox.connect`: guarda en el
         handle la `Instrumentation`; `connect()` en sí abre un único span
         `rayito.sandbox.connect`.
         """
@@ -846,7 +846,7 @@ class AsyncSandbox:
         `terminate_on_failure`, todo fallo previo al primer `agent_ready` que no
         sea `SandboxNotReadyException` termina el MicroVM. `readiness` es el
         calendario del sondeo (`TakePoll` desde el pool) y `require_lifecycle`
-        la puerta de agente M9 de un lanzamiento con bloque `lifecycle`."""
+        la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque `lifecycle`."""
         refresher = AsyncTokenRefresher(
             TokenRefresher(
                 TokenStore(),

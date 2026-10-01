@@ -468,7 +468,7 @@ function lifecycleIdle(lifecycle: ShimLifecycle): IdlePolicyInput | null {
  * `Sandbox.create(opts)` y `Sandbox.create(template, opts)`: la tabla D5 en
  * camelCase. `timeoutMs` es el plazo lógico de `rayd` (300 000 si falta) y
  * toda creación del shim manda el bloque `lifecycle`, así una imagen anterior
- * a M9 falla en vez de ignorar el plazo. `ingress` es `ALL_INGRESS` salvo que
+ * a 0.3.0 falla en vez de ignorar el plazo. `ingress` es `ALL_INGRESS` salvo que
  * se pase y `egress` siempre `INTERNET_EGRESS` (la política va en el guest).
  */
 export function mapCreateOptions(
@@ -732,7 +732,7 @@ export function normalizedLanguageOrUnimplemented(
  * ausente de la imagen (el nativo ya lo traduce a `UnimplementedError`, con
  * el `ConnectError` en su propia `cause`); `undefined` para cualquier otro
  * error, que el shim propaga sin tocar (p. ej. el `InvalidArgumentError` de
- * un agente anterior a M9 que no conoce `typescript`).
+ * un agente anterior a 0.3.0 que no conoce `typescript`).
  */
 export function unimplementedLanguage(
   error: unknown,
@@ -766,11 +766,11 @@ export function settleAsyncCallback<A>(
 }
 
 export const LIFECYCLE_IMAGE_REASON =
-  "la imagen no impone el timeout del servidor: publica una imagen M9 (ADR-011)";
+  "la imagen no impone el timeout del servidor: publica una imagen 0.3.0 o posterior";
 
 /**
  * Envuelve un error de `getMetricsHistory`/`getMetrics(sandboxId)` que
- * viene de una imagen sin historial (pre-M9) en el `UnimplementedError` de
+ * viene de una imagen sin historial (anterior a 0.3.0) en el `UnimplementedError` de
  * la tabla D14; cualquier otro error pasa sin tocar.
  */
 export function historyImageError(feature: string, error: unknown): unknown {
@@ -782,7 +782,7 @@ export function historyImageError(feature: string, error: unknown): unknown {
   });
 }
 
-/** Envuelve el `LifecycleUnsupportedError` nativo (agente sin M9) en el `UnimplementedError` de E2B. */
+/** Envuelve el `LifecycleUnsupportedError` nativo (agente anterior a 0.3.0) en el `UnimplementedError` de E2B. */
 export function lifecycleImageError(error: unknown): unknown {
   return error instanceof LifecycleUnsupportedError
     ? new UnimplementedError("lifecycle", LIFECYCLE_IMAGE_REASON, COMPAT_DOC_PATH)

@@ -415,7 +415,7 @@ def test_metrics_on_an_old_agent(sbx: Sandbox, fake_rayd: RaydEndpoint) -> None:
     with pytest.raises(UnimplementedError) as excinfo:
         sbx.get_metrics(start=datetime(2026, 9, 23, tzinfo=UTC))
     assert excinfo.value.feature == "get_metrics(start=, end=)"
-    assert "M9" in excinfo.value.reason
+    assert "0.3.0" in excinfo.value.reason
 
 
 def test_class_metrics_on_an_old_agent(

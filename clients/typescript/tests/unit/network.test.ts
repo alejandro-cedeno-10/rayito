@@ -383,7 +383,7 @@ describe("gate and errors", () => {
     const old = networkRpcError(new ConnectError("", Code.Unimplemented), "getNetwork");
     expect(old).toBeInstanceOf(UnimplementedError);
     expect((old as UnimplementedError).reason).toBe(OLD_AGENT_REASON);
-    expect(OLD_AGENT_REASON).toContain("una imagen M9 de rayito-base-caps");
+    expect(OLD_AGENT_REASON).toContain("una imagen 0.3.0 o posterior de rayito-base-caps");
   });
 
   test("the rest follow the unary table", () => {

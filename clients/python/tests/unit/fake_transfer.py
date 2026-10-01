@@ -72,7 +72,7 @@ class FakeTransferFilesystemService(FakeFilesystemService):
     `export_failure` hace que la próxima exportación termine `FAILED` con ese
     `(code, reason)`; `import_failure`, lo mismo para la próxima importación
     en cuanto ve el objeto. `unimplemented` responde `UNIMPLEMENTED` a las
-    cinco RPCs, como un `rayd` anterior a M9."""
+    cinco RPCs, como un `rayd` anterior a 0.3.0."""
 
     s3: FakeS3 = field(default_factory=FakeS3)
     transfers: dict[str, TransferRecord] = field(default_factory=dict)

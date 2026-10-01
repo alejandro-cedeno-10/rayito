@@ -81,7 +81,7 @@ export interface RunHookPayloadOptions {
  * caracteres; `cpuTimeLimit` (segundos de CPU, `1..=28800`) viaja como
  * `limits: {"cpu_seconds": N}` sólo cuando se pasa, igual que en Python.
  * `lifecycle` (≈ 80 caracteres) sólo viaja cuando se pidió un plazo lógico:
- * un `rayd` anterior a M9 ignora la clave y `v` sigue siendo 1.
+ * un `rayd` anterior a 0.3.0 ignora la clave y `v` sigue siendo 1.
  */
 export function buildRunHookPayload(options: RunHookPayloadOptions): string {
   if (!options.accessToken) {

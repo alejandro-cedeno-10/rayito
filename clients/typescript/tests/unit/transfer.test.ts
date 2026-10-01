@@ -375,7 +375,7 @@ describe("upload tickets", () => {
     expect(rayd.filesystem.headers.StartImport).toBeUndefined();
   });
 
-  test("a pre-M9 agent is detected once and refuses transfers, metadata and gzip writes", async () => {
+  test("a anterior a 0.3.0 agent is detected once and refuses transfers, metadata and gzip writes", async () => {
     const { sandbox, rayd } = await stagedSandbox();
     rayd.filesystem.transfers.mode = "unimplemented";
     for (const attempt of [

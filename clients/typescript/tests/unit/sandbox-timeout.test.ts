@@ -2,7 +2,7 @@
  * El plazo lógico que impone `rayd` (ADR-011) visto desde `Sandbox`:
  * `setTimeout` estático y de instancia, `connect({ timeoutMs })` estático y
  * de instancia, la reapertura de `resume()`, `getInfo().expiresAt`, la
- * puerta de un agente anterior a M9, la puerta `sandbox_timeout` de las
+ * puerta de un agente anterior a 0.3.0, la puerta `sandbox_timeout` de las
  * unarias y el disparador del modo `pause`, todo contra los fakes.
  */
 
@@ -143,7 +143,7 @@ describe("moving the deadline", () => {
     expect(connected).toBeInstanceOf(LifecycleUnsupportedError);
     expect((connected as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_CONNECT);
     expect((connected as LifecycleUnsupportedError).reason).toBe(
-      "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
+      "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no tiene LifecycleService",
     );
     rayd.lifecycle.failNext.push(new ConnectError("sin LifecycleService", Code.Unimplemented));
     const moved = await sandbox.setTimeout(60_000).catch((error: unknown) => error);
@@ -316,7 +316,7 @@ describe("launching with a lifecycle", () => {
       }).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(LifecycleUnsupportedError);
       expect((error as Error).message).toContain("rayito-base-2gb");
-      expect((error as Error).message).toContain("publica una imagen M9");
+      expect((error as Error).message).toContain("publica una imagen 0.3.0 o posterior");
       expect(plane?.callsTo("terminateMicrovm")).toHaveLength(keepOnFailure ? 0 : 1);
     }
   });

@@ -454,7 +454,7 @@ export class Sandbox implements AsyncDisposable {
 
   /**
    * La serie de `MetricsHistory` en orden ascendente. Sin `start`/`end`, una
-   * serie vacía o una imagen anterior a M9 devuelven la instantánea actual.
+   * serie vacía o una imagen anterior a 0.3.0 devuelven la instantánea actual.
    */
   async getMetrics(opts: SandboxMetricsOpts = {}): Promise<SandboxMetrics[]> {
     const connection = this.#connection(opts, "getMetrics", SIGNAL_AND_TIMEOUT);

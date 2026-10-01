@@ -1,5 +1,5 @@
 """M9 `m9-egress-policy` contra AWS real (design D19, ADR-012): la política
-de egress en el guest sobre una imagen M9 `rayito-base-caps`
+de egress en el guest sobre una imagen 0.3.0 o posterior `rayito-base-caps`
 (`RAYITO_TEMPLATE_CAPS`) y la compuerta fail-closed sobre la imagen por
 defecto (`RAYITO_TEMPLATE`).
 
@@ -258,7 +258,7 @@ def first_ipv4(host: str) -> str:
 def caps_template() -> str:
     template = os.environ.get(CAPS_TEMPLATE_VAR) or None
     if template is None:
-        pytest.skip(f"exporta {CAPS_TEMPLATE_VAR}=<arn|nombre> (imagen M9 {CAPS_IMAGE})")
+        pytest.skip(f"exporta {CAPS_TEMPLATE_VAR}=<arn|nombre> ({CAPS_IMAGE} 0.3.0+)")
     return template
 
 

@@ -53,16 +53,17 @@ WILDCARD_PREFIX: Final = "*."
 
 EGRESS_UNAVAILABLE_REASON: Final = (
     "la imagen no aplica política de egress en el guest (Health.egress_enforcement=NONE): usa "
-    "una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de "
+    "una imagen 0.3.0 o posterior de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de "
     "plataforma, rayito.Sandbox.create(egress=[<ConnectorArn de "
     "infra/egress-connector.yaml>]); el sandbox se ha terminado"
 )
 CAPS_REASON: Final = (
-    "la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen M9 de "
+    "la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen 0.3.0 o posterior de "
     "rayito-base-caps (additionalOsCapabilities ALL)"
 )
 OLD_AGENT_REASON: Final = (
-    "el rayd de esta imagen es anterior a NetworkService: usa una imagen M9 de rayito-base-caps"
+    "el rayd de esta imagen es anterior a NetworkService: usa una imagen 0.3.0 o posterior "
+    "de rayito-base-caps"
 )
 ALLOW_ONLY_NOTICE: Final = (
     "allow_out sin deny_out no restringe nada: sin deny_out todo el egress está permitido "
@@ -355,7 +356,7 @@ def egress_gate_error(
     sandbox_id: str, enforcement: EgressEnforcement, feature: str
 ) -> UnimplementedError | None:
     """El error de la compuerta cuando el guest no aplica la política
-    (`NONE`, o `UNSPECIFIED` de un agente anterior a M9); `None` si la aplica.
+    (`NONE`, o `UNSPECIFIED` de un agente anterior a 0.3.0); `None` si la aplica.
     El caller ya terminó (o termina) el MicroVM."""
     if enforcement not in UNENFORCED:
         return None

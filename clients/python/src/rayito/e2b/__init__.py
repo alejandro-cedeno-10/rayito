@@ -8,7 +8,7 @@ Cambia la línea de import y el resto del programa sigue igual:
     from e2b.exceptions import ...            ->  from rayito.e2b.exceptions import ...
 
 El plazo del sandbox (`timeout`, `set_timeout`, `connect(timeout=)`,
-`lifecycle`) lo impone `rayd` en una imagen M9; `upload_url`/`download_url`
+`lifecycle`) lo impone `rayd` en una imagen 0.3.0 o posterior; `upload_url`/`download_url`
 firman en S3; `allow_internet_access=False` y `network` son una política de
 egress en el guest (`rayito-base-caps`); `get_metrics(start, end)` es el
 historial del agente. `Secret`/`AsyncSecret` son CRUD sobre AWS Secrets

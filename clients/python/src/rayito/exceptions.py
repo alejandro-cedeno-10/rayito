@@ -225,7 +225,7 @@ class SecretNotFoundException(SecretException, NotFoundException):
 
 
 class SandboxIndexException(SandboxException):
-    """Error del índice opcional de metadatos (`DynamoDbIndex`, M14): la
+    """Error del índice opcional de metadatos (`DynamoDbIndex`): la
     tabla no existe, faltan permisos IAM o `BatchGetItem` dejó claves sin
     procesar tras los reintentos. Un listado con índice nunca devuelve una
     lista incompleta en silencio. El mensaje nunca repite el de AWS;
@@ -277,8 +277,8 @@ class UnimplementedError(NotImplementedError):
 
 
 class LifecycleUnsupportedException(UnimplementedError):
-    """El agente del sandbox es anterior a M9 y no impone el timeout del
+    """El agente del sandbox es anterior a 0.3.0 y no impone el timeout del
     servidor (`Health` sin `lifecycle`, o `UNIMPLEMENTED` en `SetTimeout`):
-    hace falta publicar una imagen M9 o crear el sandbox sin `max_lifetime`
+    hace falta publicar una imagen 0.3.0 o posterior o crear el sandbox sin `max_lifetime`
     ni `on_timeout`. Subclase de `UnimplementedError` sólo como discriminador
     tipado para el shim de E2B (`isinstance`, nunca el texto)."""

@@ -1,7 +1,7 @@
 /**
  * `getMetricsHistory` (instancia y estática) contra el `rayd` falso: el
  * request que llega, el mapeo ascendente con `memCacheBytes`, la validación
- * previa a todo RPC, un agente anterior a M9, el transporte dedicado de la
+ * previa a todo RPC, un agente anterior a 0.3.0, el transporte dedicado de la
  * variante estática con el access token, y los datos del guest que
  * `getInfo()` toma del último `Health`.
  */
@@ -154,7 +154,7 @@ describe("sandbox.getMetricsHistory", () => {
     expect(rayd.health.historyCalls).toEqual([]);
   });
 
-  test("a pre-M9 agent is UnimplementedError with Python's reason and the gRPC cause", async () => {
+  test("a anterior a 0.3.0 agent is UnimplementedError with Python's reason and the gRPC cause", async () => {
     const { sandbox, rayd } = await createTestSandbox();
     rayd.health.historyUnimplemented = true;
     const error = (await sandbox
@@ -164,7 +164,7 @@ describe("sandbox.getMetricsHistory", () => {
     expect(error).not.toBeInstanceOf(SandboxError);
     expect(error).toMatchObject({ feature: HISTORY_FEATURE, reason: HISTORY_UNIMPLEMENTED_REASON });
     expect(HISTORY_UNIMPLEMENTED_REASON).toBe(
-      "la imagen es anterior a M9 (rayd sin MetricsHistory): publica una imagen M9",
+      "la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior",
     );
     expect(error.cause).toBeInstanceOf(UnimplementedError);
     const grpcCause = (error.cause as UnimplementedError).cause;
@@ -288,7 +288,7 @@ describe("Sandbox.getMetricsHistory (static)", () => {
     await expectAllClosed(rayd);
   });
 
-  test("a pre-M9 agent is UnimplementedError", async () => {
+  test("a anterior a 0.3.0 agent is UnimplementedError", async () => {
     rayd.health.historyUnimplemented = true;
     const error = (await call({ accessToken: ACCESS_TOKEN }).catch(
       (caught: unknown) => caught,
@@ -340,7 +340,7 @@ describe("guest facts on getInfo", () => {
     expect((await Sandbox.getInfo(SANDBOX_ID, { controlPlane: plane })).metadata).toBeUndefined();
   });
 
-  test("a pre-M9 agent yields its version and leaves the rest undefined", async () => {
+  test("a anterior a 0.3.0 agent yields its version and leaves the rest undefined", async () => {
     const { sandbox } = await createTestSandbox();
     const info = await sandbox.getInfo();
     expect([info.agentVersion, info.cpuCount, info.memoryMb]).toEqual([

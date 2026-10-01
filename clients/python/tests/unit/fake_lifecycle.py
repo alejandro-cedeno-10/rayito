@@ -1,7 +1,7 @@
 """`LifecycleService` del `rayd` falso (ADR-011).
 
 Aplica `SetTimeout` como `rayd`: exige `x-access-token`, `UNIMPLEMENTED` si
-el `Health` falso no trae `lifecycle` (un agente anterior a M9),
+el `Health` falso no trae `lifecycle` (un agente anterior a 0.3.0),
 `FAILED_PRECONDITION lifecycle_unmanaged` en `UNMANAGED`, `INVALID_ARGUMENT
 timeout beyond cap; cap_unix_ms=<n>` más allá del tope, y EXACT/AT_LEAST
 sobre el `LifecycleState` que también sirve `Health` (el mismo objeto), así

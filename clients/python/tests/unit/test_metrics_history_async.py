@@ -111,7 +111,7 @@ async def test_history_on_a_pre_m9_agent_says_so(
     with pytest.raises(UnimplementedError) as excinfo:
         await sandbox.get_metrics_history()
     assert excinfo.value.feature == HISTORY_FEATURE
-    assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON and "M9" in str(excinfo.value)
+    assert excinfo.value.reason == HISTORY_UNIMPLEMENTED_REASON and "0.3.0" in str(excinfo.value)
     assert not isinstance(excinfo.value, SandboxException)
     cause = excinfo.value.__cause__
     assert isinstance(cause, UnimplementedError)

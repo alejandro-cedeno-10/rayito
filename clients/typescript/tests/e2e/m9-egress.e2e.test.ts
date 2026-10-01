@@ -2,7 +2,7 @@
  * M9 `m9-egress-policy` a través del SDK TypeScript contra AWS real, espejo
  * de `clients/python/tests/e2e/test_m9_egress.py` (design D19).
  *
- * Con `RAYITO_TEMPLATE_CAPS` (imagen M9 de `rayito-base-caps`):
+ * Con `RAYITO_TEMPLATE_CAPS` (imagen 0.3.0 o posterior de `rayito-base-caps`):
  * `allowInternetAccess: false` bloquea a uid 1000 (urllib en menos de 5 s y
  * toda dirección resuelta; el nombre puede resolverse por los resolvedores de
  * la plataforma dentro del guest, adenda de ADR-012) mientras un servidor en
@@ -17,7 +17,7 @@
  * con restricciones es `UnimplementedError`.
  *
  * Las dos suites se omiten sin `RAYITO_TEMPLATE_CAPS`: su presencia es la
- * señal de que las dos imágenes son de M9 (con un `rayito-base` anterior a M9,
+ * señal de que las dos imágenes son de M9 (con un `rayito-base` anterior a 0.3.0,
  * `UpdateNetwork` respondería `Unimplemented`). Nada de aquí imprime listas
  * de la política, direcciones de proxy ni credenciales.
  */

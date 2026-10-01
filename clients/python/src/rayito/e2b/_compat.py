@@ -69,7 +69,7 @@ POLY_KERNELS_REASON: Final = (
     "image-publish-poly y úsala como template)"
 )
 LIFECYCLE_IMAGE_REASON: Final = (
-    "la imagen no impone el timeout del servidor: publica una imagen M9 (ADR-011)"
+    "la imagen no impone el timeout del servidor: publica una imagen 0.3.0 o posterior"
 )
 METRICS_HISTORY_IMAGE_REASON: Final = HISTORY_UNIMPLEMENTED_REASON
 CLASS_METRICS_REASON: Final = (
@@ -407,7 +407,7 @@ def native_call_kwargs(
 
 
 def lifecycle_unimplemented() -> UnimplementedError:
-    """El error del shim para una imagen anterior a M9: el nativo ya terminó
+    """El error del shim para una imagen anterior a 0.3.0: el nativo ya terminó
     el VM recién lanzado."""
     return unimplemented("lifecycle", LIFECYCLE_IMAGE_REASON)
 
@@ -546,7 +546,7 @@ def metrics_from_native(metrics: NativeSandboxMetrics) -> SandboxMetrics:
 def history_falls_back_to_snapshot(exc: UnimplementedError, *, ranged: bool) -> bool:
     """La decisión de `get_metrics()` cuando el historial falla, compartida
     por los shims sync y async (que hacen la IO): `True` si es una imagen
-    anterior a M9 sin rango (cae en la instantánea); con rango es
+    anterior a 0.3.0 sin rango (cae en la instantánea); con rango es
     `UnimplementedError` encadenado a `exc`; `False` para cualquier otro
     fallo, que el llamador relanza tal cual."""
     if not is_history_unavailable(exc):
@@ -655,7 +655,7 @@ def unimplemented_language(
     `UNIMPLEMENTED` a un kernel que la imagen no trae: el núcleo ya lo
     distingue por tipo (la tabla unaria genérica de `_transport.py`), así que
     el shim sólo reenvuelve con `POLY_KERNELS_REASON` y `COMPAT_DOC_PATH`. El
-    `INVALID_ARGUMENT` de un agente anterior a M9 que no conoce `typescript`
+    `INVALID_ARGUMENT` de un agente anterior a 0.3.0 que no conoce `typescript`
     no pasa por aquí: el caller sólo llama a esto tras un `except
     UnimplementedError`."""
     return unimplemented(f"{feature}(language={language!r})", POLY_KERNELS_REASON)

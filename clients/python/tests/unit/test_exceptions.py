@@ -227,9 +227,10 @@ def test_lifecycle_unsupported_is_only_an_unimplemented_error() -> None:
     assert issubclass(LifecycleUnsupportedException, UnimplementedError)
     assert not issubclass(LifecycleUnsupportedException, SandboxException)
     assert not issubclass(LifecycleUnsupportedException, InvalidArgumentException)
-    error = LifecycleUnsupportedException("connect(timeout=)", "necesita una imagen M9")
+    reason = "necesita una imagen 0.3.0 o posterior"
+    error = LifecycleUnsupportedException("connect(timeout=)", reason)
     assert isinstance(error, UnimplementedError) and isinstance(error, NotImplementedError)
-    assert (error.feature, error.reason) == ("connect(timeout=)", "necesita una imagen M9")
+    assert (error.feature, error.reason) == ("connect(timeout=)", reason)
 
 
 def test_git_exceptions_follow_the_e2b_tree() -> None:

@@ -117,7 +117,7 @@ class ClassMethodVariant(Generic[VariantResult]):
 @dataclass(frozen=True)
 class LaunchPlan:
     """Todo lo que `create()` necesita antes de tocar la red.
-    `lifecycle_requested` es la puerta de agente M9: el payload lleva un
+    `lifecycle_requested` es la puerta de agente 0.3.0 o posterior: el payload lleva un
     bloque `lifecycle` y el `Health` de readiness debe traerlo. El access
     token es el secreto del sandbox: nunca aparece en `repr()`."""
 
@@ -527,7 +527,7 @@ class GuestFacts:
 
 
 def guest_facts_from_health(response: health_pb2.HealthResponse) -> GuestFacts:
-    """Un agente anterior a M9 manda `cpu_count` y `memory_total_bytes` a 0,
+    """Un agente anterior a 0.3.0 manda `cpu_count` y `memory_total_bytes` a 0,
     que aquí son `None`: 0 CPUs o 0 MiB nunca es un dato real."""
     return GuestFacts(
         agent_version=str(response.agent_version) or None,
