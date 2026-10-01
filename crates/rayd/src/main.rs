@@ -232,10 +232,13 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // M15 foundations: no feature slot returns a participant yet
-            // (`features::build` is all `Unsupported`), so `/suspend` and
-            // `/ready` behave exactly as in 0.5.x.
-            participants: Vec::new(),
+            // M15 (`m15-events-webhooks`): a fresh `FeatureSet` built here
+            // still shares this process's one `lifecycle_events` singleton
+            // with the one `rayd::grpc::router_with_transfers` built above
+            // for `ConfigureService` — see that call site's comment. Every
+            // other slot is still `slot::Unsupported` (`participant() ->
+            // None`), so this is empty for them, unchanged from 0.5.x.
+            participants: rayd::features::build(&rayd::features::FeatureContext).participants(),
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());

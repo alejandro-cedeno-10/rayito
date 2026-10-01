@@ -19,7 +19,10 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
         ("mounts", {"/mnt/d": object()}),
         ("volumes", {"/mnt/v": object()}),
         ("size", "4gb"),
-        ("events", object()),
+        # `events` left this stub list in m15-events-webhooks: without
+        # `logging="cloudwatch"` it is now `InvalidArgumentException`, still
+        # before any control plane is resolved — see
+        # `test_events_without_cloudwatch_logging_rejects_before_any_control_plane`.
         ("telemetry", object()),
         ("gateways", {"anthropic": object()}),
         ("domain", object()),

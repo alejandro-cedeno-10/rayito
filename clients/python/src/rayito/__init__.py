@@ -20,6 +20,9 @@ from rayito._charts import (
 )
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
+from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
+from rayito._lifecycle_events._service import LifecycleEvents
+from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
 from rayito._listing_base import ListOrder
 from rayito._models import (
     ALL_TRAFFIC,
@@ -136,6 +139,7 @@ __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
     "AsyncGit",
+    "AsyncLifecycleEvents",
     "AsyncOptionalStacks",
     "AsyncPtyHandle",
     "AsyncSandbox",
@@ -167,6 +171,7 @@ __all__ = [
     "EgressEnforcement",
     "EgressProxy",
     "EntryInfo",
+    "EventRecord",
     "Execution",
     "ExecutionError",
     "FileNotFoundException",
@@ -189,6 +194,7 @@ __all__ = [
     "InvalidArgumentException",
     "JsonFilePoolBackend",
     "LaunchOptions",
+    "LifecycleEvents",
     "LifecycleUnsupportedException",
     "LineChart",
     "ListOrder",
@@ -263,6 +269,7 @@ __all__ = [
     "VolumePathNotFoundException",
     "WatchHandle",
     "WebhookException",
+    "WebhookInfo",
     "WriteEntry",
     "__version__",
 ]

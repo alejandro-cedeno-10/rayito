@@ -17,7 +17,9 @@ describe("Sandbox.create: 0.6 options", () => {
     ["mounts", { "/mnt/d": {} }],
     ["volumes", { "/mnt/v": {} }],
     ["size", "4gb"],
-    ["events", {}],
+    // `events` left this stub list in m15-events-webhooks (now
+    // `InvalidArgumentError` without `logging: "cloudwatch"`, still before
+    // any control plane) — see `m15-events-webhooks-feature-options.test.ts`.
     ["telemetry", {}],
     ["gateways", { anthropic: {} }],
     ["domain", {}],

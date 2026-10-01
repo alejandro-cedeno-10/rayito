@@ -1397,8 +1397,16 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
 - **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
-- **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
-  firmados y webhooks compatibles con E2B.
+- **events-webhooks** (`m15-events-webhooks`): `rayd` emite `created`/
+  `paused`/`resumed`/`killed` por stdout, firmados HMAC con una clave que
+  deriva el SDK (nunca `rayd`); un forwarder Lambda verifica y guarda en
+  DynamoDB (TTL 7 días), un deliverer entrega a webhooks firmados al
+  estilo E2B (con guardián SSRF), un reconciler (`rate(5 min)`) sintetiza
+  `killed` para sandboxes que `ListMicrovms` ya no reporta. ADR-020.
+  Hueco de integración documentado, no bloqueante: `create()` todavía no
+  envía la sección `ConfigureSandbox` de esta función (necesita tocar un
+  fichero exclusivo de foundations; la pieza que falta queda anotada en
+  `_feature_options.plan_features`).
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
 - **templates** (`m15-templates`): DSL de templates declarativos.

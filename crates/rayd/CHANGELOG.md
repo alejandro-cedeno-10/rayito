@@ -28,6 +28,17 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **Eventos de ciclo de vida firmados** (`m15-events-webhooks`, ADR-020):
+  `rayd` emite `created`/`paused`/`resumed`/`killed{reason: request}` como
+  una línea `rayito.event.v1 <b64url(json)> <b64url(hmac-sha256)>` en su
+  propio stdout, sólo cuando `ConfigureSandbox` trae una
+  `LifecycleEventsConfig` con clave (la deriva y empuja el SDK; `rayd`
+  nunca ve el secreto del stack). Cola acotada y no bloqueante; comparte el
+  `FeatureSet` entre el servicio gRPC `Configure` y los hooks HTTP
+  (`features::lifecycle_events::shared_inner`, un singleton por proceso).
+  Sin `events=`, cero líneas y cero coste (`/suspend` sigue siendo 0.5.x
+  byte a byte: el participante de esta función comprueba su propio estado
+  antes de hacer nada).
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

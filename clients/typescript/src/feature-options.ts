@@ -6,7 +6,7 @@
  * `undefined` no hace nada: ni `ConfigureSandbox`, ni un cliente nuevo.
  */
 
-import { UnimplementedError } from "./errors.js";
+import { InvalidArgumentError, UnimplementedError } from "./errors.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -38,10 +38,22 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) queda para cuando una función
- * real lo necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a
- * AWS ni construye ningún cliente.
+ * real lo necesite; ninguna rama de hoy lo usa. `logging` es el `logging`
+ * de `create()` (`m15-events-webhooks` lo necesita: `events` exige
+ * `logging: "cloudwatch"`). No hace ninguna llamada a AWS ni construye
+ * ningún cliente.
+ *
+ * `events` ya valida aquí, pero nada envía todavía la sección: igual que
+ * en el SDK Python (`_feature_options.plan_features`'s docstring),
+ * `create()` no conoce `sandboxId`/`imageArn`/`imageVersion` hasta después
+ * de `run-microvm`, y ese punto vive en `sandbox/sandbox.ts`, un fichero
+ * exclusivo de foundations — ver ADR-020, "Hueco de integración conocido".
  */
-export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
+export function planFeatures(
+  options: FeatureOptions,
+  imageVariant?: string,
+  logging?: unknown,
+): FeaturePlan {
   void imageVariant;
   if (options.mounts !== undefined) {
     throw new UnimplementedError("mounts", `llega en 0.6 (${MOUNTS_CHANGE})`);
@@ -52,8 +64,11 @@ export function planFeatures(options: FeatureOptions, imageVariant?: string): Fe
   if (options.size !== undefined) {
     throw new UnimplementedError("size", `llega en 0.6 (${SIZE_CHANGE})`);
   }
-  if (options.events !== undefined) {
-    throw new UnimplementedError("events", `llega en 0.6 (${EVENTS_CHANGE})`);
+  if (options.events !== undefined && logging !== "cloudwatch") {
+    throw new InvalidArgumentError(
+      'events necesita logging: "cloudwatch" (si no, el forwarder no tiene ningún log del ' +
+        "que leer)",
+    );
   }
   if (options.telemetry !== undefined) {
     throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);

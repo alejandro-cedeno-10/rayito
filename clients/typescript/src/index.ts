@@ -83,6 +83,12 @@ export {
   type WriteFailurePolicy,
 } from "./index/dynamodb.js";
 export type { IndexRecord } from "./index/record.js";
+export type { EventKind, EventRecord, KillReason, WebhookInfo } from "./lifecycle-events/domain.js";
+export {
+  type DeployWebhooksOptions,
+  LifecycleEvents,
+  type LifecycleEventsOptions,
+} from "./lifecycle-events/service.js";
 export type { Logger } from "./logger.js";
 export {
   ALL_TRAFFIC,

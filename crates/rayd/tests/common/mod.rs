@@ -441,7 +441,14 @@ pub async fn harness_with(options: Options) -> Harness {
         user_probe: options.user_probe,
         timeout,
         network,
-        participants: Vec::new(),
+        // M15 (`m15-events-webhooks`): a fresh `FeatureSet` built here still
+        // yields the slot that shares this process's one
+        // `lifecycle_events` singleton (`features::lifecycle_events::shared_inner`),
+        // so a test's `ConfigureSandbox` call (via the gRPC client on this
+        // same harness) is visible to `/suspend`/`/resume`/`/terminate`
+        // here — see `rayd::grpc::mod`'s comment at its own `features::build`
+        // call site.
+        participants: rayd::features::build(&rayd::features::FeatureContext).participants(),
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),

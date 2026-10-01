@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from rayito.exceptions import UnimplementedError
+from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 MOUNTS_CHANGE: Final = "m15-s3-mounts"
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
@@ -62,12 +62,29 @@ class FeaturePlan:
     configure_sections: tuple[Any, ...] = ()
 
 
-def plan_features(options: FeatureOptions, *, image_variant: str | None = None) -> FeaturePlan:
+def plan_features(
+    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
     para cuando una función real lo necesite (s3-mounts, efs-volumes,
     rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
-    No hace ninguna llamada a AWS ni construye ningún cliente.
+    `logging` es el `logging=` de `create()` (`m15-events-webhooks` lo
+    necesita: `events=` exige `logging="cloudwatch"`, para que el forwarder
+    tenga algo que leer). No hace ninguna llamada a AWS ni construye ningún
+    cliente.
+
+    `events=` ya valida y construye su propia `FeaturePlan`
+    (`_lifecycle_events._service.LifecycleEvents._build_section` hace la
+    derivación de `k_sbx`), pero **nada todavía envía esa sección**:
+    `create()` no llega a conocer `sandbox_id`/`image_arn`/`image_version`
+    hasta después de `run-microvm`, y ese punto (justo tras
+    `plane.run_microvm(plan.request)`, antes de `cls._open(...)`, en
+    `sandbox_sync/main.py`/`sandbox_async/main.py`) es un archivo exclusivo
+    de foundations. El seguimiento queda documentado en ADR-020: la pieza
+    que falta es, en ese punto exacto, por cada `FeaturePlan.configure_sections`
+    con un método `to_configure_section(sandbox_id, image_arn, image_version)`,
+    construir la sección y mandarla con una sola llamada a `Configure`.
     """
     del image_variant
     if options.mounts is not None:
@@ -76,8 +93,11 @@ def plan_features(options: FeatureOptions, *, image_variant: str | None = None) 
         raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
     if options.size is not None:
         raise UnimplementedError("size=", f"llega en 0.6 ({SIZE_CHANGE})")
-    if options.events is not None:
-        raise UnimplementedError("events=", f"llega en 0.6 ({EVENTS_CHANGE})")
+    if options.events is not None and logging != "cloudwatch":
+        raise InvalidArgumentException(
+            'events= necesita logging="cloudwatch" (si no, el forwarder no tiene '
+            "ningún log del que leer)"
+        )
     if options.telemetry is not None:
         raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
     if options.gateways is not None:

@@ -24,15 +24,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n rayito/v1/lifecycle_events.proto\x12\trayito.v1\"\x17\n\x15LifecycleEventsConfig\"\x17\n\x15LifecycleEventsStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n rayito/v1/lifecycle_events.proto\x12\trayito.v1\"\x99\x01\n\x15LifecycleEventsConfig\x12\x1f\n\x0bsandbox_key\x18\x01 \x01(\x0cR\nsandboxKey\x12\x1d\n\nsandbox_id\x18\x02 \x01(\tR\tsandboxId\x12\x1b\n\timage_arn\x18\x03 \x01(\tR\x08imageArn\x12#\n\rimage_version\x18\x04 \x01(\tR\x0cimageVersion\"u\n\x15LifecycleEventsStatus\x12\x18\n\x07\x65mitted\x18\x01 \x01(\x04R\x07\x65mitted\x12\x18\n\x07\x64ropped\x18\x02 \x01(\x04R\x07\x64ropped\x12(\n\x10last_error_class\x18\x03 \x01(\tR\x0elastErrorClassb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.lifecycle_events_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_LIFECYCLEEVENTSCONFIG']._serialized_start=47
-  _globals['_LIFECYCLEEVENTSCONFIG']._serialized_end=70
-  _globals['_LIFECYCLEEVENTSSTATUS']._serialized_start=72
-  _globals['_LIFECYCLEEVENTSSTATUS']._serialized_end=95
+  _globals['_LIFECYCLEEVENTSCONFIG']._serialized_start=48
+  _globals['_LIFECYCLEEVENTSCONFIG']._serialized_end=201
+  _globals['_LIFECYCLEEVENTSSTATUS']._serialized_start=203
+  _globals['_LIFECYCLEEVENTSSTATUS']._serialized_end=320
 # @@protoc_insertion_point(module_scope)

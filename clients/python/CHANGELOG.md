@@ -24,6 +24,18 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **`LifecycleEvents`/`AsyncLifecycleEvents`** (`m15-events-webhooks`,
+  opcional y apagado por defecto): despliega `infra/events-webhooks.yaml`
+  (`deploy`/`status`/`destroy`, componente `events-webhooks` de
+  `OptionalStacks`), registra webhooks compatibles con E2B
+  (`register_webhook`/`list_webhooks`/`delete_webhook`) y lee el historial
+  (`get_events`). CLI `rayito events deploy|status|destroy|list` y
+  `rayito events webhook add|list|remove`. `events=` en `Sandbox.create()`
+  valida (`logging="cloudwatch"` obligatorio) y deriva la clave por
+  sandbox; sin `events=`, ni un cliente DynamoDB/Secrets Manager nuevo ni
+  una llamada `ConfigureSandbox`. Hueco de integración documentado (ver
+  ADR-020): `create()` todavía no envía la sección — la pieza exacta que
+  falta está anotada en `_feature_options.plan_features`.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

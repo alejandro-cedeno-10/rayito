@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito M15 (optional, m15-events-webhooks): lifecycle events (created,
+  paused, resumed, killed) emitted on stdout by `rayd`, forwarded from a
+  CloudWatch Logs subscription, stored for 7 days and delivered to
+  registered webhooks with E2B-compatible signatures. Creates one Secrets
+  Manager secret (the stack-wide HMAC key), one on-demand DynamoDB table,
+  three Lambda functions, one CloudWatch Logs subscription filter and one
+  EventBridge Scheduler rule. Deploy it only if you pass `events=` to
+  `Sandbox.create`; delete the stack to remove everything it created
+  (the Secrets Manager secret is force-deleted, losing every already
+  registered webhook's ability to re-verify old events). Action names and
+  parameters: AWS_API_NOTES.md section 25.
+
+Parameters:
+  LogGroupName:
+    Type: String
+    MinLength: 1
+    Description: >-
+      The image's CloudWatch Logs log group (the one `logging="cloudwatch"`
+      already writes rayd's stdout to). The subscription filter reads from
+      this group; it is never created by this stack.
+  ArtifactBucket:
+    Type: String
+    MinLength: 3
+    Description: >-
+      S3 bucket `OptionalStacks.deploy(artifact_bucket=...)` already
+      uploaded the three Lambdas' code to (same value, so the template can
+      reference it alongside the key `StackArtifact` resolves).
+  ArtifactS3Key:
+    Type: String
+    MinLength: 1
+    Description: sha256 of the Lambda zip (filled by `OptionalStacks.deploy`, never set by hand).
+  ReconcilerIntervalMinutes:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 60
+    Description: >-
+      EventBridge Scheduler rate for the reconciler (§7.4: synthesizes
+      `killed` events for sandboxes `ListMicrovms` no longer reports).
+  ReconcilerImageArn:
+    Type: String
+    Default: ""
+    Description: Stamped onto a synthesized `killed` event's `image_arn`; informational only.
+  ReconcilerImageVersion:
+    Type: String
+    Default: ""
+    Description: Stamped onto a synthesized `killed` event's `image_version`; informational only.
+
+Resources:
+  # --- Secret -----------------------------------------------------------
+  StackKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: >-
+        Rayito events-webhooks stack key: HMAC-SHA256(this, "rayito.events.v1|"
+        + sandbox_id) derives each sandbox's own k_sbx (SDK-side,
+        `_lifecycle_events/_keys.py`). Never pushed into a guest; the
+        forwarder Lambda reads it to re-derive k_sbx and verify event MACs.
+      GenerateSecretString:
+        PasswordLength: 32
+        ExcludePunctuation: true
+        ExcludeUppercase: false
+        ExcludeLowercase: false
+        ExcludeNumbers: false
+        RequireEachIncludedType: false
+
+  # --- Table --------------------------------------------------------------
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  # --- Lambda execution roles (least privilege, one per function) --------
+  ForwarderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: forwarder
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteEvents
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:DeleteItem]
+                Resource: !GetAtt EventsTable.Arn
+              - Sid: ReadStackKey
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref StackKeySecret
+              - Sid: WriteLogs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  DelivererRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: deliverer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadStream
+                Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource: !GetAtt EventsTable.StreamArn
+              - Sid: ReadWebhooksAndDedupe
+                Effect: Allow
+                Action: [dynamodb:Query, dynamodb:PutItem]
+                Resource: !GetAtt EventsTable.Arn
+              - Sid: ReadWebhookSecrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rayito/webhooks/*"
+              - Sid: WriteLogs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  ReconcilerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: reconciler
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadAndWriteEvents
+                Effect: Allow
+                Action: [dynamodb:Scan, dynamodb:PutItem, dynamodb:DeleteItem]
+                Resource: !GetAtt EventsTable.Arn
+              - Sid: ListMicrovms
+                Effect: Allow
+                Action: lambda-microvms:ListMicrovms
+                Resource: "*"
+              - Sid: WriteLogs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  # --- Lambda functions ---------------------------------------------------
+  ForwarderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: handlers.forwarder.handler
+      Role: !GetAtt ForwarderRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+          STACK_KEY_SECRET_ID: !Ref StackKeySecret
+
+  ForwarderLogPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: lambda:InvokeFunction
+      Principal: !Sub "logs.${AWS::Region}.amazonaws.com"
+      SourceArn: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupName}:*"
+
+  ForwarderSubscription:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: ForwarderLogPermission
+    Properties:
+      LogGroupName: !Ref LogGroupName
+      DestinationArn: !GetAtt ForwarderFunction.Arn
+      FilterPattern: '"rayito.event.v1 "'
+
+  DelivererFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: handlers.deliverer.handler
+      Role: !GetAtt DelivererRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+
+  DelivererEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt EventsTable.StreamArn
+      FunctionName: !Ref DelivererFunction
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumRetryAttempts: 2
+
+  ReconcilerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: handlers.reconciler.handler
+      Role: !GetAtt ReconcilerRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+          RECONCILER_IMAGE_ARN: !Ref ReconcilerImageArn
+          RECONCILER_IMAGE_VERSION: !Ref ReconcilerImageVersion
+
+  ReconcilerSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-reconciler
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ReconcilerFunction.Arn
+
+  ReconcilerSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      ScheduleExpression: !Sub "rate(${ReconcilerIntervalMinutes} minutes)"
+      FlexibleTimeWindow: { Mode: "OFF" }
+      Target:
+        Arn: !GetAtt ReconcilerFunction.Arn
+        RoleArn: !GetAtt ReconcilerSchedulerRole.Arn
+
+  # --- Operator policy: the SDK caller only needs to read the stack key --
+  EventsOperatorPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Attach to the identity calling LifecycleEvents(...)/events=: lets it
+        read the stack key to derive k_sbx (SecretStore itself is a
+        separate concern: register_webhook's own secret lives under
+        rayito/webhooks/, covered by secrets-access.yaml, not this policy).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadStackKey
+            Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Ref StackKeySecret
+
+Outputs:
+  EventsTableName:
+    Value: !Ref EventsTable
+  StackKeySecretArn:
+    Description: Pass to LifecycleEvents(stack_key_secret_arn=...) / read by the forwarder.
+    Value: !Ref StackKeySecret
+  OperatorPolicyArn:
+    Description: Attach to the identity that calls events=/register_webhook/get_events.
+    Value: !Ref EventsOperatorPolicy
+  ReconcilerFunctionArn:
+    Value: !GetAtt ReconcilerFunction.Arn

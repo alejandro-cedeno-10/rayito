@@ -580,6 +580,7 @@ async fn resume(State(state): State<HooksState>) -> Response {
         }
         resume_deadline(&state);
         state.network.on_resume().await;
+        run_participants_on_resume(&state.participants).await;
         let probe_started = Instant::now();
         let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
         let probe_ms = millis(probe_started.elapsed());
@@ -635,10 +636,45 @@ async fn terminate(State(state): State<HooksState>) -> Response {
             TERMINATING,
             HookCallOutcome::Nominal,
         );
+        run_participants_on_terminate(&state.participants).await;
         schedule_shutdown(state.shutdown.clone());
         TERMINATING.to_owned()
     })
     .await
+}
+
+/// Runs every participant's `on_resume` concurrently; with no participant
+/// configured this resolves immediately, same as `run_participants` on
+/// `/suspend`. Unlike `/suspend`'s flush, `/resume` has no
+/// `SuspendBudget`/`SuspendShares` of its own to divide, so each
+/// participant just runs under the hook's own overall deadline
+/// (`within_budget_extras`).
+async fn run_participants_on_resume(participants: &[Arc<dyn LifecycleParticipant>]) {
+    if participants.is_empty() {
+        return;
+    }
+    let mut joins = tokio::task::JoinSet::new();
+    #[allow(clippy::unnecessary_to_owned)]
+    for participant in participants.iter().cloned() {
+        joins.spawn(async move { participant.on_resume().await });
+    }
+    while joins.join_next().await.is_some() {}
+}
+
+/// Runs every participant's `on_terminate` concurrently, before
+/// `schedule_shutdown` starts winding the process down — a participant
+/// that queues a line (`lifecycle_events`) or flushes a buffer needs to run
+/// while stdout and the runtime are still alive.
+async fn run_participants_on_terminate(participants: &[Arc<dyn LifecycleParticipant>]) {
+    if participants.is_empty() {
+        return;
+    }
+    let mut joins = tokio::task::JoinSet::new();
+    #[allow(clippy::unnecessary_to_owned)]
+    for participant in participants.iter().cloned() {
+        joins.spawn(async move { participant.on_terminate().await });
+    }
+    while joins.join_next().await.is_some() {}
 }
 
 async fn within_budget<F>(hook: Hook, session: Arc<SandboxSession>, work: F) -> Response

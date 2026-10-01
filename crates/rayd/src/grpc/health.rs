@@ -132,14 +132,19 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot is still `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself is
-        // reported. The feature that gives a slot a real adapter updates
-        // this one call site (`rayd_core::features::AgentFeatures`), never
-        // `HealthGrpc`'s constructor.
-        features: Some(agent_features_message(
-            rayd_core::features::AgentFeatures::foundations_only(),
-        )),
+        // M15 foundations: every feature slot started `Unsupported`
+        // (`features::build`), so only `ConfigureService` itself was
+        // reported. `m15-events-webhooks` is the first slot with a real
+        // adapter (`features::lifecycle_events::build`, always
+        // `supported() == true` — what stays inert without a
+        // `ConfigureSandbox` call is the key, not the slot), so this one
+        // call site adds that flag; the feature that gives the next slot a
+        // real adapter does the same here, never through `HealthGrpc`'s
+        // constructor.
+        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
+            lifecycle_events: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        })),
     }
 }
 

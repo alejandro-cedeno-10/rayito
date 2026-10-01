@@ -184,9 +184,16 @@ pub fn router_with_transfers(
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
     // M15 foundations: every slot is still `features::slot::Unsupported`
     // (stateless), so building the set fresh here needs no field on
-    // `Services` yet. The feature that first needs shared context (a
-    // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
+    // `Services` yet. `m15-events-webhooks` is the first feature with real
+    // state (`features::lifecycle_events`), but it keeps that state behind
+    // a process-wide singleton (`lifecycle_events::shared_inner`) rather
+    // than widen `Services`/`HookServices` across the eight other test
+    // files that build them directly — building the set again (here and in
+    // `main.rs`, for `HookServices.participants`) still reaches the same
+    // underlying state. The next feature that truly needs its *own*
+    // external context (a bucket, a credential broker) still threads
+    // `Arc<FeatureSet>` through `Services` in its own PR, as this comment
+    // originally invited.
     let configure = ConfigureGrpc::new(
         session.clone(),
         Arc::new(crate::features::build(&crate::features::FeatureContext)),

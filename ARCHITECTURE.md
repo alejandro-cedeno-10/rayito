@@ -1819,9 +1819,54 @@ catálogo de tamaños soportados, Q87/Q88).
 
 ## ADR-020 — events-webhooks (M15, 0.6)
 
-Pendiente: lo completa `m15-events-webhooks` (eventos de ciclo de vida
-firmados por HMAC, forwarder/deliverer/reconciler en Lambda, webhooks
-compatibles con E2B).
+`rayd` emite una línea por evento de ciclo de vida (`created`, `paused`,
+`resumed`, `killed`) en su propio stdout: `rayito.event.v1 <b64url(json)>
+<b64url(mac)>`. La clave (`k_sbx`) la deriva el SDK —
+`HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` — y la empuja una
+vez por `ConfigureSandbox` (`LifecycleEventsConfig.sandbox_key`); `rayd`
+nunca ve `stack_key`, así que un sandbox comprometido sólo revela su propia
+clave. `created` se emite la primera vez que la sección trae una clave;
+`paused`/`resumed` en `/suspend`/`/resume` (el participante de la función,
+cuota de `/suspend` ≤ 1 s); `killed{reason: request}` en `/terminate`.
+
+Una suscripción de CloudWatch Logs reenvía cada línea a un Lambda
+*forwarder*, que re-deriva `k_sbx` del secreto del stack, comprueba que el
+`sandbox_id` de la línea coincide con el *log stream* de origen y escribe
+el evento, de forma idempotente, en una tabla DynamoDB (TTL 7 días). Un
+*deliverer* (disparado por DynamoDB Streams) entrega el evento a cada
+webhook suscrito a ese tipo, firmado al estilo E2B (`e2b-signature` =
+base64 sin relleno de `sha256(secreto + payload)`), con un guardián SSRF
+(resuelve DNS, rechaza loopback/privada/link-local/CGNAT, conecta a la
+dirección ya comprobada — nunca una segunda resolución) y hasta 3
+reintentos. Un *reconciler* (`rate(5 min)`) compara `ListMicrovms` con los
+sandboxes que la tabla aún considera abiertos y sintetiza `killed{unknown}`
+para los que ya no aparecen — hoy sólo `unknown`: distinguir `timeout` exige
+conocer la duración máxima declarada de cada sandbox, que esta iteración no
+rastrea.
+
+**Hueco de integración conocido (no bloqueante, documentado en vez de
+forzado):** el agente de esta función no edita `sandbox_{sync,async}/main.py`
+ni `crates/rayd/src/{main.rs,hooks/mod.rs,grpc/mod.rs}` más allá de lo que
+sus propios comentarios invitaban explícitamente a tocar (ver
+`crate::features::mod::FeatureContext`, `crate::grpc::mod`'s comentario
+junto a `features::build`, y `_feature_options.plan_features`'s docstring).
+En consecuencia:
+
+- *Lado `rayd`*: implementado y conectado de punta a punta.
+  `ConfigureGrpc.apply()` ya actualiza el mismo `FeatureSet` que
+  `HookServices.participants` lee (vía un singleton por proceso,
+  `features::lifecycle_events::shared_inner`, documentado en ese módulo),
+  y `hooks::mod` llama a `on_resume`/`on_terminate` de cada participante
+  (edición mínima, aditiva, igual al patrón ya existente de
+  `on_suspend`/`ready_gate`).
+- *Lado SDK*: `LifecycleEvents._build_section(sandbox_id, image_arn,
+  image_version)` construye la sección real y está probada de forma
+  aislada, pero **nada la envía todavía**: `create()` no conoce
+  `sandbox_id`/`image_arn`/`image_version` hasta después de
+  `run-microvm`, y ese punto exacto vive en un fichero exclusivo de
+  foundations. La pieza que falta, con su forma exacta, queda anotada en
+  `_feature_options.plan_features`'s docstring para que conectarla sea un
+  cambio de fontanería, no de diseño.
 
 ## ADR-021 — rayd-otlp (M15, 0.6)
 

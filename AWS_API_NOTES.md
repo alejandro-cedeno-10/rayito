@@ -987,9 +987,49 @@ Pendiente: `m15-sizes-catalog` documenta aquí `GetMicrovmImageVersion`
 
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 
-Pendiente: `m15-events-webhooks` documenta aquí la suscripción de
-CloudWatch Logs, la tabla DynamoDB de eventos/webhooks y la regla de
-EventBridge Scheduler del reconciliador.
+**CloudWatch Logs** (`infra/events-webhooks.yaml`): `AWS::Logs::SubscriptionFilter`
+sobre `LogGroupName` (parámetro — el mismo log group que `logging="cloudwatch"`
+ya usa), destino el *forwarder* Lambda, `FilterPattern` literal `"rayito.event.v1 "`
+(sólo líneas de evento, nunca el resto del log de `rayd`). El payload que
+recibe el handler es `{"awslogs": {"data": "<base64(gzip(json))>"}}`
+(`CloudWatchLogsDecodedData`: `logGroup`, `logStream`, `logEvents[].message`).
+**Supuesto pendiente de confirmar en la fase de aceptación AWS (CP-5):** el
+forwarder exige que `logStream` contenga el `sandbox_id` del evento firmado,
+para que una VM no pueda reivindicar el `sandbox_id` de otra aunque calculase
+un MAC válido para sí misma — el nombre exacto del *log stream* de una
+imagen Lambda MicroVM no está medido todavía.
+
+**DynamoDB** (tabla única, on-demand, `StreamViewType: NEW_IMAGE`; diseño de
+claves en `infra/lambdas/events_webhooks/domain/schema.py`, duplicado a
+propósito en `clients/python/src/rayito/_lifecycle_events/_dynamodb.py` — un
+zip de Lambda y el SDK son artefactos desplegables distintos): `PutItem`
+(forwarder: evento idempotente por `pk`+`sk`; deliverer: marca de
+deduplicación de entrega), `DeleteItem` (al confirmarse `killed`, borra la
+fila `STATE#<sandbox_id>`), `Query` (deliverer: webhooks por tipo; SDK:
+`get_events` por sandbox o por el GSI `gsi1` para todos), `Scan`
+(reconciliador: sandboxes abiertos — `FilterExpression` sobre `STATE#`,
+volumen acotado por la concurrencia de MicroVMs de la cuenta),
+`GetRecords`/`GetShardIterator`/`DescribeStream`/`ListStreams` (el
+*event source mapping* del deliverer sobre el stream de la tabla).
+
+**Secrets Manager**: `GetSecretValue` sobre el secreto HMAC del stack
+(forwarder, y el SDK para derivar `k_sbx`) y sobre cada secreto de webhook
+bajo `rayito/webhooks/` (deliverer). Nunca `CreateSecret`/`PutSecretValue`
+desde esta pila: el secreto de un webhook se crea aparte, con
+`SecretStore(prefix="rayito/webhooks/")`.
+
+**EventBridge Scheduler**: una `AWS::Scheduler::Schedule`,
+`rate(ReconcilerIntervalMinutes minutes)` (5 por defecto), destino el
+*reconciler* Lambda vía un rol propio con sólo `lambda:InvokeFunction` sobre
+esa función.
+
+**`lambda-microvms` desde el reconciliador** (decisión 8 de la arquitectura
+M15): el runtime gestionado de Lambda no conoce este servicio, así que el
+zip incluye `docs/aws-api/service-2.json` bajo
+`models/lambda-microvms/2025-09-09/service-2.json` y el handler fija
+`AWS_DATA_PATH` a ese directorio antes de construir el cliente boto3.
+`ListMicrovms` (paginado por `nextToken`) — el campo `microvmId` de cada
+`items[]` es el `sandbox_id` del resto del SDK.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 
