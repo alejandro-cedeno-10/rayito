@@ -179,7 +179,7 @@ export function sandboxTimeoutError(options: SandboxErrorOptions = {}): TimeoutE
 /**
  * Único punto que traduce un `Unimplemented` de gRPC a `UnimplementedError`:
  * el motivo es el `rawMessage` crudo del agente (lo que hoy manda un `rayd`
- * anterior a M9 o sin un kernel/RPC concretos) más `hint` si lo hay, y la
+ * anterior a 0.3.0 o sin un kernel/RPC concretos) más `hint` si lo hay, y la
  * causa el `ConnectError`. Mismo contrato que `unimplemented_rpc_error` en
  * Python. `translateRpcError` la usa con el `feature` genérico y la pista de
  * publicar una imagen actual; `code.ts` la reutiliza con el suyo para nombrar
@@ -325,7 +325,7 @@ export function translateStreamError(
 
 /**
  * La tabla de `LifecycleService.SetTimeout` antes de la unaria: más allá del
- * tope, sin plazo lógico (`lifecycle_unmanaged`) y un agente anterior a M9
+ * tope, sin plazo lógico (`lifecycle_unmanaged`) y un agente anterior a 0.3.0
  * (`Unimplemented`) tienen mensaje propio; el resto sigue `translateRpcError`.
  */
 export function translateSetTimeoutError(

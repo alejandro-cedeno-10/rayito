@@ -254,7 +254,7 @@ def test_lifecycle_from_proto_is_none_on_an_older_agent() -> None:
 
 def test_connect_extension_table() -> None:
     assert connect_extension(None, None, NOW_MS) is None
-    with pytest.raises(LifecycleUnsupportedException, match="imagen M9") as raised:
+    with pytest.raises(LifecycleUnsupportedException, match=r"imagen 0\.3\.0 o") as raised:
         connect_extension(None, 300, NOW_MS)
     assert raised.value.feature == "connect(timeout=)"
     assert isinstance(raised.value, UnimplementedError)
@@ -374,7 +374,7 @@ def test_older_agent_error_names_template_version_and_the_fix() -> None:
     assert error.feature == "create(max_lifetime=, on_timeout=)"
     assert "rayito-base" in str(error)
     assert "0.2.0" in str(error)
-    assert "publica una imagen M9" in str(error)
+    assert "publica una imagen 0.3.0 o posterior" in str(error)
 
 
 def info_with(logical: SandboxLifecycle | None, state_reason: str | None = None) -> SandboxInfo:

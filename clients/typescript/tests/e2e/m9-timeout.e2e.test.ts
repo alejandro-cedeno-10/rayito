@@ -4,7 +4,7 @@
  * (design D12): `setTimeout` que acorta, `connect({ timeoutMs })` AT_LEAST,
  * el modo `pause` con un cliente vivo (suspensión y auto-resume con la regla
  * de 5 min), un stream abierto al vencer el plazo y `setTimeout` más allá del
- * tope. Exige la imagen M9 de `RAYITO_TEMPLATE`; todo sandbox nace con
+ * tope. Exige la imagen 0.3.0 o posterior de `RAYITO_TEMPLATE`; todo sandbox nace con
  * `maxLifetimeMs <= 900 000`, sin execution role (y por tanto con
  * `logging: "disabled"`: CloudWatch exige el rol), y el sweeper de `useE2E`
  * lo termina. Cada test imprime lo que necesitan las filas de

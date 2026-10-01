@@ -2,11 +2,11 @@
 
 `sbx.git` es la API git del SDK de E2B sobre `commands.run`: cada método
 construye la orden `git` con los argumentos de E2B y la ejecuta dentro del
-sandbox como el usuario del sandbox. `rayito-base` trae `git-core` desde M9
+sandbox como el usuario del sandbox. `rayito-base` trae `git-core` desde 0.3.0
 (`git-core-2.50.1-1.amzn2023.0.1`, fijado en `image/Dockerfile`).
 
 !!! note "E2B marca este módulo como obsoleto"
-    Rayito lo ofrece por paridad (`m9-e2b-v2-surface`). Nada impide usar
+    Rayito lo ofrece por paridad. Nada impide usar
     `sbx.commands.run("git ...")` directamente.
 
 === "Python"
@@ -95,7 +95,7 @@ Métodos (los mismos en `Git` y `AsyncGit`; en TypeScript en camelCase):
   guarda las credenciales con `git credential approve` en
   `~/.git-credentials` del usuario del sandbox: **quedan visibles para el
   código del sandbox**, igual que en E2B. Úsalo sólo con un token de ámbito
-  mínimo y de vida corta (`SECURITY.md` T9).
+  mínimo y de vida corta ([Seguridad](security.md)).
 
 ## Errores
 

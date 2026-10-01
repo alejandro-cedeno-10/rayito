@@ -45,7 +45,7 @@ function lifecycle(overrides: Partial<SandboxLifecycle> = {}): SandboxLifecycle 
 }
 
 describe("resolveLifecycle", () => {
-  test("no block without maxLifetimeMs or onTimeout: the pre-M9 launch", () => {
+  test("no block without maxLifetimeMs or onTimeout: the anterior a 0.3.0 launch", () => {
     const plan = resolveLifecycle({
       timeoutSeconds: 900,
       maxLifetimeMs: undefined,
@@ -292,7 +292,7 @@ describe("moving the deadline", () => {
     expect(caught).not.toBeInstanceOf(InvalidArgumentError);
     expect((caught as LifecycleUnsupportedError).feature).toBe(LIFECYCLE_FEATURE_CONNECT);
     expect((caught as LifecycleUnsupportedError).reason).toBe(
-      "necesita una imagen M9: el agente de este sandbox no impone el timeout del servidor",
+      "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no impone el timeout del servidor",
     );
   });
 
@@ -343,7 +343,7 @@ describe("moving the deadline", () => {
     expect(error).not.toBeInstanceOf(SandboxError);
     expect(error.message).toContain("rayito-base");
     expect(error.message).toContain("0.2.0");
-    expect(error.message).toContain("publica una imagen M9");
+    expect(error.message).toContain("publica una imagen 0.3.0 o posterior");
     expect(error.feature).toBe(LIFECYCLE_FEATURE_CREATE);
   });
 });

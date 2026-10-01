@@ -652,7 +652,7 @@ function transferDeadlineError(transferId: string): TimeoutError {
   );
 }
 
-/** La tabla unaria salvo `Unimplemented`, que en un RPC de transferencia sólo significa un `rayd` anterior a M9. */
+/** La tabla unaria salvo `Unimplemented`, que en un RPC de transferencia sólo significa un `rayd` anterior a 0.3.0. */
 export function transferRpcError(error: unknown, feature: string, filesystem: boolean): Error {
   if (asConnectError(error)?.code === Code.Unimplemented) {
     return outdatedImageError(feature);
@@ -660,7 +660,7 @@ export function transferRpcError(error: unknown, feature: string, filesystem: bo
   return translateRpcError(error, { filesystem });
 }
 
-/** `GetTransfer("")`: `NotFound` es un agente M9, `Unimplemented` uno anterior; lo demás se propaga. */
+/** `GetTransfer("")`: `NotFound` es un agente 0.3.0 o posterior, `Unimplemented` uno anterior; lo demás se propaga. */
 export function probeSupportsTransfers(error: unknown): boolean {
   const code = asConnectError(error)?.code;
   if (code === Code.NotFound) {

@@ -43,15 +43,15 @@ export class FakeHealth {
   kernelStateLost = false;
   uptimeMs = 12_345;
   egressEnforcement: EgressEnforcement = EgressEnforcement.NONE;
-  /** `undefined` es un agente anterior a M9; `FakeLifecycleService.setTimeout` lo mueve. */
+  /** `undefined` es un agente anterior a 0.3.0; `FakeLifecycleService.setTimeout` lo mueve. */
   lifecycle: LifecycleState | undefined = undefined;
-  /** Vista del guest en `Health`; 0 como un agente anterior a M9. */
+  /** Vista del guest en `Health`; 0 como un agente anterior a 0.3.0. */
   cpuCount = 0;
   memoryTotalBytes = 0n;
   /** Los metadatos del `runHookPayload` que `Health` devuelve (M6). */
   metadata: Record<string, string> = {};
   memCacheBytes = 0n;
-  /** Lo que `MetricsHistory` devuelve tal cual; `historyUnimplemented` imita a un `rayd` anterior a M9. */
+  /** Lo que `MetricsHistory` devuelve tal cual; `historyUnimplemented` imita a un `rayd` anterior a 0.3.0. */
   history: MetricsResponse[] = [];
   historyUnimplemented = false;
   readonly historyRequests: MetricsHistoryRequest[] = [];

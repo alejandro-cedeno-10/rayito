@@ -1,45 +1,88 @@
 # Persistencia
 
 Un sandbox vive como mucho 8 h y `kill()` borra todo lo que hay dentro. La
-persistencia (M7, `m7-s3-persistence`, ADR-009) guarda el `HOME` del usuario
+persistencia guarda el `HOME` del usuario
 (`/home/user`) en tu bucket de S3 y lo restaura en el sandbox siguiente: los
 **ficheros** sobreviven al muro de las 8 h y a `kill()`; las variables del
-kernel, los procesos y las PTY no (ADR-007).
+kernel, los procesos y las PTY no.
 
 Lo hace `rayd`, el agente de la VM, **como root y con el execution role**
 leído por IMDSv2: el código del sandbox (uid 1000) sigue sin poder alcanzar
 IMDS en la imagen `rayito-base-caps`, y nada pasa por tu máquina.
 
-## Quickstart
+<a id="quickstart"></a>
 
-```python
-from rayito import S3Prefix, Sandbox
+## Ejemplo rápido
 
-sbx = Sandbox.create(
-    "rayito-base-caps",
-    execution_role_arn="arn:aws:iam::123456789012:role/rayito-m0-execution-us-east-1",
-    persist=S3Prefix("mi-bucket", prefix="rayito-home", name="agente-7"),
-)
-print(sbx.last_restore)          # None la primera vez; después, lo restaurado
-sbx.files.write("/home/user/notas.txt", "hola")
-sbx.checkpoint_files()           # -> s3://mi-bucket/rayito-home/agente-7/home.tar.gz
-sbx.kill()
+Necesitas la imagen `rayito-base-caps`, un execution role con acceso al
+bucket (`infra/iam.yaml` con `PersistenceBucket`, ver [IAM y bucket](#iam-y-bucket))
+y su ARN en `RAYITO_EXECUTION_ROLE_ARN`:
 
-sbx2 = Sandbox.create("rayito-base-caps", execution_role_arn=..., persist=sbx.persist)
-print(sbx2.files.read("/home/user/notas.txt"))   # "hola"
-```
+=== "Python"
 
-```typescript
-import { S3Prefix, Sandbox } from "rayito";
+    ```python
+    import os
 
-const sbx = await Sandbox.create({
-  template: "rayito-base-caps",
-  executionRoleArn: "arn:aws:iam::123456789012:role/rayito-m0-execution-us-east-1",
-  persist: new S3Prefix({ bucket: "mi-bucket", prefix: "rayito-home", name: "agente-7" }),
-});
-await sbx.checkpointFiles();
-const next = await sbx.reincarnate();   // 8 h frescas con el mismo HOME
-```
+    from rayito import S3Prefix, Sandbox
+
+    role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+    home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="agente-7")
+
+    with Sandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as sbx:
+        print(sbx.last_restore)  # None la primera vez; después, lo restaurado
+        sbx.files.write("/home/user/notas.txt", "hola")
+        sbx.checkpoint_files()  # (1)!
+
+    with Sandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as again:
+        print(again.files.read("/home/user/notas.txt"))  # "hola"
+        nxt = again.reincarnate()  # (2)!
+        nxt.kill()
+    ```
+
+    1. `s3://amzn-s3-demo-bucket/rayito-home/agente-7/home.tar.gz`
+    2. 8 h frescas con el mismo `HOME`; el sandbox viejo se mata.
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+    import os
+
+    from rayito import AsyncSandbox, S3Prefix
+
+
+    async def main() -> None:
+        role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+        home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="agente-7")
+        async with await AsyncSandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as sbx:
+            await sbx.files.write("/home/user/notas.txt", "hola")
+            await sbx.checkpoint_files()
+        async with await AsyncSandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as again:
+            print(await again.files.read("/home/user/notas.txt"))  # "hola"
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { S3Prefix, Sandbox } from "rayito";
+
+    const executionRoleArn = process.env.RAYITO_EXECUTION_ROLE_ARN ?? "";
+    const persist = new S3Prefix({ bucket: "amzn-s3-demo-bucket", prefix: "rayito-home", name: "agente-7" });
+
+    {
+      await using sbx = await Sandbox.create({ template: "rayito-base-caps", executionRoleArn, persist });
+      console.log(sbx.lastRestore); // undefined la primera vez
+      await sbx.files.write("/home/user/notas.txt", "hola");
+      await sbx.checkpointFiles();
+    }
+    await using again = await Sandbox.create({ template: "rayito-base-caps", executionRoleArn, persist });
+    console.log(await again.files.read("/home/user/notas.txt")); // "hola"
+    const next = await again.reincarnate(); // 8 h frescas con el mismo HOME
+    await next.kill();
+    ```
 
 ## `S3Prefix`
 
@@ -141,9 +184,9 @@ nuevo. El nuevo tiene 8 h frescas, otro `sandbox_id`, otro access token
 `create()` falla, el sandbox viejo sigue vivo y la excepción lleva una nota con
 la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
 `create(persist=)`: un handle de `connect()` no conoce el lanzamiento.
-Desde M9 `set_timeout()` (nativo y en `rayito.e2b`) mueve el plazo lógico
+`set_timeout()` (nativo y en `rayito.e2b`) mueve el plazo lógico
 que impone `rayd`, pero nunca más allá de `max_lifetime` (el tope de la
-plataforma, ≤ 8 h, fijo tras `create()`, ADR-011): pasado ese tope,
+plataforma, ≤ 8 h, fijo tras `create()`): pasado ese tope,
 `reincarnate()` sigue siendo el único camino, con los ficheros y sin la
 memoria.
 
@@ -186,7 +229,7 @@ almacenamiento ni ACL: aplican los valores por defecto del bucket
 | otra operación en curso, región desconocida | `PersistenceException(code="failed_precondition")` | `failed_precondition` |
 | red, S3 5xx, tar/gzip, checksum, disco lleno | `PersistenceException(code="internal")` | `internal` |
 | stream cortado a mitad (`/suspend`, proxy) | `PersistenceException(code="interrupted")`: repite la operación, el SDK no la reanuda | `interrupted` |
-| imagen con un `rayd` anterior a M7 | `PersistenceException(code="unimplemented")` con la instrucción de republicar | `unimplemented` |
+| imagen con un `rayd` anterior a 0.2.0 | `PersistenceException(code="unimplemented")` con la instrucción de republicar | `unimplemented` |
 | deadline (`timeout`, 600 s por defecto) | `TimeoutException` | `TimeoutError` |
 
 ## Coste y números medidos

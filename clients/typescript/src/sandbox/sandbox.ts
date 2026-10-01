@@ -203,7 +203,7 @@ export interface SandboxConnectOptions extends ControlPlaneOptions, SecretOption
    * exactamente como antes de M9. En `connect` nunca acorta: manda
    * `SetTimeout(AT_LEAST)` y el plazo pasa a ser al menos ahora + `timeoutMs`
    * (`InvalidArgumentError` en un sandbox sin plazo lógico,
-   * `LifecycleUnsupportedError` en una imagen anterior a M9).
+   * `LifecycleUnsupportedError` en una imagen anterior a 0.3.0).
    */
   readonly timeoutMs?: number | undefined;
   /**
@@ -591,7 +591,7 @@ export interface SandboxOpenOptions {
   readonly terminateOnFailure: boolean;
   readonly logger: Logger | undefined;
   readonly readiness?: typeof ReadinessPoll | undefined;
-  /** El lanzamiento mandó un bloque `lifecycle`: un `Health` sin `lifecycle` es un agente anterior a M9. */
+  /** El lanzamiento mandó un bloque `lifecycle`: un `Health` sin `lifecycle` es un agente anterior a 0.3.0. */
   readonly requireLifecycle?: boolean | undefined;
   /** Abortado durante la readiness: se trata como cualquier otro fallo de arranque. */
   readonly signal?: AbortSignal | undefined;
@@ -1391,7 +1391,7 @@ export class Sandbox implements AsyncDisposable {
   /**
    * La serie que `rayd` muestrea cada 5 s desde `/run` (8 h como mucho), en
    * orden ascendente, con un hueco mientras estuvo suspendido. Una imagen
-   * anterior a M9 es `UnimplementedError`.
+   * anterior a 0.3.0 es `UnimplementedError`.
    */
   async getMetricsHistory(options: MetricsHistoryOptions = {}): Promise<SandboxMetrics[]> {
     const request = metricsHistoryRequest(options);
@@ -1455,7 +1455,7 @@ export class Sandbox implements AsyncDisposable {
    * `NetworkService.UpdateNetwork`: sustituye la política entera (lo omitido
    * se borra; sin argumentos, sin restricciones) y afecta a las conexiones
    * nuevas. `UnimplementedError` en una imagen sin `CAP_NET_ADMIN` o anterior
-   * a M9; `InvalidArgumentError` si `rayd` rechaza una entrada.
+   * a 0.3.0; `InvalidArgumentError` si `rayd` rechaza una entrada.
    */
   async updateNetwork(
     network?: NetworkPolicyInput,

@@ -117,7 +117,7 @@ export interface SandboxInfoFields {
  * MicroVM terminó porque `rayd` salió al vencer el plazo. `agentVersion`,
  * `cpuCount` y `memoryMb` son la vista del guest leída de `Health` (sólo los
  * rellena `getInfo()` de una instancia; `undefined` = no leído o agente
- * anterior a M9): `memoryMb` es el `MemTotal` del guest en MiB, no el
+ * anterior a 0.3.0): `memoryMb` es el `MemTotal` del guest en MiB, no el
  * `minimumMemoryInMiB` de la versión de imagen. `ingress`/`egress` son los
  * ARNs de conectores que devuelve `get-microvm` (`ingressNetworkConnectors`,
  * `egressNetworkConnectors`), vacíos si la respuesta no los trae.
@@ -365,7 +365,7 @@ export interface NetworkPolicyInput {
 
 /**
  * Cómo aplica el guest la política (`Health.egress_enforcement`):
- * `unspecified` es un agente anterior a M9 y, como `none`, significa que no
+ * `unspecified` es un agente anterior a 0.3.0 y, como `none`, significa que no
  * hay política en el guest.
  */
 export const EgressEnforcement = {
@@ -396,9 +396,9 @@ export interface NetworkState {
  * `/suspend` y su `/resume` (0 si no hubo); `kernelStateLost` es `true`
  * cuando algún kernel no respondió a la sonda de `/resume` y fue reiniciado.
  * `uptimeMs` incluye el tiempo suspendido. `lifecycle` es `undefined` en un
- * agente anterior a M9, que no impone el plazo lógico. `egressEnforcement`
+ * agente anterior a 0.3.0, que no impone el plazo lógico. `egressEnforcement`
  * es la política de egress que el guest verificó (`unspecified` en un agente
- * anterior a M9, y cuenta como `none`).
+ * anterior a 0.3.0, y cuenta como `none`).
  */
 export interface SandboxHealth {
   readonly agentReady: boolean;
@@ -411,7 +411,7 @@ export interface SandboxHealth {
   readonly kernelStateLost: boolean;
   readonly egressEnforcement: EgressEnforcement;
   readonly lifecycle: SandboxLifecycle | undefined;
-  /** CPUs que ve el guest; 0 si no se pudieron leer o en un agente anterior a M9. */
+  /** CPUs que ve el guest; 0 si no se pudieron leer o en un agente anterior a 0.3.0. */
   readonly cpuCount: number;
   /** `MemTotal` del guest en bytes (no el tamaño de la imagen); 0 como `cpuCount`. */
   readonly memoryTotalBytes: number;
@@ -420,7 +420,7 @@ export interface SandboxHealth {
 /**
  * `HealthService.Metrics` (instantánea procfs del MicroVM) o una muestra de
  * `MetricsHistory`. `memCacheBytes` es el `Cached` de `/proc/meminfo`; 0 en
- * un agente anterior a M9.
+ * un agente anterior a 0.3.0.
  */
 export interface SandboxMetrics {
   readonly cpuUsedPct: number;

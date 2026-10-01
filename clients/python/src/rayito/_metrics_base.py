@@ -1,7 +1,7 @@
 """Núcleo puro del historial de métricas (`HealthService.MetricsHistory`),
 compartido por `Sandbox` y `AsyncSandbox`: conversión de `datetime` a
 milisegundos Unix, validación previa al RPC, el request, el mapeo de la
-respuesta y la traducción de un `rayd` anterior a M9 (sin el RPC) a
+respuesta y la traducción de un `rayd` anterior a 0.3.0 (sin el RPC) a
 `UnimplementedError`, como las transferencias y el plazo del servidor."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from rayito.exceptions import InvalidArgumentException, SandboxStateException, U
 from rayito.v1 import health_pb2
 
 HISTORY_UNIMPLEMENTED_REASON: Final = (
-    "la imagen es anterior a M9 (rayd sin MetricsHistory): publica una imagen M9"
+    "la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior"
 )
 HISTORY_FEATURE: Final = "get_metrics_history"
 CLASS_HISTORY_FEATURE: Final = "Sandbox.get_metrics_history(sandbox_id)"
@@ -27,7 +27,7 @@ INVERTED_RANGE_ERROR: Final = "start es posterior a end"
 
 
 class MetricsHistoryUnavailable(UnimplementedError):
-    """El historial de métricas contra un `rayd` anterior a M9. Es un
+    """El historial de métricas contra un `rayd` anterior a 0.3.0. Es un
     `UnimplementedError` como cualquier otro para el usuario; el tipo existe
     para que el shim de E2B lo distinga sin comparar el texto de `reason`,
     que sólo es para mostrar."""
@@ -80,7 +80,7 @@ def metrics_history_from_proto(
 
 def history_unimplemented_error(cause: UnimplementedError, feature: str) -> UnimplementedError:
     """El `UnimplementedError` genérico de la tabla unaria (un `rayd`
-    anterior a M9, sin `MetricsHistory`) reenvuelto en el discriminador
+    anterior a 0.3.0, sin `MetricsHistory`) reenvuelto en el discriminador
     tipado del historial, con la causa encadenada."""
     error = MetricsHistoryUnavailable(feature, HISTORY_UNIMPLEMENTED_REASON)
     error.__cause__ = cause

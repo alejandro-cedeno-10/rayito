@@ -91,10 +91,10 @@ TimeoutActionName = Literal["kill", "pause"]
 
 @dataclass(frozen=True)
 class SandboxLifecycle:
-    """El plazo lógico que impone `rayd` (ADR-011), tal como lo reporta `Health`.
+    """El plazo lógico que impone `rayd`, tal como lo reporta `Health`.
 
     `phase` es `unmanaged` cuando el sandbox se creó sin `max_lifetime` ni
-    `on_timeout` (su vida es la de la plataforma, ADR-007), `active` con el
+    `on_timeout` (su vida es la de la plataforma), `active` con el
     plazo corriendo, `resume_grace` durante los 30 s tras reanudarse pasado
     el plazo (esperando a `connect()`) y `expired` con el plazo vencido.
     `deadline` y `cap` son instantes de pared (`None` en `unmanaged`); `cap`
@@ -127,7 +127,7 @@ class SandboxInfo:
     que `run-microvm`/`get-microvm` reportan (`ingressNetworkConnectors` /
     `egressNetworkConnectors`), vacíos si la respuesta no los trae.
     `lifecycle` es el último plazo lógico leído del agente (`None` si no se
-    leyó o si la imagen es anterior a M9): `expires_at` es ese plazo cuando
+    leyó o si la imagen es anterior a 0.3.0): `expires_at` es ese plazo cuando
     el sandbox lo tiene y `platform_expires_at` siempre el tope de la
     plataforma (`started_at + maximum_duration_seconds`).
     `agent_version`, `cpu_count` y `memory_mb` son la vista del guest que
@@ -314,9 +314,9 @@ ALL_TRAFFIC: Final = "0.0.0.0/0"
 
 
 class EgressEnforcement(StrEnum):
-    """Cómo aplica `rayd` la política de egress en el guest (ADR-012), tal
+    """Cómo aplica `rayd` la política de egress en el guest, tal
     como lo publican `Health.egress_enforcement` y `NetworkState.enforcement`.
-    `UNSPECIFIED` es un agente anterior a M9 y cuenta como `NONE`: ninguna
+    `UNSPECIFIED` es un agente anterior a 0.3.0 y cuenta como `NONE`: ninguna
     política en el guest, sólo el conector de la plataforma."""
 
     UNSPECIFIED = "unspecified"
@@ -404,12 +404,12 @@ class SandboxHealth:
     arranque (`/run` repetido, `/suspend`/`/resume` rechazados por el
     limitador, recuperaciones de un `/suspend` que nunca congeló la VM):
     distinto de 0 significa que alguien posee un token `allPorts` de la VM.
-    `lifecycle` es el plazo lógico (ADR-011); `None` en un agente anterior
-    a M9, que no impone ningún timeout. `egress_enforcement` es la política
-    de egress que `rayd` verificó en el guest (ADR-012); `UNSPECIFIED` en un
-    agente anterior a M9. `cpu_count` y `memory_total_bytes` son la vista del
+    `lifecycle` es el plazo lógico; `None` en un agente anterior
+    a 0.3.0, que no impone ningún timeout. `egress_enforcement` es la política
+    de egress que `rayd` verificó en el guest; `UNSPECIFIED` en un
+    agente anterior a 0.3.0. `cpu_count` y `memory_total_bytes` son la vista del
     guest (CPUs que `rayd` puede usar y `MemTotal` en bytes), 0 en un agente
-    anterior a M9.
+    anterior a 0.3.0.
     """
 
     agent_ready: bool
@@ -433,7 +433,7 @@ class SandboxHealth:
 class SandboxMetrics:
     """Una muestra procfs del MicroVM: la instantánea de `get_metrics()` o un
     punto de `get_metrics_history()`. `mem_cache_bytes` es el `Cached` de
-    `/proc/meminfo` (page cache), 0 en un agente anterior a M9."""
+    `/proc/meminfo` (page cache), 0 en un agente anterior a 0.3.0."""
 
     cpu_used_pct: float
     mem_used_bytes: int
@@ -463,7 +463,7 @@ class EntryInfo:
     `mode` son los bits `st_mode & 0o7777`. `symlink_target` sólo en symlinks.
     `metadata` son los metadatos de `files.write(metadata=)` (xattrs
     `user.rayito.*`, claves en minúsculas), de sólo lectura y vacíos si no
-    hay o si la imagen es anterior a M9.
+    hay o si la imagen es anterior a 0.3.0.
     """
 
     name: str
@@ -1000,7 +1000,7 @@ def validate_int_between(value: object, *, field: str, low: int, high: int) -> i
 @dataclass(frozen=True)
 class S3Staging:
     """El bucket de transferencias de `upload_url`/`download_url` y de los
-    ficheros grandes (ADR-010). El SDK firma cada URL con las credenciales
+    ficheros grandes. El SDK firma cada URL con las credenciales
     del llamante; `rayd` nunca guarda ninguna.
 
     `region=None` usa la región del sandbox y debe ser la del bucket.

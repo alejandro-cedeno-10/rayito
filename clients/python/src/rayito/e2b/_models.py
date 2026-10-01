@@ -86,7 +86,7 @@ ListedSandbox = SandboxInfo
 @dataclass(frozen=True)
 class SandboxMetrics:
     """`SandboxMetrics` de E2B: una muestra en bytes. `mem_cache` es la page
-    cache (`Cached` de `/proc/meminfo`), 0 en un agente anterior a M9."""
+    cache (`Cached` de `/proc/meminfo`), 0 en un agente anterior a 0.3.0."""
 
     timestamp: datetime
     cpu_used_pct: float

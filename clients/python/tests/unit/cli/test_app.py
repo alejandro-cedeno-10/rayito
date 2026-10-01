@@ -125,7 +125,7 @@ def test_unimplemented_feature_exits_1_with_its_message(capsys: pytest.CaptureFi
     from rayito.exceptions import UnimplementedError
 
     with pytest.raises(SystemExit) as excinfo, translated_failures():
-        raise UnimplementedError("get_metrics_history", "la imagen es anterior a M9")
+        raise UnimplementedError("get_metrics_history", "la imagen es anterior a 0.3.0")
     assert excinfo.value.code == 1
     assert "get_metrics_history no está disponible en Rayito" in capsys.readouterr().err
 

@@ -1,38 +1,46 @@
 # Imágenes e IAM
 
 Todo sandbox arranca desde una imagen de Lambda MicroVMs publicada **en tu
-cuenta** desde `image/Dockerfile`. Rayito 0.3.0 (M9) necesita una imagen
-publicada desde este árbol (con el `rayd` de M9) y, para dos familias de
-features, una variante concreta. `rayito doctor` comprueba la versión del
+cuenta** desde `image/Dockerfile`. El SDK necesita una imagen con un
+`rayd` de su misma serie (`MAJOR.MINOR`, ver
+[Compatibilidad](limits.md#compatibilidad-sdk-rayd-imagen)) y, para dos
+familias de funciones, una variante concreta. `rayito doctor` comprueba la versión del
 agente de la imagen ([CLI](cli.md#rayito-doctor)).
 
-## Qué imagen necesita cada feature
+<a id="que-imagen-necesita-cada-feature"></a>
+
+## Qué imagen necesita cada función
 
 Las tres variantes salen del mismo `Dockerfile`: `rayito-base-caps` es el
 mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
 `rayito-base-poly` añade una capa con `bash_kernel` y Deno 2.9.7.
 
-| Feature | `rayito-base` | `rayito-base-caps` | `rayito-base-poly` |
+| Función | `rayito-base` | `rayito-base-caps` | `rayito-base-poly` |
 |---|---|---|---|
 | `commands`, `files`, `pty`, `run_code` en Python, metadatos, pool, `persist=` | sí | sí | sí |
-| Plazo del servidor: `max_lifetime`, `on_timeout`, `set_timeout`, `connect(timeout=)` ([Plazo](lifecycle.md)) | sí (M9) | sí (M9) | sí (M9) |
-| `upload_url`/`download_url`, ficheros grandes por S3, `gzip`, `metadata` ([Ficheros](files.md)) | sí (M9) | sí (M9) | sí (M9) |
-| `get_metrics_history()`, hechos del guest ([Observabilidad](observability.md)) | sí (M9) | sí (M9) | sí (M9) |
-| `sbx.git` (`git-core` en la imagen, [Git](git.md)) | sí (M9) | sí (M9) | sí (M9) |
-| Shim `rayito.e2b` / `rayito/e2b` ([Compatibilidad](e2b-compat.md)) | sí (M9) | sí (M9) | sí (M9) |
+| Plazo del servidor: `max_lifetime`, `on_timeout`, `set_timeout`, `connect(timeout=)` ([Plazo](lifecycle.md)) | sí (0.3.0) | sí (0.3.0) | sí (0.3.0) |
+| `upload_url`/`download_url`, ficheros grandes por S3, `gzip`, `metadata` ([Ficheros](files.md)) | sí (0.3.0) | sí (0.3.0) | sí (0.3.0) |
+| `get_metrics_history()`, hechos del guest ([Observabilidad](observability.md)) | sí (0.3.0) | sí (0.3.0) | sí (0.3.0) |
+| `sbx.git` (`git-core` en la imagen, [Git](git.md)) | sí (0.3.0) | sí (0.3.0) | sí (0.3.0) |
+| Shim `rayito.e2b` / `rayito/e2b` ([Compatibilidad](e2b-compat.md)) | sí (0.3.0) | sí (0.3.0) | sí (0.3.0) |
 | `run_code(language="bash")` | no: `UNIMPLEMENTED` | no | sí |
-| `run_code(language="javascript")` o `"typescript"` ([Kernels](kernels.md)) | no: `UNIMPLEMENTED` | no | sí (M9) |
-| Política de egress: `network=`, `allow_internet_access=False`, `update_network()` ([Red saliente](network.md)) | no: el SDK termina el VM y lanza `UnimplementedError` | sí (M9) | no: igual que `rayito-base` |
+| `run_code(language="javascript")` o `"typescript"` ([Kernels](kernels.md)) | no: `UNIMPLEMENTED` | no | sí (0.3.0) |
+| Política de egress: `network=`, `allow_internet_access=False`, `update_network()` ([Red saliente](network.md)) | no: el SDK termina el VM y lanza `UnimplementedError` | sí (0.3.0) | no: igual que `rayito-base` |
 | IMDS bloqueado para uid 1000–65535 (`get_health().imds_blocked`) | no | sí | no |
 
-"sí (M9)" significa que hace falta una imagen publicada con el `rayd` de M9
-(en la release, `agent_version` 0.3.0); contra una anterior, cada feature falla cerrado con
+"sí (0.3.0)" significa que hace falta una imagen con `rayd` 0.3.0 o
+posterior (`agent_version`); contra una anterior, cada feature falla cerrado con
 `UnimplementedError` (`LifecycleUnsupportedException` para el plazo del
 servidor, subclase suya desde 0.4.0; el resto ya lo era).
 No hay una variante que junte `-caps` y `-poly`: ningún objetivo de `make` la
 publica y la combinación no está medida.
 
 ## Publicar las tres
+
+Sin compilar nada, `rayito-base` y `rayito-base-caps` se publican desde el
+`rayito-image.zip` firmado de cada release
+([Configurar AWS](primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)).
+Desde el código fuente (Linux o WSL2, para compilar `rayd`):
 
 ```bash
 export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
@@ -68,10 +76,11 @@ for sbx in (base, caps, poly):
 ## IAM del llamante
 
 El SDK corre con **tus** credenciales (la cadena de boto3 / AWS SDK v3). La
-`CallerPolicy` de `infra/iam.yaml` es la política mínima; M9 sólo añade
-permisos para las transferencias:
+`CallerPolicy` de `infra/iam.yaml` es la política mínima. La tabla completa,
+función por función y con las políticas opcionales de secretos e índice, está
+en [IAM](operacion/iam.md). Lo que añade cada función de esta página:
 
-| Feature de M9 | Permisos nuevos |
+| Función | Permisos nuevos |
 |---|---|
 | Plazo del servidor (`kill` y `pause`) | ninguno: en `kill`, `rayd` sale y la VM termina sola; en `pause`, el SDK usa `suspend-microvm`, que ya estaba |
 | Formas de clase (`Sandbox.set_timeout(id)`, `get_metrics_history(id)`, `update_network(id)`) | ninguno: `get-microvm` y `create-microvm-auth-token`, que ya estaban, más el access token del sandbox |
@@ -120,7 +129,7 @@ Sin la plantilla, el equivalente para añadir a tu política:
 - Con SSE-KMS, añade `kms:GenerateDataKey` (subidas) y `kms:Decrypt`
   (descargas) sobre la clave; la plantilla no lo incluye.
 - El execution role del sandbox **no** necesita nada: `rayd` nunca firma ni
-  guarda credenciales para las transferencias (ADR-010, `SECURITY.md` T16).
+  guarda credenciales para las transferencias (ver [Seguridad](security.md)).
 
 ## El bucket de transferencias
 

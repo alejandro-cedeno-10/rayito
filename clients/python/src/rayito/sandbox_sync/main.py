@@ -515,147 +515,147 @@ class Sandbox:
         tracer_provider: TracerProviderLike | None = None,
     ) -> Self:
         """`run-microvm` → token del proxy → sondeo de `Health` hasta
-        `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
+         `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
 
-        Sin `max_lifetime` ni `on_timeout`, `timeout` es la vida máxima
-        (running + suspended, tope 8 h) y no se puede cambiar después
-        (ADR-007). Con cualquiera de los dos (ADR-011, exige una imagen M9),
-        `timeout` es el plazo lógico que impone `rayd` aunque el cliente
-        muera, movible con `set_timeout()` y `connect(timeout=)`, y
-        `max_lifetime` (`120..=28800`, por defecto `timeout + 60`) es
-        `maximumDurationInSeconds`: el plazo nunca pasa de `max_lifetime -
-        60 s` desde el arranque. Al vencer, `on_timeout='kill'` (por defecto)
-        termina el sandbox y `on_timeout='pause'` lo suspende (necesita
-        `idle`; `idle.auto_resume` decide si una petición posterior lo
-        reanuda con un plazo nuevo de `max(timeout, 300 s)`). Una imagen
-        anterior a M9 falla con `LifecycleUnsupportedException` y el VM se
-        termina (salvo `keep_on_failure`). `idle=None` desactiva la
-        auto-suspensión. Sin `execution_role_arn` no hay logs de runtime.
-        `reconnect_timeout` acota cuánto espera el SDK a que el agente vuelva
-        tras un corte (pausa, auto-resume, 502 del proxy) antes de fallar.
-        `metadata` son etiquetas no secretas (viajan en el `runHookPayload`
-        junto a `envs`, dentro de sus 4096 caracteres) que el agente devuelve
-        en `Health`: inmutables durante la vida del sandbox, legibles con
-        `sbx.metadata`, `get_info()` y `Sandbox.list(metadata=...)`.
-        `cpu_time_limit` son segundos de CPU, no de pared (`1..=28800`): cada
-        proceso y PTY del sandbox recibe `RLIMIT_CPU` con ese tope (`SIGXCPU`
-        al alcanzarlo, `SIGKILL` 5 s después); un proceso dormido no lo
-        consume y el kernel de `run_code` nunca lo recibe. Para un tope de
-        pared usa `timeout` en cada comando.
+         Sin `max_lifetime` ni `on_timeout`, `timeout` es la vida máxima
+         (running + suspended, tope 8 h) y no se puede cambiar después
+        . Con cualquiera de los dos (exige una imagen 0.3.0 o posterior),
+         `timeout` es el plazo lógico que impone `rayd` aunque el cliente
+         muera, movible con `set_timeout()` y `connect(timeout=)`, y
+         `max_lifetime` (`120..=28800`, por defecto `timeout + 60`) es
+         `maximumDurationInSeconds`: el plazo nunca pasa de `max_lifetime -
+         60 s` desde el arranque. Al vencer, `on_timeout='kill'` (por defecto)
+         termina el sandbox y `on_timeout='pause'` lo suspende (necesita
+         `idle`; `idle.auto_resume` decide si una petición posterior lo
+         reanuda con un plazo nuevo de `max(timeout, 300 s)`). Una imagen
+         anterior a 0.3.0 falla con `LifecycleUnsupportedException` y el VM se
+         termina (salvo `keep_on_failure`). `idle=None` desactiva la
+         auto-suspensión. Sin `execution_role_arn` no hay logs de runtime.
+         `reconnect_timeout` acota cuánto espera el SDK a que el agente vuelva
+         tras un corte (pausa, auto-resume, 502 del proxy) antes de fallar.
+         `metadata` son etiquetas no secretas (viajan en el `runHookPayload`
+         junto a `envs`, dentro de sus 4096 caracteres) que el agente devuelve
+         en `Health`: inmutables durante la vida del sandbox, legibles con
+         `sbx.metadata`, `get_info()` y `Sandbox.list(metadata=...)`.
+         `cpu_time_limit` son segundos de CPU, no de pared (`1..=28800`): cada
+         proceso y PTY del sandbox recibe `RLIMIT_CPU` con ese tope (`SIGXCPU`
+         al alcanzarlo, `SIGKILL` 5 s después); un proceso dormido no lo
+         consume y el kernel de `run_code` nunca lo recibe. Para un tope de
+         pared usa `timeout` en cada comando.
 
-        `pool=` es azúcar de `pool.take()`: el sandbox sale de una plaza
-        suspendida del `SandboxPool` (ya arrancado) con la configuración de
-        lanzamiento de su `PoolConfig`; cualquier otro kwarg de lanzamiento o
-        de plano distinto de su valor por defecto es `InvalidArgumentException`.
-        Sólo `ready_timeout`, `request_timeout` y `reconnect_timeout` pasan.
+         `pool=` es azúcar de `pool.take()`: el sandbox sale de una plaza
+         suspendida del `SandboxPool` (ya arrancado) con la configuración de
+         lanzamiento de su `PoolConfig`; cualquier otro kwarg de lanzamiento o
+         de plano distinto de su valor por defecto es `InvalidArgumentException`.
+         Sólo `ready_timeout`, `request_timeout` y `reconnect_timeout` pasan.
 
-        `persist=S3Prefix(...)` (requiere `execution_role_arn`) enlaza el
-        `HOME` del sandbox a `s3://bucket/prefix/name/`: con `name` dado, tras
-        `Health` el SDK restaura el checkpoint que haya bajo el prefijo
-        (`sbx.last_restore`; `None` si no había ninguno) y sin `name` lo fija al
-        `sandbox_id`. `persist_timeout` es el deadline del restore automático
-        y de `reincarnate()`. Un restore que falla (salvo "no hay checkpoint")
-        cierra y termina el sandbox como un fallo de readiness.
+         `persist=S3Prefix(...)` (requiere `execution_role_arn`) enlaza el
+         `HOME` del sandbox a `s3://bucket/prefix/name/`: con `name` dado, tras
+         `Health` el SDK restaura el checkpoint que haya bajo el prefijo
+         (`sbx.last_restore`; `None` si no había ninguno) y sin `name` lo fija al
+         `sandbox_id`. `persist_timeout` es el deadline del restore automático
+         y de `reincarnate()`. Un restore que falla (salvo "no hay checkpoint")
+         cierra y termina el sandbox como un fallo de readiness.
 
-        `allow_internet_access=False` y `network={"allow_out", "deny_out",
-        "egress_proxy"}` (ADR-012, semántica de E2B: sin `deny_out` todo está
-        permitido y `allow_out` gana a `deny_out`; `ALL_TRAFFIC` es todo) se
-        aplican en el guest y exigen una imagen M9 de `rayito-base-caps`:
-        `rayd` instala deny-all antes de `/run` y `create()` manda la política
-        real con `UpdateNetwork` antes de devolver. Sobre una imagen que no la
-        aplica (`Health.egress_enforcement` `NONE`), el SDK termina el VM
-        **aunque** haya `keep_on_failure` y lanza `UnimplementedError`. Una
-        entrada de nombre de host (`"api.example.com"`, `"*.example.com"`) o
-        `egress_proxy` activan el proxy local de `rayd`, que sólo alcanzan los
-        clientes que respetan `HTTPS_PROXY`/`ALL_PROXY`; el resto falla cerrado.
+         `allow_internet_access=False` y `network={"allow_out", "deny_out",
+         "egress_proxy"}` (semántica de E2B: sin `deny_out` todo está
+         permitido y `allow_out` gana a `deny_out`; `ALL_TRAFFIC` es todo) se
+         aplican en el guest y exigen una imagen 0.3.0 o posterior de `rayito-base-caps`:
+         `rayd` instala deny-all antes de `/run` y `create()` manda la política
+         real con `UpdateNetwork` antes de devolver. Sobre una imagen que no la
+         aplica (`Health.egress_enforcement` `NONE`), el SDK termina el VM
+         **aunque** haya `keep_on_failure` y lanza `UnimplementedError`. Una
+         entrada de nombre de host (`"api.example.com"`, `"*.example.com"`) o
+         `egress_proxy` activan el proxy local de `rayd`, que sólo alcanzan los
+         clientes que respetan `HTTPS_PROXY`/`ALL_PROXY`; el resto falla cerrado.
 
-        `transfer=S3Staging(...)` (o `RAYITO_TRANSFER_BUCKET` con `None`) es el
-        bucket de `files.upload_url`/`download_url` y de los ficheros grandes
-        (ADR-010): configuración del cliente, nada viaja al VM, también con
-        `pool=`. Con `persist` en el mismo bucket, los prefijos deben ser
-        disjuntos o es `InvalidArgumentException` antes de llamar a AWS.
+         `transfer=S3Staging(...)` (o `RAYITO_TRANSFER_BUCKET` con `None`) es el
+         bucket de `files.upload_url`/`download_url` y de los ficheros grandes
+        : configuración del cliente, nada viaja al VM, también con
+         `pool=`. Con `persist` en el mismo bucket, los prefijos deben ser
+         disjuntos o es `InvalidArgumentException` antes de llamar a AWS.
 
-        `secrets={"ENV": "nombre" | SecretRef}` (M13a) guarda en el handle
-        sólo las referencias y entrega los valores como variables de entorno
-        de cada `commands.run`, `pty.create`, `run_code` (contextos Python) y
-        `create_code_context`, nunca en el `runHookPayload`, `metadata` ni
-        el entorno de la imagen. Se resuelven (y quedan en `SecretCache`)
-        antes de `run-microvm`: un secreto que falta falla sin lanzar un VM.
-        Se admite con `pool=` (lo enlaza `take()`).
+         `secrets={"ENV": "nombre" | SecretRef}` guarda en el handle
+         sólo las referencias y entrega los valores como variables de entorno
+         de cada `commands.run`, `pty.create`, `run_code` (contextos Python) y
+         `create_code_context`, nunca en el `runHookPayload`, `metadata` ni
+         el entorno de la imagen. Se resuelven (y quedan en `SecretCache`)
+         antes de `run-microvm`: un secreto que falta falla sin lanzar un VM.
+         Se admite con `pool=` (lo enlaza `take()`).
 
-        Coste y activación
-        -------------------
-        Activa: `secrets=` inyecta secretos de Secrets Manager como variables
-            de entorno; `secret_cache=SecretCache(ttl_seconds=300)` fija la
-            caché (si no, una compartida por región y sesión, TTL 300 s).
-        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
-            secreto y TTL (un acierto de caché no llama a AWS); ningún recurso
-            nuevo. Sin `secrets=` no se crea ningún cliente `secretsmanager`.
-        Coste aproximado: $0,05 por 10 000 llamadas + $0,40 por secreto y mes
-            (Secrets Manager, us-east-1, 2026-09-30); ≈ $0,04/mes por secreto
-            y proceso con el TTL por defecto.
-        IAM: `secretsmanager:GetSecretValue` sobre `...:secret:rayito/*` en las
-            credenciales del llamante (no el execution role).
-        Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
-        Ejemplo:
-            SecretStore().create("openai", key)
-            sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"})
-            sbx.commands.run("python agent.py")
+         Coste y activación
+         -------------------
+         Activa: `secrets=` inyecta secretos de Secrets Manager como variables
+             de entorno; `secret_cache=SecretCache(ttl_seconds=300)` fija la
+             caché (si no, una compartida por región y sesión, TTL 300 s).
+         Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+             secreto y TTL (un acierto de caché no llama a AWS); ningún recurso
+             nuevo. Sin `secrets=` no se crea ningún cliente `secretsmanager`.
+         Coste aproximado: $0,05 por 10 000 llamadas + $0,40 por secreto y mes
+             (Secrets Manager, us-east-1, 2026-09-30); ≈ $0,04/mes por secreto
+             y proceso con el TTL por defecto.
+         IAM: `secretsmanager:GetSecretValue` sobre `...:secret:rayito/*` en las
+             credenciales del llamante (no el execution role).
+         Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
+         Ejemplo:
+             SecretStore().create("openai", key)
+             sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"})
+             sbx.commands.run("python agent.py")
 
-        `index=DynamoDbIndex("tabla")` (M14) escribe, tras `run-microvm` y
-        antes de la sonda de readiness, una fila inmutable con `metadata`, la
-        imagen y `startedAt` en la tabla opcional del índice, para que
-        `Sandbox.list(metadata=..., index=...)` encuentre el sandbox también
-        suspendido y sin sondearlo. Si `PutItem` falla, con
-        `on_write_failure='terminate'` (por defecto) el VM se termina (salvo
-        `keep_on_failure=True`) y se lanza `IndexWriteException`; con
-        `'warn'` sólo se avisa. Con `pool=` es `InvalidArgumentException`:
-        se configura en `PoolConfig(index=...)`. `kill()` no toca el índice.
+         `index=DynamoDbIndex("tabla")` escribe, tras `run-microvm` y
+         antes de la sonda de readiness, una fila inmutable con `metadata`, la
+         imagen y `startedAt` en la tabla opcional del índice, para que
+         `Sandbox.list(metadata=..., index=...)` encuentre el sandbox también
+         suspendido y sin sondearlo. Si `PutItem` falla, con
+         `on_write_failure='terminate'` (por defecto) el VM se termina (salvo
+         `keep_on_failure=True`) y se lanza `IndexWriteException`; con
+         `'warn'` sólo se avisa. Con `pool=` es `InvalidArgumentException`:
+         se configura en `PoolConfig(index=...)`. `kill()` no toca el índice.
 
-        Coste y activación
-        -------------------
-        Activa: `index=DynamoDbIndex(...)` escribe la fila del índice de
-            metadatos de este sandbox.
-        Recursos y llamadas AWS: `dynamodb:PutItem` una vez (condicional
-            `attribute_not_exists(pk)`); ningún recurso nuevo (la tabla la
-            despliegas tú con `infra/metadata-index.yaml`). Sin `index=`
-            ningún cliente `dynamodb`.
-        Coste aproximado: ~1 WRU ≈ $0,000000625 por sandbox + $0,25/GB-mes
-            (DynamoDB on-demand, us-east-1, consultado 2026-09-30).
-        IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`) en las
-            credenciales del llamante.
-        Cómo apagarla: `index=None` (por defecto).
-        Ejemplo:
-            idx = DynamoDbIndex("rayito-sandboxes")
-            sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
-            sbx.pause()
-            items = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
+         Coste y activación
+         -------------------
+         Activa: `index=DynamoDbIndex(...)` escribe la fila del índice de
+             metadatos de este sandbox.
+         Recursos y llamadas AWS: `dynamodb:PutItem` una vez (condicional
+             `attribute_not_exists(pk)`); ningún recurso nuevo (la tabla la
+             despliegas tú con `infra/metadata-index.yaml`). Sin `index=`
+             ningún cliente `dynamodb`.
+         Coste aproximado: ~1 WRU ≈ $0,000000625 por sandbox + $0,25/GB-mes
+             (DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+         IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`) en las
+             credenciales del llamante.
+         Cómo apagarla: `index=None` (por defecto).
+         Ejemplo:
+             idx = DynamoDbIndex("rayito-sandboxes")
+             sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
+             sbx.pause()
+             items = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
 
-        `tracer_provider=` (M13b) guarda en el handle una `Instrumentation`
-        que instrumenta sus operaciones (`commands.run`, `run_code`,
-        `files.*`, `kill`/`pause`/`resume` de instancia); `create()` en sí es
-        un único span `rayito.sandbox.create` que envuelve `run-microvm`, la
-        espera de `Health`, la escritura del índice y la política de red.
-        Con `pool=` se enlaza al handle que entrega `take()`, sin span propio
-        (no hay lanzamiento que medir). `None` (por defecto) es `NOOP`: cero
-        import de `opentelemetry` y cero coste por llamada.
+         `tracer_provider=` guarda en el handle una `Instrumentation`
+         que instrumenta sus operaciones (`commands.run`, `run_code`,
+         `files.*`, `kill`/`pause`/`resume` de instancia); `create()` en sí es
+         un único span `rayito.sandbox.create` que envuelve `run-microvm`, la
+         espera de `Health`, la escritura del índice y la política de red.
+         Con `pool=` se enlaza al handle que entrega `take()`, sin span propio
+         (no hay lanzamiento que medir). `None` (por defecto) es `NOOP`: cero
+         import de `opentelemetry` y cero coste por llamada.
 
-        Coste y activación
-        -------------------
-        Activa: `tracer_provider=` (un `TracerProvider` de
-            `opentelemetry.trace`, o cualquier objeto con
-            `get_tracer(name, version)`).
-        Recursos y llamadas AWS: ninguno; rayito sólo crea spans en el
-            proveedor del llamante.
-        Coste aproximado: $0 de AWS; el coste (si lo hay) es el del backend
-            de exportación que configure el llamante.
-        IAM: ninguno adicional.
-        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
-        Ejemplo:
-            from opentelemetry import trace
-            sbx = Sandbox.create(tracer_provider=trace.get_tracer_provider())
-            sbx.commands.run("echo hola")  # span "rayito.commands.run"
-            sbx.kill()
+         Coste y activación
+         -------------------
+         Activa: `tracer_provider=` (un `TracerProvider` de
+             `opentelemetry.trace`, o cualquier objeto con
+             `get_tracer(name, version)`).
+         Recursos y llamadas AWS: ninguno; rayito sólo crea spans en el
+             proveedor del llamante.
+         Coste aproximado: $0 de AWS; el coste (si lo hay) es el del backend
+             de exportación que configure el llamante.
+         IAM: ninguno adicional.
+         Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+         Ejemplo:
+             from opentelemetry import trace
+             sbx = Sandbox.create(tracer_provider=trace.get_tracer_provider())
+             sbx.commands.run("echo hola")  # span "rayito.commands.run"
+             sbx.kill()
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -823,7 +823,7 @@ class Sandbox:
         `SUSPENDED` sin auto-resume, el sondeo de `Health` y la extensión del
         plazo de `Sandbox.connect(sandbox_id, timeout=)`. Devuelve `self`.
         `secrets=`/`secret_cache=` sustituyen los del handle; `None` los
-        conserva y `secrets={}` los borra todos. `tracer_provider=` (M13b)
+        conserva y `secrets={}` los borra todos. `tracer_provider=`
         sustituye la `Instrumentation` del handle; `None` conserva la que ya
         tenía ($0 de AWS: ver el bloque de `create()`).
 
@@ -897,12 +897,12 @@ class Sandbox:
         Un sandbox `SUSPENDED` sin auto-resume se reanuda explícitamente; con
         auto-resume el propio sondeo de `Health` lo despierta.
 
-        Nunca acorta el plazo lógico (ADR-011): con `timeout` manda
+        Nunca acorta el plazo lógico: con `timeout` manda
         `SetTimeout(AT_LEAST)` (el plazo pasa a ser al menos ahora +
         `timeout`); sin él, un sandbox reanudado después de su plazo
         (`resume_grace` o `expired`) se reabre con su propio `timeout`. Sobre
-        un sandbox sin `max_lifetime`/`on_timeout` (ADR-007) `timeout` es
-        `InvalidArgumentException`, y sobre una imagen anterior a M9
+        un sandbox sin `max_lifetime`/`on_timeout` `timeout` es
+        `InvalidArgumentException`, y sobre una imagen anterior a 0.3.0
         `LifecycleUnsupportedException`.
 
         `secrets=`/`secret_cache=` como en `create()`: el handle guarda sólo
@@ -921,7 +921,7 @@ class Sandbox:
             sbx = Sandbox.connect(sandbox_id, secrets={"GITHUB_TOKEN": "gh"})
             sbx.commands.run("gh repo list")
 
-        `tracer_provider=` (M13b) como en `create()`: guarda en el handle la
+        `tracer_provider=` como en `create()`: guarda en el handle la
         `Instrumentation` de todas sus operaciones; `Sandbox.connect()` en sí
         abre un único span `rayito.sandbox.connect`.
         """
@@ -996,7 +996,7 @@ class Sandbox:
         `readiness` es el calendario del sondeo: `create()`, `connect()` y
         `resume()` usan el de `ReadinessPoll`; el pool pasa `TakePoll`.
         `require_lifecycle` (el lanzamiento mandó un bloque `lifecycle`)
-        exige que el `Health` de readiness lo traiga: un agente anterior a M9
+        exige que el `Health` de readiness lo traiga: un agente anterior a 0.3.0
         es `LifecycleUnsupportedException` dentro de este mismo camino de
         fallo, así que nunca queda un sandbox con un timeout sin imponer.
         """
@@ -1072,7 +1072,7 @@ class Sandbox:
         no ordena, así que recorre todas las páginas antes del primer item.
         Para reanudar un listado usa `paginate()`.
 
-        Con `metadata` e `index=DynamoDbIndex(...)` (M14) no hay sondas: por
+        Con `metadata` e `index=DynamoDbIndex(...)` no hay sondas: por
         cada página de `list-microvms`, un `BatchGetItem` de los candidatos y
         la unión con sus filas; ningún `get-microvm`, token ni `Health`, así
         que nada se despierta. `states` admite cualquier estado no terminal
@@ -1269,7 +1269,7 @@ class Sandbox:
     @class_method_variant("_class_get_info")
     def get_info(self) -> SandboxInfo:
         """`get-microvm` fresco y, si el sandbox está `RUNNING` con plazo
-        lógico gestionado (ADR-011), un `Health` (registrado) que lo
+        lógico gestionado, un `Health` (registrado) que lo
         refresca: `expires_at` es el plazo vigente aunque otro cliente lo
         haya movido. `metadata` y los hechos del guest vienen del último
         `Health` sin RPC extra (quedan fijos en `/run`), y nunca se sondea
@@ -1429,7 +1429,7 @@ class Sandbox:
     @class_method_variant("_class_set_timeout")
     def set_timeout(self, timeout: int, *, request_timeout: float | None = None) -> None:
         """Fija el plazo lógico en ahora + `timeout` segundos (`SetTimeout`
-        EXACT, ADR-011): puede alargarlo o acortarlo, y reabre un sandbox en
+        EXACT): puede alargarlo o acortarlo, y reabre un sandbox en
         modo `pause` cuyo plazo venció pero que aún no se suspendió. El tope
         es `max_lifetime` (fijo desde `create()`, como mucho 28800 s): más
         allá, `InvalidArgumentException` con el plazo intacto y
@@ -1560,7 +1560,7 @@ class Sandbox:
         muestra `cpu_used_pct` es la media desde la anterior (≈ 5 s), no la
         ventana de 100 ms de `get_metrics()`. Mientras el sandbox está
         suspendido no se muestrea: la serie tiene un hueco. Una imagen
-        anterior a M9 es `UnimplementedError`."""
+        anterior a 0.3.0 es `UnimplementedError`."""
         request = metrics_history_request(start, end, max_points)
         timeout = self._resolve_request_timeout(request_timeout)
         try:
@@ -1635,11 +1635,11 @@ class Sandbox:
         allow_internet_access: bool | None = None,
         request_timeout: float | None = None,
     ) -> NetworkState:
-        """`NetworkService.UpdateNetwork` (ADR-012): sustituye la política
+        """`NetworkService.UpdateNetwork`: sustituye la política
         entera de forma atómica y afecta a las conexiones nuevas (las abiertas
         siguen). `None` o `{}` es sin restricciones; `allow_internet_access=
         False` añade `ALL_TRAFFIC` a `deny_out`. Una imagen sin `CAP_NET_ADMIN`
-        o con un `rayd` anterior a M9 es `UnimplementedError`; una entrada mal
+        o con un `rayd` anterior a 0.3.0 es `UnimplementedError`; una entrada mal
         formada, `InvalidArgumentException` con la lista y el índice."""
         policy = update_policy(network, allow_internet_access)
         return self._send_update_network(
@@ -1847,13 +1847,13 @@ class Sandbox:
         persist_timeout: float = DEFAULT_PERSIST_TIMEOUT_SECONDS,
     ) -> Self:
         """La respuesta a lo que `set_timeout` no puede dar, pasar de
-        `max_lifetime` (ADR-011): `checkpoint_files()` → `create(persist=)`
+        `max_lifetime`: `checkpoint_files()` → `create(persist=)`
         con las mismas opciones de lanzamiento (que restaura) → `kill()` de este
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
         y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
         su propia fila en el mismo índice); las variables del kernel, los procesos y las
-        PTY no sobreviven (ADR-007), sólo los ficheros del `HOME`. Si el
+        PTY no sobreviven, sólo los ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota
         con la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
         `create(persist=)`: un handle de `connect()` no conoce el lanzamiento."""
@@ -1905,7 +1905,7 @@ class Sandbox:
             raise
 
     def _apply_initial_network(self, launch: NetworkLaunch) -> None:
-        """Paso 5 de la compuerta de `create()` (ADR-012): cualquier fallo
+        """Paso 5 de la compuerta de `create()`: cualquier fallo
         (imagen que no aplica la política, error del RPC, Ctrl-C) cierra el
         cliente y termina el VM **aunque** haya `keep_on_failure`: un sandbox
         cuya política pedida no se aplica nunca queda corriendo."""

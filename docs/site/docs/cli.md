@@ -147,14 +147,14 @@ rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-re
   (repetible, sin distinguir mayúsculas: `--state suspended`) filtra por
   estado. `--metadata K=V` (repetible) filtra por metadatos: sin
   `--index-table` es la sonda O(n) de `Sandbox.list(metadata=)` (un `Health`
-  por sandbox `RUNNING`); con `--index-table TABLA` (M14, opcional, **apagado
+  por sandbox `RUNNING`); con `--index-table TABLA` (opcional, **apagado
   por defecto**) usa el índice de metadatos de esa tabla DynamoDB
   (`infra/metadata-index.yaml`): un `dynamodb:BatchGetItem` por página, sin
   sondas, y también sobre sandboxes en pausa
   (`rayito sandbox list --metadata user=42 --state suspended --index-table rayito-sandboxes`).
   Sólo aparecen los sandboxes creados con `index=`; con `--json` cada fila
   lleva sus `metadata`. Coste e IAM en
-  [Funciones opcionales](optional-features.md#metadata-index).
+  [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md).
   `--index-table` sin `--metadata` es un error de uso (salida 2) y no
   llama a DynamoDB: el índice sólo sirve para filtrar por metadatos.
   `--all-states` no se combina con `--state`, `--metadata` ni
@@ -175,7 +175,9 @@ rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-re
   hay stream ni grupo: `sin logs: el sandbox se lanzó con logging disabled,
   sin executionRoleArn, o en otro grupo (--log-group)` y salida 1.
 
-### `create`, `connect`, `exec` y `metrics` (M9)
+<a id="create-connect-exec-y-metrics-m9"></a>
+
+### `create`, `connect`, `exec` y `metrics`
 
 Los cuatro comandos operativos de la CLI de E2B que Lambda MicroVMs puede
 servir. Los que necesitan hablar con `rayd` usan el **access token** del
@@ -236,7 +238,7 @@ Expone un puerto del guest en `http://<bind>:<local-port>` (por defecto
 `--local-port` es igual a `--port`), para desarrollo local: curl, un
 navegador o cualquier cliente HTTP/1.1 contra un servidor que el sandbox
 ya sirve. El paso de WebSocket (upgrade) está implementado, no medido
-contra AWS (`AWS_API_NOTES.md` §16, Q95). Nunca hace falta el access token del
+contra AWS. Nunca hace falta el access token del
 sandbox, sólo el JWE del proxy.
 
 ```bash
@@ -245,7 +247,7 @@ rayito sandbox proxy microvm-<id> --port 8000
 curl http://127.0.0.1:8000/
 ```
 
-- Rechaza `--port 9000` (el puerto de los lifecycle hooks, ADR-006) y
+- Rechaza `--port 9000` (el puerto de los lifecycle hooks) y
   cualquier valor fuera de 1-65535, sin llamar a AWS.
 - `--bind` fuera de `127.0.0.1`/`::1`/`localhost` necesita `--allow-remote`
   (si no, salida de uso): cualquiera que llegue a ese puerto usa el sandbox
@@ -257,7 +259,7 @@ curl http://127.0.0.1:8000/
   vigente o sin conexión al sandbox responde `502` y escribe el motivo en
   stderr; la cabecera tiene que llegar en 30 s y la conexión al sandbox
   abrirse en 30 s. Nunca registra el JWE, las cabeceras, los cuerpos
-  ni las rutas de lo que pasa por el proxy ([Seguridad](security.md#rayito-sandbox-proxy-m12)).
+  ni las rutas de lo que pasa por el proxy ([Seguridad](security.md#rayito-sandbox-proxy)).
 - El JWE se renueva a los 45 min con el mismo `TokenRefresher` que usa el
   canal gRPC del SDK: no se acuña uno nuevo en cada petición.
 - Un sandbox `SUSPENDED` con auto-resume se despierta con la primera
@@ -312,7 +314,7 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
 
 ```json
 {
-  "rayito": "0.2.0",
+  "rayito": "0.5.0",
   "region": "us-east-1",
   "account": "123456789012",
   "principal_kind": "assumed-role",
@@ -320,7 +322,9 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
   "compatibility": [
     {"sdk_series": "0.1", "min_agent_version": "0.1.0", "note": "…"},
     {"sdk_series": "0.2", "min_agent_version": "0.2.0", "note": "…"},
-    {"sdk_series": "0.3", "min_agent_version": "0.3.0", "note": "…"}
+    {"sdk_series": "0.3", "min_agent_version": "0.3.0", "note": "…"},
+    {"sdk_series": "0.4", "min_agent_version": "0.4.0", "note": "…"},
+    {"sdk_series": "0.5", "min_agent_version": "0.5.0", "note": "…"}
   ],
   "launched_sandbox_id": null,
   "exit_code": 0

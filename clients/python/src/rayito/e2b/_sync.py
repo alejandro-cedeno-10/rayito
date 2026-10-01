@@ -391,7 +391,7 @@ class Sandbox:
         `UnimplementedError`. `headers`, `proxy` y `retries` llegan al canal
         y al plano; `api_key`, `domain`, `debug`, `api_url`, `sandbox_url`,
         `validate_api_key`, `api_headers` y `secure=False` avisan con un
-        `RayitoCompatWarning` cada uno. Sobre una imagen anterior a M9 el VM
+        `RayitoCompatWarning` cada uno. Sobre una imagen anterior a 0.3.0 el VM
         se termina y es `UnimplementedError`."""
         return cls._create(
             template,
@@ -807,8 +807,8 @@ class Sandbox:
     ) -> builtins.list[SandboxMetrics]:
         """La serie de métricas en bytes y en orden (`MetricsHistory`, una
         muestra cada 5 s). Sin rango y con el historial vacío o una imagen
-        anterior a M9 devuelve la instantánea de `Metrics`; con rango en una
-        imagen anterior a M9 es `UnimplementedError`."""
+        anterior a 0.3.0 devuelve la instantánea de `Metrics`; con rango en una
+        imagen anterior a 0.3.0 es `UnimplementedError`."""
         ranged = start is not None or end is not None
         try:
             samples = self._native.get_metrics_history(

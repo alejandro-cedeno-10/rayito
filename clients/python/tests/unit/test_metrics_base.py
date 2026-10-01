@@ -1,6 +1,6 @@
 """Núcleo puro del historial de métricas (design D6): conversión de
 `datetime` a milisegundos, validación de `max_points`, el request, el mapeo
-y la traducción de un `rayd` anterior a M9."""
+y la traducción de un `rayd` anterior a 0.3.0."""
 
 from __future__ import annotations
 
@@ -105,14 +105,14 @@ def test_metrics_history_from_proto_keeps_the_order_and_maps_mem_cache() -> None
 
 def test_unimplemented_is_wrapped_into_a_typed_history_unavailable_keeping_the_cause() -> None:
     """El `UnimplementedError` genérico de la tabla unaria (un `rayd`
-    anterior a M9, sin `MetricsHistory`) llega ya traducido por
+    anterior a 0.3.0, sin `MetricsHistory`) llega ya traducido por
     `_transport.translate_rpc_error`; este módulo sólo lo reenvuelve en el
     discriminador tipado del historial."""
     cause = UnimplementedError("get_metrics_history", "Method not found")
     error = history_unimplemented_error(cause, HISTORY_FEATURE)
     assert isinstance(error, UnimplementedError) and not isinstance(error, SandboxException)
     assert error.feature == HISTORY_FEATURE
-    assert error.reason == HISTORY_UNIMPLEMENTED_REASON and "M9" in str(error)
+    assert error.reason == HISTORY_UNIMPLEMENTED_REASON and "0.3.0" in str(error)
     assert error.__cause__ is cause
     assert is_history_unavailable(error)
     assert not is_history_unavailable(UnimplementedError(HISTORY_FEATURE, "otro motivo"))

@@ -1,6 +1,6 @@
 # Compatibilidad con E2B
 
-Desde M9 (Rayito 0.3.0), `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
+`rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
 son un drop-in a nivel de import para los SDKs de E2B **2.x** (contrato:
 `e2b` 2.51.0 y `e2b-code-interpreter` 2.10.0). Cambia la línea de import y
 el resto del programa sigue igual. Qué hay y qué no, fila a fila, está en
@@ -58,17 +58,17 @@ Lo que cambia fuera del código:
    por defecto de boto3 / AWS SDK v3 (`AWS_PROFILE=<tu-perfil>`,
    `AWS_REGION`); `api_key`, `domain` y compañía se aceptan y se ignoran con
    un `RayitoCompatWarning`.
-2. **Una imagen M9 en tu cuenta** en lugar del template de E2B:
+2. **Una imagen 0.3.0 o posterior en tu cuenta** en lugar del template de E2B:
    `RAYITO_TEMPLATE=rayito-base` (o `template=`). Para JS/TS hace falta
    `rayito-base-poly` y para `allow_internet_access=False`/`network=`,
    `rayito-base-caps` ([Imágenes e IAM](images.md)).
 3. **`upload_url`/`download_url`** necesitan un bucket tuyo:
    `RAYITO_TRANSFER_BUCKET=amzn-s3-demo-bucket` ([Ficheros](files.md)).
 
-!!! warning "Los shims exigen una imagen M9"
+!!! warning "Los shims exigen una imagen 0.3.0 o posterior"
     El shim siempre pide a `rayd` un plazo lógico. Contra una imagen anterior
-    a M9, `create()` termina el VM y lanza `UnimplementedError("lifecycle")`
-    nombrando la imagen M9. Publica `rayito-base` desde este árbol
+    a 0.3.0, `create()` termina el VM y lanza `UnimplementedError("lifecycle")`
+    pidiendo una imagen nueva. Publica `rayito-base` desde este árbol
     (`rayito image publish`) antes de migrar.
 
 ## Tabla de imports
@@ -122,7 +122,7 @@ Lo que cambia fuera del código:
 
 Los shims siguen los valores por defecto de **E2B**, no los del SDK nativo:
 `timeout=300` es el plazo lógico del sandbox con `on_timeout='kill'` (lo
-impone `rayd`, [más abajo](#plazo-y-ciclo-de-vida-m9-server-timeout)), sin
+impone `rayd`, [más abajo](#plazo-y-ciclo-de-vida)), sin
 auto-suspensión por inactividad, endpoint público (`ALL_INGRESS`) y salida a
 internet (`INTERNET_EGRESS`). El tope de la plataforma (`max_lifetime`,
 kwarg sólo de Rayito; TS `maxLifetimeMs`) es `max(3600, min(timeout + 60,
@@ -162,10 +162,10 @@ nada se aproxima en silencio.
 | `sbx.upload_url(path, user, use_signature_expiration)` / `uploadUrl` | URL de S3 prefirmada con **tus** credenciales ([Ficheros](files.md)): `PUT` con el cuerpo en crudo (`form=True` da los campos de un `POST`); el fichero aterriza de forma asíncrona (barrera en `rayd` y `ticket.wait()`); de un solo uso; caducidad siempre fijada (≤ 7 días y ≤ la vida de tus credenciales); `use_signature_expiration <= 0` lanza; exige un bucket de transferencias: el shim no acepta `transfer=`, así que se configura con `RAYITO_TRANSFER_BUCKET` (y `RAYITO_TRANSFER_PREFIX`, `RAYITO_TRANSFER_REGION`); sin él `UnimplementedError`; `upload_url(path=None)` lanza. Python devuelve el `UploadTicket` nativo (un `str` con `.headers` y `wait()`); TS devuelve la URL como `string` (`sbx.native.files.uploadUrl()` da el ticket con `wait()`) |
 | `sbx.download_url(...)` / `downloadUrl` | URL `GET` prefirmada (admite `Range`) sobre una foto tomada al llamar; un fichero que no existe lanza al llamar; en el shim async ambos métodos son corrutinas |
 | `files.read(gzip=)`, `files.write(gzip=)`, `metadata=`, `stream_idle_timeout=`, `use_octet_stream=`; JS `format: "blob"` | gzip de gRPC (las respuestas lo piden con la cabecera `rayito-compress`); `metadata` como xattrs `user.rayito.*` (claves en minúsculas, sobrescribir reemplaza el conjunto); `use_octet_stream` se acepta sin efecto (gRPC no tiene formulario multipart) |
-| `sbx.get_metrics(start, end)` → `[SandboxMetrics]` en bytes, con `mem_cache` | el historial de `rayd` (una muestra cada 5 s, anillo de 8 h, **hueco** mientras está suspendido; [Observabilidad](observability.md)); sin `start`/`end`, un historial vacío o una imagen anterior a M9 dan la instantánea de `get_metrics()` como único punto; con rango en una imagen anterior a M9, `UnimplementedError` |
+| `sbx.get_metrics(start, end)` → `[SandboxMetrics]` en bytes, con `mem_cache` | el historial de `rayd` (una muestra cada 5 s, anillo de 8 h, **hueco** mientras está suspendido; [Observabilidad](observability.md)); sin `start`/`end`, un historial vacío o una imagen anterior a 0.3.0 dan la instantánea de `get_metrics()` como único punto; con rango en una imagen anterior a 0.3.0, `UnimplementedError` |
 | `Sandbox.get_metrics(id, start, end)` | necesita el access token del sandbox; sin él, `UnimplementedError` sin llamar a nada |
 | `Sandbox.list(limit=, next_token=, query=SandboxQuery(state=, started_after=, template=), order=)` → `SandboxPaginator` | `next_token` es un cursor opaco sobre el `nextToken` de `list-microvms`; `order` se calcula en cliente (recorre todas las páginas antes del primer item); un token reanudado salta por identidad; `state=[PAUSED]` = `SUSPENDING`/`SUSPENDED` de AWS |
-| `allow_internet_access=False` / `allowInternetAccess: false` | política deny-all **dentro del guest** en `rayito-base-caps` ([Red saliente](network.md)): ninguna conexión sale del VM, aunque los nombres pueden seguir resolviéndose por los resolvedores de la plataforma en el guest; en cualquier otra imagen el shim termina el VM y lanza `UnimplementedError` (sin conector de egress el MicroVM sigue saliendo: `AWS_API_NOTES.md` Q44, Q60) |
+| `allow_internet_access=False` / `allowInternetAccess: false` | política deny-all **dentro del guest** en `rayito-base-caps` ([Red saliente](network.md)): ninguna conexión sale del VM y, desde 0.3.2, tampoco resuelve el DNS para los procesos del sandbox; en cualquier otra imagen el shim termina el VM y lanza `UnimplementedError` (sin conector de egress el MicroVM sigue saliendo: `AWS_API_NOTES.md` Q44, Q60) |
 | `network={"allow_out", "deny_out", "egress_proxy"}` (CIDR, IP, `ALL_TRAFFIC`, `*.dominio`, selectores invocables) | la semántica de E2B en `rayito-base-caps`: rutas por uid y, para nombres de host o `egress_proxy`, un proxy local de `rayd`; los clientes que no honran `HTTPS_PROXY` fallan cerrados |
 | `sbx.update_network(network)` / `Sandbox.update_network(id, network)` | `NetworkService.UpdateNetwork`: cambia la política del guest de forma atómica para las conexiones nuevas; devuelve `None` |
 | `network.https_ports` | se valida (1–65535); una lista no vacía es `UnimplementedError`: medido, el proxy no reenvía TLS extremo a extremo a un puerto del guest (fila Q67 de `AWS_API_NOTES.md`); `get_host(puerto)` sirve HTTP en claro |
@@ -220,20 +220,20 @@ feature en camelCase, salvo las diferencias que se listan tras la tabla):
 | `run_code(language=...)` / `create_code_context(language=...)` con algo distinto de `python`, `bash`, `javascript`/`js`, `typescript`/`ts` (`r`, `java`) | `run_code(language='r')` | kernels disponibles: python en toda imagen; bash, javascript y typescript en la variante rayito-base-poly; R y Java no (SPEC.md §4) |
 | un kernel que la imagen no trae (`bash`, `javascript` o `typescript` fuera de `rayito-base-poly`) | `run_code(language='typescript')` | este kernel sólo existe en la variante rayito-base-poly (publícala con make image-publish-poly y úsala como template) |
 | `Sandbox.list(query=SandboxQuery(metadata=...), state=[PAUSED])` **sin** `index=` (TS: `list({ query: { metadata, state: ["paused"] } })` sin `index`; con él se mapea, ver [abajo](#el-coste-de-listquerysandboxquerymetadata)) | `list(state=PAUSED, query.metadata)` (TS: `list(query.state=paused, query.metadata)`) | los metadatos viven en el agente; leerlos despertaría el sandbox. Pasa index=DynamoDbIndex(...) (tabla opcional en tu cuenta, ver optional-features.md) para filtrar sandboxes en pausa por metadatos sin despertarlos (TS: `index: new DynamoDbIndex({...})`) |
-| `allow_internet_access=False` o `network=` fuera de `rayito-base-caps` (el VM se termina antes de lanzar) | `allow_internet_access=False` / `network` | la imagen no aplica política de egress en el guest (Health.egress_enforcement=NONE): usa una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de plataforma, rayito.Sandbox.create(egress=[&lt;ConnectorArn de infra/egress-connector.yaml&gt;]); el sandbox se ha terminado |
-| `update_network` fuera de `rayito-base-caps` | `update_network` | la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) |
+| `allow_internet_access=False` o `network=` fuera de `rayito-base-caps` (el VM se termina antes de lanzar) | `allow_internet_access=False` / `network` | la imagen no aplica política de egress en el guest (Health.egress_enforcement=NONE): usa una imagen 0.3.0 o posterior de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de plataforma, rayito.Sandbox.create(egress=[&lt;ConnectorArn de infra/egress-connector.yaml&gt;]); el sandbox se ha terminado |
+| `update_network` fuera de `rayito-base-caps` | `update_network` | la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen 0.3.0 o posterior de rayito-base-caps (additionalOsCapabilities ALL) |
 | `network.https_ports` no vacío | `network.https_ports` | el proxy de Lambda MicroVMs no reenvía TLS extremo a extremo a un puerto del guest (medido, fila 67 QE2 de AWS_API_NOTES.md §16); get_host(puerto) sirve HTTP en claro |
 | `upload_url`/`download_url` sin bucket de transferencias | `upload_url` / `download_url` | configura transfer=S3Staging(...) o RAYITO_TRANSFER_BUCKET (TS: configura transfer: { bucket } (S3Staging) o RAYITO_TRANSFER_BUCKET) |
-| una URL de subida o de bajada contra un `rayd` anterior a M9 (sin transferencias) | `upload_url` / `download_url` | actualiza la imagen: este rayd no tiene transferencias |
+| una URL de subida o de bajada contra un `rayd` anterior a 0.3.0 (sin transferencias) | `upload_url` / `download_url` | actualiza la imagen: este rayd no tiene transferencias |
 | el historial de métricas por la forma de clase, sin access token ni `RAYITO_ACCESS_TOKEN` | `Sandbox.get_metrics(sandbox_id)` | rayd exige el access token del sandbox (x-access-token): pásalo con access_token= o define RAYITO_ACCESS_TOKEN |
-| el historial de métricas con rango (`start`/`end`) o por la forma de clase, contra una imagen anterior a M9 | `get_metrics(start=, end=)` / `Sandbox.get_metrics(sandbox_id)` (TS: `getMetrics({ start, end })` / `Sandbox.getMetrics(sandboxId)`) | la imagen es anterior a M9 (rayd sin MetricsHistory): publica una imagen M9 |
-| cualquier `create()` contra una imagen anterior a M9 (el VM se termina antes de lanzar) | `lifecycle` | la imagen no impone el timeout del servidor: publica una imagen M9 (ADR-011) |
+| el historial de métricas con rango (`start`/`end`) o por la forma de clase, contra una imagen anterior a 0.3.0 | `get_metrics(start=, end=)` / `Sandbox.get_metrics(sandbox_id)` (TS: `getMetrics({ start, end })` / `Sandbox.getMetrics(sandboxId)`) | la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior |
+| cualquier `create()` contra una imagen anterior a 0.3.0 (el VM se termina antes de lanzar) | `lifecycle` | la imagen no impone el timeout del servidor: publica una imagen 0.3.0 o posterior |
 | `cpu`/`memory` por sandbox | — | no son parámetros de `create()`: el tamaño es propiedad de la imagen (`rayito image publish --memory-mib`), igual que `Template.build(cpu_count=, memory_mb=)` en E2B ([Límites](limits.md#tamano-cpuram)) |
 | la CLI de templates/snapshots/fork de E2B | — | no existen: fuera del alcance (`SPEC.md` §4) |
 
 El SDK nativo sigue la misma regla: `get_metrics_history()` (TS
 `getMetricsHistory()`), en instancia y en la forma de clase, contra un `rayd`
-anterior a M9 lanza `UnimplementedError` con el mismo motivo (feature
+anterior a 0.3.0 lanza `UnimplementedError` con el mismo motivo (feature
 `get_metrics_history` / `Sandbox.get_metrics_history(sandbox_id)`; TS
 `getMetricsHistory` / `Sandbox.getMetricsHistory(sandboxId)`), como las
 transferencias y el plazo del servidor; el `UnimplementedError` genérico de
@@ -259,9 +259,13 @@ Diferencias reales entre los dos shims:
   (Python: «no está disponible en Rayito»; TS: «no está disponible»), así que
   compara `feature` y `reason`, no el mensaje.
 
-## Diferencias por cambio de M9
+<a id="diferencias-por-cambio-de-m9"></a>
 
-### Plazo y ciclo de vida (`m9-server-timeout`)
+## Diferencias por área
+
+<a id="plazo-y-ciclo-de-vida-m9-server-timeout"></a>
+
+### Plazo y ciclo de vida
 
 - El tope `max_lifetime` cuenta el tiempo suspendido: 8 h como mucho desde el
   arranque. E2B guarda sandboxes pausados sin límite.
@@ -276,7 +280,9 @@ Diferencias reales entre los dos shims:
 - Más allá de `max_lifetime` sólo queda `rayito.Sandbox.reincarnate()`
   ([Persistencia](persistence.md)).
 
-### Ficheros y URLs (`m9-file-transfer`)
+<a id="ficheros-y-urls-m9-file-transfer"></a>
+
+### Ficheros y URLs
 
 - Subida por `PUT` con el cuerpo en crudo en vez del `POST` multipart de envd
   (`form=True` da los campos de un `POST` para navegadores).
@@ -287,29 +293,36 @@ Diferencias reales entre los dos shims:
   exportación que se reencola tras una suspensión vuelve a leer el fichero).
 - Caducidad siempre fijada; hace falta un bucket de transferencias.
 
-### Red saliente (`m9-egress-policy`)
+<a id="red-saliente-m9-egress-policy"></a>
+
+### Red saliente
 
 - Sólo en `rayito-base-caps`; en otras imágenes falla cerrado.
 - Las reglas por nombre de host sólo valen en 80/443 y a través del proxy
   local; los clientes que no lo honran fallan cerrados.
-- Bajo deny-all (`allow_internet_access=False`) los nombres pueden seguir
-  resolviéndose por los resolvedores de la plataforma dentro del guest, pero
-  ninguna conexión sale del VM (riesgo residual de exfiltración por DNS,
-  T17); UDP/QUIC no pasan por el proxy; un cambio afecta a las conexiones nuevas; root no se
+- Bajo deny-all (`allow_internet_access=False`) ninguna conexión sale del VM
+  y, desde 0.3.2, el DNS de los procesos del sandbox también se bloquea;
+  UDP/QUIC no pasan por el proxy; un cambio afecta a las conexiones nuevas; root no se
   filtra. Detalle en [Red saliente](network.md).
 
-### Kernels (`m9-deno-kernels`)
+<a id="kernels-m9-deno-kernels"></a>
+
+### Kernels
 
 - `javascript` y `typescript` son el kernel de Deno 2.9.7 en
   `rayito-base-poly`, con arranque perezoso; `r` y `java` siguen fuera.
 
-### Observabilidad (`m9-sandbox-observability`)
+<a id="observabilidad-m9-sandbox-observability"></a>
+
+### Observabilidad
 
 - El historial de métricas tiene un hueco mientras el sandbox está suspendido y
   `memory_mb` es la vista del guest.
 - `order` y los filtros de `list` se calculan en cliente.
 
-### Superficie 2.x (`m9-e2b-v2-surface`)
+<a id="superficie-2x-m9-e2b-v2-surface"></a>
+
+### Superficie 2.x
 
 - `git` es un envoltorio en cliente sobre `commands.run` (E2B lo marca como
   obsoleto).
@@ -317,8 +330,7 @@ Diferencias reales entre los dos shims:
 
 ## Secretos (`Secret`, `AsyncSecret`)
 
-Desde 0.5.0 (`m13-secrets`; probado con fakes, **pendiente de aceptación en
-AWS real**), `Secret`/`AsyncSecret` (TS: `Secret`) ya no
+Desde 0.5.0, `Secret`/`AsyncSecret` (TS: `Secret`) ya no
 lanzan `UnimplementedError`: son el CRUD de E2B sobre **AWS Secrets Manager
 en tu cuenta** (`SecretStore` del SDK nativo, ver [Secretos](secrets.md)).
 Contrato: `e2b` **2.51.0** de PyPI (`e2b/secret/{base,secret_sync,
@@ -361,7 +373,7 @@ escrito contra él:
 | `sbx.connection_config` lanzaba `UnimplementedError` | devuelve un `ConnectionConfig` |
 | `set_timeout`, `upload_url`/`download_url`, `get_metrics(start=, end=)`, `list(next_token=)`, `allow_internet_access=False` lanzaban `UnimplementedError` | se mapean (tabla de arriba) |
 | `mcp=`, `network=`, `lifecycle=` eran `TypeError` | se mapean o lanzan `UnimplementedError` |
-| `timeout` era la vida inmutable del MicroVM | es el plazo lógico de `rayd`; `max_lifetime` es el tope, y hace falta una imagen M9 |
+| `timeout` era la vida inmutable del MicroVM | es el plazo lógico de `rayd`; `max_lifetime` es el tope, y hace falta una imagen 0.3.0 o posterior |
 | TS: el disco lleno era `RateLimitError` | `DiskFullError` (`NotEnoughSpaceError` en `rayito/e2b`) |
 
 ## Paridad
@@ -373,9 +385,9 @@ imposible en la plataforma, con la página de cada una) está en
 **OTel (fila 108, divergente).** La exportación de telemetría del sandbox de
 E2B (Enterprise) no existe en Rayito: no hay un servicio que recoja métricas
 o logs del MicroVM y los exporte por ti. Lo que sí hay, nativo y opt-in
-(M13b), son spans del lado del **cliente** sobre las llamadas que ya haces
+(desde 0.5.0), son spans del lado del **cliente** sobre las llamadas que ya haces
 (`tracer_provider=`/`tracerProvider`, nombres `rayito.*`), descritos en
-[Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional); el
+[OpenTelemetry](funciones-opcionales/opentelemetry.md); el
 shim de E2B (`rayito.e2b`/`rayito/e2b`) no está instrumentado, así que
 `from rayito.e2b import Sandbox` no emite ningún span por ahora.
 
@@ -387,7 +399,9 @@ shim de E2B (`rayito.e2b`/`rayito/e2b`) no está instrumentado, así que
 sonda cuenta como tráfico para la política de idle de ese sandbox. Filtra por
 `template` antes si tienes muchos.
 
-### Con el índice de metadatos (`index=`, opcional, M14)
+<a id="con-el-indice-de-metadatos-index-opcional-m14"></a>
+
+### Con el índice de metadatos (`index=`, opcional)
 
 La extensión de Rayito `index=DynamoDbIndex("rayito-sandboxes")` (TS
 `index: new DynamoDbIndex({ tableName: "rayito-sandboxes" })`), en

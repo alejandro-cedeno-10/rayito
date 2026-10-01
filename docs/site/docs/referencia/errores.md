@@ -1,0 +1,128 @@
+# Errores
+
+Todos los errores del SDK en una tabla: el nombre en Python, el nombre en
+TypeScript, el código gRPC del agente que lo produce (si viene de `rayd`),
+cuándo ocurre y qué hacer.
+
+## Jerarquía
+
+=== "Python"
+
+    <!-- noqa: example: árbol de clases, no es código ejecutable -->
+    ```text
+    SandboxException
+    ├── TimeoutException
+    ├── InvalidArgumentException
+    ├── NotFoundException
+    │   ├── FileNotFoundException
+    │   ├── SandboxNotFoundException
+    │   └── SecretNotFoundException   (también SecretException)
+    ├── SandboxNotReadyException
+    ├── SandboxStateException
+    ├── SandboxLifetimeException
+    ├── PoolClosedException
+    ├── CommandExitException
+    ├── PersistenceException
+    ├── DiskFullException
+    ├── TransferException
+    │   └── FileUploadException
+    ├── RateLimitException
+    ├── GitUpstreamException
+    ├── SecretException
+    └── SandboxIndexException
+        └── IndexWriteException
+    AuthenticationException          (Exception: un problema de credenciales, no del sandbox)
+    └── GitAuthException
+    QuotaExceededException           (Exception)
+    CapacityException                (Exception)
+    UnimplementedError               (NotImplementedError: la función no existe aquí)
+    └── LifecycleUnsupportedException
+    ```
+
+=== "TypeScript"
+
+    <!-- noqa: example: árbol de clases, no es código ejecutable -->
+    ```text
+    SandboxError
+    ├── TimeoutError
+    ├── InvalidArgumentError
+    ├── NotFoundError
+    │   ├── FileNotFoundError
+    │   └── SandboxNotFoundError
+    ├── SandboxNotReadyError
+    ├── SandboxStateError
+    ├── SandboxLifetimeError
+    ├── PoolClosedError
+    ├── CommandExitError
+    ├── PersistenceError
+    ├── DiskFullError
+    ├── TransferError
+    │   └── FileUploadError
+    ├── RateLimitError
+    ├── GitUpstreamError
+    ├── SecretError
+    │   └── SecretNotFoundError
+    └── SandboxIndexError
+        └── IndexWriteError
+    AuthenticationError              (Error)
+    └── GitAuthError
+    QuotaExceededError               (Error)
+    CapacityError                    (Error)
+    UnimplementedError               (Error)
+    └── LifecycleUnsupportedError
+    ```
+
+    `instanceof` funciona en ESM y en CommonJS.
+
+Captura `SandboxException` / `SandboxError` para "algo falló en el
+sandbox"; `AuthenticationException`, `QuotaExceededException` y
+`CapacityException` quedan fuera a propósito: dicen algo de tu cuenta o de
+AWS, no del sandbox. Un error **dentro de `run_code`** nunca es una
+excepción: llega en `execution.error`.
+
+## Tabla completa
+
+| Python | TypeScript | gRPC / origen | Cuándo | Qué hacer |
+|---|---|---|---|---|
+| `InvalidArgumentException` | `InvalidArgumentError` | `INVALID_ARGUMENT`, `FAILED_PRECONDITION`; o el SDK antes de llamar | argumento inválido: `envs` + `metadata` > 4096 caracteres, `timeout` fuera de rango, `language` y `context` a la vez, `envs` repetidos en `secrets`, un peer opcional de TypeScript sin instalar | lee el mensaje: dice qué argumento y por qué |
+| `TimeoutException` | `TimeoutError` | `DEADLINE_EXCEEDED`; `sandbox_timeout` | venció el `timeout` de un comando, el plazo de una llamada o el plazo del sandbox | sube el `timeout`; para el plazo del sandbox, [`set_timeout()`](../lifecycle.md) |
+| `NotFoundException` | `NotFoundError` | `NOT_FOUND`, `OUT_OF_RANGE` | proceso, contexto o checkpoint que no existe | — |
+| `FileNotFoundException` | `FileNotFoundError` | `NOT_FOUND` en `files` | el fichero no existe | comprueba la ruta (absoluta o relativa al `HOME`) |
+| `SandboxNotFoundException` | `SandboxNotFoundError` | plano de control | el sandbox no existe o ya terminó (también por llegar a su `timeout`) | crea uno nuevo |
+| `SandboxNotReadyException` | `SandboxNotReadyError` | el SDK | el agente no estuvo listo en `ready_timeout` (90 s) | `rayito doctor`; `keep_on_failure=True` para inspeccionarlo |
+| `SandboxStateException` | `SandboxStateError` | `UNAVAILABLE` (puerta de fase); plano de control | el sandbox está suspendiéndose, reanudándose o terminando | reintenta en unos segundos |
+| `SandboxLifetimeException` | `SandboxLifetimeError` | el SDK | `timeout` / `max_lifetime` por encima de 28 800 s | no se puede pasar de 8 h: [Persistencia](../persistence.md) |
+| `PoolClosedException` | `PoolClosedError` | el SDK | `take()` sobre un pool sin arrancar o cerrado | `start()` / `with` |
+| `CommandExitException` | `CommandExitError` | el proceso | un comando salió con código distinto de cero (`exit_code`, `stdout`, `stderr`) | captúrala si el fallo es esperable |
+| `PersistenceException` | `PersistenceError` | el agente (`code`) | checkpoint o restore fallido: `permission_denied`, `failed_precondition`, `internal`, `interrupted`, `unimplemented` | ver [Persistencia: errores](../persistence.md#errores) |
+| `DiskFullException` | `DiskFullError` | `RESOURCE_EXHAUSTED` (disco) | el disco del sandbox está lleno | borra ficheros o usa una imagen más grande |
+| `TransferException` | `TransferError` | el agente | una exportación a S3 falló | revisa permisos y región del bucket de transferencias |
+| `FileUploadException` | `FileUploadError` | el agente (`code`) | una importación desde S3 falló: `too_large`, `expired`, `checksum_mismatch`, `disk_reserve`, `wrong_region` | ver [Ficheros y S3](../files.md) |
+| `RateLimitException` | `RateLimitError` | `RESOURCE_EXHAUSTED`; `ThrottlingException` de AWS | más de 256 procesos/PTYs, 8 contextos o 16 transferencias; cuota TPS de la API | libera recursos; espacia las llamadas |
+| `AuthenticationException` | `AuthenticationError` | `UNAUTHENTICATED`, `PERMISSION_DENIED`; 403 del proxy | access token incorrecto, token del proxy rechazado (`proxy_rejected`), credenciales de AWS caducadas | revisa el token guardado; `aws sso login` |
+| `GitAuthException` | `GitAuthError` | `git` | el remoto pidió credenciales | pasa `username` y `password` (un token) |
+| `GitUpstreamException` | `GitUpstreamError` | `git` | `push`/`pull` sin rama de seguimiento | pasa `remote` y `branch`, o configura la rama de seguimiento |
+| `SecretException` | `SecretError` | Secrets Manager | permiso que falta, ya existe, choque de versión, secreto binario | lee `aws_code`; ver [Secretos](../secrets.md#errores) |
+| `SecretNotFoundException` | `SecretNotFoundError` | Secrets Manager | el secreto no existe o se está borrando | crea el secreto; ojo a las mayúsculas |
+| `SandboxIndexException` | `SandboxIndexError` | DynamoDB | `BatchGetItem` falló o quedaron claves sin leer | revisa `RayitoIndexReader` y la tabla |
+| `IndexWriteException` | `IndexWriteError` | DynamoDB | `PutItem` falló al crear con `index=` | revisa `RayitoIndexWriter`; el sandbox se terminó |
+| `QuotaExceededException` | `QuotaExceededError` | plano de control | cuota de la cuenta agotada (memoria, MicroVMs) | mata sandboxes o pide aumento de cuota |
+| `CapacityException` | `CapacityError` | plano de control | AWS sin capacidad momentánea | reintenta con backoff |
+| `UnimplementedError` | `UnimplementedError` | `UNIMPLEMENTED`; el SDK | la función no existe en esta imagen (actualízala) o en la plataforma (`fork`, snapshots…) | lee `feature`, `reason` y `doc` |
+| `LifecycleUnsupportedException` | `LifecycleUnsupportedError` | el SDK | plazo del servidor contra una imagen anterior a 0.3.0 | publica una imagen de la release actual |
+| `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
+
+## Errores del shim de E2B
+
+`rayito.e2b` exporta los nombres de `e2b.exceptions` apuntando a las mismas
+clases: `NotEnoughSpaceException` es `DiskFullException`,
+`ServiceBusyException` es `CapacityException`, y `TemplateException` y
+`BuildException` existen pero nunca se lanzan. Detalle:
+[Diferencias con E2B](../e2b-compat.md#funciona-sin-cambios).
+
+## Ver también
+
+- [Solución de problemas](../operacion/solucion-de-problemas.md): por
+  síntoma
+- [Referencia Python: excepciones](python/excepciones.md)
+- [Referencia TypeScript](typescript.md)

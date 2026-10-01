@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr docs-examples
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -274,6 +274,13 @@ wheel:
 # estricto desde el entorno del cliente Python, sin deploy.
 docs:
 	cd $(PYTHON_CLIENT) && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
+
+# Ejemplos del sitio: Python (compile + ruff F821 + mypy contra rayito), JSON,
+# YAML y reglas de estilo; después TypeScript con tsc contra clients/typescript
+# (necesita `pnpm install` allí). Sin AWS.
+docs-examples:
+	cd $(PYTHON_CLIENT) && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy
+	python3 scripts/check_docs_examples.py --typescript
 
 clean:
 	cargo clean

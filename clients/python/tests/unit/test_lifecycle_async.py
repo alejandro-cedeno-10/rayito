@@ -281,7 +281,7 @@ async def test_async_create_on_an_older_agent_terminates_and_raises(
     fake_rayd.servicer.agent_version = "0.2.0"
     captured = capture_launch(control_plane, fake_rayd)
     expect_terminate(control_plane)
-    with pytest.raises(LifecycleUnsupportedException, match="publica una imagen M9") as raised:
+    with pytest.raises(LifecycleUnsupportedException, match=r"publica una imagen 0\.3") as raised:
         await launch(control_plane, fake_rayd, timeout=60, on_timeout="kill")
     assert not isinstance(raised.value, SandboxNotReadyException)
     assert not isinstance(raised.value, InvalidArgumentException)
@@ -350,7 +350,7 @@ async def test_async_unmanaged_set_timeout_raises_invalid_argument(
             await sandbox.set_timeout(60)
         assert not isinstance(raised.value, LifecycleUnsupportedException)
         fake_rayd.servicer.lifecycle = None
-        with pytest.raises(LifecycleUnsupportedException, match="imagen M9"):
+        with pytest.raises(LifecycleUnsupportedException, match=r"imagen 0\.3\.0 o"):
             await sandbox.set_timeout(60)
     finally:
         expect_terminate(control_plane)

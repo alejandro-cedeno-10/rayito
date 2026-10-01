@@ -3,12 +3,11 @@
 Un `SandboxPool` mantiene N MicroVMs **suspendidos** y ya calientes
 (`agent_ready`, kernel rotado, warm-up hecho) para que `take()` entregue un
 sandbox usable en menos de un segundo en vez de los 5-6 s de un `create()`.
-Es la decisión ADR-008 de `ARCHITECTURE.md`, implementada en
-`m7-suspended-pool` y medida contra AWS real (`clients/python/tests/e2e/test_m7_pool.py`).
+Está medido contra AWS real (detalle al final, en "Fuentes y mediciones").
 
 ## Por qué suspendidos y no `RUNNING`
 
-El benchmark de M6 (`docs/benchmarks/2026-09-cold-start.md` §9) midió un
+El benchmark de arranque en frío midió un
 `create()` → `kernel_ready` de **p50 5,2 s / p95 6,1 s** (p95 8,6 s en ráfaga
 de 20) y un `resume()` explícito → `Health` de **p50 0,38 s / p95 0,40 s**. Un
 VM `SUSPENDED` sólo paga el storage de su snapshot (0,92 GB × $0,08/GB-mes ≈
@@ -27,7 +26,7 @@ Una toma son ≈ 0,14 s de `resume-microvm`, ≈ 0,5 s de acuñar el JWE, abrir 
 canal y ver `Health` con el sondeo `TakePoll` (0,1 → 0,5 s), y ≈ 0,1 s de la
 celda. Los 20 `take()` fueron aciertos (`hits == 20`, `misses == 0`); run
 del 2026-09-16 (`rayito-base` 17.0, RTT medido 109 ms; los tres tests del
-fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de M6.
+fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de arranque.
 
 ## Cuándo compensa
 
@@ -43,7 +42,7 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de M6.
 
 ## API
 
-=== "Python (sync)"
+=== "Python"
 
     ```python
     from rayito import PoolConfig, SandboxPool
@@ -66,12 +65,19 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de M6.
 === "Python (async)"
 
     ```python
+    import asyncio
+
     from rayito import AsyncSandboxPool, PoolConfig
 
-    async with AsyncSandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
-        sbx = await pool.take()
-        print((await sbx.run_code("1+1")).text)
-        await sbx.kill()
+
+    async def main() -> None:
+        async with AsyncSandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
+            sbx = await pool.take()
+            print((await sbx.run_code("1+1")).text)
+            await sbx.kill()
+
+
+    asyncio.run(main())
     ```
 
     `await AsyncSandbox.create(pool=pool)` con las mismas reglas.
@@ -239,7 +245,7 @@ que `rayd` rechaza por diseño. Consecuencias (`SECURITY.md` T14):
 responde 200 a `/run` y encarga la rotación del kernel por defecto en segundo
 plano; entre ese 200 (que abre el tráfico) y el arranque de la rotación hay
 una ventana en la que `Health` aún dice `kernel_ready` del kernel sin rotar.
-En el e2e de M7, 2 de 40 calentamientos vieron `kernel_ready` a los 2-3 s (en
+En el e2e del pool, 2 de 40 calentamientos vieron `kernel_ready` a los 2-3 s (en
 vez de ≈ 6 s) y, aparcados en ese estado, perdieron el kernel al reanudar
 (`kernel_state_lost`, 6-12 s hasta la primera celda). Por eso cada
 calentamiento ejecuta una celda trivial antes de aparcar: `rayd` retiene
@@ -263,3 +269,11 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 El e2e completo (≈ 46 lanzamientos de segundos: 20 tomas + 20 `create()` +
 las plazas de relleno, el reciclado y la recuperación) cuesta ≈ $0,25.
+
+??? info "Fuentes y mediciones"
+    - Diseño: ADR-008 en [`ARCHITECTURE.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/ARCHITECTURE.md);
+      custodia del secreto: T2 y T14 en [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).
+    - Latencias del pool: [`clients/python/tests/e2e/test_m7_pool.py`](https://github.com/alejandro-cedeno-10/rayito/blob/main/clients/python/tests/e2e/test_m7_pool.py)
+      (run del 2026-09-16); arranque en frío:
+      [`docs/benchmarks/2026-09-cold-start.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/benchmarks/2026-09-cold-start.md).
+    - Precios: `AWS_API_NOTES.md` §12; la rotación de `/run`: Q53.

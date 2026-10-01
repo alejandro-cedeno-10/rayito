@@ -1,4 +1,4 @@
-"""Núcleo puro del pool de sandboxes suspendidos (ADR-008): configuración,
+"""Núcleo puro del pool de sandboxes suspendidos: configuración,
 registro de plaza, reglas de selección, reciclado y reconciliación, backoff
 del relleno y estadísticas. Sin I/O ni hilos; `sandbox_sync.pool` y
 `sandbox_async.pool` ponen la mecánica encima.
@@ -57,7 +57,7 @@ class PoolConfig:
     `access_token` (uno por plaza) ni `allowed_ports` (`get_host(port)` acuña
     por puerto tras la toma).
 
-    `index=DynamoDbIndex(...)` (M14, `None` por defecto) escribe la fila del
+    `index=DynamoDbIndex(...)` (`None` por defecto) escribe la fila del
     índice de metadatos de cada plaza al lanzarla, con la `metadata` del
     pool: así `Sandbox.list(metadata=..., states=["SUSPENDED"], index=...)`
     encuentra también las plazas aparcadas. Una escritura fallida con

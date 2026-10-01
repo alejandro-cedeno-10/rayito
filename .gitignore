@@ -24,6 +24,8 @@ node_modules/
 /clients/typescript/dist/
 /clients/typescript/coverage/
 /clients/typescript/*.tgz
+# Proyecto temporal de scripts/check_docs_examples.py --typescript
+/clients/typescript/.docs-examples/
 
 # Documentación generada
 /docs/site/_build/

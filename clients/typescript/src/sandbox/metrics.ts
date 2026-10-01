@@ -1,7 +1,7 @@
 /**
  * El historial de métricas (`HealthService.MetricsHistory`, design D6/D10):
  * la validación y el request, el mapeo de la respuesta, el error de una
- * imagen anterior a M9 (`UnimplementedError`) y la variante estática, que lee un sandbox `RUNNING`
+ * imagen anterior a 0.3.0 (`UnimplementedError`) y la variante estática, que lee un sandbox `RUNNING`
  * por su id con el access token sin despertarlo nunca. Mismas reglas y mismo
  * texto que `clients/python/src/rayito/_metrics_base.py`.
  */
@@ -23,7 +23,7 @@ import { withDedicatedHealthClient } from "./probe.js";
 import { terminalStateError } from "./readiness.js";
 
 export const HISTORY_UNIMPLEMENTED_REASON =
-  "la imagen es anterior a M9 (rayd sin MetricsHistory): publica una imagen M9";
+  "la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior";
 export const HISTORY_FEATURE = "getMetricsHistory";
 export const STATIC_HISTORY_FEATURE = "Sandbox.getMetricsHistory(sandboxId)";
 
@@ -94,7 +94,7 @@ export function metricsHistoryFromProto(response: MetricsHistoryResponse): Sandb
 export class MetricsHistoryUnavailableError extends UnimplementedError {}
 
 /**
- * La tabla unaria, salvo `Unimplemented` (un `rayd` anterior a M9 no conoce
+ * La tabla unaria, salvo `Unimplemented` (un `rayd` anterior a 0.3.0 no conoce
  * el método): `translateRpcError` ya lo traduce a `UnimplementedError`
  * genérico, y aquí se renombra su `feature` con el motivo de M9, guardando
  * ese genérico en `cause` (como las transferencias y el plazo).

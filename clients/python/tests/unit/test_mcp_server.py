@@ -344,7 +344,7 @@ async def test_unimplemented_feature_is_a_tool_error_without_resetting_the_lease
     resetear el lease ni pedir reintento (design D7)."""
 
     async def unimplemented(self: AsyncCommands, cmd: str, **kwargs: Any) -> Any:
-        raise UnimplementedError("run_command", "la imagen es anterior a M9")
+        raise UnimplementedError("run_command", "la imagen es anterior a 0.3.0")
 
     async with launched_client(control_plane, fake_rayd) as client:
         await client.call_tool("run_command", {"cmd": "echo hola"})

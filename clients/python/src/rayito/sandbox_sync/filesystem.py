@@ -220,7 +220,7 @@ class Filesystem:
         `gzip=True` comprime el stream (`grpc-encoding: gzip`). `metadata`
         (claves token de HTTP, se guardan en minúsculas) se aplica a cada
         fichero y sustituye el conjunto entero; se valida antes de cualquier
-        RPC. Ambos exigen un agente M9 (`UnimplementedError` si no).
+        RPC. Ambos exigen un agente 0.3.0 o posterior (`UnimplementedError` si no).
         `use_octet_stream` se acepta y no tiene efecto (gRPC no usa
         formularios). Con `transfer=S3Staging(...)`, cada fichero de al menos
         `threshold_bytes` (o un stream binario no buscable) se sube a S3 con
@@ -269,7 +269,7 @@ class Filesystem:
         request_timeout: float | None = None,
     ) -> UploadTicket:
         """Una URL de subida a S3 firmada con tus credenciales, con la
-        importación a `path` ya armada en el sandbox (ADR-010). Es un `str`:
+        importación a `path` ya armada en el sandbox. Es un `str`:
         `requests.put(ticket, data=f, headers=ticket.headers)` basta; con
         `form=True` es un formulario POST (`ticket.fields` más el fichero en
         `file`) que S3 limita a `max_bytes`. De un solo uso; `expires_in` se
@@ -530,7 +530,7 @@ class Filesystem:
 
     def _plan(self, files: Sequence[WriteEntry]) -> WritePlan:
         """Sin `transfer` no se sondea nada y todo va por gRPC; con él, lo
-        grande va por S3 salvo que el agente sea anterior a M9."""
+        grande va por S3 salvo que el agente sea anterior a 0.3.0."""
         plan = plan_writes(files, self._sandbox.transfer)
         if plan.routed and not self._sandbox._transfers.supports_transfers():
             return plan.without_routing()

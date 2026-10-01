@@ -805,7 +805,7 @@ export class Filesystem {
    * Un solo stream `Write` para lo que va por gRPC, cada fichero atómico por
    * separado. Con `transfer` configurado, lo que mide `>= thresholdBytes` y
    * todo `ReadableStream` van por S3 uno a uno. Los resultados siguen el
-   * orden pedido. `metadata` y `gzip` exigen un agente M9.
+   * orden pedido. `metadata` y `gzip` exigen un agente 0.3.0 o posterior.
    *
    * Con `tracerProvider` abre `rayito.files.write_files` (nunca las rutas ni
    * los datos), con `rayito.files.count` y `rayito.files.bytes` al terminar.
@@ -863,7 +863,7 @@ export class Filesystem {
    * Una URL prefirmada de S3 a la que cualquier cliente HTTP sube el fichero
    * sin cabeceras de Rayito (`PUT`, o `POST` con `form: true`); `rayd` lo
    * importa a `path` como `user` en cuanto aparece. Necesita `transfer` (o
-   * `RAYITO_TRANSFER_BUCKET`) y un agente M9.
+   * `RAYITO_TRANSFER_BUCKET`) y un agente 0.3.0 o posterior.
    */
   async uploadUrl(path: string, options: UploadUrlOptions = {}): Promise<UploadTicket> {
     this.#transfers.requireStaging("uploadUrl");

@@ -750,7 +750,7 @@ def test_older_image_raises_unimplemented_and_terminates(
             transport=fake_rayd.transport,
         )
     assert excinfo.value.feature == "lifecycle"
-    assert "M9" in excinfo.value.reason
+    assert "0.3.0" in excinfo.value.reason
     assert isinstance(excinfo.value.__cause__, LifecycleUnsupportedException)
     assert "lifecycle" in json.loads(str(captured["runHookPayload"]))
 

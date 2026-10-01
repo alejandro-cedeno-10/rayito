@@ -14,7 +14,7 @@ crear ningún MicroVM (`RAYITO_POLY_SIZES`, `RAYITO_BASE_SIZES`,
 `codeInstallSizeInBytes` no es la suma de bytes de los ficheros (el binario
 de Deno de ≈ 85 MB cuesta 132-137 MB de code install), la memoria por
 pares suma el ruido de cuatro builds (18-32 MB medidos) y el code install de
-`rayito-base` frente a una versión anterior a M9 incluye git-core (Q76,
+`rayito-base` frente a una versión anterior a 0.3.0 incluye git-core (Q76,
 ≈ 38-41 MB netos de `rayd`).
 """
 

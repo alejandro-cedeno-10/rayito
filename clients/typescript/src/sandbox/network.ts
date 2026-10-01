@@ -47,14 +47,14 @@ export const GET_NETWORK_FEATURE = "getNetwork";
 
 export const EGRESS_UNAVAILABLE_REASON =
   "la imagen no aplica política de egress en el guest (Health.egress_enforcement=NONE): usa " +
-  "una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de plataforma, " +
+  "una imagen 0.3.0 o posterior de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de plataforma, " +
   'Sandbox.create({ egress: ["<ConnectorArn de infra/egress-connector.yaml>"] }); el sandbox ' +
   "se ha terminado";
 export const CAPS_REASON =
-  "la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen M9 de " +
+  "la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen 0.3.0 o posterior de " +
   "rayito-base-caps (additionalOsCapabilities ALL)";
 export const OLD_AGENT_REASON =
-  "este rayd no tiene NetworkService: la política de egress exige una imagen M9 de rayito-base-caps";
+  "este rayd no tiene NetworkService: la política de egress exige una imagen 0.3.0 o posterior de rayito-base-caps";
 export const ALLOW_ONLY_NOTICE =
   "allowOut sin denyOut no restringe nada: no se aplica política de egress en el guest";
 export const POOL_NETWORK_MESSAGE =
@@ -396,7 +396,7 @@ export function egressGateError(
 
 /**
  * `FailedPrecondition` (imagen sin `CAP_NET_ADMIN`) y `Unimplemented`
- * (agente anterior a M9) son `UnimplementedError`; el resto sigue la tabla
+ * (agente anterior a 0.3.0) son `UnimplementedError`; el resto sigue la tabla
  * unaria (`InvalidArgument` → `InvalidArgumentError`, `Internal` →
  * `SandboxError`).
  */

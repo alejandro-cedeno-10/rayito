@@ -107,7 +107,7 @@ class Transfers:
     # ------------------------------------------------------------ capability
 
     def supports_transfers(self) -> bool:
-        """Sonda `GetTransfer("")` cacheada: `NOT_FOUND` es un agente M9."""
+        """Sonda `GetTransfer("")` cacheada: `NOT_FOUND` es un agente 0.3.0 o posterior."""
         with self._probe_lock:
             if self._probe.supported is None:
                 self._probe.supported = self._probe_agent()

@@ -719,7 +719,7 @@ def translate_transfer_error(
     exc: grpc.RpcError, feature: str, *, filesystem: bool = False
 ) -> Exception:
     """La tabla unaria salvo `UNIMPLEMENTED`, que en un RPC de transferencia
-    sólo significa un `rayd` anterior a M9."""
+    sólo significa un `rayd` anterior a 0.3.0."""
     if rpc_status(exc) is grpc.StatusCode.UNIMPLEMENTED:
         return outdated_image_error(feature)
     return translate_rpc_error(exc, filesystem=filesystem)
@@ -773,7 +773,7 @@ def translate_s3_error(exc: Exception) -> Exception:
 
 class CapabilityProbe:
     """Resultado cacheado de la sonda `GetTransfer("")` durante la vida del
-    sandbox: `None` sin sondear, `True` agente M9, `False` anterior."""
+    sandbox: `None` sin sondear, `True` agente 0.3.0 o posterior, `False` anterior."""
 
     def __init__(self) -> None:
         self.supported: bool | None = None

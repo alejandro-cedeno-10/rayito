@@ -84,7 +84,7 @@ def build_run_hook_payload(
     `limits: {"cpu_seconds": N}` sólo cuando se pasa: `rayd` lo aplica como
     `RLIMIT_CPU` a cada proceso y PTY del sandbox, nunca al kernel.
     `lifecycle` (ADR-011) viaja sólo cuando se pasa: `rayd` impone con él el
-    plazo lógico; `v` sigue en 1 y un agente anterior a M9 ignora la clave.
+    plazo lógico; `v` sigue en 1 y un agente anterior a 0.3.0 ignora la clave.
     `network_enforce` añade `"network": {"enforce": true}` (ADR-012): `rayd`
     instala deny-all antes de responder a `/run` y la política real llega
     después por `UpdateNetwork`; el payload nunca lleva reglas ni credenciales.

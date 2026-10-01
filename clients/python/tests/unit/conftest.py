@@ -201,7 +201,7 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
     ) -> health_pb2.MetricsHistoryResponse:
         """Como `rayd` M9: exige `x-access-token` y devuelve `history` tal cual
         (el filtrado por rango es del agente, no del SDK). Con
-        `history_unimplemented` responde como un `rayd` anterior a M9."""
+        `history_unimplemented` responde como un `rayd` anterior a 0.3.0."""
         metadata = metadata_dict(context.invocation_metadata())
         with self.lock:
             self.history_calls.append(metadata)

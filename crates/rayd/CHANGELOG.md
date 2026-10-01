@@ -110,7 +110,7 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   línea de ~2.9 MB en el log que dejaba mudo al runner (ni `timeout` ni la
   cancelación respondían). La búsqueda ahora es lineal (1-2 s) y los panics
   muestran sólo la longitud y los últimos 512 bytes. Investigación en
-  [`docs/research/2026-10-ci-x86-freeze.md`](../../docs/research/2026-10-ci-x86-freeze.md).
+  [`docs/research/2026-10-ci-x86-freeze.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-ci-x86-freeze.md).
 
 ## [0.3.2] - 2026-09-29
 

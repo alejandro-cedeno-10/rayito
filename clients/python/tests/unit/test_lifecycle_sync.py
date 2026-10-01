@@ -1,6 +1,6 @@
 """Plazo lógico (ADR-011) en el `Sandbox` síncrono contra el `rayd` falso:
 `set_timeout` (instancia y clase), `connect(timeout=)`, la reapertura tras
-el plazo, la puerta de agente M9 en `create()`, los cierres
+el plazo, la puerta de agente 0.3.0 o posterior en `create()`, los cierres
 `sandbox_timeout`, el disparador del modo `pause` y `get_info().expires_at`."""
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def no_pause_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def managed(control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint) -> Iterator[Sandbox]:
-    """Un sandbox creado con `max_lifetime=900` (modo `kill`) cuyo agente M9
+    """Un sandbox creado con `max_lifetime=900` (modo `kill`) cuyo agente 0.3.0 o posterior
     reporta un plazo 60 s por delante y el tope 840 s por delante."""
     fake_rayd.servicer.lifecycle = lifecycle_state()
     capture_launch(control_plane, fake_rayd)
@@ -277,7 +277,7 @@ def test_create_on_an_older_agent_terminates_and_raises(
     fake_rayd.servicer.agent_version = "0.2.0"
     captured = capture_launch(control_plane, fake_rayd)
     expect_terminate(control_plane)
-    with pytest.raises(LifecycleUnsupportedException, match="publica una imagen M9") as raised:
+    with pytest.raises(LifecycleUnsupportedException, match=r"publica una imagen 0\.3") as raised:
         launch(control_plane, fake_rayd, timeout=60, on_timeout="kill")
     assert not isinstance(raised.value, SandboxNotReadyException)
     assert not isinstance(raised.value, InvalidArgumentException)
@@ -388,7 +388,7 @@ def test_unmanaged_set_timeout_raises_invalid_argument(
         with pytest.raises(InvalidArgumentException, match="max_lifetime"):
             sandbox.connect(timeout=60)
         fake_rayd.servicer.lifecycle = None
-        with pytest.raises(LifecycleUnsupportedException, match="imagen M9"):
+        with pytest.raises(LifecycleUnsupportedException, match=r"imagen 0\.3\.0 o"):
             sandbox.set_timeout(60)
     finally:
         expect_terminate(control_plane)

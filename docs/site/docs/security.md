@@ -1,7 +1,8 @@
 # Seguridad
 
-Resumen de `SECURITY.md` (el modelo de amenazas completo, con el hito en el
-que entra cada mitigación). Tres principales: el operador del SDK (confianza
+Resumen de [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(el modelo de amenazas completo; los identificadores T*n* de esta página son
+sus filas). Tres principales: el operador del SDK (confianza
 total), el código que corre dentro del sandbox (**ninguna**) y AWS (proxy,
 hooks, snapshot).
 
@@ -16,11 +17,11 @@ hooks, snapshot).
 | Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels |
 | `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, `O_NOFOLLOW`, sin `..` |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
-| Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde M9, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
-| URLs prefirmadas y SSRF de `rayd` (T16, M9) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
-| Proxy de egress de `rayd` como SSRF (T17, M9) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; **riesgo residual**: bajo deny-all en `rayito-base-caps` los nombres aún se resuelven por los resolvedores de la plataforma dentro del guest (canal de exfiltración por DNS, aunque toda conexión fuera del VM falla); las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
-| Secretos inyectados (T18, M13a) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
-| Índice de metadatos (T19, M14) | apagado por defecto; con `index=DynamoDbIndex(...)` se copia en tu tabla DynamoDB sólo la `metadata` (no secreta) más la imagen, `startedAt` y el TTL, nunca tokens, `envs` ni secretos; una fila falsa nunca crea un sandbox fantasma (el listado parte de `list-microvms` y exige misma imagen y `startedAt`); rol escritor (`PutItem`) separado del lector (`BatchGetItem`) ([Observabilidad](observability.md#listado-por-metadatos-con-indice-opcional)) |
+| Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde 0.3.0, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
+| URLs prefirmadas y SSRF de `rayd` (T16) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
+| Proxy de egress de `rayd` como SSRF (T17) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; bajo deny-all en `rayito-base-caps`, desde 0.3.2 el DNS de uid ≥ 1000 también se bloquea (una regla `ip rule` del puerto 53 por delante de los resolvedores de la plataforma, que escuchan dentro del guest), así que ni las conexiones ni las consultas DNS de los procesos del sandbox salen del VM; **riesgo residual**: las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
+| Secretos inyectados (T18) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
+| Índice de metadatos (T19) | apagado por defecto; con `index=DynamoDbIndex(...)` se copia en tu tabla DynamoDB sólo la `metadata` (no secreta) más la imagen, `startedAt` y el TTL, nunca tokens, `envs` ni secretos; una fila falsa nunca crea un sandbox fantasma (el listado parte de `list-microvms` y exige misma imagen y `startedAt`); rol escritor (`PutItem`) separado del lector (`BatchGetItem`) ([Índice de metadatos](funciones-opcionales/indice-de-metadatos.md)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -32,7 +33,7 @@ ninguna credencial: `Health` es el único RPC anónimo y `rayd` lo sirve en
 `0.0.0.0:8080`, así que un proceso uid 1000 del sandbox lee su `sandbox_id`
 y el mapa `metadata` completo. Son etiquetas y configuración, **no
 secretos**: las credenciales van por `sbx.files.write`, por `envs=` de un
-comando concreto o, desde M13a, por `secrets=` (desde Secrets Manager, con
+comando concreto o, desde 0.5.0, por `secrets=` (desde Secrets Manager, con
 caché; ver [Secretos](secrets.md)), nunca en el payload de creación. Ni `rayd` ni el SDK escriben claves ni valores de
 `metadata` en logs (sólo el número de claves).
 
@@ -42,7 +43,7 @@ caché; ver [Secretos](secrets.md)), nunca en el payload de creación. Ni `rayd`
 público (`ingress=["ALL_INGRESS"]`) y salida a internet
 (`egress=["INTERNET_EGRESS"]`). Un MicroVM sin conector de egress en
 `run-microvm` hereda el de la versión de imagen y sigue saliendo a internet
-(medido, `AWS_API_NOTES.md` Q44 y Q60), así que desde M9
+(medido, `AWS_API_NOTES.md` Q44 y Q60), así que desde 0.3.0
 `allow_internet_access=False` y `network=` se aplican **dentro del guest**
 en `rayito-base-caps` y, en cualquier otra imagen, el SDK termina el VM y
 lanza `UnimplementedError`: nunca te devuelve un sandbox con la red abierta
@@ -93,7 +94,7 @@ como parte del sandbox. Añade al bucket una regla
 
 ## Custodia de secretos del usuario (T18)
 
-`secrets=` (M13a, [Secretos](secrets.md)) está **apagado por defecto** y
+`secrets=` ([Secretos](secrets.md)) está **apagado por defecto** y
 sólo lo enciende la propia opción. Cuando se usa:
 
 - **Canal**: el valor viaja sólo en los `envs` por llamada de comandos,
@@ -123,7 +124,7 @@ Detalle en `SECURITY.md` T18.
 
 ## Copia de metadatos en reposo (T19)
 
-Con el índice opcional de metadatos (M14, `index=DynamoDbIndex(...)`), la
+Con el índice opcional de metadatos (`index=DynamoDbIndex(...)`), la
 `metadata` de cada sandbox queda **en reposo** en una tabla DynamoDB de tu
 cuenta (`infra/metadata-index.yaml`), cifrada por defecto y con TTL. Es la
 misma `metadata` que ya no es secreta (T4: `Health` la devuelve a cualquier
@@ -148,15 +149,16 @@ Detalle en `SECURITY.md` T19.
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
-proxy, `envs`, `metadata`, el body de los hooks; desde M9 tampoco URLs
+proxy, `envs`, `metadata`, el body de los hooks; tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
-credenciales de git; desde M12 tampoco el JWE, las cabeceras, los cuerpos ni
-las rutas de lo que pasa por `rayito sandbox proxy`; desde M13a tampoco
-valores ni nombres de secretos. Sólo ids, códigos de
+credenciales de git, ni el JWE, las cabeceras, los cuerpos ni las rutas de
+lo que pasa por `rayito sandbox proxy`, ni valores ni nombres de secretos. Sólo ids, códigos de
 estado, recuentos y duraciones.
 
-## `rayito sandbox proxy` (M12)
+<a id="rayito-sandbox-proxy-m12"></a>
+
+## `rayito sandbox proxy`
 
 El proxy local (`rayito sandbox proxy <id> --port N`, [CLI](cli.md#proxy))
 acuña el mismo JWE que usa el canal gRPC del SDK, pero con alcance a **un

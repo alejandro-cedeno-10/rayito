@@ -267,8 +267,8 @@ export class UnimplementedError extends Error {
 
 /**
  * Se pidió un plazo lógico (`maxLifetimeMs`, `onTimeout`, `setTimeout`,
- * `connect({ timeoutMs })`) a un agente anterior a M9, que no lo impone
- * (ADR-011): hay que publicar una imagen M9 o prescindir del plazo. Es una
+ * `connect({ timeoutMs })`) a un agente anterior a 0.3.0, que no lo impone
+ * (ADR-011): hay que publicar una imagen 0.3.0 o posterior o prescindir del plazo. Es una
  * subclase de `UnimplementedError` (paridad con Python): fuera de la
  * jerarquía de `SandboxError`, nunca un `InvalidArgumentError`.
  */

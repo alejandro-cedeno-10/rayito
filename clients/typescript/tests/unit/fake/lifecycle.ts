@@ -2,7 +2,7 @@
  * `LifecycleService` como lo implementa `rayd` (ADR-011): `SetTimeout` exige
  * `x-access-token`, graba cada petición y mueve el `LifecycleState` que
  * `Health` devuelve (`FakeHealth.lifecycle`). Sin estado en `Health` responde
- * `Unimplemented`, como un agente anterior a M9; `UNMANAGED` responde
+ * `Unimplemented`, como un agente anterior a 0.3.0; `UNMANAGED` responde
  * `FailedPrecondition "lifecycle_unmanaged"` y un plazo más allá del tope
  * `InvalidArgument "timeout beyond cap; cap_unix_ms=<n>"`. También las formas
  * de cierre `sandbox_timeout` de los streams.

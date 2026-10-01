@@ -183,7 +183,7 @@ class AsyncFilesystem:
         request_timeout: float | None = None,
     ) -> list[EntryInfo]:
         """Misma semántica que `Filesystem.write_files`: un solo stream, cada
-        fichero atómico por separado, `gzip`/`metadata` con agente M9 y lo
+        fichero atómico por separado, `gzip`/`metadata` con agente 0.3.0 o posterior y lo
         grande por S3 con `transfer`."""
         with self._sandbox._instrumentation.span(
             "rayito.files.write_files", {"rayito.files.operation": "write_files"}

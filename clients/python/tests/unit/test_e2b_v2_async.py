@@ -280,7 +280,7 @@ async def test_async_metrics_series_and_class_variant(
     fake_rayd.servicer.history = []
     assert len(await sbx.get_metrics()) == 1
     fake_rayd.servicer.history_unimplemented = True
-    with pytest.raises(UnimplementedError, match="M9"):
+    with pytest.raises(UnimplementedError, match=r"0\.3\.0"):
         await sbx.get_metrics(start=start)
 
 

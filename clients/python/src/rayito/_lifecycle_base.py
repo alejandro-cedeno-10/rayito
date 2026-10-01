@@ -297,7 +297,7 @@ def lifecycle_from_state(state: Any) -> SandboxLifecycle:
 
 
 def lifecycle_from_proto(response: Any) -> SandboxLifecycle | None:
-    """`None` cuando `Health` no trae `lifecycle`: un agente anterior a M9,
+    """`None` cuando `Health` no trae `lifecycle`: un agente anterior a 0.3.0,
     que no impone ningún timeout (la puerta de capacidad del SDK)."""
     if not response.HasField("lifecycle"):
         return None
@@ -334,7 +334,7 @@ def connect_extension(
 
     Un `timeout` pedido siempre es `at_least`. Sin él, sólo un sandbox en
     `resume_grace`/`expired` se reabre, con su propio `timeout` acotado al
-    tope menos 5 s de seguridad. Un agente anterior a M9 o un sandbox sin
+    tope menos 5 s de seguridad. Un agente anterior a 0.3.0 o un sandbox sin
     plazo lógico no admiten un `timeout` pedido."""
     seconds = (
         None if requested is None else validate_set_timeout_seconds(requested, mode="at_least")
@@ -343,8 +343,8 @@ def connect_extension(
         if seconds is not None:
             raise LifecycleUnsupportedException(
                 "connect(timeout=)",
-                "necesita una imagen M9: el agente de este sandbox no impone el timeout del "
-                "servidor",
+                "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no impone el "
+                "timeout del servidor",
             )
         return None
     if not lifecycle.managed:
@@ -454,13 +454,14 @@ def older_agent_error(template: str, agent_version: str) -> LifecycleUnsupported
     return LifecycleUnsupportedException(
         "create(max_lifetime=, on_timeout=)",
         f"la imagen {template} (agent_version {agent_version}) no impone el timeout del "
-        "servidor: publica una imagen M9 o crea el sandbox sin max_lifetime ni on_timeout",
+        "servidor: publica una imagen 0.3.0 o posterior o crea el sandbox sin max_lifetime ni "
+        "on_timeout",
     )
 
 
 def translate_set_timeout_error(exc: grpc.RpcError, request: TimeoutRequest) -> Exception:
     """Los rechazos propios de `SetTimeout` antes de la tabla unaria:
-    más allá del tope, sandbox sin plazo lógico y agente anterior a M9."""
+    más allá del tope, sandbox sin plazo lógico y agente anterior a 0.3.0."""
     code = rpc_status(exc)
     details = rpc_details(exc)
     if code is grpc.StatusCode.INVALID_ARGUMENT and details.startswith(BEYOND_CAP_PREFIX):
@@ -470,7 +471,8 @@ def translate_set_timeout_error(exc: grpc.RpcError, request: TimeoutRequest) -> 
     if code is grpc.StatusCode.UNIMPLEMENTED:
         return LifecycleUnsupportedException(
             request.operation,
-            "necesita una imagen M9: el agente de este sandbox no tiene LifecycleService",
+            "necesita una imagen 0.3.0 o posterior: el agente de este sandbox no tiene "
+            "LifecycleService",
         )
     return translate_rpc_error(exc)
 

@@ -399,7 +399,7 @@ def test_unimplemented_names_an_m9_caps_image() -> None:
     )
     assert isinstance(error, UnimplementedError)
     assert error.feature == "get_network"
-    assert "una imagen M9 de rayito-base-caps" in error.reason
+    assert "una imagen 0.3.0 o posterior de rayito-base-caps" in error.reason
 
 
 def test_other_codes_follow_the_unary_table() -> None:

@@ -283,7 +283,7 @@ export const UNKNOWN_GUEST_FACTS: GuestFacts = Object.freeze({
 });
 
 /**
- * `""` y `0` significan "no leído": un agente anterior a M9 da `agentVersion`
+ * `""` y `0` significan "no leído": un agente anterior a 0.3.0 da `agentVersion`
  * y deja `cpuCount`/`memoryMb` en `undefined`. `memoryMb` es `MemTotal` en MiB
  * truncado.
  */

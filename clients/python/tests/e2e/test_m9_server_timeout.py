@@ -1,12 +1,12 @@
 """M9 `m9-server-timeout` contra AWS real (design D12): el plazo lógico que
-impone `rayd` (ADR-011) sobre la imagen M9 de `RAYITO_TEMPLATE`.
+impone `rayd` (ADR-011) sobre la imagen 0.3.0 o posterior de `RAYITO_TEMPLATE`.
 
 Cada test imprime lo que su fila de `AWS_API_NOTES.md` §16 necesita
 (`stateReason`, sobrepasos, tiempos de suspensión y reanudación: Q63, Q64 y
 Q65), siempre con el id del MicroVM y nunca con tokens ni JWE. Todo sandbox
 nace con `max_lifetime <= 900`, sin rol de ejecución, y se termina en el
 teardown. `test_older_agent_gate` necesita además
-`RAYITO_E2E_PRE_M9_TEMPLATE_VERSION` (la versión publicada anterior a M9 de
+`RAYITO_E2E_PRE_M9_TEMPLATE_VERSION` (la versión publicada anterior a 0.3.0 de
 la misma imagen; sólo en el entorno local, nunca en un fichero versionado).
 """
 
@@ -525,7 +525,7 @@ def test_older_agent_gate(
 ) -> None:
     pre_m9 = os.environ.get(PRE_M9_VERSION_VAR)
     if not pre_m9:
-        pytest.skip(f"exporta {PRE_M9_VERSION_VAR}=<versión anterior a M9> para la puerta")
+        pytest.skip(f"exporta {PRE_M9_VERSION_VAR}=<versión anterior a 0.3.0> para la puerta")
     before = {item.sandbox_id for item in control_plane.list_microvms(image_arn=template_arn)}
     with pytest.raises(UnimplementedError):
         rayito.e2b.Sandbox.create(template_arn, template_version=pre_m9, max_lifetime=900)

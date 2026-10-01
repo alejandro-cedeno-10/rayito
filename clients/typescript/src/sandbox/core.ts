@@ -249,7 +249,7 @@ export class SandboxCore {
   closed = false;
   resumeGeneration = 0;
   paused = false;
-  /** El último plazo lógico leído de `Health` o de `SetTimeout`; `undefined` en un agente anterior a M9. */
+  /** El último plazo lógico leído de `Health` o de `SetTimeout`; `undefined` en un agente anterior a 0.3.0. */
   lifecycle: SandboxLifecycle | undefined;
   /** Versión, CPUs y memoria del guest del último `Health`, se lea en el arranque, en `getHealth` o al reconectar. */
   guestFacts: GuestFacts = UNKNOWN_GUEST_FACTS;

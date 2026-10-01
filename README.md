@@ -9,6 +9,15 @@ propia cuenta de AWS sobre Lambda MicroVMs.
 
 Documentación completa: **https://alejandro-cedeno-10.github.io/rayito/**
 
+**Empieza aquí** (unos 15 minutos, en tu cuenta):
+[Primeros pasos](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/)
+→ [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/)
+→ [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
+¿Vienes de E2B? [Migrar desde E2B](https://alejandro-cedeno-10.github.io/rayito/migrar-desde-e2b/).
+Una guía por función (comandos, código, ficheros, PTY, red, pausa, pool…) en
+[Guías](https://alejandro-cedeno-10.github.io/rayito/guias/) y la API de
+Python y TypeScript en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia/).
+
 La ergonomía de E2B sin que el código de tus clientes salga de tu cuenta, y sin
 clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
 
@@ -42,7 +51,7 @@ with SandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
 Si vienes del SDK de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
 son un drop-in a nivel de import de E2B 2.x: lo que Lambda MicroVMs no puede
 hacer lanza `UnimplementedError` en vez de aproximarse en silencio
-(`docs/site/docs/e2b-compat.md`). Desde M9 el shim exige una imagen M9.
+(`docs/site/docs/e2b-compat.md`). El shim exige una imagen 0.3.0 o posterior.
 
 ```python
 from rayito.e2b import Sandbox          # antes: from e2b_code_interpreter import Sandbox
@@ -333,21 +342,30 @@ Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
    `TransferBucket`/`TransferPrefix` ([`images.md`](docs/site/docs/images.md)).
 
 2. **Imagen**: publica `rayito-base` (y, si las usas, `-caps` para la red
-   saliente y `-poly` para JavaScript/TypeScript):
+   saliente y `-poly` para JavaScript/TypeScript). Sin compilar nada, desde el
+   `rayito-image.zip` firmado de la release:
 
    ```bash
-   make image-publish BUCKET=<tu-bucket>        # también image-publish-caps / -poly
+   RAYD_VERSION=0.5.0   # la misma versión que tu SDK instalado
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION/rayito-image.zip"
+   rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket <tu-bucket>
    ```
 
-   Compila `rayd` para `aarch64-unknown-linux-musl`: hazlo en Linux o WSL2
-   (en macOS, dentro de una VM Linux) con `cargo-zigbuild`
-   ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
+   La imagen debe ser de la misma versión que el SDK (`rayito doctor` lo
+   comprueba); las versiones están en las
+   [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
+
+   O desde el código fuente con `make image-publish BUCKET=<tu-bucket>`
+   (también `image-publish-caps` / `-poly`), que compila `rayd` para
+   `aarch64-unknown-linux-musl`: hazlo en Linux o WSL2 (en macOS, dentro de
+   una VM Linux) con `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 3. **Diagnóstico**: `pip install "rayito[cli]" && rayito doctor --template rayito-base`
    comprueba credenciales, cuotas, IAM, bucket, imagen y versión del agente.
 
-4. **Primer sandbox**: el [quickstart](docs/site/docs/quickstart.md) y el
-   resto de la documentación en [`docs/site/docs/`](docs/site/docs/).
+4. **Primer sandbox**: [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/)
+   (fuente en [`docs/site/docs/quickstart.md`](docs/site/docs/quickstart.md)) y el
+   resto de la documentación en el [sitio](https://alejandro-cedeno-10.github.io/rayito/).
 
 ## Estructura del repositorio
 

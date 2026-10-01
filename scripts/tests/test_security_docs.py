@@ -234,20 +234,20 @@ def test_prefix_is_not_a_tenant_boundary() -> None:
 
 
 def test_persistence_quickstart_stays_out_of_the_artifact_namespace() -> None:
-    quickstart = section(site_doc("persistence"), "## Quickstart")
+    quickstart = section(site_doc("persistence"), "## Ejemplo rápido")
     assert_says(
-        "docs/site/docs/persistence.md «Quickstart»",
+        "docs/site/docs/persistence.md «Ejemplo rápido»",
         quickstart,
         (
             'prefix="rayito-home"',
             'prefix: "rayito-home"',
-            "s3://mi-bucket/rayito-home/agente-7/home.tar.gz",
+            "s3://amzn-s3-demo-bucket/rayito-home/agente-7/home.tar.gz",
         ),
     )
     assert_silent(
-        "docs/site/docs/persistence.md «Quickstart»",
+        "docs/site/docs/persistence.md «Ejemplo rápido»",
         quickstart,
-        ('prefix="rayito"', "s3://mi-bucket/rayito/"),
+        ('prefix="rayito"', "s3://amzn-s3-demo-bucket/rayito/"),
     )
 
     page = section(site_doc("persistence"), "## `S3Prefix`")
