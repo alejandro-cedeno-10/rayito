@@ -9,15 +9,21 @@ from __future__ import annotations
 
 import pytest
 
-from rayito import AsyncSandbox, AsyncSandboxPool, Sandbox, SandboxPool
+from rayito import AsyncSandbox, AsyncSandboxPool, EfsVolume, Sandbox, SandboxPool
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
+
+#: Un valor bien formado: m15-efs-volumes valida la forma de `volumes=`
+#: (tipo, rutas) antes de llegar a `UnimplementedError`, así que un
+#: `object()` ahí ya no llegaría tan lejos (lanzaría InvalidArgumentException
+#: por el tipo, no por ser un stub).
+_VALID_VOLUME = {"/mnt/v": EfsVolume(file_system_id="fs-0123abcd", access_point_id="fsap-0123abcd")}
 
 
 @pytest.mark.parametrize(
     ("option", "value"),
     [
         ("mounts", {"/mnt/d": object()}),
-        ("volumes", {"/mnt/v": object()}),
+        ("volumes", _VALID_VOLUME),
         ("size", "4gb"),
         ("events", object()),
         ("telemetry", object()),

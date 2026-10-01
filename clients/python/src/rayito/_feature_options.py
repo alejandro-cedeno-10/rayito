@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from rayito._volumes._section import require_volume_support
 from rayito.exceptions import UnimplementedError
 
 MOUNTS_CHANGE: Final = "m15-s3-mounts"
@@ -64,16 +65,19 @@ class FeaturePlan:
 
 def plan_features(options: FeatureOptions, *, image_variant: str | None = None) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
-    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
-    para cuando una función real lo necesite (s3-mounts, efs-volumes,
-    rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
+    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es para
+    cuando una función real lo necesita (s3-mounts, efs-volumes, rayd-otlp
+    con rol exigen la variante caps); `volumes=` ya lo usa
+    (`require_volume_support`), el resto de ramas todavía no.
     No hace ninguna llamada a AWS ni construye ningún cliente.
     """
-    del image_variant
     if options.mounts is not None:
         raise UnimplementedError("mounts=", f"llega en 0.6 ({MOUNTS_CHANGE})")
     if options.volumes is not None:
-        raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
+        # m15-efs-volumes: validación real (rutas, tipos, variante caps)
+        # antes de la UnimplementedError genérica; ver
+        # rayito._volumes._section.require_volume_support.
+        require_volume_support(options.volumes, image_variant=image_variant)
     if options.size is not None:
         raise UnimplementedError("size=", f"llega en 0.6 ({SIZE_CHANGE})")
     if options.events is not None:

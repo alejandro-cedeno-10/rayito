@@ -49,4 +49,5 @@ pub mod sandbox_timeout;
 pub mod session;
 pub mod suspend_sync;
 pub mod transfer;
+pub mod volume;
 pub mod wire_tokens;

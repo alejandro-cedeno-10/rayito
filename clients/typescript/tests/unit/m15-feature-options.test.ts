@@ -7,9 +7,11 @@ describe("feature-options", () => {
     expect(planFeatures({})).toEqual({ configureSections: [] });
   });
 
+  // `volumes` ya no es un stub genérico (m15-efs-volumes reemplazó su rama
+  // con `requireVolumeSupport`, que exige un `EfsVolume` real y valida rutas
+  // antes de llegar a `UnimplementedError`): ver m15-efs-volumes.test.ts.
   test.each([
     ["mounts", { "/mnt/d": {} }, "mounts", "m15-s3-mounts"],
-    ["volumes", { "/mnt/v": {} }, "volumes", "m15-efs-volumes"],
     ["size", "4gb", "size", "m15-sizes-catalog"],
     ["events", {}, "events", "m15-events-webhooks"],
     ["telemetry", {}, "telemetry", "m15-rayd-otlp"],

@@ -19,7 +19,16 @@ Pendiente.
 
 ## Volúmenes EFS (`m15-efs-volumes`, experimental)
 
-Pendiente, tras la campaña de medición EFS-1..EFS-20.
+`VolumeStore`/`AsyncVolumeStore` (CRUD real de access points EFS) y
+`Sandbox.create(volumes=)` (valida la petición y siempre lanza
+`UnimplementedError`, pendiente de la campaña de medición EFS-1..EFS-20).
+`rayito stack deploy efs-volumes` despliega el sistema de ficheros, sus
+mount targets y un conector de egress dedicado. El shim de E2B
+(`Volume`/`AsyncVolume`) hace CRUD real sobre `E2B(volume_store=...)`; sus
+operaciones de contenido siguen sin plano de datos propio. El montaje real
+en el guest queda para una función posterior, una vez la campaña de
+medición despeje sus tres criterios de parada (EFS-2, EFS-3, EFS-8). Ver
+[Volúmenes EFS](site/docs/funciones-opcionales/volumenes-efs.md).
 
 ## Tamaños (`m15-sizes-catalog`)
 

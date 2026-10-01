@@ -9,13 +9,19 @@ import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, UnimplementedError } from "../../src/errors.js";
 import type { SandboxPool } from "../../src/pool/pool.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { EfsVolume } from "../../src/volumes/domain.js";
 
 const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base";
+// m15-efs-volumes valida la forma de `volumes` (tipo, rutas) antes de
+// UnimplementedError, así que `{}` ya no llegaría tan lejos.
+const VALID_VOLUME = {
+  "/mnt/v": new EfsVolume({ fileSystemId: "fs-0123abcd", accessPointId: "fsap-0123abcd" }),
+};
 
 describe("Sandbox.create: 0.6 options", () => {
   test.each([
     ["mounts", { "/mnt/d": {} }],
-    ["volumes", { "/mnt/v": {} }],
+    ["volumes", VALID_VOLUME],
     ["size", "4gb"],
     ["events", {}],
     ["telemetry", {}],

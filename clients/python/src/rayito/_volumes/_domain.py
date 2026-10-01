@@ -1,0 +1,101 @@
+"""Dominio puro de `volumes=` (`m15-efs-volumes`, ADR-018, experimental):
+el valor inmutable `EfsVolume`, el estado que reporta un montaje
+(`VolumeStatus`/`MountState`) y las constantes de la convención de acceso
+que `VolumeStore` aplica siempre (research doc
+`docs/research/2026-10-efs-persistence.md` §4.1/§4.5). Sin `boto3`: las
+llamadas a EFS viven en `_store.py`/`_store_async.py`.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Final, Literal
+
+from rayito.exceptions import InvalidArgumentException
+
+#: `fs-[0-9a-f]{8,40}` (research doc R3; AWS_API_NOTES.md §22).
+FILE_SYSTEM_ID_PATTERN: Final = re.compile(r"^fs-[0-9a-f]{8,40}$")
+#: `fsap-[0-9a-f]{8,40}` (research doc R3; AWS_API_NOTES.md §22).
+ACCESS_POINT_ID_PATTERN: Final = re.compile(r"^fsap-[0-9a-f]{8,40}$")
+#: Un nombre lógico de volumen: letras, números y guiones (research doc §2,
+#: "Volume.create(name)"), como mucho lo que cabe en un componente de
+#: `RootDirectory.Path` (100 caracteres, modelo `efs`).
+VOLUME_NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9-]{1,100}$")
+
+#: Cada volumen se expone bajo este prefijo del sistema de ficheros del
+#: operador (research doc §4.5): `RootDirectory.Path = f"{ROOT_DIRECTORY_PREFIX}/{name}"`.
+ROOT_DIRECTORY_PREFIX: Final = "/rayito-volumes"
+#: El access point fuerza este usuario POSIX para todo acceso al volumen,
+#: tanto en `PosixUser` como en `CreationInfo` (research doc §4.1 regla 5,
+#: "root squash": `ClientRootAccess` nunca se concede).
+VOLUME_POSIX_UID: Final = 1000
+VOLUME_POSIX_GID: Final = 1000
+#: Permisos octales de `CreationInfo` para un directorio raíz nuevo
+#: (research doc §4.5: "CreationInfo 1000:1000 0750").
+ROOT_DIRECTORY_PERMISSIONS: Final = "0750"
+#: Etiqueta que identifica el access point como un volumen de Rayito
+#: (research doc §4.5); `VolumeStore.list()`/`get()` filtran por ella.
+VOLUME_TAG_KEY: Final = "rayito:volume"
+
+
+def validate_volume_name(name: str) -> str:
+    if not isinstance(name, str) or not VOLUME_NAME_PATTERN.match(name):
+        raise InvalidArgumentException(
+            "el nombre de un volumen EFS es letras, números y guiones, de 1 a 100 caracteres"
+        )
+    return name
+
+
+def validate_file_system_id(value: str) -> str:
+    if not isinstance(value, str) or not FILE_SYSTEM_ID_PATTERN.match(value):
+        raise InvalidArgumentException(f"file_system_id inválido: {value!r}")
+    return value
+
+
+def validate_access_point_id(value: str) -> str:
+    if not isinstance(value, str) or not ACCESS_POINT_ID_PATTERN.match(value):
+        raise InvalidArgumentException(f"access_point_id inválido: {value!r}")
+    return value
+
+
+#: Mirrors `rayd_core::volume::MountState`; sólo `"mounted"` deja usar el
+#: volumen. Ningún build 0.6 de `rayd` reporta otra cosa que no sea ausente
+#: (`UnavailableEfsMounter`), así que hoy ningún `VolumeStatus` real existe
+#: todavía: el tipo está aquí para cuando `ConfigureStatus` sí lo rellene.
+MountState = Literal[
+    "requested", "mounting", "mounted", "degraded", "remounting", "unmounted", "failed"
+]
+
+
+@dataclass(frozen=True)
+class EfsVolume:
+    """Un volumen EFS: el access point que un sandbox puede montar bajo
+    `volumes={path: EfsVolume(...)}`. Validado en construcción, sin ninguna
+    llamada a AWS; `name`/`region` son metadata del cliente (`VolumeStore`
+    los rellena al crear o leer uno), nunca parte de la identidad que
+    manda al guest."""
+
+    file_system_id: str
+    access_point_id: str
+    name: str | None = None
+    region: str | None = None
+    read_only: bool = False
+    mount_target_ip: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_file_system_id(self.file_system_id)
+        validate_access_point_id(self.access_point_id)
+        if self.name is not None:
+            validate_volume_name(self.name)
+
+
+@dataclass(frozen=True)
+class VolumeStatus:
+    """Lo que `sbx.volumes[path]` reporta tras `/run` (research doc §4.5);
+    en 0.6 ningún build de `rayd` llega a `mounted`, así que todo volumen
+    pedido termina en `last_error_class="unsupported"` antes de que el SDK
+    siquiera construya uno de estos (ver `_section.require_volume_support`)."""
+
+    state: MountState
+    last_error_class: str | None = None

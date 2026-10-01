@@ -128,9 +128,11 @@ describe("stacks/service: OptionalStacks", () => {
   });
 
   test("destroying an unsupported component also raises first", async () => {
+    // sizes-guard, not efs-volumes: m15-efs-volumes made that component
+    // real (infra/efs-volumes.yaml), so it is supported: true now.
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.destroy("efs-volumes")).rejects.toThrow(UnimplementedError);
+    await expect(stacks.destroy("sizes-guard")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 

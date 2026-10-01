@@ -18,7 +18,13 @@ const MCP_REASON =
   "cada petición al endpoint necesita además un JWE en cabecera con TTL de 60 min como máximo " +
   "(AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp";
 const VOLUME_REASON =
-  "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o upload_url/download_url";
+  "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen; incluso " +
+  "configurado, volumes=/volume_mounts sigue en UnimplementedError hasta que la campaña de " +
+  "medición EFS-1..EFS-20 (AWS_API_NOTES.md §22, m15-efs-volumes) decida un adaptador de " +
+  "montaje real; usa persist= (S3) o upload_url/download_url mientras tanto";
+const VOLUME_CONTENT_REASON =
+  "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y " +
+  "monta el volumen, o usa upload_url/download_url sobre persist=";
 
 export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.freeze({
   fork: NO_MEMORY_COPY_REASON,
@@ -46,6 +52,7 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   getMcpToken: MCP_REASON,
   volumeMounts: VOLUME_REASON,
   Volume: VOLUME_REASON,
+  "volume.readFile": VOLUME_CONTENT_REASON,
   getSignature:
     "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo " +
     "WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3",

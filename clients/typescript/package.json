@@ -74,6 +74,7 @@
   "peerDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
+    "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
     "@opentelemetry/api": "^1.9.0"
   },
@@ -82,6 +83,9 @@
       "optional": true
     },
     "@aws-sdk/client-dynamodb": {
+      "optional": true
+    },
+    "@aws-sdk/client-efs": {
       "optional": true
     },
     "@aws-sdk/client-secrets-manager": {
@@ -94,6 +98,7 @@
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
+    "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
     "@biomejs/biome": "^2.5.14",
     "@opentelemetry/api": "^1.9.0",

@@ -1,0 +1,166 @@
+/**
+ * `m15-efs-volumes` (ADR-018, experimental): `EfsVolume` validation,
+ * `VolumeStore` CRUD over a fake `EfsApi`, and `requireVolumeSupport`'s
+ * pre-launch gate. Espejo de `test_m15_efs_volumes_domain.py` /
+ * `test_m15_efs_volumes_store.py` / `test_m15_efs_volumes_section.py`.
+ */
+
+import { describe, expect, test } from "vitest";
+import { InvalidArgumentError, UnimplementedError, VolumeNotFoundError } from "../../src/errors.js";
+import { EfsVolume } from "../../src/volumes/domain.js";
+import type { DescribedAccessPoint, EfsApi } from "../../src/volumes/efs.js";
+import { requireVolumeSupport } from "../../src/volumes/section.js";
+import { VolumeStore } from "../../src/volumes/store.js";
+
+function awsError(name: string): Error {
+  const error = new Error("redacted");
+  error.name = name;
+  return error;
+}
+
+class FakeEfsApi implements EfsApi {
+  readonly accessPoints = new Map<string, DescribedAccessPoint & { name: string }>();
+  readonly calls: string[] = [];
+  #nextId = 1;
+
+  async createAccessPoint(input: {
+    FileSystemId: string;
+    Tags: Array<{ Key: string; Value: string }>;
+  }): Promise<DescribedAccessPoint> {
+    this.calls.push("createAccessPoint");
+    const name = input.Tags.find((t) => t.Key === "rayito:volume")?.Value ?? "";
+    for (const existing of this.accessPoints.values()) {
+      if (existing.name === name) {
+        return existing;
+      }
+    }
+    const accessPointId = `fsap-${(this.#nextId++).toString().padStart(8, "0")}`;
+    const described = { AccessPointId: accessPointId, FileSystemId: input.FileSystemId, name };
+    this.accessPoints.set(accessPointId, described);
+    return described;
+  }
+
+  async describeAccessPoints(input: {
+    FileSystemId: string;
+  }): Promise<{ AccessPoints?: DescribedAccessPoint[] }> {
+    this.calls.push("describeAccessPoints");
+    const points = [...this.accessPoints.values()]
+      .filter((ap) => ap.FileSystemId === input.FileSystemId)
+      .map((ap) => ({
+        AccessPointId: ap.AccessPointId,
+        FileSystemId: ap.FileSystemId,
+        Tags: [{ Key: "rayito:volume", Value: ap.name }],
+      }));
+    return { AccessPoints: points };
+  }
+
+  async deleteAccessPoint(input: { AccessPointId: string }): Promise<unknown> {
+    this.calls.push("deleteAccessPoint");
+    if (!this.accessPoints.has(input.AccessPointId)) {
+      throw awsError("AccessPointNotFound");
+    }
+    this.accessPoints.delete(input.AccessPointId);
+    return {};
+  }
+}
+
+const FILE_SYSTEM_ID = "fs-0123abcd";
+
+describe("EfsVolume", () => {
+  test("constructs with a well-formed file system and access point id", () => {
+    const vol = new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abcd" });
+    expect(vol.readOnly).toBe(false);
+  });
+
+  test("rejects a malformed file system id", () => {
+    expect(
+      () => new EfsVolume({ fileSystemId: "not-an-id", accessPointId: "fsap-0123abcd" }),
+    ).toThrow(InvalidArgumentError);
+  });
+
+  test("rejects a malformed access point id", () => {
+    expect(
+      () => new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fs-0123abcd" }),
+    ).toThrow(InvalidArgumentError);
+  });
+});
+
+describe("VolumeStore", () => {
+  test("constructing it makes no call", () => {
+    const fake = new FakeEfsApi();
+    new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    expect(fake.calls).toEqual([]);
+  });
+
+  test("create is idempotent by name", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    const first = await store.create("datos-agente-7");
+    const second = await store.create("datos-agente-7");
+    expect(second.accessPointId).toBe(first.accessPointId);
+    expect(fake.accessPoints.size).toBe(1);
+  });
+
+  test("get finds a volume by name and raises when missing", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    await store.create("datos-agente-7");
+    const found = await store.get("datos-agente-7");
+    expect(found.name).toBe("datos-agente-7");
+    await expect(store.get("no-existe")).rejects.toThrow(VolumeNotFoundError);
+  });
+
+  test("list returns every tagged access point", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    await store.create("a");
+    await store.create("b");
+    const names = (await store.list()).map((v) => v.name).sort();
+    expect(names).toEqual(["a", "b"]);
+  });
+
+  test("destroy returns false for a volume that never existed", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    expect(await store.destroy("ghost")).toBe(false);
+  });
+
+  test("destroy returns true and removes the access point", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    await store.create("datos-agente-7");
+    expect(await store.destroy("datos-agente-7")).toBe(true);
+    expect(fake.accessPoints.size).toBe(0);
+  });
+});
+
+const VALID_VOLUME = {
+  "/mnt/v": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abcd" }),
+};
+
+describe("requireVolumeSupport", () => {
+  test("an empty object is invalid", () => {
+    expect(() => requireVolumeSupport({}, undefined)).toThrow(InvalidArgumentError);
+  });
+
+  test("a non-EfsVolume value is invalid", () => {
+    expect(() => requireVolumeSupport({ "/mnt/v": {} }, undefined)).toThrow(InvalidArgumentError);
+  });
+
+  test("an overlapping path is invalid", () => {
+    const overlapping = {
+      "/mnt/v": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abcd" }),
+      "/mnt/v/sub": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abce" }),
+    };
+    expect(() => requireVolumeSupport(overlapping, undefined)).toThrow(InvalidArgumentError);
+  });
+
+  test("a non-caps image variant is rejected before the generic message", () => {
+    expect(() => requireVolumeSupport(VALID_VOLUME, "base")).toThrow(UnimplementedError);
+  });
+
+  test("a well-formed request still raises UnimplementedError (experimental, pending EFS-1..EFS-20)", () => {
+    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps")).toThrow(UnimplementedError);
+    expect(() => requireVolumeSupport(VALID_VOLUME, undefined)).toThrow(UnimplementedError);
+  });
+});

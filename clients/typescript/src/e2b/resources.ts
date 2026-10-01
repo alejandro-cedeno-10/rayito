@@ -1,8 +1,10 @@
 /**
- * `Template`, `Volume` y `getSignature` de E2B: cada estático que
- * E2B define lanza `UnimplementedError` con su motivo (nunca un
- * `TypeError` por método inexistente). Lanzan en el acto, también los que en
- * E2B son asíncronos: un `await Template.build()` lo recibe igual.
+ * `Template` y `getSignature` de E2B: cada estático que E2B define lanza
+ * `UnimplementedError` con su motivo (nunca un `TypeError` por método
+ * inexistente). Lanzan en el acto, también los que en E2B son asíncronos:
+ * un `await Template.build()` lo recibe igual. `Volume` vive en
+ * `volume.ts` (m15-efs-volumes, experimental): tiene una implementación
+ * real una vez `new E2B({ volumeStore })` lo configura.
  */
 
 import { unimplemented } from "./unimplemented.js";
@@ -54,32 +56,8 @@ export class Template {
   }
 }
 
-/** Volúmenes compartidos de E2B: fuera de alcance (SPEC.md §4). */
-export class Volume {
-  private constructor() {
-    throw unimplemented("Volume");
-  }
-
-  static create(..._args: unknown[]): never {
-    throw unimplemented("Volume");
-  }
-
-  static connect(..._args: unknown[]): never {
-    throw unimplemented("Volume");
-  }
-
-  static destroy(..._args: unknown[]): never {
-    throw unimplemented("Volume");
-  }
-
-  static list(..._args: unknown[]): never {
-    throw unimplemented("Volume");
-  }
-
-  static getInfo(..._args: unknown[]): never {
-    throw unimplemented("Volume");
-  }
-}
+// `Volume` moved to `volume.ts` (m15-efs-volumes, experimental): it has a
+// real implementation once `new E2B({ volumeStore })` configures one.
 
 /** La firma de URLs de envd de E2B: no autentica en el proxy de AWS. */
 export function getSignature(..._args: unknown[]): never {

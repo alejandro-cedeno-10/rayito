@@ -32,8 +32,14 @@ MCP_REASON: Final = (
     "servidor rayito-mcp"
 )
 VOLUME_REASON: Final = (
-    "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o "
-    "upload_url/download_url"
+    "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen; incluso "
+    "configurado, volumes=/volume_mounts sigue en UnimplementedError hasta que la campaña de "
+    "medición EFS-1..EFS-20 (AWS_API_NOTES.md §22, m15-efs-volumes) decida un adaptador de "
+    "montaje real; usa persist= (S3) o upload_url/download_url mientras tanto"
+)
+VOLUME_CONTENT_REASON: Final = (
+    "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y "
+    "monta el volumen, o usa upload_url/download_url sobre persist="
 )
 
 UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
@@ -70,6 +76,7 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
         "get_mcp_token": MCP_REASON,
         "volume_mounts": VOLUME_REASON,
         "Volume": VOLUME_REASON,
+        "volume.read_file": VOLUME_CONTENT_REASON,
         "get_signature": (
             "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el "
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "
@@ -94,7 +101,6 @@ TEMPLATE_METHODS: Final = (
     "to_json",
     "to_dockerfile",
 )
-VOLUME_METHODS: Final = ("create", "connect", "destroy", "list", "get_info")
 
 
 def unimplemented(feature: str, reason: str | None = None) -> UnimplementedError:
@@ -126,9 +132,11 @@ class UnimplementedMember:
 
 
 def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> type[Any]:
-    """Una clase de E2B (`Template`, `Volume` y sus `Async*`) cuyo
-    constructor y cuyos classmethods públicos lanzan `unimplemented(feature)`:
-    nunca `AttributeError`."""
+    """Una clase de E2B (`Template`/`AsyncTemplate`) cuyo constructor y cuyos
+    classmethods públicos lanzan `unimplemented(feature)`: nunca
+    `AttributeError`. `Volume`/`AsyncVolume` usan su propio patrón en
+    `e2b/_volume.py`, porque a diferencia de `Template` sí llegan a tener
+    una implementación real (configurando `E2B(volume_store=...)`)."""
 
     def refuse_instance(cls: type, *args: Any, **kwargs: Any) -> NoReturn:
         raise unimplemented(feature)
@@ -144,8 +152,8 @@ def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> t
 
 Template: type[Any] = unimplemented_resource("Template", "Template", TEMPLATE_METHODS)
 AsyncTemplate: type[Any] = unimplemented_resource("AsyncTemplate", "Template", TEMPLATE_METHODS)
-Volume: type[Any] = unimplemented_resource("Volume", "Volume", VOLUME_METHODS)
-AsyncVolume: type[Any] = unimplemented_resource("AsyncVolume", "Volume", VOLUME_METHODS)
+# Volume/AsyncVolume live in e2b/_volume.py (m15-efs-volumes): real CRUD once
+# E2B(volume_store=...) configures one, UnimplementedError("Volume") otherwise.
 
 
 def get_signature(*args: Any, **kwargs: Any) -> NoReturn:

@@ -26,7 +26,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
 <!-- m15-s3-mounts -->
-<!-- m15-efs-volumes -->
+- **Dominio y puerto de volúmenes EFS** (`m15-efs-volumes`, ADR-018,
+  experimental): `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/
+  `MountState`/`VolumeError`, puro) y el puerto `VolumeMounter`. El único
+  adaptador de este cambio es `UnavailableEfsMounter`
+  (`support()` siempre `Unsupported`): `features::efs_volumes` sigue
+  `slot::Unsupported` y `Health.features.efs_volumes` sigue `false`,
+  pendiente de la campaña de medición EFS-1..EFS-20
+  (`docs/research/2026-10-efs-persistence.md`). `proto/rayito/v1/efs_volumes.proto`
+  gana sus mensajes reales (`EfsVolumesConfig`/`EfsVolumesStatus`).
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->

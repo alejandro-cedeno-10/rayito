@@ -967,12 +967,47 @@ dos de M15 foundations lo necesita) usa el mismo patrón que el resto del
 SDK para S3: `HeadObject` (clave = sha256 del contenido) antes de
 `PutObject`, así subir el mismo artefacto dos veces es un no-op.
 
-## 22. EFS (`m15-efs-volumes`)
+## 22. EFS (`m15-efs-volumes`, ADR-018, experimental, **contrato de parámetros**)
 
-Pendiente: `m15-efs-volumes` documenta aquí `CreateAccessPoint`,
-`DescribeAccessPoints`, `DeleteAccessPoint` (`VolumeStore`) y los
-parámetros de montaje NFS (`mount -t efs -o tls,iam,accesspoint`), tras la
-campaña de medición EFS-1..EFS-20.
+`VolumeStore` (Python `rayito/_volumes/_store.py`, TypeScript
+`src/volumes/store.ts`) llama a AWS EFS **con las credenciales del
+llamante**, nunca con las del execution role (eso es `efs-utils` dentro
+del guest, §4.2 más abajo). **Estas son las únicas operaciones y los
+únicos parámetros que los SDKs pueden usar**: la regla dura 1 vale también
+aquí. Verificado sin red el 2026-10-01, antes de escribir código: los
+nombres de Python contra el modelo `elasticfilesystem/2015-02-01` de
+botocore 1.43.103 (miembros de entrada y de salida de
+`CreateAccessPoint`, `DescribeAccessPoints`, `DeleteAccessPoint`,
+`DescribeMountTargets`); los de JavaScript son los mismos nombres de
+parámetro de la API REST de EFS, que `@aws-sdk/client-efs` expone sin
+cambios de forma. Referencia de la API:
+<https://docs.aws.amazon.com/efs/latest/ug/efs-api-reference.html>
+(consultada 2026-10-01).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `CreateAccessPoint` (`create_access_point` / `CreateAccessPointCommand`) | `ClientToken` (hash del nombre lógico, idempotente), `FileSystemId`, `PosixUser={Uid, Gid}` (1000:1000, fijo), `RootDirectory={Path, CreationInfo={OwnerUid, OwnerGid, Permissions}}` (`Path` = `/rayito-volumes/<nombre>`, `CreationInfo` 1000:1000 `0750`), `Tags=[{Key, Value}]` (`rayito:volume=<nombre>`) | `AccessPointId`, `AccessPointArn`, `LifeCycleState` | `elasticfilesystem:CreateAccessPoint` sobre el sistema de ficheros | <https://docs.aws.amazon.com/efs/latest/ug/API_CreateAccessPoint.html> |
+| `DescribeAccessPoints` (`describe_access_points` / `DescribeAccessPointsCommand`) | `AccessPointId` **o** `FileSystemId` (mutuamente excluyentes, nunca ambos), `MaxResults`, `NextToken` | `AccessPoints[].{AccessPointId, AccessPointArn, FileSystemId, RootDirectory.Path, Tags, LifeCycleState}`, `NextToken` | `elasticfilesystem:DescribeAccessPoints` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeAccessPoints.html> |
+| `DeleteAccessPoint` (`delete_access_point` / `DeleteAccessPointCommand`) | `AccessPointId` | — (sin cuerpo; `204`) | `elasticfilesystem:DeleteAccessPoint` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteAccessPoint.html> |
+| `DescribeMountTargets` (`describe_mount_targets` / `DescribeMountTargetsCommand`) | `AccessPointId` **o** `FileSystemId` (uno de los dos; nunca `MountTargetId` desde este SDK) | `MountTargets[].{MountTargetId, SubnetId, LifeCycleState, IpAddress, AvailabilityZoneId}` | `elasticfilesystem:DescribeMountTargets` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html> |
+
+`LifeCycleState` es una cadena cerrada (`creating`, `available`,
+`updating`, `deleting`, `deleted`, `error`); `VolumeStore` sólo trata
+`available` como listo para montar. `DescribeAccessPoints` sin
+`AccessPointId` ni `FileSystemId` describiría los access points de toda la
+cuenta: el SDK siempre manda uno de los dos. `CreateAccessPoint` exige
+`ClientToken`, `OwnerUid`/`OwnerGid`/`Permissions` completos dentro de
+`CreationInfo` (los tres o ninguno) y como mucho 4 componentes en `Path`
+(`research doc §4.1 regla 2`/modelo `efs`). Ningún error de EFS (`Error.Message`)
+se reexpone al llamante; sólo la clase (`VolumeException`/
+`VolumeNotFoundException`), igual que `secretsmanager` en §19.
+
+Dentro del guest, `efs-utils` (no un API de AWS: opciones del *mount
+helper*) sigue pendiente de las mediciones EFS-5/EFS-8:
+`mount -t efs -o tls,iam,accesspoint=<fsap>,mounttargetip=<ip>,noresvport[,ro]
+<fs-id>: <ruta>`. Esas opciones se fijan en este mismo §22 una vez
+EFS-8 responda; hasta entonces `rayd` no monta nada
+(`UnavailableEfsMounter`).
 
 ## 23. Mountpoint y S3 (`m15-s3-mounts`)
 

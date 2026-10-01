@@ -78,7 +78,7 @@ export {
   type PtyOutputCallback,
   type PtySize,
 } from "./pty.js";
-export { getSignature, Template, Volume } from "./resources.js";
+export { getSignature, Template } from "./resources.js";
 export { Sandbox, type SandboxInstanceConnectOpts, SandboxPaginator } from "./sandbox.js";
 export {
   Secret,
@@ -111,5 +111,6 @@ export type {
   SandboxState,
   SandboxUrlOpts,
 } from "./types.js";
+export { bindVolume, Volume } from "./volume.js";
 
 export default Sandbox;

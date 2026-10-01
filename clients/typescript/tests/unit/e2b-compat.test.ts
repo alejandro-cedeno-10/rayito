@@ -91,6 +91,7 @@ const D14_TS_KEYS = [
   "getMcpToken",
   "volumeMounts",
   "Volume",
+  "volume.readFile",
   "getSignature",
   "Template",
 ];

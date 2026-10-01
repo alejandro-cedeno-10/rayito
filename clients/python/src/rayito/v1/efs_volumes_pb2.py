@@ -24,15 +24,21 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1brayito/v1/efs_volumes.proto\x12\trayito.v1\"\x12\n\x10\x45\x66sVolumesConfig\"\x12\n\x10\x45\x66sVolumesStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1brayito/v1/efs_volumes.proto\x12\trayito.v1\"E\n\x10\x45\x66sVolumesConfig\x12\x31\n\x06mounts\x18\x01 \x03(\x0b\x32\x19.rayito.v1.EfsVolumeMountR\x06mounts\"\xc2\x01\n\x0e\x45\x66sVolumeMount\x12\x1d\n\nmount_path\x18\x01 \x01(\tR\tmountPath\x12$\n\x0e\x66ile_system_id\x18\x02 \x01(\tR\x0c\x66ileSystemId\x12&\n\x0f\x61\x63\x63\x65ss_point_id\x18\x03 \x01(\tR\raccessPointId\x12\x1b\n\tread_only\x18\x04 \x01(\x08R\x08readOnly\x12&\n\x0fmount_target_ip\x18\x05 \x01(\tR\rmountTargetIp\"H\n\x10\x45\x66sVolumesStatus\x12\x34\n\x07volumes\x18\x01 \x03(\x0b\x32\x1a.rayito.v1.EfsVolumeStatusR\x07volumes\"\x8b\x01\n\x0f\x45\x66sVolumeStatus\x12\x1d\n\nmount_path\x18\x01 \x01(\tR\tmountPath\x12/\n\x05state\x18\x02 \x01(\x0e\x32\x19.rayito.v1.EfsVolumeStateR\x05state\x12(\n\x10last_error_class\x18\x03 \x01(\tR\x0elastErrorClass*\x8c\x02\n\x0e\x45\x66sVolumeState\x12 \n\x1c\x45\x46S_VOLUME_STATE_UNSPECIFIED\x10\x00\x12\x1e\n\x1a\x45\x46S_VOLUME_STATE_REQUESTED\x10\x01\x12\x1d\n\x19\x45\x46S_VOLUME_STATE_MOUNTING\x10\x02\x12\x1c\n\x18\x45\x46S_VOLUME_STATE_MOUNTED\x10\x03\x12\x1d\n\x19\x45\x46S_VOLUME_STATE_DEGRADED\x10\x04\x12\x1f\n\x1b\x45\x46S_VOLUME_STATE_REMOUNTING\x10\x05\x12\x1e\n\x1a\x45\x46S_VOLUME_STATE_UNMOUNTED\x10\x06\x12\x1b\n\x17\x45\x46S_VOLUME_STATE_FAILED\x10\x07\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.efs_volumes_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_EFSVOLUMESTATE']._serialized_start=527
+  _globals['_EFSVOLUMESTATE']._serialized_end=795
   _globals['_EFSVOLUMESCONFIG']._serialized_start=42
-  _globals['_EFSVOLUMESCONFIG']._serialized_end=60
-  _globals['_EFSVOLUMESSTATUS']._serialized_start=62
-  _globals['_EFSVOLUMESSTATUS']._serialized_end=80
+  _globals['_EFSVOLUMESCONFIG']._serialized_end=111
+  _globals['_EFSVOLUMEMOUNT']._serialized_start=114
+  _globals['_EFSVOLUMEMOUNT']._serialized_end=308
+  _globals['_EFSVOLUMESSTATUS']._serialized_start=310
+  _globals['_EFSVOLUMESSTATUS']._serialized_end=382
+  _globals['_EFSVOLUMESTATUS']._serialized_start=385
+  _globals['_EFSVOLUMESTATUS']._serialized_end=524
 # @@protoc_insertion_point(module_scope)

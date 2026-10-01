@@ -77,6 +77,7 @@ from rayito._stacks._service import OptionalStacks
 from rayito._stacks._service_async import AsyncOptionalStacks
 from rayito._transport import TransportSettings
 from rayito._version import __version__
+from rayito._volumes import AsyncVolumeStore, EfsVolume, VolumeStatus, VolumeStore
 from rayito.exceptions import (
     AuthenticationException,
     BuildException,
@@ -142,6 +143,7 @@ __all__ = [
     "AsyncSandboxListPaginator",
     "AsyncSandboxPool",
     "AsyncUploadTicket",
+    "AsyncVolumeStore",
     "AsyncWatchHandle",
     "AuthenticationException",
     "BarChart",
@@ -164,6 +166,7 @@ __all__ = [
     "DiskFullException",
     "DownloadLink",
     "DynamoDbIndex",
+    "EfsVolume",
     "EgressEnforcement",
     "EgressProxy",
     "EntryInfo",
@@ -261,6 +264,8 @@ __all__ = [
     "VolumeException",
     "VolumeNotFoundException",
     "VolumePathNotFoundException",
+    "VolumeStatus",
+    "VolumeStore",
     "WatchHandle",
     "WebhookException",
     "WriteEntry",

@@ -16,6 +16,7 @@ export const COST_DECLARATIONS = [
   { name: "class Secret (e2b)", pattern: /^(export )?declare class Secret\b/ },
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
+  { name: "class VolumeStore", pattern: /^(export )?declare class VolumeStore\b/ },
 ];
 
 export const REQUIRED_HEADINGS = [

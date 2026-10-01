@@ -1,6 +1,10 @@
 """`rayito._feature_options.plan_features`: con las siete opciones en
 `None` no pasa nada; cualquiera puesta lanza `UnimplementedError` nombrando
-su propio cambio OpenSpec, antes de construir ningún `FeaturePlan`."""
+su propio cambio OpenSpec, antes de construir ningún `FeaturePlan`.
+`volumes=` ya no es un stub genérico (m15-efs-volumes reemplazó su rama con
+`require_volume_support`, que exige un `EfsVolume` real y valida rutas antes
+de llegar a `UnimplementedError`): su propio comportamiento se cubre en
+`test_m15_efs_volumes_section.py`, no en el parametrize de abajo."""
 
 from __future__ import annotations
 
@@ -20,7 +24,6 @@ def test_with_everything_none_the_plan_is_empty() -> None:
     ("field", "value", "option_name", "change_slug"),
     [
         ("mounts", {"/mnt/d": object()}, "mounts=", "m15-s3-mounts"),
-        ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
         ("size", "4gb", "size=", "m15-sizes-catalog"),
         ("events", object(), "events=", "m15-events-webhooks"),
         ("telemetry", object(), "telemetry=", "m15-rayd-otlp"),

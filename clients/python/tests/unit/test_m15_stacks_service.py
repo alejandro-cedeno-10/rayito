@@ -33,10 +33,12 @@ def test_deploying_an_unsupported_component_raises_before_touching_the_provision
 
 
 def test_destroying_an_unsupported_component_also_raises_first() -> None:
+    # sizes-guard, not efs-volumes: m15-efs-volumes made that component real
+    # (infra/efs-volumes.yaml), so it is supported=True now.
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
     with pytest.raises(UnimplementedError):
-        stacks.destroy("efs-volumes")
+        stacks.destroy("sizes-guard")
     assert fake.calls == []
 
 

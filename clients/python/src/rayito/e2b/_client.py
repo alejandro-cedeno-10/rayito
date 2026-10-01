@@ -12,11 +12,13 @@ from types import MappingProxyType
 from typing import Any, NoReturn, TypeVar, Unpack
 
 from rayito._index import DynamoDbIndex, validate_index
+from rayito._volumes import VolumeStore
 from rayito.e2b._async import AsyncSandbox
 from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_params
 from rayito.e2b._secret import AsyncSecret, Secret
 from rayito.e2b._sync import Sandbox
 from rayito.e2b._unimplemented import unimplemented
+from rayito.e2b._volume import AsyncVolume, Volume
 from rayito.e2b.exceptions import RayitoCompatWarning
 
 BoundClass = TypeVar("BoundClass", bound=type)
@@ -41,8 +43,10 @@ class E2B:
     (un `None` de la llamada cae al del cliente; `headers` de la llamada
     sustituyen a las del cliente). Los `ApiParams` ignorados avisan una sola
     vez, aquí. `client.Secret`/`client.AsyncSecret` usan su `region` y su
-    `session` (Secrets Manager en esa cuenta). `Template` y `Volume` (y sus
-    `Async*`) son `UnimplementedError`.
+    `session` (Secrets Manager en esa cuenta). `Template` (y `AsyncTemplate`)
+    siguen `UnimplementedError`; `client.Volume`/`client.AsyncVolume`
+    (m15-efs-volumes, experimental) sólo funcionan con
+    `volume_store=VolumeStore(...)` — sin él, también `UnimplementedError`.
 
     `index=DynamoDbIndex(...)` (extensión de Rayito, `None` por defecto) lo
     usan `client.Sandbox.list` y `client.AsyncSandbox.list` cuando la
@@ -57,6 +61,7 @@ class E2B:
         session: Any | None = None,
         control_plane: Any | None = None,
         index: DynamoDbIndex | None = None,
+        volume_store: VolumeStore | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -79,6 +84,7 @@ class E2B:
         }
         self.Secret: type[Secret] = bind_class(Secret, secret_bound)
         self.AsyncSecret: type[AsyncSecret] = bind_class(AsyncSecret, secret_bound)
+        self._volume_store = volume_store
 
     @property
     def Template(self) -> NoReturn:
@@ -89,9 +95,15 @@ class E2B:
         raise unimplemented("Template")
 
     @property
-    def Volume(self) -> NoReturn:
-        raise unimplemented("Volume")
+    def Volume(self) -> type[Volume]:
+        """`UnimplementedError("Volume")` sin `volume_store=` en el
+        constructor; si no, una subclase de `Volume` ligada a él."""
+        if self._volume_store is None:
+            raise unimplemented("Volume")
+        return bind_class(Volume, {}, _bound_store=self._volume_store)
 
     @property
-    def AsyncVolume(self) -> NoReturn:
-        raise unimplemented("Volume")
+    def AsyncVolume(self) -> type[AsyncVolume]:
+        if self._volume_store is None:
+            raise unimplemented("Volume")
+        return bind_class(AsyncVolume, {}, _bound_store=self._volume_store)

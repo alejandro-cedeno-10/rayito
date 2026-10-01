@@ -21,7 +21,23 @@ versionado [SemVer](https://semver.org/lang/es/).
   `run-microvm`. Sin ninguna opción nueva, el comportamiento es byte a
   byte el de 0.5.x.
 <!-- m15-s3-mounts -->
-<!-- m15-efs-volumes -->
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
+  por defecto): `VolumeStore` (CRUD real de access points EFS:
+  `CreateAccessPointCommand`/`DescribeAccessPointsCommand`/
+  `DeleteAccessPointCommand`, con `@aws-sdk/client-efs` como peer opcional
+  cargado sólo en el primer uso) y `Sandbox.create({ volumes })`, que
+  valida la petición (tipos, rutas, variante `caps`) antes de cualquier
+  llamada a AWS y siempre lanza `UnimplementedError` hasta que la campaña
+  de medición EFS-1..EFS-20 decida un adaptador de montaje real
+  (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
+  y los errores `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
+  El shim de E2B (`Volume`) hace CRUD real sobre
+  `new E2B({ volumeStore })`; sus operaciones de contenido
+  (`readFile`/`writeFile`/`makeDir`/`list`/`remove`) y `volumeMounts` sin
+  volumen configurado siguen `UnimplementedError`. Componente
+  `rayito stack {deploy,status,destroy} efs-volumes`
+  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, mount
+  targets, grupo de seguridad NFS y conector de egress dedicado).
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->

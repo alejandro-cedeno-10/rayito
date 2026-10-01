@@ -7,6 +7,7 @@
  */
 
 import { UnimplementedError } from "./errors.js";
+import { requireVolumeSupport } from "./volumes/section.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -42,12 +43,12 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
  * AWS ni construye ningún cliente.
  */
 export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
-  void imageVariant;
   if (options.mounts !== undefined) {
     throw new UnimplementedError("mounts", `llega en 0.6 (${MOUNTS_CHANGE})`);
   }
   if (options.volumes !== undefined) {
-    throw new UnimplementedError("volumes", `llega en 0.6 (${VOLUMES_CHANGE})`);
+    // m15-efs-volumes: validación real antes de la UnimplementedError genérica.
+    requireVolumeSupport(options.volumes, imageVariant);
   }
   if (options.size !== undefined) {
     throw new UnimplementedError("size", `llega en 0.6 (${SIZE_CHANGE})`);

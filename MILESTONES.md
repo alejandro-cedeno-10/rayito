@@ -1394,8 +1394,13 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
 
 - **s3-mounts** (`m15-s3-mounts`): montaje S3 vía `mount-s3`/FUSE en
   `rayito-base-caps`.
-- **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
-  pendiente de la campaña de medición EFS-1..EFS-20.
+- **efs-volumes** (`m15-efs-volumes`, ADR-018, experimental): dominio y
+  puerto (`rayd_core::volume`, `VolumeMounter`), `VolumeStore` (CRUD real de
+  access points EFS), `Sandbox.create(volumes=)` (valida y siempre lanza
+  `UnimplementedError`), `infra/efs-volumes.yaml` y el shim `Volume`
+  construidos; el montaje real en el guest (`rayd`'s único adaptador hoy es
+  `UnavailableEfsMounter`) queda pendiente de la campaña de medición
+  EFS-1..EFS-20.
 - **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
 - **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
   firmados y webhooks compatibles con E2B.

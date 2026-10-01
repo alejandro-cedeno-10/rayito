@@ -21,3 +21,11 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ## Índice de metadatos
 
 ::: rayito.DynamoDbIndex
+
+## Volúmenes EFS (experimental)
+
+::: rayito.VolumeStore
+
+::: rayito.EfsVolume
+
+::: rayito.VolumeStatus

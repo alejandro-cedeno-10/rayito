@@ -5,8 +5,10 @@
 //! capability mask, the policy route that blocks IMDS for the sandbox user,
 //! the egress policy routes over the shared `ip` runner (ADR-012),
 //! the tar/gzip home archiver, the S3 object store (ADR-009) and the
-//! credential-free HTTPS client of presigned transfers (ADR-010) and the
-//! bounded per-filesystem `syncfs` of `/suspend`.
+//! credential-free HTTPS client of presigned transfers (ADR-010), the
+//! bounded per-filesystem `syncfs` of `/suspend`, and the EFS volume
+//! mounter (ADR-018, `UnavailableEfsMounter` ahead of the measurement
+//! campaign).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -14,6 +16,7 @@ pub mod bounded_sync;
 pub mod capabilities;
 pub mod child_registry;
 pub mod credential_broker;
+pub mod efs_mount;
 pub mod egress_routes;
 pub mod fs_identity;
 pub mod imds_block;
@@ -37,6 +40,7 @@ pub use child_registry::ChildRegistry;
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
+pub use efs_mount::UnavailableEfsMounter;
 pub use fs_identity::FsIdentityGuard;
 pub use imds_block::{
     IMDS_ADDRESS, IMDS_VERIFY_BUDGET, ImdsBlock, ImdsProbe, ImdsState, USER_PROBE_CODE,
