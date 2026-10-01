@@ -123,6 +123,12 @@ def test_crud_round_trip_over_secrets_manager(api: FakeSecretsManager) -> None:
     assert Secret.exists("openai-key") is False
 
 
+def test_destroy_of_a_name_that_never_existed_is_false_like_e2b(api: FakeSecretsManager) -> None:
+    assert Secret.destroy("never-created") is False
+    assert asyncio.run(AsyncSecret.destroy("never-created")) is False
+    assert api.count("DeleteSecret") == 0
+
+
 def test_not_found_is_secret_not_found_and_native_not_found(api: FakeSecretsManager) -> None:
     with pytest.raises(SecretNotFoundException) as excinfo:
         Secret.get_info(SENTINEL_NAME)

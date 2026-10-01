@@ -81,6 +81,7 @@ describe("SDK adapter", () => {
     expect(fake.configs[0]).toMatchObject({ region: "eu-west-1", credentials });
     expect(fake.sent.map((command) => [command.name, command.input])).toEqual([
       ["GetSecretValueCommand", { SecretId: "rayito/a", VersionStage: "AWSPREVIOUS" }],
+      ["DescribeSecretCommand", { SecretId: "rayito/a" }],
       ["DeleteSecretCommand", { SecretId: "rayito/a", ForceDeleteWithoutRecovery: true }],
     ]);
   });

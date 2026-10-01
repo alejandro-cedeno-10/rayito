@@ -67,6 +67,25 @@ versionado [SemVer](https://semver.org/lang/es/).
   query.metadata)` en `rayito/e2b` nombra ahora la opción `index`.
 - `rayito/e2b` `Secret` y `E2B(...).Secret` ya no lanzan `UnimplementedError`.
 
+### Fixed
+
+- `SecretStore.destroy()` (y `Secret.destroy` de `rayito/e2b`) devolvía
+  `true` para un nombre que nunca existió, porque AWS acepta el
+  `DeleteSecret` forzado de un nombre inexistente sin
+  `ResourceNotFoundException` (aceptación de 0.5.0 en AWS real). Ahora hace
+  `DescribeSecret` antes y devuelve `false` sin borrar si no existe (o ya
+  estaba programado para borrarse, o lo borró otro a la vez), como documenta
+  y como E2B. Usa `secretsmanager:DescribeSecret`, ya incluido en
+  `RayitoSecretsAdmin`.
+- `SecretStore.create()` sobre un nombre recién borrado agotaba su
+  presupuesto de reintentos de 30 s: AWS liberó el nombre tras 19–28 s y el
+  backoff no llegaba. El presupuesto es ahora de 60 s
+  (`CREATE_RETRY_BUDGET_MS` en `src/secrets/store.ts`) con ±25 % de
+  jitter.
+- `docs/site/docs/secrets.md` avisa de que un `logger` del
+  `SecretsManagerClient` del SDK v3 imprime los valores (Rayito nunca lo
+  hace) y de que `list()` es eventualmente consistente (~3–5 s).
+
 ## [0.4.0] - 2026-09-30
 
 ### Cambios que rompen

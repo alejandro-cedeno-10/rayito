@@ -235,7 +235,7 @@ export class Secret {
     return resolveStore(this.boundOpts, opts).exists(secretSelector(secret));
   }
 
-  /** Lo borra sin ventana de recuperación; `false` si no existía. */
+  /** Lo borra sin ventana de recuperación: `true` si lo borró, `false` si no existía (como E2B). */
   static async destroy(secret: string, opts: SecretDestroyOpts = {}): Promise<boolean> {
     // biome-ignore lint/complexity/noThisInStatic: `this` es la subclase ligada de `new E2B(...).Secret`
     return resolveStore(this.boundOpts, opts).destroy(secretSelector(secret));

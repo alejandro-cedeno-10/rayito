@@ -33,7 +33,14 @@ import {
 
 const SECRETS_MANAGER_PEER = "@aws-sdk/client-secrets-manager";
 const UPDATE_WARNING_INTERVAL_MS = 600_000;
-const CREATE_RETRY_BUDGET_MS = 30_000;
+/**
+ * Recrear un nombre recién borrado (SEC-9): en la aceptación de 0.5.0 AWS
+ * liberó el nombre tras 19,3-27,9 s; 60 s deja margen al backoff (0,5 s
+ * doblando hasta 8 s, ±25 % de jitter para que varios procesos no reintenten
+ * al unísono). Espejo de `CREATE_RETRY_BUDGET_SECONDS` de `rayito/_secrets.py`.
+ */
+export const CREATE_RETRY_BUDGET_MS = 60_000;
+export const CREATE_RETRY_JITTER = 0.25;
 const CREATE_RETRY_FIRST_DELAY_MS = 500;
 const CREATE_RETRY_MAX_DELAY_MS = 8_000;
 const NOT_FOUND_MESSAGE = "el secreto no existe o está programado para borrarse";
@@ -121,9 +128,10 @@ export interface SecretStoreOptions {
   readonly kmsKeyId?: string | undefined;
   /** Un cliente propio con la forma de `SecretsManager` (el agregado del SDK v3), p. ej. en tests. */
   readonly client?: SecretsManagerApi | undefined;
-  /** Reloj en ms y espera: sólo para tests. */
+  /** Reloj en ms, espera y aleatorio del jitter: sólo para tests. */
   readonly now?: (() => number) | undefined;
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
+  readonly random?: (() => number) | undefined;
 }
 
 interface SecretsManagerModule {
@@ -248,8 +256,9 @@ const warnedUpdates = new Set<string>();
  * Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
  *   (`CreateSecretCommand`); `update` = `DescribeSecretCommand` +
  *   `PutSecretValueCommand` (+ `UpdateSecretCommand` con `metadata`);
- *   `getInfo`/`exists` = `DescribeSecretCommand`; `list` = `ListSecretsCommand`;
- *   `destroy` = `DeleteSecretCommand` sin ventana de recuperación.
+ *   `getInfo`/`exists` = `DescribeSecretCommand`; `list` = `ListSecretsCommand`
+ *   (eventualmente consistente: ~3-5 s); `destroy` = `DescribeSecretCommand` +
+ *   `DeleteSecretCommand` sin ventana de recuperación.
  * Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por 10 000
  *   llamadas (us-east-1, consultado 2026-09-30,
  *   https://aws.amazon.com/secrets-manager/pricing/).
@@ -258,6 +267,9 @@ const warnedUpdates = new Set<string>();
  *   `secretsmanager:ListSecrets` sobre `*` (política `RayitoSecretsAdmin` de
  *   `infra/secrets-access.yaml`); con `kmsKeyId`, `kms:GenerateDataKey` y
  *   `kms:Decrypt` sobre esa clave.
+ * Logs: ni el valor ni el nombre en los logs de Rayito; un `logger` en el
+ *   `SecretsManagerClient` del SDK v3 sí imprime el valor (no lo actives con
+ *   secretos).
  * Cómo apagarla: no instancies `SecretStore`; `destroy()` los secretos que ya
  *   no uses (se facturan hasta entonces).
  * Ejemplo:
@@ -274,6 +286,7 @@ export class SecretStore {
   readonly #kmsKeyId: string | undefined;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #random: () => number;
   readonly #api: LazyAwsApi<SecretsManagerApi>;
 
   constructor(options: SecretStoreOptions = {}) {
@@ -289,6 +302,7 @@ export class SecretStore {
     this.#kmsKeyId = options.kmsKeyId;
     this.#now = options.now ?? (() => performance.now());
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#random = options.random ?? Math.random;
     const credentials = options.credentials;
     this.#api = new LazyAwsApi(
       options.region,
@@ -316,7 +330,12 @@ export class SecretStore {
     return { region: this.#region, prefix: this.#prefix };
   }
 
-  /** `CreateSecret` con la versión 1; si el nombre aún se está borrando, reintenta hasta 30 s. */
+  /**
+   * `CreateSecret` con la versión 1. Si el nombre aún se está borrando
+   * (`destroy` reciente: AWS tarda ~20-30 s en liberarlo), reintenta con
+   * backoff y jitter durante `CREATE_RETRY_BUDGET_MS` (60 s) con el mismo
+   * `ClientRequestToken` y después lanza `SecretError`.
+   */
   async create(
     name: string,
     value: string,
@@ -404,7 +423,12 @@ export class SecretStore {
     }
   }
 
-  /** Una página de `ListSecrets` filtrada por el prefijo (sin los programados para borrarse). */
+  /**
+   * Una página de `ListSecrets` filtrada por el prefijo (sin los programados
+   * para borrarse). Es eventualmente consistente: un secreto recién creado o
+   * actualizado puede tardar ~3-5 s en aparecer (o en reflejar el cambio);
+   * `getInfo` no.
+   */
   async list(
     options: { readonly limit?: number | undefined; readonly nextToken?: string | undefined } = {},
   ): Promise<SecretPage> {
@@ -430,10 +454,17 @@ export class SecretStore {
     return Object.freeze({ items, nextToken: response.NextToken || undefined });
   }
 
-  /** `DeleteSecret(ForceDeleteWithoutRecovery)`; `false` si no existía. */
+  /**
+   * `DescribeSecret` y, si existe, `DeleteSecret(ForceDeleteWithoutRecovery)`:
+   * deja de facturarse y no se puede recuperar. `true` si lo borró; `false` si
+   * no existía (o ya estaba programado para borrarse, u otro lo borró a la
+   * vez), sin llamar a `DeleteSecret`: el borrado forzado de AWS no distingue
+   * un nombre inexistente.
+   */
   async destroy(name: string): Promise<boolean> {
     const secretId = resolveSecretId(name, this.#prefix);
     try {
+      await this.#describe(secretId);
       await this.#call("deleteSecret", (api) =>
         api.deleteSecret({ SecretId: secretId, ForceDeleteWithoutRecovery: true }),
       );
@@ -498,16 +529,18 @@ export class SecretStore {
     const deadline = this.#now() + CREATE_RETRY_BUDGET_MS;
     let delay = CREATE_RETRY_FIRST_DELAY_MS;
     for (;;) {
+      let remaining: number;
       try {
         return await api.createSecret(input);
       } catch (error) {
         if (!isScheduledForDeletion(error)) {
           throw translateError("createSecret", error);
         }
-        if (this.#now() + delay > deadline) {
+        remaining = deadline - this.#now();
+        if (remaining <= 0) {
           throw new SecretError(
-            "el nombre sigue programado para borrarse tras 30 s de reintentos (DeleteSecret es " +
-              "asíncrono): vuelve a intentarlo más tarde",
+            `el nombre sigue programado para borrarse tras ${CREATE_RETRY_BUDGET_MS / 1000} s de ` +
+              "reintentos (DeleteSecret es asíncrono): vuelve a intentarlo más tarde",
             {
               awsCode: "InvalidRequestException",
               cause: sanitizeAwsError(error, { includeMessage: false }),
@@ -515,7 +548,8 @@ export class SecretStore {
           );
         }
       }
-      await this.#sleep(delay);
+      const jitter = 1 + CREATE_RETRY_JITTER * (2 * this.#random() - 1);
+      await this.#sleep(Math.min(delay * jitter, remaining));
       delay = Math.min(delay * 2, CREATE_RETRY_MAX_DELAY_MS);
     }
   }

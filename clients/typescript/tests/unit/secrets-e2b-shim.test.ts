@@ -85,6 +85,12 @@ describe("rayito/e2b Secret", () => {
     expect(await Secret.destroy("openai-key", { client })).toBe(false);
   });
 
+  test("destroy of a name that never existed is false, like E2B", async () => {
+    const client = new FakeSecretsManager();
+    expect(await Secret.destroy("never-created", { client })).toBe(false);
+    expect(client.count("DeleteSecret")).toBe(0);
+  });
+
   test("not found is SecretNotFoundError without the name", async () => {
     const client = new FakeSecretsManager();
     const error = await Secret.getInfo(SENTINEL_NAME, { client }).catch((e: unknown) => e);

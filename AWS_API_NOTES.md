@@ -733,9 +733,9 @@ mensaje de AWS nunca se propaga porque puede nombrar el secreto):
 
 | Código | Dónde | Qué hace el SDK |
 |---|---|---|
-| `ResourceNotFoundException` | todas | `SecretNotFoundException`/`SecretNotFoundError` (no se guarda en caché); `destroy` devuelve `False` |
+| `ResourceNotFoundException` | todas | `SecretNotFoundException`/`SecretNotFoundError` (no se guarda en caché); `destroy` devuelve `False` (lo detecta con `DescribeSecret` antes de borrar: `DeleteSecret` forzado sobre un nombre inexistente **no** devuelve este código, medido en la aceptación de 0.5.0) |
 | `ResourceExistsException` | `CreateSecret`, `PutSecretValue` | `SecretException`: ya existe (create) o choque de versión entre dos escritores con valores distintos (put, SEC-9) |
-| `InvalidRequestException` | `CreateSecret` | "a secret with this name is already scheduled for deletion": reintento con backoff acotado (≤ 30 s en total) con el mismo `ClientRequestToken`, después `SecretException`; en cualquier otra operación, `SecretException` |
+| `InvalidRequestException` | `CreateSecret` | "a secret with this name is already scheduled for deletion": reintento con backoff exponencial y ±25 % de jitter, acotado a 60 s en total (`CREATE_RETRY_BUDGET_SECONDS`/`CREATE_RETRY_BUDGET_MS`), con el mismo `ClientRequestToken`, después `SecretException`; en cualquier otra operación, `SecretException` |
 | `LimitExceededException` | `CreateSecret`, `PutSecretValue`, `UpdateSecret` | `SecretException` que recuerda el límite de versiones y la recomendación de 10 min |
 | `ThrottlingException` | todas (código genérico de AWS, no modelado) | `RateLimitException`/`RateLimitError` tras los reintentos `standard` del SDK de AWS |
 | `AccessDeniedException` | todas (código genérico de AWS, no modelado) | `SecretException` que nombra la acción IAM que falta, nunca el ARN |

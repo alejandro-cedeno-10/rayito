@@ -98,6 +98,26 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   limpio (mensaje con el puerto, salida 1, sin traceback) sin gastar
   ninguna llamada. Sin dependencias nuevas.
 
+### Fixed
+
+- `SecretStore.destroy()` (y `Secret.destroy`/`AsyncSecret.destroy` del shim
+  de E2B) devolvía `True` para un nombre que nunca existió, porque AWS
+  acepta el `DeleteSecret` forzado de un nombre inexistente sin
+  `ResourceNotFoundException` (aceptación de 0.5.0 en AWS real). Ahora hace
+  `DescribeSecret` antes y devuelve `False` sin borrar si no existe (o ya
+  estaba programado para borrarse, o lo borró otro a la vez), como documenta
+  y como E2B. Usa `secretsmanager:DescribeSecret`, ya incluido en
+  `RayitoSecretsAdmin`.
+- `SecretStore.create()` sobre un nombre recién borrado agotaba su
+  presupuesto de reintentos de 30 s: AWS liberó el nombre tras 19–28 s y el
+  backoff no llegaba. El presupuesto es ahora de 60 s
+  (`CREATE_RETRY_BUDGET_SECONDS`) con ±25 % de jitter.
+- El e2e de secretos (SEC-10) ponía el logger raíz a DEBUG y capturaba los
+  cuerpos de botocore con el valor del secreto; ahora captura sólo el logger
+  `rayito`. `docs/site/docs/secrets.md` avisa de que el DEBUG de
+  botocore/urllib3 imprime los valores (Rayito nunca lo hace) y de que
+  `list()` es eventualmente consistente (~3–5 s).
+
 ## [0.4.0] - 2026-09-30
 
 ### Fixed

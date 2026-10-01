@@ -16,6 +16,8 @@ from botocore.stub import Stubber
 
 from rayito import SecretStore
 from rayito._secrets import (
+    CREATE_RETRY_BUDGET_SECONDS,
+    CREATE_RETRY_JITTER,
     DESCRIPTION_MAX_CHARS,
     IAM_ACTIONS,
     METADATA_PREFIX,
@@ -272,15 +274,16 @@ def test_get_info_list_and_destroy_parameters() -> None:
                 "NextToken": "tok-1",
             },
         )
+        stub.add_response("describe_secret", described, expected_params={"SecretId": "rayito/a"})
         stub.add_response(
             "delete_secret",
             {"ARN": arn_for("rayito/a"), "Name": "rayito/a", "DeletionDate": CREATED},
             expected_params={"SecretId": "rayito/a", "ForceDeleteWithoutRecovery": True},
         )
         stub.add_client_error(
-            "delete_secret",
+            "describe_secret",
             service_error_code="ResourceNotFoundException",
-            expected_params={"SecretId": "rayito/gone", "ForceDeleteWithoutRecovery": True},
+            expected_params={"SecretId": "rayito/gone"},
         )
         info = store.get_info("a")
         page = store.list(limit=10, next_token="tok-1")
@@ -326,14 +329,7 @@ def test_get_secret_value_parameters_with_a_version_selector() -> None:
 
 def test_create_retries_while_the_name_is_scheduled_for_deletion() -> None:
     api = FakeSecretsManager()
-    failures = [
-        client_error(
-            "InvalidRequestException",
-            "You can't create this secret because a secret with this name is already "
-            "scheduled for deletion.",
-            "CreateSecret",
-        )
-    ] * 2
+    failures = [scheduled_for_deletion()] * 2
     real_create = api.create_secret
 
     def create_secret(**params: Any) -> dict[str, Any]:
@@ -346,6 +342,7 @@ def test_create_retries_while_the_name_is_scheduled_for_deletion() -> None:
     store = store_with(api)
     sleeps: list[float] = []
     store._sleep = sleeps.append
+    store._random = lambda: 0.5  # jitter neutro
     info = store.create("a", "v")
     assert info.version == 1
     assert sleeps == [0.5, 1.0]
@@ -353,22 +350,89 @@ def test_create_retries_while_the_name_is_scheduled_for_deletion() -> None:
     assert tokens == {version_token(1)}
 
 
-def test_create_gives_up_after_the_30_second_budget() -> None:
-    api = FakeSecretsManager()
+def scheduled_for_deletion() -> Exception:
+    error: Exception = client_error(
+        "InvalidRequestException",
+        "You can't create this secret because a secret with this name is already "
+        "scheduled for deletion.",
+        "CreateSecret",
+    )
+    return error
 
-    def always_deleting(**params: Any) -> dict[str, Any]:
-        raise client_error("InvalidRequestException", "scheduled for deletion", "CreateSecret")
 
-    api.create_secret = always_deleting  # type: ignore[method-assign]
+def store_on_a_fake_clock(api: Any, *, random: float = 0.5) -> tuple[SecretStore, list[float]]:
     store = store_with(api)
     now = [0.0]
     store._clock = lambda: now[0]
     store._sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+    store._random = lambda: random
+    return store, now
+
+
+def test_the_create_retry_budget_is_60_s_with_25_percent_jitter() -> None:
+    assert CREATE_RETRY_BUDGET_SECONDS == 60.0
+    assert CREATE_RETRY_JITTER == 0.25
+
+
+def test_create_gives_up_after_the_60_second_budget() -> None:
+    api = FakeSecretsManager()
+
+    def always_deleting(**params: Any) -> dict[str, Any]:
+        api._record("CreateSecret", params)
+        raise scheduled_for_deletion()
+
+    api.create_secret = always_deleting  # type: ignore[method-assign]
+    store, now = store_on_a_fake_clock(api)
     with pytest.raises(SecretException) as excinfo:
         store.create(SENTINEL_NAME, SENTINEL_VALUE)
-    assert now[0] <= 30.0
+    assert now[0] == pytest.approx(CREATE_RETRY_BUDGET_SECONDS)
+    assert "60 s" in str(excinfo.value)
+    assert excinfo.value.aws_code == "InvalidRequestException"
     assert SENTINEL_NAME not in str(excinfo.value)
     assert SENTINEL_VALUE not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("random", [0.0, 0.5, 1.0])
+@pytest.mark.parametrize("freed_after", [19.3, 26.8, 27.9, 45.0])
+def test_create_outlasts_the_name_reuse_delay_measured_on_aws(
+    random: float, freed_after: float
+) -> None:
+    """Aceptación de 0.5.0: AWS liberó el nombre tras 19,3-27,9 s; el
+    presupuesto de 30 s fallaba con el backoff. Con 60 s y cualquier jitter
+    `create` lo recrea."""
+    api = FakeSecretsManager()
+    real_create = api.create_secret
+    store, now = store_on_a_fake_clock(api, random=random)
+
+    def freed_later(**params: Any) -> dict[str, Any]:
+        if now[0] < freed_after:
+            api._record("CreateSecret", params)
+            raise scheduled_for_deletion()
+        return real_create(**params)
+
+    api.create_secret = freed_later  # type: ignore[method-assign]
+    assert store.create("a", "v").version == 1
+    assert freed_after <= now[0] <= CREATE_RETRY_BUDGET_SECONDS
+
+
+def test_create_retry_delays_are_jittered_by_25_percent_and_capped() -> None:
+    api = FakeSecretsManager()
+    failures = [scheduled_for_deletion() for _ in range(7)]
+    real_create = api.create_secret
+
+    def create_secret(**params: Any) -> dict[str, Any]:
+        if failures:
+            raise failures.pop()
+        return real_create(**params)
+
+    api.create_secret = create_secret  # type: ignore[method-assign]
+    store = store_with(api)
+    sleeps: list[float] = []
+    store._sleep = sleeps.append
+    randoms = iter([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
+    store._random = lambda: next(randoms)
+    store.create("a", "v")
+    assert sleeps == pytest.approx([0.375, 1.25, 1.5, 5.0, 6.0, 10.0, 6.0])
 
 
 def test_create_on_an_existing_name_and_other_invalid_requests_do_not_retry() -> None:
@@ -379,6 +443,63 @@ def test_create_on_an_existing_name_and_other_invalid_requests_do_not_retry() ->
         store.create(SENTINEL_NAME, "v")
     assert SENTINEL_NAME not in str(excinfo.value)
     assert excinfo.value.aws_code == "ResourceExistsException"
+
+
+def test_destroy_of_a_name_that_never_existed_is_false_without_deleting() -> None:
+    """AWS no da `ResourceNotFoundException` en un `DeleteSecret` forzado de un
+    nombre inexistente (aceptación de 0.5.0): `destroy` pregunta antes."""
+    api = FakeSecretsManager()
+    store = store_with(api)
+    assert store.destroy(SENTINEL_NAME) is False
+    assert api.count("DeleteSecret") == 0
+    store.create("a", "v")
+    assert store.destroy("a") is True
+    assert store.destroy("a") is False
+    assert [op for op, _ in api.requests if op != "CreateSecret"] == [
+        "DescribeSecret",
+        "DescribeSecret",
+        "DeleteSecret",
+        "DescribeSecret",
+    ]
+
+
+def test_destroy_of_a_secret_scheduled_for_deletion_is_false_without_deleting() -> None:
+    client = stubbed_client()
+    store = SecretStore(session=cast(Any, SpySession(api=client)))
+    with Stubber(client) as stub:
+        stub.add_response(
+            "describe_secret",
+            {"ARN": arn_for("rayito/a"), "Name": "rayito/a", "DeletedDate": CREATED},
+            expected_params={"SecretId": "rayito/a"},
+        )
+        assert store.destroy("a") is False
+        stub.assert_no_pending_responses()
+
+
+def test_destroy_that_loses_a_race_with_another_delete_is_false() -> None:
+    api = FakeSecretsManager()
+    store = store_with(api)
+    store.create("a", "v")
+
+    def deleted_meanwhile(**params: Any) -> dict[str, Any]:
+        raise client_error("ResourceNotFoundException", "not found", "DeleteSecret")
+
+    api.delete_secret = deleted_meanwhile  # type: ignore[method-assign]
+    assert store.destroy("a") is False
+
+
+def test_destroy_propagates_other_errors_without_the_name() -> None:
+    api = FakeSecretsManager()
+    store = store_with(api)
+    store.create(SENTINEL_NAME, "v")
+
+    def denied(**params: Any) -> dict[str, Any]:
+        raise client_error("AccessDeniedException", f"no access to {SENTINEL_NAME}", "DeleteSecret")
+
+    api.delete_secret = denied  # type: ignore[method-assign]
+    with pytest.raises(SecretException, match="secretsmanager:DeleteSecret") as excinfo:
+        store.destroy(SENTINEL_NAME)
+    assert SENTINEL_NAME not in str(excinfo.value)
 
 
 def test_not_found_is_both_secret_and_native_not_found_without_the_name() -> None:
