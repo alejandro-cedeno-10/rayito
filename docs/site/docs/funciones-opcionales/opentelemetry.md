@@ -34,8 +34,13 @@ backend que tú configures. <small>Desde 0.5.0</small>
 === "Python"
 
     ```bash
-    pip install "rayito[otel]"
+    pip install "rayito[otel]" opentelemetry-sdk
     ```
+
+    El extra `otel` sólo trae `opentelemetry-api`. Los ejemplos usan el SDK
+    de OpenTelemetry (`TracerProvider`, `ConsoleSpanExporter`), que va
+    aparte; si ya tienes un proveedor configurado en tu servicio, el extra
+    basta.
 
 === "TypeScript"
 
@@ -149,6 +154,8 @@ están reservadas: hoy ningún span las emite.
 | Síntoma | Causa | Qué hacer |
 |---|---|---|
 | `ModuleNotFoundError: opentelemetry` al pasar `tracer_provider=` | falta el extra | `pip install "rayito[otel]"` |
+| `ModuleNotFoundError: No module named 'opentelemetry.sdk'` | el extra `otel` sólo instala la API, no el SDK | `pip install opentelemetry-sdk` |
+| `Cannot find module '@opentelemetry/sdk-trace-base'` (TypeScript) | falta el SDK de trazas | `npm i @opentelemetry/sdk-trace-base` |
 | no aparece ningún span | el provider no tiene un procesador o no se vacía al salir | añade un `SpanProcessor` y llama a `provider.shutdown()` al terminar |
 | spans del shim de E2B | el shim no está instrumentado | usa el SDK nativo (`sbx.native` en el shim) |
 

@@ -59,9 +59,17 @@ ejecutar el SDK (tu usuario de desarrollo, el rol de tu servicio, el de tu
 CI):
 
 ```bash
-aws cloudformation describe-stacks --stack-name rayito-m0-iam \
-  --query "Stacks[0].Outputs[?OutputKey=='CallerPolicyArn'].OutputValue" --output text
+CALLER_POLICY_ARN=$(aws cloudformation describe-stacks --stack-name rayito-m0-iam \
+  --query "Stacks[0].Outputs[?OutputKey=='CallerPolicyArn'].OutputValue" --output text)
+
+# a un usuario de IAM:
+aws iam attach-user-policy --user-name <tu-usuario> --policy-arn "$CALLER_POLICY_ARN"
+# o a un rol (el de tu servicio o tu CI):
+aws iam attach-role-policy --role-name <tu-rol> --policy-arn "$CALLER_POLICY_ARN"
 ```
+
+Con IAM Identity Center (SSO) no se asigna a un usuario: añade la política
+al *permission set* de tu acceso desde la consola de Identity Center.
 
 Parámetros opcionales de la plantilla: `TransferBucket` y `TransferPrefix`
 para [ficheros grandes y URLs de S3](../files.md), y `PersistenceBucket` y
@@ -77,13 +85,23 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    gh release download rayd-v0.5.0 --repo alejandro-cedeno-10/rayito \
-      --pattern 'rayito-image.zip*'      # el zip y su firma de Sigstore
+    RAYD_VERSION=0.5.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION
+    curl -fsSLO "$BASE/rayito-image.zip"
+    curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
     rayito image publish --artifact rayito-image.zip --base-image-version 1
     ```
 
+    Usa el `rayd` de la misma versión que el SDK instalado: si la imagen es
+    más vieja, la comprobación `compatibility` de `rayito doctor` lo marca.
+    Todas las versiones están en las
+    [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
     Opcional pero recomendable: comprueba la firma antes de publicar
     ([Verificar una release](../verify.md)).
+
+    Con la CLI de GitHub (`gh`, autenticada con `gh auth login`) es lo mismo
+    en una línea:
+    `gh release download "rayd-v$RAYD_VERSION" --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*'`.
 
 === "Desde el código fuente"
 

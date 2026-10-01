@@ -218,6 +218,8 @@ rayito --json sandbox metrics microvm-<id> --follow --interval 5 --token-file ~/
 `metrics` imprime la instantánea de `get_metrics()` ([CLI](cli.md)); conectar
 despierta un sandbox suspendido.
 
+<a id="instalacion"></a><a id="ejemplo"></a><a id="nombres-de-span"></a><a id="atributos"></a><a id="que-no-incluye-m13b"></a>
+
 ## Trazas OpenTelemetry del SDK (opcional)
 
 Spans del lado del SDK (`rayito.sandbox.create`, `rayito.commands.run`,

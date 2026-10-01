@@ -280,6 +280,25 @@ ya iguala ese enlace. No se ha medido desde un cliente en la misma región.
 - **`use_octet_stream`** se acepta sin efecto (gRPC no tiene formulario
   multipart).
 
+## Coste de S3
+
+Sin bucket de transferencias (ni `transfer=` ni `RAYITO_TRANSFER_BUCKET`),
+`sbx.files` no toca S3 y no añade ningún coste. Con bucket, S3 cobra en tu
+factura:
+
+- **Peticiones**: un `PutObject`/`GetObject` (o las partes de un multipart)
+  por cada fichero de `threshold_bytes` o más y por cada URL que se use.
+- **Almacenamiento temporal**: los objetos del prefijo de transferencias
+  hasta que se borran; la regla de ciclo de vida de 1 día de `infra/README.md`
+  pone el tope.
+
+A cambio, los ficheros grandes tardan mucho menos, y eso son menos segundos
+de MicroVM facturados. Cifras y ejemplos: [Costes](cost.md); precios
+actuales: [Amazon S3](https://aws.amazon.com/s3/pricing/).
+
+Ojo: exportar `RAYITO_TRANSFER_BUCKET` basta para encender este camino en
+cada `create()` del proceso, también en el shim de E2B.
+
 ## IAM y el bucket
 
 Las credenciales que firman son las de **tu** proceso (el llamante), nunca un

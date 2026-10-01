@@ -21,6 +21,8 @@ Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
 `RUNNING`, por GB en cada snapshot y por el almacenamiento de las versiones
 de imagen y de los sandboxes suspendidos.
 
+<a id="precios-fuente-aws_api_notesmd-12"></a>
+
 ## Precios
 
 | Concepto | Precio |
@@ -50,6 +52,8 @@ distintas, y es fácil confundirlas:
 | Reciclado: cada ≈ 7 h la plaza se relanza y se vuelve a aparcar para que nunca llegue al límite de 8 h | ≈ $0,005 por ciclo ≈ **$0,52/mes** |
 | **Total de una plaza ociosa** | ≈ **$0,6/mes** (frente a ≈ $91/mes de un sandbox `RUNNING` todo el mes) |
 | Tomar una plaza | $0,0014 (lectura del snapshot) + el cómputo normal mientras la usas |
+
+<a id="tiempos-fuente-docsbenchmarks2026-09-cold-startmd-milestonesmd-aws_api_notesmd-16"></a>
 
 ## Tiempos
 

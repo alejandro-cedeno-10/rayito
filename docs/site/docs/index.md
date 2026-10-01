@@ -13,7 +13,7 @@ credenciales.
 
 > Sandboxes que aparecen en un destello. Dentro de tu propia cuenta de AWS.
 
-[Empezar en 5 minutos](primeros-pasos/index.md){ .md-button .md-button--primary }
+[Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
 ## Empieza en tres pasos
@@ -39,8 +39,12 @@ el diagnóstico dice qué falta antes del primer sandbox:
 
 ```bash
 export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
-rayito doctor
+rayito doctor --template "$RAYITO_TEMPLATE"
 ```
+
+`RAYITO_TEMPLATE` es la imagen que usará `Sandbox.create()`; `rayito doctor`
+no la lee, así que pásasela con `--template` (sin él comprueba
+`rayito-base`).
 
 **3. Crea tu primer sandbox.**
 
@@ -68,6 +72,11 @@ rayito doctor
     ```
 
     1. `await using` mata el sandbox al salir del bloque.
+
+Guarda el código en `primer.py` y ejecútalo con `python primer.py`, o en
+`primer.ts` y ejecútalo con `npx tsx primer.ts` (TypeScript necesita
+`"type": "module"` y un `tsconfig.json`: ver
+[Ejecutar los ejemplos](primeros-pasos/instalacion.md#ejecutar-los-ejemplos)).
 
 Siguiente paso: [Primer sandbox](quickstart.md) recorre comandos, ficheros,
 código y reconexión en Python, Python async y TypeScript.
@@ -142,10 +151,12 @@ código y reconexión en Python, Python async y TypeScript.
   aceptan el código escrito para E2B 2.x cambiando sólo el import. Lo que la
   plataforma no puede hacer lanza `UnimplementedError`: nada se aproxima en
   silencio.
-- **Nunca cobra por sorpresa.** Toda función que gasta dinero de AWS además
-  del propio sandbox (secretos, índice de metadatos) está apagada por
-  defecto y se activa con una opción explícita
-  ([Funciones opcionales](optional-features.md)).
+- **Nunca cobra por sorpresa.** Las funciones opcionales que gastan dinero
+  de AWS además del propio sandbox (secretos, índice de metadatos) están
+  apagadas por defecto y sólo se activan con una opción explícita del SDK
+  ([Funciones opcionales](optional-features.md)). La otra vía con coste
+  propio, el bucket de transferencias por S3, también la eliges tú
+  (`transfer=` o `RAYITO_TRANSFER_BUCKET`; ver [Ficheros y S3](files.md)).
 
 ## Qué incluye
 

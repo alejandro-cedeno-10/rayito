@@ -7,6 +7,8 @@ cuenta** desde `image/Dockerfile`. El SDK necesita una imagen con un
 familias de funciones, una variante concreta. `rayito doctor` comprueba la versión del
 agente de la imagen ([CLI](cli.md#rayito-doctor)).
 
+<a id="que-imagen-necesita-cada-feature"></a>
+
 ## Qué imagen necesita cada función
 
 Las tres variantes salen del mismo `Dockerfile`: `rayito-base-caps` es el

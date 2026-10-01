@@ -74,9 +74,11 @@ arranca un servidor dentro y llega a él por HTTPS a través del proxy de AWS.
 
 ## Paso a paso
 
-1. El servidor del sandbox debe escuchar en un puerto (cualquiera menos el
-   9000, reservado para el agente). Puede escuchar en `127.0.0.1` o en
-   `0.0.0.0`: el proxy de AWS corre dentro del MicroVM.
+1. El servidor del sandbox debe escuchar en un puerto libre. Dos están
+   ocupados por `rayd`: el **8080** (su gRPC, por donde habla el SDK) y el
+   **9000** (los hooks de Lambda). `get_host()` sólo rechaza el 9000; un
+   `get_host(8080)` llega a `rayd`, no a tu aplicación. Puede escuchar en
+   `127.0.0.1` o en `0.0.0.0`: el proxy de AWS corre dentro del MicroVM.
 2. `get_host(port)` acuña un token del proxy para ese puerto (un JWE que
    dura 60 min) y lo renueva solo a los 45 min mientras el handle viva.
    `host.headers` siempre devuelve el token vigente: léelo en cada petición,
@@ -104,7 +106,7 @@ arranca un servidor dentro y llega a él por HTTPS a través del proxy de AWS.
 |---|---|---|
 | `403` del proxy | faltan las cabeceras o el token caducó | usa `host.headers` en cada petición |
 | `502` del proxy | nada escucha en ese puerto todavía, o el sandbox está terminando | espera a que el servidor arranque; comprueba con `commands.run("curl -s localhost:3000")` |
-| `InvalidArgumentException` / `InvalidArgumentError` | puerto fuera de 1–65535 o el 9000 | usa otro puerto |
+| `InvalidArgumentException` / `InvalidArgumentError` | puerto fuera de 1–65535 o el 9000 | usa otro puerto (y tampoco el 8080, que es de `rayd`) |
 | el sandbox estaba suspendido | la primera petición lo despierta (auto-resume) | normal: tarda ≈ 0,7 s más |
 
 ## Diferencias con E2B

@@ -260,6 +260,8 @@ uv run --project clients/python python scripts/publish_image.py \
 de `rayito-base` reconstruida con el mismo `Dockerfile` (dentro de la banda
 de ±20 MB de memoria / ±10 MB de código respecto a 17.0) están en Q57.
 
+<a id="agentes-anteriores-a-m7"></a><a id="agentes-anteriores-a-m9"></a>
+
 ## Agentes antiguos
 
 ??? note "Agentes anteriores a M7 (`rayd` < 0.2.0)"

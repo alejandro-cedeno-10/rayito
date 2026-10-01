@@ -50,9 +50,12 @@ pausa, sin despertarlos y sin sondear uno a uno.
 Despliega la tabla una vez:
 
 ```bash
+curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/metadata-index.yaml
 aws cloudformation deploy --stack-name rayito-metadata-index \
-  --template-file infra/metadata-index.yaml --capabilities CAPABILITY_IAM
+  --template-file metadata-index.yaml --capabilities CAPABILITY_IAM
 ```
+
+(Si clonaste el repositorio, la plantilla ya está en `infra/metadata-index.yaml`.)
 
 === "Python"
 

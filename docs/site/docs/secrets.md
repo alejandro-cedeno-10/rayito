@@ -87,7 +87,28 @@ KMS (`kms_key_id=`) añade el coste de KMS y los permisos `kms:Decrypt` /
 `destroy` usa `DescribeSecret` y `DeleteSecret`, las dos incluidas). Con
 `KmsKeyArn`, añade `kms:Decrypt` (y `kms:GenerateDataKey` en la de
 administrador) sólo a través de Secrets Manager (`kms:ViaService`).
-Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md#secretos-infrasecrets-accessyaml-m13a).
+Para desplegarla:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/secrets-access.yaml
+aws cloudformation deploy --stack-name rayito-secrets-access \
+  --template-file secrets-access.yaml --capabilities CAPABILITY_IAM \
+  --parameter-overrides SecretPrefix=rayito/
+# con una clave KMS propia (SecretStore(kms_key_id=...)), añade al final:
+#   KmsKeyArn=arn:aws:kms:<región>:<cuenta>:key/<id>
+
+aws cloudformation describe-stacks --stack-name rayito-secrets-access \
+  --query "Stacks[0].Outputs" --output table    # ReaderPolicyArn y AdminPolicyArn
+```
+
+Asigna `ReaderPolicyArn` (o `AdminPolicyArn` si vas a crear y borrar
+secretos) a quien ejecuta el SDK, igual que la política de
+[Configurar AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam):
+`aws iam attach-user-policy` o `aws iam attach-role-policy`. `SecretPrefix`
+debe coincidir con `SecretStore(prefix=)`. Para borrarla:
+`aws cloudformation delete-stack --stack-name rayito-secrets-access` (quita
+las políticas, no los secretos). Más detalle:
+[`infra/README.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md#secretos-infrasecrets-accessyaml-m13a).
 
 ## Ejemplos
 

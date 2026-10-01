@@ -156,6 +156,8 @@ credenciales de git, ni el JWE, las cabeceras, los cuerpos ni las rutas de
 lo que pasa por `rayito sandbox proxy`, ni valores ni nombres de secretos. Sólo ids, códigos de
 estado, recuentos y duraciones.
 
+<a id="rayito-sandbox-proxy-m12"></a>
+
 ## `rayito sandbox proxy`
 
 El proxy local (`rayito sandbox proxy <id> --port N`, [CLI](cli.md#proxy))

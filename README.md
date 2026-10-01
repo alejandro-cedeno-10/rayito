@@ -346,9 +346,14 @@ Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
    `rayito-image.zip` firmado de la release:
 
    ```bash
-   gh release download rayd-v0.5.0 --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*'
+   RAYD_VERSION=0.5.0   # la misma versión que tu SDK instalado
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION/rayito-image.zip"
    rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket <tu-bucket>
    ```
+
+   La imagen debe ser de la misma versión que el SDK (`rayito doctor` lo
+   comprueba); las versiones están en las
+   [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
 
    O desde el código fuente con `make image-publish BUCKET=<tu-bucket>`
    (también `image-publish-caps` / `-poly`), que compila `rayd` para

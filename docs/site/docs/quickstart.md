@@ -1,5 +1,7 @@
 # Primer sandbox
 
+<a id="quickstart"></a><a id="instalacion"></a><a id="credenciales"></a><a id="la-imagen"></a>
+
 En esta página creas un sandbox, ejecutas un comando, escribes y lees un
 fichero, ejecutas código Python con estado y lo destruyes. Después te
 reconectas a un sandbox desde otro proceso.
@@ -11,6 +13,13 @@ y la imagen `rayito-base` publicada en tu cuenta
 ```bash
 export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 ```
+
+!!! tip "Cómo ejecutar cada ejemplo"
+    Guarda el código en un fichero y ejecútalo: `python primer.py` en
+    Python, `npx tsx primer.ts` en TypeScript. En TypeScript el proyecto
+    necesita `"type": "module"` y un `tsconfig.json` con
+    `"lib": ["ES2022", "ESNext.Disposable"]`; la receta completa está en
+    [Ejecutar los ejemplos](primeros-pasos/instalacion.md#ejecutar-los-ejemplos).
 
 ## Crear, usar y destruir
 
@@ -144,6 +153,8 @@ reinicio:
   `run_code` ejecuta código en un kernel con estado.
 - `sandbox_id` + `access_token` bastan para reconectar desde cualquier
   proceso con credenciales de AWS.
+
+<a id="siguiente"></a>
 
 ## Siguiente paso
 

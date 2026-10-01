@@ -175,6 +175,8 @@ rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-re
   hay stream ni grupo: `sin logs: el sandbox se lanzó con logging disabled,
   sin executionRoleArn, o en otro grupo (--log-group)` y salida 1.
 
+<a id="create-connect-exec-y-metrics-m9"></a>
+
 ### `create`, `connect`, `exec` y `metrics`
 
 Los cuatro comandos operativos de la CLI de E2B que Lambda MicroVMs puede

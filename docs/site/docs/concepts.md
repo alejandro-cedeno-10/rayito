@@ -44,6 +44,8 @@ objetivo.
 
 Si esta página y `ARCHITECTURE.md` difieren, manda `ARCHITECTURE.md`.
 
+<a id="desde-que-lenguajes-se-usa-rayito"></a>
+
 ## Desde otros lenguajes
 
 Los SDK oficiales son Python y TypeScript. `rayd` es un servidor gRPC

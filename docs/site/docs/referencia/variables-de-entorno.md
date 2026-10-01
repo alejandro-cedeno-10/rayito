@@ -1,9 +1,15 @@
 # Variables de entorno
 
 Rayito se configura con argumentos explícitos; estas variables son atajos
-para no repetirlos. Ninguna activa una función con coste: las
-[funciones opcionales](../optional-features.md) sólo se encienden con una
-opción del SDK.
+para no repetirlos. Ninguna enciende una de las
+[funciones opcionales](../optional-features.md) (secretos, índice de
+metadatos, OpenTelemetry): esas sólo se activan con una opción del SDK.
+
+!!! warning "La excepción: `RAYITO_TRANSFER_BUCKET`"
+    Con esta variable exportada, `files.write` / `files.read` de 8 MiB o
+    más y las URLs firmadas pasan por S3, que cobra sus peticiones y el
+    almacenamiento temporal del prefijo de transferencias
+    ([Ficheros y S3](../files.md#coste-de-s3), [Costes](../cost.md)).
 
 ## SDK (Python y TypeScript)
 

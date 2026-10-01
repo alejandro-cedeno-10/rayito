@@ -94,7 +94,7 @@ hay.
     with Sandbox.create() as sbx:
         plot = sbx.run_code("import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); plt.show()")
         chart = plot.results[0]
-        print(chart.formats())  # ['png', 'chart']
+        print(chart.formats())  # incluye 'png' y 'chart'
         with open("grafico.png", "wb") as out:
             out.write(base64.b64decode(chart.png or ""))  # (1)!
     ```
@@ -114,7 +114,7 @@ hay.
         async with await AsyncSandbox.create() as sbx:
             plot = await sbx.run_code("import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); plt.show()")
             chart = plot.results[0]
-            print(chart.formats())  # ['png', 'chart']
+            print(chart.formats())  # incluye 'png' y 'chart'
             with open("grafico.png", "wb") as out:
                 out.write(base64.b64decode(chart.png or ""))
 
@@ -131,7 +131,7 @@ hay.
     await using sbx = await Sandbox.create();
     const plot = await sbx.runCode("import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); plt.show()");
     const chart = plot.results[0];
-    console.log(chart?.formats()); // ["png", "chart"]
+    console.log(chart?.formats()); // incluye "png" y "chart"
     await writeFile("grafico.png", Buffer.from(chart?.png ?? "", "base64"));
     ```
 

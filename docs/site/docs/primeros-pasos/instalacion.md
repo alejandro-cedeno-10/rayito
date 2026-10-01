@@ -47,7 +47,7 @@ Nada de esto hace falta para empezar.
 |---|---|---|
 | La CLI `rayito` | `pip install "rayito[cli]"` | (usa la de Python) |
 | El servidor MCP ([Servidor MCP](../mcp.md)) | `pip install "rayito[mcp]"` | — |
-| Trazas OpenTelemetry ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]"` | `npm i @opentelemetry/api` |
+| Trazas OpenTelemetry ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]" opentelemetry-sdk` | `npm i @opentelemetry/api @opentelemetry/sdk-trace-base` |
 | Secretos de Secrets Manager ([Secretos](../secrets.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
 | Índice de metadatos en DynamoDB ([Índice](../funciones-opcionales/indice-de-metadatos.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-dynamodb` |
 
@@ -81,6 +81,59 @@ un error de autenticación (ver [Solución de problemas](../operacion/solucion-d
     ```bash
     node --input-type=module -e 'import { VERSION } from "rayito"; console.log(VERSION)'
     ```
+
+## Ejecutar los ejemplos
+
+Los ejemplos de esta documentación son programas completos: guárdalos en un
+fichero y ejecútalo.
+
+=== "Python"
+
+    ```bash
+    python primer.py
+    ```
+
+    No hace falta nada más: el ejemplo con `asyncio.run(...)` también se
+    ejecuta así.
+
+=== "TypeScript"
+
+    Los ejemplos usan `await` en el nivel superior y `await using`, así que
+    el proyecto tiene que ser un módulo ES con un `tsconfig.json` que los
+    entienda. Una vez por proyecto:
+
+    ```bash
+    npm init -y
+    npm pkg set type=module            # "type": "module" en package.json
+    pnpm add rayito                    # o: npm i rayito
+    pnpm add -D tsx typescript @types/node
+    ```
+
+    Y un `tsconfig.json` mínimo:
+
+    ```json
+    {
+      "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["ES2022", "ESNext.Disposable"],
+        "module": "nodenext",
+        "types": ["node"],
+        "strict": true,
+        "skipLibCheck": true
+      }
+    }
+    ```
+
+    Guarda el ejemplo como `primer.ts` y ejecútalo con
+    [`tsx`](https://tsx.is/), que corre TypeScript sin compilar:
+
+    ```bash
+    npx tsx primer.ts
+    npx tsc --noEmit                   # opcional: comprobar los tipos
+    ```
+
+    Si prefieres compilar, `npx tsc` y luego `node primer.js` funcionan con
+    el mismo `tsconfig.json`.
 
 ## Siguiente paso
 

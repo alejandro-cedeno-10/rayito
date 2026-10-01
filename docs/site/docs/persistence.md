@@ -10,6 +10,8 @@ Lo hace `rayd`, el agente de la VM, **como root y con el execution role**
 leído por IMDSv2: el código del sandbox (uid 1000) sigue sin poder alcanzar
 IMDS en la imagen `rayito-base-caps`, y nada pasa por tu máquina.
 
+<a id="quickstart"></a>
+
 ## Ejemplo rápido
 
 Necesitas la imagen `rayito-base-caps`, un execution role con acceso al
