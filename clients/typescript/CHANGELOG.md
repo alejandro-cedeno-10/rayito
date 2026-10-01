@@ -8,6 +8,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- **Índice de metadatos sobre DynamoDB** (`m14-metadata-index`, opcional y
+  apagado por defecto, ADR-014): `new DynamoDbIndex({ tableName, region,
+  credentials, onWriteFailure: "terminate", ttlMarginSeconds: 3600 })` y la
+  opción `index` en `Sandbox.create()`, `Sandbox.list()`,
+  `Sandbox.paginate()` y `PoolConfig`. `create()` escribe una fila inmutable
+  (`PutItemCommand` condicional) tras `run-microvm`; con `metadata` e
+  `index`, `list()`/`paginate()` unen `list-microvms` con
+  `BatchGetItemCommand` por página y filtran también sandboxes `SUSPENDED`
+  sin ninguna sonda. Nuevos errores `SandboxIndexError` e `IndexWriteError`.
+  `@aws-sdk/client-dynamodb` es una peerDependency **opcional** que sólo se
+  carga con `loadOptionalPeer` al usar el índice. Coste: ~1 WRU por sandbox
+  creado y 0,5 RRU por candidato listado.
+- **Shim de E2B**: `Sandbox.list({ query: { metadata, state: ["paused"] },
+  index })` y `new E2B({ index })`.
 - **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
   apagado por defecto, ADR-014): `new SecretStore({ region, credentials,
   prefix, kmsKeyId })` con `create`/`update`/`getInfo`/`exists`/`list`/
@@ -32,6 +46,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Changed
 
+- El motivo de `UnimplementedError` de `list(query.state=paused,
+  query.metadata)` en `rayito/e2b` nombra ahora la opción `index`.
 - `rayito/e2b` `Secret` y `E2B(...).Secret` ya no lanzan `UnimplementedError`.
 
 ## [0.4.0] - 2026-09-30

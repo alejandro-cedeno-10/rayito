@@ -19,6 +19,7 @@ import {
 } from "../aws/control-plane.js";
 import {
   errorMessage,
+  IndexWriteError,
   InvalidArgumentError,
   NotFoundError,
   SandboxNotFoundError,
@@ -28,6 +29,7 @@ import {
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
+import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
 import {
@@ -269,6 +271,34 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * Sólo pasan `readyTimeoutMs`, `requestTimeoutMs`, `reconnectTimeoutMs` y `logger`.
    */
   readonly pool?: SandboxPool | undefined;
+  /**
+   * Índice opcional de metadatos (M14): tras `run-microvm` y antes de la
+   * sonda de readiness escribe una fila inmutable (`metadata`, imagen,
+   * `startedAt`) en tu tabla DynamoDB, para que `Sandbox.list({ metadata,
+   * index })` encuentre el sandbox también suspendido y sin sondearlo. Si
+   * `PutItem` falla, con `onWriteFailure: "terminate"` (por defecto) el VM se
+   * termina (salvo `keepOnFailure`) y se lanza `IndexWriteError`; con
+   * `"warn"` sólo se avisa en el `logger`. Con `pool` es
+   * `InvalidArgumentError`: se configura en `PoolConfig.index`. `kill()` no
+   * toca el índice.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `index: new DynamoDbIndex({...})` escribe la fila de este sandbox.
+   * Recursos y llamadas AWS: `dynamodb:PutItem` una vez (condicional
+   *   `attribute_not_exists(pk)`); ningún recurso nuevo (la tabla la
+   *   despliegas tú con `infra/metadata-index.yaml`). Sin `index` no se carga
+   *   `@aws-sdk/client-dynamodb`.
+   * Coste aproximado: ~1 WRU ≈ $0,000000625 por sandbox + $0,25/GB-mes
+   *   (DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+   * IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`) en las
+   *   credenciales del llamante.
+   * Cómo apagarla: `index: undefined` (por defecto).
+   * Ejemplo:
+   *   const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+   *   const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
+   */
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 /**
@@ -298,6 +328,31 @@ export interface SandboxListOptions extends ControlPlaneOptions {
   readonly order?: ListOrder | undefined;
   readonly requestTimeoutMs?: number | undefined;
   readonly transport?: Partial<TransportSettings> | undefined;
+  /**
+   * Con `metadata`, resuelve el filtro con el índice opcional de metadatos
+   * (M14) en vez de sondear: un `BatchGetItem` por página de
+   * `list-microvms` y la unión con sus filas; ningún `get-microvm`, token ni
+   * `Health`, así que nada se despierta. `states` admite cualquier estado no
+   * terminal (por defecto todos). El estado es siempre el de
+   * `list-microvms`; sólo aparecen los sandboxes creados con ese índice. Sin
+   * `metadata` no cambia nada. El `nextToken` queda ligado a la tabla.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `index: new DynamoDbIndex({...})` junto a `metadata`.
+   * Recursos y llamadas AWS: `dynamodb:BatchGetItem` una vez por página (≤ 50
+   *   claves, eventualmente consistente).
+   * Coste aproximado: 0,5 RRU por candidato ($0,125 por millón de RRU,
+   *   DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+   * IAM: `dynamodb:BatchGetItem` sobre la tabla (`RayitoIndexReader`).
+   * Cómo apagarla: `index: undefined` (por defecto): la sonda O(n) de siempre.
+   * Ejemplo:
+   *   const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+   *   for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+   *     console.log(item.sandboxId, item.state);
+   *   }
+   */
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 /** `limit` items por `nextItems()` (todos si falta) y un `nextToken` de un paginador anterior con los mismos filtros. */
@@ -385,6 +440,47 @@ function listingContext(options: SandboxListOptions): ListingContext {
 /** `SUSPENDED` sin auto-resume de la plataforma: sólo `resume-microvm` lo despierta. */
 function needsExplicitResume(info: SandboxInfo): boolean {
   return info.state === "SUSPENDED" && !(info.idle?.autoResume ?? false);
+}
+
+/**
+ * La fila del índice de `create({ index })`, tras `run-microvm` y antes de la
+ * sonda de readiness. Si `PutItem` falla: con `onWriteFailure: "terminate"`
+ * termina el VM (salvo `keepOnFailure`) y lanza `IndexWriteError`; con
+ * `"warn"` avisa (sin metadatos) y sigue.
+ */
+async function writeIndexRecord(
+  index: DynamoDbIndex,
+  info: SandboxInfo,
+  metadata: Readonly<Record<string, string>> | undefined,
+  context: {
+    readonly controlPlane: ControlPlane;
+    readonly keepOnFailure: boolean;
+    readonly logger: Logger | undefined;
+  },
+): Promise<void> {
+  try {
+    await index.put(index.record(info, metadata));
+  } catch (error) {
+    const awsCode = (error as { awsCode?: unknown } | null)?.awsCode;
+    const code = typeof awsCode === "string" ? awsCode : errorName(error);
+    if (index.onWriteFailure === "warn") {
+      context.logger?.warn?.(
+        "índice de metadatos: no se pudo escribir la fila; el sandbox sigue vivo pero no aparecerá en list({ metadata, index })",
+        { sandboxId: info.sandboxId, reason: code },
+      );
+      return;
+    }
+    if (!context.keepOnFailure) {
+      await terminateQuietly(context.controlPlane, info.sandboxId, context.logger);
+    }
+    throw error instanceof IndexWriteError
+      ? error
+      : new IndexWriteError(`no se pudo escribir la fila del índice (${code})`, { cause: error });
+  }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 /** Limpieza best-effort de un MicroVM que no llegó a estar listo: el error original es el que importa. */
@@ -495,6 +591,12 @@ export class Sandbox implements AsyncDisposable {
       allowInternetAccess: options.allowInternetAccess,
     });
     validatePolicyShape(network);
+    const index = validateIndex(options.index);
+    if (options.pool !== undefined && index !== undefined) {
+      throw new InvalidArgumentError(
+        "create({ pool }) no admite index: la fila del índice la escribe el pool al rellenar cada plaza; pásalo como PoolConfig.index",
+      );
+    }
     if (options.pool !== undefined && options.persist !== undefined) {
       throw new InvalidArgumentError(
         "create({ pool }) no admite persist: una plaza del pool no puede restaurar un home con nombre al tomarla",
@@ -547,6 +649,13 @@ export class Sandbox implements AsyncDisposable {
       sandboxId: info.sandboxId,
       state: info.state,
     });
+    if (index !== undefined) {
+      await writeIndexRecord(index, info, options.metadata, {
+        controlPlane: plane,
+        keepOnFailure: options.keepOnFailure ?? false,
+        logger: options.logger,
+      });
+    }
     const sandbox = await Sandbox.#open(info, {
       accessToken: plan.accessToken,
       controlPlane: plane,

@@ -11,5 +11,5 @@ export default defineConfig({
   clean: true,
   // Peers opcionales (ADR-014): sólo `loadOptionalPeer` los importa, en
   // tiempo de ejecución y dentro de la función activada; nunca se empaquetan.
-  external: ["@aws-sdk/client-secrets-manager"],
+  external: ["@aws-sdk/client-dynamodb", "@aws-sdk/client-secrets-manager"],
 });

@@ -7,6 +7,7 @@
  */
 
 import { InvalidArgumentError } from "../errors.js";
+import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { type IdlePolicy, type IdlePolicyInput, validateIdlePolicy } from "../models.js";
 import { validatedCpuTimeLimit, validatedStringMap } from "../payload.js";
 import {
@@ -50,6 +51,28 @@ export interface PoolConfig {
   readonly sweepIntervalMs?: number | undefined;
   /** Plazo de readiness de cada calentamiento; por defecto 90 000. */
   readonly readyTimeoutMs?: number | undefined;
+  /**
+   * Índice opcional de metadatos (M14): el pool escribe la fila de cada
+   * plaza al lanzarla, con la `metadata` del pool, así
+   * `Sandbox.list({ metadata, states: ["SUSPENDED"], index })` encuentra
+   * también las plazas aparcadas. Una escritura fallida con
+   * `onWriteFailure: "terminate"` descarta la plaza como cualquier otro
+   * calentamiento fallido.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `index: new DynamoDbIndex({...})` escribe una fila por plaza lanzada.
+   * Recursos y llamadas AWS: `dynamodb:PutItem` una vez por plaza lanzada; sin
+   *   `index` no se carga `@aws-sdk/client-dynamodb`.
+   * Coste aproximado: ~1 WRU por plaza ≈ $0,000000625 (DynamoDB on-demand,
+   *   us-east-1, consultado 2026-09-30) + $0,25/GB-mes almacenado.
+   * IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`).
+   * Cómo apagarla: `index: undefined` (por defecto).
+   * Ejemplo:
+   *   const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+   *   const pool = new SandboxPool({ size: 2, metadata: { pool: "a" }, index });
+   */
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 /** `PoolConfig` con todos los valores por defecto aplicados y validados. */
@@ -70,6 +93,7 @@ export interface ResolvedPoolConfig {
   readonly fillConcurrency: number;
   readonly sweepIntervalMs: number;
   readonly readyTimeoutMs: number;
+  readonly index: DynamoDbIndex | undefined;
 }
 
 function requireInteger(name: string, value: unknown, min: number, max: number): number {
@@ -135,6 +159,7 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
   if (config.cpuTimeLimit !== undefined) {
     validatedCpuTimeLimit(config.cpuTimeLimit);
   }
+  const index = validateIndex(config.index);
   return Object.freeze({
     size,
     template: config.template,
@@ -152,6 +177,7 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     fillConcurrency,
     sweepIntervalMs,
     readyTimeoutMs,
+    index,
   });
 }
 
@@ -169,8 +195,9 @@ export function launchOptions(config: ResolvedPoolConfig): {
   readonly egress: readonly string[] | undefined;
   readonly logging: LoggingOption;
   readonly readyTimeoutMs: number;
+  readonly index?: DynamoDbIndex;
 } {
-  return {
+  const launch = {
     template: config.template,
     templateVersion: config.templateVersion,
     timeoutMs: config.timeoutMs,
@@ -184,4 +211,7 @@ export function launchOptions(config: ResolvedPoolConfig): {
     logging: config.logging,
     readyTimeoutMs: config.readyTimeoutMs,
   };
+  // `index` sólo aparece si el pool lo configuró: sin él, las plazas se
+  // lanzan exactamente como en 0.4.0.
+  return config.index === undefined ? launch : { ...launch, index: config.index };
 }

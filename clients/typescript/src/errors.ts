@@ -280,3 +280,19 @@ export function errorMessage(error: unknown): string {
   }
   return String(error);
 }
+
+/**
+ * Error del índice opcional de metadatos (`DynamoDbIndex`, M14): la tabla no
+ * existe, faltan permisos IAM o `BatchGetItem` dejó claves sin procesar tras
+ * los reintentos. Un listado con índice nunca devuelve una lista incompleta
+ * en silencio. El mensaje nunca repite el de AWS; `awsCode` es el código de
+ * DynamoDB, si lo hubo.
+ */
+export class SandboxIndexError extends SandboxError {}
+
+/**
+ * `create({ index })` no pudo escribir la fila del sandbox (`PutItem`). Con
+ * `onWriteFailure: "terminate"` (por defecto) el MicroVM ya se terminó,
+ * salvo `keepOnFailure: true`.
+ */
+export class IndexWriteError extends SandboxIndexError {}

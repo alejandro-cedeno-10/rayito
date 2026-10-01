@@ -13,6 +13,8 @@
 import type { ControlPlane } from "../aws/control-plane.js";
 import { SandboxError, SandboxNotFoundError } from "../errors.js";
 import type { HealthResponse } from "../gen/rayito/v1/health_pb.js";
+import { joined } from "../index/join.js";
+import type { IndexRecord } from "../index/record.js";
 import type { SandboxInfo, SandboxListItem } from "../models.js";
 import type { TransportSettings } from "../transport/transport.js";
 import {
@@ -87,9 +89,13 @@ async function matching(
   request: ListingRequest,
   filters: ListFilters,
   item: SandboxListItem,
+  records: ReadonlyMap<string, IndexRecord>,
 ): Promise<SandboxListItem | undefined> {
   if (!filters.accepts(item)) {
     return undefined;
+  }
+  if (request.index !== undefined) {
+    return joined(item, records.get(item.sandboxId), request.wanted, request.index.nowSeconds());
   }
   if (!request.hasMetadata) {
     return item;
@@ -104,7 +110,9 @@ async function matching(
 /**
  * Los items que pasan los filtros, página a página y en orden de AWS. Se
  * detiene en cada `yield`, así que el cursor del `PageWalk` refleja
- * exactamente lo consumido cuando el caller deja de pedir.
+ * exactamente lo consumido cuando el caller deja de pedir. Con índice
+ * (`metadata` + `index`), un `BatchGetItem` por página y la unión con sus
+ * filas: ni `get-microvm`, ni token, ni `Health`.
  */
 async function* matchingItems(
   context: ListingContext,
@@ -112,6 +120,7 @@ async function* matchingItems(
   filters: ListFilters,
   walk: PageWalk,
 ): AsyncGenerator<SandboxListItem> {
+  let records: ReadonlyMap<string, IndexRecord> = new Map();
   while (true) {
     const page = walk.pageToFetch();
     if (page !== undefined) {
@@ -123,13 +132,20 @@ async function* matchingItems(
           nextToken: page.awsToken,
         }),
       );
+      if (request.index !== undefined) {
+        const candidates = walk
+          .buffered()
+          .filter((item) => filters.accepts(item))
+          .map((item) => item.sandboxId);
+        records = await request.index.batchGet(candidates);
+      }
       continue;
     }
     const raw = walk.nextRaw();
     if (raw === undefined) {
       return;
     }
-    const kept = await matching(context, request, filters, raw);
+    const kept = await matching(context, request, filters, raw, records);
     if (kept !== undefined) {
       yield kept;
     }

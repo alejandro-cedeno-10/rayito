@@ -516,15 +516,19 @@ const E2B_STATE_FILTERS: Readonly<Record<SandboxState, readonly string[]>> = Obj
 });
 
 export const LIST_METADATA_STATE_REASON =
-  "los metadatos viven en el agente; leerlos despertaría el sandbox";
+  "los metadatos viven en el agente; leerlos despertaría el sandbox. Pasa " +
+  "index: new DynamoDbIndex({...}) (tabla opcional en tu cuenta, ver optional-features.md) " +
+  "para filtrar sandboxes en pausa por metadatos sin despertarlos";
 export const LIST_METADATA_STATE_FEATURE = "list(query.state=paused, query.metadata)";
 
 /**
  * `list({ query, order, limit, nextToken })` de E2B como opciones de
- * `Sandbox.paginate()`. `query.metadata` sólo filtra sandboxes `RUNNING`: con
- * `state: ["running"]` viaja `RUNNING`, y con cualquier otro estado es
- * `UnimplementedError` antes de tocar AWS, como en Python, porque leer los
- * metadatos despertaría el sandbox.
+ * `Sandbox.paginate()`. Sin `index`, `query.metadata` sólo filtra sandboxes
+ * `RUNNING`: con `state: ["running"]` viaja `RUNNING`, y con cualquier otro
+ * estado es `UnimplementedError` antes de tocar AWS, como en Python, porque
+ * leer los metadatos despertaría el sandbox. Con la extensión `index` de
+ * Rayito, los estados de E2B se mapean tal cual (`paused` =
+ * `SUSPENDING|SUSPENDED`) y los metadatos salen de la tabla, sin sondas.
  */
 export function mapListOptions(opts: SandboxListOpts = {}): SandboxPaginateOptions {
   const { connection } = splitConnectionOpts(opts);
@@ -537,14 +541,15 @@ export function mapListOptions(opts: SandboxListOpts = {}): SandboxPaginateOptio
     query.state !== undefined &&
     query.state.length > 0 &&
     query.state.every((s) => s === "running");
-  if (query.metadata !== undefined && query.state !== undefined && !runningOnly) {
+  const indexed = opts.index !== undefined;
+  if (query.metadata !== undefined && query.state !== undefined && !runningOnly && !indexed) {
     throw new UnimplementedError(
       LIST_METADATA_STATE_FEATURE,
       LIST_METADATA_STATE_REASON,
       COMPAT_DOC_PATH,
     );
   }
-  const narrowed = query.metadata !== undefined && runningOnly ? ["RUNNING"] : states;
+  const narrowed = query.metadata !== undefined && runningOnly && !indexed ? ["RUNNING"] : states;
   return {
     ...connection,
     ...defined({
@@ -555,6 +560,7 @@ export function mapListOptions(opts: SandboxListOpts = {}): SandboxPaginateOptio
       order: opts.order,
       limit: opts.limit,
       nextToken: opts.nextToken,
+      index: opts.index,
     }),
   };
 }
