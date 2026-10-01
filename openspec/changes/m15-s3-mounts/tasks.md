@@ -54,6 +54,12 @@
 - [x] 7.6 `openspec/changes/m15-s3-mounts/docs-delta.md`: exact replacement rows for `SECURITY.md` (T20), `docs/site/docs/security.md`, `e2b-parity.md` (row 111), `optional-features.md`, `cost.md`, `referencia/errores.md`, `referencia/variables-de-entorno.md` — none of those shared files edited directly.
 - [x] 7.7 `mkdocs build -f docs/site/mkdocs.yml --strict` clean (nav entry and stub page already existed from foundations).
 
+## 7a. e2e (not run here; feature-build agents must not touch AWS)
+
+- [x] 7a.1 `clients/python/tests/e2e/test_s3_mounts_e2e.py`: S3M-1..S3M-4, gated on `RAYITO_E2E=1` + `RAYITO_TEMPLATE_CAPS` + `RAYITO_S3_MOUNT_BUCKET`, each `pytest.skip`-ing with an explicit reason until `Sandbox.create(mounts=)` is wired.
+- [x] 7a.2 `clients/typescript/tests/e2e/m15-s3-mounts.e2e.test.ts`: the same four scenarios, mirroring the Python file.
+- [x] 7a.3 Verified only by collection (`pytest --collect-only`: 4 deselected; `vitest run --project e2e`: 42 skipped across all 12 e2e files, mine included) — never run against AWS from here.
+
 ## 8. OpenSpec
 
 - [x] 8.1 `proposal.md`, `design.md`, `tasks.md` (this file).
