@@ -19,7 +19,8 @@ def test_signature_matches_sha256_of_secret_plus_payload() -> None:
     secret = b"the-webhook-secret"
     payload = b'{"event_id":"evt-1"}'
     signed = sign_delivery(webhook_id="wh-1", secret=secret, payload=payload)
-    expected = base64.b64encode(hashlib.sha256(secret + payload).digest()).decode("ascii").rstrip("=")
+    expected_bytes = hashlib.sha256(secret + payload).digest()
+    expected = base64.b64encode(expected_bytes).decode("ascii").rstrip("=")
     assert signed.headers[HEADER_SIGNATURE] == expected
     assert "=" not in signed.headers[HEADER_SIGNATURE]
 

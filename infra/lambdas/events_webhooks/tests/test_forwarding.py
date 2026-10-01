@@ -9,8 +9,8 @@ import hmac
 import json
 
 from domain.forwarding import (
-    REASON_MALFORMED,
     REASON_MAC_INVALID,
+    REASON_MALFORMED,
     REASON_SANDBOX_MISMATCH,
     Accepted,
     Rejected,
@@ -21,6 +21,7 @@ from domain.mac import derive_sandbox_key
 
 def _compute_mac(key: bytes, payload: bytes) -> bytes:
     return hmac.new(key, payload, hashlib.sha256).digest()
+
 
 STACK_KEY = b"stack-wide-secret"
 SANDBOX_ID = "sbx-0000000000000001"

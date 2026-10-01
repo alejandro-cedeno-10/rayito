@@ -27,7 +27,29 @@ Pendiente.
 
 ## Eventos y webhooks (`m15-events-webhooks`)
 
-Pendiente.
+`rayd` emite `created`/`paused`/`resumed`/`killed` firmados por HMAC en su
+propio stdout, sólo cuando `ConfigureSandbox` trae una clave por sandbox
+(derivada y empujada por el SDK; `rayd` nunca ve el secreto del stack). Una
+pila opcional (`infra/events-webhooks.yaml`) los verifica, guarda en
+DynamoDB (TTL 7 días) y entrega a tus webhooks con firma compatible con
+E2B, con un guardián SSRF. Un reconciliador (`rate(5 min)`) sintetiza
+`killed{unknown}` para sandboxes que `ListMicrovms` ya no reporta. Nuevo:
+`LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/`destroy`,
+`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), CLI
+`rayito events`. Apagado por defecto; `events=` exige
+`logging="cloudwatch"`.
+
+**Pendiente de la aceptación contra AWS real:** CP-4/CP-5 (si `/terminate`
+llega siempre y si las líneas de `/suspend` alcanzan CloudWatch a tiempo),
+el supuesto del forwarder sobre el nombre del *log stream*, y el flujo de
+extremo a extremo (entrega firmada, línea forjada descartada, timeout
+sintetizado). Ver `AWS_API_NOTES.md` §25 y `ADR-020`.
+
+**Hueco de integración conocido:** `create()` todavía no envía la sección
+de `ConfigureSandbox` de esta función (necesita `sandbox_id`, que sólo se
+conoce después de `run-microvm`); `events=` ya valida, pero la clave por
+sandbox aún no llega a `rayd` en esta iteración. Ver `ADR-020`, "Hueco de
+integración conocido".
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 

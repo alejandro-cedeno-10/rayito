@@ -4,7 +4,6 @@ window) collides on purpose, a different one never does."""
 from __future__ import annotations
 
 import pytest
-
 from domain.dedupe import reconciler_window_start_ms, synthetic_event_id
 
 

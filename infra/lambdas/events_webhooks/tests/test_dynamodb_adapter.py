@@ -28,13 +28,13 @@ class FakeTable:
         self.items: dict[tuple[str, str], dict[str, Any]] = {}
         self.meta = type("Meta", (), {"client": _Client})()
 
-    def put_item(self, *, Item: dict[str, Any], ConditionExpression: str | None = None) -> None:  # noqa: N803
+    def put_item(self, *, Item: dict[str, Any], ConditionExpression: str | None = None) -> None:
         key = (Item["pk"], Item["sk"])
         if ConditionExpression and key in self.items:
             raise _ConditionalCheckFailedException()
         self.items[key] = dict(Item)
 
-    def delete_item(self, *, Key: dict[str, Any]) -> None:  # noqa: N803
+    def delete_item(self, *, Key: dict[str, Any]) -> None:
         self.items.pop((Key["pk"], Key["sk"]), None)
 
     def scan(self, **kwargs: Any) -> dict[str, Any]:
@@ -48,7 +48,9 @@ class FakeTable:
         return {"Items": items}
 
 
-def _event(sandbox_id: str = "sbx-1", kind: str = "created", event_id: str = "evt-1") -> LifecycleEvent:
+def _event(
+    sandbox_id: str = "sbx-1", kind: str = "created", event_id: str = "evt-1"
+) -> LifecycleEvent:
     return LifecycleEvent(
         event_id=event_id,
         sandbox_id=sandbox_id,

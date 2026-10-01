@@ -12,7 +12,6 @@ import ssl
 from urllib.parse import urlsplit
 
 from domain.ssrf import IpAddress, first_safe_address
-from ports import HttpSender
 
 #: Generous for a webhook receiver that may be a Lambda Function URL cold
 #: start; `deliverer.py`'s own retry budget (≤ 3 attempts) is what actually
@@ -52,7 +51,11 @@ def _resolve(hostname: str, port: int) -> list[IpAddress]:
     for family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
         hostname, port, proto=socket.IPPROTO_TCP
     ):
-        host = sockaddr[0]
+        # `sockaddr[0]` is always the address as a string (its type is a
+        # union only because `getaddrinfo`'s stub covers every address
+        # family generically); `str(...)` satisfies the type checker
+        # without changing the value.
+        host = str(sockaddr[0])
         addresses.append(
             ipaddress.ip_address(host.split("%")[0] if family == socket.AF_INET6 else host)
         )
@@ -75,8 +78,16 @@ def _send(
     against whatever host you construct it with), so this builds the
     connection by hand from public `http.client`/`ssl`/`socket` APIs only
     — no private attribute of either stdlib class."""
-    raw_socket = socket.create_connection((str(safe_address), port), timeout=CONNECT_TIMEOUT_SECONDS)
-    tls_socket = ssl.create_default_context().wrap_socket(raw_socket, server_hostname=hostname)
+    raw_socket = socket.create_connection(
+        (str(safe_address), port), timeout=CONNECT_TIMEOUT_SECONDS
+    )
+    context = ssl.create_default_context()
+    # `create_default_context()`'s own floor already excludes SSLv2/v3 on
+    # any Python this project supports, but it does not *pin* a minimum —
+    # stated explicitly here so a future OpenSSL/Python default change can
+    # never silently reopen TLS 1.0/1.1 for this one outbound client.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls_socket = context.wrap_socket(raw_socket, server_hostname=hostname)
     try:
         connection = http.client.HTTPConnection(hostname, port, timeout=CONNECT_TIMEOUT_SECONDS)
         connection.sock = tls_socket

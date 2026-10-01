@@ -14,7 +14,6 @@ import os
 from typing import Any
 
 import boto3
-
 from adapters.dynamodb import DynamoDbStore
 from adapters.secrets import SecretsManagerReader
 from domain.event import LINE_TOKEN

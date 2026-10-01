@@ -25,7 +25,7 @@ def synthetic_event_id(*, sandbox_id: str, reason: str, window_start_ms: int) ->
     if reason not in SYNTHETIC_KILL_REASONS:
         raise ValueError(f"reason sintético desconocido: {reason!r}")
     digest = hashlib.sha256(
-        f"reconciler|{sandbox_id}|{reason}|{window_start_ms}".encode("utf-8")
+        f"reconciler|{sandbox_id}|{reason}|{window_start_ms}".encode()
     ).hexdigest()
     return f"synthetic-{digest[:32]}"
 

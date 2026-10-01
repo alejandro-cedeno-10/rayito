@@ -13,7 +13,6 @@ import time
 from typing import Any
 
 import boto3
-
 from adapters.dynamodb import DynamoDbStore
 from adapters.http_client import HttpsOnlySender, SsrfBlocked
 from adapters.secrets import SecretsManagerReader
@@ -83,6 +82,7 @@ def handler(event: dict[str, Any], _context: object) -> dict[str, int]:
         if not image.get("pk", {}).get("S", "").startswith("EVENT#"):
             continue  # a STATE/WEBHOOK/DELIVERY row, not a lifecycle event
         lifecycle_event = _event_from_stream_image(image)
+        execution_id = f"{lifecycle_event.sandbox_id}#{lifecycle_event.generation}"
         payload = json.dumps(
             {
                 "event_id": lifecycle_event.event_id,
@@ -92,7 +92,7 @@ def handler(event: dict[str, Any], _context: object) -> dict[str, int]:
                 "generation": lifecycle_event.generation,
                 "occurred_at_ms": lifecycle_event.occurred_at_ms,
                 "sandbox_template_id": lifecycle_event.image_arn,
-                "sandbox_execution_id": f"{lifecycle_event.sandbox_id}#{lifecycle_event.generation}",
+                "sandbox_execution_id": execution_id,
             }
         ).encode("utf-8")
         for webhook in store.webhooks_for_type(lifecycle_event.e2b_type):

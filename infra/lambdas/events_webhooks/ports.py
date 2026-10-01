@@ -35,7 +35,10 @@ class EventStore(Protocol):
         """Sandboxes whose last known state is not `killed`."""
         ...
 
-    def undelivered_webhook_types(self, sandbox_id: str, event_id: str) -> tuple[str, ...]:
+    def mark_delivery_attempted(self, event_id: str, webhook_id: str) -> bool:
+        """`True` the first time this `(event_id, webhook_id)` pair is
+        marked — DynamoDB Streams' own at-least-once trigger can hand the
+        deliverer the same `INSERT` record twice."""
         ...
 
 

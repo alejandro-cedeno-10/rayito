@@ -26,6 +26,6 @@ class SecretsManagerReader:
             return cached
         response = self._client.get_secret_value(SecretId=secret_id)
         value = response.get("SecretString")
-        raw = value.encode("utf-8") if value is not None else response["SecretBinary"]
+        raw: bytes = value.encode("utf-8") if value is not None else bytes(response["SecretBinary"])
         self._cache[secret_id] = raw
         return raw

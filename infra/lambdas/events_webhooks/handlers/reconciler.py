@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import boto3
-
 from adapters.dynamodb import DynamoDbStore
 from adapters.microvms import ListMicrovmsLister
 from domain.dedupe import reconciler_window_start_ms, synthetic_event_id
