@@ -36,7 +36,7 @@ filter by metadata without talking to the agent.
   is unchanged. Both SDKs share a golden vector (`ae65162235b32204`).
 - **D7 — One type per concept.** `DynamoDbIndex` is both the option and the
   adapter (lazy boto3 client / lazy optional peer); the pure core
-  (`IndexRecord`, `record_for`, `join_index`) has no I/O. Async Python runs
+  (`IndexRecord`, `record_for`, `joined`) has no I/O. Async Python runs
   the boto3 calls in `asyncio.to_thread`, sharing the listing core with sync.
 
 ## Risks

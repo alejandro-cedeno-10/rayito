@@ -25,7 +25,7 @@ Rayito-hosted server and no change to `rayd`.
   `GetItem`, `Query`, `Scan` or `ProjectionExpression` (why: written there).
   IDX-1 marked "A MEDIR" for the e2e.
 - **Pure core + adapter.** Python `rayito/_index.py` (`IndexRecord`,
-  `record_for`, `join_index`, `DynamoDbIndex`); TypeScript
+  `record_for`, `joined`, `DynamoDbIndex`); TypeScript
   `src/index/{record,join,dynamodb}.ts`. The row holds only immutable data
   written once after `run-microvm` (`pk`, `image_arn`, `image_version`,
   `started_at_ms`, `metadata`, `sdk`, `expires_at` = startedAt + max

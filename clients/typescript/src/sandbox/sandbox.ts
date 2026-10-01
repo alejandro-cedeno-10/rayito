@@ -619,6 +619,8 @@ export class Sandbox implements AsyncDisposable {
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
+    // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
+    await index?.prepare();
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),

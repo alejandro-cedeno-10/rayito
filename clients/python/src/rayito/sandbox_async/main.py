@@ -149,10 +149,12 @@ from rayito._sandbox_base import (
     resolve_template,
     sandbox_logger,
     terminal_state_error,
+    terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    write_index_record,
 )
 from rayito._secrets import (
     SecretBinding,
@@ -209,9 +211,7 @@ from rayito.sandbox_sync.main import (
     StubFactory,
     closed_during_reconnect,
     resolve_control_plane,
-    terminate_quietly,
     wait_for_state,
-    write_index_record,
 )
 from rayito.v1 import (
     code_pb2_grpc,
@@ -565,6 +565,9 @@ class AsyncSandbox:
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
             return taken
+        if validated_index is not None:
+            # Sin llamadas a AWS: falla antes de lanzar nada.
+            await asyncio.to_thread(validated_index.prepare)
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
             binding,

@@ -1,9 +1,10 @@
 """Núcleo puro del índice de metadatos (M14): la fila (`record_for`, con su
 TTL determinista y sólo las claves permitidas), la unión con
-`list-microvms` (`join_index`) y los filtros/huella del listado con índice."""
+`list-microvms` (`joined`) y los filtros/huella del listado con índice."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -13,7 +14,7 @@ from rayito._index import (
     SDK_TAG,
     IndexRecord,
     chunks,
-    join_index,
+    joined,
     record_for,
 )
 from rayito._listing_base import ListFilters, listing_request
@@ -21,6 +22,18 @@ from rayito._models import SandboxInfo, SandboxListItem
 from rayito.exceptions import InvalidArgumentException
 
 from .fake_dynamodb import fake_index
+
+
+def join_index(
+    items: list[SandboxListItem],
+    records: Mapping[str, IndexRecord],
+    wanted: Mapping[str, str],
+    now_seconds: float,
+) -> list[SandboxListItem]:
+    """`joined` item a item, como hace el listado: los que conserva, en orden."""
+    kept = (joined(item, records.get(item.sandbox_id), wanted, now_seconds) for item in items)
+    return [item for item in kept if item is not None]
+
 
 IMAGE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base"
 OTHER_IMAGE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:other"

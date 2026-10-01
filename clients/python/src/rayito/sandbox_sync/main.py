@@ -36,7 +36,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
-from rayito._index import DynamoDbIndex, validate_index, write_failure
+from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
     auto_resume_reopen,
@@ -155,10 +155,12 @@ from rayito._sandbox_base import (
     resolve_template,
     sandbox_logger,
     terminal_state_error,
+    terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    write_index_record,
 )
 from rayito._secrets import (
     SecretBinding,
@@ -236,43 +238,6 @@ def resolve_control_plane(
     region: str | None,
 ) -> ControlPlane:
     return control_plane or shared_control_plane(session, region=region)
-
-
-def terminate_quietly(
-    control_plane: ControlPlane, sandbox_id: str, log: logging.Logger = logger
-) -> None:
-    """Limpieza best-effort de un MicroVM que no llegó a estar listo: el error
-    original es el que importa, así que un fallo aquí sólo se loguea (en el
-    logger del sandbox, `rayito.sandbox` por defecto)."""
-    try:
-        control_plane.terminate_microvm(sandbox_id)
-    except Exception:
-        log.warning(
-            "no se pudo terminar el sandbox %s tras un fallo de arranque", sandbox_id, exc_info=True
-        )
-
-
-def write_index_record(
-    index: DynamoDbIndex,
-    info: SandboxInfo,
-    metadata: Mapping[str, str] | None,
-    control_plane: ControlPlane,
-    keep_on_failure: bool,
-    log: logging.Logger,
-) -> None:
-    """La fila del índice de `create(index=...)`, tras `run-microvm` y antes
-    de la sonda de readiness. Si `PutItem` falla: con
-    `on_write_failure='terminate'` termina el VM (salvo `keep_on_failure`) y
-    lanza `IndexWriteException`; con `'warn'` avisa y sigue."""
-    try:
-        index.put(index.record(info, metadata))
-    except Exception as exc:
-        error = write_failure(index, info.sandbox_id, exc, log)
-        if error is None:
-            return
-        if not keep_on_failure:
-            terminate_quietly(control_plane, info.sandbox_id, log)
-        raise error from exc
 
 
 def first_stream_message(call: Any, *, allow_empty: bool = False) -> tuple[Any, Any]:
@@ -719,6 +684,8 @@ class Sandbox:
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
             return taken
+        if validated_index is not None:
+            validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
             binding,

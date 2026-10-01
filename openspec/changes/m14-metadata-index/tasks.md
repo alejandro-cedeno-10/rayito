@@ -6,7 +6,7 @@
 
 ## 2. Core and adapter
 
-- [x] 2.1 Python `rayito/_index.py`: `IndexRecord` (allow-listed attributes, `repr` without values), `record_for` (deterministic TTL), `joined`/`join_index` (pure), `DynamoDbIndex` (lazy client, conditional put, chunked batch get with bounded `UnprocessedKeys` retry, expired rows dropped, errors by code without AWS messages).
+- [x] 2.1 Python `rayito/_index.py`: `IndexRecord` (allow-listed attributes, `repr` without values), `record_for` (deterministic TTL), `joined` (pure, applied item by item by the listing), `DynamoDbIndex` (lazy client, conditional put, chunked batch get with bounded `UnprocessedKeys` retry, expired rows dropped, errors by code without AWS messages).
 - [x] 2.2 TypeScript `src/index/{record,join,dynamodb}.ts` with the same contract; `@aws-sdk/client-dynamodb` optional peer + devDependency + `tsdown` external, loaded only through `loadOptionalPeer`.
 - [x] 2.3 `SandboxIndexException`/`IndexWriteException`; TS `SandboxIndexError`/`IndexWriteError`; exported from both packages.
 - [x] 2.4 Unit tests: `test_index_record.py`, `test_index_dynamodb.py` (incl. botocore `Stubber` against the service model); `index-record.test.ts` (incl. the shared golden fingerprint and lazy peer).
@@ -19,6 +19,7 @@
 - [x] 3.4 "Coste y activación" blocks with runnable examples on `DynamoDbIndex`, `create`, `list`, `PoolConfig` (Python docstrings and TSDoc).
 - [x] 3.5 Unit tests: `test_index_sync.py`, `test_index_async.py`, `test_index_pool.py`, `index-sandbox.test.ts` (one conditional put, failed put terminates before any token, warn continues, pool rejection, refill writes, SUSPENDED listing with 0 token/get/Health calls and 0 probe channels, rows without index excluded, index without metadata never calls DynamoDB, resumable token bound to the table, read failure raises, kill untouched, no client/peer without index, logs without metadata values). Existing listing tests unchanged.
 - [x] 3.7 `reincarnate()` carries `index` into the successor (Python `LaunchOptions.index`, TypeScript `LaunchContext.index`); tests `test_index_reincarnate.py`, `index-reincarnate.test.ts`.
+- [x] 3.8 I/O-free preflight before `run-microvm` (also on pool refill, which goes through `create()`): Python `DynamoDbIndex.prepare()` builds the boto3 client and raises `InvalidArgumentException` without a region; TypeScript `DynamoDbIndex.prepare()` (internal) resolves the region and loads the optional peer, raising `InvalidArgumentError`. Tests assert `RunMicrovm` is never called (`test_index_sync.py`, `test_index_async.py`, `index-sandbox.test.ts`).
 - [ ] 3.6 e2e `clients/python/tests/e2e/test_metadata_index_e2e.py` and `clients/typescript/tests/e2e/metadata-index.e2e.test.ts` against real AWS (`RAYITO_E2E=1`, `RAYITO_E2E_INDEX_TABLE`): 3 sandboxes, 2 paused, the indexed listing returns exactly those 2 and `get-microvm` still shows them `SUSPENDED`; one is resumed and keeps its `startedAt` (±1 s) and stays in the indexed listing; IDX-1 (a, b, c) recorded. **Gate for archive; not run in this branch (no real AWS).**
 
 ## 4. Infra (`infra/metadata-index.yaml`)

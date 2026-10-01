@@ -7,7 +7,7 @@ lo despertaría). Con `index=DynamoDbIndex("tabla")`, `create()` escribe una
 fila inmutable por sandbox y `list(metadata=..., index=...)` la une con
 `list-microvms`: filtra también sandboxes `SUSPENDED` sin sondear ninguno.
 
-El núcleo es puro (`IndexRecord`, `record_for`, `join_index`); la única E/S
+El núcleo es puro (`IndexRecord`, `record_for`, `joined`); la única E/S
 es `DynamoDbIndex`, que construye su cliente boto3 `dynamodb` en su primer
 uso (ADR-014) y sólo llama a `PutItem` y `BatchGetItem`
 (`AWS_API_NOTES.md` §20).
@@ -60,13 +60,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, NoRegionError
 
 from rayito._aws import LazyClient, aws_code
 from rayito._aws_sanitize import sanitize_aws_error
@@ -204,17 +204,6 @@ def joined(
     return replace(item, metadata=dict(record.metadata))
 
 
-def join_index(
-    items: Iterable[SandboxListItem],
-    records: Mapping[str, IndexRecord],
-    wanted: Mapping[str, str],
-    now_seconds: float,
-) -> list[SandboxListItem]:
-    """`joined` sobre una página: los items que conserva, en su orden."""
-    kept = (joined(item, records.get(item.sandbox_id), wanted, now_seconds) for item in items)
-    return [item for item in kept if item is not None]
-
-
 def chunks(ids: Sequence[str], size: int = BATCH_GET_MAX_KEYS) -> list[list[str]]:
     unique = list(dict.fromkeys(ids))
     return [unique[start : start + size] for start in range(0, len(unique), size)]
@@ -294,8 +283,9 @@ class DynamoDbIndex:
     el logger `rayito.index` y devuelve el sandbox, que no aparecerá en los
     listados con índice. `ttl_margin_seconds` es el margen sobre la vida
     máxima del sandbox antes de que la fila caduque. `region`/`session` son
-    los de la tabla (por defecto la cadena de boto3). Reutilizable y seguro
-    entre hilos.
+    los de la tabla (por defecto la cadena de boto3); sin región,
+    `create()` lanza `InvalidArgumentException` antes de `run-microvm`, sin
+    lanzar ningún MicroVM. Reutilizable y seguro entre hilos.
     """
 
     def __init__(
@@ -382,6 +372,18 @@ class DynamoDbIndex:
                     found[record.sandbox_id] = record
         return found
 
+    def prepare(self) -> None:
+        """Comprobación previa sin llamadas a AWS que `create()` hace antes de
+        `run-microvm`: construye el cliente `dynamodb` (construirlo no llama a
+        AWS) y lanza `InvalidArgumentException` si no hay región, así un
+        error de configuración nunca lanza (ni factura) un MicroVM."""
+        try:
+            self.api()
+        except NoRegionError as exc:
+            raise InvalidArgumentException(
+                "falta la región del índice: pasa DynamoDbIndex(region=...) o define AWS_REGION"
+            ) from exc
+
     def api(self) -> DynamoDbApi:
         """El cliente `dynamodb`, construido en el primer uso."""
         client: DynamoDbApi = self._client.get()
@@ -459,7 +461,6 @@ __all__ = [
     "DynamoDbIndex",
     "IndexRecord",
     "WriteFailurePolicy",
-    "join_index",
     "joined",
     "record_for",
     "validate_index",
