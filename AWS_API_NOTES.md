@@ -767,3 +767,108 @@ supuestos, y las filas de secretos de `optional-features.md` y
 `e2b-parity.md` dicen "pendiente de aceptación en AWS real". Si la medida
 los contradice, se corrigen el código y esta sección antes de archivar
 `m13-secrets`.
+
+## 20. DynamoDB (M14, `m14-metadata-index`, **contrato de parámetros**)
+
+`DynamoDbIndex` (Python `rayito/_index.py`, TypeScript `src/index/**`), el
+índice opcional de metadatos de sandboxes, llama a Amazon DynamoDB **con las
+credenciales del llamante** sobre una tabla que el cliente despliega con
+`infra/metadata-index.yaml`. **Estas son las únicas operaciones y los únicos
+parámetros de DynamoDB que los SDKs pueden usar**: la regla dura 1 vale
+también aquí, y `scripts/tests/test_metadata_index_template.py` comprueba que
+toda operación que el código nombra aparece en esta sección. Verificado sin
+red el 2026-09-30, antes de escribir código: los nombres de Python contra el
+modelo `dynamodb/2012-08-10` de botocore 1.43.103 (miembros de entrada y de
+salida, `error_shapes`, y `min: 1, max: 100` de `KeyList`/`BatchGetRequestMap`);
+los de JavaScript contra los `.d.ts` publicados de `@aws-sdk/client-dynamodb`
+3.1144.0 (`PutItemInput`, `KeysAndAttributes`, `BatchGetItemOutput`). Referencia
+de la API: <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/>
+(consultada 2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `PutItem` (`put_item` / `PutItemCommand`) | `TableName`, `Item`, `ConditionExpression="attribute_not_exists(pk)"` | — | `dynamodb:PutItem` sobre el ARN de la tabla | <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html> |
+| `BatchGetItem` (`batch_get_item` / `BatchGetItemCommand`) | `RequestItems={<TableName>: {Keys: [{pk: {S: id}}] (1–100), ConsistentRead: false}}` | `Responses[<TableName>]`, `UnprocessedKeys[<TableName>].Keys` | `dynamodb:BatchGetItem` sobre el ARN de la tabla | <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchGetItem.html> |
+
+`ProjectionExpression` (también miembro de `KeysAndAttributes`) **no se
+usa**: Rayito necesita todos los atributos de la fila, y la capacidad que
+consume una lectura depende del tamaño del ítem, no de la proyección
+(<https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html>).
+Tampoco `DeleteItem`, `GetItem`, `Query` ni `Scan`: `kill()` no borra la fila
+(la unión con `list-microvms` y el TTL la vuelven inofensiva) y el listado
+siempre parte de `list-microvms`.
+
+Constructor de cliente: Python `session.client("dynamodb", region_name=…,
+config=client_config())` (el mismo `Config` que el plano de control:
+reintentos `standard`, que ya reintentan
+`ProvisionedThroughputExceededException`/`ThrottlingException`, y User-Agent
+`rayito/<versión>`); TypeScript `new DynamoDBClient({ region, credentials })`
+cargado con `loadOptionalPeer("@aws-sdk/client-dynamodb")`. Ningún cliente se
+construye hasta la primera llamada (ADR-014).
+
+Esquema del ítem (sólo datos inmutables, escritos una vez tras `run-microvm`):
+
+| Atributo | Tipo | Valor |
+|---|---|---|
+| `pk` | `S` | `microvmId` de `run-microvm` (clave de partición) |
+| `image_arn` | `S` | `imageArn` de `run-microvm` |
+| `image_version` | `S` | `imageVersion` de `run-microvm` |
+| `started_at_ms` | `N` | `startedAt` de `run-microvm` en ms epoch |
+| `metadata` | `M` de `S` | la `metadata` de `create()` (ya declarada no secreta) |
+| `sdk` | `S` | `py/<versión>` o `ts/<versión>` |
+| `expires_at` | `N` | **TTL**: `floor(startedAt/1000) + maximumDurationInSeconds + ttl_margin_seconds` (3600 por defecto), segundos epoch |
+
+Nunca el access token (ni su hash), `envs`, referencias o valores de
+secretos, el `runHookPayload` ni el JWE: un test de cada SDK compara las
+claves con esta lista.
+
+TTL (<https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html>,
+consultado 2026-09-30): el atributo debe ser un `Number` con un timestamp en
+**segundos** epoch; los ítems vencidos se borran "within a few days" de su
+expiración y, mientras tanto, siguen apareciendo en las lecturas. Por eso
+`batch_get`/`batchGet` y la unión **descartan al leer** toda fila con
+`expires_at < ahora`. El borrado por TTL no consume capacidad de escritura.
+
+Límites de `BatchGetItem` (API_BatchGetItem.html): como mucho **100 claves** y
+**16 MB** de respuesta por llamada; puede devolver un resultado parcial con
+`UnprocessedKeys` (p. ej. por limitación de tasa o por los 16 MB). Rayito pide
+como mucho las claves de una página de `list-microvms` (50), trocea en 100 de
+todos modos y reintenta `UnprocessedKeys` hasta 5 veces con backoff
+exponencial (50 ms → 1 s); si siguen sin procesar, `SandboxIndexException` /
+`SandboxIndexError` (nunca una lista incompleta en silencio). `ConsistentRead`
+es `false` (lectura eventualmente consistente, la mitad de RRU): la fila se
+escribe antes de que `create()` devuelva el sandbox, mucho antes de cualquier
+listado posterior.
+
+Errores que el SDK trata por **código** (el mensaje de AWS nunca se propaga
+porque puede nombrar la tabla o la clave):
+
+| Código | Dónde | Qué hace el SDK |
+|---|---|---|
+| `ConditionalCheckFailedException` | `PutItem` | `IndexWriteException`/`IndexWriteError`: ya había una fila con ese `pk` (no se sobrescribe) |
+| `ResourceNotFoundException` | ambas | la tabla no existe en esa región: `IndexWriteException` (put) o `SandboxIndexException` (lectura) |
+| `ProvisionedThroughputExceededException`, `ThrottlingException` | ambas | tras los reintentos `standard` del SDK de AWS, `IndexWriteException`/`SandboxIndexException` |
+| `AccessDeniedException` | ambas (código genérico de AWS) | el error nombra la acción IAM que falta |
+
+Con `on_write_failure='terminate'` (por defecto) un `PutItem` fallido termina
+el MicroVM recién lanzado (salvo `keep_on_failure=True`) antes de acuñar
+ningún token; con `'warn'` sólo avisa y el sandbox no aparece en los listados
+con índice.
+
+Precios on-demand (us-east-1, <https://aws.amazon.com/dynamodb/pricing/on-demand/>,
+consultado 2026-09-30): **$0,625 por millón de WRU** (un `PutItem` de ≤ 1 KB
+= 1 WRU ≈ $0,000000625), **$0,125 por millón de RRU** (una lectura
+eventualmente consistente de ≤ 4 KB = 0,5 RRU), **$0,25 por GB-mes**
+almacenado tras los primeros 25 GB gratuitos; el borrado por TTL es gratis.
+10 000 sandboxes al mes con un listado diario cada uno quedan por debajo de
+$0,10/mes. Una tabla vacía cuesta $0.
+
+**A MEDIR (IDX-1, en el e2e de `m14-metadata-index`)**: (a) que el
+`startedAt` de `run-microvm` y el de `list-microvms` coinciden dentro de la
+tolerancia de ±1 s de la unión (esperado: idénticos); (b) que un sandbox
+pausado sigue `SUSPENDED` después de un `list(metadata=, index=)` (ninguna
+llamada lo despierta). **Estado (2026-09-30): SIN MEDIR**; el e2e
+(`clients/python/tests/e2e/test_metadata_index_e2e.py`,
+`clients/typescript/tests/e2e/metadata-index.e2e.test.ts`, con
+`RAYITO_E2E_INDEX_TABLE`) lo comprueba, pero todavía no se ha ejecutado
+contra AWS real.
