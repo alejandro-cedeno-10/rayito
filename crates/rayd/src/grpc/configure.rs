@@ -218,4 +218,72 @@ mod tests {
             Some(rayito_proto::v1::EfsVolumesStatus {})
         );
     }
+
+    /// `ConfigureGrpc` must never log or `Debug`-print the request: a
+    /// future section may carry a pushed secret-gateway header value.
+    /// Captures every log line emitted during a real `Configure` call
+    /// (JSON formatter, same shape `rayd::logging::init` uses) and asserts
+    /// none of them mention the request type or its field names.
+    #[tokio::test]
+    async fn configure_never_logs_the_request() {
+        use std::io;
+        use std::sync::{Arc as StdArc, Mutex};
+
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone, Default)]
+        struct Capture(StdArc<Mutex<Vec<u8>>>);
+
+        impl io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Capture {
+            type Writer = Capture;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(capture.clone())
+            .with_target(false)
+            .finish();
+        let service = running_service();
+        let request = ConfigureRequest {
+            s3_mounts: Some(S3MountsConfig {}),
+            request_id: "a-request-id".to_owned(),
+            ..Default::default()
+        };
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            service.configure(Request::new(request)).await.unwrap();
+        }
+        let logged = String::from_utf8_lossy(
+            &capture
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned();
+        for forbidden in ["ConfigureRequest", "a-request-id", "s3_mounts"] {
+            assert!(
+                !logged.contains(forbidden),
+                "log line must never mention {forbidden:?}: {logged}"
+            );
+        }
+    }
 }
