@@ -14,7 +14,8 @@
 //! (`/validate`), `terminating`, `budget_exceeded`.
 //!
 //! `/suspend` (design D8) closes every open client stream through the
-//! `SuspendSignal`, quiesces the sidecar and syncs the page cache, without
+//! `SuspendSignal`, quiesces the sidecar and syncs each filesystem inside a
+//! deadline (`BoundedFlush`, never past the 200), without
 //! killing a process, a PTY or a kernel; `/resume` (D10) probes every
 //! kernel inside a hard cap, restarts the lost ones in the background and
 //! reseeds the rest. Both always answer 200, in every lifecycle phase.
@@ -57,8 +58,11 @@ use rayd_core::wire_tokens::TERMINATING;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use rayd_core::suspend_sync::{FlushReport, SuspendBudget};
+
 use crate::adapters::{
-    IMDS_VERIFY_BUDGET, ImdsState, UserConnectProbe, rule_present, verify_imds_block,
+    BoundedFlush, IMDS_VERIFY_BUDGET, ImdsState, PlatformFilesystemSync, UserConnectProbe,
+    rule_present, verify_imds_block,
 };
 use crate::code::CodeManager;
 use crate::lifecycle::{SuspendSignal, TimeoutWatcher, suspend_watchdog};
@@ -121,6 +125,7 @@ struct HooksState {
     user_probe: Option<UserConnectProbe>,
     timeout: Arc<TimeoutWatcher>,
     network: Arc<NetworkManager>,
+    flush: Arc<BoundedFlush>,
 }
 
 /// The router without an IMDS block, a user probe or a deadline watcher
@@ -144,8 +149,19 @@ pub fn router(
     })
 }
 
-/// The router for the hooks listener.
+/// The router for the hooks listener, with the platform's bounded
+/// per-filesystem sync on `/suspend`.
 pub fn router_with(services: HookServices) -> Router {
+    let flush = BoundedFlush::new(
+        Arc::new(PlatformFilesystemSync),
+        SuspendBudget::for_hook(budget(Hook::Suspend)),
+    );
+    router_with_flush(services, flush)
+}
+
+/// The router with the `/suspend` flush given explicitly (tests inject a
+/// fake `FilesystemSync` or a shorter deadline).
+pub fn router_with_flush(services: HookServices, flush: BoundedFlush) -> Router {
     let state = HooksState {
         session: services.session,
         code: services.code,
@@ -155,6 +171,7 @@ pub fn router_with(services: HookServices) -> Router {
         user_probe: services.user_probe,
         timeout: services.timeout,
         network: services.network,
+        flush: Arc::new(flush),
     };
     Router::new()
         .route(&hook_path(Hook::Ready), post(ready))
@@ -323,7 +340,9 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
 }
 
 /// Design D8: transition, detach the execute origins, broadcast, wait the
-/// stream-close grace, quiesce, sync, 200. Nothing is killed and nothing
+/// stream-close grace, quiesce, bounded per-filesystem sync, 200. The sync
+/// waits at most the `SuspendBudget` deadline; what has not returned by
+/// then keeps running off the hook's path. Nothing is killed and nothing
 /// in flight is awaited; a repeated `/suspend` changes nothing. Every
 /// accepted transition arms the stale-suspend watchdog (design D2).
 async fn suspend(State(state): State<HooksState>) -> Response {
@@ -348,7 +367,8 @@ async fn suspend(State(state): State<HooksState>) -> Response {
         if transition.is_ok() {
             state.code.quiesce(QUIESCE_TIMEOUT).await;
         }
-        flush_page_cache().await;
+        let flushed = state.flush.flush().await;
+        log_flush(&flushed, state.flush.budget());
         if close_streams {
             spawn_suspend_watchdog(&state.session);
         }
@@ -357,6 +377,7 @@ async fn suspend(State(state): State<HooksState>) -> Response {
             outcome = %outcome,
             suspend_generation = state.session.suspend_generation(),
             streams_closed,
+            filesystems_synced = flushed.synced,
             suspend_ms = millis(started.elapsed()),
             "suspend recorded"
         );
@@ -664,21 +685,34 @@ fn schedule_shutdown(shutdown: CancellationToken) {
     });
 }
 
-/// Step 4 of the `/suspend` checklist: dirty pages reach the disk before the
-/// checkpoint. Runs off the async runtime because `sync(2)` blocks. The
-/// `unsafe` block is sound: `sync` takes no arguments and only schedules
-/// writeback.
-#[cfg(unix)]
-async fn flush_page_cache() {
-    let flushed = tokio::task::spawn_blocking(|| unsafe { libc::sync() }).await;
-    if flushed.is_err() {
-        tracing::warn!(hook = %Hook::Suspend, reason = "sync task panicked", "page cache not flushed");
+/// Step 4 of the `/suspend` checklist, logged with counts only (never a
+/// path): a hit deadline means some filesystem is hung or slow and its
+/// dirty pages may miss the checkpoint.
+fn log_flush(report: &FlushReport, budget: SuspendBudget) {
+    if report.deadline_hit() {
+        tracing::warn!(
+            hook = %Hook::Suspend,
+            sync_pending = report.pending,
+            sync_failed = report.failed,
+            filesystems_synced = report.synced,
+            deadline_ms = millis(budget.sync_deadline()),
+            "suspend sync deadline hit"
+        );
+    } else if report.failed > 0 {
+        tracing::warn!(
+            hook = %Hook::Suspend,
+            sync_failed = report.failed,
+            filesystems_synced = report.synced,
+            "suspend sync failed on some filesystems"
+        );
     }
-}
-
-#[cfg(not(unix))]
-fn flush_page_cache() -> impl Future<Output = ()> {
-    std::future::ready(())
+    if report.skipped_in_flight > 0 {
+        tracing::warn!(
+            hook = %Hook::Suspend,
+            sync_skipped = report.skipped_in_flight,
+            "suspend sync skipped filesystems still syncing"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -913,6 +947,86 @@ mod tests {
             assert!(kernel.table(Family::V4, 101).is_some());
             assert!(kernel.blocked("1.1.1.1".parse().unwrap()));
             assert_eq!(session.egress_enforcement(), EgressEnforcement::GuestRoutes);
+        }
+    }
+
+    mod suspend_flush {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::suspend_sync::SUSPEND_SYNC_DEADLINE;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::adapters::OsRandomSource;
+        use crate::adapters::bounded_sync::fake::{Behaviour, FakeFilesystemSync};
+
+        const DIGEST_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        fn hooks(fake: Arc<FakeFilesystemSync>) -> Router {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let services = HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network: NetworkManager::unavailable(session),
+            };
+            let flush = BoundedFlush::new(fake, SuspendBudget::for_hook(budget(Hook::Suspend)));
+            router_with_flush(services, flush)
+        }
+
+        async fn post(router: &Router, hook: Hook, body: String) -> (StatusCode, HookReply) {
+            let request = Request::post(hook_path(hook))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let response = router.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (status, serde_json::from_slice(&bytes).unwrap())
+        }
+
+        fn run_body() -> String {
+            let payload = format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"}}");
+            serde_json::json!({"microvmId": "mvm-1", "runHookPayload": payload}).to_string()
+        }
+
+        /// A filesystem whose `syncfs` never returns (a hung hard NFS or
+        /// FUSE mount) costs `/suspend` the sync deadline and nothing more:
+        /// the checklist still completes and the 200 goes out well inside
+        /// the hook budget, as does the repeated `/suspend` behind it.
+        #[tokio::test(start_paused = true)]
+        async fn a_sync_that_never_returns_does_not_hold_the_suspend_200() {
+            let fake = Arc::new(FakeFilesystemSync::new(&[(
+                "/mnt/hung",
+                Behaviour::BlocksForever,
+            )]));
+            let router = hooks(fake.clone());
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            let started = tokio::time::Instant::now();
+            let (status, reply) = post(&router, Hook::Suspend, String::new()).await;
+            let elapsed = started.elapsed();
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "changed");
+            assert_eq!(reply.suspend_generation, 1);
+            assert!(elapsed >= SUSPEND_SYNC_DEADLINE, "{elapsed:?}");
+            assert!(elapsed <= budget(Hook::Suspend) / 2, "{elapsed:?}");
+
+            let started = tokio::time::Instant::now();
+            let (status, reply) = post(&router, Hook::Suspend, String::new()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "unchanged");
+            assert!(started.elapsed() < SUSPEND_SYNC_DEADLINE);
+            assert!(
+                fake.calls() <= 1,
+                "the hung filesystem gets no second thread"
+            );
         }
     }
 }
