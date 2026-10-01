@@ -6,6 +6,21 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-01
+
+### Fixed
+
+- Los mensajes de error y los docstrings del SDK nombran la versión de la
+  imagen o del SDK que hace falta (por ejemplo, "necesita una imagen 0.3.0 o
+  posterior"), en lugar del hito interno (M9, M12…).
+
+### Documentation
+
+- Sitio de documentación reorganizado por tareas: primeros pasos, guías por
+  función con ejemplos en Python y TypeScript, funciones opcionales con su
+  coste, migración desde E2B y referencia (Python, TypeScript, CLI, errores
+  y variables de entorno). Los ejemplos se comprueban en CI.
+
 ## [0.5.0] - 2026-10-01
 
 ### Added
