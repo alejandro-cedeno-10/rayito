@@ -57,8 +57,8 @@ describe("templates/build", () => {
 
   test("imageArn builds one from region, account and name", () => {
     const clients = new FakeBuildClients();
-    expect(imageArn(clients, "mi-template", "999999999999")).toBe(
-      `arn:aws:lambda:${clients.region}:999999999999:microvm-image:mi-template`,
+    expect(imageArn(clients, "mi-template", "444455556666")).toBe(
+      `arn:aws:lambda:${clients.region}:444455556666:microvm-image:mi-template`,
     );
   });
 

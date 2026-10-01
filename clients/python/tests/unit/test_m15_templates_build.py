@@ -46,9 +46,9 @@ def test_image_arn_passes_through_an_already_resolved_arn() -> None:
 
 
 def test_image_arn_builds_one_from_region_account_and_name() -> None:
-    clients = FakeBuildClients(region_value="eu-west-1", account_id_value="999999999999")
+    clients = FakeBuildClients(region_value="eu-west-1", account_id_value="444455556666")
     assert image_arn(clients, "mi-template") == (
-        "arn:aws:lambda:eu-west-1:999999999999:microvm-image:mi-template"
+        "arn:aws:lambda:eu-west-1:444455556666:microvm-image:mi-template"
     )
 
 
