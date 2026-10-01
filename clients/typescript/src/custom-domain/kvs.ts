@@ -32,10 +32,10 @@ import { loadOptionalPeer } from "../optional.js";
 type Credentials = AwsClientSettings["credentials"];
 
 const KVS_PEER = "@aws-sdk/client-cloudfront-keyvaluestore";
-//: El firmante SigV4A que `endpoint-rule-set-1.json` de este servicio exige
-//: (AWS_API_NOTES.md §29); no se usa directamente (el cliente del KVS lo
-//: resuelve él mismo internamente), sólo se carga aquí para fallar con un
-//: mensaje claro si falta, en vez del error profundo del SDK.
+// El firmante SigV4A que `endpoint-rule-set-1.json` de este servicio exige
+// (AWS_API_NOTES.md §29); no se usa directamente (el cliente del KVS lo
+// resuelve él mismo internamente), sólo se carga aquí para fallar con un
+// mensaje claro si falta, en vez del error profundo del SDK.
 const SIGNATURE_V4A_PEER = "@aws-sdk/signature-v4a";
 
 /** `ResourceNotFoundException` de `DeleteKey`/`PutKey`: el almacén o la
