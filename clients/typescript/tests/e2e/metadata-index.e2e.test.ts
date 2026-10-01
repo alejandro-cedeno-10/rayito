@@ -3,7 +3,9 @@
  * desplegada desde `infra/metadata-index.yaml`): tres sandboxes con
  * `index`, dos en pausa; `Sandbox.list({ metadata, states: ["SUSPENDED"],
  * index })` devuelve exactamente esos dos y, después, `get-microvm` muestra
- * que siguen `SUSPENDED` (el listado no los despertó). Coste: tres sandboxes
+ * que siguen `SUSPENDED` (el listado no los despertó). Luego se reanuda uno:
+ * su `startedAt` no cambia (±1 s, IDX-1 c) y el listado con índice lo sigue
+ * encontrando, ya `RUNNING`. Coste: tres sandboxes
  * durante < 5 min (~$0,05) + 3 `PutItem` + 1 `BatchGetItem` (< $0,00001).
  */
 
@@ -38,6 +40,11 @@ describe.runIf(e2eEnabled())("M14 metadata index (AWS real)", () => {
       sandboxes.push(sandbox);
     }
     const paused = sandboxes.slice(0, 2);
+    const started = new Map<string, number>();
+    for (const sandbox of paused) {
+      const info = await e2e.controlPlane.getMicrovm(sandbox.sandboxId);
+      started.set(sandbox.sandboxId, info.startedAt.getTime());
+    }
     for (const sandbox of paused) {
       expect(await sandbox.pause()).toBe(true);
     }
@@ -56,5 +63,20 @@ describe.runIf(e2eEnabled())("M14 metadata index (AWS real)", () => {
     for (const sandbox of paused) {
       expect((await e2e.controlPlane.getMicrovm(sandbox.sandboxId)).state).toBe("SUSPENDED");
     }
+
+    const resumed = paused[0] as Sandbox;
+    await resumed.resume();
+    const after = (await e2e.controlPlane.getMicrovm(resumed.sandboxId)).startedAt.getTime();
+    expect(Math.abs(after - (started.get(resumed.sandboxId) ?? 0))).toBeLessThanOrEqual(1000);
+    const running: string[] = [];
+    for await (const item of Sandbox.list({
+      metadata: { run },
+      states: ["RUNNING"],
+      index,
+      controlPlane: e2e.controlPlane,
+    })) {
+      running.push(item.sandboxId);
+    }
+    expect(running).toContain(resumed.sandboxId);
   });
 });

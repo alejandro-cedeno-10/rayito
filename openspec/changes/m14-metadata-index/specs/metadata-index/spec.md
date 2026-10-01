@@ -25,6 +25,13 @@ After `run-microvm` and before the readiness probe, `create(index=idx)` SHALL ca
 - **WHEN** the same failure happens with `DynamoDbIndex(..., on_write_failure="warn")`
 - **THEN** the sandbox is returned, a warning is logged and no `TerminateMicrovm` is recorded
 
+### Requirement: reincarnate() keeps the index of its create()
+A sandbox created with `index=` (Python) / `index` (TypeScript) SHALL keep that index in its launch options, and `reincarnate()` SHALL pass it to the successor's `create()`, so the successor writes its own conditional row and stays visible to the indexed listing. Without `index` the successor SHALL make no DynamoDB call.
+
+#### Scenario: the successor is indexed
+- **WHEN** a sandbox created with `persist=`, `metadata={"user": "42"}` and `index=` is reincarnated
+- **THEN** the fake table receives a second conditional `PutItem` for the successor's id and `list(metadata={"user": "42"}, index=)` returns the successor
+
 ### Requirement: list(metadata=, index=) joins without probing and never invents a sandbox
 With both `metadata` and `index`, `list()`/`paginate()` SHALL page `list-microvms`, apply the existing filters, call `BatchGetItem` (≤ 100 keys per call, `ConsistentRead=false`, bounded retries of `UnprocessedKeys`, raising `SandboxIndexException` if they never drain) once per page for the candidate ids, and keep an item only if a non-expired row has the same id, image ARN and `startedAt` (±1 s) and its metadata contains every wanted pair; state SHALL come from `list-microvms`; an item without a row SHALL be excluded and never probed. It SHALL make no `Health`, `CreateMicrovmAuthToken` or `GetMicrovm` call and SHALL accept any non-terminal state (default: all), rejecting `TERMINATING`/`TERMINATED`. With `index` but no `metadata`, or without `index`, the listing SHALL be exactly the 0.4.0 path. The `next_token` fingerprint SHALL include the table name only when the index is effective.
 
@@ -37,11 +44,15 @@ With both `metadata` and `index`, `list()`/`paginate()` SHALL page `list-microvm
 - **THEN** `next_items()` raises `InvalidArgumentException` ("next_token no corresponde a estos filtros")
 
 ### Requirement: The CLI and the optional template expose the index explicitly
-`rayito sandbox list` SHALL accept `--metadata K=V`, `--state S` and `--index-table NAME`; `--index-table` SHALL build a `DynamoDbIndex` on the CLI session and is off by default. `infra/metadata-index.yaml` SHALL create only a `PAY_PER_REQUEST` table keyed by `pk` with TTL on `expires_at` and two managed policies (`RayitoIndexWriter`: `dynamodb:PutItem`; `RayitoIndexReader`: `dynamodb:BatchGetItem`) scoped to the table ARN, with no Lambda, stream or EventBridge, and SHALL pass `cfn-lint`.
+`rayito sandbox list` SHALL accept `--metadata K=V`, `--state S` and `--index-table NAME`; `--index-table` SHALL build a `DynamoDbIndex` on the CLI session, is off by default, and without `--metadata` SHALL be a usage error (exit 2) that makes no DynamoDB call. `infra/metadata-index.yaml` SHALL create only a `PAY_PER_REQUEST` table keyed by `pk` with TTL on `expires_at` and two managed policies (`RayitoIndexWriter`: `dynamodb:PutItem`; `RayitoIndexReader`: `dynamodb:BatchGetItem`) scoped to the table ARN, with no Lambda, stream or EventBridge, and SHALL pass `cfn-lint`.
 
 #### Scenario: CLI with the flag
 - **WHEN** `rayito --json sandbox list --metadata user=42 --state suspended --index-table rayito-sandboxes` runs against a fake plane and a fake index
 - **THEN** it prints only the suspended sandbox whose row has `user=42`, with its metadata, and mints no token
+
+#### Scenario: CLI flag without metadata
+- **WHEN** `rayito sandbox list --index-table rayito-sandboxes` runs without `--metadata`
+- **THEN** it exits with code 2 naming `--metadata` and builds no index
 
 #### Scenario: template policies
 - **WHEN** `scripts/tests/test_metadata_index_template.py` reads the template

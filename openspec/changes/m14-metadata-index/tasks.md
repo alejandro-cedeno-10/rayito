@@ -18,7 +18,8 @@
 - [x] 3.3 TypeScript `SandboxCreateOptions.index`, `SandboxListOptions.index`, `listing.ts`, `paginator.ts`, `PoolConfig.index`.
 - [x] 3.4 "Coste y activación" blocks with runnable examples on `DynamoDbIndex`, `create`, `list`, `PoolConfig` (Python docstrings and TSDoc).
 - [x] 3.5 Unit tests: `test_index_sync.py`, `test_index_async.py`, `test_index_pool.py`, `index-sandbox.test.ts` (one conditional put, failed put terminates before any token, warn continues, pool rejection, refill writes, SUSPENDED listing with 0 token/get/Health calls and 0 probe channels, rows without index excluded, index without metadata never calls DynamoDB, resumable token bound to the table, read failure raises, kill untouched, no client/peer without index, logs without metadata values). Existing listing tests unchanged.
-- [ ] 3.6 e2e `clients/python/tests/e2e/test_metadata_index_e2e.py` and `clients/typescript/tests/e2e/metadata-index.e2e.test.ts` against real AWS (`RAYITO_E2E=1`, `RAYITO_E2E_INDEX_TABLE`): 3 sandboxes, 2 paused, the indexed listing returns exactly those 2 and `get-microvm` still shows them `SUSPENDED`; IDX-1 recorded. **Gate for archive; not run in this branch (no real AWS).**
+- [x] 3.7 `reincarnate()` carries `index` into the successor (Python `LaunchOptions.index`, TypeScript `LaunchContext.index`); tests `test_index_reincarnate.py`, `index-reincarnate.test.ts`.
+- [ ] 3.6 e2e `clients/python/tests/e2e/test_metadata_index_e2e.py` and `clients/typescript/tests/e2e/metadata-index.e2e.test.ts` against real AWS (`RAYITO_E2E=1`, `RAYITO_E2E_INDEX_TABLE`): 3 sandboxes, 2 paused, the indexed listing returns exactly those 2 and `get-microvm` still shows them `SUSPENDED`; one is resumed and keeps its `startedAt` (±1 s) and stays in the indexed listing; IDX-1 (a, b, c) recorded. **Gate for archive; not run in this branch (no real AWS).**
 
 ## 4. Infra (`infra/metadata-index.yaml`)
 
@@ -30,7 +31,7 @@
 
 - [x] 5.1 Python `states_for`/`list_mapping(indexed=)`, `Sandbox.list(index=)`/`AsyncSandbox.list(index=)`, `E2B(index=)` (class attribute, not merged into other calls); reason text names `index=`.
 - [x] 5.2 TypeScript `mapListOptions` with `index`, `SandboxListOpts.index`, `E2BClientOpts.index`; reason text names `index`.
-- [x] 5.3 CLI `rayito sandbox list --metadata/--state/--index-table`.
+- [x] 5.3 CLI `rayito sandbox list --metadata/--state/--index-table`; `--index-table` without `--metadata` is a usage error (exit 2) with no DynamoDB call.
 - [x] 5.4 Tests: `test_index_e2b.py`, the e2b block of `index-sandbox.test.ts`, `cli/test_index_cli.py`.
 
 ## 6. Docs

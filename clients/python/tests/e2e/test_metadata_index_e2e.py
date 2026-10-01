@@ -3,6 +3,8 @@ desplegada desde `infra/metadata-index.yaml`): tres sandboxes con
 `index=DynamoDbIndex(...)`, dos en pausa; `Sandbox.list(metadata=,
 states=["SUSPENDED"], index=)` devuelve exactamente esos dos y, después,
 `get-microvm` muestra que siguen `SUSPENDED` (el listado no los despertó).
+Luego se reanuda uno: su `startedAt` no cambia (±1 s, IDX-1 c) y el listado
+con índice lo sigue encontrando, ya `RUNNING`.
 
 Coste: tres sandboxes durante < 5 min (~$0,05) + 3 `PutItem` + 1
 `BatchGetItem` (< $0,00001)."""
@@ -50,6 +52,7 @@ def test_list_by_metadata_over_suspended_sandboxes_without_waking_them(
                 )
             )
         paused = sandboxes[:2]
+        started = {s.sandbox_id: control_plane.get_microvm(s.sandbox_id).started_at for s in paused}
         for sandbox in paused:
             assert sandbox.pause() is True
 
@@ -66,6 +69,17 @@ def test_list_by_metadata_over_suspended_sandboxes_without_waking_them(
         assert all(item.metadata == {"suite": "m14", "run": run} for item in found)
         for sandbox in paused:
             assert control_plane.get_microvm(sandbox.sandbox_id).state == "SUSPENDED"
+
+        resumed = paused[0]
+        resumed.resume()
+        after = control_plane.get_microvm(resumed.sandbox_id).started_at
+        assert abs((after - started[resumed.sandbox_id]).total_seconds()) <= 1
+        running = list(
+            Sandbox.list(
+                metadata={"run": run}, states=["RUNNING"], index=index, control_plane=control_plane
+            )
+        )
+        assert resumed.sandbox_id in {item.sandbox_id for item in running}
     finally:
         for sandbox in sandboxes:
             with contextlib.suppress(SandboxNotFoundException):

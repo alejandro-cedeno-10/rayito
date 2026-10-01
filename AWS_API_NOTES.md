@@ -867,7 +867,10 @@ $0,10/mes. Una tabla vacía cuesta $0.
 `startedAt` de `run-microvm` y el de `list-microvms` coinciden dentro de la
 tolerancia de ±1 s de la unión (esperado: idénticos); (b) que un sandbox
 pausado sigue `SUSPENDED` después de un `list(metadata=, index=)` (ninguna
-llamada lo despierta). **Estado (2026-09-30): SIN MEDIR**; el e2e
+llamada lo despierta); (c) que el `startedAt` de un sandbox no cambia tras
+pausa → reanudación (si cambiara, la unión lo descartaría y un sandbox
+reanudado desaparecería del listado con índice). **Estado (2026-09-30): SIN
+MEDIR**; es puerta de release y de archivo del cambio; el e2e
 (`clients/python/tests/e2e/test_metadata_index_e2e.py`,
 `clients/typescript/tests/e2e/metadata-index.e2e.test.ts`, con
 `RAYITO_E2E_INDEX_TABLE`) lo comprueba, pero todavía no se ha ejecutado
