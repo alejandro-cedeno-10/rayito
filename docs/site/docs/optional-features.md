@@ -80,7 +80,7 @@ SEC-9/SEC-10 siguen sin medir (`AWS_API_NOTES.md` §19). Pasarán a
 
 | Función | Opción | Qué activa | Recursos AWS | Coste | Dónde |
 |---|---|---|---|---|---|
-| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `localhost`, renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:CreateMicrovmAuthToken` (ya se usa hoy en `get_host()`) | $0: `CreateMicrovmAuthToken` es gratuito (cuota de 50 TPS, `AWS_API_NOTES.md` §12); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal, no el proxy en sí | CLI (llega en M12) |
+| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `localhost`, renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:CreateMicrovmAuthToken` (ya se usa hoy en `get_host()`) | $0: `CreateMicrovmAuthToken` es gratuito (cuota de 50 TPS, `AWS_API_NOTES.md` §12); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
 
 Esta fila no pasa por el ciclo "planificado → disponible" de la tabla de
 arriba: no consume cuota ni dinero adicional (reutiliza una llamada que el
@@ -110,6 +110,7 @@ amenazas en [Secretos](secrets.md).
 === "TypeScript"
 
     ```ts
+    // npm install @aws-sdk/client-secrets-manager   (peer opcional)
     import { Sandbox, SecretCache } from "rayito";
 
     const secretCache = new SecretCache({ ttlSeconds: 300 });
@@ -148,6 +149,7 @@ borras: apagar la función es dejar de instanciar `SecretStore` **y**
 === "TypeScript"
 
     ```ts
+    // npm install @aws-sdk/client-secrets-manager   (peer opcional)
     import { SecretStore } from "rayito";
 
     const store = new SecretStore({ region: "us-east-1" });

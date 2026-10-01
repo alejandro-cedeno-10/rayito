@@ -375,8 +375,10 @@ secretos), nunca al execution role del MicroVM: `rayd` no lee secretos.
 aws cloudformation deploy \
   --stack-name rayito-secrets-access \
   --template-file infra/secrets-access.yaml \
+  --capabilities CAPABILITY_IAM \
   --parameter-overrides SecretPrefix=rayito/
 # con una CMK propia (SecretStore(kms_key_id=...)):
+#   --capabilities CAPABILITY_IAM \
 #   --parameter-overrides SecretPrefix=rayito/ KmsKeyArn=arn:aws:kms:<región>:<cuenta>:key/<id>
 
 aws cloudformation describe-stacks --stack-name rayito-secrets-access \
@@ -387,8 +389,9 @@ Parámetros: `SecretPrefix` (`rayito/` por defecto; debe coincidir con
 `SecretStore(prefix=)`/`secret_prefix=`; nunca vacío, porque un prefijo vacío
 concedería todos los secretos de la cuenta y la región) y `KmsKeyArn`
 (vacío por defecto: la clave gestionada por AWS `aws/secretsmanager` no
-necesita permisos KMS aparte). No hace falta `CAPABILITY_NAMED_IAM`: las
-políticas no llevan nombre fijo.
+necesita permisos KMS aparte). `CAPABILITY_IAM` es obligatorio porque la plantilla
+crea políticas IAM; no hace falta `CAPABILITY_NAMED_IAM`: las políticas no
+llevan nombre fijo.
 
 ### Borrar
 
