@@ -54,12 +54,13 @@ from rayito._sandbox_base import (
     DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     resolve_template,
+    terminate_quietly,
 )
 from rayito._secrets import SecretCache, SecretRef, awarm, bind_secrets, shared_secret_cache
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException, SandboxStateException
 from rayito.sandbox_async.main import AsyncSandbox
-from rayito.sandbox_sync.main import resolve_control_plane, terminate_quietly
+from rayito.sandbox_sync.main import resolve_control_plane
 from rayito.sandbox_sync.pool import (
     SETTLE_ATTEMPTS,
     SETTLE_CELL,

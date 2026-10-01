@@ -14,12 +14,12 @@ from typing import Any
 import boto3
 import pytest
 
-from rayito import IndexWriteException, Sandbox, SandboxIndexException, SandboxPool
+from rayito import DynamoDbIndex, IndexWriteException, Sandbox, SandboxIndexException, SandboxPool
 from rayito.exceptions import InvalidArgumentException
 
 from .conftest import IMAGE_ARN, TrackingTransport
 from .fake_control_plane import FakeControlPlane
-from .fake_dynamodb import fake_index
+from .fake_dynamodb import TABLE, fake_index
 from .log_capture import capture_logs
 
 SECRET_LOOKING_VALUE = "metadata-value-never-at-info"
@@ -38,6 +38,15 @@ def plane() -> Iterator[FakeControlPlane]:
 @pytest.fixture
 def transport() -> TrackingTransport:
     return TrackingTransport.for_loopback()
+
+
+@pytest.fixture
+def no_aws_region(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Sin región en el entorno ni en ficheros de configuración de AWS."""
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
 
 
 def create(plane: FakeControlPlane, transport: TrackingTransport, **kwargs: Any) -> Sandbox:
@@ -232,3 +241,13 @@ def test_without_index_no_dynamodb_client_is_ever_built(
     list(Sandbox.list(control_plane=plane))
     sandbox.kill()
     assert "dynamodb" not in built
+
+
+@pytest.mark.usefixtures("no_aws_region")
+def test_an_index_without_a_region_fails_before_run_microvm(
+    plane: FakeControlPlane, transport: TrackingTransport
+) -> None:
+    index = DynamoDbIndex(TABLE)
+    with pytest.raises(InvalidArgumentException, match="región del índice"):
+        create(plane, transport, metadata={"user": "42"}, index=index)
+    assert "RunMicrovm" not in [call.operation for call in plane.calls]

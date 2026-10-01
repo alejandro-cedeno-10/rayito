@@ -31,6 +31,7 @@ from rayito._code_base import (
     reattach_failure,
     require_context_id,
     resolve_context_id,
+    target_context_language,
 )
 from rayito._models import CodeContext, Execution
 from rayito._process_base import STREAM_EOF, deadline_at, remaining_deadline
@@ -58,6 +59,9 @@ class AsyncCodeClient:
 
     def __init__(self, sandbox: AsyncSandbox) -> None:
         self._sandbox = sandbox
+        # id → lenguaje de los contextos que este cliente creó o listó: decide
+        # si una celda con `context=<id>` puede llevar los secretos del handle.
+        self._context_languages: dict[str, str] = {}
 
     async def run_code(
         self,
@@ -77,7 +81,7 @@ class AsyncCodeClient:
         """Misma semántica que `CodeClient.run_code`; los callbacks corren en el loop."""
         context_id = resolve_context_id(context)
         include_bound = code_secrets_scope(
-            language, context.language if isinstance(context, CodeContext) else None, secrets
+            language, target_context_language(context, self._context_languages), secrets
         )
         envs = await self._sandbox._secret_envs(envs, secrets, include_bound=include_bound)
         request = build_execute_request(
@@ -135,7 +139,9 @@ class AsyncCodeClient:
         for listed in await self.list_contexts(request_timeout=request_timeout):
             if listed.id == context_id:
                 return listed
-        return fallback_context(context_id, language=language, cwd=cwd)
+        fallback = fallback_context(context_id, language=language, cwd=cwd)
+        self._context_languages[context_id] = fallback.language
+        return fallback
 
     async def list_contexts(self, *, request_timeout: float | None = None) -> list[CodeContext]:
         response = await self._sandbox._code_call(
@@ -144,7 +150,9 @@ class AsyncCodeClient:
             ),
             request_timeout,
         )
-        return [context_from_proto(info) for info in response.contexts]
+        contexts = [context_from_proto(info) for info in response.contexts]
+        self._context_languages.update({listed.id: listed.language for listed in contexts})
+        return contexts
 
     async def remove_context(
         self, context: ContextLike, *, request_timeout: float | None = None

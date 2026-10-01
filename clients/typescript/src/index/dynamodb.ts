@@ -18,7 +18,9 @@
  *   y el shim `rayito/e2b` (`Sandbox.list({ query, index })`, `new E2B({ index })`).
  *   Construirlo no llama a AWS ni carga `@aws-sdk/client-dynamodb` (peer
  *   opcional): el cliente se crea en su primer uso. Sin la opción no se carga
- *   el peer ni se hace ninguna llamada a DynamoDB (el camino de 0.4.0).
+ *   el peer ni se hace ninguna llamada a DynamoDB (el camino de 0.4.0). Sin
+ *   región o sin el peer, `create()` lanza `InvalidArgumentError` antes de
+ *   `run-microvm`: un error de configuración nunca lanza un MicroVM.
  * Recursos y llamadas AWS: ninguno se crea desde el SDK (la tabla la
  *   despliegas tú con `infra/metadata-index.yaml`). `PutItemCommand` una vez
  *   por sandbox creado (condicional `attribute_not_exists(pk)`);
@@ -303,6 +305,19 @@ export class DynamoDbIndex {
       `DynamoDB dejó claves sin procesar en BatchGetItem tras ${UNPROCESSED_RETRY_ATTEMPTS} reintentos: vuelve a listar más tarde`,
       { awsCode: "UnprocessedKeys" },
     );
+  }
+
+  /**
+   * Comprobación previa sin E/S contra AWS que `create()` hace antes de
+   * `run-microvm`: resuelve la región y carga el peer opcional (construir el
+   * cliente no llama a AWS). Lanza `InvalidArgumentError` si falta
+   * cualquiera de los dos, así un error de configuración nunca lanza (ni
+   * factura) un MicroVM.
+   *
+   * @internal
+   */
+  async prepare(): Promise<void> {
+    await this.#client();
   }
 
   #client(): Promise<DynamoDbApi> {

@@ -60,7 +60,8 @@ Ejemplo:
 
 `scripts/tests/test_optional_features_docs.py` comprueba, para cada fila
 marcada "disponible" en la tabla de abajo, que el símbolo de opción citado
-aparece en el fichero SDK de su columna "Dónde" junto a ese mismo marcador.
+aparece en el fichero SDK de su columna "Dónde" dentro de un mismo bloque
+"Coste y activación" que trae, además, los seis apartados de la plantilla.
 
 ## Funciones con coste AWS
 
@@ -68,7 +69,7 @@ aparece en el fichero SDK de su columna "Dónde" junto a ese mismo marcador.
 |---|---|---|---|---|---|---|---|---|---|---|
 | [Inyección de secretos](#secrets-injection) | implementado, pendiente de aceptación en AWS real (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
 | [Secret CRUD (Secrets Manager)](#secrets-crud) | implementado, pendiente de aceptación en AWS real (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
-| [Índice de metadatos (DynamoDB)](#metadata-index) | implementado, pendiente de aceptación en AWS real (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Escribe una fila inmutable por sandbox (`metadata`, imagen, `startedAt`, TTL) en tu tabla DynamoDB al crearlo (`create()`, `PoolConfig`) y la une con `list-microvms` para filtrar `list()`/`paginate()` por metadatos también sobre `SUSPENDED`, sin sondear `Health` ni despertar nada; también en el shim (`Sandbox.list(..., index=)`, `E2B(index=)`) y la CLI (`--index-table`) | `dynamodb:PutItem` una vez por sandbox creado (condicional) y `dynamodb:BatchGetItem` una vez por página de `list-microvms` al listar con `metadata` + `index`; la tabla la despliegas tú (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`); nunca `DeleteItem` | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (~1 por `create` ≈ $0,000000625) + $0,125 por millón de RRU (0,5 por sandbox candidato) + $0,25/GB-mes tras 25 GB gratis; borrado por TTL gratis. 10 000 sandboxes/mes con un `list()` diario < $0,10/mes; tabla vacía $0 | `dynamodb:PutItem` (escritor, política `RayitoIndexWriter`) y `dynamodb:BatchGetItem` (lector, `RayitoIndexReader`) sobre el ARN de la tabla, en las credenciales del **llamante** | No pasar `index=` / `index` (o pasar `None`/`undefined`); borrar el stack de `infra/metadata-index.yaml` para dejar de pagar el almacenamiento | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index/dynamodb.ts` |
+| [Índice de metadatos (DynamoDB)](#metadata-index) | implementado, pendiente de aceptación en AWS real (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Escribe una fila inmutable por sandbox (`metadata`, imagen, `startedAt`, TTL) en tu tabla DynamoDB al crearlo (`create()`, `PoolConfig`) y la une con `list-microvms` para filtrar `list()`/`paginate()` por metadatos también sobre `SUSPENDED`, sin sondear `Health` ni despertar nada; también en el shim (`Sandbox.list(..., index=)`, `E2B(index=)`) y la CLI (`--index-table`) | `dynamodb:PutItem` una vez por sandbox creado (condicional) y `dynamodb:BatchGetItem` una vez por página de `list-microvms` al listar con `metadata` + `index`; la tabla la despliegas tú (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`); nunca `DeleteItem` | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (~1 por `create` ≈ $0,000000625) + $0,125 por millón de RRU (`BatchGetItem` se factura por ítem leído: 0,5 RRU por sandbox candidato, lectura eventualmente consistente de ≤ 4 KB) + $0,25/GB-mes tras 25 GB gratis; borrado por TTL gratis. Ejemplo: 10 000 sandboxes/mes ≈ 10 000 WRU ($0,006) y un `list()` diario sobre ellos ≈ 300 000 ítems × 0,5 = 150 000 RRU ($0,019): ≈ $0,03/mes; tabla vacía $0 | `dynamodb:PutItem` (escritor, política `RayitoIndexWriter`) y `dynamodb:BatchGetItem` (lector, `RayitoIndexReader`) sobre el ARN de la tabla, en las credenciales del **llamante** | No pasar `index=` / `index` (o pasar `None`/`undefined`); borrar el stack de `infra/metadata-index.yaml` para dejar de pagar el almacenamiento | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index/dynamodb.ts` |
 | [Trazas OpenTelemetry del SDK](#otel-sdk) | disponible (0.5.0) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (instancia y clase/estático), `commands.run`, `run_code`/`runCode` y `files.*` con spans `rayito.*` (`SpanKind.CLIENT`) sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` |
 
 Las cuatro filas empezaron en "planificado (Mxx)": cada grupo cambia **su**
@@ -94,10 +95,10 @@ esperar; ya está "disponible (0.5.0)".
 
 | Función | Opción | Qué activa | Recursos AWS | Coste | Dónde |
 |---|---|---|---|---|---|
-| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `localhost`, renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:CreateMicrovmAuthToken` (ya se usa hoy en `get_host()`) | $0: `CreateMicrovmAuthToken` es gratuito (cuota de 50 TPS, `AWS_API_NOTES.md` §12); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
+| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `127.0.0.1` (otra interfaz sólo con `--bind` + `--allow-remote`), renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:GetMicrovm` (una vez, para el endpoint) + `lambda:CreateMicrovmAuthToken` (~1 cada 45 min por proxy en marcha); IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`) | $0: ambas llamadas son gratuitas (cuotas de 100 y 50 TPS, `AWS_API_NOTES.md` §11); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal más la lectura del snapshot al reanudar, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
 
 Esta fila no pasa por el ciclo "planificado → disponible" de la tabla de
-arriba: no consume cuota ni dinero adicional (reutiliza una llamada que el
+arriba: no consume cuota ni dinero adicional (reutiliza llamadas gratuitas que el
 SDK ya hace), así que no necesita una aceptación de coste independiente.
 
 ## Ejemplos
@@ -132,6 +133,19 @@ amenazas en [Secretos](secrets.md).
     await sbx.commands.run("python agent.py");
     await sbx.commands.run("env", { secrets: { GH_TOKEN: "gh" } });
     ```
+
+**La caché, nunca una lectura por llamada.** Opción `secret_cache=SecretCache(ttl_seconds=...)`
+(TS: `secretCache: new SecretCache({ ttlSeconds })`); sin ella, una caché
+compartida del proceso por (región, sesión/credenciales). TTL de 300 s por
+defecto, de 1 a 86 400 (`0` se rechaza). Clave: región, credenciales,
+secreto y versión (`VersionId`/`VersionStage`). Una sola lectura en vuelo
+por clave (diez llamadas a la vez = una `GetSecretValue`); un acierto hace 0
+llamadas, y sólo se relee al vencer el TTL o con `refresh()`/`invalidate()`.
+Los valores nunca se registran ni van en `metadata`, etiquetas,
+`runHookPayload`, el entorno de la imagen ni el del proceso `rayd`/sidecar,
+ni en mensajes de error: sólo llegan al entorno del comando, PTY, celda
+Python (mientras dura) o contexto de código que los pide explícitamente.
+Detalle en [Secretos](secrets.md#la-cache-nunca-en-cada-llamada).
 
 **Fase 1: el valor es visible para el código del sandbox** (ADR-014, punto
 6). La inyección entrega el secreto como variable de entorno del proceso que
@@ -284,9 +298,12 @@ ejecución; sólo queda un objeto de atributos trivial por llamada.
 ### `rayito sandbox proxy`
 
 ```bash
-rayito sandbox proxy sbx-abc123 --port 8000
-# sirve http://localhost:8000 -> puerto 8000 del guest,
+rayito sandbox proxy microvm-<id> --port 8000
+# sirve http://127.0.0.1:8000 -> puerto 8000 del guest,
 # renovando el JWE antes de que expire; Ctrl+C para cortar.
 ```
+
+Escucha sólo en loopback (`127.0.0.1`) salvo que pases `--bind <ip>` junto
+con `--allow-remote`: quien llegue a ese puerto usa el sandbox con tu acceso.
 
 No hace falta ninguna opción del SDK: es sólo CLI, sin coste AWS propio.

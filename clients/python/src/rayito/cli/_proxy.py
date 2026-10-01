@@ -17,16 +17,27 @@ Contrato (research custom-domain opción D, AWS_API_NOTES.md §7):
   cabeceras" más abajo), quita cualquier `x-aws-proxy-*` que traiga el
   cliente, fija `Host: <endpoint>`, añade `X-aws-proxy-auth: <JWE vigente>`
   y `X-aws-proxy-port: N`, fuerza `Connection: close` salvo en una petición
-  `Upgrade` (WebSocket, donde se deja intacta) y a partir de ahí hace de
-  tubería en los dos sentidos hasta que un lado cierra.
+  de upgrade (`Upgrade` + el token `upgrade` en `Connection`, RFC 9110
+  §7.8; ahí se deja intacta) y a partir de ahí hace de tubería en los dos
+  sentidos hasta que un lado cierra. El paso de WebSocket está
+  implementado, no medido contra AWS (sólo hay un test contra un upstream
+  falso en loopback).
+- Tiempos acotados: la cabecera del cliente tiene que llegar en
+  `HEAD_READ_TIMEOUT_SECONDS` y la conexión TLS al endpoint abrirse en
+  `UPSTREAM_CONNECT_TIMEOUT_SECONDS`. Sin JWE vigente (el refresher lleva
+  fallando más allá del TTL) o si la conexión al upstream falla o vence,
+  responde `502` + `Connection: close` y escribe en stderr una línea sin
+  JWE, cabeceras ni ruta.
 - **Sólo la primera petición de cada conexión se reescribe.** Como todas
-  las respuestas fuerzan `Connection: close` (salvo `Upgrade`), un cliente
-  bien portado no manda una segunda petición por la misma conexión; si lo
-  hace igualmente (pipelining), esos bytes se reenvían tal cual por la
-  tubería, sin volver a pasar por `parse_http_head`/`rewrite_head` — AWS la
-  rechaza de todos modos por no traer `x-aws-proxy-auth` propio (esa
-  cabecera ya se puso una vez, al principio de la conexión, no por
-  petición).
+  las peticiones que no son upgrade llegan al upstream con
+  `Connection: close` (el `Connection` del cliente se descarta), el
+  servidor del guest cierra tras la primera respuesta. Si un cliente manda
+  igualmente más peticiones por la misma conexión (pipelining), esos bytes
+  se reenvían tal cual por la tubería, sin volver a pasar por
+  `parse_http_head`/`rewrite_head`. Si el proxy de AWS valida
+  `X-aws-proxy-auth` por petición o por conexión en un keep-alive HTTP/1.1
+  NO está medido (AWS_API_NOTES.md §16, Q-M12-1): no se cuenta con que AWS
+  las rechace.
 - **Contrabando de cabeceras (`request smuggling`)**: `parse_http_head`
   rechaza (`MalformedHttpHeadError`, el llamante responde `400` y cierra)
   cualquier cabecera con un CR o LF suelto fuera de un `\\r\\n`, una
@@ -57,6 +68,7 @@ import contextlib
 import re
 import socket
 import ssl
+import sys
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -70,6 +82,15 @@ HEADER_TERMINATOR: bytes = b"\r\n\r\n"
 BAD_REQUEST_RESPONSE: bytes = (
     b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 )
+BAD_GATEWAY_RESPONSE: bytes = (
+    b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+)
+# Un cliente que abre la conexión y no termina la cabecera, o un handshake
+# TLS que se queda colgado, no retienen una tarea para siempre.
+HEAD_READ_TIMEOUT_SECONDS = 30.0
+UPSTREAM_CONNECT_TIMEOUT_SECONDS = 30.0
+# Cada cuánto `_run_until_stopped` mira el `stop_event` del e2e.
+STOP_POLL_SECONDS = 0.1
 # RFC 9110 §5.6.2 `tchar`: los nombres de cabecera del cliente que no
 # cumplan esto se rechazan en vez de reenviarse tal cual.
 _TOKEN_CHARS = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
@@ -130,16 +151,27 @@ def local_url(bind: str, port: int) -> str:
 def bind_listener_socket(bind: str, local_port: int) -> socket.socket:
     """Reserva el socket local ANTES de tocar AWS (`GetMicrovm`,
     `CreateMicrovmAuthToken`): un `--local-port` ocupado o un `--bind`
-    inválido falla aquí, limpio, sin haber gastado ninguna llamada.
-    `asyncio.start_server(sock=...)` hace el resto (listen + no bloqueante)."""
+    inválido falla aquí, limpio (`InvalidArgumentException` con el puerto,
+    que la CLI muestra sin traceback), sin haber gastado ninguna llamada.
+    `asyncio.start_server(sock=...)` hace el resto (no bloqueante)."""
     family = socket.AF_INET6 if ":" in bind else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock = socket.socket(family, socket.SOCK_STREAM)
+    except OSError as exc:
+        raise InvalidArgumentException(f"--bind {bind}: {exc.strerror or exc}") from exc
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((bind, local_port))
-    except OSError:
+        # `listen()` aquí y no en `start_server`: con `SO_REUSEADDR` dos
+        # `bind()` al mismo puerto conviven en Linux hasta el primer
+        # `listen()`, así que el conflicto con otro proceso que ya escucha
+        # sale ahora, antes de tocar AWS.
+        sock.listen()
+    except OSError as exc:
         sock.close()
-        raise
+        raise InvalidArgumentException(
+            f"no se puede escuchar en {bind} con --local-port {local_port}: {exc.strerror or exc}"
+        ) from exc
     return sock
 
 
@@ -158,11 +190,14 @@ class HttpHead:
         return None
 
     def is_upgrade(self) -> bool:
+        """RFC 9110 §7.8: hace falta `Upgrade` Y el token `upgrade` en
+        `Connection`; un `Upgrade` suelto (p. ej. con `Connection:
+        keep-alive`) no es un upgrade y se trata como cualquier petición."""
         tokens = {
             token.strip().lower()
             for token in (self.header(CONNECTION_HEADER_NAME) or "").split(",")
         }
-        return "upgrade" in tokens or self.header(UPGRADE_HEADER_NAME) is not None
+        return "upgrade" in tokens and self.header(UPGRADE_HEADER_NAME) is not None
 
 
 class MalformedHttpHeadError(ValueError):
@@ -261,6 +296,20 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         await writer.wait_closed()
 
 
+def _report(reason: str) -> None:
+    """Una línea en stderr para que el operador sepa por qué una petición
+    recibió `502`. `reason` es un texto fijo: nunca lleva el JWE, las
+    cabeceras, el cuerpo ni la ruta de la petición."""
+    print(f"rayito: proxy: {reason}", file=sys.stderr, flush=True)
+
+
+async def _reply_and_close(writer: asyncio.StreamWriter, response: bytes) -> None:
+    with contextlib.suppress(ConnectionError, OSError):
+        writer.write(response)
+        await writer.drain()
+    await _close(writer)
+
+
 async def handle_connection(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
@@ -269,32 +318,44 @@ async def handle_connection(
     port: int,
     jwe_provider: JweProvider,
     connector: Connector,
+    head_timeout: float = HEAD_READ_TIMEOUT_SECONDS,
+    connect_timeout: float = UPSTREAM_CONNECT_TIMEOUT_SECONDS,
 ) -> None:
     """Una conexión de cliente: reescribe la cabecera de la primera petición
     y hace de tubería en los dos sentidos. Nunca registra nada de lo que
-    pasa por ella."""
+    pasa por ella; sin JWE o sin upstream responde `502` y deja en stderr
+    sólo el motivo."""
     try:
-        raw_head = await client_reader.readuntil(HEADER_TERMINATOR)
-    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError, OSError):
+        raw_head = await asyncio.wait_for(client_reader.readuntil(HEADER_TERMINATOR), head_timeout)
+    except (
+        TimeoutError,
+        asyncio.IncompleteReadError,
+        asyncio.LimitOverrunError,
+        ConnectionError,
+        OSError,
+    ):
         await _close(client_writer)
         return
     try:
         head = parse_http_head(raw_head)
     except MalformedHttpHeadError:
-        with contextlib.suppress(ConnectionError, OSError):
-            client_writer.write(BAD_REQUEST_RESPONSE)
-            await client_writer.drain()
-        await _close(client_writer)
+        await _reply_and_close(client_writer, BAD_REQUEST_RESPONSE)
         return
     jwe = jwe_provider()
     if jwe is None:
-        await _close(client_writer)
+        _report("sin JWE vigente (falla la renovación con CreateMicrovmAuthToken): 502")
+        await _reply_and_close(client_writer, BAD_GATEWAY_RESPONSE)
         return
     upstream_head = rewrite_head(head, endpoint=endpoint, jwe=jwe, port=port)
     try:
-        upstream_reader, upstream_writer = await connector()
+        upstream_reader, upstream_writer = await asyncio.wait_for(connector(), connect_timeout)
+    except TimeoutError:
+        _report("la conexión al upstream (endpoint del sandbox) no se abrió a tiempo: 502")
+        await _reply_and_close(client_writer, BAD_GATEWAY_RESPONSE)
+        return
     except OSError:
-        await _close(client_writer)
+        _report("no se pudo conectar al upstream (endpoint del sandbox): 502")
+        await _reply_and_close(client_writer, BAD_GATEWAY_RESPONSE)
         return
     try:
         upstream_writer.write(upstream_head)
@@ -326,6 +387,8 @@ async def serve_proxy(
     *,
     listener: socket.socket,
     ready: Callable[[asyncio.Server], None] | None = None,
+    head_timeout: float = HEAD_READ_TIMEOUT_SECONDS,
+    connect_timeout: float = UPSTREAM_CONNECT_TIMEOUT_SECONDS,
 ) -> None:
     """Corre el listener (ya reservado con `bind_listener_socket`, antes de
     cualquier llamada a AWS) hasta que lo cancelen (Ctrl-C en la CLI, un
@@ -339,6 +402,8 @@ async def serve_proxy(
             port=spec.port,
             jwe_provider=jwe_provider,
             connector=connector,
+            head_timeout=head_timeout,
+            connect_timeout=connect_timeout,
         )
 
     server = await asyncio.start_server(on_connection, sock=listener)
@@ -378,16 +443,22 @@ async def _run_until_stopped(
 ) -> None:
     """Sin `stop_event` (la CLI real): equivale a `await serve_proxy(...)`,
     que sólo vuelve por Ctrl-C. Con un `threading.Event` (el e2e, que lanza
-    esto en un hilo aparte porque SIGINT no cruza hilos): cancela la tarea en
-    cuanto se marca, en vez de reimplementar el bucle de servir + parar."""
+    esto en un hilo aparte porque SIGINT no cruza hilos): espera a lo que
+    llegue antes, que el servidor acabe (y entonces relanza su excepción, p.
+    ej. si `start_server` falló) o que se marque el evento (y entonces lo
+    cancela). Sondea el evento en vez de bloquear un hilo del executor en
+    `stop_event.wait()`, que dejaría `asyncio.run` colgado al salir."""
     if stop_event is None:
         await serve_proxy(spec, jwe_provider, connector, listener=listener, ready=ready)
         return
     task = asyncio.ensure_future(
         serve_proxy(spec, jwe_provider, connector, listener=listener, ready=ready)
     )
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, stop_event.wait)
+    while not task.done() and not stop_event.is_set():
+        await asyncio.wait({task}, timeout=STOP_POLL_SECONDS)
+    if task.done():
+        task.result()
+        return
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task

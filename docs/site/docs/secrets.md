@@ -140,11 +140,11 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
 
 | Llamada | Python | TypeScript | Notas |
 |---|---|---|---|
-| Crear / conectar | `Sandbox.create(secrets=, secret_cache=)`, `Sandbox.connect(id, secrets=, …)`, `sbx.connect(secrets=, …)` | `Sandbox.create({ secrets, secretCache })`, `Sandbox.connect(id, { secrets })`, `sbx.connect({ secrets })` | el handle guarda sólo las referencias; se resuelven **antes** de `run-microvm`: un secreto que falta falla sin lanzar un VM; `connect` sin `secrets` conserva los del handle (un `secret_cache=`/`secretCache` solo cambia la caché, no las referencias) |
+| Crear / conectar | `Sandbox.create(secrets=, secret_cache=)`, `Sandbox.connect(id, secrets=, …)`, `sbx.connect(secrets=, …)` | `Sandbox.create({ secrets, secretCache })`, `Sandbox.connect(id, { secrets })`, `sbx.connect({ secrets })` | el handle guarda sólo las referencias; se resuelven **antes** de `run-microvm`: un secreto que falta falla sin lanzar un VM; `connect` sin `secrets` conserva los del handle (un `secret_cache=`/`secretCache` solo cambia la caché, no las referencias); `secrets={}` (TS: `secrets: {}`) los borra todos y conserva la caché |
 | Pool | `pool.take(secrets=)`, `Sandbox.create(pool=, secrets=)` | `pool.take({ secrets })`, `Sandbox.create({ pool, secrets })` | se enlazan al sandbox que sale del pool; las plazas calientes nunca los llevan (ni en su lanzamiento ni en su `SlotRecord`) |
 | Comandos | `commands.run(..., secrets=)` (también `background=True`) | `commands.run(cmd, { secrets })` | `StartRequest.envs` |
 | PTY | `pty.create(secrets=)` | `pty.create({ secrets })` | `PtyStart.envs` |
-| Código | `run_code(..., secrets=)` | `runCode(code, { secrets })` | `ExecuteRequest.envs`, sólo en contextos **Python** y sólo durante esa celda; con otro `language` es `InvalidArgumentException`, y los del handle no se añaden a celdas de otros lenguajes |
+| Código | `run_code(..., secrets=)` | `runCode(code, { secrets })` | `ExecuteRequest.envs`, sólo en contextos **Python** y sólo durante esa celda; con otro `language` es `InvalidArgumentException`, y los del handle no se añaden a celdas de otros lenguajes. Con `context=` dado como **id** (texto), los del handle sólo van si el contexto es `default` o uno que ese handle creó o listó como Python: un id desconocido (creado desde otro handle) va sin ellos; pasa el `CodeContext` o `secrets=` en la llamada |
 | Contextos | `create_code_context(secrets=)` | `createCodeContext({ secrets })` | `CreateContextRequest.envs`: el entorno del kernel, de cualquier lenguaje, mientras viva |
 | `reincarnate()` | relanza con las referencias (y la caché) que tenga el handle **en ese momento**, incluidas las de `pool.take(secrets=)` o `connect(secrets=)` | igual | sólo referencias, nunca valores |
 
@@ -186,7 +186,14 @@ Reglas:
   preguntar.
 - Sin `secret_cache=`, `secrets=` usa una caché **compartida del proceso**
   por (región, sesión), con TTL 300, creada la primera vez que se usa
-  `secrets=`.
+  `secrets=`. Como mucho hay 32 (`MAX_SHARED_CACHES`): un proceso que crea
+  una sesión o un proveedor de credenciales por tenant o por petición
+  descarta la usada hace más tiempo (sólo cuesta releer después).
+- **Los valores vencidos se descartan**, no se quedan en memoria: cada uso
+  de una caché (y cada vez que se pide una compartida, para todas las
+  compartidas) borra antes los valores cuyo TTL ya pasó; `sweep()` lo hace
+  a mano. No hay temporizador: una caché que nadie vuelve a usar conserva
+  sus valores hasta que el proceso la suelta.
 - Los valores viven **sólo en la memoria del proceso** del SDK; `repr`,
   `str`, `toJSON` e `inspect` muestran `***`.
 

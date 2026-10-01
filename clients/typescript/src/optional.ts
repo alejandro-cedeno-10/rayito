@@ -51,11 +51,13 @@ export async function loadOptionalPeer<T>(specifier: string, feature: string): P
 }
 
 /**
- * `true` sólo cuando la resolución falló para `specifier` mismo, nunca para
- * una dependencia anidada de un paquete que sí está instalado: un
- * `ERR_MODULE_NOT_FOUND`/`MODULE_NOT_FOUND` de Node nombra en su mensaje el
- * módulo concreto que no pudo resolver, que es distinto de `specifier`
- * cuando el problema está más adentro.
+ * `true` sólo cuando la resolución falló para `specifier` mismo (o para su
+ * paquete, en un especificador con subruta), nunca para una dependencia
+ * anidada de un paquete que sí está instalado. Se compara sólo el nombre
+ * entrecomillado que Node no pudo resolver ("Cannot find package|module
+ * '<x>'"), no el mensaje entero: el mensaje también incluye la ruta del
+ * importador, que para una dependencia transitiva rota contiene
+ * `node_modules/<specifier>/...` y casaría por error.
  */
 function isMissingRequestedSpecifier(error: unknown, specifier: string): boolean {
   const code = (error as { code?: unknown } | null)?.code;
@@ -63,5 +65,15 @@ function isMissingRequestedSpecifier(error: unknown, specifier: string): boolean
     return false;
   }
   const message = (error as { message?: unknown } | null)?.message;
-  return typeof message === "string" && message.includes(specifier);
+  if (typeof message !== "string") {
+    return false;
+  }
+  const missing = /Cannot find (?:package|module) '([^']+)'/.exec(message)?.[1];
+  return missing !== undefined && (missing === specifier || missing === packageName(specifier));
+}
+
+/** Nombre del paquete npm de un especificador (`@scope/name` o `name`, sin subruta). */
+function packageName(specifier: string): string {
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? specifier);
 }

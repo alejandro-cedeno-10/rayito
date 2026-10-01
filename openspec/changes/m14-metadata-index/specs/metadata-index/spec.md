@@ -15,7 +15,7 @@
 - **THEN** no boto3 `dynamodb` client is built (Python) and `loadOptionalPeer` is never called with `@aws-sdk/client-dynamodb` (TypeScript)
 
 ### Requirement: create(index=) writes the row before readiness and fails closed by default
-After `run-microvm` and before the readiness probe, `create(index=idx)` SHALL call `PutItem` with `ConditionExpression="attribute_not_exists(pk)"`. If it fails and `on_write_failure` is `"terminate"` (default) the SDK SHALL terminate the MicroVM (unless `keep_on_failure=True`) and raise `IndexWriteException` (TS `IndexWriteError`) before minting any proxy token; with `"warn"` it SHALL log a warning without metadata values and return the sandbox. `create(pool=, index=)` SHALL raise `InvalidArgumentException`; `PoolConfig(index=)` SHALL make every slot launch write its row with the pool metadata. `kill()` SHALL NOT touch the index.
+After `run-microvm` and before the readiness probe, `create(index=idx)` SHALL call `PutItem` with `ConditionExpression="attribute_not_exists(pk)"`. If it fails and `on_write_failure` is `"terminate"` (default) the SDK SHALL terminate the MicroVM (unless `keep_on_failure=True`) and raise `IndexWriteException` (TS `IndexWriteError`) before minting any proxy token; with `"warn"` it SHALL log a warning without metadata values and return the sandbox. `create(pool=, index=)` SHALL raise `InvalidArgumentException`; `PoolConfig(index=)` SHALL make every slot launch write its row with the pool metadata. `kill()` SHALL NOT touch the index. Before `run-microvm` (also on a pool refill), the SDK SHALL run an I/O-free preflight that builds the index client and SHALL raise `InvalidArgumentException` (TS `InvalidArgumentError`) if the index has no region or its optional peer is missing, without launching anything.
 
 #### Scenario: a failed put terminates the VM
 - **WHEN** `PutItem` answers `AccessDeniedException` during `create(index=idx)`
@@ -24,6 +24,10 @@ After `run-microvm` and before the readiness probe, `create(index=idx)` SHALL ca
 #### Scenario: warn keeps the sandbox
 - **WHEN** the same failure happens with `DynamoDbIndex(..., on_write_failure="warn")`
 - **THEN** the sandbox is returned, a warning is logged and no `TerminateMicrovm` is recorded
+
+#### Scenario: a configuration error fails before launch
+- **WHEN** `create(index=idx)` runs and the index has no region (or, in TypeScript, `@aws-sdk/client-dynamodb` is not installed)
+- **THEN** `InvalidArgumentException` (TS `InvalidArgumentError`) is raised by an I/O-free preflight and the fake control plane records no `RunMicrovm`
 
 ### Requirement: reincarnate() keeps the index of its create()
 A sandbox created with `index=` (Python) / `index` (TypeScript) SHALL keep that index in its launch options, and `reincarnate()` SHALL pass it to the successor's `create()`, so the successor writes its own conditional row and stays visible to the indexed listing. Without `index` the successor SHALL make no DynamoDB call.

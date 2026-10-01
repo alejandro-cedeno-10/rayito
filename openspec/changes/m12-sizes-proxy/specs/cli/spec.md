@@ -11,7 +11,7 @@ It SHALL call `get-microvm` to resolve the sandbox's endpoint and SHALL exit wit
 
 **Token lifecycle.** The command SHALL reuse the SDK's own `TokenRefresher`: mint once at startup, start the background refresh thread (45-minute cadence, the same `TOKEN_REFRESH_AFTER_MINUTES` the gRPC transport uses), and read the current JWE from the `TokenStore` on every connection without minting a new one per request.
 
-**Listener.** It SHALL bind `--bind` (default `127.0.0.1`) and `--local-port`, speak HTTP/1.1, and per connection: read only the request header, capped at the `asyncio.StreamReader` default limit (64 KiB); strip any client-supplied header whose name starts with `x-aws-proxy-` (case-insensitive); replace any `Host` header with the sandbox's endpoint; add `X-aws-proxy-auth` (the current JWE) and `X-aws-proxy-port` (`N`); force `Connection: close` unless the request is an `Upgrade` request, in which case `Connection`/`Upgrade` SHALL pass through unmodified; then open a connection to the endpoint (TLS on port 443, SNI = the endpoint, via an injectable connector factory) and pipe bytes in both directions until either side closes.
+**Listener.** It SHALL bind `--bind` (default `127.0.0.1`) and `--local-port`, speak HTTP/1.1, and per connection: read only the request header, capped at the `asyncio.StreamReader` default limit (64 KiB); strip any client-supplied header whose name starts with `x-aws-proxy-` (case-insensitive); replace any `Host` header with the sandbox's endpoint; add `X-aws-proxy-auth` (the current JWE) and `X-aws-proxy-port` (`N`); force `Connection: close` (dropping the client's own `Connection`) unless the request is an upgrade request — an `Upgrade` header AND the `upgrade` token in `Connection` (RFC 9110 §7.8) — in which case `Connection`/`Upgrade` SHALL pass through unmodified; the header read and the upstream connect SHALL each be bounded by a timeout; when there is no current JWE or the upstream connect fails or times out, it SHALL answer `502 Bad Gateway` with `Connection: close` and write a stderr line carrying no JWE, header or path; then open a connection to the endpoint (TLS on port 443, SNI = the endpoint, via an injectable connector factory) and pipe bytes in both directions until either side closes.
 
 **Bind safety.** `--bind` outside `127.0.0.1`, `::1` or `localhost` SHALL require `--allow-remote`; without it, the command SHALL exit with a usage error before touching AWS. With `--allow-remote`, it SHALL print a warning that any host reaching the port uses the sandbox.
 
@@ -45,4 +45,12 @@ It SHALL require no sandbox access token (only the JWE), and it SHALL stop the r
 
 #### Scenario: an invalid or busy --local-port fails before any AWS call
 - **WHEN** `--local-port` is outside `1..65535`, or is already bound by another process
-- **THEN** the command exits with an error before calling `GetMicrovm` or `CreateMicrovmAuthToken`
+- **THEN** the command exits with an error message naming the port (no traceback) before calling `GetMicrovm` or `CreateMicrovmAuthToken`
+
+#### Scenario: an Upgrade header without Connection: upgrade is not an upgrade
+- **WHEN** a client sends a request with `Upgrade: x` and `Connection: keep-alive`
+- **THEN** the upstream receives a single `Connection: close` and no `keep-alive`
+
+#### Scenario: no JWE or no upstream answers 502
+- **WHEN** the JWE provider returns nothing, or the upstream connect raises or times out
+- **THEN** the client receives `502 Bad Gateway` with `Connection: close`, and stderr gets a reason line without the JWE, headers or path

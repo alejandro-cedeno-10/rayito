@@ -36,7 +36,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
-from rayito._index import DynamoDbIndex, validate_index, write_failure
+from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
     auto_resume_reopen,
@@ -156,10 +156,12 @@ from rayito._sandbox_base import (
     resolve_template,
     sandbox_logger,
     terminal_state_error,
+    terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    write_index_record,
 )
 from rayito._secrets import (
     SecretBinding,
@@ -237,43 +239,6 @@ def resolve_control_plane(
     region: str | None,
 ) -> ControlPlane:
     return control_plane or shared_control_plane(session, region=region)
-
-
-def terminate_quietly(
-    control_plane: ControlPlane, sandbox_id: str, log: logging.Logger = logger
-) -> None:
-    """Limpieza best-effort de un MicroVM que no llegó a estar listo: el error
-    original es el que importa, así que un fallo aquí sólo se loguea (en el
-    logger del sandbox, `rayito.sandbox` por defecto)."""
-    try:
-        control_plane.terminate_microvm(sandbox_id)
-    except Exception:
-        log.warning(
-            "no se pudo terminar el sandbox %s tras un fallo de arranque", sandbox_id, exc_info=True
-        )
-
-
-def write_index_record(
-    index: DynamoDbIndex,
-    info: SandboxInfo,
-    metadata: Mapping[str, str] | None,
-    control_plane: ControlPlane,
-    keep_on_failure: bool,
-    log: logging.Logger,
-) -> None:
-    """La fila del índice de `create(index=...)`, tras `run-microvm` y antes
-    de la sonda de readiness. Si `PutItem` falla: con
-    `on_write_failure='terminate'` termina el VM (salvo `keep_on_failure`) y
-    lanza `IndexWriteException`; con `'warn'` avisa y sigue."""
-    try:
-        index.put(index.record(info, metadata))
-    except Exception as exc:
-        error = write_failure(index, info.sandbox_id, exc, log)
-        if error is None:
-            return
-        if not keep_on_failure:
-            terminate_quietly(control_plane, info.sandbox_id, log)
-        raise error from exc
 
 
 def first_stream_message(call: Any, *, allow_empty: bool = False) -> tuple[Any, Any]:
@@ -750,6 +715,8 @@ class Sandbox:
             taken._bind_logger(logger)
             taken._instrumentation = instrumentation
             return taken
+        if validated_index is not None:
+            validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
             binding,
@@ -855,10 +822,32 @@ class Sandbox:
         """Reabre este handle: `get-microvm`, `resume-microvm` si está
         `SUSPENDED` sin auto-resume, el sondeo de `Health` y la extensión del
         plazo de `Sandbox.connect(sandbox_id, timeout=)`. Devuelve `self`.
-        `secrets=`/`secret_cache=` sustituyen los del handle (como en
-        `create()`, con el mismo bloque "Coste y activación"; `None` los
-        conserva). `tracer_provider=` (M13b) sustituye la `Instrumentation`
-        del handle; `None` conserva la que ya tenía (misma convención)."""
+        `secrets=`/`secret_cache=` sustituyen los del handle; `None` los
+        conserva y `secrets={}` los borra todos. `tracer_provider=` (M13b)
+        sustituye la `Instrumentation` del handle; `None` conserva la que ya
+        tenía ($0 de AWS: ver el bloque de `create()`).
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` (y `secret_cache=`) inyectan secretos de Secrets
+            Manager en cada comando, PTY, celda Python y contexto de este
+            handle; sin ellos, `connect()` no construye ningún cliente
+            `secretsmanager` (el camino de 0.4.0).
+        Recursos y llamadas AWS: `GetSecretValue` una vez por secreto y TTL de
+            `SecretCache` (300 s por defecto), resuelto aquí antes de
+            `get-microvm`; ningún recurso nuevo.
+        Coste aproximado: $0,05 por 10 000 llamadas (≈ $0,04/mes por secreto
+            y proceso con TTL 300) + $0,40 por secreto y mes (us-east-1,
+            2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante
+            (`RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt`
+            con una CMK.
+        Cómo apagarla: no pases `secrets=` ni `secret_cache=`; `secrets={}`
+            quita los que el handle ya tenía.
+        Ejemplo:
+            sbx.connect(secrets={"OPENAI_API_KEY": "openai"})
+            sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
+        """
         if tracer_provider is not None:
             self._instrumentation = instrumentation_for(tracer_provider)
         self._rebind_secrets(secrets, secret_cache)
@@ -1773,7 +1762,10 @@ class Sandbox:
         `secrets=` (y los del handle) viajan en `ExecuteRequest.envs` sólo
         durante esta celda y sólo en contextos Python: con otro `language` es
         `InvalidArgumentException` (usa `create_code_context(secrets=)`), y
-        los del handle no se añaden a celdas de otros lenguajes.
+        los del handle no se añaden a celdas de otros lenguajes. Con
+        `context=` dado como id (str), los del handle sólo van si el contexto
+        es `default` o uno que este handle creó o listó como Python; un id
+        desconocido (creado desde otro handle) va sin ellos.
 
         Coste y activación
         -------------------
@@ -2031,10 +2023,10 @@ class Sandbox:
         secret_cache: SecretCache | None,
     ) -> None:
         """Sustituye los secretos del handle (tras resolverlos) según
-        `rebind_secrets`: `secrets=None` conserva las referencias; con los dos
-        a `None` no toca nada."""
-        binding = rebind_secrets(self._secrets, secrets, secret_cache)
-        if binding is None:
+        `rebind_secrets`: `secrets=None` conserva las referencias,
+        `secrets={}` las borra; con los dos a `None` no toca nada."""
+        changed, binding = rebind_secrets(self._secrets, secrets, secret_cache)
+        if not changed:
             return
         self._secrets = warm(binding, self._default_secret_cache)
 

@@ -47,7 +47,7 @@
     "test": "vitest run --project unit --passWithNoTests",
     "test:e2e": "vitest run --project e2e --no-file-parallelism",
     "lint": "biome check .",
-    "pack:check": "node scripts/pack-check.mjs",
+    "pack:check": "node scripts/pack-check.mjs && node scripts/check-dts-cost-blocks.mjs",
     "format": "biome format --write .",
     "gen": "cd ../.. && buf generate"
   },

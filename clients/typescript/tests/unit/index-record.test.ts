@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { chunks } from "../../src/index/dynamodb.js";
-import { joinIndex } from "../../src/index/join.js";
+import { joined } from "../../src/index/join.js";
 import {
   fromItem,
   type IndexRecord,
@@ -23,7 +23,7 @@ import {
   InvalidArgumentError,
   SandboxIndexError,
 } from "../../src/index.js";
-import { sandboxListItem } from "../../src/models.js";
+import { type SandboxListItem, sandboxListItem } from "../../src/models.js";
 import * as optional from "../../src/optional.js";
 import { ListFilters, listingRequest } from "../../src/sandbox/listing.js";
 import { FakeDynamoDb, fakeIndex, TABLE } from "./index-fake.js";
@@ -97,7 +97,19 @@ describe("IndexRecord", () => {
   });
 });
 
-describe("joinIndex", () => {
+/** `joined` item a item, como hace el paginador: los que conserva, en su orden. */
+function joinIndex(
+  items: readonly SandboxListItem[],
+  records: ReadonlyMap<string, IndexRecord>,
+  wanted: Readonly<Record<string, string>>,
+  nowSeconds: number,
+): SandboxListItem[] {
+  return items.flatMap(
+    (item) => joined(item, records.get(item.sandboxId), wanted, nowSeconds) ?? [],
+  );
+}
+
+describe("joined", () => {
   test("keeps matching rows with the state from list-microvms", () => {
     const kept = joinIndex(
       [listed("microvm-1", "SUSPENDED")],

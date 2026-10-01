@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -86,6 +87,28 @@ def test_rewrite_head_keeps_upgrade_and_connection_intact() -> None:
     assert "Connection: close" not in rewritten
     assert "Upgrade: websocket" in rewritten
     assert "forged" not in rewritten
+
+
+def test_upgrade_header_without_connection_upgrade_is_not_an_upgrade() -> None:
+    """RFC 9110 §7.8: `Upgrade` sólo cuenta con el token `upgrade` en
+    `Connection`. Con `Connection: keep-alive` la conexión no es un upgrade:
+    se quita el `Connection` del cliente y se fuerza `close`, para que no
+    queden peticiones posteriores sin reescribir en la misma conexión."""
+    request = head(
+        [
+            "GET / HTTP/1.1",
+            "Host: localhost",
+            "Upgrade: x",
+            "Connection: keep-alive",
+        ]
+    )
+    assert request.is_upgrade() is False
+    rewritten = _proxy.rewrite_head(
+        request, endpoint="abc.lambda-microvm.us-east-1.on.aws", jwe="JWE-1", port=8080
+    ).decode("latin-1")
+    assert "keep-alive" not in rewritten
+    assert rewritten.count("Connection:") == 1
+    assert "Connection: close" in rewritten
 
 
 # --------------------------------------------------------------------------
@@ -278,7 +301,12 @@ async def _echo_upstream(record: dict[str, bytes]) -> UpstreamHandler:
 
 
 async def _start_proxy(
-    connector: _proxy.Connector, jwe: str, *, port: int = 8080
+    connector: _proxy.Connector,
+    jwe: str | None,
+    *,
+    port: int = 8080,
+    head_timeout: float = _proxy.HEAD_READ_TIMEOUT_SECONDS,
+    connect_timeout: float = _proxy.UPSTREAM_CONNECT_TIMEOUT_SECONDS,
 ) -> tuple[asyncio.Task[None], int]:
     spec = _proxy.ProxySpec(
         sandbox_id=SANDBOX_ID,
@@ -296,7 +324,15 @@ async def _start_proxy(
         ready.set()
 
     task = asyncio.create_task(
-        _proxy.serve_proxy(spec, lambda: jwe, connector, listener=listener, ready=on_ready)
+        _proxy.serve_proxy(
+            spec,
+            lambda: jwe,
+            connector,
+            listener=listener,
+            ready=on_ready,
+            head_timeout=head_timeout,
+            connect_timeout=connect_timeout,
+        )
     )
     await ready.wait()
     return task, box["port"]
@@ -410,6 +446,121 @@ async def test_proxy_server_responds_400_and_closes_on_a_malformed_head() -> Non
         await _stop_proxy(task)
 
 
+async def test_proxy_answers_502_when_there_is_no_jwe(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """El refresher lleva fallando más allá del TTL: `502` + `Connection:
+    close` (no un cierre mudo) y una línea en stderr sin JWE, cabeceras ni
+    ruta; nunca se abre conexión al upstream."""
+
+    async def connector_never_called() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise AssertionError("no debería conectar al upstream sin JWE")
+
+    task, proxy_port = await _start_proxy(connector_never_called, None)
+    try:
+        client_reader, client_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        client_writer.write(b"GET /private-path HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await client_writer.drain()
+        response = await client_reader.read(-1)
+        assert response == _proxy.BAD_GATEWAY_RESPONSE
+    finally:
+        await _stop_proxy(task)
+    err = capsys.readouterr().err
+    assert "JWE" in err
+    assert "private-path" not in err
+    assert "localhost" not in err
+
+
+async def test_proxy_answers_502_when_the_upstream_connect_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def connector_refused() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise ConnectionRefusedError("refused")
+
+    task, proxy_port = await _start_proxy(connector_refused, "JWE-REFUSED")
+    try:
+        client_reader, client_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        client_writer.write(b"GET /private-path HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await client_writer.drain()
+        response = await client_reader.read(-1)
+        assert response == _proxy.BAD_GATEWAY_RESPONSE
+    finally:
+        await _stop_proxy(task)
+    err = capsys.readouterr().err
+    assert "JWE-REFUSED" not in err
+    assert "private-path" not in err
+    assert "upstream" in err
+
+
+async def test_proxy_answers_502_when_the_upstream_connect_times_out() -> None:
+    async def connector_stalled() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        await asyncio.sleep(3600)
+        raise AssertionError("inalcanzable")
+
+    task, proxy_port = await _start_proxy(connector_stalled, "JWE-SLOW", connect_timeout=0.05)
+    try:
+        client_reader, client_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        client_writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await client_writer.drain()
+        response = await asyncio.wait_for(client_reader.read(-1), 5)
+        assert response == _proxy.BAD_GATEWAY_RESPONSE
+    finally:
+        await _stop_proxy(task)
+
+
+async def test_proxy_closes_an_idle_client_after_the_header_timeout() -> None:
+    async def connector_never_called() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise AssertionError("no debería conectar al upstream sin cabecera")
+
+    task, proxy_port = await _start_proxy(connector_never_called, "JWE-IDLE", head_timeout=0.05)
+    try:
+        client_reader, client_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        client_writer.write(b"GET / HTTP/1.1\r\n")
+        await client_writer.drain()
+        response = await asyncio.wait_for(client_reader.read(-1), 5)
+        assert response == b""
+    finally:
+        await _stop_proxy(task)
+
+
+async def test_run_until_stopped_reraises_a_server_failure_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Con `stop_event` (el e2e), si `serve_proxy` falla (p. ej.
+    `start_server` lanza), el error sale en vez de quedarse esperando a un
+    `stop_event` que nadie marcará."""
+
+    async def failing_serve_proxy(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("start_server falló")
+
+    monkeypatch.setattr(_proxy, "serve_proxy", failing_serve_proxy)
+    spec = _proxy.ProxySpec(
+        sandbox_id=SANDBOX_ID, port=8080, endpoint="e", bind="127.0.0.1", local_port=0
+    )
+    stop_event = threading.Event()
+
+    async def connector_never_called() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise AssertionError("inalcanzable")
+
+    listener = _proxy.bind_listener_socket("127.0.0.1", 0)
+    try:
+        with pytest.raises(RuntimeError, match="start_server falló"):
+            await asyncio.wait_for(
+                _proxy._run_until_stopped(
+                    spec,
+                    lambda: "JWE",
+                    connector_never_called,
+                    listener,
+                    lambda _server: None,
+                    stop_event,
+                ),
+                5,
+            )
+    finally:
+        stop_event.set()
+        listener.close()
+
+
 async def test_proxy_never_logs_the_jwe(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
     secret = "SUPER-SECRET-JWE-DO-NOT-LOG"
@@ -509,7 +660,7 @@ def test_run_proxy_translates_a_bind_failure_without_calling_get_microvm() -> No
     busy.listen(1)
     try:
         busy_port = busy.getsockname()[1]
-        with pytest.raises(OSError):
+        with pytest.raises(InvalidArgumentException, match=f"--local-port {busy_port}"):
             _proxy.run_proxy(
                 plane,
                 sandbox_id=SANDBOX_ID,
@@ -565,3 +716,23 @@ def test_proxy_command_rejects_an_invalid_local_port_without_touching_the_contro
         obj=_clients_with_no_call_control_plane(),
     )
     assert result.exit_code == 1, result.stderr
+
+
+def test_proxy_command_reports_a_busy_local_port_cleanly(runner: CliRunner) -> None:
+    """Un `--local-port` ocupado: mensaje limpio que nombra el puerto,
+    salida 1, sin traceback y sin tocar AWS."""
+    busy = _proxy.bind_listener_socket("127.0.0.1", 0)
+    busy.listen(1)
+    try:
+        busy_port = busy.getsockname()[1]
+        result = runner.invoke(
+            app,
+            ["sandbox", "proxy", SANDBOX_ID, "--port", "8080", "--local-port", str(busy_port)],
+            obj=_clients_with_no_call_control_plane(),
+        )
+    finally:
+        busy.close()
+    assert result.exit_code == 1, result.output
+    assert f"--local-port {busy_port}" in result.stderr
+    assert "Traceback" not in result.output
+    assert not isinstance(result.exception, OSError)

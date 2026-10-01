@@ -247,8 +247,26 @@ class Secret:
 
 
 class AsyncSecret:
-    """`e2b.AsyncSecret`: la misma semántica y el mismo bloque "Coste y
-    activación" que `Secret`, con corrutinas (boto3 en `asyncio.to_thread`)."""
+    """`e2b.AsyncSecret`: la misma semántica que `Secret`, con corrutinas
+    (boto3 en `asyncio.to_thread`). Los valores son de sólo escritura.
+
+    Coste y activación
+    -------------------
+    Activa: llamar a `AsyncSecret.create/update/get_info/list/exists/destroy`
+        es la opción explícita; `fill` e importar el módulo no llaman a AWS.
+    Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
+        (`CreateSecret`); `DescribeSecret`, `PutSecretValue`, `UpdateSecret`,
+        `ListSecrets`, `DeleteSecret` (AWS_API_NOTES.md §19).
+    Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por
+        10 000 llamadas (us-east-1, 2026-09-30).
+    IAM: la política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`.
+    Cómo apagarla: no llames al CRUD; `await AsyncSecret.destroy(name)` para
+        dejar de pagar.
+    Ejemplo:
+        from rayito.e2b import AsyncSecret
+        info = await AsyncSecret.create("openai-key", "sk-...", region="us-east-1")
+        await AsyncSecret.destroy("openai-key")
+    """
 
     _bound_params: ClassVar[Mapping[str, Any]] = MappingProxyType({})
 

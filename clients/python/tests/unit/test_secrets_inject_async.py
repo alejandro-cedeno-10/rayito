@@ -15,6 +15,7 @@ from rayito import AsyncSandbox, RayitoCompatWarning, SecretCache, SecretRef, Se
 from rayito.exceptions import InvalidArgumentException, SecretNotFoundException
 
 from .conftest import ACCESS_TOKEN, IMAGE_ARN, SANDBOX_ID, RaydEndpoint, StubbedControlPlane
+from .fake_code import FakeContext
 from .fake_secrets import SENTINEL_NAME, SENTINEL_VALUE, FakeSecretsManager, SpySession
 from .test_commands_async import stub_launch
 
@@ -135,6 +136,40 @@ async def test_connect_rebinds(
     await sandbox.connect(secrets={"OPENAI_API_KEY": "gh"}, secret_cache=cache)
     await sandbox.commands.run("env")
     assert dict(fake_rayd.process.start_requests[-1].process.envs)["OPENAI_API_KEY"] == GH_VALUE
+
+
+async def test_connect_with_empty_secrets_clears_the_handle_secrets(
+    sandbox: AsyncSandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    cache: SecretCache,
+) -> None:
+    from rayito._secrets import relaunch_secrets
+
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    await sandbox.connect(secrets={})
+    await sandbox.commands.run("env")
+    assert "OPENAI_API_KEY" not in dict(fake_rayd.process.start_requests[-1].process.envs)
+    assert relaunch_secrets(sandbox._secrets) == (None, cache)
+
+
+async def test_run_code_with_a_context_id_adds_handle_secrets_only_to_known_python(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    await sandbox.run_code("1+1", context="default")
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {"OPENAI_API_KEY": SENTINEL_VALUE}
+    python_ctx = await sandbox.create_code_context()
+    await sandbox.run_code("1+1", context=python_ctx.id)
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {"OPENAI_API_KEY": SENTINEL_VALUE}
+    bash_ctx = await sandbox.create_code_context(language="bash")
+    await sandbox.run_code("echo hi", context=bash_ctx.id)
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {}
+    with fake_rayd.code.lock:
+        fake_rayd.code.contexts["ctx-other"] = FakeContext("ctx-other", language="bash")
+    await sandbox.run_code("echo hi", context="ctx-other")
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {}
 
 
 async def test_connect_with_only_a_cache_keeps_the_handle_secrets(

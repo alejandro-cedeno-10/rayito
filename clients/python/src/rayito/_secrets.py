@@ -62,6 +62,7 @@ import re
 import threading
 import time
 import warnings
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -753,7 +754,9 @@ class SecretCache:
     __str__ = __repr__
 
     def get(self, secret: str | SecretRef) -> str:
-        """El valor (de la caché si sigue vigente; si no, `GetSecretValue`)."""
+        """El valor (de la caché si sigue vigente; si no, `GetSecretValue`).
+        Cada llamada descarta antes los valores vencidos de esta caché."""
+        self.sweep()
         ref = as_ref(secret)
         key = self._key(ref)
         hit = self._fresh(key)
@@ -774,6 +777,7 @@ class SecretCache:
     async def aget(self, secret: str | SecretRef) -> str:
         """`get` para asyncio: un acierto no sale del bucle; un fallo corre en
         `asyncio.to_thread` con la misma petición única por clave."""
+        self.sweep()
         ref = as_ref(secret)
         hit = self._fresh(self._key(ref))
         if hit is not None:
@@ -806,6 +810,17 @@ class SecretCache:
             ]:
                 del self._entries[key]
 
+    def sweep(self) -> int:
+        """Descarta los valores vencidos (sin llamar a AWS) y devuelve
+        cuántos: un valor no sobrevive en memoria a su TTL más allá del
+        siguiente uso de la caché."""
+        now = self._clock()
+        with self._guard:
+            expired = [key for key, entry in self._entries.items() if entry.expires_at <= now]
+            for key in expired:
+                del self._entries[key]
+        return len(expired)
+
     def _key(self, ref: SecretRef) -> CacheKey:
         region, identity = self._store.cache_identity()
         return (region, identity, resolve_secret_id(ref.name, self._store.prefix), ref.selector)
@@ -826,18 +841,38 @@ class SecretCache:
 
 
 _shared_lock = threading.Lock()
-_shared_caches: dict[tuple[str | None, object | None], SecretCache] = {}
+# Una caché por (región, sesión), con tope: un proceso que crea una sesión por
+# tenant o por petición no acumula cachés (ni valores) sin límite. Al pasar del
+# tope se descarta la usada hace más tiempo (sólo cuesta releer después).
+MAX_SHARED_CACHES: Final = 32
+_shared_caches: OrderedDict[tuple[str | None, object | None], SecretCache] = OrderedDict()
+
+
+def shared_secret_caches() -> list[SecretCache]:
+    """Las cachés compartidas vivas (para tests)."""
+    with _shared_lock:
+        return list(_shared_caches.values())
 
 
 def shared_secret_cache(region: str | None, session: boto3.session.Session | None) -> SecretCache:
     """La caché del proceso para `secrets=` sin `secret_cache=`: una por
-    (región, sesión), TTL 300, creada la primera vez que se usa."""
+    (región, sesión), TTL 300, creada la primera vez que se usa. Cada vez
+    que se pide una, todas descartan sus valores vencidos; como mucho hay
+    `MAX_SHARED_CACHES` (se descarta la usada hace más tiempo)."""
     key = (region, session)
+    with _shared_lock:
+        caches = list(_shared_caches.values())
+    for existing in caches:
+        existing.sweep()
     with _shared_lock:
         cache = _shared_caches.get(key)
         if cache is None:
             cache = SecretCache(region=region, session=session)
             _shared_caches[key] = cache
+            while len(_shared_caches) > MAX_SHARED_CACHES:
+                _shared_caches.popitem(last=False)
+        else:
+            _shared_caches.move_to_end(key)
         return cache
 
 
@@ -909,15 +944,25 @@ def rebind_secrets(
     current: SecretBinding | None,
     secrets: Mapping[str, str | SecretRef] | None,
     secret_cache: SecretCache | None,
-) -> SecretBinding | None:
+) -> tuple[bool, SecretBinding | None]:
     """Lo que `connect(secrets=, secret_cache=)` deja en un handle ya
-    enlazado: `secrets=` sustituye las referencias; `secrets=None` las
-    conserva (y un `secret_cache=` sólo cambia la caché). `None` si no se
-    pidió nada: el handle no cambia."""
-    binding = bind_secrets(secrets, secret_cache)
-    if binding is None or secrets is not None or current is None:
-        return binding
-    return SecretBinding(refs=current.refs, cache=binding.cache)
+    enlazado, como `(cambia, vinculación)`: `secrets=` sustituye las
+    referencias y un `{}` explícito las borra todas (conservando la caché);
+    `secrets=None` las conserva (y un `secret_cache=` sólo cambia la caché).
+    Con los dos a `None` no cambia nada."""
+    cache = validate_secret_cache(secret_cache)
+    if secrets is None:
+        if cache is None:
+            return False, current
+        refs = current.refs if current is not None else MappingProxyType({})
+        return True, SecretBinding(refs=refs, cache=cache)
+    binding = bind_secrets(secrets, cache)
+    if binding is not None and binding.refs:
+        return True, binding
+    # `secrets={}`: el handle se queda sin secretos; la caché (la pasada o la
+    # que ya tenía) se conserva para los `secrets=` por llamada.
+    kept = cache if cache is not None else (current.cache if current is not None else None)
+    return True, None if kept is None else SecretBinding(refs=MappingProxyType({}), cache=kept)
 
 
 def relaunch_secrets(
@@ -1050,13 +1095,18 @@ PYTHON_LANGUAGES: Final = frozenset({"python", "python3"})
 
 
 def code_secrets_scope(language: str | None, context_language: str | None, secrets: object) -> bool:
-    """Si una celda de `run_code` puede llevar secretos: `ExecuteRequest.envs`
-    sólo existe en contextos Python (`rayd` responde `INVALID_ARGUMENT` en los
-    demás). Con `secrets=` en la propia llamada sobre otro lenguaje es
-    `InvalidArgumentException` apuntando a `create_code_context(secrets=)`;
-    los secretos del handle sólo se añaden a celdas Python (devuelve False)."""
-    target = (language or context_language or "python").lower()
-    if target in PYTHON_LANGUAGES:
+    """Si una celda de `run_code` puede llevar los secretos del handle:
+    `ExecuteRequest.envs` sólo existe en contextos Python (`rayd` responde
+    `INVALID_ARGUMENT` en los demás). `context_language` es el lenguaje del
+    contexto destino si se conoce con certeza (`None` = desconocido: un id
+    que este cliente no creó ni listó). Con `secrets=` en la propia llamada
+    sobre otro lenguaje conocido es `InvalidArgumentException` apuntando a
+    `create_code_context(secrets=)`; los del handle sólo se añaden a celdas
+    Python conocidas (devuelve False en otro caso)."""
+    target = language or context_language
+    if target is None:
+        return False
+    if target.lower() in PYTHON_LANGUAGES:
         return True
     if secrets:
         raise InvalidArgumentException(
@@ -1077,4 +1127,5 @@ __all__ = [
     "SecretStore",
     "SecretsManagerApi",
     "shared_secret_cache",
+    "shared_secret_caches",
 ]

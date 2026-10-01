@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { E2B, Sandbox as E2BSandbox, UnimplementedError } from "../../src/e2b/index.js";
 import {
+  DynamoDbIndex,
   IndexWriteError,
   InvalidArgumentError,
   Sandbox,
@@ -123,6 +124,35 @@ describe("create({ index })", () => {
     const pool = Object.create(SandboxPool.prototype) as SandboxPool;
     await expect(Sandbox.create({ pool, index })).rejects.toThrow(/PoolConfig\.index/);
     await expect(Sandbox.create({ pool, index })).rejects.toBeInstanceOf(InvalidArgumentError);
+  });
+
+  test("a missing DynamoDB peer fails before run-microvm", async () => {
+    vi.spyOn(optional, "loadOptionalPeer").mockRejectedValue(
+      new InvalidArgumentError("npm install @aws-sdk/client-dynamodb"),
+    );
+    const plane = newPlane();
+    const index = new DynamoDbIndex({ tableName: TABLE, region: "eu-west-1" });
+    await expect(create(plane, { metadata: { user: "42" }, index })).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
+    expect(plane.calls.map((call) => call.operation)).not.toContain("RunMicrovm");
+  });
+
+  test("an index without a region fails before run-microvm", async () => {
+    vi.stubEnv("AWS_REGION", "");
+    vi.stubEnv("AWS_DEFAULT_REGION", "");
+    const loader = vi.spyOn(optional, "loadOptionalPeer");
+    const plane = newPlane();
+    const index = new DynamoDbIndex({ tableName: TABLE });
+    try {
+      await expect(create(plane, { metadata: { user: "42" }, index })).rejects.toThrow(
+        /región del índice/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(plane.calls.map((call) => call.operation)).not.toContain("RunMicrovm");
+    expect(loader).not.toHaveBeenCalled();
   });
 
   test("without index the DynamoDB peer is never loaded", async () => {

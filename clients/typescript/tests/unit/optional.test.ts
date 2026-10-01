@@ -3,10 +3,10 @@
  * una función (ADR-014).
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "../../src/errors.js";
 import { loadOptionalPeer } from "../../src/optional.js";
 
@@ -24,6 +24,16 @@ const MISSING_NESTED_IMPORT_FIXTURE = new URL(
 // (M13b) ya es una dependencia real, pero sólo como tipo: la comprueba el
 // describe de más abajo, con su propia regla (permite `import type`).
 const LAZY_OPTIONAL_PEERS = ["@aws-sdk/client-secrets-manager", "@aws-sdk/client-dynamodb"];
+
+// Peer "instalado" de verdad bajo node_modules (resuelto por especificador
+// desnudo, como `@aws-sdk/client-dynamodb`), cuyo index reexporta un paquete
+// que no existe. Node nombra en el mensaje la ruta del importador, que
+// contiene el propio especificador del peer.
+const FAKE_SCOPE_DIR = fileURLToPath(
+  new URL("../../node_modules/@rayito-test-fake", import.meta.url),
+);
+const FAKE_PEER = "@rayito-test-fake/peer";
+const FAKE_NESTED = "rayito-test-fake-nested-missing-pkg";
 
 const SRC_ROOT = fileURLToPath(new URL("../../src", import.meta.url));
 
@@ -63,6 +73,39 @@ describe("loadOptionalPeer", () => {
   test("an existing specifier resolves", async () => {
     const module = await loadOptionalPeer<typeof import("node:util")>("node:util", "una función");
     expect(typeof module.inspect).toBe("function");
+  });
+
+  describe("con un peer desnudo instalado en node_modules", () => {
+    beforeAll(() => {
+      const peerDir = join(FAKE_SCOPE_DIR, "peer");
+      mkdirSync(peerDir, { recursive: true });
+      writeFileSync(
+        join(peerDir, "package.json"),
+        JSON.stringify({ name: FAKE_PEER, type: "module", main: "index.js" }),
+      );
+      writeFileSync(join(peerDir, "index.js"), `export * from "${FAKE_NESTED}";\n`);
+    });
+
+    afterAll(() => {
+      rmSync(FAKE_SCOPE_DIR, { recursive: true, force: true });
+    });
+
+    test("a broken transitive dependency of an installed bare peer propagates the original error", async () => {
+      await expect(loadOptionalPeer(FAKE_PEER, "una función")).rejects.toSatisfy(
+        (error: unknown) => {
+          expect(error).not.toBeInstanceOf(InvalidArgumentError);
+          expect((error as { code?: unknown }).code).toBe("ERR_MODULE_NOT_FOUND");
+          expect((error as Error).message).toContain(FAKE_NESTED);
+          return true;
+        },
+      );
+    });
+
+    test("a missing subpath of an uninstalled scoped peer is still reported as a missing peer", async () => {
+      await expect(
+        loadOptionalPeer("@rayito-test-fake-absent/peer/sub", "una función"),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
+    });
   });
 
   test("a missing nested dependency of an otherwise resolvable specifier propagates as-is, not as InvalidArgumentError", async () => {

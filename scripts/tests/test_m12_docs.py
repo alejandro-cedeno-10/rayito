@@ -86,3 +86,40 @@ def test_security_md_documents_the_proxy_jwe_scope() -> None:
 def test_site_security_md_documents_the_proxy() -> None:
     page = read("docs/site/docs/security.md")
     assert "sandbox proxy" in page
+
+
+def proxy_row() -> str:
+    """La fila de `rayito sandbox proxy` en la tabla única de
+    `optional-features.md`."""
+    rows = [
+        line
+        for line in read("docs/site/docs/optional-features.md").splitlines()
+        if line.startswith("| [`rayito sandbox proxy`]")
+    ]
+    assert len(rows) == 1, f"optional-features.md: hay {len(rows)} filas del proxy, debería ser 1"
+    return flatten(rows[0])
+
+
+def test_optional_features_proxy_row_matches_the_shipped_cli() -> None:
+    row = proxy_row()
+    assert "`clients/python/src/rayito/cli/_proxy.py`" in row
+    assert "llega en M12" not in row, "optional-features.md: el proxy ya está disponible"
+    assert row.count("lambda:GetMicrovm") >= 2, "faltan GetMicrovm en llamadas e IAM"
+    assert row.count("lambda:CreateMicrovmAuthToken") >= 2
+    assert "§11" in row and "§12" not in row, "las cuotas TPS están en AWS_API_NOTES.md §11"
+    assert "snapshot" in row, "falta la lectura de snapshot del auto-resume"
+
+
+def test_optional_features_proxy_example_is_honest() -> None:
+    # `section()` cortaría en los comentarios `# ...` del bloque bash: aquí se
+    # corta en el siguiente encabezado `## `/`### ` o ancla `<a id=`.
+    text = read("docs/site/docs/optional-features.md")
+    start = text.index("### `rayito sandbox proxy`")
+    ends = [
+        found
+        for marker in ("\n## ", "\n### ", "\n<a id=")
+        if (found := text.find(marker, start + 1)) != -1
+    ]
+    body = flatten(text[start : min(ends, default=len(text))])
+    assert "microvm-<id>" in body and "sbx-abc123" not in body
+    assert "--allow-remote" in body and "127.0.0.1" in body

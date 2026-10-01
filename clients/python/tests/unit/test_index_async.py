@@ -8,12 +8,12 @@ from typing import Any
 
 import pytest
 
-from rayito import AsyncSandbox, AsyncSandboxPool, IndexWriteException
+from rayito import AsyncSandbox, AsyncSandboxPool, DynamoDbIndex, IndexWriteException
 from rayito.exceptions import InvalidArgumentException
 
 from .conftest import IMAGE_ARN, TrackingTransport
 from .fake_control_plane import FakeControlPlane
-from .fake_dynamodb import fake_index
+from .fake_dynamodb import TABLE, fake_index
 
 PROBE_OPERATIONS = ("GetMicrovm", "CreateMicrovmAuthToken")
 
@@ -30,6 +30,15 @@ def plane() -> Iterator[FakeControlPlane]:
 @pytest.fixture
 def transport() -> TrackingTransport:
     return TrackingTransport.for_loopback()
+
+
+@pytest.fixture
+def no_aws_region(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Sin región en el entorno ni en ficheros de configuración de AWS."""
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
 
 
 async def create(
@@ -112,3 +121,13 @@ async def test_list_and_paginate_with_index_never_probe(
     assert [c.operation for c in plane.calls[since:] if c.operation in PROBE_OPERATIONS] == []
     assert len(transport.opened) == channels
     assert len(api.calls("batch_get_item")) == 2
+
+
+@pytest.mark.usefixtures("no_aws_region")
+async def test_an_index_without_a_region_fails_before_run_microvm(
+    plane: FakeControlPlane, transport: TrackingTransport
+) -> None:
+    index = DynamoDbIndex(TABLE)
+    with pytest.raises(InvalidArgumentException, match="región del índice"):
+        await create(plane, transport, metadata={"user": "42"}, index=index)
+    assert "RunMicrovm" not in [call.operation for call in plane.calls]

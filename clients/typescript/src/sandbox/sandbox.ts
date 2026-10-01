@@ -671,6 +671,8 @@ export class Sandbox implements AsyncDisposable {
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
+    // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
+    await index?.prepare();
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
@@ -1588,7 +1590,7 @@ export class Sandbox implements AsyncDisposable {
         persist,
         persistTimeoutMs,
         transfer: this.transfer ?? null,
-        secrets: this.#secrets.binding?.toRecord(),
+        secrets: this.#secrets.binding?.refs.size ? this.#secrets.binding.toRecord() : undefined,
         secretCache: this.#secrets.binding?.cache,
       });
     } catch (error) {

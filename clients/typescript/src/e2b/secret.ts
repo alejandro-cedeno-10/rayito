@@ -21,22 +21,8 @@
  *   `RayitoCompatWarning` y se ignoran. Las opciones propias son `region`,
  *   `credentials`, `secretPrefix` y `kmsKeyId`.
  *
- * Coste y activación
- * -------------------
- * Activa: llamar a `Secret.create/update/getInfo/list/exists/destroy`; `fill`
- *   e importar `rayito/e2b` no llaman a AWS ni cargan el peer opcional.
- * Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
- *   (`CreateSecretCommand`); `DescribeSecretCommand`, `PutSecretValueCommand`,
- *   `UpdateSecretCommand`, `ListSecretsCommand`, `DeleteSecretCommand`.
- * Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por 10 000
- *   llamadas (us-east-1, 2026-09-30).
- * IAM: la política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`.
- * Cómo apagarla: no llames al CRUD; `Secret.destroy(name)` para dejar de pagar.
- * Ejemplo:
- *   import { Secret } from "rayito/e2b";
- *   await Secret.create("openai-key", "sk-...", { region: "us-east-1" });
- *   Secret.fill("openai-key"); // '${e2b.secrets.openai-key}' (no se resuelve)
- *   await Secret.destroy("openai-key");
+ * El bloque "Coste y activación" está en el TSDoc de `Secret` (lo que
+ * enseña el IDE al pasar el ratón).
  */
 
 import { InvalidArgumentError } from "../errors.js";
@@ -185,8 +171,24 @@ export class SecretPaginator {
 
 /**
  * `Secret` de E2B sobre AWS Secrets Manager. Los valores son de sólo
- * escritura: ninguna lectura los devuelve. Ver el bloque "Coste y
- * activación" del módulo.
+ * escritura: ninguna lectura los devuelve.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: llamar a `Secret.create/update/getInfo/list/exists/destroy`; `fill`
+ *   e importar `rayito/e2b` no llaman a AWS ni cargan el peer opcional.
+ * Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
+ *   (`CreateSecretCommand`); `DescribeSecretCommand`, `PutSecretValueCommand`,
+ *   `UpdateSecretCommand`, `ListSecretsCommand`, `DeleteSecretCommand`.
+ * Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por 10 000
+ *   llamadas (us-east-1, 2026-09-30).
+ * IAM: la política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`.
+ * Cómo apagarla: no llames al CRUD; `Secret.destroy(name)` para dejar de pagar.
+ * Ejemplo:
+ *   import { Secret } from "rayito/e2b";
+ *   await Secret.create("openai-key", "sk-...", { region: "us-east-1" });
+ *   Secret.fill("openai-key"); // '${e2b.secrets.openai-key}' (no se resuelve)
+ *   await Secret.destroy("openai-key");
  */
 // biome-ignore lint/complexity/noStaticOnlyClass: nombre y forma públicos de E2B JS (`Secret.create`, …)
 export class Secret {
