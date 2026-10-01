@@ -406,3 +406,59 @@ Estado: validada con `cfn-lint` 1.56.3 y `scripts/tests/test_secrets_template.py
 (sólo `AWS::IAM::ManagedPolicy`, ninguna acción fuera de la lista, ningún
 `Resource: "*"` salvo `ListSecrets`, KMS sólo con clave y `kms:ViaService`);
 `make infra-lint` la incluye (`validate-template` + `cfn-lint`).
+
+## Índice de metadatos (`infra/metadata-index.yaml`, M14)
+
+Plantilla **opcional**: sólo hace falta si listas sandboxes por metadatos
+con el índice (`index=DynamoDbIndex(...)` en Python, `index: new
+DynamoDbIndex({...})` en TypeScript, `rayito sandbox list --index-table`;
+[docs/site/docs/observability.md](../docs/site/docs/observability.md#listado-por-metadatos-con-indice-opcional)).
+Nunca se despliega sola ni el SDK la crea. Crea **una tabla DynamoDB y dos
+políticas IAM**, nada más (ni Lambdas, ni streams, ni EventBridge).
+Acciones y parámetros: `AWS_API_NOTES.md` §20.
+
+| Recurso / salida | Qué es |
+|---|---|
+| `TableName` / `TableArn` | `AWS::DynamoDB::Table` `rayito-sandboxes` (parámetro `TableName`): `PAY_PER_REQUEST`, clave `pk` (`S`), TTL en `expires_at`, cifrado por defecto de DynamoDB; `PointInTimeRecovery` y `DeletionProtection` apagados por defecto |
+| `WriterPolicyArn` | `RayitoIndexWriter`: `dynamodb:PutItem` sobre el ARN de la tabla (quien crea sandboxes con `index=` o corre un `SandboxPool` con `PoolConfig(index=)`) |
+| `ReaderPolicyArn` | `RayitoIndexReader`: `dynamodb:BatchGetItem` sobre el ARN de la tabla (quien lista con `metadata=` e `index=`) |
+
+Se adjuntan a las credenciales del **llamante** del SDK, nunca al execution
+role del MicroVM: `rayd` no toca el índice.
+
+**Coste**: $0 en reposo (on-demand y tabla vacía). Con uso, ~1 WRU por
+sandbox creado y 0,5 RRU por sandbox candidato al listar ($0,625 por millón
+de WRU y $0,125 por millón de RRU en us-east-1, consultado 2026-09-30) más
+$0,25/GB-mes tras los primeros 25 GB; el TTL borra las filas vencidas gratis.
+10 000 sandboxes al mes quedan por debajo de $0,10.
+
+### Desplegar
+
+```bash
+aws cloudformation deploy \
+  --stack-name rayito-metadata-index \
+  --template-file infra/metadata-index.yaml
+# otro nombre de tabla: --parameter-overrides TableName=mi-indice
+
+aws cloudformation describe-stacks --stack-name rayito-metadata-index \
+  --query "Stacks[0].Outputs" --output table
+```
+
+No hace falta `CAPABILITY_NAMED_IAM`: las políticas no llevan nombre fijo.
+
+### Borrar (apagarlo)
+
+```bash
+aws cloudformation delete-stack --stack-name rayito-metadata-index
+```
+
+Borra la tabla (con `DeletionProtection=true`, desactívalo antes) y las
+políticas; deja de facturar al momento. Deja también de pasar `index=` en el
+SDK: un listado con índice contra una tabla borrada falla con
+`SandboxIndexException` (nunca devuelve una lista vacía en silencio).
+
+Estado: validada con `cfn-lint` 1.56.3 y
+`scripts/tests/test_metadata_index_template.py` (el único recurso de datos es
+la tabla, `PAY_PER_REQUEST`, TTL en `expires_at`, cada política con su única
+acción sobre el ARN de la tabla, ningún `Resource: "*"`); `make infra-lint`
+la incluye (`validate-template` + `cfn-lint`).
