@@ -10,7 +10,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import IO, Any, Final, Literal, NoReturn, Protocol, Self, TypeAlias, TypedDict
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Literal,
+    NoReturn,
+    Protocol,
+    Self,
+    TypeAlias,
+    TypedDict,
+)
 
 from rayito._charts import Chart
 from rayito._limits import (
@@ -32,6 +43,9 @@ from rayito._limits import (
     TRANSFER_THRESHOLD_MIN_BYTES,
 )
 from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    from rayito._index import DynamoDbIndex
 
 REDACTED: Final = "<redacted>"
 PROXY_AUTH_HEADER = "x-aws-proxy-auth"
@@ -860,6 +874,8 @@ class LaunchOptions:
     `repr`/`str`: sólo se muestra si hay token y cuántas variables hay.
     Los `secrets=` no viajan aquí: `reincarnate()` relanza con los que el
     handle tenga en ese momento (sólo referencias, nunca valores).
+    `index` es el `DynamoDbIndex` del `create()` (o `None`): el sucesor
+    escribe su propia fila y sigue apareciendo en el listado con índice.
     """
 
     template: str
@@ -884,6 +900,7 @@ class LaunchOptions:
     max_lifetime: int | None = None
     on_timeout: TimeoutActionName | None = None
     network: NetworkPolicy | None = None
+    index: DynamoDbIndex | None = None
 
     def __repr__(self) -> str:
         token = None if self.access_token is None else REDACTED

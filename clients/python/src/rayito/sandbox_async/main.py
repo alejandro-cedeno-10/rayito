@@ -642,6 +642,7 @@ class AsyncSandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
+            index=validated_index,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -1416,6 +1417,7 @@ class AsyncSandbox:
                 persist_timeout=persist_timeout,
                 secrets=secret_refs,
                 secret_cache=secret_cache,
+                index=options.index,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)

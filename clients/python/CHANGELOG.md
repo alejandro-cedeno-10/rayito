@@ -19,12 +19,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   ninguna sonda de `Health`, token ni `get-microvm`. Nuevas excepciones
   `SandboxIndexException` e `IndexWriteException`. Coste: ~1 WRU por sandbox
   creado y 0,5 RRU por candidato listado (DynamoDB on-demand); la tabla la
-  despliegas tú con `infra/metadata-index.yaml`.
+  despliegas tú con `infra/metadata-index.yaml`. `reincarnate()` conserva
+  `index=`: el sucesor escribe su propia fila.
 - **Shim de E2B**: `Sandbox.list(query=SandboxQuery(metadata=...,
   state=[PAUSED]), index=...)` y `E2B(index=...)` filtran sandboxes en pausa
   por metadatos con el índice.
 - **CLI**: `rayito sandbox list --metadata K=V --state suspended
-  --index-table TABLA` (y `--state` sola); sin `--index-table`, sin cambios.
+  --index-table TABLA` (y `--state` sola); `--index-table` sin `--metadata`
+  es un error de uso (salida 2); sin `--index-table`, sin cambios.
 - **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
   apagado por defecto, ADR-014): `SecretStore(region=, session=,
   prefix="rayito/", kms_key_id=)` con `create`/`update`/`get_info`/

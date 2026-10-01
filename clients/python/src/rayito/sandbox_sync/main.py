@@ -790,6 +790,7 @@ class Sandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
+            index=validated_index,
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1726,7 +1727,8 @@ class Sandbox:
         con las mismas opciones de lanzamiento (que restaura) → `kill()` de este
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
-        y los mismos `metadata`; las variables del kernel, los procesos y las
+        y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
+        su propia fila en el mismo índice); las variables del kernel, los procesos y las
         PTY no sobreviven (ADR-007), sólo los ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota
         con la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
@@ -1746,6 +1748,7 @@ class Sandbox:
                 persist_timeout=persist_timeout,
                 secrets=secret_refs,
                 secret_cache=secret_cache,
+                index=options.index,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)

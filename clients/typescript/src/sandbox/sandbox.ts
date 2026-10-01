@@ -310,6 +310,8 @@ interface LaunchContext {
   readonly controlPlane: ControlPlane;
   readonly transport: Partial<TransportSettings> | undefined;
   readonly logger: Logger | undefined;
+  /** El índice del `create()`: el sucesor escribe su propia fila en él. */
+  readonly index: DynamoDbIndex | undefined;
 }
 
 /**
@@ -703,6 +705,7 @@ export class Sandbox implements AsyncDisposable {
       controlPlane: plane,
       transport: options.transport,
       logger: options.logger,
+      index,
     };
     if (options.persist !== undefined) {
       await sandbox.#bindAndRestore(
@@ -1399,7 +1402,8 @@ export class Sandbox implements AsyncDisposable {
    * (ADR-011): `checkpointFiles()` → `create({ persist })` con las mismas
    * opciones (que restaura, incluidos `maxLifetimeMs` y `onTimeout`) →
    * `kill()` de este sandbox. El nuevo tiene un tope fresco, otro `sandboxId`
-   * y otro token salvo que el original fuera explícito; kernels, procesos y
+   * y otro token salvo que el original fuera explícito (con `index` en el
+   * `create()`, el nuevo escribe su propia fila en el mismo índice); kernels, procesos y
    * PTY no sobreviven (ADR-007). Si el
    * `create()` falla, este sandbox sigue vivo y se relanza el mismo error
    * (con sus campos tipados: `code`, `state`...) con la `uri` del checkpoint
@@ -1424,6 +1428,7 @@ export class Sandbox implements AsyncDisposable {
         controlPlane: context.controlPlane,
         transport: context.transport,
         logger: context.logger,
+        index: context.index,
         persist,
         persistTimeoutMs,
         transfer: this.transfer ?? null,

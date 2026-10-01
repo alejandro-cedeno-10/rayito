@@ -19,7 +19,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   sin ninguna sonda. Nuevos errores `SandboxIndexError` e `IndexWriteError`.
   `@aws-sdk/client-dynamodb` es una peerDependency **opcional** que sólo se
   carga con `loadOptionalPeer` al usar el índice. Coste: ~1 WRU por sandbox
-  creado y 0,5 RRU por candidato listado.
+  creado y 0,5 RRU por candidato listado. `reincarnate()` conserva `index`:
+  el sucesor escribe su propia fila.
 - **Shim de E2B**: `Sandbox.list({ query: { metadata, state: ["paused"] },
   index })` y `new E2B({ index })`.
 - **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
