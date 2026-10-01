@@ -39,7 +39,9 @@ with Sandbox.create() as sbx:
 | `rayito sandbox create / connect / exec / metrics` (M9) | la CLI operativa: [CLI](cli.md) |
 | `rayito/e2b` (TypeScript, M9) | el shim de E2B 2.x para JS/TS: [Compatibilidad](e2b-compat.md) y [Paridad](e2b-parity.md) |
 
-Qué imagen necesita cada cosa, y el IAM: [Imágenes e IAM](images.md).
+Qué imagen necesita cada cosa, y el IAM: [Imágenes e IAM](images.md). Qué
+funciones cuestan y cómo activarlas explícitamente, con su ejemplo: [Funciones
+opcionales y su coste](optional-features.md).
 
 ## Estado
 
