@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use rayd_core::configure::{SectionCode, SectionOutcome};
-use rayd_core::s3_mount::{self, FuseDaemon, FuseDevice, MountErrorClass, MountPhase, MountState, S3Mount};
+use rayd_core::s3_mount::{
+    self, FuseDaemon, FuseDevice, MountErrorClass, MountPhase, MountState, S3Mount,
+};
 use rayd_core::suspend_sync::ParticipantDemand;
 use rayito_proto::v1::{
     S3Mount as WireMount, S3MountPhase, S3MountState as WireMountState, S3MountsConfig,
@@ -109,7 +111,10 @@ impl Inner {
     fn status(&self) -> S3MountsStatus {
         let mounts = self.lock();
         S3MountsStatus {
-            mounts: mounts.values().map(|entry| to_wire_state(&entry.state)).collect(),
+            mounts: mounts
+                .values()
+                .map(|entry| to_wire_state(&entry.state))
+                .collect(),
         }
     }
 
@@ -160,7 +165,11 @@ pub struct S3MountsFeature {
 }
 
 impl S3MountsFeature {
-    fn new(device: Arc<dyn FuseDevice>, daemon: Arc<dyn FuseDaemon>, allowed_buckets: Vec<String>) -> Self {
+    fn new(
+        device: Arc<dyn FuseDevice>,
+        daemon: Arc<dyn FuseDaemon>,
+        allowed_buckets: Vec<String>,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 device,
@@ -186,8 +195,10 @@ impl ConfigurableFeature<S3MountsConfig, S3MountsStatus> for S3MountsFeature {
                 error_class: Some(validation.class.as_str().to_owned()),
             };
         }
-        let desired_paths: std::collections::HashSet<String> =
-            desired.iter().map(|mount| mount.mount_path.clone()).collect();
+        let desired_paths: std::collections::HashSet<String> = desired
+            .iter()
+            .map(|mount| mount.mount_path.clone())
+            .collect();
         let to_remove: Vec<String> = {
             let mounts = self.inner.lock();
             mounts
@@ -257,7 +268,9 @@ impl LifecycleParticipant for S3MountsParticipant {
     async fn on_resume(&self) {
         let mount_paths: Vec<String> = { self.inner.lock().keys().cloned().collect() };
         for mount_path in mount_paths {
-            let probe = tokio::process::Command::new("stat").arg(&mount_path).status();
+            let probe = tokio::process::Command::new("stat")
+                .arg(&mount_path)
+                .status();
             let responsive = tokio::time::timeout(RESUME_PROBE_TIMEOUT, probe)
                 .await
                 .is_ok_and(|result| result.is_ok_and(|status| status.success()));
@@ -295,12 +308,17 @@ fn to_wire_state(state: &MountState) -> WireMountState {
     WireMountState {
         mount_path: state.mount_path.clone(),
         phase: i32::from(phase),
-        error_class: state.error_class.map(|class| class.as_str().to_owned()).unwrap_or_default(),
+        error_class: state
+            .error_class
+            .map(|class| class.as_str().to_owned())
+            .unwrap_or_default(),
     }
 }
 
 #[must_use]
-pub fn build(_ctx: &FeatureContext) -> Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>> {
+pub fn build(
+    _ctx: &FeatureContext,
+) -> Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>> {
     let allowed_buckets =
         s3_mount::parse_allowed_buckets(&std::env::var(ALLOWED_BUCKETS_ENV).unwrap_or_default());
     let region = std::env::var(AWS_REGION_ENV).unwrap_or_default();
@@ -365,7 +383,10 @@ mod tests {
         }
 
         fn kill(&self, pid: i32) {
-            self.alive.lock().unwrap().retain(|candidate| *candidate != pid);
+            self.alive
+                .lock()
+                .unwrap()
+                .retain(|candidate| *candidate != pid);
             self.killed.lock().unwrap().push(pid);
         }
     }
@@ -455,7 +476,10 @@ mod tests {
             .await;
         let outcome = feature.apply(S3MountsConfig { mounts: vec![] }).await;
         assert_eq!(outcome.code, SectionCode::Applied);
-        assert_eq!(*device.detached.lock().unwrap(), vec!["/mnt/data".to_owned()]);
+        assert_eq!(
+            *device.detached.lock().unwrap(),
+            vec!["/mnt/data".to_owned()]
+        );
         assert!(daemon.killed.lock().unwrap().contains(&1));
         assert!(feature.status().await.mounts.is_empty());
     }
@@ -478,7 +502,10 @@ mod tests {
         let (feature, device, _daemon) = feature(&["a", "b"]);
         feature
             .apply(S3MountsConfig {
-                mounts: vec![wire_mount("/mnt/a", "a", true), wire_mount("/mnt/b", "b", true)],
+                mounts: vec![
+                    wire_mount("/mnt/a", "a", true),
+                    wire_mount("/mnt/b", "b", true),
+                ],
             })
             .await;
         feature.apply(S3MountsConfig { mounts: vec![] }).await;
@@ -489,7 +516,9 @@ mod tests {
     #[test]
     fn the_participant_demands_no_suspend_share() {
         let (feature, ..) = feature(&["team-data"]);
-        let participant = feature.participant().expect("s3-mounts always joins /suspend+/ready");
+        let participant = feature
+            .participant()
+            .expect("s3-mounts always joins /suspend+/ready");
         assert_eq!(participant.demand().max, Duration::ZERO);
         assert_eq!(participant.ready_gate(), ReadyVerdict::Ok);
     }

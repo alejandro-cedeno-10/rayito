@@ -142,7 +142,7 @@ fn proto_code(code: SectionCode) -> rayito_proto::v1::SectionCode {
 mod tests {
     use rayd_core::clock::SystemClock;
     use rayd_core::session::RunHookInput;
-    use rayito_proto::v1::S3MountsConfig;
+    use rayito_proto::v1::{EfsVolumesConfig, S3MountsConfig};
 
     use super::*;
     use crate::features::{self, FeatureContext};
@@ -182,7 +182,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_present_section_against_every_slot_still_unsupported_reports_unsupported() {
+    async fn a_present_section_against_a_slot_still_unsupported_reports_unsupported() {
+        // `s3_mounts` has a real adapter since `m15-s3-mounts`; `efs_volumes`
+        // is still a stub (`features::efs_volumes::build` -> `Unsupported`)
+        // and makes the same point.
+        let service = running_service();
+        let request = ConfigureRequest {
+            efs_volumes: Some(EfsVolumesConfig {}),
+            ..Default::default()
+        };
+        let response = service
+            .configure(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(
+            response.results[0].section,
+            i32::from(rayito_proto::v1::ConfigSection::EfsVolumes)
+        );
+        assert_eq!(
+            response.results[0].code,
+            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_present_s3_mounts_section_now_applies_instead_of_reporting_unsupported() {
         let service = running_service();
         let request = ConfigureRequest {
             s3_mounts: Some(S3MountsConfig::default()),
@@ -200,7 +226,7 @@ mod tests {
         );
         assert_eq!(
             response.results[0].code,
-            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+            i32::from(rayito_proto::v1::SectionCode::Applied)
         );
     }
 

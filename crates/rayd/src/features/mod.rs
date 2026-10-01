@@ -60,9 +60,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_slot_starts_unsupported() {
+    fn every_slot_still_a_stub_starts_unsupported() {
+        // `s3_mounts` has a real adapter since `m15-s3-mounts`
+        // (`features::s3_mounts::build`), asserted separately in that
+        // module's own tests; every other slot is still `Unsupported`.
         let set = build(&FeatureContext);
-        assert!(!set.s3_mounts.supported());
         assert!(!set.efs_volumes.supported());
         assert!(!set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());

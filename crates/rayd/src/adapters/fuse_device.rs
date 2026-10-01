@@ -32,7 +32,8 @@ pub struct LinuxFuseDevice;
 
 impl FuseDevice for LinuxFuseDevice {
     fn attach(&self, mount: &S3Mount) -> Result<RawFd, MountErrorClass> {
-        std::fs::create_dir_all(&mount.mount_path).map_err(|_io_error| MountErrorClass::NotFound)?;
+        std::fs::create_dir_all(&mount.mount_path)
+            .map_err(|_io_error| MountErrorClass::NotFound)?;
         let device = OpenOptions::new()
             .read(true)
             .write(true)

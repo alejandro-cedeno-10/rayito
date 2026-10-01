@@ -49,10 +49,7 @@ pub fn parse_allowed_buckets(raw: &str) -> Vec<String> {
 
 /// Checked in request order, so the first offending mount is the one
 /// reported; `allowed` empty rejects every mount with `NotAllowed`.
-pub fn validate_mounts(
-    mounts: &[S3Mount],
-    allowed: &[String],
-) -> Result<(), MountValidationError> {
+pub fn validate_mounts(mounts: &[S3Mount], allowed: &[String]) -> Result<(), MountValidationError> {
     let mut seen_paths: Vec<&str> = Vec::with_capacity(mounts.len());
     for mount in mounts {
         if seen_paths.contains(&mount.mount_path.as_str()) {
@@ -119,7 +116,10 @@ mod tests {
     #[test]
     fn duplicate_mount_paths_in_one_request_are_rejected() {
         let allowed = vec!["team-data".to_owned()];
-        let mounts = vec![mount("/mnt/data", "team-data"), mount("/mnt/data", "team-data")];
+        let mounts = vec![
+            mount("/mnt/data", "team-data"),
+            mount("/mnt/data", "team-data"),
+        ];
         let error = validate_mounts(&mounts, &allowed).unwrap_err();
         assert_eq!(error.mount_path, "/mnt/data");
     }

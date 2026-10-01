@@ -121,7 +121,9 @@ impl FuseDaemon for TokioMountS3Daemon {
                 Ok(())
             });
         }
-        let mut child = command.spawn().map_err(|_io_error| MountErrorClass::HelperMissing)?;
+        let mut child = command
+            .spawn()
+            .map_err(|_io_error| MountErrorClass::HelperMissing)?;
         let pid = i32::try_from(child.id().ok_or(MountErrorClass::HelperMissing)?)
             .map_err(|_overflow| MountErrorClass::HelperMissing)?;
         self.alive_set().insert(pid);
