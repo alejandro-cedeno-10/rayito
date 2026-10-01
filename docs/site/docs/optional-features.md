@@ -28,10 +28,15 @@ opcional futura:
   del `Sandbox`.
 - **(c) Peers opcionales de TypeScript cargados bajo demanda.** Los clientes
   de AWS SDK v3 que 0.4.0 no usaba (`@aws-sdk/client-secrets-manager`,
-  `@aws-sdk/client-dynamodb`) y `@opentelemetry/api` son peerDependencies
-  **opcionales**: se cargan con `import()` dinámico sólo dentro de la
-  función ya activada (`loadOptionalPeer`), nunca a nivel superior de un
-  módulo. En Python, el equivalente es `rayito[otel]` vía `require_module`.
+  `@aws-sdk/client-dynamodb`) son peerDependencies **opcionales**: se cargan
+  con `import()` dinámico sólo dentro de la función ya activada
+  (`loadOptionalPeer`), nunca a nivel superior de un módulo.
+  `@opentelemetry/api` también es un peer opcional, pero sólo para tipos:
+  `src/otel.ts` lo usa con `import type` (se borra en el build), el SDK usa
+  directamente el `tracerProvider` que le pasa el llamante y no carga nada
+  de `@opentelemetry/api` en tiempo de ejecución. En Python, el equivalente
+  es `rayito[otel]` vía `require_module`, que importa `opentelemetry.trace`
+  sólo al activar `tracer_provider=`.
 - **(d) Bloque de docstring "Coste y activación".** Toda opción de coste lo
   lleva, con la plantilla de abajo.
 
@@ -65,7 +70,7 @@ aparece en el fichero SDK de su columna "Dónde" dentro de un mismo bloque
 | [Inyección de secretos](#secrets-injection) | implementado, pendiente de aceptación en AWS real (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
 | [Secret CRUD (Secrets Manager)](#secrets-crud) | implementado, pendiente de aceptación en AWS real (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
 | [Índice de metadatos (DynamoDB)](#metadata-index) | implementado, pendiente de aceptación en AWS real (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Escribe una fila inmutable por sandbox (`metadata`, imagen, `startedAt`, TTL) en tu tabla DynamoDB al crearlo (`create()`, `PoolConfig`) y la une con `list-microvms` para filtrar `list()`/`paginate()` por metadatos también sobre `SUSPENDED`, sin sondear `Health` ni despertar nada; también en el shim (`Sandbox.list(..., index=)`, `E2B(index=)`) y la CLI (`--index-table`) | `dynamodb:PutItem` una vez por sandbox creado (condicional) y `dynamodb:BatchGetItem` una vez por página de `list-microvms` al listar con `metadata` + `index`; la tabla la despliegas tú (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`); nunca `DeleteItem` | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (~1 por `create` ≈ $0,000000625) + $0,125 por millón de RRU (`BatchGetItem` se factura por ítem leído: 0,5 RRU por sandbox candidato, lectura eventualmente consistente de ≤ 4 KB) + $0,25/GB-mes tras 25 GB gratis; borrado por TTL gratis. Ejemplo: 10 000 sandboxes/mes ≈ 10 000 WRU ($0,006) y un `list()` diario sobre ellos ≈ 300 000 ítems × 0,5 = 150 000 RRU ($0,019): ≈ $0,03/mes; tabla vacía $0 | `dynamodb:PutItem` (escritor, política `RayitoIndexWriter`) y `dynamodb:BatchGetItem` (lector, `RayitoIndexReader`) sobre el ARN de la tabla, en las credenciales del **llamante** | No pasar `index=` / `index` (o pasar `None`/`undefined`); borrar el stack de `infra/metadata-index.yaml` para dejar de pagar el almacenamiento | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index/dynamodb.ts` |
-| [Trazas OpenTelemetry del SDK](#otel-sdk) | planificado (M13b) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (y las demás llamadas del SDK) con spans OTel sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` (llega en M13b) |
+| [Trazas OpenTelemetry del SDK](#otel-sdk) | disponible (0.5.0) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (instancia y clase/estático), `commands.run`, `run_code`/`runCode` y `files.*` con spans `rayito.*` (`SpanKind.CLIENT`) sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` |
 
 Las cuatro filas empezaron en "planificado (Mxx)": cada grupo cambia **su**
 fila a "disponible (0.5.0)" y completa su sección de ejemplo cuando la
@@ -80,7 +85,11 @@ y probado con fakes, con su e2e
 (`clients/python/tests/e2e/test_metadata_index_e2e.py` y
 `clients/typescript/tests/e2e/metadata-index.e2e.test.ts`, IDX-1 en
 `AWS_API_NOTES.md` §20) todavía sin ejecutar contra AWS real; es la puerta de
-archivo de `m14-metadata-index`.
+archivo de `m14-metadata-index`. Las trazas OpenTelemetry (M13b) no llaman a
+AWS, así que su puerta de aceptación es distinta: los tests unitarios con un
+`InMemorySpanExporter` (el mismo nombre de clase en el SDK de Python y en el
+de TypeScript) son la prueba completa, sin ningún e2e contra AWS real que
+esperar; ya está "disponible (0.5.0)".
 
 ## Sin coste AWS
 
@@ -239,9 +248,50 @@ despertarlos. Lo que **no** cambia: el estado sale siempre de
 
 ### Trazas OpenTelemetry del SDK
 
-*Llega en M13b.* Cuando esté disponible, un ejemplo Python y otro TypeScript
-de `tracer_provider=`/`tracerProvider` con un exportador en memoria
-sustituirá este párrafo.
+Implementada en `m13-otel-sdk` para 0.5.0. No llama a AWS, así que no hay
+aceptación contra AWS real que esperar: los tests unitarios con un
+`InMemorySpanExporter` son la prueba completa. Guía completa, nombres de
+span, atributos y lo que nunca se registra en
+[Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional).
+
+=== "Python"
+
+    ```python
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from rayito import Sandbox
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    sbx = Sandbox.create(tracer_provider=provider)   # un único span "rayito.sandbox.create"
+    sbx.commands.run("echo hola")                    # span "rayito.commands.run"
+    sbx.kill()                                        # span "rayito.sandbox.kill"
+    print([span.name for span in exporter.get_finished_spans()])
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+    import { Sandbox } from "rayito";
+
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+
+    const sbx = await Sandbox.create({ tracerProvider: provider }); // un único span "rayito.sandbox.create"
+    await sbx.commands.run("echo hola");                            // span "rayito.commands.run"
+    await sbx.kill();                                               // span "rayito.sandbox.kill"
+    console.log(exporter.getFinishedSpans().map((span) => span.name));
+    ```
+
+Sin `tracer_provider=`/`tracerProvider` (por defecto): `NOOP`, ningún span
+y ningún import de `opentelemetry`/`@opentelemetry/api` en tiempo de
+ejecución; sólo queda un objeto de atributos trivial por llamada.
 
 <a id="local-proxy"></a>
 

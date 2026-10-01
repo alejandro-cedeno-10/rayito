@@ -17,8 +17,8 @@ página sólo dice **qué hay** y dónde está documentado.
 | Estado | Qué significa | Filas |
 |---|---|---|
 | implementado | la feature de E2B funciona con el mismo contrato; "antes de M9" si ya estaba en 0.2.0 | 72 (24 antes de M9, 48 en M9) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla opcional) | 21 |
-| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 9 |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla opcional) | 22 |
+| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 8 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
 Ninguna fila se aproxima en silencio: lo que no está implementado lanza
@@ -153,7 +153,7 @@ se explica cómo usarlo.
 | 105 | JS `Sandbox.list(opts)` → `SandboxPaginator` | implementado (M9) | `m9-sandbox-observability` | la forma del paginador más el filtro de metadatos, como en Python | [Observabilidad](observability.md) |
 | 106 | superficie camelCase de JS `commands` / `files` / `runCode` / contextos | implementado (antes de M9) | — | el espejo nativo de TS ya coincidía; el shim de TS la reexpone | [Compatibilidad](e2b-compat.md) |
 | 107 | API REST y webhooks de eventos de ciclo de vida (docs) | fuera por SPEC | — | necesita un servicio de plano de control con almacén y entrega (`SPEC.md` §4); el análogo en tu cuenta son los eventos de datos de CloudTrail (§10) | [Compatibilidad](e2b-compat.md) |
-| 108 | exportación de telemetría OTel (docs, Enterprise) | fuera por SPEC | — | superficie de producto SaaS (`SPEC.md` §4); análogos en tu cuenta: logs de runtime en CloudWatch y el historial de `get_metrics` | [Observabilidad](observability.md) |
+| 108 | exportación de telemetría OTel (docs, Enterprise) | divergente (M13b) | `m13-otel-sdk` | la exportación de telemetría del sandbox no existe; en su lugar, spans del lado cliente del SDK nativo con `tracer_provider=`/`tracerProvider` (nombres `rayito.*`, apagados por defecto), que no son la exportación de métricas/logs del sandbox de E2B (Enterprise) — análogo en tu cuenta: logs de runtime en CloudWatch y el historial de `get_metrics`; el shim de E2B no está instrumentado | [Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional) |
 | 109 | receta de acceso SSH (sshd + websocat, docs) | divergente (M9) | `m9-e2b-v2-surface` | `rayito sandbox connect` da una terminal PTY interactiva; una receta con sshd necesita una imagen propia y un cliente que hable la autenticación por subprotocolo WebSocket | [CLI](cli.md) |
 | 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | `m12-sizes-proxy` | para desarrollo: `rayito sandbox proxy <id> --port N` expone un puerto del guest en localhost; un dominio público queda para un add-on opcional en la cuenta del cliente (ADR-014), no incluido | [CLI](cli.md#proxy) |
 | 111 | montajes de buckets s3fs/gcsfuse (docs) | fuera por SPEC | — | receta de template más montajes compartidos en vivo, fuera por `SPEC.md` §4; FUSE en `rayito-base-caps` no está medido; análogos: persistencia en S3 y transferencias de M9 | [Ficheros](files.md) |
@@ -171,5 +171,6 @@ se explica cómo usarlo.
 | `network.rules` con `Secret.fill()` | `secrets={"ENV": "nombre"}` del SDK nativo: entrega el valor como variable de entorno (visible para el código del sandbox, fase 1); no hay inyector de egress fuera del guest ([Secretos](secrets.md)) |
 | `mcp=` | el servidor [`rayito-mcp`](mcp.md), en el cliente |
 | `iam=` | `execution_role_arn` (IMDSv2); en `rayito-base-caps` el código del sandbox no ve IMDS ([Seguridad](security.md)) |
-| webhooks de ciclo de vida, OTel | eventos de datos de CloudTrail, logs de runtime en CloudWatch y `get_metrics_history()` ([Observabilidad](observability.md)) |
+| webhooks de ciclo de vida | eventos de datos de CloudTrail, logs de runtime en CloudWatch y `get_metrics_history()` ([Observabilidad](observability.md)) |
+| OTel (exportación de telemetría del sandbox, Enterprise) | `tracer_provider=`/`tracerProvider` (M13b): spans del lado del SDK sobre las llamadas que ya haces, no telemetría del sandbox ([Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional)) |
 | cpu/memoria por sandbox | una imagen por tamaño ([Límites](limits.md)) |

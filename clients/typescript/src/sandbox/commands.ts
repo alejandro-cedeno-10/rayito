@@ -35,6 +35,7 @@ import {
   StartRequestSchema,
 } from "../gen/rayito/v1/process_pb.js";
 import type { CommandResult, OutputChunk, ProcessInfo, SandboxMetrics } from "../models.js";
+import { type Instrumentation, NOOP } from "../otel.js";
 import { validatedEnvs } from "../payload.js";
 import type { SecretEnvs, SecretsInput } from "../secrets/inject.js";
 import { sandboxTimeoutError, translateStreamError } from "../transport/errors.js";
@@ -552,10 +553,16 @@ export type ProcessClient = SandboxCore["clients"]["process"];
 export class Commands {
   readonly core: SandboxCore;
   readonly #secrets: SecretEnvs;
+  readonly #instrumentation: () => Instrumentation;
 
-  constructor(core: SandboxCore, secrets: SecretEnvs) {
+  constructor(
+    core: SandboxCore,
+    secrets: SecretEnvs,
+    instrumentation: () => Instrumentation = () => NOOP,
+  ) {
     this.core = core;
     this.#secrets = secrets;
+    this.#instrumentation = instrumentation;
   }
 
   run(cmd: string, options: CommandOptions & { background: true }): Promise<CommandHandle>;
@@ -564,24 +571,51 @@ export class Commands {
     options?: CommandOptions & { background?: false | undefined },
   ): Promise<CommandResult>;
   run(cmd: string, options?: CommandOptions): Promise<CommandResult | CommandHandle>;
+  /**
+   * Con `tracerProvider` en `create()`/`connect()`, cada llamada abre un
+   * span `rayito.commands.run` (nunca con el texto del comando, sus
+   * argumentos ni sus `envs`): `rayito.commands.background` siempre, y en
+   * foreground `rayito.commands.exit_code` al terminar (también cuando sale
+   * con un código distinto de cero). En segundo plano el span se cierra en
+   * cuanto `run` devuelve el handle, no cuando el proceso termina.
+   */
   async run(cmd: string, options: CommandOptions = {}): Promise<CommandResult | CommandHandle> {
     const envs = await this.#secrets.apply(options.envs, options.secrets);
     const request = buildStartRequest(cmd, { ...options, envs });
     const deadline = streamDeadlineMs(options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
     const background = options.background === true;
-    const handle = await this.attach(
-      (client, callOptions) => client.start(request, withTimeout(callOptions, deadline)),
-      {
-        stream: background,
-        deadlineMs: deadline,
-        onStdout: options.onStdout,
-        onStderr: options.onStderr,
-        requestTimeoutMs: options.requestTimeoutMs,
-        foreground: !background,
-        signal: options.signal,
+    return this.#instrumentation().span(
+      "rayito.commands.run",
+      { "rayito.commands.background": background },
+      async (span) => {
+        const handle = await this.attach(
+          (client, callOptions) => client.start(request, withTimeout(callOptions, deadline)),
+          {
+            stream: background,
+            deadlineMs: deadline,
+            onStdout: options.onStdout,
+            onStderr: options.onStderr,
+            requestTimeoutMs: options.requestTimeoutMs,
+            foreground: !background,
+            signal: options.signal,
+          },
+        );
+        if (background) {
+          return handle;
+        }
+        let result: CommandResult;
+        try {
+          result = await handle.wait();
+        } catch (error) {
+          if (error instanceof CommandExitError) {
+            span?.setAttribute("rayito.commands.exit_code", error.exitCode);
+          }
+          throw error;
+        }
+        span?.setAttribute("rayito.commands.exit_code", result.exitCode);
+        return result;
       },
     );
-    return background ? handle : handle.wait();
   }
 
   /** Se engancha a un proceso vivo (o terminado hace < 30 s); `fromSeq` reenvía salida retenida. */

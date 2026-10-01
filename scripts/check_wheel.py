@@ -12,7 +12,11 @@ extra `mcp` (`Provides-Extra: mcp` y `Requires-Dist: mcp>=2.2,<3 ; extra ==
 en `entry_points.txt`; y la CLI (`m7-cli`): el subpaquete `rayito/cli`
 (`__init__.py`), el extra `cli` (`Provides-Extra: cli` y `Requires-Dist:
 typer>=0.15,<1 ; extra == 'cli'`, misma grafía de `uv_build`) y el console
-script `rayito`. Se ejecuta desde la raíz del repo:
+script `rayito`. Desde M13b comprueba también el extra opcional `otel`
+(`Provides-Extra: otel` y `Requires-Dist: opentelemetry-api>=1.27,<2 ;
+extra == 'otel'`): no añade ningún fichero ni entry point, sólo metadatos,
+porque `rayito._otel` ya está en el paquete base. Se ejecuta desde la raíz
+del repo:
 
     python scripts/check_wheel.py clients/python/dist/rayito-*.whl
 """
@@ -55,6 +59,10 @@ CLI_METADATA_LINES = (
     "Requires-Dist: typer>=0.15,<1 ; extra == 'cli'",
 )
 CLI_ENTRY_POINT = "rayito = rayito.cli.__main__:main"
+OTEL_METADATA_LINES = (
+    "Provides-Extra: otel",
+    "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'",
+)
 ENTRY_POINTS_SUFFIX = ".dist-info/entry_points.txt"
 
 
@@ -106,7 +114,17 @@ def problems_for(wheel: Path) -> list[str]:
         + license_problems(entries, metadata)
         + mcp_problems(metadata, entry_points)
         + cli_problems(metadata, entry_points)
+        + otel_problems(metadata)
     )
+
+
+def otel_problems(metadata: str) -> list[str]:
+    lines = metadata.splitlines()
+    return [
+        f"METADATA sin `{required}`"
+        for required in OTEL_METADATA_LINES
+        if required not in lines
+    ]
 
 
 def cli_problems(metadata: str, entry_points: str) -> list[str]:

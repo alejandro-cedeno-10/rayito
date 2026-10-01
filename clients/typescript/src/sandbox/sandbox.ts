@@ -49,6 +49,12 @@ import {
   sandboxInfo,
   withLifecycle,
 } from "../models.js";
+import {
+  type Instrumentation,
+  instrumentationFor,
+  NOOP,
+  type TracerProviderLike,
+} from "../otel.js";
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import {
@@ -215,6 +221,31 @@ export interface SandboxConnectOptions extends ControlPlaneOptions, SecretOption
    * disjuntos (`InvalidArgumentError` antes de tocar AWS).
    */
   readonly transfer?: S3Staging | null | undefined;
+  /**
+   * Spans OpenTelemetry del lado del SDK (M13b), opt-in. Guarda en el handle
+   * una `Instrumentation` que envuelve `commands.run`, `run_code`,
+   * `files.*` y `kill`/`pause`/`resume` de instancia en spans `rayito.*`
+   * (`SpanKind.CLIENT`); `create()`/`connect()` en sí son, cada uno, un
+   * único span. Nunca lleva texto de comandos, código, rutas, `envs` ni
+   * secretos como atributo.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `tracerProvider` (un `TracerProvider` de `@opentelemetry/api`,
+   *   o cualquier objeto con `getTracer(name, version)`).
+   * Recursos y llamadas AWS: ninguno; rayito sólo crea spans en el
+   *   proveedor del llamante.
+   * Coste aproximado: $0 de AWS; el coste (si lo hay) es el del backend de
+   *   exportación que configure el llamante.
+   * IAM: ninguno adicional.
+   * Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * Ejemplo:
+   *   import { trace } from "@opentelemetry/api";
+   *   const sbx = await Sandbox.create({ tracerProvider: trace.getTracerProvider() });
+   *   await sbx.commands.run("echo hola"); // span "rayito.commands.run"
+   *   await sbx.kill();
+   */
+  readonly tracerProvider?: TracerProviderLike | undefined;
 }
 
 export interface SandboxCreateOptions extends SandboxConnectOptions {
@@ -382,6 +413,22 @@ export interface SignedUrlOptions {
 
 export interface StaticPauseOptions extends ControlPlaneOptions, PauseOptions {
   readonly readyTimeoutMs?: number | undefined;
+  /**
+   * Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`;
+   * `undefined` por defecto (apagado). $0 de AWS, ningún IAM adicional.
+   * Ejemplo: `{ tracerProvider: trace.getTracerProvider() }`.
+   */
+  readonly tracerProvider?: TracerProviderLike | undefined;
+}
+
+/** `Sandbox.kill(sandboxId)`: sin handle, así que `tracerProvider` es su única opción propia. */
+export interface StaticKillOptions extends ControlPlaneOptions {
+  /**
+   * Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`;
+   * `undefined` por defecto (apagado). $0 de AWS, ningún IAM adicional.
+   * Ejemplo: `{ tracerProvider: trace.getTracerProvider() }`.
+   */
+  readonly tracerProvider?: TracerProviderLike | undefined;
 }
 
 /** `Sandbox.setTimeout(sandboxId, timeoutMs)`: un canal dedicado que se cierra al terminar. */
@@ -397,6 +444,8 @@ export interface SandboxSetTimeoutOptions extends ControlPlaneOptions {
 /** `sbx.connect({ timeoutMs })`: reabre el handle y extiende el plazo como `Sandbox.connect`. */
 export interface InstanceConnectOptions extends RequestOptions, SecretOptions {
   readonly timeoutMs?: number | undefined;
+  /** Sustituye la `Instrumentation` del handle (M13b); `undefined` conserva la que ya tenía. */
+  readonly tracerProvider?: TracerProviderLike | undefined;
 }
 
 export interface UpdateNetworkOptions {
@@ -563,6 +612,7 @@ export class Sandbox implements AsyncDisposable {
   #launchContext: LaunchContext | undefined;
   #readinessHealth: SandboxHealth | undefined;
   readonly #secrets: SecretEnvs;
+  #instrumentation: Instrumentation = NOOP;
 
   private constructor(core: SandboxCore) {
     this.#core = core;
@@ -572,11 +622,11 @@ export class Sandbox implements AsyncDisposable {
         awsClientSettingsOf(core.controlPlane).credentials,
       ),
     );
-    this.commands = new Commands(core, this.#secrets);
-    this.files = new Filesystem(core);
+    this.commands = new Commands(core, this.#secrets, () => this.#instrumentation);
+    this.files = new Filesystem(core, undefined, () => this.#instrumentation);
     this.pty = new Pty(core, this.commands, this.#secrets);
     this.git = new Git(this.commands);
-    this.#code = new CodeClient(core, this.#secrets);
+    this.#code = new CodeClient(core, this.#secrets, () => this.#instrumentation);
     this.#persistence = new PersistenceClient(core);
   }
 
@@ -584,6 +634,7 @@ export class Sandbox implements AsyncDisposable {
 
   static async create(options: SandboxCreateOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
+    const instrumentation = instrumentationFor(options.tracerProvider);
     const binding = bindSecrets(options.secrets, options.secretCache);
     const transportSettings = resolveTransportSettings(options.transport);
     requireRoleForPersist(options.persist, options.executionRoleArn);
@@ -616,6 +667,7 @@ export class Sandbox implements AsyncDisposable {
         secretCache: options.secretCache,
       });
       taken.#core.transfer = transfer;
+      taken.#instrumentation = instrumentation;
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
@@ -648,39 +700,48 @@ export class Sandbox implements AsyncDisposable {
       networkEnforce: requiresEnforcement(network),
     });
     options.signal?.throwIfAborted();
-    const info = await plane.runMicrovm(plan.request);
-    options.logger?.info?.("run-microvm aceptado", {
-      sandboxId: info.sandboxId,
-      state: info.state,
-    });
-    if (index !== undefined) {
-      await writeIndexRecord(index, info, options.metadata, {
-        controlPlane: plane,
-        keepOnFailure: options.keepOnFailure ?? false,
-        logger: options.logger,
-      });
-    }
-    const sandbox = await Sandbox.#open(info, {
-      accessToken: plan.accessToken,
-      controlPlane: plane,
-      transport: transportSettings,
-      signal: options.signal,
-      proxyPorts: plan.proxyPorts,
-      requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-      readyTimeoutMs: options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
-      reconnectTimeoutMs: options.reconnectTimeoutMs ?? DEFAULT_RECONNECT_TIMEOUT_MS,
-      terminateOnFailure: !(options.keepOnFailure ?? false),
-      logger: options.logger,
-      requireLifecycle: plan.lifecycleRequested,
-    });
-    sandbox.#core.transfer = transfer;
-    sandbox.#secrets.set(secrets);
-    if (requiresEnforcement(network)) {
-      await sandbox.#applyInitialNetwork(
-        network,
-        egressFeature(network, options.allowInternetAccess),
-      );
-    }
+    const sandbox = await instrumentation.span(
+      "rayito.sandbox.create",
+      { "rayito.region": plane.region, "rayito.operation": "create" },
+      async (span) => {
+        const info = await plane.runMicrovm(plan.request);
+        span?.setAttribute("rayito.sandbox.id", info.sandboxId);
+        options.logger?.info?.("run-microvm aceptado", {
+          sandboxId: info.sandboxId,
+          state: info.state,
+        });
+        if (index !== undefined) {
+          await writeIndexRecord(index, info, options.metadata, {
+            controlPlane: plane,
+            keepOnFailure: options.keepOnFailure ?? false,
+            logger: options.logger,
+          });
+        }
+        const opened = await Sandbox.#open(info, {
+          accessToken: plan.accessToken,
+          controlPlane: plane,
+          transport: transportSettings,
+          signal: options.signal,
+          proxyPorts: plan.proxyPorts,
+          requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+          readyTimeoutMs: options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
+          reconnectTimeoutMs: options.reconnectTimeoutMs ?? DEFAULT_RECONNECT_TIMEOUT_MS,
+          terminateOnFailure: !(options.keepOnFailure ?? false),
+          logger: options.logger,
+          requireLifecycle: plan.lifecycleRequested,
+        });
+        opened.#instrumentation = instrumentation;
+        opened.#core.transfer = transfer;
+        opened.#secrets.set(secrets);
+        if (requiresEnforcement(network)) {
+          await opened.#applyInitialNetwork(
+            network,
+            egressFeature(network, options.allowInternetAccess),
+          );
+        }
+        return opened;
+      },
+    );
     sandbox.#launchOptions = {
       template: imageArn,
       templateVersion: options.templateVersion,
@@ -727,6 +788,7 @@ export class Sandbox implements AsyncDisposable {
    */
   static async connect(sandboxId: string, options: SandboxConnectOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
+    const instrumentation = instrumentationFor(options.tracerProvider);
     const token = requireAccessToken(options.accessToken);
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     const transportSettings = resolveTransportSettings(options.transport);
@@ -738,35 +800,43 @@ export class Sandbox implements AsyncDisposable {
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
-    const info = await plane.getMicrovm(validateSandboxId(sandboxId), { signal: options.signal });
-    if (TERMINAL_STATES.has(info.state)) {
-      throw terminalStateError(info);
-    }
-    if (needsExplicitResume(info)) {
-      await plane.resumeMicrovm(sandboxId, { signal: options.signal });
-    }
-    const sandbox = await Sandbox.#open(info, {
-      accessToken: token,
-      controlPlane: plane,
-      transport: transportSettings,
-      signal: options.signal,
-      proxyPorts: [PortSpec.single(DEFAULT_PORT)],
-      requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-      readyTimeoutMs: options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
-      reconnectTimeoutMs: options.reconnectTimeoutMs ?? DEFAULT_RECONNECT_TIMEOUT_MS,
-      terminateOnFailure: false,
-      logger: options.logger,
-    });
-    sandbox.#persist = bound;
-    sandbox.#core.transfer = transfer;
-    sandbox.#secrets.set(secrets);
-    try {
-      await sandbox.#extendAfterReadiness(requestedMs, undefined, options.signal);
-    } catch (error) {
-      sandbox.close();
-      throw error;
-    }
-    return sandbox;
+    const validatedSandboxId = validateSandboxId(sandboxId);
+    return instrumentation.span(
+      "rayito.sandbox.connect",
+      { "rayito.sandbox.id": validatedSandboxId, "rayito.operation": "connect" },
+      async () => {
+        const info = await plane.getMicrovm(validatedSandboxId, { signal: options.signal });
+        if (TERMINAL_STATES.has(info.state)) {
+          throw terminalStateError(info);
+        }
+        if (needsExplicitResume(info)) {
+          await plane.resumeMicrovm(sandboxId, { signal: options.signal });
+        }
+        const sandbox = await Sandbox.#open(info, {
+          accessToken: token,
+          controlPlane: plane,
+          transport: transportSettings,
+          signal: options.signal,
+          proxyPorts: [PortSpec.single(DEFAULT_PORT)],
+          requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+          readyTimeoutMs: options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
+          reconnectTimeoutMs: options.reconnectTimeoutMs ?? DEFAULT_RECONNECT_TIMEOUT_MS,
+          terminateOnFailure: false,
+          logger: options.logger,
+        });
+        sandbox.#instrumentation = instrumentation;
+        sandbox.#persist = bound;
+        sandbox.#core.transfer = transfer;
+        sandbox.#secrets.set(secrets);
+        try {
+          await sandbox.#extendAfterReadiness(requestedMs, undefined, options.signal);
+        } catch (error) {
+          sandbox.close();
+          throw error;
+        }
+        return sandbox;
+      },
+    );
   }
 
   /**
@@ -922,43 +992,102 @@ export class Sandbox implements AsyncDisposable {
     });
   }
 
-  static async kill(sandboxId: string, options: ControlPlaneOptions = {}): Promise<boolean> {
-    return resolveControlPlane(options).terminateMicrovm(validateSandboxId(sandboxId));
+  /**
+   * `Sandbox.kill(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.kill`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.kill(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
+  static async kill(sandboxId: string, options: StaticKillOptions = {}): Promise<boolean> {
+    const plane = resolveControlPlane(options);
+    const validatedSandboxId = validateSandboxId(sandboxId);
+    return instrumentationFor(options.tracerProvider).span(
+      "rayito.sandbox.kill",
+      { "rayito.sandbox.id": validatedSandboxId, "rayito.operation": "kill" },
+      () => plane.terminateMicrovm(validatedSandboxId),
+    );
   }
 
   static async getInfo(sandboxId: string, options: ControlPlaneOptions = {}): Promise<SandboxInfo> {
     return resolveControlPlane(options).getMicrovm(validateSandboxId(sandboxId));
   }
 
+  /**
+   * `Sandbox.pause(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.pause`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.pause(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
   static async pause(sandboxId: string, options: StaticPauseOptions = {}): Promise<boolean> {
     const plane = resolveControlPlane(options);
-    const info = await plane.getMicrovm(validateSandboxId(sandboxId));
-    if (alreadySuspended(info)) {
-      return false;
-    }
-    const suspended = await plane.suspendMicrovm(sandboxId);
-    if (suspended && (options.wait ?? true)) {
-      await waitForState(
-        plane,
-        sandboxId,
-        "SUSPENDED",
-        options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
-      );
-    }
-    return suspended;
+    const validatedSandboxId = validateSandboxId(sandboxId);
+    return instrumentationFor(options.tracerProvider).span(
+      "rayito.sandbox.pause",
+      { "rayito.sandbox.id": validatedSandboxId, "rayito.operation": "pause" },
+      async () => {
+        const info = await plane.getMicrovm(validatedSandboxId);
+        if (alreadySuspended(info)) {
+          return false;
+        }
+        const suspended = await plane.suspendMicrovm(sandboxId);
+        if (suspended && (options.wait ?? true)) {
+          await waitForState(
+            plane,
+            sandboxId,
+            "SUSPENDED",
+            options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
+          );
+        }
+        return suspended;
+      },
+    );
   }
 
+  /**
+   * `Sandbox.resume(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.resume`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.resume(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
   static async resume(sandboxId: string, options: StaticPauseOptions = {}): Promise<void> {
     const plane = resolveControlPlane(options);
-    await plane.resumeMicrovm(validateSandboxId(sandboxId));
-    if (options.wait ?? true) {
-      await waitForState(
-        plane,
-        sandboxId,
-        "RUNNING",
-        options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
-      );
-    }
+    const validatedSandboxId = validateSandboxId(sandboxId);
+    return instrumentationFor(options.tracerProvider).span(
+      "rayito.sandbox.resume",
+      { "rayito.sandbox.id": validatedSandboxId, "rayito.operation": "resume" },
+      async () => {
+        await plane.resumeMicrovm(validatedSandboxId);
+        if (options.wait ?? true) {
+          await waitForState(
+            plane,
+            sandboxId,
+            "RUNNING",
+            options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
+          );
+        }
+      },
+    );
   }
 
   /**
@@ -1067,11 +1196,17 @@ export class Sandbox implements AsyncDisposable {
 
   /** `terminate-microvm` y `close()`, también si la llamada falla. */
   async kill(): Promise<boolean> {
-    try {
-      return await this.#core.controlPlane.terminateMicrovm(this.sandboxId);
-    } finally {
-      this.close();
-    }
+    return this.#instrumentation.span(
+      "rayito.sandbox.kill",
+      { "rayito.sandbox.id": this.sandboxId, "rayito.operation": "kill" },
+      async () => {
+        try {
+          return await this.#core.controlPlane.terminateMicrovm(this.sandboxId);
+        } finally {
+          this.close();
+        }
+      },
+    );
   }
 
   /**
@@ -1123,21 +1258,30 @@ export class Sandbox implements AsyncDisposable {
   async connect(options: InstanceConnectOptions = {}): Promise<Sandbox> {
     const { signal } = options;
     signal?.throwIfAborted();
+    if (options.tracerProvider !== undefined) {
+      this.#instrumentation = instrumentationFor(options.tracerProvider);
+    }
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     await this.#secrets.rebind(options);
-    const info = await this.#core.controlPlane.getMicrovm(this.sandboxId, { signal });
-    if (TERMINAL_STATES.has(info.state)) {
-      throw terminalStateError(info);
-    }
-    this.#core.info = info;
-    this.#core.paused = false;
-    if (needsExplicitResume(info)) {
-      await this.#core.controlPlane.resumeMicrovm(this.sandboxId, { signal });
-      await raceAbort(this.#core.refresher.refreshAll(), signal);
-    }
-    await this.#core.waitUntilReady({ terminateOnFailure: false, signal });
-    await this.#extendAfterReadiness(requestedMs, options.requestTimeoutMs, signal);
-    return this;
+    return this.#instrumentation.span(
+      "rayito.sandbox.connect",
+      { "rayito.sandbox.id": this.sandboxId, "rayito.operation": "connect" },
+      async () => {
+        const info = await this.#core.controlPlane.getMicrovm(this.sandboxId, { signal });
+        if (TERMINAL_STATES.has(info.state)) {
+          throw terminalStateError(info);
+        }
+        this.#core.info = info;
+        this.#core.paused = false;
+        if (needsExplicitResume(info)) {
+          await this.#core.controlPlane.resumeMicrovm(this.sandboxId, { signal });
+          await raceAbort(this.#core.refresher.refreshAll(), signal);
+        }
+        await this.#core.waitUntilReady({ terminateOnFailure: false, signal });
+        await this.#extendAfterReadiness(requestedMs, options.requestTimeoutMs, signal);
+        return this;
+      },
+    );
   }
 
   /**
@@ -1145,20 +1289,26 @@ export class Sandbox implements AsyncDisposable {
    * pendiente ningún stream en curso de este `Sandbox` sondea `Health`.
    */
   async pause(options: PauseOptions = {}): Promise<boolean> {
-    this.#core.info = await this.#core.controlPlane.getMicrovm(this.sandboxId);
-    if (alreadySuspended(this.#core.info)) {
-      return false;
-    }
-    const suspended = await this.#core.suspendMarkingPaused();
-    if (suspended && (options.wait ?? true)) {
-      this.#core.info = await waitForState(
-        this.#core.controlPlane,
-        this.sandboxId,
-        "SUSPENDED",
-        this.#core.readyTimeoutMs,
-      );
-    }
-    return suspended;
+    return this.#instrumentation.span(
+      "rayito.sandbox.pause",
+      { "rayito.sandbox.id": this.sandboxId, "rayito.operation": "pause" },
+      async () => {
+        this.#core.info = await this.#core.controlPlane.getMicrovm(this.sandboxId);
+        if (alreadySuspended(this.#core.info)) {
+          return false;
+        }
+        const suspended = await this.#core.suspendMarkingPaused();
+        if (suspended && (options.wait ?? true)) {
+          this.#core.info = await waitForState(
+            this.#core.controlPlane,
+            this.sandboxId,
+            "SUSPENDED",
+            this.#core.readyTimeoutMs,
+          );
+        }
+        return suspended;
+      },
+    );
   }
 
   /**
@@ -1168,13 +1318,19 @@ export class Sandbox implements AsyncDisposable {
    * como en `connect()`.
    */
   async resume(options: PauseOptions = {}): Promise<void> {
-    this.#core.paused = false;
-    await this.#core.controlPlane.resumeMicrovm(this.sandboxId);
-    await this.#core.refresher.refreshAll();
-    if (options.wait ?? true) {
-      await this.#core.waitUntilReady({ terminateOnFailure: false });
-      await this.#extendAfterReadiness(undefined, undefined);
-    }
+    return this.#instrumentation.span(
+      "rayito.sandbox.resume",
+      { "rayito.sandbox.id": this.sandboxId, "rayito.operation": "resume" },
+      async () => {
+        this.#core.paused = false;
+        await this.#core.controlPlane.resumeMicrovm(this.sandboxId);
+        await this.#core.refresher.refreshAll();
+        if (options.wait ?? true) {
+          await this.#core.waitUntilReady({ terminateOnFailure: false });
+          await this.#extendAfterReadiness(undefined, undefined);
+        }
+      },
+    );
   }
 
   /** Un `Health` acotado por `requestTimeoutMs` (y por el tope del sondeo de readiness). */

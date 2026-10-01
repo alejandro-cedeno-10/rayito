@@ -40,6 +40,7 @@ from rayito._process_base import (
 from rayito._sandbox_base import GateRetry, ReconnectBudget
 from rayito._secrets import SecretRef
 from rayito.exceptions import (
+    CommandExitException,
     NotFoundException,
     SandboxException,
     TimeoutException,
@@ -138,16 +139,27 @@ class AsyncCommands:
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
         )
         deadline = stream_deadline(timeout)
-        handle = await self._attach(
-            lambda stub: stub.Start(request, timeout=deadline),
-            stream=background,
-            deadline=deadline,
-            on_stdout=on_stdout,
-            on_stderr=on_stderr,
-            request_timeout=request_timeout,
-            foreground=not background,
-        )
-        return handle if background else await handle.wait()
+        with self._sandbox._instrumentation.span(
+            "rayito.commands.run", {"rayito.commands.background": background}
+        ) as span:
+            handle = await self._attach(
+                lambda stub: stub.Start(request, timeout=deadline),
+                stream=background,
+                deadline=deadline,
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+                request_timeout=request_timeout,
+                foreground=not background,
+            )
+            if background:
+                return handle
+            try:
+                result = await handle.wait()
+            except CommandExitException as exc:
+                span.set_attribute("rayito.commands.exit_code", exc.exit_code)
+                raise
+            span.set_attribute("rayito.commands.exit_code", result.exit_code)
+            return result
 
     async def connect(
         self,
