@@ -46,11 +46,10 @@
  */
 
 import type { AwsClientSettings } from "../aws/control-plane.js";
-import { clientConfig } from "../aws/control-plane.js";
+import { awsCode, LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { IndexWriteError, InvalidArgumentError, SandboxIndexError } from "../errors.js";
 import type { SandboxInfo } from "../models.js";
-import { loadOptionalPeer } from "../optional.js";
 import {
   DEFAULT_TTL_MARGIN_SECONDS,
   fromItem,
@@ -126,17 +125,16 @@ interface DynamoDbModule {
 
 /** El adaptador real: carga el peer opcional en el primer uso y manda cada `…Command`. */
 async function sdkApi(region: string, credentials: Credentials): Promise<DynamoDbApi> {
-  const sdk = await loadOptionalPeer<DynamoDbModule>(
+  const { sdk, send } = await loadOptionalSdkClient<DynamoDbModule>(
     DYNAMODB_PEER,
     "el índice de metadatos (DynamoDbIndex / index)",
-  );
-  const client = new sdk.DynamoDBClient(
-    clientConfig(region, credentials === undefined ? {} : { credentials }),
+    (module) => module.DynamoDBClient,
+    region,
+    credentials,
   );
   return {
-    putItem: (input) => client.send(new sdk.PutItemCommand(input)),
-    batchGetItem: (input) =>
-      client.send(new sdk.BatchGetItemCommand(input)) as ReturnType<DynamoDbApi["batchGetItem"]>,
+    putItem: (input) => send(new sdk.PutItemCommand(input)),
+    batchGetItem: (input) => send(new sdk.BatchGetItemCommand(input)),
   };
 }
 
@@ -144,11 +142,6 @@ const IAM_ACTIONS: Readonly<Record<keyof DynamoDbApi, string>> = Object.freeze({
   putItem: "dynamodb:PutItem",
   batchGetItem: "dynamodb:BatchGetItem",
 });
-
-function awsCode(error: unknown): string | undefined {
-  const name = (error as { name?: unknown } | null)?.name;
-  return typeof name === "string" ? name : undefined;
-}
 
 /** El error de DynamoDB como error propio, sin el mensaje de AWS (puede nombrar la tabla o la clave). */
 export function indexError(
@@ -197,11 +190,9 @@ export class DynamoDbIndex {
   readonly tableName: string;
   readonly onWriteFailure: WriteFailurePolicy;
   readonly ttlMarginSeconds: number;
-  readonly #region: string | undefined;
-  readonly #credentials: Credentials;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  #api: Promise<DynamoDbApi> | undefined;
+  readonly #api: LazyAwsApi<DynamoDbApi>;
 
   constructor(options: DynamoDbIndexOptions) {
     const tableName = (options as { tableName?: unknown } | undefined)?.tableName;
@@ -223,11 +214,15 @@ export class DynamoDbIndex {
     this.tableName = tableName;
     this.onWriteFailure = onWriteFailure;
     this.ttlMarginSeconds = margin;
-    this.#region = options.region;
-    this.#credentials = options.credentials;
     this.#now = options.now ?? (() => Date.now());
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.#api = options.client === undefined ? undefined : Promise.resolve(options.client);
+    const credentials = options.credentials;
+    this.#api = new LazyAwsApi(
+      options.region,
+      "falta la región del índice: pasa `region` o define AWS_REGION",
+      (region) => sdkApi(region, credentials),
+      options.client,
+    );
   }
 
   toJSON(): Record<string, unknown> {
@@ -311,22 +306,7 @@ export class DynamoDbIndex {
   }
 
   #client(): Promise<DynamoDbApi> {
-    if (this.#api === undefined) {
-      const region = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
-      if (!region) {
-        return Promise.reject(
-          new InvalidArgumentError("falta la región del índice: pasa `region` o define AWS_REGION"),
-        );
-      }
-      const pending = sdkApi(region, this.#credentials);
-      pending.catch(() => {
-        if (this.#api === pending) {
-          this.#api = undefined;
-        }
-      });
-      this.#api = pending;
-    }
-    return this.#api;
+    return this.#api.get();
   }
 }
 

@@ -6,7 +6,7 @@ contra el modelo del servicio con `Stubber`."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import boto3
 import pytest
@@ -18,7 +18,7 @@ from rayito._index import record_for
 from rayito._models import SandboxInfo
 from rayito.exceptions import InvalidArgumentException
 
-from .fake_dynamodb import TABLE, FakeDynamoDb, fake_index
+from .fake_dynamodb import TABLE, DynamoSpySession, FakeDynamoDb, fake_index
 
 STARTED = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -163,8 +163,7 @@ def stubbed() -> tuple[DynamoDbIndex, Stubber]:
         "dynamodb", config=Config(retries={"total_max_attempts": 1, "mode": "standard"})
     )
     stubber = Stubber(client)
-    index = DynamoDbIndex(TABLE)
-    index._client = client
+    index = DynamoDbIndex(TABLE, session=cast(Any, DynamoSpySession(api=client)))
     index._clock = lambda: NOW
     return index, stubber
 

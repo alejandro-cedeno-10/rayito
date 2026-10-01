@@ -59,7 +59,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -69,7 +68,7 @@ from typing import Any, Final, Literal, Protocol
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rayito._aws import client_config
+from rayito._aws import LazyClient, aws_code
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito._models import SandboxInfo, SandboxListItem
 from rayito._version import __version__
@@ -232,15 +231,6 @@ class DynamoDbApi(Protocol):
     def batch_get_item(self, **params: Any) -> dict[str, Any]: ...
 
 
-def aws_code(exc: BaseException) -> str | None:
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return None
-    error = response.get("Error")
-    code = error.get("Code") if isinstance(error, dict) else None
-    return code if isinstance(code, str) else None
-
-
 def index_error(
     operation: str, exc: BaseException, error_type: type[SandboxIndexException]
 ) -> SandboxIndexException:
@@ -336,8 +326,7 @@ class DynamoDbIndex:
         self._session = session
         self._on_write_failure: WriteFailurePolicy = on_write_failure
         self._ttl_margin_seconds = ttl_margin_seconds
-        self._client: DynamoDbApi | None = None
-        self._client_lock = threading.Lock()
+        self._client = LazyClient("dynamodb", region=region, session=session)
         self._sleep: Callable[[float], None] = time.sleep
         self._clock: Callable[[], float] = time.time
 
@@ -395,13 +384,8 @@ class DynamoDbIndex:
 
     def api(self) -> DynamoDbApi:
         """El cliente `dynamodb`, construido en el primer uso."""
-        with self._client_lock:
-            if self._client is None:
-                session = self._session or boto3.session.Session(region_name=self._region)
-                self._client = session.client(
-                    "dynamodb", region_name=self._region, config=client_config()
-                )
-            return self._client
+        client: DynamoDbApi = self._client.get()
+        return client
 
     def _batch_get_chunk(self, ids: list[str]) -> list[Mapping[str, Any]]:
         request: dict[str, Any] = {
