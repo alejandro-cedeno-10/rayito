@@ -219,8 +219,9 @@ cual y manda `\x04` al acabar. El código de salida es el del shell remoto.
 
 Expone un puerto del guest en `http://<bind>:<local-port>` (por defecto
 `--local-port` es igual a `--port`), para desarrollo local: curl, un
-navegador o cualquier cliente HTTP/1.1 (incluido WebSocket) contra un
-servidor que el sandbox ya sirve. Nunca hace falta el access token del
+navegador o cualquier cliente HTTP/1.1 contra un servidor que el sandbox
+ya sirve. El paso de WebSocket (upgrade) está implementado, no medido
+contra AWS (`AWS_API_NOTES.md` §16, Q81). Nunca hace falta el access token del
 sandbox, sólo el JWE del proxy.
 
 ```bash
@@ -237,7 +238,10 @@ curl http://127.0.0.1:8000/
 - Cabeceras: quita cualquier `x-aws-proxy-*` que traiga el cliente, fija
   `Host` al endpoint del sandbox, añade `X-aws-proxy-auth` (el JWE vigente)
   y `X-aws-proxy-port`, y fuerza `Connection: close` salvo en una petición
-  `Upgrade` (WebSocket). Nunca registra el JWE, las cabeceras, los cuerpos
+  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sin JWE
+  vigente o sin conexión al sandbox responde `502` y escribe el motivo en
+  stderr; la cabecera tiene que llegar en 30 s y la conexión al sandbox
+  abrirse en 30 s. Nunca registra el JWE, las cabeceras, los cuerpos
   ni las rutas de lo que pasa por el proxy ([Seguridad](security.md#rayito-sandbox-proxy-m12)).
 - El JWE se renueva a los 45 min con el mismo `TokenRefresher` que usa el
   canal gRPC del SDK: no se acuña uno nuevo en cada petición.

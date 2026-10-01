@@ -69,8 +69,12 @@ Two loose ends from the research read for M11–M14
   HTTP/1.1: per connection it reads only the request header (64 KiB cap,
   `asyncio.StreamReader`'s own limit), strips any client-supplied
   `x-aws-proxy-*`, sets `Host: <endpoint>`, adds `X-aws-proxy-auth` and
-  `X-aws-proxy-port`, forces `Connection: close` except on an `Upgrade`
-  request (left untouched for WebSocket), opens TLS to `<endpoint>:443`
+  `X-aws-proxy-port`, forces `Connection: close` except on an upgrade
+  request (`Upgrade` plus the `upgrade` token in `Connection`, RFC 9110
+  §7.8; left untouched — WebSocket passthrough is implemented but not yet
+  measured against AWS, `AWS_API_NOTES.md` §16 Q81), answers `502` when
+  there is no valid JWE or the upstream connect fails, bounds the header
+  read and the upstream connect, opens TLS to `<endpoint>:443`
   (SNI = endpoint) and pipes both directions until either side closes. No
   new dependency: stdlib plus the SDK's own transport primitives, inside
   the existing `rayito[cli]` extra. `--bind` outside loopback requires
