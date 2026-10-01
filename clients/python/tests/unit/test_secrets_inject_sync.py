@@ -28,6 +28,7 @@ from rayito._secrets import code_secrets_scope, relaunch_secrets
 from rayito.exceptions import InvalidArgumentException, SecretNotFoundException
 
 from .conftest import ACCESS_TOKEN, IMAGE_ARN, SANDBOX_ID, RaydEndpoint, StubbedControlPlane
+from .fake_code import FakeContext
 from .fake_secrets import SENTINEL_NAME, SENTINEL_VALUE, FakeSecretsManager, SpySession
 from .test_commands_sync import stub_launch
 
@@ -194,10 +195,51 @@ def test_run_code_secrets_on_a_non_python_language_point_to_contexts(sandbox: Sa
 
 
 def test_handle_secrets_are_not_added_to_non_python_cells() -> None:
-    assert code_secrets_scope(None, None, None) is True
+    assert code_secrets_scope(None, "python", None) is True
+    assert code_secrets_scope(None, None, None) is False  # contexto desconocido
     assert code_secrets_scope("python", None, {"A": "a"}) is True
     assert code_secrets_scope(None, "bash", None) is False
     assert code_secrets_scope("typescript", None, {}) is False
+
+
+def test_run_code_with_a_context_id_adds_handle_secrets_only_to_known_python(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    """Un `context=` dado como id (str): los secretos del handle sólo van si el
+    contexto es Python con certeza (`default`, o uno que este cliente creó o
+    listó como Python); en otro caso la celda va sin ellos y `rayd` no la
+    rechaza por traer `envs` a un kernel no Python."""
+    sandbox.run_code("1+1", context="default")
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {"OPENAI_API_KEY": SENTINEL_VALUE}
+    python_ctx = sandbox.create_code_context()
+    sandbox.run_code("1+1", context=python_ctx.id)
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {"OPENAI_API_KEY": SENTINEL_VALUE}
+    bash_ctx = sandbox.create_code_context(language="bash")
+    sandbox.run_code("echo hi", context=bash_ctx.id)
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {}
+    # Un id que este cliente no conoce (otro handle lo creó): sin secretos del
+    # handle; los de la propia llamada sí viajan (el llamante los pidió).
+    with fake_rayd.code.lock:
+        fake_rayd.code.contexts["ctx-other"] = FakeContext("ctx-other", language="bash")
+    sandbox.run_code("echo hi", context="ctx-other")
+    assert dict(fake_rayd.code.execute_requests[-1].envs) == {}
+
+
+def test_connect_with_empty_secrets_clears_the_handle_secrets(
+    sandbox: Sandbox,
+    control_plane: StubbedControlPlane,
+    fake_rayd: RaydEndpoint,
+    cache: SecretCache,
+) -> None:
+    from .conftest import microvm_response
+
+    control_plane.microvms.add_response("get_microvm", microvm_response(endpoint=fake_rayd.host))
+    sandbox.connect(secrets={})
+    sandbox.commands.run("env")
+    assert "OPENAI_API_KEY" not in dict(fake_rayd.process.start_requests[-1].process.envs)
+    refs, kept = relaunch_secrets(sandbox._secrets)
+    assert refs is None
+    assert kept is cache
 
 
 def test_connect_rebinds_and_none_keeps_the_handle_secrets(
@@ -328,7 +370,7 @@ def test_without_secrets_no_secretsmanager_client_is_ever_built(
         return real_client(self, service, *args, **kwargs)
 
     monkeypatch.setattr(boto3.session.Session, "client", spy)
-    shared_before = dict(secrets_module._shared_caches)
+    shared_before = secrets_module.shared_secret_caches()
     stub_launch(control_plane, fake_rayd)
     plain = Sandbox.create(
         IMAGE_ARN,
@@ -348,4 +390,4 @@ def test_without_secrets_no_secretsmanager_client_is_ever_built(
         )
         plain.kill()
     assert "secretsmanager" not in built
-    assert secrets_module._shared_caches == shared_before
+    assert secrets_module.shared_secret_caches() == shared_before

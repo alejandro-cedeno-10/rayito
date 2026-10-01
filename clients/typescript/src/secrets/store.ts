@@ -3,32 +3,8 @@
  * cuenta (M13a). Espejo de `SecretStore` de `rayito/_secrets.py`. Sólo usa
  * las operaciones y los parámetros de AWS_API_NOTES.md §19.
  *
- * Coste y activación
- * -------------------
- * Activa: `new SecretStore({...})` es la opción explícita del CRUD; construirlo
- *   no llama a AWS ni carga `@aws-sdk/client-secrets-manager` (peer opcional):
- *   el cliente se crea en la primera llamada a un método.
- * Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
- *   (`CreateSecretCommand`); `update` = `DescribeSecretCommand` +
- *   `PutSecretValueCommand` (+ `UpdateSecretCommand` con `metadata`);
- *   `getInfo`/`exists` = `DescribeSecretCommand`; `list` = `ListSecretsCommand`;
- *   `destroy` = `DeleteSecretCommand` sin ventana de recuperación.
- * Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por 10 000
- *   llamadas (us-east-1, consultado 2026-09-30,
- *   https://aws.amazon.com/secrets-manager/pricing/).
- * IAM: `secretsmanager:CreateSecret`, `PutSecretValue`, `UpdateSecret`,
- *   `DescribeSecret`, `DeleteSecret` sobre `…:secret:rayito/*` y
- *   `secretsmanager:ListSecrets` sobre `*` (política `RayitoSecretsAdmin` de
- *   `infra/secrets-access.yaml`); con `kmsKeyId`, `kms:GenerateDataKey` y
- *   `kms:Decrypt` sobre esa clave.
- * Cómo apagarla: no instancies `SecretStore`; `destroy()` los secretos que ya
- *   no uses (se facturan hasta entonces).
- * Ejemplo:
- *   const store = new SecretStore({ region: "us-east-1" });
- *   await store.create("openai", process.env.OPENAI_API_KEY!, { metadata: { team: "ml" } });
- *   await store.update("openai", "sk-nuevo");
- *   const page = await store.list({ limit: 20 });
- *   await store.destroy("openai");
+ * El bloque "Coste y activación" está en el TSDoc de `SecretStore` (lo que
+ * enseña el IDE al pasar el ratón).
  */
 
 import type { AwsClientSettings } from "../aws/control-plane.js";
@@ -267,7 +243,37 @@ export function infoFromDescription(described: DescribedSecret, prefix: string):
 const lastUpdates = new Map<string, number>();
 const warnedUpdates = new Set<string>();
 
-/** Ver el bloque "Coste y activación" del módulo. Reutilizable; los errores nunca repiten el nombre ni el valor. */
+/**
+ * CRUD de secretos de Rayito sobre AWS Secrets Manager, en tu cuenta.
+ * Reutilizable; los errores nunca repiten el nombre ni el valor.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: `new SecretStore({...})` es la opción explícita del CRUD; construirlo
+ *   no llama a AWS ni carga `@aws-sdk/client-secrets-manager` (peer opcional):
+ *   el cliente se crea en la primera llamada a un método.
+ * Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
+ *   (`CreateSecretCommand`); `update` = `DescribeSecretCommand` +
+ *   `PutSecretValueCommand` (+ `UpdateSecretCommand` con `metadata`);
+ *   `getInfo`/`exists` = `DescribeSecretCommand`; `list` = `ListSecretsCommand`;
+ *   `destroy` = `DeleteSecretCommand` sin ventana de recuperación.
+ * Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por 10 000
+ *   llamadas (us-east-1, consultado 2026-09-30,
+ *   https://aws.amazon.com/secrets-manager/pricing/).
+ * IAM: `secretsmanager:CreateSecret`, `PutSecretValue`, `UpdateSecret`,
+ *   `DescribeSecret`, `DeleteSecret` sobre `…:secret:rayito/*` y
+ *   `secretsmanager:ListSecrets` sobre `*` (política `RayitoSecretsAdmin` de
+ *   `infra/secrets-access.yaml`); con `kmsKeyId`, `kms:GenerateDataKey` y
+ *   `kms:Decrypt` sobre esa clave.
+ * Cómo apagarla: no instancies `SecretStore`; `destroy()` los secretos que ya
+ *   no uses (se facturan hasta entonces).
+ * Ejemplo:
+ *   const store = new SecretStore({ region: "us-east-1" });
+ *   await store.create("openai", process.env.OPENAI_API_KEY!, { metadata: { team: "ml" } });
+ *   await store.update("openai", "sk-nuevo");
+ *   const page = await store.list({ limit: 20 });
+ *   await store.destroy("openai");
+ */
 export class SecretStore {
   readonly #region: string | undefined;
   readonly #credentials: Credentials;

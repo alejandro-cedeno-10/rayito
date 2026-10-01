@@ -15,6 +15,7 @@ import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { SecretCache } from "../../src/secrets/cache.js";
 import {
   codeSecretsScope,
+  MAX_SHARED_CACHES,
   normalizeSecrets,
   resetVisibilityWarningForTests,
   SECRET_VISIBILITY_WARNING,
@@ -22,6 +23,7 @@ import {
   sharedSecretCacheCount,
 } from "../../src/secrets/inject.js";
 import { SecretStore } from "../../src/secrets/store.js";
+import { FakeContext } from "./fake/code.js";
 import { IMAGE_ARN } from "./fake/control-plane.js";
 import { FakeClock, FakePoolControlPlane } from "./fake/pool-plane.js";
 import { createTestSandbox, waitUntil } from "./helpers.js";
@@ -134,6 +136,48 @@ describe("secrets on the native Sandbox", () => {
     ).rejects.toThrow(/createCodeContext/);
     expect(codeSecretsScope(undefined, "bash", undefined)).toBe(false);
     expect(codeSecretsScope("python", undefined, { A: "a" })).toBe(true);
+    // Contexto desconocido: sin los secretos del handle, sin error.
+    expect(codeSecretsScope(undefined, undefined, undefined)).toBe(false);
+  });
+
+  test("runCode with a context id adds handle secrets only to known Python contexts", async () => {
+    const { sandbox, rayd } = await sandboxWithSecrets();
+    await sandbox.runCode("1+1", { context: "default" });
+    expect(rayd.code.executeRequests.at(-1)?.envs).toEqual({ OPENAI_API_KEY: SENTINEL_VALUE });
+    const pythonCtx = await sandbox.createCodeContext();
+    await sandbox.runCode("1+1", { context: pythonCtx.id });
+    expect(rayd.code.executeRequests.at(-1)?.envs).toEqual({ OPENAI_API_KEY: SENTINEL_VALUE });
+    const bashCtx = await sandbox.createCodeContext({ language: "bash" });
+    await sandbox.runCode("echo hi", { context: bashCtx.id });
+    expect(rayd.code.executeRequests.at(-1)?.envs).toEqual({});
+    // Un id que este cliente no conoce (lo creó otro handle).
+    rayd.code.contexts.set("ctx-other", new FakeContext("ctx-other", "/home/user", {}, "bash"));
+    await sandbox.runCode("echo hi", { context: "ctx-other" });
+    expect(rayd.code.executeRequests.at(-1)?.envs).toEqual({});
+  });
+
+  test("connect with empty secrets clears the handle secrets and keeps the cache", async () => {
+    const { cache } = secretRig();
+    const { sandbox, rayd } = await createTestSandbox({
+      create: {
+        executionRoleArn: "arn:aws:iam::123456789012:role/rayito-persist",
+        persist: new S3Prefix({ bucket: "my-bucket" }),
+        secrets: { OPENAI_API_KEY: SENTINEL_NAME },
+        secretCache: cache,
+      },
+    });
+    await sandbox.connect({ secrets: {} });
+    await sandbox.commands.run("env");
+    expect(rayd.process.startRequests.at(-1)?.process?.envs.OPENAI_API_KEY).toBeUndefined();
+    const create = vi.spyOn(Sandbox, "create").mockResolvedValue({} as Sandbox);
+    vi.spyOn(sandbox, "checkpointFiles").mockResolvedValue(
+      undefined as unknown as Awaited<ReturnType<Sandbox["checkpointFiles"]>>,
+    );
+    vi.spyOn(sandbox, "kill").mockResolvedValue(true);
+    await sandbox.reincarnate();
+    const relaunch = create.mock.calls[0]?.[0];
+    expect(relaunch?.secrets).toBeUndefined();
+    expect(relaunch?.secretCache).toBe(cache);
   });
 
   test("connect rebinds the handle secrets; no options keep them", async () => {
@@ -289,5 +333,38 @@ describe("secrets with a SandboxPool", () => {
       await pool.close();
       await plane.close();
     }
+  });
+});
+
+describe("shared secret caches", () => {
+  test("are capped and sweep expired values when one is requested", () => {
+    const credentials = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "x" };
+    const kept = sharedSecretCache("eu-west-1", credentials);
+    const sweep = vi.spyOn(SecretCache.prototype, "sweep");
+    for (let index = 0; index < MAX_SHARED_CACHES + 5; index += 1) {
+      sharedSecretCache("eu-west-1", { accessKeyId: `AKID${index}`, secretAccessKey: "x" });
+    }
+    expect(sweep).toHaveBeenCalled();
+    expect(sharedSecretCacheCount()).toBeLessThanOrEqual(MAX_SHARED_CACHES);
+    expect(sharedSecretCache("eu-west-1", credentials)).not.toBe(kept);
+  });
+
+  test("a cache drops expired values on its next use", async () => {
+    let now = 0;
+    const api = new FakeSecretsManager();
+    api.put("rayito/a", "va");
+    api.put("rayito/b", "vb");
+    const cache = new SecretCache({
+      ttlSeconds: 60,
+      store: new SecretStore({ client: api }),
+      now: () => now,
+    });
+    await cache.get("a");
+    now += 61_000;
+    await cache.get("b");
+    expect(cache.size).toBe(1);
+    now += 61_000;
+    expect(cache.sweep()).toBe(1);
+    expect(cache.size).toBe(0);
   });
 });

@@ -198,3 +198,45 @@ def test_repr_str_and_logs_never_contain_the_value(
         assert SENTINEL_VALUE not in rendered
     assert "***" in repr(cache)
     assert SENTINEL_VALUE not in caplog.text
+
+
+def test_expired_values_are_swept_on_the_next_use_of_the_cache(api: FakeSecretsManager) -> None:
+    """Un valor vencido no se queda en memoria: el siguiente `get` (de
+    cualquier secreto) de la caché lo descarta antes de nada."""
+    api.put("rayito/other", "other-value")
+    cache, clock = cache_over(api, ttl=60)
+    cache.get("openai")
+    clock.now += 61
+    cache.get("other")
+    assert len(cache._entries) == 1
+    assert cache.sweep() == 0
+    clock.now += 61
+    assert cache.sweep() == 1
+    assert cache._entries == {}
+
+
+def test_shared_caches_are_capped_and_swept() -> None:
+    """Una sesión por tenant no acumula cachés sin límite (se descarta la
+    usada hace más tiempo) y pedir cualquier caché compartida barre los
+    valores vencidos de todas."""
+    import rayito._secrets as secrets_module
+
+    first = cast(Any, SpySession(api=FakeSecretsManager()))
+    kept = shared_secret_cache("eu-west-1", first)
+    swept: list[SecretCache] = []
+    original = SecretCache.sweep
+
+    def spy(self: SecretCache) -> int:
+        swept.append(self)
+        return original(self)
+
+    try:
+        SecretCache.sweep = spy  # type: ignore[method-assign]
+        for _ in range(secrets_module.MAX_SHARED_CACHES + 5):
+            shared_secret_cache("eu-west-1", cast(Any, SpySession(api=FakeSecretsManager())))
+    finally:
+        SecretCache.sweep = original  # type: ignore[method-assign]
+    assert any(cache is kept for cache in swept)
+    live = secrets_module.shared_secret_caches()
+    assert len(live) == secrets_module.MAX_SHARED_CACHES
+    assert all(cache is not kept for cache in live)
