@@ -2,26 +2,114 @@
 // @generated from file rayito/v1/telemetry_export.proto (package rayito.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file rayito/v1/telemetry_export.proto.
  */
 export const file_rayito_v1_telemetry_export: GenFile = /*@__PURE__*/
-  fileDesc("CiByYXlpdG8vdjEvdGVsZW1ldHJ5X2V4cG9ydC5wcm90bxIJcmF5aXRvLnYxIhcKFVRlbGVtZXRyeUV4cG9ydENvbmZpZyIXChVUZWxlbWV0cnlFeHBvcnRTdGF0dXNiBnByb3RvMw");
+  fileDesc("CiByYXlpdG8vdjEvdGVsZW1ldHJ5X2V4cG9ydC5wcm90bxIJcmF5aXRvLnYxIpMCChVUZWxlbWV0cnlFeHBvcnRDb25maWcSEgoKaW50ZXJ2YWxfcxgBIAEoDRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSIwoFbmFtZXMYAyABKA4yFC5yYXlpdG8udjEuTmFtZVN0eWxlEhEKCWltYWdlX2FybhgGIAEoCRIVCg1pbWFnZV92ZXJzaW9uGAcgASgJEhgKEGltYWdlX21lbW9yeV9taWIYCCABKA0SNgoOZXhlY3V0aW9uX3JvbGUYBCABKAsyHC5yYXlpdG8udjEuRXhlY3V0aW9uUm9sZUF1dGhIABInCgZiZWFyZXIYBSABKAsyFS5yYXlpdG8udjEuQmVhcmVyQXV0aEgAQgYKBGF1dGgiEwoRRXhlY3V0aW9uUm9sZUF1dGgiGwoKQmVhcmVyQXV0aBINCgV0b2tlbhgBIAEoCSJUChVUZWxlbWV0cnlFeHBvcnRTdGF0dXMSEAoIZXhwb3J0ZWQYASABKAQSDwoHZHJvcHBlZBgCIAEoBBIYChBsYXN0X2Vycm9yX2NsYXNzGAMgASgJKlIKCU5hbWVTdHlsZRIaChZOQU1FX1NUWUxFX1VOU1BFQ0lGSUVEEAASFQoRTkFNRV9TVFlMRV9SQVlJVE8QARISCg5OQU1FX1NUWUxFX0UyQhACYgZwcm90bzM");
 
 /**
- * Owned by m15-rayd-otlp. Foundations only creates these two empty stub
- * messages (so `configure.proto` has a stable field to point at); the
- * feature that implements rayd-otlp owns every field number inside this
- * file from here on. Message names stay prefixed (`TelemetryExport*`) so
- * they never collide with another feature's messages inside `rayito.v1`.
+ * Owned by m15-rayd-otlp (ADR-021). `TelemetryExportConfig` is the complete
+ * desired state of one `Configure` call's `telemetry_export` section
+ * (ConfigSection.TELEMETRY_EXPORT, second in APPLY_ORDER): a present but
+ * empty section stops the exporter, matching every other 0.6 section's
+ * "present replaces, absent leaves untouched" rule.
+ *
+ * `SectionResult.error_class` values this feature returns (lowercase snake,
+ * never an AWS message, documented here per the M15 shared-file protocol):
+ * "invalid_interval" (outside 15..=300), "empty_service_name", "no_region"
+ * (the agent was never told `AWS_REGION`: `rayd` cannot sign a request or
+ * build the CloudWatch endpoint host without it), "missing_auth" (neither
+ * `oneof auth` branch set), "role_not_permitted" (`execution_role` on a
+ * non-caps image variant).
  *
  * @generated from message rayito.v1.TelemetryExportConfig
  */
 export type TelemetryExportConfig = Message<"rayito.v1.TelemetryExportConfig"> & {
+  /**
+   * Export cadence in seconds, 15..=300 inclusive. Bounds fixed by the M15
+   * architecture (research options B1/B1', §6.3/§6.8: OT2 will measure
+   * billed bytes at this cadence against the real account quota of 500 TPS
+   * / 1000 points per request); not yet re-measured against real AWS, so
+   * treat them as provisional until the acceptance stage's OT-numbers land.
+   * There is no "0 means default" special case: 0 is INVALID like any
+   * other out-of-range value, so a caller that forgets to set this never
+   * silently gets a surprising cadence.
+   *
+   * @generated from field: uint32 interval_s = 1;
+   */
+  intervalS: number;
+
+  /**
+   * `Resource` attribute `service.name` (OTLP `Resource`, never empty).
+   *
+   * @generated from field: string service_name = 2;
+   */
+  serviceName: string;
+
+  /**
+   * Which metric-name family `rayd` emits: `rayito.sandbox.*` (default) or,
+   * for the E2B shim's `names="e2b"` alias (research §6.4), `e2b.sandbox.*`.
+   *
+   * @generated from field: rayito.v1.NameStyle names = 3;
+   */
+  names: NameStyle;
+
+  /**
+   * The 4 closed `AttrKey` resource attributes besides the sandbox id
+   * (which `rayd` already knows from its own session): `rayd` has no local
+   * notion of its own image, so the SDK supplies these from the same
+   * `GetMicrovmImageVersion`/launch-plan data `_sizing.py` already reads.
+   * Never a path, a command or anything else user-controlled.
+   *
+   * @generated from field: string image_arn = 6;
+   */
+  imageArn: string;
+
+  /**
+   * @generated from field: string image_version = 7;
+   */
+  imageVersion: string;
+
+  /**
+   * @generated from field: uint32 image_memory_mib = 8;
+   */
+  imageMemoryMib: number;
+
+  /**
+   * @generated from oneof rayito.v1.TelemetryExportConfig.auth
+   */
+  auth: {
+    /**
+     * SigV4, execution-role credentials from IMDS (research option B1).
+     * Needs `rayito-base-caps` (ADR-012/`_role_policy.require_caps_for`):
+     * the SDK checks this before `/run` when the image name already says
+     * so, otherwise `rayd` reports `AgentFeatures.telemetry_export = false`
+     * after boot and the SDK terminates the sandbox (unless
+     * `keep_on_failure`) with `UnimplementedError`.
+     *
+     * @generated from field: rayito.v1.ExecutionRoleAuth execution_role = 4;
+     */
+    value: ExecutionRoleAuth;
+    case: "executionRole";
+  } | {
+    /**
+     * A log-group-scoped bearer token the SDK resolves once (Secrets
+     * Manager or any `str`) and pushes through this same `Configure` call
+     * (research option B1', preferred per OT9: the execution-role policy
+     * cannot be scoped by namespace). Works on `rayito-base`, no caps
+     * needed. Kept only in `rayd` memory (`PushedCredentials`, Zeroizing),
+     * never echoed back by `ConfigureStatus` or logged.
+     *
+     * @generated from field: rayito.v1.BearerAuth bearer = 5;
+     */
+    value: BearerAuth;
+    case: "bearer";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -32,9 +120,57 @@ export const TelemetryExportConfigSchema: GenMessage<TelemetryExportConfig> = /*
   messageDesc(file_rayito_v1_telemetry_export, 0);
 
 /**
+ * @generated from message rayito.v1.ExecutionRoleAuth
+ */
+export type ExecutionRoleAuth = Message<"rayito.v1.ExecutionRoleAuth"> & {
+};
+
+/**
+ * Describes the message rayito.v1.ExecutionRoleAuth.
+ * Use `create(ExecutionRoleAuthSchema)` to create a new message.
+ */
+export const ExecutionRoleAuthSchema: GenMessage<ExecutionRoleAuth> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_telemetry_export, 1);
+
+/**
+ * @generated from message rayito.v1.BearerAuth
+ */
+export type BearerAuth = Message<"rayito.v1.BearerAuth"> & {
+  /**
+   * @generated from field: string token = 1;
+   */
+  token: string;
+};
+
+/**
+ * Describes the message rayito.v1.BearerAuth.
+ * Use `create(BearerAuthSchema)` to create a new message.
+ */
+export const BearerAuthSchema: GenMessage<BearerAuth> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_telemetry_export, 2);
+
+/**
+ * Served by `ConfigureService.ConfigureStatus`; mirrors
+ * `rayd_core::telemetry::batcher::BatcherStats` (counts only, never a host,
+ * a payload or a credential).
+ *
  * @generated from message rayito.v1.TelemetryExportStatus
  */
 export type TelemetryExportStatus = Message<"rayito.v1.TelemetryExportStatus"> & {
+  /**
+   * @generated from field: uint64 exported = 1;
+   */
+  exported: bigint;
+
+  /**
+   * @generated from field: uint64 dropped = 2;
+   */
+  dropped: bigint;
+
+  /**
+   * @generated from field: string last_error_class = 3;
+   */
+  lastErrorClass: string;
 };
 
 /**
@@ -42,5 +178,31 @@ export type TelemetryExportStatus = Message<"rayito.v1.TelemetryExportStatus"> &
  * Use `create(TelemetryExportStatusSchema)` to create a new message.
  */
 export const TelemetryExportStatusSchema: GenMessage<TelemetryExportStatus> = /*@__PURE__*/
-  messageDesc(file_rayito_v1_telemetry_export, 1);
+  messageDesc(file_rayito_v1_telemetry_export, 3);
+
+/**
+ * @generated from enum rayito.v1.NameStyle
+ */
+export enum NameStyle {
+  /**
+   * @generated from enum value: NAME_STYLE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: NAME_STYLE_RAYITO = 1;
+   */
+  RAYITO = 1,
+
+  /**
+   * @generated from enum value: NAME_STYLE_E2B = 2;
+   */
+  E2B = 2,
+}
+
+/**
+ * Describes the enum rayito.v1.NameStyle.
+ */
+export const NameStyleSchema: GenEnum<NameStyle> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_telemetry_export, 0);
 

@@ -26,6 +26,7 @@ use tonic::{Request, Response, Status};
 
 use super::lifecycle::lifecycle_state;
 use crate::adapters::ImdsState;
+use crate::features::FeatureSet;
 
 pub const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -35,6 +36,11 @@ pub struct HealthGrpc {
     history: Arc<MetricsHistory>,
     kernel: Arc<dyn KernelStatus>,
     imds: Arc<ImdsState>,
+    /// `None` keeps `Health.features` at `AgentFeatures::foundations_only()`
+    /// and `root_egress` empty, exactly as before any feature had a real
+    /// adapter (every existing call site that does not call
+    /// `with_features` is unaffected by this field's addition).
+    features: Option<Arc<FeatureSet>>,
 }
 
 impl HealthGrpc {
@@ -51,7 +57,18 @@ impl HealthGrpc {
             history,
             kernel,
             imds,
+            features: None,
         }
+    }
+
+    /// Reports `features`'s real capability flags instead of
+    /// `AgentFeatures::foundations_only()` (m15-rayd-otlp, ADR-021: the
+    /// first feature with a real slot). `main` passes the same `FeatureSet`
+    /// here and to `ConfigureGrpc` so both answer from one instance.
+    #[must_use]
+    pub fn with_features(mut self, features: Arc<FeatureSet>) -> Self {
+        self.features = Some(features);
+        self
     }
 }
 
@@ -67,7 +84,7 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot)))
+        Ok(Response::new(to_response(snapshot, self.features.as_deref())))
     }
 
     async fn metrics(
@@ -113,7 +130,7 @@ impl HealthService for HealthGrpc {
     }
 }
 
-fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
+fn to_response(snapshot: HealthSnapshot, features: Option<&FeatureSet>) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
         kernel_ready: snapshot.kernel_ready,
@@ -132,19 +149,25 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot is still `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself is
-        // reported. The feature that gives a slot a real adapter updates
-        // this one call site (`rayd_core::features::AgentFeatures`), never
-        // `HealthGrpc`'s constructor.
+        // `None` (no `with_features` call, every existing test and the
+        // 0.6.0-foundations-only build) keeps reporting exactly
+        // `AgentFeatures::foundations_only()` with no `root_egress`;
+        // m15-rayd-otlp is the first feature with a real slot
+        // (`FeatureSet::agent_features`/`root_egress`, capability-based,
+        // never "currently configured").
         features: Some(agent_features_message(
-            rayd_core::features::AgentFeatures::foundations_only(),
+            features.map_or_else(
+                rayd_core::features::AgentFeatures::foundations_only,
+                FeatureSet::agent_features,
+            ),
+            features.map_or_else(Vec::new, FeatureSet::root_egress),
         )),
     }
 }
 
 fn agent_features_message(
     features: rayd_core::features::AgentFeatures,
+    root_egress: Vec<rayd_core::root_egress::RootEgressClass>,
 ) -> rayito_proto::v1::AgentFeatures {
     rayito_proto::v1::AgentFeatures {
         configure: features.configure,
@@ -154,8 +177,25 @@ fn agent_features_message(
         telemetry_export: features.telemetry_export,
         secret_gateway: features.secret_gateway,
         template_start: features.template_start,
-        // No feature opens a root-egress path yet (`root_egress.rs`).
-        root_egress: Vec::new(),
+        root_egress: root_egress
+            .into_iter()
+            .map(|class| i32::from(proto_root_egress_class(class)))
+            .collect(),
+    }
+}
+
+fn proto_root_egress_class(
+    class: rayd_core::root_egress::RootEgressClass,
+) -> rayito_proto::v1::RootEgressClass {
+    match class {
+        rayd_core::root_egress::RootEgressClass::S3 => rayito_proto::v1::RootEgressClass::S3,
+        rayd_core::root_egress::RootEgressClass::CloudwatchOtlp => {
+            rayito_proto::v1::RootEgressClass::CloudwatchOtlp
+        }
+        rayd_core::root_egress::RootEgressClass::SecretGatewayUpstream => {
+            rayito_proto::v1::RootEgressClass::SecretGatewayUpstream
+        }
+        rayd_core::root_egress::RootEgressClass::Efs => rayito_proto::v1::RootEgressClass::Efs,
     }
 }
 

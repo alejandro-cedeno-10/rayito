@@ -31,7 +31,16 @@ Pendiente.
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 
-Pendiente.
+`rayd` exporta 7 métricas de CPU, memoria y disco a CloudWatch por
+OTLP/HTTP cada `interval_s` (15-300 s), firmadas con SigV4 sobre el
+execution role (`OtlpAuth.execution_role()`, exige `rayito-base-caps`) o
+con un token al portador (`OtlpAuth.bearer(...)`, experimental, funciona en
+`rayito-base`). Opt-in: `telemetry=`/`telemetry` en `Sandbox.create()`.
+`sbx.get_telemetry_status()`/`sbx.getTelemetryStatus()` consulta exportadas,
+descartadas y el último error. La propagación W3C `traceparent` del lado
+del SDK está implementada pero aún no conectada al canal real (seguimiento
+no bloqueante). Números `OT*` reales y mediciones de coste/overhead
+pendientes de la etapa de aceptación contra AWS real.
 
 ## Templates (`m15-templates`)
 

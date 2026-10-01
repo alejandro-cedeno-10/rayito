@@ -10,9 +10,11 @@
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
+pub mod aws_sigv4;
 pub mod bounded_sync;
 pub mod capabilities;
 pub mod child_registry;
+pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
@@ -21,6 +23,7 @@ pub mod ip_command;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
+pub mod otlp_codec;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod pty_backend;
@@ -31,9 +34,11 @@ pub mod signed_http;
 pub mod std_filesystem;
 pub mod tar_archiver;
 
+pub use aws_sigv4::{SignedHeaders, SigningRequest, sign};
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
 pub use child_registry::ChildRegistry;
+pub use cloudwatch_otlp_sink::{CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError};
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
@@ -50,6 +55,7 @@ pub use name_resolver::{NumericNameResolver, PlatformNameResolver};
 pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
 pub use orphan_reaper::OrphanReaper;
+pub use otlp_codec::ProstOtlpEncoder;
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };

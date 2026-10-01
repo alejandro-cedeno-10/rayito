@@ -1930,6 +1930,7 @@ dependencies = [
  "mimalloc",
  "nix",
  "notify",
+ "prost",
  "rayd-core",
  "rayito-proto",
  "rcgen",

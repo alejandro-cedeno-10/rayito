@@ -36,6 +36,12 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._configure_base import (
+    AgentFeatures,
+    agent_features_from_health,
+    require_configure_support,
+    section_error,
+)
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
@@ -176,6 +182,7 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
+from rayito._telemetry_export import TelemetryExport, TelemetryHealth, build_section
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -205,6 +212,7 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
+from rayito.sandbox_sync.configure import call_configure, call_configure_status
 from rayito.sandbox_sync.filesystem import Filesystem
 from rayito.sandbox_sync.git import Git
 from rayito.sandbox_sync.lifecycle import DeadlineTrigger, set_timeout_once
@@ -214,6 +222,8 @@ from rayito.sandbox_sync.pty import Pty
 from rayito.sandbox_sync.transfer import Transfers
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -444,7 +454,9 @@ class Sandbox:
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
+        self._readiness_agent_features: AgentFeatures | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
         self._deadline_pause_generation: int | None = None
@@ -666,14 +678,57 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         `mounts=`, `volumes=`, `size=`, `events=`, `telemetry=`, `gateways=`
-         y `domain=` son las siete opciones 0.6 (M15); cada una llega en su
+         `mounts=`, `volumes=`, `size=`, `events=`, `gateways=` y `domain=`
+         son seis de las siete opciones 0.6 (M15); cada una llega en su
          propio cambio OpenSpec y, mientras siga siendo un stub, ponerla a
          algo distinto de `None` lanza `UnimplementedError` nombrando ese
          cambio, antes de `run-microvm` (`_feature_options.plan_features`).
          Ninguna hace ninguna llamada a AWS ni construye ningún cliente por
-         sí sola; con las siete en `None` (su valor por defecto) el
+         sí sola; con las seis en `None` (su valor por defecto) el
          comportamiento es exactamente el de 0.5.x.
+
+         `telemetry=` (m15-rayd-otlp, ADR-021) es la séptima y ya es real:
+         un `TelemetryExport` hace que `rayd` exporte 7 gauges de CPU,
+         memoria y disco a CloudWatch cada `interval_s` (15-300 s, 60 por
+         defecto), firmados con `OtlpAuth.execution_role()` (SigV4 sobre el
+         execution role, exige `rayito-base-caps`) o con
+         `OtlpAuth.bearer(secret_name=...)` (experimental: un token acotado
+         a un log group, funciona en `rayito-base`). Se envía como una
+         sección de `ConfigureSandbox` justo después de que el agente esté
+         listo; una imagen anterior a 0.6.0, o una 0.6.0 sin el exportador
+         todavía implementado, termina el sandbox (salvo `keep_on_failure`)
+         y lanza `UnimplementedError`.
+
+         Coste y activación
+         -------------------
+         Activa: `telemetry=TelemetryExport(...)` en `create()`.
+         Recursos y llamadas AWS: ninguno propio más allá de lo que tú
+             adjuntes: con `OtlpAuth.execution_role()` necesitas la política
+             `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+             `rayito stack deploy otlp-export`) en el execution role;
+             con `OtlpAuth.bearer(...)` no hace falta ninguna política nueva
+             en el execution role, pero sí el permiso para leer el secreto.
+             `rayd` hace un `PutMetricData` por lote exportado (uno por
+             `interval_s`, agrupando las 7 gauges).
+         Coste aproximado: $0 por la opción en sí; CloudWatch factura las
+             métricas personalizadas que de verdad se exporten (ver
+             la página de precios de CloudWatch, consultada 2026-09-30).
+         IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
+             de la cuenta (no se puede acotar por namespace, research OT9);
+             con `OtlpAuth.bearer(...)`, en su lugar el permiso de lectura
+             del secreto que guarda el token.
+         Cómo apagarla: no pases `telemetry=` (por defecto `None`); borra la
+             pila `otlp-export` si ya no la usa ningún sandbox.
+         Ejemplo:
+             from rayito import OtlpAuth, TelemetryExport
+
+             sbx = Sandbox.create(
+                 "rayito-base-caps",
+                 execution_role_arn=role_arn,
+                 telemetry=TelemetryExport(interval_s=60, service_name="agente",
+                                           auth=OtlpAuth.execution_role()),
+             )
+             sbx.get_telemetry_status()  # TelemetryHealth(exported, dropped, last_error_class)
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -742,7 +797,7 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
-        plan_features(
+        feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
                 volumes=volumes,
@@ -815,6 +870,10 @@ class Sandbox:
             sandbox._secrets = binding
             if launch.enforce:
                 sandbox._apply_initial_network(launch)
+            if feature_plan.telemetry is not None:
+                sandbox._apply_telemetry(
+                    feature_plan.telemetry, region=plane.region, session=session
+                )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -1533,6 +1592,23 @@ class Sandbox:
         self._record_health(response)
         return health_from_proto(response)
 
+    def get_telemetry_status(self, *, request_timeout: float | None = None) -> TelemetryHealth:
+        """`ConfigureService.ConfigureStatus` → `TelemetryExportStatus`
+        (m15-rayd-otlp). Siempre `TelemetryHealth()` (todo ceros) si nunca
+        pasaste `telemetry=` a `create()`/`connect()`, o si la imagen no
+        soporta la función: nunca lanza por eso. Llamada explícita, no parte
+        de `get_health()`, para que el camino sin `telemetry=` nunca pague
+        esta llamada extra.
+        """
+        timeout = self._resolve_request_timeout(request_timeout)
+        response = call_configure_status(self._configure, timeout=timeout)
+        status = response.telemetry_export
+        return TelemetryHealth(
+            exported=status.exported,
+            dropped=status.dropped,
+            last_error_class=status.last_error_class or None,
+        )
+
     def upload_url(
         self,
         path: str,
@@ -1953,6 +2029,58 @@ class Sandbox:
             terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
             raise
 
+    def _apply_telemetry(
+        self,
+        telemetry: TelemetryExport,
+        *,
+        region: str,
+        session: boto3.session.Session | None,
+    ) -> None:
+        """Post-boot (m15-rayd-otlp): exige `Health.features.telemetry_export`
+        antes de enviar la sección -- ausente del todo en un agente anterior
+        a 0.6, o presente pero `False` mientras la imagen no soporte la
+        función (`features::slot::Unsupported` del lado de `rayd`).
+        Cualquier fallo termina la `MicroVM` (salvo `keep_on_failure`), igual
+        que `_apply_initial_network` y `persist=`: una opción 0.6 pedida que
+        el sandbox no puede cumplir nunca deja una VM corriendo sin ella.
+        """
+        try:
+            features = require_configure_support(self._readiness_agent_features, "telemetry=")
+            if not features.telemetry_export:
+                raise UnimplementedError(
+                    "telemetry=",
+                    "esta imagen no tiene el exportador OTLP implementado todavía "
+                    "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
+                    doc="docs/site/docs/funciones-opcionales/exportacion-otlp.md",
+                )
+            section = build_section(
+                telemetry,
+                image_arn=self._launch_info.template,
+                image_version=self._launch_info.template_version,
+                image_memory_mib=(self._readiness_health.memory_total_bytes // (1024 * 1024))
+                if self._readiness_health is not None
+                else 0,
+                region=region,
+                session=session,
+            )
+            request = configure_pb2.ConfigureRequest()
+            section.fill(request)
+            response = call_configure(
+                self._configure, request, timeout=self._resolve_request_timeout(None)
+            )
+            for result in response.results:
+                error = section_error(
+                    section.section,
+                    configure_pb2.SectionCode.Name(result.code),
+                    result.error_class,
+                )
+                if error is not None:
+                    raise error
+        except BaseException:
+            self.close()
+            terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
+            raise
+
     def _enforce_launch_policy(self, launch: NetworkLaunch) -> None:
         reported = readiness_enforcement(self._readiness_health)
         refused = egress_gate_error(self.sandbox_id, reported, launch.feature)
@@ -2308,6 +2436,7 @@ class Sandbox:
             if response is not None and health_ready(response):
                 self._record_health(response)
                 self._readiness_health = health_from_proto(response)
+                self._readiness_agent_features = agent_features_from_health(response)
                 return response
             if poll.should_check_state():
                 self._fail_if_terminal()

@@ -993,9 +993,46 @@ EventBridge Scheduler del reconciliador.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 
-Pendiente: `m15-rayd-otlp` documenta aquí el endpoint OTLP/HTTP de
-CloudWatch (`PutMetricData` vía `https://monitoring.<región>.amazonaws.com/v1/metrics`,
-Q91) y su firma SigV4.
+CloudWatch's OTLP metrics endpoint is **not** a modeled botocore/AWS-SDK-v3
+operation: it is a raw HTTP endpoint that accepts a serialized
+`ExportMetricsServiceRequest` (OpenTelemetry collector proto) as the POST
+body, authenticated the same way any other AWS API call is (SigV4, or a
+bearer token scoped to a log group). Research OT1
+(`docs/research/2026-10-e2b-out-of-scope.md` §6.8) confirmed this against
+real AWS before this change was written; the request/response contract
+below is that confirmed shape, not the modeled-API contract §21 documents
+for CloudFormation.
+
+| What | Value | Notes |
+|---|---|---|
+| Method + path | `POST /v1/metrics` | no query string |
+| Host | `monitoring.<region>.amazonaws.com` | the classic CloudWatch regional endpoint, not a new service |
+| Body | `ExportMetricsServiceRequest` (OTLP collector proto), gzip-compressed | `rayd`'s `adapters::otlp_codec` builds it from a minimal vendored subset of `opentelemetry-proto` (`crates/rayito-proto/vendor/opentelemetry/`), never the full upstream schema |
+| `Content-Type` | `application/x-protobuf` | |
+| `Content-Encoding` | `gzip` | always sent; `rayd` never sends uncompressed |
+| Auth (SigV4) | `Authorization`, `x-amz-date`, `x-amz-content-sha256`, `x-amz-security-token` (if a session token) | service name `monitoring` (the classic CloudWatch SigV4 service, not a new one); signed over the execution role's IMDS credentials |
+| Auth (bearer) | `Authorization: Bearer <token>` | a log-group-scoped CloudWatch API key, pushed into `rayd` by the SDK through `ConfigureSandbox`'s `telemetry_export` section (`BearerAuth.token`), never read from an environment variable |
+| IAM action authorized (SigV4 path) | `cloudwatch:PutMetricData` | on resource `arn:${Partition}:cloudwatch:${Region}:${Account}:dataset/default` — OT9 confirmed this **cannot be scoped by namespace**: the policy only names the account's single default OTLP dataset, so an execution role with this permission can export metrics under any name, not only `rayito.sandbox.*` (documented in T23 and the feature's "Coste y activación" block) |
+| Success | `200` | body not parsed by `rayd` (it only checks the HTTP status) |
+| Reference | <https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLPEndpoint.html> | consulted 2026-09-30 |
+
+`infra/otlp-export.yaml`'s `RayitoOtlpExport` managed policy grants exactly
+`cloudwatch:PutMetricData` on that one resource; it creates nothing else
+($0 idle). Client construction: `rayd`'s `adapters::cloudwatch_otlp_sink`
+builds one `hyper-rustls` client per sandbox (not per export), reusing the
+OS trust store and a `FilteringResolver` (same predicate as the presigned-
+transfer client, ADR-010) even though the host is a fixed AWS endpoint, not
+attacker-controlled input — belt and suspenders against a poisoned
+resolver. No request is sent, and no client is built, until `telemetry=`
+is actually configured (ADR-014 rule 4).
+
+Byte counts billed per sandbox-hour, the exporter's CPU overhead and its
+behaviour across a real `/suspend`/`/resume` cycle (OT2, OT5, OT7) are
+**not yet measured against real AWS**: this change implements and unit-
+tests the full client-side contract above (verified against the research's
+OT1 finding and a hand-written SigV4 signer checked against the RFC 4231
+HMAC-SHA256 test vector), but the AWS acceptance stage assigns the real
+`OT`-numbered Q entries (≥ Q95, per the M15 architecture §8) when it runs.
 
 ## 27. Logs de build y extras de imagen (`m15-templates`)
 

@@ -21,3 +21,13 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ## Índice de metadatos
 
 ::: rayito.DynamoDbIndex
+
+## Exportación OTLP
+
+Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
+
+::: rayito.TelemetryExport
+
+::: rayito.OtlpAuth
+
+::: rayito.TelemetryHealth

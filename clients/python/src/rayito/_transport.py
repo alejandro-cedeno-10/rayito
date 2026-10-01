@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 import grpc
 import grpc.aio
@@ -136,13 +136,30 @@ class TokenStore:
 MetadataPairs = tuple[tuple[str, str], ...]
 
 
+class CallMetadataProvider(Protocol):
+    """Seam para añadir cabeceras calculadas en el momento de cada llamada
+    (a diferencia de `extra_metadata`/`extra`, fijas para la vida del
+    canal). Vacío por defecto: `rayito._telemetry_export._propagation`'s
+    `TraceparentProvider` (m15-rayd-otlp, research Q92) es la primera
+    implementación real -- un `traceparent` distinto por RPC, porque cada
+    llamada ocurre dentro de un span distinto de
+    `rayito._otel.Instrumentation`.
+    """
+
+    def metadata(self) -> MetadataPairs: ...
+
+
 class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
     """Añade las cuatro cabeceras del proxy a cada RPC (unarios y streams).
 
     `access_token=None` omite `x-access-token`: sólo tiene sentido para
     `HealthService.Health`, el único RPC anónimo. `extra` son cabeceras del
     usuario ya validadas (`headers=` del shim de E2B) y van siempre después
-    de las reservadas, así que nunca las sustituyen.
+    de las reservadas, así que nunca las sustituyen. `providers` se evalúa
+    de nuevo en cada llamada (`CallMetadataProvider.metadata()`) y va al
+    final de todo; es un atributo público y mutable para que algo que se
+    sabe después de construir el plugin (como la instrumentación OTel de
+    `create()`, fijada tras `_open()`) pueda activarlo sin reabrir el canal.
     """
 
     def __init__(
@@ -152,11 +169,13 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
         port: int = DEFAULT_PORT,
         access_token: str | None,
         extra: MetadataPairs = (),
+        providers: tuple[CallMetadataProvider, ...] = (),
     ) -> None:
         self._store = store
         self._port = port
         self._access_token = access_token
         self._extra = extra
+        self.providers = providers
 
     def __call__(
         self,
@@ -177,6 +196,8 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
         if self._access_token:
             metadata.append((ACCESS_TOKEN_KEY, self._access_token))
         metadata.extend(self._extra)
+        for provider in self.providers:
+            metadata.extend(provider.metadata())
         callback(tuple(metadata), None)
 
 

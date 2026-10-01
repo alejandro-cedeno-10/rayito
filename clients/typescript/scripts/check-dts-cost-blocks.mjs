@@ -16,6 +16,9 @@ export const COST_DECLARATIONS = [
   { name: "class Secret (e2b)", pattern: /^(export )?declare class Secret\b/ },
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
+  // m15-rayd-otlp (ADR-021).
+  { name: "class TelemetryExport", pattern: /^(export )?declare class TelemetryExport\b/ },
+  { name: "opción telemetry", pattern: /^\s*readonly telemetry\?: unknown\b/ },
 ];
 
 export const REQUIRED_HEADINGS = [

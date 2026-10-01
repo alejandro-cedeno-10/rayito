@@ -23,7 +23,8 @@
 //! (`features`, `root_egress`), and the credential-lease freshness rule
 //! shared by every feature that needs the execution role inside the guest
 //! (`credentials`). Each feature's own domain (`volume`, `s3_mount`, …)
-//! lives in its own module, added by that feature.
+//! lives in its own module, added by that feature; `telemetry` (m15-rayd-otlp,
+//! ADR-021) is the first one: rayd's own OTLP/HTTP metrics exporter.
 
 pub mod auth;
 pub mod capabilities;
@@ -48,5 +49,6 @@ pub mod run_payload;
 pub mod sandbox_timeout;
 pub mod session;
 pub mod suspend_sync;
+pub mod telemetry;
 pub mod transfer;
 pub mod wire_tokens;

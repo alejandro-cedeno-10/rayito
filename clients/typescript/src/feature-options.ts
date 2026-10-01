@@ -7,6 +7,8 @@
  */
 
 import { UnimplementedError } from "./errors.js";
+import type { TelemetryExport } from "./telemetry-export/domain.js";
+import { planTelemetry } from "./telemetry-export/domain.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -27,22 +29,27 @@ export interface FeatureOptions {
   readonly domain?: unknown;
 }
 
-/** Vacío en 0.6 foundations a propósito: `planFeatures` lanza antes de
- * construir uno si alguna opción estaba puesta. */
+/** `telemetry` (m15-rayd-otlp) is the first real function: an already
+ * validated `TelemetryExport`, ready for `create()` to build its
+ * `TelemetryExportSection` once it knows the image facts (the ARN and
+ * version from `run-microvm`, the memory from `Health`). The rest keep
+ * throwing `UnimplementedError` and never populate this field. */
 export interface FeaturePlan {
   readonly configureSections: readonly unknown[];
+  readonly telemetry: TelemetryExport | undefined;
 }
 
-const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
+const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [], telemetry: undefined });
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
- * `imageVariant` (de `resolveImageVariant`) queda para cuando una función
- * real lo necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a
- * AWS ni construye ningún cliente.
+ * `imageVariant` (de `resolveImageVariant`) es lo que `telemetry` (con
+ * `OtlpAuth.executionRole()`) usa para exigir la variante caps antes de
+ * lanzar, cuando el nombre de imagen ya lo permite saber; las demás ramas
+ * siguen sin usarlo. No hace ninguna llamada a AWS ni construye ningún
+ * cliente.
  */
 export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
-  void imageVariant;
   if (options.mounts !== undefined) {
     throw new UnimplementedError("mounts", `llega en 0.6 (${MOUNTS_CHANGE})`);
   }
@@ -55,14 +62,13 @@ export function planFeatures(options: FeatureOptions, imageVariant?: string): Fe
   if (options.events !== undefined) {
     throw new UnimplementedError("events", `llega en 0.6 (${EVENTS_CHANGE})`);
   }
-  if (options.telemetry !== undefined) {
-    throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);
-  }
+  const telemetry =
+    options.telemetry === undefined ? undefined : planTelemetry(options.telemetry, imageVariant);
   if (options.gateways !== undefined) {
     throw new UnimplementedError("gateways", `llega en 0.6 (${GATEWAYS_CHANGE})`);
   }
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
   }
-  return EMPTY_PLAN;
+  return telemetry === undefined ? EMPTY_PLAN : { configureSections: [], telemetry };
 }

@@ -18,10 +18,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use rayd::adapters::{
-    CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock, ImdsState, OsRandomSource,
-    PlatformMetricsProbe, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
-    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform, inherited_nofile_limits,
-    install_imds_block, prepare_socket_root,
+    CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock, ImdsCredentialBroker, ImdsState,
+    OsRandomSource, PlatformMetricsProbe, PushedCredentials, S3ObjectStore, SpawnPlatform,
+    USER_PROBE_CODE, USER_PROBE_PROGRAM, UserConnectProbe, detect_guest_capabilities,
+    detect_spawn_platform, inherited_nofile_limits, install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
 use rayd::filesystem::FilesystemManager;
@@ -196,10 +196,12 @@ async fn main() -> anyhow::Result<ExitCode> {
     let transfers = transfer_services(&session, &files, &suspend);
     let (exit_reason, timeout) = deadline(&session, &shutdown, &suspend, &processes, &code)?;
 
+    let features = build_feature_set(&session, &metrics_history);
+
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    let grpc = rayd::grpc::router_with_transfers(
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes,
@@ -216,6 +218,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         },
         StreamSettings::default(),
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
@@ -232,10 +235,12 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // M15 foundations: no feature slot returns a participant yet
-            // (`features::build` is all `Unsupported`), so `/suspend` and
-            // `/ready` behave exactly as in 0.5.x.
-            participants: Vec::new(),
+            // Every slot but `telemetry_export`'s still returns `None`
+            // from `participant()`, and `telemetry_export`'s own
+            // `TelemetryParticipant` only ever does anything once a
+            // section was actually applied — an agent with no 0.6 option
+            // in use behaves exactly as in 0.5.x here too.
+            participants: features.participants(),
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());
@@ -246,6 +251,30 @@ async fn main() -> anyhow::Result<ExitCode> {
     )?;
     tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
     Ok(ExitCode::from(exit_reason.exit_code()))
+}
+
+/// m15-rayd-otlp (ADR-021): one `FeatureSet` for the whole process, shared
+/// by `ConfigureGrpc`, `HealthGrpc` and the hooks' lifecycle participants,
+/// so a `Configure`d exporter, a `Health` call and a `/suspend` flush all
+/// agree on what is actually running. Every slot but `telemetry_export`'s
+/// is still `features::slot::Unsupported` regardless of this context
+/// (`m15-s3-mounts` etc. build their own real adapters in their own PRs);
+/// `telemetry_export` itself degrades to `Unsupported` too when
+/// `AWS_REGION` is unset, so a platform that never sets it sees the exact
+/// 0.6.0-foundations behaviour.
+fn build_feature_set(
+    session: &Arc<SandboxSession>,
+    metrics_history: &Arc<MetricsHistory>,
+) -> Arc<rayd::features::FeatureSet> {
+    Arc::new(rayd::features::build(&rayd::features::FeatureContext {
+        session: session.clone(),
+        credentials: Arc::new(ImdsCredentialBroker::new()),
+        pushed: Arc::new(PushedCredentials::new()),
+        history: metrics_history.clone(),
+        region: std::env::var(REGION_ENV)
+            .ok()
+            .filter(|region| !region.is_empty()),
+    }))
 }
 
 /// The code manager over the kernel sidecar (none with `--no-sidecar`),

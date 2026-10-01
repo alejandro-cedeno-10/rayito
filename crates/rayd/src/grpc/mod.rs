@@ -160,11 +160,42 @@ pub fn router_with_settings(services: Services, settings: StreamSettings) -> Grp
     router_with_transfers(services, settings, TransferServices::unavailable())
 }
 
+/// `router`/`router_with_settings`/`router_with_transfers` all build a
+/// fresh, default-context `FeatureSet` here (every slot but
+/// `telemetry_export` is still `Unsupported` either way, and
+/// `telemetry_export` itself reports `Unsupported` without a region,
+/// `FeatureContext::default()`'s own guarantee) — unchanged behaviour for
+/// every existing caller, including the integration tests that build
+/// `Services` directly. `main` is the one caller with real shared context
+/// (credentials, the metrics-history ring, the region), so it calls
+/// `router_with_features` instead, which this function also backs.
 #[must_use]
 pub fn router_with_transfers(
     services: Services,
     settings: StreamSettings,
     transfers: TransferServices,
+) -> GrpcRouter {
+    router_with_features(
+        services,
+        settings,
+        transfers,
+        Arc::new(crate::features::build(&crate::features::FeatureContext::default())),
+    )
+}
+
+/// Like `router_with_transfers`, but with `main`'s real `FeatureSet`
+/// (m15-rayd-otlp, ADR-021: the first feature needing shared context)
+/// threaded to both `HealthGrpc` and `ConfigureGrpc`, so a `Health` call
+/// and a `Configure`/`ConfigureStatus` call always agree on what is
+/// actually running — building two separate `FeatureSet`s here (one
+/// discarded) would otherwise let a stateful feature's `Configure`d state
+/// diverge from what `Health` reports.
+#[must_use]
+pub fn router_with_features(
+    services: Services,
+    settings: StreamSettings,
+    transfers: TransferServices,
+    features: Arc<crate::features::FeatureSet>,
 ) -> GrpcRouter {
     let Services {
         session,
@@ -182,15 +213,7 @@ pub fn router_with_transfers(
     } = services;
     let kernel_status: Arc<dyn KernelStatus> = code.clone();
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
-    // M15 foundations: every slot is still `features::slot::Unsupported`
-    // (stateless), so building the set fresh here needs no field on
-    // `Services` yet. The feature that first needs shared context (a
-    // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
-    let configure = ConfigureGrpc::new(
-        session.clone(),
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
-    );
+    let configure = ConfigureGrpc::new(session.clone(), features.clone());
     let mut server = Server::builder()
         .tcp_nodelay(true)
         .http2_keepalive_interval(Some(HTTP2_KEEPALIVE_INTERVAL))
@@ -201,13 +224,10 @@ pub fn router_with_transfers(
         .layer(SandboxTimeoutGateLayer::new(session.clone()))
         .layer(ClientAbortLayer);
     server
-        .add_service(HealthServiceServer::new(HealthGrpc::new(
-            session,
-            metrics,
-            metrics_history,
-            kernel_status,
-            imds,
-        )))
+        .add_service(HealthServiceServer::new(
+            HealthGrpc::new(session, metrics, metrics_history, kernel_status, imds)
+                .with_features(features),
+        ))
         .add_service(ProcessServiceServer::new(
             ProcessGrpc::with_keepalive_interval(
                 processes,

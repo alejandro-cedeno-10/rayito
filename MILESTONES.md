@@ -1399,8 +1399,24 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
 - **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
 - **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
   firmados y webhooks compatibles con E2B.
-- **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
-  CloudWatch.
+- **rayd-otlp** (`m15-rayd-otlp`, ADR-021): `rayd` exporta 7 gauges de CPU,
+  memoria y disco a CloudWatch cada `interval_s` (15-300 s) por OTLP/HTTP,
+  firmado con SigV4 sobre el execution role (`OtlpAuth.execution_role()`,
+  exige `rayito-base-caps`) o con un token al portador empujado por
+  `ConfigureSandbox` (`OtlpAuth.bearer(...)`, experimental, funciona en
+  `rayito-base`). Cola acotada con backoff y jitter por sandbox
+  (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
+  vaciado de hasta 2 s. Firmante SigV4 propio (HMAC-SHA256 sobre `sha2`,
+  sin crate nuevo, verificado contra RFC 4231) y un subconjunto vendido y
+  mínimo de los tipos de OpenTelemetry (Apache-2.0) para no acoplar
+  `rayd-core` a `opentelemetry-proto`. La propagación W3C `traceparent` del
+  lado del SDK tiene su seam y su implementación, pero queda sin conectar
+  al canal gRPC real (seguimiento razonado y no bloqueante, igual que el
+  reaper de zombis huérfanos de foundations; ver el diseño del cambio). La
+  política IAM mínima de CloudWatch no se puede acotar por namespace
+  (investigado, OT9): documentado en T23. Sin AWS real todavía: la
+  aceptación (bytes facturados, overhead de CPU, comportamiento en
+  `/suspend`/`/resume`) es la etapa serializada posterior.
 - **templates** (`m15-templates`): DSL de templates declarativos.
 - **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
   loopback.

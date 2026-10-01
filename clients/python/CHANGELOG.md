@@ -25,7 +25,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
-<!-- m15-rayd-otlp -->
+- **`telemetry=`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
+  ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
+  nuevos (`OtlpAuth.execution_role()`, exige `rayito-base-caps`;
+  `OtlpAuth.bearer(secret_name=...)`, experimental, funciona en
+  `rayito-base`). Se envía como una sección de `ConfigureSandbox` tras
+  `/run`; una imagen sin el exportador implementado termina el sandbox
+  (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
+  `sbx.get_telemetry_status()` (síncrono y `AsyncSandbox`) lee
+  `ConfigureStatus`, como una llamada explícita aparte de `get_health()`.
+  Sin `telemetry=`, ningún comportamiento cambia frente a 0.5.x (traza de
+  oro sin tocar).
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->

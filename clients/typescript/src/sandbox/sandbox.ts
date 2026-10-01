@@ -8,6 +8,7 @@
 import { create } from "@bufbuild/protobuf";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import {
+  type AwsClientSettings,
   awsClientSettingsOf,
   type CommandSender,
   type ControlPlane,
@@ -18,6 +19,12 @@ import {
   sharedControlPlane,
 } from "../aws/control-plane.js";
 import {
+  agentFeaturesFromHealth,
+  requireConfigureSupport,
+  sectionError,
+} from "../configure/base.js";
+import { callConfigure, callConfigureStatus } from "../configure/rpc.js";
+import {
   errorMessage,
   IndexWriteError,
   InvalidArgumentError,
@@ -25,8 +32,11 @@ import {
   SandboxNotFoundError,
   SandboxNotReadyError,
   TimeoutError,
+  UnimplementedError,
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
+import { ConfigureRequestSchema, ConfigureService } from "../gen/rayito/v1/configure_pb.js";
+import type { AgentFeatures } from "../gen/rayito/v1/features_pb.js";
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
@@ -67,6 +77,12 @@ import {
   sharedSecretCache,
   warm,
 } from "../secrets/inject.js";
+import {
+  EMPTY_TELEMETRY_HEALTH,
+  type TelemetryExport,
+  type TelemetryHealth,
+} from "../telemetry-export/domain.js";
+import { buildSection } from "../telemetry-export/section.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -333,17 +349,52 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    */
   readonly index?: DynamoDbIndex | undefined;
   /**
-   * Las siete opciones 0.6 (M15): cada una llega en su propio cambio
-   * OpenSpec y, mientras siga siendo un stub, ponerla a algo distinto de
-   * `undefined` lanza `UnimplementedError` nombrando ese cambio, antes de
-   * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
-   * siete ausentes (su valor por defecto) el comportamiento es exactamente
-   * el de 0.5.x.
+   * Seis de las siete opciones 0.6 (M15): cada una llega en su propio
+   * cambio OpenSpec y, mientras siga siendo un stub, ponerla a algo
+   * distinto de `undefined` lanza `UnimplementedError` nombrando ese
+   * cambio, antes de `run-microvm`. Ninguna hace ninguna llamada a AWS por
+   * sí sola; con las seis ausentes (su valor por defecto) el comportamiento
+   * es exactamente el de 0.5.x. La séptima, `telemetry`, ya es real: ver su
+   * propio TSDoc justo debajo.
    */
   readonly mounts?: Readonly<Record<string, unknown>> | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: unknown;
   readonly events?: unknown;
+  /**
+   * `TelemetryExport` (m15-rayd-otlp, ADR-021): hace que `rayd` exporte 7
+   * gauges de CPU, memoria y disco a CloudWatch cada `intervalS` (15–300 s,
+   * 60 por defecto), firmados con `OtlpAuth.executionRole()` (SigV4 sobre
+   * el execution role, exige `rayito-base-caps`) o con
+   * `OtlpAuth.bearer(secretName)` (experimental, funciona en
+   * `rayito-base`). Se envía como una sección de `ConfigureSandbox` justo
+   * después de que el agente esté listo; una imagen anterior a 0.6.0, o una
+   * 0.6.0 sin el exportador todavía implementado, termina el sandbox (salvo
+   * `keepOnFailure`) y lanza `UnimplementedError`.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `telemetry: new TelemetryExport({ ... })` en `create()`.
+   * Recursos y llamadas AWS: ninguno propio más allá de lo que adjuntes:
+   *   con `OtlpAuth.executionRole()` necesitas la política
+   *   `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+   *   `rayito stack deploy otlp-export`) en el execution role; `rayd` hace
+   *   un `PutMetricData` por lote exportado (uno por `intervalS`).
+   * Coste aproximado: $0 por la opción en sí; CloudWatch factura las
+   *   métricas personalizadas que de verdad se exporten (ver la página de
+   *   precios de CloudWatch, consultada 2026-09-30).
+   * IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto de la
+   *   cuenta (no se puede acotar por namespace, research OT9); con
+   *   `OtlpAuth.bearer(...)`, el permiso de lectura del secreto.
+   * Cómo apagarla: no pases `telemetry` (por defecto `undefined`); borra la
+   *   pila `otlp-export` si ya no la usa ningún sandbox.
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({
+   *     template: "rayito-base-caps", executionRoleArn,
+   *     telemetry: new TelemetryExport({ auth: OtlpAuth.executionRole() }),
+   *   });
+   *   await sbx.getTelemetryStatus(); // { exported, dropped, lastErrorClass }
+   */
   readonly telemetry?: unknown;
   readonly gateways?: Readonly<Record<string, unknown>> | undefined;
   readonly domain?: unknown;
@@ -628,6 +679,7 @@ export class Sandbox implements AsyncDisposable {
   #launchOptions: LaunchOptions | undefined;
   #launchContext: LaunchContext | undefined;
   #readinessHealth: SandboxHealth | undefined;
+  #readinessAgentFeatures: AgentFeatures | undefined;
   readonly #secrets: SecretEnvs;
   #instrumentation: Instrumentation = NOOP;
 
@@ -690,7 +742,7 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
-    planFeatures(
+    const featurePlan = planFeatures(
       {
         mounts: options.mounts,
         volumes: options.volumes,
@@ -767,6 +819,11 @@ export class Sandbox implements AsyncDisposable {
             network,
             egressFeature(network, options.allowInternetAccess),
           );
+        }
+        if (featurePlan.telemetry !== undefined) {
+          await opened.#applyTelemetry(featurePlan.telemetry, plane.region, {
+            credentials: awsClientSettingsOf(plane).credentials,
+          });
         }
         return opened;
       },
@@ -965,6 +1022,7 @@ export class Sandbox implements AsyncDisposable {
         signal: options.signal,
       });
       sandbox.#readinessHealth = healthFromProto(ready);
+      sandbox.#readinessAgentFeatures = agentFeaturesFromHealth(ready);
       if (options.requireLifecycle === true && sandbox.#readinessHealth.lifecycle === undefined) {
         throw olderAgentError(info.templateName, sandbox.#readinessHealth.agentVersion);
       }
@@ -1397,6 +1455,28 @@ export class Sandbox implements AsyncDisposable {
     return healthFromProto(response);
   }
 
+  /**
+   * `ConfigureService.ConfigureStatus` → `TelemetryExportStatus`
+   * (m15-rayd-otlp). Always `{ exported: 0n, dropped: 0n, lastErrorClass:
+   * undefined }` if you never passed `telemetry` to `create()`/`connect()`,
+   * or if the image doesn't support the feature: never throws for that.
+   * An explicit call, not part of `getHealth()`, so the path without
+   * `telemetry` never pays this extra RPC.
+   */
+  async getTelemetryStatus(options: RequestOptions = {}): Promise<TelemetryHealth> {
+    const timeoutMs = this.#core.resolveRequestTimeout(options.requestTimeoutMs);
+    const client = this.#core.clientFor(ConfigureService, false);
+    const response = await callConfigureStatus(client, callOptions(timeoutMs, options.signal));
+    const status = response.telemetryExport;
+    return status === undefined
+      ? EMPTY_TELEMETRY_HEALTH
+      : {
+          exported: status.exported,
+          dropped: status.dropped,
+          lastErrorClass: status.lastErrorClass === "" ? undefined : status.lastErrorClass,
+        };
+  }
+
   /** Un `HostAccess` con el JWE que cubre `port` (acuñado si hace falta); 9000 está prohibido (ADR-006). */
   async getHost(port: number): Promise<HostAccess> {
     const validated = validateHostPort(port);
@@ -1559,6 +1639,58 @@ export class Sandbox implements AsyncDisposable {
     const gate = egressGateError(this.sandboxId, enforcement, feature);
     if (gate !== undefined) {
       throw gate;
+    }
+  }
+
+  /**
+   * Post-boot (m15-rayd-otlp): exige `Health.features.telemetryExport`
+   * antes de enviar la sección -- ausente del todo en un agente anterior a
+   * 0.6, o presente pero `false` mientras la imagen no soporte la función
+   * (`features::slot::Unsupported` del lado de `rayd`). Cualquier fallo
+   * termina la `MicroVM` (salvo `keepOnFailure`), igual que
+   * `#applyInitialNetwork`: una opción 0.6 pedida que el sandbox no puede
+   * cumplir nunca deja una VM corriendo sin ella.
+   */
+  async #applyTelemetry(
+    telemetry: TelemetryExport,
+    region: string,
+    aws: { readonly credentials: AwsClientSettings["credentials"] },
+  ): Promise<void> {
+    try {
+      const features = requireConfigureSupport(this.#readinessAgentFeatures, "telemetry");
+      if (!features.telemetryExport) {
+        throw new UnimplementedError(
+          "telemetry",
+          "esta imagen no tiene el exportador OTLP implementado todavía " +
+            "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
+          "docs/site/docs/funciones-opcionales/exportacion-otlp.md",
+        );
+      }
+      const section = await buildSection(telemetry, {
+        imageArn: this.#core.launchInfo.template,
+        imageVersion: this.#core.launchInfo.templateVersion ?? "",
+        imageMemoryMib: Math.round((this.#readinessHealth?.memoryTotalBytes ?? 0) / (1024 * 1024)),
+        region,
+        credentials: aws.credentials,
+      });
+      const request = create(ConfigureRequestSchema, {});
+      section.fill(request);
+      const client = this.#core.clientFor(ConfigureService, false);
+      const response = await callConfigure(
+        client,
+        request,
+        callOptions(this.#core.resolveRequestTimeout(undefined), undefined),
+      );
+      for (const result of response.results) {
+        const error = sectionError(section.section, result.code, result.errorClass);
+        if (error !== undefined) {
+          throw error;
+        }
+      }
+    } catch (error) {
+      this.close();
+      await terminateQuietly(this.#core.controlPlane, this.sandboxId, this.#core.logger);
+      throw error;
     }
   }
 

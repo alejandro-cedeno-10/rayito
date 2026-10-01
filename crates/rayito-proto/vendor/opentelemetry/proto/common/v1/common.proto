@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package opentelemetry.proto.common.v1;
+
+// m15-rayd-otlp (ADR-021): a minimal, hand-authored subset of upstream
+// OpenTelemetry's `common/v1/common.proto` (open-telemetry/opentelemetry-proto,
+// Apache-2.0; see /NOTICE), kept outside the `buf` module on purpose (`vendor/**`,
+// `rayito-proto/build.rs` VENDOR_GLOB) so `buf lint`/`buf breaking` never see it.
+// Only the fields `rayd`'s `adapters::otlp_codec` actually sets are declared;
+// every field number matches the upstream message exactly, so the bytes `rayd`
+// sends decode the same way a real `opentelemetry-proto` client's would
+// (CloudWatch's OTLP endpoint, `AWS_API_NOTES.md` §26, speaks the real schema).
+// `rayd` never *parses* OTLP: this is write-only wire shape, used by
+// `otlp_codec` alone.
+
+message AnyValue {
+  oneof value {
+    string string_value = 1;
+    bool bool_value = 2;
+    int64 int_value = 3;
+    double double_value = 4;
+  }
+}
+
+message KeyValue {
+  string key = 1;
+  AnyValue value = 2;
+}
+
+message InstrumentationScope {
+  string name = 1;
+  string version = 2;
+}

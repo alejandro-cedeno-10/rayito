@@ -1,12 +1,213 @@
 # Exportación OTLP
 
-!!! warning "En construcción (0.6)"
-    Esta función todavía no está implementada: llega en el cambio OpenSpec
-    `m15-rayd-otlp` de Rayito 0.6 (M15). `telemetry=` existe ya como opción de
-    `Sandbox.create()` y lanza `UnimplementedError` nombrando este cambio
-    mientras tanto.
+`rayd` (el agente dentro del `MicroVM`) exporta 7 métricas de CPU, memoria y
+disco a CloudWatch cada pocos segundos por OTLP/HTTP, firmadas con
+SigV4 o con un token al portador. <small>Desde 0.6.0</small>
 
 !!! info "Coste y activación"
-    Pendiente: esta sección la rellena `m15-rayd-otlp` con el bloque completo
-    (Activa, Recursos y llamadas AWS, Coste aproximado, IAM, Cómo
-    apagarla, Ejemplo).
+    - **Por defecto**: apagado. Sin `telemetry=` (TypeScript: `telemetry`)
+      el SDK no envía ninguna sección de `ConfigureSandbox` y `rayd` no abre
+      ninguna conexión saliente nueva: cero coste, cero llamada a AWS.
+    - **Activa**: `telemetry=TelemetryExport(...)` en `Sandbox.create()` /
+      `AsyncSandbox.create()` (TypeScript: `telemetry: new TelemetryExport({...})`).
+      Se envía como una sección de `ConfigureSandbox` justo después de que
+      el agente esté listo, nunca en el propio `run-microvm`.
+    - **Recursos y llamadas AWS**: `rayd` hace un `PutMetricData` por lote
+      exportado (uno cada `interval_s`, agrupando las 7 gauges). Con
+      `OtlpAuth.execution_role()` necesitas la política IAM
+      `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+      `rayito stack deploy otlp-export`) en el execution role.
+    - **Coste aproximado**: $0 por la opción en sí; CloudWatch factura las
+      métricas personalizadas que de verdad se exporten, como cualquier otra
+      métrica personalizada (ver la
+      [página de precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
+      consultada 2026-09-30).
+    - **IAM**: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
+      de la cuenta — el endpoint OTLP de CloudWatch no admite acotar por
+      namespace (investigado, ver "Fuentes y mediciones" abajo). Con
+      `OtlpAuth.bearer(...)` en su lugar hace falta permiso para leer el
+      secreto que guarda el token.
+    - **Cómo apagarla**: no pases `telemetry=` (por defecto `None`/`undefined`);
+      borra la pila `otlp-export` (`rayito stack destroy otlp-export`) si ya
+      no la usa ningún sandbox.
+
+## Cuándo usarlo
+
+- Quieres ver CPU, memoria y disco de tus sandboxes en un dashboard de
+  CloudWatch junto al resto de tu infraestructura, sin montar tu propio
+  collector.
+- **Cuándo no**: si sólo necesitas una instantánea puntual o un historial
+  corto dentro de tu propio proceso, [`get_metrics_history()`](../observability.md#instantanea-e-historial)
+  no tiene coste de AWS y no exige ninguna imagen especial.
+
+## Qué exporta
+
+Exactamente 7 gauges, muestreados del mismo anillo de 5 s que ya sirve
+`get_metrics_history()` — ningún sondeo adicional del guest:
+
+| Métrica (`names="rayito"`) | `names="e2b"` | Qué es |
+|---|---|---|
+| `rayito.sandbox.cpu.used_pct` | `e2b.sandbox.cpu.used_pct` | % de CPU en uso |
+| `rayito.sandbox.cpu.count` | `e2b.sandbox.cpu.count` | CPUs que ve el guest |
+| `rayito.sandbox.memory.used_bytes` | `e2b.sandbox.memory.used_bytes` | Memoria en uso |
+| `rayito.sandbox.memory.total_bytes` | `e2b.sandbox.memory.total_bytes` | Memoria total del guest |
+| `rayito.sandbox.memory.cache_bytes` | `e2b.sandbox.memory.cache_bytes` | Caché de página |
+| `rayito.sandbox.disk.used_bytes` | `e2b.sandbox.disk.used_bytes` | Disco en uso |
+| `rayito.sandbox.disk.total_bytes` | `e2b.sandbox.disk.total_bytes` | Disco total |
+
+Cada lote lleva 4 atributos de recurso, una lista cerrada (nunca una ruta,
+un comando o un valor de `metadata`): `sandbox_id`, `image_arn`,
+`image_version` e `image_memory_mib` (la vista del guest, que ve 4× la
+memoria declarada de la imagen; ver `limits.md`).
+
+## Autenticación
+
+=== "Rol de ejecución (`OtlpAuth.execution_role()`)"
+
+    SigV4 sobre las credenciales IMDS del execution role. Exige la variante
+    `rayito-base-caps` (o una derivada por tamaño, p. ej.
+    `rayito-base-caps-4gb`): sin ella, `Sandbox.create()` lanza
+    `UnimplementedError` antes de `run-microvm` cuando el nombre de la
+    imagen ya lo permite saber, o termina la `MicroVM` y lanza después de
+    `/run` en caso contrario.
+
+    La política mínima de CloudWatch no puede acotarse por namespace: con
+    esta opción, un sandbox comprometido puede escribir métricas arbitrarias
+    con el nombre que quiera (no sólo las 7 de `rayito`). Si eso te
+    preocupa, usa `OtlpAuth.bearer(...)` o una imagen `rayito-base-caps` sin
+    más privilegios de los necesarios.
+
+=== "Token al portador (`OtlpAuth.bearer(...)`, experimental)"
+
+    Un secreto de Secrets Manager cuyo valor es un token de CloudWatch
+    acotado a un log group. El SDK lo resuelve una vez, al enviar la
+    sección, y lo empuja a `rayd` por `ConfigureSandbox` — nunca por una
+    variable de entorno (ADR-014 regla 4) ni en texto plano en ningún lado;
+    `rayd` lo guarda sólo en memoria. Funciona en `rayito-base`, sin caps.
+
+## Instalación
+
+No hace falta ningún paquete extra: `TelemetryExport`/`OtlpAuth` ya forman
+parte del SDK. Si usas `OtlpAuth.execution_role()`, despliega la política
+IAM una vez:
+
+```bash
+rayito stack deploy otlp-export
+```
+
+## Ejemplo rápido
+
+=== "Python"
+
+    ```python
+    from rayito import OtlpAuth, Sandbox, TelemetryExport
+
+    sbx = Sandbox.create(
+        "rayito-base-caps",
+        execution_role_arn=role_arn,
+        telemetry=TelemetryExport(
+            interval_s=60,
+            service_name="agente",
+            auth=OtlpAuth.execution_role(),
+        ),
+    )
+    sbx.commands.run("python agent.py")
+    status = sbx.get_telemetry_status()
+    print(status.exported, status.dropped, status.last_error_class)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+
+    from rayito import AsyncSandbox, OtlpAuth, TelemetryExport
+
+
+    async def main() -> None:
+        sbx = await AsyncSandbox.create(
+            "rayito-base-caps",
+            execution_role_arn=role_arn,
+            telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
+        )
+        await sbx.commands.run("python agent.py")
+        print(await sbx.get_telemetry_status())
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { OtlpAuth, Sandbox, TelemetryExport } from "rayito";
+
+    await using sbx = await Sandbox.create({
+      template: "rayito-base-caps",
+      executionRoleArn: roleArn,
+      telemetry: new TelemetryExport({
+        intervalS: 60,
+        serviceName: "agente",
+        auth: OtlpAuth.executionRole(),
+      }),
+    });
+    await sbx.commands.run("python agent.py");
+    const status = await sbx.getTelemetryStatus();
+    console.log(status.exported, status.dropped, status.lastErrorClass);
+    ```
+
+Con el token al portador, sólo cambia la autenticación:
+
+=== "Python"
+
+    ```python
+    telemetry=TelemetryExport(auth=OtlpAuth.bearer(secret_name="rayito/otlp-key"))
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    telemetry: new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") })
+    ```
+
+## Errores y solución de problemas
+
+| Síntoma | Causa | Qué hacer |
+|---|---|---|
+| `UnimplementedError` antes de `run-microvm`, nombra la variante caps | `OtlpAuth.execution_role()` sobre una imagen que no es `rayito-base-caps` (o derivada) | usa una imagen caps, o cambia a `OtlpAuth.bearer(...)` |
+| `UnimplementedError` justo después de crear el sandbox (la VM ya se terminó, salvo `keep_on_failure=True`) | la imagen corre un `rayd` anterior a 0.6.0, o 0.6.0 sin el exportador implementado todavía | publica una imagen con el `rayd` del tag `rayd-v0.6.0` o posterior |
+| `SecretException` al enviar la sección | `OtlpAuth.bearer(secret_name=...)` no existe o no tiene `SecretString` | revisa el secreto en Secrets Manager |
+| `get_telemetry_status()` siempre en cero | nunca pasaste `telemetry=`, o la sección no aplicó | revisa el resultado de `create()` (si no lanzó, aplicó) |
+
+## Diferencias con E2B
+
+La exportación de telemetría del sandbox de E2B es sólo Enterprise, la
+configura E2B en el onboarding del cliente y no tiene API ni kwarg: aquí es
+explícita y opt-in. El shim de E2B no añade ningún kwarg nuevo para esto;
+`names="e2b"` es la única concesión a su convención de nombres.
+
+## Ver también
+
+- [Funciones opcionales](../optional-features.md)
+- [Pilas opcionales (`rayito stack`)](pilas-opcionales.md)
+- [OpenTelemetry (spans del SDK)](opentelemetry.md) — complementario, no lo
+  mismo: aquello instrumenta tus llamadas al SDK, esto exporta métricas del
+  *interior* del sandbox.
+- [Métricas y listado](../observability.md)
+
+??? info "Fuentes y mediciones"
+    - Implementación: [`crates/rayd-core/src/telemetry/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/crates/rayd-core/src/telemetry),
+      [`crates/rayd/src/adapters/cloudwatch_otlp_sink.rs`](https://github.com/alejandro-cedeno-10/rayito/blob/main/crates/rayd/src/adapters/cloudwatch_otlp_sink.rs),
+      [`clients/python/src/rayito/_telemetry_export/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/clients/python/src/rayito/_telemetry_export)
+      y [`clients/typescript/src/telemetry-export/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/clients/typescript/src/telemetry-export).
+    - Investigación: `docs/research/2026-10-e2b-out-of-scope.md` §6 (opciones
+      B1/B1'), con OT1/OT9 confirmando que el endpoint OTLP de CloudWatch
+      acepta SigV4 sobre `monitoring.<región>.amazonaws.com/v1/metrics` y
+      que la acción `cloudwatch:PutMetricData` no se puede acotar por
+      namespace.
+    - Probado con dobles de `TelemetrySink`/`OtlpEncoder` en los dos SDK y
+      con el signer `SigV4` de `rayd` contra el vector de prueba de
+      RFC 4231: no necesita una aceptación contra AWS real para la lógica
+      de dominio. La aceptación contra AWS real (cuota facturada, overhead
+      de CPU, comportamiento en `/suspend`/`/resume`) es un seguimiento
+      separado de esta entrega.

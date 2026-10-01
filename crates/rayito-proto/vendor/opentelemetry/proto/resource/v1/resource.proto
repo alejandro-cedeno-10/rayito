@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package opentelemetry.proto.resource.v1;
+
+import "opentelemetry/proto/common/v1/common.proto";
+
+// m15-rayd-otlp (ADR-021): minimal subset of upstream `resource/v1/resource.proto`
+// (Apache-2.0, see /NOTICE and `common/v1/common.proto`'s header comment).
+
+message Resource {
+  repeated opentelemetry.proto.common.v1.KeyValue attributes = 1;
+}

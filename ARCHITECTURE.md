@@ -1825,8 +1825,69 @@ compatibles con E2B).
 
 ## ADR-021 — rayd-otlp (M15, 0.6)
 
-Pendiente: lo completa `m15-rayd-otlp` (exportación OTLP/HTTP de métricas a
-CloudWatch, propagación W3C `traceparent`).
+**Contexto.** `get_metrics_history()` (M9) sólo sirve el anillo de 5 s de
+`MetricsHistory` dentro del propio proceso del llamante; para verlo junto al
+resto de la infraestructura en un dashboard, alguien tendría que montar su
+propio reenvío. La investigación (`docs/research/2026-10-e2b-out-of-scope.md`
+§6) evaluó cinco opciones; B1 ("`rayd` → CloudWatch OTLP firmado") es la
+única que exporta sin montar un plano propio, y el crítico de la
+investigación añadió B1' (el mismo diseño con un token al portador) porque
+B1 por sí sola exige el execution role dentro del guest, legible por uid
+1000 en `rayito-base` sin caps (T1).
+
+**Decisión.** `rayd` reutiliza el muestreador de 5 s existente para exportar
+7 gauges (research §7.5) como un `ExportMetricsServiceRequest` OTLP/HTTP
+protobuf + gzip a `monitoring.<región>.amazonaws.com/v1/metrics`, con
+`TelemetryAuth::ExecutionRole` (SigV4 sobre las credenciales IMDS
+compartidas, `adapters::credential_broker::ImdsCredentialBroker`, ADR-012:
+exige `rayito-base-caps`) o `TelemetryAuth::Bearer` (un token empujado por
+`ConfigureSandbox`, guardado sólo en memoria del agente, funciona en
+`rayito-base`). La cola entre el muestreador y la red es acotada
+(`rayd_core::telemetry::Batcher`, research §6.5) con backoff con jitter por
+sandbox, para no sincronizar reintentos tras un `/resume` masivo contra la
+cuota de 500 TPS de la cuenta. El exportador implementa
+`LifecycleParticipant` (ADR-015): su `/suspend` es un intento de vaciado
+acotado a 2 s, nunca bloqueante; `ready_gate()` usa el valor por defecto
+(nunca retrasa `/ready`). `Health.features.telemetry_export` (y
+`root_egress` con `CloudwatchOtlp`) sólo son `true` cuando el agente conoce
+`AWS_REGION`: sin región no hay endpoint que construir ni firma posible, así
+que el slot se queda `Unsupported`, igual que un build anterior a 0.6.0.
+El firmante SigV4 (HMAC-SHA256 sobre `sha2`, verificado contra el vector de
+RFC 4231) vive en `rayd` en vez de añadir una dependencia nueva (§5 del plan
+de M15: esta función puede añadir protos vendidos, no crates); el
+`ExportMetricsServiceRequest` se construye sobre un subconjunto vendido y
+mínimo de los tipos de OpenTelemetry (`crates/rayito-proto/vendor/opentelemetry/`,
+Apache-2.0, ver `/NOTICE`), con los mismos números de campo que el esquema
+real, nunca el `.proto` completo.
+
+La propagación W3C `traceparent` del lado del SDK (research Q92: sólo
+`traceparent`/`tracestate`, nunca `grpc-trace-bin` ni `baggage`) tiene su
+seam (`CallMetadataProvider` en `_transport.py`/`transport/`) y su
+implementación (`TraceparentProvider`/`_telemetry_export/_propagation.py`),
+pero **no está conectada todavía al canal gRPC real**: hacerlo bien exige
+reordenar cuándo se construye el canal de autenticación frente a cuándo se
+conoce la instrumentación OTel en varios puntos de un fichero compartido
+entre las siete funciones 0.6 (`sandbox_sync/main.py` y su espejo). Es un
+seguimiento razonado y no bloqueante (mismo patrón que el reaper de zombis
+huérfanos de M15 foundations), registrado en
+`openspec/changes/m15-rayd-otlp/design.md`.
+
+**Consecuencias.** Sin `telemetry=`/`telemetry`, `rayd` no abre ninguna
+conexión nueva y el SDK no envía ninguna sección de `ConfigureSandbox`
+(prueba de coste cero dedicada). Con `OtlpAuth.execution_role()`, la
+política IAM mínima de CloudWatch no puede acotarse por namespace
+(investigado): un sandbox malicioso con esa opción puede escribir métricas
+arbitrarias, no sólo las 7 de `rayito` (documentado en T23 y en el bloque
+"Coste y activación" de la función). `sbx.get_telemetry_status()` (Python) /
+`sbx.getTelemetryStatus()` (TypeScript) es una llamada explícita a
+`ConfigureStatus`, nunca parte de `get_health()`/`getHealth()`, para que el
+camino sin `telemetry=` nunca pague un RPC de más.
+
+**Reversible.** Aditivo: un campo de `ConfigureRequest`/`ConfigureResponse`
+(`telemetry_export`), un slot más de `FeatureSet` y una política IAM
+opcional (`rayito stack destroy otlp-export` la retira sin afectar a nada
+más). Un agente 0.5.x o un 0.6.0 sin este slot implementado se comporta
+exactamente igual que antes de este cambio.
 
 ## ADR-022 — templates (M15, 0.6)
 

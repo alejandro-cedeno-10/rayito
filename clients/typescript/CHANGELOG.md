@@ -24,7 +24,16 @@ versionado [SemVer](https://semver.org/lang/es/).
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
-<!-- m15-rayd-otlp -->
+- **`telemetry`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
+  ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
+  nuevos (`OtlpAuth.executionRole()`, exige `rayito-base-caps`;
+  `OtlpAuth.bearer(secretName)`, experimental, funciona en `rayito-base`),
+  con `@aws-sdk/client-secrets-manager` como peer opcional sólo para el
+  bearer. Se envía como una sección de `ConfigureSandbox` tras `/run`; una
+  imagen sin el exportador implementado termina el sandbox (salvo
+  `keepOnFailure`) y lanza `UnimplementedError`. `sbx.getTelemetryStatus()`
+  lee `ConfigureStatus`, como una llamada explícita aparte de `getHealth()`.
+  Sin `telemetry`, ningún comportamiento cambia frente a 0.5.x.
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->

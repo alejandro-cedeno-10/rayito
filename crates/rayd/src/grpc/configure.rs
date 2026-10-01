@@ -47,7 +47,11 @@ impl ConfigureGrpc {
                 Some(self.features.lifecycle_events.apply(cfg).await)
             }
             ConfigSection::TelemetryExport => {
-                let cfg = request.telemetry_export?;
+                // Unlike its five sibling stub messages, `TelemetryExportConfig`
+                // (m15-rayd-otlp) has real fields (a `String` service name, a
+                // `oneof auth`), so it is not `Copy`; `request` is a shared
+                // reference, so this clones rather than moving out of it.
+                let cfg = request.telemetry_export.clone()?;
                 Some(self.features.telemetry_export.apply(cfg).await)
             }
             ConfigSection::SecretGateway => {
@@ -152,13 +156,13 @@ mod tests {
             sandbox_id: Some("mvm-test"),
             payload: Some(RUN_PAYLOAD),
         });
-        ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)))
+        ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext::default())))
     }
 
     #[tokio::test]
     async fn configure_before_run_is_failed_precondition_not_running() {
         let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
-        let service = ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)));
+        let service = ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext::default())));
         let status = service
             .configure(Request::new(ConfigureRequest::default()))
             .await
