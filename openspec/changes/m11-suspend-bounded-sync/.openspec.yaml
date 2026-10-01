@@ -1,0 +1,10 @@
+schema: spec-driven
+created: "2026-09-30"
+goal: >-
+  /suspend never hangs on sync(2): one bounded syncfs per filesystem in
+  throwaway threads, with the deadline as a pure SuspendBudget rule in
+  rayd-core, so a hung network or FUSE mount cannot make AWS terminate the
+  MicroVM.
+affected_areas:
+  - crates/rayd-core
+  - crates/rayd

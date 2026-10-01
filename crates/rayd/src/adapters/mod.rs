@@ -5,10 +5,12 @@
 //! capability mask, the policy route that blocks IMDS for the sandbox user,
 //! the egress policy routes over the shared `ip` runner (ADR-012),
 //! the tar/gzip home archiver, the S3 object store (ADR-009) and the
-//! credential-free HTTPS client of presigned transfers (ADR-010).
+//! credential-free HTTPS client of presigned transfers (ADR-010) and the
+//! bounded per-filesystem `syncfs` of `/suspend`.
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
+pub mod bounded_sync;
 pub mod capabilities;
 pub mod egress_routes;
 pub mod fs_identity;
@@ -26,6 +28,7 @@ pub mod signed_http;
 pub mod std_filesystem;
 pub mod tar_archiver;
 
+pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
 pub use fs_identity::FsIdentityGuard;
 pub use imds_block::{
