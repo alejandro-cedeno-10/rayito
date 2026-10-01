@@ -28,6 +28,8 @@
 
 - [x] 4.1 Python unit + ruff + mypy; TS lint/typecheck/build/test/pack:check;
   scripts tests; `check_pins`/`check_hygiene`; `make docs`.
-- [ ] 4.2 Real AWS (SDK side, Secrets Manager only): create → force-delete →
+- [x] 4.2 Real AWS (SDK side, Secrets Manager only): create → force-delete →
   re-create with the new budget (both SDKs); `destroy` of a never-existing
-  name → `False`, of an existing one → `True` (both SDKs and shims).
+  name → `False`, of an existing one → `True` (both SDKs and shims); the
+  Python and TypeScript secrets e2e on a `rayito-base` version built from
+  this branch (deleted afterwards). Results in `AWS_API_NOTES.md` §19.
