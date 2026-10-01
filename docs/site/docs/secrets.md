@@ -46,9 +46,22 @@ traer el secreto en cada llamada (`SecretCache`).
 |---|---|---|
 | Activa | crear, actualizar, describir, listar y borrar secretos bajo un prefijo (`rayito/` por defecto) | entregar el valor como variable de entorno de un comando, una PTY, una celda Python o un contexto de código |
 | Recursos AWS | un secreto de Secrets Manager por `create` | ninguno nuevo |
-| Llamadas AWS | `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DescribeSecret`, `ListSecrets`, `DeleteSecret` (una por método) | `GetSecretValue` una vez por secreto y TTL de la caché (300 s por defecto) |
+| Llamadas AWS | `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DescribeSecret`, `ListSecrets`, `DeleteSecret` (una por método; `update` y `destroy` hacen antes un `DescribeSecret`) | `GetSecretValue` una vez por secreto y TTL de la caché (300 s por defecto) |
 | Coste (us-east-1, [precios](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30) | **$0,40 por secreto y mes**, prorrateado, **hasta que lo borras**, + $0,05 por 10 000 llamadas | $0,05 por 10 000 llamadas: con el TTL por defecto, ≤ 12 lecturas/hora por secreto y proceso ≈ **$0,04/mes** |
 | IAM (credenciales del **llamante**, no el execution role) | política `RayitoSecretsAdmin` | política `RayitoSecretsReader` |
+
+!!! danger "El log DEBUG de botocore / AWS SDK imprime el valor"
+    Rayito **nunca** escribe el valor ni el nombre de un secreto en sus logs
+    (loggers `rayito.*` en Python, el `logger` de las opciones en
+    TypeScript), en `repr`/`toJSON` ni en errores. Pero si activas el log
+    DEBUG del SDK de AWS que Rayito usa por debajo —`logging.DEBUG` en el
+    logger raíz o en `botocore`/`urllib3`, `boto3.set_stream_logger()`, o
+    un `logger` en el `SecretsManagerClient` del SDK v3—, **ese** log
+    incluye los cuerpos de petición y respuesta de Secrets Manager, con el
+    `SecretString` en claro (`CreateSecret`, `PutSecretValue`,
+    `GetSecretValue`). No lo actives en procesos que manejan secretos, o
+    limita el nivel DEBUG al logger `rayito`
+    (`logging.getLogger("rayito").setLevel(logging.DEBUG)`).
 
 Contrato exacto de parámetros y errores: `AWS_API_NOTES.md` §19. Una CMK de
 KMS (`kms_key_id=`) añade el coste de KMS y los permisos `kms:Decrypt` /
@@ -60,7 +73,8 @@ KMS (`kms_key_id=`) añade el coste de KMS y los permisos `kms:Decrypt` /
 (coste $0): `RayitoSecretsReader` (`GetSecretValue`, `DescribeSecret` sobre
 `arn:aws:secretsmanager:<región>:<cuenta>:secret:rayito/*`) y
 `RayitoSecretsAdmin` (además `CreateSecret`, `PutSecretValue`,
-`UpdateSecret`, `DeleteSecret` en ese ARN y `ListSecrets` en `*`). Con
+`UpdateSecret`, `DeleteSecret` en ese ARN y `ListSecrets` en `*`;
+`destroy` usa `DescribeSecret` y `DeleteSecret`, las dos incluidas). Con
 `KmsKeyArn`, añade `kms:Decrypt` (y `kms:GenerateDataKey` en la de
 administrador) sólo a través de Secrets Manager (`kms:ViaService`).
 Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md#secretos-infrasecrets-accessyaml-m13a).
@@ -214,11 +228,28 @@ Reglas:
   conserva como mucho 100 versiones más las de las últimas 24 h).
 - `metadata` va en `Description` como `rayito:v1:` + JSON compacto, ≤ 2048
   caracteres (validado antes de llamar a AWS).
-- `destroy` es `DeleteSecret(ForceDeleteWithoutRecovery=True)`: no hay
-  ventana de recuperación. Recrear el mismo nombre justo después puede
-  tardar unos segundos (el borrado es asíncrono); `create` reintenta con
-  backoff hasta 30 s si AWS responde `InvalidRequestException` mencionando
-  el borrado (supuesto de SEC-9, pendiente de medir en AWS real).
+- `destroy` es `DescribeSecret` y, si el secreto existe,
+  `DeleteSecret(ForceDeleteWithoutRecovery=True)`: no hay ventana de
+  recuperación. Devuelve `True` si lo borró y `False` si no existía (o ya
+  estaba programado para borrarse, u otro proceso lo borró a la vez), sin
+  llamar a `DeleteSecret`, como E2B. El `DescribeSecret` previo es
+  necesario porque AWS acepta el borrado forzado de un nombre que no existe
+  sin `ResourceNotFoundException`.
+- **Recrear un nombre recién borrado**: el borrado es asíncrono y AWS tarda
+  en liberar el nombre (en la aceptación de 0.5.0, entre 19 y 28 s).
+  Mientras tanto `CreateSecret` responde `InvalidRequestException`
+  mencionando el borrado y `create` reintenta con el mismo
+  `ClientRequestToken`, con backoff exponencial (0,5 s doblando hasta 8 s,
+  ±25 % de jitter) durante como mucho **60 s**
+  (`CREATE_RETRY_BUDGET_SECONDS` en Python, `CREATE_RETRY_BUDGET_MS` en
+  TypeScript). Pasado ese plazo lanza `SecretException`
+  (`SecretError`) con `aws_code="InvalidRequestException"`.
+- **`list()` es eventualmente consistente**: `ListSecrets` puede tardar
+  ~3–5 s en mostrar un secreto recién creado o el cambio de uno recién
+  actualizado (y en dejar de mostrar uno recién borrado). `get_info`,
+  `exists` y `destroy` (`DescribeSecret`) no tienen ese retraso. Un test
+  que crea y lista debe **sondear** `list()` con un plazo, no comprobarlo
+  una sola vez.
 
 ## Errores
 
@@ -230,7 +261,9 @@ Reglas:
 | `InvalidArgumentException` | `InvalidArgumentError` | nombre, valor (≤ 64 KiB), `metadata`, TTL o variable inválidos; conflicto `envs`/`secrets` |
 
 Ningún error contiene el valor ni el nombre del secreto; el mensaje de AWS
-tampoco se propaga (puede nombrar el secreto): sólo su código.
+tampoco se propaga (puede nombrar el secreto): sólo su código. Tampoco los
+logs de Rayito; el log DEBUG del SDK de AWS sí los contiene (ver el aviso de
+[Qué activa y qué cuesta](#que-activa-y-que-cuesta)).
 
 ## Cómo apagarlo
 

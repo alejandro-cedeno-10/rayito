@@ -25,7 +25,8 @@ Activa: `SecretStore(...)` (CRUD explícito) y `secrets=` / `secret_cache=`
     a Secrets Manager (el camino de 0.4.0).
 Recursos y llamadas AWS: `secretsmanager:CreateSecret`, `PutSecretValue`,
     `UpdateSecret`, `DescribeSecret`, `ListSecrets`, `DeleteSecret` (sólo
-    desde `SecretStore`); `GetSecretValue` una vez por secreto y TTL
+    desde `SecretStore`; `destroy` = `DescribeSecret` + `DeleteSecret`);
+    `GetSecretValue` una vez por secreto y TTL
     (`secrets=`), nunca en cada comando. Ver `AWS_API_NOTES.md` §19.
 Coste aproximado: $0,40 por secreto y mes (prorrateado, se paga hasta
     `destroy`) + $0,05 por 10 000 llamadas (us-east-1, consultado 2026-09-30,
@@ -39,6 +40,10 @@ IAM: lector (`secrets=`): `secretsmanager:GetSecretValue` y
     `kms:GenerateDataKey` para escribir) si usas una CMK. Plantilla opcional:
     `infra/secrets-access.yaml`. Son permisos de las credenciales del
     LLAMANTE, no del execution role del MicroVM.
+Logs: Rayito nunca escribe el valor ni el nombre de un secreto en sus
+    logs (`rayito.*`), `repr` ni errores. El DEBUG de botocore/urllib3 (logger
+    raíz a DEBUG, `boto3.set_stream_logger()`) SÍ imprime los cuerpos de
+    Secrets Manager con el valor en claro: no lo actives con secretos.
 Cómo apagarla: no pases `secrets=` ni `secret_cache=` (o pásalos a `None`) y
     no instancies `SecretStore`. Para dejar de pagar, `SecretStore().destroy(
     nombre)` de cada secreto: la facturación sigue hasta que se borran.
@@ -58,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import threading
 import time
@@ -93,9 +99,14 @@ SECRET_ID_MAX_CHARS: Final = 512
 LIST_MAX_RESULTS: Final = 100
 CURRENT_STAGE: Final = "AWSCURRENT"
 UPDATE_WARNING_INTERVAL_SECONDS: Final = 600.0
-CREATE_RETRY_BUDGET_SECONDS: Final = 30.0
+# Recrear un nombre recién borrado (SEC-9): en la aceptación de 0.5.0 AWS
+# liberó el nombre tras 19,3-27,9 s; 60 s deja margen al backoff (0,5 s
+# doblando hasta 8 s, ±25 % de jitter para que varios procesos no reintenten
+# al unísono). El espejo TS es CREATE_RETRY_BUDGET_MS de secrets/store.ts.
+CREATE_RETRY_BUDGET_SECONDS: Final = 60.0
 CREATE_RETRY_FIRST_DELAY_SECONDS: Final = 0.5
 CREATE_RETRY_MAX_DELAY_SECONDS: Final = 8.0
+CREATE_RETRY_JITTER: Final = 0.25
 MASK: Final = "***"
 
 SECRET_NAME_PATTERN: Final = re.compile(r"[A-Za-z0-9/_+=.@-]+")
@@ -394,8 +405,10 @@ class SecretStore:
     Recursos y llamadas AWS: un secreto de Secrets Manager por `create`
         (`CreateSecret`); `update` = `DescribeSecret` + `PutSecretValue`
         (+ `UpdateSecret` si cambias `metadata`); `get_info`/`exists` =
-        `DescribeSecret`; `list` = `ListSecrets`; `destroy` = `DeleteSecret`
-        (sin ventana de recuperación).
+        `DescribeSecret`; `list` = `ListSecrets` (eventualmente consistente:
+        un secreto recién creado o cambiado puede tardar ~3-5 s en salir);
+        `destroy` = `DescribeSecret` + `DeleteSecret` (sin ventana de
+        recuperación).
     Coste aproximado: $0,40 por secreto y mes hasta `destroy` + $0,05 por
         10 000 llamadas (us-east-1, 2026-09-30).
     IAM: `secretsmanager:CreateSecret`, `PutSecretValue`, `UpdateSecret`,
@@ -403,6 +416,8 @@ class SecretStore:
         `secretsmanager:ListSecrets` sobre `*` (política `RayitoSecretsAdmin`
         de `infra/secrets-access.yaml`); con `kms_key_id=`, `kms:GenerateDataKey`
         y `kms:Decrypt` sobre esa clave.
+    Logs: ni el valor ni el nombre en los logs de Rayito; el DEBUG de
+        botocore sí imprime el valor (no lo actives con secretos).
     Cómo apagarla: no instancies `SecretStore`; borra con `destroy()` los
         secretos que ya no uses (se facturan hasta entonces).
     Ejemplo:
@@ -434,6 +449,7 @@ class SecretStore:
         self._client = LazyClient("secretsmanager", region=region, session=session)
         self._sleep: Callable[[float], None] = time.sleep
         self._clock: Callable[[], float] = time.monotonic
+        self._random: Callable[[], float] = random.random
 
     @property
     def prefix(self) -> str:
@@ -459,8 +475,9 @@ class SecretStore:
         self, name: str, value: str, *, metadata: Mapping[str, str] | None = None
     ) -> SecretInfo:
         """`CreateSecret` con la versión 1. Si el nombre aún se está borrando
-        (`destroy` reciente), reintenta con backoff hasta 30 s con el mismo
-        `ClientRequestToken` y después lanza `SecretException`.
+        (`destroy` reciente: AWS tarda ~20-30 s en liberarlo), reintenta con
+        backoff y jitter durante `CREATE_RETRY_BUDGET_SECONDS` (60 s) con el
+        mismo `ClientRequestToken` y después lanza `SecretException`.
         `created_at`/`updated_at` son el reloj del cliente (`get_info` da los
         de AWS)."""
         if isinstance(name, str) and name.startswith("arn:"):
@@ -537,7 +554,9 @@ class SecretStore:
 
     def list(self, *, limit: int | None = None, next_token: str | None = None) -> SecretPage:
         """Una página de `ListSecrets` filtrada por el prefijo (sin los
-        programados para borrarse). `limit` 1-100."""
+        programados para borrarse). `limit` 1-100. Es eventualmente
+        consistente: un secreto recién creado o actualizado puede tardar
+        ~3-5 s en aparecer (o en reflejar el cambio); `get_info` no."""
         params: dict[str, Any] = {"IncludePlannedDeletion": False}
         if self._prefix:
             params["Filters"] = [{"Key": "name", "Values": [self._prefix]}]
@@ -557,14 +576,15 @@ class SecretStore:
         return SecretPage(items=items, next_token=str(token) if token else None)
 
     def destroy(self, name: str) -> bool:
-        """`DeleteSecret(ForceDeleteWithoutRecovery=True)`: deja de facturarse
-        y no se puede recuperar. `False` si no existía."""
+        """`DescribeSecret` y, si existe, `DeleteSecret(ForceDeleteWithoutRecovery=True)`:
+        deja de facturarse y no se puede recuperar. `True` si lo borró;
+        `False` si no existía (o ya estaba programado para borrarse, u otro
+        lo borró a la vez), sin llamar a `DeleteSecret`: el borrado forzado
+        de AWS no distingue un nombre inexistente."""
+        secret_id = resolve_secret_id(name, self._prefix)
         try:
-            self._call(
-                "delete_secret",
-                SecretId=resolve_secret_id(name, self._prefix),
-                ForceDeleteWithoutRecovery=True,
-            )
+            self._describe(secret_id)
+            self._call("delete_secret", SecretId=secret_id, ForceDeleteWithoutRecovery=True)
         except SecretNotFoundException:
             return False
         return True
@@ -623,10 +643,12 @@ class SecretStore:
                     raise translate_error("create_secret", exc) from sanitize_aws_error(
                         exc, include_message=False
                     )
-                if self._clock() + delay > deadline:
+                remaining = deadline - self._clock()
+                if remaining <= 0:
                     error = SecretException(
-                        "el nombre sigue programado para borrarse tras 30 s de reintentos "
-                        "(DeleteSecret es asíncrono): vuelve a intentarlo más tarde",
+                        f"el nombre sigue programado para borrarse tras "
+                        f"{CREATE_RETRY_BUDGET_SECONDS:g} s de reintentos (DeleteSecret es "
+                        "asíncrono): vuelve a intentarlo más tarde",
                         aws_code="InvalidRequestException",
                     )
                     raise error from sanitize_aws_error(exc, include_message=False)
@@ -634,7 +656,8 @@ class SecretStore:
                 raise translate_error("create_secret", exc) from sanitize_aws_error(
                     exc, include_message=False
                 )
-            self._sleep(delay)
+            jitter = 1.0 + CREATE_RETRY_JITTER * (2.0 * self._random() - 1.0)
+            self._sleep(min(delay * jitter, remaining))
             delay = min(delay * 2, CREATE_RETRY_MAX_DELAY_SECONDS)
 
     def _warn_if_frequent(self, secret_id: str) -> None:

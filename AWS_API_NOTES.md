@@ -733,9 +733,9 @@ mensaje de AWS nunca se propaga porque puede nombrar el secreto):
 
 | Código | Dónde | Qué hace el SDK |
 |---|---|---|
-| `ResourceNotFoundException` | todas | `SecretNotFoundException`/`SecretNotFoundError` (no se guarda en caché); `destroy` devuelve `False` |
+| `ResourceNotFoundException` | todas | `SecretNotFoundException`/`SecretNotFoundError` (no se guarda en caché); `destroy` devuelve `False` (lo detecta con `DescribeSecret` antes de borrar: `DeleteSecret` forzado sobre un nombre inexistente **no** devuelve este código, medido en la aceptación de 0.5.0) |
 | `ResourceExistsException` | `CreateSecret`, `PutSecretValue` | `SecretException`: ya existe (create) o choque de versión entre dos escritores con valores distintos (put, SEC-9) |
-| `InvalidRequestException` | `CreateSecret` | "a secret with this name is already scheduled for deletion": reintento con backoff acotado (≤ 30 s en total) con el mismo `ClientRequestToken`, después `SecretException`; en cualquier otra operación, `SecretException` |
+| `InvalidRequestException` | `CreateSecret` | "a secret with this name is already scheduled for deletion": reintento con backoff exponencial y ±25 % de jitter, acotado a 60 s en total (`CREATE_RETRY_BUDGET_SECONDS`/`CREATE_RETRY_BUDGET_MS`), con el mismo `ClientRequestToken`, después `SecretException`; en cualquier otra operación, `SecretException` |
 | `LimitExceededException` | `CreateSecret`, `PutSecretValue`, `UpdateSecret` | `SecretException` que recuerda el límite de versiones y la recomendación de 10 min |
 | `ThrottlingException` | todas (código genérico de AWS, no modelado) | `RateLimitException`/`RateLimitError` tras los reintentos `standard` del SDK de AWS |
 | `AccessDeniedException` | todas (código genérico de AWS, no modelado) | `SecretException` que nombra la acción IAM que falta, nunca el ARN |
@@ -774,16 +774,30 @@ recreado tras el borrado forzado vuelve a aceptar los tokens
 `rayito-secret-version-…01`/`…02` (esperado: los tokens son por secreto, y
 el recreado es otro secreto con otro ARN).
 
-**Estado de SEC-9 y SEC-10 (2026-09-30): SIN MEDIR.** El e2e
-(`clients/python/tests/e2e/test_secrets_e2e.py`, `RAYITO_E2E=1`) imprime
-(a)–(d) y comprueba SEC-10 (ni el valor ni el nombre en los logs del SDK),
-pero todavía no se ha ejecutado contra AWS real. Hasta que se ejecute:
-`is_scheduled_for_deletion` (código `InvalidRequestException` + "delet" en
-el mensaje) y la reutilización de tokens en un nombre recreado son
-supuestos, y las filas de secretos de `optional-features.md` y
-`e2b-parity.md` dicen "pendiente de aceptación en AWS real". Si la medida
-los contradice, se corrigen el código y esta sección antes de archivar
-`m13-secrets`.
+**Estado de SEC-9 y SEC-10 (2026-10-01): medidos en AWS real** (aceptación
+de 0.5.0 sobre `a422b54` y validación de `m11-secrets-acceptance-fixes`,
+us-east-1):
+
+- (a) un `CreateSecret` inmediato tras el borrado forzado falla con
+  `InvalidRequestException` y un mensaje que `is_scheduled_for_deletion`
+  reconoce; AWS liberó el nombre tras 19,3 / 19,8 / 26,8 / 27,9 s en la
+  aceptación, y `create` recreó el nombre en 18,4 s (Python), 26,6 s
+  (TypeScript) y 31,7 s (e2e de Python) con el nuevo presupuesto de 60 s
+  (con el anterior de 30 s y el backoff, los dos últimos habrían fallado).
+- (b) `PutSecretValue` con un token ya usado y otro valor:
+  `ResourceExistsException`.
+- (c) sin medir todavía (el e2e no lo imprime).
+- (d) el nombre recreado vuelve a empezar en la versión 1 y `update` escribe
+  la 2 sin chocar.
+- `DeleteSecret` con `ForceDeleteWithoutRecovery=true` sobre un nombre que
+  no existe **no** devuelve `ResourceNotFoundException`: `destroy` hace
+  `DescribeSecret` antes (validado: `False` para un nombre inexistente y
+  `True` para uno existente, en los dos SDK y en los shims).
+- `ListSecrets` es eventualmente consistente: un secreto recién creado o
+  actualizado tardó ~3–5 s en aparecer.
+- SEC-10: Rayito no escribe ni el valor ni el nombre en sus logs; el DEBUG
+  de botocore sí imprime los cuerpos con el `SecretString` (por eso el e2e
+  captura sólo el logger `rayito`).
 
 ## 20. DynamoDB (M14, `m14-metadata-index`, **contrato de parámetros**)
 

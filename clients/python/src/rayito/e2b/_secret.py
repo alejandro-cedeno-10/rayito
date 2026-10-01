@@ -232,7 +232,8 @@ class Secret:
 
     @classmethod
     def destroy(cls, secret: str, **opts: Any) -> bool:
-        """Lo borra sin ventana de recuperación; False si no existía."""
+        """Lo borra sin ventana de recuperación: True si lo borró, False si no
+        existía (como E2B; ver `SecretStore.destroy`)."""
         return cls._store(opts, "destroy").destroy(secret_selector(secret))
 
     @staticmethod
@@ -319,6 +320,8 @@ class AsyncSecret:
 
     @classmethod
     async def destroy(cls, secret: str, **opts: Any) -> bool:
+        """Lo borra sin ventana de recuperación: True si lo borró, False si no
+        existía (como E2B; ver `SecretStore.destroy`)."""
         store = cls._store(opts, "destroy")
         return await asyncio.to_thread(store.destroy, secret_selector(secret))
 

@@ -174,8 +174,16 @@ class FakeSecretsManager:
         return response
 
     def delete_secret(self, **params: Any) -> dict[str, Any]:
+        """Como AWS (aceptación de 0.5.0): con `ForceDeleteWithoutRecovery`,
+        un secreto que no existe NO es `ResourceNotFoundException`, responde
+        como si lo hubiera borrado."""
         self._record("DeleteSecret", params)
-        stored = self._find(params["SecretId"], "DeleteSecret")
+        try:
+            stored = self._find(params["SecretId"], "DeleteSecret")
+        except ClientError:
+            if params.get("ForceDeleteWithoutRecovery"):
+                return {"ARN": arn_for(params["SecretId"]), "Name": params["SecretId"]}
+            raise
         del self.secrets[stored.name]
         return {"ARN": stored.arn, "Name": stored.name}
 

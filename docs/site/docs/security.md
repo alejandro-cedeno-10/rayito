@@ -111,6 +111,11 @@ sólo lo enciende la propia opción. Cuando se usa:
   código del sandbox puede leer un secreto inyectado.** Con código no
   confiable, inyecta sólo tokens de vida corta y mínimo privilegio, nunca
   credenciales de larga duración.
+- **Logs**: Rayito nunca escribe el valor ni el nombre en sus logs. El log
+  DEBUG del SDK de AWS que usa por debajo (botocore/urllib3 en Python, un
+  `logger` del `SecretsManagerClient` en TypeScript) **sí** imprime los
+  cuerpos de Secrets Manager con el valor en claro: no lo actives en
+  procesos que manejan secretos ([Secretos](secrets.md#que-activa-y-que-cuesta)).
 - `Secret.fill()` del shim de E2B devuelve el placeholder, pero Rayito no lo
   resuelve en ninguna parte.
 

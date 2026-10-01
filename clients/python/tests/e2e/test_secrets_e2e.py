@@ -2,7 +2,11 @@
 sobre Secrets Manager → `Sandbox.create(secrets=)` → `printenv` tres veces con
 UNA sola `GetSecretValue` (contada con el hook de eventos de botocore) →
 `destroy`. Mide SEC-9 (recreación tras borrado forzado, choque de
-`ClientRequestToken`) y SEC-10 (el valor no aparece en los logs del SDK).
+`ClientRequestToken`) y SEC-10 (el valor no aparece en los logs de Rayito).
+
+SEC-10 captura sólo el logger `rayito`: el DEBUG de botocore (y de urllib3)
+imprime los cuerpos de petición y respuesta, valor del secreto incluido, y
+eso no es un log de Rayito (docs/site/docs/secrets.md, "Logs").
 
 Coste: un secreto durante < 5 min (≈ $0,0005) + ~10 llamadas a Secrets
 Manager + un sandbox (~$0,03)."""
@@ -21,15 +25,17 @@ from botocore.exceptions import ClientError
 
 from rayito import Sandbox, SecretCache, SecretStore
 from rayito._aws import LambdaMicrovmsControlPlane
-from rayito._secrets import is_scheduled_for_deletion, version_token
+from rayito._secrets import (
+    CREATE_RETRY_BUDGET_SECONDS,
+    is_scheduled_for_deletion,
+    version_token,
+)
 from rayito.e2b import Secret
 from rayito.exceptions import SandboxNotFoundException
 
 from .conftest import TEST_SANDBOX_TIMEOUT_SECONDS, E2ESettings
 
 pytestmark = pytest.mark.e2e
-
-RECREATE_BUDGET_SECONDS = 60.0
 
 
 def count_calls(store: SecretStore, operation: str) -> list[int]:
@@ -50,7 +56,7 @@ def test_secret_crud_injection_and_hygiene(
     template_arn: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="rayito")
     name = f"e2e-{stdlib_secrets.token_hex(6)}"
     value = f"sentinel-{stdlib_secrets.token_hex(16)}"
     region = e2e_settings.region or control_plane.region
@@ -88,8 +94,8 @@ def test_secret_crud_injection_and_hygiene(
     finally:
         assert Secret.destroy(name, region=region)
     measure_recreate_after_force_delete(name, region)
-    assert value not in caplog.text, "SEC-10: el valor apareció en los logs del SDK"
-    assert name not in caplog.text, "SEC-10: el nombre apareció en los logs del SDK"
+    assert value not in caplog.text, "SEC-10: el valor apareció en los logs de Rayito"
+    assert name not in caplog.text, "SEC-10: el nombre apareció en los logs de Rayito"
 
 
 def measure_token_clash(name: str, region: str) -> None:
@@ -134,7 +140,7 @@ def measure_recreate_after_force_delete(name: str, region: str) -> None:
         finally:
             elapsed = time.monotonic() - started
             print(f"\nSEC-9 (a): recreación con reintento en {elapsed:.2f} s", flush=True)
-        assert elapsed < RECREATE_BUDGET_SECONDS
+        assert elapsed <= CREATE_RETRY_BUDGET_SECONDS
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)

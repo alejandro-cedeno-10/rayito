@@ -171,10 +171,23 @@ export class FakeSecretsManager implements SecretsManagerApi {
     };
   }
 
+  /**
+   * Como AWS (aceptación de 0.5.0): con `ForceDeleteWithoutRecovery`, un
+   * secreto que no existe NO es `ResourceNotFoundException`.
+   */
   async deleteSecret(input: { SecretId: string; ForceDeleteWithoutRecovery: boolean }) {
     this.#record("DeleteSecret", input);
-    const stored = this.#find(input.SecretId);
-    this.secrets.delete(stored.name);
+    const stored = [...this.secrets.values()].find(
+      (entry) => input.SecretId === entry.name || input.SecretId === entry.arn,
+    );
+    if (stored === undefined) {
+      if (input.ForceDeleteWithoutRecovery) {
+        return {};
+      }
+      this.#find(input.SecretId);
+    } else {
+      this.secrets.delete(stored.name);
+    }
     return {};
   }
 }
