@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-01
+
 ### Fixed
 
 - `/suspend` ya no puede colgarse en `sync(2)`: el paso 4 del checklist
