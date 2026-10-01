@@ -1005,9 +1005,30 @@ build (`create-microvm-image`/`update-microvm-image`) y el contrato del
 
 ## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
 
-Pendiente: `m15-secrets-gateway` documenta aquí cómo reutiliza
-`infra/secrets-access.yaml` (sin plantilla propia) y el contrato interno
-del listener de loopback.
+`gateways=`/`gateways` no añade ninguna operación de AWS nueva: cada
+cabecera de `SecretGateway.headers` es un nombre (o `SecretRef`) que
+`GatewaySection.fill` resuelve con la misma `SecretCache`/`GetSecretValue`
+de §19, justo antes de cada `Configure` (un acierto de caché no llama a
+AWS). No hay plantilla propia: la función reutiliza
+`infra/secrets-access.yaml` y la política `RayitoSecretsReader` sin
+cambios, porque quien lee Secrets Manager es siempre el SDK con las
+credenciales del llamante — `rayd` nunca tiene credenciales de AWS propias
+para esta función y no las necesita.
+
+El contrato interno (sin AWS: `ConfigureSandbox`, ya documentado en
+ADR-015) es lo que cambia de verdad:
+
+| Mensaje | Campo | Contrato |
+|---|---|---|
+| `SecretGatewayConfig.routes[].headers` | `map<string, string>` | Clave = nombre de cabecera HTTP tal cual se manda; valor = el secreto ya resuelto (nunca un nombre ni un ARN). Validado por `SecretValue::header_safe` (rechaza CR/LF/NUL) antes de construir cualquier cabecera saliente. |
+| `SecretGatewayRoute.upstream` | `string` | `https://host` exacto, sin ruta/query/fragmento (se añaden por petición). Validado en el dominio (`GatewaySpec::parse`) antes de que `rayd` abra el listener. |
+| `SecretGatewayRouteStatus.port` | `uint32` | El puerto real que `rayd` acaba de enlazar en `127.0.0.1` (elegido por el SO, `bind(0)`); nunca se repite entre rutas de un mismo `Configure`. |
+| `SecretGatewayRouteStatus.last_error_class` | `string` | Una de las clases cerradas de `GatewayErrorClass` (`not_allowed`, `rate_limited`, `upstream_unreachable`, `upstream_timeout`, `upstream_error`); vacío si la ruta no ha fallado todavía. |
+
+No hay IAM nuevo (reutiliza `RayitoSecretsReader` de §19) ni un cliente AWS
+nuevo del lado de `rayd`: el único cliente que esta función añade es el
+`hyper`/`rustls` HTTPS genérico hacia el `upstream` declarado, que no es
+una API de AWS.
 
 ## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
 

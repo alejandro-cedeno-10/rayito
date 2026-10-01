@@ -18,6 +18,14 @@ import {
   sharedControlPlane,
 } from "../aws/control-plane.js";
 import {
+  CONFIGURE_DOC,
+  CONFIGURE_FEATURE,
+  type ConfigureSection,
+  configSectionName,
+  requireConfigureSupport,
+  sectionError,
+} from "../configure-base.js";
+import {
   errorMessage,
   IndexWriteError,
   InvalidArgumentError,
@@ -25,11 +33,17 @@ import {
   SandboxNotFoundError,
   SandboxNotReadyError,
   TimeoutError,
+  UnimplementedError,
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
+import {
+  ConfigureRequestSchema,
+  ConfigureStatusRequestSchema,
+} from "../gen/rayito/v1/configure_pb.js";
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
+import { SecretGatewayStatusSchema } from "../gen/rayito/v1/secret_gateway_pb.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
@@ -59,6 +73,14 @@ import {
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import { resolveImageVariant } from "../role-policy.js";
+import type { GatewayStatus, SecretGateway } from "../secret-gateway/domain.js";
+import {
+  EMPTY_GATEWAYS,
+  GatewayHandle,
+  GatewaySection,
+  gatewayStatusesFromProto,
+} from "../secret-gateway/section.js";
+import type { SecretCache } from "../secrets/cache.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -345,7 +367,7 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
   readonly size?: unknown;
   readonly events?: unknown;
   readonly telemetry?: unknown;
-  readonly gateways?: Readonly<Record<string, unknown>> | undefined;
+  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
   readonly domain?: unknown;
 }
 
@@ -630,6 +652,7 @@ export class Sandbox implements AsyncDisposable {
   #readinessHealth: SandboxHealth | undefined;
   readonly #secrets: SecretEnvs;
   #instrumentation: Instrumentation = NOOP;
+  #gateways: GatewayHandle = EMPTY_GATEWAYS;
 
   private constructor(core: SandboxCore) {
     this.#core = core;
@@ -690,7 +713,7 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
-    planFeatures(
+    const featurePlan = planFeatures(
       {
         mounts: options.mounts,
         volumes: options.volumes,
@@ -768,6 +791,12 @@ export class Sandbox implements AsyncDisposable {
             egressFeature(network, options.allowInternetAccess),
           );
         }
+        await opened.#applyConfigureSections(
+          featurePlan.configureSections as readonly {
+            build(cache: SecretCache): ConfigureSection;
+          }[],
+          options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        );
         return opened;
       },
     );
@@ -1195,6 +1224,14 @@ export class Sandbox implements AsyncDisposable {
     return this.#core.transfer;
   }
 
+  /** `{ nombre: GatewayStatus }` de `create({ gateways })`: vacío (y su
+   * `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
+   * `"http://127.0.0.1:<puerto>"`, el host al que apuntar
+   * `ANTHROPIC_BASE_URL` y similares dentro del sandbox. */
+  get gateways(): GatewayHandle {
+    return this.#gateways;
+  }
+
   // --------------------------------------------------------------- transfers
 
   /**
@@ -1553,6 +1590,89 @@ export class Sandbox implements AsyncDisposable {
       await terminateQuietly(this.#core.controlPlane, this.sandboxId, this.#core.logger);
       throw error;
     }
+  }
+
+  /**
+   * Único punto de `create()` que llama a `ConfigureSandbox`: agrupa en una
+   * sola llamada las secciones 0.6 que `planFeatures` dejó pendientes (hoy
+   * sólo `gateways`; una función futura añade su propia entrada a
+   * `FeaturePlan.configureSections`, nunca toca este método). Cada entrada
+   * es un `GatewaySectionFactory`-como-objeto (`{ build(cache) }`) sobre la
+   * `SecretCache` ya resuelta del handle; exige su flag en
+   * `Health.features` antes de construir el `ConfigureRequest` y traduce
+   * cada `SectionResult` a su excepción (`sectionError`).
+   */
+  async #applyConfigureSections(
+    factories: readonly { build(cache: SecretCache): ConfigureSection }[],
+    timeoutMs: number,
+  ): Promise<void> {
+    if (factories.length === 0) {
+      return;
+    }
+    const features = requireConfigureSupport(this.#core.agentFeatures, CONFIGURE_FEATURE);
+    const cache =
+      this.#secrets.binding?.cache ??
+      sharedSecretCache(
+        this.#core.controlPlane.region,
+        awsClientSettingsOf(this.#core.controlPlane).credentials,
+      );
+    const sections = factories.map((factory) => factory.build(cache));
+    for (const section of sections) {
+      if (!features[section.requiredFlag]) {
+        throw new UnimplementedError(
+          section.section,
+          "esta imagen no tiene esta función implementada todavía",
+          CONFIGURE_DOC,
+        );
+      }
+    }
+    const request = create(ConfigureRequestSchema, {});
+    for (const section of sections) {
+      await section.fill(request);
+    }
+    const response = await this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
+    );
+    for (const result of response.results) {
+      const error = sectionError(configSectionName(result.section), result);
+      if (error !== undefined) {
+        throw error;
+      }
+    }
+    const gatewaySection = sections.find(
+      (section): section is GatewaySection => section instanceof GatewaySection,
+    );
+    if (gatewaySection !== undefined) {
+      const status = await this.#fetchConfigureStatus(timeoutMs);
+      this.#gateways = new GatewayHandle(gatewayStatusesFromProto(status), () =>
+        this.#refreshGateways(gatewaySection, timeoutMs),
+      );
+    }
+  }
+
+  async #fetchConfigureStatus(timeoutMs: number) {
+    const status = await this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configureStatus(
+        create(ConfigureStatusRequestSchema, {}),
+        callOptions(timeoutMs, undefined),
+      ),
+    );
+    return status.secretGateway ?? create(SecretGatewayStatusSchema, {});
+  }
+
+  /** `sbx.gateways.refresh()`: vuelve a resolver cada cabecera (una
+   * `SecretCache` vencida la relee) y manda un `Configure` nuevo — la
+   * forma de rotar un secreto sin recrear el sandbox. */
+  async #refreshGateways(
+    section: GatewaySection,
+    timeoutMs: number,
+  ): Promise<Readonly<Record<string, GatewayStatus>>> {
+    const request = create(ConfigureRequestSchema, {});
+    await section.fill(request);
+    await this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
+    );
+    return gatewayStatusesFromProto(await this.#fetchConfigureStatus(timeoutMs));
   }
 
   #throwUnlessEnforced(enforcement: EgressEnforcement, feature: string): void {

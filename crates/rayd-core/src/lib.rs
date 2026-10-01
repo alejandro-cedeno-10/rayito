@@ -46,6 +46,7 @@ pub mod pty;
 pub mod root_egress;
 pub mod run_payload;
 pub mod sandbox_timeout;
+pub mod secret_gateway;
 pub mod session;
 pub mod suspend_sync;
 pub mod transfer;

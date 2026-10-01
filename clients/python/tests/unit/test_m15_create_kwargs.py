@@ -1,9 +1,11 @@
-"""`Sandbox.create()`/`AsyncSandbox.create()`: las siete opciones 0.6 lanzan
-`UnimplementedError` antes de resolver ningún plano de control (y por tanto
-antes de cualquier llamada a AWS: `plan_features` corre antes de
-`resolve_control_plane`); `pool=` junto con cualquiera de ellas es
-`InvalidArgumentException` por el mismo mecanismo que el resto de los
-kwargs de plano."""
+"""`Sandbox.create()`/`AsyncSandbox.create()`: las seis opciones 0.6 que
+siguen siendo un stub lanzan `UnimplementedError` antes de resolver ningún
+plano de control (y por tanto antes de cualquier llamada a AWS:
+`plan_features` corre antes de `resolve_control_plane`); `pool=` junto con
+cualquiera de ellas es `InvalidArgumentException` por el mismo mecanismo
+que el resto de los kwargs de plano. `gateways=` (m15-secrets-gateway) ya
+no es un stub: con un valor mal formado lanza `InvalidArgumentException`
+en su lugar, en el mismo punto (antes de `resolve_control_plane`)."""
 
 from __future__ import annotations
 
@@ -21,15 +23,19 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
         ("size", "4gb"),
         ("events", object()),
         ("telemetry", object()),
-        ("gateways", {"anthropic": object()}),
         ("domain", object()),
     ],
 )
-def test_sync_create_rejects_each_0_6_option_before_resolving_a_control_plane(
+def test_sync_create_rejects_each_remaining_stub_option_before_resolving_a_control_plane(
     option: str, value: object
 ) -> None:
     with pytest.raises(UnimplementedError):
         Sandbox.create("rayito-base", **{option: value})  # type: ignore[arg-type]
+
+
+def test_sync_create_rejects_a_malformed_gateways_value_before_resolving_a_control_plane() -> None:
+    with pytest.raises(InvalidArgumentException):
+        Sandbox.create("rayito-base", gateways={"anthropic": object()})  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

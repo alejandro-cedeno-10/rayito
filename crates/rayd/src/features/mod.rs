@@ -1,9 +1,9 @@
 //! `FeatureSet`: the six 0.6 feature slots (M15 foundations, ADR-015),
-//! built once from `main` by `build(&FeatureContext)`. Every slot is
-//! `slot::Unsupported` in this build; each feature replaces its own
-//! field's construction (inside its own `features::<name>::build`) in its
-//! own PR — `FeatureSet`'s field list and `build`'s signature do not
-//! change for that.
+//! built once from `main` by `build(&FeatureContext)`. Every slot starts as
+//! `slot::Unsupported`; each feature replaces its own field's construction
+//! (inside its own `features::<name>::build`) in its own PR —
+//! `FeatureSet`'s field list and `build`'s signature do not change for
+//! that. `secret_gateway` (m15-secrets-gateway) is the first to do so.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -60,13 +60,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_slot_starts_unsupported() {
+    fn every_slot_starts_unsupported_except_the_features_already_shipped() {
         let set = build(&FeatureContext);
         assert!(!set.s3_mounts.supported());
         assert!(!set.efs_volumes.supported());
         assert!(!set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());
-        assert!(!set.secret_gateway.supported());
+        // m15-secrets-gateway: the first 0.6 feature with a real adapter
+        // (`features::secret_gateway::build`), so this is the one slot this
+        // build actually supports.
+        assert!(set.secret_gateway.supported());
         assert!(!set.template_start.supported());
     }
 }

@@ -132,14 +132,18 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot is still `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself is
-        // reported. The feature that gives a slot a real adapter updates
-        // this one call site (`rayd_core::features::AgentFeatures`), never
-        // `HealthGrpc`'s constructor.
-        features: Some(agent_features_message(
-            rayd_core::features::AgentFeatures::foundations_only(),
-        )),
+        // M15: every slot but `secret_gateway` (m15-secrets-gateway) is
+        // still `Unsupported` (`features::build`). The feature that gives a
+        // slot a real adapter updates this one call site
+        // (`rayd_core::features::AgentFeatures`), never `HealthGrpc`'s
+        // constructor: a feature's `ConfigurableFeature::supported()` is a
+        // fixed property of this build, never a per-request runtime check,
+        // so hard-coding its flag here is equivalent to threading
+        // `FeatureSet` through just to ask it.
+        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
+            secret_gateway: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        })),
     }
 }
 
@@ -154,8 +158,15 @@ fn agent_features_message(
         telemetry_export: features.telemetry_export,
         secret_gateway: features.secret_gateway,
         template_start: features.template_start,
-        // No feature opens a root-egress path yet (`root_egress.rs`).
-        root_egress: Vec::new(),
+        // secret-gateway is the one feature in this build whose adapter
+        // sends traffic out as root (its fixed upstream, never a guest
+        // process's own route): declared here, never a host or IP
+        // (`rayd_core::root_egress`).
+        root_egress: if features.secret_gateway {
+            vec![i32::from(rayito_proto::v1::RootEgressClass::SecretGatewayUpstream)]
+        } else {
+            Vec::new()
+        },
     }
 }
 

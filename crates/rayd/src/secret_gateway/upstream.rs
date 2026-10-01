@@ -1,0 +1,215 @@
+//! The HTTPS client every gateway route forwards through (ADR-023): HTTP/1.1
+//! (a loopback proxy in front of one fixed upstream API gets nothing from
+//! h2 multiplexing that a pooled connection does not already give it),
+//! `FilteringResolver` so a route's upstream can never resolve to a
+//! loopback, link-local or IMDS address
+//! (`rayd_core::transfer::is_forbidden_address`, the same predicate
+//! `adapters::signed_http` and the local proxy use), the OS trust store,
+//! and bounded connect/idle timeouts. Both the request and the response
+//! body stream through unbuffered (no `Vec<u8>` ever holds a whole body),
+//! so a chunked upload or an SSE response passes through as it arrives.
+
+use std::error::Error as StdError;
+use std::fmt;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::future::Future;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
+use axum::body::Body;
+use http::{Request, Response};
+use hyper::body::Incoming;
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector, HttpsConnectorBuilder};
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::dns::{GaiResolver, Name};
+use hyper_util::rt::{TokioExecutor, TokioTimer};
+use rayd_core::transfer::is_forbidden_address;
+use rustls::ClientConfig;
+use tower::Service;
+
+/// No upstream connection attempt waits longer than this; well above a
+/// loopback-to-internet handshake, short enough that a stuck upstream
+/// never pins a sandbox command for long.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the pool keeps an idle connection to one upstream before
+/// closing it.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// At most this many idle connections per upstream host: one gateway route
+/// talks to exactly one host, so a handful covers bursty concurrent calls
+/// without the pool growing unbounded.
+const POOL_MAX_IDLE_PER_HOST: usize = 4;
+
+/// The native trust store could not be loaded.
+#[derive(Debug)]
+pub struct UpstreamInitError(io::Error);
+
+impl fmt::Display for UpstreamInitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "trust store unavailable: {}", self.0.kind())
+    }
+}
+
+impl StdError for UpstreamInitError {}
+
+/// Why forwarding a request never reached (or never finished) a response;
+/// mirrors `rayd_core::secret_gateway::GatewayErrorClass`'s upstream
+/// variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardError {
+    Unreachable,
+    Timeout,
+}
+
+type BoxError = Box<dyn StdError + Send + Sync>;
+type Connector = HttpsConnector<HttpConnector<FilteringResolver>>;
+
+/// A resolver that keeps only the addresses `is_forbidden_address` allows,
+/// so `GatewayRoute::upstream` can never be pointed at the guest's own
+/// loopback, a link-local address or IMDS by a route the SDK built from
+/// user input.
+#[derive(Clone)]
+struct FilteringResolver(GaiResolver);
+
+impl Default for FilteringResolver {
+    fn default() -> Self {
+        Self(GaiResolver::new())
+    }
+}
+
+/// Every address a name resolved to was one `rayd` refuses to reach.
+#[derive(Debug, Clone, Copy)]
+struct ForbiddenAddressError;
+
+impl fmt::Display for ForbiddenAddressError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("forbidden_address")
+    }
+}
+
+impl StdError for ForbiddenAddressError {}
+
+type ResolveFuture =
+    Pin<Box<dyn Future<Output = Result<std::vec::IntoIter<SocketAddr>, BoxError>> + Send>>;
+
+impl Service<Name> for FilteringResolver {
+    type Response = std::vec::IntoIter<SocketAddr>;
+    type Error = BoxError;
+    type Future = ResolveFuture;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx).map_err(|error| Box::new(error) as BoxError)
+    }
+
+    fn call(&mut self, name: Name) -> Self::Future {
+        let resolving = self.0.call(name);
+        Box::pin(async move {
+            let allowed: Vec<SocketAddr> = resolving
+                .await
+                .map_err(|error| Box::new(error) as BoxError)?
+                .filter(|address| !is_forbidden_address(address.ip()))
+                .collect();
+            if allowed.is_empty() {
+                Err(Box::new(ForbiddenAddressError) as BoxError)
+            } else {
+                Ok(allowed.into_iter())
+            }
+        })
+    }
+}
+
+/// The client every `GatewayRoute`'s listener shares: one pooled
+/// connection set per upstream host, built once by `features::secret_gateway`.
+pub struct GatewayUpstream {
+    client: Client<Connector, Body>,
+}
+
+impl GatewayUpstream {
+    /// OS trust store, TLS 1.2+, HTTPS only, the address filter above.
+    ///
+    /// # Errors
+    /// `UpstreamInitError` when the OS trust store cannot be loaded.
+    pub fn new() -> Result<Self, UpstreamInitError> {
+        let config = ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|error| UpstreamInitError(io::Error::other(error)))?
+        .with_native_roots()
+        .map_err(UpstreamInitError)?
+        .with_no_client_auth();
+        let mut http = HttpConnector::new_with_resolver(FilteringResolver::default());
+        http.enforce_http(false);
+        http.set_connect_timeout(Some(CONNECT_TIMEOUT));
+        http.set_nodelay(true);
+        let connector = HttpsConnectorBuilder::new()
+            .with_tls_config(config)
+            .https_only()
+            .enable_http1()
+            .wrap_connector(http);
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
+            .pool_timer(TokioTimer::new())
+            .build(connector);
+        Ok(Self { client })
+    }
+
+    /// Sends `request` and hands back the response head plus its still-open
+    /// body (`Incoming`): the caller streams it on, nothing is buffered
+    /// here. `ForwardError::Timeout` only ever covers the connection
+    /// attempt (`CONNECT_TIMEOUT`); a connection that opens but then stalls
+    /// mid-response is the caller's own idle timeout to enforce, because
+    /// only the caller knows whether the stall is an SSE keep-alive gap or
+    /// a truly stuck upstream.
+    ///
+    /// # Errors
+    /// `ForwardError::Unreachable` when the connection could not be
+    /// established (including a resolved address `FilteringResolver`
+    /// refused); `ForwardError::Timeout` when it timed out
+    /// (`CONNECT_TIMEOUT`).
+    pub async fn send(
+        &self,
+        request: Request<Body>,
+    ) -> Result<Response<Incoming>, ForwardError> {
+        self.client.request(request).await.map_err(|error| classify(&error))
+    }
+}
+
+fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
+    let mut source: Option<&(dyn StdError + 'static)> = Some(error);
+    while let Some(current) = source {
+        if current.downcast_ref::<ForbiddenAddressError>().is_some() {
+            return ForwardError::Unreachable;
+        }
+        if current.downcast_ref::<io::Error>().is_some_and(|io_error| {
+            io_error.kind() == io::ErrorKind::TimedOut
+        }) {
+            return ForwardError::Timeout;
+        }
+        source = current.source();
+    }
+    if error.is_connect() {
+        ForwardError::Unreachable
+    } else {
+        ForwardError::Timeout
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_request_to_a_forbidden_address_is_classified_unreachable_without_connecting() {
+        let upstream = GatewayUpstream::new().unwrap();
+        let request = Request::builder()
+            .uri("https://169.254.169.254/latest/meta-data/")
+            .body(Body::empty())
+            .unwrap();
+        let error = upstream.send(request).await.unwrap_err();
+        assert_eq!(error, ForwardError::Unreachable);
+    }
+}

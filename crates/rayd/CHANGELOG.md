@@ -31,7 +31,19 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
-<!-- m15-secrets-gateway -->
+- **Pasarela de secretos en loopback** (`m15-secrets-gateway`, M15, ADR-023):
+  el slot `secret_gateway` deja de ser `Unsupported`. Un listener `axum`
+  por ruta de `SecretGatewayConfig` (`rayd::secret_gateway`), con
+  allowlist de método/ruta y límite de peticiones por minuto (cubo de
+  tokens entero y determinista, `rayd_core::secret_gateway`) antes de
+  reenviar al `upstream` fijo de la ruta por un cliente HTTPS compartido
+  (`GatewayUpstream`: raíz de confianza del SO, `FilteringResolver` para
+  que un `upstream` nunca resuelva a loopback/link-local/IMDS, cuerpos en
+  flujo sin bufferizar). Las cabeceras del guest con el mismo nombre que
+  una vaultada se eliminan antes de inyectar el valor real (T24): el
+  código del sandbox nunca puede leer ni suplantar su propio secreto. Sin
+  ningún `Configure` con `secret_gateway`, `rayd` no abre ningún socket de
+  loopback para esta función.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

@@ -36,6 +36,13 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._configure_base import (
+    CONFIGURE_DOC,
+    AgentFeatures,
+    agent_features_from_health,
+    require_configure_support,
+    section_error,
+)
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
@@ -165,6 +172,13 @@ from rayito._sandbox_base import (
     with_guest_facts,
     write_index_record,
 )
+from rayito._secret_gateway import (
+    EMPTY_GATEWAYS,
+    GatewayHandle,
+    GatewaySection,
+    GatewayStatus,
+    gateway_statuses_from_proto,
+)
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -205,6 +219,7 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
+from rayito.sandbox_sync.configure import CONFIGURE_FEATURE, call_configure, call_configure_status
 from rayito.sandbox_sync.filesystem import Filesystem
 from rayito.sandbox_sync.git import Git
 from rayito.sandbox_sync.lifecycle import DeadlineTrigger, set_timeout_once
@@ -214,6 +229,8 @@ from rayito.sandbox_sync.pty import Pty
 from rayito.sandbox_sync.transfer import Transfers
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -439,6 +456,9 @@ class Sandbox:
         self._channel = transport.open_channel(info.endpoint, self._plugin)
         self._stream_channel: grpc.Channel | None = None
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
+        self._agent_features: AgentFeatures | None = None
+        self._gateways: GatewayHandle = EMPTY_GATEWAYS
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
@@ -742,7 +762,7 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
-        plan_features(
+        feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
                 volumes=volumes,
@@ -815,6 +835,9 @@ class Sandbox:
             sandbox._secrets = binding
             if launch.enforce:
                 sandbox._apply_initial_network(launch)
+            sandbox._apply_configure_sections(
+                feature_plan.configure_sections, timeout=request_timeout
+            )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -1258,6 +1281,14 @@ class Sandbox:
         """El resultado del restore automático de `create(persist=)`; `None` si
         no hubo (primera vida de ese `name`) o si el sandbox no persiste."""
         return self._last_restore
+
+    @property
+    def gateways(self) -> GatewayHandle:
+        """`{nombre: GatewayStatus}` de `create(gateways=)`: vacío (y su
+        `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
+        `"http://127.0.0.1:<puerto>"`, el host al que apuntar
+        `ANTHROPIC_BASE_URL` y similares dentro del sandbox."""
+        return self._gateways
 
     # --------------------------------------------------------------- lifecycle
 
@@ -2054,6 +2085,66 @@ class Sandbox:
         este handle; sólo se crea si alguna llamada usa `secrets=`."""
         return shared_secret_cache(self._control_plane.region, self._session)
 
+    def _apply_configure_sections(
+        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+    ) -> None:
+        """Único punto de `create()` que llama a `ConfigureSandbox`: agrupa
+        en una sola llamada las secciones 0.6 que `plan_features` dejó
+        pendientes (hoy sólo `gateways=`; una función futura añade su propia
+        entrada a `FeaturePlan.configure_sections`, nunca toca este método).
+        Cada entrada es un invocable de la `SecretCache` ya resuelta del
+        handle (`GatewaySectionFactory`); exige su flag en
+        `Health.features` antes de construir el `ConfigureRequest` y
+        traduce cada `SectionResult` a su excepción (`section_error`).
+        """
+        if not factories:
+            return
+        features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
+        cache = (
+            self._secrets.cache
+            if self._secrets is not None and self._secrets.cache is not None
+            else self._default_secret_cache()
+        )
+        sections = [factory(cache) for factory in factories]
+        for section in sections:
+            if not getattr(features, section.required_flag, False):
+                raise UnimplementedError(
+                    section.section,
+                    "esta imagen no tiene esta función implementada todavía",
+                    doc=CONFIGURE_DOC,
+                )
+        request = configure_pb2.ConfigureRequest()
+        for section in sections:
+            section.fill(request)
+        response = call_configure(self._configure, request, timeout=timeout)
+        for result in response.results:
+            error = section_error(
+                configure_pb2.ConfigSection.Name(result.section),
+                configure_pb2.SectionCode.Name(result.code),
+                result.error_class,
+            )
+            if error is not None:
+                raise error
+        gateway_section = next((s for s in sections if isinstance(s, GatewaySection)), None)
+        if gateway_section is not None:
+            status = call_configure_status(self._configure, timeout=timeout)
+            self._gateways = GatewayHandle(
+                gateway_statuses_from_proto(status.secret_gateway),
+                refresher=lambda: self._refresh_gateways(gateway_section, timeout=timeout),
+            )
+
+    def _refresh_gateways(
+        self, section: GatewaySection, *, timeout: float
+    ) -> Mapping[str, GatewayStatus]:
+        """`sbx.gateways.refresh()`: vuelve a resolver cada cabecera (una
+        `SecretCache` vencida la relee) y manda un `Configure` nuevo — la
+        forma de rotar un secreto sin recrear el sandbox."""
+        request = configure_pb2.ConfigureRequest()
+        section.fill(request)
+        call_configure(self._configure, request, timeout=timeout)
+        status = call_configure_status(self._configure, timeout=timeout)
+        return gateway_statuses_from_proto(status.secret_gateway)
+
     def _rebind_secrets(
         self,
         secrets: Mapping[str, str | SecretRef] | None,
@@ -2322,6 +2413,10 @@ class Sandbox:
         kernel reiniciado o de un desfase de reloj mayor que 5 s."""
         self._metadata = metadata_from_health(response)
         self._guest = guest_facts_from_health(response)
+        # M15: `None` en un agente anterior a 0.6.0 (campo `features`
+        # ausente); `_apply_configure_sections` es quien exige que no lo sea
+        # antes de mandar cualquier sección 0.6.
+        self._agent_features = agent_features_from_health(response)
         if self._ready_uptime_ms is None:
             self._ready_uptime_ms = int(response.uptime_ms)
         self._warn_hardening(response)

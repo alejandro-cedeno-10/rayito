@@ -2,27 +2,41 @@
 // @generated from file rayito/v1/secret_gateway.proto (package rayito.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file rayito/v1/secret_gateway.proto.
  */
 export const file_rayito_v1_secret_gateway: GenFile = /*@__PURE__*/
-  fileDesc("Ch5yYXlpdG8vdjEvc2VjcmV0X2dhdGV3YXkucHJvdG8SCXJheWl0by52MSIVChNTZWNyZXRHYXRld2F5Q29uZmlnIhUKE1NlY3JldEdhdGV3YXlTdGF0dXNiBnByb3RvMw");
+  fileDesc("Ch5yYXlpdG8vdjEvc2VjcmV0X2dhdGV3YXkucHJvdG8SCXJheWl0by52MSJEChNTZWNyZXRHYXRld2F5Q29uZmlnEi0KBnJvdXRlcxgBIAMoCzIdLnJheWl0by52MS5TZWNyZXRHYXRld2F5Um91dGUi7AEKElNlY3JldEdhdGV3YXlSb3V0ZRIMCgRuYW1lGAEgASgJEhAKCHVwc3RyZWFtGAIgASgJEjsKB2hlYWRlcnMYAyADKAsyKi5yYXlpdG8udjEuU2VjcmV0R2F0ZXdheVJvdXRlLkhlYWRlcnNFbnRyeRIwCgVhbGxvdxgEIAMoCzIhLnJheWl0by52MS5TZWNyZXRHYXRld2F5QWxsb3dSdWxlEhcKD3JhdGVfcGVyX21pbnV0ZRgFIAEoDRouCgxIZWFkZXJzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASI2ChZTZWNyZXRHYXRld2F5QWxsb3dSdWxlEg4KBm1ldGhvZBgBIAEoCRIMCgRwYXRoGAIgASgJIkoKE1NlY3JldEdhdGV3YXlTdGF0dXMSMwoGcm91dGVzGAEgAygLMiMucmF5aXRvLnYxLlNlY3JldEdhdGV3YXlSb3V0ZVN0YXR1cyKDAQoYU2VjcmV0R2F0ZXdheVJvdXRlU3RhdHVzEgwKBG5hbWUYASABKAkSDAoEcG9ydBgCIAEoDRIxCgVzdGF0ZRgDIAEoDjIiLnJheWl0by52MS5TZWNyZXRHYXRld2F5Um91dGVTdGF0ZRIYChBsYXN0X2Vycm9yX2NsYXNzGAQgASgJKpYBChdTZWNyZXRHYXRld2F5Um91dGVTdGF0ZRIqCiZTRUNSRVRfR0FURVdBWV9ST1VURV9TVEFURV9VTlNQRUNJRklFRBAAEigKJFNFQ1JFVF9HQVRFV0FZX1JPVVRFX1NUQVRFX0xJU1RFTklORxABEiUKIVNFQ1JFVF9HQVRFV0FZX1JPVVRFX1NUQVRFX0ZBSUxFRBACYgZwcm90bzM");
 
 /**
- * Owned by m15-secrets-gateway. Foundations only creates these two empty
- * stub messages (so `configure.proto` has a stable field to point at); the
- * feature that implements secrets-gateway owns every field number inside
- * this file from here on. Message names stay prefixed
- * (`SecretGateway*`) so they never collide with another feature's
- * messages inside `rayito.v1`.
+ * Owned by m15-secrets-gateway. Message names stay prefixed
+ * (`SecretGateway*`) so they never collide with another feature's messages
+ * inside `rayito.v1`.
+ *
+ * Semantics: a present `SecretGatewayConfig` is the gateway's complete
+ * desired state and replaces whatever routes were configured before (an
+ * empty message tears every route down, closing its listener). Header
+ * values are the only place a secret's actual bytes cross the wire to
+ * `rayd`: the SDK resolves each configured header from Secrets Manager
+ * (through the same `SecretCache` `secrets=` already uses) right before
+ * building this message, and `rayd` keeps the value only in memory
+ * (`SecretValue`, `Zeroizing`, never logged, never `Debug`-printed —
+ * `ConfigureGrpc` never logs its request for exactly this reason). A route
+ * name that repeats what a previous `Configure` call sent restarts that
+ * route's listener with the new routes; a name that is missing from a new
+ * call tears that route's listener down.
  *
  * @generated from message rayito.v1.SecretGatewayConfig
  */
 export type SecretGatewayConfig = Message<"rayito.v1.SecretGatewayConfig"> & {
+  /**
+   * @generated from field: repeated rayito.v1.SecretGatewayRoute routes = 1;
+   */
+  routes: SecretGatewayRoute[];
 };
 
 /**
@@ -33,9 +47,98 @@ export const SecretGatewayConfigSchema: GenMessage<SecretGatewayConfig> = /*@__P
   messageDesc(file_rayito_v1_secret_gateway, 0);
 
 /**
+ * One loopback HTTP listener: `rayd` accepts on `127.0.0.1:<ephemeral>`,
+ * checks `allow` and the rate limit before touching the network, strips
+ * any inbound header `headers` also names (so the sandbox can never spoof
+ * or read back its own gateway's credential) and injects the vaulted
+ * values, then forwards to `upstream` over TLS as root — the one
+ * declared, named exception to the guest's egress policy this feature
+ * opens (`RootEgressClass::SecretGatewayUpstream`, ADR-012).
+ *
+ * @generated from message rayito.v1.SecretGatewayRoute
+ */
+export type SecretGatewayRoute = Message<"rayito.v1.SecretGatewayRoute"> & {
+  /**
+   * 1-64 lowercase `[a-z0-9-]`; keys `SecretGatewayStatus.routes` and is
+   * never itself secret.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * `https://` only; no path, query or fragment (those come from each
+   * forwarded request). Never echoed in an error.
+   *
+   * @generated from field: string upstream = 2;
+   */
+  upstream: string;
+
+  /**
+   * Header name -> the value to inject, resolved by the SDK before this
+   * call. At most `MAX_HEADERS_PER_ROUTE` (rayd_core::secret_gateway::route).
+   *
+   * @generated from field: map<string, string> headers = 3;
+   */
+  headers: { [key: string]: string };
+
+  /**
+   * @generated from field: repeated rayito.v1.SecretGatewayAllowRule allow = 4;
+   */
+  allow: SecretGatewayAllowRule[];
+
+  /**
+   * Token-bucket capacity per full minute; `0` means "use the domain's
+   * default" (`rayd_core::secret_gateway::route::DEFAULT_RATE_PER_MINUTE`).
+   *
+   * @generated from field: uint32 rate_per_minute = 5;
+   */
+  ratePerMinute: number;
+};
+
+/**
+ * Describes the message rayito.v1.SecretGatewayRoute.
+ * Use `create(SecretGatewayRouteSchema)` to create a new message.
+ */
+export const SecretGatewayRouteSchema: GenMessage<SecretGatewayRoute> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_secret_gateway, 1);
+
+/**
+ * @generated from message rayito.v1.SecretGatewayAllowRule
+ */
+export type SecretGatewayAllowRule = Message<"rayito.v1.SecretGatewayAllowRule"> & {
+  /**
+   * `GET`, `POST`, ... (uppercase, no wildcard: a route that allows every
+   * method lists each one it needs).
+   *
+   * @generated from field: string method = 1;
+   */
+  method: string;
+
+  /**
+   * An exact path ("/v1/messages") or a prefix ending in the literal
+   * wildcard suffix "/*" (rayd_core::secret_gateway::route::WILDCARD_SUFFIX).
+   *
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
+
+/**
+ * Describes the message rayito.v1.SecretGatewayAllowRule.
+ * Use `create(SecretGatewayAllowRuleSchema)` to create a new message.
+ */
+export const SecretGatewayAllowRuleSchema: GenMessage<SecretGatewayAllowRule> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_secret_gateway, 2);
+
+/**
  * @generated from message rayito.v1.SecretGatewayStatus
  */
 export type SecretGatewayStatus = Message<"rayito.v1.SecretGatewayStatus"> & {
+  /**
+   * @generated from field: repeated rayito.v1.SecretGatewayRouteStatus routes = 1;
+   */
+  routes: SecretGatewayRouteStatus[];
 };
 
 /**
@@ -43,5 +146,69 @@ export type SecretGatewayStatus = Message<"rayito.v1.SecretGatewayStatus"> & {
  * Use `create(SecretGatewayStatusSchema)` to create a new message.
  */
 export const SecretGatewayStatusSchema: GenMessage<SecretGatewayStatus> = /*@__PURE__*/
-  messageDesc(file_rayito_v1_secret_gateway, 1);
+  messageDesc(file_rayito_v1_secret_gateway, 3);
+
+/**
+ * @generated from message rayito.v1.SecretGatewayRouteStatus
+ */
+export type SecretGatewayRouteStatus = Message<"rayito.v1.SecretGatewayRouteStatus"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * The real loopback port this route's listener bound (0 while the
+   * listener is still starting up, never repeated across routes).
+   *
+   * @generated from field: uint32 port = 2;
+   */
+  port: number;
+
+  /**
+   * @generated from field: rayito.v1.SecretGatewayRouteState state = 3;
+   */
+  state: SecretGatewayRouteState;
+
+  /**
+   * Lowercase snake `rayd_core::secret_gateway::GatewayErrorClass`, set only
+   * once a request against this route actually failed; empty otherwise.
+   *
+   * @generated from field: string last_error_class = 4;
+   */
+  lastErrorClass: string;
+};
+
+/**
+ * Describes the message rayito.v1.SecretGatewayRouteStatus.
+ * Use `create(SecretGatewayRouteStatusSchema)` to create a new message.
+ */
+export const SecretGatewayRouteStatusSchema: GenMessage<SecretGatewayRouteStatus> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_secret_gateway, 4);
+
+/**
+ * @generated from enum rayito.v1.SecretGatewayRouteState
+ */
+export enum SecretGatewayRouteState {
+  /**
+   * @generated from enum value: SECRET_GATEWAY_ROUTE_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: SECRET_GATEWAY_ROUTE_STATE_LISTENING = 1;
+   */
+  LISTENING = 1,
+
+  /**
+   * @generated from enum value: SECRET_GATEWAY_ROUTE_STATE_FAILED = 2;
+   */
+  FAILED = 2,
+}
+
+/**
+ * Describes the enum rayito.v1.SecretGatewayRouteState.
+ */
+export const SecretGatewayRouteStateSchema: GenEnum<SecretGatewayRouteState> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_secret_gateway, 0);
 

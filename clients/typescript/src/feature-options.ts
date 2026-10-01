@@ -7,6 +7,8 @@
  */
 
 import { UnimplementedError } from "./errors.js";
+import { type SecretGateway, validateGateways } from "./secret-gateway/domain.js";
+import { GatewaySectionFactory } from "./secret-gateway/section.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -23,17 +25,18 @@ export interface FeatureOptions {
   readonly size?: unknown;
   readonly events?: unknown;
   readonly telemetry?: unknown;
-  readonly gateways?: Readonly<Record<string, unknown>> | undefined;
+  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
   readonly domain?: unknown;
 }
 
-/** Vacío en 0.6 foundations a propósito: `planFeatures` lanza antes de
- * construir uno si alguna opción estaba puesta. */
+/** Vacío salvo que `gateways` (u otra función futura) añada su propio
+ * `GatewaySectionFactory`-como-objeto (`{ build(cache) }`). */
 export interface FeaturePlan {
   readonly configureSections: readonly unknown[];
 }
 
 const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
+const EMPTY_SECTIONS: readonly unknown[] = Object.freeze([]);
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
@@ -58,11 +61,16 @@ export function planFeatures(options: FeatureOptions, imageVariant?: string): Fe
   if (options.telemetry !== undefined) {
     throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);
   }
+  let configureSections: readonly unknown[] = EMPTY_SECTIONS;
   if (options.gateways !== undefined) {
-    throw new UnimplementedError("gateways", `llega en 0.6 (${GATEWAYS_CHANGE})`);
+    // Sólo valida la forma (ninguna llamada a AWS: `validateGateways` es
+    // pura). La `SecretCache` que de verdad resuelve cada cabecera llega
+    // después, cuando `create()` ya la calculó para `secrets` — ver
+    // `GatewaySectionFactory`.
+    configureSections = [new GatewaySectionFactory(validateGateways(options.gateways))];
   }
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
   }
-  return EMPTY_PLAN;
+  return configureSections.length === 0 ? EMPTY_PLAN : { configureSections };
 }

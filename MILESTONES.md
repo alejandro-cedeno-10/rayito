@@ -1402,8 +1402,19 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
 - **templates** (`m15-templates`): DSL de templates declarativos.
-- **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
-  loopback.
+- **secrets-gateway** (`m15-secrets-gateway`, ADR-023): pasarela de
+  credenciales en loopback — un listener `axum` por ruta declarada
+  (`gateways=`/`gateways`), allowlist de método/ruta y límite de tasa
+  (cubo de tokens entero y determinista) antes de reenviar, cabeceras
+  vaultadas inyectadas y las del guest con el mismo nombre eliminadas
+  primero (T24), `upstream` sólo `https://host` resuelto a través de un
+  cliente compartido que nunca alcanza loopback/link-local/IMDS
+  (`FilteringResolver`), ambos cuerpos en flujo (SSE y subidas troceadas
+  pasan sin cambios). Reutiliza `infra/secrets-access.yaml` sin plantilla
+  propia: el valor lo resuelve siempre el SDK con `SecretCache`, nunca
+  `rayd`. Implementado y probado localmente (231 tests Rust, unit Python y
+  TypeScript, `openspec validate --strict`); PR abierto, pendiente de la
+  aceptación serializada contra AWS real del hito.
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre
   CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
 

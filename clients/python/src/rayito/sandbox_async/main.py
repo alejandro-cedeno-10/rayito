@@ -29,6 +29,13 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._configure_base import (
+    CONFIGURE_DOC,
+    AgentFeatures,
+    agent_features_from_health,
+    require_configure_support,
+    section_error,
+)
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
@@ -159,6 +166,13 @@ from rayito._sandbox_base import (
     with_guest_facts,
     write_index_record,
 )
+from rayito._secret_gateway import (
+    EMPTY_GATEWAYS,
+    GatewayHandle,
+    GatewaySection,
+    GatewayStatus,
+    gateway_statuses_from_proto,
+)
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -199,6 +213,11 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
+from rayito.sandbox_async.configure import (
+    CONFIGURE_FEATURE,
+    call_configure,
+    call_configure_status,
+)
 from rayito.sandbox_async.filesystem import AsyncFilesystem
 from rayito.sandbox_async.git import AsyncGit
 from rayito.sandbox_async.lifecycle import AsyncDeadlineTrigger, set_timeout_once_async
@@ -218,6 +237,8 @@ from rayito.sandbox_sync.main import (
 )
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -402,6 +423,9 @@ class AsyncSandbox:
         self._channel = transport.open_aio_channel(info.endpoint, self._plugin)
         self._stream_channel: grpc.aio.Channel | None = None
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
+        self._agent_features: AgentFeatures | None = None
+        self._gateways: GatewayHandle = EMPTY_GATEWAYS
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
@@ -606,7 +630,7 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
-        plan_features(
+        feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
                 volumes=volumes,
@@ -680,6 +704,9 @@ class AsyncSandbox:
             sandbox._secrets = binding
             if launch.enforce:
                 await sandbox._apply_initial_network(launch)
+            await sandbox._apply_configure_sections(
+                feature_plan.configure_sections, timeout=request_timeout
+            )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -1051,6 +1078,11 @@ class AsyncSandbox:
         """El resultado del restore automático de `create(persist=)`; `None` si
         no hubo (primera vida de ese `name`) o si el sandbox no persiste."""
         return self._last_restore
+
+    @property
+    def gateways(self) -> GatewayHandle:
+        """Misma semántica que `Sandbox.gateways`."""
+        return self._gateways
 
     # --------------------------------------------------------------- lifecycle
 
@@ -1731,6 +1763,57 @@ class AsyncSandbox:
         """Misma semántica que `Sandbox._default_secret_cache`."""
         return shared_secret_cache(self._control_plane.region, self._session)
 
+    async def _apply_configure_sections(
+        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+    ) -> None:
+        """Misma semántica que `Sandbox._apply_configure_sections`, sobre el
+        canal `grpc.aio`."""
+        if not factories:
+            return
+        features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
+        cache = (
+            self._secrets.cache
+            if self._secrets is not None and self._secrets.cache is not None
+            else self._default_secret_cache()
+        )
+        sections = [factory(cache) for factory in factories]
+        for section in sections:
+            if not getattr(features, section.required_flag, False):
+                raise UnimplementedError(
+                    section.section,
+                    "esta imagen no tiene esta función implementada todavía",
+                    doc=CONFIGURE_DOC,
+                )
+        request = configure_pb2.ConfigureRequest()
+        for section in sections:
+            section.fill(request)
+        response = await call_configure(self._configure, request, timeout=timeout)
+        for result in response.results:
+            error = section_error(
+                configure_pb2.ConfigSection.Name(result.section),
+                configure_pb2.SectionCode.Name(result.code),
+                result.error_class,
+            )
+            if error is not None:
+                raise error
+        gateway_section = next((s for s in sections if isinstance(s, GatewaySection)), None)
+        if gateway_section is not None:
+            status = await call_configure_status(self._configure, timeout=timeout)
+            self._gateways = GatewayHandle(
+                gateway_statuses_from_proto(status.secret_gateway),
+                async_refresher=lambda: self._refresh_gateways(gateway_section, timeout=timeout),
+            )
+
+    async def _refresh_gateways(
+        self, section: GatewaySection, *, timeout: float
+    ) -> Mapping[str, GatewayStatus]:
+        """Misma semántica que `Sandbox._refresh_gateways`, en `asyncio`."""
+        request = configure_pb2.ConfigureRequest()
+        section.fill(request)
+        await call_configure(self._configure, request, timeout=timeout)
+        status = await call_configure_status(self._configure, timeout=timeout)
+        return gateway_statuses_from_proto(status.secret_gateway)
+
     async def _rebind_secrets(
         self,
         secrets: Mapping[str, str | SecretRef] | None,
@@ -1970,6 +2053,10 @@ class AsyncSandbox:
     def _record_health(self, response: health_pb2.HealthResponse) -> None:
         self._metadata = metadata_from_health(response)
         self._guest = guest_facts_from_health(response)
+        # M15: `None` en un agente anterior a 0.6.0 (campo `features`
+        # ausente); `_apply_configure_sections` es quien exige que no lo sea
+        # antes de mandar cualquier sección 0.6.
+        self._agent_features = agent_features_from_health(response)
         if self._ready_uptime_ms is None:
             self._ready_uptime_ms = int(response.uptime_ms)
         self._warn_hardening(response)
