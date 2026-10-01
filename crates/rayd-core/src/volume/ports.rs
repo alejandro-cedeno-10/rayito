@@ -73,7 +73,11 @@ pub trait VolumeMounter: Send + Sync {
 
     fn mount(&self, spec: &VolumeSpec) -> BoxFuture<'_, Result<(), MountFailure>>;
 
-    fn unmount(&self, path: &MountPath, mode: UnmountMode) -> BoxFuture<'_, Result<(), MountFailure>>;
+    fn unmount(
+        &self,
+        path: &MountPath,
+        mode: UnmountMode,
+    ) -> BoxFuture<'_, Result<(), MountFailure>>;
 
     fn probe(&self, path: &MountPath, budget: Duration) -> BoxFuture<'_, ProbeOutcome>;
 }

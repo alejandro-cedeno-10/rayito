@@ -25,12 +25,17 @@ const ID_SUFFIX_MIN: usize = 8;
 const ID_SUFFIX_MAX: usize = 40;
 
 fn validate_hex_id<'a>(value: &'a str, prefix: &str) -> Result<&'a str, VolumeError> {
-    let suffix = value.strip_prefix(prefix).ok_or(VolumeError::InvalidIdentifier)?;
+    let suffix = value
+        .strip_prefix(prefix)
+        .ok_or(VolumeError::InvalidIdentifier)?;
     let len = suffix.len();
     if !(ID_SUFFIX_MIN..=ID_SUFFIX_MAX).contains(&len) {
         return Err(VolumeError::InvalidIdentifier);
     }
-    if !suffix.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+    if !suffix
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return Err(VolumeError::InvalidIdentifier);
     }
     Ok(value)
@@ -113,7 +118,8 @@ fn is_canonical(path: &str) -> bool {
     if path.contains("//") {
         return false;
     }
-    path.split('/').all(|segment| segment != "." && segment != "..")
+    path.split('/')
+        .all(|segment| segment != "." && segment != "..")
 }
 
 /// A validated IPv4 dotted-quad, used for `efs-utils`' `mounttargetip=`
@@ -131,7 +137,9 @@ impl MountTargetIp {
             if part.is_empty() || (part.len() > 1 && part.starts_with('0')) {
                 return Err(VolumeError::InvalidIdentifier);
             }
-            *octet = part.parse::<u8>().map_err(|_| VolumeError::InvalidIdentifier)?;
+            *octet = part
+                .parse::<u8>()
+                .map_err(|_| VolumeError::InvalidIdentifier)?;
         }
         if parts.next().is_some() {
             return Err(VolumeError::InvalidIdentifier);
@@ -186,7 +194,10 @@ mod tests {
 
     #[test]
     fn a_file_system_id_shorter_than_the_minimum_is_rejected() {
-        assert_eq!(FileSystemId::parse("fs-123"), Err(VolumeError::InvalidIdentifier));
+        assert_eq!(
+            FileSystemId::parse("fs-123"),
+            Err(VolumeError::InvalidIdentifier)
+        );
     }
 
     #[test]
@@ -226,17 +237,26 @@ mod tests {
 
     #[test]
     fn a_path_with_a_trailing_slash_is_not_canonical() {
-        assert_eq!(MountPath::parse("/mnt/data/"), Err(VolumeError::InvalidPath));
+        assert_eq!(
+            MountPath::parse("/mnt/data/"),
+            Err(VolumeError::InvalidPath)
+        );
     }
 
     #[test]
     fn a_path_with_dot_dot_is_not_canonical() {
-        assert_eq!(MountPath::parse("/mnt/../etc"), Err(VolumeError::InvalidPath));
+        assert_eq!(
+            MountPath::parse("/mnt/../etc"),
+            Err(VolumeError::InvalidPath)
+        );
     }
 
     #[test]
     fn a_path_with_a_double_slash_is_not_canonical() {
-        assert_eq!(MountPath::parse("/mnt//data"), Err(VolumeError::InvalidPath));
+        assert_eq!(
+            MountPath::parse("/mnt//data"),
+            Err(VolumeError::InvalidPath)
+        );
     }
 
     #[test]
@@ -276,7 +296,10 @@ mod tests {
 
     #[test]
     fn a_mount_target_ip_with_too_few_octets_is_rejected() {
-        assert_eq!(MountTargetIp::parse("10.0.1"), Err(VolumeError::InvalidIdentifier));
+        assert_eq!(
+            MountTargetIp::parse("10.0.1"),
+            Err(VolumeError::InvalidIdentifier)
+        );
     }
 
     #[test]

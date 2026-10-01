@@ -43,7 +43,9 @@ impl VolumePlan {
         }
         specs.sort_by(|a, b| a.mount_path.as_str().cmp(b.mount_path.as_str()));
         for pair in specs.windows(2) {
-            let [first, second] = pair else { unreachable!() };
+            let [first, second] = pair else {
+                unreachable!()
+            };
             if first.mount_path.overlaps(&second.mount_path) {
                 return Err(VolumePlanError::Overlap {
                     first: first.mount_path.as_str().to_owned(),

@@ -13,7 +13,10 @@
 
 use std::time::Duration;
 
-use rayd_core::volume::{BoxFuture, MountFailure, MountFailureClass, MountPath, MountSupport, ProbeOutcome, UnmountMode, VolumeMounter, VolumeSpec};
+use rayd_core::volume::{
+    BoxFuture, MountFailure, MountFailureClass, MountPath, MountSupport, ProbeOutcome, UnmountMode,
+    VolumeMounter, VolumeSpec,
+};
 
 /// Always-unsupported `VolumeMounter`. Zero-cost by construction: it holds
 /// no state, spawns no process and opens no socket.
@@ -33,7 +36,11 @@ impl VolumeMounter for UnavailableEfsMounter {
         })
     }
 
-    fn unmount(&self, _path: &MountPath, _mode: UnmountMode) -> BoxFuture<'_, Result<(), MountFailure>> {
+    fn unmount(
+        &self,
+        _path: &MountPath,
+        _mode: UnmountMode,
+    ) -> BoxFuture<'_, Result<(), MountFailure>> {
         Box::pin(async {
             Err(MountFailure {
                 class: MountFailureClass::HelperMissing,
@@ -69,20 +76,34 @@ mod tests {
     #[tokio::test]
     async fn mount_always_fails_with_helper_missing() {
         let result = UnavailableEfsMounter.mount(&spec()).await;
-        assert_eq!(result, Err(MountFailure { class: MountFailureClass::HelperMissing }));
+        assert_eq!(
+            result,
+            Err(MountFailure {
+                class: MountFailureClass::HelperMissing
+            })
+        );
     }
 
     #[tokio::test]
     async fn unmount_always_fails_with_helper_missing() {
         let path = MountPath::parse("/mnt/data").unwrap();
-        let result = UnavailableEfsMounter.unmount(&path, UnmountMode::Lazy).await;
-        assert_eq!(result, Err(MountFailure { class: MountFailureClass::HelperMissing }));
+        let result = UnavailableEfsMounter
+            .unmount(&path, UnmountMode::Lazy)
+            .await;
+        assert_eq!(
+            result,
+            Err(MountFailure {
+                class: MountFailureClass::HelperMissing
+            })
+        );
     }
 
     #[tokio::test]
     async fn a_probe_always_finds_the_mount_gone() {
         let path = MountPath::parse("/mnt/data").unwrap();
-        let outcome = UnavailableEfsMounter.probe(&path, Duration::from_secs(5)).await;
+        let outcome = UnavailableEfsMounter
+            .probe(&path, Duration::from_secs(5))
+            .await;
         assert_eq!(outcome, ProbeOutcome::Gone);
     }
 }
