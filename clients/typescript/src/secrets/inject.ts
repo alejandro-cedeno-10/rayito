@@ -139,33 +139,54 @@ export function bindSecrets(
 
 export type CacheFactory = () => SecretCache;
 
-const sharedCaches = new Map<string | undefined, Map<unknown, SecretCache>>();
+/**
+ * Una caché por (región, credenciales), con tope: un proceso que crea un
+ * proveedor de credenciales por tenant o por petición no acumula cachés (ni
+ * valores) sin límite. Al pasar del tope se descarta la usada hace más tiempo
+ * (sólo cuesta releer después).
+ */
+export const MAX_SHARED_CACHES = 32;
 
-/** La caché del proceso para `secrets` sin `secretCache`: una por (región, credenciales), TTL 300. */
+interface SharedEntry {
+  readonly region: string | undefined;
+  readonly credentials: unknown;
+  readonly cache: SecretCache;
+}
+
+/** Orden de uso: la primera es la usada hace más tiempo. */
+const sharedCaches: SharedEntry[] = [];
+
+/**
+ * La caché del proceso para `secrets` sin `secretCache`: una por (región,
+ * credenciales), TTL 300. Cada vez que se pide una, todas descartan sus
+ * valores vencidos; como mucho hay `MAX_SHARED_CACHES`.
+ */
 export function sharedSecretCache(
   region: string | undefined,
   credentials: SecretStoreOptions["credentials"],
 ): SecretCache {
-  let byCredentials = sharedCaches.get(region);
-  if (byCredentials === undefined) {
-    byCredentials = new Map();
-    sharedCaches.set(region, byCredentials);
+  for (const entry of sharedCaches) {
+    entry.cache.sweep();
   }
-  let cache = byCredentials.get(credentials);
-  if (cache === undefined) {
-    cache = new SecretCache({ region, credentials });
-    byCredentials.set(credentials, cache);
+  const index = sharedCaches.findIndex(
+    (entry) => entry.region === region && entry.credentials === credentials,
+  );
+  if (index !== -1) {
+    const [entry] = sharedCaches.splice(index, 1) as [SharedEntry];
+    sharedCaches.push(entry);
+    return entry.cache;
+  }
+  const cache = new SecretCache({ region, credentials });
+  sharedCaches.push({ region, credentials, cache });
+  while (sharedCaches.length > MAX_SHARED_CACHES) {
+    sharedCaches.shift();
   }
   return cache;
 }
 
-/** Sólo para tests: cuántas cachés compartidas se han creado. */
+/** Sólo para tests: cuántas cachés compartidas hay vivas. */
 export function sharedSecretCacheCount(): number {
-  let count = 0;
-  for (const byCredentials of sharedCaches.values()) {
-    count += byCredentials.size;
-  }
-  return count;
+  return sharedCaches.length;
 }
 
 /**
@@ -229,18 +250,24 @@ export async function secretEnvs(
 const PYTHON_LANGUAGES = new Set(["python", "python3"]);
 
 /**
- * Si una celda de `runCode` puede llevar secretos: `ExecuteRequest.envs` sólo
- * existe en contextos Python. Con `secrets` en la propia llamada sobre otro
- * lenguaje es `InvalidArgumentError` apuntando a `createCodeContext`; los del
- * handle sólo se añaden a celdas Python (devuelve `false`).
+ * Si una celda de `runCode` puede llevar los secretos del handle:
+ * `ExecuteRequest.envs` sólo existe en contextos Python. `contextLanguage` es
+ * el lenguaje del contexto destino si se conoce con certeza (`undefined` =
+ * desconocido: un id que este cliente no creó ni listó). Con `secrets` en la
+ * propia llamada sobre otro lenguaje conocido es `InvalidArgumentError`
+ * apuntando a `createCodeContext`; los del handle sólo se añaden a celdas
+ * Python conocidas (devuelve `false` en otro caso).
  */
 export function codeSecretsScope(
   language: string | undefined,
   contextLanguage: string | undefined,
   secrets: SecretsInput | undefined,
 ): boolean {
-  const target = (language ?? contextLanguage ?? "python").toLowerCase();
-  if (PYTHON_LANGUAGES.has(target)) {
+  const target = language ?? contextLanguage;
+  if (target === undefined) {
+    return false;
+  }
+  if (PYTHON_LANGUAGES.has(target.toLowerCase())) {
     return true;
   }
   if (secrets !== undefined && Object.keys(secrets).length > 0) {
@@ -279,7 +306,24 @@ export interface SecretOptions {
   readonly secrets?: SecretsInput | undefined;
   /**
    * La caché (y su TTL) de `secrets`; sin ella, una compartida por región y
-   * credenciales con TTL 300 s. Mismo bloque "Coste y activación" que `SecretCache`.
+   * credenciales con TTL 300 s. Clave: (región, credenciales, secreto,
+   * versión/etapa); una sola lectura en vuelo por clave.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: fija la caché que usan los `secrets` de este handle (sólo tiene
+   *   efecto junto con `secrets`); construir `SecretCache` no llama a AWS.
+   * Recursos y llamadas AWS: `GetSecretValueCommand` en el primer uso de cada
+   *   secreto y otra vez sólo al vencer `ttlSeconds` (300 por defecto,
+   *   1..86400) o tras `refresh()`/`invalidate()`; un acierto hace 0 llamadas.
+   * Coste aproximado: ≤ 12 llamadas/hora por secreto y proceso con TTL 300 ≈
+   *   $0,04/mes ($0,05 por 10 000 llamadas, us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante (y
+   *   `kms:Decrypt` con una CMK).
+   * Cómo apagarla: no la pases (por defecto `undefined`) ni pases `secrets`.
+   * Ejemplo:
+   *   const secretCache = new SecretCache({ ttlSeconds: 600 });
+   *   const sbx = await Sandbox.create({ secrets: { OPENAI_API_KEY: "openai" }, secretCache });
    */
   readonly secretCache?: SecretCache | undefined;
 }
@@ -307,18 +351,31 @@ export class SecretEnvs {
 
   /**
    * `connect({ secrets, secretCache })` sobre el handle: `secrets` sustituye
-   * las referencias; sin `secrets` se conservan (y un `secretCache` sólo
-   * cambia la caché). Sin nada pedido no toca nada.
+   * las referencias y `secrets: {}` las borra todas (conservando la caché);
+   * sin `secrets` se conservan (y un `secretCache` sólo cambia la caché). Sin
+   * nada pedido no toca nada.
    */
   async rebind(options: SecretOptions): Promise<void> {
-    let binding = bindSecrets(options.secrets, options.secretCache);
-    if (binding === undefined) {
+    const cache = validateSecretCache(options.secretCache);
+    if (options.secrets === undefined) {
+      if (cache === undefined) {
+        return;
+      }
+      this.#binding = await warm(
+        new SecretBinding(this.#binding?.refs ?? new Map(), cache),
+        this.#defaultCache,
+      );
       return;
     }
-    if (options.secrets === undefined && this.#binding !== undefined) {
-      binding = new SecretBinding(this.#binding.refs, binding.cache);
+    const binding = bindSecrets(options.secrets, cache);
+    if (binding !== undefined && binding.refs.size > 0) {
+      this.#binding = await warm(binding, this.#defaultCache);
+      return;
     }
-    this.#binding = await warm(binding, this.#defaultCache);
+    // `secrets: {}`: el handle se queda sin secretos; la caché (la pasada o la
+    // que ya tenía) se conserva para los `secrets` por llamada.
+    const kept = cache ?? this.#binding?.cache;
+    this.#binding = kept === undefined ? undefined : new SecretBinding(new Map(), kept);
   }
 
   /** Los `envs` de una llamada con los secretos ya resueltos desde la caché. */

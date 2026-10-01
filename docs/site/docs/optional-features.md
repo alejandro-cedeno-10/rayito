@@ -55,7 +55,8 @@ Ejemplo:
 
 `scripts/tests/test_optional_features_docs.py` comprueba, para cada fila
 marcada "disponible" en la tabla de abajo, que el símbolo de opción citado
-aparece en el fichero SDK de su columna "Dónde" junto a ese mismo marcador.
+aparece en el fichero SDK de su columna "Dónde" dentro de un mismo bloque
+"Coste y activación" que trae, además, los seis apartados de la plantilla.
 
 ## Funciones con coste AWS
 
@@ -85,10 +86,10 @@ archivo de `m14-metadata-index`.
 
 | Función | Opción | Qué activa | Recursos AWS | Coste | Dónde |
 |---|---|---|---|---|---|
-| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `localhost`, renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:CreateMicrovmAuthToken` (ya se usa hoy en `get_host()`) | $0: `CreateMicrovmAuthToken` es gratuito (cuota de 50 TPS, `AWS_API_NOTES.md` §12); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
+| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `127.0.0.1` (otra interfaz sólo con `--bind` + `--allow-remote`), renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:GetMicrovm` (una vez, para el endpoint) + `lambda:CreateMicrovmAuthToken` (~1 cada 45 min por proxy en marcha); IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`) | $0: ambas llamadas son gratuitas (cuotas de 100 y 50 TPS, `AWS_API_NOTES.md` §11); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal más la lectura del snapshot al reanudar, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
 
 Esta fila no pasa por el ciclo "planificado → disponible" de la tabla de
-arriba: no consume cuota ni dinero adicional (reutiliza una llamada que el
+arriba: no consume cuota ni dinero adicional (reutiliza llamadas gratuitas que el
 SDK ya hace), así que no necesita una aceptación de coste independiente.
 
 ## Ejemplos
@@ -123,6 +124,19 @@ amenazas en [Secretos](secrets.md).
     await sbx.commands.run("python agent.py");
     await sbx.commands.run("env", { secrets: { GH_TOKEN: "gh" } });
     ```
+
+**La caché, nunca una lectura por llamada.** Opción `secret_cache=SecretCache(ttl_seconds=...)`
+(TS: `secretCache: new SecretCache({ ttlSeconds })`); sin ella, una caché
+compartida del proceso por (región, sesión/credenciales). TTL de 300 s por
+defecto, de 1 a 86 400 (`0` se rechaza). Clave: región, credenciales,
+secreto y versión (`VersionId`/`VersionStage`). Una sola lectura en vuelo
+por clave (diez llamadas a la vez = una `GetSecretValue`); un acierto hace 0
+llamadas, y sólo se relee al vencer el TTL o con `refresh()`/`invalidate()`.
+Los valores nunca se registran ni van en `metadata`, etiquetas,
+`runHookPayload`, el entorno de la imagen ni el del proceso `rayd`/sidecar,
+ni en mensajes de error: sólo llegan al entorno del comando, PTY, celda
+Python (mientras dura) o contexto de código que los pide explícitamente.
+Detalle en [Secretos](secrets.md#la-cache-nunca-en-cada-llamada).
 
 **Fase 1: el valor es visible para el código del sandbox** (ADR-014, punto
 6). La inyección entrega el secreto como variable de entorno del proceso que
@@ -234,9 +248,12 @@ sustituirá este párrafo.
 ### `rayito sandbox proxy`
 
 ```bash
-rayito sandbox proxy sbx-abc123 --port 8000
-# sirve http://localhost:8000 -> puerto 8000 del guest,
+rayito sandbox proxy microvm-<id> --port 8000
+# sirve http://127.0.0.1:8000 -> puerto 8000 del guest,
 # renovando el JWE antes de que expire; Ctrl+C para cortar.
 ```
+
+Escucha sólo en loopback (`127.0.0.1`) salvo que pases `--bind <ip>` junto
+con `--allow-remote`: quien llegue a ese puerto usa el sandbox con tu acceso.
 
 No hace falta ninguna opción del SDK: es sólo CLI, sin coste AWS propio.

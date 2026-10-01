@@ -113,7 +113,10 @@ export interface RunCodeOptions extends RequestOptions {
    * Secretos en el entorno de esta celda (más los del handle), sólo en
    * contextos Python (`ExecuteRequest.envs`): con otro `language` es
    * `InvalidArgumentError` (usa `createCodeContext({ secrets })`), y los del
-   * handle no se añaden a celdas de otros lenguajes.
+   * handle no se añaden a celdas de otros lenguajes. Con `context` dado como
+   * id (string), los del handle sólo van si el contexto es `default` o uno
+   * que este handle creó o listó como Python; un id desconocido (creado desde
+   * otro handle) va sin ellos.
    *
    * Coste y activación
    * -------------------
@@ -228,6 +231,33 @@ export function languageDefaultContextId(request: ExecuteRequest): string | unde
   return request.language === DEFAULT_LANGUAGE
     ? DEFAULT_CONTEXT_ID
     : `${DEFAULT_CONTEXT_ID}-${request.language}`;
+}
+
+/**
+ * El lenguaje del contexto al que va una celda, si se sabe con certeza: sin
+ * `context`, el `default` (Python); un `CodeContext`, su `language`; un id,
+ * `default`/`default-<lenguaje>` o uno que este cliente creó o listó
+ * (`known`). `undefined` si el id es desconocido (p. ej. lo creó otro
+ * handle): `runCode` no le añade entonces los secretos del handle.
+ */
+export function targetContextLanguage(
+  context: ContextLike | undefined,
+  known: ReadonlyMap<string, string>,
+): string | undefined {
+  if (context === undefined) {
+    return DEFAULT_LANGUAGE;
+  }
+  if (typeof context === "object" && context !== null) {
+    return context.language;
+  }
+  if (context === DEFAULT_CONTEXT_ID) {
+    return DEFAULT_LANGUAGE;
+  }
+  const prefix = `${DEFAULT_CONTEXT_ID}-`;
+  if (context.startsWith(prefix) && SUPPORTED_LANGUAGES.has(context.slice(prefix.length))) {
+    return context.slice(prefix.length);
+  }
+  return known.get(context);
 }
 
 export function validateCwd(cwd: string | undefined): string | undefined {
@@ -534,6 +564,8 @@ function withKernelFeature(error: unknown, name: string, language: string | unde
 export class CodeClient {
   readonly core: SandboxCore;
   readonly #secrets: SecretEnvs;
+  /** id → lenguaje de los contextos que este cliente creó o listó. */
+  readonly #contextLanguages = new Map<string, string>();
 
   constructor(core: SandboxCore, secrets: SecretEnvs) {
     this.core = core;
@@ -542,11 +574,11 @@ export class CodeClient {
 
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
-    const contextLanguage =
-      typeof options.context === "object" && options.context !== null
-        ? options.context.language
-        : undefined;
-    const includeBound = codeSecretsScope(options.language, contextLanguage, options.secrets);
+    const includeBound = codeSecretsScope(
+      options.language,
+      targetContextLanguage(options.context, this.#contextLanguages),
+      options.secrets,
+    );
     const envs = await this.#secrets.apply(options.envs, options.secrets, includeBound);
     const request = buildExecuteRequest(code, {
       contextId,
@@ -608,7 +640,9 @@ export class CodeClient {
         return listed;
       }
     }
-    return fallbackContext(contextId, { language: options.language, cwd: options.cwd });
+    const fallback = fallbackContext(contextId, { language: options.language, cwd: options.cwd });
+    this.#contextLanguages.set(contextId, fallback.language);
+    return fallback;
   }
 
   async listContexts(options: RequestOptions = {}): Promise<CodeContext[]> {
@@ -619,7 +653,11 @@ export class CodeClient {
       undefined,
       options.signal,
     );
-    return response.contexts.map(contextFromProto);
+    const contexts = response.contexts.map(contextFromProto);
+    for (const listed of contexts) {
+      this.#contextLanguages.set(listed.id, listed.language);
+    }
+    return contexts;
   }
 
   async removeContext(context: ContextLike, options: RequestOptions = {}): Promise<void> {

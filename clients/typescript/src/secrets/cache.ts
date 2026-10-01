@@ -3,29 +3,8 @@
  * `secrets` nunca traiga el secreto en cada llamada. Espejo de `SecretCache`
  * de `rayito/_secrets.py`.
  *
- * Coste y activación
- * -------------------
- * Activa: `secretCache: new SecretCache({ ttlSeconds: 300 })` fija la caché (y
- *   su TTL) que usa `secrets`; sin ella, `secrets` usa una caché compartida
- *   del proceso por (región, credenciales) con TTL 300, creada la primera vez.
- *   Construirla no llama a AWS ni carga el peer opcional.
- * Recursos y llamadas AWS: `GetSecretValueCommand` en el primer uso de cada
- *   (región, credenciales, secreto, versión) y otra vez sólo al vencer el TTL
- *   o con `refresh()`; un acierto hace 0 llamadas. Una sola promesa en vuelo
- *   por clave (10 llamadas a la vez = 1 lectura).
- * Coste aproximado: con TTL 300, ≤ 12 llamadas/hora por secreto y proceso ≈
- *   $0,04/mes ($0,05 por 10 000 llamadas, us-east-1, 2026-09-30); el secreto
- *   en sí cuesta $0,40/mes aparte.
- * IAM: `secretsmanager:GetSecretValue` (política `RayitoSecretsReader` de
- *   `infra/secrets-access.yaml`) y `kms:Decrypt` si el secreto usa una CMK.
- * Cómo apagarla: no pases `secrets` ni `secretCache`. `ttlSeconds: 0` no
- *   existe (sería traer en cada llamada): 1..86400.
- * Ejemplo:
- *   const secretCache = new SecretCache({ ttlSeconds: 600, region: "us-east-1" });
- *   const sbx = await Sandbox.create({ secrets: { OPENAI_API_KEY: "openai" }, secretCache });
- *   await sbx.commands.run("python agent.py"); // 1 GetSecretValue
- *   await sbx.commands.run("python agent.py"); // 0: acierto
- *   await secretCache.refresh("openai"); // fuerza una lectura nueva
+ * El bloque "Coste y activación" está en el TSDoc de `SecretCache` (lo que
+ * enseña el IDE al pasar el ratón).
  */
 
 import { InvalidArgumentError } from "../errors.js";
@@ -57,7 +36,35 @@ interface Entry {
   readonly expiresAt: number;
 }
 
-/** Ver el bloque "Coste y activación" del módulo. Los valores viven sólo en la memoria del proceso. */
+/**
+ * Caché en memoria de valores de secretos: lo que hace que `secrets` nunca
+ * traiga el secreto en cada llamada. Los valores viven sólo en la memoria del
+ * proceso; `JSON.stringify`/`inspect` nunca los muestran.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: `secretCache: new SecretCache({ ttlSeconds: 300 })` fija la caché (y
+ *   su TTL) que usa `secrets`; sin ella, `secrets` usa una caché compartida
+ *   del proceso por (región, credenciales) con TTL 300, creada la primera vez.
+ *   Construirla no llama a AWS ni carga el peer opcional.
+ * Recursos y llamadas AWS: `GetSecretValueCommand` en el primer uso de cada
+ *   (región, credenciales, secreto, versión) y otra vez sólo al vencer el TTL
+ *   o tras `refresh()`/`invalidate()`; un acierto hace 0 llamadas. Una sola promesa en vuelo
+ *   por clave (10 llamadas a la vez = 1 lectura).
+ * Coste aproximado: con TTL 300, ≤ 12 llamadas/hora por secreto y proceso ≈
+ *   $0,04/mes ($0,05 por 10 000 llamadas, us-east-1, 2026-09-30); el secreto
+ *   en sí cuesta $0,40/mes aparte.
+ * IAM: `secretsmanager:GetSecretValue` (política `RayitoSecretsReader` de
+ *   `infra/secrets-access.yaml`) y `kms:Decrypt` si el secreto usa una CMK.
+ * Cómo apagarla: no pases `secrets` ni `secretCache`. `ttlSeconds: 0` no
+ *   existe (sería traer en cada llamada): 1..86400.
+ * Ejemplo:
+ *   const secretCache = new SecretCache({ ttlSeconds: 600, region: "us-east-1" });
+ *   const sbx = await Sandbox.create({ secrets: { OPENAI_API_KEY: "openai" }, secretCache });
+ *   await sbx.commands.run("python agent.py"); // 1 GetSecretValue
+ *   await sbx.commands.run("python agent.py"); // 0: acierto
+ *   await secretCache.refresh("openai"); // fuerza una lectura nueva
+ */
 export class SecretCache {
   readonly #ttlMs: number;
   readonly #store: SecretStore;
@@ -108,6 +115,7 @@ export class SecretCache {
 
   /** El valor (de la caché si sigue vigente; si no, `GetSecretValue`, una sola vez por clave en vuelo). */
   get(secret: SecretLike): Promise<string> {
+    this.sweep();
     const ref = asRef(secret);
     const key = this.#key(ref);
     const hit = this.#fresh(key);
@@ -178,6 +186,28 @@ export class SecretCache {
         }
       }
     }
+  }
+
+  /**
+   * Descarta los valores vencidos (sin llamar a AWS) y devuelve cuántos: un
+   * valor no sobrevive en memoria a su TTL más allá del siguiente uso de la
+   * caché.
+   */
+  sweep(): number {
+    const now = this.#now();
+    let dropped = 0;
+    for (const [key, entry] of [...this.#entries]) {
+      if (entry.expiresAt <= now) {
+        this.#entries.delete(key);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
+
+  /** Cuántos valores vigentes o aún sin barrer guarda (nunca los valores). */
+  get size(): number {
+    return this.#entries.size;
   }
 
   toJSON(): Record<string, unknown> {

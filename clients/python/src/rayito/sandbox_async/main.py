@@ -664,8 +664,30 @@ class AsyncSandbox:
     ) -> AsyncSandbox:
         """Misma semántica que `sbx.connect()` de `Sandbox`: reabre este
         handle y extiende el plazo (`AT_LEAST`). Devuelve `self`.
-        `secrets=`/`secret_cache=` sustituyen los del handle (mismo bloque
-        "Coste y activación" que `create()`; `None` los conserva)."""
+        `secrets=`/`secret_cache=` sustituyen los del handle; `None` los
+        conserva y `secrets={}` los borra todos.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` (y `secret_cache=`) inyectan secretos de Secrets
+            Manager en cada comando, PTY, celda Python y contexto de este
+            handle; sin ellos, `connect()` no construye ningún cliente
+            `secretsmanager` (el camino de 0.4.0).
+        Recursos y llamadas AWS: `GetSecretValue` una vez por secreto y TTL de
+            `SecretCache` (300 s por defecto), resuelto aquí antes de
+            `get-microvm`; ningún recurso nuevo.
+        Coste aproximado: $0,05 por 10 000 llamadas (≈ $0,04/mes por secreto
+            y proceso con TTL 300) + $0,40 por secreto y mes (us-east-1,
+            2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante
+            (`RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt`
+            con una CMK.
+        Cómo apagarla: no pases `secrets=` ni `secret_cache=`; `secrets={}`
+            quita los que el handle ya tenía.
+        Ejemplo:
+            await sbx.connect(secrets={"OPENAI_API_KEY": "openai"})
+            await sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
+        """
         await self._rebind_secrets(secrets, secret_cache)
         info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
         if info.state in TERMINAL_STATES:
@@ -1562,8 +1584,8 @@ class AsyncSandbox:
         secret_cache: SecretCache | None,
     ) -> None:
         """Misma semántica que `Sandbox._rebind_secrets`."""
-        binding = rebind_secrets(self._secrets, secrets, secret_cache)
-        if binding is None:
+        changed, binding = rebind_secrets(self._secrets, secrets, secret_cache)
+        if not changed:
             return
         self._secrets = await awarm(binding, self._default_secret_cache)
 

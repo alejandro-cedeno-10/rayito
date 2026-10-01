@@ -1434,7 +1434,7 @@ export class Sandbox implements AsyncDisposable {
         persist,
         persistTimeoutMs,
         transfer: this.transfer ?? null,
-        secrets: this.#secrets.binding?.toRecord(),
+        secrets: this.#secrets.binding?.refs.size ? this.#secrets.binding.toRecord() : undefined,
         secretCache: this.#secrets.binding?.cache,
       });
     } catch (error) {
