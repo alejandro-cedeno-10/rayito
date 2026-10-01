@@ -63,7 +63,7 @@ aparece en el fichero SDK de su columna "Dónde" junto a ese mismo marcador.
 |---|---|---|---|---|---|---|---|---|---|---|
 | [Inyección de secretos](#secrets-injection) | implementado, pendiente de aceptación en AWS real (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
 | [Secret CRUD (Secrets Manager)](#secrets-crud) | implementado, pendiente de aceptación en AWS real (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
-| [Índice de metadatos (DynamoDB)](#metadata-index) | planificado (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Copia inmutable de `metadata` por sandbox en DynamoDB para poder filtrar `list()`/`paginate()` sobre estados no `RUNNING` (por ejemplo `SUSPENDED`) sin sondear `Health` | `dynamodb:PutItem/BatchGetItem` por sandbox creado/listado | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $1,25 por millón de `PutItem` (WRU) + $0,25 por millón de `BatchGetItem` (RRU, ítems ≤ 4 KB) + $0,25/GB-mes almacenado. Ejemplo: 10 000 sandboxes/mes con un `list()` diario cada uno ≈ 10 000 `PutItem` + ~300 000 `BatchGetItem` ≈ $0,09/mes en llamadas, más el almacenamiento (ítems de metadatos son del orden de KB, no de GB) | `dynamodb:PutItem`, `dynamodb:BatchGetItem` sobre la tabla del índice | No pasar `index=` / `index` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index-store.ts` (llega en M14) |
+| [Índice de metadatos (DynamoDB)](#metadata-index) | implementado, pendiente de aceptación en AWS real (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Escribe una fila inmutable por sandbox (`metadata`, imagen, `startedAt`, TTL) en tu tabla DynamoDB al crearlo (`create()`, `PoolConfig`) y la une con `list-microvms` para filtrar `list()`/`paginate()` por metadatos también sobre `SUSPENDED`, sin sondear `Health` ni despertar nada; también en el shim (`Sandbox.list(..., index=)`, `E2B(index=)`) y la CLI (`--index-table`) | `dynamodb:PutItem` una vez por sandbox creado (condicional) y `dynamodb:BatchGetItem` una vez por página de `list-microvms` al listar con `metadata` + `index`; la tabla la despliegas tú (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`); nunca `DeleteItem` | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (~1 por `create` ≈ $0,000000625) + $0,125 por millón de RRU (0,5 por sandbox candidato) + $0,25/GB-mes tras 25 GB gratis; borrado por TTL gratis. 10 000 sandboxes/mes con un `list()` diario < $0,10/mes; tabla vacía $0 | `dynamodb:PutItem` (escritor, política `RayitoIndexWriter`) y `dynamodb:BatchGetItem` (lector, `RayitoIndexReader`) sobre el ARN de la tabla, en las credenciales del **llamante** | No pasar `index=` / `index` (o pasar `None`/`undefined`); borrar el stack de `infra/metadata-index.yaml` para dejar de pagar el almacenamiento | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index/dynamodb.ts` |
 | [Trazas OpenTelemetry del SDK](#otel-sdk) | planificado (M13b) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (y las demás llamadas del SDK) con spans OTel sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` (llega en M13b) |
 
 Las cuatro filas empezaron en "planificado (Mxx)": cada grupo cambia **su**
@@ -74,7 +74,12 @@ aceptadas contra AWS real**: su e2e (`clients/python/tests/e2e/test_secrets_e2e.
 y `clients/typescript/tests/e2e/secrets.e2e.test.ts`) no se ha ejecutado y
 SEC-9/SEC-10 siguen sin medir (`AWS_API_NOTES.md` §19). Pasarán a
 "disponible (0.5.0)" cuando ese e2e pase; es la puerta de archivo de
-`m13-secrets`.
+`m13-secrets`. Lo mismo vale para el índice de metadatos (M14): implementado
+y probado con fakes, con su e2e
+(`clients/python/tests/e2e/test_metadata_index_e2e.py` y
+`clients/typescript/tests/e2e/metadata-index.e2e.test.ts`, IDX-1 en
+`AWS_API_NOTES.md` §20) todavía sin ejecutar contra AWS real; es la puerta de
+archivo de `m14-metadata-index`.
 
 ## Sin coste AWS
 
@@ -166,9 +171,55 @@ diferencias en [Compatibilidad con E2B](e2b-compat.md#secretos-secret-asyncsecre
 
 ### Índice de metadatos (DynamoDB)
 
-*Llega en M14.* Cuando esté disponible, un ejemplo Python y otro TypeScript
-de `index=DynamoDbIndex(...)` con `list(metadata=, states=[SUSPENDED])`
-sustituirá este párrafo.
+Implementado en `m14-metadata-index` para 0.5.0, **pendiente de aceptación
+contra AWS real** (ver arriba). Despliega antes la tabla (una vez, $0 en
+reposo):
+
+```bash
+aws cloudformation deploy --stack-name rayito-metadata-index \
+  --template-file infra/metadata-index.yaml
+```
+
+=== "Python"
+
+    ```python
+    from rayito import DynamoDbIndex, Sandbox
+
+    idx = DynamoDbIndex("rayito-sandboxes")       # no llama a AWS todavía
+    sbx = Sandbox.create(metadata={"user": "42"}, index=idx)   # 1 PutItem
+    sbx.pause()
+    for item in Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx):
+        print(item.sandbox_id, item.state, item.metadata)      # 1 BatchGetItem por página
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { DynamoDbIndex, Sandbox } from "rayito";
+
+    const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+    const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
+    await sbx.pause();
+    for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+      console.log(item.sandboxId, item.state, item.metadata);
+    }
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito sandbox list --metadata user=42 --state suspended --index-table rayito-sandboxes
+    ```
+
+Qué cambia frente a `list(metadata=)` sin índice: ninguna sonda de `Health`,
+ningún token ni `get-microvm`, así que funciona sobre sandboxes en pausa sin
+despertarlos. Lo que **no** cambia: el estado sale siempre de
+`list-microvms`, y sólo aparecen los sandboxes creados con `index=` (o por un
+`PoolConfig(index=)`). `on_write_failure='terminate'` (por defecto; TS
+`onWriteFailure: "terminate"`) termina el VM si su fila no se pudo escribir;
+`'warn'` sólo avisa. TypeScript necesita el peer opcional
+`npm install @aws-sdk/client-dynamodb`. Guía completa en
+[Observabilidad](observability.md#listado-por-metadatos-con-indice-opcional).
 
 <a id="otel-sdk"></a>
 

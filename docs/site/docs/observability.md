@@ -183,16 +183,88 @@ y el filtro) que puedes guardar y pasar a otro proceso.
 | `states` | cliente | por defecto todo menos `TERMINATING`/`TERMINATED` |
 | `started_after` / `startedAfter` | cliente | incluido |
 | `order="asc"` o `"desc"` | cliente, por `startedAt` | AWS no ordena: el primer item llega tras recorrer **todas** las páginas (O(páginas)); un token reanudado salta por identidad los items ya entregados |
-| `metadata` | cliente, O(n) | una sonda `Health` por sandbox `RUNNING` (≈ 0,5-1 s cada una, cuenta como tráfico para su idle); nunca sondea un suspendido |
+| `metadata` | cliente, O(n) | una sonda `Health` por sandbox `RUNNING` (≈ 0,5-1 s cada una, cuenta como tráfico para su idle); nunca sondea un suspendido. Con `index=` (opcional, abajo): sin sondas y sobre cualquier estado no terminal |
+| `index` (opcional, M14) | tu tabla DynamoDB | `DynamoDbIndex(...)`: un `BatchGetItem` por página; ver la sección siguiente |
 | `limit` (sólo `paginate`) | cliente | items por `next_items()`; todos si falta |
 
 Un `next_token` sólo vale con los mismos filtros con los que se emitió; uno
 manipulado o de otro filtro es `InvalidArgumentException`.
 
+## Listado por metadatos con índice (opcional)
+
+Sin índice, `list(metadata=...)` sólo ve sandboxes `RUNNING`: los metadatos
+viven en el agente y sondear uno suspendido lo despertaría. El **índice de
+metadatos** (M14, apagado por defecto) guarda una copia inmutable de
+`metadata` por sandbox en una tabla DynamoDB **de tu cuenta**, así puedes
+filtrar también los `SUSPENDED` sin sondear ni despertar ninguno. Coste,
+IAM y cómo apagarlo: [Funciones opcionales](optional-features.md#metadata-index).
+
+1. Despliega la tabla una vez (`infra/metadata-index.yaml`: on-demand, TTL en
+   `expires_at`, $0 en reposo) y da a tus credenciales las políticas
+   `RayitoIndexWriter` (`dynamodb:PutItem`) y `RayitoIndexReader`
+   (`dynamodb:BatchGetItem`) que crea la plantilla ([infra](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md)).
+2. Crea los sandboxes con `index=`: tras `run-microvm`, y antes de esperar
+   a `Health`, `create()` escribe la fila con `PutItem` condicional. Un pool
+   la escribe al rellenar si su `PoolConfig` lleva `index=`.
+3. Lista con `metadata=` e `index=`: por cada página de `list-microvms`, un
+   `BatchGetItem` de los candidatos y la unión con sus filas.
+
+=== "Python"
+
+    ```python
+    from rayito import DynamoDbIndex, Sandbox
+
+    idx = DynamoDbIndex("rayito-sandboxes")             # reutilizable; no llama a AWS
+    sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
+    sbx.pause()
+
+    paused = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
+    pages = Sandbox.paginate(metadata={"user": "42"}, index=idx, limit=20)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { DynamoDbIndex, Sandbox } from "rayito";       // + npm install @aws-sdk/client-dynamodb
+
+    const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+    const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
+    await sbx.pause();
+    for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+      console.log(item.sandboxId, item.state, item.metadata);
+    }
+    ```
+
+Reglas de la unión (una fila nunca inventa un sandbox):
+
+- El **estado** sale siempre de `list-microvms`; la fila sólo aporta los
+  metadatos.
+- Un item se queda si hay una fila con su mismo id, su mismo ARN de imagen y
+  su mismo `startedAt` (±1 s), no caducada, y cuyos metadatos contienen cada
+  par pedido. Un sandbox **sin fila** (creado sin `index=`, o con
+  `on_write_failure='warn'` y una escritura fallida) se omite: sus metadatos
+  son desconocidos y nunca se sondea.
+- Con índice, `states` admite cualquier estado no terminal (por defecto
+  todos); `TERMINATING`/`TERMINATED` son `InvalidArgumentException`.
+- `index=` sin `metadata=` no cambia nada: el listado es el de siempre y no
+  toca DynamoDB. El `next_token` de un listado con índice queda ligado a la
+  tabla.
+- `kill()` no borra la fila: el TTL (`expires_at` = `startedAt` + vida
+  máxima + `ttl_margin_seconds`, 3600 por defecto) la borra gratis y, como
+  DynamoDB puede tardar días, el SDK descarta al leer las filas vencidas.
+- Si `PutItem` falla, `on_write_failure='terminate'` (por defecto; TS
+  `onWriteFailure: "terminate"`) termina el VM recién lanzado (salvo
+  `keep_on_failure=True`) y lanza `IndexWriteException` (TS
+  `IndexWriteError`); `'warn'` avisa en el logger y devuelve el sandbox.
+  Un `BatchGetItem` que falla, o claves que siguen sin procesar tras 5
+  reintentos, es `SandboxIndexException` (TS `SandboxIndexError`), nunca una
+  lista incompleta en silencio.
+
 ## Desde la CLI
 
 ```bash
 rayito sandbox list --template rayito-base
+rayito sandbox list --metadata user=42 --state suspended --index-table rayito-sandboxes
 rayito sandbox metrics microvm-<id> --token-file ~/.rayito/<id>.token
 rayito --json sandbox metrics microvm-<id> --follow --interval 5 --token-file ~/.rayito/<id>.token
 ```
@@ -207,4 +279,6 @@ despierta un sandbox suspendido.
 `Sandbox.get_metrics(sandbox_id, access_token=...)` es la forma de clase, y
 `Sandbox.list(query=SandboxQuery(state=..., started_after=..., template=...,
 metadata=...), limit=, next_token=, order=)` devuelve un `SandboxPaginator`
-([Compatibilidad con E2B](e2b-compat.md)).
+([Compatibilidad con E2B](e2b-compat.md)). Con la extensión `index=` (o
+`E2B(index=...)`), `query.metadata` también filtra `state=[PAUSED]`
+([Compatibilidad con E2B](e2b-compat.md#con-el-indice-de-metadatos-index-opcional-m14)).

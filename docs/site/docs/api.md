@@ -68,6 +68,14 @@ Opcional y con coste (ADR-014): ver [Secretos](secrets.md) y
 
 ::: rayito.SecretPage
 
+## Índice de metadatos
+
+Opcional y con coste (ADR-014, M14): ver
+[Observabilidad](observability.md#listado-por-metadatos-con-indice-opcional) y
+[Funciones opcionales y su coste](optional-features.md#metadata-index).
+
+::: rayito.DynamoDbIndex
+
 ## Modelos
 
 ::: rayito._models

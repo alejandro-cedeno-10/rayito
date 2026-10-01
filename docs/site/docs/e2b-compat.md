@@ -219,7 +219,7 @@ feature en camelCase, salvo las diferencias que se listan tras la tabla):
 |---|---|---|
 | `run_code(language=...)` / `create_code_context(language=...)` con algo distinto de `python`, `bash`, `javascript`/`js`, `typescript`/`ts` (`r`, `java`) | `run_code(language='r')` | kernels disponibles: python en toda imagen; bash, javascript y typescript en la variante rayito-base-poly; R y Java no (SPEC.md §4) |
 | un kernel que la imagen no trae (`bash`, `javascript` o `typescript` fuera de `rayito-base-poly`) | `run_code(language='typescript')` | este kernel sólo existe en la variante rayito-base-poly (publícala con make image-publish-poly y úsala como template) |
-| `Sandbox.list(query=SandboxQuery(metadata=...), state=[PAUSED])` | `list(state=PAUSED, query.metadata)` | los metadatos viven en el agente; leerlos despertaría el sandbox |
+| `Sandbox.list(query=SandboxQuery(metadata=...), state=[PAUSED])` **sin** `index=` (TS: `list({ query: { metadata, state: ["paused"] } })` sin `index`; con él se mapea, ver [abajo](#el-coste-de-listquerysandboxquerymetadata)) | `list(state=PAUSED, query.metadata)` (TS: `list(query.state=paused, query.metadata)`) | los metadatos viven en el agente; leerlos despertaría el sandbox. Pasa index=DynamoDbIndex(...) (tabla opcional en tu cuenta, ver optional-features.md) para filtrar sandboxes en pausa por metadatos sin despertarlos (TS: `index: new DynamoDbIndex({...})`) |
 | `allow_internet_access=False` o `network=` fuera de `rayito-base-caps` (el VM se termina antes de lanzar) | `allow_internet_access=False` / `network` | la imagen no aplica política de egress en el guest (Health.egress_enforcement=NONE): usa una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) o, a nivel de plataforma, rayito.Sandbox.create(egress=[&lt;ConnectorArn de infra/egress-connector.yaml&gt;]); el sandbox se ha terminado |
 | `update_network` fuera de `rayito-base-caps` | `update_network` | la imagen no tiene CAP_NET_ADMIN: la política de egress exige una imagen M9 de rayito-base-caps (additionalOsCapabilities ALL) |
 | `network.https_ports` no vacío | `network.https_ports` | el proxy de Lambda MicroVMs no reenvía TLS extremo a extremo a un puerto del guest (medido, fila 67 QE2 de AWS_API_NOTES.md §16); get_host(puerto) sirve HTTP en claro |
@@ -377,3 +377,30 @@ imposible en la plataforma, con la página de cada una) está en
 `Health` (≈ 0,6-0,8 s por sandbox, medido: `AWS_API_NOTES.md` Q45), y cada
 sonda cuenta como tráfico para la política de idle de ese sandbox. Filtra por
 `template` antes si tienes muchos.
+
+### Con el índice de metadatos (`index=`, opcional, M14)
+
+La extensión de Rayito `index=DynamoDbIndex("rayito-sandboxes")` (TS
+`index: new DynamoDbIndex({ tableName: "rayito-sandboxes" })`), en
+`Sandbox.list(...)` o ligada al cliente con `E2B(index=...)`, resuelve
+`query.metadata` con una tabla DynamoDB **opcional en tu cuenta**
+(`infra/metadata-index.yaml`): un `dynamodb:BatchGetItem` por página de
+`list-microvms`, ningún `get-microvm`, token ni `Health`, así que admite
+`state=[PAUSED]` sin despertar ningún sandbox. Diferencias con E2B:
+
+- Sólo aparecen los sandboxes **creados con el índice** (`rayito.Sandbox.create(index=)`
+  del SDK nativo o un `PoolConfig(index=)`); el `create()` del shim no lo
+  escribe. Un sandbox sin fila se omite: sus metadatos son desconocidos.
+- El estado sale siempre de `list-microvms` (`PAUSED` = `SUSPENDING|SUSPENDED`).
+- Coste: 0,5 RRU por sandbox candidato y 1 WRU por `create` (DynamoDB
+  on-demand); detalle, IAM y cómo apagarlo en
+  [Funciones opcionales](optional-features.md#metadata-index).
+
+```python
+from rayito import DynamoDbIndex
+from rayito.e2b import Sandbox, SandboxQuery, SandboxState
+
+idx = DynamoDbIndex("rayito-sandboxes")
+query = SandboxQuery(metadata={"user": "42"}, state=[SandboxState.PAUSED])
+paused = Sandbox.list(query=query, index=idx).next_items()
+```
