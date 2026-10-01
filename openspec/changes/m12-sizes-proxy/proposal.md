@@ -72,7 +72,7 @@ Two loose ends from the research read for M11–M14
   `X-aws-proxy-port`, forces `Connection: close` except on an upgrade
   request (`Upgrade` plus the `upgrade` token in `Connection`, RFC 9110
   §7.8; left untouched — WebSocket passthrough is implemented but not yet
-  measured against AWS, `AWS_API_NOTES.md` §16 Q81), answers `502` when
+  measured against AWS, `AWS_API_NOTES.md` §16 Q95), answers `502` when
   there is no valid JWE or the upstream connect fails, bounds the header
   read and the upstream connect, opens TLS to `<endpoint>:443`
   (SNI = endpoint) and pipes both directions until either side closes. No
