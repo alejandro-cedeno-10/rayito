@@ -1405,7 +1405,15 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
 - **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
   loopback.
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre
-  CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
+  CloudFront. Distribución + CloudFront Function de enrutado + KeyValueStore
+  y la clase `CustomDomain` (deploy/status/destroy, register/unregister/
+  refresh de rutas) están construidos y probados con fakes; sin componente
+  en `rayd` (la única función de M15 sin uno). La integración con
+  `Sandbox.create(domain=)`/`get_host()`/`expose()` queda como seguimiento
+  no bloqueante (foundations no pre-añadió el `HostResolver`/`expose()`
+  que la arquitectura preveía); `domain=` sigue lanzando
+  `UnimplementedError`. DOM-2/3/5/7/8 sin medir: necesitan D3 (dominio y
+  certificado ACM del mantenedor) y la etapa de aceptación AWS.
 
 ---
 

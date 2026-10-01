@@ -8,6 +8,7 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as customDomain from "./templates/custom-domain.gen.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
 import * as secretsAccess from "./templates/secrets-access.gen.js";
 
@@ -17,6 +18,7 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "custom-domain": customDomain,
   "metadata-index": metadataIndex,
   "secrets-access": secretsAccess,
 };

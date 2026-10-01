@@ -35,6 +35,13 @@ export {
   type SuperChart,
 } from "./charts.js";
 export {
+  CustomDomain,
+  type CustomDomainOptions,
+  type CustomDomainRoute,
+  type DeployCustomDomainOptions,
+  type RegisterRouteOptions,
+} from "./custom-domain/service.js";
+export {
   AuthenticationError,
   CapacityError,
   CommandExitError,

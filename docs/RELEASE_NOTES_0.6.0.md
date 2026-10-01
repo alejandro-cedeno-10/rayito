@@ -43,4 +43,19 @@ Pendiente.
 
 ## Dominio propio (`m15-custom-domain`)
 
-Pendiente de D3 (dominio y certificado ACM del mantenedor).
+`CustomDomain` (Python sync/async, TypeScript) despliega una distribución
+CloudFront con alias comodín, una CloudFront Function de enrutado y un
+KeyValueStore (`infra/custom-domain.yaml`, `rayito domain
+deploy|status|destroy`), y gestiona las rutas `{puerto}-{alias}.<tu
+dominio>` con `register()`/`unregister()`/`refresh()`. Experimental y
+apagado por defecto: construirlo no llama a AWS, y sólo `deploy()`,
+`register()`, etc. lo hacen.
+
+`Sandbox.create(domain=)`/`get_host()`/`expose()` **no** están cableados
+todavía a `CustomDomain` en esta release: `domain=` sigue lanzando
+`UnimplementedError` (seguimiento no bloqueante, ver `ARCHITECTURE.md`
+ADR-024). DOM-2 (HTTP/1.1 por `cf.updateRequestOrigin`), DOM-3 (WebSocket),
+DOM-5 (latencia de propagación del KeyValueStore), DOM-7 (keep-alive tras
+caducar el JWE) y DOM-8 (auto-resume por el dominio) están pendientes de
+D3 (dominio y certificado ACM del mantenedor) y de la etapa de aceptación
+contra AWS real.

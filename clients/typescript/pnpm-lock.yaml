@@ -42,6 +42,9 @@ importers:
       '@aws-sdk/client-cloudformation':
         specifier: ^3.1138.0
         version: 3.1145.0
+      '@aws-sdk/client-cloudfront-keyvaluestore':
+        specifier: ^3.1138.0
+        version: 3.1145.0
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1138.0
         version: 3.1144.0
@@ -78,6 +81,10 @@ packages:
 
   '@aws-sdk/client-cloudformation@3.1145.0':
     resolution: {integrity: sha512-fXja70gY4h3iRZnt1ncP6icHhQl7rQYnKxyfb9DVlHX32YCdcd+nvVOoH0qxTtKzcFt/Ghf3n8/xx4xx0H0bLQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-cloudfront-keyvaluestore@3.1145.0':
+    resolution: {integrity: sha512-TISaKpwSLcejivXDH7lGVoTokZObG4OknAuIc9hIBdam9AVNdSecOst4FK87DzI6s1x98TSD1jAai9Eu/twDFA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-dynamodb@3.1144.0':
@@ -1365,6 +1372,18 @@ snapshots:
     dependencies:
       '@aws-sdk/core': 3.978.1
       '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.0
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-cloudfront-keyvaluestore@3.1145.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/signature-v4-multi-region': 3.996.47
       '@aws-sdk/types': 3.974.6
       '@smithy/core': 3.35.0
       '@smithy/fetch-http-handler': 5.8.0

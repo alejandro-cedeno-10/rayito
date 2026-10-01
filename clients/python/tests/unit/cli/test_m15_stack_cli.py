@@ -95,11 +95,13 @@ def test_status_of_an_undeployed_component_is_none(
     assert json.loads(result.output) is None
 
 
-def test_events_template_domain_stub_subapps_print_pending_help(runner: CliRunner) -> None:
+def test_events_template_stub_subapps_print_pending_help(runner: CliRunner) -> None:
+    # `domain` ya no es un stub (m15-custom-domain la implementó); ver
+    # `test_m15_domain_cli.py`. `events`/`template` siguen pendientes de su
+    # propio cambio OpenSpec.
     for name, slug in (
         ("events", "m15-events-webhooks"),
         ("template", "m15-templates"),
-        ("domain", "m15-custom-domain"),
     ):
         result = runner.invoke(app, [name, "--help"])
         assert result.exit_code == 0, result.output

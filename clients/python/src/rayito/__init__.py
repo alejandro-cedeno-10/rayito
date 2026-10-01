@@ -18,6 +18,7 @@ from rayito._charts import (
     ScatterChart,
     SuperChart,
 )
+from rayito._custom_domain import AsyncCustomDomain, CustomDomain, CustomDomainRoute
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
 from rayito._listing_base import ListOrder
@@ -135,6 +136,7 @@ from rayito.sandbox_sync.pty import PtyHandle
 __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
+    "AsyncCustomDomain",
     "AsyncGit",
     "AsyncOptionalStacks",
     "AsyncPtyHandle",
@@ -160,7 +162,9 @@ __all__ = [
     "CommandHandle",
     "CommandResult",
     "CostStatement",
+    "CustomDomain",
     "CustomDomainException",
+    "CustomDomainRoute",
     "DiskFullException",
     "DownloadLink",
     "DynamoDbIndex",

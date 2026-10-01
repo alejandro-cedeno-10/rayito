@@ -1009,8 +1009,70 @@ Pendiente: `m15-secrets-gateway` documenta aquí cómo reutiliza
 `infra/secrets-access.yaml` (sin plantilla propia) y el contrato interno
 del listener de loopback.
 
-## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
+## 29. CloudFront, KeyValueStore y Functions (`m15-custom-domain`, **contrato de parámetros** para el KVS)
 
-Pendiente: `m15-custom-domain` documenta aquí `CreateDistribution`/
-`UpdateKeyValueStore` (SigV4A, `@aws-sdk/signature-v4a`) y el contrato de
-la CloudFront Function de enrutado.
+`CustomDomain` (Python `rayito/_custom_domain/`, TypeScript
+`src/custom-domain/`) no llama directamente a `CreateDistribution`,
+`CreateFunction` ni `CreateKeyValueStore`: la distribución, la Function y
+el KeyValueStore los crea `infra/custom-domain.yaml` a través del
+`OptionalStack` genérico (`OptionalStacks.deploy`, ADR-016, §21 de este
+documento). Lo único que `CustomDomain` llama en tiempo de ejecución es el
+plano de datos del KeyValueStore, para `register()`/`unregister()`/
+`refresh()`.
+
+**Corrección a la investigación previa:** se asumía que escribir en un
+KeyValueStore de CloudFront necesita SigV4A
+(`@aws-sdk/signature-v4a`/`awscrt`). Verificado sin red el 2026-09-30,
+antes de escribir código, contra el modelo `cloudfront-keyvaluestore/
+2022-07-26` de botocore 1.43.103: `metadata.signatureVersion == "v4"`.
+Es SigV4 normal; ni Python necesita una dependencia nueva (boto3 ya trae
+el cliente) ni TypeScript necesita `@aws-sdk/signature-v4a`/`aws-crt`, sólo
+el peer opcional habitual `@aws-sdk/client-cloudfront-keyvaluestore`.
+
+**Estas son las únicas operaciones y los únicos parámetros de
+`cloudfront-keyvaluestore` que los SDKs pueden usar** (regla dura 1). Los
+nombres de Python están verificados contra el modelo de botocore
+1.43.103; los de JavaScript contra los mismos nombres de comando (sufijo
+`Command`) que expone `@aws-sdk/client-cloudfront-keyvaluestore`.
+Referencia de la API:
+<https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/>
+(consultada 2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `DescribeKeyValueStore` (`describe_key_value_store` / `DescribeKeyValueStoreCommand`) | `KvsARN` | `ETag` | `cloudfront-keyvaluestore:DescribeKeyValueStore` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DescribeKeyValueStore.html> |
+| `PutKey` (`put_key` / `PutKeyCommand`) | `KvsARN`, `Key`, `Value`, `IfMatch` (el `ETag` de la llamada anterior, encadenado) | `ETag` (el nuevo, para la siguiente escritura) | `cloudfront-keyvaluestore:PutKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_PutKey.html> |
+| `DeleteKey` (`delete_key` / `DeleteKeyCommand`) | `KvsARN`, `Key`, `IfMatch` | `ETag` | `cloudfront-keyvaluestore:DeleteKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DeleteKey.html> |
+
+Una ruta ocupa dos claves (`DOM-1`, re-derivado de un JWE real de
+`create-microvm-auth-token`: 823 B, por debajo del límite de 1024 B por
+valor de este servicio): `j:<puerto>-<alias>` (el JWE tal cual) y
+`m:<puerto>-<alias>` (JSON compacto `{"e": endpoint, "t": sha256(traffic_token)
+o "", "x": expiración epoch}`). `register()` hace `DescribeKeyValueStore` +
+2 `PutKey` encadenados por `ETag`; `refresh()` sólo reescribe `j:`;
+`unregister()` hace `DescribeKeyValueStore` + hasta 2 `DeleteKey`, y trata
+`ResourceNotFoundException` (clave ya borrada) como éxito — nunca
+`DescribeKeyValueStore` falla así, sólo `PutKey`/`DeleteKey` sobre una
+clave ausente.
+
+Constructor de cliente: Python `LazyClient("cloudfront-keyvaluestore",
+region=…, session=…)`; TypeScript `loadOptionalSdkClient("@aws-sdk/client-
+cloudfront-keyvaluestore", …)`. Ningún cliente se construye hasta el
+primer `register`/`unregister`/`refresh`; construir `CustomDomain()` no
+llama a AWS.
+
+**CloudFront Function** (`infra/functions/custom_domain_router.js`,
+runtime `cloudfront-js-2.0`, asociada en `viewer-request`, único evento
+donde `cf.updateRequestOrigin` está disponible): abre un `kvs = cf.kvs()`
+una vez a nivel de módulo (el almacén asociado en `FunctionConfig.
+KeyValueStoreAssociations` no necesita id explícito), lee
+`j:<label>`/`m:<label>` con `await kvs.get(key, {format: ...})` (lanza si
+la clave no existe, capturado para responder 404), y llama a
+`cf.updateRequestOrigin({domainName: meta.e, customHeaders: {"x-aws-proxy-
+auth": jwe, "x-aws-proxy-port": puerto}})`. `updateRequestOrigin` no exige
+que `domainName` sea un origen ya declarado en la distribución (verificado
+contra la documentación de AWS antes de escribir la plantilla); el origen
+"placeholder" de `infra/custom-domain.yaml` nunca se contacta de verdad.
+DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket) y DOM-5 (latencia de propagación
+del KVS a los edges) quedan **SIN MEDIR** hasta D3 (dominio y certificado
+ACM del mantenedor) y la etapa de aceptación AWS.

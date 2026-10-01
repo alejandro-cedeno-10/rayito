@@ -27,7 +27,17 @@ versionado [SemVer](https://semver.org/lang/es/).
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
-<!-- m15-custom-domain -->
+- **Dominio propio** (`m15-custom-domain`, ADR-024, experimental y apagado
+  por defecto): la clase `CustomDomain` despliega una distribución
+  CloudFront con alias comodín, una CloudFront Function de enrutado
+  (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`);
+  `register`/`unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.
+  <tu dominio>`. Nuevo peer opcional `@aws-sdk/client-cloudfront-
+  keyvaluestore`; sin instanciar `CustomDomain` no se importa ni se
+  construye. `domain` en `Sandbox.create()` sigue lanzando
+  `UnimplementedError`: la integración con `getHost()`/`expose()` queda
+  para un cambio posterior. DOM-2/3/5/7/8 pendientes de D3 y de la
+  aceptación contra AWS real.
 
 ## [0.5.1] - 2026-10-01
 

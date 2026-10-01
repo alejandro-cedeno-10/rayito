@@ -1,0 +1,103 @@
+"""`AsyncCustomDomain` (m15-custom-domain): el mismo contrato que
+`CustomDomain` sobre `asyncio.to_thread`, igual que `AsyncOptionalStacks`
+(`_stacks/_service_async.py`) y `AsyncTokenRefresher` (`_transport.py`). No
+reimplementa la lógica: la delega en una `CustomDomain` propia.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Callable
+
+import boto3
+
+from rayito._custom_domain._kvs import KeyValueStoreWriter
+from rayito._custom_domain._service import CustomDomain, CustomDomainRoute
+from rayito._stacks._model import StackStatus
+from rayito._stacks._port import StackProvisioner
+from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS
+
+
+class AsyncCustomDomain:
+    def __init__(
+        self,
+        *,
+        public_domain: str,
+        stack_name: str | None = None,
+        kvs_arn: str | None = None,
+        region: str | None = None,
+        session: boto3.session.Session | None = None,
+        provisioner: StackProvisioner | None = None,
+        kvs_writer: KeyValueStoreWriter | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._inner = CustomDomain(
+            public_domain=public_domain,
+            stack_name=stack_name,
+            kvs_arn=kvs_arn,
+            region=region,
+            session=session,
+            provisioner=provisioner,
+            kvs_writer=kvs_writer,
+            clock=clock,
+        )
+
+    @property
+    def public_domain(self) -> str:
+        return self._inner.public_domain
+
+    def host_for(self, alias: str, port: int) -> str:
+        return self._inner.host_for(alias, port)
+
+    async def deploy(
+        self,
+        *,
+        certificate_arn: str,
+        tags: dict[str, str] | None = None,
+        wait: bool = True,
+        wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
+    ) -> StackStatus:
+        return await asyncio.to_thread(
+            self._inner.deploy,
+            certificate_arn=certificate_arn,
+            tags=tags,
+            wait=wait,
+            wait_timeout=wait_timeout,
+        )
+
+    async def status(self) -> StackStatus | None:
+        return await asyncio.to_thread(self._inner.status)
+
+    async def destroy(
+        self, *, wait: bool = True, wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS
+    ) -> None:
+        await asyncio.to_thread(self._inner.destroy, wait=wait, wait_timeout=wait_timeout)
+
+    async def register(
+        self,
+        alias: str,
+        port: int,
+        *,
+        endpoint: str,
+        jwe: str,
+        traffic_token: str | None = None,
+        ttl_seconds: int,
+    ) -> CustomDomainRoute:
+        return await asyncio.to_thread(
+            self._inner.register,
+            alias,
+            port,
+            endpoint=endpoint,
+            jwe=jwe,
+            traffic_token=traffic_token,
+            ttl_seconds=ttl_seconds,
+        )
+
+    async def refresh(
+        self, route: CustomDomainRoute, *, jwe: str, ttl_seconds: int
+    ) -> CustomDomainRoute:
+        return await asyncio.to_thread(self._inner.refresh, route, jwe=jwe, ttl_seconds=ttl_seconds)
+
+    async def unregister(self, alias: str, port: int) -> None:
+        await asyncio.to_thread(self._inner.unregister, alias, port)
