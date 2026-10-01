@@ -34,6 +34,11 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 
+## [0.5.1] - 2026-10-01
+
+Sin cambios en el agente: versión en paso con los SDK 0.5.1. Una imagen con
+`rayd` 0.5.0 sigue siendo compatible.
+
 ## [0.5.0] - 2026-10-01
 
 ### Fixed
