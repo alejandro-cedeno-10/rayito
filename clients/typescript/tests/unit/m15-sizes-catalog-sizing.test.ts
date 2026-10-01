@@ -90,9 +90,12 @@ describe("sizing", () => {
     [2048, 4],
     [4096, 8],
     [8192, 16],
-  ])("baselineCpuFor matches the Q88 measurement for every catalog size (%d -> %d)", (mib, expected) => {
-    expect(baselineCpuFor(mib)).toBe(expected);
-  });
+  ])(
+    "baselineCpuFor matches the Q88 measurement for every catalog size (%d -> %d)",
+    (mib, expected) => {
+      expect(baselineCpuFor(mib)).toBe(expected);
+    },
+  );
 
   test("baselineCpuFor never goes below one", () => {
     expect(baselineCpuFor(1)).toBe(1);

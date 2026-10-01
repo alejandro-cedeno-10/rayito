@@ -36,7 +36,10 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       ninguna imagen).
     - **Ejemplo**:
       ```python
-      sbx = Sandbox.create(size="4gb")
+      from rayito import Sandbox
+
+      with Sandbox.create(size="4gb") as sbx:
+          sbx.commands.run("echo hola")
       ```
 
 !!! warning "Pendiente de aceptación en AWS real"
@@ -119,13 +122,19 @@ hacia abajo, y avisa:
     ```python
     from rayito import Sandbox, SizeRequest
 
-    sbx = Sandbox.create(size=SizeRequest(memory_mib=3000))  # RayitoCompatWarning: redondea a 4096 MiB (4gb)
+    # RayitoCompatWarning: redondea a 4096 MiB (4gb)
+    with Sandbox.create(size=SizeRequest(memory_mib=3000)) as sbx:
+        sbx.commands.run("echo hola")
     ```
 
 === "TypeScript"
 
     ```ts
-    const sbx = await Sandbox.create({ size: { memoryMib: 3000 } }); // avisa con process.emitWarning(..., { type: "RayitoCompatWarning" })
+    import { Sandbox } from "rayito";
+
+    // avisa con process.emitWarning(..., { type: "RayitoCompatWarning" })
+    await using sbx = await Sandbox.create({ size: { memoryMib: 3000 } });
+    await sbx.commands.run("echo hola");
     ```
 
 ## Cómo funciona
