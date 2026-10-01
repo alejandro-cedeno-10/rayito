@@ -221,7 +221,7 @@ Expone un puerto del guest en `http://<bind>:<local-port>` (por defecto
 `--local-port` es igual a `--port`), para desarrollo local: curl, un
 navegador o cualquier cliente HTTP/1.1 contra un servidor que el sandbox
 ya sirve. El paso de WebSocket (upgrade) está implementado, no medido
-contra AWS (`AWS_API_NOTES.md` §16, Q81). Nunca hace falta el access token del
+contra AWS (`AWS_API_NOTES.md` §16, Q95). Nunca hace falta el access token del
 sandbox, sólo el JWE del proxy.
 
 ```bash
