@@ -7,6 +7,8 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 |---|---|---|
 | `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`) y la managed policy `CallerPolicy` del publicador (S3 de transferencias con `TransferBucket`) | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
+| `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
+| `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
 
 ## Egress allowlist (`egress-connector.yaml`)
@@ -437,14 +439,18 @@ $0,25/GB-mes tras los primeros 25 GB; el TTL borra las filas vencidas gratis.
 ```bash
 aws cloudformation deploy \
   --stack-name rayito-metadata-index \
-  --template-file infra/metadata-index.yaml
+  --template-file infra/metadata-index.yaml \
+  --capabilities CAPABILITY_IAM
 # otro nombre de tabla: --parameter-overrides TableName=mi-indice
 
 aws cloudformation describe-stacks --stack-name rayito-metadata-index \
   --query "Stacks[0].Outputs" --output table
 ```
 
-No hace falta `CAPABILITY_NAMED_IAM`: las políticas no llevan nombre fijo.
+`--capabilities CAPABILITY_IAM` es obligatorio (la plantilla crea dos
+políticas IAM; sin él CloudFormation responde
+`InsufficientCapabilitiesException`); `CAPABILITY_NAMED_IAM` no hace falta,
+porque las políticas no llevan nombre fijo.
 
 ### Borrar (apagarlo)
 

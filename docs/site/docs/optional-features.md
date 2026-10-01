@@ -177,7 +177,7 @@ reposo):
 
 ```bash
 aws cloudformation deploy --stack-name rayito-metadata-index \
-  --template-file infra/metadata-index.yaml
+  --template-file infra/metadata-index.yaml --capabilities CAPABILITY_IAM
 ```
 
 === "Python"
