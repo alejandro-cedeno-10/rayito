@@ -132,6 +132,30 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
+        // M15 foundations: every feature slot is still `Unsupported`
+        // (`features::build`), so only `ConfigureService` itself is
+        // reported. The feature that gives a slot a real adapter updates
+        // this one call site (`rayd_core::features::AgentFeatures`), never
+        // `HealthGrpc`'s constructor.
+        features: Some(agent_features_message(
+            rayd_core::features::AgentFeatures::foundations_only(),
+        )),
+    }
+}
+
+fn agent_features_message(
+    features: rayd_core::features::AgentFeatures,
+) -> rayito_proto::v1::AgentFeatures {
+    rayito_proto::v1::AgentFeatures {
+        configure: features.configure,
+        s3_mounts: features.s3_mounts,
+        efs_volumes: features.efs_volumes,
+        lifecycle_events: features.lifecycle_events,
+        telemetry_export: features.telemetry_export,
+        secret_gateway: features.secret_gateway,
+        template_start: features.template_start,
+        // No feature opens a root-egress path yet (`root_egress.rs`).
+        root_egress: Vec::new(),
     }
 }
 

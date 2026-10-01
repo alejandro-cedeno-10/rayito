@@ -19,8 +19,12 @@ import typer.core
 
 from rayito.cli._console import translated_failures
 from rayito.cli.doctor import doctor
+from rayito.cli.domain import domain_app
+from rayito.cli.events import events_app
 from rayito.cli.image import image_app
 from rayito.cli.sandbox import sandbox_app
+from rayito.cli.stack import stack_app
+from rayito.cli.template import template_app
 
 PROG_NAME = "rayito"
 SHIM_HINT = "ejecuta con: uv run --project clients/python python scripts/{script} …"
@@ -45,6 +49,10 @@ app = typer.Typer(
 )
 app.add_typer(image_app, name="image")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(stack_app, name="stack")
+app.add_typer(events_app, name="events")
+app.add_typer(template_app, name="template")
+app.add_typer(domain_app, name="domain")
 app.command("doctor")(doctor)
 
 

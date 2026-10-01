@@ -18,6 +18,7 @@ SET_KEYS = frozenset({"terminalStates", "suspendedStates", "managedNetworkConnec
 CONSTANT_NAME_OVERRIDES = {
     "s3BucketNameMin": "S3_BUCKET_NAME_MIN",
     "s3BucketNameMax": "S3_BUCKET_NAME_MAX",
+    "supportedMemoryMiB": "SUPPORTED_MEMORY_MIB",
 }
 
 

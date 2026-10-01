@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// Owned by m15-events-webhooks. Foundations only creates these two empty
+// stub messages (so `configure.proto` has a stable field to point at); the
+// feature that implements events-webhooks owns every field number inside
+// this file from here on. Message names stay prefixed
+// (`LifecycleEvent*`) so they never collide with another feature's
+// messages inside `rayito.v1`.
+message LifecycleEventsConfig {}
+
+message LifecycleEventsStatus {}

@@ -86,5 +86,8 @@
   "metadataMaxBytes": 4000,
   "metadataMaxKeys": 64,
   "metadataXattrPrefix": "user.rayito.",
-  "compressionOptInHeader": "rayito-compress"
+  "compressionOptInHeader": "rayito-compress",
+  "supportedMemoryMiB": [512, 1024, 2048, 4096, 8192],
+  "guestMemoryMultiplier": 4,
+  "reservedPorts": [8080, 9000]
 }

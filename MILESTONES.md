@@ -1334,6 +1334,81 @@ sandboxes suspendidos de la prueba).
 
 ---
 
+## 0.5.0 — Funciones opcionales sin servidor (2026-10-01)
+
+Siete cambios OpenSpec (`m11-optin-adr`, `m11-suspend-bounded-sync`,
+`m12-sizes-proxy`, `m13-secrets`, `m13-otel-sdk`, `m14-metadata-index`,
+`m11-secrets-acceptance-fixes`), archivados tras la aceptación contra AWS
+real. Todas las funciones con coste están apagadas por defecto y se activan
+sólo con una opción explícita del SDK (ADR-014):
+
+- **Secretos** (`SecretStore`, `Secret` del shim) sobre Secrets Manager, con
+  caché con TTL (300 s por defecto) para no consultar el secreto en cada
+  llamada.
+- **Índice de metadatos** (`DynamoDbIndex`): lista sandboxes pausados por
+  metadatos sin despertarlos.
+- **Trazas OpenTelemetry** del SDK, sólo con `tracer_provider`.
+- **`rayito sandbox proxy`**: un puerto del sandbox en `localhost`, coste $0.
+- **`/suspend` acotado**: `syncfs` por sistema de ficheros con presupuesto.
+
+**Aceptación (2026-10-01, cuenta de pruebas, us-east-1):** TypeScript 38/38,
+corpus E2B y `doctor` en verde; sin opciones no hay ninguna llamada a Secrets
+Manager, DynamoDB ni OpenTelemetry. Limpieza: sólo se borró lo creado por la
+prueba.
+
+---
+
+## M15 — Rayito 0.6
+
+Diez cambios OpenSpec: `m15-foundations` primero, ocho funciones en
+paralelo sobre el nuevo `main` (`m15-efs-volumes`, `m15-s3-mounts`,
+`m15-sizes-catalog`, `m15-events-webhooks`, `m15-rayd-otlp`,
+`m15-templates`, `m15-secrets-gateway`, `m15-custom-domain`), y
+`m15-docs-integration` al final. La aceptación contra AWS real corre una
+sola vez, en serie, sobre el `main` ya integrado (presupuesto total
+≤ $8.00, por ítem en el plan de M15).
+
+### Foundations
+
+`ConfigureSandbox` (ADR-015: servicio gRPC único, seis secciones, orden de
+aplicación fijo, participantes de `/suspend`/`/ready`), el convenio
+`OptionalStack` (ADR-016: `OptionalStacks`/`rayito stack`, catálogo de
+nueve componentes, `metadata-index` y `secrets-access` migrados), el
+reaper de zombies huérfanos de PID 1 (`rayd_core::orphans`, Q80), el
+broker de credenciales IMDS compartido (`rayd::adapters::credential_broker`)
+y la fila de compatibilidad 0.6. Zombie reaping se entrega como dominio y
+adaptador completos y probados (`ChildRegistry`, `OrphanReaper`) sin
+activarse todavía en `main.rs`: el registro de PIDs en
+`process_spawner`/`pty_backend`/`sidecar_process` queda como seguimiento
+no bloqueante (ver el informe de cierre de `m15-foundations`), porque
+activarlo sin ese registro arriesgaría robarle a tokio el estado de
+salida de sus propios hijos. Un cambio OpenSpec (`v06-foundations`).
+
+**Criterio de aceptación: sin ninguna de las siete opciones 0.6 =
+comportamiento de 0.5.x.** La traza de oro (`fixtures/zero_cost_0_5_trace.json`,
+ambos SDKs) fija la secuencia exacta de operaciones boto3/AWS SDK v3 y de
+métodos gRPC de `create → commands.run → files.write → pause → resume →
+commands.run → kill → list`; ningún test de la suite existente cambia.
+
+### Funciones (pendientes de su propio cambio OpenSpec)
+
+- **s3-mounts** (`m15-s3-mounts`): montaje S3 vía `mount-s3`/FUSE en
+  `rayito-base-caps`.
+- **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
+  pendiente de la campaña de medición EFS-1..EFS-20.
+- **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
+- **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
+  firmados y webhooks compatibles con E2B.
+- **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
+  CloudWatch.
+- **templates** (`m15-templates`): DSL de templates declarativos.
+- **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
+  loopback.
+- **custom-domain** (`m15-custom-domain`): dominio propio sobre
+  CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

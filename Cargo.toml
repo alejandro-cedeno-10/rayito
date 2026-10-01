@@ -21,6 +21,9 @@ tonic-prost-build = { version = "=0.14.6", default-features = false }
 prost = "=0.14.4"
 prost-types = "=0.14.4"
 protox = "=0.9.1"
+# Drop-in proto registry (M15 foundations): `rayito-proto/build.rs` globs
+# `proto/rayito/v1/*.proto` instead of a hard-coded list.
+glob = "=0.3.4"
 tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util", "fs"] }
 tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
 tokio-util = { version = "=0.7.19", default-features = false, features = ["codec"] }

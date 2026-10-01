@@ -1713,3 +1713,133 @@ ninguna ganancia de simplicidad frente a la regla de coste explícita.
 **Reversible.** Cada componente opcional vive en su propia plantilla
 CloudFormation y su propio flag de opción; retirar uno no afecta a los demás
 ni al SDK sin opciones.
+
+## ADR-015 — `ConfigureSandbox` y los participantes del ciclo de vida (M15, 0.6)
+
+**Contexto.** Las ocho funciones de 0.6 (montajes S3, volúmenes EFS, eventos
+y webhooks, exportación OTLP, pasarela de secretos, dominio propio, tamaños
+y templates) necesitan, cada una, configurar algo dentro del guest después
+de `/run` (un montaje, un sink de eventos, un exportador de métricas, un
+listener de loopback) sin añadir un RPC por función ni acoplar `rayd` a
+ellas por adelantado.
+
+**Decisión.** Un único servicio gRPC, `ConfigureService` (`Configure`,
+`ConfigureStatus`), con una sección opcional por función dentro de
+`ConfigureRequest`: una sección ausente se deja tal cual, una presente
+(incluso vacía) sustituye el estado anterior de esa función. El orden de
+aplicación es fijo (`rayd_core::configure::APPLY_ORDER`): eventos →
+telemetría → pasarela → montajes S3 → volúmenes EFS (los eventos primero
+para que las secciones siguientes ya puedan generarlos; los montajes al
+final porque pueden tardar más en asentarse, `SECTION_CODE_PENDING`). Sólo
+se acepta en fase `RUNNING`/`RESUMED` (`FAILED_PRECONDITION not_running`
+en cualquier otra). El lado del agente es un `FeatureSet` de seis
+`ConfigurableFeature<Cfg, Status>` (`rayd::features`), cada uno
+`Unsupported` hasta que su propia función construye un adaptador real;
+`Health.features` (`AgentFeatures`, `features.proto`) expone qué build
+soporta qué, para que el SDK distinga "agente anterior a 0.6" (mensaje
+ausente, presencia de proto3) de "0.6, pero esta función sigue en stub".
+
+Las funciones que necesitan participar en `/suspend` y `/ready` implementan
+`LifecycleParticipant` (`rayd::lifecycle::participants`): `on_suspend(share)`
+corre **concurrentemente** con el `syncfs` por sistema de ficheros existente
+(`rayd_core::suspend_sync::SuspendShares`, reutilizando `SuspendBudget` sin
+tocar su contrato), nunca en serie después; `ready_gate()` combina su
+veredicto con la decisión existente de `/ready` sin reemplazarla. Sin
+ningún participante registrado (el caso de 0.6 foundations: todos los slots
+son `Unsupported`), ambos hooks se comportan exactamente como en 0.5.x.
+
+**Consecuencias.** `ConfigureSandbox` nunca se llama con las siete opciones
+0.6 en `None`/`undefined`: el SDK pre-valida con `plan_features`/
+`planFeatures` antes de `run-microvm` y no construye ningún `ConfigureRequest`
+hasta que una función real lo necesite. El orden de aplicación fijo es una
+decisión del ADR, no configurable: una sección no puede pedir ejecutarse
+antes que las que la preceden en la lista.
+
+**Reversible.** `ConfigureService` es aditivo (nuevo campo 16 en
+`HealthResponse`, nuevo servicio gRPC); un agente 0.5.x sigue funcionando
+sin cambios y el SDK lo detecta por la ausencia de `features`.
+
+## ADR-016 — Convenio `OptionalStack` para infraestructura opcional (M15, 0.6)
+
+**Contexto.** ADR-014 ya establece que la infraestructura opcional vive en
+la cuenta del cliente, desplegada a mano con `aws cloudformation deploy`
+contra las plantillas de `infra/`. Con ocho funciones nuevas añadiendo cada
+una su propia plantilla, repetir ese flujo manual por función (parámetros,
+capacidades, artefactos Lambda, espera de estado) sin una convención común
+dispersaría la lógica y haría más difícil auditar qué crea cada una y
+cuánto cuesta.
+
+**Decisión.** Un puerto `StackProvisioner` (`describe`, `create`, `update`,
+`delete`, `wait`, `putArtifact`, `failureReason`) con un adaptador real
+sobre CloudFormation (`AWS_API_NOTES.md` §21) y un servicio `OptionalStacks`
+(`components`, `deploy`, `status`, `destroy`) que nunca se invoca
+implícitamente: ningún `create()`, listado o getter del SDK lo llama, sólo
+una llamada explícita (o `rayito stack`). Cada componente es una
+`StackComponent` estática (nombre, parámetros, coste estructurado,
+capacidades IAM) en un catálogo (`_stacks/_registry.py` /
+`stacks/registry.ts`); `scripts/gen_stack_assets.py` renderiza, de forma
+determinista y por componente, la plantilla y el artefacto Lambda (si lo
+hay) desde `infra/<component>.yaml` hacia ambos SDKs, así ninguno necesita
+el repositorio presente en tiempo de ejecución. Dos componentes existentes
+(`metadata-index` de M14, `secrets-access` de M13a) migran a este convenio
+en M15 foundations sin cambiar su plantilla; los otros siete son stubs
+(`supported: false`) hasta que su propia función los complete.
+
+**Consecuencias.** `rayito stack list|deploy|status|destroy` sustituye el
+`aws cloudformation deploy` manual documentado hasta ahora en
+`infra/README.md` para estos dos componentes (`infra/README.md` sigue
+documentando el despliegue manual como alternativa). `deploy` imprime
+siempre el bloque de coste del componente y pide confirmación salvo
+`--yes`. CAPABILITY_AUTO_EXPAND nunca se usa (ningún componente usa macros
+ni SAM).
+
+**Alternativas descartadas.** Un único stack que agrupe todas las funciones
+(`infra/rayito-plane.yaml`, ya descartado por ADR-014 regla 2): acoplaría el
+ciclo de vida de componentes sin relación entre sí. Generar las plantillas
+en tiempo de ejecución en vez de en tiempo de build: perdería la
+determinismo que `scripts/gen_stack_assets.py --check` verifica en CI.
+
+**Reversible.** Cada componente es independiente; retirar uno no afecta a
+los demás ni al SDK sin usarlo.
+
+## ADR-017 — s3-mounts (M15, 0.6)
+
+Pendiente: lo completa `m15-s3-mounts` (montaje S3 vía `mount-s3`/FUSE en
+`rayito-base-caps`, credenciales IMDS nunca en argv/entorno).
+
+## ADR-018 — efs-volumes (M15, 0.6, experimental)
+
+Pendiente: lo completa `m15-efs-volumes`, tras la campaña de medición
+EFS-1..EFS-20 (`docs/research/2026-10-efs-persistence.md`).
+
+## ADR-019 — sizes-catalog (M15, 0.6)
+
+Pendiente: lo completa `m15-sizes-catalog` (imágenes `<variant>[-<size>]`,
+catálogo de tamaños soportados, Q87/Q88).
+
+## ADR-020 — events-webhooks (M15, 0.6)
+
+Pendiente: lo completa `m15-events-webhooks` (eventos de ciclo de vida
+firmados por HMAC, forwarder/deliverer/reconciler en Lambda, webhooks
+compatibles con E2B).
+
+## ADR-021 — rayd-otlp (M15, 0.6)
+
+Pendiente: lo completa `m15-rayd-otlp` (exportación OTLP/HTTP de métricas a
+CloudWatch, propagación W3C `traceparent`).
+
+## ADR-022 — templates (M15, 0.6)
+
+Pendiente: lo completa `m15-templates` (DSL de templates declarativos sobre
+`create-microvm-image`/`update-microvm-image`, sin caché de capas, sólo
+ARM64).
+
+## ADR-023 — secrets-gateway (M15, 0.6)
+
+Pendiente: lo completa `m15-secrets-gateway` (pasarela de credenciales en
+loopback que nunca expone el valor al código del sandbox; extiende T18).
+
+## ADR-024 — custom-domain (M15, 0.6)
+
+Pendiente: lo completa `m15-custom-domain` (dominio propio sobre CloudFront,
+JWE de enrutado en un KeyValueStore firmado con SigV4A; necesita D3).

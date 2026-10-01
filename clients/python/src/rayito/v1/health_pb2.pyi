@@ -1,5 +1,6 @@
 from rayito.v1 import lifecycle_pb2 as _lifecycle_pb2
 from rayito.v1 import network_pb2 as _network_pb2
+from rayito.v1 import features_pb2 as _features_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -13,7 +14,7 @@ class HealthRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class HealthResponse(_message.Message):
-    __slots__ = ("agent_ready", "kernel_ready", "agent_version", "uptime_ms", "sandbox_id", "resume_generation", "clock_offset_ms", "kernel_state_lost", "imds_blocked", "hook_anomalies", "metadata", "lifecycle", "egress_enforcement", "cpu_count", "memory_total_bytes")
+    __slots__ = ("agent_ready", "kernel_ready", "agent_version", "uptime_ms", "sandbox_id", "resume_generation", "clock_offset_ms", "kernel_state_lost", "imds_blocked", "hook_anomalies", "metadata", "lifecycle", "egress_enforcement", "cpu_count", "memory_total_bytes", "features")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -36,6 +37,7 @@ class HealthResponse(_message.Message):
     EGRESS_ENFORCEMENT_FIELD_NUMBER: _ClassVar[int]
     CPU_COUNT_FIELD_NUMBER: _ClassVar[int]
     MEMORY_TOTAL_BYTES_FIELD_NUMBER: _ClassVar[int]
+    FEATURES_FIELD_NUMBER: _ClassVar[int]
     agent_ready: bool
     kernel_ready: bool
     agent_version: str
@@ -51,7 +53,8 @@ class HealthResponse(_message.Message):
     egress_enforcement: _network_pb2.EgressEnforcement
     cpu_count: int
     memory_total_bytes: int
-    def __init__(self, agent_ready: _Optional[bool] = ..., kernel_ready: _Optional[bool] = ..., agent_version: _Optional[str] = ..., uptime_ms: _Optional[int] = ..., sandbox_id: _Optional[str] = ..., resume_generation: _Optional[int] = ..., clock_offset_ms: _Optional[int] = ..., kernel_state_lost: _Optional[bool] = ..., imds_blocked: _Optional[bool] = ..., hook_anomalies: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., lifecycle: _Optional[_Union[_lifecycle_pb2.LifecycleState, _Mapping]] = ..., egress_enforcement: _Optional[_Union[_network_pb2.EgressEnforcement, str]] = ..., cpu_count: _Optional[int] = ..., memory_total_bytes: _Optional[int] = ...) -> None: ...
+    features: _features_pb2.AgentFeatures
+    def __init__(self, agent_ready: _Optional[bool] = ..., kernel_ready: _Optional[bool] = ..., agent_version: _Optional[str] = ..., uptime_ms: _Optional[int] = ..., sandbox_id: _Optional[str] = ..., resume_generation: _Optional[int] = ..., clock_offset_ms: _Optional[int] = ..., kernel_state_lost: _Optional[bool] = ..., imds_blocked: _Optional[bool] = ..., hook_anomalies: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., lifecycle: _Optional[_Union[_lifecycle_pb2.LifecycleState, _Mapping]] = ..., egress_enforcement: _Optional[_Union[_network_pb2.EgressEnforcement, str]] = ..., cpu_count: _Optional[int] = ..., memory_total_bytes: _Optional[int] = ..., features: _Optional[_Union[_features_pb2.AgentFeatures, _Mapping]] = ...) -> None: ...
 
 class MetricsRequest(_message.Message):
     __slots__ = ()

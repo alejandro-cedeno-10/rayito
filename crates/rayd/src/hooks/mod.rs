@@ -58,14 +58,16 @@ use rayd_core::wire_tokens::TERMINATING;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use rayd_core::suspend_sync::{FlushReport, SuspendBudget};
+use rayd_core::suspend_sync::{FlushReport, ParticipantDemand, SuspendBudget, SuspendShares};
 
 use crate::adapters::{
     BoundedFlush, IMDS_VERIFY_BUDGET, ImdsState, PlatformFilesystemSync, UserConnectProbe,
     rule_present, verify_imds_block,
 };
 use crate::code::CodeManager;
-use crate::lifecycle::{SuspendSignal, TimeoutWatcher, suspend_watchdog};
+use crate::lifecycle::{
+    LifecycleParticipant, ReadyVerdict, SuspendSignal, TimeoutWatcher, suspend_watchdog,
+};
 use crate::network::NetworkManager;
 
 /// `warn!` threshold for the wall-clock drift recorded at `/resume`.
@@ -113,6 +115,12 @@ pub struct HookServices {
     pub user_probe: Option<UserConnectProbe>,
     pub timeout: Arc<TimeoutWatcher>,
     pub network: Arc<NetworkManager>,
+    /// M15 foundations (ADR-015): the 0.6 feature slots that opted into
+    /// `/suspend`'s bounded flush and `/ready`'s combined verdict
+    /// (`ConfigurableFeature::participant`). Empty until a feature's slot
+    /// returns `Some`, which is how `/suspend` and `/ready` stay byte-for-byte
+    /// the 0.5.x behaviour with no 0.6 feature configured.
+    pub participants: Vec<Arc<dyn LifecycleParticipant>>,
 }
 
 #[derive(Clone)]
@@ -126,6 +134,7 @@ struct HooksState {
     timeout: Arc<TimeoutWatcher>,
     network: Arc<NetworkManager>,
     flush: Arc<BoundedFlush>,
+    participants: Arc<Vec<Arc<dyn LifecycleParticipant>>>,
 }
 
 /// The router without an IMDS block, a user probe or a deadline watcher
@@ -146,6 +155,7 @@ pub fn router(
         user_probe: None,
         timeout: TimeoutWatcher::detached(),
         network: NetworkManager::unavailable(session_for_network),
+        participants: Vec::new(),
     })
 }
 
@@ -172,6 +182,7 @@ pub fn router_with_flush(services: HookServices, flush: BoundedFlush) -> Router 
         timeout: services.timeout,
         network: services.network,
         flush: Arc::new(flush),
+        participants: Arc::new(services.participants),
     };
     Router::new()
         .route(&hook_path(Hook::Ready), post(ready))
@@ -236,6 +247,10 @@ struct RunEnvelope {
 async fn ready(State(state): State<HooksState>) -> Response {
     let sidecar_state = state.code.sidecar_state();
     let decision = ready_hook_decision(&sidecar_state, state.code.boot_elapsed());
+    if matches!(decision, ReadyDecision::Ok) && !participants_ready(&state.participants) {
+        tracing::info!(hook = %Hook::Ready, outcome = "participant_not_ready", "ready deferred");
+        return retry_later(Hook::Ready, "participant_not_ready", &state.session);
+    }
     match decision {
         ReadyDecision::Retry => {
             tracing::info!(hook = %Hook::Ready, outcome = "kernel_warming", state = sidecar_state.as_str(), "ready deferred");
@@ -367,7 +382,10 @@ async fn suspend(State(state): State<HooksState>) -> Response {
         if transition.is_ok() {
             state.code.quiesce(QUIESCE_TIMEOUT).await;
         }
-        let flushed = state.flush.flush().await;
+        let (flushed, participants_run) = tokio::join!(
+            state.flush.flush(),
+            run_participants(&state.participants, state.flush.budget())
+        );
         log_flush(&flushed, state.flush.budget());
         if close_streams {
             spawn_suspend_watchdog(&state.session);
@@ -378,6 +396,7 @@ async fn suspend(State(state): State<HooksState>) -> Response {
             suspend_generation = state.session.suspend_generation(),
             streams_closed,
             filesystems_synced = flushed.synced,
+            participants_run,
             suspend_ms = millis(started.elapsed()),
             "suspend recorded"
         );
@@ -390,6 +409,49 @@ async fn suspend(State(state): State<HooksState>) -> Response {
         )
     })
     .await
+}
+
+/// `/ready` only ever downgrades its own decision: `Ok` from every
+/// participant leaves the existing verdict untouched, and any `Retry` or
+/// `Fail` keeps answering 503 rather than declare the sandbox ready while a
+/// feature says it should not be.
+fn participants_ready(participants: &[Arc<dyn LifecycleParticipant>]) -> bool {
+    participants
+        .iter()
+        .all(|participant| participant.ready_gate() == ReadyVerdict::Ok)
+}
+
+/// Runs every participant's `on_suspend` concurrently with the
+/// per-filesystem `syncfs` calls (`BoundedFlush::flush`), each cut off at
+/// its own `SuspendShares` allocation inside the same `SuspendBudget`
+/// (`rayd_core::suspend_sync`). Returns how many participants ran, for the
+/// `suspend recorded` log line; with no participant configured this
+/// resolves immediately and changes nothing about `/suspend`'s 0.5.x
+/// behaviour.
+async fn run_participants(
+    participants: &[Arc<dyn LifecycleParticipant>],
+    budget: SuspendBudget,
+) -> usize {
+    if participants.is_empty() {
+        return 0;
+    }
+    let demands: Vec<ParticipantDemand> = participants.iter().map(|p| p.demand()).collect();
+    let shares = SuspendShares::allocate(budget, &demands);
+    let mut joins = tokio::task::JoinSet::new();
+    // `cloned()` is not redundant here: each spawned task needs an owned,
+    // `'static` `Arc`, not a borrow of this function's `participants` slice.
+    #[allow(clippy::unnecessary_to_owned)]
+    for participant in participants.iter().cloned() {
+        let share = shares.share_for(participant.demand().name);
+        joins.spawn(async move {
+            let _ = tokio::time::timeout(share, participant.on_suspend(share)).await;
+        });
+    }
+    let mut completed = 0;
+    while joins.join_next().await.is_some() {
+        completed += 1;
+    }
+    completed
 }
 
 fn spawn_suspend_watchdog(session: &Arc<SandboxSession>) {
@@ -822,6 +884,7 @@ mod tests {
                 user_probe: None,
                 timeout: TimeoutWatcher::detached(),
                 network,
+                participants: Vec::new(),
             });
             (session, router)
         }
@@ -888,6 +951,7 @@ mod tests {
                 user_probe: None,
                 timeout: TimeoutWatcher::detached(),
                 network,
+                participants: Vec::new(),
             });
             let status = post(
                 &router,
@@ -975,6 +1039,7 @@ mod tests {
                 user_probe: None,
                 timeout: TimeoutWatcher::detached(),
                 network: NetworkManager::unavailable(session),
+                participants: Vec::new(),
             };
             let flush = BoundedFlush::new(fake, SuspendBudget::for_hook(budget(Hook::Suspend)));
             router_with_flush(services, flush)

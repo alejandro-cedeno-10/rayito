@@ -121,6 +121,7 @@ async fn harness() -> Harness {
         user_probe: None,
         timeout: TimeoutWatcher::detached(),
         network,
+        participants: Vec::new(),
     });
     Harness {
         channel,

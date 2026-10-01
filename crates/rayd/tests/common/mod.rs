@@ -441,6 +441,7 @@ pub async fn harness_with(options: Options) -> Harness {
         user_probe: options.user_probe,
         timeout,
         network,
+        participants: Vec::new(),
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),

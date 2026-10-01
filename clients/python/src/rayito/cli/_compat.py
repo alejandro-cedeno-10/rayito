@@ -57,6 +57,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales "
         "(secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0",
     ),
+    CompatibilityRow(
+        "0.6",
+        "0.6.0",
+        "0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, volúmenes, eventos, OTLP, "
+        "pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0",
+    ),
 )
 
 

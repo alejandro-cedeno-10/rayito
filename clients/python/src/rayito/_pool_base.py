@@ -555,6 +555,17 @@ class LaunchKwargDefaults:
     keep_on_failure: object = False
     control_plane: object = None
     transport: object = None
+    # M15 (Rayito 0.6, foundations): las siete opciones 0.6 no tienen
+    # sentido con pool= (una plaza ya arrancada no puede aceptar un plano de
+    # lanzamiento distinto); se rechazan con el mismo mecanismo que todo lo
+    # demás en vez de que cada feature añada su propia comprobación.
+    mounts: object = None
+    volumes: object = None
+    size: object = None
+    events: object = None
+    telemetry: object = None
+    gateways: object = None
+    domain: object = None
 
 
 LAUNCH_KWARG_DEFAULTS: Final = LaunchKwargDefaults()

@@ -11,6 +11,7 @@
 
 pub mod adapters;
 pub mod code;
+pub mod features;
 pub mod filesystem;
 pub mod grpc;
 pub mod hooks;

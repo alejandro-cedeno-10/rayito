@@ -906,3 +906,111 @@ MEDIR**; es puerta de release y de archivo del cambio; el e2e
 `clients/typescript/tests/e2e/metadata-index.e2e.test.ts`, con
 `RAYITO_E2E_INDEX_TABLE`) lo comprueba, pero todavía no se ha ejecutado
 contra AWS real.
+
+## 21. CloudFormation (M15 foundations, `m15-foundations`/ADR-016, **contrato de parámetros**)
+
+`OptionalStacks` (Python `rayito/_stacks/_cloudformation.py`, TypeScript
+`src/stacks/cloudformation.ts`), el adaptador del convenio `OptionalStack`,
+llama a AWS CloudFormation **con las credenciales del llamante**. **Estas
+son las únicas operaciones y los únicos parámetros que los SDKs pueden
+usar**: la regla dura 1 vale también aquí. Verificado sin red el
+2026-09-30, antes de escribir código: los nombres de Python contra el
+modelo `cloudformation/2010-05-15` de botocore 1.43.103 (miembros de
+entrada y de salida de `CreateStack`, `UpdateStack`, `DescribeStacks`,
+`DeleteStack`, `DescribeStackEvents`, y el `enum` de `StackStatus`); los de
+JavaScript son los mismos nombres de parámetro de la API REST de
+CloudFormation, que `@aws-sdk/client-cloudformation` expone sin cambios de
+forma. Referencia de la API:
+<https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/>
+(consultada 2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
+| `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack` | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html> |
+| `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
+| `DeleteStack` (`delete_stack` / `DeleteStackCommand`) | `StackName` | — (idempotente: no falla sobre una pila que no existe) | `cloudformation:DeleteStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html> |
+
+`DescribeStackEvents` queda documentada (`StackName` → `StackEvents[].{
+LogicalResourceId, ResourceStatus, ResourceStatusReason}`) pero **no se usa
+todavía**: `wait()` sondea `DescribeStacks` (más simple y suficiente para
+pilas sin recursos anidados); un componente futuro con una pila grande
+puede adoptarla para diagnósticos más finos sin cambiar el puerto
+`StackProvisioner`.
+
+`CAPABILITY_AUTO_EXPAND` **nunca se usa**: ningún componente de este
+catálogo usa macros ni transforms de SAM.
+
+`Parameters`/`Tags` siempre se mandan ordenados por clave (determinismo de
+los tests, nunca un requisito de la API). `Tags` siempre incluye las tres
+etiquetas fijas de `stackTags` (`rayito:component`, `rayito:managed-by`,
+`rayito:sdk-version`), que ganan sobre cualquier etiqueta del llamante con
+el mismo nombre.
+
+Ausencia de pila: `DescribeStacks` sobre un nombre que no existe responde
+`ClientError`/`Error` con `Code="ValidationError"` y un mensaje que
+contiene `"does not exist"` (sin más estructura verificable sin red); el
+adaptador lo traduce a `undefined`/`None`, nunca a una excepción. Mismo
+código y el texto `"No updates are to be performed"` en `UpdateStack`
+cuando la plantilla y los parámetros no cambiaron nada: se traduce a
+`"no_changes"` (`UpdateOutcome`), no a un fallo.
+
+Constructor de cliente: Python `LazyClient("cloudformation", region=…,
+session=…)` (mismo `client_config()` que el resto del SDK: reintentos
+`standard`, User-Agent `rayito/<versión>`); TypeScript
+`loadOptionalSdkClient("@aws-sdk/client-cloudformation", …)`. Ningún
+cliente se construye hasta el primer `deploy`/`status`/`destroy`
+(ADR-014); construir `OptionalStacks()` no llama a AWS.
+
+`putArtifact` (sólo para un componente con código Lambda; ninguno de los
+dos de M15 foundations lo necesita) usa el mismo patrón que el resto del
+SDK para S3: `HeadObject` (clave = sha256 del contenido) antes de
+`PutObject`, así subir el mismo artefacto dos veces es un no-op.
+
+## 22. EFS (`m15-efs-volumes`)
+
+Pendiente: `m15-efs-volumes` documenta aquí `CreateAccessPoint`,
+`DescribeAccessPoints`, `DeleteAccessPoint` (`VolumeStore`) y los
+parámetros de montaje NFS (`mount -t efs -o tls,iam,accesspoint`), tras la
+campaña de medición EFS-1..EFS-20.
+
+## 23. Mountpoint y S3 (`m15-s3-mounts`)
+
+Pendiente: `m15-s3-mounts` documenta aquí las banderas de `mount-s3` y el
+contrato de credenciales IMDS del daemon FUSE.
+
+## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
+
+Pendiente: `m15-sizes-catalog` documenta aquí `GetMicrovmImageVersion`
+(lectura de `resources[0].minimumMemoryInMiB`) y las oleadas de
+`create-microvm-image --sizes`.
+
+## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
+
+Pendiente: `m15-events-webhooks` documenta aquí la suscripción de
+CloudWatch Logs, la tabla DynamoDB de eventos/webhooks y la regla de
+EventBridge Scheduler del reconciliador.
+
+## 26. CloudWatch OTLP (`m15-rayd-otlp`)
+
+Pendiente: `m15-rayd-otlp` documenta aquí el endpoint OTLP/HTTP de
+CloudWatch (`PutMetricData` vía `https://monitoring.<región>.amazonaws.com/v1/metrics`,
+Q91) y su firma SigV4.
+
+## 27. Logs de build y extras de imagen (`m15-templates`)
+
+Pendiente: `m15-templates` documenta aquí la lectura del grupo de logs de
+build (`create-microvm-image`/`update-microvm-image`) y el contrato del
+`codeArtifact` en S3.
+
+## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
+
+Pendiente: `m15-secrets-gateway` documenta aquí cómo reutiliza
+`infra/secrets-access.yaml` (sin plantilla propia) y el contrato interno
+del listener de loopback.
+
+## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
+
+Pendiente: `m15-custom-domain` documenta aquí `CreateDistribution`/
+`UpdateKeyValueStore` (SigV4A, `@aws-sdk/signature-v4a`) y el contrato de
+la CloudFront Function de enrutado.

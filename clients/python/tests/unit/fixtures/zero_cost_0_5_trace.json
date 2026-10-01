@@ -1,0 +1,26 @@
+{
+  "boto3_operations": [
+    "RunMicrovm",
+    "CreateMicrovmAuthToken",
+    "GetMicrovm",
+    "SuspendMicrovm",
+    "GetMicrovm",
+    "ResumeMicrovm",
+    "CreateMicrovmAuthToken",
+    "TerminateMicrovm",
+    "ListMicrovms"
+  ],
+  "run_microvm_payload": {
+    "token_sha256": "859e5de6b4aec7dd6f241f258e87bbe1bed8483bac575e01a020a85a6af7ee14",
+    "user": "user",
+    "v": 1,
+    "workdir": "/home/user"
+  },
+  "grpc_methods": [
+    "/rayito.v1.HealthService/Health",
+    "/rayito.v1.ProcessService/Start",
+    "/rayito.v1.FilesystemService/Write",
+    "/rayito.v1.HealthService/Health",
+    "/rayito.v1.ProcessService/Start"
+  ]
+}
