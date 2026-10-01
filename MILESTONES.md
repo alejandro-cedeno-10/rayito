@@ -1334,6 +1334,30 @@ sandboxes suspendidos de la prueba).
 
 ---
 
+## 0.5.0 — Funciones opcionales sin servidor (2026-10-01)
+
+Siete cambios OpenSpec (`m11-optin-adr`, `m11-suspend-bounded-sync`,
+`m12-sizes-proxy`, `m13-secrets`, `m13-otel-sdk`, `m14-metadata-index`,
+`m11-secrets-acceptance-fixes`), archivados tras la aceptación contra AWS
+real. Todas las funciones con coste están apagadas por defecto y se activan
+sólo con una opción explícita del SDK (ADR-014):
+
+- **Secretos** (`SecretStore`, `Secret` del shim) sobre Secrets Manager, con
+  caché con TTL (300 s por defecto) para no consultar el secreto en cada
+  llamada.
+- **Índice de metadatos** (`DynamoDbIndex`): lista sandboxes pausados por
+  metadatos sin despertarlos.
+- **Trazas OpenTelemetry** del SDK, sólo con `tracer_provider`.
+- **`rayito sandbox proxy`**: un puerto del sandbox en `localhost`, coste $0.
+- **`/suspend` acotado**: `syncfs` por sistema de ficheros con presupuesto.
+
+**Aceptación (2026-10-01, cuenta de pruebas, us-east-1):** TypeScript 38/38,
+corpus E2B y `doctor` en verde; sin opciones no hay ninguna llamada a Secrets
+Manager, DynamoDB ni OpenTelemetry. Limpieza: sólo se borró lo creado por la
+prueba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
