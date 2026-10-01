@@ -1,8 +1,12 @@
 //! What `rayd` needs from the outside to mount an EFS volume (research doc
-//! §4.2 `VolumeMounter`). `dyn`-safe (the `features::efs_volumes` slot
-//! stores it behind `Arc<dyn VolumeMounter>`), so it returns boxed futures
-//! rather than using `async fn` in the trait; no tokio, nix or process type
-//! crosses into `rayd-core` itself.
+//! §4.2 `VolumeMounter`). `dyn`-safe (a real adapter, once one exists, is
+//! held behind `Arc<dyn VolumeMounter>` the same way other ports in this
+//! codebase are), so it returns boxed futures rather than using `async fn`
+//! in the trait; no tokio, nix or process type crosses into `rayd-core`
+//! itself. `adapters::efs_mount::UnavailableEfsMounter` is the only
+//! implementation today; `features::efs_volumes` does not wire it into a
+//! `FeatureSet` slot yet (`slot::Unsupported` instead — see that module's
+//! docs for why).
 
 use std::future::Future;
 use std::pin::Pin;
