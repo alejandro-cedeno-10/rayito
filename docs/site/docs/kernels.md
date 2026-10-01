@@ -1,8 +1,7 @@
 # Kernels
 
 `run_code` ejecuta cada celda en un kernel de Jupyter con estado dentro del
-MicroVM. Desde M7 (`m7-poly-kernels`) el kernel se elige por celda con
-`language`; el contrato es el mismo para todos (`ExecuteRequest.language`,
+MicroVM. El kernel se elige por celda con `language`; el contrato es el mismo para todos (`ExecuteRequest.language`,
 `CreateContextRequest.language`) y la imagen decide qué kernels existen.
 
 ## Lenguajes e imágenes
@@ -11,8 +10,8 @@ MicroVM. Desde M7 (`m7-poly-kernels`) el kernel se elige por celda con
 |---|---|---|---|
 | `python` (por defecto) | `ipykernel` con el stack científico, calentado antes de `/ready` | sí | sí |
 | `bash` | [`bash_kernel`](https://pypi.org/project/bash_kernel/) 0.10.0 (`pexpect` sobre `bash`), arranque perezoso | `UNIMPLEMENTED` | sí |
-| `javascript` (alias `js`) | kernel Jupyter de [Deno](https://deno.com) 2.9.7 (M9), arranque perezoso | `UNIMPLEMENTED` | sí |
-| `typescript` (alias `ts`) | el mismo binario de Deno con su kernelspec TypeScript (M9), arranque perezoso | `UNIMPLEMENTED` | sí |
+| `javascript` (alias `js`) | kernel Jupyter de [Deno](https://deno.com) 2.9.7, arranque perezoso | `UNIMPLEMENTED` | sí |
+| `typescript` (alias `ts`) | el mismo binario de Deno con su kernelspec TypeScript, arranque perezoso | `UNIMPLEMENTED` | sí |
 
 Los nombres se normalizan en el SDK (`Bash`, `JS`, `TypeScript`, `ts` valen);
 en el cable sólo viajan `python`, `bash`, `javascript` y `typescript`.
@@ -141,7 +140,7 @@ Reglas:
     console.log((await sbx.runCode("[1, 2, 3].map((n) => n * 2)", { context: ctx })).text);
     ```
 
-=== "Shim de E2B"
+=== "Shim E2B"
 
     ```python
     from rayito.e2b import Sandbox
@@ -216,14 +215,14 @@ argumento). El agente sabe qué kernels hay porque el sidecar lo anuncia en
 
 ## Por qué no `ijavascript`
 
-El diseño de M7 preveía `ijavascript` sobre Node 20 (`dnf install nodejs20`).
+El diseño original preveía `ijavascript` sobre Node 20 (`dnf install nodejs20`).
 La prueba del 2026-09-16 (Q57) lo descartó: `ijavascript@5.2.1` depende de
 `jmp@2`, que sólo acepta `zeromq@5`, y `zeromq@5.3.1` no publica binarios
 precompilados para `linux-arm64` ni para Node 20 (ABI 115: sus `prebuilds`
 llegan hasta `node.abi108`, sólo `darwin-x64`, `linux-x64` y `win32`); npm
 cae en `node-gyp rebuild`, que muere con `not found: make` porque
-`al2023-minimal` no trae compiladores. M9 sirve `javascript` y `typescript`
-con Deno, que no necesita nada de eso.
+`al2023-minimal` no trae compiladores. Desde 0.3.0, `javascript` y
+`typescript` los sirve Deno, que no necesita nada de eso.
 
 ## R y Java
 
@@ -261,18 +260,20 @@ uv run --project clients/python python scripts/publish_image.py \
 de `rayito-base` reconstruida con el mismo `Dockerfile` (dentro de la banda
 de ±20 MB de memoria / ±10 MB de código respecto a 17.0) están en Q57.
 
-## Agentes anteriores a M7
+## Agentes antiguos
 
-`ExecuteRequest.language` es un campo proto3 opcional: un `rayd` anterior a
-M7 lo ignora y ejecuta la celda en el kernel Python del contexto por defecto
-sin avisar. Usa una imagen publicada desde este cambio (o posterior) antes de
-confiar en `language`; la tabla de compatibilidad SDK/agente se publica con
-cada release (`docs/RELEASING.md`).
+??? note "Agentes anteriores a M7 (`rayd` < 0.2.0)"
+    `ExecuteRequest.language` es un campo proto3 opcional: un `rayd` anterior a
+    0.2.0 lo ignora y ejecuta la celda en el kernel Python del contexto por defecto
+    sin avisar. Usa una imagen 0.2.0 o posterior antes de
+    confiar en `language`; la tabla de compatibilidad SDK/agente se publica con
+    cada release (`docs/RELEASING.md`).
 
-## Agentes anteriores a M9
 
-Un `rayd` anterior a M9 no conoce `typescript`: responde `INVALID_ARGUMENT`
-("language must be one of python, bash, javascript") y los SDKs lo entregan
-como `InvalidArgumentException` / `InvalidArgumentError` (también a través del
-shim). `javascript` contra ese agente sigue siendo `UNIMPLEMENTED` en toda
-imagen. Publica `rayito-base-poly` desde un árbol M9 antes de usar JS/TS.
+??? note "Agentes anteriores a M9 (`rayd` < 0.3.0)"
+
+    Un `rayd` anterior a 0.3.0 no conoce `typescript`: responde `INVALID_ARGUMENT`
+    ("language must be one of python, bash, javascript") y los SDKs lo entregan
+    como `InvalidArgumentException` / `InvalidArgumentError` (también a través del
+    shim). `javascript` contra ese agente sigue siendo `UNIMPLEMENTED` en toda
+    imagen. Publica `rayito-base-poly` desde una release 0.3.0 o posterior antes de usar JS/TS.

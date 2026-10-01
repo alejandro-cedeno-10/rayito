@@ -4,30 +4,61 @@ site_description: Sandboxes de ejecución para agentes de IA sobre AWS Lambda Mi
 docs_dir: docs
 site_dir: _build
 repo_url: https://github.com/alejandro-cedeno-10/rayito
+repo_name: alejandro-cedeno-10/rayito
+edit_uri: edit/main/docs/site/docs/
 strict: true
+
+# MkDocs 1.6: con `strict`, un enlace o un ancla rota rompe el build.
+validation:
+  omitted_files: warn
+  absolute_links: relative_to_docs
+  unrecognized_links: warn
+  anchors: warn
 
 theme:
   name: material
   language: es
   features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.indexes
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.tabs.link
     - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: amber
+      accent: deep orange
       toggle:
         icon: material/brightness-7
         name: Modo oscuro
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: amber
+      accent: deep orange
       toggle:
         icon: material/brightness-4
         name: Modo claro
 
 plugins:
-  - search
+  - search:
+      lang: es
   - mkdocstrings:
       handlers:
         python:
@@ -37,36 +68,120 @@ plugins:
             show_source: false
             members_order: source
             show_root_heading: true
+            show_root_full_path: false
             show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+            docstring_section_style: table
+            filters: ["!^_"]
+            heading_level: 2
 
 markdown_extensions:
+  - abbr
   - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
   - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path:
+        - !relative $config_dir/../..
+        - !relative $config_dir/../../docs
+      check_paths: true
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/alejandro-cedeno-10/rayito
+      name: Rayito en GitHub
+
+# Las páginas que ya existían conservan su fichero (y su URL); la navegación
+# las agrupa por tarea. Las nuevas viven en carpetas por sección.
 nav:
   - Inicio: index.md
-  - Quickstart: quickstart.md
-  - Imágenes e IAM: images.md
-  - CLI: cli.md
-  - Conceptos: concepts.md
-  - Referencia de API: api.md
-  - Kernels: kernels.md
-  - Seguridad: security.md
-  - Límites: limits.md
-  - Compatibilidad con E2B: e2b-compat.md
-  - Paridad con E2B: e2b-parity.md
-  - Servidor MCP: mcp.md
-  - Modelo de costes: cost.md
-  - Funciones opcionales y su coste: optional-features.md
-  - Secretos: secrets.md
-  - Pool de sandboxes: pool.md
-  - Persistencia: persistence.md
-  - Plazo del servidor: lifecycle.md
-  - Ficheros y transferencias: files.md
-  - Red saliente: network.md
-  - Métricas y listado: observability.md
-  - Git: git.md
-  - Verificar una release: verify.md
+  - Primeros pasos:
+      - primeros-pasos/index.md
+      - Instalación: primeros-pasos/instalacion.md
+      - Configurar AWS: primeros-pasos/configurar-aws.md
+      - Primer sandbox: quickstart.md
+      - Conceptos: concepts.md
+  - Guías:
+      - guias/index.md
+      - Sandbox:
+          - Ciclo de vida: guias/ciclo-de-vida.md
+          - Pausar y reanudar: guias/pausar-reanudar.md
+          - Plazo del servidor: lifecycle.md
+          - Pool: pool.md
+          - Persistencia: persistence.md
+          - Async: guias/async.md
+      - Ejecutar:
+          - Comandos: guias/comandos.md
+          - Ejecutar código: guias/ejecutar-codigo.md
+          - Lenguajes y kernels: kernels.md
+          - Terminal (PTY): guias/terminal-pty.md
+      - Ficheros y red:
+          - Ficheros y S3: files.md
+          - Red saliente: network.md
+          - Puertos y host: guias/puertos-y-host.md
+      - Observar y herramientas:
+          - Métricas y listado: observability.md
+          - Git: git.md
+      - Agentes:
+          - Servidor MCP: mcp.md
+          - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
+  - Funciones opcionales:
+      - Resumen y coste: optional-features.md
+      - Secretos: secrets.md
+      - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
+      - OpenTelemetry: funciones-opcionales/opentelemetry.md
+      - Proxy local: funciones-opcionales/proxy-local.md
+  - Migrar desde E2B:
+      - migrar-desde-e2b/index.md
+      - Diferencias: e2b-compat.md
+      - Paridad: e2b-parity.md
+  - Referencia:
+      - referencia/index.md
+      - Python:
+          - Resumen: api.md
+          - Sandbox: referencia/python/sandbox.md
+          - Subclientes: referencia/python/subclientes.md
+          - Pool: referencia/python/pool.md
+          - Modelos: referencia/python/modelos.md
+          - Opcionales: referencia/python/opcionales.md
+          - Excepciones: referencia/python/excepciones.md
+          - Shim E2B: referencia/python/shim-e2b.md
+      - TypeScript: referencia/typescript.md
+      - CLI: cli.md
+      - Errores: referencia/errores.md
+      - Variables de entorno: referencia/variables-de-entorno.md
+      - Límites: limits.md
+      - Otros lenguajes (gRPC): referencia/otros-lenguajes.md
+      - Changelog: referencia/changelog.md
+  - Operación:
+      - operacion/index.md
+      - Imágenes: images.md
+      - IAM: operacion/iam.md
+      - Seguridad: security.md
+      - Costes: cost.md
+      - Verificar una release: verify.md
+      - Solución de problemas: operacion/solucion-de-problemas.md
+      - FAQ: operacion/faq.md

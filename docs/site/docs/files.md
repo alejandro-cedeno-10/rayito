@@ -1,12 +1,16 @@
 # Ficheros y transferencias
 
 `sbx.files` lee, escribe, lista y vigila ficheros del sandbox por gRPC a
-través del proxy de Lambda MicroVMs. Desde M9 (`m9-file-transfer`, ADR-010)
-suma URLs de S3 prefirmadas (`upload_url`/`download_url`), un camino por S3
-para los ficheros grandes, gzip, metadatos por fichero y un plazo entre trozos
-de lectura. Todo lo de M9 exige una imagen construida con el `rayd` de M9: en
-una anterior el SDK lanza `UnimplementedError("actualiza la imagen")` antes de
-mover un byte.
+través del proxy de Lambda MicroVMs. Además da URLs de S3 prefirmadas
+(`upload_url`/`download_url`), un camino por S3 para los ficheros grandes,
+gzip, metadatos por fichero y un plazo entre trozos de lectura. <small>Desde
+0.3.0</small>
+
+!!! note "Las funciones de S3 exigen una imagen 0.3.0 o posterior"
+    Las URLs, los ficheros grandes por S3, gzip y los metadatos por fichero
+    necesitan un `rayd` 0.3.0 o posterior en la imagen: en una anterior el
+    SDK lanza `UnimplementedError("actualiza la imagen")` antes de mover un
+    byte.
 
 ## La superficie de ficheros
 
@@ -16,12 +20,11 @@ mover un byte.
 | `files.write(path, data)` / `write_files([WriteEntry, ...])` | escritura atómica (temporal + rename), padres creados; varios ficheros en un stream |
 | `files.list(path, depth=)`, `exists`, `get_info`, `remove`, `rename`, `make_dir` | como en E2B |
 | `files.watch_dir(path, on_event=...)` | eventos de inotify hasta `stop()`; un `files.write` en el directorio llega como un único `WRITE` del destino (con `entry` si `include_entry=True`), como el ejemplo de E2B |
-| `files.upload_url(path)` / `download_url(path)` (M9) | URLs de S3 firmadas con tus credenciales |
+| `files.upload_url(path)` / `download_url(path)` | URLs de S3 firmadas con tus credenciales |
 
-Por el proxy, un fichero sube a ≈ 0,6 MB/s (la ventana HTTP/2 del proxy,
-`AWS_API_NOTES.md` Q32) y baja a 4–5 MB/s (Q27). Entre el VM y S3 se midieron
-55,7–106,2 MB/s de subida y 84,2–99,0 MB/s de bajada (Q59). Por eso los
-ficheros grandes van por S3.
+Por el proxy, un fichero sube a ≈ 0,6 MB/s (la ventana HTTP/2 del proxy) y
+baja a 4–5 MB/s. Entre el VM y S3 se midieron 55,7–106,2 MB/s de subida y
+84,2–99,0 MB/s de bajada. Por eso los ficheros grandes van por S3.
 
 ## `S3Staging`: el bucket de transferencias
 
@@ -40,7 +43,8 @@ defecto: pásalo en `create`/`connect` o en el entorno.
         max_expires_in=86400,               # tope de las URLs de usuario
         threshold_bytes=8 * 1024 * 1024,    # desde aquí files.write/read van por S3
     )
-    sbx = Sandbox.create(transfer=staging)
+    with Sandbox.create(transfer=staging) as sbx:
+        print(sbx.transfer)
     # o: RAYITO_TRANSFER_BUCKET=amzn-s3-demo-bucket (y RAYITO_TRANSFER_PREFIX, RAYITO_TRANSFER_REGION)
     ```
 
@@ -49,9 +53,10 @@ defecto: pásalo en `create`/`connect` o en el entorno.
     ```ts
     import { Sandbox } from "rayito";
 
-    const sbx = await Sandbox.create({
+    await using sbx = await Sandbox.create({
       transfer: { bucket: "amzn-s3-demo-bucket", prefix: "rayito-transfer" },
     });
+    console.log(sbx.transfer);
     ```
 
 Las claves quedan bajo `<prefix>/<sandbox_id>/<up|down>/<id>`: una clave por
@@ -66,7 +71,7 @@ día los borraría.
 `upload_url` arma una importación en el sandbox y devuelve una URL de subida;
 lo que se suba a ella aterriza en `path`.
 
-=== "Python (`requests`)"
+=== "Python"
 
     ```python
     import requests
@@ -81,14 +86,6 @@ lo que se suba a ella aterriza en `path`.
         link = sbx.files.download_url("/home/user/datos.csv", filename="datos.csv")
         print(entry.size, link.size, link.sha256)
         body = requests.get(link).content
-    ```
-
-=== "curl"
-
-    ```bash
-    curl -T datos.csv -H "Content-Type: application/octet-stream" "$UPLOAD_URL"
-    curl -o datos.csv "$DOWNLOAD_URL"
-    curl -H "Range: bytes=0-1023" "$DOWNLOAD_URL"
     ```
 
 === "Python (async)"
@@ -119,7 +116,7 @@ lo que se suba a ella aterriza en `path`.
     asyncio.run(main())
     ```
 
-=== "TypeScript (`fetch`)"
+=== "TypeScript"
 
     ```ts
     import { readFile } from "node:fs/promises";
@@ -145,6 +142,15 @@ lo que se suba a ella aterriza en `path`.
     console.log(bytes.length === link.size);
     ```
 
+Desde la terminal, con `curl` y las URLs que devuelven `upload_url` y
+`download_url`:
+
+```bash
+curl -T datos.csv -H "Content-Type: application/octet-stream" "$UPLOAD_URL"
+curl -o datos.csv "$DOWNLOAD_URL"
+curl -H "Range: bytes=0-1023" "$DOWNLOAD_URL"
+```
+
 - **El ticket es un `str`** (Python) con la URL; `ticket.headers` son las
   cabeceras que el `PUT` debe llevar (`Content-Type:
   application/octet-stream`). En TypeScript la URL es `ticket.url` (o
@@ -158,7 +164,7 @@ lo que se suba a ella aterriza en `path`.
 - **Caducidad** siempre fijada: `expires_in` (3600 s por defecto), topada por
   `S3Staging.max_expires_in` y por los 7 días de SigV4. Si firmas con
   credenciales temporales (SSO, un rol), la URL deja de valer cuando caducan
-  ellas aunque diga más (Q62).
+  ellas aunque diga más.
 - **`download_url` es una foto** del fichero tal como está al llamar (la
   exportación termina antes de devolver la URL); un fichero que no existe
   lanza `FileNotFoundException` al momento, un directorio o un symlink
@@ -179,7 +185,7 @@ y luego leo o ejecuto" funcione sin `wait()`, un `files.read`, `get_info`,
 posterior espera hasta 2 s a las importaciones armadas: si el objeto ya está
 en S3 la importación se completa antes de la operación. Si no llega en ese
 margen la operación sigue (verá el fichero viejo o `NotFound`); `ticket.wait()`
-es la forma determinista. Medido (Q71): entre el `200` del `PUT` y el
+es la forma determinista. Medido: entre el `200` del `PUT` y el
 fichero visible pasan 0,34 s de mediana y 0,83 s de p95 con 1 MiB; con
 50 MB, `ticket.wait()` vuelve 0,7 s después del `200`.
 
@@ -191,7 +197,7 @@ lo sube el SDK directamente a S3 con tus credenciales mientras calcula su
 sha256, y `rayd` lo importa comprobando ese sha256. `files.read` de un fichero
 así lo exporta y el SDK lo descarga verificando el sha256; el objeto temporal
 se borra al terminar. Sin `transfer` el camino gRPC no cambia. `gzip` no se
-aplica a lo que va por S3. Medido (Q75): dentro del VM `rayd` importa a
+aplica a lo que va por S3. Medido: dentro del VM `rayd` importa a
 60-74 MB/s y exporta a 28-86 MB/s (10 MiB a 200 MB), así que el límite lo
 pone tu enlace con S3. Desde una conexión doméstica de ~3,5 MB/s de subida,
 200 MB por S3 van 6 veces más rápido que por gRPC al escribir; al leer, gRPC
@@ -263,7 +269,7 @@ ya iguala ese enlace. No se ha medido desde un cliente en la misma región.
 - **gzip** es la compresión estándar de gRPC: las respuestas sólo llegan
   comprimidas si la petición lleva la cabecera `rayito-compress: gzip`, que
   el SDK pone con `gzip=True`. Cruza el proxy en los dos sentidos: 20 MB de
-  texto compresible pasan de 0,80 a 52,34 MB/s de escritura + lectura (Q74).
+  texto compresible pasan de 0,80 a 52,34 MB/s de escritura + lectura.
 - **Metadatos**: se guardan como xattrs `user.rayito.<clave>` del fichero
   (claves de caracteres de token HTTP, en minúsculas; valores ASCII
   imprimible; ≤ 64 claves y ≤ 4 000 B). Sobrescribir un fichero reemplaza el
@@ -277,7 +283,7 @@ ya iguala ese enlace. No se ha medido desde un cliente en la misma región.
 ## IAM y el bucket
 
 Las credenciales que firman son las de **tu** proceso (el llamante), nunca un
-execution role: `rayd` no guarda ninguna (T16). La política mínima del
+execution role: `rayd` no guarda ninguna. La política mínima del
 llamante está parametrizada en `infra/iam.yaml` (`TransferBucket`,
 `TransferPrefix`): `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` y
 `s3:AbortMultipartUpload` sobre `<bucket>/<prefix>/*` y `s3:ListBucket`
@@ -343,3 +349,11 @@ ticket con `wait()` usa `sbx.native.files.uploadUrl()`.
 - Un fichero que no existe lanza en `download_url`, no al descargar.
 - `upload_url(path=None)` lanza: una URL de S3 no lleva nombre de fichero.
 - En el shim async, `upload_url`/`download_url` son corrutinas.
+
+??? info "Fuentes y mediciones"
+    - Diseño: ADR-010 en [`ARCHITECTURE.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/ARCHITECTURE.md);
+      modelo de amenazas T16 en [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).
+    - Medidas en [`AWS_API_NOTES.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md):
+      Q27 y Q32 (caudal por el proxy), Q59 (caudal VM ↔ S3), Q62 (caducidad
+      con credenciales temporales), Q71 (barrera tras subida), Q74 (gzip) y
+      Q75 (ficheros grandes).

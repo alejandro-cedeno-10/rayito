@@ -1,85 +1,155 @@
-# Quickstart
+# Primer sandbox
 
-## Instalación
+En esta página creas un sandbox, ejecutas un comando, escribes y lees un
+fichero, ejecutas código Python con estado y lo destruyes. Después te
+reconectas a un sandbox desde otro proceso.
 
-```bash
-pip install rayito        # o: uv add rayito
-```
-
-Python ≥ 3.11. Dependencias de runtime: `grpcio`, `protobuf` y `boto3`.
-
-Para TypeScript (Node ≥ 20):
+Antes necesitas el SDK instalado ([Instalación](primeros-pasos/instalacion.md))
+y la imagen `rayito-base` publicada en tu cuenta
+([Configurar AWS](primeros-pasos/configurar-aws.md)):
 
 ```bash
-pnpm add rayito           # o: npm i rayito / yarn add rayito / bun add rayito
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 ```
 
-El SDK TypeScript usa la cadena de credenciales por defecto del AWS SDK v3
-(`AWS_PROFILE`/`AWS_REGION` o variables de entorno).
+## Crear, usar y destruir
 
-## Credenciales
+=== "Python"
 
-El SDK usa las credenciales de AWS de la sesión de `boto3`: un perfil, variables
-de entorno o el rol de la máquina. No hay API key de Rayito.
+    ```python
+    from rayito import Sandbox
 
-```bash
-export AWS_PROFILE=<perfil> AWS_REGION=us-east-1
-export RAYITO_TEMPLATE=rayito-base        # nombre o ARN de la imagen
-```
+    with Sandbox.create(timeout=900) as sbx:  # (1)!
+        print(sbx.commands.run("echo hola").stdout)  # "hola\n"
+        sbx.files.write("/home/user/a.txt", "contenido")
+        print(sbx.files.read("/home/user/a.txt"))  # "contenido"
+        print(sbx.run_code("x = 40; x + 2").text)  # "42" (2)
+    ```
 
-`RAYITO_TEMPLATE` evita pasar `template=` en cada `create()`. Un nombre se
-resuelve al ARN `arn:aws:lambda:<region>:<cuenta>:microvm-image:<nombre>` con
-la identidad de la sesión (`sts:GetCallerIdentity`).
+    1. `timeout` es la vida máxima del sandbox en segundos (3600 por
+       defecto, tope 8 h). `with` llama a `kill()` al salir.
+    2. El kernel conserva el estado entre celdas: `x` sigue existiendo en la
+       siguiente llamada a `run_code`.
 
-Lo primero que conviene ejecutar en una cuenta nueva es el diagnóstico de la
-[CLI](cli.md): comprueba credenciales, región, cuotas, IAM, bucket, la imagen
-y el agente, y dice qué falta antes del primer `create()`.
+=== "Python (async)"
 
-```bash
-pip install "rayito[cli]"
-rayito doctor --template rayito-base        # --launch prueba un sandbox efímero (≈ $0,002)
-```
+    ```python
+    import asyncio
 
-## La imagen
+    from rayito import AsyncSandbox
 
-Cada sandbox arranca desde una versión de la imagen `rayito-base`, que lleva
-`rayd` (el agente) y el sidecar de kernels. La imagen se construye desde
-`image/Dockerfile` y se publica con `make image-publish` (ver el `README.md`
-del repositorio) o, lo que es lo mismo, con `rayito image publish --artifact
-image/rayito-image.zip --base-image-version 1 --bucket <bucket>` ([CLI](cli.md)).
-Los metadatos por sandbox necesitan una imagen de M6 o posterior; sobre una
-anterior se leen vacíos; `rayito doctor` lo comprueba en `compatibility`.
 
-## Primer sandbox
+    async def main() -> None:
+        async with await AsyncSandbox.create(timeout=900) as sbx:
+            print((await sbx.commands.run("echo hola")).stdout)  # "hola\n"
+            await sbx.files.write("/home/user/a.txt", "contenido")
+            print(await sbx.files.read("/home/user/a.txt"))  # "contenido"
+            print((await sbx.run_code("x = 40; x + 2")).text)  # "42"
 
-```python
-from rayito import Sandbox
 
-with Sandbox.create(timeout=900) as sbx:
-    print(sbx.commands.run("echo hola").stdout)          # "hola\n"
-    sbx.files.write("/home/user/a.txt", "contenido")
-    print(sbx.files.read("/home/user/a.txt"))
-    print(sbx.run_code("x = 40; x + 2").text)             # "42"
-```
+    asyncio.run(main())
+    ```
 
-`with` llama a `kill()` al salir (`terminate-microvm`). Sin `with`, llama a
-`sbx.kill()` explícitamente: un sandbox huérfano vive hasta `timeout`
-(3600 s por defecto, tope 8 h) y factura mientras tanto.
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    await using sbx = await Sandbox.create({ timeoutMs: 900_000 }); // (1)!
+    console.log((await sbx.commands.run("echo hola")).stdout); // "hola\n"
+    await sbx.files.write("/home/user/a.txt", "contenido");
+    console.log(await sbx.files.read("/home/user/a.txt")); // "contenido"
+    console.log((await sbx.runCode("x = 40; x + 2")).text); // "42"
+    ```
+
+    1. En TypeScript los tiempos van en milisegundos (`timeoutMs`).
+       `await using` llama a `kill()` al salir del bloque.
+
+Qué pasa por debajo:
+
+1. `create()` lanza un MicroVM desde la imagen (`run-microvm`) y espera a
+   que `rayd`, el agente de dentro, esté listo: unos 2 s hasta el agente y
+   5–6 s hasta el kernel de Python.
+2. Cada llamada viaja por gRPC a través del proxy de AWS, autenticada con
+   un token del proxy y con el *access token* del sandbox.
+3. Al salir del bloque, `kill()` termina el MicroVM (`terminate-microvm`).
+
+!!! warning "Libera siempre el sandbox"
+    Sin `with` / `await using`, llama a `kill()` tú mismo. Un sandbox
+    olvidado sigue facturando ≈ $0,126/h (2 GB) hasta su `timeout`. Para
+    encontrar huérfanos: `rayito sandbox list` y `rayito sandbox kill`.
 
 ## Reconectar desde otro proceso
 
-```python
-sbx = Sandbox.create()
-sandbox_id, token = sbx.sandbox_id, sbx.access_token   # guárdalos
+Un sandbox no depende del proceso que lo creó. Guarda su `sandbox_id` y su
+*access token* y conéctate desde otro proceso, otra máquina o tras un
+reinicio:
 
-again = Sandbox.connect(sandbox_id, access_token=token)
-again.run_code("x")
-```
+=== "Python"
 
-`connect()` no extiende la vida del sandbox y reanuda uno pausado.
+    ```python
+    from rayito import Sandbox
 
-## Siguiente
+    sbx = Sandbox.create()
+    sandbox_id, token = sbx.sandbox_id, sbx.access_token  # (1)!
 
-- [Conceptos](concepts.md): vida vs. idle, tokens, canales, streams.
-- [Compatibilidad con E2B](e2b-compat.md): si vienes de `e2b_code_interpreter`.
-- [Modelo de costes](cost.md): lo que cuesta cada operación, medido.
+    again = Sandbox.connect(sandbox_id, access_token=token)
+    print(again.commands.run("hostname").stdout)
+    again.kill()
+    ```
+
+    1. El access token es un secreto: guárdalo como guardarías una
+       contraseña. Sin él no se puede hablar con el sandbox.
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+
+    from rayito import AsyncSandbox
+
+
+    async def main() -> None:
+        sbx = await AsyncSandbox.create()
+        sandbox_id, token = sbx.sandbox_id, sbx.access_token
+
+        again = await AsyncSandbox.connect(sandbox_id, access_token=token)
+        print((await again.commands.run("hostname")).stdout)
+        await again.kill()
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    const sbx = await Sandbox.create();
+    const { sandboxId, accessToken } = sbx;
+
+    const again = await Sandbox.connect(sandboxId, { accessToken });
+    console.log((await again.commands.run("hostname")).stdout);
+    await again.kill();
+    ```
+
+`connect()` reanuda el sandbox si estaba pausado y no alarga su vida.
+
+## Recap
+
+- `Sandbox.create()` lanza un MicroVM en tu cuenta; `with` / `await using`
+  lo destruye al terminar.
+- `commands.run` ejecuta procesos, `files` lee y escribe ficheros y
+  `run_code` ejecuta código en un kernel con estado.
+- `sandbox_id` + `access_token` bastan para reconectar desde cualquier
+  proceso con credenciales de AWS.
+
+## Siguiente paso
+
+- [Conceptos](concepts.md): qué corre dónde, plazos, tokens y reconexión.
+- [Comandos](guias/comandos.md), [Ejecutar código](guias/ejecutar-codigo.md)
+  y [Ficheros](files.md): cada función en detalle.
+- [Migrar desde E2B](migrar-desde-e2b/index.md): si vienes de
+  `e2b_code_interpreter` o `@e2b/code-interpreter`.
+- [Costes](cost.md): lo que cuesta cada operación, medido.

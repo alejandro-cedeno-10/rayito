@@ -1,64 +1,102 @@
 # Modelo de costes
 
-Todo lo de esta página está medido contra AWS real (`us-east-1`, ARM,
-imagen `rayito-base` de 2 GB / 1 vCPU) o sale de la lista de precios pública.
-Cada fila cita su fuente en el repositorio.
+Rayito no cobra nada: pagas a AWS, en tu factura, lo que consumen tus
+sandboxes. Todo lo de esta página está medido contra AWS real (`us-east-1`,
+ARM, imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de 2026) o sale de la
+lista de precios pública.
 
-## Precios (fuente: `AWS_API_NOTES.md` §12)
+## Cuánto cuesta, con ejemplos
+
+| Escenario | Coste aproximado |
+|---|---|
+| 1 sandbox de 2 GB durante 10 minutos | 600 s × $0,126/h ≈ **$0,021**, más el lanzamiento ($0,0014) ≈ **$0,022** |
+| 1 sandbox de 2 GB durante 1 hora | **$0,126** + $0,0014 |
+| Un agente con 100 sesiones al día de 5 minutos | 100 × (300 s × $0,126/h + $0,0014) ≈ **$1,19/día** |
+| El mismo sandbox pausado 8 horas | almacenamiento del snapshot (≈ 0,92 GB × $0,08/GB-mes durante 8 h) ≈ **$0,0008** + un ciclo suspend/resume ($0,0049) |
+| Mantener publicada una versión de imagen | ≈ **$0,04 por semana** (mínimo una semana por versión) |
+| `rayito doctor --launch` | ≈ **$0,002** |
+| Un pool de 3 plazas ociosas | ≈ 3 × $0,6 = **$1,8/mes** (ver abajo) |
+
+Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
+`RUNNING`, por GB en cada snapshot y por el almacenamiento de las versiones
+de imagen y de los sandboxes suspendidos.
+
+## Precios
 
 | Concepto | Precio |
 |---|---|
-| Cómputo mientras `RUNNING` | $0.0000276944 / vCPU-s + $0.0000036667 / GB-s ⇒ **$0.126/h** a 2 GB / 1 vCPU |
-| Snapshot write (cada `suspend`) | $0.0038 / GB |
-| Snapshot read (cada `run-microvm` o `resume`) | $0.00155 / GB |
-| Storage de snapshots (versiones de imagen, VMs suspendidas) | $0.08 / GB-mes, **mínimo una semana** por versión de imagen ⇒ ≈ $0.037 / semana por versión |
-| Un ciclo suspend + resume a 2 GB (`rayito-base`, 0,92 GB de snapshot escritos y leídos) | ≈ **$0.0049** (≈ 140 s de cómputo): un `max_idle_seconds` por debajo de ≈ 150 s nunca ahorra (`docs/benchmarks/2026-09-cold-start.md` §8) |
-| Un lanzamiento (`run-microvm`, lectura del snapshot de 0,92 GB) | ≈ **$0.0014** |
-| Una pasada completa del e2e de un hito | ≈ **$0.03** (+ $0.037 si publica una versión de imagen) |
-| Una plaza ociosa del [pool de sandboxes](pool.md) (storage del snapshot + reciclado cada ≈ 7 h) | ≈ **$0.6/mes** por plaza (frente a $91/mes una VM `RUNNING`); una toma ≈ $0.0014 y **p50 0.77 s / p95 0.90 s** hasta la primera celda (M7) |
+| Cómputo mientras `RUNNING` | $0,0000276944 por vCPU-s + $0,0000036667 por GB-s ⇒ **$0,126/h** a 2 GB / 1 vCPU |
+| Escritura de snapshot (cada `suspend`) | $0,0038 por GB |
+| Lectura de snapshot (cada `run-microvm` o `resume`) | $0,00155 por GB |
+| Almacenamiento de snapshots (versiones de imagen, sandboxes suspendidos) | $0,08 por GB-mes, **mínimo una semana** por versión de imagen ⇒ ≈ $0,037 por semana y versión |
+| Un ciclo suspend + resume a 2 GB (0,92 GB de snapshot escritos y leídos) | ≈ **$0,0049**, lo mismo que ≈ 140 s de cómputo |
+| Un lanzamiento (`run-microvm`, lectura del snapshot de 0,92 GB) | ≈ **$0,0014** |
 
-Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
-`RUNNING`, por GB en cada snapshot y por el storage de las versiones.
+!!! tip "La auto-suspensión y el umbral de 150 s"
+    Como un ciclo suspend/resume cuesta lo mismo que ≈ 140 s de cómputo, un
+    `max_idle_seconds` por debajo de ≈ 150 s nunca ahorra dinero. El valor
+    por defecto (300 s) sí. Para trabajos con huecos cortos, sube
+    `max_idle_seconds` o pasa `idle=None`
+    ([Pausar y reanudar](guias/pausar-reanudar.md)).
 
-## Tiempos (fuente: `docs/benchmarks/2026-09-cold-start.md`, `MILESTONES.md`; `AWS_API_NOTES.md` §16)
+### El pool: almacenamiento frente a coste total por plaza
+
+Una plaza de [pool](pool.md) aparcada (suspendida) paga dos cosas
+distintas, y es fácil confundirlas:
+
+| Concepto | Coste por plaza |
+|---|---|
+| Sólo el almacenamiento del snapshot mientras está aparcada | 0,92 GB × $0,08/GB-mes ≈ **$0,074/mes** |
+| Reciclado: cada ≈ 7 h la plaza se relanza y se vuelve a aparcar para que nunca llegue al límite de 8 h | ≈ $0,005 por ciclo ≈ **$0,52/mes** |
+| **Total de una plaza ociosa** | ≈ **$0,6/mes** (frente a ≈ $91/mes de un sandbox `RUNNING` todo el mes) |
+| Tomar una plaza | $0,0014 (lectura del snapshot) + el cómputo normal mientras la usas |
+
+## Tiempos
 
 | Operación | Medido |
 |---|---|
-| `run-microvm` → `Health.agent_ready` (arranque en frío, cliente a ≈ 90 ms de RTT) | **p50 2.3 s / p95 3.0 s** (benchmark M6, 20 secuenciales) |
-| `run-microvm` → `kernel_ready` (incluye la rotación y el warm-up del kernel en `/run`) | **p50 5.2 s / p95 6.1 s** secuencial; p50 5.7 s / p95 8.6 s en ráfaga de 20 por el SDK (benchmark M6) |
-| `pause()` → `SUSPENDED` | **1.37-1.49 s** (M5, `pause_s`) |
-| `resume()` explícito → `Health` con la generación nueva | **p50 0.38 s / p95 0.40 s** (benchmark M6) |
-| Auto-resume: primera llamada sobre un sandbox suspendido → `Health` con la generación nueva | **≈ 0.67 s** (benchmark M6; 0.7-1.6 s en M5) |
-| `files.write` a 2 GB | **0.65 MB/s** (M3, bench de 50 MB) |
-| `files.read` a 2 GB | **6.71 MB/s** (M3: 8 000 000 B en 1.19 s) |
-| `Sandbox.get_info(id)` con metadatos (`get-microvm` + JWE + `Health`) | **0.61-0.66 s** (M6, `AWS_API_NOTES.md` Q45) |
-| `Sandbox.list(metadata=...)` | **≈ 0.6-0.8 s por sandbox `RUNNING`** (0.76-0.77 s con un sandbox; M6, `AWS_API_NOTES.md` Q45) |
-| `get_metrics()` | ≈ 100 ms (dos muestras de `/proc/stat`) |
+| `create()` hasta el agente listo (`agent_ready`), cliente a ≈ 90 ms | **p50 2,3 s / p95 3,0 s** |
+| `create()` hasta el kernel listo (`kernel_ready`) | **p50 5,2 s / p95 6,1 s** secuencial; p50 5,7 s / p95 8,6 s en ráfaga de 20 |
+| `pool.take()` hasta la primera celda | **p50 0,77 s / p95 0,90 s** |
+| `pause()` hasta `SUSPENDED` | **1,37–1,49 s** |
+| `resume()` explícito | **p50 0,38 s / p95 0,40 s** |
+| Auto-resume: primera llamada sobre un sandbox suspendido | **≈ 0,67 s** |
+| `files.write` a 2 GB por el proxy | **0,65 MB/s** |
+| `files.read` a 2 GB por el proxy | **6,71 MB/s** |
+| Ficheros grandes por S3 (con `transfer=`) | **55–106 MB/s** dentro del VM |
+| `Sandbox.get_info(id)` con metadatos | **0,61–0,66 s** |
+| `Sandbox.list(metadata=...)` sin índice | **≈ 0,6–0,8 s por sandbox `RUNNING`** |
+| `get_metrics()` | ≈ 100 ms |
 
 ## Reglas prácticas
 
-- Todo lo de esta página es lo que **crea o llama el propio `create()`/`connect()`**.
-  Las funciones opcionales (secretos, índice de metadatos, trazas OTel del
-  SDK) tienen su propio coste, apagado por defecto y activado sólo con una
-  opción explícita del SDK (ADR-014): [Funciones opcionales y su
-  coste](optional-features.md).
-- Un sandbox olvidado factura hasta `timeout` (3600 s por defecto): usa `with`
-  o `kill()`, y un `timeout` acorde a la tarea. Con el plazo del servidor de
-  M9 (`max_lifetime` u `on_timeout`) y `on_timeout='kill'`, un huérfano
-  factura hasta su plazo lógico más ≈ 15 s de 502 hasta `TERMINATED`
-  (`AWS_API_NOTES.md` Q58), no hasta `max_lifetime`. En modo `pause` sigue
-  facturando hasta que la suspensión llega (hasta `max_idle` sin cliente) y
-  después el storage del snapshot hasta el tope.
-- `files.write`/`files.read` de ficheros grandes con `transfer=S3Staging(...)`
-  (M9) van por S3 a 55–106 MB/s medidos dentro del VM (Q59) en vez de
-  0,65 MB/s por el proxy: menos segundos de cómputo facturados por fichero;
-  S3 cobra sus peticiones y el almacenamiento de 24–48 h del prefijo de
-  transferencias.
-- La política de idle por defecto (300 s) suspende un sandbox inactivo por
-  ≈ $0.0049 el ciclo; para trabajos con huecos cortos, sube `max_idle_seconds`
-  o pasa `idle=None`.
-- El coste dominante de un arranque corto es el snapshot read (≈ $0.00155 × 1 GB
-  por lanzamiento): el tamaño de la imagen importa más que el cómputo en
-  sandboxes de segundos.
-- `list(metadata=)` pospone la auto-suspensión de cada sandbox sondeado una
-  ventana de idle: no lo llames en bucle sobre una flota grande.
+- Todo lo de esta página es lo que **crea o llama el propio `create()` /
+  `connect()`**. Las funciones opcionales (secretos, índice de metadatos)
+  tienen su propio coste, apagado por defecto y activado sólo con una opción
+  explícita del SDK: [Funciones opcionales](optional-features.md).
+- Un sandbox olvidado factura hasta su `timeout` (3600 s por defecto): usa
+  `with` / `await using` o `kill()`, y un `timeout` acorde a la tarea. Con el
+  [plazo del servidor](lifecycle.md) y `on_timeout="kill"`, un sandbox
+  huérfano factura hasta su plazo más ≈ 15 s, no hasta `max_lifetime`.
+- Los ficheros grandes con `transfer=S3Staging(...)` van por S3, mucho más
+  rápido que por el proxy: menos segundos de cómputo facturados. S3 cobra
+  sus peticiones y el almacenamiento temporal del prefijo de transferencias.
+- En sandboxes de segundos, el coste dominante es la lectura del snapshot de
+  cada lanzamiento: el tamaño de la imagen importa más que el cómputo.
+- `list(metadata=)` sin índice cuenta como tráfico para cada sandbox
+  sondeado y le retrasa la auto-suspensión: no lo llames en bucle sobre una
+  flota grande.
+- Un sandbox más grande cuesta proporcionalmente más por hora
+  ([Límites: tamaño](limits.md#tamano-cpuram)).
+
+??? info "Fuentes y mediciones"
+    - Precios: `AWS_API_NOTES.md` §12, en
+      [GitHub](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md),
+      y la lista de precios pública de Lambda MicroVMs.
+    - Ciclo suspend/resume y arranque en frío:
+      [`docs/benchmarks/2026-09-cold-start.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/benchmarks/2026-09-cold-start.md)
+      (§8 y §9).
+    - Pool: `clients/python/tests/e2e/test_m7_pool.py` (2026-09-16).
+    - `pause()`, auto-resume, caudal de ficheros, `get_info` y
+      `list(metadata=)`: aceptaciones de 0.1.0 (`MILESTONES.md`) y
+      `AWS_API_NOTES.md` Q45; S3: Q59; el plazo del servidor: Q58.

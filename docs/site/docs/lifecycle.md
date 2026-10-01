@@ -1,7 +1,6 @@
 # Plazo del servidor
 
-Desde M9 (`m9-server-timeout`, ADR-011) un sandbox puede tener un **plazo
-lógico** que impone `rayd` dentro del MicroVM, aunque tu proceso muera: al
+Un sandbox puede tener un **plazo lógico** que impone `rayd` dentro del MicroVM, aunque tu proceso muera: al
 vencer, el sandbox se termina (`on_timeout="kill"`) o se suspende
 (`on_timeout="pause"`). El plazo se mueve en caliente con `set_timeout()` y
 se alarga con `connect(timeout=)`, como en E2B. El **tope** de la plataforma
@@ -9,9 +8,9 @@ se alarga con `connect(timeout=)`, como en E2B. El **tope** de la plataforma
 `create()` y no se mueve: no existe `UpdateMicrovm`. La tabla de los tres
 relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
 
-!!! note "Exige una imagen M9"
+!!! note "Exige una imagen 0.3.0 o posterior"
     Pedir un ciclo de vida (`max_lifetime` u `on_timeout`) a una imagen
-    anterior a M9 termina el VM (salvo `keep_on_failure`) y lanza
+    anterior a 0.3.0 termina el VM (salvo `keep_on_failure`) y lanza
     `LifecycleUnsupportedException` (TS `LifecycleUnsupportedError`), la misma
     feature ausente que cualquier otra: desde 0.4.0 es una subclase de
     `UnimplementedError` (TS `UnimplementedError`), no de
@@ -118,11 +117,11 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
 
 `rayd` cierra los streams con `sandbox_timeout`, manda `SIGTERM`/`SIGKILL` a
 todos los procesos y sale con código 124; la VM pasa a `TERMINATED` ≈ 15 s
-después sin ninguna llamada IAM (Q58). Durante esos segundos toda llamada
+después sin ninguna llamada IAM. Durante esos segundos toda llamada
 salvo `Health` y `SetTimeout` falla con `TimeoutException` (TS
 `TimeoutError`). Después, `Sandbox.get_info(id).timed_out` es `True` (el
 código 124 en el `stateReason`: la plataforma lo propaga como
-`Container Stopped with Exit Code: 124`, medido en Q63, con `TERMINATED`
+`Container Stopped with Exit Code: 124`, medido, con `TERMINATED`
 entre ≈ 15 y 19 s después del plazo). Se facturan esos segundos de 502.
 
 ## Al vencer: `pause`
@@ -138,6 +137,8 @@ entre ≈ 15 y 19 s después del plazo). Se facturan esos segundos de 502.
         on_timeout="pause",
         idle=IdlePolicy(max_idle_seconds=300, auto_resume=True),
     )
+    print(sbx.get_info().expires_at)
+    sbx.kill()
     ```
 
 === "TypeScript"
@@ -145,12 +146,13 @@ entre ≈ 15 y 19 s después del plazo). Se facturan esos segundos de 502.
     ```ts
     import { Sandbox } from "rayito";
 
-    const sbx = await Sandbox.create({
+    await using sbx = await Sandbox.create({
       timeoutMs: 600_000,
       maxLifetimeMs: 7_200_000,
       onTimeout: "pause",
       idle: { maxIdleSeconds: 300, autoResume: true },
     });
+    console.log((await sbx.getInfo()).expiresAt);
     ```
 
 Modo **honesto-parcial**: con un cliente vivo (un `Sandbox` abierto en algún
@@ -184,6 +186,7 @@ sbx.set_timeout(900)
 token = sbx.native.access_token  # E2B no tiene este token; guárdalo junto al sandbox_id
 Sandbox.set_timeout(sbx.sandbox_id, 1200, access_token=token)
 same = Sandbox.connect(sbx.sandbox_id, timeout=600, access_token=token)
+same.kill()
 ```
 
 En TypeScript el token está en `sbx.native.accessToken`.
@@ -197,3 +200,8 @@ En TypeScript el token está en `sbx.native.accessToken`.
 - Las formas de clase necesitan el access token del sandbox.
 - Una suspensión real de menos de 2 s que cruza el plazo no la reconoce
   `rayd` (la cubre el SDK que suspendió, arriba).
+
+??? info "Fuentes y mediciones"
+    - Diseño: ADR-011 en [`ARCHITECTURE.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/ARCHITECTURE.md).
+    - Medidas Q58 (salida y `TERMINATED` ≈ 15 s después) y Q63 (código 124 en
+      el `stateReason`) en [`AWS_API_NOTES.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md).

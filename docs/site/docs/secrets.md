@@ -5,20 +5,29 @@ Rayito puede **guardar** secretos en AWS Secrets Manager de tu cuenta
 a un sandbox como variables de entorno (`secrets=`), con una caché que evita
 traer el secreto en cada llamada (`SecretCache`).
 
-!!! note "Estado: implementado, pendiente de aceptación en AWS real"
-    Probado con fakes de Secrets Manager en los dos SDK; el e2e contra AWS
-    real y las medidas SEC-9/SEC-10 (`AWS_API_NOTES.md` §19) aún no se han
-    ejecutado. Hasta entonces, la fila de
-    [Funciones opcionales](optional-features.md) no dice "disponible".
+<small>Desde 0.5.0. Aceptado contra AWS Secrets Manager real.</small>
 
-!!! info "Apagado por defecto; sólo con `secrets=` / `SecretStore`"
-    Las dos funciones consumen dinero de AWS y siguen ADR-014
-    ([Funciones opcionales y su coste](optional-features.md)): sin pasar
-    `secrets=` / `secret_cache=` (TypeScript: `secrets` / `secretCache`) y sin
-    instanciar `SecretStore`, Rayito **no construye ningún cliente de Secrets
-    Manager, no importa `@aws-sdk/client-secrets-manager` y no hace ninguna
-    llamada** (exactamente el camino de 0.4.0). Ninguna variable de entorno,
-    fichero de configuración ni setter global las enciende.
+!!! info "Coste y activación"
+    - **Por defecto**: apagado. Sin `secrets=` / `secret_cache=` (TypeScript:
+      `secrets` / `secretCache`) y sin instanciar `SecretStore`, Rayito no
+      construye ningún cliente de Secrets Manager, no importa
+      `@aws-sdk/client-secrets-manager` y no hace ninguna llamada. Ninguna
+      variable de entorno ni fichero de configuración lo enciende.
+    - **Activa**: `SecretStore(...)` guarda, actualiza, lista y borra
+      secretos bajo un prefijo (`rayito/`); `secrets=` entrega su valor como
+      variable de entorno de un comando, una PTY, una celda o un contexto.
+    - **Recursos y llamadas AWS**: un secreto de Secrets Manager por
+      `create`; `GetSecretValue` una vez por secreto y TTL de la caché (300 s),
+      nunca una vez por comando.
+    - **Coste aproximado** (us-east-1, consultado 2026-09-30,
+      [precios](https://aws.amazon.com/secrets-manager/pricing/)): $0,40 por
+      secreto y mes **hasta que lo borras**, más $0,05 por 10 000 llamadas
+      (≈ $0,04/mes por secreto y proceso con el TTL por defecto).
+    - **IAM** (credenciales de quien llama al SDK): `RayitoSecretsReader` para
+      inyectar y `RayitoSecretsAdmin` para el CRUD, de
+      `infra/secrets-access.yaml`.
+    - **Cómo apagarla**: quita `secrets=` y deja de instanciar `SecretStore`;
+      `destroy()` los secretos que ya no uses ([Cómo apagarlo](#como-apagarlo)).
 
 !!! warning "Fase 1: el código del sandbox PUEDE leer un secreto inyectado"
     `secrets=` entrega el **valor** como variable de entorno del proceso que lo
@@ -63,7 +72,8 @@ traer el secreto en cada llamada (`SecretCache`).
     limita el nivel DEBUG al logger `rayito`
     (`logging.getLogger("rayito").setLevel(logging.DEBUG)`).
 
-Contrato exacto de parámetros y errores: `AWS_API_NOTES.md` §19. Una CMK de
+Contrato exacto de parámetros y errores: `AWS_API_NOTES.md` §19 (en
+[GitHub](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)). Una CMK de
 KMS (`kms_key_id=`) añade el coste de KMS y los permisos `kms:Decrypt` /
 `kms:GenerateDataKey`; la clave gestionada por AWS (`aws/secretsmanager`) no.
 
@@ -98,7 +108,7 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
     sbx.commands.run("env", secrets={"GH_TOKEN": SecretRef("gh", version_stage="AWSCURRENT")})
     sbx.kill()
 
-    store.update("openai", "sk-rotada")        # versión 2
+    store.update("openai", os.environ["OPENAI_API_KEY_NUEVA"])  # versión 2
     cache.refresh("openai")                    # sin esperar al TTL
     store.destroy("openai")                    # deja de facturar
     ```
@@ -119,7 +129,7 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
     });
     await sbx.kill();
 
-    await store.update("openai", "sk-rotada");
+    await store.update("openai", process.env.OPENAI_API_KEY_NUEVA ?? "");
     await secretCache.refresh("openai");
     await store.destroy("openai");
     ```
@@ -130,12 +140,14 @@ Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10
     ella, la primera llamada lanza `InvalidArgumentError` con el comando de
     instalación.
 
-=== "Shim de E2B"
+=== "Shim E2B"
 
     ```python
+    import os
+
     from rayito.e2b import Secret
 
-    info = Secret.create("openai-key", "sk-...", region="us-east-1")
+    info = Secret.create("openai-key", os.environ["OPENAI_API_KEY"], region="us-east-1")
     print(info.secret_id)                 # el ARN de Secrets Manager
     Secret.fill("openai-key")             # '${e2b.secrets.openai-key}': NO se resuelve
     Secret.destroy("openai-key")

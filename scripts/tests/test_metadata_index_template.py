@@ -184,7 +184,10 @@ def test_docs_explain_the_index_and_its_cost() -> None:
     observability = read("docs/site/docs/observability.md")
     assert "## Listado por metadatos con índice (opcional)" in observability
     assert "--index-table" in read("docs/site/docs/cli.md")
-    assert "::: rayito.DynamoDbIndex" in read("docs/site/docs/api.md")
+    assert "::: rayito.DynamoDbIndex" in read("docs/site/docs/referencia/python/opcionales.md")
+    assert "Coste y activación" in read(
+        "docs/site/docs/funciones-opcionales/indice-de-metadatos.md"
+    )
     assert "metadata-index.yaml" in read("infra/README.md")
     page = read("docs/site/docs/optional-features.md")
     row = next(
