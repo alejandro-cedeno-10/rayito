@@ -31,7 +31,10 @@ def _dummy_session() -> boto3.session.Session:
     # para la petición antes de que salga a red, así que nunca se usan de
     # verdad ni necesitan ser válidas.
     return boto3.session.Session(
-        aws_access_key_id="AKIADUMMYDUMMYDUMMYX",
+        # La access key de ejemplo de la documentación de AWS (termina en
+        # EXAMPLE a propósito: `scripts/check_hygiene.py` la reconoce como
+        # placeholder, no como una credencial real).
+        aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="dummy-secret-dummy-secret-dummy-secret",
         region_name="us-east-1",
     )
