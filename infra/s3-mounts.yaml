@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito m15-s3-mounts (optional, ADR-017): one least-privilege IAM managed
+  policy, RayitoS3MountAccess, for the execution role of a sandbox that uses
+  `mounts=` (S3 buckets mounted into the guest through `mount-s3`/FUSE, only
+  on `rayito-base-caps`). It creates no other resource ($0: IAM only). The
+  policy scopes `ListBucket` to the declared prefixes (an IAM
+  `s3:prefix` condition, matched against the real `mount-s3 --prefix`
+  argument); object-level actions are scoped to the bucket itself, not to a
+  prefix — the same shape as AWS's own published Mountpoint-S3 example
+  policy, because an object key has no IAM concept of "prefix" the way a
+  `ListBucket` call does. Actual prefix containment at mount time is
+  `mount-s3 --prefix`'s job, backed by `RAYITO_ALLOWED_MOUNT_BUCKETS` on the
+  image (AWS_API_NOTES.md §23). Deploy it only if you use `mounts=`; delete
+  the stack to remove the policy (no bucket or object it names is ever
+  touched by delete).
+
+Parameters:
+  BucketName:
+    Type: String
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: >-
+      The single bucket this policy grants access to (one stack per bucket;
+      deploy it again under a different stack name for a second bucket).
+  Prefixes:
+    Type: CommaDelimitedList
+    Default: "*"
+    Description: >-
+      Object-key prefixes the role may list (`s3:prefix` condition on
+      `ListBucket`, IAM `StringLike` semantics: each entry should end in
+      `*` to match a sub-tree, e.g. "team7/*,runs/*"). The default "*"
+      allows listing the whole bucket. Object-level actions below are
+      scoped to the bucket, not to these prefixes (see the template
+      Description).
+  ReadOnly:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: >-
+      "true" (default) grants only read actions (`GetObject`,
+      `ListBucket`). "false" additionally grants `PutObject` and
+      `DeleteObject`: the per-mount `read_only=False`/`allow_delete=True`
+      flags on `S3Mount` still decide what `mount-s3` itself allows for
+      any one mount, this only bounds what the role could ever do.
+
+Conditions:
+  AllowWrites: !Equals [!Ref ReadOnly, "false"]
+
+Resources:
+  RayitoS3MountAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Rayito s3-mounts: execution-role access for `mount-s3` against
+        BucketName, read-only unless ReadOnly=false.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListBucketUnderPrefixes
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}"
+            Condition:
+              StringLike:
+                s3:prefix: !Ref Prefixes
+          - Sid: ReadObjects
+            Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+          - !If
+            - AllowWrites
+            - Sid: WriteObjects
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+            - !Ref AWS::NoValue
+
+Outputs:
+  PolicyArn:
+    Description: ARN of RayitoS3MountAccess, to attach to the sandbox's execution role.
+    Value: !Ref RayitoS3MountAccess

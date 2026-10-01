@@ -25,6 +25,19 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `.proto` pasa a descubrirse por glob (`crates/rayito-proto/build.rs`).
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
+- **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
+  (`S3Mount`, `MountErrorClass`, `validate_mounts`/`parse_allowed_buckets`,
+  ports `FuseDevice`/`FuseDaemon`), the Linux adapters
+  (`adapters::{fuse_device,mount_s3}`: a raw `mount(2)` FUSE attach and a
+  `mount-s3` daemon run as the dedicated `rayito-mount` user, uid 990,
+  with a from-scratch environment — no credential ever in argv or env,
+  SEC-3) and a real `features::s3_mounts::S3MountsFeature`
+  (`supported()==true`, `Health.features.s3_mounts==true`, a
+  `LifecycleParticipant` whose `/suspend` share is zero and whose
+  `on_resume` relaunches a dead daemon). `s3_mounts.proto` now carries
+  real fields (`S3Mount`, `S3MountState`, `S3MountPhase`). With no
+  `S3MountsConfig` section sent, behaviour is unchanged from 0.5.x: no
+  `/dev/fuse` open, no `mount-s3` spawn.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

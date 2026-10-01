@@ -55,7 +55,10 @@ impl ConfigureGrpc {
                 Some(self.features.secret_gateway.apply(cfg).await)
             }
             ConfigSection::S3Mounts => {
-                let cfg = request.s3_mounts?;
+                // `.clone()`: unlike the other sections, `S3MountsConfig`
+                // now carries real fields (`m15-s3-mounts`), so it is no
+                // longer `Copy` and `request` is only borrowed here.
+                let cfg = request.s3_mounts.clone()?;
                 Some(self.features.s3_mounts.apply(cfg).await)
             }
             ConfigSection::EfsVolumes => {
@@ -182,7 +185,7 @@ mod tests {
     async fn a_present_section_against_every_slot_still_unsupported_reports_unsupported() {
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            s3_mounts: Some(S3MountsConfig::default()),
             ..Default::default()
         };
         let response = service
@@ -211,7 +214,7 @@ mod tests {
             .into_inner();
         assert_eq!(
             response.s3_mounts,
-            Some(rayito_proto::v1::S3MountsStatus {})
+            Some(rayito_proto::v1::S3MountsStatus::default())
         );
         assert_eq!(
             response.efs_volumes,
@@ -264,7 +267,7 @@ mod tests {
             .finish();
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            s3_mounts: Some(S3MountsConfig::default()),
             request_id: "a-request-id".to_owned(),
             ..Default::default()
         };

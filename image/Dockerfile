@@ -93,6 +93,46 @@ RUN for tool in /bin/bash whoami id sleep head tr env python3 /usr/bin/python3 p
     && { test -c /dev/ptmx && echo "pty devices: /dev/ptmx present at build" \
          || echo "pty devices: /dev/ptmx not visible at build (informative)"; }
 
+# m15-s3-mounts (ADR-017): el daemon `mount-s3` (Mountpoint for Amazon S3)
+# para `mounts=`, sólo útil sobre `rayito-base-caps` (una imagen base sin
+# capacidad sin usar es $0 extra de AWS; el binario vive en las cuatro
+# variantes porque hay un único Dockerfile, igual que `iproute` de M6).
+# Mountpoint no está en los repos dnf de AL2023: AWS lo distribuye como
+# RPM propio (releases firmadas de `awslabs/mountpoint-s3`), así que se
+# clava por versión exacta y sha256, verificado con `sha256sum -c` antes de
+# `dnf install` sobre el fichero local (mismo patrón de curl-con--o +
+# sha256sum -c que `scripts/check_pins.py` exige, ya usado por Deno más
+# abajo para `rayito-base-poly`). `fuse` sí es un paquete AL2023 (udev +
+# permisos de `/dev/fuse`); Mountpoint habla el protocolo FUSE de bajo
+# nivel por sí mismo (igual que `adapters::fuse_device::LinuxFuseDevice` en
+# `rayd`), así que no hace falta `fuse3`/`fusermount` como dependencia de
+# ejecución. `rayito-mount` (uid 990, sistema, sin shell ni home) es el
+# usuario bajo el que `rayd` lanza el daemon (SEC-3): por debajo de 1000,
+# el bloqueo de IMDS de M6 (`uidrange 1000-65535`) no lo alcanza, así que
+# sigue viendo IMDS directamente para resolver las credenciales del
+# execution role sin que lleguen nunca a argv ni al entorno del proceso.
+# Tamaño instalado estimado en Q80 de la investigación out-of-scope
+# (docs/research/2026-10-e2b-out-of-scope.md): +22.4 MB; una build real
+# confirma la cifra exacta (`rpm -q --queryformat '%{SIZE}' mount-s3`) en
+# la aceptación de este cambio. Subir Mountpoint es una versión de imagen
+# nueva: cambiar `MOUNT_S3_VERSION`/`MOUNT_S3_SHA256`, republicar y repetir
+# el e2e de `m15-s3-mounts`.
+RUN dnf install -y --setopt=install_weak_deps=0 fuse \
+    && dnf clean all \
+    && MOUNT_S3_VERSION=1.24.0 \
+    && MOUNT_S3_SHA256=3636465c56908c7f26182d6f31aaa77e4e145330833863104f4cca0db1788343 \
+    && curl -fsSL --retry 3 -o /tmp/mount-s3.rpm \
+         "https://s3.amazonaws.com/mountpoint-s3-release/${MOUNT_S3_VERSION}/arm64/mount-s3-${MOUNT_S3_VERSION}-arm64.rpm" \
+    && echo "${MOUNT_S3_SHA256}  /tmp/mount-s3.rpm" | sha256sum -c - \
+    && dnf install -y /tmp/mount-s3.rpm \
+    && dnf clean all \
+    && rm -f /tmp/mount-s3.rpm \
+    && useradd -r -u 990 -s /sbin/nologin -M rayito-mount \
+    && command -v mount-s3 >/dev/null \
+    && mount-s3 --version | grep -q "${MOUNT_S3_VERSION}" \
+    && { test -c /dev/fuse && echo "fuse device: /dev/fuse present at build" \
+         || echo "fuse device: /dev/fuse not visible at build (informative)"; }
+
 # Sidecar + pines exactos y clavados por hash (kernel-sidecar/requirements.txt)
 # en el site-packages del sistema, legibles por `user`; `--require-hashes`
 # rechaza cualquier fichero que no coincida con uno de los sha256 clavados

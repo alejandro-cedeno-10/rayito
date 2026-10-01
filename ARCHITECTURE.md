@@ -1804,8 +1804,75 @@ los demás ni al SDK sin usarlo.
 
 ## ADR-017 — s3-mounts (M15, 0.6)
 
-Pendiente: lo completa `m15-s3-mounts` (montaje S3 vía `mount-s3`/FUSE en
-`rayito-base-caps`, credenciales IMDS nunca en argv/entorno).
+`mounts=` monta uno o más buckets S3 (o un prefijo suyo) en el guest con
+`mount-s3` (Mountpoint for Amazon S3), sólo sobre `rayito-base-caps` (o una
+variante derivada por tamaño): el execution role del sandbox necesita
+IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`).
+
+**Dominio** (`rayd_core::s3_mount`, puro): `S3Mount{mount_path, bucket,
+prefix, read_only, allow_overwrite, allow_delete}`, `MountErrorClass`
+(`network`/`iam_denied`/`not_found`/`not_allowed`/`helper_missing`/`timeout`,
+espejo exacto de `S3MountState.error_class` del proto y de `MountException
+.code`/`MountError.code` en ambos SDKs), `MountPhase`
+(`Pending`/`Mounted`/`Failed`) y `validate_mounts` (rechaza un bucket fuera
+del allowlist de la imagen o una ruta repetida en la misma petición, antes
+de tocar nada). `RAYITO_ALLOWED_MOUNT_BUCKETS` es configuración de imagen
+(`rayito image publish --env`), nunca un interruptor de activación por
+sandbox (ADR-014 regla 4): vacía o ausente deniega todo.
+
+**Puertos** (`rayd_core::s3_mount::ports`): `FuseDevice` (abre `/dev/fuse`
+y hace el `mount(2)` del ABI de FUSE del kernel — `fd`, `rootmode`,
+`user_id=1000`, `group_id=1000` — sobre `mount_path`) y `FuseDaemon`
+(lanza, comprueba y mata el proceso `mount-s3` bound a ese descriptor).
+
+**Adaptadores** (`rayd::adapters`): `LinuxFuseDevice` hace el `mount(2)`
+crudo con `libc` (sin depender del feature `mount` de `nix`, que el
+workspace no tiene). `TokioMountS3Daemon` lanza
+`mount-s3 --foreground <bucket> /dev/fd/3 [--prefix p] [--read-only |
+--allow-overwrite --allow-delete]` como el usuario dedicado `rayito-mount`
+(uid/gid 990, creado en `image/Dockerfile`), con el entorno reconstruido
+desde cero (sólo `AWS_REGION`/`PATH`: nunca una credencial en argv ni en
+entorno, SEC-3) y reapea su propio hijo con `Child::wait()` en una tarea
+dedicada (independiente de `adapters::{child_registry,orphan_reaper}`,
+reservados a los procesos que pasan por `ProcessSpawner`): nunca hay dos
+sitios esperando el mismo pid. uid 990 está **por debajo** de
+`MIN_UNPRIVILEGED_ID` (1000), así que el blackhole de IMDS de M6
+(`uidrange 1000-65535`) no lo alcanza: `mount-s3` resuelve las credenciales
+del execution role por su **propio** acceso a IMDS, en su propio proceso,
+sin que `rayd` las toque nunca.
+
+**Slot** (`rayd::features::s3_mounts`): un `S3MountsFeature` real
+(`supported() == true` desde este cambio); `apply()` valida todo el
+`S3MountsConfig` (allowlist + rutas duplicadas) antes de montar o
+desmontar nada — una sección inválida no toca un solo montaje existente
+— desmonta lo que ya no está en la lista deseada, monta lo nuevo o lo que
+cambió de spec, y dos `Configure` seguidas con el mismo contenido son un
+no-op (ni un `/dev/fuse` nuevo ni un `mount-s3` relanzado).
+`ConfigurableFeature::participant()` devuelve un `LifecycleParticipant`
+cuya `demand().max` es `Duration::ZERO` (el `syncfs` acotado ya cubre el
+montaje FUSE, §7.2: "`/suspend` no añade ningún paso propio") y cuyo
+`on_resume` lanza una sonda `stat` de 2 s por montaje, relanzando el daemon
+si está muerto o no responde.
+
+**IAM** (`infra/s3-mounts.yaml`, `OptionalStack`): la política gestionada
+`RayitoS3MountAccess` concede `ListBucket` acotado por un `s3:prefix`
+condicional (parámetro `Prefixes`, coma-separado) y `GetObject` (más
+`PutObject`/`DeleteObject` con `ReadOnly=false`) sobre el bucket entero —
+IAM no tiene el concepto de "prefijo" de una clave de objeto como sí lo
+tiene `ListBucket`, la misma forma que la política de ejemplo que publica
+AWS para Mountpoint—; la contención real por prefijo la hace
+`mount-s3 --prefix` en tiempo de montaje, respaldada por el allowlist de
+bucket de la imagen.
+
+**SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer
+`cmdline`/`environ` del proceso `mount-s3` (mismo `/proc` que cualquier
+otro proceso del guest); el bucket y el prefijo están declarados **no
+secretos** (igual que la `metadata` de T4), así que esto no es una fuga —
+nunca hay una credencial en argv ni en entorno, documentado en T20
+(`SECURITY.md`).
+
+**Sin API en el shim de E2B**: E2B no tiene un equivalente a `mounts=`
+(fila 111 de `e2b-parity.md`, divergente desde 0.6.0).
 
 ## ADR-018 — efs-volumes (M15, 0.6, experimental)
 

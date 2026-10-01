@@ -60,7 +60,9 @@ describe("stacks/service: OptionalStacks", () => {
   test("deploying an unsupported component raises before touching the provisioner", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.deploy("s3-mounts")).rejects.toThrow(UnimplementedError);
+    // `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
+    // stub (`supported: false`) and makes the same point.
+    await expect(stacks.deploy("efs-volumes")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 

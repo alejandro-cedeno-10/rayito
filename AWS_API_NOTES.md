@@ -976,8 +976,69 @@ campaña de medición EFS-1..EFS-20.
 
 ## 23. Mountpoint y S3 (`m15-s3-mounts`)
 
-Pendiente: `m15-s3-mounts` documenta aquí las banderas de `mount-s3` y el
-contrato de credenciales IMDS del daemon FUSE.
+**No es una llamada a la API de control de AWS**: `mounts=` no añade
+ninguna operación `lambda-microvms` nueva. Lo que sigue es el contrato del
+binario `mount-s3` (Mountpoint for Amazon S3, `awslabs/mountpoint-s3`) que
+`rayd` lanza dentro del guest, y de IMDS, que `mount-s3` consulta por su
+cuenta.
+
+**Distribución del binario**: Mountpoint no está en los repos dnf de
+AL2023; AWS lo publica como RPM/DEB/tar.gz firmado en
+`s3.amazonaws.com/mountpoint-s3-release/<versión>/<arch>/...` (releases de
+`awslabs/mountpoint-s3` en GitHub). `image/Dockerfile` clava la versión
+exacta (`1.24.0`, arm64) y su sha256
+(`3636465c56908c7f26182d6f31aaa77e4e145330833863104f4cca0db1788343`,
+calculado sobre el RPM descargado el 2026-10-01), verificado con
+`sha256sum -c` antes de `dnf install` sobre el fichero local — el mismo
+patrón que `scripts/check_pins.py` exige para el binario de Deno de
+`rayito-base-poly`.
+
+**Invocación**: `mount-s3 --foreground <bucket> /dev/fd/3 [--prefix <p>]
+[--read-only | --allow-overwrite --allow-delete]`. `/dev/fd/3` es el
+descriptor que `rayd` ya adjuntó a `mount_path` con `mount(2)` (ABI de FUSE
+del kernel: `fd=<n>,rootmode=040000,user_id=1000,group_id=1000`), así que
+`mount-s3` nunca hace su propio `mount(2)`: sólo habla el protocolo FUSE
+sobre el descriptor que se le pasa. `--read-only` sin escritura es el
+valor por defecto de `S3Mount`; `--allow-overwrite`/`--allow-delete` sólo
+se pasan con `read_only=False`.
+
+**Credenciales**: `mount-s3` resuelve las credenciales del execution role
+por su **propia** llamada a IMDS (`http://169.254.169.254`, perfil del rol
+vía `AWS_CONTAINER_CREDENTIALS_*`/IMDSv2 estándar de sus propios SDKs de
+Rust), nunca por algo que `rayd` le pase en argv o en entorno. Esto
+funciona porque `rayd` lo lanza como el usuario de sistema dedicado
+`rayito-mount` (uid/gid 990, `image/Dockerfile`), que queda **fuera** del
+rango `uidrange 1000-65535` que la regla de IMDS de M6 blackholea para el
+sandbox (`ip rule add uidrange 1000-65535 lookup 100` + ruta `blackhole`):
+uid 990 nunca entra en esa regla, así que su tráfico a
+`169.254.169.254` sigue la ruta por defecto sin pasar por la tabla 100.
+`AWS_REGION` sí se le pasa explícitamente (de la región de la propia
+plataforma, el mismo valor que ya usa `adapters::s3_store` para la
+persistencia de ADR-009); `PATH` es el único otro valor del entorno.
+
+**IAM (bucket, no prefijo)**: `infra/s3-mounts.yaml` concede
+`s3:ListBucket` acotado por un `s3:prefix` condicional (parámetro
+`Prefixes`) y `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` sobre el
+bucket entero (`arn:...:s3:::<Bucket>/*`): IAM no tiene una forma nativa de
+expresar "las acciones a nivel de objeto sólo bajo este prefijo" para una
+lista arbitraria de prefijos sin una plantilla por prefijo, así que la
+contención real de prefijo es responsabilidad de `mount-s3 --prefix` (y
+del allowlist `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen), no de IAM —
+la misma forma que la política de ejemplo que AWS publica para Mountpoint.
+
+**Tamaño de imagen (Q80 de la investigación out-of-scope)**: `fuse`
+(paquete AL2023, permisos/udev de `/dev/fuse`; Mountpoint habla FUSE por sí
+mismo, sin `libfuse`/`fusermount`) + el RPM de `mount-s3`: +22,4 MB
+estimados; una build real confirma la cifra exacta
+(`rpm -q --queryformat '%{SIZE}' mount-s3`) en la aceptación de este
+cambio.
+
+**Medido, pendiente de aceptación en AWS real** (S3M-1..S3M-4, numeración
+real desde Q95 en la aceptación serializada): montaje de lectura y
+escritura, que uid 1000 no pueda leer el entorno ni matar el daemon,
+`/suspend` con S3 inalcanzable, funcionamiento con
+`allow_internet_access=False`, ausencia de `<defunct>` tras un ciclo de
+montar/desmontar/relanzar.
 
 ## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
 

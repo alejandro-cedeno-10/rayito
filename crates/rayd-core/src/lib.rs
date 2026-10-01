@@ -22,8 +22,8 @@
 //! contract (`configure`) and the capability flags `Health` reports
 //! (`features`, `root_egress`), and the credential-lease freshness rule
 //! shared by every feature that needs the execution role inside the guest
-//! (`credentials`). Each feature's own domain (`volume`, `s3_mount`, …)
-//! lives in its own module, added by that feature.
+//! (`credentials`). Each feature's own domain lives in its own module,
+//! added by that feature: `s3_mount` (`m15-s3-mounts`) is the first one.
 
 pub mod auth;
 pub mod capabilities;
@@ -45,6 +45,7 @@ pub mod process;
 pub mod pty;
 pub mod root_egress;
 pub mod run_payload;
+pub mod s3_mount;
 pub mod sandbox_timeout;
 pub mod session;
 pub mod suspend_sync;

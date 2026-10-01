@@ -27,8 +27,10 @@ def test_components_lists_the_full_catalog_with_no_provisioner_call() -> None:
 def test_deploying_an_unsupported_component_raises_before_touching_the_provisioner() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
-    with pytest.raises(UnimplementedError, match="s3-mounts"):
-        stacks.deploy("s3-mounts")
+    # `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
+    # stub (`supported=False`) and makes the same point.
+    with pytest.raises(UnimplementedError, match="efs-volumes"):
+        stacks.deploy("efs-volumes")
     assert fake.calls == []
 
 

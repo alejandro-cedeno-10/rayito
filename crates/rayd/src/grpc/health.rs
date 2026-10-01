@@ -132,14 +132,16 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot is still `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself is
-        // reported. The feature that gives a slot a real adapter updates
-        // this one call site (`rayd_core::features::AgentFeatures`), never
-        // `HealthGrpc`'s constructor.
-        features: Some(agent_features_message(
-            rayd_core::features::AgentFeatures::foundations_only(),
-        )),
+        // M15: `s3_mounts` has a real adapter from `m15-s3-mounts` on
+        // (ADR-017); every other slot is still `Unsupported`
+        // (`features::build`). The feature that next gives a slot a real
+        // adapter updates this one call site
+        // (`rayd_core::features::AgentFeatures`), never `HealthGrpc`'s
+        // constructor.
+        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
+            s3_mounts: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        })),
     }
 }
 
