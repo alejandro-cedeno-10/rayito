@@ -370,6 +370,15 @@ La tabla completa (113 filas: implementado, divergente, fuera por SPEC,
 imposible en la plataforma, con la página de cada una) está en
 [Paridad con E2B](e2b-parity.md).
 
+**OTel (fila 108, divergente).** La exportación de telemetría del sandbox de
+E2B (Enterprise) no existe en Rayito: no hay un servicio que recoja métricas
+o logs del MicroVM y los exporte por ti. Lo que sí hay, nativo y opt-in
+(M13b), son spans del lado del **cliente** sobre las llamadas que ya haces
+(`tracer_provider=`/`tracerProvider`, nombres `rayito.*`), descritos en
+[Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional); el
+shim de E2B (`rayito.e2b`/`rayito/e2b`) no está instrumentado, así que
+`from rayito.e2b import Sandbox` no emite ningún span por ahora.
+
 ## El coste de `list(query=SandboxQuery(metadata=...))`
 
 `list-microvms` no conoce los metadatos. El filtro es O(n) sobre los sandboxes

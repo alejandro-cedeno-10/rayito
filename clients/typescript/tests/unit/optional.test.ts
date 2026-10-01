@@ -18,14 +18,12 @@ const MISSING_NESTED_IMPORT_FIXTURE = new URL(
 ).href;
 
 // Peers opcionales que ningún grupo ha añadido todavía como dependencia real
-// (los añadirán M13a/M13b/M14). `src/**/*.ts` no debe importarlos de forma
-// estática nunca: sólo `loadOptionalPeer` los carga, con `import()` dinámico,
-// y sólo dentro de la función ya activada por su opción.
-const FUTURE_OPTIONAL_PEERS = [
-  "@aws-sdk/client-secrets-manager",
-  "@aws-sdk/client-dynamodb",
-  "@opentelemetry/api",
-];
+// (los añadirá M14). `src/**/*.ts` no debe importarlos de forma estática
+// nunca: sólo `loadOptionalPeer` los carga, con `import()` dinámico, y sólo
+// dentro de la función ya activada por su opción. `@opentelemetry/api`
+// (M13b) ya es una dependencia real, pero sólo como tipo: la comprueba el
+// describe de más abajo, con su propia regla (permite `import type`).
+const FUTURE_OPTIONAL_PEERS = ["@aws-sdk/client-secrets-manager", "@aws-sdk/client-dynamodb"];
 
 const SRC_ROOT = fileURLToPath(new URL("../../src", import.meta.url));
 
@@ -101,6 +99,24 @@ describe("peerDependencies opcionales futuros", () => {
         );
         if (staticImportPattern.test(content)) {
           offenders.push(`${file} -> ${peer}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("@opentelemetry/api sólo se importa como tipo", () => {
+  test("todo import/export/require de @opentelemetry/api en src/ es `import type` (se borra en el build, M13b)", () => {
+    const offenders: string[] = [];
+    const pattern =
+      /(^|\n)\s*(import(?:\s+type)?|export(?:\s+type)?)\b[^\n]*['"]@opentelemetry\/api['"]|require\(\s*['"]@opentelemetry\/api['"]\s*\)/g;
+    for (const file of listTsFilesRecursively(SRC_ROOT)) {
+      const content = readFileSync(file, "utf-8");
+      for (const match of content.matchAll(pattern)) {
+        const statement = match[0].trim();
+        if (!/^import\s+type\b/.test(statement)) {
+          offenders.push(`${file} -> ${statement}`);
         }
       }
     }

@@ -272,6 +272,115 @@ rayito --json sandbox metrics microvm-<id> --follow --interval 5 --token-file ~/
 `metrics` imprime la instantánea de `get_metrics()` ([CLI](cli.md)); conectar
 despierta un sandbox suspendido.
 
+## Trazas OpenTelemetry del SDK (opcional)
+
+Spans del lado del SDK para las operaciones que ya haces (M13b, apagado por
+defecto; coste e IAM: [Funciones opcionales](optional-features.md#otel-sdk)).
+Nunca propagan `traceparent`/`tracestate` hacia `rayd` (el servidor no sabe
+nada de esto) y no hay telemetría del sandbox: son spans sobre lo que hace
+*tu proceso* al llamar al SDK, exportados a donde tú configures.
+
+### Instalación
+
+=== "Python"
+
+    ```bash
+    pip install 'rayito[otel]'
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npm install @opentelemetry/api
+    ```
+
+### Ejemplo
+
+=== "Python"
+
+    ```python
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
+
+    from rayito import Sandbox
+
+    sbx = Sandbox.create(tracer_provider=trace.get_tracer_provider())
+    sbx.commands.run("echo hola")       # span "rayito.commands.run"
+    sbx.run_code("1 + 1")               # span "rayito.code.run"
+    sbx.files.write("/tmp/x", "hola")   # spans "rayito.files.write" + "rayito.files.write_files"
+    sbx.kill()                          # span "rayito.sandbox.kill"
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { trace } from "@opentelemetry/api";
+    import { BasicTracerProvider, ConsoleSpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+    import { Sandbox } from "rayito";
+
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+    });
+    trace.setGlobalTracerProvider(provider);
+
+    const sbx = await Sandbox.create({ tracerProvider: provider });
+    await sbx.commands.run("echo hola"); // span "rayito.commands.run"
+    await sbx.runCode("1 + 1");          // span "rayito.code.run"
+    await sbx.kill();                    // span "rayito.sandbox.kill"
+    ```
+
+Sin `tracer_provider=`/`tracerProvider` (el valor por defecto) no se importa
+`opentelemetry`/`@opentelemetry/api` en tiempo de ejecución y no se asigna
+nada por llamada.
+
+### Nombres de span
+
+| Span | Dónde |
+|---|---|
+| `rayito.sandbox.create` | `create()` (envuelve `run-microvm`, la espera de `Health`, el índice y la red) |
+| `rayito.sandbox.connect` | `connect()`, ambas formas |
+| `rayito.sandbox.kill` | `kill()`, instancia y clase/estático |
+| `rayito.sandbox.pause` | `pause()`, instancia y clase/estático |
+| `rayito.sandbox.resume` | `resume()`, instancia y clase/estático |
+| `rayito.code.run` | `run_code()`/`runCode()` |
+| `rayito.commands.run` | `commands.run()` (en segundo plano, el span se cierra en cuanto `start` devuelve el handle, no cuando el proceso termina) |
+| `rayito.files.read`, `write`, `write_files`, `list`, `exists`, `get_info`, `remove`, `rename`, `make_dir` | `files.*` |
+
+Todos son `SpanKind.CLIENT`.
+
+### Atributos
+
+Lista cerrada (cualquier otra clave es un error antes de abrir el span):
+`rayito.sandbox.id`, `rayito.region`, `rayito.template.name`,
+`rayito.resume_generation`, `rayito.operation`,
+`rayito.commands.exit_code`, `rayito.commands.background`,
+`rayito.code.language`, `rayito.files.operation`, `rayito.files.count`,
+`rayito.files.bytes`, `rayito.error.type`.
+
+**Nunca se registra**: el texto de un comando o su `cmd`/args, código
+fuente, rutas de ficheros, valores de `envs`, nombres o valores de
+secretos, valores de `metadata`, el access token, el JWE, ni URLs
+prefirmadas. Un error dentro de un span registra la excepción
+(`record_exception`/`recordException`) y pone el estado en `ERROR`, pero el
+único dato que entra es el **nombre de la clase** de la excepción: ni su
+mensaje ni su traza (que podrían llevar cualquiera de los datos de arriba).
+
+### Qué no incluye (M13b)
+
+- **No propaga** `traceparent`/`tracestate` hacia `rayd`: un span de rayito
+  nunca es el padre de nada dentro del sandbox.
+- **No hay telemetría del sandbox**: ni métricas ni logs del propio
+  MicroVM viajan por aquí (ver [Métricas](#instantanea-e-historial) para
+  eso).
+- El **shim de E2B** (`rayito.e2b`/`rayito/e2b`) no está instrumentado.
+- La exportación de los spans (consola, OTLP, Jaeger, X-Ray...) la configura
+  tu `tracer_provider`/`TracerProvider`, no rayito.
+
 ## En el shim de E2B
 
 `sbx.get_metrics(start, end)` devuelve el historial como

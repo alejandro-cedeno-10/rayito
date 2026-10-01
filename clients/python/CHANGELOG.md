@@ -8,6 +8,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Spans OpenTelemetry del lado del SDK** (`m13-otel-sdk`, opcional y
+  apagado por defecto, ADR-014): `tracer_provider=` en `Sandbox.create()`
+  (también con `pool=`), `connect()` (ambas formas) y las variantes de clase
+  `kill`/`pause`/`resume`; instrumenta `commands.run`, `run_code`, `files.*`
+  y `kill`/`pause`/`resume` de instancia con spans `rayito.*` de
+  `SpanKind.CLIENT`. Sin `tracer_provider=` no se importa `opentelemetry`
+  (extra `otel`, `pip install rayito[otel]`) y `NOOP.span()` no asigna nada
+  por llamada. Lista cerrada de atributos (nunca texto de comandos, código,
+  rutas, `envs`, secretos ni metadata); un error del span lleva el nombre de
+  la clase de la excepción, nunca su mensaje. $0 de AWS; el coste (si lo
+  hay) es el del backend de exportación del llamante. Fuera de alcance:
+  propagación `traceparent`/`tracestate` hacia `rayd`, telemetría del
+  sandbox y el shim de E2B.
+
 - **Índice de metadatos sobre DynamoDB** (`m14-metadata-index`, opcional y
   apagado por defecto, ADR-014): `DynamoDbIndex(table_name, region=,
   session=, on_write_failure="terminate", ttl_margin_seconds=3600)` y la

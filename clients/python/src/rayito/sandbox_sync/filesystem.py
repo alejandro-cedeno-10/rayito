@@ -134,32 +134,40 @@ class Filesystem:
         cancela la lectura si el siguiente chunk tarda más y levanta
         `TimeoutException`. Con `transfer=S3Staging(...)` un fichero de al
         menos `threshold_bytes` se exporta a S3 y se descarga con tus
-        credenciales (verificando su sha256); `gzip` no aplica ahí."""
+        credenciales (verificando su sha256); `gzip` no aplica ahí.
+
+        Con `tracer_provider=` abre `rayito.files.read` (nunca con `path` ni
+        el contenido como atributo); en `format="text"`/`"bytes"`,
+        `rayito.files.bytes` al terminar."""
         read_format = validate_read_format(format)
         idle = validate_stream_idle_timeout(stream_idle_timeout)
-        request = read_request(path, user)
-        entry = require_regular_file(
-            self.get_info(path, user=user, request_timeout=request_timeout)
-        )
-        if self._routes(entry.size):
-            return self._sandbox._transfers.read_routed(
-                path,
-                entry,
-                read_format=read_format,
-                user=user,
-                request_timeout=request_timeout,
+        with self._sandbox._instrumentation.span(
+            "rayito.files.read", {"rayito.files.operation": "read"}
+        ) as span:
+            request = read_request(path, user)
+            entry = require_regular_file(
+                self.get_info(path, user=user, request_timeout=request_timeout)
+            )
+            if self._routes(entry.size):
+                return self._sandbox._transfers.read_routed(
+                    path,
+                    entry,
+                    read_format=read_format,
+                    user=user,
+                    request_timeout=request_timeout,
+                    idle=idle,
+                )
+            chunks = self._read_chunks(
+                request,
+                file_request_deadline(entry.size, request_timeout),
+                options=read_call_options(gzip),
                 idle=idle,
             )
-        chunks = self._read_chunks(
-            request,
-            file_request_deadline(entry.size, request_timeout),
-            options=read_call_options(gzip),
-            idle=idle,
-        )
-        if read_format == "stream":
-            return chunks
-        data = b"".join(chunks)
-        return data if read_format == "bytes" else decode_text(data)
+            if read_format == "stream":
+                return chunks
+            data = b"".join(chunks)
+            span.set_attribute("rayito.files.bytes", len(data))
+            return data if read_format == "bytes" else decode_text(data)
 
     def write(
         self,
@@ -176,16 +184,23 @@ class Filesystem:
         """Escribe `data` (str en UTF-8, bytes o fichero abierto) de forma
         atómica, creando los padres y con `mode` (0o644 por defecto). Los
         padres que falten se crean; el propietario es `user`. `gzip`,
-        `metadata` y `use_octet_stream` como en `write_files`."""
-        entries = self.write_files(
-            [WriteEntry(path, data, mode)],
-            user=user,
-            gzip=gzip,
-            metadata=metadata,
-            use_octet_stream=use_octet_stream,
-            request_timeout=request_timeout,
-        )
-        return entries[0]
+        `metadata` y `use_octet_stream` como en `write_files`.
+
+        Con `tracer_provider=` abre `rayito.files.write` (nunca con `path` ni
+        `data`), con `rayito.files.bytes` al terminar."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.write", {"rayito.files.operation": "write"}
+        ) as span:
+            entries = self.write_files(
+                [WriteEntry(path, data, mode)],
+                user=user,
+                gzip=gzip,
+                metadata=metadata,
+                use_octet_stream=use_octet_stream,
+                request_timeout=request_timeout,
+            )
+            span.set_attribute("rayito.files.bytes", entries[0].size)
+            return entries[0]
 
     def write_files(
         self,
@@ -209,29 +224,39 @@ class Filesystem:
         `use_octet_stream` se acepta y no tiene efecto (gRPC no usa
         formularios). Con `transfer=S3Staging(...)`, cada fichero de al menos
         `threshold_bytes` (o un stream binario no buscable) se sube a S3 con
-        tus credenciales y `rayd` lo importa; `gzip` no aplica ahí."""
-        normalized = validate_metadata(metadata)
-        self._require_m9_write(gzip=gzip, metadata=normalized)
-        plan = self._plan(files)
-        results: dict[int, EntryInfo] = {}
-        if plan.grpc:
-            prepared = plan.grpc_entries
-            deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
-            response = self._sandbox._files_call(
-                lambda stub, timeout: stub.Write(
-                    build_write_requests(prepared, user, normalized),
-                    timeout=timeout,
-                    **write_call_options(gzip),
-                ),
-                deadline,
-            )
-            for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
-                results[index] = entry_info_from_proto(entry)
-        for routed in plan.routed:
-            results[routed.index] = self._sandbox._transfers.write_routed(
-                routed, user=user, metadata=normalized, request_timeout=request_timeout
-            )
-        return [results[index] for index in range(plan.count)]
+        tus credenciales y `rayd` lo importa; `gzip` no aplica ahí.
+
+        Con `tracer_provider=` abre `rayito.files.write_files` (nunca las
+        rutas ni los datos), con `rayito.files.count` y `rayito.files.bytes`
+        al terminar."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.write_files", {"rayito.files.operation": "write_files"}
+        ) as span:
+            normalized = validate_metadata(metadata)
+            self._require_m9_write(gzip=gzip, metadata=normalized)
+            plan = self._plan(files)
+            results: dict[int, EntryInfo] = {}
+            if plan.grpc:
+                prepared = plan.grpc_entries
+                deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
+                response = self._sandbox._files_call(
+                    lambda stub, timeout: stub.Write(
+                        build_write_requests(prepared, user, normalized),
+                        timeout=timeout,
+                        **write_call_options(gzip),
+                    ),
+                    deadline,
+                )
+                for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
+                    results[index] = entry_info_from_proto(entry)
+            for routed in plan.routed:
+                results[routed.index] = self._sandbox._transfers.write_routed(
+                    routed, user=user, metadata=normalized, request_timeout=request_timeout
+                )
+            ordered = [results[index] for index in range(plan.count)]
+            span.set_attribute("rayito.files.count", len(ordered))
+            span.set_attribute("rayito.files.bytes", sum(entry.size for entry in ordered))
+            return ordered
 
     def upload_url(
         self,
@@ -295,32 +320,50 @@ class Filesystem:
     ) -> list[EntryInfo]:
         """Entradas hasta `depth` niveles (1 = sólo hijos directos; 0 vale 1)
         en preorden, ordenadas por nombre en cada directorio, sin seguir
-        symlinks. Más de 10 000 entradas es `RateLimitException`."""
-        request = list_dir_request(path, depth, user)
-        response = self._sandbox._files_call(
-            lambda stub, timeout: stub.ListDir(request, timeout=timeout), request_timeout
-        )
-        return [entry_info_from_proto(entry) for entry in response.entries]
+        symlinks. Más de 10 000 entradas es `RateLimitException`.
+
+        Con `tracer_provider=` abre `rayito.files.list` (nunca `path`), con
+        `rayito.files.count` al terminar."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.list", {"rayito.files.operation": "list"}
+        ) as span:
+            request = list_dir_request(path, depth, user)
+            response = self._sandbox._files_call(
+                lambda stub, timeout: stub.ListDir(request, timeout=timeout), request_timeout
+            )
+            entries = [entry_info_from_proto(entry) for entry in response.entries]
+            span.set_attribute("rayito.files.count", len(entries))
+            return entries
 
     def exists(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
     ) -> bool:
-        """False sólo si `Stat` responde `NOT_FOUND`; otros errores se propagan."""
-        try:
-            self.get_info(path, user=user, request_timeout=request_timeout)
-        except FileNotFoundException:
-            return False
-        return True
+        """False sólo si `Stat` responde `NOT_FOUND`; otros errores se propagan.
+
+        Con `tracer_provider=` abre `rayito.files.exists` (nunca `path`)."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.exists", {"rayito.files.operation": "exists"}
+        ):
+            try:
+                self.get_info(path, user=user, request_timeout=request_timeout)
+            except FileNotFoundException:
+                return False
+            return True
 
     def get_info(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
     ) -> EntryInfo:
-        """`Stat` sin seguir symlinks (`type is FileType.SYMLINK` con `symlink_target`)."""
-        request = stat_request(path, user)
-        response = self._sandbox._files_call(
-            lambda stub, timeout: stub.Stat(request, timeout=timeout), request_timeout
-        )
-        return entry_info_from_proto(response.entry)
+        """`Stat` sin seguir symlinks (`type is FileType.SYMLINK` con `symlink_target`).
+
+        Con `tracer_provider=` abre `rayito.files.get_info` (nunca `path`)."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.get_info", {"rayito.files.operation": "get_info"}
+        ):
+            request = stat_request(path, user)
+            response = self._sandbox._files_call(
+                lambda stub, timeout: stub.Stat(request, timeout=timeout), request_timeout
+            )
+            return entry_info_from_proto(response.entry)
 
     def remove(
         self,
@@ -331,11 +374,16 @@ class Filesystem:
         request_timeout: float | None = None,
     ) -> None:
         """Borra un fichero, symlink (sólo el enlace) o directorio; con
-        `recursive=False` un directorio no vacío es `InvalidArgumentException`."""
-        request = remove_request(path, recursive, user)
-        self._sandbox._files_call(
-            lambda stub, timeout: stub.Remove(request, timeout=timeout), request_timeout
-        )
+        `recursive=False` un directorio no vacío es `InvalidArgumentException`.
+
+        Con `tracer_provider=` abre `rayito.files.remove` (nunca `path`)."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.remove", {"rayito.files.operation": "remove"}
+        ):
+            request = remove_request(path, recursive, user)
+            self._sandbox._files_call(
+                lambda stub, timeout: stub.Remove(request, timeout=timeout), request_timeout
+            )
 
     def rename(
         self,
@@ -346,19 +394,32 @@ class Filesystem:
         request_timeout: float | None = None,
     ) -> EntryInfo:
         """`rename(2)`: reemplaza un fichero regular existente; un destino que
-        es un directorio no vacío es `InvalidArgumentException`."""
-        request = move_request(old_path, new_path, user)
-        response = self._sandbox._files_call(
-            lambda stub, timeout: stub.Move(request, timeout=timeout), request_timeout
-        )
-        return entry_info_from_proto(response.entry)
+        es un directorio no vacío es `InvalidArgumentException`.
+
+        Con `tracer_provider=` abre `rayito.files.rename` (nunca las rutas)."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.rename", {"rayito.files.operation": "rename"}
+        ):
+            request = move_request(old_path, new_path, user)
+            response = self._sandbox._files_call(
+                lambda stub, timeout: stub.Move(request, timeout=timeout), request_timeout
+            )
+            return entry_info_from_proto(response.entry)
 
     def make_dir(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
     ) -> bool:
         """Crea el directorio y sus padres (0o755). True si lo creó, False si
         ya existía; si existe algo que no es un directorio,
-        `InvalidArgumentException`."""
+        `InvalidArgumentException`.
+
+        Con `tracer_provider=` abre `rayito.files.make_dir` (nunca `path`)."""
+        with self._sandbox._instrumentation.span(
+            "rayito.files.make_dir", {"rayito.files.operation": "make_dir"}
+        ):
+            return self._make_dir(path, user=user, request_timeout=request_timeout)
+
+    def _make_dir(self, path: str, *, user: str | None, request_timeout: float | None) -> bool:
         request = make_dir_request(path, user)
         timeout = self._sandbox._resolve_request_timeout(request_timeout)
         try:

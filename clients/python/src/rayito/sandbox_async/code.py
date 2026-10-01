@@ -84,23 +84,30 @@ class AsyncCodeClient:
             code, context_id=context_id, language=language, envs=envs, timeout=timeout
         )
         deadline = execute_deadline(timeout) if request_timeout is None else request_timeout
-        builder = ExecutionBuilder(
-            context_id=context_id or language_default_context_id(request),
-            on_stdout=on_stdout,
-            on_stderr=on_stderr,
-            on_result=on_result,
-            on_error=on_error,
+        resolved_language = language or (
+            context.language if isinstance(context, CodeContext) else None
         )
-        try:
-            call, first = await self._sandbox._open_stream(
-                lambda stub: stub.Execute(request, timeout=deadline),
-                service=CODE_STUB,
-                stream=False,
-                reconnect=False,
+        with self._sandbox._instrumentation.span(
+            "rayito.code.run",
+            {"rayito.code.language": resolved_language} if resolved_language else None,
+        ):
+            builder = ExecutionBuilder(
+                context_id=context_id or language_default_context_id(request),
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+                on_result=on_result,
+                on_error=on_error,
             )
-        except UnimplementedError as exc:
-            raise kernel_unimplemented_error(exc, "run_code", language) from exc.__cause__
-        return await self._consume(call, first, builder, deadline_at(deadline, time.monotonic))
+            try:
+                call, first = await self._sandbox._open_stream(
+                    lambda stub: stub.Execute(request, timeout=deadline),
+                    service=CODE_STUB,
+                    stream=False,
+                    reconnect=False,
+                )
+            except UnimplementedError as exc:
+                raise kernel_unimplemented_error(exc, "run_code", language) from exc.__cause__
+            return await self._consume(call, first, builder, deadline_at(deadline, time.monotonic))
 
     async def create_context(
         self,

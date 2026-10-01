@@ -101,6 +101,7 @@ from rayito._network_base import (
     state_from_proto,
     update_policy,
 )
+from rayito._otel import Instrumentation, TracerProviderLike, instrumentation_for
 from rayito._persistence_base import (
     CheckpointProgressCallback,
     RestoreProgressCallback,
@@ -505,6 +506,7 @@ class Sandbox:
         self._transfers = Transfers(self)
         self._secrets: SecretBinding | None = None
         self._git: Git | None = None
+        self._instrumentation: Instrumentation = instrumentation_for(None)
 
     # ------------------------------------------------------------------ create
 
@@ -545,6 +547,7 @@ class Sandbox:
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
         index: DynamoDbIndex | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> Self:
         """`run-microvm` → token del proxy → sondeo de `Health` hasta
         `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
@@ -662,7 +665,34 @@ class Sandbox:
             sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
             sbx.pause()
             items = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
+
+        `tracer_provider=` (M13b) guarda en el handle una `Instrumentation`
+        que instrumenta sus operaciones (`commands.run`, `run_code`,
+        `files.*`, `kill`/`pause`/`resume` de instancia); `create()` en sí es
+        un único span `rayito.sandbox.create` que envuelve `run-microvm`, la
+        espera de `Health`, la escritura del índice y la política de red.
+        Con `pool=` se enlaza al handle que entrega `take()`, sin span propio
+        (no hay lanzamiento que medir). `None` (por defecto) es `NOOP`: cero
+        import de `opentelemetry` y cero coste por llamada.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` (un `TracerProvider` de
+            `opentelemetry.trace`, o cualquier objeto con
+            `get_tracer(name, version)`).
+        Recursos y llamadas AWS: ninguno; rayito sólo crea spans en el
+            proveedor del llamante.
+        Coste aproximado: $0 de AWS; el coste (si lo hay) es el del backend
+            de exportación que configure el llamante.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            from opentelemetry import trace
+            sbx = Sandbox.create(tracer_provider=trace.get_tracer_provider())
+            sbx.commands.run("echo hola")  # span "rayito.commands.run"
+            sbx.kill()
         """
+        instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
@@ -718,6 +748,7 @@ class Sandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
+            taken._instrumentation = instrumentation
             return taken
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
@@ -744,29 +775,42 @@ class Sandbox:
             on_timeout=on_timeout,
             network_enforce=launch.enforce,
         )
-        info = plane.run_microvm(plan.request)
-        sandbox_logger(logger).info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
-        if validated_index is not None:
-            write_index_record(
-                validated_index, info, metadata, plane, keep_on_failure, sandbox_logger(logger)
+        with instrumentation.span(
+            "rayito.sandbox.create",
+            {"rayito.region": plane.region, "rayito.operation": "create"},
+        ) as span:
+            info = plane.run_microvm(plan.request)
+            span.set_attribute("rayito.sandbox.id", info.sandbox_id)
+            sandbox_logger(logger).info(
+                "run-microvm aceptado: %s (%s)", info.sandbox_id, info.state
             )
-        sandbox = cls._open(
-            info,
-            access_token=plan.access_token,
-            control_plane=plane,
-            transport=transport or TransportSettings(),
-            proxy_ports=plan.proxy_ports,
-            request_timeout=request_timeout,
-            ready_timeout=ready_timeout,
-            reconnect_timeout=reconnect_timeout,
-            terminate_on_failure=not keep_on_failure,
-            require_lifecycle=plan.lifecycle_requested,
-            logger=logger,
-        )
-        sandbox._bind_transfer(staging, session)
-        sandbox._secrets = binding
-        if launch.enforce:
-            sandbox._apply_initial_network(launch)
+            if validated_index is not None:
+                write_index_record(
+                    validated_index,
+                    info,
+                    metadata,
+                    plane,
+                    keep_on_failure,
+                    sandbox_logger(logger),
+                )
+            sandbox = cls._open(
+                info,
+                access_token=plan.access_token,
+                control_plane=plane,
+                transport=transport or TransportSettings(),
+                proxy_ports=plan.proxy_ports,
+                request_timeout=request_timeout,
+                ready_timeout=ready_timeout,
+                reconnect_timeout=reconnect_timeout,
+                terminate_on_failure=not keep_on_failure,
+                require_lifecycle=plan.lifecycle_requested,
+                logger=logger,
+            )
+            sandbox._instrumentation = instrumentation
+            sandbox._bind_transfer(staging, session)
+            sandbox._secrets = binding
+            if launch.enforce:
+                sandbox._apply_initial_network(launch)
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -806,24 +850,32 @@ class Sandbox:
         request_timeout: float | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> Sandbox:
         """Reabre este handle: `get-microvm`, `resume-microvm` si está
         `SUSPENDED` sin auto-resume, el sondeo de `Health` y la extensión del
         plazo de `Sandbox.connect(sandbox_id, timeout=)`. Devuelve `self`.
         `secrets=`/`secret_cache=` sustituyen los del handle (como en
         `create()`, con el mismo bloque "Coste y activación"; `None` los
-        conserva)."""
+        conserva). `tracer_provider=` (M13b) sustituye la `Instrumentation`
+        del handle; `None` conserva la que ya tenía (misma convención)."""
+        if tracer_provider is not None:
+            self._instrumentation = instrumentation_for(tracer_provider)
         self._rebind_secrets(secrets, secret_cache)
-        info = self._control_plane.get_microvm(self.sandbox_id)
-        if info.state in TERMINAL_STATES:
-            raise terminal_state_error(info)
-        self._info = info
-        self._paused = False
-        if needs_explicit_resume(info):
-            self._control_plane.resume_microvm(self.sandbox_id)
-            self._refresher.refresh_all()
-        self._wait_until_ready(terminate_on_failure=False)
-        self._extend_after_readiness(timeout, request_timeout=request_timeout)
+        with self._instrumentation.span(
+            "rayito.sandbox.connect",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "connect"},
+        ):
+            info = self._control_plane.get_microvm(self.sandbox_id)
+            if info.state in TERMINAL_STATES:
+                raise terminal_state_error(info)
+            self._info = info
+            self._paused = False
+            if needs_explicit_resume(info):
+                self._control_plane.resume_microvm(self.sandbox_id)
+                self._refresher.refresh_all()
+            self._wait_until_ready(terminate_on_failure=False)
+            self._extend_after_readiness(timeout, request_timeout=request_timeout)
         return self
 
     @classmethod
@@ -845,6 +897,7 @@ class Sandbox:
         logger: logging.Logger | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> Self:
         """Se engancha a un sandbox existente.
         `persist` (con `name`) sólo enlaza el prefijo para `checkpoint_files()`;
@@ -878,7 +931,12 @@ class Sandbox:
         Ejemplo:
             sbx = Sandbox.connect(sandbox_id, secrets={"GITHUB_TOKEN": "gh"})
             sbx.commands.run("gh repo list")
+
+        `tracer_provider=` (M13b) como en `create()`: guarda en el handle la
+        `Instrumentation` de todas sus operaciones; `Sandbox.connect()` en sí
+        abre un único span `rayito.sandbox.connect`.
         """
+        instrumentation = instrumentation_for(tracer_provider)
         token = require_access_token(access_token)
         bound = None if persist is None else require_named_persist(persist)
         staging = resolve_staging(transfer)
@@ -889,31 +947,37 @@ class Sandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        info = plane.get_microvm(validate_sandbox_id(sandbox_id))
-        if info.state in TERMINAL_STATES:
-            raise terminal_state_error(info)
-        if needs_explicit_resume(info):
-            plane.resume_microvm(sandbox_id)
-        sandbox = cls._open(
-            info,
-            access_token=token,
-            control_plane=plane,
-            transport=transport or TransportSettings(),
-            proxy_ports=(PortSpec.single(DEFAULT_PORT),),
-            request_timeout=request_timeout,
-            ready_timeout=ready_timeout,
-            reconnect_timeout=reconnect_timeout,
-            terminate_on_failure=False,
-            logger=logger,
-        )
-        sandbox._persist = bound
-        sandbox._bind_transfer(staging, session)
-        sandbox._secrets = binding
-        try:
-            sandbox._extend_after_readiness(timeout, request_timeout=None)
-        except BaseException:
-            sandbox.close()
-            raise
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation.span(
+            "rayito.sandbox.connect",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "connect"},
+        ):
+            info = plane.get_microvm(validated_sandbox_id)
+            if info.state in TERMINAL_STATES:
+                raise terminal_state_error(info)
+            if needs_explicit_resume(info):
+                plane.resume_microvm(sandbox_id)
+            sandbox = cls._open(
+                info,
+                access_token=token,
+                control_plane=plane,
+                transport=transport or TransportSettings(),
+                proxy_ports=(PortSpec.single(DEFAULT_PORT),),
+                request_timeout=request_timeout,
+                ready_timeout=ready_timeout,
+                reconnect_timeout=reconnect_timeout,
+                terminate_on_failure=False,
+                logger=logger,
+            )
+            sandbox._instrumentation = instrumentation
+            sandbox._persist = bound
+            sandbox._bind_transfer(staging, session)
+            sandbox._secrets = binding
+            try:
+                sandbox._extend_after_readiness(timeout, request_timeout=None)
+            except BaseException:
+                sandbox.close()
+                raise
         return sandbox
 
     @classmethod
@@ -1174,10 +1238,14 @@ class Sandbox:
     @class_method_variant("_class_kill")
     def kill(self) -> bool:
         """`terminate-microvm` (idempotente). False sólo si ya no existe."""
-        try:
-            return self._control_plane.terminate_microvm(self.sandbox_id)
-        finally:
-            self.close()
+        with self._instrumentation.span(
+            "rayito.sandbox.kill",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "kill"},
+        ):
+            try:
+                return self._control_plane.terminate_microvm(self.sandbox_id)
+            finally:
+                self.close()
 
     @classmethod
     def _class_kill(
@@ -1187,9 +1255,27 @@ class Sandbox:
         region: str | None = None,
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
+        """`Sandbox.kill(sandbox_id)`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            Sandbox.kill(sandbox_id, tracer_provider=trace.get_tracer_provider())
+        """
         plane = resolve_control_plane(control_plane, session, region)
-        return plane.terminate_microvm(validate_sandbox_id(sandbox_id))
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.kill",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "kill"},
+        ):
+            return plane.terminate_microvm(validated_sandbox_id)
 
     @class_method_variant("_class_get_info")
     def get_info(self) -> SandboxInfo:
@@ -1241,15 +1327,22 @@ class Sandbox:
         la pausa pendiente, ningún stream en curso (ni siquiera un `run_code`
         o un `run` en foreground) sondea `Health`: la pausa no se deshace sola.
         """
-        self._info = self._control_plane.get_microvm(self.sandbox_id)
-        if already_suspended(self._info):
-            return False
-        suspended = self._suspend_marking_paused()
-        if suspended and wait:
-            self._info = wait_for_state(
-                self._control_plane, self.sandbox_id, "SUSPENDED", timeout=self._ready_timeout
-            )
-        return suspended
+        with self._instrumentation.span(
+            "rayito.sandbox.pause",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "pause"},
+        ):
+            self._info = self._control_plane.get_microvm(self.sandbox_id)
+            if already_suspended(self._info):
+                return False
+            suspended = self._suspend_marking_paused()
+            if suspended and wait:
+                self._info = wait_for_state(
+                    self._control_plane,
+                    self.sandbox_id,
+                    "SUSPENDED",
+                    timeout=self._ready_timeout,
+                )
+            return suspended
 
     @classmethod
     def _class_pause(
@@ -1261,14 +1354,28 @@ class Sandbox:
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
+        """`Sandbox.pause(sandbox_id)`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno. IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        """
         plane = resolve_control_plane(control_plane, session, region)
-        if already_suspended(plane.get_microvm(validate_sandbox_id(sandbox_id))):
-            return False
-        suspended = plane.suspend_microvm(sandbox_id)
-        if suspended and wait:
-            wait_for_state(plane, sandbox_id, "SUSPENDED", timeout=ready_timeout)
-        return suspended
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.pause",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "pause"},
+        ):
+            if already_suspended(plane.get_microvm(validated_sandbox_id)):
+                return False
+            suspended = plane.suspend_microvm(sandbox_id)
+            if suspended and wait:
+                wait_for_state(plane, sandbox_id, "SUSPENDED", timeout=ready_timeout)
+            return suspended
 
     @class_method_variant("_class_resume")
     def resume(self, *, wait: bool = True) -> None:
@@ -1281,12 +1388,16 @@ class Sandbox:
         `wait`, un sandbox reanudado después de su plazo lógico (`resume_grace`
         o `expired`) se reabre con su propio `timeout`, como `connect()`.
         """
-        self._paused = False
-        self._control_plane.resume_microvm(self.sandbox_id)
-        self._refresher.refresh_all()
-        if wait:
-            self._wait_until_ready(terminate_on_failure=False)
-            self._extend_after_readiness(None, request_timeout=None)
+        with self._instrumentation.span(
+            "rayito.sandbox.resume",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "resume"},
+        ):
+            self._paused = False
+            self._control_plane.resume_microvm(self.sandbox_id)
+            self._refresher.refresh_all()
+            if wait:
+                self._wait_until_ready(terminate_on_failure=False)
+                self._extend_after_readiness(None, request_timeout=None)
 
     @classmethod
     def _class_resume(
@@ -1298,12 +1409,25 @@ class Sandbox:
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> None:
-        """Sin token del agente sólo se puede esperar el estado de `get-microvm`."""
+        """Sin token del agente sólo se puede esperar el estado de `get-microvm`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno. IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        """
         plane = resolve_control_plane(control_plane, session, region)
-        plane.resume_microvm(validate_sandbox_id(sandbox_id))
-        if wait:
-            wait_for_state(plane, sandbox_id, "RUNNING", timeout=ready_timeout)
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.resume",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "resume"},
+        ):
+            plane.resume_microvm(validated_sandbox_id)
+            if wait:
+                wait_for_state(plane, sandbox_id, "RUNNING", timeout=ready_timeout)
 
     @class_method_variant("_class_set_timeout")
     def set_timeout(self, timeout: int, *, request_timeout: float | None = None) -> None:

@@ -118,29 +118,33 @@ class AsyncFilesystem:
         devuelve un `AsyncIterator[bytes]`."""
         read_format = validate_read_format(format)
         idle = validate_stream_idle_timeout(stream_idle_timeout)
-        request = read_request(path, user)
-        entry = require_regular_file(
-            await self.get_info(path, user=user, request_timeout=request_timeout)
-        )
-        if await self._routes(entry.size):
-            return await self._sandbox._transfers.read_routed(
-                path,
-                entry,
-                read_format=read_format,
-                user=user,
-                request_timeout=request_timeout,
+        with self._sandbox._instrumentation.span(
+            "rayito.files.read", {"rayito.files.operation": "read"}
+        ) as span:
+            request = read_request(path, user)
+            entry = require_regular_file(
+                await self.get_info(path, user=user, request_timeout=request_timeout)
+            )
+            if await self._routes(entry.size):
+                return await self._sandbox._transfers.read_routed(
+                    path,
+                    entry,
+                    read_format=read_format,
+                    user=user,
+                    request_timeout=request_timeout,
+                    idle=idle,
+                )
+            chunks = await self._read_chunks(
+                request,
+                file_request_deadline(entry.size, request_timeout),
+                options=read_call_options(gzip),
                 idle=idle,
             )
-        chunks = await self._read_chunks(
-            request,
-            file_request_deadline(entry.size, request_timeout),
-            options=read_call_options(gzip),
-            idle=idle,
-        )
-        if read_format == "stream":
-            return chunks
-        data = b"".join([chunk async for chunk in chunks])
-        return data if read_format == "bytes" else decode_text(data)
+            if read_format == "stream":
+                return chunks
+            data = b"".join([chunk async for chunk in chunks])
+            span.set_attribute("rayito.files.bytes", len(data))
+            return data if read_format == "bytes" else decode_text(data)
 
     async def write(
         self,
@@ -154,15 +158,19 @@ class AsyncFilesystem:
         use_octet_stream: bool = False,
         request_timeout: float | None = None,
     ) -> EntryInfo:
-        entries = await self.write_files(
-            [WriteEntry(path, data, mode)],
-            user=user,
-            gzip=gzip,
-            metadata=metadata,
-            use_octet_stream=use_octet_stream,
-            request_timeout=request_timeout,
-        )
-        return entries[0]
+        with self._sandbox._instrumentation.span(
+            "rayito.files.write", {"rayito.files.operation": "write"}
+        ) as span:
+            entries = await self.write_files(
+                [WriteEntry(path, data, mode)],
+                user=user,
+                gzip=gzip,
+                metadata=metadata,
+                use_octet_stream=use_octet_stream,
+                request_timeout=request_timeout,
+            )
+            span.set_attribute("rayito.files.bytes", entries[0].size)
+            return entries[0]
 
     async def write_files(
         self,
@@ -177,28 +185,34 @@ class AsyncFilesystem:
         """Misma semántica que `Filesystem.write_files`: un solo stream, cada
         fichero atómico por separado, `gzip`/`metadata` con agente M9 y lo
         grande por S3 con `transfer`."""
-        normalized = validate_metadata(metadata)
-        await self._require_m9_write(gzip=gzip, metadata=normalized)
-        plan = await self._plan(files)
-        results: dict[int, EntryInfo] = {}
-        if plan.grpc:
-            prepared = plan.grpc_entries
-            deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
-            response = await self._sandbox._files_call(
-                lambda stub, timeout: stub.Write(
-                    build_write_requests(prepared, user, normalized),
-                    timeout=timeout,
-                    **write_call_options(gzip),
-                ),
-                deadline,
-            )
-            for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
-                results[index] = entry_info_from_proto(entry)
-        for routed in plan.routed:
-            results[routed.index] = await self._sandbox._transfers.write_routed(
-                routed, user=user, metadata=normalized, request_timeout=request_timeout
-            )
-        return [results[index] for index in range(plan.count)]
+        with self._sandbox._instrumentation.span(
+            "rayito.files.write_files", {"rayito.files.operation": "write_files"}
+        ) as span:
+            normalized = validate_metadata(metadata)
+            await self._require_m9_write(gzip=gzip, metadata=normalized)
+            plan = await self._plan(files)
+            results: dict[int, EntryInfo] = {}
+            if plan.grpc:
+                prepared = plan.grpc_entries
+                deadline = file_request_deadline(total_write_bytes(prepared), request_timeout)
+                response = await self._sandbox._files_call(
+                    lambda stub, timeout: stub.Write(
+                        build_write_requests(prepared, user, normalized),
+                        timeout=timeout,
+                        **write_call_options(gzip),
+                    ),
+                    deadline,
+                )
+                for (index, _), entry in zip(plan.grpc, response.entries, strict=False):
+                    results[index] = entry_info_from_proto(entry)
+            for routed in plan.routed:
+                results[routed.index] = await self._sandbox._transfers.write_routed(
+                    routed, user=user, metadata=normalized, request_timeout=request_timeout
+                )
+            ordered = [results[index] for index in range(plan.count)]
+            span.set_attribute("rayito.files.count", len(ordered))
+            span.set_attribute("rayito.files.bytes", sum(entry.size for entry in ordered))
+            return ordered
 
     async def upload_url(
         self,
@@ -247,29 +261,40 @@ class AsyncFilesystem:
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> list[EntryInfo]:
-        request = list_dir_request(path, depth, user)
-        response = await self._sandbox._files_call(
-            lambda stub, timeout: stub.ListDir(request, timeout=timeout), request_timeout
-        )
-        return [entry_info_from_proto(entry) for entry in response.entries]
+        with self._sandbox._instrumentation.span(
+            "rayito.files.list", {"rayito.files.operation": "list"}
+        ) as span:
+            request = list_dir_request(path, depth, user)
+            response = await self._sandbox._files_call(
+                lambda stub, timeout: stub.ListDir(request, timeout=timeout), request_timeout
+            )
+            entries = [entry_info_from_proto(entry) for entry in response.entries]
+            span.set_attribute("rayito.files.count", len(entries))
+            return entries
 
     async def exists(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
     ) -> bool:
-        try:
-            await self.get_info(path, user=user, request_timeout=request_timeout)
-        except FileNotFoundException:
-            return False
-        return True
+        with self._sandbox._instrumentation.span(
+            "rayito.files.exists", {"rayito.files.operation": "exists"}
+        ):
+            try:
+                await self.get_info(path, user=user, request_timeout=request_timeout)
+            except FileNotFoundException:
+                return False
+            return True
 
     async def get_info(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
     ) -> EntryInfo:
-        request = stat_request(path, user)
-        response = await self._sandbox._files_call(
-            lambda stub, timeout: stub.Stat(request, timeout=timeout), request_timeout
-        )
-        return entry_info_from_proto(response.entry)
+        with self._sandbox._instrumentation.span(
+            "rayito.files.get_info", {"rayito.files.operation": "get_info"}
+        ):
+            request = stat_request(path, user)
+            response = await self._sandbox._files_call(
+                lambda stub, timeout: stub.Stat(request, timeout=timeout), request_timeout
+            )
+            return entry_info_from_proto(response.entry)
 
     async def remove(
         self,
@@ -279,10 +304,13 @@ class AsyncFilesystem:
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> None:
-        request = remove_request(path, recursive, user)
-        await self._sandbox._files_call(
-            lambda stub, timeout: stub.Remove(request, timeout=timeout), request_timeout
-        )
+        with self._sandbox._instrumentation.span(
+            "rayito.files.remove", {"rayito.files.operation": "remove"}
+        ):
+            request = remove_request(path, recursive, user)
+            await self._sandbox._files_call(
+                lambda stub, timeout: stub.Remove(request, timeout=timeout), request_timeout
+            )
 
     async def rename(
         self,
@@ -292,14 +320,25 @@ class AsyncFilesystem:
         user: str | None = None,
         request_timeout: float | None = None,
     ) -> EntryInfo:
-        request = move_request(old_path, new_path, user)
-        response = await self._sandbox._files_call(
-            lambda stub, timeout: stub.Move(request, timeout=timeout), request_timeout
-        )
-        return entry_info_from_proto(response.entry)
+        with self._sandbox._instrumentation.span(
+            "rayito.files.rename", {"rayito.files.operation": "rename"}
+        ):
+            request = move_request(old_path, new_path, user)
+            response = await self._sandbox._files_call(
+                lambda stub, timeout: stub.Move(request, timeout=timeout), request_timeout
+            )
+            return entry_info_from_proto(response.entry)
 
     async def make_dir(
         self, path: str, *, user: str | None = None, request_timeout: float | None = None
+    ) -> bool:
+        with self._sandbox._instrumentation.span(
+            "rayito.files.make_dir", {"rayito.files.operation": "make_dir"}
+        ):
+            return await self._make_dir(path, user=user, request_timeout=request_timeout)
+
+    async def _make_dir(
+        self, path: str, *, user: str | None, request_timeout: float | None
     ) -> bool:
         request = make_dir_request(path, user)
         timeout = self._sandbox._resolve_request_timeout(request_timeout)

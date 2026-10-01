@@ -94,6 +94,7 @@ from rayito._network_base import (
     state_from_proto,
     update_policy,
 )
+from rayito._otel import Instrumentation, TracerProviderLike, instrumentation_for
 from rayito._persistence_base import (
     CheckpointProgressCallback,
     RestoreProgressCallback,
@@ -431,6 +432,7 @@ class AsyncSandbox:
         self._transfers = AsyncTransfers(self)
         self._secrets: SecretBinding | None = None
         self._git: AsyncGit | None = None
+        self._instrumentation: Instrumentation = instrumentation_for(None)
 
     # ------------------------------------------------------------------ create
 
@@ -471,6 +473,7 @@ class AsyncSandbox:
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
         index: DynamoDbIndex | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=`,
         `persist=`, `transfer=`, el plazo lógico de `max_lifetime`/`on_timeout`
@@ -508,7 +511,25 @@ class AsyncSandbox:
         Ejemplo:
             idx = DynamoDbIndex("rayito-sandboxes")
             sbx = await AsyncSandbox.create(metadata={"user": "42"}, index=idx)
+
+        `tracer_provider=` (M13b) como en `Sandbox.create`: `create()` en sí
+        es un único span `rayito.sandbox.create`; el handle instrumenta sus
+        demás operaciones. `None` (por defecto) es `NOOP`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` (un `TracerProvider` de
+            `opentelemetry.trace`, o cualquier objeto con
+            `get_tracer(name, version)`).
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            from opentelemetry import trace
+            sbx = await AsyncSandbox.create(tracer_provider=trace.get_tracer_provider())
         """
+        instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
@@ -564,6 +585,7 @@ class AsyncSandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
+            taken._instrumentation = instrumentation
             return taken
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
@@ -590,35 +612,43 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network_enforce=launch.enforce,
         )
-        info = await asyncio.to_thread(plane.run_microvm, plan.request)
-        sandbox_logger(logger).info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
-        if validated_index is not None:
-            await asyncio.to_thread(
-                write_index_record,
-                validated_index,
-                info,
-                metadata,
-                plane,
-                keep_on_failure,
-                sandbox_logger(logger),
+        with instrumentation.span(
+            "rayito.sandbox.create",
+            {"rayito.region": plane.region, "rayito.operation": "create"},
+        ) as span:
+            info = await asyncio.to_thread(plane.run_microvm, plan.request)
+            span.set_attribute("rayito.sandbox.id", info.sandbox_id)
+            sandbox_logger(logger).info(
+                "run-microvm aceptado: %s (%s)", info.sandbox_id, info.state
             )
-        sandbox = await cls._open(
-            info,
-            access_token=plan.access_token,
-            control_plane=plane,
-            transport=transport or TransportSettings(),
-            proxy_ports=plan.proxy_ports,
-            request_timeout=request_timeout,
-            ready_timeout=ready_timeout,
-            reconnect_timeout=reconnect_timeout,
-            terminate_on_failure=not keep_on_failure,
-            require_lifecycle=plan.lifecycle_requested,
-            logger=logger,
-        )
-        sandbox._bind_transfer(staging, session)
-        sandbox._secrets = binding
-        if launch.enforce:
-            await sandbox._apply_initial_network(launch)
+            if validated_index is not None:
+                await asyncio.to_thread(
+                    write_index_record,
+                    validated_index,
+                    info,
+                    metadata,
+                    plane,
+                    keep_on_failure,
+                    sandbox_logger(logger),
+                )
+            sandbox = await cls._open(
+                info,
+                access_token=plan.access_token,
+                control_plane=plane,
+                transport=transport or TransportSettings(),
+                proxy_ports=plan.proxy_ports,
+                request_timeout=request_timeout,
+                ready_timeout=ready_timeout,
+                reconnect_timeout=reconnect_timeout,
+                terminate_on_failure=not keep_on_failure,
+                require_lifecycle=plan.lifecycle_requested,
+                logger=logger,
+            )
+            sandbox._instrumentation = instrumentation
+            sandbox._bind_transfer(staging, session)
+            sandbox._secrets = binding
+            if launch.enforce:
+                await sandbox._apply_initial_network(launch)
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -658,22 +688,31 @@ class AsyncSandbox:
         request_timeout: float | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> AsyncSandbox:
         """Misma semántica que `sbx.connect()` de `Sandbox`: reabre este
         handle y extiende el plazo (`AT_LEAST`). Devuelve `self`.
         `secrets=`/`secret_cache=` sustituyen los del handle (mismo bloque
-        "Coste y activación" que `create()`; `None` los conserva)."""
+        "Coste y activación" que `create()`; `None` los conserva).
+        `tracer_provider=` (M13b) sustituye la `Instrumentation` del handle;
+        `None` conserva la que ya tenía."""
+        if tracer_provider is not None:
+            self._instrumentation = instrumentation_for(tracer_provider)
         await self._rebind_secrets(secrets, secret_cache)
-        info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
-        if info.state in TERMINAL_STATES:
-            raise terminal_state_error(info)
-        self._info = info
-        self._paused = False
-        if needs_explicit_resume(info):
-            await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
-            await self._refresher.refresh_all()
-        await self._wait_until_ready(terminate_on_failure=False)
-        await self._extend_after_readiness(timeout, request_timeout=request_timeout)
+        with self._instrumentation.span(
+            "rayito.sandbox.connect",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "connect"},
+        ):
+            info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
+            if info.state in TERMINAL_STATES:
+                raise terminal_state_error(info)
+            self._info = info
+            self._paused = False
+            if needs_explicit_resume(info):
+                await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
+                await self._refresher.refresh_all()
+            await self._wait_until_ready(terminate_on_failure=False)
+            await self._extend_after_readiness(timeout, request_timeout=request_timeout)
         return self
 
     @classmethod
@@ -695,6 +734,7 @@ class AsyncSandbox:
         logger: logging.Logger | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.connect(sandbox_id)` (incluidos
         `persist=`, que sólo enlaza el prefijo con `name`, `transfer=`,
@@ -711,7 +751,12 @@ class AsyncSandbox:
         Cómo apagarla: `secrets=None` (por defecto).
         Ejemplo:
             sbx = await AsyncSandbox.connect(sandbox_id, secrets={"TOKEN": "gh"})
+
+        `tracer_provider=` (M13b) como en `Sandbox.connect`: guarda en el
+        handle la `Instrumentation`; `connect()` en sí abre un único span
+        `rayito.sandbox.connect`.
         """
+        instrumentation = instrumentation_for(tracer_provider)
         token = require_access_token(access_token)
         bound = None if persist is None else require_named_persist(persist)
         staging = resolve_staging(transfer)
@@ -722,31 +767,37 @@ class AsyncSandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
-        if info.state in TERMINAL_STATES:
-            raise terminal_state_error(info)
-        if needs_explicit_resume(info):
-            await asyncio.to_thread(plane.resume_microvm, sandbox_id)
-        sandbox = await cls._open(
-            info,
-            access_token=token,
-            control_plane=plane,
-            transport=transport or TransportSettings(),
-            proxy_ports=(PortSpec.single(DEFAULT_PORT),),
-            request_timeout=request_timeout,
-            ready_timeout=ready_timeout,
-            reconnect_timeout=reconnect_timeout,
-            terminate_on_failure=False,
-            logger=logger,
-        )
-        sandbox._persist = bound
-        sandbox._bind_transfer(staging, session)
-        sandbox._secrets = binding
-        try:
-            await sandbox._extend_after_readiness(timeout, request_timeout=None)
-        except BaseException:
-            await sandbox.close()
-            raise
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation.span(
+            "rayito.sandbox.connect",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "connect"},
+        ):
+            info = await asyncio.to_thread(plane.get_microvm, validated_sandbox_id)
+            if info.state in TERMINAL_STATES:
+                raise terminal_state_error(info)
+            if needs_explicit_resume(info):
+                await asyncio.to_thread(plane.resume_microvm, sandbox_id)
+            sandbox = await cls._open(
+                info,
+                access_token=token,
+                control_plane=plane,
+                transport=transport or TransportSettings(),
+                proxy_ports=(PortSpec.single(DEFAULT_PORT),),
+                request_timeout=request_timeout,
+                ready_timeout=ready_timeout,
+                reconnect_timeout=reconnect_timeout,
+                terminate_on_failure=False,
+                logger=logger,
+            )
+            sandbox._instrumentation = instrumentation
+            sandbox._persist = bound
+            sandbox._bind_transfer(staging, session)
+            sandbox._secrets = binding
+            try:
+                await sandbox._extend_after_readiness(timeout, request_timeout=None)
+            except BaseException:
+                await sandbox.close()
+                raise
         return sandbox
 
     @classmethod
@@ -952,10 +1003,16 @@ class AsyncSandbox:
 
     @class_method_variant("_class_kill")
     async def kill(self) -> bool:
-        try:
-            return await asyncio.to_thread(self._control_plane.terminate_microvm, self.sandbox_id)
-        finally:
-            await self.close()
+        with self._instrumentation.span(
+            "rayito.sandbox.kill",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "kill"},
+        ):
+            try:
+                return await asyncio.to_thread(
+                    self._control_plane.terminate_microvm, self.sandbox_id
+                )
+            finally:
+                await self.close()
 
     @classmethod
     async def _class_kill(
@@ -965,9 +1022,17 @@ class AsyncSandbox:
         region: str | None = None,
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
+        """`AsyncSandbox.kill(sandbox_id)`; `tracer_provider=` como en
+        `Sandbox.kill`."""
         plane = resolve_control_plane(control_plane, session, region)
-        return await asyncio.to_thread(plane.terminate_microvm, validate_sandbox_id(sandbox_id))
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.kill",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "kill"},
+        ):
+            return await asyncio.to_thread(plane.terminate_microvm, validated_sandbox_id)
 
     @class_method_variant("_class_get_info")
     async def get_info(self) -> SandboxInfo:
@@ -1006,15 +1071,22 @@ class AsyncSandbox:
     async def pause(self, *, wait: bool = True) -> bool:
         """Misma semántica que `Sandbox.pause`: mientras la pausa esté
         pendiente ningún stream en curso sondea `Health`."""
-        self._info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
-        if already_suspended(self._info):
-            return False
-        suspended = await self._suspend_marking_paused()
-        if suspended and wait:
-            self._info = await wait_for_state_async(
-                self._control_plane, self.sandbox_id, "SUSPENDED", timeout=self._ready_timeout
-            )
-        return suspended
+        with self._instrumentation.span(
+            "rayito.sandbox.pause",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "pause"},
+        ):
+            self._info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
+            if already_suspended(self._info):
+                return False
+            suspended = await self._suspend_marking_paused()
+            if suspended and wait:
+                self._info = await wait_for_state_async(
+                    self._control_plane,
+                    self.sandbox_id,
+                    "SUSPENDED",
+                    timeout=self._ready_timeout,
+                )
+            return suspended
 
     @classmethod
     async def _class_pause(
@@ -1026,26 +1098,38 @@ class AsyncSandbox:
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
+        """`AsyncSandbox.pause(sandbox_id)`; `tracer_provider=` como en
+        `Sandbox.pause`."""
         plane = resolve_control_plane(control_plane, session, region)
-        info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
-        if already_suspended(info):
-            return False
-        suspended = await asyncio.to_thread(plane.suspend_microvm, sandbox_id)
-        if suspended and wait:
-            await wait_for_state_async(plane, sandbox_id, "SUSPENDED", timeout=ready_timeout)
-        return suspended
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.pause",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "pause"},
+        ):
+            info = await asyncio.to_thread(plane.get_microvm, validated_sandbox_id)
+            if already_suspended(info):
+                return False
+            suspended = await asyncio.to_thread(plane.suspend_microvm, sandbox_id)
+            if suspended and wait:
+                await wait_for_state_async(plane, sandbox_id, "SUSPENDED", timeout=ready_timeout)
+            return suspended
 
     @class_method_variant("_class_resume")
     async def resume(self, *, wait: bool = True) -> None:
         """Misma semántica que `Sandbox.resume` (incluida la reapertura de un
         sandbox reanudado después de su plazo lógico)."""
-        self._paused = False
-        await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
-        await self._refresher.refresh_all()
-        if wait:
-            await self._wait_until_ready(terminate_on_failure=False)
-            await self._extend_after_readiness(None, request_timeout=None)
+        with self._instrumentation.span(
+            "rayito.sandbox.resume",
+            {"rayito.sandbox.id": self.sandbox_id, "rayito.operation": "resume"},
+        ):
+            self._paused = False
+            await asyncio.to_thread(self._control_plane.resume_microvm, self.sandbox_id)
+            await self._refresher.refresh_all()
+            if wait:
+                await self._wait_until_ready(terminate_on_failure=False)
+                await self._extend_after_readiness(None, request_timeout=None)
 
     @classmethod
     async def _class_resume(
@@ -1057,11 +1141,19 @@ class AsyncSandbox:
         session: boto3.session.Session | None = None,
         control_plane: ControlPlane | None = None,
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
+        tracer_provider: TracerProviderLike | None = None,
     ) -> None:
+        """`AsyncSandbox.resume(sandbox_id)`; `tracer_provider=` como en
+        `Sandbox.resume`."""
         plane = resolve_control_plane(control_plane, session, region)
-        await asyncio.to_thread(plane.resume_microvm, validate_sandbox_id(sandbox_id))
-        if wait:
-            await wait_for_state_async(plane, sandbox_id, "RUNNING", timeout=ready_timeout)
+        validated_sandbox_id = validate_sandbox_id(sandbox_id)
+        with instrumentation_for(tracer_provider).span(
+            "rayito.sandbox.resume",
+            {"rayito.sandbox.id": validated_sandbox_id, "rayito.operation": "resume"},
+        ):
+            await asyncio.to_thread(plane.resume_microvm, validated_sandbox_id)
+            if wait:
+                await wait_for_state_async(plane, sandbox_id, "RUNNING", timeout=ready_timeout)
 
     @class_method_variant("_class_set_timeout")
     async def set_timeout(self, timeout: int, *, request_timeout: float | None = None) -> None:

@@ -164,22 +164,36 @@ class Commands:
         Cómo apagarla: `secrets=None` (por defecto).
         Ejemplo:
             sbx.commands.run("python agent.py", secrets={"OPENAI_API_KEY": "openai"})
+
+        Con `tracer_provider=` en `create()`/`connect()`, cada llamada abre un
+        span `rayito.commands.run` (nunca con el texto del comando, sus
+        argumentos ni sus `envs`): `rayito.commands.background` siempre, y en
+        foreground `rayito.commands.exit_code` al terminar. En segundo plano
+        el span se cierra en cuanto `start` devuelve el handle, no cuando el
+        proceso termina.
         """
         envs = self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
         )
         deadline = stream_deadline(timeout)
-        handle = self._attach(
-            lambda stub: stub.Start(request, timeout=deadline),
-            stream=background,
-            deadline=deadline,
-            on_stdout=on_stdout,
-            on_stderr=on_stderr,
-            request_timeout=request_timeout,
-            foreground=not background,
-        )
-        return handle if background else handle.wait()
+        with self._sandbox._instrumentation.span(
+            "rayito.commands.run", {"rayito.commands.background": background}
+        ) as span:
+            handle = self._attach(
+                lambda stub: stub.Start(request, timeout=deadline),
+                stream=background,
+                deadline=deadline,
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+                request_timeout=request_timeout,
+                foreground=not background,
+            )
+            if background:
+                return handle
+            result = handle.wait()
+            span.set_attribute("rayito.commands.exit_code", result.exit_code)
+            return result
 
     def connect(
         self,

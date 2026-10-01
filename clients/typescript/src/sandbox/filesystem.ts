@@ -52,6 +52,7 @@ import {
   type WriteData,
   type WriteEntry,
 } from "../models.js";
+import { type Instrumentation, NOOP } from "../otel.js";
 import { isStreamReset, translateRpcError } from "../transport/errors.js";
 import { deadlineAt, type RequestOptions, remainingDeadlineMs } from "./commands.js";
 import { type Abortable, type OpenedStream, type SandboxCore, withTimeout } from "./core.js";
@@ -711,6 +712,7 @@ export type FilesystemClient = SandboxCore["clients"]["filesystem"];
 export class Filesystem {
   readonly core: SandboxCore;
   readonly #transfers: TransferClient;
+  readonly #instrumentation: () => Instrumentation;
 
   /**
    * `sharedWith` es interno a rayito/e2b: cuando el shim de E2B envuelve este
@@ -719,12 +721,17 @@ export class Filesystem {
    * de transferencias (`#supported`) y los clientes S3 no se dupliquen entre
    * `sbx.files` y `sbx.native.files`.
    */
-  constructor(core: SandboxCore, sharedWith?: Filesystem) {
+  constructor(
+    core: SandboxCore,
+    sharedWith?: Filesystem,
+    instrumentation: () => Instrumentation = () => NOOP,
+  ) {
     this.core = core;
     this.#transfers =
       sharedWith === undefined
         ? new TransferClient(core, entryInfoFromProto)
         : sharedWith.#transfers;
+    this.#instrumentation = instrumentation;
   }
 
   read(path: string, options?: ReadOptionsFor<{ format?: "text" | undefined }>): Promise<string>;
@@ -740,29 +747,58 @@ export class Filesystem {
    * exporta a S3 y el SDK lo baja con tus credenciales comprobando el
    * sha256; si no, un `Read` por gRPC como siempre.
    */
+  /**
+   * Con `tracerProvider` abre `rayito.files.read` (nunca `path` ni el
+   * contenido); con `format` `"text"`/`"bytes"`, `rayito.files.bytes` al
+   * terminar.
+   */
   async read(path: string, options: ReadOptions = {}): Promise<ReadResult> {
     const format = validateReadFormat(options.format ?? "text");
-    const idleMs = validateStreamIdleTimeout(options.streamIdleTimeoutMs);
-    const request = readRequest(path, options.user);
-    const entry = requireRegularFile(await this.getInfo(path, options));
-    const deadlineMs = fileRequestDeadlineMs(entry.size, options.requestTimeoutMs);
-    const deadline =
-      format === "stream"
-        ? undefined
-        : new OperationDeadline(
-            () => deadlineMs,
-            this.core.now,
-            options.requestTimeoutMs !== undefined,
-          );
-    const stream = (await this.#routes(entry.size))
-      ? await this.#readThroughS3(path, options.user, entry.size, deadlineMs, idleMs, deadline)
-      : await this.readStream(request, deadlineMs, { gzip: options.gzip ?? false, idleMs });
-    return formatRead(stream, format);
+    return this.#instrumentation().span(
+      "rayito.files.read",
+      { "rayito.files.operation": "read" },
+      async (span) => {
+        const idleMs = validateStreamIdleTimeout(options.streamIdleTimeoutMs);
+        const request = readRequest(path, options.user);
+        const entry = requireRegularFile(await this.getInfo(path, options));
+        const deadlineMs = fileRequestDeadlineMs(entry.size, options.requestTimeoutMs);
+        const deadline =
+          format === "stream"
+            ? undefined
+            : new OperationDeadline(
+                () => deadlineMs,
+                this.core.now,
+                options.requestTimeoutMs !== undefined,
+              );
+        const stream = (await this.#routes(entry.size))
+          ? await this.#readThroughS3(path, options.user, entry.size, deadlineMs, idleMs, deadline)
+          : await this.readStream(request, deadlineMs, { gzip: options.gzip ?? false, idleMs });
+        const result = await formatRead(stream, format);
+        if (typeof result === "string") {
+          span?.setAttribute("rayito.files.bytes", new TextEncoder().encode(result).length);
+        } else if (result instanceof Uint8Array) {
+          span?.setAttribute("rayito.files.bytes", result.length);
+        }
+        return result;
+      },
+    );
   }
 
+  /**
+   * Con `tracerProvider` abre `rayito.files.write` (nunca `path` ni
+   * `data`), con `rayito.files.bytes` al terminar.
+   */
   async write(path: string, data: WriteData, options: WriteOptions = {}): Promise<EntryInfo> {
-    const entries = await this.writeFiles([{ path, data, mode: options.mode }], options);
-    return entries[0] as EntryInfo;
+    return this.#instrumentation().span(
+      "rayito.files.write",
+      { "rayito.files.operation": "write" },
+      async (span) => {
+        const entries = await this.writeFiles([{ path, data, mode: options.mode }], options);
+        const entry = entries[0] as EntryInfo;
+        span?.setAttribute("rayito.files.bytes", entry.size);
+        return entry;
+      },
+    );
   }
 
   /**
@@ -770,42 +806,57 @@ export class Filesystem {
    * separado. Con `transfer` configurado, lo que mide `>= thresholdBytes` y
    * todo `ReadableStream` van por S3 uno a uno. Los resultados siguen el
    * orden pedido. `metadata` y `gzip` exigen un agente M9.
+   *
+   * Con `tracerProvider` abre `rayito.files.write_files` (nunca las rutas ni
+   * los datos), con `rayito.files.count` y `rayito.files.bytes` al terminar.
    */
   async writeFiles(
     files: readonly WriteEntry[],
     options: WriteFilesOptions = {},
   ): Promise<EntryInfo[]> {
-    const sources = validateWriteSources(files);
-    const metadata = validateMetadata(options.metadata);
-    const gzip = options.gzip ?? false;
-    await this.#requireWriteFeatures(metadata, gzip);
-    const deadline = new OperationDeadline(
-      (size) => fileRequestDeadlineMs(size, options.requestTimeoutMs),
-      this.core.now,
-      options.requestTimeoutMs !== undefined,
+    return this.#instrumentation().span(
+      "rayito.files.write_files",
+      { "rayito.files.operation": "write_files" },
+      async (span) => {
+        const sources = validateWriteSources(files);
+        const metadata = validateMetadata(options.metadata);
+        const gzip = options.gzip ?? false;
+        await this.#requireWriteFeatures(metadata, gzip);
+        const deadline = new OperationDeadline(
+          (size) => fileRequestDeadlineMs(size, options.requestTimeoutMs),
+          this.core.now,
+          options.requestTimeoutMs !== undefined,
+        );
+        const routed = await this.#routedIndexes(sources);
+        const results: Array<EntryInfo | undefined> = sources.map(() => undefined);
+        const grpcIndexes = sources.flatMap((_, index) => (routed.has(index) ? [] : [index]));
+        if (grpcIndexes.length > 0) {
+          const written = await this.#writeGrpc(
+            grpcIndexes.map((index) => sources[index] as WriteSource),
+            options,
+            metadata,
+            gzip,
+          );
+          grpcIndexes.forEach((index, position) => {
+            results[index] = written[position];
+          });
+        }
+        for (const index of routed) {
+          const source = sources[index] as WriteSource;
+          results[index] = await this.#transfers.importUpload(
+            { path: source.path, mode: source.mode, body: routedBody(source.data) },
+            { user: options.user, metadata, deadline },
+          );
+        }
+        const ordered = results as EntryInfo[];
+        span?.setAttribute("rayito.files.count", ordered.length);
+        span?.setAttribute(
+          "rayito.files.bytes",
+          ordered.reduce((total, entry) => total + entry.size, 0),
+        );
+        return ordered;
+      },
     );
-    const routed = await this.#routedIndexes(sources);
-    const results: Array<EntryInfo | undefined> = sources.map(() => undefined);
-    const grpcIndexes = sources.flatMap((_, index) => (routed.has(index) ? [] : [index]));
-    if (grpcIndexes.length > 0) {
-      const written = await this.#writeGrpc(
-        grpcIndexes.map((index) => sources[index] as WriteSource),
-        options,
-        metadata,
-        gzip,
-      );
-      grpcIndexes.forEach((index, position) => {
-        results[index] = written[position];
-      });
-    }
-    for (const index of routed) {
-      const source = sources[index] as WriteSource;
-      results[index] = await this.#transfers.importUpload(
-        { path: source.path, mode: source.mode, body: routedBody(source.data) },
-        { user: options.user, metadata, deadline },
-      );
-    }
-    return results as EntryInfo[];
   }
 
   /**
@@ -918,76 +969,121 @@ export class Filesystem {
     return this.#transfers.streamExported(exported, idleMs, deadline);
   }
 
+  /** Con `tracerProvider` abre `rayito.files.list` (nunca `path`), con `rayito.files.count` al terminar. */
   async list(path: string, options: ListOptions = {}): Promise<EntryInfo[]> {
-    const request = listDirRequest(path, options.depth ?? DEFAULT_DEPTH, options.user);
-    const response = await this.core.filesCall(
-      (client, callOptions) => client.listDir(request, callOptions),
-      options.requestTimeoutMs,
-      options.signal,
+    return this.#instrumentation().span(
+      "rayito.files.list",
+      { "rayito.files.operation": "list" },
+      async (span) => {
+        const request = listDirRequest(path, options.depth ?? DEFAULT_DEPTH, options.user);
+        const response = await this.core.filesCall(
+          (client, callOptions) => client.listDir(request, callOptions),
+          options.requestTimeoutMs,
+          options.signal,
+        );
+        const entries = response.entries.map(entryInfoFromProto);
+        span?.setAttribute("rayito.files.count", entries.length);
+        return entries;
+      },
     );
-    return response.entries.map(entryInfoFromProto);
   }
 
+  /** Con `tracerProvider` abre `rayito.files.exists` (nunca `path`). */
   async exists(path: string, options: UserOptions = {}): Promise<boolean> {
-    try {
-      await this.getInfo(path, options);
-    } catch (error) {
-      if (error instanceof FileNotFoundError) {
-        return false;
-      }
-      throw error;
-    }
-    return true;
+    return this.#instrumentation().span(
+      "rayito.files.exists",
+      { "rayito.files.operation": "exists" },
+      async () => {
+        try {
+          await this.getInfo(path, options);
+        } catch (error) {
+          if (error instanceof FileNotFoundError) {
+            return false;
+          }
+          throw error;
+        }
+        return true;
+      },
+    );
   }
 
+  /** Con `tracerProvider` abre `rayito.files.get_info` (nunca `path`). */
   async getInfo(path: string, options: UserOptions = {}): Promise<EntryInfo> {
-    const request = statRequest(path, options.user);
-    const response = await this.core.filesCall(
-      (client, callOptions) => client.stat(request, callOptions),
-      options.requestTimeoutMs,
-      options.signal,
+    return this.#instrumentation().span(
+      "rayito.files.get_info",
+      { "rayito.files.operation": "get_info" },
+      async () => {
+        const request = statRequest(path, options.user);
+        const response = await this.core.filesCall(
+          (client, callOptions) => client.stat(request, callOptions),
+          options.requestTimeoutMs,
+          options.signal,
+        );
+        if (response.entry === undefined) {
+          throw new SandboxError("Stat respondió sin entry");
+        }
+        return entryInfoFromProto(response.entry);
+      },
     );
-    if (response.entry === undefined) {
-      throw new SandboxError("Stat respondió sin entry");
-    }
-    return entryInfoFromProto(response.entry);
   }
 
+  /** Con `tracerProvider` abre `rayito.files.remove` (nunca `path`). */
   async remove(path: string, options: RemoveOptions = {}): Promise<void> {
-    const request = removeRequest(path, options.recursive ?? true, options.user);
-    await this.core.filesCall(
-      (client, callOptions) => client.remove(request, callOptions),
-      options.requestTimeoutMs,
-      options.signal,
+    return this.#instrumentation().span(
+      "rayito.files.remove",
+      { "rayito.files.operation": "remove" },
+      async () => {
+        const request = removeRequest(path, options.recursive ?? true, options.user);
+        await this.core.filesCall(
+          (client, callOptions) => client.remove(request, callOptions),
+          options.requestTimeoutMs,
+          options.signal,
+        );
+      },
     );
   }
 
+  /** Con `tracerProvider` abre `rayito.files.rename` (nunca las rutas). */
   async rename(oldPath: string, newPath: string, options: UserOptions = {}): Promise<EntryInfo> {
-    const request = moveRequest(oldPath, newPath, options.user);
-    const response = await this.core.filesCall(
-      (client, callOptions) => client.move(request, callOptions),
-      options.requestTimeoutMs,
-      options.signal,
+    return this.#instrumentation().span(
+      "rayito.files.rename",
+      { "rayito.files.operation": "rename" },
+      async () => {
+        const request = moveRequest(oldPath, newPath, options.user);
+        const response = await this.core.filesCall(
+          (client, callOptions) => client.move(request, callOptions),
+          options.requestTimeoutMs,
+          options.signal,
+        );
+        if (response.entry === undefined) {
+          throw new SandboxError("Move respondió sin entry");
+        }
+        return entryInfoFromProto(response.entry);
+      },
     );
-    if (response.entry === undefined) {
-      throw new SandboxError("Move respondió sin entry");
-    }
-    return entryInfoFromProto(response.entry);
   }
 
-  /** `false` cuando el directorio ya existía (`AlreadyExists`). */
+  /** `false` cuando el directorio ya existía (`AlreadyExists`). Con `tracerProvider` abre `rayito.files.make_dir` (nunca `path`). */
   async makeDir(path: string, options: UserOptions = {}): Promise<boolean> {
-    const request = makeDirRequest(path, options.user);
-    const timeoutMs = this.core.resolveRequestTimeout(options.requestTimeoutMs);
-    try {
-      await this.core.callUnary(() => this.core.clients.filesystem.makeDir(request, { timeoutMs }));
-    } catch (error) {
-      if (isAlreadyExists(error)) {
-        return false;
-      }
-      throw translateRpcError(error, { filesystem: true });
-    }
-    return true;
+    return this.#instrumentation().span(
+      "rayito.files.make_dir",
+      { "rayito.files.operation": "make_dir" },
+      async () => {
+        const request = makeDirRequest(path, options.user);
+        const timeoutMs = this.core.resolveRequestTimeout(options.requestTimeoutMs);
+        try {
+          await this.core.callUnary(() =>
+            this.core.clients.filesystem.makeDir(request, { timeoutMs }),
+          );
+        } catch (error) {
+          if (isAlreadyExists(error)) {
+            return false;
+          }
+          throw translateRpcError(error, { filesystem: true });
+        }
+        return true;
+      },
+    );
   }
 
   /** Resuelve tras `WatchStarted`; el consumidor corre en una tarea aparte. */

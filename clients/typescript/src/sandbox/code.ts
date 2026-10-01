@@ -40,6 +40,7 @@ import {
   Result,
   type ResultFields,
 } from "../models.js";
+import { type Instrumentation, NOOP } from "../otel.js";
 import { DEFAULT_WORKDIR, validatedEnvs } from "../payload.js";
 import { codeSecretsScope, type SecretEnvs, type SecretsInput } from "../secrets/inject.js";
 import { unimplementedRpcError } from "../transport/errors.js";
@@ -534,12 +535,23 @@ function withKernelFeature(error: unknown, name: string, language: string | unde
 export class CodeClient {
   readonly core: SandboxCore;
   readonly #secrets: SecretEnvs;
+  readonly #instrumentation: () => Instrumentation;
 
-  constructor(core: SandboxCore, secrets: SecretEnvs) {
+  constructor(
+    core: SandboxCore,
+    secrets: SecretEnvs,
+    instrumentation: () => Instrumentation = () => NOOP,
+  ) {
     this.core = core;
     this.#secrets = secrets;
+    this.#instrumentation = instrumentation;
   }
 
+  /**
+   * Con `tracerProvider` en `create()`/`connect()` abre `rayito.code.run`
+   * (nunca con el código ni sus datos), con `rayito.code.language` cuando se
+   * conoce.
+   */
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
     const contextLanguage =
@@ -558,31 +570,38 @@ export class CodeClient {
       options.requestTimeoutMs === undefined
         ? executeDeadlineMs(options.timeoutMs ?? DEFAULT_CODE_TIMEOUT_MS)
         : options.requestTimeoutMs;
-    const builder = new ExecutionBuilder({
-      contextId: contextId ?? languageDefaultContextId(request),
-      onStdout: options.onStdout,
-      onStderr: options.onStderr,
-      onResult: options.onResult,
-      onError: options.onError,
-    });
-    const opened = await this.core
-      .openStream(
-        (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
-        { service: CodeService, stream: false, reconnect: false, signal: options.signal },
-      )
-      .catch((error: unknown) =>
-        withKernelFeature(error, "runCode", normalizeLanguage(options.language)),
-      );
-    try {
-      return await this.#consume(
-        opened,
-        builder,
-        deadlineAt(deadline, this.core.now),
-        options.signal,
-      );
-    } catch (error) {
-      throw abortReasonOr(options.signal, error);
-    }
+    const resolvedLanguage = options.language ?? contextLanguage;
+    return this.#instrumentation().span(
+      "rayito.code.run",
+      resolvedLanguage === undefined ? undefined : { "rayito.code.language": resolvedLanguage },
+      async () => {
+        const builder = new ExecutionBuilder({
+          contextId: contextId ?? languageDefaultContextId(request),
+          onStdout: options.onStdout,
+          onStderr: options.onStderr,
+          onResult: options.onResult,
+          onError: options.onError,
+        });
+        const opened = await this.core
+          .openStream(
+            (client, callOptions) => client.execute(request, withTimeout(callOptions, deadline)),
+            { service: CodeService, stream: false, reconnect: false, signal: options.signal },
+          )
+          .catch((error: unknown) =>
+            withKernelFeature(error, "runCode", normalizeLanguage(options.language)),
+          );
+        try {
+          return await this.#consume(
+            opened,
+            builder,
+            deadlineAt(deadline, this.core.now),
+            options.signal,
+          );
+        } catch (error) {
+          throw abortReasonOr(options.signal, error);
+        }
+      },
+    );
   }
 
   async createContext(options: CreateContextOptions = {}): Promise<CodeContext> {

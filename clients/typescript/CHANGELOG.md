@@ -8,6 +8,22 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- **Spans OpenTelemetry del lado del SDK** (`m13-otel-sdk`, opcional y
+  apagado por defecto, ADR-014): `tracerProvider` en `Sandbox.create()`
+  (también con `pool`), `connect()` (ambas formas) y las variantes
+  estáticas `kill`/`pause`/`resume`; instrumenta `commands.run`, `runCode`,
+  `files.*` y `kill`/`pause`/`resume` de instancia con spans `rayito.*` de
+  `SpanKind.CLIENT`. `@opentelemetry/api` es una peerDependency **opcional**
+  importada sólo con `import type` (se borra en el build: ningún
+  require/import en tiempo de ejecución, comprobado por `pack:check`), y
+  `SpanKind.CLIENT`/`SpanStatusCode.ERROR` son constantes numéricas locales.
+  Lista cerrada de atributos (nunca texto de comandos, código, rutas,
+  `envs`, secretos ni metadata); un error del span lleva el nombre de la
+  clase del error, nunca su `message`. $0 de AWS; el coste (si lo hay) es el
+  del backend de exportación del llamante. Fuera de alcance: propagación
+  `traceparent`/`tracestate` hacia `rayd`, telemetría del sandbox y el shim
+  de E2B.
+
 - **Índice de metadatos sobre DynamoDB** (`m14-metadata-index`, opcional y
   apagado por defecto, ADR-014): `new DynamoDbIndex({ tableName, region,
   credentials, onWriteFailure: "terminate", ttlMarginSeconds: 3600 })` y la
