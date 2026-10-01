@@ -488,9 +488,14 @@ hacen falta). Acciones y parámetros del plano de datos del KeyValueStore:
 | `KvsArn` | `AWS::CloudFront::KeyValueStore`: dos claves por ruta (`j:<etiqueta>` el JWE, `m:<etiqueta>` metadatos), que escriben `CustomDomain.register()`/`unregister()`/`refresh()`, nunca la Function |
 
 **Coste**: $0 en reposo (CloudFront sin tráfico no factura; el KeyValueStore
-tampoco). Con uso: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida
-(CloudFront) y $0,0000004 por lectura/escritura del KeyValueStore
-(us-east-1, consultado 2026-09-30).
+tampoco). Con uso (us-east-1; cifras de lista de CloudFront Functions/
+KeyValueStore desde su lanzamiento, por reconfirmar en la etapa de
+aceptación AWS): ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida
+(CloudFront); ~$0,10 por 1 000 000 de invocaciones de la Function (una por
+petición); KeyValueStore ~$0,50 por 1 000 000 de lecturas (las de la
+Function) y ~$5 por 1 000 000 de llamadas de gestión (`PutKey`/`DeleteKey`
+de `register`/`unregister`/`refresh`) — tres líneas, no una cifra
+combinada.
 
 ### Desplegar
 

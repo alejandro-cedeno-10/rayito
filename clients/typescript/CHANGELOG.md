@@ -32,12 +32,16 @@ versionado [SemVer](https://semver.org/lang/es/).
   CloudFront con alias comodín, una CloudFront Function de enrutado
   (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`);
   `register`/`unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.
-  <tu dominio>`. Nuevo peer opcional `@aws-sdk/client-cloudfront-
-  keyvaluestore`; sin instanciar `CustomDomain` no se importa ni se
-  construye. `domain` en `Sandbox.create()` sigue lanzando
-  `UnimplementedError`: la integración con `getHost()`/`expose()` queda
-  para un cambio posterior. DOM-2/3/5/7/8 pendientes de D3 y de la
-  aceptación contra AWS real.
+  <tu dominio>`. `register()` exige `trafficToken` salvo `public: true`
+  explícito — nunca hay una ruta pública por omisión — y
+  reintenta/limpia sus dos escrituras encadenadas al KVS ante una carrera
+  de `ETag`. Nuevos peers opcionales `@aws-sdk/client-cloudfront-
+  keyvaluestore` y `@aws-sdk/signature-v4a` (el plano de datos del KVS
+  exige SigV4A pese a declarar `signatureVersion: v4` en su modelo); sin
+  instanciar `CustomDomain` no se importa ni se construye ninguno.
+  `domain` en `Sandbox.create()` sigue lanzando `UnimplementedError`: la
+  integración con `getHost()`/`expose()` queda para un cambio posterior.
+  DOM-2/3/5/7/8 pendientes de D3 y de la aceptación contra AWS real.
 
 ## [0.5.1] - 2026-10-01
 

@@ -216,6 +216,7 @@ describe("custom-domain/service", () => {
       const route = await domain.register("ws-7", 8000, {
         endpoint: "10.0.0.1.lambda-url.us-east-1.on.aws",
         jwe: "a-jwe",
+        public: true,
         ttlSeconds: 2400,
       });
       expect(route.host).toBe("8000-ws-7.sbx.example.com");
@@ -237,9 +238,26 @@ describe("custom-domain/service", () => {
       expect(meta).not.toContain("secret");
     });
 
+    test("register without a trafficToken or public is rejected (SEC-T25)", async () => {
+      await expect(
+        domain.register("ws-7", 8000, { endpoint: "e", jwe: "a-jwe", ttlSeconds: 60 }),
+      ).rejects.toThrow(InvalidArgumentError);
+      expect(kvs.calls).toEqual([]);
+    });
+
+    test("register with public true and no token is allowed", async () => {
+      const route = await domain.register("ws-7", 8000, {
+        endpoint: "e",
+        jwe: "a-jwe",
+        public: true,
+        ttlSeconds: 60,
+      });
+      expect(route.trafficTokenSha256).toBe("");
+    });
+
     test("register rejects a non-positive ttl before touching the KVS", async () => {
       await expect(
-        domain.register("ws-7", 8000, { endpoint: "e", jwe: "a-jwe", ttlSeconds: 0 }),
+        domain.register("ws-7", 8000, { endpoint: "e", jwe: "a-jwe", public: true, ttlSeconds: 0 }),
       ).rejects.toThrow(InvalidArgumentError);
       expect(kvs.calls).toEqual([]);
     });
@@ -249,27 +267,61 @@ describe("custom-domain/service", () => {
         domain.register("ws-7", 8000, {
           endpoint: "e",
           jwe: "x".repeat(MAX_KVS_VALUE_BYTES + 1),
+          public: true,
           ttlSeconds: 60,
         }),
       ).rejects.toThrow(CustomDomainError);
       expect(kvs.calls).toEqual([]);
     });
 
-    test("refresh rewrites only the jwe key", async () => {
+    test("register rolls back the jwe if the metadata put fails", async () => {
+      kvs.failPutOnce.set("m:8000-ws-7", "ValidationException");
+      await expect(
+        domain.register("ws-7", 8000, {
+          endpoint: "e",
+          jwe: "a-jwe",
+          public: true,
+          ttlSeconds: 60,
+        }),
+      ).rejects.toThrow(CustomDomainError);
+      expect(kvs.stores.get(KVS_ARN)?.has("j:8000-ws-7")).toBe(false);
+      expect(kvs.stores.get(KVS_ARN)?.has("m:8000-ws-7")).toBe(false);
+    });
+
+    test("register retries once on an etag conflict", async () => {
+      kvs.failPutOnce.set("j:8000-ws-7", "ConflictException");
+      const route = await domain.register("ws-7", 8000, {
+        endpoint: "e",
+        jwe: "a-jwe",
+        public: true,
+        ttlSeconds: 60,
+      });
+      expect(kvs.stores.get(KVS_ARN)?.get("j:8000-ws-7")).toBe("a-jwe");
+      expect(route.host).toBe("8000-ws-7.sbx.example.com");
+    });
+
+    test("refresh rewrites both keys, keeping endpoint and token hash", async () => {
       const route = await domain.register("ws-7", 8000, {
         endpoint: "e",
         jwe: "old-jwe",
+        trafficToken: "secret",
         ttlSeconds: 60,
       });
-      const metaBefore = kvs.stores.get(KVS_ARN)?.get("m:8000-ws-7");
       const refreshed = await domain.refresh(route, { jwe: "new-jwe", ttlSeconds: 2400 });
       expect(kvs.stores.get(KVS_ARN)?.get("j:8000-ws-7")).toBe("new-jwe");
-      expect(kvs.stores.get(KVS_ARN)?.get("m:8000-ws-7")).toBe(metaBefore);
+      expect(kvs.stores.get(KVS_ARN)?.get("m:8000-ws-7")).toContain('"x":1002400');
       expect(refreshed.expiresAt.getTime()).toBe((1_000_000 + 2400) * 1000);
+      expect(refreshed.endpoint).toBe(route.endpoint);
+      expect(refreshed.trafficTokenSha256).toBe(route.trafficTokenSha256);
     });
 
     test("unregister removes both keys", async () => {
-      await domain.register("ws-7", 8000, { endpoint: "e", jwe: "a-jwe", ttlSeconds: 60 });
+      await domain.register("ws-7", 8000, {
+        endpoint: "e",
+        jwe: "a-jwe",
+        public: true,
+        ttlSeconds: 60,
+      });
       await domain.unregister("ws-7", 8000);
       expect(kvs.stores.get(KVS_ARN)?.has("j:8000-ws-7")).toBe(false);
       expect(kvs.stores.get(KVS_ARN)?.has("m:8000-ws-7")).toBe(false);
@@ -312,6 +364,7 @@ describe("custom-domain/service", () => {
     const route: CustomDomainRoute = await domain.register("ws-7", 8000, {
       endpoint: "e",
       jwe: "a-jwe",
+      public: true,
       ttlSeconds: 60,
     });
     expect(route.alias).toBe("ws-7");

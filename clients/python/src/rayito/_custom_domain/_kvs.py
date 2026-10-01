@@ -7,11 +7,22 @@ Verificado offline contra botocore 1.43.103, modelo
 IfMatch) -> ETag` y `DeleteKey(KvsARN, Key, IfMatch) -> ETag` son
 optimistic-concurrency sobre un `ETag` que cada llamada encadena a la
 siguiente (la respuesta de un `PutKey` ya trae el `ETag` que pide el
-siguiente, sin otro `DescribeKeyValueStore`). El modelo declara
-`signatureVersion: v4`: a pesar de lo que suponía la investigación previa
-(`docs/research/2026-10-e2b-out-of-scope.md` §8), este servicio **no**
-necesita SigV4A ni el peer `awscrt`/`@aws-sdk/signature-v4a` — una
-corrección documentada en `AWS_API_NOTES.md` §29.
+siguiente, sin otro `DescribeKeyValueStore`).
+
+**`service-2.json` declara `signatureVersion: v4`, pero eso no es lo que de
+verdad firma la petición**: `endpoint-rule-set-1.json` de este servicio fija
+`authSchemes: [{"name": "sigv4a", ...}]` en sus reglas de endpoint, y es la
+resolución de endpoint la que elige el firmante, no `metadata.
+signatureVersion` (una corrección anterior en este mismo fichero asumía lo
+contrario; revertida tras comprobar botocore 1.43.103 con credenciales
+ficticias y un hook `before-send`: sin `awscrt` instalado, `boto3`
+`describe_key_value_store` lanza `MissingDependencyException` — "This
+operation requires an additional dependency. Use pip install
+botocore[crt]"). Por eso el plano de datos de este servicio sí necesita
+SigV4A: Python instala `awscrt` como el extra opcional `rayito[custom-domain]`
+(`pyproject.toml`); sin él, cualquier llamada falla con un
+`CustomDomainException` que nombra ese extra (`_wrap`, más abajo), nunca con
+el `MissingDependencyException` crudo de botocore.
 """
 
 from __future__ import annotations
@@ -30,6 +41,16 @@ from rayito.exceptions import CustomDomainException
 #: `CustomDomain.unregister` la usa para ser idempotente (borrar una ruta
 #: que ya no está no es un error).
 RESOURCE_NOT_FOUND_CODE = "ResourceNotFoundException"
+
+#: El nombre de clase que botocore usa para "falta una dependencia opcional"
+#: (aquí, `awscrt` para firmar SigV4A); no trae `.response`, así que
+#: `aws_code()` no la reconoce y hay que mirar `type(exc).__name__` a mano
+#: (verificado offline contra botocore 1.43.103, AWS_API_NOTES.md §29).
+_MISSING_CRT_DEPENDENCY_EXCEPTION = "MissingDependencyException"
+
+#: El extra de `pyproject.toml` que trae `awscrt`; nombrado en el mensaje de
+#: `_wrap` cuando falta, para que instalarlo sea un solo comando.
+_CUSTOM_DOMAIN_EXTRA = "rayito[custom-domain]"
 
 
 class KeyValueStoreWriter(Protocol):
@@ -50,6 +71,14 @@ class KeyValueStoreWriter(Protocol):
 
 
 def _wrap(exc: Exception) -> CustomDomainException:
+    if type(exc).__name__ == _MISSING_CRT_DEPENDENCY_EXCEPTION:
+        return CustomDomainException(
+            f"CustomDomain (domain=/register()/unregister()/refresh()) necesita el paquete "
+            f"opcional 'awscrt' para firmar SigV4A: instala pip install '{_CUSTOM_DOMAIN_EXTRA}'",
+            status_code=None,
+            grpc_code=None,
+            aws_code=None,
+        )
     return CustomDomainException(
         str(sanitize_aws_error(exc)),
         status_code=None,

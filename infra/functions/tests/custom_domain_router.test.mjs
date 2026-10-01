@@ -1,29 +1,57 @@
 // Prueba las funciones puras de `custom_domain_router.js` con `node:test`
-// (sin `cf`/KVS: eso sólo se puede validar contra una distribución real,
-// en la etapa de aceptación AWS — DOM-2/DOM-3). `handler` no se exporta
-// (igual que el ejemplo oficial de `AWS::CloudFront::Function`), así que
-// no se prueba aquí.
+// (sin `cf`/KVS real: eso sólo se puede validar contra una distribución
+// real, en la etapa de aceptación AWS — DOM-2/DOM-3). `route()` sí se
+// prueba entera, con una `kvsGet` falsa en vez del runtime de CloudFront;
+// sólo `handler` (que llama a `cf.updateRequestOrigin`) no se exporta, como
+// el ejemplo oficial de `AWS::CloudFront::Function`, y no se prueba aquí.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   constantTimeEqual,
   portFromLabel,
   readCookie,
+  RESERVED_PORTS,
+  route,
   routeLabel,
   sha256Hex,
   stripUpstreamProxyHeaders,
   trafficTokenAccepted,
 } from "../custom_domain_router.js";
 
+const TESTDATA = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../../../testdata/custom-domain/hostnames.json", import.meta.url)),
+    "utf8",
+  ),
+);
+
+function requestFor(host, headers = {}) {
+  return { headers: { host: { value: host }, ...headers } };
+}
+
 test("routeLabel toma la primera etiqueta del host", () => {
   assert.equal(routeLabel("8000-ws-7.sbx.example.com"), "8000-ws-7");
   assert.equal(routeLabel("sin-puntos"), "sin-puntos");
 });
 
+test("routeLabel pasa el host a minúsculas", () => {
+  assert.equal(routeLabel("8000-WS-7.SBX.Example.com"), "8000-ws-7");
+});
+
 test("portFromLabel toma el prefijo numérico", () => {
   assert.equal(portFromLabel("8000-ws-7"), "8000");
   assert.equal(portFromLabel("8000-11111111-1111-1111-1111-111111111111"), "8000");
+});
+
+test("routeLabel/portFromLabel sobre los vectores compartidos con el SDK", () => {
+  for (const c of TESTDATA.valid) {
+    const label = routeLabel(c.host);
+    assert.equal(label, `${c.port}-${c.alias}`, c.host);
+    assert.equal(portFromLabel(label), String(c.port), c.host);
+  }
 });
 
 test("stripUpstreamProxyHeaders borra sólo las cabeceras x-aws-proxy-*", () => {
@@ -79,4 +107,81 @@ test("trafficTokenAccepted: token ausente o incorrecto se rechaza", () => {
   assert.equal(trafficTokenAccepted({}, sha256Hex("lo-que-sea")), false);
   const headers = { "e2b-traffic-access-token": { value: "equivocado" } };
   assert.equal(trafficTokenAccepted(headers, sha256Hex("correcto")), false);
+});
+
+test("RESERVED_PORTS trae los dos puertos reservados de limits.json", () => {
+  assert.deepEqual(RESERVED_PORTS, [8080, 9000]);
+});
+
+// -------------------------------------------------------------- route()
+
+function fakeKvs(entries) {
+  return async (key, format) => {
+    if (!(key in entries)) {
+      throw new Error(`clave no encontrada: ${key}`);
+    }
+    const value = entries[key];
+    return format === "json" ? JSON.parse(value) : value;
+  };
+}
+
+test("route: 404 cuando la ruta no está en el KVS", async () => {
+  const request = requestFor("8000-no-existe.sbx.example.com");
+  const decision = await route(request, fakeKvs({}));
+  assert.deepEqual(decision, { kind: "not-found" });
+});
+
+test("route: 404 directo para un puerto reservado, sin consultar el KVS", async () => {
+  let calls = 0;
+  const kvsGet = async () => {
+    calls += 1;
+    throw new Error("no debería consultarse el KVS para un puerto reservado");
+  };
+  const decision = await route(requestFor("9000-ws-7.sbx.example.com"), kvsGet);
+  assert.deepEqual(decision, { kind: "not-found" });
+  assert.equal(calls, 0);
+});
+
+test("route: 403 cuando la ruta exige traffic_token y no llega (o es incorrecto)", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: sha256Hex("correcto"), x: 1 }),
+  };
+  const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries));
+  assert.deepEqual(decision, { kind: "forbidden" });
+});
+
+test("route: entrega el origen y las cabeceras del proxy en el camino feliz", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+  };
+  const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries));
+  assert.deepEqual(decision, {
+    kind: "origin",
+    domainName: "endpoint.example",
+    customHeaders: { "x-aws-proxy-auth": "a-jwe", "x-aws-proxy-port": "8000" },
+  });
+});
+
+test("route: borra una cabecera x-aws-proxy-* forjada por el viewer antes de decidir", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+  };
+  const request = requestFor("8000-ws-7.sbx.example.com", {
+    "x-aws-proxy-auth": { value: "jwe-forjado" },
+  });
+  const decision = await route(request, fakeKvs(entries));
+  assert.equal(decision.customHeaders["x-aws-proxy-auth"], "a-jwe");
+  assert.equal("x-aws-proxy-auth" in request.headers, false);
+});
+
+test("route: acepta un host en mayúsculas igual que en minúsculas", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+  };
+  const decision = await route(requestFor("8000-WS-7.SBX.Example.com"), fakeKvs(entries));
+  assert.equal(decision.kind, "origin");
 });

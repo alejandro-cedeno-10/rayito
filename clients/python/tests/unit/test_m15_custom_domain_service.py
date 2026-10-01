@@ -133,7 +133,12 @@ def test_host_for_is_pure_and_needs_no_deploy() -> None:
 def test_register_writes_both_keys_with_a_chained_etag() -> None:
     domain, _stacks, kvs = _deployed_domain(clock=1_000_000.0)
     route = domain.register(
-        "ws-7", 8000, endpoint="10.0.0.1.lambda-url.us-east-1.on.aws", jwe="a-jwe", ttl_seconds=2400
+        "ws-7",
+        8000,
+        endpoint="10.0.0.1.lambda-url.us-east-1.on.aws",
+        jwe="a-jwe",
+        public=True,
+        ttl_seconds=2400,
     )
     assert route.host == "8000-ws-7.sbx.example.com"
     assert route.expires_at.timestamp() == 1_000_000.0 + 2400
@@ -150,10 +155,24 @@ def test_register_with_a_traffic_token_stores_only_its_digest() -> None:
     assert "secret" not in stored_meta
 
 
+def test_register_without_a_traffic_token_or_public_is_rejected() -> None:
+    """SEC-T25: una ruta nunca es pública por omisión."""
+    domain, _stacks, kvs = _deployed_domain()
+    with pytest.raises(InvalidArgumentException):
+        domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", ttl_seconds=60)
+    assert kvs.calls == []
+
+
+def test_register_with_public_true_and_no_token_is_allowed() -> None:
+    domain, _stacks, _kvs = _deployed_domain()
+    route = domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=60)
+    assert route.traffic_token_sha256 == ""
+
+
 def test_register_rejects_a_non_positive_ttl_before_touching_the_kvs() -> None:
     domain, _stacks, kvs = _deployed_domain()
     with pytest.raises(InvalidArgumentException):
-        domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", ttl_seconds=0)
+        domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=0)
     assert kvs.calls == []
 
 
@@ -161,24 +180,54 @@ def test_register_rejects_an_oversized_jwe_before_touching_the_kvs() -> None:
     domain, _stacks, kvs = _deployed_domain()
     with pytest.raises(CustomDomainException):
         domain.register(
-            "ws-7", 8000, endpoint="e", jwe="x" * (MAX_KVS_VALUE_BYTES + 1), ttl_seconds=60
+            "ws-7",
+            8000,
+            endpoint="e",
+            jwe="x" * (MAX_KVS_VALUE_BYTES + 1),
+            public=True,
+            ttl_seconds=60,
         )
     assert kvs.calls == []
 
 
-def test_refresh_rewrites_only_the_jwe_key() -> None:
+def test_register_rolls_back_the_jwe_if_the_metadata_put_fails() -> None:
+    """D1: nunca se deja un `j:` vivo sin su `m:` (hallazgo del review de
+    PR #74): un fallo permanente en el segundo `put` borra el primero."""
+    domain, _stacks, kvs = _deployed_domain()
+    kvs.fail_put_once["m:8000-ws-7"] = "ValidationException"
+    with pytest.raises(CustomDomainException):
+        domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=60)
+    assert "j:8000-ws-7" not in kvs.stores[KVS_ARN]
+    assert "m:8000-ws-7" not in kvs.stores[KVS_ARN]
+
+
+def test_register_retries_once_on_an_etag_conflict() -> None:
+    domain, _stacks, kvs = _deployed_domain()
+    kvs.fail_put_once["j:8000-ws-7"] = "ConflictException"
+    route = domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=60)
+    assert kvs.stores[KVS_ARN]["j:8000-ws-7"] == "a-jwe"
+    assert route.host == "8000-ws-7.sbx.example.com"
+
+
+def test_refresh_rewrites_both_keys_keeping_endpoint_and_token_hash() -> None:
+    """El hallazgo del review de PR #74: `refresh()` sólo reescribía `j:`,
+    así que `m:`.x (expires_at) quedaba obsoleto tras el primer refresh."""
     domain, _stacks, kvs = _deployed_domain(clock=1_000_000.0)
-    route = domain.register("ws-7", 8000, endpoint="e", jwe="old-jwe", ttl_seconds=60)
-    meta_before = kvs.stores[KVS_ARN]["m:8000-ws-7"]
+    route = domain.register(
+        "ws-7", 8000, endpoint="e", jwe="old-jwe", traffic_token="secret", ttl_seconds=60
+    )
     refreshed = domain.refresh(route, jwe="new-jwe", ttl_seconds=2400)
     assert kvs.stores[KVS_ARN]["j:8000-ws-7"] == "new-jwe"
-    assert kvs.stores[KVS_ARN]["m:8000-ws-7"] == meta_before
+    stored_meta = kvs.stores[KVS_ARN]["m:8000-ws-7"]
+    assert '"x":1002400' in stored_meta
     assert refreshed.expires_at.timestamp() == 1_000_000.0 + 2400
+    assert refreshed.endpoint == route.endpoint
+    assert refreshed.traffic_token_sha256 == route.traffic_token_sha256
 
 
 def test_unregister_removes_both_keys() -> None:
     domain, _stacks, kvs = _deployed_domain()
-    domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", ttl_seconds=60)
+    domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=60)
     domain.unregister("ws-7", 8000)
     assert "j:8000-ws-7" not in kvs.stores[KVS_ARN]
     assert "m:8000-ws-7" not in kvs.stores[KVS_ARN]
@@ -217,7 +266,9 @@ async def test_async_custom_domain_mirrors_the_sync_one() -> None:
     certificate_arn = "arn:aws:acm:us-east-1:111122223333:certificate/abc"
     status = await domain.deploy(certificate_arn=certificate_arn)
     assert status.state == "CREATE_COMPLETE"
-    route = await domain.register("ws-7", 8000, endpoint="e", jwe="a-jwe", ttl_seconds=60)
+    route = await domain.register(
+        "ws-7", 8000, endpoint="e", jwe="a-jwe", public=True, ttl_seconds=60
+    )
     assert isinstance(route, CustomDomainRoute)
     await domain.unregister("ws-7", 8000)
     await domain.destroy()

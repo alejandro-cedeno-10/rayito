@@ -59,16 +59,35 @@ STACK_COMPONENT: Final = "custom-domain"
 #: tras `deploy()`/`status()` para no pedírsela al llamante aparte.
 KVS_ARN_OUTPUT_KEY: Final = "KvsArn"
 
+#: Reintentos acotados de "describe + put(s) encadenados" cuando AWS
+#: rechaza el `ETag` por una carrera con otro escritor de la misma ruta
+#: (`register`/`refresh` concurrentes). No verificado contra una
+#: distribución real (D3): la lista de códigos de abajo es defensiva, no
+#: una lista cerrada como el resto de `AWS_API_NOTES.md` §29.
+MAX_ETAG_CONFLICT_RETRIES: Final = 3
+
+#: Códigos de error que `_write_route` trata como "el `ETag` ya no es el
+#: vigente, vuelve a intentarlo desde `describe()`": `ConflictException` es
+#: lo que produce el fake de test (`FakeKeyValueStoreWriter`);
+#: `PreconditionFailedException` se añade defensivamente por si el servicio
+#: real usa ese nombre para un `IfMatch` que no coincide (sin confirmar
+#: contra una distribución real, D3).
+_ETAG_CONFLICT_AWS_CODES: Final = ("ConflictException", "PreconditionFailedException")
+
 
 @dataclass(frozen=True)
 class CustomDomainRoute:
     """Una ruta ya registrada: su hostname y cuándo caduca el JWE que
-    cubre (`refresh()` la extiende sin cambiar ninguno de estos campos
-    salvo `expires_at`)."""
+    cubre. `endpoint`/`traffic_token_sha256` son los metadatos que
+    `register()` ya escribió en `m:<label>`; `refresh()` los necesita de
+    vuelta para reescribir esa clave con la misma `endpoint`/hash y sólo
+    `expires_at` al día."""
 
     alias: str
     port: int
     public_domain: str
+    endpoint: str
+    traffic_token_sha256: str
     expires_at: datetime
 
     @property
@@ -104,8 +123,14 @@ class CustomDomain:
         custom_domain.py`): llama a `refresh()` tú mismo antes de que
         caduque el JWE de una ruta (DOM-7).
     Coste aproximado: CloudFront ~$0,085/GB + $0,0075/10 000 peticiones
-        HTTPS (datos salientes, `us-east-1`, acceso 2026-09-30); KeyValueStore
-        $0 en reposo y $0,0000004 por lectura/escritura.
+        HTTPS (datos salientes, `us-east-1`); CloudFront Functions ~$0,10 por
+        1 000 000 de invocaciones (una por petición); KeyValueStore $0 en
+        reposo, ~$0,50 por 1 000 000 de lecturas (las de la Function) y ~$5
+        por 1 000 000 de llamadas de gestión (`PutKey`/`DeleteKey` de
+        `register`/`unregister`/`refresh`) — tres líneas separadas, no una
+        cifra combinada (`_stacks/components/custom_domain.py`, cifras de
+        lista de CloudFront Functions/KeyValueStore desde su lanzamiento,
+        reconfirmar en la etapa de aceptación AWS).
     IAM: `cloudformation:*Stack*` para `deploy`/`destroy` (vía `OptionalStacks`);
         `cloudfront-keyvaluestore:DescribeKeyValueStore/PutKey/DeleteKey` sobre
         el KVS de la pila para `register`/`unregister`/`refresh`.
@@ -115,7 +140,10 @@ class CustomDomain:
     Ejemplo:
         domain = CustomDomain(public_domain="sbx.example.com")
         domain.deploy(certificate_arn="arn:aws:acm:us-east-1:...:certificate/...")
-        route = domain.register("ws-7", 8000, endpoint=sbx.endpoint, jwe=jwe, ttl_seconds=2400)
+        route = domain.register(
+            "ws-7", 8000, endpoint=sbx.endpoint, jwe=jwe,
+            traffic_token=secrets.token_urlsafe(32), ttl_seconds=2400,
+        )
         route.host  # "8000-ws-7.sbx.example.com"
         domain.unregister("ws-7", 8000)
     """
@@ -197,6 +225,44 @@ class CustomDomain:
         ruta esté ya registrada (pura, `_domain.route_host`)."""
         return route_host(alias, port, self.public_domain)
 
+    def _delete_best_effort(self, kvs_arn: str, key: str) -> None:
+        """Borra `key` sin dejar que un fallo tape la excepción original de
+        quien llama: `_write_route` lo usa para no dejar un JWE vivo sin
+        sus metadatos (o viceversa) cuando una escritura encadenada falla a
+        medias."""
+        try:
+            etag = self._kvs.describe(kvs_arn)
+            self._kvs.delete(kvs_arn, key, if_match=etag)
+        except CustomDomainException:
+            pass
+
+    def _write_route(self, kvs_arn: str, writes: tuple[tuple[str, str], ...]) -> None:
+        """Escribe `writes` (clave, valor) encadenando el `ETag` de un
+        `describe()` inicial. Si una escritura después de la primera falla,
+        borra en reversa (best-effort) las que sí se aplicaron antes de
+        relanzar, para no dejar la ruta a medias (p. ej. un `j:` vivo sin su
+        `m:`). Reintenta la secuencia completa desde `describe()` hasta
+        `MAX_ETAG_CONFLICT_RETRIES` veces si AWS rechaza el `ETag`
+        encadenado por una carrera con otro escritor de la misma ruta."""
+        last_error: CustomDomainException | None = None
+        for _ in range(MAX_ETAG_CONFLICT_RETRIES):
+            etag = self._kvs.describe(kvs_arn)
+            written: list[str] = []
+            try:
+                for key, value in writes:
+                    etag = self._kvs.put(kvs_arn, key, value, if_match=etag)
+                    written.append(key)
+            except CustomDomainException as exc:
+                for key in reversed(written):
+                    self._delete_best_effort(kvs_arn, key)
+                last_error = exc
+                if exc.aws_code in _ETAG_CONFLICT_AWS_CODES:
+                    continue
+                raise
+            return
+        assert last_error is not None  # el bucle sólo termina así tras agotar los reintentos
+        raise last_error
+
     def register(
         self,
         alias: str,
@@ -205,51 +271,68 @@ class CustomDomain:
         endpoint: str,
         jwe: str,
         traffic_token: str | None = None,
+        public: bool = False,
         ttl_seconds: int,
     ) -> CustomDomainRoute:
         """Escribe las dos claves de la ruta (`j:`/`m:`) con `ETag`
-        encadenado: dos `PutKey`, nunca uno sin el otro a medias si el
-        primero falla (la excepción deja el KVS sin la ruta, no con sólo el
-        JWE y sin metadatos)."""
+        encadenado (`_write_route`): si la segunda escritura falla, la
+        primera se borra best-effort antes de relanzar, nunca se deja un
+        JWE vivo sin sus metadatos. Una ruta es pública (sin `traffic_token`
+        que comprobar) sólo con `public=True`, nunca por omisión: sin
+        `traffic_token` ni `public=True` se rechaza antes de tocar el KVS
+        (SEC-T25 — el valor por defecto nunca es "pública")."""
+        if not public and traffic_token is None:
+            raise InvalidArgumentException(
+                "register() necesita traffic_token (o public=True para una ruta pública "
+                "a propósito: nunca es el valor por defecto implícito)"
+            )
         if ttl_seconds <= 0:
             raise InvalidArgumentException(f"ttl_seconds debe ser positivo: {ttl_seconds}")
         check_kvs_value_size(jwe)
         label = route_label(alias, port)
         expires_at = int(self._clock()) + ttl_seconds
+        traffic_token_sha256 = traffic_token_digest(traffic_token)
         metadata = RouteMetadata(
-            endpoint=endpoint,
-            traffic_token_sha256=traffic_token_digest(traffic_token),
-            expires_at=expires_at,
+            endpoint=endpoint, traffic_token_sha256=traffic_token_sha256, expires_at=expires_at
+        ).encode()
+        self._write_route(
+            self.kvs_arn(), ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata))
         )
-        kvs_arn = self.kvs_arn()
-        etag = self._kvs.describe(kvs_arn)
-        etag = self._kvs.put(kvs_arn, kvs_json_key(label), jwe, if_match=etag)
-        self._kvs.put(kvs_arn, kvs_meta_key(label), metadata.encode(), if_match=etag)
         return CustomDomainRoute(
             alias=alias,
             port=port,
             public_domain=self.public_domain,
+            endpoint=endpoint,
+            traffic_token_sha256=traffic_token_sha256,
             expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
         )
 
     def refresh(self, route: CustomDomainRoute, *, jwe: str, ttl_seconds: int) -> CustomDomainRoute:
-        """Reescribe sólo `j:<label>` con un JWE nuevo (el `TokenRefresher`
-        del transporte ya renueva el suyo a los 45 min,
+        """Reescribe `j:<label>` con un JWE nuevo (el `TokenRefresher` del
+        transporte ya renueva el suyo a los 45 min,
         `_transport.TOKEN_REFRESH_AFTER_MINUTES`; esto hace lo mismo para la
-        copia que vive en el KVS). `m:<label>` no cambia: el endpoint y el
-        hash del `traffic_token` siguen siendo los mismos."""
+        copia que vive en el KVS) y también `m:<label>`, para que su
+        expiración no quede obsoleta: mismo `endpoint`/hash de
+        `traffic_token` que `route` ya tenía, sólo `expires_at` al día."""
         if ttl_seconds <= 0:
             raise InvalidArgumentException(f"ttl_seconds debe ser positivo: {ttl_seconds}")
         check_kvs_value_size(jwe)
         label = route.label
-        kvs_arn = self.kvs_arn()
-        etag = self._kvs.describe(kvs_arn)
-        self._kvs.put(kvs_arn, kvs_json_key(label), jwe, if_match=etag)
         expires_at = int(self._clock()) + ttl_seconds
+        metadata = RouteMetadata(
+            endpoint=route.endpoint,
+            traffic_token_sha256=route.traffic_token_sha256,
+            expires_at=expires_at,
+        ).encode()
+        self._write_route(
+            self.kvs_arn(), ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata))
+        )
         return CustomDomainRoute(
             alias=route.alias,
             port=route.port,
             public_domain=route.public_domain,
+            endpoint=route.endpoint,
+            traffic_token_sha256=route.traffic_token_sha256,
             expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
         )
 

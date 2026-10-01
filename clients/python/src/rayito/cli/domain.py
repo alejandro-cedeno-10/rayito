@@ -3,7 +3,15 @@ una fachada fina sobre `rayito stack {deploy,status,destroy} custom-domain`
 (`cli/stack.py`) con los nombres de parámetro propios de `CustomDomain`
 (`--public-domain`, `--certificate-arn`). Para parámetros avanzados o un
 nombre de pila distinto usa `rayito stack` directamente; esta CLI no repite
-ninguna opción que ya ofrezca esa."""
+ninguna opción que ya ofrezca esa.
+
+`status`/`destroy` sólo necesitan el nombre de la pila: van directas a
+`OptionalStacks` (como `cli/stack.py`), nunca pasan por `CustomDomain`, así
+que no piden `--public-domain` (no lo usarían para nada: `CustomDomain` lo
+necesita sólo para `host_for()`/`register()`, no para `deploy`/`status`/
+`destroy`, que ya identifican la pila por `STACK_COMPONENT`/`--stack-name`).
+`deploy` sí construye una `CustomDomain` real, porque valida el formato de
+`--public-domain` antes de tocar AWS."""
 
 from __future__ import annotations
 
@@ -13,9 +21,9 @@ import typer
 
 from rayito._custom_domain._service import STACK_COMPONENT, CustomDomain
 from rayito._stacks._registry import component_by_name
+from rayito._stacks._service import OptionalStacks
 from rayito.cli._console import echo, emit_json
 from rayito.cli._session import clients_of, json_mode
-from rayito.exceptions import CustomDomainException
 
 domain_app = typer.Typer(
     no_args_is_help=True,
@@ -33,6 +41,11 @@ def _domain(ctx: typer.Context, public_domain: str, stack_name: str | None) -> C
     )
 
 
+def _stacks(ctx: typer.Context) -> OptionalStacks:
+    clients = clients_of(ctx)
+    return OptionalStacks(region=clients.region, session=clients.session)
+
+
 @domain_app.command("deploy")
 def deploy_command(
     ctx: typer.Context,
@@ -48,6 +61,8 @@ def deploy_command(
         echo(f"Coste y activación de {STACK_COMPONENT}")
         echo(f"  Recursos y llamadas AWS: {', '.join(component.cost.creates)}")
         echo(f"  Coste aproximado (reposo): {component.cost.idle_monthly}")
+        if component.cost.per_use:
+            echo(f"  Coste por uso: {'; '.join(component.cost.per_use)}")
         echo(f"  Cómo apagarla: rayito domain destroy ({component.cost.removal})")
     if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
         raise typer.Exit(1)
@@ -61,11 +76,9 @@ def deploy_command(
 @domain_app.command("status")
 def status_command(
     ctx: typer.Context,
-    public_domain: Annotated[str, typer.Option("--public-domain")],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
 ) -> None:
-    domain = _domain(ctx, public_domain, stack_name)
-    status = domain.status()
+    status = _stacks(ctx).status(STACK_COMPONENT, stack_name=stack_name)
     if json_mode(ctx):
         emit_json(
             None
@@ -84,17 +97,16 @@ def status_command(
 @domain_app.command("destroy")
 def destroy_command(
     ctx: typer.Context,
-    public_domain: Annotated[str, typer.Option("--public-domain")],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
-    domain = _domain(ctx, public_domain, stack_name)
+    component = component_by_name(STACK_COMPONENT)
+    assert component is not None  # registrado por foundations, siempre presente
+    if not json_mode(ctx):
+        echo(f"Al borrar: {component.cost.removal}")
     if not yes and not json_mode(ctx) and not typer.confirm("¿Borrar la pila de dominio propio?"):
         raise typer.Exit(1)
-    try:
-        domain.destroy()
-    except CustomDomainException as exc:
-        raise typer.BadParameter(str(exc)) from exc
+    _stacks(ctx).destroy(STACK_COMPONENT, stack_name=stack_name)
     if json_mode(ctx):
         emit_json({"name": STACK_COMPONENT, "state": "destroyed"})
         return

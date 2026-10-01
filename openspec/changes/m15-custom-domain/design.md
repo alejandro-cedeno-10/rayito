@@ -17,13 +17,23 @@ build, only a stack to deploy and a KeyValueStore to read/write.
   expiry) does not fit alongside the JWE in one value, so `j:<label>` and
   `m:<label>` are separate keys, written as two chained `PutKey` calls
   (architecture §7.8). The refresher only ever needs to touch `j:`.
-- **D2 — `signatureVersion: v4`, not SigV4A.** The M15 architecture's
-  research assumed KeyValueStore writes need SigV4A
-  (`@aws-sdk/signature-v4a`/`awscrt`). Checked offline against the
-  `cloudfront-keyvaluestore` botocore model (1.43.103) before writing any
-  code: `metadata.signatureVersion == "v4"`. Plain SigV4 is correct and
-  removes a whole dependency axis (no CRT native binary, no extra Python
-  extra). Recorded as a correction in `AWS_API_NOTES.md` §29.
+- **D2 — SigV4A, not plain SigV4 despite `signatureVersion: v4`.** An
+  earlier pass of this change read `metadata.signatureVersion == "v4"` in
+  the `cloudfront-keyvaluestore` botocore model (1.43.103) and concluded
+  SigV4A was unnecessary — the wrong field. The model's
+  `endpoint-rule-set-1.json` sets `authSchemes: [{"name": "sigv4a", ...}]`,
+  and endpoint resolution picks the signer, not `metadata.signatureVersion`.
+  Checked offline with dummy credentials and a `before-send` hook: `boto3`
+  `describe_key_value_store` signs with `AWS4-ECDSA-P256-SHA256` when
+  `awscrt` is installed and raises `MissingDependencyException` ("Use pip
+  install botocore[crt]") when it is not; the JS v3 SDK fails the same way
+  without a SigV4A signer. So this service's data plane genuinely needs
+  SigV4A: Python gets `awscrt` through the new `rayito[custom-domain]`
+  extra, TypeScript declares `@aws-sdk/signature-v4a` as an additional
+  optional peer. Both are loaded lazily and mapped to a clear
+  `CustomDomainException`/`CustomDomainError` naming the missing package.
+  Recorded as a correction (of the earlier correction) in
+  `AWS_API_NOTES.md` §29.
 - **D3 — The placeholder origin is never meant to serve traffic.** CloudFront
   requires a `DefaultCacheBehavior`/`TargetOriginId` pointing at a real
   `Origins` entry at template-create time, but the real target is chosen per

@@ -45,13 +45,26 @@ COMPONENT: StackComponent = StackComponent(
         idle_monthly="~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)",
         per_use=(
             "CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1)",
-            "KeyValueStore: $0,0000004 por lectura/escritura "
-            "(PutKey/DeleteKey/consulta de la Function)",
+            # Tres líneas separadas a propósito (no una cifra combinada):
+            # AWS factura la invocación de la Function, la lectura del KVS
+            # que esa invocación hace y las llamadas de gestión del KVS
+            # (PutKey/DeleteKey, las que hace el SDK en register/unregister/
+            # refresh) por separado.
+            "CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, "
+            "cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión)",
+            "KeyValueStore, lectura (la que hace la Function en cada petición): "
+            "~$0,50 por 1 000 000 de lecturas",
+            "KeyValueStore, llamada de gestión (PutKey/DeleteKey de "
+            "register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas",
         ),
         removal=(
             "destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la "
             "Function y el KVS; ninguna ruta sobrevive"
         ),
-        source="AWS_API_NOTES.md §29 (verificado contra botocore 1.43.103, 2026-09-30)",
+        source=(
+            "AWS_API_NOTES.md §29 (verificado contra botocore 1.43.103, 2026-09-30); cifras de "
+            "lanzamiento de CloudFront Functions/KeyValueStore, reconfirmar contra "
+            "https://aws.amazon.com/cloudfront/pricing/ en la etapa de aceptación AWS"
+        ),
     ),
 )

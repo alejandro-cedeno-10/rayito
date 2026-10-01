@@ -1020,14 +1020,26 @@ documento). Lo único que `CustomDomain` llama en tiempo de ejecución es el
 plano de datos del KeyValueStore, para `register()`/`unregister()`/
 `refresh()`.
 
-**Corrección a la investigación previa:** se asumía que escribir en un
-KeyValueStore de CloudFront necesita SigV4A
-(`@aws-sdk/signature-v4a`/`awscrt`). Verificado sin red el 2026-09-30,
-antes de escribir código, contra el modelo `cloudfront-keyvaluestore/
-2022-07-26` de botocore 1.43.103: `metadata.signatureVersion == "v4"`.
-Es SigV4 normal; ni Python necesita una dependencia nueva (boto3 ya trae
-el cliente) ni TypeScript necesita `@aws-sdk/signature-v4a`/`aws-crt`, sólo
-el peer opcional habitual `@aws-sdk/client-cloudfront-keyvaluestore`.
+**Corrección a una "corrección" anterior de este mismo documento:** una
+revisión previa de este cambio había anotado aquí que escribir en un
+KeyValueStore de CloudFront no necesita SigV4A, leyendo sólo
+`metadata.signatureVersion == "v4"` del modelo `cloudfront-keyvaluestore/
+2022-07-26` de botocore 1.43.103. Eso mira el campo equivocado:
+`endpoint-rule-set-1.json` del mismo servicio fija
+`"authSchemes": [{"name": "sigv4a", ...}]` en sus reglas de endpoint, y es
+la resolución de endpoint quien elige el firmante de verdad, no
+`metadata.signatureVersion`. Comprobado sin red con credenciales ficticias
+y un hook `before-send`: `boto3` `describe_key_value_store` firma con
+`AWS4-ECDSA-P256-SHA256` (SigV4A) cuando `awscrt` está instalado, y lanza
+`MissingDependencyException` ("This operation requires an additional
+dependency. Use pip install botocore[crt]") cuando no lo está. El SDK de
+JavaScript v3 falla igual sin un firmante SigV4A. Así que **sí hace falta
+SigV4A**: Python instala `awscrt` con el extra opcional
+`rayito[custom-domain]` (`pyproject.toml`); TypeScript declara
+`@aws-sdk/signature-v4a` como peer opcional además del peer habitual
+`@aws-sdk/client-cloudfront-keyvaluestore`. Sin ninguno de los dos, cada
+llamada falla con un mensaje propio que nombra el paquete que falta, nunca
+con el error crudo de la dependencia.
 
 **Estas son las únicas operaciones y los únicos parámetros de
 `cloudfront-keyvaluestore` que los SDKs pueden usar** (regla dura 1). Los
@@ -1056,10 +1068,14 @@ o "", "x": expiración epoch}`). `register()` hace `DescribeKeyValueStore` +
 clave ausente.
 
 Constructor de cliente: Python `LazyClient("cloudfront-keyvaluestore",
-region=…, session=…)`; TypeScript `loadOptionalSdkClient("@aws-sdk/client-
-cloudfront-keyvaluestore", …)`. Ningún cliente se construye hasta el
-primer `register`/`unregister`/`refresh`; construir `CustomDomain()` no
-llama a AWS.
+region=…, session=…)` (necesita `awscrt`, extra `rayito[custom-domain]`,
+para firmar SigV4A); TypeScript `loadOptionalSdkClient("@aws-sdk/client-
+cloudfront-keyvaluestore", …)`, que además carga el peer opcional
+`@aws-sdk/signature-v4a` antes de construir el cliente (ambos fallan con un
+mensaje propio, no con el error crudo del SDK, si falta cualquiera de los
+dos paquetes). Ningún cliente se construye hasta el primer
+`register`/`unregister`/`refresh`; construir `CustomDomain()` no llama a
+AWS.
 
 **CloudFront Function** (`infra/functions/custom_domain_router.js`,
 runtime `cloudfront-js-2.0`, asociada en `viewer-request`, único evento
@@ -1076,3 +1092,17 @@ contra la documentación de AWS antes de escribir la plantilla); el origen
 DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket) y DOM-5 (latencia de propagación
 del KVS a los edges) quedan **SIN MEDIR** hasta D3 (dominio y certificado
 ACM del mantenedor) y la etapa de aceptación AWS.
+
+**Comprobación DOM-2 — `OriginRequestPolicy` no puede forwardear `Host`.**
+`DefaultCacheBehavior` usa la política gestionada `AllViewerExceptHostHeader`
+(`b689b0a8-53d0-40ab-baf2-68738e2966ac`), no `AllViewer`
+(`216adef6-5c7f-47e4-b989-5492eafa07d3`, usada por error en una versión
+anterior de esta plantilla). Razón: si se forwardea `Host`, CloudFront
+comprueba el certificado TLS del origen elegido por `updateRequestOrigin`
+contra ese `Host` (y lo manda como SNI); el certificado del endpoint de AWS
+Lambda MicroVMs nunca coincide con `<puerto>-<alias>.<PublicDomain>`, así
+que toda petición acabaría en 502. `AllViewerExceptHostHeader` forwardea
+todo lo demás que el proxy de AWS Lambda MicroVMs y los upgrades WebSocket
+necesitan, sin ese campo. Pendiente de confirmar contra una distribución
+real en la etapa de aceptación AWS (D3): `aws cloudfront test-function`
+(gratuito) sobre `RouterFunction` es parte de ese plan.

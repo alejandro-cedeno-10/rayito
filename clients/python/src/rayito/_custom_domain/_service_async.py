@@ -82,6 +82,7 @@ class AsyncCustomDomain:
         endpoint: str,
         jwe: str,
         traffic_token: str | None = None,
+        public: bool = False,
         ttl_seconds: int,
     ) -> CustomDomainRoute:
         return await asyncio.to_thread(
@@ -91,6 +92,7 @@ class AsyncCustomDomain:
             endpoint=endpoint,
             jwe=jwe,
             traffic_token=traffic_token,
+            public=public,
             ttl_seconds=ttl_seconds,
         )
 

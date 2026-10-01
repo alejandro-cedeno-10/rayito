@@ -1864,11 +1864,15 @@ toda cabecera `x-aws-proxy-*` que traiga el viewer, comprueba el
 origen real nunca está declarado de antemano en la plantilla, se elige por
 petición; una ruta sin entrada en el KVS recibe 404 directo de la Function.
 `CustomDomain.register()`/`unregister()`/`refresh()` son las únicas
-escrituras al KVS (SDK), nunca la Function. El modelo
-`cloudfront-keyvaluestore` declara `signatureVersion: v4` (verificado
-contra botocore 1.43.103): **no hace falta SigV4A**, a diferencia de lo que
-asumía la investigación previa — ni `awscrt` ni
-`@aws-sdk/signature-v4a` son dependencias de esta función.
+escrituras al KVS (SDK), nunca la Function. Aunque `cloudfront-
+keyvaluestore` declara `signatureVersion: v4` en su `service-2.json`, su
+`endpoint-rule-set-1.json` fija `authSchemes: sigv4a` y es la resolución de
+endpoint quien manda: el plano de datos **sí necesita SigV4A** (verificado
+offline contra botocore 1.43.103 con credenciales ficticias y un hook
+`before-send`). `awscrt` (extra `rayito[custom-domain]`) y
+`@aws-sdk/signature-v4a` (peer opcional) son dependencias reales de esta
+función; sin ellas cada llamada falla con un mensaje propio en vez del
+error crudo del SDK.
 
 **Consecuencias.** `custom-domain` es la única función de M15 sin ningún
 componente en `rayd`: todo vive en la distribución y en el SDK. La
@@ -1894,8 +1898,10 @@ Function: correría en `origin-request` (sólo en cache miss, y aquí nada es
 cacheable) y añadiría una Lambda por petición donde una Function basta y
 es más barata. Guardar el JWE y los metadatos en una única clave del KVS:
 no cabe bajo el límite de 1 KiB junto con los metadatos (D1 de
-`design.md` del cambio). Firmar las escrituras del KVS con SigV4A por si
-acaso: el modelo real del servicio no lo exige (D2 del mismo documento).
+`design.md` del cambio). Asumir que el servicio firma con SigV4 llano sólo
+porque `service-2.json` declara `signatureVersion: v4`: la resolución de
+endpoint del servicio exige SigV4A de verdad (D2 del mismo documento,
+corregido tras verificarlo offline).
 
 **Reversible.** `destroy()` borra la distribución, la Function y el KVS;
 ninguna ruta sobrevive. Mientras `domain=` siga sin cablear, no tocar

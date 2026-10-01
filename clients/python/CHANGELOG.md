@@ -35,12 +35,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   custom-domain.yaml`, `rayito domain deploy|status|destroy`); `register`/
   `unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.<tu
   dominio>` sin que la Function necesite confiar en nada que el viewer
-  mande. Sin instanciar `CustomDomain` no hay ningún cliente
-  `cloudfront-keyvaluestore` ni `cloudformation`. `Sandbox.create(domain=)`
-  sigue lanzando `UnimplementedError`: la integración con `get_host()`/
-  `expose()` queda para un cambio posterior (ver `ARCHITECTURE.md`
-  ADR-024). DOM-2/3/5/7/8 pendientes de D3 (dominio y certificado ACM del
-  mantenedor) y de la aceptación contra AWS real.
+  mande. `register()` exige `traffic_token` salvo `public=True` explícito
+  — nunca hay una ruta pública por omisión — y reintenta/limpia sus dos
+  escrituras encadenadas al KVS ante una carrera de `ETag`. Nuevo extra
+  `rayito[custom-domain]` (`awscrt`): el plano de datos de
+  `cloudfront-keyvaluestore` exige SigV4A pese a declarar
+  `signatureVersion: v4` en su modelo. Sin instanciar `CustomDomain` no hay
+  ningún cliente `cloudfront-keyvaluestore` ni `cloudformation`.
+  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`: la
+  integración con `get_host()`/`expose()` queda para un cambio posterior
+  (ver `ARCHITECTURE.md` ADR-024). DOM-2/3/5/7/8 pendientes de D3 (dominio
+  y certificado ACM del mantenedor) y de la aceptación contra AWS real.
 
 ## [0.5.1] - 2026-10-01
 

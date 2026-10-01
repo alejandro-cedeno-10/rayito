@@ -20,6 +20,10 @@ class FakeKeyValueStoreWriter:
     #: `kvs_arn -> ETag` (un entero creciente como cadena).
     etags: dict[str, int] = field(default_factory=dict)
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    #: `key -> aws_code`: el próximo `put()` sobre esa clave falla una vez
+    #: con ese código (se consume al fallar), para probar el rollback/retry
+    #: de `CustomDomain._write_route`.
+    fail_put_once: dict[str, str] = field(default_factory=dict)
 
     def _require_store(self, kvs_arn: str) -> dict[str, str]:
         if kvs_arn not in self.stores:
@@ -43,6 +47,10 @@ class FakeKeyValueStoreWriter:
     def put(self, kvs_arn: str, key: str, value: str, *, if_match: str) -> str:
         self.calls.append(("put", kvs_arn, key))
         store = self._require_store(kvs_arn)
+        if key in self.fail_put_once:
+            raise CustomDomainException(
+                "fallo inyectado para pruebas", aws_code=self.fail_put_once.pop(key)
+            )
         if str(self.etags.get(kvs_arn, 0)) != if_match:
             raise CustomDomainException("ETag no coincide", aws_code="ConflictException")
         store[key] = value

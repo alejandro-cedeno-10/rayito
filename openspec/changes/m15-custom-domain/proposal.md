@@ -36,9 +36,14 @@ here and are documented as pending the AWS acceptance stage.
   `KeyValueStoreWriter` port and a `CloudFrontKvsWriter` adapter
   (`DescribeKeyValueStore`/`PutKey`/`DeleteKey`, `ETag`-chained). Verified
   offline against the `cloudfront-keyvaluestore` service model (botocore
-  1.43.103): `signatureVersion: v4`, **not** SigV4A as the research assumed
-  — no `awscrt`/`@aws-sdk/signature-v4a` dependency needed, a correction
-  recorded in `AWS_API_NOTES.md` §29.
+  1.43.103): despite `signatureVersion: v4` in `service-2.json`, its
+  `endpoint-rule-set-1.json` requires SigV4A — confirmed with dummy
+  credentials and a `before-send` hook (`MissingDependencyException`
+  without `awscrt`, `AWS4-ECDSA-P256-SHA256` with it). Python adds the
+  `rayito[custom-domain]` extra (`awscrt`); TypeScript adds the optional
+  peer `@aws-sdk/signature-v4a` alongside the usual
+  `@aws-sdk/client-cloudfront-keyvaluestore`. A correction recorded in
+  `AWS_API_NOTES.md` §29.
 - **Service** `CustomDomain`/`AsyncCustomDomain` (Python),
   `CustomDomain` (TypeScript, one async class): `deploy`/`status`/`destroy`
   as a thin facade over `OptionalStacks` (M15 foundations), plus
@@ -82,14 +87,16 @@ here and are documented as pending the AWS acceptance stage.
 - **Python**: new package `rayito/_custom_domain/` (`__init__.py`,
   `_domain.py`, `_kvs.py`, `_service.py`, `_service_async.py`);
   `_stacks/components/custom_domain.py` (real); `cli/domain.py` (real);
-  `__init__.py` exports; tests
+  `__init__.py` exports; new `pyproject.toml` extra `custom-domain`
+  (`awscrt`); tests
   `tests/unit/{test_m15_custom_domain_domain,test_m15_custom_domain_service,fake_custom_domain}.py`,
   `tests/unit/cli/test_m15_domain_cli.py`; one pre-existing foundations test
   updated (`test_m15_stack_cli.py`: `domain` is no longer a pending stub).
 - **TypeScript**: new `src/custom-domain/{domain,kvs,service}.ts`;
   `src/stacks/components/custom-domain.ts` (real); `src/index.ts` exports;
-  `package.json` new optional peer `@aws-sdk/client-cloudfront-keyvaluestore`
-  (+ devDependency, + `pnpm-lock.yaml`); `check-dts-cost-blocks.mjs` new
+  `package.json` two new optional peers,
+  `@aws-sdk/client-cloudfront-keyvaluestore` and `@aws-sdk/signature-v4a`
+  (+ devDependencies, + `pnpm-lock.yaml`); `check-dts-cost-blocks.mjs` new
   declaration; tests `tests/unit/{m15-custom-domain.test.ts,m15-fake-custom-domain.ts}`.
 - **Infra**: `infra/custom-domain.yaml` (new), `infra/functions/
   custom_domain_router.js` + `infra/functions/tests/

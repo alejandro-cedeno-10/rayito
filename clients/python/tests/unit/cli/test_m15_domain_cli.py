@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from rayito._stacks._service import OptionalStacks
 from rayito.cli import domain as domain_cli
 from rayito.cli._session import Clients
 from rayito.cli.app import app
@@ -25,7 +26,9 @@ CERTIFICATE_ARN = "arn:aws:acm:us-east-1:123456789012:certificate/abc"
 def fake_provisioner(monkeypatch: pytest.MonkeyPatch) -> FakeStackProvisioner:
     fake = FakeStackProvisioner()
 
-    def factory(*, public_domain: str, stack_name: str | None, region: Any, session: Any) -> Any:
+    def custom_domain_factory(
+        *, public_domain: str, stack_name: str | None, region: Any, session: Any
+    ) -> Any:
         from rayito._custom_domain._service import CustomDomain
 
         return CustomDomain(
@@ -35,7 +38,14 @@ def fake_provisioner(monkeypatch: pytest.MonkeyPatch) -> FakeStackProvisioner:
             kvs_writer=FakeKeyValueStoreWriter(),
         )
 
-    monkeypatch.setattr(domain_cli, "CustomDomain", factory)
+    def stacks_factory(**kwargs: Any) -> OptionalStacks:
+        assert set(kwargs) == {"region", "session"}
+        return OptionalStacks(provisioner=fake)
+
+    # `deploy` sigue construyendo una `CustomDomain` (valida --public-domain);
+    # `status`/`destroy` van directas a `OptionalStacks` (no la necesitan).
+    monkeypatch.setattr(domain_cli, "CustomDomain", custom_domain_factory)
+    monkeypatch.setattr(domain_cli, "OptionalStacks", stacks_factory)
     return fake
 
 
@@ -87,9 +97,7 @@ def test_deploy_with_yes_creates_the_stack(
 def test_status_of_an_undeployed_stack(
     runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
 ) -> None:
-    result = runner.invoke(
-        app, ["--json", "domain", "status", "--public-domain", PUBLIC_DOMAIN], obj=clients
-    )
+    result = runner.invoke(app, ["--json", "domain", "status"], obj=clients)
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) is None
 
@@ -97,8 +105,15 @@ def test_status_of_an_undeployed_stack(
 def test_destroy_without_yes_aborts(
     runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
 ) -> None:
-    result = runner.invoke(
-        app, ["domain", "destroy", "--public-domain", PUBLIC_DOMAIN], input="n\n", obj=clients
-    )
+    result = runner.invoke(app, ["domain", "destroy"], input="n\n", obj=clients)
     assert result.exit_code != 0
     assert fake_provisioner.calls == []
+
+
+def test_destroy_with_yes_deletes_the_stack_and_prints_what_is_retained(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    result = runner.invoke(app, ["domain", "destroy", "--yes"], obj=clients)
+    assert result.exit_code == 0, result.output
+    assert "Al borrar:" in result.output
+    assert [call[0] for call in fake_provisioner.calls] == ["delete", "wait"]

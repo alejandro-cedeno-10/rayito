@@ -29,10 +29,15 @@ hostname público normal — sin las cabeceras `x-aws-proxy-auth`/
       (`infra/custom-domain.yaml`, `rayito domain deploy`). En uso,
       `register()`/`unregister()`/`refresh()` llaman a
       `DescribeKeyValueStore`/`PutKey`/`DeleteKey`.
-    - **Coste aproximado** (us-east-1, consultado 2026-09-30,
-      [precios de CloudFront](https://aws.amazon.com/cloudfront/pricing/)):
-      ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida; el
-      KeyValueStore no cobra en reposo y $0,0000004 por lectura/escritura.
+    - **Coste aproximado** (us-east-1,
+      [precios de CloudFront](https://aws.amazon.com/cloudfront/pricing/);
+      cifras de lista de CloudFront Functions/KeyValueStore desde su
+      lanzamiento, por reconfirmar en la etapa de aceptación AWS):
+      ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida; la CloudFront
+      Function, ~$0,10 por 1 000 000 de invocaciones (una por petición); el
+      KeyValueStore no cobra en reposo, ~$0,50 por 1 000 000 de lecturas
+      (las que hace la Function) y ~$5 por 1 000 000 de llamadas de gestión
+      (`PutKey`/`DeleteKey` de `register`/`unregister`/`refresh`).
     - **IAM** (credenciales de quien llama al SDK): `cloudformation:*Stack*`
       para `deploy`/`status`/`destroy`;
       `cloudfront-keyvaluestore:DescribeKeyValueStore/PutKey/DeleteKey`
@@ -71,6 +76,8 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 === "Python"
 
     ```python
+    import secrets
+
     from rayito import CustomDomain, Sandbox
 
     domain = CustomDomain(public_domain="sbx.tu-dominio.com")  # (1)!
@@ -78,10 +85,12 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 
     with Sandbox.create("rayito-base", allowed_ports=[8000]) as sbx:
         jwe = sbx.get_host(8000).headers["x-aws-proxy-auth"]  # (2)!
+        traffic_token = secrets.token_urlsafe(32)  # (3)!
         route = domain.register(
-            sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe, ttl_seconds=2400
+            sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe,
+            traffic_token=traffic_token, ttl_seconds=2400,
         )
-        print(route.host)  # (3)!
+        print(route.host)  # (4)!
         # ... antes de que caduque:
         domain.refresh(route, jwe=jwe, ttl_seconds=2400)
         domain.unregister(sbx.sandbox_id, 8000)
@@ -90,12 +99,17 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
     1. Construirlo no llama a AWS.
     2. El JWE que ya emite `get_host()`; es el mismo que valida el proxy de
        AWS Lambda MicroVMs.
-    3. `"8000-<sandbox_id>.sbx.tu-dominio.com"`.
+    3. Guárdalo: hay que mandarlo en la cabecera `e2b-traffic-access-token`
+       (o la cookie `rayito_tt`) de cada petición al `route.host`. Sin él,
+       `register()` rechaza la llamada — una ruta sólo es pública con
+       `public=True` explícito, nunca por omisión.
+    4. `"8000-<sandbox_id>.sbx.tu-dominio.com"`.
 
 === "Python (async)"
 
     ```python
     import asyncio
+    import secrets
 
     from rayito import AsyncCustomDomain, AsyncSandbox
 
@@ -107,7 +121,8 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
         async with await AsyncSandbox.create("rayito-base", allowed_ports=[8000]) as sbx:
             jwe = (await sbx.get_host(8000)).headers["x-aws-proxy-auth"]
             route = await domain.register(
-                sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe, ttl_seconds=2400
+                sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe,
+                traffic_token=secrets.token_urlsafe(32), ttl_seconds=2400,
             )
             print(route.host)
             await domain.unregister(sbx.sandbox_id, 8000)
@@ -119,6 +134,7 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 === "TypeScript"
 
     ```typescript
+    import { randomBytes } from "node:crypto";
     import { CustomDomain, Sandbox } from "rayito";
 
     const domain = new CustomDomain({ publicDomain: "sbx.tu-dominio.com" });
@@ -127,9 +143,11 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
     const sbx = await Sandbox.create({ template: "rayito-base", allowedPorts: [8000] });
     try {
       const jwe = (await sbx.getHost(8000)).headers["x-aws-proxy-auth"] ?? "";
+      const trafficToken = randomBytes(32).toString("base64url");
       const route = await domain.register(sbx.sandboxId, 8000, {
         endpoint: sbx.endpoint,
         jwe,
+        trafficToken,
         ttlSeconds: 2400,
       });
       console.log(route.host);
@@ -157,9 +175,10 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 
 - Sin `Sandbox.create(domain=)`/`expose()`/`get_host()` cableados, hay que
   acuñar el JWE y registrar la ruta a mano (como en el ejemplo).
-- El `traffic_token`, si lo usas, sólo se guarda como su hash sha256 — no
-  hay forma de recuperarlo después de perderlo; genera uno nuevo y vuelve a
-  registrar la ruta.
+- `register()` exige `traffic_token` salvo que pases `public=True` a
+  propósito — nunca hay una ruta pública por omisión. El `traffic_token`
+  sólo se guarda como su hash sha256 — no hay forma de recuperarlo después
+  de perderlo; genera uno nuevo y vuelve a registrar la ruta.
 - Una ruta no se borra sola cuando el sandbox muere: llama a
   `unregister()` tú mismo (o deja que el JWE caduque, lo que deja la ruta
   respondiendo con un 401/403 del lado del proxy de AWS, no de CloudFront).

@@ -1,14 +1,23 @@
-"""`infra/custom-domain.yaml` embebe `infra/functions/custom_domain_router.js`
-literalmente bajo `FunctionCode` (m15-custom-domain, ADR-024): este test es
-la guarda contra que diverjan, ya que `AWS::CloudFront::Function` sólo
-acepta el código como una cadena dentro de la plantilla (CloudFormation no
-tiene un `Fn::Include` de fichero), así que el `.js` es la fuente de verdad
-que `infra/functions/tests/custom_domain_router.test.mjs` prueba con
-`node:test`, y este test comprueba que la plantilla trae exactamente ese
-mismo texto, no una copia que se haya quedado atrás."""
+"""`infra/custom-domain.yaml` embebe bajo `FunctionCode` una versión
+derivada de `infra/functions/custom_domain_router.js` (m15-custom-domain,
+ADR-024): este test es la guarda contra que diverjan, ya que
+`AWS::CloudFront::Function` sólo acepta el código como una cadena dentro de
+la plantilla (CloudFormation no tiene un `Fn::Include` de fichero), así que
+el `.js` es la fuente de verdad que `infra/functions/tests/
+custom_domain_router.test.mjs` prueba con `node:test`.
+
+"Derivada", no idéntica: `export ` se quita de cada declaración de nivel
+superior (`_strip_exports`, abajo) antes de comparar. `export const`/
+`export function` sólo existen en el fichero fuente para que los tests de
+Node importen sus funciones puras directamente; el runtime
+`cloudfront-js-2.0` nunca ha documentado soporte para esa sintaxis de
+módulos ES en el código de la propia función (a diferencia de
+`import cf from "cloudfront"`, que sí es la forma documentada por AWS de
+acceder a sus builtins, y por eso se conserva tal cual)."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +26,22 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO_ROOT / "infra" / "custom-domain.yaml"
 ROUTER_JS = REPO_ROOT / "infra" / "functions" / "custom_domain_router.js"
+LIMITS_JSON = REPO_ROOT / "limits.json"
+
+#: Sólo estas tres formas de declaración de nivel superior usan `export` en
+#: `custom_domain_router.js` (comprobado por inspección: ni `export default`
+#: ni un `export {...}` de cola aparecen en ese fichero); quitarlas es lo
+#: único que distingue el código fuente del `FunctionCode` desplegado.
+_EXPORTED_DECLARATION_KEYWORDS = ("const", "function", "async function")
+
+
+def _strip_exports(source: str) -> str:
+    """El código que de verdad se despliega: sin `export ` en ninguna
+    declaración de nivel superior (ver el docstring del módulo)."""
+    pattern = re.compile(
+        rf"^export (?=(?:{'|'.join(_EXPORTED_DECLARATION_KEYWORDS)})\b)", re.MULTILINE
+    )
+    return pattern.sub("", source)
 
 
 class TemplateLoader(yaml.SafeLoader):
@@ -42,15 +67,44 @@ def _template() -> dict[str, Any]:
     return document
 
 
-def test_function_code_matches_the_source_file_byte_for_byte() -> None:
+def test_function_code_matches_the_stripped_source_file() -> None:
     document = _template()
     embedded = document["Resources"]["RouterFunction"]["Properties"]["FunctionCode"]
-    source = ROUTER_JS.read_text(encoding="utf-8")
-    assert embedded.rstrip("\n") == source.rstrip("\n"), (
+    expected = _strip_exports(ROUTER_JS.read_text(encoding="utf-8"))
+    assert embedded.rstrip("\n") == expected.rstrip("\n"), (
         "infra/custom-domain.yaml FunctionCode quedó desincronizado de "
-        "infra/functions/custom_domain_router.js: regenera el bloque "
-        "FunctionCode con el contenido exacto de ese fichero"
+        "infra/functions/custom_domain_router.js (sin sus `export `): "
+        "regenera el bloque FunctionCode con _strip_exports(ese fichero)"
     )
+
+
+def test_function_code_has_no_es_module_syntax() -> None:
+    """El runtime `cloudfront-js-2.0` nunca ha documentado soporte para
+    `export` en el código de la propia función; si `CreateFunction` lo
+    rechazara, el despliegue entero de la pila fallaría (hallazgo del
+    review de PR #74). `_strip_exports` es idempotente sobre un texto que ya
+    no tiene ninguna declaración exportada; no se busca la subcadena
+    "export " a pelo porque los comentarios del fichero la mencionan al
+    explicar justo esta regla."""
+    document = _template()
+    embedded = document["Resources"]["RouterFunction"]["Properties"]["FunctionCode"]
+    assert _strip_exports(embedded) == embedded
+
+
+def test_reserved_ports_match_limits_json() -> None:
+    """`RESERVED_PORTS` en `custom_domain_router.js` no puede importar
+    `limits.json` (el runtime de CloudFront Functions sólo resuelve sus
+    propios builtins) ni el módulo generado que sí usan `_limits.py`/
+    `limits.ts`; este test es la única guarda contra que ese literal se
+    quede atrás si `reservedPorts` cambia alguna vez."""
+    import json
+
+    limits = json.loads(LIMITS_JSON.read_text(encoding="utf-8"))
+    source = ROUTER_JS.read_text(encoding="utf-8")
+    match = re.search(r"export const RESERVED_PORTS = (\[[^\]]*\]);", source)
+    assert match is not None, "no se encontró el literal RESERVED_PORTS en custom_domain_router.js"
+    reserved_in_router = json.loads(match.group(1))
+    assert reserved_in_router == limits["reservedPorts"]
 
 
 def test_router_function_uses_the_kvs_runtime_and_is_associated() -> None:
@@ -66,10 +120,13 @@ def test_default_cache_behavior_is_never_cached_and_runs_the_function() -> None:
     behavior = document["Resources"]["Distribution"]["Properties"]["DistributionConfig"][
         "DefaultCacheBehavior"
     ]
-    # Managed "CachingDisabled" / "AllViewer" policy ids (AWS_API_NOTES.md
-    # section 29): routing is per sandbox, so nothing here may be cached.
+    # Managed "CachingDisabled" / "AllViewerExceptHostHeader" policy ids
+    # (AWS_API_NOTES.md section 29): routing is per sandbox, so nothing here
+    # may be cached, and Host must never reach the chosen origin (DOM-2) —
+    # plain "AllViewer" would forward it and break the TLS/SNI check
+    # against the MicroVMs endpoint's own certificate.
     assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-    assert behavior["OriginRequestPolicyId"] == "216adef6-5c7f-47e4-b989-5492eafa07d3"
+    assert behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
     assert behavior["FunctionAssociations"] == [
         {
             "EventType": "viewer-request",

@@ -8,19 +8,26 @@
 //   j:<puerto>-<alias>  -> el JWE vigente de `create-microvm-auth-token`
 //   m:<puerto>-<alias>  -> JSON compacto {"e": endpoint, "t": sha256(token) o "", "x": exp}
 //
-// Pasos (arquitectura M15 §7.8): (1) borra cualquier cabecera
-// `x-aws-proxy-*` que traiga el viewer, para que nadie pueda suplantar el
-// origen o el JWE desde fuera; (2) si la ruta exige `traffic_token`
-// (`m.t` no vacío), lo comprueba en tiempo constante contra la cabecera
-// `e2b-traffic-access-token` o la cookie `rayito_tt`; (3) llama a
-// `cf.updateRequestOrigin` con el endpoint de la ruta y las cabeceras que
-// el proxy de AWS Lambda MicroVMs espera.
+// Pasos (arquitectura M15 §7.8, función pura `route()` más abajo): (1)
+// borra cualquier cabecera `x-aws-proxy-*` que traiga el viewer, para que
+// nadie pueda suplantar el origen o el JWE desde fuera; (2) rechaza sin
+// tocar el KVS un puerto reservado (RESERVED_PORTS, defensa en
+// profundidad — el SDK ya nunca registra una ruta ahí); (3) si la ruta
+// exige `traffic_token` (`m.t` no vacío), lo comprueba en tiempo constante
+// contra la cabecera `e2b-traffic-access-token` o la cookie `rayito_tt`;
+// (4) llama a `cf.updateRequestOrigin` con el endpoint de la ruta y las
+// cabeceras que el proxy de AWS Lambda MicroVMs espera.
 //
-// `export` sólo en las funciones puras de abajo (para que
-// `infra/functions/tests/*.test.mjs` las importe con Node directamente);
-// `handler` se queda sin `export`, tal cual el ejemplo oficial de AWS para
-// `AWS::CloudFront::Function` (sin verificar aún contra una distribución
-// real: D3/DOM-2 lo confirma en la etapa de aceptación AWS).
+// `import cf from "cloudfront"` es la forma documentada por AWS de acceder
+// a los builtins del runtime `cloudfront-js-2.0` (no una importación de
+// paquete), así que se mantiene en el código desplegado. `export`, en
+// cambio, no está documentado como soportado por ese runtime para las
+// propias declaraciones de la función — nunca se ha comprobado contra una
+// distribución real — así que `scripts/tests/test_custom_domain_function_sync.py`
+// exige que el `FunctionCode` embebido en `infra/custom-domain.yaml` sea
+// este mismo fichero con cada `export ` de nivel superior quitado; las
+// declaraciones `export` de aquí existen sólo para que
+// `infra/functions/tests/*.test.mjs` las importe con Node directamente.
 
 import cf from "cloudfront";
 import crypto from "crypto";
@@ -35,11 +42,21 @@ export const PROXY_AUTH_HEADER = "x-aws-proxy-auth";
 export const PROXY_PORT_HEADER = "x-aws-proxy-port";
 export const AWS_PROXY_HEADER_PREFIX = "x-aws-proxy-";
 
+// `limits.json` `reservedPorts` (ADR-006: 8080 es `rayd`, 9000 los hooks);
+// espejo literal de `RESERVED_PORTS` en `_limits.py`/`limits.ts`, verificado
+// igual contra `limits.json` por
+// `scripts/tests/test_custom_domain_router_reserved_ports.py` (este runtime
+// no puede importar un módulo generado: CloudFront Functions sólo resuelve
+// los builtins `cloudfront`/`crypto`, nunca un fichero propio).
+export const RESERVED_PORTS = [8080, 9000];
+
 /** "8000-ws-7.sbx.example.com" -> "8000-ws-7": la etiqueta es la primera
- * componente del host, siempre (`_domain.route_host`). */
+ * componente del host, siempre (`_domain.route_host`), en minúsculas (una
+ * etiqueta DNS no distingue mayúsculas; el KVS sí). */
 export function routeLabel(host) {
-  const dot = host.indexOf(".");
-  return dot === -1 ? host : host.substring(0, dot);
+  const lower = host.toLowerCase();
+  const dot = lower.indexOf(".");
+  return dot === -1 ? lower : lower.substring(0, dot);
 }
 
 /** El puerto es el prefijo numérico de la etiqueta, antes del primer guion. */
@@ -116,27 +133,58 @@ export function trafficTokenAccepted(headers, metadataTokenHash) {
   return constantTimeEqual(sha256Hex(provided), metadataTokenHash);
 }
 
-async function handler(event) {
-  const request = event.request;
+/**
+ * La decisión de enrutado, pura: nunca toca `cf.updateRequestOrigin` ni la
+ * respuesta HTTP final, así que se prueba con una `kvsGet` falsa
+ * (`infra/functions/tests/custom_domain_router.test.mjs`) sin runtime de
+ * CloudFront. `kvsGet(key, format)` es `(key, format) =>
+ * kvsHandle.get(key, {format})` en producción (ver `handler` más abajo).
+ *
+ * @returns `{kind: "not-found"}` (404: puerto reservado o sin ruta en el
+ *   KVS), `{kind: "forbidden"}` (403: `traffic_token` ausente o
+ *   incorrecto), o `{kind: "origin", domainName, customHeaders}` (pasa a
+ *   `cf.updateRequestOrigin` tal cual).
+ */
+export async function route(request, kvsGet) {
   stripUpstreamProxyHeaders(request.headers);
   const label = routeLabel(request.headers.host.value);
+  const port = portFromLabel(label);
+  // Defensa en profundidad: el SDK nunca registra una ruta en un puerto
+  // reservado (`_domain.validate_route_port`), pero si alguna vez hubiera
+  // una entrada residual, no responder huecos a un host fabricado a mano
+  // ahorra además la consulta al KVS.
+  if (RESERVED_PORTS.includes(Number(port))) {
+    return { kind: "not-found" };
+  }
   let jwe;
   let metadata;
   try {
-    jwe = await kvsHandle.get(JWE_KEY_PREFIX + label, { format: "string" });
-    metadata = await kvsHandle.get(META_KEY_PREFIX + label, { format: "json" });
+    jwe = await kvsGet(JWE_KEY_PREFIX + label, "string");
+    metadata = await kvsGet(META_KEY_PREFIX + label, "json");
   } catch (err) {
-    return { statusCode: 404, statusDescription: "Not Found", headers: {} };
+    return { kind: "not-found" };
   }
   if (!trafficTokenAccepted(request.headers, metadata.t)) {
-    return { statusCode: 403, statusDescription: "Forbidden", headers: {} };
+    return { kind: "forbidden" };
   }
-  cf.updateRequestOrigin({
+  return {
+    kind: "origin",
     domainName: metadata.e,
     customHeaders: {
       [PROXY_AUTH_HEADER]: jwe,
-      [PROXY_PORT_HEADER]: portFromLabel(label),
+      [PROXY_PORT_HEADER]: port,
     },
-  });
-  return request;
+  };
+}
+
+async function handler(event) {
+  const decision = await route(event.request, (key, format) => kvsHandle.get(key, { format }));
+  if (decision.kind === "not-found") {
+    return { statusCode: 404, statusDescription: "Not Found", headers: {} };
+  }
+  if (decision.kind === "forbidden") {
+    return { statusCode: 403, statusDescription: "Forbidden", headers: {} };
+  }
+  cf.updateRequestOrigin({ domainName: decision.domainName, customHeaders: decision.customHeaders });
+  return event.request;
 }

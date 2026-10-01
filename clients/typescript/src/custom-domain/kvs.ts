@@ -7,20 +7,36 @@
  * 1.43.103, `AWS_API_NOTES.md` §29): `DescribeKeyValueStore(KvsARN) ->
  * ETag`, `PutKey(KvsARN, Key, Value, IfMatch) -> ETag` y
  * `DeleteKey(KvsARN, Key, IfMatch) -> ETag`, optimistic-concurrency sobre
- * un `ETag` encadenado. El modelo declara `signatureVersion: v4`: a pesar
- * de lo que suponía la investigación previa, este servicio **no** necesita
- * SigV4A — `@aws-sdk/client-cloudfront-keyvaluestore` es un peer opcional
- * normal, sin `@aws-sdk/signature-v4a-crt`.
+ * un `ETag` encadenado.
+ *
+ * **`service-2.json` declara `signatureVersion: v4`, pero no es ese campo
+ * quien firma de verdad**: `endpoint-rule-set-1.json` de este servicio fija
+ * `authSchemes: [{"name": "sigv4a", ...}]`, y es la resolución de endpoint
+ * quien elige el firmante (una corrección anterior de este mismo fichero
+ * asumía lo contrario, revertida tras comprobar botocore 1.43.103 offline
+ * con credenciales ficticias y un hook `before-send`: sin `awscrt`,
+ * `describe_key_value_store` de boto3 lanza `MissingDependencyException`).
+ * Por eso, además del peer habitual `@aws-sdk/client-cloudfront-
+ * keyvaluestore`, hace falta `@aws-sdk/signature-v4a`: se carga perezoso
+ * aquí, antes de construir el cliente, y si falta cualquiera de los dos se
+ * lanza un `CustomDomainError` que nombra el paquete, nunca el error crudo
+ * del SDK.
  */
 
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { awsCode, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { CustomDomainError } from "../errors.js";
+import { loadOptionalPeer } from "../optional.js";
 
 type Credentials = AwsClientSettings["credentials"];
 
 const KVS_PEER = "@aws-sdk/client-cloudfront-keyvaluestore";
+//: El firmante SigV4A que `endpoint-rule-set-1.json` de este servicio exige
+//: (AWS_API_NOTES.md §29); no se usa directamente (el cliente del KVS lo
+//: resuelve él mismo internamente), sólo se carga aquí para fallar con un
+//: mensaje claro si falta, en vez del error profundo del SDK.
+const SIGNATURE_V4A_PEER = "@aws-sdk/signature-v4a";
 
 /** `ResourceNotFoundException` de `DeleteKey`/`PutKey`: el almacén o la
  * clave no existen. `CustomDomain.unregister` la usa para ser idempotente. */
@@ -53,9 +69,14 @@ interface KvsModule {
 }
 
 async function kvsApi(region: string, credentials: Credentials): Promise<KvsApi> {
+  const feature = "CustomDomain (domain=/register()/unregister()/refresh())";
+  // Se comprueba antes de construir el cliente: sin este peer, la primera
+  // llamada real fallaría muy adentro del SDK con un error que no nombra
+  // qué instalar (AWS_API_NOTES.md §29, D2 de design.md del cambio).
+  await loadOptionalPeer<unknown>(SIGNATURE_V4A_PEER, feature);
   const { sdk, send } = await loadOptionalSdkClient<KvsModule>(
     KVS_PEER,
-    "CustomDomain (domain=/register()/unregister())",
+    feature,
     (module) => module.CloudFrontKeyValueStoreClient,
     region,
     credentials,

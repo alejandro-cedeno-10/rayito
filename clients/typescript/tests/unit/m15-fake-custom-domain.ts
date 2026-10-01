@@ -13,6 +13,10 @@ export class FakeKeyValueStoreWriter implements KeyValueStoreWriter {
   readonly stores = new Map<string, Map<string, string>>();
   readonly etags = new Map<string, number>();
   readonly calls: Array<readonly [string, ...string[]]> = [];
+  /** `key -> awsCode`: el próximo `put()` sobre esa clave falla una vez con
+   * ese código (se consume al fallar), para probar el rollback/retry de
+   * `CustomDomain#writeRoute`. */
+  readonly failPutOnce = new Map<string, string>();
 
   #requireStore(kvsArn: string): Map<string, string> {
     const store = this.stores.get(kvsArn);
@@ -45,6 +49,11 @@ export class FakeKeyValueStoreWriter implements KeyValueStoreWriter {
   async put(kvsArn: string, key: string, value: string, ifMatch: string): Promise<string> {
     this.calls.push(["put", kvsArn, key]);
     const store = this.#requireStore(kvsArn);
+    const injected = this.failPutOnce.get(key);
+    if (injected !== undefined) {
+      this.failPutOnce.delete(key);
+      throw new CustomDomainError("fallo inyectado para pruebas", { awsCode: injected });
+    }
     if (String(this.etags.get(kvsArn) ?? 0) !== ifMatch) {
       throw new CustomDomainError("ETag no coincide", { awsCode: "ConflictException" });
     }
