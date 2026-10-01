@@ -37,17 +37,26 @@ class ListingIo:
 
     def matches(self, session: ListingSession) -> Iterator[SandboxListItem]:
         """Los items que pasan los filtros, en el orden de `list-microvms`,
-        pidiendo cada página sólo cuando la anterior se agotó."""
+        pidiendo cada página sólo cuando la anterior se agotó. Con índice
+        (`metadata` + `index=`), un `BatchGetItem` por página y la unión con
+        sus filas: ni `get-microvm`, ni token, ni `Health`."""
         wanted = session.wanted_metadata
         while True:
             page_request = session.walk.page_to_fetch()
             if page_request is not None:
                 session.walk.accept_page(fetch_page(self.plane, session.filters, page_request))
+                if session.index is not None:
+                    session.load_records(session.index.batch_get(session.index_candidates()))
                 continue
             item = session.walk.next_raw()
             if item is None:
                 return
             if not session.filters.accepts(item):
+                continue
+            if session.index is not None:
+                kept = session.joined(item, session.index.now())
+                if kept is not None:
+                    yield kept
                 continue
             if wanted is None:
                 yield item

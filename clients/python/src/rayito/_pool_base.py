@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Literal
 
+from rayito._index import DynamoDbIndex, validate_index
 from rayito._limits import MAX_DURATION_SECONDS
 from rayito._models import REDACTED, IdlePolicy, SandboxInfo
 from rayito._payload import validated_cpu_time_limit, validated_envs, validated_metadata
@@ -55,6 +56,28 @@ class PoolConfig:
     ella una plaza olvidada se termina sola en `timeout`. No hay
     `access_token` (uno por plaza) ni `allowed_ports` (`get_host(port)` acuña
     por puerto tras la toma).
+
+    `index=DynamoDbIndex(...)` (M14, `None` por defecto) escribe la fila del
+    índice de metadatos de cada plaza al lanzarla, con la `metadata` del
+    pool: así `Sandbox.list(metadata=..., states=["SUSPENDED"], index=...)`
+    encuentra también las plazas aparcadas. Una escritura fallida con
+    `on_write_failure='terminate'` descarta la plaza como cualquier otro
+    calentamiento fallido.
+
+    Coste y activación
+    -------------------
+    Activa: `PoolConfig(index=DynamoDbIndex("tabla"))` escribe una fila por
+        plaza lanzada (relleno, reciclado y caídas a `create()`).
+    Recursos y llamadas AWS: `dynamodb:PutItem` una vez por plaza lanzada; sin
+        `index=` ningún cliente `dynamodb`.
+    Coste aproximado: ~1 WRU por plaza ≈ $0,000000625 (DynamoDB on-demand,
+        us-east-1, consultado 2026-09-30) + $0,25/GB-mes almacenado.
+    IAM: `dynamodb:PutItem` sobre la tabla (política `RayitoIndexWriter` de
+        `infra/metadata-index.yaml`) en las credenciales del proceso del pool.
+    Cómo apagarla: `index=None` (por defecto).
+    Ejemplo:
+        idx = DynamoDbIndex("rayito-sandboxes")
+        pool = SandboxPool(PoolConfig(size=2, metadata={"pool": "a"}, index=idx))
     """
 
     size: int
@@ -73,6 +96,7 @@ class PoolConfig:
     fill_concurrency: int = DEFAULT_FILL_CONCURRENCY
     sweep_interval_seconds: float = DEFAULT_SWEEP_INTERVAL_SECONDS
     ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS
+    index: DynamoDbIndex | None = None
 
     def __post_init__(self) -> None:
         validate_pool_size(self.size)
@@ -88,6 +112,7 @@ class PoolConfig:
             validated_metadata(self.metadata)
         if self.cpu_time_limit is not None:
             validated_cpu_time_limit(self.cpu_time_limit)
+        validate_index(self.index)
 
 
 def validate_pool_size(size: object) -> int:
@@ -168,8 +193,10 @@ def validate_ready_timeout(ready_timeout: object) -> float:
 
 def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
     """Los kwargs de `Sandbox.create()` de cada plaza; el pool añade el token,
-    `keep_on_failure=False`, el plano de control y el transporte."""
-    return {
+    `keep_on_failure=False`, el plano de control y el transporte. `index`
+    sólo aparece si el pool lo configuró: sin él, las plazas se lanzan
+    exactamente como en 0.4.0."""
+    kwargs: dict[str, Any] = {
         "template": config.template,
         "template_version": config.template_version,
         "timeout": config.timeout,
@@ -183,6 +210,9 @@ def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
         "logging": config.logging,
         "ready_timeout": config.ready_timeout,
     }
+    if config.index is not None:
+        kwargs["index"] = config.index
+    return kwargs
 
 
 def resolved_pool_idle(config: PoolConfig) -> IdlePolicy:

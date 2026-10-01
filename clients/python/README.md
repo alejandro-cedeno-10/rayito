@@ -335,6 +335,26 @@ sbx.commands.run("python agent.py")
 
 IAM, reglas de la caché y el shim `Secret` de E2B: [Secretos](../../docs/site/docs/secrets.md).
 
+## Índice de metadatos (opcional, con coste)
+
+Apagado por defecto: sólo `index=DynamoDbIndex(...)` lo enciende (sin él no
+se construye ningún cliente de DynamoDB). Copia la `metadata` (no secreta)
+de cada sandbox en una tabla DynamoDB de tu cuenta (`infra/metadata-index.yaml`,
+on-demand, $0 en reposo; ~1 WRU por sandbox creado y 0,5 RRU por candidato
+listado) para filtrar por metadatos también sandboxes en pausa, sin
+despertarlos.
+
+```python
+from rayito import DynamoDbIndex, Sandbox
+
+idx = DynamoDbIndex("rayito-sandboxes")
+sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
+sbx.pause()
+paused = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
+```
+
+Reglas, IAM y cómo apagarlo: [Observabilidad](../../docs/site/docs/observability.md#listado-por-metadatos-con-indice-opcional).
+
 ## Shim de E2B
 
 ```python

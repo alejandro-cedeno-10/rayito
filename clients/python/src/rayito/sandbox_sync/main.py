@@ -36,6 +36,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._index import DynamoDbIndex, validate_index, write_failure
 from rayito._lifecycle_base import (
     TimeoutRequest,
     auto_resume_reopen,
@@ -249,6 +250,29 @@ def terminate_quietly(
         log.warning(
             "no se pudo terminar el sandbox %s tras un fallo de arranque", sandbox_id, exc_info=True
         )
+
+
+def write_index_record(
+    index: DynamoDbIndex,
+    info: SandboxInfo,
+    metadata: Mapping[str, str] | None,
+    control_plane: ControlPlane,
+    keep_on_failure: bool,
+    log: logging.Logger,
+) -> None:
+    """La fila del índice de `create(index=...)`, tras `run-microvm` y antes
+    de la sonda de readiness. Si `PutItem` falla: con
+    `on_write_failure='terminate'` termina el VM (salvo `keep_on_failure`) y
+    lanza `IndexWriteException`; con `'warn'` avisa y sigue."""
+    try:
+        index.put(index.record(info, metadata))
+    except Exception as exc:
+        error = write_failure(index, info.sandbox_id, exc, log)
+        if error is None:
+            return
+        if not keep_on_failure:
+            terminate_quietly(control_plane, info.sandbox_id, log)
+        raise error from exc
 
 
 def first_stream_message(call: Any, *, allow_empty: bool = False) -> tuple[Any, Any]:
@@ -520,6 +544,7 @@ class Sandbox:
         logger: logging.Logger | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        index: DynamoDbIndex | None = None,
     ) -> Self:
         """`run-microvm` → token del proxy → sondeo de `Health` hasta
         `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
@@ -608,12 +633,47 @@ class Sandbox:
             SecretStore().create("openai", key)
             sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"})
             sbx.commands.run("python agent.py")
+
+        `index=DynamoDbIndex("tabla")` (M14) escribe, tras `run-microvm` y
+        antes de la sonda de readiness, una fila inmutable con `metadata`, la
+        imagen y `startedAt` en la tabla opcional del índice, para que
+        `Sandbox.list(metadata=..., index=...)` encuentre el sandbox también
+        suspendido y sin sondearlo. Si `PutItem` falla, con
+        `on_write_failure='terminate'` (por defecto) el VM se termina (salvo
+        `keep_on_failure=True`) y se lanza `IndexWriteException`; con
+        `'warn'` sólo se avisa. Con `pool=` es `InvalidArgumentException`:
+        se configura en `PoolConfig(index=...)`. `kill()` no toca el índice.
+
+        Coste y activación
+        -------------------
+        Activa: `index=DynamoDbIndex(...)` escribe la fila del índice de
+            metadatos de este sandbox.
+        Recursos y llamadas AWS: `dynamodb:PutItem` una vez (condicional
+            `attribute_not_exists(pk)`); ningún recurso nuevo (la tabla la
+            despliegas tú con `infra/metadata-index.yaml`). Sin `index=`
+            ningún cliente `dynamodb`.
+        Coste aproximado: ~1 WRU ≈ $0,000000625 por sandbox + $0,25/GB-mes
+            (DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+        IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`) en las
+            credenciales del llamante.
+        Cómo apagarla: `index=None` (por defecto).
+        Ejemplo:
+            idx = DynamoDbIndex("rayito-sandboxes")
+            sbx = Sandbox.create(metadata={"user": "42"}, index=idx)
+            sbx.pause()
+            items = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
         """
         binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
         staging = resolve_staging(transfer)
         validate_staging_against_persist(staging, persist)
+        validated_index = validate_index(index)
+        if pool is not None and validated_index is not None:
+            raise InvalidArgumentException(
+                "create(pool=...) no admite index=: la fila del índice la escribe el pool al "
+                "rellenar cada plaza; pásalo como PoolConfig(index=...)"
+            )
         if pool is not None and persist is not None:
             raise InvalidArgumentException(
                 "create(pool=...) no admite persist=: una plaza del pool no puede restaurar "
@@ -686,6 +746,10 @@ class Sandbox:
         )
         info = plane.run_microvm(plan.request)
         sandbox_logger(logger).info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
+        if validated_index is not None:
+            write_index_record(
+                validated_index, info, metadata, plane, keep_on_failure, sandbox_logger(logger)
+            )
         sandbox = cls._open(
             info,
             access_token=plan.access_token,
@@ -930,6 +994,7 @@ class Sandbox:
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
+        index: DynamoDbIndex | None = None,
     ) -> Iterator[SandboxListItem]:
         """Pagina `list-microvms` (páginas de 50) de forma perezosa. Sin
         `states` omite `TERMINATING|TERMINATED`, que AWS sigue listando ~20 min
@@ -952,6 +1017,28 @@ class Sandbox:
         `order` (`"asc"`/`"desc"` por `startedAt`) se calcula en cliente: AWS
         no ordena, así que recorre todas las páginas antes del primer item.
         Para reanudar un listado usa `paginate()`.
+
+        Con `metadata` e `index=DynamoDbIndex(...)` (M14) no hay sondas: por
+        cada página de `list-microvms`, un `BatchGetItem` de los candidatos y
+        la unión con sus filas; ningún `get-microvm`, token ni `Health`, así
+        que nada se despierta. `states` admite cualquier estado no terminal
+        (por defecto todos). El estado es siempre el de `list-microvms`; sólo
+        aparecen los sandboxes creados con ese índice (un sandbox sin fila se
+        omite). `index` sin `metadata` no cambia nada.
+
+        Coste y activación
+        -------------------
+        Activa: `index=DynamoDbIndex(...)` junto a `metadata=`.
+        Recursos y llamadas AWS: `dynamodb:BatchGetItem` una vez por página
+            de `list-microvms` (≤ 50 claves, eventualmente consistente).
+        Coste aproximado: 0,5 RRU por candidato ($0,125 por millón de RRU,
+            DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+        IAM: `dynamodb:BatchGetItem` sobre la tabla (`RayitoIndexReader`).
+        Cómo apagarla: `index=None` (por defecto): la sonda O(n) de siempre.
+        Ejemplo:
+            idx = DynamoDbIndex("rayito-sandboxes")
+            for item in Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx):
+                print(item.sandbox_id, item.state, item.metadata)
         """
         request = listing_request(
             template=None,
@@ -962,6 +1049,7 @@ class Sandbox:
             order=order,
             limit=None,
             next_token=None,
+            index=index,
         )
         plane = resolve_control_plane(control_plane, session, region)
         image_arn = plane.resolve_template_arn(template) if template else None
@@ -985,6 +1073,7 @@ class Sandbox:
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
+        index: DynamoDbIndex | None = None,
     ) -> SandboxListPaginator:
         """Los filtros de `list()` como un listado reanudable: cada
         `next_items()` devuelve hasta `limit` items y `next_token` (opaco,
@@ -994,7 +1083,8 @@ class Sandbox:
         Al reanudar vuelve a pedir la página del cursor y salta por identidad
         los items ya servidos de ella. Con `order` el primer `next_items()`
         recorre todas las páginas (O(páginas)) y la reanudación es por clave
-        (`startedAt`, id)."""
+        (`startedAt`, id). `index=` como en `list()` (`dynamodb:BatchGetItem`
+        por página, sin sondas); el `next_token` queda ligado a la tabla."""
         request = listing_request(
             template=template,
             template_version=template_version,
@@ -1004,6 +1094,7 @@ class Sandbox:
             order=order,
             limit=limit,
             next_token=next_token,
+            index=index,
         )
         plane = resolve_control_plane(control_plane, session, region)
         io = ListingIo(plane, probe_metadata, transport or TransportSettings(), request_timeout)
