@@ -130,6 +130,8 @@ export class FakePoolControlPlane implements ControlPlane {
   #mints = 0;
   /** Máximo de VMs `RUNNING` (calentamientos en vuelo sin tomas) visto al aceptar un `runMicrovm`. */
   maxRunningAtLaunch = 0;
+  /** m15-sizes-catalog: `minimumMemoryInMiB` por `imageArn@imageVersion`. */
+  readonly #imageVersions = new Map<string, number>();
 
   constructor(options: { readonly clock?: FakeClock; readonly now?: () => Date } = {}) {
     this.clock = options.clock ?? new FakeClock();
@@ -336,6 +338,22 @@ export class FakePoolControlPlane implements ControlPlane {
     this.#require(sandboxId);
     this.#mints += 1;
     return `${JWE}.${this.#mints}`;
+  }
+
+  /** m15-sizes-catalog: lo que `GetMicrovmImageVersion` debe devolver para esa versión. */
+  setImageVersionMemory(imageArn: string, imageVersion: string, memoryMib: number): void {
+    this.#imageVersions.set(`${imageArn}@${imageVersion}`, memoryMib);
+  }
+
+  async getMicrovmImageVersion(imageArn: string, imageVersion: string): Promise<number> {
+    await this.#enter("GetMicrovmImageVersion", undefined);
+    const memoryMib = this.#imageVersions.get(`${imageArn}@${imageVersion}`);
+    if (memoryMib === undefined) {
+      throw new SandboxNotFoundError(
+        `no hay minimumMemoryInMiB configurado para ${imageArn}@${imageVersion}`,
+      );
+    }
+    return memoryMib;
   }
 
   // --------------------------------------------------------------- internals

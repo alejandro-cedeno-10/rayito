@@ -37,7 +37,7 @@ import boto3
 
 from rayito._aws import ControlPlane, LaunchRequest, PortSpec, control_plane_session
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
-from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
+from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._payload import generate_access_token
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
 from rayito._pool_base import (
@@ -152,6 +152,9 @@ class LaunchObserver:
 
     def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str:
         return self._plane.create_auth_token(sandbox_id, ports)
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo:
+        return self._plane.get_microvm_image_version(image_arn, image_version)
 
 
 class SandboxPool:

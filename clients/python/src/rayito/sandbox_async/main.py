@@ -157,6 +157,7 @@ from rayito._sandbox_base import (
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secrets import (
@@ -170,6 +171,8 @@ from rayito._secrets import (
     relaunch_secrets,
     shared_secret_cache,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import apply_size_suffix, resolve_size, warn_if_rounded
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -606,6 +609,11 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
+        # m15-sizes-catalog: ver la versión sync para el porqué (`size=` no
+        # es una sección de `ConfigureSandbox`, se resuelve aquí).
+        resolved_size = None if size is None else resolve_size(size)
+        if resolved_size is not None:
+            warn_if_rounded(resolved_size, stacklevel=3)
         plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -623,7 +631,10 @@ class AsyncSandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = await asyncio.to_thread(plane.resolve_template_arn, resolve_template(template))
+        template_name = resolve_template(template)
+        if resolved_size is not None:
+            template_name = apply_size_suffix(template_name, resolved_size)
+        image_arn = await asyncio.to_thread(plane.resolve_template_arn, template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -704,6 +715,7 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            size=resolved_size,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -1101,14 +1113,30 @@ class AsyncSandbox:
     @class_method_variant("_class_get_info")
     async def get_info(self) -> SandboxInfo:
         """Misma semántica que `Sandbox.get_info`: un `Health` sólo si el
-        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo."""
+        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo.
+        `size`/`baseline_memory_mib`/`baseline_cpu` sólo aparecen cuando
+        `create(size=...)` se usó (m15-sizes-catalog); ver la versión sync
+        para el porqué de la única llamada cacheada a
+        `GetMicrovmImageVersion`."""
         refreshed = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
         if deadline_may_have_moved(refreshed.state, self._lifecycle):
             await self._refresh_health()
         self._info = dataclasses.replace(
             refreshed, metadata=self.metadata, lifecycle=self._lifecycle
         )
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = await asyncio.to_thread(
+                DEFAULT_SIZE_CATALOG.minimum_memory_mib,
+                self._control_plane,
+                result.template,
+                result.template_version,
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     async def _class_get_info(

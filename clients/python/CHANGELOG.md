@@ -24,6 +24,26 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **Catálogo de tamaños** (`m15-sizes-catalog`, ADR-019, opcional y
+  apagado por defecto): `Sandbox.create(size="4gb")`/`SizeRequest(memory_mib=...)`
+  resuelve, enteramente en cliente y sin ningún RPC, al primer tamaño del
+  catálogo cerrado (512mb/1gb/2gb/4gb/8gb, Q87) que cubra lo pedido
+  (redondea siempre hacia arriba, avisa con `RayitoCompatWarning` si no
+  encaja exacto) y antepone el sufijo de imagen (`rayito-base-4gb`) antes
+  de resolver el ARN; `size=` con un template dado por ARN, o por encima
+  del máximo publicado, es `InvalidArgumentException` antes de cualquier
+  llamada a AWS. `rayito image publish --sizes 512mb,4gb` publica, desde
+  el mismo artefacto, una imagen adicional por tamaño (en oleadas de hasta
+  10 construcciones simultáneas), horneando `RAYITO_BASELINE_MEMORY_MIB`
+  en la imagen (nunca un interruptor de activación); `--env KEY=VALUE`
+  añade cualquier otra variable de imagen. `get_info()` confirma, con una
+  única llamada cacheada a `GetMicrovmImageVersion` por versión de imagen,
+  `SandboxInfo.baseline_memory_mib` y `baseline_cpu` (vCPU medido
+  exactamente para los cinco tamaños del catálogo); `cpu_count`/`memory_mb`
+  siguen siendo lo que el guest reporta de verdad. Guardarraíles de coste
+  opcional `rayito stack deploy sizes-guard` (`RayitoRunAllowedSizes`,
+  limita `lambda:RunMicrovm` a los ARN de imagen permitidos). Sin `size=`,
+  el comportamiento sigue siendo exactamente el de 0.5.x.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

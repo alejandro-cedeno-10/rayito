@@ -16,7 +16,6 @@ describe("Sandbox.create: 0.6 options", () => {
   test.each([
     ["mounts", { "/mnt/d": {} }],
     ["volumes", { "/mnt/v": {} }],
-    ["size", "4gb"],
     ["events", {}],
     ["telemetry", {}],
     ["gateways", { anthropic: {} }],
@@ -32,5 +31,12 @@ describe("Sandbox.create: 0.6 options", () => {
     await expect(Sandbox.create({ pool, mounts: { "/mnt/d": {} } })).rejects.toThrow(
       InvalidArgumentError,
     );
+  });
+
+  test("pool with size is invalid argument even though size is implemented", async () => {
+    // m15-sizes-catalog: `size` ya resuelve de verdad, pero sigue sin poder
+    // combinarse con `pool` (architecture §7.3).
+    const pool = Object.create(Object.getPrototypeOf({})) as SandboxPool;
+    await expect(Sandbox.create({ pool, size: "4gb" })).rejects.toThrow(InvalidArgumentError);
   });
 });

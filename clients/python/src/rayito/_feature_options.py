@@ -24,7 +24,6 @@ from rayito.exceptions import UnimplementedError
 
 MOUNTS_CHANGE: Final = "m15-s3-mounts"
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
-SIZE_CHANGE: Final = "m15-sizes-catalog"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
@@ -74,8 +73,11 @@ def plan_features(options: FeatureOptions, *, image_variant: str | None = None) 
         raise UnimplementedError("mounts=", f"llega en 0.6 ({MOUNTS_CHANGE})")
     if options.volumes is not None:
         raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
-    if options.size is not None:
-        raise UnimplementedError("size=", f"llega en 0.6 ({SIZE_CHANGE})")
+    # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
+    # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
+    # es qué imagen lanzar), así que `create()` la resuelve por su cuenta
+    # con `_sizing.resolve_size`/`apply_size_suffix` antes de pedir el ARN
+    # de la plantilla, y aquí no hay nada que comprobar ni que lanzar.
     if options.events is not None:
         raise UnimplementedError("events=", f"llega en 0.6 ({EVENTS_CHANGE})")
     if options.telemetry is not None:

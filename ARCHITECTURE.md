@@ -1814,8 +1814,74 @@ EFS-1..EFS-20 (`docs/research/2026-10-efs-persistence.md`).
 
 ## ADR-019 — sizes-catalog (M15, 0.6)
 
-Pendiente: lo completa `m15-sizes-catalog` (imágenes `<variant>[-<size>]`,
-catálogo de tamaños soportados, Q87/Q88).
+**Contexto.** `create-microvm-image` fija la memoria del guest con
+`resources[0].minimumMemoryInMiB` por *versión de imagen*, no por
+lanzamiento: no hay una API de tipo "RunMicrovm con este tamaño". Medido
+(AWS_API_NOTES.md §24, Q87): sólo 512/1024/2048/4096/8192 MiB construyen;
+256, 3072, 10240 y 16384 dan `ValidationException` síncrona sin crear
+nada. Medido también (RES-2/Q88, confirma el punto suelto de Q61/Q68) que
+el guest ve memoria/512 vCPU y hasta ~4x la memoria nominal en los cinco
+tamaños del catálogo (512→1 vCPU/1989 MiB, 1024→2/3998, 2048→4/8016,
+4096→8/16052, 8192→16/32123; disco raíz ext4 8,3 GB hasta 2048, 16,7 GB a
+4096, 33,6 GB a 8192). SPEC.md §4 decía "no hay, ni se promete, un
+resolvedor de tamaño por sandbox" (ADR-019 lo reemplaza; D1 deja la
+redacción exacta a decisión del mantenedor).
+
+**Decisión (opción A de §4 de la investigación).** Un catálogo cerrado de
+cinco tamaños (`SUPPORTED_MEMORY_MIB`/`SIZE_NAMES`:
+`512mb`/`1gb`/`2gb`/`4gb`/`8gb`), resuelto enteramente en el SDK, sin RPC ni
+sección de `ConfigureSandbox`: `size=`/`size` no es un ajuste del guest en
+marcha, es qué imagen lanzar. `resolveSize` (`_sizing.py`/`sizing.ts`)
+redondea siempre hacia arriba al primer valor publicado que cubra lo
+pedido (nunca por debajo) y avisa con `RayitoCompatWarning`/
+`RayitoCompatWarning` cuando no hay coincidencia exacta; por encima de
+`MAX_SUPPORTED_MEMORY_MIB` (8192) es `InvalidArgumentException` antes de
+cualquier llamada a AWS. El nombre de imagen sigue la convención
+`<variant>[-<size>]` con el sufijo siempre al final (`apply_size_suffix`/
+`applySizeSuffix`): el baseline (2048 MiB) nunca lleva sufijo, así que
+`rayito image publish` sin `--sizes` sigue publicando exactamente lo
+mismo que en 0.5.x. `rayito image publish --sizes 512mb,4gb` publica,
+desde el mismo artefacto, una imagen adicional por tamaño
+(`cli/_publish.py`: `sized_settings`/`publish_sizes`), horneando
+`RAYITO_BASELINE_MEMORY_MIB` en `environmentVariables` (configuración de
+imagen, nunca un interruptor de activación, ADR-014 regla 4) y sometiendo
+los `create`/`update-microvm-image` en oleadas de a lo sumo
+`MAX_CONCURRENT_IMAGE_BUILDS_Q83` (10) construcciones simultáneas antes de
+esperar a que ninguna se asiente. `ConventionCatalog`
+(`_size_catalog.py`/`sizing/catalog.ts`) hace, sólo cuando `size=`/`size`
+se usó, una única llamada gratuita a `GetMicrovmImageVersion` por versión
+de imagen (cacheada por `(imageArn, imageVersion)` y por proceso) para
+confirmar `resources[0].minimumMemoryInMiB` y rellenar
+`SandboxInfo.baselineMemoryMib`/`baselineCpu` en `get_info()`/`getInfo()`;
+`cpu_count`/`memory_mb` (`cpuCount`/`memoryMb`) siguen siendo lo que el
+guest reporta de verdad vía `Health`, nunca un valor derivado. `baselineCpu`
+es la proporción memoria/512 que RES-2/Q88 midió exactamente para los
+cinco tamaños del catálogo (no una extrapolación).
+`infra/sizes-guard.yaml` (`RayitoRunAllowedSizes`, componente
+`sizes-guard` de `OptionalStack`) es un guardarraíles de coste opcional:
+una política IAM que limita `lambda:RunMicrovm` a los ARN de imagen que el
+operador liste explícitamente, para que nadie lance, por accidente, un
+tamaño más caro que el publicado. `create(pool=, size=)` /
+`create({ pool, size })` es `InvalidArgumentException`/`InvalidArgumentError`:
+una plaza del pool ya salió de una imagen fija.
+
+**Consecuencias.** Sin `size=`/`size` (su valor por defecto) no hay ningún
+`GetMicrovmImageVersion`, ningún ajuste al nombre de la plantilla y el
+comportamiento es exactamente el de 0.5.x (golden test de M15
+foundations). `Template.build(memory_mb=)` (m15-templates) consume
+`resolveSize` sólo como lector, sin duplicar el catálogo.
+
+**Alternativas descartadas.** Resolver el tamaño en el agente (`rayd`)
+leyendo `minimumMemoryInMiB` de su propia `Health`: no sirve para decidir
+*qué imagen lanzar*, que es una decisión de antes de `run-microvm`.
+Permitir cualquier entero de memoria en `size=`: el catálogo de
+`create-microvm-image` ya es cerrado (Q87), así que aceptar cualquier
+valor sólo trasladaría el error de validación de cliente a AWS, más tarde
+y con una imagen a medio construir.
+
+**Reversible.** El catálogo es datos puros (`limits.json`); una imagen sin
+sufijo sigue siendo válida siempre. Borrar la pila `sizes-guard` no borra
+ninguna imagen ni versión.
 
 ## ADR-020 — events-webhooks (M15, 0.6)
 

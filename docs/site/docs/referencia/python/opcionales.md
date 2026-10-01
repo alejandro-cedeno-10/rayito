@@ -21,3 +21,7 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ## Índice de metadatos
 
 ::: rayito.DynamoDbIndex
+
+## Tamaños
+
+::: rayito.SizeRequest

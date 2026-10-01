@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from rayito._aws import PortSpec
 from rayito._limits import TERMINAL_STATES
-from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
+from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito.cli._publish import IMAGE_HOOKS
 from rayito.cli._session import SERVICE_NAMES, Clients
 from rayito.exceptions import SandboxNotFoundException
@@ -80,6 +80,8 @@ class FakeControlPlane:
     tokens: list[tuple[str, tuple[PortSpec, ...]]] = field(default_factory=list)
     jwe: str = JWE
     region_name: str = REGION
+    # m15-sizes-catalog: `minimumMemoryInMiB` por `(image_arn, image_version)`.
+    image_versions: dict[tuple[str, str], int] = field(default_factory=dict)
 
     @property
     def region(self) -> str:
@@ -150,6 +152,16 @@ class FakeControlPlane:
     def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str:
         self.tokens.append((sandbox_id, tuple(ports)))
         return self.jwe
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo:
+        try:
+            return ImageVersionInfo(
+                minimum_memory_mib=self.image_versions[(image_arn, image_version)]
+            )
+        except KeyError:
+            raise SandboxNotFoundException(
+                f"no hay minimumMemoryInMiB configurado para {image_arn}@{image_version}"
+            ) from None
 
 
 def list_item(

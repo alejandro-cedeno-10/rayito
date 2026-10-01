@@ -43,14 +43,28 @@ numerically and every other key exactly.
 
 There is no default bucket: ``--bucket`` or ``RAYITO_BUCKET`` name the
 artifact bucket of the account that publishes.
+
+``--sizes 512mb,4gb`` (m15-sizes-catalog) publishes one extra image per
+named size from the *same* artifact, named ``<image_name>-<size>``
+(``apply_size_suffix``/``_sizing.SIZE_NAMES``), each with its own
+``resources[0].minimumMemoryInMiB`` and an ``environmentVariables``
+entry (``RAYITO_BASELINE_MEMORY_MIB``) so the guest can tell its own
+baseline apart from ``free -m`` (Q88: the guest sees up to 4x). Without
+``--sizes`` only the unsuffixed baseline publishes, exactly as before
+sizes-catalog existed. ``--env KEY=VALUE`` (repeatable) adds arbitrary
+``environmentVariables`` to every image this invocation publishes,
+baseline included (``_images.py``'s ``ImageEnvironment`` seam); it is
+never an activation switch (ADR-014 rule 4): it only configures the
+image's own guest environment, nothing about what the SDK does at
+``Sandbox.create()``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -58,6 +72,7 @@ from typing import Any, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._sizing import BASELINE_MEMORY_MIB, NAME_TO_MEMORY_MIB
 from rayito.cli._artifact import VARIANTS, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
 
@@ -68,7 +83,10 @@ DEFAULT_IMAGE_NAMES = {
     "poly": f"{DEFAULT_IMAGE_NAME}-poly",
 }
 DEFAULT_STACK_NAME = "rayito-m0-iam"
-DEFAULT_MEMORY_MIB = 2048
+# El mismo catálogo cerrado que `_sizing.BASELINE_MEMORY_MIB`: la imagen sin
+# sufijo de `--sizes` siempre es esta, verificado por
+# `test_default_memory_mib_matches_the_sizing_baseline`.
+DEFAULT_MEMORY_MIB = BASELINE_MEMORY_MIB
 OS_CAPABILITY_CHOICES = ("ALL",)
 BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
@@ -82,6 +100,17 @@ SETTLED_VERSION_STATES = frozenset({"SUCCESSFUL", "FAILED"})
 MISSING_OBJECT_CODES = frozenset({"404", "NoSuchKey", "NotFound", "403"})
 BASE_IMAGE_VERSION_KEY = "baseImageVersion"
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
+# Nombre de la variable de imagen que `--sizes` hornea: `rayd`/el guest la
+# leen para saber su propio baseline (Q88), nunca una llamada a AWS.
+BASELINE_MEMORY_ENV_VAR = "RAYITO_BASELINE_MEMORY_MIB"
+# Oleadas de construcción simultánea de `--sizes`: al menos 10 builds en
+# paralelo no degradan el servicio (Q83, docs/research/2026-10-e2b-out-of-
+# scope.md; compartido con el límite de concurrencia de m15-templates, que
+# mide lo mismo del lado de `CreateMicrovmImage`). El catálogo cerrado de
+# tamaños tiene como mucho 4 sufijos además del baseline, así que hoy esto
+# nunca forma una segunda oleada; se implementa igual porque el límite es
+# del servicio, no de este catálogo.
+MAX_CONCURRENT_IMAGE_BUILDS_Q83 = 10
 
 IMAGE_HOOKS: dict[str, Any] = {
     "port": HOOKS_PORT,
@@ -142,6 +171,11 @@ class PublishSettings:
     force: bool
     timeout_seconds: float
     os_capabilities: str | None = None
+    # m15-sizes-catalog: `--env KEY=VALUE` (genérico) más, para una imagen de
+    # `--sizes`, `BASELINE_MEMORY_ENV_VAR` ya horneada por `sized_settings`.
+    # Vacío (igual que antes de sizes-catalog) no añade `environmentVariables`
+    # a la configuración: ver `desired_configuration`.
+    environment_variables: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def log_group(self) -> str:
@@ -261,6 +295,8 @@ def desired_configuration(
     }
     if settings.os_capabilities:
         configuration["additionalOsCapabilities"] = [settings.os_capabilities]
+    if settings.environment_variables:
+        configuration["environmentVariables"] = dict(settings.environment_variables)
     return configuration
 
 
@@ -464,6 +500,38 @@ def progress_emitter(json_output: bool) -> Emitter:
     return lambda message: echo(message, err=json_output)
 
 
+@dataclass(frozen=True)
+class PreparedBuild:
+    """Lo común a reusar-o-construir: `arn` y `artifact_uri` no cambian
+    entre comprobar si hay una versión que reutilizar y, si no la hay,
+    pedir una nueva con la misma `desired`."""
+
+    arn: str
+    artifact_uri: str
+    desired: dict[str, Any]
+
+
+def prepare_build(
+    clients: PublishClients, settings: PublishSettings, emit: Emitter
+) -> PreparedBuild:
+    """Sube el artefacto (si hace falta) y arma la configuración deseada;
+    no decide si hay que construir, eso es `reusable_version`."""
+    arn = image_arn(clients, settings.image_name)
+    artifact_uri = upload_artifact(clients, settings, emit)
+    return PreparedBuild(arn, artifact_uri, desired_configuration(clients, settings, artifact_uri))
+
+
+def reusable_version(
+    clients: PublishClients, settings: PublishSettings, prepared: PreparedBuild
+) -> str | None:
+    """La versión lanzable más nueva que ya coincide, o `None` si no hay
+    ninguna o `--force` la ignora. `settings` sólo aporta `force`: el resto
+    ya está en `prepared`."""
+    if settings.force or not image_exists(clients, prepared.arn):
+        return None
+    return published_version(clients, prepared.arn, prepared.desired)
+
+
 def publish(
     clients: PublishClients,
     settings: PublishSettings,
@@ -473,25 +541,91 @@ def publish(
 ) -> int:
     emit = progress_emitter(json_output)
     require_matching_variant(settings)
-    arn = image_arn(clients, settings.image_name)
-    artifact_uri = upload_artifact(clients, settings, emit)
-    desired = desired_configuration(clients, settings, artifact_uri)
-    if not settings.force and image_exists(clients, arn):
-        existing = published_version(clients, arn, desired)
-        if existing:
-            emit(f"version {existing} already built from this artifact and config; reusing")
-            build = latest_build(clients, arn, existing)
-            report_success(
-                publish_summary(arn, existing, artifact_uri, None, build), json_output=json_output
-            )
-            return 0
+    prepared = prepare_build(clients, settings, emit)
+    existing = reusable_version(clients, settings, prepared)
+    if existing:
+        emit(f"version {existing} already built from this artifact and config; reusing")
+        build = latest_build(clients, prepared.arn, existing)
+        report_success(
+            publish_summary(prepared.arn, existing, prepared.artifact_uri, None, build),
+            json_output=json_output,
+        )
+        return 0
     started = time.monotonic()
-    arn, version = submit_build(clients, settings, arn, desired, emit)
+    arn, version = submit_build(clients, settings, prepared.arn, prepared.desired, emit)
     gate = wait_for_gate(clients, arn, version, settings.timeout_seconds, emit, sleep)
     build_seconds = time.monotonic() - started
     build = latest_build(clients, arn, version)
-    summary = publish_summary(arn, version, artifact_uri, build_seconds, build, gate)
+    summary = publish_summary(arn, version, prepared.artifact_uri, build_seconds, build, gate)
     if not gate.launchable:
         return fail_build(clients, settings, summary, gate, build, emit, json_output=json_output)
     report_success(summary, json_output=json_output)
     return 0
+
+
+def sized_settings(base: PublishSettings, size_name: str) -> PublishSettings:
+    """`base` con el sufijo de tamaño aplicado (m15-sizes-catalog):
+    `image_name` lleva `-<size_name>`, `memory_mib` es el valor del
+    catálogo cerrado y `environment_variables` gana
+    `BASELINE_MEMORY_ENV_VAR` horneado (el guest lo lee para distinguir su
+    baseline de lo que `free -m` reporta, Q88). `size_name` ya viene
+    validado contra `_sizing.SIZE_NAMES` por la CLI."""
+    memory_mib = NAME_TO_MEMORY_MIB[size_name]
+    return replace(
+        base,
+        image_name=f"{base.image_name}-{size_name}",
+        memory_mib=memory_mib,
+        environment_variables={
+            **base.environment_variables,
+            BASELINE_MEMORY_ENV_VAR: str(memory_mib),
+        },
+    )
+
+
+def publish_sizes(
+    clients: PublishClients,
+    base_settings: PublishSettings,
+    size_names: Sequence[str],
+    *,
+    sleep: Sleeper = time.sleep,
+    json_output: bool = False,
+) -> int:
+    """Publica una imagen adicional por cada nombre de `size_names` (nunca
+    el baseline: `publish()` sin sufijo ya lo cubre) desde el mismo
+    artefacto que `base_settings`. Cada oleada de a lo sumo
+    `MAX_CONCURRENT_IMAGE_BUILDS_Q83` construcciones se somete entera antes
+    de esperar a que ninguna se asiente, así ``create``/``update-microvm-
+    image`` las construye en paralelo; devuelve 1 si alguna de las que de
+    verdad se construyeron (no reutilizadas) no queda lanzable."""
+    emit = progress_emitter(json_output)
+    require_matching_variant(base_settings)
+    failed = False
+    for wave_start in range(0, len(size_names), MAX_CONCURRENT_IMAGE_BUILDS_Q83):
+        wave = size_names[wave_start : wave_start + MAX_CONCURRENT_IMAGE_BUILDS_Q83]
+        submitted: list[tuple[PublishSettings, str, str, str, float]] = []
+        for size_name in wave:
+            settings = sized_settings(base_settings, size_name)
+            prepared = prepare_build(clients, settings, emit)
+            existing = reusable_version(clients, settings, prepared)
+            if existing:
+                emit(f"{settings.image_name}: version {existing} already built; reusing")
+                build = latest_build(clients, prepared.arn, existing)
+                report_success(
+                    publish_summary(prepared.arn, existing, prepared.artifact_uri, None, build),
+                    json_output=json_output,
+                )
+                continue
+            started = time.monotonic()
+            arn, version = submit_build(clients, settings, prepared.arn, prepared.desired, emit)
+            submitted.append((settings, arn, version, prepared.artifact_uri, started))
+        for settings, arn, version, artifact_uri, started in submitted:
+            gate = wait_for_gate(clients, arn, version, settings.timeout_seconds, emit, sleep)
+            build_seconds = time.monotonic() - started
+            build = latest_build(clients, arn, version)
+            summary = publish_summary(arn, version, artifact_uri, build_seconds, build, gate)
+            if not gate.launchable:
+                fail_build(clients, settings, summary, gate, build, emit, json_output=json_output)
+                failed = True
+                continue
+            report_success(summary, json_output=json_output)
+    return 1 if failed else 0

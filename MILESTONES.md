@@ -1396,7 +1396,17 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   `rayito-base-caps`.
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
-- **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
+- **sizes-catalog** (`m15-sizes-catalog`, **entregado, pendiente de
+  aceptación en AWS real**): catálogo cerrado de cinco tamaños
+  (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de
+  `ConfigureSandbox`; imágenes `<variant>[-<size>]` (`rayito image publish
+  --sizes`, en oleadas de hasta 10 builds simultáneos, horneando
+  `RAYITO_BASELINE_MEMORY_MIB`); `ConventionCatalog` confirma
+  `minimumMemoryInMiB` con una única llamada cacheada a
+  `GetMicrovmImageVersion` (`SandboxInfo.baselineMemoryMib`/`baselineCpu`,
+  vCPU medido exactamente para los cinco tamaños, RES-2/Q88); guardarraíles
+  IAM opcional `sizes-guard` (`RayitoRunAllowedSizes`, Q90). Sin `size=`
+  (su valor por defecto), cero llamadas nuevas.
 - **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
   firmados y webhooks compatibles con E2B.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a

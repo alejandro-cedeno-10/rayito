@@ -66,6 +66,7 @@ from rayito._models import (
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
 from rayito._pool_base import PoolConfig, PoolSlotInfo, PoolStats
 from rayito._secrets import SecretCache, SecretInfo, SecretPage, SecretRef, SecretStore
+from rayito._sizing import SizeRequest
 from rayito._stacks._model import (
     CostStatement,
     StackArtifact,
@@ -245,6 +246,7 @@ __all__ = [
     "SecretPage",
     "SecretRef",
     "SecretStore",
+    "SizeRequest",
     "StackArtifact",
     "StackComponent",
     "StackException",

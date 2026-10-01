@@ -979,11 +979,68 @@ campaña de medición EFS-1..EFS-20.
 Pendiente: `m15-s3-mounts` documenta aquí las banderas de `mount-s3` y el
 contrato de credenciales IMDS del daemon FUSE.
 
-## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
+## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`, **contrato de parámetros**)
 
-Pendiente: `m15-sizes-catalog` documenta aquí `GetMicrovmImageVersion`
-(lectura de `resources[0].minimumMemoryInMiB`) y las oleadas de
-`create-microvm-image --sizes`.
+El catálogo cerrado de `SUPPORTED_MEMORY_MIB` (512/1024/2048/4096/8192
+MiB) y el guardarraíles IAM de `infra/sizes-guard.yaml` sólo usan los
+parámetros de `GetMicrovmImageVersion` y el campo `Resource` de una
+política IAM; la regla dura 1 vale también aquí. Nombres verificados
+contra `docs/aws-api/model_summary.md` (generado del modelo
+`lambda-microvms` 2025-09-09) y contra el paquete
+`@aws-sdk/client-lambda-microvms` instalado (`GetMicrovmImageVersionCommand`
+exportado, confirmado con `node -e` el 2026-09-30, sin red).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier` (el ARN ya resuelto), `imageVersion` (el `template_version`/`templateVersion` que devolvió `RunMicrovm`) | `resources[0].minimumMemoryInMiB` (único campo que lee `ConventionCatalog`) | `lambda:GetMicrovmImageVersion` (en CloudTrail; no aparece en `apiTps` porque el servicio no le fija una cuota propia) | `docs/aws-api/model_summary.md` §`GetMicrovmImageVersion` |
+
+`GetMicrovmImageVersion` no se llama nunca durante `create()`/`Sandbox.create()`:
+sólo la hace, y como mucho una vez por `(imageArn, imageVersion)` y por
+proceso (`ConventionCatalog`, cacheada), `get_info()`/`getInfo()` cuando el
+sandbox se lanzó con `size=`/`size`. Sin esa opción, cero llamadas nuevas:
+golden test de M15 foundations.
+
+**Tamaños aceptados por `create-microvm-image` (Q87, medido 2026-09-30,
+`rayito-base`).** 512, 1024, 2048, 4096 y 8192 MiB construyen; 256, 3072,
+10240 y 16384 fallan con `ValidationException` **síncrona, sin crear
+ninguna imagen**: `"The requested memory size of N MiB is not supported by
+base MicroVM image arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1.
+Supported memory sizes in MiB are: [512, 1024, 2048, 4096, 8192]."` El
+modelo limita `resources` a un elemento (`ResourcesList` `max: 1`): un
+tamaño por versión, de ahí que `rayito image publish --sizes` publique una
+*versión de imagen* (nombre `<variant>-<size>`) por tamaño, no una sola
+versión con varios tamaños.
+
+**Guest vs. imagen, medido para los cinco tamaños (RES-2/Q88, confirma el
+punto suelto de Q61/Q68 para 2048 MiB).** `SandboxInfo.memory_mb`/`memoryMb`
+(el `MemTotal` real del guest, leído de `Health`) no es
+`minimumMemoryInMiB`: el guest ve memoria/512 vCPU (`nproc`) y hasta ≈4x la
+memoria nominal (`GUEST_MEMORY_MULTIPLIER` en `limits.json`) en los cinco
+tamaños:
+
+| `minimumMemoryInMiB` | vCPU del guest | `MemTotal` del guest | Disco raíz ext4 |
+|---|---|---|---|
+| 512 | 1 | 1 989 MiB | 8,3 GB |
+| 1024 | 2 | 3 998 MiB | 8,3 GB |
+| 2048 | 4 | 8 016 MiB | 8,3 GB |
+| 4096 | 8 | 16 052 MiB | 16,7 GB |
+| 8192 | 16 | 32 123 MiB | 33,6 GB |
+
+`_sizing.baseline_cpu_for`/`sizing.ts baselineCpuFor` codifica esta
+proporción (512 MiB por vCPU, `MIB_PER_VCPU_Q88`): medida para los cinco
+valores del catálogo, no una extrapolación. `/dev/shm` es 64 MiB en los
+cinco tamaños; el snapshot de memoria de una misma imagen mínima crece con
+el tamaño (446 MB a 512, 503 a 1024, 597 a 2048, 782 a 4096, 1 146 a 8192
+MiB), así que cada tamaño adicional publicado cuesta más almacenamiento de
+snapshot aun siendo la misma imagen.
+
+**Guardarraíles de coste por ARN (Q90, `sizes-guard`).** `lambda:RunMicrovm`
+acepta `Resource` con el ARN de una *imagen* (sin versión): una política
+IAM (`RayitoRunAllowedSizes`, `infra/sizes-guard.yaml`) con
+`Resource: [<ARN de cada imagen publicada y permitida>]` restringe qué
+tamaños puede lanzar una identidad, sin tocar ninguna imagen existente.
+`sizes-guard` es `CAPABILITY_IAM` (crea una `AWS::IAM::ManagedPolicy`, nada
+más): $0 en reposo y por uso.
 
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 

@@ -10,7 +10,6 @@ import { UnimplementedError } from "./errors.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
-export const SIZE_CHANGE = "m15-sizes-catalog";
 export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
@@ -49,9 +48,10 @@ export function planFeatures(options: FeatureOptions, imageVariant?: string): Fe
   if (options.volumes !== undefined) {
     throw new UnimplementedError("volumes", `llega en 0.6 (${VOLUMES_CHANGE})`);
   }
-  if (options.size !== undefined) {
-    throw new UnimplementedError("size", `llega en 0.6 (${SIZE_CHANGE})`);
-  }
+  // `size` (m15-sizes-catalog) ya no es un stub: no produce ninguna
+  // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste
+  // del guest en marcha), así que `create()` la resuelve por su cuenta con
+  // `sizing/sizing.ts` antes de pedir el ARN de la plantilla.
   if (options.events !== undefined) {
     throw new UnimplementedError("events", `llega en 0.6 (${EVENTS_CHANGE})`);
   }

@@ -1,17 +1,30 @@
-"""Stub de componente para `m15-sizes-catalog` (M15 foundations). La
-feature sustituye `COMPONENT` por la definición real (`infra/sizes-guard.yaml`:
-la política `RayitoRunAllowedSizes`) en su propio cambio; hasta entonces
-`OptionalStacks.deploy/status/destroy` lanzan `UnimplementedError` para
-este nombre (`supported=False`).
-"""
+"""Componente `sizes-guard` (m15-sizes-catalog): la política IAM
+`RayitoRunAllowedSizes` de `infra/sizes-guard.yaml`, que limita
+`lambda:RunMicrovm` a los ARN de imagen que el operador liste
+explícitamente (Q90). Sólo IAM: ningún recurso facturable."""
 
 from __future__ import annotations
 
-from rayito._stacks._model import CostStatement, StackComponent
+from rayito._stacks._model import CostStatement, StackComponent, StackParameter
 
 COMPONENT: StackComponent = StackComponent(
     name="sizes-guard",
-    description="Pendiente de m15-sizes-catalog: política RayitoRunAllowedSizes por tamaño.",
-    supported=False,
-    cost=CostStatement(creates=(), idle_monthly="$0 (sólo IAM, cuando exista)"),
+    description=(
+        "Política RayitoRunAllowedSizes: lambda:RunMicrovm sólo sobre los ARN de imagen "
+        "listados (el baseline más cada sufijo de --sizes que se quiera permitir)."
+    ),
+    parameters=(
+        StackParameter(
+            "ImageArns",
+            "ARN completos (CommaDelimitedList) de cada versión de imagen permitida.",
+            required=True,
+        ),
+    ),
+    capabilities=("CAPABILITY_IAM",),
+    cost=CostStatement(
+        creates=("AWS::IAM::ManagedPolicy",),
+        idle_monthly="$0 (sólo IAM)",
+        removal="destroy() borra la política; ninguna imagen se toca",
+        source="AWS_API_NOTES.md §24 (Q90)",
+    ),
 )

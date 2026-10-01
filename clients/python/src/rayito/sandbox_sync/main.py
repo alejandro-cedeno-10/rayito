@@ -163,6 +163,7 @@ from rayito._sandbox_base import (
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secrets import (
@@ -176,6 +177,8 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import apply_size_suffix, resolve_size, warn_if_rounded
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -742,6 +745,14 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
+        # m15-sizes-catalog: se resuelve aquí, no en `plan_features` (§7.3
+        # de la arquitectura M15: `size=` no es una sección de
+        # `ConfigureSandbox`, es qué imagen lanzar). `resolve_size` es puro
+        # y lanza `InvalidArgumentException` antes de cualquier llamada a
+        # AWS si el catálogo cerrado no cubre lo pedido.
+        resolved_size = None if size is None else resolve_size(size)
+        if resolved_size is not None:
+            warn_if_rounded(resolved_size, stacklevel=3)
         plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -759,7 +770,10 @@ class Sandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = plane.resolve_template_arn(resolve_template(template))
+        template_name = resolve_template(template)
+        if resolved_size is not None:
+            template_name = apply_size_suffix(template_name, resolved_size)
+        image_arn = plane.resolve_template_arn(template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -839,6 +853,7 @@ class Sandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            size=resolved_size,
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1312,12 +1327,25 @@ class Sandbox:
         `Health` sin RPC extra (quedan fijos en `/run`), y nunca se sondea
         un sandbox que no está `RUNNING` (la sonda lo despertaría). Los
         hechos del guest sólo van en el valor devuelto: `sbx.info` los deja
-        en `None`."""
+        en `None`. `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+        aparecen cuando `create(size=...)` se usó (m15-sizes-catalog): esa
+        única llamada a `GetMicrovmImageVersion` se cachea por versión de
+        imagen (`_size_catalog.DEFAULT_SIZE_CATALOG`), así que repetir
+        `get_info()` no repite la llamada a AWS."""
         info = self._control_plane.get_microvm(self.sandbox_id)
         if deadline_may_have_moved(info.state, self._lifecycle):
             self._refresh_health()
         self._info = dataclasses.replace(info, metadata=self.metadata, lifecycle=self._lifecycle)
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = DEFAULT_SIZE_CATALOG.minimum_memory_mib(
+                self._control_plane, result.template, result.template_version
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     def _class_get_info(

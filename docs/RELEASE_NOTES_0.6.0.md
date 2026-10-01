@@ -23,7 +23,16 @@ Pendiente, tras la campaña de medición EFS-1..EFS-20.
 
 ## Tamaños (`m15-sizes-catalog`)
 
-Pendiente.
+Catálogo cerrado de cinco tamaños (512mb/1gb/2gb/4gb/8gb, Q87), apagado
+por defecto: `Sandbox.create(size="4gb")`/`Sandbox.create({ size: "4gb" })`
+resuelve en cliente, sin ningún RPC, redondeando siempre hacia arriba y
+avisando si no encaja exacto. `rayito image publish --sizes 512mb,4gb`
+publica, desde el mismo artefacto, una imagen adicional por tamaño.
+`get_info()`/`getInfo()` confirma el tamaño real con una única llamada
+cacheada a `GetMicrovmImageVersion` (`baseline_memory_mib`/`baselineMemoryMib`,
+`baseline_cpu`/`baselineCpu`, medido exactamente para los cinco tamaños).
+Guardarraíles de coste opcional `rayito stack deploy sizes-guard`.
+Pendiente: aceptación en AWS real (SZ-1 y siguientes, MILESTONES.md).
 
 ## Eventos y webhooks (`m15-events-webhooks`)
 

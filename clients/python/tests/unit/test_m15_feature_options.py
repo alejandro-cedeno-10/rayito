@@ -1,6 +1,9 @@
 """`rayito._feature_options.plan_features`: con las siete opciones en
-`None` no pasa nada; cualquiera puesta lanza `UnimplementedError` nombrando
-su propio cambio OpenSpec, antes de construir ningún `FeaturePlan`."""
+`None` no pasa nada; las que siguen siendo un stub lanzan
+`UnimplementedError` nombrando su propio cambio OpenSpec, antes de construir
+ningún `FeaturePlan`. `size=` ya no es un stub (m15-sizes-catalog): su
+propia resolución se prueba en `test_m15_sizes_catalog_domain.py` y
+`test_m15_sizes_catalog_create.py`, no aquí."""
 
 from __future__ import annotations
 
@@ -21,7 +24,6 @@ def test_with_everything_none_the_plan_is_empty() -> None:
     [
         ("mounts", {"/mnt/d": object()}, "mounts=", "m15-s3-mounts"),
         ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
-        ("size", "4gb", "size=", "m15-sizes-catalog"),
         ("events", object(), "events=", "m15-events-webhooks"),
         ("telemetry", object(), "telemetry=", "m15-rayd-otlp"),
         ("gateways", {"anthropic": object()}, "gateways=", "m15-secrets-gateway"),
@@ -46,3 +48,12 @@ def test_feature_options_defaults_are_all_none() -> None:
     assert options.telemetry is None
     assert options.gateways is None
     assert options.domain is None
+
+
+def test_size_no_longer_raises_and_produces_no_configure_section() -> None:
+    """m15-sizes-catalog: `size=` no es un ajuste de `ConfigureSandbox` (no
+    hay nada que aplicar dentro del guest), así que `plan_features` no
+    lanza y el plan sigue sin secciones; la resolución real vive en
+    `_sizing.resolve_size` y se ejecuta en `create()`, no aquí."""
+    plan = plan_features(FeatureOptions(size="4gb"))
+    assert plan.configure_sections == ()

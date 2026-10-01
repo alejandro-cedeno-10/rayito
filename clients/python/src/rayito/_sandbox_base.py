@@ -47,6 +47,7 @@ from rayito._payload import (
     generate_access_token,
     validate_access_token,
 )
+from rayito._sizing import baseline_cpu_for
 from rayito._transport import is_phase_gate, rpc_details
 from rayito.exceptions import (
     AuthenticationException,
@@ -550,6 +551,22 @@ def with_guest_facts(info: SandboxInfo, facts: GuestFacts) -> SandboxInfo:
         agent_version=facts.agent_version,
         cpu_count=facts.cpu_count,
         memory_mb=facts.memory_mb,
+    )
+
+
+def with_size_facts(info: SandboxInfo, *, size_name: str, baseline_memory_mib: int) -> SandboxInfo:
+    """m15-sizes-catalog: `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+    se rellenan cuando `create(size=...)` se usó, y `baseline_memory_mib` es
+    el que `_size_catalog.ConventionCatalog` confirmó por AWS (no
+    necesariamente igual al resuelto en cliente, si la imagen se publicó a
+    mano). `cpu_count`/`memory_mb` (de `with_guest_facts`) siguen siendo lo
+    que el guest reporta de verdad (Q88: hasta 4x `baseline_memory_mib`),
+    nunca lo que este módulo estima."""
+    return dataclasses.replace(
+        info,
+        size=size_name,
+        baseline_memory_mib=baseline_memory_mib,
+        baseline_cpu=baseline_cpu_for(baseline_memory_mib),
     )
 
 

@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 import typer
 
+from rayito._sizing import BASELINE_MEMORY_MIB, NAME_TO_MEMORY_MIB, SIZE_NAMES
 from rayito.cli._artifact import VARIANTS, artifact_sha256, copy_sidecar, write_zip
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._prune import (
@@ -26,6 +27,7 @@ from rayito.cli._publish import (
     PublishSettings,
     default_image_name,
     publish,
+    publish_sizes,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
 
@@ -64,6 +66,47 @@ def validate_os_capabilities(value: str | None) -> str | None:
             f"admitidas: {', '.join(OS_CAPABILITY_CHOICES)}", param_hint="--os-capabilities"
         )
     return value
+
+
+BASELINE_SIZE_NAME = next(
+    name for name, mib in NAME_TO_MEMORY_MIB.items() if mib == BASELINE_MEMORY_MIB
+)
+
+
+def validate_sizes(raw: str | None) -> tuple[str, ...]:
+    """`--sizes 512mb,4gb` (m15-sizes-catalog): nombres separados por comas,
+    cada uno del catálogo cerrado (`_sizing.SIZE_NAMES`), sin duplicados ni
+    el baseline (ya lo publica `publish_command` sin sufijo)."""
+    if raw is None:
+        return ()
+    names = [piece.strip() for piece in raw.split(",") if piece.strip()]
+    for name in names:
+        if name not in SIZE_NAMES:
+            raise typer.BadParameter(
+                f"{name!r}: admitidos {', '.join(SIZE_NAMES)}", param_hint="--sizes"
+            )
+        if name == BASELINE_SIZE_NAME:
+            raise typer.BadParameter(
+                f"{BASELINE_SIZE_NAME!r} ya es el baseline sin sufijo; quítalo de --sizes",
+                param_hint="--sizes",
+            )
+    if len(set(names)) != len(names):
+        raise typer.BadParameter("tamaños repetidos", param_hint="--sizes")
+    return tuple(names)
+
+
+def parse_environment_assignments(raw: list[str]) -> dict[str, str]:
+    """`--env KEY=VALUE` (repetible, m15-sizes-catalog/`_images.py`): nunca
+    un interruptor de activación (ADR-014 regla 4), sólo configuración
+    horneada en la imagen (`environmentVariables` de `create`/`update-
+    microvm-image`)."""
+    result: dict[str, str] = {}
+    for item in raw:
+        if "=" not in item:
+            raise typer.BadParameter(f"formato K=V esperado: {item!r}", param_hint="--env")
+        key, _, value = item.partition("=")
+        result[key] = value
+    return result
 
 
 @image_app.command("publish")
@@ -113,9 +156,28 @@ def publish_command(
     force: Annotated[
         bool, typer.Option("--force", help="Construye una versión nueva aunque una coincida.")
     ] = False,
+    sizes: Annotated[
+        str | None,
+        typer.Option(
+            "--sizes",
+            help=(
+                "Tamaños extra separados por comas (512mb,1gb,2gb,4gb,8gb), "
+                "publicados además del baseline desde el mismo artefacto."
+            ),
+        ),
+    ] = None,
+    env: Annotated[
+        list[str],
+        typer.Option("--env", help="KEY=VALUE horneado en environmentVariables (repetible)."),
+    ] = [],  # noqa: B006
 ) -> None:
     """Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
-    espera al gate de tres estados; reutiliza una versión igual."""
+    espera al gate de tres estados; reutiliza una versión igual. Con
+    `--sizes` publica, además, una imagen por tamaño desde el mismo
+    artefacto (m15-sizes-catalog); sin él, sólo el baseline, como antes de
+    sizes-catalog."""
+    size_names = validate_sizes(sizes)
+    environment_variables = parse_environment_assignments(env)
     settings = PublishSettings(
         artifact=artifact,
         image_name=image_name or default_image_name(validate_variant(variant)),
@@ -128,8 +190,11 @@ def publish_command(
         force=force,
         timeout_seconds=timeout_seconds,
         os_capabilities=validate_os_capabilities(os_capabilities),
+        environment_variables=environment_variables,
     )
     code = publish(clients_of(ctx), settings, json_output=json_mode(ctx))
+    if code == 0 and size_names:
+        code = publish_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
     if code:
         raise typer.Exit(code)
 

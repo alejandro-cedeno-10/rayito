@@ -254,6 +254,12 @@ export {
   type SecretsManagerApi,
 } from "./secrets/store.js";
 export type {
+  ResolvedSize,
+  SizeInput,
+  SizeName,
+  SizeRequest,
+} from "./sizing/sizing.js";
+export type {
   CostStatement,
   DeployAction,
   DeployPlan,
