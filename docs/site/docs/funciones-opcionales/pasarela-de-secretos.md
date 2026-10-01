@@ -123,7 +123,7 @@ vez, al construir la petición saliente.
       },
       secretCache: new SecretCache(),
     });
-    const url = sbx.gateways.get("anthropic")?.url;   // "http://127.0.0.1:<puerto>"
+    const url = sbx.gateways.get("anthropic")!.url;   // "http://127.0.0.1:<puerto>"
     await sbx.commands.run("python agent.py", { envs: { ANTHROPIC_BASE_URL: url } });
 
     // rotar la credencial sin recrear el sandbox:

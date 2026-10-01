@@ -16,7 +16,9 @@ use axum::extract::{Request, State};
 use axum::response::Response;
 use http::{HeaderName, HeaderValue, StatusCode};
 use rayd_core::secret_gateway::header_template::must_drop;
-use rayd_core::secret_gateway::{Decision, GatewayErrorClass, GatewayRoute, GatewaySpec, TokenBucket};
+use rayd_core::secret_gateway::{
+    Decision, GatewayErrorClass, GatewayRoute, GatewaySpec, TokenBucket,
+};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -39,7 +41,10 @@ struct RouteState {
 
 impl RouteState {
     fn record_error(&self, class: &'static str) {
-        *self.last_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(class);
+        *self
+            .last_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(class);
     }
 }
 
@@ -177,7 +182,12 @@ impl GatewayRuntime {
 
 impl Drop for GatewayRuntime {
     fn drop(&mut self) {
-        for handle in self.routes.get_mut().unwrap_or_else(PoisonError::into_inner).drain(..) {
+        for handle in self
+            .routes
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             handle.accept.abort();
         }
     }
@@ -213,8 +223,13 @@ async fn forward(State(state): State<Arc<RouteState>>, request: Request) -> Resp
     let now_ms = u64::try_from(state.base.elapsed().as_millis()).unwrap_or(u64::MAX);
     let decision = {
         let mut bucket = state.bucket.lock().unwrap_or_else(PoisonError::into_inner);
-        let (next, decision) =
-            rayd_core::secret_gateway::evaluate(&state.route, method.as_str(), &path, *bucket, now_ms);
+        let (next, decision) = rayd_core::secret_gateway::evaluate(
+            &state.route,
+            method.as_str(),
+            &path,
+            *bucket,
+            now_ms,
+        );
         *bucket = next;
         decision
     };

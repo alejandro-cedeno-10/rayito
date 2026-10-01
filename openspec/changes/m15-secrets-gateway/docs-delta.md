@@ -68,7 +68,7 @@ Guía completa: [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos
       }) },
       secretCache: new SecretCache(),
     });
-    const url = sbx.gateways.get("anthropic")?.url;
+    const url = sbx.gateways.get("anthropic")!.url;
     await sbx.commands.run("python agent.py", { envs: { ANTHROPIC_BASE_URL: url } });
     ```
 

@@ -163,7 +163,9 @@ fn agent_features_message(
         // process's own route): declared here, never a host or IP
         // (`rayd_core::root_egress`).
         root_egress: if features.secret_gateway {
-            vec![i32::from(rayito_proto::v1::RootEgressClass::SecretGatewayUpstream)]
+            vec![i32::from(
+                rayito_proto::v1::RootEgressClass::SecretGatewayUpstream,
+            )]
         } else {
             Vec::new()
         },

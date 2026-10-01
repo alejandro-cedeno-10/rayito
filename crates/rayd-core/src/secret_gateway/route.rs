@@ -420,9 +420,20 @@ mod tests {
     #[test]
     fn too_many_routes_is_rejected() {
         let routes = (0..=MAX_ROUTES_PER_GATEWAY)
-            .map(|i| route(&format!("r{i}"), "https://example.com", vec![], vec![("GET", "/x")], 60))
+            .map(|i| {
+                route(
+                    &format!("r{i}"),
+                    "https://example.com",
+                    vec![],
+                    vec![("GET", "/x")],
+                    60,
+                )
+            })
             .collect();
-        assert_eq!(GatewaySpec::parse(routes), Err(GatewaySpecError::TooManyRoutes));
+        assert_eq!(
+            GatewaySpec::parse(routes),
+            Err(GatewaySpecError::TooManyRoutes)
+        );
     }
 
     #[test]
@@ -455,7 +466,13 @@ mod tests {
 
     #[test]
     fn error_classes_are_closed_lowercase_snake_strings() {
-        assert_eq!(GatewaySpecError::RateOutOfRange.as_str(), "rate_out_of_range");
-        assert_eq!(GatewaySpecError::UpstreamNotHttps.as_str(), "upstream_not_https");
+        assert_eq!(
+            GatewaySpecError::RateOutOfRange.as_str(),
+            "rate_out_of_range"
+        );
+        assert_eq!(
+            GatewaySpecError::UpstreamNotHttps.as_str(),
+            "upstream_not_https"
+        );
     }
 }

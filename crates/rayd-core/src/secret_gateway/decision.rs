@@ -185,7 +185,10 @@ mod tests {
         let route = route(60);
         let bucket = TokenBucket::full(&route, 0);
         let refilled = bucket.refilled(&route, 1_000_000);
-        assert_eq!(refilled.milli_tokens, u64::from(route.rate_per_minute()) * TOKEN_SCALE);
+        assert_eq!(
+            refilled.milli_tokens,
+            u64::from(route.rate_per_minute()) * TOKEN_SCALE
+        );
     }
 
     #[test]

@@ -85,6 +85,10 @@ mod tests {
         // itself always returns lower-case names regardless of the route's
         // own header-name casing.
         let names = stripped_header_names(&route());
-        assert!(names.iter().all(|name| name.chars().all(|c| !c.is_ascii_uppercase())));
+        assert!(
+            names
+                .iter()
+                .all(|name| name.chars().all(|c| !c.is_ascii_uppercase()))
+        );
     }
 }

@@ -11,15 +11,15 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use std::io;
-use std::net::SocketAddr;
-use std::pin::Pin;
 use std::future::Future;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::Body;
-use http::{Request, Response};
+use http::{Request, Response, Uri};
 use hyper::body::Incoming;
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
@@ -100,7 +100,9 @@ impl Service<Name> for FilteringResolver {
     type Future = ResolveFuture;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx).map_err(|error| Box::new(error) as BoxError)
+        self.0
+            .poll_ready(cx)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
@@ -166,16 +168,32 @@ impl GatewayUpstream {
     /// a truly stuck upstream.
     ///
     /// # Errors
-    /// `ForwardError::Unreachable` when the connection could not be
-    /// established (including a resolved address `FilteringResolver`
-    /// refused); `ForwardError::Timeout` when it timed out
-    /// (`CONNECT_TIMEOUT`).
-    pub async fn send(
-        &self,
-        request: Request<Body>,
-    ) -> Result<Response<Incoming>, ForwardError> {
-        self.client.request(request).await.map_err(|error| classify(&error))
+    /// `ForwardError::Unreachable` when `request`'s URI is an IP-literal
+    /// `is_forbidden_address` refuses (checked here because the connector
+    /// dials an IP literal directly, without ever asking
+    /// `FilteringResolver`) or the connection could not be established
+    /// (including a resolved address the resolver refused);
+    /// `ForwardError::Timeout` when it timed out (`CONNECT_TIMEOUT`).
+    pub async fn send(&self, request: Request<Body>) -> Result<Response<Incoming>, ForwardError> {
+        if literal_host_forbidden(request.uri()) {
+            return Err(ForwardError::Unreachable);
+        }
+        self.client
+            .request(request)
+            .await
+            .map_err(|error| classify(&error))
     }
+}
+
+/// `true` when `uri`'s host is an IP literal `is_forbidden_address`
+/// refuses. A hostname is left to `FilteringResolver`: this only covers
+/// the literal case the connector would otherwise dial unchecked (mirrors
+/// `adapters::signed_http::HyperSignedHttp::check_literal_host`).
+fn literal_host_forbidden(uri: &Uri) -> bool {
+    uri.host()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+        .and_then(|host| host.parse::<IpAddr>().ok())
+        .is_some_and(is_forbidden_address)
 }
 
 fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
@@ -184,9 +202,10 @@ fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
         if current.downcast_ref::<ForbiddenAddressError>().is_some() {
             return ForwardError::Unreachable;
         }
-        if current.downcast_ref::<io::Error>().is_some_and(|io_error| {
-            io_error.kind() == io::ErrorKind::TimedOut
-        }) {
+        if current
+            .downcast_ref::<io::Error>()
+            .is_some_and(|io_error| io_error.kind() == io::ErrorKind::TimedOut)
+        {
             return ForwardError::Timeout;
         }
         source = current.source();
@@ -202,8 +221,40 @@ fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_literal_imds_or_loopback_host_is_forbidden() {
+        for uri in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/",
+            "https://[::1]/",
+        ] {
+            assert!(
+                literal_host_forbidden(&uri.parse().unwrap()),
+                "{uri} should be forbidden"
+            );
+        }
+        assert!(!literal_host_forbidden(
+            &"https://93.184.216.34/".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn a_hostname_is_left_to_the_resolver() {
+        // Not an IP literal: `literal_host_forbidden` never resolves it, so
+        // it is never forbidden at this layer (`FilteringResolver` is the
+        // one that checks a resolved name's addresses).
+        assert!(!literal_host_forbidden(
+            &"https://api.anthropic.com/".parse().unwrap()
+        ));
+    }
+
+    /// No network attempt here: `send` rejects an IP-literal forbidden host
+    /// before ever reaching the connector, so this is deterministic in any
+    /// environment (unlike actually dialing 169.254.169.254, whose real
+    /// behaviour — refused, filtered or a genuine IMDS reply — depends on
+    /// where the test runs).
     #[tokio::test]
-    async fn a_request_to_a_forbidden_address_is_classified_unreachable_without_connecting() {
+    async fn sending_to_a_literal_forbidden_address_never_connects() {
         let upstream = GatewayUpstream::new().unwrap();
         let request = Request::builder()
             .uri("https://169.254.169.254/latest/meta-data/")

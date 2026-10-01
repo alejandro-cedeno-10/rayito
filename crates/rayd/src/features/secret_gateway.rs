@@ -162,7 +162,8 @@ mod tests {
 
     #[test]
     fn participant_stays_the_default_none() {
-        let feature: &dyn ConfigurableFeature<SecretGatewayConfig, SecretGatewayStatus> = &feature();
+        let feature: &dyn ConfigurableFeature<SecretGatewayConfig, SecretGatewayStatus> =
+            &feature();
         assert!(feature.participant().is_none());
     }
 
