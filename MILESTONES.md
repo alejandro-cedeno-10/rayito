@@ -1224,6 +1224,116 @@ mapeo común de errores gRPC (`docs/research/2026-09-m9-architecture-review.md`)
 
 ---
 
+## M11 — ADR-014 y convención de opt-in
+
+Sin código de producto: gobierno de la campaña M11–M14 (secretos, índice de
+metadatos, trazas OTel del SDK). Un cambio OpenSpec (`m11-optin-adr`).
+
+- **ADR-014** en `ARCHITECTURE.md`: distinción entre "servicio hospedado por
+  Rayito" (nunca) y "componentes opcionales en la cuenta del cliente"
+  (permitidos, como plantillas CloudFormation independientes bajo `infra/`),
+  con sus tres invariantes y la regla de coste (apagado por defecto, opción
+  explícita del SDK, cero recursos/llamadas AWS extra sin opciones).
+- `SPEC.md` §4 y `openspec/project.md` regla 3 amendados para reflejar el ADR.
+- `docs/site/docs/optional-features.md` ("Funciones opcionales y su coste"):
+  la tabla de las cuatro funciones de coste (secretos ×2, índice, OTel), todas
+  en "planificado (Mxx)", más la sección "Sin coste AWS" (`rayito sandbox
+  proxy`).
+- `clients/python/src/rayito/_optional.py` (`require_module`) y
+  `clients/typescript/src/optional.ts` (`loadOptionalPeer`): los dos únicos
+  helpers de la convención de opt-in, sin código de sandbox.
+
+**Criterio de aceptación: sin opciones = comportamiento de 0.4.0.** No hay
+ninguna opción nueva del SDK en M11 (`require_module`/`loadOptionalPeer` no
+se llaman desde ningún camino activo por defecto), así que este criterio se
+cumple trivialmente; los tests de `_optional.py`/`optional.ts` lo comprueban
+de todas formas: `sys.modules` tras `import rayito` en Python, y un
+escaneo estático de `clients/typescript/src/**/*.ts` en TypeScript que falla
+si algún fichero importa de forma estática (no con `import()` dinámico) uno
+de los paquetes opcionales futuros (`@aws-sdk/client-secrets-manager`,
+`@aws-sdk/client-dynamodb`, `@opentelemetry/api`) — guarda que M13a/M13b/M14
+deben seguir cumpliendo cuando añadan esos paquetes como peerDependencies.
+
+**Presupuesto de aceptación:** $0 (sólo documentación, `mkdocs build
+--strict` y los tests unitarios/de `scripts/tests`; sin AWS).
+
+## M12 — Tamaños e2e y proxy local
+
+CLI `rayito sandbox proxy <id> --port N`: sirve un puerto del guest en
+`localhost` renovando el JWE de `x-aws-proxy-port` antes de que expire.
+Documentación de tamaños (`docs/site/docs/limits.md`, "un template = un
+tamaño"). Un cambio OpenSpec (`m12-sizes-proxy`).
+
+**Criterio de aceptación: sin opciones = comportamiento de 0.4.0.** El proxy
+es sólo CLI, sin ninguna opción de coste del SDK: `create/connect/kill` no
+cambian. El e2e real sirve un puerto del guest en `localhost` a través de un
+refresco de JWE simulado (el ciclo completo de renovación antes de la
+expiración, no sólo la primera petición).
+
+**Presupuesto de aceptación:** ≤ $0.10 (`CreateMicrovmAuthToken` es gratuito;
+el coste es el cómputo del sandbox de prueba mientras el proxy está activo).
+
+## M13a — Secretos: inyección y CRUD
+
+`secrets=`/`secrets` en `create/connect/SandboxPool.take/commands.run|start/
+pty.create/run_code/create_code_context`; `secret_cache=SecretCache(...)` /
+`secretCache: new SecretCache({...})`; `SecretStore`/`new SecretStore({...})`
+nativo; shim `Secret`/`AsyncSecret` de E2B. Fila de `docs/site/docs/e2b-parity.md`
+56, 80, 90 y el pie de tabla; filas 1–2 de `optional-features.md` pasan a
+"disponible (0.5.0)" con su ejemplo. Un cambio OpenSpec (`m13-secrets`).
+
+**Criterio de aceptación: sin opciones = comportamiento de 0.4.0.** Sin
+`secrets=`/`SecretStore`, ningún cliente de Secrets Manager se crea y ninguna
+llamada `secretsmanager:*` se hace (test dedicado, sin cliente boto3/AWS SDK
+instanciado). El e2e real cubre CRUD + inyección con una sola llamada
+`GetSecretValue` para N comandos dentro del TTL de la caché (contrato de
+caché de secretos: clave `(región, identidad de credencial, SecretId
+resuelto, VersionId|VersionStage)`, TTL configurable 1–86400 s por defecto
+300 s, single-flight por clave, sin refresco salvo expiración o
+`refresh()`/`invalidate()` explícitos).
+
+**Presupuesto de aceptación:** ≤ $0.10 (Secrets Manager: $0,40/secreto-mes
+prorrateado + $0,05/10 000 llamadas, más el cómputo del sandbox de prueba).
+
+## M13b — Trazas OpenTelemetry del SDK
+
+`tracer_provider=`/`tracerProvider` en `create/connect` y en
+`kill/pause/resume` de la clase. Fila 108 y el pie de tabla de
+`e2b-parity.md`; fila 4 de `optional-features.md` pasa a "disponible
+(0.5.0)". Un cambio OpenSpec (`m13-otel-sdk`).
+
+**Criterio de aceptación: sin opciones = comportamiento de 0.4.0.** Sin
+`tracer_provider=`/`tracerProvider`, el SDK no importa `opentelemetry` (test
+de `sys.modules`) y no crea ningún span. Puerta: unitarios con un exportador
+en memoria (`InMemorySpanExporter`); un e2e real contra AWS es opcional para
+este grupo porque no crea ni llama ningún recurso AWS propio (el exportador
+lo paga y lo configura quien lo activa).
+
+**Presupuesto de aceptación:** ≤ $0.10 (sólo el cómputo del sandbox de
+prueba; sin coste de telemetría propio de Rayito).
+
+## M14 — Índice de metadatos (DynamoDB)
+
+`index=DynamoDbIndex('table', on_write_failure='terminate')` /
+`index: new DynamoDbIndex({ tableName, onWriteFailure: 'terminate' })` en
+`create/list/paginate`, `PoolConfig`, shim `Sandbox.list`/`E2B(...)`; CLI
+`--index-table`; `infra/metadata-index.yaml`. Fila 40 de `e2b-parity.md`;
+fila 3 de `optional-features.md` pasa a "disponible (0.5.0)". Un cambio
+OpenSpec (`m14-metadata-index`).
+
+**Criterio de aceptación: sin opciones = comportamiento de 0.4.0.** Sin
+`index=`/`index`, ningún cliente DynamoDB se crea y ninguna llamada
+`dynamodb:*` se hace. El e2e real despliega la tabla desde
+`infra/metadata-index.yaml` y comprueba `list(metadata=, states=[SUSPENDED])`
+sin despertar ningún VM y sin llamar a `CreateMicrovmAuthToken` (el estado
+sigue mandando siempre desde `list-microvms`, nunca desde el índice).
+
+**Presupuesto de aceptación:** ≤ $0.10 (DynamoDB on-demand: escrituras,
+lecturas y almacenamiento del volumen de prueba, más el cómputo de los
+sandboxes suspendidos de la prueba).
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

@@ -60,6 +60,7 @@ nav:
   - Paridad con E2B: e2b-parity.md
   - Servidor MCP: mcp.md
   - Modelo de costes: cost.md
+  - Funciones opcionales y su coste: optional-features.md
   - Pool de sandboxes: pool.md
   - Persistencia: persistence.md
   - Plazo del servidor: lifecycle.md

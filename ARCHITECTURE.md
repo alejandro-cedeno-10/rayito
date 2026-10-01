@@ -450,7 +450,11 @@ cliente y los reexpide el contrato de reconexión.
    el VM.
 
 3. `quiesce` al sidecar (≤ 2 s, mejor esfuerzo).
-4. `libc::sync()`.
+4. `syncfs(2)` por sistema de ficheros escribible (uno por dispositivo, de
+   `/proc/self/mountinfo`), cada uno en un hilo desechable; el hook espera
+   como mucho el plazo de `SuspendBudget` (5 s, `rayd_core::suspend_sync`) y
+   lo que siga colgado (un montaje de red o FUSE) no retrasa el 200. Nunca
+   `sync(2)` sin plazo: un `/suspend` fuera de tiempo termina la VM.
 5. 200 con `streams_closed`; `suspend_ms` en el log. No espera ejecuciones
    ni procesos en curso; un `/suspend` repetido no cambia nada.
 
@@ -1046,6 +1050,10 @@ principal. `allPorts` **nunca** se usa por defecto: el puerto 9000 queda fuera.
 
 ### Plano de control (boto3 / SDK JS v3)
 
+Este cliente de `lambda-microvms` es el único plano de control: los
+componentes opcionales en la cuenta del cliente (secretos, índice de
+metadatos) son clientes AWS aparte, apagados por defecto (ADR-014).
+
 - Cliente `lambda-microvms` con `Config(retries={"mode": "standard",
   "total_max_attempts": 5}, connect_timeout=5, read_timeout=60,
   user_agent_extra="rayito/<ver>")`. El SDK TypeScript usa
@@ -1616,3 +1624,92 @@ poder de uid 1000 que el kernel de Python.
 
 **Reversible.** Si una versión futura de Deno abre `ipc`, basta con cambiar
 `KernelLanguage.transport`; ni el cable ni los SDKs cambian.
+
+## ADR-014 — Componentes opcionales en la cuenta del cliente
+
+**Contexto.** `SPEC.md` §4 excluye explícitamente un "servicio de plano de
+control" y "un almacén del lado cliente". Varias funciones de E2B que los
+usuarios piden (sandboxes pausados consultables por metadatos, inyección y
+CRUD de secretos, trazas OpenTelemetry del SDK) sólo son alcanzables con
+estado o llamadas AWS opcionales que van más allá de `create/connect/kill`
+directos contra la API de Lambda MicroVMs; E2B las resuelve con su propio
+plano de control hospedado (Postgres, ClickHouse, Redis, proxies de host).
+La investigación de E2B fuera de alcance
+(`docs/research/2026-10-e2b-out-of-scope.md` §2, §5, §6, §8.1) mide el
+esfuerzo, el coste y las alternativas de cada una y propone distinguir entre
+un servicio hospedado por Rayito y componentes opcionales en la cuenta del
+propio cliente.
+
+**Decisión.** Se aprueban las siete reglas siguientes:
+
+1. **Nunca un servicio hospedado por Rayito.** Rayito no opera, ni operará,
+   ninguna pieza de infraestructura por cuenta de sus usuarios: sin servidor
+   propio, sin base de datos propia, sin endpoint que reciba tráfico de
+   clientes. Todo lo que no sea el SDK corre en la cuenta AWS del propio
+   usuario.
+2. **Componentes opcionales en la cuenta del cliente: permitidos.** Se
+   entregan como plantillas CloudFormation independientes bajo `infra/`, una
+   por función, que el usuario despliega explícitamente en su propia cuenta y
+   región. En esta campaña (M11–M14): `infra/secrets-access.yaml` (rol y
+   permisos mínimos de Secrets Manager, M13a) e `infra/metadata-index.yaml`
+   (tabla DynamoDB del índice, M14). Un stack único que agrupe varias piezas
+   (`infra/rayito-plane.yaml`, propuesto en la investigación como "un solo
+   plano opcional") queda como destino futuro y no se crea en esta campaña:
+   cada función tiene hoy su propia plantilla, más simple de auditar y de
+   desplegar por separado.
+3. **Tres invariantes**, obligatorios para cualquier componente opcional
+   presente o futuro: (a) `create()`, `connect()` y `kill()` funcionan
+   exactamente igual sin ellos desplegados; (b) ninguno es fuente de verdad
+   del estado de un sandbox — manda siempre `list-microvms`, nunca una copia
+   en una tabla o un índice; (c) ningún dato sale de la cuenta del cliente.
+4. **Regla de coste.** Toda función que consuma cuota o dinero de AWS está
+   **apagada por defecto** y sólo se activa con una **opción explícita** del
+   SDK — un kwarg con nombre en Python, una propiedad con nombre en
+   TypeScript — nunca con una variable de entorno, un fichero de
+   configuración ni un setter global. Con el SDK usado sin ninguna de esas
+   opciones, Rayito crea **cero recursos AWS y hace cero llamadas AWS extra**
+   respecto a 0.4.0. Esta regla no admite excepciones: ni una comprobación de
+   salud en segundo plano, ni una carga perezosa "por si acaso", ni una
+   detección automática de credenciales para un servicio opcional.
+5. **Convención de opt-in única**, fijada en detalle en
+   `docs/site/docs/optional-features.md` y en los dos helpers de convención
+   (`clients/python/src/rayito/_optional.py`,
+   `clients/typescript/src/optional.ts`): un kwarg nombrado por función (más,
+   como mucho, un kwarg con el objeto de configuración del servicio), objetos
+   de configuración inmutables y reutilizables que crean su cliente AWS de
+   forma perezosa, y un bloque de docstring/TSDoc titulado "Coste y
+   activación" en cada opción de coste.
+6. **Fase 1 de secretos: el valor es visible para el código del sandbox.**
+   La inyección nativa de secretos (M13a) entrega el valor como variable de
+   entorno del proceso que lo pide, igual que Modal, Northflank o Runloop
+   directo (investigación §2.2); no hay, todavía, un gateway que medie el uso
+   de la credencial sin exponer su valor a uid 1000 (la opción 4 de la
+   investigación §2.3–2.4, un plano de credenciales en loopback, queda para
+   un milestone posterior). Esto se documenta explícitamente en cada API de
+   inyección: no inyectar credenciales de larga vida en código no confiable;
+   preferir tokens de corta vida y mínimo privilegio.
+7. **Volúmenes sobre S3: aprobados para un milestone posterior.** La
+   investigación (§1) mide un camino técnico viable; queda fuera de
+   M11–M14 y no se abre ningún trabajo de este ciclo en esa dirección.
+
+**Consecuencias.** Las filas de la tabla de paridad
+(`docs/site/docs/e2b-parity.md`) que dependen de estas funciones sólo cambian
+de estado cuando el grupo que las entrega las implementa de verdad contra AWS
+real, nunca por adelantado: `adr-optin` (este ADR) no mueve ninguna fila.
+`docs/site/docs/optional-features.md` (A3) nace con todas sus filas en
+"planificado (Mxx)" por la misma razón. Aumenta la superficie de seguridad
+del proyecto (nuevas amenazas documentadas por cada grupo en `SECURITY.md`
+según entrega) y su superficie de soporte (una plantilla CloudFormation más
+por función optativa).
+
+**Alternativas descartadas.** (a) Un ADR por función (cuatro ADR-014 en
+conflicto, sin una regla común de coste ni de opt-in): fragmenta la decisión
+de "apagado por defecto" en cuatro sitios que podrían divergir. (b) Un
+servicio SaaS operado por Rayito para alguna de estas funciones: rompe la
+tesis del producto (el código del cliente nunca sale de su cuenta). (c) No
+hacer nada: deja fuera funciones que los usuarios de E2B ya usan hoy, sin
+ninguna ganancia de simplicidad frente a la regla de coste explícita.
+
+**Reversible.** Cada componente opcional vive en su propia plantilla
+CloudFormation y su propio flag de opción; retirar uno no afecta a los demás
+ni al SDK sin opciones.

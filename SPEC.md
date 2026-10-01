@@ -118,15 +118,23 @@ Se rechazan en review si aparecen antes de M6:
 - ~~**Metadatos por sandbox**~~: entregados en M6 vía `runHookPayload` +
   `Health` (los MicroVMs no admiten tags y `list-microvms` no filtra por
   ellos); `list(metadata=)` es O(n) sobre los sandboxes `RUNNING` y no es
-  secreto. Sin almacén del lado cliente ni actualización tras `create()`.
+  secreto. Sin almacén del lado cliente **obligatorio**; índice DynamoDB
+  opcional en la cuenta del cliente (ADR-014, M14), apagado por defecto y sin
+  cambiar `list-microvms` como fuente de verdad del estado.
 - **Tamaño por sandbox** (`cpu=`/`memory=`): el tamaño es propiedad de la imagen
   (`resources[0].minimumMemoryInMiB`) tanto en Rayito como, de hecho, en E2B.
-  Un template = un tamaño (`base-2gb`, `base-4gb`).
+  Un template = un tamaño, como en E2B (tamaño por build de template, por
+  ejemplo `base-2gb`, `base-4gb`); ver [`limits.md`](docs/site/docs/limits.md).
+  No hay, ni se promete, un resolvedor de tamaño por sandbox.
 - ~~Persistencia de filesystem entre sesiones (S3/EFS)~~ (era candidata a M6):
   entregada en M7 (`m7-s3-persistence`, ADR-009): checkpoint/restore de
   `/home/user` en S3 desde `rayd` (`Sandbox.create(persist=)`,
   `checkpoint_files()`, `restore_files()`, `reincarnate()`); EFS sigue fuera.
-- Servicio de plano de control: en M1–M5 el SDK llama a AWS directamente.
+- Servicio de plano de control **hospedado por Rayito**: nunca. Componentes
+  opcionales en la cuenta del cliente: permitidos según ADR-014, apagados por
+  defecto y activados sólo con una opción explícita del SDK.
+- **Volúmenes**: aprobados sobre S3 para un milestone posterior (investigación
+  `docs/research/2026-10-e2b-out-of-scope.md` §1); fuera de M11–M14.
 
 ## 5. Decisiones ya tomadas
 
