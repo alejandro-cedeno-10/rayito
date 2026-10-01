@@ -29,6 +29,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -114,6 +115,7 @@ from rayito._process_base import (
     metrics_from_proto,
     stream_failure_exception,
 )
+from rayito._role_policy import resolve_image_variant
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -474,6 +476,13 @@ class AsyncSandbox:
         secret_cache: SecretCache | None = None,
         index: DynamoDbIndex | None = None,
         tracer_provider: TracerProviderLike | None = None,
+        mounts: Mapping[str, Any] | None = None,
+        volumes: Mapping[str, Any] | None = None,
+        size: Any | None = None,
+        events: Any | None = None,
+        telemetry: Any | None = None,
+        gateways: Mapping[str, Any] | None = None,
+        domain: Any | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=`,
         `persist=`, `transfer=`, el plazo lógico de `max_lifetime`/`on_timeout`
@@ -571,6 +580,13 @@ class AsyncSandbox:
                     "keep_on_failure": keep_on_failure,
                     "control_plane": control_plane,
                     "transport": transport,
+                    "mounts": mounts,
+                    "volumes": volumes,
+                    "size": size,
+                    "events": events,
+                    "telemetry": telemetry,
+                    "gateways": gateways,
+                    "domain": domain,
                 }
             )
             taken = cast(
@@ -590,6 +606,18 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
+        plan_features(
+            FeatureOptions(
+                mounts=mounts,
+                volumes=volumes,
+                size=size,
+                events=events,
+                telemetry=telemetry,
+                gateways=gateways,
+                domain=domain,
+            ),
+            image_variant=resolve_image_variant(template),
+        )
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
             binding,

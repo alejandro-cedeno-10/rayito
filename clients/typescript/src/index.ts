@@ -38,14 +38,19 @@ export {
   AuthenticationError,
   CapacityError,
   CommandExitError,
+  CustomDomainError,
   DiskFullError,
   FileNotFoundError,
   FileUploadError,
+  GatewayError,
+  type GatewayErrorOptions,
   GitAuthError,
   GitUpstreamError,
   IndexWriteError,
   InvalidArgumentError,
   LifecycleUnsupportedError,
+  MountError,
+  type MountErrorOptions,
   NotFoundError,
   PersistenceError,
   type PersistenceErrorOptions,
@@ -60,10 +65,16 @@ export {
   SandboxStateError,
   SecretError,
   SecretNotFoundError,
+  StackError,
+  type StackErrorOptions,
   TimeoutError,
   TransferError,
   type TransferErrorOptions,
   UnimplementedError,
+  VolumeError,
+  VolumeNotFoundError,
+  VolumePathNotFoundError,
+  WebhookError,
 } from "./errors.js";
 export {
   type DynamoDbApi,
@@ -242,5 +253,21 @@ export {
   type SecretStoreOptions,
   type SecretsManagerApi,
 } from "./secrets/store.js";
+export type {
+  CostStatement,
+  DeployAction,
+  DeployPlan,
+  StackArtifact,
+  StackComponent,
+  StackParameter,
+  StackStatus,
+} from "./stacks/model.js";
+export type { DeployTarget, StackProvisioner, UpdateOutcome } from "./stacks/port.js";
+export {
+  type DeployOptions,
+  type DestroyOptions,
+  OptionalStacks,
+  type OptionalStacksOptions,
+} from "./stacks/service.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";

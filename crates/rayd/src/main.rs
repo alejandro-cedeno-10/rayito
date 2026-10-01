@@ -232,6 +232,10 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
+            // M15 foundations: no feature slot returns a participant yet
+            // (`features::build` is all `Unsupported`), so `/suspend` and
+            // `/ready` behave exactly as in 0.5.x.
+            participants: Vec::new(),
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());

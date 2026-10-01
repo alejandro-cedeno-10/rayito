@@ -10,6 +10,30 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Added
+
+- **`ConfigureService` y los seis slots de función 0.6** (`v06-foundations`,
+  M15 foundations, ADR-015): el servicio gRPC `Configure`/`ConfigureStatus`,
+  el orden de aplicación fijo (eventos → telemetría → pasarela → montajes
+  S3 → volúmenes EFS), `Health.features` (`AgentFeatures`, campo 16,
+  `configure=true` y el resto `false` hasta que su propia función
+  construye un adaptador real) y `LifecycleParticipant` para que una
+  función futura participe en `/suspend`/`/ready` sin cambiar su contrato.
+  El reaper de zombies huérfanos de PID 1 (`rayd_core::orphans`,
+  `ChildRegistry`, `OrphanReaper`, Q80) queda implementado y probado, sin
+  activarse todavía en `main.rs` (ver MILESTONES.md M15). El registro de
+  `.proto` pasa a descubrirse por glob (`crates/rayito-proto/build.rs`).
+  Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
+  idéntico al de 0.5.x.
+<!-- m15-s3-mounts -->
+<!-- m15-efs-volumes -->
+<!-- m15-sizes-catalog -->
+<!-- m15-events-webhooks -->
+<!-- m15-rayd-otlp -->
+<!-- m15-templates -->
+<!-- m15-secrets-gateway -->
+<!-- m15-custom-domain -->
+
 ## [0.5.0] - 2026-10-01
 
 ### Fixed

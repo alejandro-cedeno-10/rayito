@@ -4,6 +4,7 @@ package rayito.v1;
 
 import "rayito/v1/lifecycle.proto";
 import "rayito/v1/network.proto";
+import "rayito/v1/features.proto";
 
 // Estado del agente y del sandbox. Health es el único RPC que no exige
 // `x-access-token`: es la sonda de readiness y liveness del SDK (el estado de
@@ -58,6 +59,11 @@ message HealthResponse {
   // propio sandbox lo lee de `/proc`.
   uint32 cpu_count = 14;
   uint64 memory_total_bytes = 15;
+  // M15 (Rayito 0.6): qué funciones opcionales soporta este build. Ausente
+  // en un agente anterior a 0.6 (presencia de mensaje de proto3): el SDK lo
+  // trata como "agente pre-0.6" y exige publicar una imagen 0.6.0 o
+  // posterior antes de usar cualquier sección de ConfigureSandbox.
+  AgentFeatures features = 16;
 }
 
 message MetricsRequest {}

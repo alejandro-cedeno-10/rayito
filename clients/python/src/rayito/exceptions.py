@@ -282,3 +282,100 @@ class LifecycleUnsupportedException(UnimplementedError):
     hace falta publicar una imagen 0.3.0 o posterior o crear el sandbox sin `max_lifetime`
     ni `on_timeout`. Subclase de `UnimplementedError` sólo como discriminador
     tipado para el shim de E2B (`isinstance`, nunca el texto)."""
+
+
+# --------------------------------------------------------- M15 (Rayito 0.6)
+#
+# Cada clase la usa la función OpenSpec que la nombra en su docstring; hasta
+# entonces nada las lanza (foundations sólo las pre-crea como seam, §1(g) de
+# la arquitectura de M15, para que ningún cambio de feature tenga que tocar
+# este fichero compartido). `code`/`error_class` son cadenas cerradas, nunca
+# el mensaje de AWS ni un identificador del usuario.
+
+
+class MountException(SandboxException):
+    """Un montaje de `mounts=` (m15-s3-mounts) falló o sigue sin asentarse.
+    `code` es uno de `network`, `iam_denied`, `not_found`, `not_allowed`,
+    `helper_missing`, `timeout`."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class VolumeException(SandboxException):
+    """Error de un volumen EFS (m15-efs-volumes, experimental):
+    `VolumeStore.create/get/list/destroy` o el estado de `volumes=` tras
+    `/run`."""
+
+
+class VolumeNotFoundException(VolumeException):
+    """El `AccessPoint` del volumen no existe (`DescribeAccessPoints` vacío
+    o `DeleteAccessPoint` sobre un id que ya no está)."""
+
+
+class VolumePathNotFoundException(VolumeException):
+    """Una operación de contenido sobre el volumen (fuera de alcance en
+    0.6: `read_file`/`write_file`/... del shim de E2B no tienen plano de
+    datos propio) nombra una ruta que no está bajo el volumen montado."""
+
+
+class BuildException(SandboxException):
+    """`Template.build` (m15-templates) falló: `reason` nombra la causa
+    (`build_quota`, `ready_client_error`, `ready_server_error`, o `None`
+    con `step`/`command`/`exit_code`/`log_tail` cuando falló un paso del
+    Dockerfile compilado)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        step: int | None = None,
+        command: str | None = None,
+        exit_code: int | None = None,
+        log_tail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.step = step
+        self.command = command
+        self.exit_code = exit_code
+        self.log_tail = log_tail
+
+
+class TemplateException(SandboxException):
+    """`Template` (m15-templates): un nombre o un tag inválido, o una
+    imagen anterior a 0.6 pasada a `Sandbox.create()` con un `Template`."""
+
+
+class StackException(SandboxException):
+    """Un `OptionalStacks.deploy/status/destroy` (M15 foundations) falló.
+    `code` es `blocked` (pila en `ROLLBACK_COMPLETE`, hay que borrarla
+    antes), `not_found`, `in_progress` o `failed`; el mensaje nunca repite
+    el de CloudFormation."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class WebhookException(SandboxException):
+    """`LifecycleEvents.register_webhook/list_webhooks/delete_webhook`
+    (m15-events-webhooks) falló; el mensaje nunca repite una URL ni un
+    secreto."""
+
+
+class GatewayException(SandboxException):
+    """Un `SecretGateway` (m15-secrets-gateway) rechazó o no pudo enrutar
+    una petición: `code` es `not_allowed` (método/ruta fuera de la
+    allowlist), `rate_limited` o `upstream_unreachable`."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class CustomDomainException(SandboxException):
+    """`CustomDomain` (m15-custom-domain) falló: deploy/status/destroy de
+    la pila, o un `expose()`/`get_host()` sin ruta válida en el KVS."""

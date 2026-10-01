@@ -109,6 +109,72 @@ impl FlushReport {
     }
 }
 
+/// What one `LifecycleParticipant` (M15 foundations, `rayd::lifecycle::participants`)
+/// asks the `/suspend` budget for: a name for `SuspendShares::share_for` and
+/// an upper bound it never needs more than (events' flush, telemetry's
+/// flush and the gateway's drain are all sub-second; a future feature with
+/// a slower participant states its own `max`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParticipantDemand {
+    pub name: &'static str,
+    pub max: Duration,
+}
+
+/// What a participant's `on_suspend(share)` reports back once its share is
+/// spent: `completed` is whatever work it had to do finishing in time,
+/// `timed_out` is the share itself expiring first. Never fatal: `/suspend`
+/// always answers 200 regardless (design D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParticipantReport {
+    pub completed: bool,
+    pub timed_out: bool,
+}
+
+/// How much of the `SuspendBudget` each participant gets, computed once per
+/// `/suspend`. Every participant's share is at most its own `max` *and* at
+/// most the budget's `sync_deadline`: participants run concurrently with
+/// the per-filesystem `syncfs` calls, not in series after them, so adding a
+/// participant never grows the hook's total wait past the existing
+/// `SuspendBudget` ceiling.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SuspendShares {
+    shares: Vec<(&'static str, Duration)>,
+}
+
+impl SuspendShares {
+    #[must_use]
+    pub fn allocate(budget: SuspendBudget, demands: &[ParticipantDemand]) -> Self {
+        let ceiling = budget.sync_deadline();
+        Self {
+            shares: demands
+                .iter()
+                .map(|demand| (demand.name, demand.max.min(ceiling)))
+                .collect(),
+        }
+    }
+
+    /// The share for `name`, or `Duration::ZERO` if it made no demand (a
+    /// participant that never asked gets no time, not an error: callers
+    /// check `is_empty`/length against their own demand list instead).
+    #[must_use]
+    pub fn share_for(&self, name: &str) -> Duration {
+        self.shares
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map_or(Duration::ZERO, |(_, share)| *share)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.shares.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.shares.is_empty()
+    }
+}
+
 /// What the flush needs from the operating system. `syncfs` may block for
 /// as long as the filesystem wants (forever on a hung hard NFS mount): the
 /// adapter only ever calls it from a throwaway thread.
@@ -367,5 +433,65 @@ garbage line
         assert!(!report.deadline_hit());
         report.pending = 1;
         assert!(report.deadline_hit());
+    }
+
+    #[test]
+    fn a_participants_share_is_capped_by_its_own_demand() {
+        let budget = SuspendBudget::for_hook(HOOK_BUDGET);
+        let shares = SuspendShares::allocate(
+            budget,
+            &[ParticipantDemand {
+                name: "events",
+                max: Duration::from_millis(500),
+            }],
+        );
+        assert_eq!(shares.share_for("events"), Duration::from_millis(500));
+        assert_eq!(shares.len(), 1);
+        assert!(!shares.is_empty());
+    }
+
+    #[test]
+    fn a_participants_share_never_exceeds_the_sync_deadline() {
+        // A tiny hook budget leaves almost nothing for the syncs (see
+        // `a_hook_budget_too_small_for_the_other_steps_waits_for_nothing`);
+        // a participant asking for far more than that gets clamped, not the
+        // full amount it asked for.
+        let tiny_budget = SuspendBudget::for_hook(Duration::from_millis(800));
+        let shares = SuspendShares::allocate(
+            tiny_budget,
+            &[ParticipantDemand {
+                name: "telemetry",
+                max: Duration::from_secs(2),
+            }],
+        );
+        assert_eq!(shares.share_for("telemetry"), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_participant_that_never_asked_gets_no_share() {
+        let budget = SuspendBudget::for_hook(HOOK_BUDGET);
+        let shares = SuspendShares::allocate(budget, &[]);
+        assert!(shares.is_empty());
+        assert_eq!(shares.share_for("gateway"), Duration::ZERO);
+    }
+
+    #[test]
+    fn several_participants_each_get_their_own_share_independently() {
+        let budget = SuspendBudget::for_hook(HOOK_BUDGET);
+        let shares = SuspendShares::allocate(
+            budget,
+            &[
+                ParticipantDemand {
+                    name: "events",
+                    max: Duration::from_millis(1_000),
+                },
+                ParticipantDemand {
+                    name: "telemetry",
+                    max: Duration::from_millis(2_000),
+                },
+            ],
+        );
+        assert_eq!(shares.share_for("events"), Duration::from_millis(1_000));
+        assert_eq!(shares.share_for("telemetry"), Duration::from_millis(2_000));
     }
 }

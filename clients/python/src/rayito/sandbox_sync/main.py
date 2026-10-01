@@ -36,6 +36,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -120,6 +121,7 @@ from rayito._process_base import (
     metrics_from_proto,
     stream_failure_exception,
 )
+from rayito._role_policy import resolve_image_variant
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -513,6 +515,13 @@ class Sandbox:
         secret_cache: SecretCache | None = None,
         index: DynamoDbIndex | None = None,
         tracer_provider: TracerProviderLike | None = None,
+        mounts: Mapping[str, Any] | None = None,
+        volumes: Mapping[str, Any] | None = None,
+        size: Any | None = None,
+        events: Any | None = None,
+        telemetry: Any | None = None,
+        gateways: Mapping[str, Any] | None = None,
+        domain: Any | None = None,
     ) -> Self:
         """`run-microvm` → token del proxy → sondeo de `Health` hasta
          `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
@@ -656,6 +665,15 @@ class Sandbox:
              sbx = Sandbox.create(tracer_provider=trace.get_tracer_provider())
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
+
+         `mounts=`, `volumes=`, `size=`, `events=`, `telemetry=`, `gateways=`
+         y `domain=` son las siete opciones 0.6 (M15); cada una llega en su
+         propio cambio OpenSpec y, mientras siga siendo un stub, ponerla a
+         algo distinto de `None` lanza `UnimplementedError` nombrando ese
+         cambio, antes de `run-microvm` (`_feature_options.plan_features`).
+         Ninguna hace ninguna llamada a AWS ni construye ningún cliente por
+         sí sola; con las siete en `None` (su valor por defecto) el
+         comportamiento es exactamente el de 0.5.x.
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -699,6 +717,13 @@ class Sandbox:
                     "keep_on_failure": keep_on_failure,
                     "control_plane": control_plane,
                     "transport": transport,
+                    "mounts": mounts,
+                    "volumes": volumes,
+                    "size": size,
+                    "events": events,
+                    "telemetry": telemetry,
+                    "gateways": gateways,
+                    "domain": domain,
                 }
             )
             taken = cast(
@@ -717,6 +742,18 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
+        plan_features(
+            FeatureOptions(
+                mounts=mounts,
+                volumes=volumes,
+                size=size,
+                events=events,
+                telemetry=telemetry,
+                gateways=gateways,
+                domain=domain,
+            ),
+            image_variant=resolve_image_variant(template),
+        )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
             binding,

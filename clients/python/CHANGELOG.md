@@ -6,6 +6,30 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Added
+
+- **Convenio `OptionalStack` y `ConfigureSandbox`** (`v06-foundations`,
+  M15 foundations, ADR-015/ADR-016, opcional y apagado por defecto): el
+  servicio `OptionalStacks` (`deploy`/`status`/`destroy`/`components`) y la
+  CLI `rayito stack` sobre un catálogo de nueve componentes
+  (`metadata-index` y `secrets-access`, migrados sin cambios de
+  comportamiento; los otros siete son stubs hasta su propia función); las
+  siete opciones 0.6 de `Sandbox.create()` (`mounts`, `volumes`, `size`,
+  `events`, `telemetry`, `gateways`, `domain`) existen ya en la firma y
+  lanzan `UnimplementedError` nombrando el cambio que las trae mientras
+  sigan siendo un stub, antes de `run-microvm`. Fila de compatibilidad
+  "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna opción nueva,
+  el comportamiento es byte a byte el de 0.5.x (traza de oro en
+  `tests/unit/fixtures/zero_cost_0_5_trace.json`).
+<!-- m15-s3-mounts -->
+<!-- m15-efs-volumes -->
+<!-- m15-sizes-catalog -->
+<!-- m15-events-webhooks -->
+<!-- m15-rayd-otlp -->
+<!-- m15-templates -->
+<!-- m15-secrets-gateway -->
+<!-- m15-custom-domain -->
+
 ## [0.5.0] - 2026-10-01
 
 ### Added

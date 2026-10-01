@@ -131,3 +131,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.3` | `0.3.0` | M9: max_lifetime/on_timeout, set_timeout, get_metrics_history, network= y los kernels Deno exigen el rayd del tag rayd-v0.3.0 |
 | `0.4` | `0.4.0` | 0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente en español exigen el rayd del tag rayd-v0.4.0 |
 | `0.5` | `0.5.0` | 0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales (secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0 |
+| `0.6` | `0.6.0` | 0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, volúmenes, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0 |

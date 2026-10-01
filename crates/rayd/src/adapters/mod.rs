@@ -12,12 +12,15 @@
 
 pub mod bounded_sync;
 pub mod capabilities;
+pub mod child_registry;
+pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
 pub mod imds_block;
 pub mod ip_command;
 pub mod name_resolver;
 pub mod notify_watcher;
+pub mod orphan_reaper;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod pty_backend;
@@ -30,6 +33,10 @@ pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
+pub use child_registry::ChildRegistry;
+pub use credential_broker::{
+    CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
+};
 pub use fs_identity::FsIdentityGuard;
 pub use imds_block::{
     IMDS_ADDRESS, IMDS_VERIFY_BUDGET, ImdsBlock, ImdsProbe, ImdsState, USER_PROBE_CODE,
@@ -42,6 +49,7 @@ pub use name_resolver::{NumericNameResolver, PlatformNameResolver};
 #[cfg(unix)]
 pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
+pub use orphan_reaper::OrphanReaper;
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };

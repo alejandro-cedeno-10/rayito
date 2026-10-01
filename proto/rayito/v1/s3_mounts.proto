@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// Owned by m15-s3-mounts. Foundations only creates these two empty stub
+// messages (so `configure.proto` has a stable field to point at); the
+// feature that implements s3-mounts owns every field number inside this
+// file from here on. Message names stay prefixed (`S3Mount*`) so they
+// never collide with another feature's messages inside `rayito.v1`.
+message S3MountsConfig {}
+
+message S3MountsStatus {}

@@ -26,6 +26,7 @@ import {
   SandboxNotReadyError,
   TimeoutError,
 } from "../errors.js";
+import { planFeatures } from "../feature-options.js";
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
@@ -57,6 +58,7 @@ import {
 } from "../otel.js";
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
+import { resolveImageVariant } from "../role-policy.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -330,6 +332,21 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    *   const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
    */
   readonly index?: DynamoDbIndex | undefined;
+  /**
+   * Las siete opciones 0.6 (M15): cada una llega en su propio cambio
+   * OpenSpec y, mientras siga siendo un stub, ponerla a algo distinto de
+   * `undefined` lanza `UnimplementedError` nombrando ese cambio, antes de
+   * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
+   * siete ausentes (su valor por defecto) el comportamiento es exactamente
+   * el de 0.5.x.
+   */
+  readonly mounts?: Readonly<Record<string, unknown>> | undefined;
+  readonly volumes?: Readonly<Record<string, unknown>> | undefined;
+  readonly size?: unknown;
+  readonly events?: unknown;
+  readonly telemetry?: unknown;
+  readonly gateways?: Readonly<Record<string, unknown>> | undefined;
+  readonly domain?: unknown;
 }
 
 /**
@@ -673,6 +690,18 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
+    planFeatures(
+      {
+        mounts: options.mounts,
+        volumes: options.volumes,
+        size: options.size,
+        events: options.events,
+        telemetry: options.telemetry,
+        gateways: options.gateways,
+        domain: options.domain,
+      },
+      resolveImageVariant(options.template),
+    );
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),

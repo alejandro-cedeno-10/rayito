@@ -296,3 +296,115 @@ export class SandboxIndexError extends SandboxError {}
  * salvo `keepOnFailure: true`.
  */
 export class IndexWriteError extends SandboxIndexError {}
+
+// ------------------------------------------------------------- M15 (Rayito 0.6)
+//
+// Cada clase la usa la función OpenSpec que la nombra en su docstring; hasta
+// entonces nada la lanza (foundations sólo la pre-crea como seam, §1(g) de la
+// arquitectura de M15). `code` es una cadena cerrada, nunca el mensaje de AWS
+// ni un identificador del usuario.
+
+export interface MountErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+}
+
+/**
+ * Un montaje de `mounts` (m15-s3-mounts) falló o sigue sin asentarse. `code`
+ * es uno de `network`, `iam_denied`, `not_found`, `not_allowed`,
+ * `helper_missing`, `timeout`.
+ */
+export class MountError extends SandboxError {
+  readonly code: string;
+
+  constructor(message: string, options: MountErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+  }
+}
+
+/** Error de un volumen EFS (m15-efs-volumes, experimental). */
+export class VolumeError extends SandboxError {}
+
+/** El `AccessPoint` del volumen no existe. */
+export class VolumeNotFoundError extends VolumeError {}
+
+/** Una operación de contenido nombra una ruta fuera del volumen montado. */
+export class VolumePathNotFoundError extends VolumeError {}
+
+export interface BuildErrorOptions extends SandboxErrorOptions {
+  readonly reason?: string | undefined;
+  readonly step?: number | undefined;
+  readonly command?: string | undefined;
+  readonly exitCode?: number | undefined;
+  readonly logTail?: string | undefined;
+}
+
+/**
+ * `Template.build` (m15-templates) falló.
+ *
+ * OJO (open item para m15-templates): `src/e2b/errors.ts` ya declara un
+ * `BuildError`/`TemplateError` propios — stands-ins que nunca se lanzan
+ * (Rayito no tenía API de templates) y que `tests/unit/e2b-exports.test.ts`
+ * comprueba con una forma distinta (`BuildError` del shim NO es
+ * `SandboxError`). No se exportan desde `index.ts` todavía para no chocar
+ * con ellos; m15-templates decide si los retira y realinea el shim a estas
+ * clases (el patrón ya usado para `NotEnoughSpaceError`/`FileUploadError`)
+ * o si renombra una de las dos parejas.
+ */
+export class BuildError extends SandboxError {
+  readonly reason: string | undefined;
+  readonly step: number | undefined;
+  readonly command: string | undefined;
+  readonly exitCode: number | undefined;
+  readonly logTail: string | undefined;
+
+  constructor(message: string, options: BuildErrorOptions = {}) {
+    super(message, options);
+    this.reason = options.reason;
+    this.step = options.step;
+    this.command = options.command;
+    this.exitCode = options.exitCode;
+    this.logTail = options.logTail;
+  }
+}
+
+/** Un `Template` inválido, o una imagen anterior a 0.6 con un `Template`. */
+export class TemplateError extends SandboxError {}
+
+export interface StackErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+}
+
+/**
+ * Un `OptionalStacks.deploy/status/destroy` (M15 foundations) falló. `code`
+ * es `blocked` (pila en ROLLBACK_COMPLETE), `not_found`, `in_progress` o
+ * `failed`; el mensaje nunca repite el de CloudFormation.
+ */
+export class StackError extends SandboxError {
+  readonly code: string;
+
+  constructor(message: string, options: StackErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+  }
+}
+
+/** `LifecycleEvents` webhooks (m15-events-webhooks) falló. */
+export class WebhookError extends SandboxError {}
+
+export interface GatewayErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+}
+
+/** Un `SecretGateway` (m15-secrets-gateway) rechazó o no pudo enrutar una petición. */
+export class GatewayError extends SandboxError {
+  readonly code: string;
+
+  constructor(message: string, options: GatewayErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+  }
+}
+
+/** `CustomDomain` (m15-custom-domain) falló. */
+export class CustomDomainError extends SandboxError {}

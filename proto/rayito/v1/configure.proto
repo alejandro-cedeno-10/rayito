@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+import "rayito/v1/s3_mounts.proto";
+import "rayito/v1/efs_volumes.proto";
+import "rayito/v1/lifecycle_events.proto";
+import "rayito/v1/telemetry_export.proto";
+import "rayito/v1/secret_gateway.proto";
+
+// M15 (Rayito 0.6, foundations): el único canal de configuración por
+// sandbox tras `/run`. Exige x-access-token como cualquier RPC salvo
+// Health. Sólo se llama cuando al menos una sección de 0.6 está activada
+// explícitamente por el SDK (ADR-014 regla 4: ninguna variable de entorno
+// activa una función de coste); sin eso, el SDK no hace ninguna llamada a
+// este servicio y el comportamiento es byte a byte el de 0.5.x.
+//
+// Semántica de `ConfigureRequest`: una sección ausente se deja tal cual; una
+// presente (incluso vacía) sustituye el estado anterior de esa función.
+// Orden de aplicación fijo (`rayd_core::configure::APPLY_ORDER`): events →
+// telemetry → gateway → s3_mounts → efs_volumes.
+service ConfigureService {
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc ConfigureStatus(ConfigureStatusRequest) returns (ConfigureStatusResponse);
+}
+
+message ConfigureRequest {
+  // Idempotencia: una reconexión que repite el mismo request_id tras un
+  // corte recibe el mismo resultado sin reaplicar las secciones.
+  string request_id = 1;
+  S3MountsConfig s3_mounts = 2;
+  EfsVolumesConfig efs_volumes = 3;
+  LifecycleEventsConfig lifecycle_events = 4;
+  TelemetryExportConfig telemetry_export = 5;
+  SecretGatewayConfig secret_gateway = 6;
+  // 7-15 reservados para futuras secciones (ver §1(b)/§3 de la arquitectura).
+}
+
+message ConfigureResponse {
+  repeated SectionResult results = 1;
+  // Se incrementa cada vez que una Configure cambia algo; una llamada
+  // idempotente (mismo request_id) devuelve la generación sin incrementar.
+  uint64 config_generation = 2;
+}
+
+message SectionResult {
+  ConfigSection section = 1;
+  SectionCode code = 2;
+  // Cadena snake_case cerrada que documenta el `.proto` de la función
+  // (nunca un mensaje de AWS, un host o una ruta).
+  string error_class = 3;
+}
+
+enum ConfigSection {
+  CONFIG_SECTION_UNSPECIFIED = 0;
+  CONFIG_SECTION_S3_MOUNTS = 1;
+  CONFIG_SECTION_EFS_VOLUMES = 2;
+  CONFIG_SECTION_LIFECYCLE_EVENTS = 3;
+  CONFIG_SECTION_TELEMETRY_EXPORT = 4;
+  CONFIG_SECTION_SECRET_GATEWAY = 5;
+}
+
+enum SectionCode {
+  SECTION_CODE_UNSPECIFIED = 0;
+  // El estado deseado de la sección ya está en efecto.
+  SECTION_CODE_APPLIED = 1;
+  // Aceptada pero aún no en efecto (p. ej. un montaje que sigue asentándose).
+  SECTION_CODE_PENDING = 2;
+  // Este build del agente no tiene slot para la función.
+  SECTION_CODE_UNSUPPORTED = 3;
+  // El contenido de la sección se rechazó antes de cambiar nada.
+  SECTION_CODE_INVALID = 4;
+  // Aceptada e intentada, pero el adaptador propio de la función falló.
+  SECTION_CODE_FAILED = 5;
+}
+
+message ConfigureStatusRequest {}
+
+message ConfigureStatusResponse {
+  S3MountsStatus s3_mounts = 1;
+  EfsVolumesStatus efs_volumes = 2;
+  LifecycleEventsStatus lifecycle_events = 3;
+  TelemetryExportStatus telemetry_export = 4;
+  SecretGatewayStatus secret_gateway = 5;
+}

@@ -8,6 +8,7 @@
 
 pub mod exit_terminator;
 pub mod metrics_sampler;
+pub mod participants;
 pub mod reaper;
 pub mod running_sleep;
 pub mod suspend;
@@ -16,6 +17,7 @@ pub mod timeout_watcher;
 
 pub use exit_terminator::{ExitParts, ExitReason, ExitTerminator, ForceExit};
 pub use metrics_sampler::spawn_metrics_sampler;
+pub use participants::{LifecycleParticipant, ReadyVerdict};
 pub use reaper::{DEFAULT_REAPER_INTERVAL, Reaper, spawn_reaper};
 pub use running_sleep::running_sleep;
 pub use suspend::{

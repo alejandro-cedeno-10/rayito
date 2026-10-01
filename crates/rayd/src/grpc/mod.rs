@@ -11,6 +11,7 @@ mod access_token;
 mod client_abort;
 mod code;
 mod compression;
+pub mod configure;
 mod filesystem;
 mod health;
 mod keepalive;
@@ -31,6 +32,7 @@ use rayd_core::metrics::MetricsProbe;
 use rayd_core::metrics_history::MetricsHistory;
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::code_service_server::CodeServiceServer;
+use rayito_proto::v1::configure_service_server::ConfigureServiceServer;
 use rayito_proto::v1::filesystem_service_server::FilesystemServiceServer;
 use rayito_proto::v1::health_service_server::HealthServiceServer;
 use rayito_proto::v1::lifecycle_service_server::LifecycleServiceServer;
@@ -46,6 +48,7 @@ pub use access_token::AccessTokenLayer;
 pub use client_abort::{ClientAbort, ClientAbortLayer};
 pub use code::CodeGrpc;
 pub use compression::{COMPRESSION_OPT_IN_HEADER, CompressionOptInLayer};
+pub use configure::ConfigureGrpc;
 pub use filesystem::{DEFAULT_WATCH_KEEPALIVE_INTERVAL, FilesystemGrpc};
 use health::HealthGrpc;
 pub use keepalive::{DEFAULT_KEEPALIVE_INTERVAL, KeepAliveStream};
@@ -179,6 +182,15 @@ pub fn router_with_transfers(
     } = services;
     let kernel_status: Arc<dyn KernelStatus> = code.clone();
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
+    // M15 foundations: every slot is still `features::slot::Unsupported`
+    // (stateless), so building the set fresh here needs no field on
+    // `Services` yet. The feature that first needs shared context (a
+    // bucket, a credential broker) threads `Arc<FeatureSet>` through
+    // `Services` in its own PR instead of building it here.
+    let configure = ConfigureGrpc::new(
+        session.clone(),
+        Arc::new(crate::features::build(&crate::features::FeatureContext)),
+    );
     let mut server = Server::builder()
         .tcp_nodelay(true)
         .http2_keepalive_interval(Some(HTTP2_KEEPALIVE_INTERVAL))
@@ -231,4 +243,5 @@ pub fn router_with_transfers(
         ))
         .add_service(LifecycleServiceServer::new(lifecycle))
         .add_service(NetworkServiceServer::new(NetworkGrpc::new(network)))
+        .add_service(ConfigureServiceServer::new(configure))
 }

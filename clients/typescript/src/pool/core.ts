@@ -398,6 +398,16 @@ export const POOL_REJECTED_OPTIONS: readonly string[] = Object.freeze([
   "keepOnFailure",
   "controlPlane",
   "transport",
+  // M15 (Rayito 0.6, foundations): las siete opciones 0.6 no tienen sentido
+  // con pool (una plaza ya arrancada no puede aceptar un plano de
+  // lanzamiento distinto).
+  "mounts",
+  "volumes",
+  "size",
+  "events",
+  "telemetry",
+  "gateways",
+  "domain",
 ]);
 
 /** La primera opción rechazada que viene definida junto a `pool`; `undefined` si ninguna. */

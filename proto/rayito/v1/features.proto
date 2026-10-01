@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package rayito.v1;
+
+// M15 (Rayito 0.6, foundations): qué funciones opcionales soporta este
+// build del agente. `HealthResponse.features` (health.proto, campo 16) lo
+// expone; un agente anterior a 0.6 nunca manda este mensaje (ausencia de
+// campo de proto3), que es como el SDK distingue "agente pre-0.6" de
+// "0.6, pero esta función en concreto sigue siendo un stub" (`configure=
+// true` con el resto en `false`). Los flags no son secretos: sólo dicen qué
+// existe, nunca un host, una credencial ni un valor de configuración.
+message AgentFeatures {
+  // `ConfigureService` existe en este build (siempre true desde 0.6.0).
+  bool configure = 1;
+  bool s3_mounts = 2;
+  bool efs_volumes = 3;
+  bool lifecycle_events = 4;
+  bool telemetry_export = 5;
+  bool secret_gateway = 6;
+  bool template_start = 7;
+  // Clases de tráfico que sale como root por una excepción declarada a la
+  // política de egress del guest (ADR-012); nunca un host ni una IP.
+  repeated RootEgressClass root_egress = 8;
+}
+
+// Mirrors `rayd_core::root_egress::RootEgressClass`. Foundations defines
+// the enum; each feature that opens a root-egress path reports its own
+// class once it has a real adapter (today none does, so `root_egress` is
+// always empty).
+enum RootEgressClass {
+  ROOT_EGRESS_CLASS_UNSPECIFIED = 0;
+  // s3-mounts: el daemon `mount-s3` lee el execution role de IMDS como root.
+  ROOT_EGRESS_CLASS_S3 = 1;
+  // rayd-otlp: métricas OTLP/HTTP exportadas a CloudWatch, firmadas SigV4.
+  ROOT_EGRESS_CLASS_CLOUDWATCH_OTLP = 2;
+  // secret-gateway: el upstream fijo del listener de loopback.
+  ROOT_EGRESS_CLASS_SECRET_GATEWAY_UPSTREAM = 3;
+  // efs-volumes: el propio montaje NFS.
+  ROOT_EGRESS_CLASS_EFS = 4;
+}

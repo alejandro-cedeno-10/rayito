@@ -16,11 +16,22 @@
 //! `wire_tokens`. No
 //! transport types live here; the adapters in the `rayd` crate translate
 //! gRPC and HTTP into these calls.
+//!
+//! M15 (Rayito 0.6) adds the shared domain of the optional features:
+//! which zombies PID 1 may reap (`orphans`), the `ConfigureSandbox`
+//! contract (`configure`) and the capability flags `Health` reports
+//! (`features`, `root_egress`), and the credential-lease freshness rule
+//! shared by every feature that needs the execution role inside the guest
+//! (`credentials`). Each feature's own domain (`volume`, `s3_mount`, …)
+//! lives in its own module, added by that feature.
 
 pub mod auth;
 pub mod capabilities;
 pub mod clock;
 pub mod code;
+pub mod configure;
+pub mod credentials;
+pub mod features;
 pub mod filesystem;
 pub mod health;
 pub mod hooks;
@@ -28,9 +39,11 @@ pub mod lifecycle;
 pub mod metrics;
 pub mod metrics_history;
 pub mod network;
+pub mod orphans;
 pub mod persistence;
 pub mod process;
 pub mod pty;
+pub mod root_egress;
 pub mod run_payload;
 pub mod sandbox_timeout;
 pub mod session;
