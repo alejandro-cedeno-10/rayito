@@ -163,7 +163,7 @@ def list_command(
         typer.Option(
             "--index-table",
             help="Tabla DynamoDB del índice de metadatos (opcional, infra/metadata-index.yaml): "
-            "con --metadata filtra también sandboxes en pausa sin despertarlos. Coste: "
+            "exige --metadata; filtra también sandboxes en pausa sin despertarlos. Coste: "
             "dynamodb:BatchGetItem por página. Apagado por defecto.",
         ),
     ] = None,
@@ -175,7 +175,9 @@ def list_command(
     states = states_or_exit(state)
     if all_states and (metadata or states is not None or index_table is not None):
         usage_failure("--all-states no se combina con --state, --metadata ni --index-table")
-    if metadata or index_table is not None:
+    if index_table is not None and not metadata:
+        usage_failure("--index-table sólo filtra junto a --metadata K=V")
+    if metadata:
         items = filtered_sandboxes(clients, template, template_version, wanted, states, index_table)
     elif states is not None:
         items = list(

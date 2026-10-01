@@ -155,6 +155,8 @@ rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-re
   Sólo aparecen los sandboxes creados con `index=`; con `--json` cada fila
   lleva sus `metadata`. Coste e IAM en
   [Funciones opcionales](optional-features.md#metadata-index).
+  `--index-table` sin `--metadata` es un error de uso (salida 2) y no
+  llama a DynamoDB: el índice sólo sirve para filtrar por metadatos.
   `--all-states` no se combina con `--state`, `--metadata` ni
   `--index-table` (salida 2).
 - `info` hace `get-microvm` y, sobre un sandbox `RUNNING`, lee sus metadatos

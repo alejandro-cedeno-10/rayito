@@ -92,3 +92,13 @@ def test_all_states_does_not_combine_with_the_index(runner: CliRunner, clients: 
         app, ["sandbox", "list", "--all-states", "--index-table", TABLE], obj=clients
     )
     assert result.exit_code == 2
+
+
+def test_index_table_without_metadata_is_a_usage_error_and_builds_no_index(
+    runner: CliRunner, clients: Clients, fake_plane: FakeControlPlane, index: DynamoDbIndex
+) -> None:
+    fake_plane.items = [list_item("microvm-a", "SUSPENDED")]
+    result = runner.invoke(app, ["sandbox", "list", "--index-table", TABLE], obj=clients)
+    assert result.exit_code == 2
+    assert "--metadata" in result.stderr
+    assert index.tables == []  # type: ignore[attr-defined]
