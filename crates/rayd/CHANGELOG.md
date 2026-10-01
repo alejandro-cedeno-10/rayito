@@ -10,6 +10,21 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `/suspend` ya no puede colgarse en `sync(2)`: el paso 4 del checklist
+  llamaba a `sync(2)` sin plazo, y un montaje de red o FUSE colgado (o un
+  disco muy lento) lo dejaba en estado `D`; un `/suspend` que no responde a
+  tiempo hace que AWS termine el `MicroVM`. Ahora se hace un `syncfs(2)` por
+  sistema de ficheros (sacados de `/proc/self/mountinfo`: escribibles, uno
+  por dispositivo, sin pseudo-sistemas), cada uno en un hilo desechable, y
+  el hook espera como mucho el plazo de `SuspendBudget` (5 s por defecto,
+  acotado a que gracia + quiesce + sync quepan en la mitad del presupuesto
+  del hook). Lo que no termine sigue fuera del camino del 200; su sistema de
+  ficheros se salta en los siguientes `/suspend` mientras siga colgado, y el
+  plazo vencido se registra sólo con contadores (nunca rutas). La regla vive
+  en `rayd_core::suspend_sync`; las syscalls, en `adapters::bounded_sync`.
+
 ## [0.4.0] - 2026-09-30
 
 ### Cambios que rompen
