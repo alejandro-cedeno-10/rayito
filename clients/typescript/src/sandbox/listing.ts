@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
+import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { LIST_MAX_RESULTS, TERMINAL_STATES } from "../limits.js";
 import type { MicrovmListPage, SandboxListItem } from "../models.js";
 import { validatedStringMap } from "../payload.js";
@@ -121,6 +122,8 @@ export interface ListFiltersFields {
   readonly startedAfterMs: number | undefined;
   readonly metadata: ReadonlyArray<readonly [string, string]> | undefined;
   readonly order: ListOrder | undefined;
+  /** La tabla del índice, sólo cuando filtra (`metadata` + `index`). */
+  readonly indexTable?: string | undefined;
 }
 
 /**
@@ -135,6 +138,7 @@ export class ListFilters implements ListFiltersFields {
   readonly startedAfterMs: number | undefined;
   readonly metadata: ReadonlyArray<readonly [string, string]> | undefined;
   readonly order: ListOrder | undefined;
+  readonly indexTable: string | undefined;
 
   constructor(fields: ListFiltersFields) {
     this.imageArn = fields.imageArn;
@@ -153,30 +157,42 @@ export class ListFilters implements ListFiltersFields {
               .map(([key, value]) => Object.freeze([key, value] as const)),
           );
     this.order = fields.order;
+    this.indexTable = fields.indexTable;
     Object.freeze(this);
   }
 
-  /** 16 hex del sha256 del JSON canónico de los filtros (golden vectors de D8). */
+  /**
+   * 16 hex del sha256 del JSON canónico de los filtros (golden vectors de
+   * D8). Con índice añade `index` (el nombre de la tabla); sin él, el
+   * documento es byte a byte el de 0.4.0.
+   */
   fingerprint(): string {
-    return sha256Hex(
-      canonicalJson({
-        image: this.imageArn ?? null,
-        version: this.imageVersion ?? null,
-        states: this.states === undefined ? null : [...this.states],
-        started_after_ms: this.startedAfterMs ?? null,
-        metadata: this.metadata === undefined ? null : Object.fromEntries(this.metadata),
-        order: this.order ?? null,
-      }),
-    ).slice(0, 16);
+    const document: Record<string, unknown> = {
+      image: this.imageArn ?? null,
+      version: this.imageVersion ?? null,
+      states: this.states === undefined ? null : [...this.states],
+      started_after_ms: this.startedAfterMs ?? null,
+      metadata: this.metadata === undefined ? null : Object.fromEntries(this.metadata),
+      order: this.order ?? null,
+    };
+    if (this.indexTable !== undefined) {
+      document.index = this.indexTable;
+    }
+    return sha256Hex(canonicalJson(document)).slice(0, 16);
   }
 
   /**
    * Estado (explícito o, por defecto, sin `TERMINATING|TERMINATED`) y
-   * `startedAt >= startedAfter`. Con `metadata` sólo pasa `RUNNING`: los
-   * metadatos se comparan aparte porque exigen una sonda de `Health`.
+   * `startedAt >= startedAfter`. Con `metadata` sin índice sólo pasa
+   * `RUNNING`: los metadatos se comparan aparte porque exigen una sonda de
+   * `Health`. Con índice pasa todo estado no terminal.
    */
   accepts(item: SandboxListItem): boolean {
-    if (this.metadata !== undefined && item.state !== METADATA_LIST_STATE) {
+    if (
+      this.metadata !== undefined &&
+      this.indexTable === undefined &&
+      item.state !== METADATA_LIST_STATE
+    ) {
       return false;
     }
     const stateWanted =
@@ -356,6 +372,11 @@ export class PageWalk {
     this.#loaded = true;
   }
 
+  /** Los items de la página actual que quedan por consumir. */
+  buffered(): readonly SandboxListItem[] {
+    return [...this.#buffer];
+  }
+
   nextRaw(): SandboxListItem | undefined {
     const item = this.#buffer.shift();
     if (item !== undefined) {
@@ -466,6 +487,17 @@ function validateMetadataStates(states: readonly string[] | undefined): void {
   }
 }
 
+/** Con índice, `metadata` filtra cualquier estado no terminal. */
+function validateIndexedStates(states: readonly string[] | undefined): void {
+  const terminal = (states ?? []).filter((state) => TERMINAL_STATES.has(state));
+  if (terminal.length > 0) {
+    throw new InvalidArgumentError(
+      "list({ metadata, index }) filtra sandboxes no terminados (RUNNING, PENDING, SUSPENDING, " +
+        `SUSPENDED); recibido ${JSON.stringify(terminal)}`,
+    );
+  }
+}
+
 function validateCursorForm(decoded: DecodedToken | undefined, order: ListOrder | undefined): void {
   if (decoded === undefined) {
     return;
@@ -484,6 +516,7 @@ export interface ListingRequestOptions {
   readonly order?: ListOrder | undefined;
   readonly limit?: number | undefined;
   readonly nextToken?: string | undefined;
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 /** Un listado validado; el ARN de la plantilla se resuelve después, con I/O. */
@@ -493,13 +526,17 @@ export interface ListingRequest {
   readonly order: ListOrder | undefined;
   readonly decoded: DecodedToken | undefined;
   readonly hasMetadata: boolean;
+  /** El índice sólo cuando filtra (`metadata` + `index`); si no, `undefined`. */
+  readonly index: DynamoDbIndex | undefined;
+  readonly wanted: Readonly<Record<string, string>>;
   metadataMatches(candidate: Readonly<Record<string, string>>): boolean;
   filters(imageArn: string | undefined): ListFilters;
 }
 
 /**
  * Valida todo lo de `paginate()`/`list()` antes de tocar AWS: `limit`,
- * `order`, `metadata` (con `states ⊆ {RUNNING}`), `startedAfter` y el token
+ * `order`, `metadata` (con `states ⊆ {RUNNING}` sin índice; cualquier estado
+ * no terminal con `index`), `startedAfter` y el token
  * (incluida su forma: cursor de página sin `order`, de clave con `order`).
  */
 export function listingRequest(options: ListingRequestOptions): ListingRequest {
@@ -507,8 +544,13 @@ export function listingRequest(options: ListingRequestOptions): ListingRequest {
   const order = validateOrder(options.order);
   const metadata =
     options.metadata === undefined ? undefined : validatedStringMap(options.metadata, "metadata");
-  if (metadata !== undefined) {
+  const givenIndex = validateIndex(options.index);
+  const index = metadata === undefined ? undefined : givenIndex;
+  if (metadata !== undefined && index === undefined) {
     validateMetadataStates(options.states);
+  }
+  if (index !== undefined) {
+    validateIndexedStates(options.states);
   }
   const startedAfterMs = validateStartedAfter(options.startedAfter);
   const decoded = options.nextToken === undefined ? undefined : decodeNextToken(options.nextToken);
@@ -521,6 +563,8 @@ export function listingRequest(options: ListingRequestOptions): ListingRequest {
     order,
     decoded,
     hasMetadata: wanted !== undefined,
+    index,
+    wanted: Object.freeze({ ...(metadata ?? {}) }),
     metadataMatches: (candidate: Readonly<Record<string, string>>) =>
       (wanted ?? []).every(
         ([key, value]) => Object.hasOwn(candidate, key) && candidate[key] === value,
@@ -533,6 +577,7 @@ export function listingRequest(options: ListingRequestOptions): ListingRequest {
         startedAfterMs,
         metadata: wanted,
         order,
+        indexTable: index?.tableName,
       }),
   });
 }

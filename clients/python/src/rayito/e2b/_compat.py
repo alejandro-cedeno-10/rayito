@@ -77,7 +77,9 @@ CLASS_METRICS_REASON: Final = (
     "define RAYITO_ACCESS_TOKEN"
 )
 LIST_METADATA_STATE_REASON: Final = (
-    "los metadatos viven en el agente; leerlos despertaría el sandbox"
+    "los metadatos viven en el agente; leerlos despertaría el sandbox. Pasa "
+    "index=DynamoDbIndex(...) (tabla opcional en tu cuenta, ver optional-features.md) "
+    "para filtrar sandboxes en pausa por metadatos sin despertarlos"
 )
 HTTPS_PORTS_SUPPORTED: Final[bool] = False
 HTTPS_PORTS_REASON: Final = (
@@ -578,13 +580,18 @@ def pty_size_to_native(size: PtySize | NativePtySize) -> NativePtySize:
 
 
 def states_for(
-    state: Sequence[SandboxState] | None, query: SandboxQuery | None
+    state: Sequence[SandboxState] | None,
+    query: SandboxQuery | None,
+    *,
+    indexed: bool = False,
 ) -> tuple[str, ...] | None:
     """Estados nativos de `list()`: sin filtro, el nativo por defecto (todo
-    menos terminal); con `query.metadata`, sólo `RUNNING` (los metadatos
-    viven en el agente y leerlos despertaría un sandbox pausado)."""
+    menos terminal); con `query.metadata` y sin índice, sólo `RUNNING` (los
+    metadatos viven en el agente y leerlos despertaría un sandbox pausado).
+    Con índice (`indexed`), `query.metadata` admite también `PAUSED`
+    (`SUSPENDING|SUSPENDED`): los metadatos salen de la tabla, no del agente."""
     wanted = tuple(state) if state is not None else None
-    if query is not None and query.metadata is not None:
+    if query is not None and query.metadata is not None and not indexed:
         if wanted is None or set(wanted) == {SandboxState.RUNNING}:
             return METADATA_QUERY_STATES
         raise unimplemented("list(state=PAUSED, query.metadata)", LIST_METADATA_STATE_REASON)
@@ -600,10 +607,13 @@ def list_mapping(
     query: SandboxQuery | None,
     state: Sequence[SandboxState] | None,
     template: str | None,
+    *,
+    indexed: bool = False,
 ) -> ListMapping:
     """Los filtros de `list()`: `state` y `query.state` distintos, o
     `template` y `query.template` distintos, son `InvalidArgumentException`;
-    los estados pasan por `states_for`."""
+    los estados pasan por `states_for` (con `indexed`, la extensión
+    `index=` de Rayito)."""
     query_state = None if query is None else query.state
     if state is not None and query_state is not None and set(state) != set(query_state):
         raise InvalidArgumentException("state y query.state difieren: usa sólo query.state")
@@ -613,7 +623,7 @@ def list_mapping(
             "template y query.template difieren: usa sólo query.template"
         )
     return ListMapping(
-        states=states_for(state if state is not None else query_state, query),
+        states=states_for(state if state is not None else query_state, query, indexed=indexed),
         metadata=None if query is None else query.metadata,
         started_after=None if query is None else query.started_after,
         template=template if template is not None else query_template,

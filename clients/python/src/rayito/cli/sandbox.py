@@ -22,6 +22,7 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
+from rayito._index import DynamoDbIndex
 from rayito._limits import MICROVM_STATES, TERMINAL_STATES
 from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
 from rayito._payload import generate_access_token
@@ -64,7 +65,7 @@ LIST_COLUMNS = ("sandbox_id", "state", "template", "template_version", "started_
 
 
 def list_row(item: SandboxListItem) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "sandbox_id": item.sandbox_id,
         "state": item.state,
         "template": item.template_name,
@@ -73,6 +74,9 @@ def list_row(item: SandboxListItem) -> dict[str, Any]:
         "started_at": iso_utc(item.started_at),
         "age": age(item.started_at),
     }
+    if item.metadata is not None:
+        row["metadata"] = dict(item.metadata)
+    return row
 
 
 def list_sandboxes(
@@ -88,6 +92,45 @@ def list_sandboxes(
     )
 
 
+def filtered_sandboxes(
+    clients: Clients,
+    template: str | None,
+    template_version: str | None,
+    metadata: dict[str, str],
+    states: list[str] | None,
+    index_table: str | None,
+) -> list[SandboxListItem]:
+    """`list --metadata`: con `--index-table`, `Sandbox.list(index=...)` sobre
+    la tabla del índice (cualquier estado no terminal, sin sondas); sin él,
+    la sonda de `Health` O(n) de 0.4.0, sólo sobre `RUNNING`."""
+    index = (
+        None
+        if index_table is None
+        else DynamoDbIndex(index_table, session=clients.session, region=clients.region)
+    )
+    return list(
+        Sandbox.list(
+            template=template,
+            template_version=template_version,
+            states=states,
+            metadata=metadata,
+            index=index,
+            control_plane=clients.control_plane,
+            transport=clients.transport,
+        )
+    )
+
+
+def states_or_exit(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    states = [value.upper() for value in values]
+    unknown = sorted(set(states) - set(MICROVM_STATES))
+    if unknown:
+        usage_failure(f"--state: estado desconocido {unknown}; válidos: {list(MICROVM_STATES)}")
+    return states
+
+
 @sandbox_app.command("list")
 def list_command(
     ctx: typer.Context,
@@ -98,12 +141,56 @@ def list_command(
     all_states: Annotated[
         bool, typer.Option("--all-states", help="Incluye TERMINATING y TERMINATED.")
     ] = False,
+    metadata: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--metadata",
+            metavar="K=V",
+            help="Filtra por metadatos (repetible). Sin --index-table sondea el Health de "
+            "cada sandbox RUNNING (O(n)).",
+        ),
+    ] = None,
+    state: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--state",
+            help="Estado a incluir (repetible, p. ej. suspended); con --metadata exige "
+            "--index-table para estados distintos de running.",
+        ),
+    ] = None,
+    index_table: Annotated[
+        str | None,
+        typer.Option(
+            "--index-table",
+            help="Tabla DynamoDB del índice de metadatos (opcional, infra/metadata-index.yaml): "
+            "exige --metadata; filtra también sandboxes en pausa sin despertarlos. Coste: "
+            "dynamodb:BatchGetItem por página. Apagado por defecto.",
+        ),
+    ] = None,
 ) -> None:
-    """MicroVMs no terminados (sin sondear ningún endpoint)."""
+    """MicroVMs no terminados (sin sondear ningún endpoint salvo --metadata sin
+    --index-table)."""
     clients = clients_of(ctx)
-    rows = [
-        list_row(item) for item in list_sandboxes(clients, template, template_version, all_states)
-    ]
+    wanted = pairs_or_exit(metadata, "--metadata")
+    states = states_or_exit(state)
+    if all_states and (metadata or states is not None or index_table is not None):
+        usage_failure("--all-states no se combina con --state, --metadata ni --index-table")
+    if index_table is not None and not metadata:
+        usage_failure("--index-table sólo filtra junto a --metadata K=V")
+    if metadata:
+        items = filtered_sandboxes(clients, template, template_version, wanted, states, index_table)
+    elif states is not None:
+        items = list(
+            Sandbox.list(
+                template=template,
+                template_version=template_version,
+                states=states,
+                control_plane=clients.control_plane,
+            )
+        )
+    else:
+        items = list_sandboxes(clients, template, template_version, all_states)
+    rows = [list_row(item) for item in items]
     if json_mode(ctx):
         emit_json(rows)
         return

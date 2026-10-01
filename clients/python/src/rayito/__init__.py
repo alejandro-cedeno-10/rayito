@@ -19,6 +19,7 @@ from rayito._charts import (
     SuperChart,
 )
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
+from rayito._index import DynamoDbIndex
 from rayito._listing_base import ListOrder
 from rayito._models import (
     ALL_TRAFFIC,
@@ -76,6 +77,7 @@ from rayito.exceptions import (
     FileUploadException,
     GitAuthException,
     GitUpstreamException,
+    IndexWriteException,
     InvalidArgumentException,
     LifecycleUnsupportedException,
     NotFoundException,
@@ -85,6 +87,7 @@ from rayito.exceptions import (
     RateLimitException,
     RayitoCompatWarning,
     SandboxException,
+    SandboxIndexException,
     SandboxLifetimeException,
     SandboxNotFoundException,
     SandboxNotReadyException,
@@ -137,6 +140,7 @@ __all__ = [
     "CommandResult",
     "DiskFullException",
     "DownloadLink",
+    "DynamoDbIndex",
     "EgressEnforcement",
     "EgressProxy",
     "EntryInfo",
@@ -157,6 +161,7 @@ __all__ = [
     "HostAccess",
     "IdlePolicy",
     "InMemoryPoolBackend",
+    "IndexWriteException",
     "InvalidArgumentException",
     "JsonFilePoolBackend",
     "LaunchOptions",
@@ -194,6 +199,7 @@ __all__ = [
     "Sandbox",
     "SandboxException",
     "SandboxHealth",
+    "SandboxIndexException",
     "SandboxInfo",
     "SandboxLifecycle",
     "SandboxLifetimeException",

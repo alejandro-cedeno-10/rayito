@@ -131,7 +131,7 @@ mismas exclusiones. Imprime ficheros, bytes, variante y el sha256 del zip
 ## `rayito sandbox`
 
 ```bash
-rayito sandbox list [--template T] [--template-version V] [--all-states]
+rayito sandbox list [--template T] [--template-version V] [--all-states] [--state S]… [--metadata K=V]… [--index-table TABLA]
 rayito sandbox info ID [--no-metadata]
 rayito sandbox kill ID… | rayito sandbox kill --all [--template T] [--yes]
 rayito sandbox logs ID [--log-group G] [--limit 1000] [--since 30m|2h|1d|ISO]
@@ -143,7 +143,22 @@ rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-re
 ```
 
 - `list` omite `TERMINATING` y `TERMINATED` (AWS los sigue listando unos 20
-  minutos) salvo con `--all-states`; no sondea ningún endpoint.
+  minutos) salvo con `--all-states`; no sondea ningún endpoint. `--state`
+  (repetible, sin distinguir mayúsculas: `--state suspended`) filtra por
+  estado. `--metadata K=V` (repetible) filtra por metadatos: sin
+  `--index-table` es la sonda O(n) de `Sandbox.list(metadata=)` (un `Health`
+  por sandbox `RUNNING`); con `--index-table TABLA` (M14, opcional, **apagado
+  por defecto**) usa el índice de metadatos de esa tabla DynamoDB
+  (`infra/metadata-index.yaml`): un `dynamodb:BatchGetItem` por página, sin
+  sondas, y también sobre sandboxes en pausa
+  (`rayito sandbox list --metadata user=42 --state suspended --index-table rayito-sandboxes`).
+  Sólo aparecen los sandboxes creados con `index=`; con `--json` cada fila
+  lleva sus `metadata`. Coste e IAM en
+  [Funciones opcionales](optional-features.md#metadata-index).
+  `--index-table` sin `--metadata` es un error de uso (salida 2) y no
+  llama a DynamoDB: el índice sólo sirve para filtrar por metadatos.
+  `--all-states` no se combina con `--state`, `--metadata` ni
+  `--index-table` (salida 2).
 - `info` hace `get-microvm` y, sobre un sandbox `RUNNING`, lee sus metadatos
   con un `Health` (un JWE de un solo uso, canal dedicado); `--no-metadata`
   lo evita. Los metadatos no son secretos; el endpoint es un hostname; no hay

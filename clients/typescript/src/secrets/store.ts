@@ -8,7 +8,7 @@
  */
 
 import type { AwsClientSettings } from "../aws/control-plane.js";
-import { clientConfig } from "../aws/control-plane.js";
+import { awsCode, LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import {
   InvalidArgumentError,
@@ -16,7 +16,6 @@ import {
   SecretError,
   SecretNotFoundError,
 } from "../errors.js";
-import { loadOptionalPeer } from "../optional.js";
 import {
   currentVersion,
   DEFAULT_SECRET_PREFIX,
@@ -142,14 +141,13 @@ interface SecretsManagerModule {
 
 /** El adaptador real: carga el peer opcional en el primer uso y manda cada `…Command`. */
 async function sdkApi(region: string, credentials: Credentials): Promise<SecretsManagerApi> {
-  const sdk = await loadOptionalPeer<SecretsManagerModule>(
+  const { sdk, send } = await loadOptionalSdkClient<SecretsManagerModule>(
     SECRETS_MANAGER_PEER,
     "Secrets Manager (SecretStore / secrets)",
+    (module) => module.SecretsManagerClient,
+    region,
+    credentials,
   );
-  const client = new sdk.SecretsManagerClient(
-    clientConfig(region, credentials === undefined ? {} : { credentials }),
-  );
-  const send = <T>(command: unknown): Promise<T> => client.send(command) as Promise<T>;
   return {
     createSecret: (input) => send(new sdk.CreateSecretCommand(input)),
     putSecretValue: (input) => send(new sdk.PutSecretValueCommand(input)),
@@ -170,11 +168,6 @@ const IAM_ACTIONS: Readonly<Record<keyof SecretsManagerApi, string>> = Object.fr
   listSecrets: "secretsmanager:ListSecrets",
   deleteSecret: "secretsmanager:DeleteSecret",
 });
-
-function awsCode(error: unknown): string | undefined {
-  const name = (error as { name?: unknown } | null)?.name;
-  return typeof name === "string" ? name : undefined;
-}
 
 /** El error del SDK de AWS como error propio, sin el mensaje de AWS (puede nombrar el secreto). */
 export function translateError(operation: keyof SecretsManagerApi, error: unknown): Error {
@@ -281,7 +274,7 @@ export class SecretStore {
   readonly #kmsKeyId: string | undefined;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  #api: Promise<SecretsManagerApi> | undefined;
+  readonly #api: LazyAwsApi<SecretsManagerApi>;
 
   constructor(options: SecretStoreOptions = {}) {
     this.#region = options.region;
@@ -296,7 +289,13 @@ export class SecretStore {
     this.#kmsKeyId = options.kmsKeyId;
     this.#now = options.now ?? (() => performance.now());
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.#api = options.client === undefined ? undefined : Promise.resolve(options.client);
+    const credentials = options.credentials;
+    this.#api = new LazyAwsApi(
+      options.region,
+      "falta la región: pasa `region` o define AWS_REGION",
+      (region) => sdkApi(region, credentials),
+      options.client,
+    );
   }
 
   get prefix(): string {
@@ -467,22 +466,7 @@ export class SecretStore {
   }
 
   #client(): Promise<SecretsManagerApi> {
-    if (this.#api === undefined) {
-      const region = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
-      if (!region) {
-        return Promise.reject(
-          new InvalidArgumentError("falta la región: pasa `region` o define AWS_REGION"),
-        );
-      }
-      const pending = sdkApi(region, this.#credentials);
-      pending.catch(() => {
-        if (this.#api === pending) {
-          this.#api = undefined;
-        }
-      });
-      this.#api = pending;
-    }
-    return this.#api;
+    return this.#api.get();
   }
 
   async #call<T>(

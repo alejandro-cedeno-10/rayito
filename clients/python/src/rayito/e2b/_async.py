@@ -18,6 +18,7 @@ from typing import IO, Any, ClassVar, Literal, Self, Unpack, overload
 from rayito import AsyncSandbox as NativeAsyncSandbox
 from rayito._code_base import ContextLike, ErrorCallback, ResultCallback, StdoutCallback
 from rayito._filesystem_base import EventCallback, ExitCallback
+from rayito._index import DynamoDbIndex
 from rayito._limits import DEFAULT_PORT
 from rayito._models import (
     AsyncUploadTicket,
@@ -107,6 +108,7 @@ class AsyncSandbox:
     """Drop-in de `e2b_code_interpreter.AsyncSandbox` / `e2b.AsyncSandbox` (2.51)."""
 
     _bound_params: ClassVar[Mapping[str, Any]] = EMPTY_PARAMS
+    _bound_index: ClassVar[DynamoDbIndex | None] = None
 
     def __init__(
         self, *, _native: NativeAsyncSandbox, _connection: ConnectionConfig | None = None
@@ -346,10 +348,14 @@ class AsyncSandbox:
         session: Any | None = None,
         control_plane: Any | None = None,
         transport: Any | None = None,
+        index: DynamoDbIndex | None = None,
         **api_params: Unpack[ApiParams],
     ) -> AsyncSandboxPaginator:
-        """`AsyncSandboxPaginator` sobre `rayito.AsyncSandbox.paginate`."""
-        mapping = list_mapping(query, state, template)
+        """`AsyncSandboxPaginator` sobre `rayito.AsyncSandbox.paginate`; `index=`
+        (o `E2B(index=...)`) como en `Sandbox.list`: `query.metadata` sobre
+        sandboxes en pausa con `dynamodb:BatchGetItem`, sin sondas."""
+        chosen_index = index if index is not None else cls._bound_index
+        mapping = list_mapping(query, state, template, indexed=chosen_index is not None)
         resolved = cls._native_call(
             {
                 "template": mapping.template,
@@ -364,6 +370,7 @@ class AsyncSandbox:
                 "session": session,
                 "control_plane": control_plane,
                 "transport": transport,
+                "index": chosen_index,
             },
             api_params,
             call="list",

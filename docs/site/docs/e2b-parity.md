@@ -17,8 +17,8 @@ página sólo dice **qué hay** y dónde está documentado.
 | Estado | Qué significa | Filas |
 |---|---|---|
 | implementado | la feature de E2B funciona con el mismo contrato; "antes de M9" si ya estaba en 0.2.0 | 72 (24 antes de M9, 48 en M9) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto) | 20 |
-| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 10 |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla opcional) | 21 |
+| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 9 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
 Ninguna fila se aproxima en silencio: lo que no está implementado lanza
@@ -85,7 +85,7 @@ se explica cómo usarlo.
 | 37 | `Sandbox.list(order="asc" / "desc")` | implementado (M9) | `m9-sandbox-observability` | ordenado en cliente por `startedAt` sobre todas las páginas: AWS no ordena | [Observabilidad](observability.md) |
 | 38 | `SandboxQuery.state` / `started_after` / `template` | implementado (M9) | `m9-sandbox-observability` | filtros en cliente sobre los items | [Observabilidad](observability.md) |
 | 39 | `SandboxQuery.metadata` sobre sandboxes `RUNNING` | implementado (antes de M9) | — | una sonda `Health` por sandbox `RUNNING`, O(n) (Q45) | [Observabilidad](observability.md) |
-| 40 | `SandboxQuery.metadata` sobre sandboxes `PAUSED` | fuera por SPEC | — | `SPEC.md` §4 excluye un almacén de metadatos en cliente y leerlos del agente despertaría el VM; sigue siendo `UnimplementedError` | [Observabilidad](observability.md) |
+| 40 | `SandboxQuery.metadata` sobre sandboxes `PAUSED` | divergente (0.5.0, pendiente de aceptación en AWS real) | `m14-metadata-index` | con la extensión `index=DynamoDbIndex(...)` (TS `index: new DynamoDbIndex({...})`, también `E2B(index=)`): una tabla DynamoDB opcional en tu cuenta (`infra/metadata-index.yaml`, ADR-014, on-demand, ~$0 en reposo); sólo aparecen los sandboxes creados con el índice desde el SDK nativo (`rayito.Sandbox.create(index=)` o `PoolConfig(index=)`): el `Sandbox.create()` del shim (`rayito.e2b` / `rayito/e2b`) nunca escribe el índice, así que el flujo PAUSED completo no cabe dentro del shim; el estado sale siempre de `list-microvms` y no se sondea ni despierta ningún sandbox; sin índice sigue siendo `UnimplementedError`, con la pista de `index=` | [Observabilidad](observability.md#listado-por-metadatos-con-indice-opcional), [Funciones opcionales](optional-features.md#metadata-index) |
 | 41 | `sbx.get_metrics(start, end)` → `List[SandboxMetrics]` con `mem_cache` | implementado (M9) | `m9-sandbox-observability` | anillo de 5 s en `rayd` (8 h) con hueco mientras está suspendido | [Observabilidad](observability.md) |
 | 42 | `Sandbox.get_metrics(id)` / JS estático `getMetrics` | divergente (M9) | `m9-sandbox-observability` | necesita el access token del sandbox | [Observabilidad](observability.md) |
 | 43 | `sbx.pause()` → `bool` / `Sandbox.pause(id)` | implementado (M9) | `m9-e2b-v2-surface` | devuelve `bool` como E2B 2.x (antes `str`) | [Compatibilidad](e2b-compat.md) |

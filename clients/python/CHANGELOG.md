@@ -8,6 +8,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Índice de metadatos sobre DynamoDB** (`m14-metadata-index`, opcional y
+  apagado por defecto, ADR-014): `DynamoDbIndex(table_name, region=,
+  session=, on_write_failure="terminate", ttl_margin_seconds=3600)` y la
+  opción `index=` en `Sandbox.create()`, `Sandbox.list()`,
+  `Sandbox.paginate()` (y sus gemelos asíncronos) y `PoolConfig`. `create()`
+  escribe una fila inmutable (`PutItem` condicional) tras `run-microvm`; con
+  `metadata=` e `index=`, `list()`/`paginate()` unen `list-microvms` con
+  `BatchGetItem` por página y filtran también sandboxes `SUSPENDED` sin
+  ninguna sonda de `Health`, token ni `get-microvm`. Nuevas excepciones
+  `SandboxIndexException` e `IndexWriteException`. Coste: ~1 WRU por sandbox
+  creado y 0,5 RRU por candidato listado (DynamoDB on-demand); la tabla la
+  despliegas tú con `infra/metadata-index.yaml`. `reincarnate()` conserva
+  `index=`: el sucesor escribe su propia fila.
+- **Shim de E2B**: `Sandbox.list(query=SandboxQuery(metadata=...,
+  state=[PAUSED]), index=...)` y `E2B(index=...)` filtran sandboxes en pausa
+  por metadatos con el índice.
+- **CLI**: `rayito sandbox list --metadata K=V --state suspended
+  --index-table TABLA` (y `--state` sola); `--index-table` sin `--metadata`
+  es un error de uso (salida 2); sin `--index-table`, sin cambios.
 - **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
   apagado por defecto, ADR-014): `SecretStore(region=, session=,
   prefix="rayito/", kms_key_id=)` con `create`/`update`/`get_info`/
@@ -34,6 +53,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Changed
 
+- El motivo de `UnimplementedError` de `list(state=PAUSED, query.metadata)`
+  en el shim de E2B nombra ahora la opción `index=DynamoDbIndex(...)`.
 - `RayitoCompatWarning` vive ahora en `rayito.exceptions` (y se re-exporta
   desde `rayito.e2b.exceptions`: es la misma clase).
 - `rayito.e2b.Secret`/`AsyncSecret` y `E2B(...).Secret` ya no lanzan

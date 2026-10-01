@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Final, Literal
 
 from rayito._aws import ControlPlane
+from rayito._index import DynamoDbIndex, IndexRecord, joined, validate_index
 from rayito._limits import LIST_MAX_RESULTS, TERMINAL_STATES
 from rayito._metrics_base import unix_ms_or_zero
 from rayito._models import MicrovmListPage, SandboxListItem
@@ -85,7 +86,8 @@ class ListFilters:
     """Los filtros de un listado, canónicos (tuplas ordenadas) para que la
     huella no dependa del orden en que el caller los pasó. `states` `None`
     es el defecto: sin `metadata` omite `TERMINATING|TERMINATED`, con
-    `metadata` sólo `RUNNING` (los metadatos viven en el agente)."""
+    `metadata` sólo `RUNNING` (los metadatos viven en el agente), salvo con
+    índice (`index_table`), que admite todo estado no terminal."""
 
     image_arn: str | None
     image_version: str | None
@@ -93,11 +95,14 @@ class ListFilters:
     started_after_ms: int | None
     metadata: tuple[tuple[str, str], ...] | None
     order: ListOrder | None
+    index_table: str | None = None
 
     def fingerprint(self) -> str:
         """El token la lleva para rechazar su uso con otros filtros; es un
-        hash, así que nunca expone los valores de `metadata`."""
-        document = {
+        hash, así que nunca expone los valores de `metadata`. Con índice
+        (sólo cuando hay `metadata`) incluye el nombre de la tabla; sin él
+        el documento es byte a byte el de 0.4.0."""
+        document: dict[str, object] = {
             "image": self.image_arn,
             "version": self.image_version,
             "states": None if self.states is None else list(self.states),
@@ -105,6 +110,8 @@ class ListFilters:
             "metadata": None if self.metadata is None else dict(self.metadata),
             "order": self.order,
         }
+        if self.index_table is not None:
+            document["index"] = self.index_table
         return hashlib.sha256(canonical_json(document)).hexdigest()[:FINGERPRINT_HEX_CHARS]
 
     def accepts(self, item: SandboxListItem) -> bool:
@@ -117,7 +124,7 @@ class ListFilters:
     def _state_wanted(self, state: str) -> bool:
         if self.states is not None:
             return state in self.states
-        if self.metadata is not None:
+        if self.metadata is not None and self.index_table is None:
             return state in METADATA_LIST_STATES
         return state not in TERMINAL_STATES
 
@@ -246,6 +253,7 @@ class ListingRequest:
     limit: int | None
     next_token: str | None
     decoded: DecodedToken | None
+    index: DynamoDbIndex | None = None
 
     def filters(self, image_arn: str | None) -> ListFilters:
         return ListFilters(
@@ -255,6 +263,7 @@ class ListingRequest:
             started_after_ms=self.started_after_ms,
             metadata=self.metadata,
             order=self.order,
+            index_table=None if self.index is None else self.index.table_name,
         )
 
 
@@ -268,17 +277,27 @@ def listing_request(
     order: str | None,
     limit: int | None,
     next_token: str | None,
+    index: DynamoDbIndex | None = None,
 ) -> ListingRequest:
     """Todo lo que se puede validar sin AWS: `limit`, `order`, `metadata`
-    (sólo con `RUNNING`), `started_after` y la forma del token, que tiene que
-    corresponder a `order` (cursor de clave con `order`, de página sin él)."""
+    (sólo con `RUNNING` sin índice; cualquier estado no terminal con
+    `index=`), `started_after` y la forma del token, que tiene que
+    corresponder a `order` (cursor de clave con `order`, de página sin él).
+    `index` sin `metadata` no cambia nada: el listado es el de 0.4.0 y no
+    toca DynamoDB."""
     validated_limit = validate_limit(limit)
     validated_order = validate_order(order)
+    validated_index = validate_index(index)
     requested_states = None if states is None else tuple(sorted(states))
     canonical_metadata = None
+    effective_index = None
     if metadata is not None:
         canonical_metadata = tuple(sorted(validated_metadata(metadata).items()))
-        list_states_for_metadata(requested_states)
+        if validated_index is None:
+            list_states_for_metadata(requested_states)
+        else:
+            indexed_list_states(requested_states)
+            effective_index = validated_index
     started_after_ms = (
         None if started_after is None else unix_ms_or_zero(started_after, field="started_after")
     )
@@ -297,7 +316,19 @@ def listing_request(
         limit=validated_limit,
         next_token=next_token,
         decoded=decoded,
+        index=effective_index,
     )
+
+
+def indexed_list_states(states: tuple[str, ...] | None) -> None:
+    """Con índice, `metadata` filtra cualquier estado no terminal: el estado
+    sale de `list-microvms` y los metadatos de la fila, sin sondear."""
+    terminal = sorted(set(states or ()) & TERMINAL_STATES)
+    if terminal:
+        raise InvalidArgumentException(
+            "list(metadata=, index=) filtra sandboxes no terminados (RUNNING, PENDING, "
+            f"SUSPENDING, SUSPENDED); recibido {terminal}"
+        )
 
 
 def resume_cursors(
@@ -349,6 +380,10 @@ class PageWalk:
         )
         self._next_token = page.next_token
         self._fetched = True
+
+    def buffered(self) -> tuple[SandboxListItem, ...]:
+        """Los items de la página actual que quedan por consumir."""
+        return tuple(self._buffer)
 
     def next_raw(self) -> SandboxListItem | None:
         if not self._buffer:
@@ -429,11 +464,31 @@ class ListingSession:
         page_cursor, self.after = resume_cursors(request.decoded, self.filters)
         self.walk = PageWalk(page_cursor)
         self.ordered: OrderedWalk | None = None
+        self._records: dict[str, IndexRecord] = {}
 
     @property
     def wanted_metadata(self) -> dict[str, str] | None:
         metadata = self.filters.metadata
         return None if metadata is None else dict(metadata)
+
+    @property
+    def index(self) -> DynamoDbIndex | None:
+        """El índice sólo cuando filtra (`metadata` + `index=`)."""
+        return self.request.index
+
+    def index_candidates(self) -> list[str]:
+        """Los ids de la página recién aceptada que pasan los filtros de
+        estado y fecha: los únicos que se piden a `BatchGetItem`."""
+        return [item.sandbox_id for item in self.walk.buffered() if self.filters.accepts(item)]
+
+    def load_records(self, records: Mapping[str, IndexRecord]) -> None:
+        """Las filas de la página actual (sustituyen a las de la anterior)."""
+        self._records = dict(records)
+
+    def joined(self, item: SandboxListItem, now_seconds: float) -> SandboxListItem | None:
+        """El item unido a su fila (con `metadata` relleno) o `None`."""
+        wanted = dict(self.filters.metadata or ())
+        return joined(item, self._records.get(item.sandbox_id), wanted, now_seconds)
 
     def start_ordered(self, order: ListOrder, matches: Iterable[SandboxListItem]) -> OrderedWalk:
         """Con `order` la primera llamada recorre todas las páginas: AWS no

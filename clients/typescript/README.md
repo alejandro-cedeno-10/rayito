@@ -159,6 +159,28 @@ await sbx.commands.run("python agent.py");
 
 IAM, reglas de la caché y el shim `Secret` de E2B: [Secretos](../../docs/site/docs/secrets.md).
 
+## Índice de metadatos (opcional, con coste)
+
+Apagado por defecto: sólo `index: new DynamoDbIndex({...})` lo enciende, y
+sólo entonces se carga `@aws-sdk/client-dynamodb` (peerDependency
+**opcional**: `npm install @aws-sdk/client-dynamodb`). Copia la `metadata`
+(no secreta) de cada sandbox en una tabla DynamoDB de tu cuenta
+(`infra/metadata-index.yaml`, on-demand, $0 en reposo) para filtrar por
+metadatos también sandboxes en pausa, sin despertarlos.
+
+```ts
+import { DynamoDbIndex, Sandbox } from "rayito";
+
+const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
+await sbx.pause();
+for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+  console.log(item.sandboxId, item.state);
+}
+```
+
+Reglas, IAM y cómo apagarlo: [Observabilidad](../../docs/site/docs/observability.md#listado-por-metadatos-con-indice-opcional).
+
 ## Novedades de 0.3.0 (M9)
 
 Paridad con E2B 2.x. Exige una imagen publicada con el `rayd` de M9 y está

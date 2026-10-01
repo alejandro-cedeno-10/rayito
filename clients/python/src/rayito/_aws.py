@@ -223,6 +223,43 @@ def client_config(settings: ClientSettings | None = None) -> Config:
     )
 
 
+def aws_code(exc: BaseException) -> str | None:
+    """El `Error.Code` de un `ClientError` de botocore, o `None` si `exc` no
+    trae una respuesta de AWS (`BotoCoreError`, errores de red)."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    error = response.get("Error")
+    code = error.get("Code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) else None
+
+
+class LazyClient:
+    """Un cliente boto3 de `service` que se construye en el primer `get()` (y
+    sólo una vez, aunque lo pidan varios hilos), con la sesión dada o una
+    `Session(region_name=region)` y la `client_config()` del SDK. Construirlo
+    no hace ninguna llamada a AWS: es lo que usan las funciones opcionales
+    (`SecretStore`, `DynamoDbIndex`) para no costar nada mientras no se usan."""
+
+    def __init__(
+        self, service: str, *, region: str | None, session: boto3.session.Session | None
+    ) -> None:
+        self._service = service
+        self._region = region
+        self._session = session
+        self._client: Any | None = None
+        self._lock = threading.Lock()
+
+    def get(self) -> Any:
+        with self._lock:
+            if self._client is None:
+                session = self._session or boto3.session.Session(region_name=self._region)
+                self._client = session.client(
+                    self._service, region_name=self._region, config=client_config()
+                )
+            return self._client
+
+
 def control_plane_session(plane: object) -> boto3.session.Session | None:
     """La sesión boto3 de un plano que la expone (`session`), para que el SDK
     firme sus URLs de S3 con el mismo principal que el plano de control

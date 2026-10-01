@@ -18,7 +18,8 @@ from typing import Any, Final, Generic, Literal, TypeVar, cast
 
 import grpc
 
-from rayito._aws import LaunchRequest, PortSpec
+from rayito._aws import ControlPlane, LaunchRequest, PortSpec
+from rayito._index import DynamoDbIndex, write_failure
 from rayito._lifecycle_base import lifecycle_from_proto, resolve_lifecycle
 from rayito._lifecycle_base import resolve_idle_policy as resolve_idle_policy
 from rayito._limits import (
@@ -730,3 +731,39 @@ def terminated_during_boot_error(info: SandboxInfo) -> SandboxNotReadyException:
         state=info.state,
         state_reason=info.state_reason,
     )
+
+
+def terminate_quietly(control_plane: ControlPlane, sandbox_id: str, log: Logger = logger) -> None:
+    """Limpieza best-effort de un MicroVM que no llegó a estar listo: el error
+    original es el que importa, así que un fallo aquí sólo se loguea (en el
+    logger del sandbox, `rayito.sandbox` por defecto)."""
+    try:
+        control_plane.terminate_microvm(sandbox_id)
+    except Exception:
+        log.warning(
+            "no se pudo terminar el sandbox %s tras un fallo de arranque", sandbox_id, exc_info=True
+        )
+
+
+def write_index_record(
+    index: DynamoDbIndex,
+    info: SandboxInfo,
+    metadata: Mapping[str, str] | None,
+    control_plane: ControlPlane,
+    keep_on_failure: bool,
+    log: Logger,
+) -> None:
+    """La fila del índice de `create(index=...)`, tras `run-microvm` y antes
+    de la sonda de readiness (síncrona: el SDK async la llama en un hilo).
+    Si `PutItem` falla: con `on_write_failure='terminate'` termina el VM
+    (salvo `keep_on_failure`) y lanza `IndexWriteException`; con `'warn'`
+    avisa y sigue."""
+    try:
+        index.put(index.record(info, metadata))
+    except Exception as exc:
+        error = write_failure(index, info.sandbox_id, exc, log)
+        if error is None:
+            return
+        if not keep_on_failure:
+            terminate_quietly(control_plane, info.sandbox_id, log)
+        raise error from exc

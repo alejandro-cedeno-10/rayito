@@ -29,6 +29,7 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
+from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
     auto_resume_reopen,
@@ -148,10 +149,12 @@ from rayito._sandbox_base import (
     resolve_template,
     sandbox_logger,
     terminal_state_error,
+    terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    write_index_record,
 )
 from rayito._secrets import (
     SecretBinding,
@@ -208,7 +211,6 @@ from rayito.sandbox_sync.main import (
     StubFactory,
     closed_during_reconnect,
     resolve_control_plane,
-    terminate_quietly,
     wait_for_state,
 )
 from rayito.v1 import (
@@ -468,6 +470,7 @@ class AsyncSandbox:
         logger: logging.Logger | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        index: DynamoDbIndex | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=`,
         `persist=`, `transfer=`, el plazo lógico de `max_lifetime`/`on_timeout`
@@ -489,12 +492,34 @@ class AsyncSandbox:
         Ejemplo:
             sbx = await AsyncSandbox.create(secrets={"OPENAI_API_KEY": "openai"})
             await sbx.commands.run("python agent.py")
+
+        `index=DynamoDbIndex(...)` como en `Sandbox.create` (fila del índice
+        tras `run-microvm`, `IndexWriteException` y VM terminado si falla con
+        `on_write_failure='terminate'`).
+
+        Coste y activación
+        -------------------
+        Activa: `index=DynamoDbIndex(...)` escribe la fila del índice.
+        Recursos y llamadas AWS: `dynamodb:PutItem` una vez por sandbox.
+        Coste aproximado: ~1 WRU ≈ $0,000000625 (on-demand, us-east-1,
+            consultado 2026-09-30).
+        IAM: `dynamodb:PutItem` sobre la tabla (`RayitoIndexWriter`).
+        Cómo apagarla: `index=None` (por defecto).
+        Ejemplo:
+            idx = DynamoDbIndex("rayito-sandboxes")
+            sbx = await AsyncSandbox.create(metadata={"user": "42"}, index=idx)
         """
         binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
         staging = resolve_staging(transfer)
         validate_staging_against_persist(staging, persist)
+        validated_index = validate_index(index)
+        if pool is not None and validated_index is not None:
+            raise InvalidArgumentException(
+                "create(pool=...) no admite index=: la fila del índice la escribe el pool al "
+                "rellenar cada plaza; pásalo como PoolConfig(index=...)"
+            )
         if pool is not None and persist is not None:
             raise InvalidArgumentException(
                 "create(pool=...) no admite persist=: una plaza del pool no puede restaurar "
@@ -540,6 +565,9 @@ class AsyncSandbox:
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
             return taken
+        if validated_index is not None:
+            # Sin llamadas a AWS: falla antes de lanzar nada.
+            await asyncio.to_thread(validated_index.prepare)
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
             binding,
@@ -567,6 +595,16 @@ class AsyncSandbox:
         )
         info = await asyncio.to_thread(plane.run_microvm, plan.request)
         sandbox_logger(logger).info("run-microvm aceptado: %s (%s)", info.sandbox_id, info.state)
+        if validated_index is not None:
+            await asyncio.to_thread(
+                write_index_record,
+                validated_index,
+                info,
+                metadata,
+                plane,
+                keep_on_failure,
+                sandbox_logger(logger),
+            )
         sandbox = await cls._open(
             info,
             access_token=plan.access_token,
@@ -607,6 +645,7 @@ class AsyncSandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network=launch.stored_policy,
+            index=validated_index,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -812,9 +851,12 @@ class AsyncSandbox:
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
+        index: DynamoDbIndex | None = None,
     ) -> builtins.list[SandboxListItem]:
         """Misma semántica y mismo coste O(n) con `metadata` que `Sandbox.list`;
-        las sondas de `Health` van por `grpc.aio`, una tras otra."""
+        las sondas de `Health` van por `grpc.aio`, una tras otra. Con
+        `index=DynamoDbIndex(...)` y `metadata`, sin sondas: un
+        `dynamodb:BatchGetItem` por página (ver `Sandbox.list`)."""
         request = listing_request(
             template=None,
             template_version=template_version,
@@ -824,6 +866,7 @@ class AsyncSandbox:
             order=order,
             limit=None,
             next_token=None,
+            index=index,
         )
         plane = resolve_control_plane(control_plane, session, region)
         image_arn = (
@@ -851,6 +894,7 @@ class AsyncSandbox:
         control_plane: ControlPlane | None = None,
         transport: TransportSettings | None = None,
         request_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS,
+        index: DynamoDbIndex | None = None,
     ) -> AsyncSandboxListPaginator:
         """`Sandbox.paginate` con `next_items()` asíncrono. No es `async`:
         construir el paginador valida sin hacer E/S."""
@@ -863,6 +907,7 @@ class AsyncSandbox:
             order=order,
             limit=limit,
             next_token=next_token,
+            index=index,
         )
         plane = resolve_control_plane(control_plane, session, region)
         io = AsyncListingIo(
@@ -1397,6 +1442,7 @@ class AsyncSandbox:
                 persist_timeout=persist_timeout,
                 secrets=secret_refs,
                 secret_cache=secret_cache,
+                index=options.index,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)

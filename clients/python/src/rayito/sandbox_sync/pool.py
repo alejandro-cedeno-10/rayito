@@ -63,11 +63,12 @@ from rayito._sandbox_base import (
     DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     resolve_template,
+    terminate_quietly,
 )
 from rayito._secrets import SecretCache, SecretRef, bind_secrets, shared_secret_cache, warm
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException, SandboxStateException
-from rayito.sandbox_sync.main import Sandbox, resolve_control_plane, terminate_quietly
+from rayito.sandbox_sync.main import Sandbox, resolve_control_plane
 
 logger = logging.getLogger("rayito.pool")
 

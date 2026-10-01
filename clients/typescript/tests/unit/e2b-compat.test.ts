@@ -19,6 +19,7 @@ import {
   infoFromNative,
   instanceUnappliedReason,
   LIST_METADATA_STATE_FEATURE,
+  LIST_METADATA_STATE_REASON,
   mapCreateOptions,
   mapLifecycle,
   mapListOptions,
@@ -588,8 +589,9 @@ describe("mapListOptions", () => {
       expect(error).toBeInstanceOf(UnimplementedError);
       expect(error).toMatchObject({
         feature: LIST_METADATA_STATE_FEATURE,
-        reason: "los metadatos viven en el agente; leerlos despertaría el sandbox",
+        reason: LIST_METADATA_STATE_REASON,
       });
+      expect((error as UnimplementedError).reason).toContain("index: new DynamoDbIndex");
     }
   });
 });

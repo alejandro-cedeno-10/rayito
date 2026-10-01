@@ -20,6 +20,7 @@ hooks, snapshot).
 | URLs prefirmadas y SSRF de `rayd` (T16, M9) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
 | Proxy de egress de `rayd` como SSRF (T17, M9) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; **riesgo residual**: bajo deny-all en `rayito-base-caps` los nombres aún se resuelven por los resolvedores de la plataforma dentro del guest (canal de exfiltración por DNS, aunque toda conexión fuera del VM falla); las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
 | Secretos inyectados (T18, M13a) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
+| Índice de metadatos (T19, M14) | apagado por defecto; con `index=DynamoDbIndex(...)` se copia en tu tabla DynamoDB sólo la `metadata` (no secreta) más la imagen, `startedAt` y el TTL, nunca tokens, `envs` ni secretos; una fila falsa nunca crea un sandbox fantasma (el listado parte de `list-microvms` y exige misma imagen y `startedAt`); rol escritor (`PutItem`) separado del lector (`BatchGetItem`) ([Observabilidad](observability.md#listado-por-metadatos-con-indice-opcional)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -114,6 +115,30 @@ sólo lo enciende la propia opción. Cuando se usa:
   resuelve en ninguna parte.
 
 Detalle en `SECURITY.md` T18.
+
+## Copia de metadatos en reposo (T19)
+
+Con el índice opcional de metadatos (M14, `index=DynamoDbIndex(...)`), la
+`metadata` de cada sandbox queda **en reposo** en una tabla DynamoDB de tu
+cuenta (`infra/metadata-index.yaml`), cifrada por defecto y con TTL. Es la
+misma `metadata` que ya no es secreta (T4: `Health` la devuelve a cualquier
+principal que pueda acuñar un JWE y al propio código del sandbox), así que no
+metas en ella nada que no pondrías en una etiqueta.
+
+- **Qué se guarda**: `pk` (id del sandbox), ARN y versión de la imagen,
+  `startedAt`, `metadata`, la versión del SDK y `expires_at`. Nunca el access
+  token ni su hash, `envs`, secretos, el `runHookPayload` ni el JWE.
+- **Integridad**: una fila falsa no crea un sandbox fantasma; el listado
+  parte de `list-microvms` (de ahí sale el estado) y exige misma imagen y
+  `startedAt` (±1 s). Quien pueda escribir en la tabla sí puede cambiar con
+  qué metadatos aparece un sandbox real o esconderlo de un listado con
+  índice: no uses la `metadata` como control de acceso.
+- **IAM**: `RayitoIndexWriter` (`dynamodb:PutItem`) para quien crea
+  sandboxes o corre un pool, `RayitoIndexReader` (`dynamodb:BatchGetItem`)
+  para quien lista; ambas sobre el ARN de la tabla.
+- **Apagarlo**: no pases `index=`; borra el stack para borrar la tabla.
+
+Detalle en `SECURITY.md` T19.
 
 ## Qué nunca se loguea
 

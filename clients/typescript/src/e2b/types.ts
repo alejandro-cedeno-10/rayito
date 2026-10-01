@@ -4,6 +4,7 @@
  * las unidades que E2B fija (`memoryMB`, `endAt`, `state: "running"`).
  */
 
+import type { DynamoDbIndex } from "../index/dynamodb.js";
 import type { EgressProxyInput, NetworkSelector } from "../models.js";
 import type { LoggingOption, PortLike } from "../sandbox/launch.js";
 import type { ListOrder } from "../sandbox/listing.js";
@@ -114,6 +115,15 @@ export interface SandboxListOpts extends ConnectionOpts {
   readonly order?: ListOrder | undefined;
   readonly limit?: number | undefined;
   readonly nextToken?: string | undefined;
+  /**
+   * Extensión de Rayito (M14, `undefined` por defecto; también
+   * `new E2B({ index })`): resuelve `query.metadata` con el índice opcional
+   * de metadatos en DynamoDB, así admite `state: ["paused"]` sin despertar
+   * ningún sandbox. Sólo encuentra los creados con `index` en el SDK nativo o
+   * un `PoolConfig.index`. Coste: `dynamodb:BatchGetItem` por página (ver
+   * `DynamoDbIndex`, "Coste y activación").
+   */
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 export interface SandboxUrlOpts {

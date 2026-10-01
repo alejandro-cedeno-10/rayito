@@ -41,11 +41,20 @@ class AsyncListingIo:
                     fetch_page, self.plane, session.filters, page_request
                 )
                 session.walk.accept_page(page)
+                index = session.index
+                if index is not None:
+                    records = await asyncio.to_thread(index.batch_get, session.index_candidates())
+                    session.load_records(records)
                 continue
             item = session.walk.next_raw()
             if item is None:
                 return
             if not session.filters.accepts(item):
+                continue
+            if session.index is not None:
+                kept = session.joined(item, session.index.now())
+                if kept is not None:
+                    yield kept
                 continue
             if wanted is None:
                 yield item

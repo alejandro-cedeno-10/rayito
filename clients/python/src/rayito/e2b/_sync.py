@@ -24,6 +24,7 @@ from typing import IO, Any, ClassVar, Literal, Self, Unpack, overload
 from rayito import Sandbox as NativeSandbox
 from rayito._code_base import ContextLike, ErrorCallback, ResultCallback, StdoutCallback
 from rayito._filesystem_base import EventCallback, ExitCallback
+from rayito._index import DynamoDbIndex
 from rayito._limits import DEFAULT_PORT
 from rayito._models import (
     PROXY_AUTH_HEADER,
@@ -134,6 +135,7 @@ class Sandbox:
     """Drop-in de `e2b_code_interpreter.Sandbox` / `e2b.Sandbox` (2.51)."""
 
     _bound_params: ClassVar[Mapping[str, Any]] = EMPTY_PARAMS
+    _bound_index: ClassVar[DynamoDbIndex | None] = None
 
     def __init__(
         self,
@@ -581,13 +583,37 @@ class Sandbox:
         session: Any | None = None,
         control_plane: Any | None = None,
         transport: Any | None = None,
+        index: DynamoDbIndex | None = None,
         **api_params: Unpack[ApiParams],
     ) -> SandboxPaginator:
         """`SandboxPaginator` sobre `rayito.Sandbox.paginate`: `limit` es el
         tamaño de página y `next_token` reanuda un listado anterior. Con
         `query.metadata` el filtro es O(n) sobre los sandboxes `RUNNING` (un
-        `Health` por sandbox, dentro de `next_items()`)."""
-        mapping = list_mapping(query, state, template)
+        `Health` por sandbox, dentro de `next_items()`).
+
+        `index=DynamoDbIndex(...)` (extensión de Rayito; también
+        `E2B(index=...)`) resuelve `query.metadata` con la tabla opcional del
+        índice: admite `state=[PAUSED]` sin despertar ningún sandbox, pero sólo
+        encuentra los creados con `rayito.Sandbox.create(index=...)` o un
+        `PoolConfig(index=...)`. Sin él, `query.metadata` con `PAUSED` sigue
+        siendo `UnimplementedError`.
+
+        Coste y activación
+        -------------------
+        Activa: `index=` usa el índice de metadatos en DynamoDB.
+        Recursos y llamadas AWS: `dynamodb:BatchGetItem` por página de
+            `list-microvms`; ningún `Health`, token ni `get-microvm`.
+        Coste aproximado: 0,5 RRU por sandbox candidato ($0,125 por millón,
+            DynamoDB on-demand, us-east-1, consultado 2026-09-30).
+        IAM: `dynamodb:BatchGetItem` sobre la tabla (`RayitoIndexReader`).
+        Cómo apagarla: `index=None` (por defecto).
+        Ejemplo:
+            idx = DynamoDbIndex("rayito-sandboxes")
+            q = SandboxQuery(metadata={"user": "42"}, state=[SandboxState.PAUSED])
+            paused = Sandbox.list(query=q, index=idx).next_items()
+        """
+        chosen_index = index if index is not None else cls._bound_index
+        mapping = list_mapping(query, state, template, indexed=chosen_index is not None)
         resolved = cls._native_call(
             {
                 "template": mapping.template,
@@ -602,6 +628,7 @@ class Sandbox:
                 "session": session,
                 "control_plane": control_plane,
                 "transport": transport,
+                "index": chosen_index,
             },
             api_params,
             call="list",

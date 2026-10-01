@@ -7,6 +7,8 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 |---|---|---|
 | `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`) y la managed policy `CallerPolicy` del publicador (S3 de transferencias con `TransferBucket`) | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
+| `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
+| `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
 
 ## Egress allowlist (`egress-connector.yaml`)
@@ -406,3 +408,63 @@ Estado: validada con `cfn-lint` 1.56.3 y `scripts/tests/test_secrets_template.py
 (sólo `AWS::IAM::ManagedPolicy`, ninguna acción fuera de la lista, ningún
 `Resource: "*"` salvo `ListSecrets`, KMS sólo con clave y `kms:ViaService`);
 `make infra-lint` la incluye (`validate-template` + `cfn-lint`).
+
+## Índice de metadatos (`infra/metadata-index.yaml`, M14)
+
+Plantilla **opcional**: sólo hace falta si listas sandboxes por metadatos
+con el índice (`index=DynamoDbIndex(...)` en Python, `index: new
+DynamoDbIndex({...})` en TypeScript, `rayito sandbox list --index-table`;
+[docs/site/docs/observability.md](../docs/site/docs/observability.md#listado-por-metadatos-con-indice-opcional)).
+Nunca se despliega sola ni el SDK la crea. Crea **una tabla DynamoDB y dos
+políticas IAM**, nada más (ni Lambdas, ni streams, ni EventBridge).
+Acciones y parámetros: `AWS_API_NOTES.md` §20.
+
+| Recurso / salida | Qué es |
+|---|---|
+| `TableName` / `TableArn` | `AWS::DynamoDB::Table` `rayito-sandboxes` (parámetro `TableName`): `PAY_PER_REQUEST`, clave `pk` (`S`), TTL en `expires_at`, cifrado por defecto de DynamoDB; `PointInTimeRecovery` y `DeletionProtection` apagados por defecto |
+| `WriterPolicyArn` | `RayitoIndexWriter`: `dynamodb:PutItem` sobre el ARN de la tabla (quien crea sandboxes con `index=` o corre un `SandboxPool` con `PoolConfig(index=)`) |
+| `ReaderPolicyArn` | `RayitoIndexReader`: `dynamodb:BatchGetItem` sobre el ARN de la tabla (quien lista con `metadata=` e `index=`) |
+
+Se adjuntan a las credenciales del **llamante** del SDK, nunca al execution
+role del MicroVM: `rayd` no toca el índice.
+
+**Coste**: $0 en reposo (on-demand y tabla vacía). Con uso, ~1 WRU por
+sandbox creado y 0,5 RRU por sandbox candidato al listar ($0,625 por millón
+de WRU y $0,125 por millón de RRU en us-east-1, consultado 2026-09-30) más
+$0,25/GB-mes tras los primeros 25 GB; el TTL borra las filas vencidas gratis.
+10 000 sandboxes al mes quedan por debajo de $0,10.
+
+### Desplegar
+
+```bash
+aws cloudformation deploy \
+  --stack-name rayito-metadata-index \
+  --template-file infra/metadata-index.yaml \
+  --capabilities CAPABILITY_IAM
+# otro nombre de tabla: --parameter-overrides TableName=mi-indice
+
+aws cloudformation describe-stacks --stack-name rayito-metadata-index \
+  --query "Stacks[0].Outputs" --output table
+```
+
+`--capabilities CAPABILITY_IAM` es obligatorio (la plantilla crea dos
+políticas IAM; sin él CloudFormation responde
+`InsufficientCapabilitiesException`); `CAPABILITY_NAMED_IAM` no hace falta,
+porque las políticas no llevan nombre fijo.
+
+### Borrar (apagarlo)
+
+```bash
+aws cloudformation delete-stack --stack-name rayito-metadata-index
+```
+
+Borra la tabla (con `DeletionProtection=true`, desactívalo antes) y las
+políticas; deja de facturar al momento. Deja también de pasar `index=` en el
+SDK: un listado con índice contra una tabla borrada falla con
+`SandboxIndexException` (nunca devuelve una lista vacía en silencio).
+
+Estado: validada con `cfn-lint` 1.56.3 y
+`scripts/tests/test_metadata_index_template.py` (el único recurso de datos es
+la tabla, `PAY_PER_REQUEST`, TTL en `expires_at`, cada política con su única
+acción sobre el ARN de la tabla, ningún `Resource: "*"`); `make infra-lint`
+la incluye (`validate-template` + `cfn-lint`).

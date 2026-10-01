@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, NoReturn, TypeVar, Unpack
 
+from rayito._index import DynamoDbIndex, validate_index
 from rayito.e2b._async import AsyncSandbox
 from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_params
 from rayito.e2b._secret import AsyncSecret, Secret
@@ -21,10 +22,16 @@ from rayito.e2b.exceptions import RayitoCompatWarning
 BoundClass = TypeVar("BoundClass", bound=type)
 
 
-def bind_class(cls: BoundClass, params: Mapping[str, Any]) -> BoundClass:
+def bind_class(cls: BoundClass, params: Mapping[str, Any], **class_attrs: Any) -> BoundClass:
     """Una subclase de `cls` con una copia de `params` como `_bound_params`:
-    cambiar después el dict del llamador no altera el vínculo."""
-    namespace = {"_bound_params": MappingProxyType(dict(params)), "__module__": cls.__module__}
+    cambiar después el dict del llamador no altera el vínculo. `class_attrs`
+    fija además atributos de clase propios (`_bound_index`), que no se
+    mezclan en cada llamada nativa como los `_bound_params`."""
+    namespace = {
+        "_bound_params": MappingProxyType(dict(params)),
+        "__module__": cls.__module__,
+        **class_attrs,
+    }
     return type(cls.__name__, (cls,), namespace)  # type: ignore[return-value]
 
 
@@ -35,7 +42,13 @@ class E2B:
     sustituyen a las del cliente). Los `ApiParams` ignorados avisan una sola
     vez, aquí. `client.Secret`/`client.AsyncSecret` usan su `region` y su
     `session` (Secrets Manager en esa cuenta). `Template` y `Volume` (y sus
-    `Async*`) son `UnimplementedError`."""
+    `Async*`) son `UnimplementedError`.
+
+    `index=DynamoDbIndex(...)` (extensión de Rayito, `None` por defecto) lo
+    usan `client.Sandbox.list` y `client.AsyncSandbox.list` cuando la
+    llamada no pasa otro: `query.metadata` sobre sandboxes en pausa con
+    `dynamodb:BatchGetItem` (ver `rayito.DynamoDbIndex`, "Coste y
+    activación"). Ninguna otra llamada lo usa."""
 
     def __init__(
         self,
@@ -43,6 +56,7 @@ class E2B:
         region: str | None = None,
         session: Any | None = None,
         control_plane: Any | None = None,
+        index: DynamoDbIndex | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -55,8 +69,11 @@ class E2B:
         }
         params = {"region": region, "session": session, "control_plane": control_plane, **applied}
         bound = {key: value for key, value in params.items() if value is not None}
-        self.Sandbox: type[Sandbox] = bind_class(Sandbox, bound)
-        self.AsyncSandbox: type[AsyncSandbox] = bind_class(AsyncSandbox, bound)
+        chosen_index = validate_index(index)
+        self.Sandbox: type[Sandbox] = bind_class(Sandbox, bound, _bound_index=chosen_index)
+        self.AsyncSandbox: type[AsyncSandbox] = bind_class(
+            AsyncSandbox, bound, _bound_index=chosen_index
+        )
         secret_bound: dict[str, Any] = {
             key: bound[key] for key in ("region", "session") if key in bound
         }

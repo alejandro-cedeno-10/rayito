@@ -43,6 +43,7 @@ export {
   FileUploadError,
   GitAuthError,
   GitUpstreamError,
+  IndexWriteError,
   InvalidArgumentError,
   LifecycleUnsupportedError,
   NotFoundError,
@@ -52,6 +53,7 @@ export {
   QuotaExceededError,
   RateLimitError,
   SandboxError,
+  SandboxIndexError,
   SandboxLifetimeError,
   SandboxNotFoundError,
   SandboxNotReadyError,
@@ -63,6 +65,13 @@ export {
   type TransferErrorOptions,
   UnimplementedError,
 } from "./errors.js";
+export {
+  type DynamoDbApi,
+  DynamoDbIndex,
+  type DynamoDbIndexOptions,
+  type WriteFailurePolicy,
+} from "./index/dynamodb.js";
+export type { IndexRecord } from "./index/record.js";
 export type { Logger } from "./logger.js";
 export {
   ALL_TRAFFIC,

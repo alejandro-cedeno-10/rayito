@@ -72,7 +72,7 @@ from typing import Any, Final, Protocol, TypeAlias
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rayito._aws import client_config
+from rayito._aws import LazyClient, aws_code
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito.exceptions import (
     InvalidArgumentException,
@@ -324,15 +324,6 @@ IAM_ACTIONS: Final[Mapping[str, str]] = MappingProxyType(
 )
 
 
-def aws_code(exc: BaseException) -> str | None:
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return None
-    error = response.get("Error")
-    code = error.get("Code") if isinstance(error, dict) else None
-    return code if isinstance(code, str) else None
-
-
 def translate_error(operation: str, exc: BaseException) -> Exception:
     """El `ClientError`/`BotoCoreError` como excepción propia, sin el mensaje
     de AWS (puede nombrar el secreto). Quien la lanza la encadena con
@@ -440,8 +431,7 @@ class SecretStore:
         if kms_key_id is not None and (not isinstance(kms_key_id, str) or not kms_key_id):
             raise InvalidArgumentException("kms_key_id debe ser un id, ARN o alias de KMS")
         self._kms_key_id = kms_key_id
-        self._client: SecretsManagerApi | None = None
-        self._client_lock = threading.Lock()
+        self._client = LazyClient("secretsmanager", region=region, session=session)
         self._sleep: Callable[[float], None] = time.sleep
         self._clock: Callable[[], float] = time.monotonic
 
@@ -601,13 +591,8 @@ class SecretStore:
 
     def api(self) -> SecretsManagerApi:
         """El cliente `secretsmanager`, construido en el primer uso."""
-        with self._client_lock:
-            if self._client is None:
-                session = self._session or boto3.session.Session(region_name=self._region)
-                self._client = session.client(
-                    "secretsmanager", region_name=self._region, config=client_config()
-                )
-            return self._client
+        client: SecretsManagerApi = self._client.get()
+        return client
 
     def _call(self, operation: str, **params: Any) -> dict[str, Any]:
         try:

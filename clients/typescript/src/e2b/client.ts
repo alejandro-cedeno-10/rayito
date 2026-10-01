@@ -6,13 +6,20 @@
  * `Template` y `Volume` lanzan `UnimplementedError` al leerlos.
  */
 
+import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { emitIgnoredWarnings, IGNORED_CONNECTION_OPTS, splitConnectionOpts } from "./compat.js";
 import type { ConnectionOpts } from "./connection.js";
 import { bindSandbox, type Sandbox } from "./sandbox.js";
 import { bindSecret, type Secret } from "./secret.js";
 import { unimplemented } from "./unimplemented.js";
 
-export type E2BClientOpts = ConnectionOpts;
+/**
+ * Las opciones de `new E2B({...})`: las de conexión y, como extensión de
+ * Rayito, `index` (M14, `undefined` por defecto), que `client.Sandbox.list`
+ * usa cuando la llamada no pasa otro (ver `DynamoDbIndex`, "Coste y
+ * activación"). Ninguna otra llamada lo usa.
+ */
+export type E2BClientOpts = ConnectionOpts & { readonly index?: DynamoDbIndex | undefined };
 
 function withoutIgnored(opts: ConnectionOpts): ConnectionOpts {
   return Object.fromEntries(
@@ -30,6 +37,7 @@ export class E2B {
   constructor(opts: E2BClientOpts = {}) {
     const { ignored } = splitConnectionOpts(opts);
     emitIgnoredWarnings(ignored);
+    validateIndex(opts.index);
     this.Sandbox = bindSandbox(withoutIgnored(opts));
     this.Secret = bindSecret(opts.region === undefined ? {} : { region: opts.region });
   }

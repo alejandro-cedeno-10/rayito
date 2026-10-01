@@ -224,6 +224,20 @@ class SecretNotFoundException(SecretException, NotFoundException):
     `NotFoundException` nativa. Nunca se guarda en `SecretCache`."""
 
 
+class SandboxIndexException(SandboxException):
+    """Error del índice opcional de metadatos (`DynamoDbIndex`, M14): la
+    tabla no existe, faltan permisos IAM o `BatchGetItem` dejó claves sin
+    procesar tras los reintentos. Un listado con índice nunca devuelve una
+    lista incompleta en silencio. El mensaje nunca repite el de AWS;
+    `aws_code` es el `Code` de DynamoDB, si lo hubo."""
+
+
+class IndexWriteException(SandboxIndexException):
+    """`create(index=...)` no pudo escribir la fila del sandbox (`PutItem`).
+    Con `on_write_failure='terminate'` (por defecto) el MicroVM ya se
+    terminó, salvo `keep_on_failure=True`."""
+
+
 class QuotaExceededException(Exception):
     def __init__(self, message: str, *, quota_code: str | None = None) -> None:
         super().__init__(message)
