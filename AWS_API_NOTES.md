@@ -999,9 +999,56 @@ Q91) y su firma SigV4.
 
 ## 27. Logs de build y extras de imagen (`m15-templates`)
 
-Pendiente: `m15-templates` documenta aquí la lectura del grupo de logs de
-build (`create-microvm-image`/`update-microvm-image`) y el contrato del
-`codeArtifact` en S3.
+`Template.build()` (Python `rayito/_templates/_build.py`, TypeScript
+`src/templates/build.ts`) reusa las mismas operaciones de
+`lambda-microvms` que `rayito image publish` (AWS_API_NOTES.md §4), más
+dos operaciones de `logs` sólo cuando un build no termina
+`SUCCESSFUL`+`ACTIVE`. Verificado contra el modelo `lambda-microvms` de
+botocore y el `@aws-sdk/client-lambda-microvms` instalado en este cambio
+(`3.1140.0`); investigación TPL-1 (Q83) y TPL-2 (Q84) para el
+comportamiento medido.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros usados | Campos de salida leídos | Cuándo | Fuente |
+|---|---|---|---|---|
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier`, `imageVersion` | `baseImageArn`, `baseImageVersion`, `buildRoleArn`, `codeArtifact.uri`, `hooks`, `state`, `status`, `stateReason`, `createdAt` | resolver la versión base pedida (o, sin `version=`, cada candidata al listar), y sondear el gate tras `create`/`update-microvm-image` | §4 (ya documentado para `rayito image publish`) |
+| `ListMicrovmImageVersions` (paginador `list_microvm_image_versions` / `paginateListMicrovmImageVersions`) | `imageIdentifier` | `items[].{imageVersion, state, status, createdAt, baseImageArn, baseImageVersion, buildRoleArn, codeArtifact, hooks}` | sin `version=` en `from_base_image()`: encontrar la versión más reciente `SUCCESSFUL`+`ACTIVE`; y, antes de cada build, buscar una versión ya construida con la misma configuración (reuso, nunca con `force=True`) | §4 |
+| `GetMicrovmImage` / `CreateMicrovmImage` / `UpdateMicrovmImage` | iguales que §4 | `state` (del `GetMicrovmImage`); `imageArn`, `imageVersion` (de `Create`/`Update`) | decidir `create` vs `update` (según si la imagen ya existe) y enviar la configuración compuesta | §4 |
+| `DescribeLogStreams` (`describe_log_streams` / `DescribeLogStreamsCommand`) | `logGroupName`, `orderBy="LastEventTime"`, `descending=true`, `limit=1` | `logStreams[0].logStreamName` | sólo si la versión terminó en un estado que no es `SUCCESSFUL`+`ACTIVE` | <https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogStreams.html> |
+| `GetLogEvents` (`get_log_events` / `GetLogEventsCommand`) | `logGroupName`, `logStreamName`, `limit=500` | `events[].message` | igual que arriba, sobre el único stream encontrado | <https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html> |
+
+**Contrato de `codeArtifact`** (TPL-2/Q84): `codeArtifact.uri` sólo acepta
+`s3://<bucket>/<key>`; una URI de ECR, un ARN de repositorio o una URL
+`https` de registro dan `ValidationException` antes de crear nada (la
+documentación del modelo que sugiere lo contrario es incorrecta). Por
+eso `from_base_image()` siempre trata el `codeArtifact` de la imagen base
+como un zip en S3 a descargar con `s3:GetObject`, nunca como una
+referencia a un registro de contenedores.
+
+**Logs de build** (TPL-1/Q83): el grupo de logs de la imagen recibe la
+salida completa de BuildKit (`#N [k/n] RUN …`, stdout y stderr de cada
+`RUN`) en un stream propio, de golpe al terminar el build (no en vivo),
+tanto si el build termina bien como si falla; en el fallido aparece el
+comando, su salida y una línea `exit code: N`. Cuota observada: 10 builds
+concurrentes por cuenta (`ServiceQuotaExceededException` en el undécimo),
+de ahí el guardia local `MAX_CONCURRENT_BUILDS = 10` antes de llamar a
+AWS.
+
+**`ready_cmd`/CMD con 4xx o 5xx** (TPL-5/Q85): si el proceso que atiende
+`/ready` responde con un código de error HTTP, el build falla **en la
+primera llamada**, sin reintento, con `stateReason` conteniendo
+"the application returned a {client,server} error (HTTP {4xx,5xx})
+response"; `classify_ready_failure`/`classifyReadyFailure` traduce eso a
+`reason="ready_client_error"`/`"ready_server_error"` sin releer los logs.
+
+**`RayitoTemplateBuilder`** (`infra/templates.yaml`) concede
+`lambda:CreateMicrovmImage`/`UpdateMicrovmImage`/`GetMicrovmImage`/
+`GetMicrovmImageVersion`/`ListMicrovmImageVersions`/
+`ListMicrovmImageBuilds`/`GetMicrovmImageBuild` sobre `Resource: "*"` (el
+API no soporta un ARN de imagen específico en estas acciones; el control
+real de qué se puede construir lo da `iam:PassRole` sobre el rol de
+build), `iam:PassRole` condicionado a `iam:PassedToService:
+lambda.amazonaws.com`, y S3/Logs acotados al bucket de artefactos y al
+prefijo de grupos de logs.
 
 ## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
 

@@ -1830,9 +1830,63 @@ CloudWatch, propagación W3C `traceparent`).
 
 ## ADR-022 — templates (M15, 0.6)
 
-Pendiente: lo completa `m15-templates` (DSL de templates declarativos sobre
-`create-microvm-image`/`update-microvm-image`, sin caché de capas, sólo
-ARM64).
+**Contexto.** E2B's `Template()` builder (filas 56, 81, 89, 112 de la
+investigación) es la función con más valor para quien migra un agente ya
+escrito contra E2B: un DSL fluido que hoy en Rayito sólo tiene como
+análogo escribir un `Dockerfile` a mano y correr `rayito image publish`.
+TPL-1 (Q83) y TPL-2 (Q84) de la campaña de medición resolvieron las dos
+preguntas de diseño abiertas antes de empezar: el grupo de logs de la
+imagen recibe la salida completa de BuildKit (`#N [k/n] RUN …`, códigos de
+salida) tanto en un build correcto como en uno fallido, así que el SDK
+puede explicar un fallo sin CodeBuild ni streaming en vivo; y
+`codeArtifact.uri` sólo acepta `s3://`, nunca una referencia a ECR, así que
+`from_base_image()` siempre compone sobre un zip ya existente en S3, nunca
+sobre una imagen externa.
+
+**Decisión.** Opción A de la investigación §3: un compilador enteramente en
+el cliente, sin plano de control propio. `Template`/`AsyncTemplate`
+(`rayito._templates`/`templates/`) son un builder inmutable que compila a
+las cinco instrucciones de cable que el propio E2B usa (`COPY`, `ENV`,
+`RUN`, `WORKDIR`, `USER`). `Template.build()` resuelve la versión `ACTIVE`
+de la imagen base nombrada por `from_base_image()` (la única fuente
+soportada: inyectar `rayd` y sus hooks en una imagen externa no tiene
+camino soportado, así que `from_image`/`from_template`/`from_dockerfile`/
+`from_gcp_registry` lanzan `UnimplementedError`), descarga su
+`codeArtifact` completo, inserta la capa nueva justo antes de la última
+`CMD`/`ENTRYPOINT` de ese Dockerfile y cierra con `USER root` más esa
+misma instrucción repetida (así `rayd` sigue siendo PID 1), reempaqueta un
+zip determinista con **todas** las entradas del zip base más las nuevas
+(el Dockerfile base puede necesitar cualquiera de sus propios ficheros), lo
+sube por hash de contenido y llama a `create`/`update-microvm-image`,
+reutilizando una versión ya `SUCCESSFUL`+`ACTIVE` con la misma
+configuración en vez de reconstruir salvo `force=True`. Un build que no
+termina `SUCCESSFUL`+`ACTIVE` se explica releyendo el grupo de logs de la
+imagen (`BuildException(step, command, exit_code, log_tail)`) o, si
+`stateReason` nombra un `ready_cmd` con 4xx/5xx (TPL-5/Q85),
+`BuildException(reason="ready_client_error"|"ready_server_error")`. Un
+guardia local (`MAX_CONCURRENT_BUILDS = 10`, Q83) rechaza un undécimo
+build concurrente en el mismo proceso antes de llamar a AWS.
+`setStartCmd()`/`set_start_cmd()` hornea `/etc/rayito/template.json`
+(`rayito.template/1`, dominio compartido en `rayd_core::template`); el
+lado del agente que lo lee y arranca/sondea el proceso queda como
+seguimiento no bloqueante (ver `openspec/changes/m15-templates/proposal.md`),
+deliberadamente no incluido en este cambio por la falta de espacio en el
+disco compartido de la VM de pruebas durante la construcción paralela de
+las ocho funciones de 0.6.
+
+**Consecuencias.** Divergencias documentadas: sin caché de capas entre
+builds (0.6 no tiene una; `skip_cache()` sólo fuerza `force=True`); sólo
+ARM64; sin streaming en vivo de los pasos del build; el etiquetado de E2B
+(`assign_tags`/`remove_tags`/`get_tags`/`alias_exists`) no tiene análogo
+porque `create`/`update-microvm-image` etiqueta la imagen entera, no una
+versión. `Template.build()` necesita una política IAM separada de la de
+lanzar sandboxes (`RayitoTemplateBuilder`, `infra/templates.yaml`, un
+componente `OptionalStack`), para que un agente que crea sandboxes no
+pueda también publicar imágenes.
+
+**Reversible.** Aditivo: ningún `Sandbox.create()` existente cambia de
+comportamiento, y nada se importa ni se construye hasta que se llama a
+`Template.build()`/`build_in_background()`.
 
 ## ADR-023 — secrets-gateway (M15, 0.6)
 

@@ -30,7 +30,17 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
-<!-- m15-templates -->
+- **Templates declarativos, dominio** (`m15-templates`, ADR-022):
+  `rayd_core::template` (`StartSpec`, `ReadyPoll`, `ready_decision`,
+  `TEMPLATE_SPEC_VERSION`, `TEMPLATE_SPEC_PATH`), el esquema de
+  `/etc/rayito/template.json` que escriben `Template.build()`/
+  `AsyncTemplate.build()` del SDK. El lado del agente que lee ese fichero
+  y arranca/sondea el `start_cmd` (`adapters/fs_template_spec.rs`,
+  `adapters/shell_ready_probe.rs`, un `TemplateParticipant` sobre
+  `features/template_start.rs`) **no se incluye en este cambio**: ver el
+  seguimiento no bloqueante en
+  `openspec/changes/m15-templates/proposal.md`. `rayd` se comporta
+  exactamente igual, con o sin `/etc/rayito/template.json` presente.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

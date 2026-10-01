@@ -1401,7 +1401,22 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   firmados y webhooks compatibles con E2B.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
-- **templates** (`m15-templates`): DSL de templates declarativos.
+- **templates** (`m15-templates`): DSL de templates declarativos
+  (`Template`/`AsyncTemplate`, igual al `Template` de E2B v2), compilado
+  enteramente en el cliente: Dockerfile + zip deterministas compuestos
+  sobre una imagen `rayito-base` ya publicada, subidos a S3 por hash y
+  construidos con `create`/`update-microvm-image`; un build fallido se
+  explica releyendo el grupo de logs de BuildKit (TPL-1/Q83) o el
+  `stateReason` de un `ready_cmd` con 4xx/5xx (TPL-5/Q85), nunca
+  repitiendo nada. Sin caché de capas, sólo ARM64, sólo `from_base_image()`
+  compone de verdad. El lado del agente (`rayd` leyendo
+  `/etc/rayito/template.json` y arrancando/sondeando el `start_cmd`) queda
+  como seguimiento no bloqueante: el disco de 58 GB de la VM compartida de
+  pruebas estuvo a 0 bytes libres durante toda la construcción en paralelo
+  de las ocho funciones de 0.6, así que ningún `cargo test`/`build` de
+  `rayd`/`rayd-core` pudo verificarse en esta sesión más allá del dominio
+  puro de `rayd-core::template` (compilación no confirmada por el mismo
+  motivo).
 - **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
   loopback.
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre

@@ -92,7 +92,10 @@ const D14_TS_KEYS = [
   "volumeMounts",
   "Volume",
   "getSignature",
-  "Template",
+  "Template.aliasExists",
+  "Template.assignTags",
+  "Template.removeTags",
+  "Template.getTags",
 ];
 
 const PYTHON_UNIMPLEMENTED = fileURLToPath(

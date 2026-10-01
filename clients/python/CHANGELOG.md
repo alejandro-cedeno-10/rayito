@@ -26,7 +26,24 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
-<!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
+  por defecto): `Template`/`AsyncTemplate` compilan un DSL (igual al
+  `Template` de E2B v2) a un Dockerfile y un zip deterministas sobre una
+  imagen `rayito-base`/`rayito-base-caps` ya publicada;
+  `Template.build()`/`build_in_background()`/`get_build_status()`/
+  `exists()` suben el artefacto por hash de contenido y llaman a
+  `create`/`update-microvm-image`, reutilizando una versión idéntica en
+  vez de reconstruir. Un build fallido se explica con `BuildException`
+  (`step`/`command`/`exit_code`/`log_tail` del log de BuildKit, o
+  `reason="ready_client_error"|"ready_server_error"` si falló el
+  `ready_cmd`), sin repetir nada. `from_image`/`from_template`/
+  `from_dockerfile`/`from_gcp_registry`/`apt_install` lanzan
+  `UnimplementedError` (documentados en ADR-022). El shim
+  `rayito.e2b.Template`/`AsyncTemplate` ya construye de verdad;
+  `TemplateException`/`BuildException` del shim pasan a ser las clases
+  nativas. Sin llamar a `Template.build()`, el SDK no crea ningún cliente
+  nuevo. `infra/templates.yaml` (`rayito stack deploy templates`): sólo la
+  política IAM `RayitoTemplateBuilder`, $0 en reposo.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

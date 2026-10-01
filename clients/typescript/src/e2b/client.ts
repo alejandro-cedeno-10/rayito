@@ -3,7 +3,8 @@
  * a `client.Sandbox` (gana la llamada salvo `undefined`; `headers` no se
  * fusiona). Las opciones ignoradas avisan una vez, al construir el cliente.
  * `client.Secret` usa su `region` (Secrets Manager en esa cuenta);
- * `Template` y `Volume` lanzan `UnimplementedError` al leerlos.
+ * `client.Template` es la clase real (m15-templates); `Volume` sigue
+ * lanzando `UnimplementedError` al leerla.
  */
 
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
@@ -11,6 +12,7 @@ import { emitIgnoredWarnings, IGNORED_CONNECTION_OPTS, splitConnectionOpts } fro
 import type { ConnectionOpts } from "./connection.js";
 import { bindSandbox, type Sandbox } from "./sandbox.js";
 import { bindSecret, type Secret } from "./secret.js";
+import { Template } from "./template.js";
 import { unimplemented } from "./unimplemented.js";
 
 /**
@@ -43,8 +45,8 @@ export class E2B {
   }
 
   // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
-  get Template(): never {
-    throw unimplemented("Template");
+  get Template(): typeof Template {
+    return Template;
   }
 
   // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS

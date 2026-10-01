@@ -25,7 +25,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
-<!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
+  por defecto): `Template` compila un DSL (igual al `Template` de E2B v2)
+  a un Dockerfile y un zip deterministas sobre una imagen `rayito-base`/
+  `rayito-base-caps` ya publicada; `Template.build()`/`buildInBackground()`/
+  `getBuildStatus()`/`exists()` suben el artefacto por hash de contenido y
+  llaman a `create`/`update-microvm-image`, reutilizando una versión
+  idéntica en vez de reconstruir. Un build fallido se explica con
+  `BuildError` (`step`/`command`/`exitCode`/`logTail` del log de BuildKit,
+  o `reason: "ready_client_error"|"ready_server_error"` si falló el
+  `readyCmd`), sin repetir nada. `fromImage`/`fromTemplate`/
+  `fromDockerfile`/`fromGcpRegistry`/`aptInstall` lanzan
+  `UnimplementedError` (documentados en ADR-022). El shim
+  `rayito/e2b`'s `Template` ya construye de verdad; `BuildError`/
+  `TemplateError` del shim pasan a ser alias de las clases nativas (igual
+  patrón que `NotEnoughSpaceError`/`FileUploadError`). Sin llamar a
+  `Template.build()`, el SDK no importa estáticamente
+  `@aws-sdk/client-s3` ni carga `@aws-sdk/client-cloudwatch-logs` (peer
+  opcional nuevo, sólo para explicar un build fallido). `infra/templates.yaml`
+  (`rayito stack deploy templates`): sólo la política IAM
+  `RayitoTemplateBuilder`, $0 en reposo.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

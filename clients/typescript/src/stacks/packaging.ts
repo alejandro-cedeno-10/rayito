@@ -10,6 +10,7 @@
 import type { StackComponent } from "./model.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
 import * as secretsAccess from "./templates/secrets-access.gen.js";
+import * as templates from "./templates/templates.gen.js";
 
 interface GeneratedAsset {
   readonly TEMPLATE_BODY: string;
@@ -19,6 +20,7 @@ interface GeneratedAsset {
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
   "metadata-index": metadataIndex,
   "secrets-access": secretsAccess,
+  templates,
 };
 
 function assetFor(component: StackComponent): GeneratedAsset {

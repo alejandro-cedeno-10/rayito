@@ -48,5 +48,6 @@ pub mod run_payload;
 pub mod sandbox_timeout;
 pub mod session;
 pub mod suspend_sync;
+pub mod template;
 pub mod transfer;
 pub mod wire_tokens;
