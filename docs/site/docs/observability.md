@@ -335,8 +335,10 @@ nada de esto) y no hay telemetría del sandbox: son spans sobre lo que hace
     ```
 
 Sin `tracer_provider=`/`tracerProvider` (el valor por defecto) no se importa
-`opentelemetry`/`@opentelemetry/api` en tiempo de ejecución y no se asigna
-nada por llamada.
+`opentelemetry`/`@opentelemetry/api` en tiempo de ejecución y no se crea
+ningún span: el único coste por llamada es el pequeño objeto de atributos
+que cada método construye antes de pasar por el camino no-op (y, en
+TypeScript, el cierre `async` que envuelve la operación).
 
 ### Nombres de span
 
@@ -355,12 +357,25 @@ Todos son `SpanKind.CLIENT`.
 
 ### Atributos
 
-Lista cerrada (cualquier otra clave es un error antes de abrir el span):
+`ALLOWED_SPAN_ATTRIBUTES` es una **lista cerrada de claves permitidas**
+(cualquier otra clave es un error antes de abrir el span):
 `rayito.sandbox.id`, `rayito.region`, `rayito.template.name`,
 `rayito.resume_generation`, `rayito.operation`,
 `rayito.commands.exit_code`, `rayito.commands.background`,
 `rayito.code.language`, `rayito.files.operation`, `rayito.files.count`,
-`rayito.files.bytes`, `rayito.error.type`.
+`rayito.files.bytes`, `rayito.error.type`. Que una clave esté permitida no
+significa que algún span la lleve: hoy `rayito.template.name`,
+`rayito.resume_generation` y `rayito.error.type` están reservadas y **ningún
+span las emite** (el tipo de error va en el estado del span y en el evento
+`exception`, no como atributo). Lo que cada span lleva de verdad:
+
+| Span | Atributos |
+|---|---|
+| `rayito.sandbox.create` | `rayito.region`, `rayito.operation`, y `rayito.sandbox.id` en cuanto `run-microvm` responde |
+| `rayito.sandbox.connect`, `kill`, `pause`, `resume` | `rayito.sandbox.id`, `rayito.operation` |
+| `rayito.commands.run` | `rayito.commands.background`; en foreground, `rayito.commands.exit_code` al terminar (también si sale con código distinto de cero) |
+| `rayito.code.run` | `rayito.code.language` cuando se conoce el lenguaje |
+| `rayito.files.*` | `rayito.files.operation`; `read`/`write` añaden `rayito.files.bytes`; `write_files` añade `rayito.files.count` y `rayito.files.bytes`; `list` añade `rayito.files.count` |
 
 **Nunca se registra**: el texto de un comando o su `cmd`/args, código
 fuente, rutas de ficheros, valores de `envs`, nombres o valores de

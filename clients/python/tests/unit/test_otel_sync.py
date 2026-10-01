@@ -149,6 +149,7 @@ def test_failing_command_sets_error_status_without_the_command_text(
     assert span.status.status_code == StatusCode.ERROR
     assert span.status.description == "CommandExitException"
     assert span.attributes is not None
+    assert span.attributes["rayito.commands.exit_code"] == 7
     for value in span.attributes.values():
         assert SENTINEL not in str(value)
     for event in span.events:

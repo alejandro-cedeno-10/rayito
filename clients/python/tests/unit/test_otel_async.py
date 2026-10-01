@@ -12,11 +12,12 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, StatusCode
 
 from rayito import AsyncSandbox
 from rayito._limits import DEFAULT_PORT
 from rayito._otel import ALLOWED_SPAN_ATTRIBUTES
+from rayito.exceptions import CommandExitException
 
 from .conftest import (
     ACCESS_TOKEN,
@@ -126,6 +127,18 @@ async def test_foreground_command_span_has_exit_code(
     (span,) = spans
     assert span.attributes is not None
     assert span.attributes["rayito.commands.exit_code"] == 0
+
+
+async def test_failing_foreground_command_span_still_has_exit_code(
+    instrumented_sandbox: AsyncSandbox, exporter: InMemorySpanExporter
+) -> None:
+    with pytest.raises(CommandExitException):
+        await instrumented_sandbox.commands.run("exit 7")
+    spans = [s for s in exporter.get_finished_spans() if s.name == "rayito.commands.run"]
+    (span,) = spans
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes["rayito.commands.exit_code"] == 7
 
 
 async def test_run_code_span_has_the_language_attribute(

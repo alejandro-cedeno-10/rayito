@@ -21,7 +21,7 @@ anything from inside the MicroVM.
   `NOOP` (default, no `tracer_provider=`/`tracerProvider`) whose `span()`
   does nothing (Python: the same `contextlib.nullcontext(...)` singleton
   every call, wrapping a no-op span so callers never branch on `None`; TS:
-  runs the callback directly, no allocation). With a provider, Python lazily
+  runs the callback directly, no span object). With a provider, Python lazily
   imports `opentelemetry.trace` through `require_module(..., extra="otel")`
   (never at import time, never without a provider) and opens
   `SpanKind.CLIENT` spans on a `rayito` tracer; TypeScript only ever
@@ -88,9 +88,11 @@ names/values, metadata values, the access token, the JWE or presigned URLs.
 - **Exporter**: whatever the caller's own OTel backend costs (a Collector,
   Jaeger, X-Ray, CloudWatch via ADOT, …) — entirely outside Rayito and
   entirely the caller's choice.
-- **Off**: no option set = zero extra imports, zero extra allocations in
-  the hot path (Python: `NOOP.span()` returns the same singleton
-  context manager every call; TS: the callback runs directly).
+- **Off**: no option set = zero extra imports and no span (Python:
+  `NOOP.span()` returns the same singleton context manager every call; TS:
+  the callback runs directly). Each instrumented call still builds a
+  trivial attributes dict/object literal (and, in TS, an `async` closure)
+  before reaching the no-op path.
 
 ## Capabilities
 

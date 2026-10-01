@@ -23,6 +23,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { CommandExitError } from "../../src/errors.js";
 import { ALLOWED_SPAN_ATTRIBUTES } from "../../src/otel.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { SANDBOX_ID } from "./fake/control-plane.js";
@@ -132,6 +133,14 @@ describe("rayito.commands.run", () => {
     const span = exporter.getFinishedSpans().find((s) => s.name === "rayito.commands.run");
     expect(span?.attributes["rayito.commands.background"]).toBe(false);
     expect(span?.attributes["rayito.commands.exit_code"]).toBe(0);
+  });
+
+  test("un comando foreground que falla también lleva su exit code en el span", async () => {
+    const { sandbox } = await createTestSandbox({ create: { tracerProvider: provider } });
+    await expect(sandbox.commands.run("exit 7")).rejects.toBeInstanceOf(CommandExitError);
+    const span = exporter.getFinishedSpans().find((s) => s.name === "rayito.commands.run");
+    expect(span?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span?.attributes["rayito.commands.exit_code"]).toBe(7);
   });
 
   test("un comando que falla pone el estado en ERROR con el nombre de la clase, nunca el texto del comando", async () => {

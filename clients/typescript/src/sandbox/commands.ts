@@ -575,9 +575,9 @@ export class Commands {
    * Con `tracerProvider` en `create()`/`connect()`, cada llamada abre un
    * span `rayito.commands.run` (nunca con el texto del comando, sus
    * argumentos ni sus `envs`): `rayito.commands.background` siempre, y en
-   * foreground `rayito.commands.exit_code` al terminar. En segundo plano el
-   * span se cierra en cuanto `run` devuelve el handle, no cuando el proceso
-   * termina.
+   * foreground `rayito.commands.exit_code` al terminar (también cuando sale
+   * con un código distinto de cero). En segundo plano el span se cierra en
+   * cuanto `run` devuelve el handle, no cuando el proceso termina.
    */
   async run(cmd: string, options: CommandOptions = {}): Promise<CommandResult | CommandHandle> {
     const envs = await this.#secrets.apply(options.envs, options.secrets);
@@ -603,7 +603,15 @@ export class Commands {
         if (background) {
           return handle;
         }
-        const result = await handle.wait();
+        let result: CommandResult;
+        try {
+          result = await handle.wait();
+        } catch (error) {
+          if (error instanceof CommandExitError) {
+            span?.setAttribute("rayito.commands.exit_code", error.exitCode);
+          }
+          throw error;
+        }
         span?.setAttribute("rayito.commands.exit_code", result.exitCode);
         return result;
       },

@@ -8,7 +8,9 @@
  * comandos, código y ficheros en un span `rayito.*` de `SpanKind.CLIENT`.
  * Sin `tracerProvider` (el valor por defecto, `undefined`),
  * {@link instrumentationFor} devuelve {@link NOOP}: `span()` ejecuta el
- * callback directamente, sin asignar nada y sin importar nada.
+ * callback directamente: ningún span ni import de `@opentelemetry/api`;
+ * sólo queda el objeto de atributos trivial (y el cierre `async`) que cada
+ * método instrumentado construye por llamada.
  *
  * Sólo se importa `@opentelemetry/api` con `import type`: el compilador lo
  * usa para comprobar tipos y `tsdown` lo borra del build, así que el bundle
@@ -212,7 +214,7 @@ class OtelInstrumentation implements Instrumentation {
   }
 }
 
-/** `undefined` (por defecto) → {@link NOOP}: cero overhead y ningún import
+/** `undefined` (por defecto) → {@link NOOP}: ningún span y ningún import
  * de `@opentelemetry/api`. Con un proveedor, construye el tracer `rayito`
  * ya mismo (una vez, en `create()`/`connect()`) para que cada `span()`
  * posterior sólo abra y cierre un span de ese tracer. */

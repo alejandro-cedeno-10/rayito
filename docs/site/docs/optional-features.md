@@ -28,10 +28,15 @@ opcional futura:
   del `Sandbox`.
 - **(c) Peers opcionales de TypeScript cargados bajo demanda.** Los clientes
   de AWS SDK v3 que 0.4.0 no usaba (`@aws-sdk/client-secrets-manager`,
-  `@aws-sdk/client-dynamodb`) y `@opentelemetry/api` son peerDependencies
-  **opcionales**: se cargan con `import()` dinámico sólo dentro de la
-  función ya activada (`loadOptionalPeer`), nunca a nivel superior de un
-  módulo. En Python, el equivalente es `rayito[otel]` vía `require_module`.
+  `@aws-sdk/client-dynamodb`) son peerDependencies **opcionales**: se cargan
+  con `import()` dinámico sólo dentro de la función ya activada
+  (`loadOptionalPeer`), nunca a nivel superior de un módulo.
+  `@opentelemetry/api` también es un peer opcional, pero sólo para tipos:
+  `src/otel.ts` lo usa con `import type` (se borra en el build), el SDK usa
+  directamente el `tracerProvider` que le pasa el llamante y no carga nada
+  de `@opentelemetry/api` en tiempo de ejecución. En Python, el equivalente
+  es `rayito[otel]` vía `require_module`, que importa `opentelemetry.trace`
+  sólo al activar `tracer_provider=`.
 - **(d) Bloque de docstring "Coste y activación".** Toda opción de coste lo
   lleva, con la plantilla de abajo.
 
@@ -270,9 +275,9 @@ span, atributos y lo que nunca se registra en
     console.log(exporter.getFinishedSpans().map((span) => span.name));
     ```
 
-Sin `tracer_provider=`/`tracerProvider` (por defecto): `NOOP`, cero overhead
+Sin `tracer_provider=`/`tracerProvider` (por defecto): `NOOP`, ningún span
 y ningún import de `opentelemetry`/`@opentelemetry/api` en tiempo de
-ejecución.
+ejecución; sólo queda un objeto de atributos trivial por llamada.
 
 <a id="local-proxy"></a>
 

@@ -17,13 +17,13 @@ const MISSING_NESTED_IMPORT_FIXTURE = new URL(
   import.meta.url,
 ).href;
 
-// Peers opcionales que ningún grupo ha añadido todavía como dependencia real
-// (los añadirá M14). `src/**/*.ts` no debe importarlos de forma estática
-// nunca: sólo `loadOptionalPeer` los carga, con `import()` dinámico, y sólo
-// dentro de la función ya activada por su opción. `@opentelemetry/api`
+// Peers opcionales de AWS SDK v3 (secretos, M13a; índice de metadatos, M14):
+// ya están en `peerDependencies` (opcionales), pero `src/**/*.ts` no debe
+// importarlos de forma estática nunca: sólo `loadOptionalPeer` los carga, con
+// `import()` dinámico, y sólo dentro de la función ya activada por su opción. `@opentelemetry/api`
 // (M13b) ya es una dependencia real, pero sólo como tipo: la comprueba el
 // describe de más abajo, con su propia regla (permite `import type`).
-const FUTURE_OPTIONAL_PEERS = ["@aws-sdk/client-secrets-manager", "@aws-sdk/client-dynamodb"];
+const LAZY_OPTIONAL_PEERS = ["@aws-sdk/client-secrets-manager", "@aws-sdk/client-dynamodb"];
 
 const SRC_ROOT = fileURLToPath(new URL("../../src", import.meta.url));
 
@@ -85,12 +85,12 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-describe("peerDependencies opcionales futuros", () => {
-  test("ningún fichero de src/ importa de forma estática un peer opcional que aún no es dependencia real", () => {
+describe("peerDependencies opcionales cargadas sólo con loadOptionalPeer", () => {
+  test("ningún fichero de src/ importa de forma estática un peer opcional de AWS SDK", () => {
     const offenders: string[] = [];
     for (const file of listTsFilesRecursively(SRC_ROOT)) {
       const content = readFileSync(file, "utf-8");
-      for (const peer of FUTURE_OPTIONAL_PEERS) {
+      for (const peer of LAZY_OPTIONAL_PEERS) {
         const escapedPeer = escapeRegExp(peer);
         // Import/export estático o `require`; el `import()` dinámico de
         // `loadOptionalPeer` no cuenta como estático y no debe casar aquí.

@@ -413,13 +413,21 @@ export interface SignedUrlOptions {
 
 export interface StaticPauseOptions extends ControlPlaneOptions, PauseOptions {
   readonly readyTimeoutMs?: number | undefined;
-  /** Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`; `undefined` por defecto. */
+  /**
+   * Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`;
+   * `undefined` por defecto (apagado). $0 de AWS, ningún IAM adicional.
+   * Ejemplo: `{ tracerProvider: trace.getTracerProvider() }`.
+   */
   readonly tracerProvider?: TracerProviderLike | undefined;
 }
 
 /** `Sandbox.kill(sandboxId)`: sin handle, así que `tracerProvider` es su única opción propia. */
 export interface StaticKillOptions extends ControlPlaneOptions {
-  /** Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`; `undefined` por defecto. */
+  /**
+   * Spans OpenTelemetry (M13b) como en `SandboxConnectOptions.tracerProvider`;
+   * `undefined` por defecto (apagado). $0 de AWS, ningún IAM adicional.
+   * Ejemplo: `{ tracerProvider: trace.getTracerProvider() }`.
+   */
   readonly tracerProvider?: TracerProviderLike | undefined;
 }
 
@@ -982,7 +990,19 @@ export class Sandbox implements AsyncDisposable {
     });
   }
 
-  /** `tracerProvider` (M13b) como en `SandboxConnectOptions.tracerProvider`: ver su "Coste y activación". */
+  /**
+   * `Sandbox.kill(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.kill`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.kill(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
   static async kill(sandboxId: string, options: StaticKillOptions = {}): Promise<boolean> {
     const plane = resolveControlPlane(options);
     const validatedSandboxId = validateSandboxId(sandboxId);
@@ -997,7 +1017,19 @@ export class Sandbox implements AsyncDisposable {
     return resolveControlPlane(options).getMicrovm(validateSandboxId(sandboxId));
   }
 
-  /** `tracerProvider` (M13b) como en `SandboxConnectOptions.tracerProvider`: ver su "Coste y activación". */
+  /**
+   * `Sandbox.pause(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.pause`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.pause(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
   static async pause(sandboxId: string, options: StaticPauseOptions = {}): Promise<boolean> {
     const plane = resolveControlPlane(options);
     const validatedSandboxId = validateSandboxId(sandboxId);
@@ -1023,7 +1055,19 @@ export class Sandbox implements AsyncDisposable {
     );
   }
 
-  /** `tracerProvider` (M13b) como en `SandboxConnectOptions.tracerProvider`: ver su "Coste y activación". */
+  /**
+   * `Sandbox.resume(sandboxId)` sin handle.
+   *
+   * Coste y activación (`tracerProvider`, M13b):
+   * - Activa: spans OpenTelemetry `rayito.sandbox.resume`, como en
+   *   `SandboxConnectOptions.tracerProvider`.
+   * - Recursos y llamadas AWS: ninguno adicional.
+   * - Coste aproximado: $0 de AWS.
+   * - IAM: ninguno adicional.
+   * - Cómo apagarla: no pases `tracerProvider` (por defecto `undefined`).
+   * - Ejemplo:
+   *   `await Sandbox.resume(sandboxId, { tracerProvider: trace.getTracerProvider() });`
+   */
   static async resume(sandboxId: string, options: StaticPauseOptions = {}): Promise<void> {
     const plane = resolveControlPlane(options);
     const validatedSandboxId = validateSandboxId(sandboxId);

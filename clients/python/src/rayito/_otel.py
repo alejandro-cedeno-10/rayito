@@ -5,8 +5,9 @@ Una función opcional más (apagada por defecto): `tracer_provider=` en
 `kill`/`pause`/`resume` guarda en el handle una `Instrumentation` que envuelve
 cada operación de ciclo de vida, comandos, código y ficheros en un span
 `rayito.*` de `SpanKind.CLIENT`. Sin `tracer_provider=` (el valor por
-defecto, `None`), `instrumentation_for()` devuelve `NOOP`: ni una asignación
-por llamada, ni un import de `opentelemetry`.
+defecto, `None`), `instrumentation_for()` devuelve `NOOP`: ningún span ni
+import de `opentelemetry`; sólo queda el diccionario de atributos trivial que
+cada método construye antes de llamar a `NOOP.span()`.
 
 `NOOP.span()` siempre es el mismo `contextlib.nullcontext()` compartido
 (nunca se construye uno por llamada); con un proveedor, el import perezoso de
@@ -203,7 +204,7 @@ def _validated_attributes(attributes: Mapping[str, Any] | None) -> dict[str, Any
 
 
 def instrumentation_for(tracer_provider: TracerProviderLike | None) -> Instrumentation:
-    """`None` (por defecto) → `NOOP`: cero overhead y ningún import de
+    """`None` (por defecto) → `NOOP`: ningún span y ningún import de
     `opentelemetry`. Con un proveedor, construye el tracer `rayito` ya mismo
     (una vez, en `create()`/`connect()`) para que cada `span()` posterior
     sólo abra y cierre un span de ese tracer."""

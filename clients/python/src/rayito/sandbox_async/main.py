@@ -1025,7 +1025,18 @@ class AsyncSandbox:
         tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
         """`AsyncSandbox.kill(sandbox_id)`; `tracer_provider=` como en
-        `Sandbox.kill`."""
+        `Sandbox.kill`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            await AsyncSandbox.kill(sandbox_id, tracer_provider=trace.get_tracer_provider())
+        """
         plane = resolve_control_plane(control_plane, session, region)
         validated_sandbox_id = validate_sandbox_id(sandbox_id)
         with instrumentation_for(tracer_provider).span(
@@ -1101,7 +1112,18 @@ class AsyncSandbox:
         tracer_provider: TracerProviderLike | None = None,
     ) -> bool:
         """`AsyncSandbox.pause(sandbox_id)`; `tracer_provider=` como en
-        `Sandbox.pause`."""
+        `Sandbox.pause`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            await AsyncSandbox.pause(sandbox_id, tracer_provider=trace.get_tracer_provider())
+        """
         plane = resolve_control_plane(control_plane, session, region)
         validated_sandbox_id = validate_sandbox_id(sandbox_id)
         with instrumentation_for(tracer_provider).span(
@@ -1144,7 +1166,18 @@ class AsyncSandbox:
         tracer_provider: TracerProviderLike | None = None,
     ) -> None:
         """`AsyncSandbox.resume(sandbox_id)`; `tracer_provider=` como en
-        `Sandbox.resume`."""
+        `Sandbox.resume`.
+
+        Coste y activación
+        -------------------
+        Activa: `tracer_provider=` como en `create()`.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
+        Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            await AsyncSandbox.resume(sandbox_id, tracer_provider=trace.get_tracer_provider())
+        """
         plane = resolve_control_plane(control_plane, session, region)
         validated_sandbox_id = validate_sandbox_id(sandbox_id)
         with instrumentation_for(tracer_provider).span(

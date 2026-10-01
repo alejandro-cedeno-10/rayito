@@ -1361,8 +1361,12 @@ class Sandbox:
         Coste y activación
         -------------------
         Activa: `tracer_provider=` como en `create()`.
-        Recursos y llamadas AWS: ninguno. IAM: ninguno adicional.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
         Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            Sandbox.pause(sandbox_id, tracer_provider=trace.get_tracer_provider())
         """
         plane = resolve_control_plane(control_plane, session, region)
         validated_sandbox_id = validate_sandbox_id(sandbox_id)
@@ -1416,8 +1420,12 @@ class Sandbox:
         Coste y activación
         -------------------
         Activa: `tracer_provider=` como en `create()`.
-        Recursos y llamadas AWS: ninguno. IAM: ninguno adicional.
+        Recursos y llamadas AWS: ninguno.
+        Coste aproximado: $0 de AWS.
+        IAM: ninguno adicional.
         Cómo apagarla: no pases `tracer_provider=` (por defecto `None`).
+        Ejemplo:
+            Sandbox.resume(sandbox_id, tracer_provider=trace.get_tracer_provider())
         """
         plane = resolve_control_plane(control_plane, session, region)
         validated_sandbox_id = validate_sandbox_id(sandbox_id)

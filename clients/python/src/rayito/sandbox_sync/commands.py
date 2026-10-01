@@ -44,6 +44,7 @@ from rayito._process_base import (
 from rayito._sandbox_base import GateRetry, ReconnectBudget
 from rayito._secrets import SecretRef
 from rayito.exceptions import (
+    CommandExitException,
     NotFoundException,
     SandboxException,
     TimeoutException,
@@ -168,7 +169,8 @@ class Commands:
         Con `tracer_provider=` en `create()`/`connect()`, cada llamada abre un
         span `rayito.commands.run` (nunca con el texto del comando, sus
         argumentos ni sus `envs`): `rayito.commands.background` siempre, y en
-        foreground `rayito.commands.exit_code` al terminar. En segundo plano
+        foreground `rayito.commands.exit_code` al terminar (también cuando sale con
+        un código distinto de cero). En segundo plano
         el span se cierra en cuanto `start` devuelve el handle, no cuando el
         proceso termina.
         """
@@ -191,7 +193,11 @@ class Commands:
             )
             if background:
                 return handle
-            result = handle.wait()
+            try:
+                result = handle.wait()
+            except CommandExitException as exc:
+                span.set_attribute("rayito.commands.exit_code", exc.exit_code)
+                raise
             span.set_attribute("rayito.commands.exit_code", result.exit_code)
             return result
 

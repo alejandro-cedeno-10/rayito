@@ -14,8 +14,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `kill`/`pause`/`resume`; instrumenta `commands.run`, `run_code`, `files.*`
   y `kill`/`pause`/`resume` de instancia con spans `rayito.*` de
   `SpanKind.CLIENT`. Sin `tracer_provider=` no se importa `opentelemetry`
-  (extra `otel`, `pip install rayito[otel]`) y `NOOP.span()` no asigna nada
-  por llamada. Lista cerrada de atributos (nunca texto de comandos, código,
+  (extra `otel`, `pip install rayito[otel]`) ni se crea ningún span
+  (`NOOP.span()` devuelve siempre el mismo `nullcontext`; sólo queda el
+  diccionario de atributos trivial de cada llamada). Lista cerrada de atributos (nunca texto de comandos, código,
   rutas, `envs`, secretos ni metadata); un error del span lleva el nombre de
   la clase de la excepción, nunca su mensaje. $0 de AWS; el coste (si lo
   hay) es el del backend de exportación del llamante. Fuera de alcance:
