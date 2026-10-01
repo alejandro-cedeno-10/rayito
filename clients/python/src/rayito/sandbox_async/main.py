@@ -153,6 +153,17 @@ from rayito._sandbox_base import (
     validate_sandbox_id,
     with_guest_facts,
 )
+from rayito._secrets import (
+    SecretBinding,
+    SecretCache,
+    SecretRef,
+    asecret_envs,
+    awarm,
+    bind_secrets,
+    rebind_secrets,
+    relaunch_secrets,
+    shared_secret_cache,
+)
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -416,6 +427,7 @@ class AsyncSandbox:
         self._transfer: S3Staging | None = None
         self._session: boto3.session.Session | None = None
         self._transfers = AsyncTransfers(self)
+        self._secrets: SecretBinding | None = None
         self._git: AsyncGit | None = None
 
     # ------------------------------------------------------------------ create
@@ -454,11 +466,31 @@ class AsyncSandbox:
         pool: AsyncSandboxPool | None = None,
         transfer: S3Staging | None = None,
         logger: logging.Logger | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.create` (incluidos `metadata`, `pool=`,
         `persist=`, `transfer=`, el plazo lógico de `max_lifetime`/`on_timeout`
         y la política de egress de `network=`/`allow_internet_access`, que
-        termina el VM aunque haya `keep_on_failure` si la imagen no la aplica)."""
+        termina el VM aunque haya `keep_on_failure` si la imagen no la aplica,
+        y `secrets=`/`secret_cache=`, resueltos antes de `run-microvm`).
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos de Secrets Manager como variables
+            de entorno de cada comando, PTY o celda; `secret_cache=` fija la
+            caché (si no, una compartida por región y sesión, TTL 300 s).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL; ningún recurso nuevo y ningún cliente sin `secrets=`.
+        Coste aproximado: $0,05 por 10 000 llamadas + $0,40 por secreto y mes
+            (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
+        Ejemplo:
+            sbx = await AsyncSandbox.create(secrets={"OPENAI_API_KEY": "openai"})
+            await sbx.commands.run("python agent.py")
+        """
+        binding = bind_secrets(secrets, secret_cache)
         launch = plan_network_launch(network, allow_internet_access=allow_internet_access)
         require_role_for_persist(persist, execution_role_arn)
         staging = resolve_staging(transfer)
@@ -501,12 +533,18 @@ class AsyncSandbox:
                     ready_timeout=ready_timeout,
                     request_timeout=request_timeout,
                     reconnect_timeout=reconnect_timeout,
+                    secrets=secrets,
+                    secret_cache=secret_cache,
                 ),
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
             return taken
         plane = resolve_control_plane(control_plane, session, region)
+        binding = await awarm(
+            binding,
+            lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
+        )
         image_arn = await asyncio.to_thread(plane.resolve_template_arn, resolve_template(template))
         plan = build_launch_plan(
             image_arn=image_arn,
@@ -543,6 +581,7 @@ class AsyncSandbox:
             logger=logger,
         )
         sandbox._bind_transfer(staging, session)
+        sandbox._secrets = binding
         if launch.enforce:
             await sandbox._apply_initial_network(launch)
         sandbox._launch_options = LaunchOptions(
@@ -577,10 +616,40 @@ class AsyncSandbox:
 
     @class_method_variant("_class_connect")
     async def connect(
-        self, *, timeout: int | None = None, request_timeout: float | None = None
+        self,
+        *,
+        timeout: int | None = None,
+        request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> AsyncSandbox:
         """Misma semántica que `sbx.connect()` de `Sandbox`: reabre este
-        handle y extiende el plazo (`AT_LEAST`). Devuelve `self`."""
+        handle y extiende el plazo (`AT_LEAST`). Devuelve `self`.
+        `secrets=`/`secret_cache=` sustituyen los del handle; `None` los
+        conserva y `secrets={}` los borra todos.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` (y `secret_cache=`) inyectan secretos de Secrets
+            Manager en cada comando, PTY, celda Python y contexto de este
+            handle; sin ellos, `connect()` no construye ningún cliente
+            `secretsmanager` (el camino de 0.4.0).
+        Recursos y llamadas AWS: `GetSecretValue` una vez por secreto y TTL de
+            `SecretCache` (300 s por defecto), resuelto aquí antes de
+            `get-microvm`; ningún recurso nuevo.
+        Coste aproximado: $0,05 por 10 000 llamadas (≈ $0,04/mes por secreto
+            y proceso con TTL 300) + $0,40 por secreto y mes (us-east-1,
+            2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante
+            (`RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt`
+            con una CMK.
+        Cómo apagarla: no pases `secrets=` ni `secret_cache=`; `secrets={}`
+            quita los que el handle ya tenía.
+        Ejemplo:
+            await sbx.connect(secrets={"OPENAI_API_KEY": "openai"})
+            await sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
+        """
+        await self._rebind_secrets(secrets, secret_cache)
         info = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
         if info.state in TERMINAL_STATES:
             raise terminal_state_error(info)
@@ -610,15 +679,35 @@ class AsyncSandbox:
         persist: S3Prefix | None = None,
         transfer: S3Staging | None = None,
         logger: logging.Logger | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Self:
         """Misma semántica que `Sandbox.connect(sandbox_id)` (incluidos
-        `persist=`, que sólo enlaza el prefijo con `name`, `transfer=` y
-        `timeout`, que nunca acorta el plazo lógico)."""
+        `persist=`, que sólo enlaza el prefijo con `name`, `transfer=`,
+        `timeout`, que nunca acorta el plazo lógico, y `secrets=`).
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos como variables de entorno de cada
+            comando, PTY o celda de este handle.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL de `SecretCache` (300 s por defecto).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            sbx = await AsyncSandbox.connect(sandbox_id, secrets={"TOKEN": "gh"})
+        """
         token = require_access_token(access_token)
         bound = None if persist is None else require_named_persist(persist)
         staging = resolve_staging(transfer)
         validate_staging_against_persist(staging, bound)
+        binding = bind_secrets(secrets, secret_cache)
         plane = resolve_control_plane(control_plane, session, region)
+        binding = await awarm(
+            binding,
+            lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
+        )
         info = await asyncio.to_thread(plane.get_microvm, validate_sandbox_id(sandbox_id))
         if info.state in TERMINAL_STATES:
             raise terminal_state_error(info)
@@ -638,6 +727,7 @@ class AsyncSandbox:
         )
         sandbox._persist = bound
         sandbox._bind_transfer(staging, session)
+        sandbox._secrets = binding
         try:
             await sandbox._extend_after_readiness(timeout, request_timeout=None)
         except BaseException:
@@ -1220,8 +1310,22 @@ class AsyncSandbox:
         envs: Mapping[str, str] | None = None,
         timeout: float | None = DEFAULT_CODE_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> Execution:
-        """Misma semántica que `Sandbox.run_code`; los callbacks son síncronos."""
+        """Misma semántica que `Sandbox.run_code`; los callbacks son síncronos.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos en el entorno de la celda (sólo
+            contextos Python).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            await sbx.run_code("import os", secrets={"OPENAI_API_KEY": "openai"})
+        """
         return await self._code_client.run_code(
             code,
             language=language,
@@ -1233,6 +1337,7 @@ class AsyncSandbox:
             envs=envs,
             timeout=timeout,
             request_timeout=request_timeout,
+            secrets=secrets,
         )
 
     # ------------------------------------------------------------ persistence
@@ -1284,9 +1389,14 @@ class AsyncSandbox:
         if persist is None:
             raise reincarnate_requires_persist_error()
         await self.checkpoint_files(exclude=exclude, timeout=persist_timeout)
+        secret_refs, secret_cache = relaunch_secrets(self._secrets)
         try:
             successor = await type(self).create(
-                **launch_kwargs(options), persist=persist, persist_timeout=persist_timeout
+                **launch_kwargs(options),
+                persist=persist,
+                persist_timeout=persist_timeout,
+                secrets=secret_refs,
+                secret_cache=secret_cache,
             )
         except BaseException as exc:
             add_reincarnate_note(exc, persist.uri)
@@ -1362,11 +1472,28 @@ class AsyncSandbox:
         language: str | None = None,
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CodeContext:
-        """Misma semántica que `Sandbox.create_code_context`, lenguajes y
-        variante de imagen incluidos."""
+        """Misma semántica que `Sandbox.create_code_context`, lenguajes,
+        variante de imagen y `secrets=` incluidos.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos en el entorno del kernel nuevo.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            ctx = await sbx.create_code_context(language="bash", secrets={"T": "gh"})
+        """
         return await self._code_client.create_context(
-            cwd=cwd, language=language, envs=envs, request_timeout=request_timeout
+            cwd=cwd,
+            language=language,
+            envs=envs,
+            request_timeout=request_timeout,
+            secrets=secrets,
         )
 
     async def list_code_contexts(
@@ -1400,6 +1527,38 @@ class AsyncSandbox:
         persistencia, transferencias): el del usuario si lo dio, el del
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
+
+    def _default_secret_cache(self) -> SecretCache:
+        """Misma semántica que `Sandbox._default_secret_cache`."""
+        return shared_secret_cache(self._control_plane.region, self._session)
+
+    async def _rebind_secrets(
+        self,
+        secrets: Mapping[str, str | SecretRef] | None,
+        secret_cache: SecretCache | None,
+    ) -> None:
+        """Misma semántica que `Sandbox._rebind_secrets`."""
+        changed, binding = rebind_secrets(self._secrets, secrets, secret_cache)
+        if not changed:
+            return
+        self._secrets = await awarm(binding, self._default_secret_cache)
+
+    async def _secret_envs(
+        self,
+        envs: Mapping[str, str] | None,
+        secrets: Mapping[str, str | SecretRef] | None,
+        *,
+        include_bound: bool = True,
+    ) -> Mapping[str, str] | None:
+        """Misma semántica que `Sandbox._secret_envs`; un fallo de caché
+        lee Secrets Manager en `asyncio.to_thread`."""
+        return await asecret_envs(
+            envs,
+            bound=self._secrets,
+            secrets=secrets,
+            default_cache=self._default_secret_cache,
+            include_bound=include_bound,
+        )
 
     def _bind_transfer(
         self, staging: S3Staging | None, session: boto3.session.Session | None

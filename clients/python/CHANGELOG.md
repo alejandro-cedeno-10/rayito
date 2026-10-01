@@ -8,6 +8,37 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
+  apagado por defecto, ADR-014): `SecretStore(region=, session=,
+  prefix="rayito/", kms_key_id=)` con `create`/`update`/`get_info`/
+  `exists`/`list`/`destroy` (versión entera en `ClientRequestToken`,
+  metadatos en `Description`, borrado sin ventana de recuperación, reintento
+  acotado de `create` tras un borrado reciente) y `SecretCache(ttl_seconds=300)`
+  (clave por región, sesión, secreto y versión; una sola lectura en vuelo por
+  clave; los aciertos no llaman a AWS; `refresh()`/`invalidate()`; nunca
+  muestra valores). Coste: $0,40/secreto-mes hasta `destroy` + $0,05/10 000
+  llamadas.
+- **`secrets=` / `secret_cache=`** en `Sandbox.create()` (también con
+  `pool=`), `connect()`, `SandboxPool.take()` y, por llamada, en
+  `commands.run`, `pty.create`, `run_code` (contextos Python) y
+  `create_code_context`, síncrono y asíncrono: entregan el valor como
+  variable de entorno por los `envs` que ya viajan a `rayd` (sin RPC nueva,
+  vale con imágenes 0.4.0), nunca en el `runHookPayload`, `metadata`, logs ni
+  errores. Se resuelven antes de `run-microvm`. La primera vez avisan con
+  `RayitoCompatWarning`: el valor es visible para el código del sandbox.
+- **Shim de E2B**: `Secret`/`AsyncSecret`, `SecretInfo`, `SecretPaginator`/
+  `AsyncSecretPaginator`, `SecretException`/`SecretNotFoundException` sobre
+  `SecretStore`, con los nombres de `e2b` 2.51.0; `E2B(...).Secret` usa su
+  región y su sesión. `fill()` devuelve el placeholder, que nada resuelve;
+  `iam_token` sigue en `UnimplementedError`.
+
+### Changed
+
+- `RayitoCompatWarning` vive ahora en `rayito.exceptions` (y se re-exporta
+  desde `rayito.e2b.exceptions`: es la misma clase).
+- `rayito.e2b.Secret`/`AsyncSecret` y `E2B(...).Secret` ya no lanzan
+  `UnimplementedError`: llaman a Secrets Manager cuando se usan.
+
 - **`rayito sandbox proxy ID --port N`** (`m12-sizes-proxy`): expone un
   puerto del guest en `http://<bind>:<local-port>` (`--local-port`, por
   defecto igual a `--port`; `--bind`, por defecto `127.0.0.1`;

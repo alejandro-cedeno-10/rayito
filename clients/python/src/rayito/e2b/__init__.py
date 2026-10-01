@@ -11,8 +11,10 @@ El plazo del sandbox (`timeout`, `set_timeout`, `connect(timeout=)`,
 `lifecycle`) lo impone `rayd` en una imagen M9; `upload_url`/`download_url`
 firman en S3; `allow_internet_access=False` y `network` son una política de
 egress en el guest (`rayito-base-caps`); `get_metrics(start, end)` es el
-historial del agente. Lo que Lambda MicroVMs no puede hacer (`fork`,
-snapshots, MCP, `iam`, volúmenes, secretos, templates, kernels que no sean
+historial del agente. `Secret`/`AsyncSecret` son CRUD sobre AWS Secrets
+Manager en tu cuenta (`fill` devuelve el placeholder de E2B, que Rayito no
+resuelve). Lo que Lambda MicroVMs no puede hacer (`fork`,
+snapshots, MCP, `iam`, volúmenes, templates, kernels que no sean
 python/bash/javascript/typescript...) lanza `UnimplementedError` (un
 `NotImplementedError`, nunca `SandboxException`) nombrando la feature y el
 motivo. Los `ApiParams` sin sentido en AWS (`api_key`, `domain`, `debug`,
@@ -78,6 +80,13 @@ from rayito.e2b._models import (
     SandboxQuery,
     SandboxState,
 )
+from rayito.e2b._secret import (
+    AsyncSecret,
+    AsyncSecretPaginator,
+    Secret,
+    SecretInfo,
+    SecretPaginator,
+)
 from rayito.e2b._sync import Sandbox
 from rayito.e2b._types import (
     MIMEType,
@@ -89,10 +98,8 @@ from rayito.e2b._types import (
     Username,
 )
 from rayito.e2b._unimplemented import (
-    AsyncSecret,
     AsyncTemplate,
     AsyncVolume,
-    Secret,
     Template,
     Volume,
     get_signature,
@@ -111,6 +118,8 @@ from rayito.e2b.exceptions import (
     RayitoCompatWarning,
     SandboxException,
     SandboxNotFoundException,
+    SecretException,
+    SecretNotFoundException,
     ServiceBusyException,
     TemplateException,
     TimeoutException,
@@ -127,6 +136,7 @@ __all__ = [
     "AsyncSandbox",
     "AsyncSandboxPaginator",
     "AsyncSecret",
+    "AsyncSecretPaginator",
     "AsyncTemplate",
     "AsyncVolume",
     "AsyncWatchHandle",
@@ -190,6 +200,10 @@ __all__ = [
     "ScaleType",
     "ScatterChart",
     "Secret",
+    "SecretException",
+    "SecretInfo",
+    "SecretNotFoundException",
+    "SecretPaginator",
     "ServiceBusyException",
     "Stderr",
     "Stdout",

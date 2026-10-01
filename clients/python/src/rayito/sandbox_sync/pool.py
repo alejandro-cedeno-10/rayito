@@ -27,7 +27,7 @@ import logging
 import random
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from types import TracebackType
@@ -35,7 +35,7 @@ from typing import Final, Self
 
 import boto3
 
-from rayito._aws import ControlPlane, LaunchRequest, PortSpec
+from rayito._aws import ControlPlane, LaunchRequest, PortSpec, control_plane_session
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._payload import generate_access_token
@@ -64,6 +64,7 @@ from rayito._sandbox_base import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     resolve_template,
 )
+from rayito._secrets import SecretCache, SecretRef, bind_secrets, shared_secret_cache, warm
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException, SandboxStateException
 from rayito.sandbox_sync.main import Sandbox, resolve_control_plane, terminate_quietly
@@ -277,10 +278,28 @@ class SandboxPool:
         ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         reconnect_timeout: float = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+        secrets: Mapping[str, str | SecretRef] | None = None,
+        secret_cache: SecretCache | None = None,
     ) -> Sandbox:
         """La plaza `ready` más vieja con al menos `min_remaining_seconds` de
         vida, reanudada y abierta con su token; sin plaza (tras esperar hasta
-        `wait` s) o con una plaza muerta, un `create()` normal."""
+        `wait` s) o con una plaza muerta, un `create()` normal.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets={"ENV": "nombre" | SecretRef}` enlaza secretos al
+            sandbox que sale del pool (sólo en `take()`: las plazas calientes
+            nunca los llevan, ni en su lanzamiento ni en su `SlotRecord`).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto y TTL de `SecretCache`, antes de reclamar la plaza.
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
+        Ejemplo:
+            sbx = pool.take(secrets={"OPENAI_API_KEY": "openai"})
+            sbx.commands.run("python agent.py")
+        """
+        binding = warm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = self._claim_ready_slot(wait)
         sandbox = (
             None
@@ -288,8 +307,16 @@ class SandboxPool:
             else self._open_slot(record, ready_timeout, request_timeout, reconnect_timeout)
         )
         if sandbox is None:
-            return self._fallback(ready_timeout, request_timeout, reconnect_timeout)
+            sandbox = self._fallback(ready_timeout, request_timeout, reconnect_timeout)
+        if binding is not None:
+            sandbox._secrets = binding
         return sandbox
+
+    def _default_secret_cache(self) -> SecretCache:
+        """La caché compartida para la región y la sesión del pool."""
+        return shared_secret_cache(
+            self._plane.region, self._session or control_plane_session(self._plane)
+        )
 
     def stats(self) -> PoolStats:
         with self._lock:

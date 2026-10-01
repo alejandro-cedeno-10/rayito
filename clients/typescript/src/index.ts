@@ -56,6 +56,8 @@ export {
   SandboxNotFoundError,
   SandboxNotReadyError,
   SandboxStateError,
+  SecretError,
+  SecretNotFoundError,
   TimeoutError,
   TransferError,
   type TransferErrorOptions,
@@ -221,5 +223,15 @@ export {
   type UploadUrlOptions,
   type WaitOptions,
 } from "./sandbox/transfer.js";
+export { SecretCache, type SecretCacheOptions } from "./secrets/cache.js";
+export type { SecretOptions, SecretsInput } from "./secrets/inject.js";
+export { type SecretLike, SecretRef, type SecretRefOptions } from "./secrets/names.js";
+export {
+  type SecretInfo,
+  type SecretPage,
+  SecretStore,
+  type SecretStoreOptions,
+  type SecretsManagerApi,
+} from "./secrets/store.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";

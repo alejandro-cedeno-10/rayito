@@ -53,6 +53,21 @@ Generada con `mkdocstrings` desde los docstrings del paquete `rayito`.
         - InMemoryPoolBackend
         - JsonFilePoolBackend
 
+## Secretos
+
+Opcional y con coste (ADR-014): ver [Secretos](secrets.md) y
+[Funciones opcionales y su coste](optional-features.md).
+
+::: rayito.SecretStore
+
+::: rayito.SecretCache
+
+::: rayito.SecretRef
+
+::: rayito.SecretInfo
+
+::: rayito.SecretPage
+
 ## Modelos
 
 ::: rayito._models
@@ -101,5 +116,9 @@ Generada con `mkdocstrings` desde los docstrings del paquete `rayito`.
 ::: rayito.e2b.Sandbox
 
 ::: rayito.e2b.AsyncSandbox
+
+::: rayito.e2b.Secret
+
+::: rayito.e2b.AsyncSecret
 
 ::: rayito.e2b.exceptions

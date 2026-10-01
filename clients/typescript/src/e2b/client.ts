@@ -2,12 +2,14 @@
  * `E2B` de E2B JS 2.51: un cliente cuyas opciones de conexión quedan ligadas
  * a `client.Sandbox` (gana la llamada salvo `undefined`; `headers` no se
  * fusiona). Las opciones ignoradas avisan una vez, al construir el cliente.
- * `Template`, `Volume` y `Secret` lanzan `UnimplementedError` al leerlos.
+ * `client.Secret` usa su `region` (Secrets Manager en esa cuenta);
+ * `Template` y `Volume` lanzan `UnimplementedError` al leerlos.
  */
 
 import { emitIgnoredWarnings, IGNORED_CONNECTION_OPTS, splitConnectionOpts } from "./compat.js";
 import type { ConnectionOpts } from "./connection.js";
 import { bindSandbox, type Sandbox } from "./sandbox.js";
+import { bindSecret, type Secret } from "./secret.js";
 import { unimplemented } from "./unimplemented.js";
 
 export type E2BClientOpts = ConnectionOpts;
@@ -22,11 +24,14 @@ function withoutIgnored(opts: ConnectionOpts): ConnectionOpts {
 export class E2B {
   // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
   readonly Sandbox: typeof Sandbox;
+  // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
+  readonly Secret: typeof Secret;
 
   constructor(opts: E2BClientOpts = {}) {
     const { ignored } = splitConnectionOpts(opts);
     emitIgnoredWarnings(ignored);
     this.Sandbox = bindSandbox(withoutIgnored(opts));
+    this.Secret = bindSecret(opts.region === undefined ? {} : { region: opts.region });
   }
 
   // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
@@ -37,10 +42,5 @@ export class E2B {
   // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
   get Volume(): never {
     throw unimplemented("Volume");
-  }
-
-  // biome-ignore lint/style/useNamingConvention: nombre público de E2B JS
-  get Secret(): never {
-    throw unimplemented("Secret");
   }
 }

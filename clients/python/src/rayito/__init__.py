@@ -64,6 +64,7 @@ from rayito._models import (
 )
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
 from rayito._pool_base import PoolConfig, PoolSlotInfo, PoolStats
+from rayito._secrets import SecretCache, SecretInfo, SecretPage, SecretRef, SecretStore
 from rayito._transport import TransportSettings
 from rayito._version import __version__
 from rayito.exceptions import (
@@ -82,11 +83,14 @@ from rayito.exceptions import (
     PoolClosedException,
     QuotaExceededException,
     RateLimitException,
+    RayitoCompatWarning,
     SandboxException,
     SandboxLifetimeException,
     SandboxNotFoundException,
     SandboxNotReadyException,
     SandboxStateException,
+    SecretException,
+    SecretNotFoundException,
     TimeoutException,
     TransferException,
     UnimplementedError,
@@ -181,6 +185,7 @@ __all__ = [
     "PtySize",
     "QuotaExceededException",
     "RateLimitException",
+    "RayitoCompatWarning",
     "RestoreProgress",
     "RestoreResult",
     "Result",
@@ -201,6 +206,13 @@ __all__ = [
     "SandboxStateException",
     "ScaleType",
     "ScatterChart",
+    "SecretCache",
+    "SecretException",
+    "SecretInfo",
+    "SecretNotFoundException",
+    "SecretPage",
+    "SecretRef",
+    "SecretStore",
     "SuperChart",
     "TimeoutException",
     "TransferException",

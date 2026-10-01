@@ -37,10 +37,12 @@ from rayito._code_base import (
     reattach_failure,
     require_context_id,
     resolve_context_id,
+    target_context_language,
 )
 from rayito._models import CodeContext, Execution
 from rayito._process_base import deadline_at, remaining_deadline
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._secrets import SecretRef, code_secrets_scope
 from rayito.exceptions import (
     NotFoundException,
     SandboxException,
@@ -62,6 +64,9 @@ class CodeClient:
 
     def __init__(self, sandbox: Sandbox) -> None:
         self._sandbox = sandbox
+        # id → lenguaje de los contextos que este cliente creó o listó: decide
+        # si una celda con `context=<id>` puede llevar los secretos del handle.
+        self._context_languages: dict[str, str] = {}
 
     def run_code(
         self,
@@ -76,6 +81,7 @@ class CodeClient:
         envs: Mapping[str, str] | None = None,
         timeout: float | None = DEFAULT_CODE_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> Execution:
         """Ejecuta `code` en el kernel del contexto (el `default` si se omite)
         o, con `language`, en el contexto por defecto de ese kernel
@@ -93,8 +99,18 @@ class CodeClient:
         `request_timeout` lo sustituya. `envs` sólo viven durante esta celda.
         Cerrar el stream antes del `end` (Ctrl-C, excepción en un callback)
         hace que el agente interrumpa la ejecución.
+
+        Los secretos del handle (`Sandbox.create(secrets=)`) sólo se añaden a
+        celdas Python: con `context=` dado como id (str), sólo si el contexto
+        es `default` o uno que este cliente creó o listó como Python; un id
+        desconocido (p. ej. creado desde otro handle) va sin ellos. Los
+        `secrets=` de la propia llamada siempre viajan.
         """
         context_id = resolve_context_id(context)
+        include_bound = code_secrets_scope(
+            language, target_context_language(context, self._context_languages), secrets
+        )
+        envs = self._sandbox._secret_envs(envs, secrets, include_bound=include_bound)
         request = build_execute_request(
             code, context_id=context_id, language=language, envs=envs, timeout=timeout
         )
@@ -124,6 +140,7 @@ class CodeClient:
         language: str | None = None,
         envs: Mapping[str, str] | None = None,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CodeContext:
         """Arranca un kernel nuevo (≈ segundos; deadline de 90 s por defecto).
         `language` es `python` (por defecto), `bash`, `javascript` (alias
@@ -133,6 +150,7 @@ class CodeClient:
         nombrando `rayito-base-poly` en las demás). `cwd` debe existir en el
         sandbox; `envs` forman parte del entorno del kernel. Como máximo 8
         contextos por sandbox."""
+        envs = self._sandbox._secret_envs(envs, secrets)
         request = build_create_context_request(language=language, cwd=cwd, envs=envs)
         try:
             response = self._sandbox._code_call(
@@ -148,7 +166,9 @@ class CodeClient:
         for listed in self.list_contexts(request_timeout=request_timeout):
             if listed.id == context_id:
                 return listed
-        return fallback_context(context_id, language=language, cwd=cwd)
+        fallback = fallback_context(context_id, language=language, cwd=cwd)
+        self._context_languages[context_id] = fallback.language
+        return fallback
 
     def list_contexts(self, *, request_timeout: float | None = None) -> list[CodeContext]:
         """El contexto `default` primero, después por orden de creación."""
@@ -158,7 +178,9 @@ class CodeClient:
             ),
             request_timeout,
         )
-        return [context_from_proto(info) for info in response.contexts]
+        contexts = [context_from_proto(info) for info in response.contexts]
+        self._context_languages.update({listed.id: listed.language for listed in contexts})
+        return contexts
 
     def remove_context(self, context: ContextLike, *, request_timeout: float | None = None) -> None:
         """Mata el kernel; las ejecuciones en curso terminan con

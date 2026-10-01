@@ -34,6 +34,7 @@ from rayito._pty_base import (
     build_send_input_request,
     pid_from_pty_started,
 )
+from rayito._secrets import SecretRef
 from rayito.exceptions import NotFoundException, SandboxException
 from rayito.sandbox_sync.commands import CommandHandle, StreamStarter
 from rayito.v1 import pty_pb2_grpc
@@ -61,6 +62,7 @@ class Pty:
         on_data: PtyDataCallback | None = None,
         timeout: float | None = DEFAULT_PTY_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> PtyHandle:
         """Abre una terminal con el shell de login de `user` (uid 1000 por
         defecto) como `<shell> -i -l`, `TERM=xterm-256color` y `LANG`/
@@ -72,7 +74,20 @@ class Pty:
         `TimeoutException`. Para un shell que deba sobrevivir, `timeout=None`.
         `on_data` recibe cada chunk de bytes de la terminal mientras el
         handle se itera o se espera; el SDK nunca los loguea.
+
+        Coste y activación
+        -------------------
+        Activa: `secrets=` inyecta secretos como variables de entorno del shell
+            (más los del handle).
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` sólo en un
+            fallo de `SecretCache` (TTL 300 s).
+        Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `secrets=None` (por defecto).
+        Ejemplo:
+            term = sbx.pty.create(secrets={"GITHUB_TOKEN": "gh"})
         """
+        envs = self._sandbox._secret_envs(envs, secrets)
         request = build_pty_start_request(
             size=size, user=user, cwd=cwd, envs=envs, shell=shell, timeout=timeout
         )

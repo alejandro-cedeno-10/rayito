@@ -41,6 +41,7 @@ import {
   type ResultFields,
 } from "../models.js";
 import { DEFAULT_WORKDIR, validatedEnvs } from "../payload.js";
+import { codeSecretsScope, type SecretEnvs, type SecretsInput } from "../secrets/inject.js";
 import { unimplementedRpcError } from "../transport/errors.js";
 import { deadlineAt, type RequestOptions, remainingDeadlineMs, timeoutToMs } from "./commands.js";
 import { type OpenedStream, type SandboxCore, withTimeout } from "./core.js";
@@ -108,6 +109,27 @@ export interface RunCodeOptions extends RequestOptions {
   readonly envs?: Readonly<Record<string, string>> | undefined;
   /** Timeout del agente en ms (300 000 por defecto; `0` = sin límite). */
   readonly timeoutMs?: number | undefined;
+  /**
+   * Secretos en el entorno de esta celda (más los del handle), sólo en
+   * contextos Python (`ExecuteRequest.envs`): con otro `language` es
+   * `InvalidArgumentError` (usa `createCodeContext({ secrets })`), y los del
+   * handle no se añaden a celdas de otros lenguajes. Con `context` dado como
+   * id (string), los del handle sólo van si el contexto es `default` o uno
+   * que este handle creó o listó como Python; un id desconocido (creado desde
+   * otro handle) va sin ellos.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en esta celda (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s).
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   await sbx.runCode("import os", { secrets: { OPENAI_API_KEY: "openai" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export interface CreateContextOptions extends RequestOptions {
@@ -120,6 +142,22 @@ export interface CreateContextOptions extends RequestOptions {
    */
   readonly language?: string | undefined;
   readonly envs?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Secretos en el entorno del kernel de este contexto, de cualquier lenguaje,
+   * mientras viva (más los del handle).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en el kernel nuevo (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s).
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   const ctx = await sbx.createCodeContext({ language: "bash", secrets: { TOKEN: "gh" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export function validateCode(code: unknown): string {
@@ -193,6 +231,33 @@ export function languageDefaultContextId(request: ExecuteRequest): string | unde
   return request.language === DEFAULT_LANGUAGE
     ? DEFAULT_CONTEXT_ID
     : `${DEFAULT_CONTEXT_ID}-${request.language}`;
+}
+
+/**
+ * El lenguaje del contexto al que va una celda, si se sabe con certeza: sin
+ * `context`, el `default` (Python); un `CodeContext`, su `language`; un id,
+ * `default`/`default-<lenguaje>` o uno que este cliente creó o listó
+ * (`known`). `undefined` si el id es desconocido (p. ej. lo creó otro
+ * handle): `runCode` no le añade entonces los secretos del handle.
+ */
+export function targetContextLanguage(
+  context: ContextLike | undefined,
+  known: ReadonlyMap<string, string>,
+): string | undefined {
+  if (context === undefined) {
+    return DEFAULT_LANGUAGE;
+  }
+  if (typeof context === "object" && context !== null) {
+    return context.language;
+  }
+  if (context === DEFAULT_CONTEXT_ID) {
+    return DEFAULT_LANGUAGE;
+  }
+  const prefix = `${DEFAULT_CONTEXT_ID}-`;
+  if (context.startsWith(prefix) && SUPPORTED_LANGUAGES.has(context.slice(prefix.length))) {
+    return context.slice(prefix.length);
+  }
+  return known.get(context);
 }
 
 export function validateCwd(cwd: string | undefined): string | undefined {
@@ -498,17 +563,27 @@ function withKernelFeature(error: unknown, name: string, language: string | unde
 /** `CodeService` del sandbox; la superficie pública vive en `Sandbox`. */
 export class CodeClient {
   readonly core: SandboxCore;
+  readonly #secrets: SecretEnvs;
+  /** id → lenguaje de los contextos que este cliente creó o listó. */
+  readonly #contextLanguages = new Map<string, string>();
 
-  constructor(core: SandboxCore) {
+  constructor(core: SandboxCore, secrets: SecretEnvs) {
     this.core = core;
+    this.#secrets = secrets;
   }
 
   async runCode(code: string, options: RunCodeOptions = {}): Promise<Execution> {
     const contextId = resolveContextId(options.context);
+    const includeBound = codeSecretsScope(
+      options.language,
+      targetContextLanguage(options.context, this.#contextLanguages),
+      options.secrets,
+    );
+    const envs = await this.#secrets.apply(options.envs, options.secrets, includeBound);
     const request = buildExecuteRequest(code, {
       contextId,
       language: options.language,
-      envs: options.envs,
+      envs,
       timeoutMs: options.timeoutMs,
     });
     const deadline =
@@ -543,7 +618,8 @@ export class CodeClient {
   }
 
   async createContext(options: CreateContextOptions = {}): Promise<CodeContext> {
-    const request = buildCreateContextRequest(options);
+    const envs = await this.#secrets.apply(options.envs, options.secrets);
+    const request = buildCreateContextRequest({ ...options, envs });
     const response = await this.core
       .codeCall(
         (client, callOptions) => client.createContext(request, callOptions),
@@ -564,7 +640,9 @@ export class CodeClient {
         return listed;
       }
     }
-    return fallbackContext(contextId, { language: options.language, cwd: options.cwd });
+    const fallback = fallbackContext(contextId, { language: options.language, cwd: options.cwd });
+    this.#contextLanguages.set(contextId, fallback.language);
+    return fallback;
   }
 
   async listContexts(options: RequestOptions = {}): Promise<CodeContext[]> {
@@ -575,7 +653,11 @@ export class CodeClient {
       undefined,
       options.signal,
     );
-    return response.contexts.map(contextFromProto);
+    const contexts = response.contexts.map(contextFromProto);
+    for (const listed of contexts) {
+      this.#contextLanguages.set(listed.id, listed.language);
+    }
+    return contexts;
   }
 
   async removeContext(context: ContextLike, options: RequestOptions = {}): Promise<void> {

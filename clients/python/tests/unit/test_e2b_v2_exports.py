@@ -88,6 +88,9 @@ E2B_NAMES = [
     "AsyncVolume",
     "Secret",
     "AsyncSecret",
+    "SecretInfo",
+    "SecretPaginator",
+    "AsyncSecretPaginator",
     "Chart",
     "Chart2D",
     "ChartType",
@@ -123,6 +126,8 @@ EXCEPTION_NAMES = [
     "TemplateException",
     "BuildException",
     "RayitoCompatWarning",
+    "SecretException",
+    "SecretNotFoundException",
 ]
 
 

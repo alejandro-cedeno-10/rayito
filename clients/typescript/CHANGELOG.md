@@ -6,6 +6,34 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- **Secretos sobre AWS Secrets Manager** (`m13-secrets`, opcional y
+  apagado por defecto, ADR-014): `new SecretStore({ region, credentials,
+  prefix, kmsKeyId })` con `create`/`update`/`getInfo`/`exists`/`list`/
+  `destroy`, y `new SecretCache({ ttlSeconds: 300 })` (una promesa en vuelo
+  por clave; los aciertos no llaman a AWS; `refresh()`/`invalidate()`;
+  `toJSON`/`inspect` nunca muestran valores). `@aws-sdk/client-secrets-manager`
+  es una peerDependency **opcional** que sólo se carga con `loadOptionalPeer`
+  al usar la función. Coste: $0,40/secreto-mes hasta `destroy` + $0,05/10 000
+  llamadas.
+- **`secrets` / `secretCache`** en `Sandbox.create()` (también con `pool`),
+  `Sandbox.connect()`, `sbx.connect()`, `pool.take()` y, por llamada, en
+  `commands.run`, `pty.create`, `runCode` (contextos Python) y
+  `createCodeContext`: entregan el valor como variable de entorno por los
+  `envs` que ya viajan a `rayd`, nunca en el `runHookPayload`, `metadata`,
+  logs ni errores. La primera vez emiten un `RayitoCompatWarning`
+  (`process.emitWarning`): el valor es visible para el código del sandbox.
+- `SecretError`/`SecretNotFoundError` en `rayito` y en `rayito/e2b`.
+- **Shim de E2B**: `Secret` (estáticos `create`/`update`/`getInfo`/`list`/
+  `exists`/`destroy`/`fill`/`iamToken`), `SecretPaginator` y el tipo
+  `SecretInfo` sobre `SecretStore`, con los nombres de `e2b` 2.51.0;
+  `new E2B({ region }).Secret` usa esa región.
+
+### Changed
+
+- `rayito/e2b` `Secret` y `E2B(...).Secret` ya no lanzan `UnimplementedError`.
+
 ## [0.4.0] - 2026-09-30
 
 ### Cambios que rompen

@@ -280,6 +280,24 @@ def language_default_context_id(request: code_pb2.ExecuteRequest) -> str | None:
     return f"{DEFAULT_CONTEXT_ID}-{language}"
 
 
+def target_context_language(context: ContextLike | None, known: Mapping[str, str]) -> str | None:
+    """El lenguaje del contexto al que va una celda, si se sabe con certeza:
+    sin `context`, el `default` (Python); un `CodeContext`, su `language`;
+    un id (str), `default`/`default-<lenguaje>` o uno que este cliente creó o
+    listó (`known`). `None` si el id es desconocido (p. ej. lo creó otro
+    handle): `run_code` no le añade entonces los secretos del handle."""
+    if context is None:
+        return DEFAULT_LANGUAGE
+    if isinstance(context, CodeContext):
+        return context.language
+    if context == DEFAULT_CONTEXT_ID:
+        return DEFAULT_LANGUAGE
+    prefix = f"{DEFAULT_CONTEXT_ID}-"
+    if context.startswith(prefix) and context[len(prefix) :] in SUPPORTED_LANGUAGES:
+        return context[len(prefix) :]
+    return known.get(context)
+
+
 def fallback_context(context_id: str, *, language: str | None, cwd: str | None) -> CodeContext:
     """Lo que `create_code_context` devuelve si `ListContexts` no lista el
     contexto recién creado (no debería ocurrir)."""

@@ -313,6 +313,28 @@ with Sandbox.create() as sbx:
 `order` se calcula en cliente (recorre todas las páginas antes del primer
 item); el historial tiene un hueco mientras el sandbox está suspendido.
 
+## Secretos (opcional, con coste)
+
+Apagado por defecto: sólo `secrets=`/`secret_cache=` o `SecretStore(...)` lo
+encienden (sin ellos no se construye ningún cliente de Secrets Manager).
+Guarda secretos en AWS Secrets Manager de tu cuenta ($0,40/secreto-mes hasta
+`destroy` + $0,05/10 000 llamadas) y los entrega como variables de entorno
+con una caché (TTL 300 s: una lectura por secreto y TTL, nunca una por
+comando). **El código del sandbox puede leer un secreto inyectado**: para
+código no confiable, sólo tokens de vida corta y mínimo privilegio.
+
+```python
+import os
+
+from rayito import Sandbox, SecretStore
+
+SecretStore(region="us-east-1").create("openai", os.environ["OPENAI_API_KEY"])
+sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"})
+sbx.commands.run("python agent.py")
+```
+
+IAM, reglas de la caché y el shim `Secret` de E2B: [Secretos](../../docs/site/docs/secrets.md).
+
 ## Shim de E2B
 
 ```python

@@ -24,6 +24,7 @@ const VALUE_EXPORTS = [
   "Template",
   "Volume",
   "Secret",
+  "SecretPaginator",
 ] as const;
 
 const ERROR_EXPORTS = [
@@ -44,6 +45,8 @@ const ERROR_EXPORTS = [
   "FileUploadError",
   "CommandExitError",
   "UnimplementedError",
+  "SecretError",
+  "SecretNotFoundError",
 ] as const;
 
 const exported: Readonly<Record<string, unknown>> = { ...e2b };

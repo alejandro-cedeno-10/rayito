@@ -91,7 +91,6 @@ const D14_TS_KEYS = [
   "volumeMounts",
   "Volume",
   "getSignature",
-  "Secret",
   "Template",
 ];
 

@@ -1,5 +1,5 @@
 /**
- * `Template`, `Volume`, `Secret` y `getSignature` de E2B: cada estático que
+ * `Template`, `Volume` y `getSignature` de E2B: cada estático que
  * E2B define lanza `UnimplementedError` con su motivo (nunca un
  * `TypeError` por método inexistente). Lanzan en el acto, también los que en
  * E2B son asíncronos: un `await Template.build()` lo recibe igual.
@@ -78,45 +78,6 @@ export class Volume {
 
   static getInfo(..._args: unknown[]): never {
     throw unimplemented("Volume");
-  }
-}
-
-/** El almacén de secretos de E2B: necesita un plano de control y un inyector de egress. */
-export class Secret {
-  private constructor() {
-    throw unimplemented("Secret");
-  }
-
-  static create(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static update(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static getInfo(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static list(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static exists(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static destroy(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static fill(..._args: unknown[]): never {
-    throw unimplemented("Secret");
-  }
-
-  static iamToken(..._args: unknown[]): never {
-    throw unimplemented("Secret");
   }
 }
 

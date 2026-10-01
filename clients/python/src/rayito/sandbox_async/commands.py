@@ -38,6 +38,7 @@ from rayito._process_base import (
     validate_pid,
 )
 from rayito._sandbox_base import GateRetry, ReconnectBudget
+from rayito._secrets import SecretRef
 from rayito.exceptions import (
     NotFoundException,
     SandboxException,
@@ -76,6 +77,7 @@ class AsyncCommands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult: ...
 
     @overload
@@ -93,6 +95,7 @@ class AsyncCommands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> AsyncCommandHandle: ...
 
     @overload
@@ -110,6 +113,7 @@ class AsyncCommands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult | AsyncCommandHandle: ...
 
     async def run(
@@ -126,8 +130,10 @@ class AsyncCommands:
         timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
         request_timeout: float | None = None,
         tag: str | None = None,
+        secrets: Mapping[str, str | SecretRef] | None = None,
     ) -> CommandResult | AsyncCommandHandle:
         """Misma semántica que `Commands.run`; los callbacks corren en el loop."""
+        envs = await self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
         )

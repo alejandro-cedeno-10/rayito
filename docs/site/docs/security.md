@@ -19,6 +19,7 @@ hooks, snapshot).
 | Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde M9, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
 | URLs prefirmadas y SSRF de `rayd` (T16, M9) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
 | Proxy de egress de `rayd` como SSRF (T17, M9) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; **riesgo residual**: bajo deny-all en `rayito-base-caps` los nombres aún se resuelven por los resolvedores de la plataforma dentro del guest (canal de exfiltración por DNS, aunque toda conexión fuera del VM falla); las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
+| Secretos inyectados (T18, M13a) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -29,9 +30,9 @@ payload en eventos de datos de CloudTrail y cualquier principal con
 ninguna credencial: `Health` es el único RPC anónimo y `rayd` lo sirve en
 `0.0.0.0:8080`, así que un proceso uid 1000 del sandbox lee su `sandbox_id`
 y el mapa `metadata` completo. Son etiquetas y configuración, **no
-secretos**: las credenciales van por `sbx.files.write` o por `envs=` de un
-comando concreto, nunca en el
-payload de creación. Ni `rayd` ni el SDK escriben claves ni valores de
+secretos**: las credenciales van por `sbx.files.write`, por `envs=` de un
+comando concreto o, desde M13a, por `secrets=` (desde Secrets Manager, con
+caché; ver [Secretos](secrets.md)), nunca en el payload de creación. Ni `rayd` ni el SDK escriben claves ni valores de
 `metadata` en logs (sólo el número de claves).
 
 ## El shim de E2B y la red
@@ -89,6 +90,31 @@ como parte del sandbox. Añade al bucket una regla
 `AbortIncompleteMultipartUpload` a 1 día. Detalles en
 [Persistencia](persistence.md) y en `SECURITY.md` T15.
 
+## Custodia de secretos del usuario (T18)
+
+`secrets=` (M13a, [Secretos](secrets.md)) está **apagado por defecto** y
+sólo lo enciende la propia opción. Cuando se usa:
+
+- **Canal**: el valor viaja sólo en los `envs` por llamada de comandos,
+  PTY, celdas Python y contextos de código, por el mismo canal autenticado
+  que los ficheros (TLS hasta el proxy de AWS, `x-access-token`); nunca en
+  el `runHookPayload`, `metadata`, etiquetas, el entorno de la imagen, los
+  registros del pool, logs, `repr` ni errores.
+- **En reposo**: en Secrets Manager (KMS); en el cliente, sólo en la
+  memoria del proceso del SDK (`SecretCache`, TTL 300 s por defecto: nunca
+  una lectura por comando); en el VM, en el entorno de los procesos que lo
+  recibieron y en el snapshot de memoria si el sandbox se suspende con
+  ellos vivos (pregunta abierta SEC-5).
+- **Quién lee qué**: IAM de lector en las credenciales del **llamante**
+  (`infra/secrets-access.yaml`), nunca el execution role. **Fase 1: el
+  código del sandbox puede leer un secreto inyectado.** Con código no
+  confiable, inyecta sólo tokens de vida corta y mínimo privilegio, nunca
+  credenciales de larga duración.
+- `Secret.fill()` del shim de E2B devuelve el placeholder, pero Rayito no lo
+  resuelve en ninguna parte.
+
+Detalle en `SECURITY.md` T18.
+
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
@@ -96,7 +122,8 @@ proxy, `envs`, `metadata`, el body de los hooks; desde M9 tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
 credenciales de git; desde M12 tampoco el JWE, las cabeceras, los cuerpos ni
-las rutas de lo que pasa por `rayito sandbox proxy`. Sólo ids, códigos de
+las rutas de lo que pasa por `rayito sandbox proxy`; desde M13a tampoco
+valores ni nombres de secretos. Sólo ids, códigos de
 estado, recuentos y duraciones.
 
 ## `rayito sandbox proxy` (M12)

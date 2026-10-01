@@ -61,6 +61,7 @@ nav:
   - Servidor MCP: mcp.md
   - Modelo de costes: cost.md
   - Funciones opcionales y su coste: optional-features.md
+  - Secretos: secrets.md
   - Pool de sandboxes: pool.md
   - Persistencia: persistence.md
   - Plazo del servidor: lifecycle.md

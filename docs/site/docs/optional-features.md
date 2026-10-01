@@ -62,23 +62,29 @@ aparece en el fichero SDK de su columna "Dónde" dentro de un mismo bloque
 
 | Función | Estado | Opción Python | Opción TypeScript | Por defecto | Qué activa | Recursos / llamadas AWS | Coste aproximado | IAM necesario | Cómo apagarla | Dónde |
 |---|---|---|---|---|---|---|---|---|---|---|
-| [Inyección de secretos](#secrets-injection) | planificado (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, ejecución de código o plaza del pool | `secretsmanager:GetSecretValue` una vez por secreto y TTL, nunca una vez por llamada: caché `secret_cache=SecretCache(ttl_seconds=300)` / `secretCache: new SecretCache({ ttlSeconds: 300 })` (TTL por defecto 300 s, rango 1–86 400); ver [contrato de caché](#secrets-injection) | SM: $0,40/secreto-mes + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` sobre los ARN concretos; añade `kms:Decrypt` sobre la clave si el secreto usa una **clave KMS gestionada por el cliente** (con clave gestionada por AWS, `aws/secretsmanager`, no hace falta permiso KMS aparte) | No pasar `secrets=` / `secrets` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets.ts` (llega en M13a) |
-| [Secret CRUD (Secrets Manager)](#secrets-crud) | planificado (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito (y el shim `Secret`/`AsyncSecret` de E2B) | `secretsmanager:CreateSecret/PutSecretValue/GetSecretValue/DescribeSecret/ListSecrets/DeleteSecret` | SM: $0,40/secreto-mes + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD completo de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets.ts` (llega en M13a) |
+| [Inyección de secretos](#secrets-injection) | implementado, pendiente de aceptación en AWS real (M13a) | `secrets=` | `secrets` | `None` / `undefined` | Entrega el valor de uno o más secretos como variable de entorno de un comando, PTY, celda Python, contexto de código o plaza tomada del pool (visible para el código del sandbox, fase 1); la caché se fija con `secret_cache=SecretCache(...)` / `secretCache` | `secretsmanager:GetSecretValue` una vez por secreto y TTL de `SecretCache` (300 s por defecto; un acierto hace 0 llamadas), nunca una vez por llamada; ningún recurso nuevo | SM: $0,05/10 000 llamadas (≈ $0,04/mes por secreto y proceso con el TTL por defecto) + el propio secreto, $0,40/secreto-mes ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | `secretsmanager:GetSecretValue` (y `DescribeSecret`) sobre `…:secret:rayito/*` en las credenciales del **llamante** (política `RayitoSecretsReader` de `infra/secrets-access.yaml`); `kms:Decrypt` sólo con una **clave KMS gestionada por el cliente** | No pasar `secrets=` / `secrets` ni `secret_cache=` / `secretCache` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/inject.ts` |
+| [Secret CRUD (Secrets Manager)](#secrets-crud) | implementado, pendiente de aceptación en AWS real (M13a) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
 | [Índice de metadatos (DynamoDB)](#metadata-index) | planificado (M14) | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Copia inmutable de `metadata` por sandbox en DynamoDB para poder filtrar `list()`/`paginate()` sobre estados no `RUNNING` (por ejemplo `SUSPENDED`) sin sondear `Health` | `dynamodb:PutItem/BatchGetItem` por sandbox creado/listado | DynamoDB on-demand, clase Standard ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (un `PutItem` de ≤ 1 KB = 1 WRU) + $0,125 por millón de RRU + $0,25/GB-mes almacenado. `BatchGetItem` se factura **por ítem leído**, no por llamada: 0,5 RRU por ítem de ≤ 4 KB con lectura eventualmente consistente, 1 RRU con lectura fuertemente consistente. Ejemplo: 10 000 sandboxes/mes, cada uno visto en un `list()` diario ≈ 10 000 WRU (≈ $0,006) + ~300 000 ítems leídos (≈ $0,019 eventual, ≈ $0,038 fuerte) ≈ $0,03–0,05/mes en peticiones, más el almacenamiento (ítems de metadatos del orden de KB, no de GB) | `dynamodb:PutItem`, `dynamodb:BatchGetItem` sobre la tabla del índice | No pasar `index=` / `index` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index-store.ts` (llega en M14) |
 | [Trazas OpenTelemetry del SDK](#otel-sdk) | planificado (M13b) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (y las demás llamadas del SDK) con spans OTel sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` (llega en M13b) |
 
-Las cuatro filas empiezan en "planificado (Mxx)": cada grupo cambia **su**
+Las cuatro filas empezaron en "planificado (Mxx)": cada grupo cambia **su**
 fila a "disponible (0.5.0)" y completa su sección de ejemplo cuando la
-entrega de verdad, aceptada contra AWS real (`MILESTONES.md`).
+entrega de verdad, aceptada contra AWS real (`MILESTONES.md`). Las dos de
+secretos (M13a) están implementadas y probadas con fakes, pero **todavía no
+aceptadas contra AWS real**: su e2e (`clients/python/tests/e2e/test_secrets_e2e.py`
+y `clients/typescript/tests/e2e/secrets.e2e.test.ts`) no se ha ejecutado y
+SEC-9/SEC-10 siguen sin medir (`AWS_API_NOTES.md` §19). Pasarán a
+"disponible (0.5.0)" cuando ese e2e pase; es la puerta de archivo de
+`m13-secrets`.
 
 ## Sin coste AWS
 
 | Función | Opción | Qué activa | Recursos AWS | Coste | Dónde |
 |---|---|---|---|---|---|
-| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `localhost`, renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:CreateMicrovmAuthToken` (ya se usa hoy en `get_host()`) | $0: `CreateMicrovmAuthToken` es gratuito (cuota de 50 TPS, `AWS_API_NOTES.md` §12); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal, no el proxy en sí | CLI (llega en M12) |
+| [`rayito sandbox proxy`](#local-proxy) | CLI `rayito sandbox proxy <id> --port N` | Sirve un puerto del guest en `127.0.0.1` (otra interfaz sólo con `--bind` + `--allow-remote`), renovando el JWE de `x-aws-proxy-port` antes de que expire | `lambda:GetMicrovm` (una vez, para el endpoint) + `lambda:CreateMicrovmAuthToken` (~1 cada 45 min por proxy en marcha); IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`) | $0: ambas llamadas son gratuitas (cuotas de 100 y 50 TPS, `AWS_API_NOTES.md` §11); si el sandbox estaba suspendido, despertarlo por auto-resume factura su cómputo normal más la lectura del snapshot al reanudar, no el proxy en sí | `clients/python/src/rayito/cli/_proxy.py` (CLI) |
 
 Esta fila no pasa por el ciclo "planificado → disponible" de la tabla de
-arriba: no consume cuota ni dinero adicional (reutiliza una llamada que el
+arriba: no consume cuota ni dinero adicional (reutiliza llamadas gratuitas que el
 SDK ya hace), así que no necesita una aceptación de coste independiente.
 
 ## Ejemplos
@@ -87,26 +93,45 @@ SDK ya hace), así que no necesita una aceptación de coste independiente.
 
 ### Inyección de secretos
 
-*Llega en M13a.* Cuando esté disponible, un ejemplo Python y otro TypeScript
-de `secrets=`/`secrets` con `secret_cache=SecretCache(ttl_seconds=300)` /
-`secretCache: new SecretCache({ ttlSeconds: 300 })` sustituirá este párrafo.
+Implementada en `m13-secrets` para 0.5.0, **pendiente de aceptación contra
+AWS real** (ver arriba). Guía completa, reglas de la caché y modelo de
+amenazas en [Secretos](secrets.md).
 
-**Contrato de caché** (`secret_cache=SecretCache(...)` en Python,
-`secretCache: new SecretCache({...})` en TypeScript):
+=== "Python"
 
-- **TTL** por defecto de 300 s (`ttl_seconds` / `ttlSeconds`, rango
-  1–86 400; `0` se rechaza).
-- **Clave de caché**: región + credenciales/sesión + nombre o ARN del secreto
-  \+ `VersionId`/`VersionStage` pedidos; dos referencias distintas nunca
-  comparten valor.
-- **Una sola petición en vuelo por clave** (single-flight): llamadas
-  concurrentes que piden el mismo secreto esperan al mismo
-  `GetSecretValue`.
-- **Refresco** sólo cuando vence el TTL o con un `refresh()` /
-  `invalidate()` explícito; un acierto de caché hace cero llamadas AWS.
-- **El valor nunca** se escribe en logs, en `metadata`, en tags, en
-  `runHookPayload` ni en mensajes de error; sólo llega al entorno del
-  comando que lo pidió.
+    ```python
+    from rayito import Sandbox, SecretCache
+
+    cache = SecretCache(ttl_seconds=300)          # opcional; no llama a AWS
+    sbx = Sandbox.create(secrets={"OPENAI_API_KEY": "openai"}, secret_cache=cache)
+    sbx.commands.run("python agent.py")           # 1 GetSecretValue por TTL, no por comando
+    sbx.commands.run("env", secrets={"GH_TOKEN": "gh"})
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    // npm install @aws-sdk/client-secrets-manager   (peer opcional)
+    import { Sandbox, SecretCache } from "rayito";
+
+    const secretCache = new SecretCache({ ttlSeconds: 300 });
+    const sbx = await Sandbox.create({ secrets: { OPENAI_API_KEY: "openai" }, secretCache });
+    await sbx.commands.run("python agent.py");
+    await sbx.commands.run("env", { secrets: { GH_TOKEN: "gh" } });
+    ```
+
+**La caché, nunca una lectura por llamada.** Opción `secret_cache=SecretCache(ttl_seconds=...)`
+(TS: `secretCache: new SecretCache({ ttlSeconds })`); sin ella, una caché
+compartida del proceso por (región, sesión/credenciales). TTL de 300 s por
+defecto, de 1 a 86 400 (`0` se rechaza). Clave: región, credenciales,
+secreto y versión (`VersionId`/`VersionStage`). Una sola lectura en vuelo
+por clave (diez llamadas a la vez = una `GetSecretValue`); un acierto hace 0
+llamadas, y sólo se relee al vencer el TTL o con `refresh()`/`invalidate()`.
+Los valores nunca se registran ni van en `metadata`, etiquetas,
+`runHookPayload`, el entorno de la imagen ni el del proceso `rayd`/sidecar,
+ni en mensajes de error: sólo llegan al entorno del comando, PTY, celda
+Python (mientras dura) o contexto de código que los pide explícitamente.
+Detalle en [Secretos](secrets.md#la-cache-nunca-en-cada-llamada).
 
 **Fase 1: el valor es visible para el código del sandbox** (ADR-014, punto
 6). La inyección entrega el secreto como variable de entorno del proceso que
@@ -118,9 +143,38 @@ corta vida y mínimo privilegio, nunca credenciales de larga vida.
 
 ### Secret CRUD (Secrets Manager)
 
-*Llega en M13a.* Cuando esté disponible, un ejemplo Python y otro TypeScript
-de `SecretStore`/`new SecretStore(...)` (crear, leer, listar, borrar)
-sustituirá este párrafo.
+Implementada en `m13-secrets` para 0.5.0, **pendiente de aceptación contra
+AWS real** (ver arriba). Cada secreto se factura hasta que lo
+borras: apagar la función es dejar de instanciar `SecretStore` **y**
+`destroy()` los secretos creados.
+
+=== "Python"
+
+    ```python
+    from rayito import SecretStore
+
+    store = SecretStore(region="us-east-1")       # no llama a AWS hasta el primer método
+    store.create("openai", "sk-...", metadata={"team": "ml"})
+    store.update("openai", "sk-rotada")           # versión 2
+    print([info.name for info in store.list(limit=20).items])
+    store.destroy("openai")                       # deja de facturar
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    // npm install @aws-sdk/client-secrets-manager   (peer opcional)
+    import { SecretStore } from "rayito";
+
+    const store = new SecretStore({ region: "us-east-1" });
+    await store.create("openai", "sk-...", { metadata: { team: "ml" } });
+    await store.update("openai", "sk-rotada");
+    console.log((await store.list({ limit: 20 })).items.map((info) => info.name));
+    await store.destroy("openai");
+    ```
+
+El shim de E2B (`from rayito.e2b import Secret`) usa el mismo `SecretStore`;
+diferencias en [Compatibilidad con E2B](e2b-compat.md#secretos-secret-asyncsecret).
 
 <a id="metadata-index"></a>
 
@@ -142,13 +196,13 @@ sustituirá este párrafo.
 
 ### `rayito sandbox proxy`
 
-*Llega en M12.* Vista previa del comando que añade M12 (todavía no existe en
-la CLI de 0.4.0):
-
 ```bash
-rayito sandbox proxy sbx-abc123 --port 8000
-# sirve http://localhost:8000 -> puerto 8000 del guest,
+rayito sandbox proxy microvm-<id> --port 8000
+# sirve http://127.0.0.1:8000 -> puerto 8000 del guest,
 # renovando el JWE antes de que expire; Ctrl+C para cortar.
 ```
+
+Escucha sólo en loopback (`127.0.0.1`) salvo que pases `--bind <ip>` junto
+con `--allow-remote`: quien llegue a ese puerto usa el sandbox con tu acceso.
 
 No hace falta ninguna opción del SDK: es sólo CLI, sin coste AWS propio.

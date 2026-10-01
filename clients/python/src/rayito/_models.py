@@ -858,6 +858,8 @@ class LaunchOptions:
 
     `access_token` y los valores de `envs` son secretos y se redactan en
     `repr`/`str`: sólo se muestra si hay token y cuántas variables hay.
+    Los `secrets=` no viajan aquí: `reincarnate()` relanza con los que el
+    handle tenga en ese momento (sólo referencias, nunca valores).
     """
 
     template: str

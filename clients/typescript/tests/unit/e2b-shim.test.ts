@@ -236,10 +236,9 @@ describe("unimplemented members", () => {
       ["Template", () => Template.build({}, { alias: "a" })],
       ["Template", () => Template.exists("a")],
       ["Volume", () => Volume.create("v")],
-      ["Secret", () => Secret.list()],
+      ["iam", () => Secret.iamToken({ audience: "sts.amazonaws.com" })],
       ["Template", () => client.Template],
       ["Volume", () => client.Volume],
-      ["Secret", () => client.Secret],
     ];
     for (const [feature, member] of syncMembers) {
       let thrown: unknown;

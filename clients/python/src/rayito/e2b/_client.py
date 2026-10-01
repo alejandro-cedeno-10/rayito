@@ -13,6 +13,7 @@ from typing import Any, NoReturn, TypeVar, Unpack
 
 from rayito.e2b._async import AsyncSandbox
 from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_params
+from rayito.e2b._secret import AsyncSecret, Secret
 from rayito.e2b._sync import Sandbox
 from rayito.e2b._unimplemented import unimplemented
 from rayito.e2b.exceptions import RayitoCompatWarning
@@ -32,8 +33,9 @@ class E2B:
     `client.AsyncSandbox` usan esas opciones salvo que la llamada dé otras
     (un `None` de la llamada cae al del cliente; `headers` de la llamada
     sustituyen a las del cliente). Los `ApiParams` ignorados avisan una sola
-    vez, aquí. `Template`, `Volume` y `Secret` (y sus `Async*`) son
-    `UnimplementedError`."""
+    vez, aquí. `client.Secret`/`client.AsyncSecret` usan su `region` y su
+    `session` (Secrets Manager en esa cuenta). `Template` y `Volume` (y sus
+    `Async*`) son `UnimplementedError`."""
 
     def __init__(
         self,
@@ -55,6 +57,11 @@ class E2B:
         bound = {key: value for key, value in params.items() if value is not None}
         self.Sandbox: type[Sandbox] = bind_class(Sandbox, bound)
         self.AsyncSandbox: type[AsyncSandbox] = bind_class(AsyncSandbox, bound)
+        secret_bound: dict[str, Any] = {
+            key: bound[key] for key in ("region", "session") if key in bound
+        }
+        self.Secret: type[Secret] = bind_class(Secret, secret_bound)
+        self.AsyncSecret: type[AsyncSecret] = bind_class(AsyncSecret, secret_bound)
 
     @property
     def Template(self) -> NoReturn:
@@ -71,11 +78,3 @@ class E2B:
     @property
     def AsyncVolume(self) -> NoReturn:
         raise unimplemented("Volume")
-
-    @property
-    def Secret(self) -> NoReturn:
-        raise unimplemented("Secret")
-
-    @property
-    def AsyncSecret(self) -> NoReturn:
-        raise unimplemented("Secret")

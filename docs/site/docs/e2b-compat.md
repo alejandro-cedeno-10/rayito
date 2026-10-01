@@ -90,8 +90,9 @@ Lo que cambia fuera del código:
     | Ficheros | `EntryInfo`, `WriteInfo`, `WriteEntry`, `FileType`, `FilesystemEvent`, `FilesystemEventType`, `WatchHandle`, `AsyncWatchHandle`, `UploadTicket`, `DownloadLink` |
     | Git | `Git`, `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode` ([Git](git.md)) |
     | Code interpreter | `Execution`, `Result`, `Logs`, `OutputMessage`, `ExecutionError`, `Context`, `MIMEType`, `RunCodeLanguage` y los charts `ChartType`, `ScaleType`, `Chart`, `Chart2D`, `PointData`, `LineChart`, `ScatterChart`, `BarChart`, `BarData`, `PieChart`, `PieData`, `BoxAndWhiskerChart`, `BoxAndWhiskerData`, `SuperChart` |
-    | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException` |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `AsyncTemplate`, `Volume`, `AsyncVolume`, `Secret`, `AsyncSecret`, `get_signature` |
+    | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `AsyncSecret`, `SecretInfo`, `SecretPaginator`, `AsyncSecretPaginator` |
+    | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException`, `SecretException`, `SecretNotFoundException` |
+    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `AsyncTemplate`, `Volume`, `AsyncVolume`, `get_signature` |
     | Sólo Rayito | `UnimplementedError`, `RayitoCompatWarning` |
 
 === "TypeScript"
@@ -110,8 +111,9 @@ Lo que cambia fuera del código:
     | Comandos, ficheros y PTY | `Filesystem`, `Pty`, `FileType`, `FilesystemEventType`, `DEFAULT_WATCH_TIMEOUT_MS`; tipos `CommandHandle`, `CommandResult`, `EntryInfo`, `WriteInfo`, `FilesystemEvent`, `WatchOpts`, `PtySize`, `PtyCreateOpts`, `PtyConnectOpts` |
     | Git | `Git`; tipos `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode` ([Git](git.md)) |
     | Code interpreter | `Execution`, `Result`; tipos `Context`, `Logs`, `OutputMessage`, `ExecutionError` |
-    | Errores (las clases nativas de `rayito`: `instanceof` vale entre los dos) | `SandboxError`, `TimeoutError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `InvalidArgumentError`, `AuthenticationError`, `RateLimitError`, `CommandExitError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`), `FileUploadError`, `GitAuthError`, `GitUpstreamError`, `TemplateError`, `BuildError`, `UnimplementedError` |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `Volume`, `Secret`, `getSignature` |
+    | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `SecretPaginator`; tipos `SecretInfo`, `SecretCreateOpts`, `SecretUpdateOpts`, `SecretGetInfoOpts`, `SecretExistsOpts`, `SecretDestroyOpts`, `SecretListOpts`, `SecretConnectionOpts` |
+    | Errores (las clases nativas de `rayito`: `instanceof` vale entre los dos) | `SandboxError`, `TimeoutError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `InvalidArgumentError`, `AuthenticationError`, `RateLimitError`, `CommandExitError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`), `FileUploadError`, `GitAuthError`, `GitUpstreamError`, `TemplateError`, `BuildError`, `UnimplementedError`, `SecretError`, `SecretNotFoundError` |
+    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `Volume`, `getSignature` |
 
     `rayito/e2b` es una entrada del mismo paquete npm `rayito` (ESM y
     CommonJS): no hay que instalar nada más.
@@ -181,7 +183,7 @@ nada se aproxima en silencio.
 | `logger=` | los logs del SDK de ese sandbox van al `logging.Logger` dado (TS: un `Logger` con `debug`/`info`/`warn`/`error`), distinto del `logging=` nativo, que es CloudWatch |
 | JS `sbx.getHost(port)` | síncrono, devuelve el hostname como E2B; las cabeceras del proxy que toda petición necesita salen de `await sbx.getHostHeaders(port)` |
 | JS `signal` (`AbortSignal`) en `ConnectionOpts` | cancela las llamadas del plano de control y los RPC en curso; rechaza con `signal.reason` |
-| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Template`, `.Volume` y `.Secret` lanzan |
+| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Secret`/`.AsyncSecret` (TS: `.Secret`) usan esa `region` y esa `session` contra Secrets Manager; `.Template` y `.Volume` lanzan |
 | Kwargs nativos (`region`, `session`, `execution_role_arn`, `allowed_ports`, `ingress`, `logging`, `control_plane`, `transport`, ...) | se pasan tal cual; `idle`, `egress` y `pool` no se aceptan (`TypeError`) |
 
 ## Lanza `UnimplementedError`
@@ -205,10 +207,10 @@ rechazada. Las claves y los motivos de esta tabla son los de
 | `mcp`, `get_mcp_url`, `get_mcp_token` | `mcp`, `getMcpUrl`, `getMcpToken` | cada petición al endpoint necesita además un JWE en cabecera con TTL de 60 min como máximo (AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp |
 | `volume_mounts`, `Volume` (y `AsyncVolume`) | `volumeMounts`, `Volume` | SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o upload_url/download_url |
 | `get_signature` | `getSignature` | una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3 |
-| `Secret` (y `AsyncSecret`) | `Secret` | necesita un almacén de secretos en un plano de control y un inyector de egress fuera del VM (SPEC.md §4; AWS_API_NOTES.md §7) |
 | `Template` (y `AsyncTemplate`) | `Template` | SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un Dockerfile y rayito image publish |
 
-`E2B(...).Template`, `.Volume` y `.Secret` lanzan lo mismo. Los casos
+`E2B(...).Template` y `.Volume` lanzan lo mismo; `Secret.iam_token`
+(TS: `Secret.iamToken`) lanza el de `iam`. Los casos
 siguientes dependen de la imagen o de la configuración y llevan su propio
 motivo (texto de Python; TypeScript usa el mismo motivo con los nombres de la
 feature en camelCase, salvo las diferencias que se listan tras la tabla):
@@ -312,6 +314,37 @@ Diferencias reales entre los dos shims:
 - `git` es un envoltorio en cliente sobre `commands.run` (E2B lo marca como
   obsoleto).
 - `traffic_access_token` es el JWE del proxy, que rota cada 45 min.
+
+## Secretos (`Secret`, `AsyncSecret`)
+
+Desde 0.5.0 (`m13-secrets`; probado con fakes, **pendiente de aceptación en
+AWS real**), `Secret`/`AsyncSecret` (TS: `Secret`) ya no
+lanzan `UnimplementedError`: son el CRUD de E2B sobre **AWS Secrets Manager
+en tu cuenta** (`SecretStore` del SDK nativo, ver [Secretos](secrets.md)).
+Contrato: `e2b` **2.51.0** de PyPI (`e2b/secret/{base,secret_sync,
+secret_async,types}.py`) y `e2b` **2.51.0** de npm (`src/secret.ts` en
+`dist/index.d.ts`), descargados y leídos el 2026-09-30; es la misma versión
+que el resto de esta página. Mismos nombres, parámetros y resultados
+(`create`, `update`, `get_info`/`getInfo`, `list`, `exists`, `destroy`,
+`fill`, `iam_token`/`iamToken`, `SecretInfo`, `SecretPaginator` con
+`has_next`/`next_token`/`next_items`); cada diferencia, aquí:
+
+| Qué | E2B 2.51 | Rayito |
+|---|---|---|
+| Dónde vive el secreto | la API de E2B (beta privada) | un secreto de Secrets Manager `<secret_prefix><nombre>` en tu cuenta (`rayito/` por defecto); cuesta $0,40/mes hasta `destroy` |
+| `SecretInfo.secret_id` / `secretId` | `sec_…` | el ARN de Secrets Manager (cambia si borras y recreas, como en E2B) |
+| Nombres | 1–128 `[A-Za-z0-9_-]`, minúsculas, `sec_` reservado (lo valida el servidor) | la misma regla, validada en el SDK **antes** de llamar a AWS; el error nunca repite el nombre. El shim pasa el nombre a minúsculas (`Secret.create("OpenAI", …)` guarda `rayito/openai`), pero `secrets=` y `SecretStore` del SDK nativo **no** normalizan: refiérete a él en minúsculas (`secrets={"K": "openai"}`), o `"OpenAI"` da `SecretNotFoundException` |
+| `secret` en `update`/`get_info`/`exists`/`destroy` | id o nombre | el nombre o el ARN (`secret_id`) |
+| `metadata` | ≤ 8 KiB | ≤ 2048 caracteres codificados (`Description` de Secrets Manager) |
+| Tope de secretos | 100 por proyecto | sin tope propio (el de tu cuenta de AWS) |
+| `version` | entero creciente | el mismo entero, codificado en el `ClientRequestToken` (`rayito-secret-version-{n:020d}`); `get_info` da 0 si la versión actual no la escribió Rayito (una rotación externa), y `update` escribe la mayor versión de Rayito que aún lista `DescribeSecret` + 1 |
+| `fill(name)` | placeholder que el proxy de egress de E2B resuelve en cabeceras de `network.rules` | la misma cadena `${e2b.secrets.<name>}`, sin llamar a AWS, pero **nada la resuelve**: no hay inyector de egress (`network.rules` sigue en `UnimplementedError`) y ningún camino del SDK sustituye placeholders dentro de `envs`. Para entregar un secreto usa `secrets=` del SDK nativo ([Secretos](secrets.md)) |
+| `iam_token` / `iamToken` | token de identidad JWT-SVID | `UnimplementedError` (motivo de `iam`) |
+| `update` muy frecuente | sin límite documentado | Secrets Manager recomienda ≤ 1 escritura cada 10 min; el SDK avisa (`UserWarning`/`process.emitWarning`) la primera vez que se supera |
+| `destroy` y recrear el mismo nombre | sin reintento en el SDK | `DeleteSecret` es asíncrono: `create` reintenta con backoff hasta 30 s **si** AWS responde `InvalidRequestException` con un mensaje que menciona el borrado. Ese comportamiento es un supuesto de SEC-9 **aún sin medir** en AWS real (`AWS_API_NOTES.md` §19); hasta entonces, un código o mensaje distinto sale como `SecretException` sin reintento |
+| Opciones de conexión (`api_key`, `domain`, `request_timeout`, …) | las de la API de E2B | no aplican: `RayitoCompatWarning` y se ignoran; las propias son `region`, `session` (TS: `credentials`), `secret_prefix` (TS: `secretPrefix`) y `kms_key_id` (TS: `kmsKeyId`) |
+| `SecretException` | hereda de `Exception` (TS: `SecretError` de `Error`) | hereda de `SandboxException` (TS: `SandboxError`); `SecretNotFoundException` es además la `NotFoundException` nativa en Python (en TS sólo `SecretError`: herencia simple) |
+| `SecretPaginator` (TS) | `new SecretPaginator(opts?)` | acepta un segundo argumento interno (las opciones ligadas de `E2B(...)`) |
 
 ## Migrar desde el shim 1.x
 

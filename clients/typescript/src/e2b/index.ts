@@ -33,6 +33,8 @@ export {
   RateLimitError,
   SandboxError,
   SandboxNotFoundError,
+  SecretError,
+  SecretNotFoundError,
   TimeoutError,
   UnimplementedError,
 } from "../errors.js";
@@ -76,8 +78,20 @@ export {
   type PtyOutputCallback,
   type PtySize,
 } from "./pty.js";
-export { getSignature, Secret, Template, Volume } from "./resources.js";
+export { getSignature, Template, Volume } from "./resources.js";
 export { Sandbox, type SandboxInstanceConnectOpts, SandboxPaginator } from "./sandbox.js";
+export {
+  Secret,
+  type SecretConnectionOpts,
+  type SecretCreateOpts,
+  type SecretDestroyOpts,
+  type SecretExistsOpts,
+  type SecretGetInfoOpts,
+  type SecretInfo,
+  type SecretListOpts,
+  SecretPaginator,
+  type SecretUpdateOpts,
+} from "./secret.js";
 export type {
   SandboxConnectOpts,
   SandboxInfo,

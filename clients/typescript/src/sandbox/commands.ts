@@ -36,6 +36,7 @@ import {
 } from "../gen/rayito/v1/process_pb.js";
 import type { CommandResult, OutputChunk, ProcessInfo, SandboxMetrics } from "../models.js";
 import { validatedEnvs } from "../payload.js";
+import type { SecretEnvs, SecretsInput } from "../secrets/inject.js";
 import { sandboxTimeoutError, translateStreamError } from "../transport/errors.js";
 import { type OpenedStream, type SandboxCore, type StreamStarter, withTimeout } from "./core.js";
 import { ReconnectBudget } from "./readiness.js";
@@ -81,6 +82,23 @@ export interface CommandOptions extends RequestOptions {
   /** Timeout del servidor en ms (60 000 por defecto; `0` = sin límite). */
   readonly timeoutMs?: number | undefined;
   readonly tag?: string | undefined;
+  /**
+   * Secretos de Secrets Manager como variables de entorno de este comando
+   * (más los del handle; la llamada gana en una clave repetida y una clave que
+   * también esté en `envs` es `InvalidArgumentError`).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: la inyección de secretos en este comando (apagada si falta).
+   * Recursos y llamadas AWS: `GetSecretValueCommand` sólo en un fallo de
+   *   `SecretCache` (TTL 300 s): tres comandos seguidos = una lectura.
+   * Coste aproximado: $0,05 por 10 000 llamadas (us-east-1, 2026-09-30).
+   * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+   * Cómo apagarla: no pases `secrets` (por defecto `undefined`).
+   * Ejemplo:
+   *   await sbx.commands.run("python agent.py", { secrets: { OPENAI_API_KEY: "openai" } });
+   */
+  readonly secrets?: SecretsInput | undefined;
 }
 
 export interface ConnectOptions extends RequestOptions {
@@ -533,9 +551,11 @@ export type ProcessClient = SandboxCore["clients"]["process"];
 /** Comandos del sandbox (`ProcessService`). */
 export class Commands {
   readonly core: SandboxCore;
+  readonly #secrets: SecretEnvs;
 
-  constructor(core: SandboxCore) {
+  constructor(core: SandboxCore, secrets: SecretEnvs) {
     this.core = core;
+    this.#secrets = secrets;
   }
 
   run(cmd: string, options: CommandOptions & { background: true }): Promise<CommandHandle>;
@@ -545,7 +565,8 @@ export class Commands {
   ): Promise<CommandResult>;
   run(cmd: string, options?: CommandOptions): Promise<CommandResult | CommandHandle>;
   async run(cmd: string, options: CommandOptions = {}): Promise<CommandResult | CommandHandle> {
-    const request = buildStartRequest(cmd, options);
+    const envs = await this.#secrets.apply(options.envs, options.secrets);
+    const request = buildStartRequest(cmd, { ...options, envs });
     const deadline = streamDeadlineMs(options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
     const background = options.background === true;
     const handle = await this.attach(
