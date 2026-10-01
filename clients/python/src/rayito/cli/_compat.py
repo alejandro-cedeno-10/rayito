@@ -51,6 +51,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente "
         "en español exigen el rayd del tag rayd-v0.4.0",
     ),
+    CompatibilityRow(
+        "0.5",
+        "0.5.0",
+        "0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales "
+        "(secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0",
+    ),
 )
 
 
