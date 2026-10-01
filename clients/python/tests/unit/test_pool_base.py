@@ -349,5 +349,11 @@ def test_reject_launch_kwargs_names_the_first_offender_in_signature_order() -> N
     with pytest.raises(InvalidArgumentException, match="`keep_on_failure`"):
         reject_launch_kwargs_with_pool({"keep_on_failure": True})
     assert POOL_REJECTED_KWARGS[0] == "template"
-    assert POOL_REJECTED_KWARGS[-1] == "transport"
+    # M15 (Rayito 0.6, foundations): the seven 0.6 launch options are
+    # appended after `transport`, so `domain` (declared last) is now the
+    # final name in signature order.
+    assert POOL_REJECTED_KWARGS[-1] == "domain"
     assert "allowed_ports" in POOL_REJECTED_KWARGS
+    assert "transport" in POOL_REJECTED_KWARGS
+    for name in ("mounts", "volumes", "size", "events", "telemetry", "gateways", "domain"):
+        assert name in POOL_REJECTED_KWARGS
