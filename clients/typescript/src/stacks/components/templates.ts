@@ -10,8 +10,9 @@ export const COMPONENT: StackComponent = {
   name: "templates",
   description:
     "Política RayitoTemplateBuilder (CreateMicrovmImage/UpdateMicrovmImage/GetMicrovmImage*/" +
-    "ListMicrovmImageVersions, PassRole sobre el rol de build, S3 del artefacto y lectura de " +
-    "logs de build), para Template.build().",
+    "ListMicrovmImageVersions sobre las imágenes de la cuenta, nunca sobre las imágenes base " +
+    "publicadas; PassRole sobre el rol de build, S3 del artefacto y lectura de logs de build), " +
+    "para Template.build().",
   parameters: [
     {
       name: "ArtifactBucketArn",
@@ -37,9 +38,15 @@ export const COMPONENT: StackComponent = {
     {
       name: "BaseImageBucketArn",
       description:
-        "ARN del bucket que ya tiene el zip de codeArtifact de rayito-base (fromBaseImage()); " +
-        "vacío concede s3:GetObject sobre cualquier bucket, porque la imagen base puede " +
-        "haberse publicado desde un bucket que esta pila no conoce.",
+        "ARN del bucket con el zip de codeArtifact de rayito-base (fromBaseImage()) si no es el " +
+        "bucket de artefactos; vacío significa el bucket de artefactos.",
+    },
+    {
+      name: "ProtectedImageNamePrefix",
+      description:
+        "Prefijo de las imágenes que Template.build() nunca puede crear ni actualizar (las " +
+        "imágenes base publicadas).",
+      default: "rayito-base",
     },
   ],
   capabilities: ["CAPABILITY_IAM"],

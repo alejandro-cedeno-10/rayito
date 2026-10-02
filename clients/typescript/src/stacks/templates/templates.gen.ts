@@ -8,8 +8,10 @@ Description: >-
   role from infra/iam.yaml, S3 access to the artifact bucket, and read-only
   access to the image's CloudWatch log group. Creates no S3 bucket, no
   image and no Lambda function ($0 at rest: IAM only). Delete the stack to
-  remove the policy; it never deletes an image or a bucket object.
-  AWS_API_NOTES.md section 27.
+  remove the policy; it never deletes an image or a bucket object. The
+  artifact bucket stays the caller's (ADR-022): give it a lifecycle rule
+  on rayito/templates/ to expire old context zips. AWS_API_NOTES.md
+  sections 10 and 27.
 
 Parameters:
   ArtifactBucketArn:
@@ -36,11 +38,18 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      ARN of the bucket that already holds the rayito-base codeArtifact zip
-      Template.build() reads from (fromBaseImage()); empty grants
-      s3:GetObject on every bucket instead, because the base image may have
-      been published from a bucket this stack does not know about. Set it
-      when the base image's bucket is known, to scope the read down to it.
+      ARN of the bucket that holds the rayito-base codeArtifact zip
+      Template.build() reads (fromBaseImage()), when it is not the artifact
+      bucket. Empty means the artifact bucket: the read is never granted on
+      any other bucket.
+  ProtectedImageNamePrefix:
+    Type: String
+    Default: rayito-base
+    MinLength: 1
+    Description: >-
+      Image names Template.build() may never create or update (the
+      published base images: rayito-base, rayito-base-caps, ...). A
+      template named with this prefix is denied.
 
 Conditions:
   HasBaseImageBucket: !Not [!Equals [!Ref BaseImageBucketArn, ""]]
@@ -66,9 +75,13 @@ Resources:
               - lambda:GetMicrovmImage
               - lambda:GetMicrovmImageVersion
               - lambda:ListMicrovmImageVersions
-              - lambda:ListMicrovmImageBuilds
-              - lambda:GetMicrovmImageBuild
-            Resource: "*"
+            Resource: !Sub "arn:\${AWS::Partition}:lambda:\${AWS::Region}:\${AWS::AccountId}:microvm-image:*"
+          - Sid: NeverOverwriteBaseImages
+            Effect: Deny
+            Action:
+              - lambda:CreateMicrovmImage
+              - lambda:UpdateMicrovmImage
+            Resource: !Sub "arn:\${AWS::Partition}:lambda:\${AWS::Region}:\${AWS::AccountId}:microvm-image:\${ProtectedImageNamePrefix}*"
           - Sid: PassBuildRole
             Effect: Allow
             Action:
@@ -81,7 +94,6 @@ Resources:
             Effect: Allow
             Action:
               - s3:GetObject
-              - s3:HeadObject
               - s3:PutObject
             Resource: !Sub "\${ArtifactBucketArn}/rayito/templates/*"
           - Sid: ReadBaseImageArtifacts
@@ -91,7 +103,7 @@ Resources:
             Resource: !If
               - HasBaseImageBucket
               - !Sub "\${BaseImageBucketArn}/*"
-              - "*"
+              - !Sub "\${ArtifactBucketArn}/*"
           - Sid: ReadBuildLogsOnFailure
             Effect: Allow
             Action:
