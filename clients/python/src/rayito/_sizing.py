@@ -30,7 +30,7 @@ SIZE_NAMES: Final[tuple[str, ...]] = ("512mb", "1gb", "2gb", "4gb", "8gb")
 NAME_TO_MEMORY_MIB: Final[dict[str, int]] = dict(zip(SIZE_NAMES, SUPPORTED_MEMORY_MIB, strict=True))
 MEMORY_MIB_TO_NAME: Final[dict[int, str]] = {mib: name for name, mib in NAME_TO_MEMORY_MIB.items()}
 
-# DEFAULT_MEMORY_MIB de `cli/_publish.py`: la imagen que `rayito image
+# `_images.DEFAULT_MEMORY_MIB` (= esta constante): la imagen que `rayito image
 # publish` construye sin `--sizes` no lleva sufijo, así que el tamaño que
 # coincide con ella tampoco necesita uno.
 BASELINE_MEMORY_MIB: Final[int] = 2048

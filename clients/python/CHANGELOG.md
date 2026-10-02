@@ -114,6 +114,40 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   rechazaron (por motivo) o sintetizaron.
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
+  por defecto): `Template`/`AsyncTemplate` compilan un DSL (igual al
+  `Template` de E2B v2) a un Dockerfile y un zip deterministas sobre una
+  imagen `rayito-base`/`rayito-base-caps` ya publicada;
+  `Template.build()`/`build_in_background()`/`get_build_status()`/
+  `exists()` suben el artefacto por hash de contenido y llaman a
+  `create`/`update-microvm-image`, reutilizando una versión idéntica en
+  vez de reconstruir. Un build fallido se explica con `BuildException`
+  (`step`/`command`/`exit_code`/`log_tail` del log de BuildKit, o
+  `reason="ready_client_error"|"ready_server_error"` si falló el
+  `ready_cmd`), sin repetir nada. `from_image`/`from_template`/
+  `from_dockerfile`/`from_gcp_registry`/`apt_install` lanzan
+  `UnimplementedError` (documentados en ADR-022). El shim
+  `rayito.e2b.Template`/`AsyncTemplate` ya construye de verdad, con la
+  firma de E2B (`alias`, `skip_cache`, `memory_mb` redondeado con
+  `RayitoCompatWarning`, `cpu_count` con aviso) y `E2B(bucket=...)`;
+  `TemplateException`/`BuildException` del shim pasan a ser las clases
+  nativas. `set_start_cmd()` necesita una imagen base con `rayd` 0.6. La
+  imagen compuesta hereda la configuración de la base
+  (`additionalOsCapabilities` incluida); `skip_cache()` equivale a
+  `force=True`; la cuota de builds de AWS llega como
+  `reason="build_quota"`. El núcleo de build de imágenes pasa a
+  `rayito._images`, compartido con `rayito image publish` (sin cambio de
+  comportamiento). Sin llamar a `Template.build()`, el SDK no crea ningún
+  cliente nuevo. `infra/templates.yaml` (`rayito stack deploy templates`):
+  sólo la política IAM `RayitoTemplateBuilder`, $0 en reposo, que no puede
+    sobrescribir las imágenes base publicadas. Aceptación en AWS real: `pip_install()` compila
+  a `python3 -m pip install --no-cache-dir --break-system-packages`
+  (rayito-base no tiene `pip` en el `PATH`); la versión gestionada que se
+  hereda se envía como `1`, no como el eco `1.0` que `create-microvm-image`
+  rechaza; la política concede `CreateMicrovmImage` sobre `*` (AWS no la
+  autoriza por ARN) y `lambda:PassNetworkConnector` sobre los conectores
+  gestionados, y su `Deny` cubre `UpdateMicrovmImage` sobre las bases
+  (`AWS_API_NOTES.md` Q114-Q116).
 <!-- m15-secrets-gateway -->
 - **`gateways=` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
   M15, ADR-023, opcional y apagado por defecto): `Sandbox.create(gateways=

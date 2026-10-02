@@ -20,6 +20,7 @@ from rayito.e2b import (
     E2B,
     AsyncSandbox,
     AsyncSandboxPaginator,
+    AsyncTemplate,
     ConnectionConfig,
     PtySize,
     SandboxException,
@@ -122,7 +123,9 @@ def unimplemented_triggers(sandbox: AsyncSandbox) -> dict[str, Callable[[], Awai
         "get_mcp_url": lambda: call(sandbox.get_mcp_url),
         "get_mcp_token": lambda: call(sandbox.get_mcp_token),
         "volume_mounts": lambda: AsyncSandbox.create(volume_mounts={"/data": "vol"}),
-        "E2B().AsyncTemplate": lambda: call(lambda: E2B().AsyncTemplate),
+        # m15-templates: AsyncTemplate ya construye de verdad; sólo el
+        # etiquetado sigue sin implementar.
+        "Template.get_tags": lambda: call(lambda: AsyncTemplate().get_tags()),
     }
 
 

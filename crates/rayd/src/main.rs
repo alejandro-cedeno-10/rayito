@@ -24,13 +24,15 @@ use rayd::adapters::{
     install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
+use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
 use rayd::hooks::HookServices;
 use rayd::lifecycle::{
-    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, Reaper, StreamCloser,
-    SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper, spawn_timeout_watcher,
+    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
+    StreamCloser, SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper,
+    spawn_timeout_watcher,
 };
 use rayd::network::NetworkManager;
 use rayd::persistence::platform_persistence_manager;
@@ -144,6 +146,19 @@ fn split_command(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(str::to_owned).collect()
 }
 
+/// The process's `FeatureSet` participants, each already past its
+/// `on_boot`, which runs before the hooks server answers anything: the
+/// build-time `/ready` must already see a template's `start_cmd` running
+/// (`template_start`, ADR-022). Every other slot's `on_boot` is the
+/// trait's no-op.
+async fn boot_participants(features: &FeatureSet) -> Vec<Arc<dyn LifecycleParticipant>> {
+    let participants = features.participants();
+    for participant in &participants {
+        participant.on_boot().await;
+    }
+    participants
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<ExitCode> {
     let args = parse_args(std::env::args().skip(1))?;
@@ -199,13 +214,15 @@ async fn main() -> anyhow::Result<ExitCode> {
     // The process's one `FeatureSet` (ADR-015): `ConfigureService` applies
     // sections to it, `Health.features` is derived from it and the hooks
     // run its participants, so all three always see the same slots.
-    let features = Arc::new(rayd::features::build(
-        &rayd::features::FeatureContext::default(),
-    ));
+    let features = Arc::new(rayd::features::build(&FeatureContext {
+        processes: Some(processes.clone()),
+        ..FeatureContext::default()
+    }));
 
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
+    let participants = boot_participants(&features).await;
     let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
@@ -240,9 +257,10 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // Empty while every slot is `Unsupported` (`participant()` is
-            // `None`), so every hook behaves exactly as in 0.5.x.
-            participants: features.participants(),
+            // Every slot's participant, each already past its `on_boot`
+            // (`boot_participants`); empty while no slot has one, which
+            // keeps every hook exactly as in 0.5.x.
+            participants,
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());

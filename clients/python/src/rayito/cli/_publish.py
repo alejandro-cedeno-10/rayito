@@ -59,16 +59,15 @@ one document/line per image. Without ``--sizes`` only the unsuffixed
 baseline publishes, exactly as before sizes-catalog existed (``publish()``,
 unaggregated). ``--env KEY=VALUE`` (repeatable) adds arbitrary
 ``environmentVariables`` to every image this invocation publishes, baseline
-included — the minimal, behavior-preserving seam this change needs
-(``PublishSettings.environment_variables``), not the full
-``ImageBuildGateway``/``_images.py`` extraction the M15 architecture names
-and a future change may still do (tasks.md §11); it is never an activation
+included (``PublishSettings.environment_variables``, sent through the
+shared build core ``rayito._images`` that ``Template.build()`` also uses);
+it is never an activation
 switch (ADR-014 rule 4): it only configures the image's own guest
 environment, nothing about what the SDK does at ``Sandbox.create()``. A
 ``--env``/``--sizes`` publish only reuses a version whose
 ``environmentVariables`` match exactly, read with
 ``get-microvm-image-version`` because ``list-microvm-image-versions`` never
-echoes them (Q118, ``echoed_environment_variables``). Without ``--env`` the
+echoes them (Q118, ``_images.echoed_environment_variables``). Without ``--env`` the
 reuse check is 0.5.x's, list-only and with no extra call: a version built
 earlier *with* ``--env`` under the same name and artifact is then reused as
 is; pass ``--force`` to rebuild it without the variables.
@@ -81,39 +80,37 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
 from botocore.exceptions import ClientError
 
-from rayito._sizing import BASELINE_MEMORY_MIB, NAME_TO_MEMORY_MIB
+from rayito._images import (
+    DEFAULT_BASE_IMAGE_NAME,
+    LOG_GROUP_PREFIX,
+    VersionGate,
+    account_image_arn,
+    find_reusable_version,
+    image_exists,
+    submit_image_build,
+    upload_if_absent,
+)
+from rayito._images import wait_for_gate as wait_for_image_gate
+from rayito._sizing import NAME_TO_MEMORY_MIB
 from rayito.cli._artifact import VARIANTS, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
 
-DEFAULT_IMAGE_NAME = "rayito-base"
+DEFAULT_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME
 DEFAULT_IMAGE_NAMES = {
     "full": DEFAULT_IMAGE_NAME,
     "slim": f"{DEFAULT_IMAGE_NAME}-slim",
     "poly": f"{DEFAULT_IMAGE_NAME}-poly",
 }
 DEFAULT_STACK_NAME = "rayito-m0-iam"
-# El mismo catálogo cerrado que `_sizing.BASELINE_MEMORY_MIB`: la imagen sin
-# sufijo de `--sizes` siempre es esta, verificado por
-# `test_default_memory_mib_matches_the_sizing_baseline`.
-DEFAULT_MEMORY_MIB = BASELINE_MEMORY_MIB
 OS_CAPABILITY_CHOICES = ("ALL",)
 BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
-LOG_GROUP_PREFIX = "/rayito"
 HOOKS_PORT = 9000
-POLL_INTERVAL_SECONDS = 10.0
-DEFAULT_BUILD_TIMEOUT_SECONDS = 1800.0
-LAUNCHABLE_IMAGE_STATES = frozenset({"CREATED", "UPDATED"})
-FAILED_IMAGE_STATES = frozenset({"CREATE_FAILED", "UPDATE_FAILED"})
-SETTLED_VERSION_STATES = frozenset({"SUCCESSFUL", "FAILED"})
-MISSING_OBJECT_CODES = frozenset({"404", "NoSuchKey", "NotFound", "403"})
-BASE_IMAGE_VERSION_KEY = "baseImageVersion"
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
 # Nombre de la variable de imagen que `--sizes` hornea: información
 # declarada para que el código del usuario sepa el baseline de la imagen
@@ -199,39 +196,6 @@ class PublishSettings:
         return f"{LOG_GROUP_PREFIX}/{self.image_name}"
 
 
-@dataclass(frozen=True)
-class VersionGate:
-    """The three independent states that must all pass before ``run-microvm``."""
-
-    image_state: str
-    version_state: str
-    version_status: str
-    state_reason: str | None
-
-    @property
-    def launchable(self) -> bool:
-        return (
-            self.image_state in LAUNCHABLE_IMAGE_STATES
-            and self.version_state == "SUCCESSFUL"
-            and self.version_status == "ACTIVE"
-        )
-
-    @property
-    def settled(self) -> bool:
-        version_done = self.version_state in SETTLED_VERSION_STATES
-        image_done = self.image_state in LAUNCHABLE_IMAGE_STATES | FAILED_IMAGE_STATES
-        return (version_done and image_done) or self.version_state == "FAILED"
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "imageState": self.image_state,
-            "versionState": self.version_state,
-            "versionStatus": self.version_status,
-            "stateReason": self.state_reason,
-            "launchable": self.launchable,
-        }
-
-
 def default_image_name(variant: str) -> str:
     if variant not in VARIANTS:
         raise ValueError(f"variant desconocida: {variant!r} (admitidas: {', '.join(VARIANTS)})")
@@ -250,28 +214,14 @@ def artifact_key(payload: bytes) -> str:
     return f"{S3_KEY_PREFIX}/rayd-{hashlib.sha256(payload).hexdigest()[:12]}.zip"
 
 
-def object_exists(clients: PublishClients, bucket: str, key: str) -> bool:
-    """A 403 also counts as absent: without ``s3:ListBucket`` S3 answers 403
-    instead of 404 to a HEAD of a missing key, and a permission that is really
-    missing surfaces on the ``put_object`` that follows."""
-    try:
-        clients.s3.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        if client_error_code(exc) in MISSING_OBJECT_CODES:
-            return False
-        raise
-    return True
-
-
 def upload_artifact(clients: PublishClients, settings: PublishSettings, emit: Emitter) -> str:
     payload = settings.artifact.read_bytes()
     key = artifact_key(payload)
     uri = f"s3://{settings.bucket}/{key}"
-    if object_exists(clients, settings.bucket, key):
-        emit(f"artifact already in S3, skipping upload: {uri}")
-    else:
-        clients.s3.put_object(Bucket=settings.bucket, Key=key, Body=payload)
+    if upload_if_absent(clients, settings.bucket, key, payload):
         emit(f"uploaded {uri} ({len(payload)} bytes)")
+    else:
+        emit(f"artifact already in S3, skipping upload: {uri}")
     return uri
 
 
@@ -289,7 +239,7 @@ def build_role_arn(clients: PublishClients, settings: PublishSettings) -> str:
 
 
 def image_arn(clients: PublishClients, image_name: str) -> str:
-    return f"arn:aws:lambda:{clients.region}:{clients.account_id}:microvm-image:{image_name}"
+    return account_image_arn(clients.region, clients.account_id, image_name)
 
 
 def base_image_arn(region: str) -> str:
@@ -317,128 +267,6 @@ def desired_configuration(
     return configuration
 
 
-def image_exists(clients: PublishClients, arn: str) -> bool:
-    try:
-        clients.microvms.get_microvm_image(imageIdentifier=arn)
-    except ClientError as exc:
-        if client_error_code(exc) == "ResourceNotFoundException":
-            return False
-        raise
-    return True
-
-
-def base_image_version_matches(echoed: Any, desired: Any) -> bool:
-    """``1`` and ``1.0`` name the same managed version: the API accepts the
-    ``list-managed-microvm-image-versions`` spelling and echoes the
-    normalised one (AWS_API_NOTES.md Q52). Non-numeric spellings only match
-    exactly."""
-    if not isinstance(echoed, str) or not isinstance(desired, str):
-        return bool(echoed == desired)
-    if echoed == desired:
-        return True
-    try:
-        return Decimal(echoed) == Decimal(desired)
-    except InvalidOperation:
-        return False
-
-
-def value_matches(key: str, echoed: Any, desired: Any) -> bool:
-    if key == BASE_IMAGE_VERSION_KEY:
-        return base_image_version_matches(echoed, desired)
-    return bool(echoed == desired)
-
-
-ENVIRONMENT_VARIABLES_KEY = "environmentVariables"
-
-
-def environment_variables_match(echoed: Any, desired: Mapping[str, str]) -> bool:
-    """`environmentVariables` se compara siempre contra lo que de verdad se
-    quiere ahora (`desired`, que es `settings.environment_variables`, nunca
-    el dict `desired_configuration` arma para la petición: ese sólo lleva la
-    clave cuando no está vacío, para que la petición a AWS siga siendo byte
-    a byte la de antes de sizes-catalog). Una versión sin la clave (nunca
-    tuvo `--env`, o viene de `list-microvm-image-versions`, que nunca la
-    devuelve: Q118) cuenta como `{}`, igual que un `desired` vacío. Quién
-    lee de verdad `echoed`: `echoed_environment_variables`."""
-    return dict(echoed or {}) == dict(desired)
-
-
-def settings_match(version: dict[str, Any], desired: dict[str, Any]) -> bool:
-    """Every key of `desired` except `environmentVariables`, which
-    `configuration_matches`/`published_version` compare on their own."""
-    return all(
-        value_matches(key, version.get(key), value)
-        for key, value in desired.items()
-        if key != ENVIRONMENT_VARIABLES_KEY
-    )
-
-
-def configuration_matches(
-    version: dict[str, Any],
-    desired: dict[str, Any],
-    environment_variables: Mapping[str, str] | None = None,
-) -> bool:
-    if not environment_variables_match(
-        version.get(ENVIRONMENT_VARIABLES_KEY), environment_variables or {}
-    ):
-        return False
-    return settings_match(version, desired)
-
-
-def echoed_environment_variables(
-    clients: PublishClients,
-    arn: str,
-    item: dict[str, Any],
-    environment_variables: Mapping[str, str],
-) -> Any:
-    """The `environmentVariables` a listed version was built with.
-    `list-microvm-image-versions` never echoes the key, only
-    `get-microvm-image-version` does (Q118, AWS_API_NOTES.md §24): without
-    this every `--env`/`--sizes` publish (sized images always bake
-    `RAYITO_BASELINE_MEMORY_MIB`) rebuilt instead of reusing. The extra
-    call (no `apiTps` quota of its own) only happens when this publish
-    asks for variables; without `--env` the list item is trusted as is,
-    the exact reuse check (and calls) of 0.5.x."""
-    if not environment_variables:
-        return item.get(ENVIRONMENT_VARIABLES_KEY)
-    response = clients.microvms.get_microvm_image_version(
-        imageIdentifier=arn, imageVersion=str(item["imageVersion"])
-    )
-    return response.get(ENVIRONMENT_VARIABLES_KEY)
-
-
-def published_version(
-    clients: PublishClients,
-    arn: str,
-    desired: dict[str, Any],
-    environment_variables: Mapping[str, str] | None = None,
-) -> str | None:
-    """Newest launchable version already built from this artifact and config:
-    candidates matching every other key are checked newest first, so a
-    `--env` publish confirms its variables with as few
-    `get-microvm-image-version` calls as possible (see
-    `echoed_environment_variables`)."""
-    wanted = environment_variables or {}
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    candidates = sorted(
-        (
-            item
-            for page in paginator.paginate(imageIdentifier=arn)
-            for item in page["items"]
-            if item["state"] == "SUCCESSFUL"
-            and item["status"] == "ACTIVE"
-            and settings_match(item, desired)
-        ),
-        key=lambda item: item["createdAt"],
-        reverse=True,
-    )
-    for item in candidates:
-        echoed = echoed_environment_variables(clients, arn, item, wanted)
-        if environment_variables_match(echoed, wanted):
-            return str(item["imageVersion"])
-    return None
-
-
 def submit_build(
     clients: PublishClients,
     settings: PublishSettings,
@@ -447,24 +275,10 @@ def submit_build(
     emit: Emitter,
 ) -> tuple[str, str]:
     request = {**desired, "description": f"rayd {utc_now()}"}
-    if image_exists(clients, arn):
-        response = clients.microvms.update_microvm_image(imageIdentifier=arn, **request)
-        emit(f"update-microvm-image accepted: version {response['imageVersion']}")
-    else:
-        response = clients.microvms.create_microvm_image(name=settings.image_name, **request)
-        emit(f"create-microvm-image accepted: version {response['imageVersion']}")
-    return str(response["imageArn"]), str(response["imageVersion"])
-
-
-def read_gate(clients: PublishClients, arn: str, version: str) -> VersionGate:
-    image = clients.microvms.get_microvm_image(imageIdentifier=arn)
-    detail = clients.microvms.get_microvm_image_version(imageIdentifier=arn, imageVersion=version)
-    return VersionGate(
-        image_state=str(image["state"]),
-        version_state=str(detail["state"]),
-        version_status=str(detail["status"]),
-        state_reason=detail.get("stateReason"),
-    )
+    submitted = submit_image_build(clients, settings.image_name, arn, request)
+    operation = "create" if submitted.created else "update"
+    emit(f"{operation}-microvm-image accepted: version {submitted.version}")
+    return submitted.arn, submitted.version
 
 
 def wait_for_gate(
@@ -475,17 +289,16 @@ def wait_for_gate(
     emit: Emitter,
     sleep: Sleeper,
 ) -> VersionGate:
-    started = time.monotonic()
-    while True:
-        gate = read_gate(clients, arn, version)
-        elapsed = time.monotonic() - started
+    def report(gate: VersionGate, elapsed: float) -> None:
         emit(
             f"  image={gate.image_state} version={version} state={gate.version_state} "
             f"status={gate.version_status} ({elapsed:.0f}s)"
         )
-        if gate.settled or elapsed >= timeout_seconds:
-            return gate
-        sleep(POLL_INTERVAL_SECONDS)
+
+    gate, _timed_out = wait_for_image_gate(
+        clients, arn, version, timeout_seconds, sleep, on_tick=report
+    )
+    return gate
 
 
 def latest_build(clients: PublishClients, arn: str, version: str) -> dict[str, Any]:
@@ -617,9 +430,7 @@ def reusable_version(
     ya está en `prepared`."""
     if settings.force or not image_exists(clients, prepared.arn):
         return None
-    return published_version(
-        clients, prepared.arn, prepared.desired, settings.environment_variables
-    )
+    return find_reusable_version(clients, prepared.arn, prepared.desired)
 
 
 def reusable_summary(

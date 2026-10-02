@@ -36,6 +36,8 @@ export {
 } from "./charts.js";
 export {
   AuthenticationError,
+  BuildError,
+  type BuildErrorOptions,
   CapacityError,
   CommandExitError,
   CustomDomainError,
@@ -67,6 +69,7 @@ export {
   SecretNotFoundError,
   StackError,
   type StackErrorOptions,
+  TemplateError,
   TimeoutError,
   TransferError,
   type TransferErrorOptions,
@@ -289,5 +292,32 @@ export {
   OptionalStacks,
   type OptionalStacksOptions,
 } from "./stacks/service.js";
+export type {
+  BuildClients,
+  BuildHandle,
+  BuildInfo,
+  BuildOptions,
+  BuildState,
+  BuildStatus,
+} from "./templates/build.js";
+export { Template } from "./templates/dsl.js";
+export type {
+  BaseImageRef,
+  CopyStep,
+  EnvStep,
+  ReadyPoll,
+  RunStep,
+  StartSpec,
+  TemplateSpec,
+  UserStep,
+  WireStep,
+} from "./templates/instructions.js";
+export {
+  ReadyCommand,
+  waitForFile,
+  waitForPort,
+  waitForProcess,
+  waitForUrl,
+} from "./templates/ready-cmds.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";

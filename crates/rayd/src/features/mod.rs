@@ -4,11 +4,11 @@
 //! hooks' lifecycle participants (`grpc::router_with_features`,
 //! `hooks::HookServices::participants`). Each feature replaces its own
 //! field's construction (inside its own `features::<name>::build`, e.g.
-//! `m15-s3-mounts`'s, `m15-events-webhooks`'s and `m15-secrets-gateway`'s
-//! real adapters) in its own PR, every other slot staying
-//! `slot::Unsupported` — `FeatureSet`'s field list, `build`'s signature and
-//! the three views below (`agent_features`, `root_egress`, `participants`)
-//! do not change for that.
+//! `m15-s3-mounts`'s, `m15-events-webhooks`'s, `m15-templates`'s and
+//! `m15-secrets-gateway`'s real adapters) in its own PR, every other slot
+//! staying `slot::Unsupported` — `FeatureSet`'s field list, `build`'s
+//! signature and the three views below (`agent_features`, `root_egress`,
+//! `participants`) do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -31,15 +31,21 @@ use rayito_proto::v1::{
 use crate::lifecycle::LifecycleParticipant;
 use slot::ConfigurableFeature;
 
-/// What a feature's `build()` needs from `main` to construct its slot.
-/// `child_registry` is `m15-s3-mounts`'s own addition (its `mount-s3`
-/// daemon registers each pid there, see `adapters::mount_s3`'s module
-/// doc); every other slot is still a stub and ignores it. A feature that
-/// needs a bucket name, a credential broker or other shared context adds
-/// its own field here in its own PR, never by widening `FeatureSet` itself.
+use crate::grpc::PlatformProcessManager;
+
+/// What a feature's `build()` needs from `main` to construct its slot. A
+/// feature that needs credentials, a bucket name or other shared context
+/// adds its own field here in its own PR, never by widening `FeatureSet`
+/// itself; every other slot ignores it. `child_registry` is
+/// `m15-s3-mounts`'s (its `mount-s3` daemon registers each pid there, see
+/// `adapters::mount_s3`'s module doc). `processes` is `template_start`'s
+/// (ADR-022): `None` builds a slot that still reports `supported()`
+/// correctly but spawns nothing — the shape every test keeps using via
+/// `FeatureContext::default()`.
 #[derive(Default)]
 pub struct FeatureContext {
     pub child_registry: Arc<crate::adapters::ChildRegistry>,
+    pub processes: Option<Arc<PlatformProcessManager>>,
 }
 
 pub struct FeatureSet {
@@ -148,13 +154,13 @@ mod tests {
     #[tokio::test]
     async fn every_slot_still_a_stub_starts_unsupported() {
         // `s3_mounts` (`m15-s3-mounts`), `lifecycle_events`
-        // (`m15-events-webhooks`) and `secret_gateway` (`m15-secrets-gateway`)
-        // have real adapters, asserted separately in their own modules'
-        // tests; every other slot is still `Unsupported`.
+        // (`m15-events-webhooks`), `template_start` (`m15-templates`) and
+        // `secret_gateway` (`m15-secrets-gateway`) have real adapters,
+        // asserted separately in their own modules' tests; every other slot
+        // is still `Unsupported`.
         let set = build(&FeatureContext::default());
         assert!(!set.efs_volumes.supported());
         assert!(!set.telemetry_export.supported());
-        assert!(!set.template_start.supported());
     }
 
     #[tokio::test]
@@ -173,6 +179,9 @@ mod tests {
         assert_eq!(features.s3_mounts, set.s3_mounts.supported());
         assert_eq!(features.secret_gateway, set.secret_gateway.supported());
         assert!(features.lifecycle_events);
+        // `template_start` always understands the spec; without a
+        // `template.json` (any test host) it has no participant.
+        assert!(features.template_start);
         assert!(!features.efs_volumes);
         let expected: Vec<RootEgressClass> = [
             (set.s3_mounts.supported(), RootEgressClass::S3),

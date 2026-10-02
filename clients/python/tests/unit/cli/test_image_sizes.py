@@ -18,6 +18,7 @@ import typer
 from botocore.stub import ANY
 from typer.testing import CliRunner
 
+from rayito import _images
 from rayito.cli import _artifact, _publish
 from rayito.cli._session import Clients
 from rayito.cli.app import app
@@ -109,7 +110,7 @@ def test_validate_baseline_memory_mib_rejects_a_non_default_value_with_sizes() -
 
 
 def test_validate_baseline_memory_mib_allows_the_default_with_sizes() -> None:
-    validate_baseline_memory_mib(_publish.DEFAULT_MEMORY_MIB, ("512mb",))  # no lanza
+    validate_baseline_memory_mib(_images.DEFAULT_MEMORY_MIB, ("512mb",))  # no lanza
 
 
 def test_validate_baseline_memory_mib_allows_any_value_without_sizes() -> None:
@@ -248,7 +249,7 @@ def sized_version_detail(number: int, *, artifact_uri: str) -> dict[str, Any]:
 
 def stub_sized_versions(stubs: Stubs, key: str) -> None:
     """La lista de versiones del tamaño y el `get` que confirma sus
-    `environmentVariables` antes de reutilizarla (`published_version`)."""
+    `environmentVariables` antes de reutilizarla (`_images.find_reusable_version`)."""
     uri = f"s3://bucket/{key}"
     stubs.microvms.add_response(
         "list_microvm_image_versions",
@@ -314,7 +315,7 @@ def test_publish_sizes_rebuilds_when_the_echoed_environment_differs(
 ) -> None:
     """Q118: una versión que coincide en todo lo que devuelve la lista pero
     cuyas `environmentVariables` (leídas con `get`) no son las pedidas no se
-    reutiliza: `published_version` no encuentra ninguna."""
+    reutiliza: `_images.find_reusable_version` no encuentra ninguna."""
     settings = _publish.sized_settings(base_settings(artifact=artifact), "4gb")
     key = _publish.artifact_key(artifact.read_bytes())
     uri = f"s3://bucket/{key}"
@@ -329,7 +330,9 @@ def test_publish_sizes_rebuilds_when_the_echoed_environment_differs(
         {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0"},
     )
     desired = {"codeArtifact": {"uri": uri}}
-    found = _publish.published_version(clients, SIZED_ARN, desired, settings.environment_variables)
+    found = _images.find_reusable_version(
+        clients, SIZED_ARN, desired, settings.environment_variables
+    )
     assert found is None
     stubbed_clients.microvms.assert_no_pending_responses()
 

@@ -1449,7 +1449,23 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   `LifecycleEvents` funciona ya.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
-- **templates** (`m15-templates`): DSL de templates declarativos.
+- **templates** (`m15-templates`): DSL de templates declarativos
+  (`Template`/`AsyncTemplate`, igual al `Template` de E2B v2), compilado
+  enteramente en el cliente: Dockerfile + zip deterministas compuestos
+  sobre una imagen `rayito-base` ya publicada, subidos a S3 por hash y
+  construidos con `create`/`update-microvm-image`; un build fallido se
+  explica releyendo el grupo de logs de BuildKit (TPL-1/Q83) o el
+  `stateReason` de un `ready_cmd` con 4xx/5xx (TPL-5/Q85), nunca
+  repitiendo nada. Sin caché de capas, sólo ARM64, sólo `from_base_image()`
+  compone de verdad. El lado del agente (`rayd` leyendo
+  `/etc/rayito/template.json` y arrancando/sondeando el `start_cmd`) queda
+  como seguimiento no bloqueante (misma integración con
+  `ProcessSpawner`/`ChildRegistry` que ya quedó pendiente para el reaper de
+  huérfanos de foundations); el dominio puro nuevo (`rayd_core::template`)
+  sí compila, pasa `cargo test --workspace` y clippy pedantic, verificado
+  por la CI de la PR (el disco de 58 GB de la VM Lima compartida estuvo en
+  0 bytes libres durante buena parte de la sesión por los
+  `CARGO_TARGET_DIR` acumulados de las ocho ramas en paralelo).
 - **secrets-gateway** (`m15-secrets-gateway`, ADR-023): pasarela de
   credenciales en loopback — un listener `axum` por ruta declarada
   (`gateways=`/`gateways`), allowlist de método/ruta y límite de tasa

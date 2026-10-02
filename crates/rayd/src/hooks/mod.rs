@@ -263,9 +263,18 @@ struct RunEnvelope {
 async fn ready(State(state): State<HooksState>) -> Response {
     let sidecar_state = state.code.sidecar_state();
     let decision = ready_hook_decision(&sidecar_state, state.code.boot_elapsed());
-    if matches!(decision, ReadyDecision::Ok) && !participants_ready(&state.participants) {
-        tracing::info!(hook = %Hook::Ready, outcome = "participant_not_ready", "ready deferred");
-        return retry_later(Hook::Ready, "participant_not_ready", &state.session);
+    if matches!(decision, ReadyDecision::Ok) {
+        match participants_verdict(&state.participants) {
+            ReadyVerdict::Ok => {}
+            ReadyVerdict::Retry => {
+                tracing::info!(hook = %Hook::Ready, outcome = "participant_not_ready", "ready deferred");
+                return retry_later(Hook::Ready, "participant_not_ready", &state.session);
+            }
+            ReadyVerdict::Fail => {
+                tracing::error!(hook = %Hook::Ready, outcome = "participant_failed", "ready refused");
+                return refuse(Hook::Ready, "participant_failed", &state.session);
+            }
+        }
     }
     match decision {
         ReadyDecision::Retry => {
@@ -356,6 +365,7 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
             state.network.on_run().await;
             state.code.spawn_run_rotation(defaults.envs);
             spawn_imds_verification(&state);
+            spawn_participants_on_run(&state.participants);
         }
         if matches!(outcome, RunOutcome::AlreadyRan | RunOutcome::Illegal(_)) {
             audit(
@@ -435,14 +445,34 @@ async fn suspend(State(state): State<HooksState>) -> Response {
     .await
 }
 
+/// Fires every participant's `on_run` in the background, same as
+/// `state.network.on_run()` and `spawn_imds_verification` above it: the 200
+/// for `/run` goes out first. With no participant configured (every build
+/// before `template_start`, and every build with no `template.json`) this
+/// spawns nothing and changes nothing about `/run`'s 0.5.x behaviour.
+fn spawn_participants_on_run(participants: &[Arc<dyn LifecycleParticipant>]) {
+    for participant in participants {
+        let participant = Arc::clone(participant);
+        tokio::spawn(async move { participant.on_run().await });
+    }
+}
+
 /// `/ready` only ever downgrades its own decision: `Ok` from every
-/// participant leaves the existing verdict untouched, and any `Retry` or
-/// `Fail` keeps answering 503 rather than declare the sandbox ready while a
-/// feature says it should not be.
-fn participants_ready(participants: &[Arc<dyn LifecycleParticipant>]) -> bool {
-    participants
+/// participant leaves the existing verdict untouched; otherwise the worst
+/// verdict wins (`Fail` over `Retry`), so a definitive failure is never
+/// hidden behind another participant that is still warming up.
+fn participants_verdict(participants: &[Arc<dyn LifecycleParticipant>]) -> ReadyVerdict {
+    let verdicts: Vec<ReadyVerdict> = participants
         .iter()
-        .all(|participant| participant.ready_gate() == ReadyVerdict::Ok)
+        .map(|participant| participant.ready_gate())
+        .collect();
+    if verdicts.contains(&ReadyVerdict::Fail) {
+        ReadyVerdict::Fail
+    } else if verdicts.contains(&ReadyVerdict::Retry) {
+        ReadyVerdict::Retry
+    } else {
+        ReadyVerdict::Ok
+    }
 }
 
 /// Runs every participant's `on_suspend` concurrently with the
@@ -767,6 +797,15 @@ fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// 500: AWS fails the build on the first one (Q85) instead of retrying.
+fn refuse(hook: Hook, outcome: &str, session: &SandboxSession) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(HookReply::new(hook, outcome, session)),
+    )
+        .into_response()
+}
+
 fn retry_later(hook: Hook, outcome: &str, session: &SandboxSession) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -950,6 +989,87 @@ mod tests {
             rayd_core::hooks::STREAM_CLOSE_GRACE + rayd_core::hooks::QUIESCE_TIMEOUT
                 < budget(Hook::Suspend)
         );
+    }
+
+    /// `/ready` combines every participant's `ready_gate`: the worst
+    /// verdict wins.
+    mod ready_verdicts {
+        use axum::body::Body;
+        use axum::http::Request;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::suspend_sync::{ParticipantDemand, ParticipantReport};
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::adapters::OsRandomSource;
+
+        struct FixedVerdict(ReadyVerdict);
+
+        #[tonic::async_trait]
+        impl LifecycleParticipant for FixedVerdict {
+            fn demand(&self) -> ParticipantDemand {
+                ParticipantDemand {
+                    name: "fixed",
+                    max: Duration::ZERO,
+                }
+            }
+
+            async fn on_suspend(&self, _share: Duration) -> ParticipantReport {
+                ParticipantReport {
+                    completed: true,
+                    timed_out: false,
+                }
+            }
+
+            fn ready_gate(&self) -> ReadyVerdict {
+                self.0
+            }
+        }
+
+        async fn ready_status(verdicts: &[ReadyVerdict]) -> StatusCode {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let router = router_with(HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network: NetworkManager::unavailable(session),
+                participants: verdicts
+                    .iter()
+                    .map(|verdict| {
+                        Arc::new(FixedVerdict(*verdict)) as Arc<dyn LifecycleParticipant>
+                    })
+                    .collect(),
+            });
+            let request = Request::post(hook_path(Hook::Ready))
+                .body(Body::empty())
+                .unwrap();
+            router.oneshot(request).await.unwrap().status()
+        }
+
+        #[tokio::test]
+        async fn no_participant_leaves_ready_as_it_was() {
+            assert_eq!(ready_status(&[]).await, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn a_retrying_participant_holds_ready_at_503() {
+            assert_eq!(
+                ready_status(&[ReadyVerdict::Ok, ReadyVerdict::Retry]).await,
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+
+        #[tokio::test]
+        async fn a_failed_participant_answers_500_even_next_to_a_retrying_one() {
+            assert_eq!(
+                ready_status(&[ReadyVerdict::Retry, ReadyVerdict::Fail]).await,
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
     }
 
     mod egress {

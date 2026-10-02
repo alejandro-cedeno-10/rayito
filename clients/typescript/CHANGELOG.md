@@ -92,6 +92,41 @@ versionado [SemVer](https://semver.org/lang/es/).
   reconciliador).
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
+  por defecto): `Template` compila un DSL (igual al `Template` de E2B v2)
+  a un Dockerfile y un zip deterministas sobre una imagen `rayito-base`/
+  `rayito-base-caps` ya publicada; `Template.build()`/`buildInBackground()`/
+  `getBuildStatus()`/`exists()` suben el artefacto por hash de contenido y
+  llaman a `create`/`update-microvm-image`, reutilizando una versión
+  idéntica en vez de reconstruir. Un build fallido se explica con
+  `BuildError` (`step`/`command`/`exitCode`/`logTail` del log de BuildKit,
+  o `reason: "ready_client_error"|"ready_server_error"` si falló el
+  `readyCmd`), sin repetir nada. `fromImage`/`fromTemplate`/
+  `fromDockerfile`/`fromGcpRegistry`/`aptInstall` lanzan
+  `UnimplementedError` (documentados en ADR-022). El shim
+  `rayito/e2b`'s `Template` ya construye de verdad, con la firma de E2B
+  (`{ alias, skipCache, memoryMB, cpuCount }`) y `new E2B({ bucket })`;
+  `BuildError`/`TemplateError` del shim pasan a ser alias de las clases
+  nativas (igual patrón que `NotEnoughSpaceError`/`FileUploadError`).
+  `setStartCmd()` necesita una imagen base con `rayd` 0.6. La imagen
+  compuesta hereda la configuración de la base
+  (`additionalOsCapabilities` incluida); `skipCache()` equivale a
+  `force: true`; la cuota de builds de AWS llega como
+  `reason: "build_quota"`. El núcleo de build vive en
+  `src/images/gateway.ts`. Sin llamar a
+  `Template.build()`, el SDK no importa estáticamente
+  `@aws-sdk/client-s3` ni carga `@aws-sdk/client-cloudwatch-logs` (peer
+  opcional nuevo, sólo para explicar un build fallido). `infra/templates.yaml`
+  (`rayito stack deploy templates`): sólo la política IAM
+  `RayitoTemplateBuilder`, $0 en reposo, que no puede sobrescribir las
+  imágenes base publicadas. Aceptación en AWS real: `pipInstall()` compila
+  a `python3 -m pip install --no-cache-dir --break-system-packages`
+  (rayito-base no tiene `pip` en el `PATH`); la versión gestionada que se
+  hereda se envía como `1`, no como el eco `1.0` que `create-microvm-image`
+  rechaza; la política concede `CreateMicrovmImage` sobre `*` (AWS no la
+  autoriza por ARN) y `lambda:PassNetworkConnector` sobre los conectores
+  gestionados, y su `Deny` cubre `UpdateMicrovmImage` sobre las bases
+  (`AWS_API_NOTES.md` Q114-Q116).
 <!-- m15-secrets-gateway -->
 - **`gateways` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
   M15, ADR-023, opcional y apagado por defecto): `Sandbox.create({ gateways:

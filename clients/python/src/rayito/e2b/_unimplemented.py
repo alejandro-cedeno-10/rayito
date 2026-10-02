@@ -35,6 +35,16 @@ VOLUME_REASON: Final = (
     "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o "
     "upload_url/download_url"
 )
+#: m15-templates: `Template`/`AsyncTemplate` ya construyen de verdad
+#: (`e2b/_template.py`, sobre `rayito.Template`); sólo el etiquetado de
+#: E2B (`assign_tags`/`remove_tags`/`get_tags`/`alias_exists`) sigue sin
+#: equivalente, porque `create`/`update-microvm-image` no expone un
+#: `Tags` por versión, sólo por imagen.
+TEMPLATE_TAGS_REASON: Final = (
+    "create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con "
+    "lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de "
+    "AWS mientras tanto"
+)
 
 UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
     {
@@ -75,25 +85,13 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "
             "firman en S3"
         ),
-        "Template": (
-            "SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un "
-            "Dockerfile y rayito image publish"
-        ),
+        "Template.alias_exists": TEMPLATE_TAGS_REASON,
+        "Template.assign_tags": TEMPLATE_TAGS_REASON,
+        "Template.remove_tags": TEMPLATE_TAGS_REASON,
+        "Template.get_tags": TEMPLATE_TAGS_REASON,
     }
 )
 
-TEMPLATE_METHODS: Final = (
-    "build",
-    "build_in_background",
-    "get_build_status",
-    "exists",
-    "alias_exists",
-    "assign_tags",
-    "remove_tags",
-    "get_tags",
-    "to_json",
-    "to_dockerfile",
-)
 VOLUME_METHODS: Final = ("create", "connect", "destroy", "list", "get_info")
 
 
@@ -142,8 +140,6 @@ def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> t
     return type(name, (), namespace)
 
 
-Template: type[Any] = unimplemented_resource("Template", "Template", TEMPLATE_METHODS)
-AsyncTemplate: type[Any] = unimplemented_resource("AsyncTemplate", "Template", TEMPLATE_METHODS)
 Volume: type[Any] = unimplemented_resource("Volume", "Volume", VOLUME_METHODS)
 AsyncVolume: type[Any] = unimplemented_resource("AsyncVolume", "Volume", VOLUME_METHODS)
 

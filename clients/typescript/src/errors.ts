@@ -351,16 +351,15 @@ export interface BuildErrorOptions extends SandboxErrorOptions {
 }
 
 /**
- * `Template.build` (m15-templates) falló.
+ * `Template.build` (m15-templates) falló: `reason` nombra la causa
+ * (`build_quota`, `ready_client_error`, `ready_server_error`, o
+ * `undefined` con `step`/`command`/`exitCode`/`logTail` cuando falló un
+ * paso del Dockerfile compilado).
  *
- * OJO (open item para m15-templates): `src/e2b/errors.ts` ya declara un
- * `BuildError`/`TemplateError` propios — stands-ins que nunca se lanzan
- * (Rayito no tenía API de templates) y que `tests/unit/e2b-exports.test.ts`
- * comprueba con una forma distinta (`BuildError` del shim NO es
- * `SandboxError`). No se exportan desde `index.ts` todavía para no chocar
- * con ellos; m15-templates decide si los retira y realinea el shim a estas
- * clases (el patrón ya usado para `NotEnoughSpaceError`/`FileUploadError`)
- * o si renombra una de las dos parejas.
+ * El shim `rayito/e2b` (`e2b/template.js`) ya construye de verdad: su
+ * `BuildError`/`TemplateError` son alias de estas clases nativas (mismo
+ * patrón que `NotEnoughSpaceError`/`FileUploadError`), retirados los
+ * stand-ins que nunca se lanzaban.
  */
 export class BuildError extends SandboxError {
   readonly reason: string | undefined;

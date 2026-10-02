@@ -5,8 +5,10 @@
 //! capability mask, the policy route that blocks IMDS for the sandbox user,
 //! the egress policy routes over the shared `ip` runner (ADR-012),
 //! the tar/gzip home archiver, the S3 object store (ADR-009) and the
-//! credential-free HTTPS client of presigned transfers (ADR-010) and the
-//! bounded per-filesystem `syncfs` of `/suspend`.
+//! credential-free HTTPS client of presigned transfers (ADR-010), the
+//! bounded per-filesystem `syncfs` of `/suspend`, the boot-time reader of
+//! `/etc/rayito/template.json` and the shell runner behind a template's
+//! `ready_cmd` (ADR-022, `features::template_start`).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -16,6 +18,7 @@ pub mod child_registry;
 pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
+pub mod fs_template_spec;
 pub mod fuse_device;
 pub mod imds_block;
 pub mod ip_command;
@@ -28,6 +31,7 @@ pub mod procfs_metrics;
 pub mod pty_backend;
 pub mod random;
 pub mod s3_store;
+pub mod shell_ready_probe;
 pub mod sidecar_process;
 pub mod signed_http;
 pub mod std_filesystem;
@@ -41,6 +45,7 @@ pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
 pub use fs_identity::FsIdentityGuard;
+pub use fs_template_spec::{FsTemplateSpecSource, TemplateSpecSource};
 pub use fuse_device::LinuxFuseDevice;
 pub use imds_block::{
     IMDS_ADDRESS, IMDS_VERIFY_BUDGET, ImdsBlock, ImdsProbe, ImdsState, USER_PROBE_CODE,
@@ -64,6 +69,7 @@ pub use pty_backend::NixPtyBackend;
 pub use pty_backend::PlatformPtyBackend;
 pub use random::OsRandomSource;
 pub use s3_store::{ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore};
+pub use shell_ready_probe::{ReadyProbe, ShellReadyProbe};
 #[cfg(unix)]
 pub use sidecar_process::TokioSidecarLauncher;
 pub use sidecar_process::{

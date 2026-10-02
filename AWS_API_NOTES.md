@@ -514,6 +514,10 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 106 | **CP-5** y nombre del log stream: ¿llega a CloudWatch la línea escrita dentro de `/suspend` antes del checkpoint? ¿cómo se llama el stream de runtime de un MicroVM? | Supuesto del forwarder: el stream contiene el `microvmId` | **Medido 2026-10-02**: la línea `paused` (emitida y vaciada dentro de `/suspend`, `LifecycleEventSink::flush`) se ingirió en CloudWatch **226 ms** después de su `occurred_at_ms` y 400 ms **antes** de que `pause()` volviera, con la VM ya en `SUSPENDED`: el orden `paused` → `resumed` se conserva. Stream: **`YYYY/MM/DD[<imageVersion>]<microvmId>`** (p. ej. `2026/10/02[1.0]microvm-…`); el forwarder exige ahora que termine en `]<sandbox_id>`. Latencia línea → fila DynamoDB: 10,6–13,9 s el primer evento (forwarder en frío), 0,3–3,7 s los siguientes; fila → webhook entregado y firmado (`e2b-signature` verificada por el receptor) en segundos |
 | 107 | **CP-7** sobre el binario real y observabilidad del forwarder | Q94 (uid 1000 no escribe en el stdout de `rayd`) | **Medido 2026-10-02**: sobre esta imagen, uid 1000 vuelve a recibir `EACCES` en `/proc/1/fd/1` (`rayd` es PID 1). Una línea con el `sandbox_id` correcto y un MAC aleatorio, inyectada con `PutLogEvents` en el stream de ese MicroVM, se rechaza (`mac_invalid`); otra con un MAC **válido** para el sandbox A escrita en el stream del sandbox B se rechaza (`sandbox_mismatch`); ninguna llega a la tabla. Hallazgo: el valor de retorno de un Lambda invocado por una suscripción de CloudWatch Logs o por EventBridge Scheduler no queda en ningún log, así que sin más el forwarder y el reconciliador no dejaban rastro; ahora cada invocación imprime una línea JSON (`forwarded`/`rejected`/`rejected_by_reason`; `synthesized`), sin la línea, el `sandbox_id` ni el MAC |
 | 108 | ¿Despliega `infra/events-webhooks.yaml` en una cuenta de una organización con políticas de etiquetas? | Sin medir | **Medido 2026-10-02**: no sin etiquetas. Una SCP de la organización denegó `sqs:CreateQueue` (y `lambda:CreateFunction` fuera de la pila) sin ciertas claves de etiqueta, y una *tag policy* rechazó un valor no permitido (`The tag policy does not allow the specified value for the following tag key`); la pila hace `ROLLBACK_COMPLETE`. Con `deploy(tags=...)` (CLI: `rayito events deploy --tag K=V`, repetible) CloudFormation propaga las etiquetas de la pila a la cola, las Lambdas y la tabla y el despliegue termina en `CREATE_COMPLETE`. Aparte: `destroy()` con `EventsOperatorPolicy` todavía vinculada a un rol termina en `DELETE_FAILED` (CloudFormation no borra una política gestionada vinculada); desvinculada, el borrado completa y el secreto del stack desaparece sin ventana de recuperación. Y `logging="cloudwatch"` exige `execution_role_arn` (`ValidationException: Logging cannot be enabled without providing executionRoleArn`), así que `events=` también |
+| 114 | ¿Qué permisos necesita `Template.build()` con sólo `RayitoTemplateBuilder`, y deniega la política `create`/`update-microvm-image` sobre `rayito-base*`? | §10: las operaciones de imagen se autorizan sobre `microvm-image:<nombre>`; `Deny` sobre `microvm-image:${ProtectedImageNamePrefix}*` | **Medido 2026-10-02** (rol temporal con sólo la política, `assume-role`): `CreateMicrovmImage` se autoriza sobre **`*`**, no sobre el ARN de la imagen nueva (`AccessDeniedException` "…not authorized to perform: lambda:CreateMicrovmImage on resource: * because no identity-based policy allows…" con el `Allow` acotado a `microvm-image:*`, para `rayito-base-x` y para un nombre normal), así que **un `Deny` por nombre sobre `create` no es posible**: el criterio de parada "deniega `create-microvm-image` con `rayito-base-x`" no se cumple por diseño de AWS. `create` sobre un nombre existente falla, de modo que una base publicada sólo podría cambiar por `update`, y `UpdateMicrovmImage` sobre `rayito-base-x` sí recibe "…with an explicit deny in an identity-based policy". Además `create`/`update` exigen **`lambda:PassNetworkConnector`** sobre `arn:aws:lambda:<r>:aws:network-connector:aws-network-connector:INTERNET_EGRESS` aunque la petición no nombre conectores (misma regla que `RunMicrovm`, §10). `infra/templates.yaml` pasa a: `CreateMicrovmImage` sobre `*`, el resto de acciones de imagen sobre `microvm-image:*`, `Deny` sólo de `UpdateMicrovmImage` sobre el prefijo protegido y `PassNetworkConnector` sobre los conectores gestionados. Con eso, el rol sonda construye un template (206 s, `Template.exists()` → `True`) y un build que falla en un `RUN` devuelve `step=10`, `exit_code=1` y el comando (lee los logs con `DescribeLogStreams`/`GetLogEvents`); tras el cambio, `create` con `rayito-base-x` llega a la validación (`ValidationException`), no a IAM. La `CallerPolicy` de `infra/iam.yaml` acota igual `CreateMicrovmImage` a `microvm-image:*`: el mismo hallazgo la afecta (seguimiento aparte; esa pila es manual, no OptionalStack). |
+| 115 | ¿Acepta `create-microvm-image` el `baseImageVersion` que devuelve `get-microvm-image-version` (`1.0`, Q52) al heredar la configuración de la versión base? | Q52: `update` acepta `1` y el eco es `1.0`; heredar el eco tal cual | **Medido 2026-10-02**: no. `create-microvm-image` con `baseImageVersion: "1.0"` → `ValidationException` "Invalid baseMicroVMImageVersion: 1.0. Expected a single major version number (e.g., 1)." (los tres casos e2e de Python y TypeScript fallaban así antes de construir nada). `inherited_configuration`/`inheritedConfiguration` envían ahora la forma mayor (`1.0` → `1`, `requestable_base_image_version`); el reuso de versiones ya comparaba `1` y `1.0` como iguales (Q52). |
+| 116 | ¿Funciona `RUN pip install …` sobre `rayito-base`? | `pip_install()` compilaba a `pip install --no-cache-dir` | **Medido 2026-10-02**: no. El build del caso correcto falla en el paso del template con `/bin/sh: line 1: pip: command not found` (exit **127**): al2023-minimal sólo trae `python3 -m pip` (`image/Dockerfile` usa `python3 -m pip install --no-cache-dir --break-system-packages`). `pip_install()`/`pipInstall()` compilan ahora a esa misma orden (`PIP_INSTALL_COMMAND`). Tras el cambio, e2e Python 4 passed (build correcto 190 s, `RUN` fallido 105 s con step/command/exit_code, `ready_cmd` `exit 1` → `ready_server_error` en 214 s) y TypeScript 4 passed (209 s, 105 s, 218 s). |
+| 117 | **TPL-15**: ¿arranca el `start_cmd` horneado por `set_start_cmd()` como proceso gestionado y sobrevive a pause/resume? | `rayd` lee `/etc/rayito/template.json` y lanza `start_cmd` antes del `/ready` del build | **Medido 2026-10-02** (`set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))`; `python` no existe en rayito-base, sólo `python3`): build **228 s**; `Sandbox.create(info.template_id)` en 5,6 s; `commands.list()` muestra `/bin/sh -c 'python3 -m http.server 8000'` con tag **`template_start`** y `curl localhost:8000` → **200**; `pause()` 1,1 s, `resume()` 0,4 s (`resume_generation` 1): el mismo pid sigue listado y `curl` vuelve a dar 200. |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -1261,9 +1265,68 @@ Q91) y su firma SigV4.
 
 ## 27. Logs de build y extras de imagen (`m15-templates`)
 
-Pendiente: `m15-templates` documenta aquí la lectura del grupo de logs de
-build (`create-microvm-image`/`update-microvm-image`) y el contrato del
-`codeArtifact` en S3.
+`Template.build()` (Python `rayito/_templates/_build.py`, TypeScript
+`src/templates/build.ts`) reusa las mismas operaciones de
+`lambda-microvms` que `rayito image publish` (AWS_API_NOTES.md §4), a
+través del mismo núcleo (`rayito/_images.py`, `src/images/gateway.ts`), más
+dos operaciones de `logs` sólo cuando un build no termina
+`SUCCESSFUL`+`ACTIVE`. Verificado contra el modelo `lambda-microvms` de
+botocore y el `@aws-sdk/client-lambda-microvms` instalado en este cambio
+(`3.1140.0`); investigación TPL-1 (Q83) y TPL-2 (Q84) para el
+comportamiento medido.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros usados | Campos de salida leídos | Cuándo | Fuente |
+|---|---|---|---|---|
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier`, `imageVersion` | `baseImageArn`, `baseImageVersion`, `buildRoleArn`, `codeArtifact.uri`, `hooks`, `state`, `status`, `stateReason`, `createdAt` | resolver la versión base pedida (o, sin `version=`, cada candidata al listar), y sondear el gate tras `create`/`update-microvm-image` | §4 (ya documentado para `rayito image publish`) |
+| `ListMicrovmImageVersions` (paginador `list_microvm_image_versions` / `paginateListMicrovmImageVersions`) | `imageIdentifier` | `items[].{imageVersion, state, status, createdAt, baseImageArn, baseImageVersion, buildRoleArn, codeArtifact, hooks}` | sin `version=` en `from_base_image()`: encontrar la versión más reciente `SUCCESSFUL`+`ACTIVE`; y, antes de cada build, buscar una versión ya construida con la misma configuración (reuso, nunca con `force=True`) | §4 |
+| `GetMicrovmImage` / `CreateMicrovmImage` / `UpdateMicrovmImage` | iguales que §4 | `state` (del `GetMicrovmImage`); `imageArn`, `imageVersion` (de `Create`/`Update`) | decidir `create` vs `update` (según si la imagen ya existe) y enviar la configuración compuesta | §4 |
+| `DescribeLogStreams` (`describe_log_streams` / `DescribeLogStreamsCommand`) | `logGroupName`, `orderBy="LastEventTime"`, `descending=true`, `limit=1` | `logStreams[0].logStreamName` | sólo si la versión terminó en un estado que no es `SUCCESSFUL`+`ACTIVE` | <https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogStreams.html> |
+| `GetLogEvents` (`get_log_events` / `GetLogEventsCommand`) | `logGroupName`, `logStreamName`, `limit=500` | `events[].message` | igual que arriba, sobre el único stream encontrado | <https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html> |
+
+**Contrato de `codeArtifact`** (TPL-2/Q84): `codeArtifact.uri` sólo acepta
+`s3://<bucket>/<key>`; una URI de ECR, un ARN de repositorio o una URL
+`https` de registro dan `ValidationException` antes de crear nada (la
+documentación del modelo que sugiere lo contrario es incorrecta). Por
+eso `from_base_image()` siempre trata el `codeArtifact` de la imagen base
+como un zip en S3 a descargar con `s3:GetObject`, nunca como una
+referencia a un registro de contenedores.
+
+**Logs de build** (TPL-1/Q83): el grupo de logs de la imagen recibe la
+salida completa de BuildKit (`#N [k/n] RUN …`, stdout y stderr de cada
+`RUN`) en un stream propio, de golpe al terminar el build (no en vivo),
+tanto si el build termina bien como si falla; en el fallido aparece el
+comando, su salida y una línea `exit code: N`. Cuota observada: 10 builds
+concurrentes por cuenta (`ServiceQuotaExceededException` en el undécimo),
+de ahí el guardia local `MAX_CONCURRENT_BUILDS = 10` antes de llamar a
+AWS.
+
+**`ready_cmd`/CMD con 4xx o 5xx** (TPL-5/Q85): si el proceso que atiende
+`/ready` responde con un código de error HTTP, el build falla **en la
+primera llamada**, sin reintento, con `stateReason` conteniendo
+"the application returned a {client,server} error (HTTP {4xx,5xx})
+response"; `classify_ready_failure`/`classifyReadyFailure` traduce eso a
+`reason="ready_client_error"`/`"ready_server_error"` sin releer los logs.
+
+**`RayitoTemplateBuilder`** (`infra/templates.yaml`) concede
+`lambda:UpdateMicrovmImage`/`GetMicrovmImage`/
+`GetMicrovmImageVersion`/`ListMicrovmImageVersions` sobre
+`arn:<partición>:lambda:<región>:<cuenta>:microvm-image:*` (el mismo
+recurso que `infra/iam.yaml` usa para `rayito image publish`, §10),
+`lambda:CreateMicrovmImage` sobre `*` (AWS la autoriza sobre `*`, no sobre
+el ARN de la imagen nueva: Q114), `lambda:PassNetworkConnector` sobre los
+conectores gestionados (Q114) y un `Deny` de `UpdateMicrovmImage` sobre
+`microvm-image:<ProtectedImageNamePrefix>*` (`rayito-base` por defecto),
+para que un template nunca sobrescriba una imagen base publicada (un
+`create` sobre un nombre existente falla; el `Deny` de `create` por nombre
+no es posible);
+`iam:PassRole` sobre el rol de build condicionado a
+`iam:PassedToService: lambda.amazonaws.com`; `s3:GetObject`/`PutObject`
+sobre `rayito/templates/*` del bucket de artefactos (`HeadObject` no es
+una acción IAM: lo autoriza `s3:GetObject`), `s3:GetObject` sobre el
+bucket de la imagen base (por defecto, el de artefactos; nunca `*`), y
+`logs:DescribeLogStreams`/`GetLogEvents` sobre el prefijo de grupos de
+logs. La pila no crea el bucket de artefactos (ADR-022): su regla de
+ciclo de vida sobre `rayito/templates/` es del cliente.
 
 ## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
 

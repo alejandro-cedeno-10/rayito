@@ -1,8 +1,27 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist");
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = resolve(SCRIPTS_DIR, "..", "dist");
+/**
+ * Registro de quita y pon: cada función opcional añade sus declaraciones en
+ * su propio `cost-declarations/<función>.json` (`[{ "name", "pattern" }]`,
+ * `pattern` como texto de una `RegExp`), sin tocar la lista de abajo; así
+ * dos ramas que añaden una función no chocan en este fichero.
+ */
+const DROP_IN_DIR = join(SCRIPTS_DIR, "cost-declarations");
+
+/** Las declaraciones de cada `cost-declarations/*.json`, en orden de fichero. */
+export function loadDropInDeclarations(dir = DROP_IN_DIR) {
+  const files = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".json")) : [];
+  return files.sort().flatMap((name) =>
+    JSON.parse(readFileSync(join(dir, name), "utf8")).map(({ name: declaration, pattern }) => ({
+      name: declaration,
+      pattern: new RegExp(pattern),
+    })),
+  );
+}
 
 /**
  * Declaraciones publicadas que activan algo con coste AWS (ADR-014). Cada una
@@ -10,18 +29,13 @@ const DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist");
  * precede dentro de `dist/*.d.mts`: el hover del IDE sólo enseña ese
  * comentario, nunca el bloque de módulo (que tsdown descarta).
  */
-// `cost-declarations/*.json` as a drop-in glob (so a feature's own entry
-// needs no edit here) was deferred by m15-foundations (see its proposal's
-// "Non-blocking follow-ups"); this array stays hard-coded for now.
-// m15-events-webhooks only adds its own line, same as any feature would.
 export const COST_DECLARATIONS = [
   { name: "class SecretStore", pattern: /^(export )?declare class SecretStore\b/ },
   { name: "class SecretCache", pattern: /^(export )?declare class SecretCache\b/ },
   { name: "class Secret (e2b)", pattern: /^(export )?declare class Secret\b/ },
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
-  { name: "class LifecycleEvents", pattern: /^(export )?declare class LifecycleEvents\b/ },
-  { name: "class SecretGateway", pattern: /^(export )?declare class SecretGateway\b/ },
+  ...loadDropInDeclarations(),
 ];
 
 export const REQUIRED_HEADINGS = [

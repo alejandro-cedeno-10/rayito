@@ -68,7 +68,31 @@ Pendiente.
 
 ## Templates (`m15-templates`)
 
-Pendiente.
+`Template`/`AsyncTemplate`: un DSL fluido, igual al `Template` de E2B v2,
+que compila a un Dockerfile y un zip deterministas sobre una imagen
+`rayito-base`/`rayito-base-caps` ya publicada y los sube con
+`create`/`update-microvm-image`. Build pipeline completo en los dos SDKs
+(composición, subida por hash, reuso de versión idéntica, explicación de
+fallos desde el log de BuildKit o el `stateReason` del `ready_cmd`,
+guardia de 10 builds concurrentes que cubre toda la espera, cuota de AWS
+como `build_quota`), sobre un núcleo de build compartido con `rayito image
+publish`. La imagen compuesta hereda la configuración de la base
+(`rayito-base-caps` sigue siendo caps). `set_start_cmd()`/`setStartCmd()`:
+`rayd` 0.6 lee `/etc/rayito/template.json`, lanza `start_cmd` como proceso
+gestionado y gatea `/ready` con `ready_cmd`. Shim de E2B
+`Template`/`AsyncTemplate` ya construye de verdad, con la firma de E2B; `BuildException`/`TemplateException`
+(Python) y `BuildError`/`TemplateError` (TypeScript) del shim pasan a ser
+las clases nativas. `infra/templates.yaml` (`RayitoTemplateBuilder`, sólo
+IAM, $0 en reposo). Divergencias: sin caché de capas, sólo ARM64, sólo
+`from_base_image()`, sin streaming en vivo de los pasos, sin etiquetado
+por versión.
+
+**Pendiente de la aceptación serializada contra AWS real** (plan y tope de
+coste en `openspec/changes/m15-templates/proposal.md` y en el plan de
+aceptación del agente): un build real de principio a fin, uno que falle en
+un paso del Dockerfile, uno con un `ready_cmd` que falle, y la supervivencia
+del `start_cmd` a un ciclo de suspend/resume (necesita una imagen
+`rayito-base` publicada con el `rayd` de esta versión).
 
 ## Pasarela de secretos (`m15-secrets-gateway`)
 
