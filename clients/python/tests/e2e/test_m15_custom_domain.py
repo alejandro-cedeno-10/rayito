@@ -119,7 +119,13 @@ def _websocket_handshake_and_echo(
     raw_socket = socket.create_connection(
         (host, HTTPS_PORT), timeout=WEBSOCKET_HANDSHAKE_TIMEOUT_SECONDS
     )
-    tls_socket = ssl.create_default_context().wrap_socket(raw_socket, server_hostname=host)
+    tls_context = ssl.create_default_context()
+    # `create_default_context()` por sí solo todavía permite negociar hasta
+    # TLSv1/TLSv1.1 en algunas combinaciones de OpenSSL (CodeQL
+    # py/insecure-protocol); CloudFront exige TLS 1.2+ de todos modos, así
+    # que fijarlo aquí sólo hace explícito lo que ya se espera.
+    tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls_socket = tls_context.wrap_socket(raw_socket, server_hostname=host)
     try:
         websocket_key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
         extra_headers = "".join(f"{name}: {value}\r\n" for name, value in headers.items())
