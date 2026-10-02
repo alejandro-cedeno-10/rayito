@@ -753,6 +753,7 @@ class Sandbox:
                 domain=domain,
             ),
             image_variant=resolve_image_variant(template),
+            logging=logging,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(

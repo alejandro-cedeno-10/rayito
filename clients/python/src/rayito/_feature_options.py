@@ -62,14 +62,17 @@ class FeaturePlan:
     configure_sections: tuple[Any, ...] = ()
 
 
-def plan_features(options: FeatureOptions, *, image_variant: str | None = None) -> FeaturePlan:
+def plan_features(
+    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
-    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
-    para cuando una función real lo necesite (s3-mounts, efs-volumes,
-    rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
-    No hace ninguna llamada a AWS ni construye ningún cliente.
+    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) y
+    `logging` (el `logging=` de `create()`, tal cual: una función que lee
+    los logs del sandbox, como `events=`, exige que lleguen a CloudWatch)
+    quedan para cuando una función real los necesite; ninguna rama de hoy
+    los usa. No hace ninguna llamada a AWS ni construye ningún cliente.
     """
-    del image_variant
+    del image_variant, logging
     if options.mounts is not None:
         raise UnimplementedError("mounts=", f"llega en 0.6 ({MOUNTS_CHANGE})")
     if options.volumes is not None:
