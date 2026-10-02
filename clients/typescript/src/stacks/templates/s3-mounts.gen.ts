@@ -5,17 +5,16 @@ Description: >-
   Rayito m15-s3-mounts (optional, ADR-017): one least-privilege IAM managed
   policy, RayitoS3MountAccess, for the execution role of a sandbox that uses
   \`mounts=\` (S3 buckets mounted into the guest through \`mount-s3\`/FUSE, only
-  on \`rayito-base-caps\`). It creates no other resource ($0: IAM only). The
-  policy scopes \`ListBucket\` to the declared prefixes (an IAM
-  \`s3:prefix\` condition, matched against the real \`mount-s3 --prefix\`
-  argument); object-level actions are scoped to the bucket itself, not to a
-  prefix — the same shape as AWS's own published Mountpoint-S3 example
-  policy, because an object key has no IAM concept of "prefix" the way a
-  \`ListBucket\` call does. Actual prefix containment at mount time is
-  \`mount-s3 --prefix\`'s job, backed by \`RAYITO_ALLOWED_MOUNT_BUCKETS\` on the
-  image (AWS_API_NOTES.md §23). Deploy it only if you use \`mounts=\`; delete
-  the stack to remove the policy (no bucket or object it names is ever
-  touched by delete).
+  on \`rayito-base-caps\`). It creates no other resource ($0: IAM only). Every
+  statement is scoped to the declared prefixes: \`ListBucket\` through an IAM
+  \`s3:prefix\` condition, and the object-level actions through object ARNs
+  that carry the prefix (\`arn:...:s3:::<bucket>/<prefix>\`), so a sandbox
+  meant to write \`runs/42/\` can never overwrite or delete another prefix's
+  objects even if the guest ignored \`mount-s3 --prefix\`. Up to four
+  prefixes per stack (deploy another stack for more); the bucket must also
+  be on the image's \`RAYITO_ALLOWED_MOUNT_BUCKETS\` (AWS_API_NOTES.md §23).
+  Deploy it only if you use \`mounts=\`; delete the stack to remove the
+  policy (no bucket or object it names is ever touched by delete).
 
 Parameters:
   BucketName:
@@ -30,12 +29,11 @@ Parameters:
     Type: CommaDelimitedList
     Default: "*"
     Description: >-
-      Object-key prefixes the role may list (\`s3:prefix\` condition on
-      \`ListBucket\`, IAM \`StringLike\` semantics: each entry should end in
-      \`*\` to match a sub-tree, e.g. "team7/*,runs/*"). The default "*"
-      allows listing the whole bucket. Object-level actions below are
-      scoped to the bucket, not to these prefixes (see the template
-      Description).
+      Up to four object-key prefixes the role may list and read (and write,
+      with ReadOnly=false), IAM wildcard semantics: each entry should end in
+      \`*\` to match a sub-tree, e.g. "team7/*,runs/*". The default "*"
+      allows the whole bucket. Object access only ever covers the first
+      four entries; deploy a second stack for more.
   ReadOnly:
     Type: String
     AllowedValues: ["true", "false"]
@@ -68,11 +66,29 @@ Resources:
             Condition:
               StringLike:
                 s3:prefix: !Ref Prefixes
+          # Object ARNs per prefix: \`CommaDelimitedList\` has no per-element
+          # map in plain CloudFormation (\`Fn::ForEach\` needs a transform and
+          # \`CAPABILITY_AUTO_EXPAND\`, which OptionalStack never requests), so
+          # the list is padded with its own first entry to four slots and
+          # each slot is selected by index. A list shorter than four only
+          # repeats a resource, which IAM treats as the same grant.
           - Sid: ReadObjects
             Effect: Allow
             Action:
               - s3:GetObject
-            Resource: !Sub "arn:\${AWS::Partition}:s3:::\${BucketName}/*"
+            Resource:
+              - !Sub
+                - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                - Prefix: !Select [0, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+              - !Sub
+                - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                - Prefix: !Select [1, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+              - !Sub
+                - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                - Prefix: !Select [2, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+              - !Sub
+                - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                - Prefix: !Select [3, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
           - !If
             - AllowWrites
             - Sid: WriteObjects
@@ -85,7 +101,19 @@ Resources:
                 # orphaned multipart parts that keep billing storage
                 # (AWS_API_NOTES.md §23).
                 - s3:AbortMultipartUpload
-              Resource: !Sub "arn:\${AWS::Partition}:s3:::\${BucketName}/*"
+              Resource:
+                - !Sub
+                  - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                  - Prefix: !Select [0, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+                - !Sub
+                  - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                  - Prefix: !Select [1, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+                - !Sub
+                  - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                  - Prefix: !Select [2, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
+                - !Sub
+                  - "arn:\${AWS::Partition}:s3:::\${BucketName}/\${Prefix}"
+                  - Prefix: !Select [3, !Split [",", !Join [",", [!Join [",", !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes], !Select [0, !Ref Prefixes]]]]]
             - !Ref AWS::NoValue
 
 Outputs:

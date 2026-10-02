@@ -22,7 +22,8 @@ COMPONENT: StackComponent = StackComponent(
         ),
         StackParameter(
             "Prefixes",
-            "Prefijos (coma-separados) permitidos en ListBucket; '*' por defecto.",
+            "Hasta 4 prefijos (coma-separados, acabados en '*') que el rol puede listar, "
+            "leer y, con ReadOnly=false, escribir; '*' (por defecto) es todo el bucket.",
             default="*",
         ),
         StackParameter(
@@ -38,4 +39,7 @@ COMPONENT: StackComponent = StackComponent(
         removal="destroy() borra la política; no borra ningún objeto ni el bucket",
         source="AWS_API_NOTES.md §23",
     ),
+    # La plantilla crea un `AWS::IAM::ManagedPolicy`: sin esta capacidad,
+    # `CreateStack` falla con `InsufficientCapabilitiesException`.
+    capabilities=("CAPABILITY_IAM",),
 )

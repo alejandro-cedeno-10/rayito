@@ -996,7 +996,10 @@ patrón que `scripts/check_pins.py` exige para el binario de Deno de
 **Invocación**: `mount-s3 --foreground <bucket> /dev/fd/3 [--prefix <p>]
 [--read-only | --allow-overwrite --allow-delete]`. `/dev/fd/3` es el
 descriptor que `rayd` ya adjuntó a `mount_path` con `mount(2)` (ABI de FUSE
-del kernel: `fd=<n>,rootmode=040000,user_id=1000,group_id=1000`), así que
+del kernel: `fd=<n>,rootmode=040000,user_id=1000,group_id=1000,allow_other`;
+el destino es `/proc/self/fd/<dirfd>` del directorio abierto componente a
+componente con `O_NOFOLLOW`, nunca la ruta: uid 1000 podría haberla
+cambiado por un enlace simbólico), así que
 `mount-s3` nunca hace su propio `mount(2)`: sólo habla el protocolo FUSE
 sobre el descriptor que se le pasa. `--read-only` sin escritura es el
 valor por defecto de `S3Mount`; `--allow-overwrite`/`--allow-delete` sólo
@@ -1016,19 +1019,25 @@ uid 990 nunca entra en esa regla, así que su tráfico a
 plataforma, el mismo valor que ya usa `adapters::s3_store` para la
 persistencia de ADR-009); `PATH` es el único otro valor del entorno.
 
-**IAM (bucket, no prefijo)**: `infra/s3-mounts.yaml` concede
+**IAM (acotado por prefijo)**: `infra/s3-mounts.yaml` concede
 `s3:ListBucket` acotado por un `s3:prefix` condicional (parámetro
-`Prefixes`) y `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`/
-`s3:AbortMultipartUpload` sobre el bucket entero (`arn:...:s3:::<Bucket>/*`):
-IAM no tiene una forma nativa de expresar "las acciones a nivel de objeto
-sólo bajo este prefijo" para una lista arbitraria de prefijos sin una
-plantilla por prefijo, así que la contención real de prefijo es
-responsabilidad de `mount-s3 --prefix` (y del allowlist
-`RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen), no de IAM — la misma forma
-que la política de ejemplo que AWS publica para Mountpoint (que también
-incluye `AbortMultipartUpload`: sin él, una subida grande que falla a
-medias deja partes multipart huérfanas facturando almacenamiento
-indefinidamente).
+`Prefixes`, comodines IAM: `team7/*`) y `s3:GetObject` (más
+`s3:PutObject`/`s3:DeleteObject`/`s3:AbortMultipartUpload` con
+`ReadOnly=false`) sobre ARNs de objeto que llevan el prefijo
+(`arn:<partición>:s3:::<Bucket>/team7/*`): un ARN de objeto sí admite un
+prefijo, así que un sandbox que sólo debe escribir `runs/42/` no puede
+sobrescribir ni borrar objetos de otro prefijo aunque el guest ignorase
+`mount-s3 --prefix`. CloudFormation sin transform no tiene un "map" por
+elemento sobre un `CommaDelimitedList` (`Fn::ForEach` exige
+`AWS::LanguageExtensions` y `CAPABILITY_AUTO_EXPAND`, que `OptionalStack`
+nunca pide), así que la plantilla rellena la lista con su primer elemento
+hasta 4 huecos y elige cada uno con `Fn::Select`: hasta 4 prefijos por
+pila (otra pila para más); con menos, un ARN repetido es la misma
+concesión. `AbortMultipartUpload` está porque la política de ejemplo que
+AWS publica para Mountpoint lo incluye: sin él, una subida grande que
+falla a medias deja partes multipart huérfanas facturando almacenamiento
+indefinidamente. La plantilla crea un `AWS::IAM::ManagedPolicy`, así que
+`deploy()` pide `CAPABILITY_IAM`.
 
 **Tamaño de imagen (Q80 de la investigación out-of-scope)**: `fuse`
 (paquete AL2023, permisos/udev de `/dev/fuse`; Mountpoint habla FUSE por sí
