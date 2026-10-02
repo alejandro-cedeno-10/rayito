@@ -5,7 +5,7 @@
 //! `hooks::HookServices::participants`). Every slot is `slot::Unsupported`
 //! in this build; each feature replaces its own field's construction
 //! (inside its own `features::<name>::build`) in its own PR —
-//! `FeatureSet`'s field list, `build`'s signature and the three views
+//! `FeatureSet`'s field list, `build`'s signature and the two views
 //! below (`agent_features`, `participants`) do not change for that.
 
 pub mod efs_volumes;
