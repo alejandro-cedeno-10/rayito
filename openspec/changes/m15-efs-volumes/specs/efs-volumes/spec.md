@@ -38,15 +38,23 @@ Importing `rayito`/`rayito` (TS) SHALL NOT construct an `efs` client. Neither SH
 - **THEN** only the access point is deleted; the underlying directory and its contents are left in place
 
 ### Requirement: the efs-volumes OptionalStack component is real and never deploys implicitly
-The `efs-volumes` `StackComponent` SHALL be `supported`. `OptionalStacks.deploy("efs-volumes")`/`destroy("efs-volumes")` SHALL only run when called explicitly (by the SDK or `rayito stack`); no `Sandbox.create()` or `VolumeStore` call SHALL trigger a stack operation. `infra/efs-volumes.yaml` SHALL create mount-target ingress limited to its own connector's security group and SHALL default to retaining the file system and its data on stack deletion.
+The `efs-volumes` `StackComponent` SHALL be `supported`. `OptionalStacks.deploy("efs-volumes")`/`destroy("efs-volumes")` SHALL only run when called explicitly (by the SDK or `rayito stack`); no `Sandbox.create()` or `VolumeStore` call SHALL trigger a stack operation. `infra/efs-volumes.yaml` SHALL create mount-target ingress limited to its own connector's security group and SHALL always retain the file system and its data on stack deletion and on replacement, with no parameter able to change which file-system resource exists.
 
 #### Scenario: deploying efs-volumes is always explicit
 - **WHEN** a sandbox is created with `volumes=` unset, or `VolumeStore` is used
 - **THEN** no `CreateStack`/`UpdateStack`/`DeleteStack` call for the `efs-volumes` component is made
 
-#### Scenario: destroy retains data unless told otherwise
-- **WHEN** `rayito stack destroy efs-volumes` runs with the default `RetainData=true`
-- **THEN** the file system and its data survive stack deletion; `RetainData=false` is required to delete them too
+#### Scenario: destroy always retains the data
+- **WHEN** `rayito stack destroy efs-volumes` runs
+- **THEN** the file system and its data survive stack deletion; deleting them is a separate, explicit `aws efs delete-file-system`
+
+#### Scenario: a redeploy never swaps the file system
+- **WHEN** `rayito stack deploy efs-volumes` runs again on an existing stack, with or without parameters (e.g. to add `SubnetId2`)
+- **THEN** the same `AWS::EFS::FileSystem` resource stays in place with the same `FileSystemId`; no parameter selects, conditions or replaces it
+
+#### Scenario: AllowWrite is reachable
+- **WHEN** `deploy("efs-volumes", parameters={"AllowWrite": "false"})` or `--param AllowWrite=false` is used
+- **THEN** the component accepts it and `RayitoEfsVolumeClient` grants `ClientMount` only
 
 ### Requirement: the E2B shim's Volume resource is capability-gated the same way as the native SDK
 `rayito.e2b.Volume`/`AsyncVolume` (TypeScript: the `e2b` module's `Volume`) `create`/`connect`/`list`/`get_info`/`destroy` SHALL delegate to a `VolumeStore` configured on the `E2B` client. `Sandbox.create(volume_mounts={...})` SHALL translate to the native `volumes=` and SHALL raise exactly what `require_volume_support` raises. Content operations (`read_file`/`write_file`/`make_dir`/`list`/`remove`) on a `Volume` SHALL raise `UnimplementedError`, since no data plane exists outside a MicroVM.

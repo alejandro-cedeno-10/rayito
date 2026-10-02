@@ -14,8 +14,9 @@ Description: >-
   Property names come from the CloudFormation resource reference for
   AWS::EFS::FileSystem, AWS::EFS::MountTarget and
   AWS::Lambda::NetworkConnector; see infra/README.md and AWS_API_NOTES.md
-  section 22. RetainData=true (the default) keeps the file system and its
-  data on stack deletion; set it to false to let destroy() remove them too.
+  section 22. The file system is always retained on stack deletion (and on
+  any replacement): removing its data is a separate, explicit
+  \`aws efs delete-file-system\` call.
 
 Parameters:
   VpcId:
@@ -39,13 +40,6 @@ Parameters:
     Default: rayito-efs
     AllowedPattern: "^[a-zA-Z0-9_-]{1,64}$"
     Description: Unique name of the connector within the account and Region.
-  RetainData:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
-    Description: >-
-      "true" (default): deleting this stack keeps the file system and its
-      data. "false": destroy() deletes them too, with everything they hold.
   AllowWrite:
     Type: String
     Default: "true"
@@ -59,8 +53,6 @@ Parameters:
 Conditions:
   HasSubnet2: !Not [!Equals [!Ref SubnetId2, ""]]
   HasSubnet3: !Not [!Equals [!Ref SubnetId3, ""]]
-  RetainFileSystem: !Equals [!Ref RetainData, "true"]
-  DeleteFileSystem: !Not [!Condition RetainFileSystem]
   GrantClientWrite: !Equals [!Ref AllowWrite, "true"]
 
 Resources:
@@ -116,20 +108,16 @@ Resources:
       DestinationSecurityGroupId: !Ref MountTargetSecurityGroup
       Description: NFS to the Rayito EFS mount targets only
 
-  # \`AWS::EFS::FileSystem\`'s \`DeletionPolicy\`/\`UpdateReplacePolicy\` cannot be
-  # an intrinsic (\`!If\`): that needs the \`AWS::LanguageExtensions\` transform,
-  # which in turn needs \`CAPABILITY_AUTO_EXPAND\` — forbidden by
-  # \`_stacks/_model.py\` (no component uses macros or SAM transforms). So
-  # this is two resources with a literal policy each, chosen by
-  # \`RetainFileSystem\`; mount targets and outputs below pick whichever one
-  # exists with \`!If\`. Their \`Properties\` are deliberately identical, kept
-  # in sync by \`scripts/tests/test_efs_volumes_template.py\` — a YAML anchor
-  # would dedupe them, but CloudFormation rejects aliases outright unless
-  # the template goes through \`aws cloudformation package\`/SAM first
-  # (cfn-lint W1101), which this stack's deploy path does not do.
-  FileSystemRetained:
+  # Always \`DeletionPolicy: Retain\` / \`UpdateReplacePolicy: Retain\`, as
+  # literals and never behind a parameter: a toggle here would pick between
+  # two logical resources, and OptionalStacks.deploy() re-sends every
+  # parameter's default on UpdateStack, so a plain redeploy could swap the
+  # file system (destroying the data of the deletable one, or orphaning the
+  # retained one). Deleting the data is an explicit, separate step outside
+  # this stack (\`aws efs delete-file-system\`, see the guide page
+  # funciones-opcionales/volumenes-efs.md, "Quitarlo").
+  FileSystem:
     Type: AWS::EFS::FileSystem
-    Condition: RetainFileSystem
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -178,59 +166,10 @@ Resources:
               Bool:
                 elasticfilesystem:AccessedViaMountTarget: "false"
 
-  FileSystemDeletable:
-    Type: AWS::EFS::FileSystem
-    Condition: DeleteFileSystem
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      Encrypted: true
-      PerformanceMode: generalPurpose
-      ThroughputMode: elastic
-      LifecyclePolicies:
-        - TransitionToIA: AFTER_30_DAYS
-      FileSystemTags:
-        - Key: rayito
-          Value: efs-volumes
-      # Kept byte-for-byte identical to FileSystemRetained's policy above
-      # (see the comment there for why this isn't a YAML anchor); the three
-      # denies are research doc section 4.6.
-      FileSystemPolicy:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: DenyNonTls
-            Effect: Deny
-            Principal: "*"
-            Action: "elasticfilesystem:*"
-            Resource: "*"
-            Condition:
-              Bool:
-                aws:SecureTransport: "false"
-          - Sid: DenyWithoutAccessPoint
-            Effect: Deny
-            Principal: "*"
-            Action:
-              - elasticfilesystem:ClientMount
-              - elasticfilesystem:ClientWrite
-            Resource: "*"
-            Condition:
-              "Null":
-                elasticfilesystem:AccessPointArn: "true"
-          - Sid: DenyWithoutMountTarget
-            Effect: Deny
-            Principal: "*"
-            Action:
-              - elasticfilesystem:ClientMount
-              - elasticfilesystem:ClientWrite
-            Resource: "*"
-            Condition:
-              Bool:
-                elasticfilesystem:AccessedViaMountTarget: "false"
-
   MountTarget1:
     Type: AWS::EFS::MountTarget
     Properties:
-      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
+      FileSystemId: !Ref FileSystem
       SubnetId: !Ref SubnetId1
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -239,7 +178,7 @@ Resources:
     Type: AWS::EFS::MountTarget
     Condition: HasSubnet2
     Properties:
-      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
+      FileSystemId: !Ref FileSystem
       SubnetId: !Ref SubnetId2
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -248,7 +187,7 @@ Resources:
     Type: AWS::EFS::MountTarget
     Condition: HasSubnet3
     Properties:
-      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
+      FileSystemId: !Ref FileSystem
       SubnetId: !Ref SubnetId3
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -312,7 +251,7 @@ Resources:
             Action:
               - elasticfilesystem:ClientMount
               - !If [GrantClientWrite, elasticfilesystem:ClientWrite, !Ref AWS::NoValue]
-            Resource: !If [RetainFileSystem, !GetAtt FileSystemRetained.Arn, !GetAtt FileSystemDeletable.Arn]
+            Resource: !GetAtt FileSystem.Arn
             Condition:
               "Null":
                 elasticfilesystem:AccessPointArn: "false"
@@ -337,9 +276,9 @@ Resources:
 Outputs:
   FileSystemId:
     Description: Pass it as VolumeStore(file_system_id=...).
-    Value: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
+    Value: !Ref FileSystem
   FileSystemArn:
-    Value: !If [RetainFileSystem, !GetAtt FileSystemRetained.Arn, !GetAtt FileSystemDeletable.Arn]
+    Value: !GetAtt FileSystem.Arn
   ConnectorArn:
     Description: Pass it as Sandbox.create(egress=[ConnectorArn]).
     Value: !GetAtt Connector.Arn

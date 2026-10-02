@@ -46,8 +46,9 @@ COMPONENT: StackComponent = StackComponent(
             default="rayito-efs",
         ),
         StackParameter(
-            "RetainData",
-            "'true' (por defecto): destroy() conserva el sistema de ficheros y sus datos.",
+            "AllowWrite",
+            "'true' (por defecto): RayitoEfsVolumeClient también concede ClientWrite; "
+            "'false': sólo lectura (ClientMount). Nunca ClientRootAccess.",
             default="true",
         ),
     ),
@@ -57,6 +58,7 @@ COMPONENT: StackComponent = StackComponent(
             "AWS::EFS::FileSystem",
             "AWS::EFS::MountTarget (1-3)",
             "AWS::EC2::SecurityGroup (x2)",
+            "AWS::EC2::SecurityGroupEgress",
             "AWS::Lambda::NetworkConnector",
             "AWS::IAM::Role",
             "AWS::IAM::ManagedPolicy",
@@ -70,8 +72,10 @@ COMPONENT: StackComponent = StackComponent(
             "sin cargo listado por access points, mount targets ni ENIs del conector",
         ),
         removal=(
-            "destroy() borra siempre el conector, el grupo de seguridad y el rol; el "
-            "sistema de ficheros y sus datos sólo se borran con RetainData=false"
+            "destroy() borra el conector, los grupos de seguridad, los mount targets, el "
+            "rol y la política; el sistema de ficheros y sus datos se conservan siempre "
+            "(DeletionPolicy: Retain) y sólo se borran con un "
+            "`aws efs delete-file-system` explícito aparte"
         ),
         source=(
             "docs/research/2026-10-efs-persistence.md §6; AWS_API_NOTES.md §22; precios "

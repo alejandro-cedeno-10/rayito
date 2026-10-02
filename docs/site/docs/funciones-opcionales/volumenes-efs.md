@@ -48,8 +48,13 @@ vivos.
       Para dejar de pagar: `VolumeStore.destroy(nombre)` borra el access
       point (los datos del directorio no se borran: ver
       [Diferencias con E2B](#diferencias-con-e2b)); `rayito stack destroy
-      efs-volumes` borra el sistema de ficheros (con `RetainData=false`;
-      por defecto conserva los datos).
+      efs-volumes` borra el conector, los mount targets, los grupos de
+      seguridad y el IAM, pero **siempre conserva** el sistema de ficheros
+      y sus datos (`DeletionPolicy: Retain`, sin parámetro que lo cambie:
+      redesplegar la pila nunca puede borrar ni sustituir los datos). Para
+      borrarlos de verdad, un paso explícito aparte, después del `destroy`:
+      `aws efs delete-file-system --file-system-id <FileSystemId>` (borra
+      antes sus access points con `aws efs delete-access-point`).
 
 ## Cuándo usarlo (cuando el montaje llegue)
 

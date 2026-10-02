@@ -57,8 +57,12 @@ for the serialized AWS acceptance stage.
   and a mount-target security group (ingress 2049 only from the connector),
   a `FileSystemPolicy` denying non-TLS/no-access-point/non-mount-target
   traffic, and a dedicated `AWS::Lambda::NetworkConnector` + operator role.
-  `RetainData` (default `true`) controls whether `destroy()` also deletes
-  the file system and its data.
+  The file system is always `DeletionPolicy: Retain` /
+  `UpdateReplacePolicy: Retain` (literals, no parameter): `deploy()`
+  re-sends every default on `UpdateStack`, so a toggle choosing between
+  two file-system resources could destroy or orphan the data on a plain
+  redeploy. Deleting the data is a separate, documented
+  `aws efs delete-file-system`.
 - **E2B shim**: `Volume`/`AsyncVolume` move out of
   `e2b/_unimplemented.py` into `e2b/_volume.py` (TS: `e2b/volume.ts`), with
   real `create`/`connect`/`list`/`get_info`/`destroy` over a configured

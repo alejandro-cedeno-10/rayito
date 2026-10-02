@@ -2,22 +2,24 @@
 the shape; these tests pin down the behaviour two earlier review rounds got
 wrong and that cfn-lint cannot see on its own:
 
-- `DeletionPolicy`/`UpdateReplacePolicy` on the file system are always a
-  literal `Retain`/`Delete`, never an `!If` (that needs the
-  `AWS::LanguageExtensions` transform, which needs `CAPABILITY_AUTO_EXPAND`
-  — forbidden by `_stacks/_model.py`, so a template that used one could
-  never actually be deployed by `rayito stack deploy`).
+- there is exactly one file system, always `DeletionPolicy: Retain` /
+  `UpdateReplacePolicy: Retain` as literals (never an `!If`, which needs
+  the `AWS::LanguageExtensions` transform and `CAPABILITY_AUTO_EXPAND`,
+  forbidden by `_stacks/_model.py`), with no `Condition` and no property
+  that depends on a parameter: `OptionalStacks.deploy()` re-sends every
+  default on `UpdateStack`, so a redeploy without parameters must never
+  change which file-system resource exists (an earlier `RetainData` toggle
+  chose between two resources and a plain redeploy could destroy the data).
 - the connector's security group can actually reach the mount targets on
   NFS (2049): without this egress rule, EFS-3 would fail because of this
   template, not the platform.
-- `FileSystemRetained`/`FileSystemDeletable` only differ in their deletion
-  policy, never silently drift apart in `Properties`.
 - the identity-side Allow (`EfsVolumeClientPolicy`) never grants
   `elasticfilesystem:ClientRootAccess` and needs no `CAPABILITY_NAMED_IAM`.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -61,35 +63,55 @@ def test_the_template_declares_no_transform() -> None:
     assert "Transform" not in template()
 
 
-def test_file_system_deletion_policy_is_a_literal_never_an_intrinsic() -> None:
-    for name in ("FileSystemRetained", "FileSystemDeletable"):
-        resource = resources()[name]
-        assert isinstance(resource["DeletionPolicy"], str), name
-        assert isinstance(resource["UpdateReplacePolicy"], str), name
-        assert resource["DeletionPolicy"] == resource["UpdateReplacePolicy"]
-    assert resources()["FileSystemRetained"]["DeletionPolicy"] == "Retain"
-    assert resources()["FileSystemDeletable"]["DeletionPolicy"] == "Delete"
-
-
-def test_the_two_file_systems_are_chosen_by_condition_and_agree_otherwise() -> None:
-    retained = resources()["FileSystemRetained"]
-    deletable = resources()["FileSystemDeletable"]
-    assert retained["Condition"] == "RetainFileSystem"
-    assert deletable["Condition"] == "DeleteFileSystem"
-    assert retained["Properties"] == deletable["Properties"]
-
-
-def test_mount_targets_and_outputs_pick_a_file_system_with_if_not_ref() -> None:
-    expected = {
-        "Fn::If": [
-            "RetainFileSystem",
-            {"Ref": "FileSystemRetained"},
-            {"Ref": "FileSystemDeletable"},
-        ]
+def file_systems() -> dict[str, Any]:
+    return {
+        name: resource
+        for name, resource in resources().items()
+        if resource["Type"] == "AWS::EFS::FileSystem"
     }
+
+
+def referenced_names(node: Any) -> set[str]:
+    """Every logical name a `Ref`/`Fn::GetAtt`/`Fn::If`/`Fn::Sub` under
+    `node` mentions (a coarse superset: enough to prove "no parameter")."""
+    if isinstance(node, dict):
+        names: set[str] = set()
+        for key, value in node.items():
+            if key == "Ref" and isinstance(value, str):
+                names.add(value)
+            elif key == "Fn::Sub":
+                names.update(re.findall(r"\$\{([\w.:]+)\}", str(value)))
+            names |= referenced_names(value)
+        return names
+    if isinstance(node, list):
+        return set().union(*(referenced_names(item) for item in node)) if node else set()
+    return set()
+
+
+def test_there_is_exactly_one_file_system_always_retained() -> None:
+    assert list(file_systems()) == ["FileSystem"]
+    file_system = file_systems()["FileSystem"]
+    assert file_system["DeletionPolicy"] == "Retain"
+    assert file_system["UpdateReplacePolicy"] == "Retain"
+    assert "Condition" not in file_system
+
+
+def test_a_redeploy_without_parameters_never_changes_the_file_system() -> None:
+    """No parameter (default or not) can select, condition or reshape the
+    file system, so `deploy()` re-sending every default on `UpdateStack`
+    cannot replace it, delete it or swap it for another one."""
+    file_system = file_systems()["FileSystem"]
+    parameters = set(template()["Parameters"])
+    assert not referenced_names(file_system) & parameters
+    assert "RetainData" not in parameters
+
+
+def test_mount_targets_and_outputs_reference_the_one_file_system() -> None:
     for mount_target in ("MountTarget1", "MountTarget2", "MountTarget3"):
-        assert resources()[mount_target]["Properties"]["FileSystemId"] == expected
-    assert template()["Outputs"]["FileSystemId"]["Value"] == expected
+        assert resources()[mount_target]["Properties"]["FileSystemId"] == {
+            "Ref": "FileSystem"
+        }
+    assert template()["Outputs"]["FileSystemId"]["Value"] == {"Ref": "FileSystem"}
 
 
 def test_connector_security_group_can_reach_the_mount_targets_on_nfs() -> None:
