@@ -29,8 +29,9 @@ use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
 use rayd::hooks::HookServices;
 use rayd::lifecycle::{
-    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, Reaper, StreamCloser,
-    SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper, spawn_timeout_watcher,
+    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
+    StreamCloser, SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper,
+    spawn_timeout_watcher,
 };
 use rayd::network::NetworkManager;
 use rayd::persistence::platform_persistence_manager;
@@ -199,6 +200,17 @@ async fn main() -> anyhow::Result<ExitCode> {
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
+    // `FeatureContext.processes` is `template_start`'s own context
+    // (ADR-022): every other slot still ignores it, so this is the one
+    // `FeatureSet` build in `main` that needs the real process manager, for
+    // `hooks::mod`'s participants below. `grpc::router_with_transfers`
+    // builds its own, cheaper `FeatureSet` for `ConfigureGrpc`, which never
+    // reads this slot.
+    let features = rayd::features::build(&rayd::features::FeatureContext {
+        processes: Some(processes.clone()),
+    });
+    let participants: Vec<Arc<dyn LifecycleParticipant>> =
+        features.template_start.participant().into_iter().collect();
     let grpc = rayd::grpc::router_with_transfers(
         Services {
             session: session.clone(),
@@ -232,10 +244,11 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // M15 foundations: no feature slot returns a participant yet
-            // (`features::build` is all `Unsupported`), so `/suspend` and
-            // `/ready` behave exactly as in 0.5.x.
-            participants: Vec::new(),
+            // `template_start` is the only slot with a participant today
+            // (ADR-022); `Vec::new()` with no `template.json` baked in, or
+            // on a build older than this one, is what keeps `/suspend` and
+            // `/ready` identical to 0.5.x.
+            participants,
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());

@@ -182,14 +182,16 @@ pub fn router_with_transfers(
     } = services;
     let kernel_status: Arc<dyn KernelStatus> = code.clone();
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
-    // M15 foundations: every slot is still `features::slot::Unsupported`
-    // (stateless), so building the set fresh here needs no field on
-    // `Services` yet. The feature that first needs shared context (a
-    // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
+    // `ConfigureGrpc` never reads `template_start` (it has no
+    // `ConfigureSandbox` section, ADR-022) and no other slot needs shared
+    // context yet, so a plain `FeatureContext::default()` here is enough;
+    // `main` builds its own `FeatureSet` with the real `processes` handle
+    // for `hooks::mod`'s participants (`template_start`'s `on_run`).
     let configure = ConfigureGrpc::new(
         session.clone(),
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
+        Arc::new(crate::features::build(
+            &crate::features::FeatureContext::default(),
+        )),
     );
     let mut server = Server::builder()
         .tcp_nodelay(true)

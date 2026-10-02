@@ -340,6 +340,7 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
             state.network.on_run().await;
             state.code.spawn_run_rotation(defaults.envs);
             spawn_imds_verification(&state);
+            spawn_participants_on_run(&state.participants);
         }
         if matches!(outcome, RunOutcome::AlreadyRan | RunOutcome::Illegal(_)) {
             audit(
@@ -409,6 +410,18 @@ async fn suspend(State(state): State<HooksState>) -> Response {
         )
     })
     .await
+}
+
+/// Fires every participant's `on_run` in the background, same as
+/// `state.network.on_run()` and `spawn_imds_verification` above it: the 200
+/// for `/run` goes out first. With no participant configured (every build
+/// before `template_start`, and every build with no `template.json`) this
+/// spawns nothing and changes nothing about `/run`'s 0.5.x behaviour.
+fn spawn_participants_on_run(participants: &[Arc<dyn LifecycleParticipant>]) {
+    for participant in participants {
+        let participant = Arc::clone(participant);
+        tokio::spawn(async move { participant.on_run().await });
+    }
 }
 
 /// `/ready` only ever downgrades its own decision: `Ok` from every

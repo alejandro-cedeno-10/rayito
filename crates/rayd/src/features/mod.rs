@@ -1,9 +1,13 @@
 //! `FeatureSet`: the six 0.6 feature slots (M15 foundations, ADR-015),
-//! built once from `main` by `build(&FeatureContext)`. Every slot is
-//! `slot::Unsupported` in this build; each feature replaces its own
-//! field's construction (inside its own `features::<name>::build`) in its
-//! own PR — `FeatureSet`'s field list and `build`'s signature do not
-//! change for that.
+//! built from `main` by `build(&FeatureContext)` — once with a real
+//! `FeatureContext` for the slot(s) `hooks::mod`'s participants need
+//! (`main` does this for `template_start`, ADR-022), and once more, cheaply,
+//! wherever `ConfigureGrpc` is constructed (`grpc::router_with_transfers`),
+//! since `ConfigureGrpc` never reads `template_start` or needs its
+//! context. Every slot but `template_start` is still `slot::Unsupported`;
+//! each feature replaces its own field's construction (inside its own
+//! `features::<name>::build`) in its own PR — `FeatureSet`'s field list and
+//! `build`'s signature do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -23,12 +27,19 @@ use rayito_proto::v1::{
 
 use slot::ConfigurableFeature;
 
-/// What a feature's `build()` needs from `main` to construct its slot.
-/// Empty today, because every slot is still a stub: a feature that needs
-/// credentials, a bucket name or other shared context adds a field here in
-/// its own PR, never by widening `FeatureSet` itself.
+use crate::grpc::PlatformProcessManager;
+
+/// What a feature's `build()` needs from `main` to construct its slot. A
+/// feature that needs credentials, a bucket name or other shared context
+/// adds a field here in its own PR, never by widening `FeatureSet` itself.
+/// `processes` is `template_start`'s (ADR-022): every other slot ignores
+/// it. `None` builds a slot that still reports `supported()` correctly but
+/// spawns nothing — the shape every non-template test keeps using via
+/// `FeatureContext::default()`.
 #[derive(Default)]
-pub struct FeatureContext;
+pub struct FeatureContext {
+    pub processes: Option<Arc<PlatformProcessManager>>,
+}
 
 pub struct FeatureSet {
     pub s3_mounts: Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>>,
@@ -60,13 +71,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_slot_starts_unsupported() {
-        let set = build(&FeatureContext);
+    fn every_stub_slot_starts_unsupported() {
+        let set = build(&FeatureContext::default());
         assert!(!set.s3_mounts.supported());
         assert!(!set.efs_volumes.supported());
         assert!(!set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());
         assert!(!set.secret_gateway.supported());
-        assert!(!set.template_start.supported());
+        // template_start (ADR-022, m15-templates) is the first slot with a
+        // real adapter: this build always understands the spec, regardless
+        // of whether `FeatureContext.processes` (or a template.json) is
+        // present — see `template_start::tests::no_template_json_yields_no_participant`
+        // for the "no spec" case that actually matters for behaviour.
+        assert!(set.template_start.supported());
     }
 }

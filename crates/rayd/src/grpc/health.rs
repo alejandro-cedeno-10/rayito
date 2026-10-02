@@ -132,14 +132,16 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot is still `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself is
-        // reported. The feature that gives a slot a real adapter updates
-        // this one call site (`rayd_core::features::AgentFeatures`), never
-        // `HealthGrpc`'s constructor.
-        features: Some(agent_features_message(
-            rayd_core::features::AgentFeatures::foundations_only(),
-        )),
+        // M15 foundations: every feature slot but `template_start`
+        // (ADR-022, m15-templates) is still `Unsupported`
+        // (`features::build`). The feature that gives a slot a real
+        // adapter updates this one call site
+        // (`rayd_core::features::AgentFeatures`), never `HealthGrpc`'s
+        // constructor.
+        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
+            template_start: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        })),
     }
 }
 
