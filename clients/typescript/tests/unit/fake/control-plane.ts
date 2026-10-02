@@ -60,6 +60,8 @@ export class FakeControlPlane implements ControlPlane {
   #idle: IdlePolicy | undefined;
   #jwe: string;
   #mints = 0;
+  /** m15-sizes-catalog: `minimumMemoryInMiB` por `imageArn@imageVersion`. */
+  #imageVersions = new Map<string, number>();
   stateReason: string | undefined;
   suspendConflicts = false;
   resumeConflicts = false;
@@ -116,7 +118,9 @@ export class FakeControlPlane implements ControlPlane {
       sandboxId,
       state,
       endpoint: this.endpoint,
-      template: IMAGE_ARN,
+      // El ARN realmente lanzado (como get-microvm/run-microvm de verdad),
+      // no una constante: m15-sizes-catalog necesita ver su propio sufijo.
+      template: this.launches.at(-1)?.imageArn ?? IMAGE_ARN,
       templateVersion: "1.0",
       startedAt: STARTED_AT,
       maximumDurationSeconds: 3600,
@@ -223,6 +227,24 @@ export class FakeControlPlane implements ControlPlane {
     this.calls.push({ operation: "createAuthToken", sandboxId, ports });
     this.#mints += 1;
     return `${this.#jwe}.${this.#mints}`;
+  }
+
+  /** m15-sizes-catalog: `minimumMemoryInMiB` configurado con
+   * `setImageVersionMemory`; sin ninguno, lanza como lo haría
+   * `GetMicrovmImageVersion` sobre una versión inexistente. */
+  setImageVersionMemory(imageArn: string, imageVersion: string, memoryMib: number): void {
+    this.#imageVersions.set(`${imageArn}@${imageVersion}`, memoryMib);
+  }
+
+  async getMicrovmImageVersion(imageArn: string, imageVersion: string): Promise<number> {
+    this.calls.push({ operation: "getMicrovmImageVersion", sandboxId: imageVersion });
+    const memoryMib = this.#imageVersions.get(`${imageArn}@${imageVersion}`);
+    if (memoryMib === undefined) {
+      throw new SandboxNotFoundError(
+        `no hay minimumMemoryInMiB configurado para ${imageArn}@${imageVersion}`,
+      );
+    }
+    return memoryMib;
   }
 
   addListed(sandboxId: string, state: string): void {

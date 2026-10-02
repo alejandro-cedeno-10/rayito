@@ -31,6 +31,7 @@ import {
   POLY_KERNELS_REASON,
   rejectUnsupportedNetworkKeys,
   settleAsyncCallback,
+  shimCpuMemory,
   splitConnectionOpts,
   unappliedInstanceOpts,
   unimplementedLanguage,
@@ -446,6 +447,26 @@ describe("network", () => {
   });
 });
 
+describe("shimCpuMemory", () => {
+  test("is the guest view without size", () => {
+    const info = nativeInfo({ cpuCount: 2, memoryMb: 1987 });
+    expect(shimCpuMemory(info)).toEqual({ cpuCount: 2, memoryMB: 1987 });
+  });
+
+  test("is the baseline when size was used (m15-sizes-catalog)", () => {
+    // E2B reporta lo declarado por el template, no un pico en vivo (Q88:
+    // el guest puede ver hasta 4x el baseline).
+    const info = nativeInfo({
+      cpuCount: 8,
+      memoryMb: 16_052,
+      size: "4gb",
+      baselineMemoryMib: 4096,
+      baselineCpu: 8,
+    });
+    expect(shimCpuMemory(info)).toEqual({ cpuCount: 8, memoryMB: 4096 });
+  });
+});
+
 describe("infoFromNative", () => {
   test("a managed sandbox fills every D10 field", () => {
     const info = infoFromNative(
@@ -475,6 +496,20 @@ describe("infoFromNative", () => {
       volumeMounts: [],
       sandboxDomain: "abc.lambda-microvm.us-east-1.on.aws",
     });
+  });
+
+  test("reports the baseline, not the guest peak, once size was used", () => {
+    const info = infoFromNative(
+      nativeInfo({
+        cpuCount: 8,
+        memoryMb: 16_052,
+        size: "4gb",
+        baselineMemoryMib: 4096,
+        baselineCpu: 8,
+      }),
+    );
+    expect(info.cpuCount).toBe(8);
+    expect(info.memoryMB).toBe(4096);
   });
 
   test("metadata comes from the native info, and is {} when it was not read", () => {

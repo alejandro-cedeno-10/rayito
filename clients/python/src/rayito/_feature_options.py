@@ -9,9 +9,18 @@ el SDK aún no sabe cumplir. Con las siete en `None` (el valor por defecto)
 `plan_features` no hace nada: ni un `ConfigureSandbox`, ni un cliente AWS
 nuevo, el comportamiento exacto de 0.5.x.
 
-Cada función sustituye su propia rama por una implementación real en su
-propio cambio OpenSpec; ni esta firma ni `FeatureOptions`/`FeaturePlan`
-cambian para eso.
+`mounts=` (`m15-s3-mounts`) y `gateways=` (m15-secrets-gateway) ya no son
+stubs. `mounts=`: `require_caps_for` corre aquí, antes de `run-microvm`,
+cuando `image_variant` ya permite decidirlo (un nombre `rayito-<variant>`);
+sobre cualquier otro nombre la decisión se difiere al agente
+(`Health.features`, comprobado después de `/run` por `create()`/`take()` —
+ver `_configure_base.require_capabilities`). `gateways=`: `plan_features`
+sólo valida su forma (pura, cero AWS) y devuelve un `GatewaySectionFactory`
+(`_configure_base.SectionFactory`) en `FeaturePlan.configure_sections` — el
+`ConfigureSandbox` de verdad, con cada cabecera ya resuelta, lo manda
+`create()`/`take()` una vez conocen la `SecretCache`. Cada función sustituye
+su propia rama por una implementación real en su propio cambio OpenSpec; ni
+esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
 
 from __future__ import annotations
@@ -20,15 +29,26 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from rayito._configure_base import PlannedSection
+from rayito._lifecycle_events._options import validate_events_option
+from rayito._role_policy import require_caps_for
+from rayito._s3_mounts import S3Mount, plan_s3_mounts
+from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
 from rayito.exceptions import UnimplementedError
 
-MOUNTS_CHANGE: Final = "m15-s3-mounts"
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
-SIZE_CHANGE: Final = "m15-sizes-catalog"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
 DOMAIN_CHANGE: Final = "m15-custom-domain"
+
+#: Por qué `events=` sigue sin aceptarse aunque `LifecycleEvents` ya
+#: funcione por su cuenta (ver `plan_features`).
+EVENTS_PENDING_REASON: Final = (
+    f"{EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm "
+    "(FeaturePlan.configure_sections); LifecycleEvents (deploy, register_webhook, "
+    "get_events) ya funciona fuera de create()"
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +60,7 @@ class FeatureOptions:
     función en su propio módulo, nunca aquí.
     """
 
-    mounts: Mapping[str, Any] | None = None
+    mounts: Mapping[str, S3Mount] | None = None
     volumes: Mapping[str, Any] | None = None
     size: Any | None = None
     events: Any | None = None
@@ -59,29 +79,52 @@ class FeaturePlan:
     construir uno si alguna opción estaba puesta.
     """
 
-    configure_sections: tuple[Any, ...] = ()
+    configure_sections: tuple[PlannedSection, ...] = ()
 
 
-def plan_features(options: FeatureOptions, *, image_variant: str | None = None) -> FeaturePlan:
+def plan_features(
+    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
-    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
-    para cuando una función real lo necesite (s3-mounts, efs-volumes,
-    rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
-    No hace ninguna llamada a AWS ni construye ningún cliente.
+    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
+    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` lo
+    usa para `require_caps_for` (s3-mounts, efs-volumes y rayd-otlp con rol
+    exigen la variante caps). `logging` es el `logging=` de `create()`:
+    `events=` exige que mande los logs a CloudWatch. No hace ninguna llamada
+    a AWS ni construye ningún cliente: `require_caps_for` es una
+    comprobación puramente sobre el nombre de la imagen.
+
+    `events=` se valida (tipo y `logging`) y después sigue lanzando
+    `UnimplementedError`: su sección de `ConfigureSandbox` necesita
+    `sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
+    `run-microvm`, y todavía no entra en `FeaturePlan.configure_sections`
+    (ADR-020, "Hueco de integración conocido"). Aceptarlo sin enviarla
+    dejaría al usuario pagando la pila sin recibir ningún evento.
     """
-    del image_variant
+    sections: list[PlannedSection] = []
     if options.mounts is not None:
-        raise UnimplementedError("mounts=", f"llega en 0.6 ({MOUNTS_CHANGE})")
+        require_caps_for("mounts=", image_variant)
+        section = plan_s3_mounts(options.mounts)
+        if section is not None:
+            sections.append(section)
     if options.volumes is not None:
         raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
-    if options.size is not None:
-        raise UnimplementedError("size=", f"llega en 0.6 ({SIZE_CHANGE})")
+    # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
+    # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
+    # es qué imagen lanzar), así que `create()` la resuelve por su cuenta
+    # con `_sizing.resolve_size`/`apply_size_suffix` antes de pedir el ARN
+    # de la plantilla, y aquí no hay nada que comprobar ni que lanzar.
     if options.events is not None:
-        raise UnimplementedError("events=", f"llega en 0.6 ({EVENTS_CHANGE})")
+        validate_events_option(options.events, logging)  # type: ignore[arg-type]
+        raise UnimplementedError("events=", EVENTS_PENDING_REASON)
     if options.telemetry is not None:
         raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
     if options.gateways is not None:
-        raise UnimplementedError("gateways=", f"llega en 0.6 ({GATEWAYS_CHANGE})")
+        # Sólo valida la forma (ninguna llamada a AWS: `validate_gateways`
+        # es pura). La `SecretCache` que de verdad resuelve cada cabecera
+        # llega después, cuando `create()`/`take()` ya la calcularon para
+        # `secrets=` — ver `GatewaySectionFactory`.
+        sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
         raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
-    return FeaturePlan()
+    return FeaturePlan(configure_sections=tuple(sections))

@@ -20,6 +20,9 @@ from rayito._charts import (
 )
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
+from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
+from rayito._lifecycle_events._service import LifecycleEvents
+from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
 from rayito._listing_base import ListOrder
 from rayito._models import (
     ALL_TRAFFIC,
@@ -65,7 +68,10 @@ from rayito._models import (
 )
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
 from rayito._pool_base import PoolConfig, PoolSlotInfo, PoolStats
+from rayito._s3_mounts import MountStatus, S3Mount
+from rayito._secret_gateway import GatewayHandle, GatewayStatus, SecretGateway
 from rayito._secrets import SecretCache, SecretInfo, SecretPage, SecretRef, SecretStore
+from rayito._sizing import SizeRequest
 from rayito._stacks._model import (
     CostStatement,
     StackArtifact,
@@ -157,6 +163,7 @@ __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
     "AsyncGit",
+    "AsyncLifecycleEvents",
     "AsyncOptionalStacks",
     "AsyncPtyHandle",
     "AsyncSandbox",
@@ -195,6 +202,7 @@ __all__ = [
     "EgressProxy",
     "EntryInfo",
     "EnvStep",
+    "EventRecord",
     "Execution",
     "ExecutionError",
     "FileNotFoundException",
@@ -203,6 +211,8 @@ __all__ = [
     "FilesystemEvent",
     "FilesystemEventType",
     "GatewayException",
+    "GatewayHandle",
+    "GatewayStatus",
     "Git",
     "GitAuthException",
     "GitBranches",
@@ -217,12 +227,14 @@ __all__ = [
     "InvalidArgumentException",
     "JsonFilePoolBackend",
     "LaunchOptions",
+    "LifecycleEvents",
     "LifecycleUnsupportedException",
     "LineChart",
     "ListOrder",
     "Logs",
     "MicrovmListPage",
     "MountException",
+    "MountStatus",
     "NetworkOptions",
     "NetworkPolicy",
     "NetworkSelectorContext",
@@ -251,6 +263,7 @@ __all__ = [
     "RestoreResult",
     "Result",
     "RunStep",
+    "S3Mount",
     "S3Prefix",
     "S3Staging",
     "Sandbox",
@@ -271,11 +284,13 @@ __all__ = [
     "ScatterChart",
     "SecretCache",
     "SecretException",
+    "SecretGateway",
     "SecretInfo",
     "SecretNotFoundException",
     "SecretPage",
     "SecretRef",
     "SecretStore",
+    "SizeRequest",
     "StackArtifact",
     "StackComponent",
     "StackException",
@@ -298,6 +313,7 @@ __all__ = [
     "VolumePathNotFoundException",
     "WatchHandle",
     "WebhookException",
+    "WebhookInfo",
     "WorkdirStep",
     "WriteEntry",
     "__version__",

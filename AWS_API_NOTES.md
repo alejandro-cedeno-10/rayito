@@ -505,6 +505,15 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 93 | **SEC-3**: ¿puede uid 1000 leer la memoria o el entorno de `rayd` (`/proc/<pid>/mem`, `environ`, `process_vm_readv`, `ptrace`, core dumps), en la imagen por defecto y en `ALL`, también tras resume? | Q47: uid 1000 con `CapEff` 0 y `NoNewPrivs`; sin `CAP_SYS_PTRACE` | **Medido 2026-09-30** (uid 1000, ctypes; `rayd` es PID 1, Uid 0): en las dos imágenes, tras una pausa de 60 s (por defecto) y tras 70 min (`ALL`), `/proc/1/{environ,maps,mem,auxv,stack,syscall,io}` → `EACCES`, `/proc/1/fd` y `readlink(/proc/1/fd/1)` → `EACCES`, `pread` de `/proc/1/mem` → `EACCES`, `process_vm_readv` → `EPERM`, `PTRACE_ATTACH` y `PTRACE_SEIZE` → `EPERM`, `kill(1, 0)` → `EPERM`. Legibles: `/proc/1/cmdline` y `/proc/1/status` (Uid 0, `CapEff`, `NoNewPrivs` 1); sin `hidepid`. Sin Yama (`ptrace_scope` no existe), `core_pattern` `|/usr/lib/systemd/systemd-coredump …`, `suid_dumpable` 0, sin gdb/gcore/strace. El `environ` de los procesos de uid 1000 (sidecar, kernel) **sí** se lee |
 | 94 | **CP-7**: ¿pueden los procesos de uid 1000 escribir en el stdout de `rayd` (herencia o `/proc/1/fd/1`) y colar líneas en el stream de runtime? | Diseño de §5 (eventos por stdout de `rayd`): sin medir | **Medido 2026-09-30** (imagen por defecto y `ALL`, `logging` a CloudWatch): los fd de un proceso lanzado por `commands.run` son `0 → /dev/null` y `1, 2 → pipe` hacia `rayd` (salida de la RPC, no se reenvía a CloudWatch). Escribir como uid 1000 en `/proc/1/fd/1`, `/proc/1/fd/2`, `/dev/console`, `/dev/kmsg`, `/dev/tty1`, `/dev/ttyS0`, `/dev/hvc0` y en `/proc/<sidecar>/fd/{1,2}` → `EACCES` en todos. Ningún marcador escrito por uid 1000 apareció en el stream de runtime de la VM, que sólo contiene las líneas JSON de `rayd` (y las del sidecar reenviadas por `rayd` con `source: sidecar`) |
 | 95 | **Proxy local de M12 (`rayito sandbox proxy`)**: en una conexión HTTP/1.1 keep-alive o con pipelining, ¿el proxy de AWS valida `X-aws-proxy-auth` en cada petición o sólo en la primera? Y ¿un upgrade a WebSocket con `X-aws-proxy-auth`/`X-aws-proxy-port` en cabeceras (no en los subprotocolos de §7) llega al guest? | §7 sólo documenta la cabecera por petición y la autenticación de WebSocket por subprotocolo; nada sobre peticiones posteriores en la misma conexión ni sobre cabeceras en un upgrade | **Sin medir.** El proxy no cuenta con que AWS rechace las peticiones posteriores: las no-upgrade salen con `Connection: close` (el `Connection` del cliente se descarta) y el paso de WebSocket figura como implementado, no medido. Medir con un e2e de `test_sandbox_proxy_e2e.py` (dos peticiones en la misma conexión y un upgrade) |
+| 100 | **S3M imagen** (`m15-s3-mounts`): ¿instala `image/Dockerfile` `mount-s3` 1.24.0 (RPM propio de AWS, clavado por sha256) en `al2023-minimal` ARM64, y cuánto ocupa? | Q80: el paquete 1.22.3 de los repos de AL2023 instala 11,3 MB y la imagen crece +22,4 MB de code install; `dnf install /tmp/mount-s3.rpm` | **Medido 2026-10-02** (`rayito image publish --os-capabilities ALL`, build en AWS): la primera build **falla** en el `RUN` de `mount-s3` con `error: No package matches '/tmp/mount-s3.rpm'`: el `dnf` de `al2023-minimal` es un enlace a `microdnf`, que no instala un RPM local. Arreglo: `dnf install fuse fuse-libs` (las dependencias de `rpm -qpR`; `fuse` solo no arrastra `fuse-libs` con `microdnf`) y `rpm -i` del fichero ya verificado; con él la build termina (`launchable: true`, ≈ 3,5 min de `create`/`update-microvm-image` a imagen activa). Tamaños: RPM descargado 14 232 764 B; instalado (`rpm -q --queryformat '%{SIZE}'`) **`mount-s3` 72 677 112 B** (`/opt/aws/mountpoint-s3`, `du -sb` 72 685 304 B), `fuse` 749 519 B, `fuse-libs` 563 718 B. Imagen `rayito-base-caps` resultante: code install 1 444 290 560 B (1 445 888 000 B con la `rayd` de Q101), memoria del snapshot 909–914 MB, disco 27,9–38,6 MB. La estimación de +22,4 MB de Q80 no vale para 1.24.0: el RPM de AWS ocupa 6,4× el de AL2023 |
+| 101 | **S3M-1 previo**: con el `mount(2)` ya hecho por `rayd` (`allow_other` en las opciones del kernel) y `mount-s3 --foreground <bucket> /dev/fd/3 --uid 1000 --gid 1000` corriendo como uid 990, ¿puede uid 1000 usar el montaje? | Diseño de ADR-017: `allow_other` en el `mount(2)` basta | **Medido 2026-10-02: no.** El daemon vive (`SNl`) y `/proc/mounts` muestra `fuse rw,…,user_id=1000,group_id=1000,allow_other`, pero `stat`/`ls` como uid 1000 dan **`EACCES`**: la sesión FUSE de Mountpoint sólo atiende a su propio uid salvo que reciba `--allow-other`. La sonda de `rayd` (un `stat` como uid 1000) nunca acierta, el montaje se queda `pending` y a los 10 s es `failed`/`timeout`; `create()` lanza `MountException(code="timeout")` y termina el VM. Con `--allow-other` (lo que ya usaba Q80) el montaje está `mounted` cuando `create()` vuelve |
+| 102 | **S3M-1, S3M-3, S3M-4** (y latencias): lectura/escritura, `pause()`/`resume()` con montaje, `allow_internet_access=False` | Q80: montaje p50 0,117 s como root; ADR-017: `/suspend` no espera a S3 | **Medido 2026-10-02** (`rayito-base-caps` con la `rayd` de Q101, `ReadOnly=false`, prefijo `rayito-e2e-s3-mounts/<uuid>/`): `create()` con un montaje 5,92 s frente a 6,61 s sin él sobre la misma imagen (el montaje se asienta dentro del ruido del arranque) y vuelve con `sbx.mounts == {"/mnt/rw": "mounted"}`; el objeto sembrado antes se lee al instante; `echo > /mnt/rw/out.txt` 0,41 s y aparece en S3; `dd` de 8 MiB 18,6 MB/s; `>>` sobre un fichero existente `EPERM` (Mountpoint no hace append, igual que Q80); `pause()` 1,08 s y `resume()` 0,41 s con el montaje activo, que sigue `mounted` y legible tras `resume`. Con `allow_internet_access=False` el montaje funciona (el tráfico S3 de `mount-s3` va por la clase de egress de sistema `ROOT_EGRESS_CLASS_S3`, que `Health.features.root_egress` anuncia). RSS del daemon 16,2 MB. Suites e2e `test_m15_s3_mounts.py` y `m15-s3-mounts.e2e.test.ts`: **4/4 y 4/4**. S3M-3 mide `pause()` con el montaje vivo, no con S3 cortado (no hay forma de cortar S3 sólo para el daemon sin cortar el plano de control); el diseño no hace esperar a `/suspend` por S3 |
+| 103 | **S3M-2 / SEC-3 y aislamiento**: ¿qué ve y qué puede hacer uid 1000 sobre el daemon, y se respetan la ruta y el prefijo? | Diseño de T20: `environ`/`cmdline` legibles (residual aceptado), daemon no matable, `invalid_path` ante un enlace simbólico | **Medido 2026-10-02**: `cmdline` del daemon legible por uid 1000 (bucket, prefijo y flags; ninguna credencial); **`/proc/<pid>/environ` → `EACCES`** (mejor que el residual documentado: el daemon es uid 990 y uid 1000 no tiene `ptrace` sobre él); `kill -9 <pid>` → `Operation not permitted`; IMDS desde uid 1000 sin respuesta (bloqueo de M6 intacto) mientras uid 990 obtiene las credenciales. `ln -s /usr/local/bin /home/user/x` + `Configure` con `/home/user/x` → montaje `failed`/**`invalid_path`**, ningún `fuse` en `/proc/mounts`, `/usr/local/bin` intacto; `/etc/x` y `/mnt/../etc` → `SECTION_CODE_INVALID`/`invalid_path` sin tocar nada. IAM (`SimulatePrincipalPolicy` sobre el execution role con `RayitoS3MountAccess` de `Prefixes=rayito-e2e-s3-mounts/*`, `ReadOnly=false`): `PutObject`/`GetObject`/`DeleteObject` dentro del prefijo `allowed`, fuera (`rayito-e2e-s3m-outside/…`, `other/…`) **`implicitDeny`**; `ListBucket` con `s3:prefix` fuera del declarado o vacío `implicitDeny` |
+| 104 | **Fallos y apagado**: prefijo denegado por IAM, bucket fuera del allowlist, imagen sin `CAP_SYS_ADMIN`, ciclo de montar/desmontar/relanzar, pila `s3-mounts` | ADR-017: `create()` lanza `MountException`/`UnimplementedError` y termina el VM; `rayd` recoge sus hijos | **Medido 2026-10-02**: prefijo fuera de la política → `MountException(code="iam_denied")` a los 15,3 s de `create()`, VM `TERMINATED`; bucket fuera de `RAYITO_ALLOWED_MOUNT_BUCKETS` → `MountException(code="not_allowed")` (`SECTION_CODE_INVALID`) a los 7,2 s, VM `TERMINATED`; imagen sin caps (la `rayd` previa a Q101; la detección no cambia): `Health.features.s3_mounts` ausente/`false` aunque `mount-s3` y `rayito-mount` estén instalados, `mounts=` → `UnimplementedError` a los 6,4 s, VM `TERMINATED`. 5 ciclos de desmontar (sección vacía, `APPLIED`, 0 montajes FUSE) / montar / cambiar `read_only` / `pause()`+`resume()`: 6 pids de daemon distintos, siempre `mounted`, **0 procesos `<defunct>`**, un único `mount-s3` vivo y un único montaje al final (el zombi por montaje de Q80 no aparece). Sin `mounts=`: ninguna llamada `Configure` en el log de `rayd` y ningún `mount-s3`. `rayito stack deploy s3-mounts` 25 s hasta `CREATE_COMPLETE` con `CAPABILITY_IAM`; la plantilla de 4 huecos con un único prefijo genera 4 ARNs iguales; `destroy` lo borra limpio |
+| 105 | **CP-4**: ¿invoca la plataforma el hook `/terminate` de `rayd` al matar un MicroVM en `RUNNING` (`terminate-microvm` y agotar `maximumDurationInSeconds`) y en `SUSPENDED`? | Diseño de §7.4 (`killed{request}` desde `rayd`; el reconciliador cubre el resto): sin medir | **Medido 2026-10-02** (imagen con el `rayd` de `m15-events-webhooks`, `logging` a CloudWatch, la sección `lifecycle_events` enviada a mano): **`RUNNING` + `terminate-microvm`**: sí, `killed{request}` en la tabla 0,3 s después de que la llamada vuelva. **`RUNNING` + `maximumDurationInSeconds=150`** (sin `idlePolicy`): sí, `/terminate` llega; la línea `killed` se emite 1,6 s después del plazo y 0,6 s antes de `terminatedAt` (`stateReason` "MicroVM exceeded maximum lifetime."), **con `kill_reason: "request"`**: el hook no dice por qué, así que `rayd` no distingue un plazo vencido de un `kill()`. **`SUSPENDED` + `terminate-microvm`**: **no** se invoca `/terminate` (ninguna línea en 90 s; `terminatedAt` 22 s tras el arranque); el reconciliador sintetizó `killed{unknown}` con la generación (0) y la imagen de su último evento 101 s después, en su siguiente ejecución, y las siguientes no escribieron nada más |
+| 106 | **CP-5** y nombre del log stream: ¿llega a CloudWatch la línea escrita dentro de `/suspend` antes del checkpoint? ¿cómo se llama el stream de runtime de un MicroVM? | Supuesto del forwarder: el stream contiene el `microvmId` | **Medido 2026-10-02**: la línea `paused` (emitida y vaciada dentro de `/suspend`, `LifecycleEventSink::flush`) se ingirió en CloudWatch **226 ms** después de su `occurred_at_ms` y 400 ms **antes** de que `pause()` volviera, con la VM ya en `SUSPENDED`: el orden `paused` → `resumed` se conserva. Stream: **`YYYY/MM/DD[<imageVersion>]<microvmId>`** (p. ej. `2026/10/02[1.0]microvm-…`); el forwarder exige ahora que termine en `]<sandbox_id>`. Latencia línea → fila DynamoDB: 10,6–13,9 s el primer evento (forwarder en frío), 0,3–3,7 s los siguientes; fila → webhook entregado y firmado (`e2b-signature` verificada por el receptor) en segundos |
+| 107 | **CP-7** sobre el binario real y observabilidad del forwarder | Q94 (uid 1000 no escribe en el stdout de `rayd`) | **Medido 2026-10-02**: sobre esta imagen, uid 1000 vuelve a recibir `EACCES` en `/proc/1/fd/1` (`rayd` es PID 1). Una línea con el `sandbox_id` correcto y un MAC aleatorio, inyectada con `PutLogEvents` en el stream de ese MicroVM, se rechaza (`mac_invalid`); otra con un MAC **válido** para el sandbox A escrita en el stream del sandbox B se rechaza (`sandbox_mismatch`); ninguna llega a la tabla. Hallazgo: el valor de retorno de un Lambda invocado por una suscripción de CloudWatch Logs o por EventBridge Scheduler no queda en ningún log, así que sin más el forwarder y el reconciliador no dejaban rastro; ahora cada invocación imprime una línea JSON (`forwarded`/`rejected`/`rejected_by_reason`; `synthesized`), sin la línea, el `sandbox_id` ni el MAC |
+| 108 | ¿Despliega `infra/events-webhooks.yaml` en una cuenta de una organización con políticas de etiquetas? | Sin medir | **Medido 2026-10-02**: no sin etiquetas. Una SCP de la organización denegó `sqs:CreateQueue` (y `lambda:CreateFunction` fuera de la pila) sin ciertas claves de etiqueta, y una *tag policy* rechazó un valor no permitido (`The tag policy does not allow the specified value for the following tag key`); la pila hace `ROLLBACK_COMPLETE`. Con `deploy(tags=...)` (CLI: `rayito events deploy --tag K=V`, repetible) CloudFormation propaga las etiquetas de la pila a la cola, las Lambdas y la tabla y el despliegue termina en `CREATE_COMPLETE`. Aparte: `destroy()` con `EventsOperatorPolicy` todavía vinculada a un rol termina en `DELETE_FAILED` (CloudFormation no borra una política gestionada vinculada); desvinculada, el borrado completa y el secreto del stack desaparece sin ventana de recuperación. Y `logging="cloudwatch"` exige `execution_role_arn` (`ValidationException: Logging cannot be enabled without providing executionRoleArn`), así que `events=` también |
 | 114 | ¿Qué permisos necesita `Template.build()` con sólo `RayitoTemplateBuilder`, y deniega la política `create`/`update-microvm-image` sobre `rayito-base*`? | §10: las operaciones de imagen se autorizan sobre `microvm-image:<nombre>`; `Deny` sobre `microvm-image:${ProtectedImageNamePrefix}*` | **Medido 2026-10-02** (rol temporal con sólo la política, `assume-role`): `CreateMicrovmImage` se autoriza sobre **`*`**, no sobre el ARN de la imagen nueva (`AccessDeniedException` "…not authorized to perform: lambda:CreateMicrovmImage on resource: * because no identity-based policy allows…" con el `Allow` acotado a `microvm-image:*`, para `rayito-base-x` y para un nombre normal), así que **un `Deny` por nombre sobre `create` no es posible**: el criterio de parada "deniega `create-microvm-image` con `rayito-base-x`" no se cumple por diseño de AWS. `create` sobre un nombre existente falla, de modo que una base publicada sólo podría cambiar por `update`, y `UpdateMicrovmImage` sobre `rayito-base-x` sí recibe "…with an explicit deny in an identity-based policy". Además `create`/`update` exigen **`lambda:PassNetworkConnector`** sobre `arn:aws:lambda:<r>:aws:network-connector:aws-network-connector:INTERNET_EGRESS` aunque la petición no nombre conectores (misma regla que `RunMicrovm`, §10). `infra/templates.yaml` pasa a: `CreateMicrovmImage` sobre `*`, el resto de acciones de imagen sobre `microvm-image:*`, `Deny` sólo de `UpdateMicrovmImage` sobre el prefijo protegido y `PassNetworkConnector` sobre los conectores gestionados. Con eso, el rol sonda construye un template (206 s, `Template.exists()` → `True`) y un build que falla en un `RUN` devuelve `step=10`, `exit_code=1` y el comando (lee los logs con `DescribeLogStreams`/`GetLogEvents`); tras el cambio, `create` con `rayito-base-x` llega a la validación (`ValidationException`), no a IAM. La `CallerPolicy` de `infra/iam.yaml` acota igual `CreateMicrovmImage` a `microvm-image:*`: el mismo hallazgo la afecta (seguimiento aparte; esa pila es manual, no OptionalStack). |
 | 115 | ¿Acepta `create-microvm-image` el `baseImageVersion` que devuelve `get-microvm-image-version` (`1.0`, Q52) al heredar la configuración de la versión base? | Q52: `update` acepta `1` y el eco es `1.0`; heredar el eco tal cual | **Medido 2026-10-02**: no. `create-microvm-image` con `baseImageVersion: "1.0"` → `ValidationException` "Invalid baseMicroVMImageVersion: 1.0. Expected a single major version number (e.g., 1)." (los tres casos e2e de Python y TypeScript fallaban así antes de construir nada). `inherited_configuration`/`inheritedConfiguration` envían ahora la forma mayor (`1.0` → `1`, `requestable_base_image_version`); el reuso de versiones ya comparaba `1` y `1.0` como iguales (Q52). |
 | 116 | ¿Funciona `RUN pip install …` sobre `rayito-base`? | `pip_install()` compilaba a `pip install --no-cache-dir` | **Medido 2026-10-02**: no. El build del caso correcto falla en el paso del template con `/bin/sh: line 1: pip: command not found` (exit **127**): al2023-minimal sólo trae `python3 -m pip` (`image/Dockerfile` usa `python3 -m pip install --no-cache-dir --break-system-packages`). `pip_install()`/`pipInstall()` compilan ahora a esa misma orden (`PIP_INSTALL_COMMAND`). Tras el cambio, e2e Python 4 passed (build correcto 190 s, `RUN` fallido 105 s con step/command/exit_code, `ready_cmd` `exit 1` → `ready_server_error` en 214 s) y TypeScript 4 passed (209 s, 105 s, 218 s). |
@@ -980,20 +989,273 @@ campaña de medición EFS-1..EFS-20.
 
 ## 23. Mountpoint y S3 (`m15-s3-mounts`)
 
-Pendiente: `m15-s3-mounts` documenta aquí las banderas de `mount-s3` y el
-contrato de credenciales IMDS del daemon FUSE.
+**No es una llamada a la API de control de AWS**: `mounts=` no añade
+ninguna operación `lambda-microvms` nueva. Lo que sigue es el contrato del
+binario `mount-s3` (Mountpoint for Amazon S3, `awslabs/mountpoint-s3`) que
+`rayd` lanza dentro del guest, y de IMDS, que `mount-s3` consulta por su
+cuenta.
 
-## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
+**Distribución del binario**: los repos dnf de AL2023 se quedan en
+`mount-s3` 1.22.3 (Q80); AWS publica cada versión como RPM/DEB/tar.gz
+firmado en `s3.amazonaws.com/mountpoint-s3-release/<versión>/<arch>/...`
+(releases de `awslabs/mountpoint-s3` en GitHub). `image/Dockerfile` clava
+la versión exacta (`1.24.0`, arm64) y su sha256
+(`3636465c56908c7f26182d6f31aaa77e4e145330833863104f4cca0db1788343`,
+calculado sobre el RPM descargado el 2026-10-01), verificado con
+`sha256sum -c` antes de `rpm -i` sobre el fichero local — el mismo
+patrón que `scripts/check_pins.py` exige para el binario de Deno de
+`rayito-base-poly`. **No `dnf install <fichero>.rpm`**: el `dnf` de
+`al2023-minimal` es `microdnf`, que rechaza un RPM local con
+`error: No package matches '/tmp/mount-s3.rpm'` (Q100); las dependencias
+del RPM (`fuse`, `fuse-libs`; libc/libgcc y `ca-certificates` ya están
+en la base) se instalan antes con `dnf` y `rpm -i` sigue comprobándolas.
 
-Pendiente: `m15-sizes-catalog` documenta aquí `GetMicrovmImageVersion`
-(lectura de `resources[0].minimumMemoryInMiB`) y las oleadas de
-`create-microvm-image --sizes`.
+**Invocación**: `mount-s3 --foreground <bucket> /dev/fd/3 --allow-other
+--uid 1000 --gid 1000 [--prefix <p>] [--read-only | --allow-overwrite
+--allow-delete]`. `--allow-other` es obligatorio aunque las opciones del
+`mount(2)` ya lleven `allow_other`: sin él la sesión FUSE de Mountpoint
+sólo atiende a su propio uid (990) y todo acceso de uid 1000 es `EACCES`
+(Q101). `/dev/fd/3` es el
+descriptor que `rayd` ya adjuntó a `mount_path` con `mount(2)` (ABI de FUSE
+del kernel: `fd=<n>,rootmode=040000,user_id=1000,group_id=1000,allow_other`;
+el destino es `/proc/self/fd/<dirfd>` del directorio abierto componente a
+componente con `O_NOFOLLOW`, nunca la ruta: uid 1000 podría haberla
+cambiado por un enlace simbólico), así que
+`mount-s3` nunca hace su propio `mount(2)`: sólo habla el protocolo FUSE
+sobre el descriptor que se le pasa. `--read-only` sin escritura es el
+valor por defecto de `S3Mount`; `--allow-overwrite`/`--allow-delete` sólo
+se pasan con `read_only=False`.
+
+**Credenciales**: `mount-s3` resuelve las credenciales del execution role
+por su **propia** llamada a IMDS (`http://169.254.169.254`, perfil del rol
+vía `AWS_CONTAINER_CREDENTIALS_*`/IMDSv2 estándar de sus propios SDKs de
+Rust), nunca por algo que `rayd` le pase en argv o en entorno. Esto
+funciona porque `rayd` lo lanza como el usuario de sistema dedicado
+`rayito-mount` (uid/gid 990, `image/Dockerfile`), que queda **fuera** del
+rango `uidrange 1000-65535` que la regla de IMDS de M6 blackholea para el
+sandbox (`ip rule add uidrange 1000-65535 lookup 100` + ruta `blackhole`):
+uid 990 nunca entra en esa regla, así que su tráfico a
+`169.254.169.254` sigue la ruta por defecto sin pasar por la tabla 100.
+`AWS_REGION` sí se le pasa explícitamente (de la región de la propia
+plataforma, el mismo valor que ya usa `adapters::s3_store` para la
+persistencia de ADR-009); `PATH` es el único otro valor del entorno.
+
+**IAM (acotado por prefijo)**: `infra/s3-mounts.yaml` concede
+`s3:ListBucket` acotado por un `s3:prefix` condicional (parámetro
+`Prefixes`, comodines IAM: `team7/*`) y `s3:GetObject` (más
+`s3:PutObject`/`s3:DeleteObject`/`s3:AbortMultipartUpload` con
+`ReadOnly=false`) sobre ARNs de objeto que llevan el prefijo
+(`arn:<partición>:s3:::<Bucket>/team7/*`): un ARN de objeto sí admite un
+prefijo, así que un sandbox que sólo debe escribir `runs/42/` no puede
+sobrescribir ni borrar objetos de otro prefijo aunque el guest ignorase
+`mount-s3 --prefix`. CloudFormation sin transform no tiene un "map" por
+elemento sobre un `CommaDelimitedList` (`Fn::ForEach` exige
+`AWS::LanguageExtensions` y `CAPABILITY_AUTO_EXPAND`, que `OptionalStack`
+nunca pide), así que la plantilla rellena la lista con su primer elemento
+hasta 4 huecos y elige cada uno con `Fn::Select`: hasta 4 prefijos por
+pila (otra pila para más); con menos, un ARN repetido es la misma
+concesión. `AbortMultipartUpload` está porque la política de ejemplo que
+AWS publica para Mountpoint lo incluye: sin él, una subida grande que
+falla a medias deja partes multipart huérfanas facturando almacenamiento
+indefinidamente. La plantilla crea un `AWS::IAM::ManagedPolicy`, así que
+`deploy()` pide `CAPABILITY_IAM`.
+
+**Tamaño de imagen (Q100)**: `fuse` + `fuse-libs` (paquetes AL2023,
+1,3 MB) y el RPM de `mount-s3` 1.24.0 de AWS: **72 677 112 B instalados**
+(Q80 estimaba +22,4 MB con el paquete 1.22.3 de AL2023, que ocupa 6,4×
+menos).
+
+**Medido en AWS real (2026-10-02, Q100–Q104)**: lectura y escritura,
+`create()` que sólo vuelve con cada montaje `mounted`, uid 1000 sin acceso
+a `environ` ni a matar el daemon, `invalid_path` ante un enlace simbólico,
+`pause()`/`resume()` con el montaje vivo, `allow_internet_access=False`,
+`MountException`/`UnimplementedError` con el VM terminado y 0 procesos
+`<defunct>` tras cinco ciclos de montar/desmontar/relanzar.
+
+## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`, **contrato de parámetros**)
+
+El catálogo cerrado de `SUPPORTED_MEMORY_MIB` (512/1024/2048/4096/8192
+MiB) y el guardarraíles IAM de `infra/sizes-guard.yaml` sólo usan los
+parámetros de `GetMicrovmImageVersion` y el campo `Resource` de una
+política IAM; la regla dura 1 vale también aquí. Nombres verificados
+contra `docs/aws-api/model_summary.md` (generado del modelo
+`lambda-microvms` 2025-09-09) y contra el paquete
+`@aws-sdk/client-lambda-microvms` instalado (`GetMicrovmImageVersionCommand`
+exportado, confirmado con `node -e` el 2026-09-30, sin red).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier` (el ARN ya resuelto), `imageVersion` (el `template_version`/`templateVersion` que devolvió `RunMicrovm`, en `ConventionCatalog`; o el `latestActiveImageVersion` que devolvió `ListMicrovmImages`, en `cli/image.py`'s `active_code_artifact`) | `resources[0].minimumMemoryInMiB` (lo único que lee `ConventionCatalog`); `codeArtifact.uri` (lo único que lee `active_code_artifact` para `sameArtifact`, ver abajo) | `lambda:GetMicrovmImageVersion` (en CloudTrail; no aparece en `apiTps` porque el servicio no le fija una cuota propia) | `docs/aws-api/model_summary.md` §`GetMicrovmImageVersion` |
+
+`GetMicrovmImageVersion` no se llama nunca durante `create()`/`Sandbox.create()`:
+sólo la hace, y como mucho una vez por `(imageArn, imageVersion)` y por
+proceso (`ConventionCatalog`, cacheada), `get_info()`/`getInfo()` cuando el
+sandbox se lanzó con `size=`/`size`. Sin esa opción, cero llamadas nuevas:
+golden test de M15 foundations. La CLI (`rayito image sizes`) la llama por
+su cuenta, fuera del SDK en marcha: una vez por imagen ya publicada (la
+columna `sameArtifact`, code review de PR #76 #2), sin caché entre
+invocaciones de la CLI (cada invocación es un proceso nuevo) y sin lanzar
+ningún sandbox — gratis por la misma ausencia de cuota en `apiTps`.
+
+**Tamaños aceptados por `create-microvm-image` (Q87, medido 2026-09-30,
+`rayito-base`).** 512, 1024, 2048, 4096 y 8192 MiB construyen; 256, 3072,
+10240 y 16384 fallan con `ValidationException` **síncrona, sin crear
+ninguna imagen**: `"The requested memory size of N MiB is not supported by
+base MicroVM image arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1.
+Supported memory sizes in MiB are: [512, 1024, 2048, 4096, 8192]."` El
+modelo limita `resources` a un elemento (`ResourcesList` `max: 1`): un
+tamaño por versión, de ahí que `rayito image publish --sizes` publique una
+*versión de imagen* (nombre `<variant>-<size>`) por tamaño, no una sola
+versión con varios tamaños.
+
+**Guest vs. imagen, medido para los cinco tamaños (RES-2/Q88, confirma el
+punto suelto de Q61/Q68 para 2048 MiB).** `SandboxInfo.memory_mb`/`memoryMb`
+(el `MemTotal` real del guest, leído de `Health`) no es
+`minimumMemoryInMiB`: el guest ve memoria/512 vCPU (`nproc`) y hasta ≈4x la
+memoria nominal (`GUEST_MEMORY_MULTIPLIER` en `limits.json`) en los cinco
+tamaños:
+
+| `minimumMemoryInMiB` | vCPU del guest | `MemTotal` del guest | Disco raíz ext4 |
+|---|---|---|---|
+| 512 | 1 | 1 989 MiB | 8,3 GB |
+| 1024 | 2 | 3 998 MiB | 8,3 GB |
+| 2048 | 4 | 8 016 MiB | 8,3 GB |
+| 4096 | 8 | 16 052 MiB | 16,7 GB |
+| 8192 | 16 | 32 123 MiB | 33,6 GB |
+
+`_sizing.baseline_cpu_for`/`sizing.ts baselineCpuFor` codifica esta
+proporción (512 MiB por vCPU, `MIB_PER_VCPU_Q88`): medida para los cinco
+valores del catálogo, no una extrapolación. `/dev/shm` es 64 MiB en los
+cinco tamaños; el snapshot de memoria de una misma imagen mínima crece con
+el tamaño (446 MB a 512, 503 a 1024, 597 a 2048, 782 a 4096, 1 146 a 8192
+MiB), así que cada tamaño adicional publicado cuesta más almacenamiento de
+snapshot aun siendo la misma imagen.
+
+**Guardarraíles de coste por ARN (Q90, `sizes-guard`).** `lambda:RunMicrovm`
+acepta `Resource` con el ARN de una *imagen* (sin versión): una política
+IAM (`RayitoRunAllowedSizes`, `infra/sizes-guard.yaml`) con
+`Resource: [<ARN de cada imagen publicada y permitida>]` restringe qué
+tamaños puede lanzar una identidad, sin tocar ninguna imagen existente.
+`sizes-guard` es `CAPABILITY_IAM` (crea una `AWS::IAM::ManagedPolicy`, nada
+más): $0 en reposo y por uso.
+
+**Aceptación en AWS real (2026-10-02, PR #76, imágenes desechables
+`<nombre>`, `<nombre>-512mb`, `<nombre>-4gb`, ya borradas).**
+
+- **Q118 — `ListMicrovmImageVersions` no devuelve `environmentVariables`.**
+  Los items de la lista traen `baseImageArn`, `baseImageVersion`,
+  `buildRoleArn`, `codeArtifact`, `cpuConfigurations`, `createdAt`,
+  `description`, `egressNetworkConnectors`, `hooks`, `imageArn`,
+  `imageVersion`, `logging`, `resources`, `state`, `status` y `updatedAt`;
+  sólo `GetMicrovmImageVersion` añade `environmentVariables`. Consecuencia
+  medida antes del arreglo: repetir el mismo `rayito image publish --sizes
+  512mb,4gb --env K=V` construyó una versión nueva de las tres imágenes en
+  vez de reutilizarlas (cada imagen con sufijo hornea siempre
+  `RAYITO_BASELINE_MEMORY_MIB`, así que ningún `--sizes` reutilizaba
+  nunca). Con el arreglo (`_publish.echoed_environment_variables`: una
+  `GetMicrovmImageVersion` por candidata, de la más nueva a la más
+  antigua, sólo si la publicación lleva variables) la misma invocación
+  reutilizó las tres en 5 s. Sin `--env` ni `--sizes` el reuse sigue
+  siendo el de 0.5.x (sólo la lista, ninguna llamada nueva).
+- **Q119 — `sizes-guard` aplicado de verdad.** Con la política desplegada
+  por `rayito stack deploy sizes-guard --param ImageArns=<ARN sin versión
+  del baseline>,<ARN sin versión de -4gb>` adjunta a un rol de prueba que
+  además tenía `lambda:*` sobre `*`: `RunMicrovm` de `-512mb` (no listado)
+  → `AccessDeniedException` "... on resource: <ARN sin versión de la
+  imagen> with an explicit deny in an identity-based policy"; `-4gb` y el
+  baseline (listados) arrancan. Sin la política, el mismo rol lanzó
+  `-512mb` (control). Confirma Q90: `RunMicrovm` autoriza sólo contra el
+  ARN de imagen sin versión, así que el `NotResource` del Deny no bloquea
+  ningún otro recurso de la petición.
+- **Un tamaño no publicado** (`size="8gb"` sin `-8gb`): el SDK resuelve el
+  nombre en cliente y `RunMicrovm` lo rechaza de forma síncrona,
+  `SandboxNotFoundException`/`SandboxNotFoundError` "No active version
+  found for MicroVM image <ARN de -8gb>": ningún MicroVM se crea.
+- **Variables de imagen y comandos.** `environmentVariables` (las de
+  `--env` y `RAYITO_BASELINE_MEMORY_MIB`) no aparecen en el entorno de
+  `commands.run` (uid 1000) ni en el de su shell; `/proc/1/environ` (rayd,
+  root) no es legible para uid 1000. Son información declarada de la
+  imagen, legible con `GetMicrovmImageVersion`, no un canal hacia el
+  código de usuario.
+- Resto, sin sorpresas: `size="4gb"` → `RunMicrovm` + `CreateMicrovmAuthToken`
+  en `create()` (ninguna `GetMicrovmImageVersion`), una sola en el primer
+  `get_info()`/`getInfo()` y ninguna en el segundo; guest `nproc` 8 y
+  `MemTotal` 16 052 MiB (Q88); `SizeRequest(memory_mib=300)`/`{ memoryMib:
+  300 }` → `512mb` con `RayitoCompatWarning`; 9000 MiB, `"3gb"` y ARN +
+  `size` → `InvalidArgumentException`/`InvalidArgumentError` con cero
+  llamadas a AWS; `rayito image sizes --image-name <nombre>` → `sameArtifact:
+  true` para los dos tamaños; tres builds en 206 s (baseline primero, los
+  dos tamaños en paralelo después).
 
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 
-Pendiente: `m15-events-webhooks` documenta aquí la suscripción de
-CloudWatch Logs, la tabla DynamoDB de eventos/webhooks y la regla de
-EventBridge Scheduler del reconciliador.
+**CloudWatch Logs** (`infra/events-webhooks.yaml`): `AWS::Logs::SubscriptionFilter`
+sobre `LogGroupName` (parámetro — el mismo log group que `logging="cloudwatch"`
+ya usa), destino el *forwarder* Lambda, `FilterPattern` literal `"rayito.event.v1 "`
+(sólo líneas de evento, nunca el resto del log de `rayd`). El payload que
+recibe el handler es `{"awslogs": {"data": "<base64(gzip(json))>"}}`
+(`CloudWatchLogsDecodedData`: `logGroup`, `logStream`, `logEvents[].message`).
+El *log stream* de runtime de un MicroVM se llama
+`YYYY/MM/DD[<imageVersion>]<microvmId>` (Q106): el forwarder exige que
+`logStream` termine en `]<sandbox_id>` del evento firmado, para que una VM
+no pueda reivindicar el `sandbox_id` de otra aunque calculase un MAC válido
+para sí misma (medido en Q107). La línea `paused` llega a CloudWatch antes
+del checkpoint (Q106). El valor de retorno del handler no queda en ningún
+log (lo descarta CloudWatch Logs), así que el forwarder imprime una línea
+JSON por invocación con `forwarded`, `rejected` y `rejected_by_reason`
+(sólo los `REASON_*` cerrados); el reconciliador, `{"synthesized": N}`.
+`/terminate` llega en `RUNNING` (también al vencer
+`maximumDurationInSeconds`, con `kill_reason: "request"`) pero no en
+`SUSPENDED`, donde el `killed{unknown}` lo pone el reconciliador (Q105).
+En una organización con políticas de etiquetas el despliegue necesita
+`tags=` (Q108).
+
+**DynamoDB** (tabla única, on-demand, `StreamViewType: NEW_IMAGE`; diseño de
+claves en `infra/lambdas/events_webhooks/domain/schema.py`, duplicado a
+propósito en `clients/python/src/rayito/_lifecycle_events/_dynamodb.py` — un
+zip de Lambda y el SDK son artefactos desplegables distintos): `PutItem`
+condicional (forwarder: evento idempotente, `attribute_not_exists(pk)`; la
+fila `STATE#<sandbox_id>` sólo avanza — `last_kind <> killed AND
+last_seen_ms <= :seen` — y `killed` queda como lápida con TTL; deliverer:
+`delivery_status` de cada entrega, reclamable salvo `delivered`), `Query`
+(deliverer: webhooks por tipo; SDK: `get_events` por sandbox o por el GSI
+`gsi1` para todos, con `FilterExpression` sobre `kind` y paginación por
+`LastEvaluatedKey`; `list_webhooks`), `DeleteItem` (SDK: `delete_webhook`),
+`Scan` (reconciliador: sandboxes abiertos — `FilterExpression` sobre
+`STATE#` y `last_kind <> killed`, volumen acotado por la concurrencia de
+MicroVMs de la cuenta y los 7 días de TTL de las lápidas),
+`GetRecords`/`GetShardIterator`/`DescribeStream`/`ListStreams` (el
+*event source mapping* del deliverer sobre el stream de la tabla, con
+`FunctionResponseTypes: [ReportBatchItemFailures]`,
+`BisectBatchOnFunctionError` y destino `OnFailure` una cola SQS:
+`sqs:SendMessage` en el rol del deliverer).
+
+**Secrets Manager**: `GetSecretValue` sobre el secreto HMAC del stack
+(forwarder, y el SDK para derivar `k_sbx`) y sobre cada secreto de webhook
+bajo `rayito/webhooks/` (deliverer). Nunca `CreateSecret`/`PutSecretValue`
+desde esta pila: el secreto de un webhook se crea aparte, con
+`SecretStore(prefix="rayito/webhooks/")`.
+
+**EventBridge Scheduler**: una `AWS::Scheduler::Schedule`,
+`rate(ReconcilerIntervalMinutes minutes)` (5 por defecto; mínimo 2 porque
+Scheduler sólo acepta `rate(1 minute)` en singular para 1), destino el
+*reconciler* Lambda vía un rol propio con sólo `lambda:InvokeFunction` sobre
+esa función.
+
+**`lambda-microvms` desde el reconciliador** (decisión 8 de la arquitectura
+M15): el runtime gestionado de Lambda no conoce este servicio, así que
+`scripts/gen_stack_assets.py` inyecta `docs/aws-api/service-2.json` en el
+zip como `models/lambda-microvms/<apiVersion>/service-2.json`. El handler
+construye el cliente desde una sesión botocore propia con `data_path` a ese
+directorio (fijado antes de que exista su *loader*, que lee `data_path` una
+sola vez al crearse), y la plantilla fija además `AWS_DATA_PATH`.
+`ListMicrovms` (paginado por `nextToken`, acción IAM `lambda:ListMicrovms`,
+§10) — el campo `microvmId` de cada `items[]` es el `sandbox_id` del resto
+del SDK; un `state` `TERMINATING`/`TERMINATED` cuenta como no vivo.
+
+**IAM del llamante** (`EventsOperatorPolicy`): `dynamodb:PutItem`/`Query`/
+`DeleteItem` sobre la tabla y `…/index/gsi1`, `cloudformation:DescribeStacks`
+sobre la pila y `secretsmanager:GetSecretValue` sobre el secreto del stack.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 
@@ -1068,9 +1330,45 @@ ciclo de vida sobre `rayito/templates/` es del cliente.
 
 ## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
 
-Pendiente: `m15-secrets-gateway` documenta aquí cómo reutiliza
-`infra/secrets-access.yaml` (sin plantilla propia) y el contrato interno
-del listener de loopback.
+`gateways=`/`gateways` no añade ninguna operación de AWS nueva: cada
+cabecera de `SecretGateway.headers` es un nombre (o `SecretRef`) que
+`GatewaySection.fill` resuelve con la misma `SecretCache`/`GetSecretValue`
+de §19, justo antes de cada `Configure` (un acierto de caché no llama a
+AWS). No hay plantilla propia: la función reutiliza
+`infra/secrets-access.yaml` y la política `RayitoSecretsReader` sin
+cambios, porque quien lee Secrets Manager es siempre el SDK con las
+credenciales del llamante — `rayd` nunca tiene credenciales de AWS propias
+para esta función y no las necesita.
+
+El contrato interno (sin AWS: `ConfigureSandbox`, ya documentado en
+ADR-015) es lo que cambia de verdad:
+
+| Mensaje | Campo | Contrato |
+|---|---|---|
+| `SecretGatewayConfig.routes[].headers` | `map<string, string>` | Clave = nombre de cabecera HTTP tal cual se manda; valor = el secreto ya resuelto (nunca un nombre ni un ARN). Validado por `SecretValue::header_safe` (rechaza CR/LF/NUL) antes de construir cualquier cabecera saliente. |
+| `SecretGatewayRoute.upstream` | `string` | `https://host` exacto, sin ruta/query/fragmento (se añaden por petición). Validado en el dominio (`GatewaySpec::parse`) antes de que `rayd` abra el listener. |
+| `SecretGatewayRouteStatus.port` | `uint32` | El puerto real que `rayd` acaba de enlazar en `127.0.0.1` (elegido por el SO, `bind(0)`); nunca se repite entre rutas de un mismo `Configure`. |
+| `SecretGatewayRouteStatus.last_error_class` | `string` | Una de las clases cerradas de `GatewayErrorClass` (`not_allowed`, `rate_limited`, `upstream_unreachable`, `upstream_timeout`, `upstream_error`); vacío si la ruta no ha fallado todavía. |
+
+No hay IAM nuevo (reutiliza `RayitoSecretsReader` de §19) ni un cliente AWS
+nuevo del lado de `rayd`: el único cliente que esta función añade es el
+`hyper`/`rustls` HTTPS genérico hacia el `upstream` declarado, que no es
+una API de AWS.
+
+**Aceptación en AWS real (2026-10-02)**, imagen `rayito-base` con el `rayd`
+de esta rama, eco `https://postman-echo.com`: las e2e de Python y
+TypeScript pasan (inyección y anti-suplantación, 403 fuera de `allow` y con
+`..`/`%2e%2e`, 429, rotación con el mismo puerto, SEC-10). SEC-7: subidas de
+1, 16, 64 y 96 KiB, troceadas o con `Content-Length`, atraviesan la
+pasarela con 200; la mediana de `time_total` (3 muestras) fue 17–31 ms por
+la pasarela frente a 35–46 ms en directo, es decir, la pasarela no añade
+latencia medible (reutiliza la conexión TLS al upstream; `curl` directo
+abre una por petición). El eco responde 500 a 128 KiB también en directo:
+es su límite de cuerpo, no el de la pasarela. Sin `gateways=` el SDK hace
+exactamente las mismas operaciones de AWS que 0.5.x (`RunMicrovm`,
+`CreateMicrovmAuthToken`, `TerminateMicrovm`; cero llamadas a Secrets
+Manager) y el guest tiene los mismos listeners. Pendiente de SEC-7: SSE de
+una API LLM real (necesita una clave de proveedor; no se midió).
 
 ## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
 

@@ -23,11 +23,44 @@ Pendiente, tras la campaña de medición EFS-1..EFS-20.
 
 ## Tamaños (`m15-sizes-catalog`)
 
-Pendiente.
+Catálogo cerrado de cinco tamaños (512mb/1gb/2gb/4gb/8gb, Q87), apagado
+por defecto: `Sandbox.create(size="4gb")`/`Sandbox.create({ size: "4gb" })`
+resuelve en cliente, sin ningún RPC, redondeando siempre hacia arriba y
+avisando si no encaja exacto. `rayito image publish --sizes 512mb,4gb`
+publica, desde el mismo artefacto, una imagen adicional por tamaño.
+`get_info()`/`getInfo()` confirma el tamaño real con una única llamada
+cacheada a `GetMicrovmImageVersion` (`baseline_memory_mib`/`baselineMemoryMib`,
+`baseline_cpu`/`baselineCpu`, medido exactamente para los cinco tamaños).
+Guardarraíles de coste opcional `rayito stack deploy sizes-guard`.
+Pendiente: aceptación en AWS real (SZ-1 y siguientes, MILESTONES.md).
 
 ## Eventos y webhooks (`m15-events-webhooks`)
 
-Pendiente.
+`rayd` emite `created`/`paused`/`resumed`/`killed` firmados por HMAC en su
+propio stdout, sólo cuando `ConfigureSandbox` trae una clave por sandbox
+(derivada y empujada por el SDK; `rayd` nunca ve el secreto del stack). Una
+pila opcional (`infra/events-webhooks.yaml`) los verifica, guarda en
+DynamoDB (TTL 7 días) y entrega a tus webhooks con firma compatible con
+E2B, con un guardián SSRF y sin perder entregas (reclamo `attempting` →
+`delivered`/`failed`, reintento sólo ante 5xx, presupuesto de tiempo por
+invocación). Un reconciliador (cada `ReconcilerIntervalMinutes`, 5 por
+defecto) sintetiza `killed{unknown}` para sandboxes que `ListMicrovms` ya no
+reporta. Nuevo: `LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/
+`destroy`, `register_webhook`/`list_webhooks`/`delete_webhook`/
+`get_events`), CLI `rayito events`. Apagado por defecto.
+
+**Pendiente de la aceptación contra AWS real:** CP-4/CP-5 (si `/terminate`
+llega siempre y si las líneas de `/suspend` alcanzan CloudWatch a tiempo),
+el supuesto del forwarder sobre el nombre del *log stream*, y el flujo de
+extremo a extremo (entrega firmada, línea forjada descartada, `killed`
+sintetizado). Ver `AWS_API_NOTES.md` §25 y `ADR-020`.
+
+**Hueco de integración conocido:** `Sandbox.create(events=...)` valida la
+opción (un `LifecycleEvents` y `logging` con CloudWatch) y sigue lanzando
+`UnimplementedError`: la sección necesita `sandbox_id`, que sólo existe tras
+`run-microvm`, y `create()` todavía no envía `FeaturePlan.configure_sections`
+tras el primer `Health`. Hasta entonces ningún sandbox emite eventos. Ver
+`ADR-020`.
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 

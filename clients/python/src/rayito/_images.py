@@ -19,12 +19,14 @@ aquí aparece literalmente en `AWS_API_NOTES.md` §4/§27.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final, Protocol
 
 from botocore.exceptions import ClientError
+
+from rayito._sizing import BASELINE_MEMORY_MIB
 
 #: Cadencia de sondeo del gate de tres estados; igual en ambos llamantes
 #: desde que este módulo existe (antes, dos constantes idénticas).
@@ -33,9 +35,10 @@ POLL_INTERVAL_SECONDS: Final = 10.0
 #: dar el build por parado (no fallido: ver `wait_for_gate`'s `timed_out`).
 DEFAULT_BUILD_TIMEOUT_SECONDS: Final = 1800.0
 #: `minimumMemoryInMiB` por defecto cuando el llamante no pide uno
-#: (`rayito image publish --memory-mib`/`Template.build(memory_mb=)`);
-#: `_limits.SUPPORTED_MEMORY_MIB` fija el catálogo cerrado (RES-1).
-DEFAULT_MEMORY_MIB: Final = 2048
+#: (`rayito image publish --memory-mib`/`Template.build(memory_mb=)`): el
+#: baseline del catálogo cerrado de tamaños (`_sizing.BASELINE_MEMORY_MIB`,
+#: m15-sizes-catalog), la imagen sin sufijo de `--sizes`.
+DEFAULT_MEMORY_MIB: Final = BASELINE_MEMORY_MIB
 #: Imagen lista para `run-microvm` tras un build (`publish`/`Template.build`).
 LAUNCHABLE_IMAGE_STATES: Final = frozenset({"CREATED", "UPDATED"})
 #: Imagen que ya no va a terminar: un `update-microvm-image` sobre una
@@ -55,6 +58,9 @@ SUCCESSFUL_VERSION_STATE: Final = "SUCCESSFUL"
 #: Clave cuyo valor se compara con normalización Q52 (`1` == `1.0`), no con
 #: `==` puro: ver `base_image_version_matches`.
 BASE_IMAGE_VERSION_KEY: Final = "baseImageVersion"
+#: Clave que `list-microvm-image-versions` nunca devuelve (Q118): sólo
+#: `get-microvm-image-version` la trae, ver `echoed_environment_variables`.
+ENVIRONMENT_VARIABLES_KEY: Final = "environmentVariables"
 #: Prefijo del grupo de logs de cada imagen (`/rayito/<nombre>`), el mismo
 #: para `rayito image publish` y `Template.build()` (`AWS_API_NOTES.md` §27;
 #: `infra/templates.yaml` `ImageLogGroupPrefix` lo repite como default).
@@ -76,7 +82,7 @@ INHERITED_CONFIGURATION_KEYS: Final = (
     BASE_IMAGE_VERSION_KEY,
     "buildRoleArn",
     "cpuConfigurations",
-    "environmentVariables",
+    ENVIRONMENT_VARIABLES_KEY,
     "additionalOsCapabilities",
     "hooks",
     "egressNetworkConnectors",
@@ -223,28 +229,99 @@ def value_matches(key: str, echoed: Any, desired: Any) -> bool:
     return bool(echoed == desired)
 
 
-def configuration_matches(version: dict[str, Any], desired: dict[str, Any]) -> bool:
-    return all(value_matches(key, version.get(key), value) for key, value in desired.items())
+def environment_variables_match(echoed: Any, desired: Mapping[str, str]) -> bool:
+    """Una versión sin `environmentVariables` (nunca las tuvo, o viene de
+    `list-microvm-image-versions`, que nunca las devuelve: Q118) cuenta
+    como `{}`, igual que un `desired` vacío."""
+    return dict(echoed or {}) == dict(desired)
+
+
+def settings_match(version: dict[str, Any], desired: dict[str, Any]) -> bool:
+    """Cada clave de `desired` salvo `environmentVariables`, que
+    `configuration_matches`/`find_reusable_version` comparan aparte."""
+    return all(
+        value_matches(key, version.get(key), value)
+        for key, value in desired.items()
+        if key != ENVIRONMENT_VARIABLES_KEY
+    )
+
+
+def wanted_environment_variables(
+    desired: dict[str, Any], environment_variables: Mapping[str, str] | None
+) -> Mapping[str, str]:
+    """Las variables que la versión reutilizada debe llevar: las que el
+    llamante pase, o si no las de `desired` (que sólo lleva la clave cuando
+    no está vacía, así la petición a AWS sin variables es la de 0.5.x)."""
+    if environment_variables is not None:
+        return environment_variables
+    return dict(desired.get(ENVIRONMENT_VARIABLES_KEY) or {})
+
+
+def configuration_matches(
+    version: dict[str, Any],
+    desired: dict[str, Any],
+    environment_variables: Mapping[str, str] | None = None,
+) -> bool:
+    wanted = wanted_environment_variables(desired, environment_variables)
+    if not environment_variables_match(version.get(ENVIRONMENT_VARIABLES_KEY), wanted):
+        return False
+    return settings_match(version, desired)
+
+
+def echoed_environment_variables(
+    clients: ImageBuildClients,
+    arn: str,
+    item: dict[str, Any],
+    environment_variables: Mapping[str, str],
+) -> Any:
+    """Las `environmentVariables` con que se construyó una versión listada.
+    `list-microvm-image-versions` nunca devuelve la clave, sólo
+    `get-microvm-image-version` (Q118, `AWS_API_NOTES.md` §24): sin esto,
+    cada build con variables (toda imagen de `--sizes` hornea
+    `RAYITO_BASELINE_MEMORY_MIB`) se reconstruía en vez de reutilizarse. La
+    llamada extra (sin cuota `apiTps` propia) sólo ocurre cuando se piden
+    variables; sin ellas el item de la lista vale tal cual, el reuso (y las
+    llamadas) de 0.5.x."""
+    if not environment_variables:
+        return item.get(ENVIRONMENT_VARIABLES_KEY)
+    response = clients.microvms.get_microvm_image_version(
+        imageIdentifier=arn, imageVersion=str(item["imageVersion"])
+    )
+    return response.get(ENVIRONMENT_VARIABLES_KEY)
 
 
 def find_reusable_version(
-    clients: ImageBuildClients, arn: str, desired: dict[str, Any]
+    clients: ImageBuildClients,
+    arn: str,
+    desired: dict[str, Any],
+    environment_variables: Mapping[str, str] | None = None,
 ) -> str | None:
     """La versión lanzable más reciente que ya tiene exactamente `desired`
-    (artefacto y configuración): reusarla evita un build y una semana más
-    de almacenamiento de snapshot. `None` si no hay ninguna."""
+    (artefacto, configuración y variables): reusarla evita un build y una
+    semana más de almacenamiento de snapshot. Las candidatas que coinciden
+    en todo lo demás se comprueban de la más nueva a la más vieja, así las
+    variables se confirman con las mínimas llamadas a
+    `get-microvm-image-version` (`echoed_environment_variables`). `None` si
+    no hay ninguna."""
+    wanted = wanted_environment_variables(desired, environment_variables)
     paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    matches = [
-        item
-        for page in paginator.paginate(imageIdentifier=arn)
-        for item in page["items"]
-        if item["state"] == SUCCESSFUL_VERSION_STATE
-        and item["status"] == ACTIVE_VERSION_STATUS
-        and configuration_matches(item, desired)
-    ]
-    if not matches:
-        return None
-    return str(max(matches, key=lambda item: item["createdAt"])["imageVersion"])
+    candidates = sorted(
+        (
+            item
+            for page in paginator.paginate(imageIdentifier=arn)
+            for item in page["items"]
+            if item["state"] == SUCCESSFUL_VERSION_STATE
+            and item["status"] == ACTIVE_VERSION_STATUS
+            and settings_match(item, desired)
+        ),
+        key=lambda item: item["createdAt"],
+        reverse=True,
+    )
+    for item in candidates:
+        echoed = echoed_environment_variables(clients, arn, item, wanted)
+        if environment_variables_match(echoed, wanted):
+            return str(item["imageVersion"])
+    return None
 
 
 @dataclass(frozen=True)

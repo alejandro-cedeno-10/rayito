@@ -19,8 +19,10 @@ pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
 pub mod fs_template_spec;
+pub mod fuse_device;
 pub mod imds_block;
 pub mod ip_command;
+pub mod mount_s3;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
@@ -33,6 +35,7 @@ pub mod shell_ready_probe;
 pub mod sidecar_process;
 pub mod signed_http;
 pub mod std_filesystem;
+pub mod stdout_event_sink;
 pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
@@ -43,11 +46,13 @@ pub use credential_broker::{
 };
 pub use fs_identity::FsIdentityGuard;
 pub use fs_template_spec::{FsTemplateSpecSource, TemplateSpecSource};
+pub use fuse_device::LinuxFuseDevice;
 pub use imds_block::{
     IMDS_ADDRESS, IMDS_VERIFY_BUDGET, ImdsBlock, ImdsProbe, ImdsState, USER_PROBE_CODE,
     USER_PROBE_PROGRAM, UserConnectProbe, install_imds_block, probe_root, rule_present,
     verify_imds_block,
 };
+pub use mount_s3::{MOUNT_S3_BINARY, MOUNT_USER_GID, MOUNT_USER_UID, TokioMountS3Daemon};
 #[cfg(unix)]
 pub use name_resolver::NixNameResolver;
 pub use name_resolver::{NumericNameResolver, PlatformNameResolver};
@@ -74,6 +79,7 @@ pub use signed_http::{FilteringResolver, HyperSignedHttp, SignedHttpInitError};
 pub use std_filesystem::PlatformFileSystem;
 #[cfg(unix)]
 pub use std_filesystem::StdFileSystem;
+pub use stdout_event_sink::StdoutEventSink;
 pub use tar_archiver::PlatformHomeArchiver;
 #[cfg(unix)]
 pub use tar_archiver::TarHomeArchiver;

@@ -24,6 +24,7 @@ use rayd::adapters::{
     install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
+use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
@@ -145,22 +146,13 @@ fn split_command(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(str::to_owned).collect()
 }
 
-/// The lifecycle participants of the 0.6 feature slots, each already past
-/// its `on_boot`. `FeatureContext.processes` is `template_start`'s own
-/// context (ADR-022): every other slot ignores it, so this is the one
-/// `FeatureSet` build that needs the real process manager;
-/// `grpc::router_with_transfers` builds its own, cheaper one for
-/// `ConfigureGrpc`, which never reads this slot. `on_boot` runs before the
-/// hooks server answers anything: the build-time `/ready` must already see
-/// a template's `start_cmd` running.
-async fn boot_participants(
-    processes: &Arc<PlatformProcessManager>,
-) -> Vec<Arc<dyn LifecycleParticipant>> {
-    let features = rayd::features::build(&rayd::features::FeatureContext {
-        processes: Some(processes.clone()),
-    });
-    let participants: Vec<Arc<dyn LifecycleParticipant>> =
-        features.template_start.participant().into_iter().collect();
+/// The process's `FeatureSet` participants, each already past its
+/// `on_boot`, which runs before the hooks server answers anything: the
+/// build-time `/ready` must already see a template's `start_cmd` running
+/// (`template_start`, ADR-022). Every other slot's `on_boot` is the
+/// trait's no-op.
+async fn boot_participants(features: &FeatureSet) -> Vec<Arc<dyn LifecycleParticipant>> {
+    let participants = features.participants();
     for participant in &participants {
         participant.on_boot().await;
     }
@@ -219,11 +211,19 @@ async fn main() -> anyhow::Result<ExitCode> {
     let transfers = transfer_services(&session, &files, &suspend);
     let (exit_reason, timeout) = deadline(&session, &shutdown, &suspend, &processes, &code)?;
 
+    // The process's one `FeatureSet` (ADR-015): `ConfigureService` applies
+    // sections to it, `Health.features` is derived from it and the hooks
+    // run its participants, so all three always see the same slots.
+    let features = Arc::new(rayd::features::build(&FeatureContext {
+        processes: Some(processes.clone()),
+        ..FeatureContext::default()
+    }));
+
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    let participants = boot_participants(&processes).await;
-    let grpc = rayd::grpc::router_with_transfers(
+    let participants = boot_participants(&features).await;
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes,
@@ -240,6 +240,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         },
         StreamSettings::default(),
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
@@ -256,10 +257,9 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // `template_start` is the only slot with a participant today
-            // (ADR-022); `Vec::new()` with no `template.json` baked in, or
-            // on a build older than this one, is what keeps `/suspend` and
-            // `/ready` identical to 0.5.x.
+            // Every slot's participant, each already past its `on_boot`
+            // (`boot_participants`); empty while no slot has one, which
+            // keeps every hook exactly as in 0.5.x.
             participants,
         }),
     )

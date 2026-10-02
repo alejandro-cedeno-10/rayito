@@ -22,11 +22,12 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from types import TracebackType
-from typing import Any, Final, Self
+from typing import TYPE_CHECKING, Any, Final, Self
 
 import boto3
 
 from rayito._aws import ControlPlane, PortSpec, control_plane_session
+from rayito._feature_options import FeatureOptions, plan_features
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import SandboxInfo
 from rayito._payload import generate_access_token
@@ -72,6 +73,9 @@ from rayito.sandbox_sync.pool import (
     parked_age_seconds,
     utc_now,
 )
+
+if TYPE_CHECKING:
+    from rayito._secret_gateway import SecretGateway
 
 logger = logging.getLogger("rayito.pool")
 
@@ -206,8 +210,10 @@ class AsyncSandboxPool:
         reconnect_timeout: float = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        gateways: Mapping[str, SecretGateway] | None = None,
     ) -> AsyncSandbox:
-        """Misma semántica que `SandboxPool.take`, `secrets=` incluido.
+        """Misma semántica que `SandboxPool.take`, `secrets=` y `gateways=`
+        incluidos.
 
         Coste y activación
         -------------------
@@ -219,7 +225,12 @@ class AsyncSandboxPool:
         Cómo apagarla: `secrets=None` y `secret_cache=None` (por defecto).
         Ejemplo:
             sbx = await pool.take(secrets={"OPENAI_API_KEY": "openai"})
+
+        `gateways=` abre la pasarela de secretos (ADR-023) en el sandbox
+        tomado; mismo coste, IAM y forma de apagarla (`gateways=None`, por
+        defecto) que en `SandboxPool.take`.
         """
+        feature_plan = plan_features(FeatureOptions(gateways=gateways))
         binding = await awarm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = await self._claim_ready_slot(wait)
         sandbox = (
@@ -231,6 +242,9 @@ class AsyncSandboxPool:
             sandbox = await self._fallback(ready_timeout, request_timeout, reconnect_timeout)
         if binding is not None:
             sandbox._secrets = binding
+        await sandbox._apply_configure_sections(
+            feature_plan.configure_sections, timeout=request_timeout, terminate_on_failure=True
+        )
         return sandbox
 
     def _default_secret_cache(self) -> SecretCache:

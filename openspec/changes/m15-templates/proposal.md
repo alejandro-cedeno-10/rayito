@@ -139,9 +139,10 @@ control plane of its own) is what this change builds.
   (the real slot and its `TemplateParticipant`), `hooks/mod.rs` (calls
   each participant's `on_run` after `/run`; `ReadyVerdict::Fail` answers
   500), `lifecycle/participants.rs` (default no-op `on_boot`),
-  `process/manager.rs` (`start_at_boot`), `main.rs` (calls `on_boot`, builds the
-  `FeatureSet` with the real `ProcessManager`), `grpc/health.rs`
-  (`AgentFeatures.template_start = true`).
+  `process/manager.rs` (`start_at_boot`), `main.rs` (calls every
+  participant's `on_boot` and builds the process's one `FeatureSet` with
+  the real `ProcessManager`); `Health.features.template_start` comes from
+  the slot's own `supported()` (`FeatureSet::agent_features`).
   No proto changes (templates has no `ConfigureSandbox` section; start/
   ready happens at boot from a file, not a per-sandbox RPC).
 - **Python**: new package `clients/python/src/rayito/_templates/`
