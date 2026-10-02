@@ -108,8 +108,21 @@
       `report`/`cleanup --run-id`; idempotent by tag
       (`rayito:measurement=efs-volumes`, `rayito:run-id`,
       `rayito:expires-at`); state under `$XDG_STATE_HOME/rayito-measure/`.
-- [x] 7.2 `scripts/tests/test_measure_efs_volumes.py`: the script's pure
-      planning/tagging logic, no AWS calls.
+      `run`/`cleanup` provision and tear down the real infra (a throwaway
+      VPC/subnet plus the `efs-volumes` `OptionalStack`, via
+      `rayito.OptionalStacks`) behind an injectable `MeasurementAwsPort`,
+      resolved by the `rayito:run-id` tag before creating anything new;
+      `cleanup` only drops a stage from local state once its delete has
+      actually succeeded. **Still a scaffold, on purpose**: the EFS-2/3/8/
+      9/11/12/13/15/16 measurements that need a running MicroVM against
+      that file system/connector are not launched by this script — they
+      are gathered by hand by the AWS acceptance stage against the infra
+      `run` provisions. Only the infra lifecycle (create/discover/destroy)
+      is real; the measurement-taking itself is not implemented here.
+- [x] 7.2 `scripts/tests/test_measure_efs_volumes.py`: the script's
+      tag-based discovery, reverse-dependency-order cleanup and
+      partial-failure-keeps-state behaviour, against a fake
+      `MeasurementAwsPort` — no AWS calls.
 
 ## 8. OpenSpec
 

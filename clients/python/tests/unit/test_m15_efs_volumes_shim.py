@@ -65,10 +65,7 @@ def test_unbound_async_volume_raises_in_the_act_not_inside_the_coroutine() -> No
         lambda: AsyncVolume.destroy("x"),
     ):
         with pytest.raises(UnimplementedError):
-            result = call()
-            # If this ever stops raising eagerly, fail loudly instead of
-            # leaving an unawaited coroutine warning as the only signal.
-            result.close()  # type: ignore[union-attr]
+            call()
 
 
 @pytest.mark.parametrize("method", CONTENT_METHODS)
