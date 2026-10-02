@@ -11,3 +11,8 @@ This product includes software developed by third parties:
   `clients/python/src/rayito/_git_base.py` and
   `clients/typescript/src/sandbox/git-args.ts` are adapted from the E2B SDK
   (github.com/e2b-dev/E2B, Apache License 2.0).
+- `crates/rayito-proto/vendor/opentelemetry/` is a minimal, hand-authored
+  subset of the message shapes and field numbers defined by the
+  OpenTelemetry Protocol (github.com/open-telemetry/opentelemetry-proto,
+  Apache License 2.0); used by `rayd`'s `adapters::otlp_codec` (m15-rayd-otlp)
+  to encode metrics for CloudWatch's OTLP endpoint.
