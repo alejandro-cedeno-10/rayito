@@ -126,16 +126,16 @@
       `desired_configuration` environment variables, `publish_sizes`
       end-to-end reuse path with `Stubber`, `publish_with_sizes` printing
       nothing in text mode on a failed build.
-- [x] 7.6b `cli/test_image_sizes_list.py`: `sizes_command`'s `sameArtifact`
-      column — `True`/`False`/`None` (not published, no active version)
-      against stubbed `GetMicrovmImageVersion` responses; `size_image_names`
-      against `_sizing.apply_size_suffix` directly.
 - [x] 7.6 Updated (not feature-owned, but required by implementing a
       previously-stub branch): `test_m15_feature_options.py`,
       `test_m15_create_kwargs.py`, `m15-feature-options.test.ts`,
       `m15-create-options.test.ts` — removed `size` from the "every 0.6
       option raises/is rejected" parametrized cases, added a dedicated
       `pool + size` rejection case in each.
+- [x] 7.7 `cli/test_image_sizes_list.py`: `sizes_command`'s `sameArtifact`
+      column — `True`/`False`/`None` (not published, no active version)
+      against stubbed `GetMicrovmImageVersion` responses; `size_image_names`
+      against `_sizing.apply_size_suffix` directly.
 
 ## 8. Gates (all green on this branch)
 
