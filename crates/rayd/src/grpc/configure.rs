@@ -51,7 +51,11 @@ impl ConfigureGrpc {
                 Some(self.features.telemetry_export.apply(cfg).await)
             }
             ConfigSection::SecretGateway => {
-                let cfg = request.secret_gateway?;
+                // Unlike the other four sections (today still empty, `Copy`
+                // stub messages), `SecretGatewayConfig` carries real fields
+                // (`routes`), so it is not `Copy` and must be cloned out of
+                // `request`, which this method only ever borrows.
+                let cfg = request.secret_gateway.clone()?;
                 Some(self.features.secret_gateway.apply(cfg).await)
             }
             ConfigSection::S3Mounts => {

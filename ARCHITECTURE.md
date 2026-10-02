@@ -2000,8 +2000,57 @@ ARM64).
 
 ## ADR-023 — secrets-gateway (M15, 0.6)
 
-Pendiente: lo completa `m15-secrets-gateway` (pasarela de credenciales en
-loopback que nunca expone el valor al código del sandbox; extiende T18).
+**Contexto.** `secrets=` entrega un valor como variable de entorno del
+proceso que lo pide: útil, pero visible a ese proceso y a cualquier cosa
+que lance. Un agente que llama a una sola API externa (Anthropic, OpenAI,
+el propio backend del cliente) no necesita que su código *tenga* la
+credencial, sólo que las peticiones que hace la *lleven*. T24 nombra el
+riesgo: un gateway mal diseñado sería un confuso-diputado (SSRF hacia
+cualquier host, no sólo el declarado) o filtraría el valor por los mismos
+canales que `secrets=` (environ, cmdline, logs).
+
+**Decisión.** `gateways=`/`gateways` declara, por nombre, un conjunto de
+rutas: cada una fija un único `upstream` (`https://host`, sin ruta ni
+query), una allowlist de `(método, ruta)` (exacta o con sufijo `/*`), un
+límite de peticiones por minuto y qué cabeceras inyectar (el *nombre* de
+un secreto ya existente, nunca el valor, hasta que `GatewaySection.fill`
+lo resuelve con la misma `SecretCache` que usa `secrets=`, justo antes de
+cada `ConfigureSandbox`). `rayd` abre un listener de loopback por ruta
+(`rayd::secret_gateway::listener::GatewayRuntime`), que decide
+(`rayd_core::secret_gateway::decision`, cubo de tokens entero y
+determinista) antes de tocar la red: una petición fuera de la allowlist o
+por encima del límite nunca llega al upstream. Lo que sí llega tiene las
+cabeceras que el guest pudo haber puesto para esos mismos nombres
+eliminadas primero (`header_template::must_drop`) y las vaultadas
+inyectadas después, así que el código del sandbox no puede ni suplantar ni
+leer de vuelta su propio secreto. El valor en sí vive sólo en memoria de
+`rayd` (`SecretValue`, `Zeroizing`, sin `Debug`/`Display`/`serde`),
+expuesto una única vez, al construir la cabecera saliente. El upstream se
+alcanza por el cliente HTTPS compartido (`GatewayUpstream`, raíz de
+confianza del SO, `FilteringResolver` sobre
+`rayd_core::transfer::is_forbidden_address`): un `upstream` no puede
+resolver nunca a loopback, link-local o IMDS, cerrando el vector de
+confuso-diputado hacia dentro de la propia VM. Tanto la petición como la
+respuesta se transmiten en flujo, sin bufferizar ningún cuerpo entero, para
+que SSE y una subida troceada atraviesen la pasarela sin cambios.
+
+Una `SecretGatewayConfig` presente sustituye el estado entero del feature
+(nunca un diff): toda ruta ausente de la llamada se para, toda ruta
+presente se (re)arranca. No hay `LifecycleParticipant`: una conexión en
+vuelo cuando `/suspend` congela la VM es, para el propio cliente HTTP del
+sandbox, una conexión cortada como cualquier otra — ya sabe reintentar.
+
+**Consecuencias.** Sin `gateways=`/`gateways`, `rayd` no abre ningún
+socket de loopback para esta función y el SDK no construye ningún cliente
+`secretsmanager` nuevo ni manda ningún `Configure` (ADR-014 regla 4). El
+tráfico hacia el upstream fijo sale como root (el proceso `rayd`, no uid
+1000): es la única excepción de egress declarada que abre esta función
+(`RootEgressClass::SecretGatewayUpstream`, `Health.features.root_egress`),
+documentada en T24 en vez de escondida.
+
+**Reversible.** Aditivo: un nuevo slot `ConfigurableFeature` y una nueva
+sección de `ConfigureRequest`; ningún agente ni SDK anteriores a este
+cambio ven comportamiento distinto.
 
 ## ADR-024 — custom-domain (M15, 0.6)
 

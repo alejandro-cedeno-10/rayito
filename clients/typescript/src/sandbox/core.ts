@@ -17,6 +17,7 @@ import {
 } from "@connectrpc/connect";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import type { ControlPlane } from "../aws/control-plane.js";
+import { type AgentFeatures, agentFeaturesFromHealth } from "../configure/base.js";
 import {
   AuthenticationError,
   errorMessage,
@@ -276,6 +277,10 @@ export class SandboxCore {
     readonly lifecycle: Client<typeof LifecycleService>;
     readonly configure: Client<typeof ConfigureService>;
   };
+  /** `undefined` en un agente anterior a 0.6.0 (campo `features` ausente de
+   * `Health`); `requireConfigureSupport` es quien exige que no lo sea antes
+   * de mandar cualquier sección 0.6. */
+  agentFeatures: AgentFeatures | undefined;
 
   readonly #liveStreams = new Set<AbortController>();
   readonly #watches = new Set<Abortable>();
@@ -309,6 +314,7 @@ export class SandboxCore {
       lifecycle: this.clientFor(LifecycleService, false),
       configure: this.clientFor(ConfigureService, false),
     };
+    this.agentFeatures = undefined;
   }
 
   get sandboxId(): string {
@@ -736,6 +742,7 @@ export class SandboxCore {
     this.recordLifecycle(lifecycleFromProto(response.lifecycle));
     this.guestFacts = guestFactsFromHealth(response);
     this.metadata = metadataFromHealth(response);
+    this.agentFeatures = agentFeaturesFromHealth(response);
     const generation = Number(response.resumeGeneration);
     if (generation === this.resumeGeneration) {
       return;

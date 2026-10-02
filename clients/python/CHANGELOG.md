@@ -26,6 +26,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   compatibilidad "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna
   opción nueva, el comportamiento es byte a byte el de 0.5.x (traza de oro en
   `tests/unit/fixtures/zero_cost_0_5_trace.json`).
+<!-- m15-s3-mounts -->
 - **`mounts=` (`m15-s3-mounts`, ADR-017, experimental, apagado por
   defecto)**: `Sandbox.create(mounts=)`/`AsyncSandbox.create(mounts=)`
   monta uno o más buckets S3 (`S3Mount(bucket=, prefix=, read_only=True,
@@ -51,7 +52,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   al bucket y a sus prefijos (hasta 4) también para leer, escribir y
   borrar objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS`
   de la imagen (`rayito image publish --env`, de `m15-sizes-catalog`).
-<!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 - **Catálogo de tamaños, aceptación en AWS real** (`m15-sizes-catalog`):
@@ -96,6 +96,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
+- **`gateways=` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
+  M15, ADR-023, opcional y apagado por defecto): `Sandbox.create(gateways=
+  {"nombre": SecretGateway(upstream=..., headers=..., allow=..., ...)})`
+  abre, dentro del agente, un listener de loopback por ruta que reenvía
+  sólo lo que su `allow` cubre, dentro de su límite de peticiones por
+  minuto, inyectando cada cabecera vaultada (resuelta de Secrets Manager
+  con la misma `SecretCache` que `secrets=`, nunca antes de `Configure`) y
+  eliminando primero cualquier cabecera del mismo nombre que el sandbox
+  intente poner. `sbx.gateways["nombre"].url` da la URL de loopback;
+  `refresh()`/`arefresh()` rotan el secreto sin recrear el sandbox (releen
+  Secrets Manager aunque la `SecretCache` no haya vencido, conservan el
+  puerto y lanzan si `rayd` rechaza la sección). También
+  `SandboxPool.take(gateways=)`/`AsyncSandboxPool.take(gateways=)`.
+  Cualquier fallo al configurarla tras `run-microvm` (imagen anterior a
+  0.6.0, flag ausente, secreto que falta, sección rechazada) termina el VM
+  salvo `keep_on_failure`. Sin `gateways=`, ningún cliente `secretsmanager`
+  nuevo se construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

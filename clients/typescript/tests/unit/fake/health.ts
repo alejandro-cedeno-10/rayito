@@ -12,6 +12,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
+import type { AgentFeatures } from "../../../src/gen/rayito/v1/features_pb.js";
 import {
   type HealthResponse,
   HealthResponseSchema,
@@ -45,6 +46,10 @@ export class FakeHealth {
   egressEnforcement: EgressEnforcement = EgressEnforcement.NONE;
   /** `undefined` es un agente anterior a 0.3.0; `FakeLifecycleService.setTimeout` lo mueve. */
   lifecycle: LifecycleState | undefined = undefined;
+  /** `undefined` es un agente anterior a 0.6.0 (sin `ConfigureService`); un
+   * test que necesite `secretGateway: true` (o cualquier otro flag) lo pone
+   * aquí antes de que el `Sandbox` bajo prueba llame a `Health`. */
+  features: AgentFeatures | undefined = undefined;
   /** Vista del guest en `Health`; 0 como un agente anterior a 0.3.0. */
   cpuCount = 0;
   memoryTotalBytes = 0n;
@@ -99,6 +104,7 @@ export class FakeHealth {
       cpuCount: this.cpuCount,
       memoryTotalBytes: this.memoryTotalBytes,
       metadata: this.metadata,
+      ...(this.features === undefined ? {} : { features: this.features }),
     });
   }
 

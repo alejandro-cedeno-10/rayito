@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import type { ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { CodeService } from "../../../src/gen/rayito/v1/code_pb.js";
+import { ConfigureService } from "../../../src/gen/rayito/v1/configure_pb.js";
 import { FilesystemService } from "../../../src/gen/rayito/v1/filesystem_pb.js";
 import { HealthService } from "../../../src/gen/rayito/v1/health_pb.js";
 import { LifecyclePhase, LifecycleService } from "../../../src/gen/rayito/v1/lifecycle_pb.js";
@@ -20,6 +21,7 @@ import { PtyService } from "../../../src/gen/rayito/v1/pty_pb.js";
 import type { TransportSettings } from "../../../src/transport/transport.js";
 import { FakeCodeService } from "./code.js";
 import { installedTokenSha256 } from "./common.js";
+import { FakeConfigureService } from "./configure.js";
 import { FakeFilesystemService } from "./filesystem.js";
 import { FakeHealth } from "./health.js";
 import { FakeLifecycleService } from "./lifecycle.js";
@@ -60,6 +62,7 @@ export class FakeRayd {
   readonly pty: FakePtyService;
   readonly network: FakeNetworkService;
   readonly lifecycle: FakeLifecycleService;
+  readonly configure: FakeConfigureService;
   readonly host = "127.0.0.1";
   readonly port: number;
   readonly server: http2.Http2Server;
@@ -87,6 +90,7 @@ export class FakeRayd {
       pty: FakePtyService;
       network: FakeNetworkService;
       lifecycle: FakeLifecycleService;
+      configure: FakeConfigureService;
     },
   ) {
     this.server = server;
@@ -98,6 +102,7 @@ export class FakeRayd {
     this.pty = services.pty;
     this.network = services.network;
     this.lifecycle = services.lifecycle;
+    this.configure = services.configure;
   }
 
   static async start(options: FakeRaydOptions): Promise<FakeRayd> {
@@ -112,6 +117,7 @@ export class FakeRayd {
     const pty = new FakePtyService(tokenSha256, process);
     const network = new FakeNetworkService(tokenSha256, health);
     const lifecycle = new FakeLifecycleService(tokenSha256, health);
+    const configure = new FakeConfigureService(tokenSha256);
     const routes = (router: ConnectRouter) => {
       router.service(HealthService, {
         health: (request, context) => health.health(request, context),
@@ -165,6 +171,10 @@ export class FakeRayd {
       router.service(LifecycleService, {
         setTimeout: (request, context) => lifecycle.setTimeout(request, context),
       });
+      router.service(ConfigureService, {
+        configure: (request, context) => configure.configure(request, context),
+        configureStatus: (request, context) => configure.configureStatus(request, context),
+      });
     };
     const adapter = connectNodeAdapter({ routes });
     let rayd: FakeRayd | undefined;
@@ -199,6 +209,7 @@ export class FakeRayd {
       pty,
       network,
       lifecycle,
+      configure,
     });
     return rayd;
   }

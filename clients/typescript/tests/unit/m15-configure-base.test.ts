@@ -1,5 +1,5 @@
 /**
- * `src/configure-base.ts`: la parte pura del ejecutor compartido de
+ * `src/configure/base.ts`: la parte pura del ejecutor compartido de
  * `configureSections` que `Sandbox.create()` corre tras el primer `Health`
  * (capacidad, una única `Configure`, resultado por sección y la espera
  * acotada a las secciones `PENDING`). Espejo de `test_m15_configure_base.py`.
@@ -14,7 +14,7 @@ import {
   requireCapabilities,
   settleTimeoutMs,
   stillPending,
-} from "../../src/configure-base.js";
+} from "../../src/configure/base.js";
 import { MountError, UnimplementedError } from "../../src/errors.js";
 import {
   ConfigSection,

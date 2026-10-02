@@ -6,7 +6,7 @@
 
 import { create } from "@bufbuild/protobuf";
 
-import type { ConfigureSection } from "../configure-base.js";
+import type { ConfigureSection } from "../configure/base.js";
 import { MountError, UnimplementedError } from "../errors.js";
 import type { ConfigureRequest, ConfigureStatusResponse } from "../gen/rayito/v1/configure_pb.js";
 import { SectionCode } from "../gen/rayito/v1/configure_pb.js";

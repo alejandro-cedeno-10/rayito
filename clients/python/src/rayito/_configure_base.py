@@ -8,14 +8,15 @@ este módulo no importa `grpc`.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
 from rayito.exceptions import SandboxException, UnimplementedError
 from rayito.v1 import configure_pb2
 
 if TYPE_CHECKING:
+    from rayito._secrets import SecretCache
     from rayito.v1 import features_pb2, health_pb2
 
 CONFIGURE_DOC: str = "docs/site/docs/funciones-opcionales/pilas-opcionales.md"
@@ -108,6 +109,38 @@ class ConfigureSection(Protocol):
         ...
 
 
+#: Vuelve a mandar una sola sección ya aplicada (`fill` otra vez, `Configure`,
+#: `check_configure_response`) y devuelve el `ConfigureStatus` resultante; síncrono
+#: en `Sandbox`, asíncrono en `AsyncSandbox`.
+Reapply = Callable[[], configure_pb2.ConfigureStatusResponse]
+AsyncReapply = Callable[[], Awaitable[configure_pb2.ConfigureStatusResponse]]
+
+
+@dataclass(frozen=True)
+class SectionApplied:
+    """Lo que `PostApplySection.after_apply` recibe una vez su `Configure`
+    se aplicó: el `ConfigureStatus` de ese momento y cómo volver a mandar
+    esa misma sección más tarde (`reapply` en `Sandbox`, `areapply` en
+    `AsyncSandbox`; el otro es `None`). `main.py` lo construye igual para
+    cualquier función, sin saber cuál es."""
+
+    status: configure_pb2.ConfigureStatusResponse
+    reapply: Reapply | None = None
+    areapply: AsyncReapply | None = None
+
+
+@runtime_checkable
+class PostApplySection(ConfigureSection, Protocol):
+    """Un `ConfigureSection` que además necesita algo después de aplicarse
+    (hoy `gateways=`: leer los puertos de `ConfigureStatus` y poder rotar).
+    `create()`/`take()` piden `ConfigureStatus` una sola vez si alguna
+    sección lo implementa y guardan lo que devuelve `after_apply` bajo su
+    `section`; la propiedad pública de esa función (`sbx.gateways`, ...) lo
+    lee de ahí. Así `main.py` nunca nombra una función concreta."""
+
+    def after_apply(self, applied: SectionApplied) -> object: ...
+
+
 def section_error(
     section: str, code_name: str, error_class: str
 ) -> SandboxException | UnimplementedError | None:
@@ -125,6 +158,49 @@ def section_error(
         )
     reason = error_class or code_name.removeprefix("SECTION_CODE_").lower()
     return SandboxException(f"{section}: {reason}")
+
+
+def raise_section_error(section: str, code: int, error_class: str) -> None:
+    """`ConfigureSection.check_result` para una sección sin excepción propia
+    (hoy `gateways=`): lanza lo que `section_error` diga del `SectionResult`
+    de `section`, y nada si se aplicó o sigue `PENDING`. Así un `INVALID`/
+    `FAILED`/`UNSUPPORTED` nunca pasa en silencio, ni en el `Configure` de
+    `create()`/`take()` ni en uno posterior de una sola sección (un
+    `refresh()`), que pasan los dos por `check_configure_response`.
+    """
+    error = section_error(section, configure_pb2.SectionCode.Name(code), error_class)
+    if error is not None:
+        raise error
+
+
+class SectionFactory(Protocol):
+    """Una entrada de `FeaturePlan.configure_sections` que todavía no es un
+    `ConfigureSection`: necesita la `SecretCache` del handle, que
+    `create()`/`take()` sólo conocen después de `plan_features` (la misma
+    que ya calculan para `secrets=`, nunca una segunda). Hoy
+    `GatewaySectionFactory`; `resolve_sections` la invoca justo antes de
+    construir el `ConfigureRequest`."""
+
+    def __call__(self, cache: SecretCache) -> ConfigureSection: ...
+
+
+#: Lo que `plan_features` pone en `FeaturePlan.configure_sections`: una
+#: sección ya lista (`mounts=`) o una que espera la `SecretCache`
+#: (`gateways=`).
+PlannedSection = ConfigureSection | SectionFactory
+
+
+def resolve_sections(
+    planned: Sequence[PlannedSection], cache: Callable[[], SecretCache]
+) -> tuple[ConfigureSection, ...]:
+    """Cada entrada de `planned` como `ConfigureSection`: las que ya lo son
+    tal cual, cada `SectionFactory` invocada con `cache()` — que sólo se
+    llama (y sólo crea la caché compartida del proceso) si alguna entrada
+    la necesita."""
+    resolved: list[ConfigureSection] = []
+    for entry in planned:
+        resolved.append(entry(cache()) if callable(entry) else entry)
+    return tuple(resolved)
 
 
 #: Wire `ConfigSection` -> the string every `ConfigureSection.section`

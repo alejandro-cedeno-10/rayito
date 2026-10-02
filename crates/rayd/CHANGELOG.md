@@ -33,6 +33,7 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `on_terminate` de cada participante sólo ante una transición aceptada,
   cada uno con su propio tope (`PARTICIPANT_RESUME_TIMEOUT`,
   `PARTICIPANT_TERMINATE_TIMEOUT`). Sin participantes, idéntico a 0.5.x.
+<!-- m15-s3-mounts -->
 - **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
   (`S3Mount`, `MountErrorClass` incl. `InvalidPath`,
   `validate_mounts`/`parse_allowed_buckets`, ports `FuseDevice`/`FuseDaemon`)
@@ -72,13 +73,39 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `S3MountState`, `S3MountPhase`). With no `S3MountsConfig` section sent,
   behaviour is unchanged from 0.5.x: no `/dev/fuse` open, no `mount-s3`
   spawn.
-<!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
+- **Pasarela de secretos en loopback** (`m15-secrets-gateway`, M15, ADR-023):
+  el slot `secret_gateway` deja de ser `Unsupported`. Un listener `axum`
+  por ruta de `SecretGatewayConfig` (`rayd::secret_gateway`), con
+  allowlist de método/ruta y límite de peticiones por minuto (cubo de
+  tokens entero y determinista, `rayd_core::secret_gateway`) antes de
+  reenviar al `upstream` fijo de la ruta por un cliente HTTPS compartido
+  (`GatewayUpstream`: raíz de confianza del SO, `FilteringResolver` para
+  que un `upstream` nunca resuelva a loopback/link-local/IMDS, cuerpos en
+  flujo sin bufferizar). Las cabeceras del guest con el mismo nombre que
+  una vaultada se eliminan antes de inyectar el valor real (T24): el
+  código del sandbox nunca puede leer ni suplantar su propio secreto. Una
+  ruta de petición con segmentos `.`/`..` (también codificados), un `/` o
+  `\` codificado, una barra invertida o un segmento vacío se rechaza (403)
+  antes de la allowlist. Los nombres de cabecera se validan (token RFC
+  9110, únicos sin distinguir mayúsculas, nunca `host`/`content-length`/
+  hop-by-hop: `invalid_header_name`/`duplicate_header_name`), igual que el
+  nombre de ruta (`invalid_route_name`) y el `upstream`
+  (`invalid_upstream_host`). Un `Configure` que repite el nombre de una
+  ruta conserva su listener y su puerto y sólo cambia su estado (la
+  siguiente petición, también por una conexión keep-alive abierta, ya lo
+  ve); una ruta retirada cierra sus conexiones keep-alive. Sólo un
+  `CONNECT_TIMEOUT` (10 s) o `RESPONSE_HEAD_TIMEOUT` (600 s) es
+  `upstream_timeout`; cualquier otro fallo tras conectar es
+  `upstream_error`. `Health.features.secret_gateway` sale del `FeatureSet`
+  construido: si el slot degrada a `Unsupported` (sin raíz de confianza),
+  no se anuncia. Sin ningún `Configure` con `secret_gateway`, `rayd` no
+  abre ningún socket de loopback para esta función.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

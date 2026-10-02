@@ -11,6 +11,7 @@ import asyncio
 import builtins
 import contextlib
 import dataclasses
+import functools
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import datetime
@@ -31,16 +32,21 @@ from rayito._code_base import (
 )
 from rayito._configure_base import (
     CONFIGURE_SETTLE_POLL_S,
+    AgentFeatures,
     ConfigureSection,
+    PlannedSection,
+    PostApplySection,
+    SectionApplied,
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
     require_capabilities,
     require_configure_support,
+    resolve_sections,
     settle_timeout_s,
     still_pending,
 )
-from rayito._feature_options import FeatureOptions, FeaturePlan, plan_features
+from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -174,6 +180,8 @@ from rayito._sandbox_base import (
     with_size_facts,
     write_index_record,
 )
+from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -216,7 +224,11 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
-from rayito.sandbox_async.configure import call_configure, call_configure_status
+from rayito.sandbox_async.configure import (
+    CONFIGURE_FEATURE,
+    call_configure,
+    call_configure_status,
+)
 from rayito.sandbox_async.filesystem import AsyncFilesystem
 from rayito.sandbox_async.git import AsyncGit
 from rayito.sandbox_async.lifecycle import AsyncDeadlineTrigger, set_timeout_once_async
@@ -236,6 +248,7 @@ from rayito.sandbox_sync.main import (
 )
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2,
     configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
@@ -421,12 +434,17 @@ class AsyncSandbox:
         self._channel = transport.open_aio_channel(info.endpoint, self._plugin)
         self._stream_channel: grpc.aio.Channel | None = None
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
+        self._agent_features: AgentFeatures | None = None
+        # Lo que `PostApplySection.after_apply` devolvió, por `section`
+        # (`_apply_configure_sections`); cada propiedad pública de una
+        # función 0.6 (`gateways`, ...) lee su entrada de aquí.
+        self._section_handles: dict[str, object] = {}
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
-        self._configure_stub = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
@@ -699,7 +717,6 @@ class AsyncSandbox:
                 reconnect_timeout=reconnect_timeout,
                 terminate_on_failure=not keep_on_failure,
                 require_lifecycle=plan.lifecycle_requested,
-                plan=feature_plan,
                 logger=logger,
             )
             sandbox._instrumentation = instrumentation
@@ -707,6 +724,11 @@ class AsyncSandbox:
             sandbox._secrets = binding
             if launch.enforce:
                 await sandbox._apply_initial_network(launch)
+            await sandbox._apply_configure_sections(
+                feature_plan.configure_sections,
+                timeout=request_timeout,
+                terminate_on_failure=not keep_on_failure,
+            )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -731,6 +753,7 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            gateways=None if gateways is None else dict(gateways),
             size=resolved_size,
         )
         if persist is not None:
@@ -896,7 +919,6 @@ class AsyncSandbox:
         terminate_on_failure: bool,
         readiness: type[ReadinessPoll] = ReadinessPoll,
         require_lifecycle: bool = False,
-        plan: FeaturePlan | None = None,
         logger: logging.Logger | None = None,
     ) -> Self:
         """Misma política de limpieza que `Sandbox._open`: con
@@ -904,9 +926,7 @@ class AsyncSandbox:
         sea `SandboxNotReadyException` termina el MicroVM. `readiness` es el
         calendario del sondeo (`TakePoll` desde el pool) y `require_lifecycle`
         la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque
-        `lifecycle`. `plan` (por defecto `None`): sus `configure_sections`,
-        si las hay, se envían en una única `Configure` justo después de este
-        mismo `Health`, dentro del mismo `try` de abajo — ver `Sandbox._open`."""
+        `lifecycle`."""
         refresher = AsyncTokenRefresher(
             TokenRefresher(
                 TokenStore(),
@@ -933,8 +953,6 @@ class AsyncSandbox:
             )
             if require_lifecycle and lifecycle_from_proto(ready) is None:
                 raise older_agent_error(info.template_name, str(ready.agent_version))
-            if plan is not None and plan.configure_sections:
-                await sandbox._apply_configure_plan(plan, ready)
         except BaseException as exc:
             if sandbox is not None:
                 await sandbox.close()
@@ -1085,6 +1103,12 @@ class AsyncSandbox:
         """El resultado del restore automático de `create(persist=)`; `None` si
         no hubo (primera vida de ese `name`) o si el sandbox no persiste."""
         return self._last_restore
+
+    @property
+    def gateways(self) -> GatewayHandle:
+        """Misma semántica que `Sandbox.gateways`."""
+        handle = self._section_handles.get(GATEWAY_SECTION)
+        return handle if isinstance(handle, GatewayHandle) else EMPTY_GATEWAYS
 
     # --------------------------------------------------------------- lifecycle
 
@@ -1350,31 +1374,14 @@ class AsyncSandbox:
         self._record_health(response)
         return health_from_proto(response)
 
-    async def _apply_configure_plan(
-        self, plan: FeaturePlan, ready: health_pb2.HealthResponse
-    ) -> None:
-        """Misma lógica que `Sandbox._apply_configure_plan`, sobre el stub
-        asíncrono: `require_capabilities`, una única `Configure`,
-        `check_configure_response` y la espera acotada a las secciones
-        `PENDING`; cualquier excepción sube a `_open`."""
-        features = require_configure_support(agent_features_from_health(ready), "configure")
-        require_capabilities(plan.configure_sections, features)
-        request = build_configure_request(plan.configure_sections)
-        response = await call_configure(
-            self._configure_stub, request, timeout=self._request_timeout
-        )
-        await self._wait_settled(check_configure_response(response, plan.configure_sections))
-
-    async def _wait_settled(self, pending: tuple[ConfigureSection, ...]) -> None:
+    async def _wait_settled(self, pending: tuple[ConfigureSection, ...], *, timeout: float) -> None:
         """Misma espera que `Sandbox._wait_settled`, sobre el reloj del
         bucle de eventos y `asyncio.sleep`."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + settle_timeout_s(pending)
         while pending:
             final = loop.time() >= deadline
-            status = await call_configure_status(
-                self._configure_stub, timeout=self._request_timeout
-            )
+            status = await call_configure_status(self._configure, timeout=timeout)
             pending = still_pending(status, pending, final=final)
             if pending:
                 await asyncio.sleep(CONFIGURE_SETTLE_POLL_S)
@@ -1384,7 +1391,7 @@ class AsyncSandbox:
         `ConfigureStatus` por lectura, nunca cacheada. Vacío si
         `create()`/`take()` no recibió `mounts=`.
         """
-        response = await call_configure_status(self._configure_stub, timeout=self._request_timeout)
+        response = await call_configure_status(self._configure, timeout=self._request_timeout)
         return from_proto_status(response.s3_mounts)
 
     async def upload_url(
@@ -1819,6 +1826,70 @@ class AsyncSandbox:
         """Misma semántica que `Sandbox._default_secret_cache`."""
         return shared_secret_cache(self._control_plane.region, self._session)
 
+    async def _apply_configure_sections(
+        self,
+        planned: Sequence[PlannedSection],
+        *,
+        timeout: float,
+        terminate_on_failure: bool,
+    ) -> None:
+        """Misma semántica que `Sandbox._apply_configure_sections`, sobre el
+        canal `grpc.aio`: un fallo en cualquier punto cierra el cliente y,
+        salvo `keep_on_failure`, termina el VM antes de relanzar."""
+        if not planned:
+            return
+        try:
+            await self._send_configure_sections(planned, timeout=timeout)
+        except BaseException:
+            await self.close()
+            if terminate_on_failure:
+                await asyncio.to_thread(
+                    terminate_quietly, self._control_plane, self.sandbox_id, self._logger
+                )
+            raise
+
+    async def _send_configure_sections(
+        self, planned: Sequence[PlannedSection], *, timeout: float
+    ) -> None:
+        """Misma semántica que `Sandbox._send_configure_sections`, en
+        `asyncio`."""
+        features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
+        sections = resolve_sections(planned, self._section_secret_cache)
+        require_capabilities(sections, features)
+        await self._configure_sections(sections, timeout=timeout)
+        post_apply = [section for section in sections if isinstance(section, PostApplySection)]
+        if not post_apply:
+            return
+        status = await call_configure_status(self._configure, timeout=timeout)
+        for section in post_apply:
+            self._section_handles[section.section] = section.after_apply(
+                SectionApplied(
+                    status=status,
+                    areapply=functools.partial(self._reapply_section, section, timeout=timeout),
+                )
+            )
+
+    async def _configure_sections(
+        self, sections: Sequence[ConfigureSection], *, timeout: float
+    ) -> None:
+        """Misma semántica que `Sandbox._configure_sections`, en `asyncio`."""
+        request = build_configure_request(sections)
+        response = await call_configure(self._configure, request, timeout=timeout)
+        await self._wait_settled(check_configure_response(response, sections), timeout=timeout)
+
+    def _section_secret_cache(self) -> SecretCache:
+        """Misma regla que `Sandbox._section_secret_cache`."""
+        if self._secrets is not None and self._secrets.cache is not None:
+            return self._secrets.cache
+        return self._default_secret_cache()
+
+    async def _reapply_section(
+        self, section: ConfigureSection, *, timeout: float
+    ) -> configure_pb2.ConfigureStatusResponse:
+        """Misma semántica que `Sandbox._reapply_section`, en `asyncio`."""
+        await self._configure_sections((section,), timeout=timeout)
+        return await call_configure_status(self._configure, timeout=timeout)
+
     async def _rebind_secrets(
         self,
         secrets: Mapping[str, str | SecretRef] | None,
@@ -2058,6 +2129,10 @@ class AsyncSandbox:
     def _record_health(self, response: health_pb2.HealthResponse) -> None:
         self._metadata = metadata_from_health(response)
         self._guest = guest_facts_from_health(response)
+        # M15: `None` en un agente anterior a 0.6.0 (campo `features`
+        # ausente); `_apply_configure_sections` es quien exige que no lo sea
+        # antes de mandar cualquier sección 0.6.
+        self._agent_features = agent_features_from_health(response)
         if self._ready_uptime_ms is None:
             self._ready_uptime_ms = int(response.uptime_ms)
         self._warn_hardening(response)

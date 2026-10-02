@@ -25,6 +25,7 @@ versionado [SemVer](https://semver.org/lang/es/).
   camino que ya termina el sandbox ante cualquier fallo anterior a
   `agentReady`. Sin ninguna opción nueva, el comportamiento es byte a
   byte el de 0.5.x.
+<!-- m15-s3-mounts -->
 - **`mounts` (`m15-s3-mounts`, ADR-017, experimental, apagado por
   defecto)**: `Sandbox.create({ mounts })` monta uno o más buckets S3
   (`new S3Mount({ bucket, prefix, readOnly: true, allowOverwrite: false,
@@ -50,7 +51,6 @@ versionado [SemVer](https://semver.org/lang/es/).
   bucket y a sus prefijos (hasta 4) también para leer, escribir y borrar
   objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la
   imagen.
-<!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 - **Catálogo de tamaños** (`m15-sizes-catalog`, ADR-019, opcional y
@@ -79,6 +79,22 @@ versionado [SemVer](https://semver.org/lang/es/).
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->
+- **`gateways` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
+  M15, ADR-023, opcional y apagado por defecto): `Sandbox.create({ gateways:
+  { nombre: new SecretGateway({ upstream, headers, allow, ... }) } })` abre,
+  dentro del agente, un listener de loopback por ruta que reenvía sólo lo
+  que su `allow` cubre, dentro de su límite de peticiones por minuto,
+  inyectando cada cabecera vaultada (resuelta con la misma `SecretCache`
+  que `secrets`, nunca antes de `Configure`) y eliminando primero
+  cualquier cabecera del mismo nombre que el sandbox intente poner.
+  `sbx.gateways.get("nombre")?.url` da la URL de loopback; `refresh()`
+  rota el secreto sin recrear el sandbox (relee Secrets Manager aunque la
+  `SecretCache` no haya vencido, conserva el puerto y lanza si `rayd`
+  rechaza la sección). También `pool.take({ gateways })`. Cualquier fallo
+  al configurarla tras `run-microvm` (imagen anterior a 0.6.0, flag
+  ausente, secreto que falta, sección rechazada) termina el VM salvo
+  `keepOnFailure`. Sin `gateways`, ningún cliente Secrets Manager nuevo se
+  construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

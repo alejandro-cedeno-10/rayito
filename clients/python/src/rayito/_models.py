@@ -912,6 +912,13 @@ class LaunchOptions:
     on_timeout: TimeoutActionName | None = None
     network: NetworkPolicy | None = None
     index: DynamoDbIndex | None = None
+    # `create(gateways=)` (m15-secrets-gateway): sólo los nombres de secreto
+    # que cada `SecretGateway.headers` selecciona, nunca un valor resuelto
+    # (`_secret_gateway._section.GatewaySection.fill` es quien lo resuelve,
+    # justo antes de cada `Configure`), así que no hace falta redactar esto
+    # en `__repr__` como `envs`. `reincarnate()` lo reenvía sin cambios: el
+    # sucesor vuelve a pedir el mismo conjunto de rutas.
+    gateways: Mapping[str, Any] | None = None
     size: ResolvedSize | None = None
 
     def __repr__(self) -> str:

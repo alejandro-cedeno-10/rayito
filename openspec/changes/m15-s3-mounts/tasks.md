@@ -170,6 +170,11 @@ Low severity:
   `check_configure_response`, the settle wait, `_apply_configure_plan`/
   `#applyConfigurePlan`) is flagged in the PR for the maintainer as
   foundations-level code later features should build on, not re-edit.
+  On the merge with `m15-secrets-gateway` it became the single apply path
+  for every section: `_configure_base.py`/`configure/base.ts`
+  (`configure-base.ts` folded in), run by
+  `_apply_configure_sections`/`#applyConfigureSections` right after
+  `_open`/`#open` (and after `take()`), with the same terminate-on-failure.
 - [x] 11.10 (low) `watch_tick` skips `Pending` entries and spawns each
   relaunch as its own task (`claim_and_spawn`); `/resume` only probes
   settled mounts.

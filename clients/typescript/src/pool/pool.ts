@@ -41,6 +41,7 @@ import {
   SandboxNotFoundError,
   SandboxStateError,
 } from "../errors.js";
+import { planFeatures } from "../feature-options.js";
 import { DEFAULT_PORT, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
 import type { MicrovmListPage, SandboxInfo, SandboxListItem } from "../models.js";
@@ -52,6 +53,7 @@ import {
   resolveTemplate,
 } from "../sandbox/launch.js";
 import { type ControlPlaneOptions, resolveControlPlane, Sandbox } from "../sandbox/sandbox.js";
+import type { SecretGateway } from "../secret-gateway/domain.js";
 import { bindSecrets, type SecretOptions, sharedSecretCache, warm } from "../secrets/inject.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
 import { InMemoryPoolBackend, type PoolBackend } from "./backend.js";
@@ -101,6 +103,21 @@ export interface SandboxPoolOptions extends ControlPlaneOptions {
  * activación" que `SecretOptions.secrets`.
  */
 export interface TakeOptions extends SecretOptions {
+  /**
+   * Abre la pasarela de secretos (ADR-023) en el sandbox que sale del pool,
+   * igual que `Sandbox.create({ gateways })`: las plazas calientes nunca la
+   * llevan.
+   *
+   * Coste y activación: `secretsmanager:GetSecretValue` una vez por secreto
+   * inyectado y TTL de `SecretCache` (y uno por secreto en cada
+   * `sbx.gateways.refresh()`), ningún recurso nuevo; $0,05 por 10 000
+   * llamadas (us-east-1, 2026-09-30). IAM: `secretsmanager:GetSecretValue`
+   * en las credenciales del llamante. Cómo apagarla: omitirla (por
+   * defecto); sin ella, `take()` no hace ni un `ConfigureSandbox`. Exige
+   * una imagen 0.6.0 o posterior: con una anterior, `take()` termina la
+   * plaza tomada y lanza `UnimplementedError`.
+   */
+  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
   /** Cuánto esperar (ms) a que el relleno aparque una plaza antes de caer a `create()`; por defecto 0. */
   readonly waitMs?: number | undefined;
   readonly readyTimeoutMs?: number | undefined;
@@ -328,6 +345,9 @@ export class SandboxPool implements AsyncDisposable {
    */
   async take(options: TakeOptions = {}): Promise<Sandbox> {
     this.#requireOpen();
+    // Pura (ninguna llamada a AWS): una forma inválida falla antes de
+    // reclamar ninguna plaza.
+    const featurePlan = planFeatures({ gateways: options.gateways });
     const secrets = await warm(bindSecrets(options.secrets, options.secretCache), () =>
       sharedSecretCache(this.#plane.region, awsClientSettingsOf(this.#plane).credentials),
     );
@@ -335,6 +355,11 @@ export class SandboxPool implements AsyncDisposable {
     const opened = record === undefined ? undefined : await this.#openSlot(record, options);
     const sandbox = opened ?? (await this.#fallback(options));
     Sandbox.attachSecrets(sandbox, secrets);
+    await Sandbox.applyConfigureSections(
+      sandbox,
+      featurePlan.configureSections,
+      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    );
     return sandbox;
   }
 

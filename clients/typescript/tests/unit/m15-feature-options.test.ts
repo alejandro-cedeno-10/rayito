@@ -3,6 +3,8 @@ import { UnimplementedError } from "../../src/errors.js";
 import { type FeatureOptions, planFeatures } from "../../src/feature-options.js";
 import { S3Mount } from "../../src/s3-mounts/domain.js";
 import { S3MountsSection } from "../../src/s3-mounts/section.js";
+import { GatewaySectionFactory } from "../../src/secret-gateway/section.js";
+import { gateway } from "./m15-secrets-gateway-fixtures.js";
 
 describe("feature-options", () => {
   test("with everything undefined the plan is empty", () => {
@@ -31,7 +33,6 @@ describe("feature-options", () => {
     ["volumes", { "/mnt/v": {} }, "volumes", "m15-efs-volumes"],
     ["events", {}, "events", "m15-events-webhooks"],
     ["telemetry", {}, "telemetry", "m15-rayd-otlp"],
-    ["gateways", { anthropic: {} }, "gateways", "m15-secrets-gateway"],
     ["domain", {}, "domain", "m15-custom-domain"],
   ] as const)(
     "remaining stub option %s raises UnimplementedError naming its own change",
@@ -48,4 +49,14 @@ describe("feature-options", () => {
       }
     },
   );
+
+  test("gateways builds a GatewaySectionFactory instead of raising", () => {
+    const plan = planFeatures({ gateways: { anthropic: gateway() } });
+    expect(plan.configureSections).toHaveLength(1);
+    expect(plan.configureSections[0]).toBeInstanceOf(GatewaySectionFactory);
+  });
+
+  test("gateways with an invalid mapping raises before any other check", () => {
+    expect(() => planFeatures({ gateways: {} })).toThrow();
+  });
 });

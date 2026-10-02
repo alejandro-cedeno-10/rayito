@@ -9,14 +9,18 @@ el SDK aún no sabe cumplir. Con las siete en `None` (el valor por defecto)
 `plan_features` no hace nada: ni un `ConfigureSandbox`, ni un cliente AWS
 nuevo, el comportamiento exacto de 0.5.x.
 
-`mounts=` (`m15-s3-mounts`) es la primera en dejar de ser un stub:
-`require_caps_for` corre aquí, antes de `run-microvm`, cuando
-`image_variant` ya permite decidirlo (un nombre `rayito-<variant>`); sobre
-cualquier otro nombre la decisión se difiere al agente (`Health.features`,
-comprobado después de `/run` por `create()`/`take()` — ver
-`_configure_base.require_capabilities`). Cada función sustituye su propia
-rama por una implementación real en su propio cambio OpenSpec; ni esta
-firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
+`mounts=` (`m15-s3-mounts`) y `gateways=` (m15-secrets-gateway) ya no son
+stubs. `mounts=`: `require_caps_for` corre aquí, antes de `run-microvm`,
+cuando `image_variant` ya permite decidirlo (un nombre `rayito-<variant>`);
+sobre cualquier otro nombre la decisión se difiere al agente
+(`Health.features`, comprobado después de `/run` por `create()`/`take()` —
+ver `_configure_base.require_capabilities`). `gateways=`: `plan_features`
+sólo valida su forma (pura, cero AWS) y devuelve un `GatewaySectionFactory`
+(`_configure_base.SectionFactory`) en `FeaturePlan.configure_sections` — el
+`ConfigureSandbox` de verdad, con cada cabecera ya resuelta, lo manda
+`create()`/`take()` una vez conocen la `SecretCache`. Cada función sustituye
+su propia rama por una implementación real en su propio cambio OpenSpec; ni
+esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
 
 from __future__ import annotations
@@ -25,9 +29,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from rayito._configure_base import ConfigureSection
+from rayito._configure_base import PlannedSection
 from rayito._role_policy import require_caps_for
 from rayito._s3_mounts import S3Mount, plan_s3_mounts
+from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
 from rayito.exceptions import UnimplementedError
 
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
@@ -65,7 +70,7 @@ class FeaturePlan:
     construir uno si alguna opción estaba puesta.
     """
 
-    configure_sections: tuple[ConfigureSection, ...] = ()
+    configure_sections: tuple[PlannedSection, ...] = ()
 
 
 def plan_features(
@@ -83,7 +88,7 @@ def plan_features(
     puramente sobre el nombre de la imagen.
     """
     del logging
-    sections: list[ConfigureSection] = []
+    sections: list[PlannedSection] = []
     if options.mounts is not None:
         require_caps_for("mounts=", image_variant)
         section = plan_s3_mounts(options.mounts)
@@ -101,7 +106,11 @@ def plan_features(
     if options.telemetry is not None:
         raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
     if options.gateways is not None:
-        raise UnimplementedError("gateways=", f"llega en 0.6 ({GATEWAYS_CHANGE})")
+        # Sólo valida la forma (ninguna llamada a AWS: `validate_gateways`
+        # es pura). La `SecretCache` que de verdad resuelve cada cabecera
+        # llega después, cuando `create()`/`take()` ya la calcularon para
+        # `secrets=` — ver `GatewaySectionFactory`.
+        sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
         raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
     return FeaturePlan(configure_sections=tuple(sections))

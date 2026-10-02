@@ -1,12 +1,14 @@
 /**
- * `Sandbox.create()`: seis de las siete opciones 0.6 siguen lanzando
+ * `Sandbox.create()`: las opciones 0.6 que siguen siendo un stub lanzan
  * `UnimplementedError` antes de resolver ningún plano de control (y por
  * tanto antes de cualquier llamada a AWS: `planFeatures` corre antes de
- * `resolveControlPlane`). `mounts` (`m15-s3-mounts`) es la primera en dejar
- * de ser un stub: en una imagen nombrada de una variante no-caps rechaza
- * igual de pronto, por `requireCapsFor`; sobre una imagen opaca (un ARN) la
- * decisión se difiere al agente, así que no puede probarse aquí sin tocar
- * AWS. Espejo de `test_m15_create_kwargs.py`.
+ * `resolveControlPlane`). `mounts` (`m15-s3-mounts`) ya no es un stub: en
+ * una imagen nombrada de una variante no-caps rechaza igual de pronto, por
+ * `requireCapsFor`; sobre una imagen opaca (un ARN) la decisión se difiere
+ * al agente, así que no puede probarse aquí sin tocar AWS. `gateways`
+ * (m15-secrets-gateway) tampoco: con un valor mal formado lanza
+ * `InvalidArgumentError` en su lugar, en el mismo punto. Espejo de
+ * `test_m15_create_kwargs.py`.
  */
 
 import { describe, expect, test } from "vitest";
@@ -22,12 +24,17 @@ describe("Sandbox.create: 0.6 options", () => {
     ["volumes", { "/mnt/v": {} }],
     ["events", {}],
     ["telemetry", {}],
-    ["gateways", { anthropic: {} }],
     ["domain", {}],
   ] as const)("rejects option %s before resolving a control plane", async (option, value) => {
     await expect(Sandbox.create({ template: TEMPLATE, [option]: value })).rejects.toThrow(
       UnimplementedError,
     );
+  });
+
+  test("rejects a malformed gateways value before resolving a control plane", async () => {
+    await expect(
+      Sandbox.create({ template: TEMPLATE, gateways: { anthropic: {} } } as never),
+    ).rejects.toThrow(InvalidArgumentError);
   });
 
   test("mounts on a named non-caps image variant rejects before resolving a control plane", async () => {

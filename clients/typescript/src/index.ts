@@ -244,6 +244,13 @@ export {
   type UploadUrlOptions,
   type WaitOptions,
 } from "./sandbox/transfer.js";
+export {
+  type AllowRule,
+  GatewayStatus,
+  SecretGateway,
+  type SecretGatewayOptions,
+} from "./secret-gateway/domain.js";
+export { GatewayHandle } from "./secret-gateway/section.js";
 export { SecretCache, type SecretCacheOptions } from "./secrets/cache.js";
 export type { SecretOptions, SecretsInput } from "./secrets/inject.js";
 export { type SecretLike, SecretRef, type SecretRefOptions } from "./secrets/names.js";

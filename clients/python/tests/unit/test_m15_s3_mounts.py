@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from rayito._configure_base import AgentFeatures
 from rayito._feature_options import FeaturePlan
 from rayito._s3_mounts import (
     MountStatus,
@@ -28,7 +29,7 @@ from rayito._s3_mounts._section import check_mounts_settled
 from rayito.exceptions import InvalidArgumentException, MountException, UnimplementedError
 from rayito.sandbox_async import main as async_main
 from rayito.sandbox_sync import main as sync_main
-from rayito.v1 import configure_pb2, features_pb2, health_pb2, s3_mounts_pb2
+from rayito.v1 import configure_pb2, features_pb2, s3_mounts_pb2
 
 #: Compartido con `rayd-core` y el SDK de TypeScript: los tres validadores
 #: leen los mismos casos (ver su `description`).
@@ -226,9 +227,7 @@ def _status(
     )
 
 
-READY = health_pb2.HealthResponse(
-    features=features_pb2.AgentFeatures(configure=True, s3_mounts=True)
-)
+READY = AgentFeatures.from_proto(features_pb2.AgentFeatures(configure=True, s3_mounts=True))
 PENDING = _status(s3_mounts_pb2.S3_MOUNT_PHASE_PENDING)
 MOUNTED = _status(s3_mounts_pb2.S3_MOUNT_PHASE_MOUNTED)
 
@@ -265,15 +264,17 @@ def _plan() -> FeaturePlan:
 
 def _sync_sandbox(stub: ScriptedStub) -> sync_main.Sandbox:
     sandbox = sync_main.Sandbox.__new__(sync_main.Sandbox)
-    sandbox._configure_stub = stub
-    sandbox._request_timeout = 1.0
+    sandbox._configure = stub
+    sandbox._agent_features = READY
+    sandbox._section_handles = {}
     return sandbox
 
 
 def _async_sandbox(stub: ScriptedStub) -> async_main.AsyncSandbox:
     sandbox = async_main.AsyncSandbox.__new__(async_main.AsyncSandbox)
-    sandbox._configure_stub = stub
-    sandbox._request_timeout = 1.0
+    sandbox._configure = stub
+    sandbox._agent_features = READY
+    sandbox._section_handles = {}
     return sandbox
 
 
@@ -285,14 +286,14 @@ def _no_settle_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_create_waits_for_a_pending_mount_to_be_mounted() -> None:
     stub = ScriptedStub([PENDING, PENDING, MOUNTED])
-    _sync_sandbox(stub)._apply_configure_plan(_plan(), READY)
+    _sync_sandbox(stub)._send_configure_sections(_plan().configure_sections, timeout=1.0)
     assert stub.status_calls == 3
 
 
 def test_create_raises_the_mounts_own_failure_instead_of_returning() -> None:
     stub = ScriptedStub([PENDING, _status(s3_mounts_pb2.S3_MOUNT_PHASE_FAILED, "not_found")])
     with pytest.raises(MountException) as excinfo:
-        _sync_sandbox(stub)._apply_configure_plan(_plan(), READY)
+        _sync_sandbox(stub)._send_configure_sections(_plan().configure_sections, timeout=1.0)
     assert excinfo.value.code == "not_found"
 
 
@@ -301,18 +302,20 @@ def test_create_gives_up_as_timeout_once_the_settle_bound_passes(
 ) -> None:
     monkeypatch.setattr(sync_main, "settle_timeout_s", lambda _pending: 0.0)
     with pytest.raises(MountException) as excinfo:
-        _sync_sandbox(ScriptedStub([PENDING]))._apply_configure_plan(_plan(), READY)
+        _sync_sandbox(ScriptedStub([PENDING]))._send_configure_sections(
+            _plan().configure_sections, timeout=1.0
+        )
     assert excinfo.value.code == "timeout"
 
 
 async def test_async_create_waits_for_a_pending_mount_to_be_mounted() -> None:
     stub = AsyncScriptedStub([PENDING, MOUNTED])
-    await _async_sandbox(stub)._apply_configure_plan(_plan(), READY)
+    await _async_sandbox(stub)._send_configure_sections(_plan().configure_sections, timeout=1.0)
     assert stub.status_calls == 2
 
 
 async def test_async_create_raises_the_mounts_own_failure() -> None:
     stub = AsyncScriptedStub([_status(s3_mounts_pb2.S3_MOUNT_PHASE_FAILED, "iam_denied")])
     with pytest.raises(MountException) as excinfo:
-        await _async_sandbox(stub)._apply_configure_plan(_plan(), READY)
+        await _async_sandbox(stub)._send_configure_sections(_plan().configure_sections, timeout=1.0)
     assert excinfo.value.code == "iam_denied"

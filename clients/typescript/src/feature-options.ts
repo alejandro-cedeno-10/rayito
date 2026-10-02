@@ -5,18 +5,22 @@
  * OpenSpec que la trae, antes de `run-microvm`. Con las siete en
  * `undefined` no hace nada: ni `ConfigureSandbox`, ni un cliente nuevo.
  *
- * `mounts` (`m15-s3-mounts`) es la primera en dejar de ser un stub:
- * `requireCapsFor` corre aquí, antes de `run-microvm`, cuando `imageVariant`
- * ya permite decidirlo; sobre cualquier otro nombre la decisión se difiere
- * al agente (`Health.features`, comprobado tras `/run` por `Sandbox.#open`
- * — ver `configure-base.ts`'s `requireCapabilities`).
+ * `mounts` (`m15-s3-mounts`) y `gateways` (m15-secrets-gateway) ya no son
+ * stubs. `mounts`: `requireCapsFor` corre aquí, antes de `run-microvm`,
+ * cuando `imageVariant` ya permite decidirlo; sobre cualquier otro nombre
+ * la decisión se difiere al agente (`Health.features`, comprobado por
+ * `requireCapabilities` de `configure/base.ts` antes del `Configure`).
+ * `gateways`: sólo se valida su forma; la sección de verdad la construye
+ * `create()`/`take()` con su `SecretCache` (`GatewaySectionFactory`).
  */
 
-import type { ConfigureSection } from "./configure-base.js";
+import type { PlannedSection } from "./configure/base.js";
 import { UnimplementedError } from "./errors.js";
 import { requireCapsFor } from "./role-policy.js";
 import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
+import { type SecretGateway, validateGateways } from "./secret-gateway/domain.js";
+import { GatewaySectionFactory } from "./secret-gateway/section.js";
 
 export const VOLUMES_CHANGE = "m15-efs-volumes";
 export const EVENTS_CHANGE = "m15-events-webhooks";
@@ -31,14 +35,15 @@ export interface FeatureOptions {
   readonly size?: unknown;
   readonly events?: unknown;
   readonly telemetry?: unknown;
-  readonly gateways?: Readonly<Record<string, unknown>> | undefined;
+  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
   readonly domain?: unknown;
 }
 
-/** Vacío en 0.6 foundations a propósito: `planFeatures` lanza antes de
- * construir uno si alguna opción estaba puesta. */
+/** Las secciones de `ConfigureSandbox` que `create()`/`take()` mandan tras
+ * el primer `Health`: listas (`mounts`) o a la espera de la `SecretCache`
+ * (`gateways`, un `ConfigureSectionFactory`). */
 export interface FeaturePlan {
-  readonly configureSections: readonly ConfigureSection[];
+  readonly configureSections: readonly PlannedSection[];
 }
 
 const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
@@ -60,7 +65,7 @@ export function planFeatures(
   logging?: unknown,
 ): FeaturePlan {
   void logging;
-  const sections: ConfigureSection[] = [];
+  const sections: PlannedSection[] = [];
   if (options.mounts !== undefined) {
     requireCapsFor("mounts", imageVariant);
     const section = planS3Mounts(options.mounts);
@@ -82,7 +87,11 @@ export function planFeatures(
     throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);
   }
   if (options.gateways !== undefined) {
-    throw new UnimplementedError("gateways", `llega en 0.6 (${GATEWAYS_CHANGE})`);
+    // Sólo valida la forma (ninguna llamada a AWS: `validateGateways` es
+    // pura). La `SecretCache` que de verdad resuelve cada cabecera llega
+    // después, cuando `create()` ya la calculó para `secrets` — ver
+    // `GatewaySectionFactory`.
+    sections.push(new GatewaySectionFactory(validateGateways(options.gateways)));
   }
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
