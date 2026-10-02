@@ -160,11 +160,35 @@ pub fn router_with_settings(services: Services, settings: StreamSettings) -> Grp
     router_with_transfers(services, settings, TransferServices::unavailable())
 }
 
+/// `router_with_features` with a freshly built `FeatureSet` of its own —
+/// for the integration tests and any caller that never shares the set with
+/// a hooks listener. `main` builds the process's one `FeatureSet` itself
+/// and calls `router_with_features`, so `ConfigureService`, `Health` and
+/// the hooks' participants all act on the same slots.
 #[must_use]
 pub fn router_with_transfers(
     services: Services,
     settings: StreamSettings,
     transfers: TransferServices,
+) -> GrpcRouter {
+    router_with_features(
+        services,
+        settings,
+        transfers,
+        Arc::new(crate::features::build(&crate::features::FeatureContext)),
+    )
+}
+
+/// The router over an explicit `FeatureSet`, shared by `ConfigureGrpc`
+/// (sections are applied to it) and `HealthGrpc` (`Health.features` is
+/// derived from it). Pass the same `Arc` whose `participants()` went into
+/// `hooks::HookServices`.
+#[must_use]
+pub fn router_with_features(
+    services: Services,
+    settings: StreamSettings,
+    transfers: TransferServices,
+    features: Arc<crate::features::FeatureSet>,
 ) -> GrpcRouter {
     let Services {
         session,
@@ -182,15 +206,7 @@ pub fn router_with_transfers(
     } = services;
     let kernel_status: Arc<dyn KernelStatus> = code.clone();
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
-    // M15 foundations: every slot is still `features::slot::Unsupported`
-    // (stateless), so building the set fresh here needs no field on
-    // `Services` yet. The feature that first needs shared context (a
-    // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
-    let configure = ConfigureGrpc::new(
-        session.clone(),
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
-    );
+    let configure = ConfigureGrpc::new(session.clone(), features.clone());
     let mut server = Server::builder()
         .tcp_nodelay(true)
         .http2_keepalive_interval(Some(HTTP2_KEEPALIVE_INTERVAL))
@@ -201,13 +217,10 @@ pub fn router_with_transfers(
         .layer(SandboxTimeoutGateLayer::new(session.clone()))
         .layer(ClientAbortLayer);
     server
-        .add_service(HealthServiceServer::new(HealthGrpc::new(
-            session,
-            metrics,
-            metrics_history,
-            kernel_status,
-            imds,
-        )))
+        .add_service(HealthServiceServer::new(
+            HealthGrpc::new(session, metrics, metrics_history, kernel_status, imds)
+                .with_features(features),
+        ))
         .add_service(ProcessServiceServer::new(
             ProcessGrpc::with_keepalive_interval(
                 processes,

@@ -37,12 +37,19 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
- * `imageVariant` (de `resolveImageVariant`) queda para cuando una función
- * real lo necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a
+ * `imageVariant` (de `resolveImageVariant`) y `logging` (el `logging` de
+ * `create()`, tal cual: una función que lee los logs del sandbox, como
+ * `events`, exige que lleguen a CloudWatch) quedan para cuando una función
+ * real los necesite; ninguna rama de hoy los usa. No hace ninguna llamada a
  * AWS ni construye ningún cliente.
  */
-export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
+export function planFeatures(
+  options: FeatureOptions,
+  imageVariant?: string,
+  logging?: unknown,
+): FeaturePlan {
   void imageVariant;
+  void logging;
   if (options.mounts !== undefined) {
     throw new UnimplementedError("mounts", `llega en 0.6 (${MOUNTS_CHANGE})`);
   }
