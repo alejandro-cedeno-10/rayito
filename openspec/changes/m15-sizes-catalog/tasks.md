@@ -36,6 +36,12 @@
       `publish_sizes` (waves of `MAX_CONCURRENT_IMAGE_BUILDS_Q83`).
 - [x] 3.2 `cli/image.py`: `--sizes`, `--env` on `rayito image publish`;
       `validate_sizes`, `parse_environment_assignments`.
+- [x] 3.3 `cli/image.py`: `rayito image sizes [--variant]` (lista las
+      imágenes `<variant>-<size>` ya publicadas vía `list-microvm-images`,
+      ninguna llamada adicional); `publish_with_sizes`,
+      `configuration_matches`/`published_version` ahora comparan siempre
+      `environmentVariables` (code review de PR #76: agregación de salida
+      de `--sizes` y reuse con `--env` obsoleto).
 
 ## 4. Python: exports and stack component
 
@@ -157,3 +163,35 @@
   `prepare_build`/`reusable_version` split, both done). Left for whichever
   future change (e.g. `m15-templates`, which also publishes images) first
   needs to swap the adapter.
+- `doctor`'s `agent_version` parity check across a variant's published
+  sizes (the M15 architecture names it alongside `rayito image sizes`,
+  which this change does add). Every existing `agent_version` doctor check
+  reads it from a live sandbox's `Health` (the `agent`/`compatibility`
+  checks' `--launch` sandbox), and `doctor` boots exactly one sandbox
+  today regardless of flags; comparing `agent_version` across N published
+  sizes would mean `--launch` booting N sandboxes (one per size) instead
+  of one, a cost-shape change to a `doctor` invariant ("diez
+  comprobaciones", `CHECK_NAMES`/`PRE_LAUNCH_CHECKS`/`LAUNCH_CHECKS` fixed
+  at ten across `cli/_checks.py` and `cli/doctor.py`) with no Q-measurement
+  backing the extra cost it would add by default. `rayito image sizes`
+  already flags a drifted baseline indirectly (a 4gb image missing or
+  `UPDATE_FAILED` while the baseline is current); a dedicated agent-version
+  check needs its own design (e.g. an opt-in `doctor --check-sizes` that
+  only launches when the operator asks) and is left for a follow-up
+  change.
+- TypeScript/shim `SandboxInfo` fields beyond `cpu_count`/`memory_mb`
+  parity (`rayito.e2b._compat.shim_cpu_memory`/
+  `clients/typescript/src/e2b/compat.ts`'s `shimCpuMemory`, both done in
+  this change): E2B has no `baseline_cpu`/`baseline_memory_mib` concept to
+  shim, so there is nothing further to map.
+- Moving `SIZE_NAMES`/`BASELINE_MEMORY_MIB`/`MIB_PER_VCPU_Q88` (currently
+  literals repeated in both `_sizing.py` and `sizing/sizing.ts`) into
+  `limits.json` (§6: shared values go there), the way `supportedMemoryMiB`
+  already does: `limits.json`/`scripts/gen_limits.py` are
+  foundations-owned (§5), and a mid-review change to the generator's
+  output shape risks drifting every other M15 branch that reads
+  `limits.json`/`_limits.py`/`limits.ts` today. `COMPAT_WARNING_TYPE`
+  *was* de-duplicated in this change (now lives in `errors.ts`, re-exported
+  from `e2b/compat.ts`) since that one is additive and touches no
+  generator. Left for `m15-docs-integration`/foundations to fold into
+  `limits.json` in its own pass.

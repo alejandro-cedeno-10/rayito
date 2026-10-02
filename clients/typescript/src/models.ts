@@ -13,7 +13,14 @@ import {
   PORT_MAX,
   PORT_MIN,
 } from "./limits.js";
-import { baselineCpuFor } from "./sizing/sizing.js";
+import {
+  applySizeSuffix,
+  baselineCpuFor,
+  type ResolvedSize,
+  resolveSize,
+  type SizeInput,
+  warnIfRounded,
+} from "./sizing/sizing.js";
 
 export const PROXY_AUTH_HEADER = "x-aws-proxy-auth";
 export const PROXY_PORT_HEADER = "x-aws-proxy-port";
@@ -211,6 +218,34 @@ export function withLifecycle(
   lifecycle: SandboxLifecycle | undefined,
 ): SandboxInfo {
   return sandboxInfo({ ...info, lifecycle });
+}
+
+/**
+ * m15-sizes-catalog: resuelve `size` fuera de `planFeatures` (no es una
+ * sección de `ConfigureSandbox`, es qué imagen lanzar) — pura, lanza
+ * `InvalidArgumentError` antes de cualquier llamada a AWS si el catálogo
+ * cerrado no cubre lo pedido, y avisa con `RayitoCompatWarning` si no cae
+ * justo en un valor del catálogo. `undefined` si `size` no se usó.
+ */
+export function planSize(size: SizeInput | undefined): ResolvedSize | undefined {
+  if (size === undefined) {
+    return undefined;
+  }
+  const resolved = resolveSize(size);
+  warnIfRounded(resolved);
+  return resolved;
+}
+
+/**
+ * El nombre de plantilla con el sufijo de tamaño ya aplicado
+ * (`applySizeSuffix`), o el mismo nombre si no se usó `size`
+ * (m15-sizes-catalog).
+ */
+export function sizedTemplateName(
+  templateName: string,
+  resolvedSize: ResolvedSize | undefined,
+): string {
+  return resolvedSize === undefined ? templateName : applySizeSuffix(templateName, resolvedSize);
 }
 
 /** m15-sizes-catalog: `size`/`baselineMemoryMib`/`baselineCpu` sólo se

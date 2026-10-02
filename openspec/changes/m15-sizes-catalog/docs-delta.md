@@ -101,7 +101,30 @@ Add to `SECURITY.md`'s threat table (same row in the site's
 it only links out):
 
 ```
-| T27 | coste por tamaño | Una identidad con `lambda:RunMicrovm` sin acotar puede lanzar el tamaño más caro del catálogo (8192 MiB) en vez del baseline previsto, multiplicando el coste por hora hasta ≈4x (RES-13/Q90: midió que una política acotada por ARN de imagen sí bloquea tamaños mayores) | Opcional, apagado por defecto: `rayito stack deploy sizes-guard` crea `RayitoRunAllowedSizes`, una política IAM que restringe `lambda:RunMicrovm` a los ARN de imagen explícitamente listados por el operador (el baseline y cada tamaño que de verdad se quiera permitir). Sin desplegarla, el comportamiento es el mismo de antes de `m15-sizes-catalog`: cualquier imagen que la identidad ya pudiera lanzar sigue lanzable | M15 |
+| T27 | coste por tamaño | Una identidad con `lambda:RunMicrovm` sin acotar puede lanzar el tamaño más caro del catálogo (8192 MiB) en vez del baseline previsto, multiplicando el coste por hora hasta ≈4x (RES-13/Q90: midió que una política acotada por ARN de imagen sí bloquea tamaños mayores) | Opcional, apagado por defecto: `rayito stack deploy sizes-guard` crea `RayitoRunAllowedSizes`, una política IAM con un Deny de `lambda:RunMicrovm` fuera de los ARN de imagen explícitamente listados por el operador (el baseline y cada tamaño que de verdad se quiera permitir); el Deny es lo que hace la restricción efectiva aunque la identidad ya tenga el `microvm-image:*` de la `CallerPolicy` estándar (un Allow por sí solo no restringiría nada en ese caso, que es el típico). Sin desplegarla, el comportamiento es el mismo de antes de `m15-sizes-catalog`: cualquier imagen que la identidad ya pudiera lanzar sigue lanzable | M15 |
+```
+
+## `SPEC.md` §4 — draft replacement for the "Tamaño por sandbox" non-goal (D1)
+
+Not applied by this change (D1 leaves the exact wording to the maintainer,
+proposal.md); this is a draft in the same style as the "Metadatos por
+sandbox" non-goal this same section already struck through and redirected,
+for the maintainer to accept, edit or reject:
+
+```markdown
+- ~~**Tamaño por sandbox** (`cpu=`/`memory=`): el tamaño es propiedad de la imagen
+  (`resources[0].minimumMemoryInMiB`) tanto en Rayito como, de hecho, en E2B.
+  Un template = un tamaño, como en E2B (tamaño por build de template, por
+  ejemplo `base-2gb`, `base-4gb`); ver [`limits.md`](docs/site/docs/limits.md).
+  No hay, ni se promete, un resolvedor de tamaño por sandbox.~~: entregado en
+  M15 (`m15-sizes-catalog`, ADR-019) con un catálogo **cerrado** de cinco
+  tamaños nombrados (`512mb`/`1gb`/`2gb`/`4gb`/`8gb`) resuelto por completo
+  en el SDK, sin RPC: `size="4gb"` sigue siendo "un template = un tamaño"
+  (antepone el sufijo de la convención `<variant>[-<size>]` antes de
+  lanzar), nunca un ajuste del guest en marcha ni un `resources=`/`cpu=`/
+  `memory=` arbitrario en `create()` — eso sigue sin existir, porque
+  `create-microvm-image` sólo acepta esos cinco valores (Q87). Ver
+  [Tamaños](docs/site/docs/funciones-opcionales/tamanos.md).
 ```
 
 ## `docs/site/docs/limits.md` reference check

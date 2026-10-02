@@ -36,10 +36,15 @@ versionado [SemVer](https://semver.org/lang/es/).
   `GetMicrovmImageVersion` por versión de imagen, `SandboxInfo.baselineMemoryMib`
   y `baselineCpu` (vCPU medido exactamente para los cinco tamaños del
   catálogo); `cpuCount`/`memoryMb` siguen siendo lo que el guest reporta de
-  verdad. Guardarraíles de coste opcional `sizes-guard`
-  (`RayitoRunAllowedSizes`, limita `lambda:RunMicrovm` a los ARN de imagen
-  permitidos; `rayito image publish --sizes`/`--env` es sólo CLI Python).
-  Sin `size`, el comportamiento sigue siendo exactamente el de 0.5.x.
+  verdad. El shim `rayito/e2b` reporta ese mismo baseline en
+  `SandboxInfo.cpuCount`/`memoryMB` cuando `size` se usó (como E2B reporta
+  lo declarado por el template), la vista real del guest si no.
+  Guardarraíles de coste opcional `sizes-guard` (`RayitoRunAllowedSizes`:
+  un Deny de `lambda:RunMicrovm` fuera de los ARN de imagen permitidos,
+  efectivo aunque la identidad ya tenga el `microvm-image:*` de la
+  `CallerPolicy` estándar; `rayito image publish --sizes`/`--env` y
+  `rayito image sizes` son sólo CLI Python). Sin `size`, el comportamiento
+  sigue siendo exactamente el de 0.5.x.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

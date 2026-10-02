@@ -1,23 +1,29 @@
 """`rayito image publish --sizes`/`--env` (m15-sizes-catalog): `validate_sizes`
 y `parse_environment_assignments` son puros y rechazan antes de cualquier
-llamada a AWS; `sized_settings` hornea `RAYITO_BASELINE_MEMORY_MIB`; y
-`publish_sizes` publica una imagen sufijada por tamaño reutilizando la
-versión ya construida, sin tocar el baseline."""
+llamada a AWS; `sized_settings` hornea `RAYITO_BASELINE_MEMORY_MIB`;
+`publish_sizes` construye o reutiliza una imagen sufijada por tamaño sin
+tocar el baseline, sin imprimir nada; y `publish_with_sizes` agrega el
+resumen del baseline con el de cada tamaño en un único documento/bloque de
+salida (nunca uno por imagen)."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import typer
+from botocore.stub import ANY
+from typer.testing import CliRunner
 
 from rayito.cli import _artifact, _publish
 from rayito.cli._session import Clients
+from rayito.cli.app import app
 from rayito.cli.image import parse_environment_assignments, validate_sizes
 
-from .conftest import ACCOUNT_ID, REGION, Stubs
+from .conftest import ACCOUNT_ID, BASE_IMAGE_ARN, IMAGE_ARN, REGION, Stubs, version_item
 
 BUILD_ROLE = f"arn:aws:iam::{ACCOUNT_ID}:role/build"
 T0 = datetime(2026, 9, 1, tzinfo=UTC)
@@ -201,6 +207,8 @@ def sized_build_item(version: str) -> dict[str, Any]:
 def test_publish_sizes_reuses_an_already_built_version_without_touching_the_baseline(
     clients: Clients, stubbed_clients: Stubs, artifact: Path
 ) -> None:
+    """`publish_sizes` nunca imprime nada: devuelve el resumen de cada
+    tamaño para que `publish_with_sizes` lo agregue con el del baseline."""
     settings = base_settings(artifact=artifact)
     key = _publish.artifact_key(artifact.read_bytes())
     stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
@@ -223,14 +231,296 @@ def test_publish_sizes_reuses_an_already_built_version_without_touching_the_base
         {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0", "buildId": "build-1"},
     )
 
-    code = _publish.publish_sizes(clients, settings, ("4gb",))
+    summaries = _publish.publish_sizes(clients, settings, ("4gb",))
 
-    assert code == 0
+    assert set(summaries) == {"4gb"}
+    assert summaries["4gb"]["imageArn"] == SIZED_ARN
+    assert summaries["4gb"]["imageVersion"] == "3.0"
+    assert summaries["4gb"]["launchable"] is True
     # El reuse no debería haber dejado ninguna respuesta de create/update sin usar.
     stubbed_clients.microvms.assert_no_pending_responses()
     stubbed_clients.s3.assert_no_pending_responses()
 
 
 def test_publish_sizes_with_no_sizes_makes_no_call(clients: Clients, artifact: Path) -> None:
-    code = _publish.publish_sizes(clients, base_settings(artifact=artifact), ())
-    assert code == 0
+    summaries = _publish.publish_sizes(clients, base_settings(artifact=artifact), ())
+    assert summaries == {}
+
+
+# ------------------------------------------------------------- size_env_var
+
+
+def test_size_env_var_uppercases_the_size_name() -> None:
+    assert _publish.size_env_var("4gb") == "RAYITO_TEMPLATE_4GB"
+    assert _publish.size_env_var("512mb") == "RAYITO_TEMPLATE_512MB"
+
+
+# --------------------------------------------------------- aggregate_summary
+
+
+def test_aggregate_summary_without_sizes_is_exactly_the_baseline() -> None:
+    baseline = {"imageArn": IMAGE_ARN, "imageVersion": "3.0"}
+    document = _publish.aggregate_summary(baseline, {})
+    assert document == baseline
+    assert "sizes" not in document
+
+
+def test_aggregate_summary_carries_the_baseline_at_the_root_and_sizes_nested() -> None:
+    baseline = {"imageArn": IMAGE_ARN, "imageVersion": "3.0"}
+    sized = {"4gb": {"imageArn": SIZED_ARN, "imageVersion": "1.0"}}
+    document = _publish.aggregate_summary(baseline, sized)
+    assert document["imageArn"] == IMAGE_ARN
+    assert document["sizes"] == sized
+
+
+# ------------------------------------------------------- publish_with_sizes (CLI)
+
+
+def publish_args(artifact: Path, *extra: str) -> list[str]:
+    return [
+        "image",
+        "publish",
+        "--artifact",
+        str(artifact),
+        "--base-image-version",
+        "1",
+        "--bucket",
+        "bucket",
+        "--build-role-arn",
+        BUILD_ROLE,
+        *extra,
+    ]
+
+
+def stub_baseline_reuse(stubs: Stubs, key: str) -> None:
+    """La misma versión 3.0 de `rayito-base` que `test_publish.py`'s
+    `test_reuse_makes_no_build_call` reutiliza, para una ruta de reuse
+    determinista sin esperar ningún gate."""
+    stubs.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubs.microvms.add_response(
+        "get_microvm_image",
+        {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATED", "createdAt": T0},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stubs.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [version_item(3, artifact_uri=f"s3://bucket/{key}", base_image_version="1.0")]},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stubs.microvms.add_response(
+        "list_microvm_image_builds",
+        {
+            "items": [
+                {
+                    "imageArn": IMAGE_ARN,
+                    "imageVersion": "3.0",
+                    "buildId": "build-1",
+                    "buildState": "SUCCESSFUL",
+                    "architecture": "ARM_64",
+                    "chipset": "GRAVITON",
+                    "chipsetGeneration": "3",
+                    "createdAt": T0,
+                }
+            ]
+        },
+        {"imageIdentifier": IMAGE_ARN, "imageVersion": "3.0"},
+    )
+    stubs.microvms.add_response(
+        "get_microvm_image_build",
+        {
+            "imageArn": IMAGE_ARN,
+            "imageVersion": "3.0",
+            "buildId": "build-1",
+            "buildState": "SUCCESSFUL",
+            "architecture": "ARM_64",
+            "chipset": "GRAVITON",
+            "chipsetGeneration": "3",
+            "createdAt": T0,
+            "snapshotBuild": {},
+        },
+        {"imageIdentifier": IMAGE_ARN, "imageVersion": "3.0", "buildId": "build-1"},
+    )
+
+
+def stub_sized_reuse(stubs: Stubs, key: str) -> None:
+    stubs.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubs.microvms.add_response(
+        "get_microvm_image", sized_image_response(), {"imageIdentifier": SIZED_ARN}
+    )
+    stubs.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [sized_version_item(3, artifact_uri=f"s3://bucket/{key}")]},
+        {"imageIdentifier": SIZED_ARN},
+    )
+    stubs.microvms.add_response(
+        "list_microvm_image_builds",
+        {"items": [sized_build_item("3.0")]},
+        {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0"},
+    )
+    stubs.microvms.add_response(
+        "get_microvm_image_build",
+        {**sized_build_item("3.0"), "snapshotBuild": {}},
+        {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0", "buildId": "build-1"},
+    )
+
+
+def test_publish_with_sizes_json_is_a_single_document(
+    runner: CliRunner, clients: Clients, stubbed_clients: Stubs, artifact: Path
+) -> None:
+    """Con `--sizes` y `--json`, `stdout` debe seguir siendo un único
+    documento parseable: el baseline en la raíz, el tamaño bajo `sizes`."""
+    key = _publish.artifact_key(artifact.read_bytes())
+    stub_baseline_reuse(stubbed_clients, key)
+    stub_sized_reuse(stubbed_clients, key)
+
+    result = runner.invoke(app, ["--json", *publish_args(artifact, "--sizes", "4gb")], obj=clients)
+
+    assert result.exit_code == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["imageArn"] == IMAGE_ARN
+    assert document["imageVersion"] == "3.0"
+    assert set(document["sizes"]) == {"4gb"}
+    assert document["sizes"]["4gb"]["imageArn"] == SIZED_ARN
+
+
+def test_publish_with_sizes_plain_prints_the_baseline_line_once(
+    runner: CliRunner, clients: Clients, stubbed_clients: Stubs, artifact: Path
+) -> None:
+    """En texto plano, `RAYITO_TEMPLATE=` debe seguir nombrando sólo el
+    baseline — nunca el último tamaño publicado — y cada tamaño adicional
+    va en su propia línea `RAYITO_TEMPLATE_<SIZE>=`."""
+    key = _publish.artifact_key(artifact.read_bytes())
+    stub_baseline_reuse(stubbed_clients, key)
+    stub_sized_reuse(stubbed_clients, key)
+
+    result = runner.invoke(app, publish_args(artifact, "--sizes", "4gb"), obj=clients)
+
+    assert result.exit_code == 0, result.stderr
+    lines = result.stdout.splitlines()
+    template_lines = [line for line in lines if line.startswith("RAYITO_TEMPLATE=")]
+    assert template_lines == [f"RAYITO_TEMPLATE={IMAGE_ARN}"]
+    assert f"RAYITO_TEMPLATE_4GB={SIZED_ARN}" in lines
+
+
+def test_publish_with_sizes_skips_sizes_when_the_baseline_fails(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si el baseline no queda lanzable, no tiene sentido gastar builds en
+    los tamaños: el documento agregado sólo trae el baseline fallido."""
+    monkeypatch.setattr("rayito.cli._publish.time.sleep", lambda seconds: None)
+    key = _publish.artifact_key(artifact.read_bytes())
+    stubbed_clients.s3.add_client_error(
+        "head_object",
+        service_error_code="404",
+        service_message="Not Found",
+        http_status_code=404,
+        expected_params={"Bucket": "bucket", "Key": key},
+    )
+    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image",
+        {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATED", "createdAt": T0},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_versions", {"items": []}, {"imageIdentifier": IMAGE_ARN}
+    )
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image",
+        {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATED", "createdAt": T0},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stubbed_clients.microvms.add_response(
+        "update_microvm_image",
+        {
+            "imageArn": IMAGE_ARN,
+            "name": "rayito-base",
+            "state": "UPDATING",
+            "createdAt": T0,
+            "updatedAt": T0,
+            "baseImageArn": BASE_IMAGE_ARN,
+            "buildRoleArn": BUILD_ROLE,
+            "codeArtifact": {"uri": f"s3://bucket/{key}"},
+            "imageVersion": "4.0",
+        },
+        {
+            "imageIdentifier": IMAGE_ARN,
+            "baseImageArn": BASE_IMAGE_ARN,
+            "baseImageVersion": "1",
+            "buildRoleArn": BUILD_ROLE,
+            "codeArtifact": {"uri": f"s3://bucket/{key}"},
+            "resources": [{"minimumMemoryInMiB": 2048}],
+            "cpuConfigurations": [{"architecture": "ARM_64"}],
+            "hooks": _publish.IMAGE_HOOKS,
+            "logging": {"cloudWatch": {"logGroup": "/rayito/rayito-base"}},
+            "description": ANY,
+        },
+    )
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image",
+        {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATE_FAILED", "createdAt": T0},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image_version",
+        {
+            **version_item(4, state="FAILED", status="INACTIVE"),
+            "stateReason": "Validate hook invocation timed out after PT10M",
+        },
+        {"imageIdentifier": IMAGE_ARN, "imageVersion": "4.0"},
+    )
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_builds",
+        {
+            "items": [
+                {
+                    "imageArn": IMAGE_ARN,
+                    "imageVersion": "4.0",
+                    "buildId": "build-1",
+                    "buildState": "FAILED",
+                    "architecture": "ARM_64",
+                    "chipset": "GRAVITON",
+                    "chipsetGeneration": "3",
+                    "createdAt": T0,
+                }
+            ]
+        },
+        {"imageIdentifier": IMAGE_ARN, "imageVersion": "4.0"},
+    )
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image_build",
+        {
+            "imageArn": IMAGE_ARN,
+            "imageVersion": "4.0",
+            "buildId": "build-1",
+            "buildState": "FAILED",
+            "architecture": "ARM_64",
+            "chipset": "GRAVITON",
+            "chipsetGeneration": "3",
+            "createdAt": T0,
+        },
+        {"imageIdentifier": IMAGE_ARN, "imageVersion": "4.0", "buildId": "build-1"},
+    )
+    stubbed_clients.logs.add_response(
+        "describe_log_streams",
+        {"logStreams": []},
+        {
+            "logGroupName": "/rayito/rayito-base",
+            "orderBy": "LastEventTime",
+            "descending": True,
+            "limit": 3,
+        },
+    )
+
+    result = runner.invoke(app, ["--json", *publish_args(artifact, "--sizes", "4gb")], obj=clients)
+
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["launchable"] is False
+    assert "sizes" not in document
+    # No se intentó construir ni reutilizar ningún tamaño.
+    stubbed_clients.microvms.assert_no_pending_responses()

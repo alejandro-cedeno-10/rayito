@@ -1,4 +1,4 @@
-"""`rayito image publish | list | prune | zip`."""
+"""`rayito image publish | list | sizes | prune | zip`."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from rayito.cli._publish import (
     PublishSettings,
     default_image_name,
     publish,
-    publish_sizes,
+    publish_with_sizes,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
 
@@ -96,10 +96,13 @@ def validate_sizes(raw: str | None) -> tuple[str, ...]:
 
 
 def parse_environment_assignments(raw: list[str]) -> dict[str, str]:
-    """`--env KEY=VALUE` (repetible, m15-sizes-catalog/`_images.py`): nunca
-    un interruptor de activación (ADR-014 regla 4), sólo configuración
+    """`--env KEY=VALUE` (repetible, m15-sizes-catalog): nunca un
+    interruptor de activación (ADR-014 regla 4), sólo configuración
     horneada en la imagen (`environmentVariables` de `create`/`update-
-    microvm-image`)."""
+    microvm-image`; `PublishSettings.environment_variables`, el seam mínimo
+    que esta función necesita en vez de la extracción completa de
+    `_images.py`/`ImageBuildGateway` que nombra la arquitectura M15 —
+    `cli/_publish.py` tasks.md §10)."""
     result: dict[str, str] = {}
     for item in raw:
         if "=" not in item:
@@ -174,8 +177,11 @@ def publish_command(
     """Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
     espera al gate de tres estados; reutiliza una versión igual. Con
     `--sizes` publica, además, una imagen por tamaño desde el mismo
-    artefacto (m15-sizes-catalog); sin él, sólo el baseline, como antes de
-    sizes-catalog."""
+    artefacto, informando todo en un único bloque de salida (m15-sizes-
+    catalog, `publish_with_sizes`): un documento JSON o un
+    `RAYITO_TEMPLATE=` del baseline seguido de un `RAYITO_TEMPLATE_<SIZE>=`
+    por tamaño, nunca uno por imagen. Sin `--sizes`, sólo el baseline, como
+    antes de sizes-catalog."""
     size_names = validate_sizes(sizes)
     environment_variables = parse_environment_assignments(env)
     settings = PublishSettings(
@@ -192,9 +198,11 @@ def publish_command(
         os_capabilities=validate_os_capabilities(os_capabilities),
         environment_variables=environment_variables,
     )
-    code = publish(clients_of(ctx), settings, json_output=json_mode(ctx))
-    if code == 0 and size_names:
-        code = publish_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
+    code = (
+        publish_with_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
+        if size_names
+        else publish(clients_of(ctx), settings, json_output=json_mode(ctx))
+    )
     if code:
         raise typer.Exit(code)
 
@@ -265,6 +273,50 @@ def list_command(
         emit_json(rows)
         return
     table(columns, [[row[column] for column in columns] for row in rows])
+
+
+SIZES_COLUMNS = ("size", "name", "published", "imageArn", "state", "createdAt")
+
+
+def size_image_names(base_name: str) -> dict[str, str]:
+    """El nombre de imagen que cada tamaño del catálogo cerrado tendría para
+    `base_name` (m15-sizes-catalog): el baseline (`BASELINE_SIZE_NAME`,
+    2048 MiB) nunca lleva sufijo, el resto sigue `<base_name>-<size>`
+    (`apply_size_suffix`). No dice si de verdad se publicó cada una; eso lo
+    cruza `sizes_command` con `list-microvm-images`."""
+    return {
+        size: base_name if size == BASELINE_SIZE_NAME else f"{base_name}-{size}"
+        for size in SIZE_NAMES
+    }
+
+
+@image_app.command("sizes")
+def sizes_command(
+    ctx: typer.Context,
+    variant: Annotated[str, typer.Option("--variant", help="full, slim o poly.")] = "full",
+) -> None:
+    """Por cada tamaño del catálogo cerrado, qué imagen de esta variante ya
+    publicó `rayito image publish --sizes` (o si ninguna): una sola
+    `list-microvm-images` filtrada por el nombre base, ninguna llamada
+    adicional a AWS. No construye ni publica nada."""
+    base_name = default_image_name(validate_variant(variant))
+    clients = clients_of(ctx)
+    published = {image["name"]: image for image in listed_images(clients, base_name)}
+    rows = [
+        {
+            "size": size,
+            "name": name,
+            "published": name in published,
+            "imageArn": published.get(name, {}).get("imageArn"),
+            "state": published.get(name, {}).get("state"),
+            "createdAt": published.get(name, {}).get("createdAt"),
+        }
+        for size, name in size_image_names(base_name).items()
+    ]
+    if json_mode(ctx):
+        emit_json(rows)
+        return
+    table(SIZES_COLUMNS, [[row[column] for column in SIZES_COLUMNS] for row in rows])
 
 
 @image_app.command("prune")

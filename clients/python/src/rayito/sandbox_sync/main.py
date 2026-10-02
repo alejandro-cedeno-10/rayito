@@ -152,11 +152,13 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
@@ -178,7 +180,7 @@ from rayito._secrets import (
     warm,
 )
 from rayito._size_catalog import DEFAULT_SIZE_CATALOG
-from rayito._sizing import apply_size_suffix, resolve_size, warn_if_rounded
+from rayito._sizing import SizeRequest
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -520,7 +522,7 @@ class Sandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -745,14 +747,10 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
-        # m15-sizes-catalog: se resuelve aquí, no en `plan_features` (§7.3
-        # de la arquitectura M15: `size=` no es una sección de
-        # `ConfigureSandbox`, es qué imagen lanzar). `resolve_size` es puro
-        # y lanza `InvalidArgumentException` antes de cualquier llamada a
-        # AWS si el catálogo cerrado no cubre lo pedido.
-        resolved_size = None if size is None else resolve_size(size)
-        if resolved_size is not None:
-            warn_if_rounded(resolved_size, stacklevel=3)
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
+        # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
+        resolved_size = plan_size(size, stacklevel=3)
         plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -770,9 +768,7 @@ class Sandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        template_name = resolve_template(template)
-        if resolved_size is not None:
-            template_name = apply_size_suffix(template_name, resolved_size)
+        template_name = sized_template_name(resolve_template(template), resolved_size)
         image_arn = plane.resolve_template_arn(template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
@@ -1331,7 +1327,15 @@ class Sandbox:
         aparecen cuando `create(size=...)` se usó (m15-sizes-catalog): esa
         única llamada a `GetMicrovmImageVersion` se cachea por versión de
         imagen (`_size_catalog.DEFAULT_SIZE_CATALOG`), así que repetir
-        `get_info()` no repite la llamada a AWS."""
+        `get_info()` no repite la llamada a AWS. Esto vive en
+        `self._launch_options` (relleno sólo por `create()`/`take()`):
+        `Sandbox.connect(id).get_info()` deja `size`/`baseline_memory_mib`/
+        `baseline_cpu` en `None` aunque la imagen tenga el sufijo de un
+        tamaño, porque el handle de `connect()` nunca pasó por `create()`
+        en este proceso (no hay un `requested_size` que confirmar). No se
+        deriva del sufijo del nombre de la imagen a propósito: un nombre
+        que termine en `-4gb` por convención propia del operador, no por
+        `--sizes`, confirmaría un tamaño que nadie pidió."""
         info = self._control_plane.get_microvm(self.sandbox_id)
         if deadline_may_have_moved(info.state, self._lifecycle):
             self._refresh_health()

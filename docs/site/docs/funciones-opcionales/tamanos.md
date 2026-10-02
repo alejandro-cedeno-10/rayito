@@ -28,9 +28,13 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       ≈1,1 GB a 8192 MiB sobre la misma imagen mínima). `sizes-guard`: $0
       en reposo y por uso (sólo IAM).
     - **IAM**: ninguno adicional para lanzar con `size=`. `sizes-guard`
-      (`RayitoRunAllowedSizes`) limita `lambda:RunMicrovm` a los ARN de
-      imagen que el operador liste; adjúntala a la identidad que crea
-      sandboxes para impedir que lance un tamaño no publicado.
+      (`RayitoRunAllowedSizes`) añade un Deny de `lambda:RunMicrovm` fuera
+      de los ARN de imagen que el operador liste (no sólo un Allow: el
+      Allow solo no restringe nada si la identidad ya tiene el
+      `microvm-image:*` de la `CallerPolicy` estándar de `infra/iam.yaml`,
+      que es justo el caso típico); adjúntala a la identidad que crea
+      sandboxes para impedir que lance un tamaño no publicado, sea cual sea
+      el resto de sus permisos.
     - **Cómo apagarla**: no pases `size=`/`size` (por defecto `None`/
       `undefined`); borra la pila `sizes-guard` si la desplegaste (no borra
       ninguna imagen).
@@ -160,6 +164,11 @@ hacia abajo, y avisa:
 5. `create(pool=, size=)`/`create({ pool, size })` es
    `InvalidArgumentException`/`InvalidArgumentError`: una plaza del pool ya
    salió de una imagen fija, no puede cambiar de tamaño al tomarla.
+6. `size`/`baseline_memory_mib`/`baseline_cpu` sólo aparecen en el handle
+   que de verdad llamó a `create(size=...)`: `Sandbox.connect(id)` nunca
+   los rellena, aunque la imagen tenga el sufijo de un tamaño (no se
+   adivina a partir del nombre a propósito, para no confirmar un tamaño
+   que nadie pidió en *este* proceso).
 
 ## Guest vs. imagen (lo medido)
 
@@ -198,6 +207,10 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   simultáneas, el límite del servicio), así AWS las construye en paralelo.
 - Una versión ya construida con el mismo artefacto y configuración se
   reutiliza, como en una publicación normal.
+- `rayito image sizes [--variant]` lista, por tamaño del catálogo cerrado,
+  qué imagen de la variante ya se publicó (o si ninguna): una sola
+  `list-microvm-images`, ninguna llamada adicional a AWS. Ver
+  [CLI](../cli.md#image-sizes).
 
 ## Guardarraíles de coste (`sizes-guard`, opcional)
 
@@ -206,11 +219,14 @@ rayito stack deploy sizes-guard \
   --param ImageArns=<ARN del baseline>,<ARN de rayito-base-4gb>
 ```
 
-Crea una política IAM (`RayitoRunAllowedSizes`) que sólo permite
-`lambda:RunMicrovm` sobre los ARN de imagen listados: una identidad con
-esta política (y nada más amplio) no puede lanzar un tamaño que no esté en
-la lista, aunque exista. `rayito stack destroy sizes-guard` borra la
-política; ninguna imagen se toca.
+Crea una política IAM (`RayitoRunAllowedSizes`) con un Allow de
+`lambda:RunMicrovm` sobre los ARN listados y, sobre todo, un Deny de
+`lambda:RunMicrovm` con `NotResource` para cualquier otro ARN: una
+identidad con esta política adjunta no puede lanzar un tamaño que no esté
+en la lista, aunque exista, **aunque también tenga** el `microvm-image:*`
+de la `CallerPolicy` estándar de `infra/iam.yaml` (un Deny explícito gana
+siempre sobre cualquier Allow, venga de la política que venga). `rayito
+stack destroy sizes-guard` borra la política; ninguna imagen se toca.
 
 ## Errores y solución de problemas
 

@@ -100,6 +100,19 @@ rayito image list rayito-base            # versiones de una imagen, la más nuev
 Con un nombre o ARN lista `imageVersion`, `state`, `status`,
 `baseImageVersion`, el nombre del artefacto en S3 y `createdAt`.
 
+### `image sizes`
+
+```bash
+rayito image sizes [--variant full|slim|poly]
+```
+
+Por cada tamaño del catálogo cerrado (`512mb`/`1gb`/`2gb`/`4gb`/`8gb`,
+[Tamaños](funciones-opcionales/tamanos.md)), qué imagen de la variante ya
+publicó `rayito image publish --sizes` (`name`, `published`, `imageArn`,
+`state`, `createdAt`) o si ninguna. Una sola `list-microvm-images` filtrada
+por el nombre base; ninguna llamada adicional a AWS, y nunca construye ni
+publica nada.
+
 ### `image prune`
 
 ```bash

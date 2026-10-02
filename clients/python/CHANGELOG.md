@@ -40,10 +40,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   única llamada cacheada a `GetMicrovmImageVersion` por versión de imagen,
   `SandboxInfo.baseline_memory_mib` y `baseline_cpu` (vCPU medido
   exactamente para los cinco tamaños del catálogo); `cpu_count`/`memory_mb`
-  siguen siendo lo que el guest reporta de verdad. Guardarraíles de coste
-  opcional `rayito stack deploy sizes-guard` (`RayitoRunAllowedSizes`,
-  limita `lambda:RunMicrovm` a los ARN de imagen permitidos). Sin `size=`,
-  el comportamiento sigue siendo exactamente el de 0.5.x.
+  siguen siendo lo que el guest reporta de verdad. El shim `rayito.e2b`
+  reporta ese mismo baseline en `SandboxInfo.cpu_count`/`memory_mb` cuando
+  `size=` se usó (como E2B reporta lo declarado por el template), la vista
+  real del guest si no. `rayito image sizes [--variant]` lista, por
+  tamaño del catálogo cerrado, qué imagen ya se publicó (`list-microvm-
+  images`, ninguna llamada adicional). Guardarraíles de coste opcional
+  `rayito stack deploy sizes-guard` (`RayitoRunAllowedSizes`: un Deny de
+  `lambda:RunMicrovm` fuera de los ARN de imagen permitidos, efectivo
+  aunque la identidad ya tenga el `microvm-image:*` de la `CallerPolicy`
+  estándar). Sin `size=`, el comportamiento sigue siendo exactamente el de
+  0.5.x.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

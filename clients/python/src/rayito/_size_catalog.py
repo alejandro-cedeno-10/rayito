@@ -3,7 +3,9 @@ una única llamada gratuita a `GetMicrovmImageVersion` por versión de imagen,
 que `resources[0].minimumMemoryInMiB` coincide con el tamaño que
 `Sandbox.create(size=...)` resolvió localmente contra el catálogo cerrado
 de `_sizing.py`. Nunca se llama si `size=` no se usó: ver
-`test_m15_sizes_catalog_zero_cost.py`.
+`test_m15_sizes_catalog_create.py` (lo prueba contra el plano de control
+falso) y el trazado dorado de 0.5.x de `test_m15_zero_cost.py` (ni `size=`
+ni nada de esta función aparece ahí).
 """
 
 from __future__ import annotations

@@ -6,6 +6,7 @@
  */
 
 import {
+  COMPAT_WARNING_TYPE,
   InvalidArgumentError,
   LifecycleUnsupportedError,
   SandboxNotFoundError,
@@ -43,7 +44,7 @@ import type {
 } from "./types.js";
 import { COMPAT_DOC_PATH, unimplemented } from "./unimplemented.js";
 
-export const COMPAT_WARNING_TYPE = "RayitoCompatWarning";
+export { COMPAT_WARNING_TYPE } from "../errors.js";
 /** El `timeoutMs` de E2B cuando falta: 5 minutos. */
 export const E2B_DEFAULT_TIMEOUT_MS = 300_000;
 /** El tope de plataforma mínimo del shim: una hora aunque el plazo lógico sea corto. */
@@ -618,10 +619,31 @@ export interface InfoExtras {
 }
 
 /**
+ * `cpuCount`/`memoryMB` del `SandboxInfo` de E2B (m15-sizes-catalog): E2B no
+ * distingue "lo declarado al construir el template" de "lo que el guest
+ * reporta en vivo" (Rayito sí, en `baselineCpu`/`baselineMemoryMib` vs.
+ * `cpuCount`/`memoryMb` nativos, Q88) — el shim sólo tiene un par de campos,
+ * así que cuando `size` se usó (el tamaño declarado se conoce) reporta ese
+ * baseline, igual que E2B reporta lo declarado por el template; sin `size`
+ * sigue siendo el comportamiento de 0.5.x: la vista real del guest vía
+ * `Health`.
+ */
+export function shimCpuMemory(info: NativeSandboxInfo): {
+  readonly cpuCount: number | undefined;
+  readonly memoryMB: number | undefined;
+} {
+  if (info.size !== undefined) {
+    return { cpuCount: info.baselineCpu, memoryMB: info.baselineMemoryMib };
+  }
+  return { cpuCount: info.cpuCount, memoryMB: info.memoryMb };
+}
+
+/**
  * El `SandboxInfo` de E2B 2.51 (D10): `endAt` es el plazo lógico (`expiresAt`),
- * `cpuCount`/`memoryMB`/`envdVersion` lo leído de `Health`, `lifecycle` sólo
- * si `rayd` lo gestiona, `network` con la política leída del guest (sea cual
- * sea su `enforcement`), `allowInternetAccess` según `internetAccessFrom`, y
+ * `cpuCount`/`memoryMB`/`envdVersion` lo leído de `Health` (o el baseline
+ * declarado con `size`, ver `shimCpuMemory`), `lifecycle` sólo si `rayd` lo
+ * gestiona, `network` con la política leída del guest (sea cual sea su
+ * `enforcement`), `allowInternetAccess` según `internetAccessFrom`, y
  * `volumeMounts` siempre vacío.
  */
 export function infoFromNative(
@@ -659,11 +681,12 @@ export function infoFromNative(
     });
   }
   const managed = info.lifecycle !== undefined && info.lifecycle.phase !== "unmanaged";
+  const { cpuCount, memoryMB } = shimCpuMemory(info);
   return Object.freeze({
     ...base,
     endAt: info.expiresAt,
-    cpuCount: info.cpuCount,
-    memoryMB: info.memoryMb,
+    cpuCount,
+    memoryMB,
     envdVersion: info.agentVersion,
     lifecycle:
       managed && info.lifecycle !== undefined

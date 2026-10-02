@@ -41,6 +41,7 @@ import {
   type IdlePolicyInput,
   type NetworkPolicyInput,
   type NetworkState,
+  planSize,
   type ResolvedS3Staging,
   type S3Staging,
   type SandboxHealth,
@@ -48,6 +49,7 @@ import {
   type SandboxListItem,
   type SandboxMetrics,
   sandboxInfo,
+  sizedTemplateName,
   withLifecycle,
   withSizeFacts,
 } from "../models.js";
@@ -69,7 +71,7 @@ import {
   warm,
 } from "../secrets/inject.js";
 import { defaultSizeCatalog } from "../sizing/catalog.js";
-import { applySizeSuffix, resolveSize, type SizeInput, warnIfRounded } from "../sizing/sizing.js";
+import type { SizeInput } from "../sizing/sizing.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -694,14 +696,10 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
-    // m15-sizes-catalog: se resuelve aquí, no en `planFeatures` (`size` no
-    // es una sección de ConfigureSandbox, es qué imagen lanzar). Puro:
-    // lanza `InvalidArgumentError` antes de cualquier llamada a AWS si el
-    // catálogo cerrado no cubre lo pedido.
-    const resolvedSize = options.size === undefined ? undefined : resolveSize(options.size);
-    if (resolvedSize !== undefined) {
-      warnIfRounded(resolvedSize);
-    }
+    // m15-sizes-catalog: `planSize` (`models.ts`) resuelve `size` aquí, no
+    // en `planFeatures`: no es una sección de ConfigureSandbox, es qué
+    // imagen lanzar.
+    const resolvedSize = planSize(options.size);
     planFeatures(
       {
         mounts: options.mounts,
@@ -718,10 +716,7 @@ export class Sandbox implements AsyncDisposable {
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
-    const resolvedTemplateName =
-      resolvedSize === undefined
-        ? resolveTemplate(options.template)
-        : applySizeSuffix(resolveTemplate(options.template), resolvedSize);
+    const resolvedTemplateName = sizedTemplateName(resolveTemplate(options.template), resolvedSize);
     const imageArn = await plane.resolveTemplateArn(resolvedTemplateName, {
       signal: options.signal,
     });

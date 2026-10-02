@@ -12,7 +12,7 @@
  * (`<variant>-<size>`, por ejemplo `rayito-base-4gb`).
  */
 
-import { InvalidArgumentError } from "../errors.js";
+import { COMPAT_WARNING_TYPE, InvalidArgumentError } from "../errors.js";
 import { SUPPORTED_MEMORY_MIB } from "../limits.js";
 
 /** Nombres cortos de `size`, en el mismo orden que `SUPPORTED_MEMORY_MIB` (Q87). */
@@ -134,8 +134,6 @@ export function applySizeSuffix(imageName: string, resolved: ResolvedSize): stri
   }
   return `${imageName}-${resolved.name}`;
 }
-
-const COMPAT_WARNING_TYPE = "RayitoCompatWarning";
 
 /** Un aviso `RayitoCompatWarning` cuando `size` no cae justo en el catálogo. */
 export function warnIfRounded(resolved: ResolvedSize): void {
