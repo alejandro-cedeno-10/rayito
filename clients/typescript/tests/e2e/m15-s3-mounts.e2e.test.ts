@@ -1,18 +1,12 @@
 /**
  * `m15-s3-mounts` contra AWS real (`RAYITO_E2E=1`): S3M-1..S3M-4 del plan de
- * aceptación de M15 (§7.2 de la arquitectura de 0.6; cap de gasto $0.30).
+ * aceptación de M15 (ADR-017; cap de gasto $0.30).
  *
  * Necesita, además de `RAYITO_TEMPLATE`: `RAYITO_TEMPLATE_CAPS` (imagen
  * `rayito-base-caps`), `RAYITO_EXECUTION_ROLE_ARN` (con la política
  * `RayitoS3MountAccess` de `infra/s3-mounts.yaml` sobre el bucket de abajo)
  * y `RAYITO_S3_MOUNT_BUCKET` (un bucket ya existente; este fichero sólo
  * escribe y borra bajo `rayito-e2e-s3-mounts/<uuid>/`).
- *
- * Pendiente de la integración de `Sandbox.create({ mounts })`
- * (`src/feature-options.ts`, `src/sandbox/sandbox.ts`, ver
- * `openspec/changes/m15-s3-mounts/proposal.md` "Non-blocking follow-ups"):
- * hasta entonces cada test se salta con un motivo que lo dice
- * explícitamente en cuanto `Sandbox.create` lanza `UnimplementedError`.
  */
 
 import { randomUUID } from "node:crypto";
@@ -23,7 +17,6 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { UnimplementedError } from "../../src/errors.js";
 import { Sandbox } from "../../src/index.js";
 import { S3Mount } from "../../src/s3-mounts/domain.js";
 import { e2eEnabled, TEST_SANDBOX_TIMEOUT_MS, useE2E } from "./helpers.js";
@@ -68,13 +61,10 @@ describe.runIf(suiteEnabled)(
         logging: e2e.settings.logging,
         controlPlane: e2e.controlPlane,
         ...(allowInternetAccess === undefined ? {} : { allowInternetAccess }),
-        // `SandboxCreateOptions.mounts` is still typed as a plain
-        // `Record<string, unknown>` (M15 foundations' placeholder shape);
-        // `_s3_mounts`' own `planS3Mounts` takes a `Map` once wired in.
-        mounts: {
-          "/mnt/ro": new S3Mount({ bucket, prefix, readOnly: true }),
-          "/mnt/rw": new S3Mount({ bucket, prefix, readOnly: false, allowOverwrite: true }),
-        },
+        mounts: new Map([
+          ["/mnt/ro", new S3Mount({ bucket, prefix, readOnly: true })],
+          ["/mnt/rw", new S3Mount({ bucket, prefix, readOnly: false, allowOverwrite: true })],
+        ]),
       });
     }
 
@@ -82,16 +72,7 @@ describe.runIf(suiteEnabled)(
       await s3.send(
         new PutObjectCommand({ Bucket: bucket, Key: `${prefix}seed.txt`, Body: "hola desde S3\n" }),
       );
-      let sandbox: Sandbox;
-      try {
-        sandbox = await createMountSandbox();
-      } catch (error) {
-        if (error instanceof UnimplementedError) {
-          console.warn(`Sandbox.create({ mounts }) todavía no está integrado: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
+      const sandbox = await createMountSandbox();
       e2e.created.push(sandbox);
       const read = await sandbox.commands.run("cat /mnt/ro/seed.txt");
       expect(read.stdout.trim()).toBe("hola desde S3");
@@ -107,16 +88,7 @@ describe.runIf(suiteEnabled)(
     });
 
     test("S3M-2 (SEC-3): uid 1000 no puede leer una credencial del entorno/argv del daemon ni matarlo", async () => {
-      let sandbox: Sandbox;
-      try {
-        sandbox = await createMountSandbox();
-      } catch (error) {
-        if (error instanceof UnimplementedError) {
-          console.warn(`Sandbox.create({ mounts }) todavía no está integrado: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
+      const sandbox = await createMountSandbox();
       e2e.created.push(sandbox);
       const findPid = await sandbox.commands.run("pgrep -f mount-s3 | head -1");
       const pid = findPid.stdout.trim();
@@ -133,16 +105,7 @@ describe.runIf(suiteEnabled)(
     });
 
     test("S3M-3: pause() responde dentro de su presupuesto aunque S3 no sea alcanzable", async () => {
-      let sandbox: Sandbox;
-      try {
-        sandbox = await createMountSandbox();
-      } catch (error) {
-        if (error instanceof UnimplementedError) {
-          console.warn(`Sandbox.create({ mounts }) todavía no está integrado: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
+      const sandbox = await createMountSandbox();
       e2e.created.push(sandbox);
       const started = performance.now();
       await sandbox.pause();
@@ -152,16 +115,7 @@ describe.runIf(suiteEnabled)(
     });
 
     test("S3M-4: el montaje funciona con allowInternetAccess: false", async () => {
-      let sandbox: Sandbox;
-      try {
-        sandbox = await createMountSandbox(false);
-      } catch (error) {
-        if (error instanceof UnimplementedError) {
-          console.warn(`Sandbox.create({ mounts }) todavía no está integrado: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
+      const sandbox = await createMountSandbox(false);
       e2e.created.push(sandbox);
       const result = await sandbox.commands.run("ls /mnt/ro");
       expect(result.exitCode).toBe(0);

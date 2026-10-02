@@ -50,35 +50,32 @@ server.
 - **No E2B shim surface**: E2B has nothing this maps to, so the shim is
   untouched; `e2b-parity.md` row 111 moves from "fuera por SPEC" to
   "divergente" (`docs-delta.md`).
-- **Deliberately not done in this change** (see "Non-blocking follow-ups"):
-  wiring `Sandbox.create(mounts=)`/`AsyncSandbox.create`/TypeScript
-  `create({ mounts })` to actually send the `ConfigureSandbox` call and
-  expose `sbx.mounts`. `_feature_options.py`/`feature-options.ts` and
-  `sandbox_{sync,async}/main.py`/`sandbox/sandbox.ts` are explicitly
-  foundations-owned files in the M15 shared-file protocol (never touched by
-  a feature change outside its pre-created stub); `plan_features`'s
-  `mounts=` branch still raises `UnimplementedError` unconditionally,
-  exactly as `m15-foundations` left it, so this change makes **zero**
-  behavioural change to the public SDK surface. Everything this change adds
-  is reachable directly (`from rayito._s3_mounts import S3Mount`,
-  `rayd`'s own `ConfigureService.Configure`, `rayito stack deploy
-  s3-mounts`) and fully unit-tested on its own; the `create()`
-  integration is the one remaining step, intentionally left for whoever
-  next touches those foundations-owned files (a dedicated follow-up or
-  `m15-docs-integration`'s maintainer-level pass), so parallel feature
-  changes never collide on them.
+- **Done in a review follow-up (§1 of "Non-blocking follow-ups" below, now
+  applied)**: `Sandbox.create(mounts=)`/`AsyncSandbox.create`/TypeScript
+  `create({ mounts })` now really send the `ConfigureSandbox` call and
+  expose `sbx.mounts`/`sbx.mounts()`. Landing this needed a small
+  foundations-level addition first (`_configure_base.py`/`configure-base.ts`
+  gained `require_capabilities`/`requireCapabilities`,
+  `build_configure_request`/`buildConfigureRequest` and
+  `check_configure_response`/`checkConfigureResponse`, and
+  `ConfigureSection` gained `check_result`/`checkResult`), then
+  `create()`/`_open()` (`Sandbox.#open` in TypeScript) execute
+  `plan.configure_sections` right after the first `Health`, inside the same
+  failure path that already terminates the sandbox before `agent_ready` —
+  so a missing capability or a rejected section terminates the VM (unless
+  `keep_on_failure`) exactly like any other pre-`agent_ready` failure, with
+  no separate termination path of its own.
 
 ## Non-blocking follow-ups (do not block this change)
 
-1. **`Sandbox.create(mounts=)` wiring.** Replace `_feature_options.py`'s
-   `mounts=`/`feature-options.ts`'s `mounts` branch with a call into
-   `_s3_mounts.plan_s3_mounts`/`planS3Mounts`, and add the post-`Health`
-   `Configure` call plus a `sbx.mounts` property to
-   `sandbox_{sync,async}/main.py` and `sandbox/sandbox.ts`. Needs a
-   maintainer decision on *when* that foundations-owned edit lands (its own
-   small change, or folded into `m15-docs-integration`), since several
-   other M15 features (`volumes=`, `events=`, …) will want the same seam at
-   the same time.
+1. ~~**`Sandbox.create(mounts=)` wiring.**~~ **Done** (review follow-up):
+   `_feature_options.py`'s `mounts=`/`feature-options.ts`'s `mounts` branch
+   now calls `_s3_mounts.plan_s3_mounts`/`planS3Mounts` (after
+   `require_caps_for`/`requireCapsFor`), and `create()`/`_open()` send the
+   post-`Health` `Configure` call and expose `sbx.mounts`
+   (`sandbox_{sync,async}/main.py`) / `sbx.mounts()` (`sandbox/sandbox.ts`).
+   A later feature (`volumes=`, `events=`, …) extends the same
+   `configure_sections` seam in its own change rather than re-deciding this.
 2. **Exact installed-size delta** for the `fuse` + `mount-s3` RPM layer
    (§Q80 estimate: +22.4 MB) needs confirming on a real image build —
    `image/Dockerfile`'s own comment documents how (`rpm -q --queryformat

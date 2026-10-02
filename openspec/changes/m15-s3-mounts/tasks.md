@@ -24,8 +24,8 @@
 ## 4. Gates: Rust (Lima VM `rayito`, user `tester`)
 
 - [x] 4.1 `cargo check -p rayd-core -p rayd` clean.
-- [ ] 4.2 `cargo test -p rayd-core -p rayd -j 2` green (queued behind sibling M15 feature agents sharing the VM's single `flock`; see the PR for the latest run).
-- [ ] 4.3 `cargo clippy --workspace --all-targets -- -D warnings` (pedantic) clean.
+- [x] 4.2 `cargo test -p rayd-core -p rayd -j 2` green (584 `rayd-core` + 246 `rayd` lib + every integration binary, review-fix round).
+- [x] 4.3 `cargo clippy -p rayd-core -p rayd --all-targets -- -D warnings` clean; `cargo fmt` clean.
 
 ## 5. Python
 
@@ -56,9 +56,88 @@
 
 ## 7a. e2e (not run here; feature-build agents must not touch AWS)
 
-- [x] 7a.1 `clients/python/tests/e2e/test_s3_mounts_e2e.py`: S3M-1..S3M-4, gated on `RAYITO_E2E=1` + `RAYITO_TEMPLATE_CAPS` + `RAYITO_S3_MOUNT_BUCKET`, each `pytest.skip`-ing with an explicit reason until `Sandbox.create(mounts=)` is wired.
-- [x] 7a.2 `clients/typescript/tests/e2e/m15-s3-mounts.e2e.test.ts`: the same four scenarios, mirroring the Python file.
-- [x] 7a.3 Verified only by collection (`pytest --collect-only`: 4 deselected; `vitest run --project e2e`: 42 skipped across all 12 e2e files, mine included) — never run against AWS from here.
+- [x] 7a.1 `clients/python/tests/e2e/test_s3_mounts_e2e.py`: S3M-1..S3M-4, gated on `RAYITO_E2E=1` + `RAYITO_TEMPLATE_CAPS` + `RAYITO_S3_MOUNT_BUCKET`. Review follow-up: no longer self-skips on `UnimplementedError` now that `Sandbox.create(mounts=)` is wired — it runs for real once those env vars are set.
+- [x] 7a.2 `clients/typescript/tests/e2e/m15-s3-mounts.e2e.test.ts`: the same four scenarios, mirroring the Python file; same un-skip.
+- [x] 7a.3 Verified only by collection (`pytest --collect-only`: 4 deselected; `vitest run`/`tsc --noEmit`: typecheck and collection clean) — never run against AWS from here.
+
+## 10. Review follow-ups applied after the initial PR (this round)
+
+High severity:
+
+- [x] 10.1 **The feature is now reachable.** `_feature_options.plan_features`'s
+  `mounts=` branch calls `require_caps_for` then `_s3_mounts.plan_s3_mounts`
+  instead of raising unconditionally (mirrored in `feature-options.ts`);
+  `create()`/`_open()` (`Sandbox.#open`) execute `FeaturePlan.configure_sections`
+  after `Health` (new foundations pieces in `_configure_base.py`/
+  `configure-base.ts`: `require_capabilities`, `build_configure_request`,
+  `check_configure_response`, `ConfigureSection.check_result`); `S3Mount`/
+  `MountStatus` are exported from `rayito`/`rayito/index.ts`; `sbx.mounts`
+  (property)/`sbx.mounts()` (async method, async SDKs) read `ConfigureStatus`
+  live; the e2e suites no longer self-skip.
+- [x] 10.2 `rayd::features::s3_mounts::build` computes `supported()` once
+  from real preconditions (the `mount-s3` binary on `PATH`, `/dev/fuse`
+  existing, the `rayito-mount` system user existing) instead of a literal
+  `true`; `HealthGrpc` now holds the same `Arc<FeatureSet>` `ConfigureGrpc`
+  dispatches to and reports `features.s3_mounts.supported()` live, plus
+  `RootEgressClass::S3` in `root_egress` when supported.
+- [x] 10.3 `apply()` reports `SECTION_CODE_PENDING` immediately and settles
+  a mount to `Mounted`/`Failed` in the background (`Inner::run_mount`),
+  polling `FuseDevice::probe_ready` (a real `stat` subprocess, bounded,
+  killed on timeout) and `FuseDaemon::is_alive`/`exit_class`; `mount-s3`'s
+  exit is classified from its exit status and a bounded stderr tail
+  (never logged); `mount(2)`'s own `EPERM`/`EACCES` map to `helper_missing`,
+  never `iam_denied` (that was never an IAM decision).
+- [x] 10.4 Fd/pid ownership rewritten around `Inner::claim`/`finish`: each
+  (re)mount attempt is tagged with a generation and only ever writes its
+  result if that generation is still current, so a racing `apply()` or
+  relaunch tears its own result down instead of double-closing or
+  resurrecting a mount the caller moved past; `apply()` always unmounts an
+  existing entry before remounting a changed spec.
+
+Medium severity:
+
+- [x] 10.5 `adapters::mount_s3::TokioMountS3Daemon` registers/unregisters
+  the `mount-s3` pid in the shared `ChildRegistry` (`FeatureContext` gained
+  `child_registry: Arc<ChildRegistry>`).
+- [x] 10.6 The background watcher (`Inner::watch_tick`, polled every
+  `WATCHER_POLL_INTERVAL`) relaunches a dead daemon with backoff
+  (`relaunch_backoff`, doubling, capped); every relaunch re-attaches a
+  fresh FUSE descriptor rather than reusing the dead one. `/resume`'s probe
+  (`on_resume`) runs as the guest uid via `FuseDevice::probe_ready` (never
+  root), with an explicit kill on timeout, and forces the same relaunch
+  path when unresponsive.
+- [x] 10.7 FUSE mount data gained `allow_other` (so the root-run probe and
+  the guest user can both reach the mount) and `mount-s3` gets
+  `--uid`/`--gid` from the same guest-id constants `fuse_device.rs` uses,
+  so file ownership matches what the kernel already reports.
+- [x] 10.8 `rayd_core::mount_path` (shared, not s3-mounts-specific): the
+  absolute/canonical/allowed-roots/no-overlap/max-count check the SDK
+  already runs, re-run server-side before anything else in
+  `s3_mount::spec::validate_mounts`, so a non-SDK or buggy client can never
+  steer `mount(2)`/`create_dir_all` outside `/mnt/`/`/home/user/`.
+
+Low severity:
+
+- [x] 10.9 `infra/s3-mounts.yaml`'s `WriteObjects` statement gained
+  `s3:AbortMultipartUpload` (regenerated into both SDKs via
+  `scripts/gen_stack_assets.py`).
+- [x] 10.10 Error-class handling de-duplicated: Python's `_section.py`
+  reuses `MOUNT_ERROR_CLASSES`/new `UNKNOWN_ERROR_CLASS` from `_domain.py`
+  and compares `configure_pb2.SECTION_CODE_*` ints (never a hand-compared
+  string); same in TypeScript (`domain.ts`'s `MOUNT_ERROR_CLASSES`/
+  `UNKNOWN_ERROR_CLASS`, `SectionCode` enum). A new `invalid_path` class
+  (Rust `MountErrorClass::InvalidPath`, mirrored in both SDKs) reports a
+  duplicate/invalid mount path distinctly from `not_allowed`.
+- [ ] 10.11 Not done: renaming the e2e test files, and the shared
+  `testdata/s3-mounts/mount-specs.json` vectors file. The existing names
+  (`test_s3_mounts_e2e.py`, `m15-s3-mounts.e2e.test.ts`) already match this
+  repo's real, established pattern for a topic-suffixed e2e file (see
+  `test_metadata_index_e2e.py`, `test_secrets_e2e.py`, and every
+  `*.e2e.test.ts` in `clients/typescript/tests/e2e/`), so renaming them
+  would not actually improve consistency; left as a judgment call for a
+  maintainer to override. The shared JSON vectors file was not created —
+  genuinely not done, due to time, not a design decision — a reasonable
+  follow-up.
 
 ## 8. OpenSpec
 

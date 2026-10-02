@@ -38,6 +38,7 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod metrics;
 pub mod metrics_history;
+pub mod mount_path;
 pub mod network;
 pub mod orphans;
 pub mod persistence;

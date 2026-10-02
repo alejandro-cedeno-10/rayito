@@ -110,6 +110,7 @@ excepción: llega en `execution.error`.
 | `CapacityException` | `CapacityError` | plano de control | AWS sin capacidad momentánea | reintenta con backoff |
 | `UnimplementedError` | `UnimplementedError` | `UNIMPLEMENTED`; el SDK | la función no existe en esta imagen (actualízala) o en la plataforma (`fork`, snapshots…) | lee `feature`, `reason` y `doc` |
 | `LifecycleUnsupportedException` | `LifecycleUnsupportedError` | el SDK | plazo del servidor contra una imagen anterior a 0.3.0 | publica una imagen de la release actual |
+| `MountException` | `MountError` | `SECTION_CODE_FAILED`/`SECTION_CODE_INVALID` de `Configure` | un montaje de `mounts=` falló o el bucket (o la ruta) no pasó la validación del agente | `code` es uno de `network`, `iam_denied`, `not_found`, `not_allowed`, `invalid_path`, `helper_missing`, `timeout` |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
 
 ## Errores del shim de E2B

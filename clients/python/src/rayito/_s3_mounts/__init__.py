@@ -1,11 +1,8 @@
 """`mounts=` (`m15-s3-mounts`, ADR-017): montajes de buckets S3 en el guest
-vía `mount-s3`/FUSE, sólo sobre `rayito-base-caps`. Paquete interno (no
-reexportado todavía desde `rayito/__init__.py`, seam de M15 foundations
-reservada a esa función): el wiring público de `Sandbox.create(mounts=)` lo
-completa `_feature_options.plan_features` en un cambio posterior; hasta
-entonces, `mounts=` sigue lanzando `UnimplementedError` como en 0.5.x/M15
-foundations y este módulo se usa directamente
-(`from rayito._s3_mounts import S3Mount`).
+vía `mount-s3`/FUSE, sólo sobre `rayito-base-caps`. Paquete interno
+(`S3Mount`/`MountStatus` se reexportan desde `rayito/__init__.py`; el resto
+—`S3MountsSection`, `plan_s3_mounts`, ...— es el adaptador de
+`_feature_options.plan_features`, no API pública).
 """
 
 from __future__ import annotations

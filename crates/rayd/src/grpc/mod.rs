@@ -182,15 +182,16 @@ pub fn router_with_transfers(
     } = services;
     let kernel_status: Arc<dyn KernelStatus> = code.clone();
     let lifecycle = LifecycleGrpc::new(session.clone(), timeout);
-    // M15 foundations: every slot is still `features::slot::Unsupported`
-    // (stateless), so building the set fresh here needs no field on
-    // `Services` yet. The feature that first needs shared context (a
-    // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
-    let configure = ConfigureGrpc::new(
-        session.clone(),
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
-    );
+    // Built once and shared: `ConfigureGrpc` dispatches each section to a
+    // slot, and `HealthGrpc` reports the same slots' own `supported()` and
+    // `root_egress` back on every `Health` call — two views of one
+    // `FeatureSet`, never two independently-constructed ones (which would
+    // let a feature whose `build()` reads boot-time state, like
+    // `m15-s3-mounts`'s image-variant detection, disagree with itself).
+    let features = Arc::new(crate::features::build(
+        &crate::features::FeatureContext::default(),
+    ));
+    let configure = ConfigureGrpc::new(session.clone(), Arc::clone(&features));
     let mut server = Server::builder()
         .tcp_nodelay(true)
         .http2_keepalive_interval(Some(HTTP2_KEEPALIVE_INTERVAL))
@@ -207,6 +208,7 @@ pub fn router_with_transfers(
             metrics_history,
             kernel_status,
             imds,
+            features,
         )))
         .add_service(ProcessServiceServer::new(
             ProcessGrpc::with_keepalive_interval(

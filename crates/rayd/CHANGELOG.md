@@ -26,18 +26,32 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
 - **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
-  (`S3Mount`, `MountErrorClass`, `validate_mounts`/`parse_allowed_buckets`,
-  ports `FuseDevice`/`FuseDaemon`), the Linux adapters
-  (`adapters::{fuse_device,mount_s3}`: a raw `mount(2)` FUSE attach and a
-  `mount-s3` daemon run as the dedicated `rayito-mount` user, uid 990,
-  with a from-scratch environment — no credential ever in argv or env,
-  SEC-3) and a real `features::s3_mounts::S3MountsFeature`
-  (`supported()==true`, `Health.features.s3_mounts==true`, a
-  `LifecycleParticipant` whose `/suspend` share is zero and whose
-  `on_resume` relaunches a dead daemon). `s3_mounts.proto` now carries
-  real fields (`S3Mount`, `S3MountState`, `S3MountPhase`). With no
-  `S3MountsConfig` section sent, behaviour is unchanged from 0.5.x: no
-  `/dev/fuse` open, no `mount-s3` spawn.
+  (`S3Mount`, `MountErrorClass` incl. `InvalidPath`,
+  `validate_mounts`/`parse_allowed_buckets`, ports `FuseDevice`/`FuseDaemon`)
+  and `rayd_core::mount_path` (the absolute/canonical/allowed-roots/
+  no-overlap/max-count check, shared with a future `efs_volumes`, re-run
+  here before anything else so a non-SDK or buggy client can never steer
+  `mount(2)` outside `/mnt/`/`/home/user/`). The Linux adapters
+  (`adapters::fuse_device`: `mount(2)` with `allow_other` plus a real
+  `probe_ready` (a bounded, killable `stat` subprocess as the guest uid);
+  `adapters::mount_s3`: `mount-s3 --uid 1000 --gid 1000` run as the
+  dedicated `rayito-mount` user, uid 990, with a from-scratch environment
+  — no credential ever in argv or env, SEC-3 — its pid registered in the
+  shared `ChildRegistry`, its exit classified from its status and a
+  bounded, never-logged stderr tail) and a real
+  `features::s3_mounts::S3MountsFeature`: `apply()` reports
+  `SECTION_CODE_PENDING` immediately and settles each mount to
+  `Mounted`/`Failed` in the background; a background watcher relaunches a
+  dead daemon with a fresh FUSE attach and backoff; `/resume`'s probe
+  forces the same relaunch for a daemon that survived the snapshot but
+  whose FUSE connection did not. `supported()`/`Health.features.s3_mounts`
+  now reflect real image preconditions (the `mount-s3` binary, `/dev/fuse`,
+  the `rayito-mount` user) instead of a literal `true`, and
+  `Health.features.root_egress` reports `RootEgressClass::S3` when
+  supported. `s3_mounts.proto` now carries real fields (`S3Mount`,
+  `S3MountState`, `S3MountPhase`). With no `S3MountsConfig` section sent,
+  behaviour is unchanged from 0.5.x: no `/dev/fuse` open, no `mount-s3`
+  spawn.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

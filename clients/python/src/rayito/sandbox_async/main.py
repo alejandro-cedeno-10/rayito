@@ -29,7 +29,14 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
-from rayito._feature_options import FeatureOptions, plan_features
+from rayito._configure_base import (
+    agent_features_from_health,
+    build_configure_request,
+    check_configure_response,
+    require_capabilities,
+    require_configure_support,
+)
+from rayito._feature_options import FeatureOptions, FeaturePlan, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -116,6 +123,7 @@ from rayito._process_base import (
     stream_failure_exception,
 )
 from rayito._role_policy import resolve_image_variant
+from rayito._s3_mounts import MountStatus, from_proto_status
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -199,6 +207,7 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
+from rayito.sandbox_async.configure import call_configure, call_configure_status
 from rayito.sandbox_async.filesystem import AsyncFilesystem
 from rayito.sandbox_async.git import AsyncGit
 from rayito.sandbox_async.lifecycle import AsyncDeadlineTrigger, set_timeout_once_async
@@ -218,6 +227,7 @@ from rayito.sandbox_sync.main import (
 )
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -407,6 +417,7 @@ class AsyncSandbox:
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._configure_stub = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
@@ -606,7 +617,7 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
-        plan_features(
+        feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
                 volumes=volumes,
@@ -673,6 +684,7 @@ class AsyncSandbox:
                 reconnect_timeout=reconnect_timeout,
                 terminate_on_failure=not keep_on_failure,
                 require_lifecycle=plan.lifecycle_requested,
+                plan=feature_plan,
                 logger=logger,
             )
             sandbox._instrumentation = instrumentation
@@ -868,13 +880,17 @@ class AsyncSandbox:
         terminate_on_failure: bool,
         readiness: type[ReadinessPoll] = ReadinessPoll,
         require_lifecycle: bool = False,
+        plan: FeaturePlan | None = None,
         logger: logging.Logger | None = None,
     ) -> Self:
         """Misma política de limpieza que `Sandbox._open`: con
         `terminate_on_failure`, todo fallo previo al primer `agent_ready` que no
         sea `SandboxNotReadyException` termina el MicroVM. `readiness` es el
         calendario del sondeo (`TakePoll` desde el pool) y `require_lifecycle`
-        la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque `lifecycle`."""
+        la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque
+        `lifecycle`. `plan` (por defecto `None`): sus `configure_sections`,
+        si las hay, se envían en una única `Configure` justo después de este
+        mismo `Health`, dentro del mismo `try` de abajo — ver `Sandbox._open`."""
         refresher = AsyncTokenRefresher(
             TokenRefresher(
                 TokenStore(),
@@ -901,6 +917,8 @@ class AsyncSandbox:
             )
             if require_lifecycle and lifecycle_from_proto(ready) is None:
                 raise older_agent_error(info.template_name, str(ready.agent_version))
+            if plan is not None and plan.configure_sections:
+                await sandbox._apply_configure_plan(plan, ready)
         except BaseException as exc:
             if sandbox is not None:
                 await sandbox.close()
@@ -1298,6 +1316,28 @@ class AsyncSandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    async def _apply_configure_plan(
+        self, plan: FeaturePlan, ready: health_pb2.HealthResponse
+    ) -> None:
+        """Misma lógica que `Sandbox._apply_configure_plan`, sobre el stub
+        asíncrono: `require_capabilities`, una única `Configure` y
+        `check_configure_response`; cualquier excepción sube a `_open`."""
+        features = require_configure_support(agent_features_from_health(ready), "configure")
+        require_capabilities(plan.configure_sections, features)
+        request = build_configure_request(plan.configure_sections)
+        response = await call_configure(
+            self._configure_stub, request, timeout=self._request_timeout
+        )
+        check_configure_response(response, plan.configure_sections)
+
+    async def mounts(self) -> dict[str, MountStatus]:
+        """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
+        `ConfigureStatus` por lectura, nunca cacheada. Vacío si
+        `create()`/`take()` no recibió `mounts=`.
+        """
+        response = await call_configure_status(self._configure_stub, timeout=self._request_timeout)
+        return from_proto_status(response.s3_mounts)
 
     async def upload_url(
         self,

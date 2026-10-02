@@ -7,13 +7,16 @@ este módulo no importa `grpc`.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from rayito.exceptions import SandboxException, UnimplementedError
+from rayito.v1 import configure_pb2
 
 if TYPE_CHECKING:
-    from rayito.v1 import configure_pb2, features_pb2, health_pb2
+    from rayito.v1 import features_pb2, health_pb2
 
 CONFIGURE_DOC: str = "docs/site/docs/funciones-opcionales/pilas-opcionales.md"
 
@@ -73,8 +76,9 @@ def require_configure_support(features: AgentFeatures | None, feature: str) -> A
 class ConfigureSection(Protocol):
     """Lo que una función 0.6 implementa para participar en una sola
     llamada a `Configure`: el nombre de su sección (para los logs y el
-    orden), el flag de `AgentFeatures` que debe estar activo y cómo rellena
-    su campo del `ConfigureRequest` compartido."""
+    orden), el flag de `AgentFeatures` que debe estar activo, cómo rellena
+    su campo del `ConfigureRequest` compartido y cómo traduce el
+    `SectionResult` que le corresponde en su propia excepción (`fill`)."""
 
     @property
     def section(self) -> str: ...
@@ -83,6 +87,8 @@ class ConfigureSection(Protocol):
     def required_flag(self) -> str: ...
 
     def fill(self, request: configure_pb2.ConfigureRequest) -> None: ...
+
+    def check_result(self, code: int, error_class: str) -> None: ...
 
 
 def section_error(
@@ -102,3 +108,64 @@ def section_error(
         )
     reason = error_class or code_name.removeprefix("SECTION_CODE_").lower()
     return SandboxException(f"{section}: {reason}")
+
+
+#: Wire `ConfigSection` -> the string every `ConfigureSection.section`
+#: property uses; grows by one entry each time a feature's own section
+#: joins (`efs_volumes`, ...), never by renaming an existing one.
+_WIRE_SECTION_NAMES: dict[int, str] = {
+    configure_pb2.CONFIG_SECTION_S3_MOUNTS: "s3_mounts",
+    configure_pb2.CONFIG_SECTION_EFS_VOLUMES: "efs_volumes",
+    configure_pb2.CONFIG_SECTION_LIFECYCLE_EVENTS: "lifecycle_events",
+    configure_pb2.CONFIG_SECTION_TELEMETRY_EXPORT: "telemetry_export",
+    configure_pb2.CONFIG_SECTION_SECRET_GATEWAY: "secret_gateway",
+}
+
+
+def require_capabilities(sections: Sequence[ConfigureSection], features: AgentFeatures) -> None:
+    """Puerta de capacidad previa al envío: la primera sección cuyo propio
+    `required_flag` esté en `False` en `features` lanza `UnimplementedError`
+    nombrándola, antes de construir un solo `ConfigureRequest`. Se llama
+    justo tras el primer `Health`, dentro del mismo `try`/`except` que
+    `_open` ya usa para terminar el sandbox ante cualquier fallo anterior a
+    `agent_ready` (salvo `keep_on_failure`): esta puerta reutiliza esa
+    terminación, no implementa la suya propia.
+    """
+    for entry in sections:
+        if not getattr(features, entry.required_flag, False):
+            raise UnimplementedError(
+                entry.section,
+                "esta imagen no tiene un adaptador real para esta función "
+                "(agente anterior a 0.6.0, o variante de imagen sin el caps que necesita)",
+                doc=CONFIGURE_DOC,
+            )
+
+
+def build_configure_request(
+    sections: Sequence[ConfigureSection],
+) -> configure_pb2.ConfigureRequest:
+    """Un único `ConfigureRequest` con todas las secciones de `sections`
+    rellenas; `request_id` es nuevo en cada llamada (idempotencia nunca
+    pedida por `create()`/`take()`, que sólo llaman una vez por sandbox)."""
+    request = configure_pb2.ConfigureRequest(request_id=uuid.uuid4().hex)
+    for entry in sections:
+        entry.fill(request)
+    return request
+
+
+def check_configure_response(
+    response: configure_pb2.ConfigureResponse, sections: Sequence[ConfigureSection]
+) -> None:
+    """Traduce cada `SectionResult` de `response` a la excepción de su
+    propia sección (`ConfigureSection.check_result`); un resultado para una
+    sección que `sections` no contiene (no debería ocurrir: el agente sólo
+    responde por lo que `ConfigureRequest` llevaba) se ignora en vez de
+    fallar de forma opaca.
+    """
+    by_name = {entry.section: entry for entry in sections}
+    for result in response.results:
+        name = _WIRE_SECTION_NAMES.get(result.section)
+        entry = by_name.get(name) if name is not None else None
+        if entry is None:
+            continue
+        entry.check_result(result.code, result.error_class)

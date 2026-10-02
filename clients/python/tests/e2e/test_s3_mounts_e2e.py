@@ -1,5 +1,5 @@
 """`m15-s3-mounts` contra AWS real (`RAYITO_E2E=1`): S3M-1..S3M-4 del plan de
-aceptación de M15 (§7.2 de la arquitectura de 0.6; cap de gasto $0.30).
+aceptación de M15 (ADR-017; cap de gasto $0.30).
 
 Necesita, además de las variables habituales de `conftest.py`:
 - `RAYITO_TEMPLATE_CAPS` (imagen `rayito-base-caps`) y
@@ -8,14 +8,6 @@ Necesita, además de las variables habituales de `conftest.py`:
 - `RAYITO_S3_MOUNT_BUCKET`: un bucket ya existente, vacío o con un prefijo
   de test dedicado; este fichero sólo escribe y borra bajo
   `rayito-e2e-s3-mounts/<uuid>/`.
-
-Pendiente de la integración de `Sandbox.create(mounts=)`/`sbx.mounts`
-(`_feature_options.py`, `sandbox_sync/sandbox_async`, ver
-`openspec/changes/m15-s3-mounts/proposal.md` "Non-blocking follow-ups"):
-hasta que esa integración exista, `Sandbox.create(mounts=...)` sigue
-lanzando `UnimplementedError` y cada test de este fichero se salta con un
-motivo que lo dice explícitamente. Una vez integrado, quitar el
-`pytest.skip` de `s3_mount_sandbox` basta para que corran de verdad.
 
 Coste: un sandbox `rayito-base-caps` por sesión (~$0.05) + un puñado de
 peticiones S3 sobre un único objeto pequeño (~$0).
@@ -30,9 +22,8 @@ from collections.abc import Iterator
 import boto3
 import pytest
 
-from rayito import Sandbox
+from rayito import S3Mount, Sandbox
 from rayito._aws import LambdaMicrovmsControlPlane
-from rayito.exceptions import UnimplementedError
 
 from .conftest import E2ESettings
 
@@ -89,28 +80,20 @@ def s3_mount_sandbox(
             f"exporta {CAPS_TEMPLATE_VAR}, {BUCKET_VAR} y RAYITO_EXECUTION_ROLE_ARN "
             "(con la política RayitoS3MountAccess) para medir m15-s3-mounts"
         )
-    from rayito._s3_mounts import S3Mount  # local import: not re-exported yet
-
-    try:
-        created = Sandbox.create(
-            control_plane.resolve_template_arn(template),
-            timeout=600,
-            idle=None,
-            execution_role_arn=e2e_settings.execution_role_arn,
-            logging=e2e_settings.logging,
-            control_plane=control_plane,
-            mounts={
-                "/mnt/ro": S3Mount(bucket=bucket, prefix=test_prefix, read_only=True),
-                "/mnt/rw": S3Mount(
-                    bucket=bucket, prefix=test_prefix, read_only=False, allow_overwrite=True
-                ),
-            },
-        )
-    except UnimplementedError:
-        pytest.skip(
-            "Sandbox.create(mounts=) todavía no está integrado "
-            "(ver proposal.md «Non-blocking follow-ups» de m15-s3-mounts)"
-        )
+    created = Sandbox.create(
+        control_plane.resolve_template_arn(template),
+        timeout=600,
+        idle=None,
+        execution_role_arn=e2e_settings.execution_role_arn,
+        logging=e2e_settings.logging,
+        control_plane=control_plane,
+        mounts={
+            "/mnt/ro": S3Mount(bucket=bucket, prefix=test_prefix, read_only=True),
+            "/mnt/rw": S3Mount(
+                bucket=bucket, prefix=test_prefix, read_only=False, allow_overwrite=True
+            ),
+        },
+    )
     try:
         yield created
     finally:
@@ -126,6 +109,10 @@ def test_s3m_1_read_write_mount_round_trips_through_s3(
     assert bucket is not None
     s3 = boto3.client("s3")
     s3.put_object(Bucket=bucket, Key=f"{test_prefix}seed.txt", Body=b"hola desde S3\n")
+
+    mounts = s3_mount_sandbox.mounts
+    assert mounts["/mnt/ro"].state == "mounted"
+    assert mounts["/mnt/rw"].state == "mounted"
 
     read = s3_mount_sandbox.commands.run("cat /mnt/ro/seed.txt")
     assert read.stdout.strip() == "hola desde S3"
@@ -185,21 +172,17 @@ def test_s3m_4_mount_works_with_allow_internet_access_false(
     bucket = _test_bucket()
     if not template or not bucket or not e2e_settings.execution_role_arn:
         pytest.skip(f"exporta {CAPS_TEMPLATE_VAR}, {BUCKET_VAR} y RAYITO_EXECUTION_ROLE_ARN")
-    from rayito._s3_mounts import S3Mount
 
-    try:
-        sbx = Sandbox.create(
-            control_plane.resolve_template_arn(template),
-            timeout=300,
-            idle=None,
-            execution_role_arn=e2e_settings.execution_role_arn,
-            allow_internet_access=False,
-            logging=e2e_settings.logging,
-            control_plane=control_plane,
-            mounts={"/mnt/ro": S3Mount(bucket=bucket, prefix=test_prefix, read_only=True)},
-        )
-    except UnimplementedError:
-        pytest.skip("Sandbox.create(mounts=) todavía no está integrado")
+    sbx = Sandbox.create(
+        control_plane.resolve_template_arn(template),
+        timeout=300,
+        idle=None,
+        execution_role_arn=e2e_settings.execution_role_arn,
+        allow_internet_access=False,
+        logging=e2e_settings.logging,
+        control_plane=control_plane,
+        mounts={"/mnt/ro": S3Mount(bucket=bucket, prefix=test_prefix, read_only=True)},
+    )
     try:
         result = sbx.commands.run("ls /mnt/ro")
         assert result.exit_code == 0

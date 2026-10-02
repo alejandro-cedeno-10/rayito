@@ -27,15 +27,10 @@ tamaño): el daemon necesita las credenciales del execution role por IMDS, y
     - **Cómo apagarla**: no pases `mounts=`; `rayito stack destroy
       s3-mounts` quita la política (no borra ningún objeto ni el bucket).
 
-!!! warning "Experimental: el agente y la IAM están listos, falta la integración final"
-    `rayd` ya monta buckets S3 de verdad (`mount-s3`/FUSE) y la política IAM
-    ya se puede desplegar. Lo que todavía falta es el último cable:
-    `Sandbox.create(mounts=)` sigue lanzando `UnimplementedError` (sin
-    cambio de comportamiento frente a 0.5.x) hasta que ese cableado llegue
-    a `sandbox_sync`/`sandbox_async`/`sandbox.ts`. Mientras tanto puedes
-    usar `rayito._s3_mounts.S3Mount`/`rayito.v1.s3_mounts_pb2` y el
-    `ConfigureService.Configure` del agente directamente si necesitas
-    probarlo antes de esa integración.
+!!! note "Experimental"
+    Funciona de punta a punta (`Sandbox.create(mounts=)`/`create({ mounts })`,
+    `sbx.mounts`), pero es nuevo: trátalo como experimental hasta la
+    campaña de medición S3M-1..S3M-4 de la aceptación en AWS real.
 
 ## Cuándo usarlo
 
@@ -57,14 +52,12 @@ dentro del guest: bajo `/mnt/` o `/home/user/`, sin solaparse con otro
 montaje (la misma regla que compartirá `volumes=` de `m15-efs-volumes`), y
 como mucho 4 montajes en total por sandbox.
 
-## Ejemplo (API objetivo, pendiente de la integración de `create()`)
+## Ejemplo
 
 === "Python"
 
-    <!-- noqa: example: `sbx.mounts` llega con la integración de `create()` pendiente (ver el aviso de arriba); mypy no puede comprobar un atributo que todavía no existe en `Sandbox` -->
     ```python
-    from rayito import Sandbox
-    from rayito._s3_mounts import S3Mount  # pasará a `from rayito import S3Mount`
+    from rayito import S3Mount, Sandbox
 
     sbx = Sandbox.create(
         "rayito-base-caps",
@@ -86,10 +79,8 @@ como mucho 4 montajes en total por sandbox.
 
 === "TypeScript"
 
-    <!-- noqa: example: API objetivo pendiente de la integración de `create()` (ver el aviso de arriba); `mounts` y la ruta de importación de `S3Mount` todavía no son públicas -->
     ```typescript
-    import { Sandbox } from "rayito";
-    import { S3Mount } from "rayito/s3-mounts/domain.js"; // pasará a "rayito"
+    import { Sandbox, S3Mount } from "rayito";
 
     const sbx = await Sandbox.create({
       template: "rayito-base-caps",
@@ -103,6 +94,7 @@ como mucho 4 montajes en total por sandbox.
       ]),
     });
     await sbx.commands.run("python3 -c \"import pandas; pandas.read_csv('/mnt/data/datos.csv')\"");
+    console.log(await sbx.mounts()); // Map { "/mnt/data" => { state: "mounted" }, ... }
     await sbx.kill();
     ```
 

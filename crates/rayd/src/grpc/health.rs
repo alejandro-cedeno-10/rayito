@@ -26,6 +26,7 @@ use tonic::{Request, Response, Status};
 
 use super::lifecycle::lifecycle_state;
 use crate::adapters::ImdsState;
+use crate::features::FeatureSet;
 
 pub const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -35,6 +36,7 @@ pub struct HealthGrpc {
     history: Arc<MetricsHistory>,
     kernel: Arc<dyn KernelStatus>,
     imds: Arc<ImdsState>,
+    features: Arc<FeatureSet>,
 }
 
 impl HealthGrpc {
@@ -44,6 +46,7 @@ impl HealthGrpc {
         history: Arc<MetricsHistory>,
         kernel: Arc<dyn KernelStatus>,
         imds: Arc<ImdsState>,
+        features: Arc<FeatureSet>,
     ) -> Self {
         Self {
             session,
@@ -51,6 +54,7 @@ impl HealthGrpc {
             history,
             kernel,
             imds,
+            features,
         }
     }
 }
@@ -67,7 +71,7 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot)))
+        Ok(Response::new(to_response(snapshot, &self.features)))
     }
 
     async fn metrics(
@@ -113,7 +117,7 @@ impl HealthService for HealthGrpc {
     }
 }
 
-fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
+fn to_response(snapshot: HealthSnapshot, features: &FeatureSet) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
         kernel_ready: snapshot.kernel_ready,
@@ -132,22 +136,29 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15: `s3_mounts` has a real adapter from `m15-s3-mounts` on
-        // (ADR-017); every other slot is still `Unsupported`
-        // (`features::build`). The feature that next gives a slot a real
-        // adapter updates this one call site
-        // (`rayd_core::features::AgentFeatures`), never `HealthGrpc`'s
-        // constructor.
-        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
-            s3_mounts: true,
-            ..rayd_core::features::AgentFeatures::foundations_only()
-        })),
+        // Read live from the same `FeatureSet` `ConfigureGrpc` dispatches
+        // to, never a literal: `m15-s3-mounts`'s own `supported()` reflects
+        // whether *this* image variant actually has the binary, the
+        // device and the mount user (`features::s3_mounts::build`), so a
+        // `rayito-base` agent reports `false` here even though the slot
+        // itself is the same build.
+        features: Some(agent_features_message(features.s3_mounts.supported())),
     }
 }
 
-fn agent_features_message(
-    features: rayd_core::features::AgentFeatures,
-) -> rayito_proto::v1::AgentFeatures {
+fn agent_features_message(s3_mounts_supported: bool) -> rayito_proto::v1::AgentFeatures {
+    let features = rayd_core::features::AgentFeatures {
+        s3_mounts: s3_mounts_supported,
+        ..rayd_core::features::AgentFeatures::foundations_only()
+    };
+    let mut root_egress = Vec::new();
+    if s3_mounts_supported {
+        // `mount-s3` reads the execution role from IMDS as root before
+        // dropping to the dedicated mount user (ADR-017); every other
+        // feature's root-egress class is still unreported until it has a
+        // real adapter.
+        root_egress.push(i32::from(rayito_proto::v1::RootEgressClass::S3));
+    }
     rayito_proto::v1::AgentFeatures {
         configure: features.configure,
         s3_mounts: features.s3_mounts,
@@ -156,8 +167,7 @@ fn agent_features_message(
         telemetry_export: features.telemetry_export,
         secret_gateway: features.secret_gateway,
         template_start: features.template_start,
-        // No feature opens a root-egress path yet (`root_egress.rs`).
-        root_egress: Vec::new(),
+        root_egress,
     }
 }
 

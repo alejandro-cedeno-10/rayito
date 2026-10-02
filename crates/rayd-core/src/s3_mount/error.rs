@@ -16,6 +16,11 @@ pub enum MountErrorClass {
     /// The bucket is not on the image's `RAYITO_ALLOWED_MOUNT_BUCKETS`
     /// allowlist: rejected before any FUSE or process call.
     NotAllowed,
+    /// The mount path's own shape is invalid (not absolute/canonical, not
+    /// under an allowed root) or it overlaps another path in the same
+    /// request — distinct from `NotAllowed` (a bucket-allowlist decision)
+    /// so a caller never confuses the two.
+    InvalidPath,
     /// `/dev/fuse` or the `mount-s3` binary is missing from the image.
     HelperMissing,
     /// The attach or the daemon did not come up before rayd gave up
@@ -31,6 +36,7 @@ impl MountErrorClass {
             Self::IamDenied => "iam_denied",
             Self::NotFound => "not_found",
             Self::NotAllowed => "not_allowed",
+            Self::InvalidPath => "invalid_path",
             Self::HelperMissing => "helper_missing",
             Self::Timeout => "timeout",
         }
@@ -54,6 +60,7 @@ mod tests {
             (MountErrorClass::IamDenied, "iam_denied"),
             (MountErrorClass::NotFound, "not_found"),
             (MountErrorClass::NotAllowed, "not_allowed"),
+            (MountErrorClass::InvalidPath, "invalid_path"),
             (MountErrorClass::HelperMissing, "helper_missing"),
             (MountErrorClass::Timeout, "timeout"),
         ];

@@ -155,13 +155,19 @@ mod tests {
             sandbox_id: Some("mvm-test"),
             payload: Some(RUN_PAYLOAD),
         });
-        ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)))
+        ConfigureGrpc::new(
+            session,
+            Arc::new(features::build(&FeatureContext::default())),
+        )
     }
 
     #[tokio::test]
     async fn configure_before_run_is_failed_precondition_not_running() {
         let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
-        let service = ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)));
+        let service = ConfigureGrpc::new(
+            session,
+            Arc::new(features::build(&FeatureContext::default())),
+        );
         let status = service
             .configure(Request::new(ConfigureRequest::default()))
             .await

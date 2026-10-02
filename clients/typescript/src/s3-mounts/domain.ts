@@ -15,9 +15,17 @@ export const MOUNT_ERROR_CLASSES = [
   "iam_denied",
   "not_found",
   "not_allowed",
+  "invalid_path",
   "helper_missing",
   "timeout",
 ] as const;
+
+/** Nunca confundir con una clase real del agente (nunca aparece en
+ * `MOUNT_ERROR_CLASSES`): usada en vez de adivinar una clase real cuando el
+ * agente manda una que este SDK no reconoce todavía — ocultar eso detrás
+ * de, por ejemplo, `"network"` enmascararía una deriva de protocolo en vez
+ * de hacerla visible. */
+export const UNKNOWN_ERROR_CLASS = "unknown";
 
 export interface S3MountOptions {
   readonly bucket: string;

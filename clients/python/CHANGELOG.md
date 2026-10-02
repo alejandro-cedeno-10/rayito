@@ -17,24 +17,35 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   siete opciones 0.6 de `Sandbox.create()` (`mounts`, `volumes`, `size`,
   `events`, `telemetry`, `gateways`, `domain`) existen ya en la firma y
   lanzan `UnimplementedError` nombrando el cambio que las trae mientras
-  sigan siendo un stub, antes de `run-microvm`. Fila de compatibilidad
-  "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna opción nueva,
-  el comportamiento es byte a byte el de 0.5.x (traza de oro en
+  sigan siendo un stub, antes de `run-microvm`; en cuanto una deja de
+  serlo (`mounts=`, ver más abajo), `create()`/`take()` ejecutan sus
+  `configure_sections` justo tras el primer `Health` (`_configure_base`:
+  `require_capabilities`, `build_configure_request`,
+  `check_configure_response`), dentro del mismo camino que ya termina el
+  sandbox ante cualquier fallo anterior a `agent_ready`. Fila de
+  compatibilidad "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna
+  opción nueva, el comportamiento es byte a byte el de 0.5.x (traza de oro en
   `tests/unit/fixtures/zero_cost_0_5_trace.json`).
 - **`mounts=` (`m15-s3-mounts`, ADR-017, experimental, apagado por
-  defecto): el paquete `rayito._s3_mounts` (`S3Mount`, `MountStatus`,
-  `plan_s3_mounts`, la traducción pura a `ConfigureRequest.s3_mounts`) y
-  la política IAM `RayitoS3MountAccess` del componente `OptionalStack`
-  `s3-mounts` (`infra/s3-mounts.yaml`, desplegable con
-  `rayito stack deploy s3-mounts --param BucketName=...`). El agente
-  (`rayd`) ya monta buckets S3 con `mount-s3`/FUSE sobre
-  `rayito-base-caps`, lanzado como el usuario dedicado `rayito-mount`
-  (uid 990) con credenciales resueltas por su propio acceso a IMDS, nunca
-  en argv ni en entorno. `Sandbox.create(mounts=)` sigue lanzando
-  `UnimplementedError` (sin cambio de comportamiento: la integración
-  final con `create()`/`sbx.mounts` queda para quien cablee las ocho
-  funciones 0.6 en `sandbox_sync/sandbox_async`, archivo reservado por
-  convención de M15).
+  defecto)**: `Sandbox.create(mounts=)`/`AsyncSandbox.create(mounts=)`
+  monta uno o más buckets S3 (`S3Mount(bucket=, prefix=, read_only=True,
+  allow_overwrite=False, allow_delete=False)`, exportado desde `rayito`)
+  en el guest con `mount-s3`/FUSE, sólo sobre `rayito-base-caps`
+  (`require_caps_for` lo exige antes de `run-microvm` cuando la imagen se
+  nombra directamente; sobre un ARN opaco la decisión se difiere a
+  `Health.features` tras `/run`, que termina el sandbox si falta la
+  capacidad). `sbx.mounts` (propiedad) da el estado en vivo de cada
+  montaje (`"pending"`/`"mounted"`/`"failed"`, `ConfigureStatus` en cada
+  lectura); una sección rechazada o un montaje fallido lanza
+  `MountException` con un `code` cerrado (`network`, `iam_denied`,
+  `not_found`, `not_allowed`, `invalid_path`, `helper_missing`,
+  `timeout`). `rayd` lanza `mount-s3` como el usuario dedicado
+  `rayito-mount` (uid 990) con credenciales resueltas por su propio
+  acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
+  relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`,
+  desplegable con `rayito stack deploy s3-mounts --param
+  BucketName=...`).
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

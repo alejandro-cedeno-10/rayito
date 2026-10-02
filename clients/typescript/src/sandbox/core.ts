@@ -24,6 +24,7 @@ import {
   SandboxNotFoundError,
 } from "../errors.js";
 import { CodeService } from "../gen/rayito/v1/code_pb.js";
+import { ConfigureService } from "../gen/rayito/v1/configure_pb.js";
 import { FilesystemService } from "../gen/rayito/v1/filesystem_pb.js";
 import {
   HealthRequestSchema,
@@ -273,6 +274,7 @@ export class SandboxCore {
     readonly code: Client<typeof CodeService>;
     readonly pty: Client<typeof PtyService>;
     readonly lifecycle: Client<typeof LifecycleService>;
+    readonly configure: Client<typeof ConfigureService>;
   };
 
   readonly #liveStreams = new Set<AbortController>();
@@ -305,6 +307,7 @@ export class SandboxCore {
       code: this.clientFor(CodeService, false),
       pty: this.clientFor(PtyService, false),
       lifecycle: this.clientFor(LifecycleService, false),
+      configure: this.clientFor(ConfigureService, false),
     };
   }
 

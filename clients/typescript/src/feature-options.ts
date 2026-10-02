@@ -4,11 +4,20 @@
  * stub, `planFeatures` lanza `UnimplementedError` nombrando el cambio
  * OpenSpec que la trae, antes de `run-microvm`. Con las siete en
  * `undefined` no hace nada: ni `ConfigureSandbox`, ni un cliente nuevo.
+ *
+ * `mounts` (`m15-s3-mounts`) es la primera en dejar de ser un stub:
+ * `requireCapsFor` corre aquí, antes de `run-microvm`, cuando `imageVariant`
+ * ya permite decidirlo; sobre cualquier otro nombre la decisión se difiere
+ * al agente (`Health.features`, comprobado tras `/run` por `Sandbox.#open`
+ * — ver `configure-base.ts`'s `requireCapabilities`).
  */
 
+import type { ConfigureSection } from "./configure-base.js";
 import { UnimplementedError } from "./errors.js";
+import { requireCapsFor } from "./role-policy.js";
+import type { S3Mount } from "./s3-mounts/domain.js";
+import { planS3Mounts } from "./s3-mounts/section.js";
 
-export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
 export const SIZE_CHANGE = "m15-sizes-catalog";
 export const EVENTS_CHANGE = "m15-events-webhooks";
@@ -18,7 +27,7 @@ export const DOMAIN_CHANGE = "m15-custom-domain";
 
 /** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
 export interface FeatureOptions {
-  readonly mounts?: Readonly<Record<string, unknown>> | undefined;
+  readonly mounts?: ReadonlyMap<string, S3Mount> | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: unknown;
   readonly events?: unknown;
@@ -30,21 +39,27 @@ export interface FeatureOptions {
 /** Vacío en 0.6 foundations a propósito: `planFeatures` lanza antes de
  * construir uno si alguna opción estaba puesta. */
 export interface FeaturePlan {
-  readonly configureSections: readonly unknown[];
+  readonly configureSections: readonly ConfigureSection[];
 }
 
 const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
- * `imageVariant` (de `resolveImageVariant`) queda para cuando una función
- * real lo necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a
- * AWS ni construye ningún cliente.
+ * `imageVariant` (de `resolveImageVariant`) es la variante de imagen,
+ * cuando el nombre ya permite decidirla; `mounts` lo usa para
+ * `requireCapsFor`. No hace ninguna llamada a AWS ni construye ningún
+ * cliente: `requireCapsFor` es una comprobación puramente sobre el nombre
+ * de la imagen.
  */
 export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
-  void imageVariant;
+  const sections: ConfigureSection[] = [];
   if (options.mounts !== undefined) {
-    throw new UnimplementedError("mounts", `llega en 0.6 (${MOUNTS_CHANGE})`);
+    requireCapsFor("mounts", imageVariant);
+    const section = planS3Mounts(options.mounts);
+    if (section !== undefined) {
+      sections.push(section);
+    }
   }
   if (options.volumes !== undefined) {
     throw new UnimplementedError("volumes", `llega en 0.6 (${VOLUMES_CHANGE})`);
@@ -64,5 +79,5 @@ export function planFeatures(options: FeatureOptions, imageVariant?: string): Fe
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
   }
-  return EMPTY_PLAN;
+  return sections.length === 0 ? EMPTY_PLAN : { configureSections: sections };
 }

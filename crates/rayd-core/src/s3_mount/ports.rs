@@ -17,8 +17,19 @@ pub trait FuseDevice: Send + Sync {
     fn attach(&self, mount: &S3Mount) -> Result<RawFd, MountErrorClass>;
 
     /// `umount2(MNT_DETACH)` on `mount_path`, then closes the descriptor
-    /// `attach` returned for it.
+    /// `attach` returned for it. Idempotent from the caller's point of
+    /// view only in the sense that calling it twice for the same `fd` is a
+    /// bug the caller must never commit — ownership of `fd` passes here,
+    /// so the caller drops its own copy of the number the moment this
+    /// returns, successfully or not.
     fn detach(&self, mount_path: &str, fd: RawFd) -> Result<(), MountErrorClass>;
+
+    /// Bounded check of whether `mount_path` is answering filesystem
+    /// requests yet (a `stat` of its root as the guest user, run as its
+    /// own short-lived, killable child so a FUSE connection with no
+    /// daemon behind it can never block this call itself). Called in a
+    /// loop by `rayd::features::s3_mounts` while a mount is `Pending`.
+    fn probe_ready(&self, mount_path: &str) -> bool;
 }
 
 /// One running `mount-s3` process bound to an already-attached FUSE
@@ -27,12 +38,20 @@ pub trait FuseDevice: Send + Sync {
 pub trait FuseDaemon: Send + Sync {
     fn spawn(&self, fd: RawFd, mount: &S3Mount) -> Result<i32, MountErrorClass>;
 
-    /// `true` while the pid is still running (a non-blocking `waitpid`);
-    /// the restart logic in `rayd::features::s3_mounts` relaunches a dead
+    /// `true` while the pid is still running (a non-blocking check); the
+    /// restart logic in `rayd::features::s3_mounts` relaunches a dead
     /// daemon rather than ever calling this on a pid it did not spawn.
     fn is_alive(&self, pid: i32) -> bool;
 
-    /// Best-effort `SIGTERM` then `SIGKILL`; never panics on an already
-    /// dead pid.
+    /// Once `is_alive` has turned `false` for a `pid` this adapter spawned,
+    /// the classified reason it exited — from its exit status and a
+    /// stderr tail that is read here and never logged or returned as
+    /// text, only as this closed class. Reads the record exactly once
+    /// (subsequent calls for the same `pid` return the same class from a
+    /// cache, never panic): never called while `is_alive(pid)` is `true`.
+    fn exit_class(&self, pid: i32) -> MountErrorClass;
+
+    /// Best-effort `SIGTERM` to the process group; never panics on an
+    /// already dead pid.
     fn kill(&self, pid: i32);
 }

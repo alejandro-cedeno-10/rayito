@@ -75,9 +75,9 @@ distintas, y es fácil confundirlas:
 ## Reglas prácticas
 
 - Todo lo de esta página es lo que **crea o llama el propio `create()` /
-  `connect()`**. Las funciones opcionales (secretos, índice de metadatos)
-  tienen su propio coste, apagado por defecto y activado sólo con una opción
-  explícita del SDK: [Funciones opcionales](optional-features.md).
+  `connect()`**. Las funciones opcionales (secretos, índice de metadatos,
+  montajes S3) tienen su propio coste, apagado por defecto y activado sólo
+  con una opción explícita del SDK: [Funciones opcionales](optional-features.md).
 - Un sandbox olvidado factura hasta su `timeout` (3600 s por defecto): usa
   `with` / `await using` o `kill()`, y un `timeout` acorde a la tarea. Con el
   [plazo del servidor](lifecycle.md) y `on_timeout="kill"`, un sandbox

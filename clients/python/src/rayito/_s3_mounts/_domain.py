@@ -15,15 +15,24 @@ MountPhase = Literal["pending", "mounted", "failed"]
 
 #: Cadenas cerradas; espejo exacto de `rayd_core::s3_mount::MountErrorClass`
 #: (`error.rs`) y de `S3MountState.error_class` en el proto. `MountException`
-#: nunca lleva un `code` fuera de este conjunto.
+#: nunca lleva un `code` fuera de este conjunto (salvo `UNKNOWN_ERROR_CLASS`,
+#: para una clase que el agente mande y este SDK todavía no conozca).
 MOUNT_ERROR_CLASSES: Final[tuple[str, ...]] = (
     "network",
     "iam_denied",
     "not_found",
     "not_allowed",
+    "invalid_path",
     "helper_missing",
     "timeout",
 )
+
+#: Nunca confundir con una clase real del agente (nunca aparece en
+#: `MOUNT_ERROR_CLASSES`): `check_section_result` la usa en vez de adivinar
+#: una de las clases reales cuando el agente manda una que este SDK no
+#: reconoce todavía — ocultar eso detrás de, por ejemplo, `"network"`
+#: enmascararía una deriva de protocolo en vez de hacerla visible.
+UNKNOWN_ERROR_CLASS: Final = "unknown"
 
 
 @dataclass(frozen=True)

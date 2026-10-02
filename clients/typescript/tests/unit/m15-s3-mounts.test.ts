@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { describe, expect, test } from "vitest";
 
 import { InvalidArgumentError, MountError, UnimplementedError } from "../../src/errors.js";
-import { ConfigureRequestSchema } from "../../src/gen/rayito/v1/configure_pb.js";
+import { ConfigureRequestSchema, SectionCode } from "../../src/gen/rayito/v1/configure_pb.js";
 import {
   S3MountPhase,
   S3MountStateSchema,
@@ -67,7 +67,7 @@ describe("planS3Mounts", () => {
     const section = planS3Mounts(mounts);
     expect(section).toBeInstanceOf(S3MountsSection);
     expect(section?.section).toBe("s3_mounts");
-    expect(section?.requiredFlag).toBe("s3_mounts");
+    expect(section?.requiredFlag).toBe("s3Mounts");
   });
 });
 
@@ -123,13 +123,13 @@ describe("proto translation", () => {
 });
 
 describe("checkSectionResult", () => {
-  test.each(["SECTION_CODE_APPLIED", "SECTION_CODE_PENDING"])("%s raises nothing", (codeName) => {
-    expect(() => checkSectionResult(codeName, "")).not.toThrow();
+  test.each([SectionCode.APPLIED, SectionCode.PENDING])("%i raises nothing", (code) => {
+    expect(() => checkSectionResult(code, "")).not.toThrow();
   });
 
   test("UNSUPPORTED raises UnimplementedError naming the option", () => {
     try {
-      checkSectionResult("SECTION_CODE_UNSUPPORTED", "");
+      checkSectionResult(SectionCode.UNSUPPORTED, "");
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(UnimplementedError);
@@ -139,7 +139,7 @@ describe("checkSectionResult", () => {
 
   test("FAILED raises MountError with the wire error class", () => {
     try {
-      checkSectionResult("SECTION_CODE_FAILED", "iam_denied");
+      checkSectionResult(SectionCode.FAILED, "iam_denied");
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(MountError);
@@ -147,12 +147,12 @@ describe("checkSectionResult", () => {
     }
   });
 
-  test("an unknown error class falls back to network", () => {
+  test("an unknown error class falls back to the unknown sentinel", () => {
     try {
-      checkSectionResult("SECTION_CODE_INVALID", "");
+      checkSectionResult(SectionCode.INVALID, "");
       expect.unreachable();
     } catch (error) {
-      expect((error as MountError).code).toBe("network");
+      expect((error as MountError).code).toBe("unknown");
     }
   });
 });

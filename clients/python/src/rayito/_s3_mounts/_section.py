@@ -11,16 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from rayito._mount_path import validate_mount_paths
 from rayito.exceptions import MountException, UnimplementedError
-from rayito.v1 import s3_mounts_pb2
+from rayito.v1 import configure_pb2, s3_mounts_pb2
 
-from ._domain import MountPhase, MountStatus, S3Mount
-
-if TYPE_CHECKING:
-    from rayito.v1 import configure_pb2
+from ._domain import MOUNT_ERROR_CLASSES, UNKNOWN_ERROR_CLASS, MountPhase, MountStatus, S3Mount
 
 SECTION_NAME: Final = "s3_mounts"
 REQUIRED_FLAG: Final = "s3_mounts"
@@ -49,6 +46,9 @@ class S3MountsSection:
 
     def fill(self, request: configure_pb2.ConfigureRequest) -> None:
         request.s3_mounts.CopyFrom(to_proto(self.mounts))
+
+    def check_result(self, code: int, error_class: str) -> None:
+        check_section_result(code, error_class)
 
 
 def plan_s3_mounts(mounts: Mapping[str, S3Mount] | None) -> S3MountsSection | None:
@@ -89,24 +89,25 @@ def from_proto_status(status: s3_mounts_pb2.S3MountsStatus) -> dict[str, MountSt
     }
 
 
-def check_section_result(code_name: str, error_class: str) -> None:
+def check_section_result(code: int, error_class: str) -> None:
     """`None` si la sección se aplicó o sigue asentándose (`PENDING`: un
     montaje todavía asentándose no es un error, `sbx.mounts` lo reporta
     como `"pending"`); en otro caso, la excepción que explica por qué.
+    `code` es el entero de `SectionCode` tal cual lo manda `rayd`, nunca una
+    cadena comparada a mano: compararlo contra las constantes generadas
+    (`configure_pb2.SECTION_CODE_*`) es lo que haría fallar una comprobación
+    `mypy`/`pyright` si el `.proto` cambiara algún día el valor de un
+    miembro del enum.
     """
-    if code_name in ("SECTION_CODE_APPLIED", "SECTION_CODE_PENDING"):
+    if code in (configure_pb2.SECTION_CODE_APPLIED, configure_pb2.SECTION_CODE_PENDING):
         return
-    if code_name == "SECTION_CODE_UNSUPPORTED":
+    if code == configure_pb2.SECTION_CODE_UNSUPPORTED:
         raise UnimplementedError(
             "mounts=",
             "necesita una imagen 0.6.0 o posterior con el agente de m15-s3-mounts",
         )
+    code_name = configure_pb2.SectionCode.Name(code)
     raise MountException(
         f"mounts=: la sección se rechazó ({code_name})",
-        code=error_class if error_class in _KNOWN_ERROR_CLASSES else "network",
+        code=error_class if error_class in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS,
     )
-
-
-_KNOWN_ERROR_CLASSES: Final = frozenset(
-    {"network", "iam_denied", "not_found", "not_allowed", "helper_missing", "timeout"}
-)

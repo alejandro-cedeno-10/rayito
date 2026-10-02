@@ -18,20 +18,30 @@ versionado [SemVer](https://semver.org/lang/es/).
   `volumes`, `size`, `events`, `telemetry`, `gateways`, `domain`) existen
   ya en `SandboxCreateOptions` y lanzan `UnimplementedError` nombrando el
   cambio que las trae mientras sigan siendo un stub, antes de
-  `run-microvm`. Sin ninguna opción nueva, el comportamiento es byte a
+  `run-microvm`; en cuanto una deja de serlo (`mounts`, ver más abajo),
+  `create()` ejecuta sus `configureSections` justo tras el primer
+  `Health` (`configure-base.ts`: `requireCapabilities`,
+  `buildConfigureRequest`, `checkConfigureResponse`), dentro del mismo
+  camino que ya termina el sandbox ante cualquier fallo anterior a
+  `agentReady`. Sin ninguna opción nueva, el comportamiento es byte a
   byte el de 0.5.x.
 - **`mounts` (`m15-s3-mounts`, ADR-017, experimental, apagado por
-  defecto): `src/s3-mounts/{domain,section}.ts` (`S3Mount`, `MountStatus`,
-  `planS3Mounts`, la traducción pura a `ConfigureRequest.s3Mounts`) y la
-  política IAM `RayitoS3MountAccess` del componente `OptionalStack`
-  `s3-mounts` (`infra/s3-mounts.yaml`). El agente (`rayd`) ya monta
-  buckets S3 con `mount-s3`/FUSE sobre `rayito-base-caps`, lanzado como el
-  usuario dedicado `rayito-mount` (uid 990) con credenciales resueltas
-  por su propio acceso a IMDS, nunca en argv ni en entorno.
-  `Sandbox.create({ mounts })` sigue lanzando `UnimplementedError` (sin
-  cambio de comportamiento: la integración final con `create()`/
-  `sbx.mounts` queda para quien cablee las ocho funciones 0.6 en
-  `sandbox/sandbox.ts`, archivo reservado por convención de M15).
+  defecto)**: `Sandbox.create({ mounts })` monta uno o más buckets S3
+  (`new S3Mount({ bucket, prefix, readOnly: true, allowOverwrite: false,
+  allowDelete: false })`, exportado desde `rayito`) en el guest con
+  `mount-s3`/FUSE, sólo sobre `rayito-base-caps` (`requireCapsFor` lo
+  exige antes de `run-microvm` cuando la imagen se nombra directamente;
+  sobre un ARN opaco la decisión se difiere a `Health.features` tras
+  `/run`, que termina el sandbox si falta la capacidad). `sbx.mounts()`
+  da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/
+  `"failed"`, `ConfigureStatus` en cada llamada); una sección rechazada o
+  un montaje fallido lanza `MountError` con un `code` cerrado (`network`,
+  `iam_denied`, `not_found`, `not_allowed`, `invalid_path`,
+  `helper_missing`, `timeout`). `rayd` lanza `mount-s3` como el usuario
+  dedicado `rayito-mount` (uid 990) con credenciales resueltas por su
+  propio acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
+  relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`).
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

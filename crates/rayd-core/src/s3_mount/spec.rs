@@ -1,15 +1,16 @@
-//! Desired state of one S3 mount, and the two pure checks `apply()` runs
-//! before touching `/dev/fuse` or spawning `mount-s3`: no two mounts in the
-//! same request name the same path, and every bucket is on the image's
-//! allowlist. The mount-path *shape* itself (absolute, canonical, under
-//! `/mnt/` or `/home/user/`, no overlap between mounts) is already
-//! enforced by the SDK before `ConfigureSandbox` is ever called
-//! (`_mount_path.py` / `mount-path.ts`), so `rayd` only re-checks for
-//! exact duplicates within one request — the one thing a buggy or
-//! malicious client could still send that the SDK-side rule does not
-//! cover on its own.
+//! Desired state of one S3 mount, and the pure checks `apply()` runs
+//! before touching `/dev/fuse` or spawning `mount-s3`: every path's own
+//! shape, no two mounts in the same request overlapping, and every bucket
+//! on the image's allowlist. The SDK already enforces the mount-path shape
+//! before `ConfigureSandbox` is ever called (`_mount_path.py` /
+//! `mount-path.ts`), but `rayd` never trusts a client to have run that
+//! check itself: a non-SDK or buggy caller could otherwise steer
+//! `FuseDevice::attach`'s own `create_dir_all`/`mount(2)` at an arbitrary
+//! path (`/etc/cron.d`, `/usr/local/bin`, `/`), so `rayd_core::mount_path`
+//! is re-run here, first, before anything else.
 
 use super::error::MountErrorClass;
+use crate::mount_path;
 
 /// One desired mount, as carried by `S3MountsConfig.mounts` (proto field
 /// numbers match one to one).
@@ -48,17 +49,21 @@ pub fn parse_allowed_buckets(raw: &str) -> Vec<String> {
 }
 
 /// Checked in request order, so the first offending mount is the one
-/// reported; `allowed` empty rejects every mount with `NotAllowed`.
+/// reported: path shape and overlap first (`rayd_core::mount_path`,
+/// `InvalidPath`), then the bucket allowlist (`NotAllowed`); `allowed`
+/// empty rejects every bucket.
 pub fn validate_mounts(mounts: &[S3Mount], allowed: &[String]) -> Result<(), MountValidationError> {
-    let mut seen_paths: Vec<&str> = Vec::with_capacity(mounts.len());
+    let paths: Vec<&str> = mounts
+        .iter()
+        .map(|mount| mount.mount_path.as_str())
+        .collect();
+    if let Err((path, _reason)) = mount_path::validate_mount_paths(&paths) {
+        return Err(MountValidationError {
+            mount_path: path.to_owned(),
+            class: MountErrorClass::InvalidPath,
+        });
+    }
     for mount in mounts {
-        if seen_paths.contains(&mount.mount_path.as_str()) {
-            return Err(MountValidationError {
-                mount_path: mount.mount_path.clone(),
-                class: MountErrorClass::NotAllowed,
-            });
-        }
-        seen_paths.push(&mount.mount_path);
         if !allowed.iter().any(|candidate| candidate == &mount.bucket) {
             return Err(MountValidationError {
                 mount_path: mount.mount_path.clone(),
@@ -114,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_mount_paths_in_one_request_are_rejected() {
+    fn duplicate_mount_paths_in_one_request_are_rejected_as_invalid_path() {
         let allowed = vec!["team-data".to_owned()];
         let mounts = vec![
             mount("/mnt/data", "team-data"),
@@ -122,6 +127,7 @@ mod tests {
         ];
         let error = validate_mounts(&mounts, &allowed).unwrap_err();
         assert_eq!(error.mount_path, "/mnt/data");
+        assert_eq!(error.class, MountErrorClass::InvalidPath);
     }
 
     #[test]
@@ -129,5 +135,15 @@ mod tests {
         let allowed = vec!["team-data".to_owned()];
         let mounts = vec![mount("/mnt/a", "team-data"), mount("/mnt/b", "team-data")];
         assert!(validate_mounts(&mounts, &allowed).is_ok());
+    }
+
+    #[test]
+    fn a_path_outside_the_allowed_roots_is_rejected_as_invalid_path_before_the_allowlist_runs() {
+        // Even an allowlisted bucket cannot rescue a malicious/buggy
+        // caller that names a path outside `/mnt/`/`/home/user/`: shape
+        // is checked first.
+        let allowed = vec!["team-data".to_owned()];
+        let error = validate_mounts(&[mount("/etc/cron.d", "team-data")], &allowed).unwrap_err();
+        assert_eq!(error.class, MountErrorClass::InvalidPath);
     }
 }

@@ -80,6 +80,11 @@ Resources:
               Action:
                 - s3:PutObject
                 - s3:DeleteObject
+                # Mountpoint's own documented IAM requirements for writes
+                # include this: a failed large upload otherwise leaves
+                # orphaned multipart parts that keep billing storage
+                # (AWS_API_NOTES.md §23).
+                - s3:AbortMultipartUpload
               Resource: !Sub "arn:\${AWS::Partition}:s3:::\${BucketName}/*"
             - !Ref AWS::NoValue
 

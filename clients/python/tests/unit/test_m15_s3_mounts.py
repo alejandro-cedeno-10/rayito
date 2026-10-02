@@ -1,8 +1,9 @@
 """`rayito._s3_mounts` (`m15-s3-mounts`, ADR-017): el dominio de `S3Mount`
-y la traducción pura hacia/desde `ConfigureRequest.s3_mounts`. El paquete
-no está todavía enlazado a `Sandbox.create()` (`_feature_options.mounts`
-sigue lanzando `UnimplementedError`, `test_m15_feature_options.py`), así
-que estos tests llaman a `_s3_mounts` directamente.
+y la traducción pura hacia/desde `ConfigureRequest.s3_mounts`, probado aquí
+directamente sobre `_s3_mounts`; el enlace end-to-end con
+`Sandbox.create(mounts=)` (`_feature_options.plan_features`, la puerta de
+capacidad, la `Configure` real) lo cubre `test_m15_feature_options.py` y
+los e2e `test_m15_s3_mounts.py`/`m15-s3-mounts.e2e.test.ts`.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from rayito._s3_mounts import (
     to_proto,
 )
 from rayito.exceptions import InvalidArgumentException, MountException, UnimplementedError
-from rayito.v1 import s3_mounts_pb2
+from rayito.v1 import configure_pb2, s3_mounts_pb2
 
 
 def test_s3mount_defaults_are_read_only_and_bucket_root() -> None:
@@ -129,27 +130,29 @@ def test_from_proto_status_maps_every_phase() -> None:
     }
 
 
-@pytest.mark.parametrize("code_name", ["SECTION_CODE_APPLIED", "SECTION_CODE_PENDING"])
-def test_applied_and_pending_raise_nothing(code_name: str) -> None:
-    check_section_result(code_name, "")
+@pytest.mark.parametrize(
+    "code", [configure_pb2.SECTION_CODE_APPLIED, configure_pb2.SECTION_CODE_PENDING]
+)
+def test_applied_and_pending_raise_nothing(code: int) -> None:
+    check_section_result(code, "")
 
 
 def test_unsupported_raises_unimplemented_naming_the_option() -> None:
     with pytest.raises(UnimplementedError) as excinfo:
-        check_section_result("SECTION_CODE_UNSUPPORTED", "")
+        check_section_result(configure_pb2.SECTION_CODE_UNSUPPORTED, "")
     assert excinfo.value.feature == "mounts="
 
 
 def test_failed_raises_mount_exception_with_the_wire_error_class() -> None:
     with pytest.raises(MountException) as excinfo:
-        check_section_result("SECTION_CODE_FAILED", "iam_denied")
+        check_section_result(configure_pb2.SECTION_CODE_FAILED, "iam_denied")
     assert excinfo.value.code == "iam_denied"
 
 
-def test_invalid_without_a_known_error_class_falls_back_to_network() -> None:
+def test_invalid_without_a_known_error_class_falls_back_to_unknown() -> None:
     with pytest.raises(MountException) as excinfo:
-        check_section_result("SECTION_CODE_INVALID", "")
-    assert excinfo.value.code == "network"
+        check_section_result(configure_pb2.SECTION_CODE_INVALID, "")
+    assert excinfo.value.code == "unknown"
 
 
 def test_importing_s3_mounts_builds_no_aws_client(monkeypatch: pytest.MonkeyPatch) -> None:

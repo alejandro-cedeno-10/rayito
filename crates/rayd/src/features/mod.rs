@@ -24,11 +24,15 @@ use rayito_proto::v1::{
 use slot::ConfigurableFeature;
 
 /// What a feature's `build()` needs from `main` to construct its slot.
-/// Empty today, because every slot is still a stub: a feature that needs
-/// credentials, a bucket name or other shared context adds a field here in
-/// its own PR, never by widening `FeatureSet` itself.
+/// `child_registry` is `m15-s3-mounts`'s own addition (its `mount-s3`
+/// daemon registers each pid there, see `adapters::mount_s3`'s module
+/// doc); every other slot is still a stub and ignores it. A feature that
+/// needs a bucket name, a credential broker or other shared context adds
+/// its own field here in its own PR, never by widening `FeatureSet` itself.
 #[derive(Default)]
-pub struct FeatureContext;
+pub struct FeatureContext {
+    pub child_registry: Arc<crate::adapters::ChildRegistry>,
+}
 
 pub struct FeatureSet {
     pub s3_mounts: Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>>,
@@ -64,7 +68,7 @@ mod tests {
         // `s3_mounts` has a real adapter since `m15-s3-mounts`
         // (`features::s3_mounts::build`), asserted separately in that
         // module's own tests; every other slot is still `Unsupported`.
-        let set = build(&FeatureContext);
+        let set = build(&FeatureContext::default());
         assert!(!set.efs_volumes.supported());
         assert!(!set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());
