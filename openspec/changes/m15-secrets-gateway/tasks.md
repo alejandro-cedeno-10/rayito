@@ -57,6 +57,7 @@
 - [x] 6.9 Upstream classification: only `CONNECT_TIMEOUT`/`RESPONSE_HEAD_TIMEOUT` are `upstream_timeout`; every other post-connect failure is `upstream_error`.
 - [x] 6.10 e2e files (`clients/python/tests/e2e/test_m15_secrets_gateway.py`, `clients/typescript/tests/e2e/m15-secrets-gateway.e2e.test.ts`), skipped unless the acceptance environment is set. **Run only by the serialized AWS acceptance stage.**
 - [x] 6.11 `reincarnate()` carries `gateways=` over (`LaunchOptions.gateways`, Python and TypeScript), re-resolving each header in the successor.
+- [x] 6.12 Serialized AWS acceptance (2026-10-02): Python and TypeScript e2e pass against an image with this branch's `rayd`; the SEC-7 upload now writes its own 96 KiB payload (the image has no `/etc/hostname`, and the echo upstream rejects 128 KiB bodies even without the gateway). Results in `AWS_API_NOTES.md` §28.
 
 ## 7. Foundations follow-ups (not done here)
 

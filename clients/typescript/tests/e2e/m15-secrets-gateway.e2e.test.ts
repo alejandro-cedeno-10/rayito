@@ -25,6 +25,13 @@ const INJECTED_HEADER = "x-rayito-e2e";
 const RATE_PER_MINUTE = 8;
 const BURST_MARGIN = 4;
 const CURL_TIMEOUT_MS = 60_000;
+/** SEC-7: la imagen no trae /etc/hostname (aceptación 2026-10-02), así que el
+ * test escribe su propia carga. 96 KiB supera el búfer de subida de curl
+ * (64 KiB por defecto), luego viaja en varios trozos, y cabe bajo el límite
+ * de cuerpo del eco por defecto: postman-echo responde 500 a 128 KiB también
+ * en directo, sin la pasarela. */
+const UPLOAD_PATH = "/tmp/rayito-e2e-upload";
+const UPLOAD_BYTES = 96 * 1024;
 
 async function curl(sandbox: Sandbox, args: string): Promise<[number, string]> {
   const result = await sandbox.commands.run(
@@ -91,9 +98,11 @@ describe.runIf(e2eEnabled())("M15 secrets gateway (AWS real)", () => {
       expect((await curl(sandbox, `--path-as-is ${url}/get/../headers`))[0]).toBe(403);
       expect((await curl(sandbox, `--path-as-is ${url}/get/%2e%2e/headers`))[0]).toBe(403);
 
+      await sandbox.commands.run(`head -c ${UPLOAD_BYTES} /dev/zero > ${UPLOAD_PATH}`);
       [code] = await curl(
         sandbox,
-        `-X POST -H 'Transfer-Encoding: chunked' --data-binary @/etc/hostname ${url}/post`,
+        "-X POST -H 'Transfer-Encoding: chunked' " +
+          `-H 'Content-Type: application/octet-stream' --data-binary @${UPLOAD_PATH} ${url}/post`,
       );
       expect(code).toBe(200);
 

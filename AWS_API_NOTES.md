@@ -1030,6 +1030,21 @@ nuevo del lado de `rayd`: el único cliente que esta función añade es el
 `hyper`/`rustls` HTTPS genérico hacia el `upstream` declarado, que no es
 una API de AWS.
 
+**Aceptación en AWS real (2026-10-02)**, imagen `rayito-base` con el `rayd`
+de esta rama, eco `https://postman-echo.com`: las e2e de Python y
+TypeScript pasan (inyección y anti-suplantación, 403 fuera de `allow` y con
+`..`/`%2e%2e`, 429, rotación con el mismo puerto, SEC-10). SEC-7: subidas de
+1, 16, 64 y 96 KiB, troceadas o con `Content-Length`, atraviesan la
+pasarela con 200; la mediana de `time_total` (3 muestras) fue 17–31 ms por
+la pasarela frente a 35–46 ms en directo, es decir, la pasarela no añade
+latencia medible (reutiliza la conexión TLS al upstream; `curl` directo
+abre una por petición). El eco responde 500 a 128 KiB también en directo:
+es su límite de cuerpo, no el de la pasarela. Sin `gateways=` el SDK hace
+exactamente las mismas operaciones de AWS que 0.5.x (`RunMicrovm`,
+`CreateMicrovmAuthToken`, `TerminateMicrovm`; cero llamadas a Secrets
+Manager) y el guest tiene los mismos listeners. Pendiente de SEC-7: SSE de
+una API LLM real (necesita una clave de proveedor; no se midió).
+
 ## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
 
 Pendiente: `m15-custom-domain` documenta aquí `CreateDistribution`/

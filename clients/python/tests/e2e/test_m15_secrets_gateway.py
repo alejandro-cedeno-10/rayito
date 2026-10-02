@@ -52,6 +52,13 @@ INJECTED_HEADER = "x-rayito-e2e"
 RATE_PER_MINUTE = 8
 BURST_MARGIN = 4
 LATENCY_SAMPLES = 3
+# SEC-7: la imagen no trae /etc/hostname (aceptación 2026-10-02), así que el
+# test escribe su propia carga. 96 KiB supera el búfer de subida de curl
+# (64 KiB por defecto), luego viaja en varios trozos, y cabe bajo el límite
+# de cuerpo del eco por defecto: postman-echo responde 500 a 128 KiB también
+# en directo, sin la pasarela.
+UPLOAD_PATH = "/tmp/rayito-e2e-upload"
+UPLOAD_BYTES = 96 * 1024
 
 
 def curl(sandbox: Sandbox, args: str) -> tuple[int, str]:
@@ -115,9 +122,12 @@ def test_gateway_injects_enforces_rotates_and_never_leaks(
             assert curl(sandbox, f"--path-as-is {url}/get/../headers")[0] == 403
             assert curl(sandbox, f"--path-as-is {url}/get/%2e%2e/headers")[0] == 403
 
+            sandbox.commands.run(f"head -c {UPLOAD_BYTES} /dev/zero > {UPLOAD_PATH}")
             status, body = curl(
                 sandbox,
-                f"-X POST -H 'Transfer-Encoding: chunked' --data-binary @/etc/hostname {url}/post",
+                "-X POST -H 'Transfer-Encoding: chunked' "
+                "-H 'Content-Type: application/octet-stream' "
+                f"--data-binary @{UPLOAD_PATH} {url}/post",
             )
             assert status == 200, f"SEC-7: la subida troceada no atravesó la pasarela: {body}"
             report_added_latency(sandbox, url, upstream)
