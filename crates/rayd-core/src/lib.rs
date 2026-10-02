@@ -23,7 +23,9 @@
 //! (`features`, `root_egress`), and the credential-lease freshness rule
 //! shared by every feature that needs the execution role inside the guest
 //! (`credentials`). Each feature's own domain lives in its own module,
-//! added by that feature: `s3_mount` (`m15-s3-mounts`) is the first one.
+//! added by that feature: `s3_mount` (`m15-s3-mounts`) is the first one,
+//! `telemetry` (m15-rayd-otlp, ADR-021) is rayd's own OTLP/HTTP metrics
+//! exporter.
 
 pub mod auth;
 pub mod capabilities;
@@ -52,6 +54,7 @@ pub mod sandbox_timeout;
 pub mod secret_gateway;
 pub mod session;
 pub mod suspend_sync;
+pub mod telemetry;
 pub mod template;
 pub mod transfer;
 pub mod wire_tokens;

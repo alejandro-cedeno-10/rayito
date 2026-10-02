@@ -117,7 +117,7 @@ export interface ConfigureSection {
  * la llamada a `Configure`.
  */
 export interface ConfigureSectionFactory {
-  build(cache: SecretCache): ConfigureSection;
+  build(cache: SecretCache): ConfigureSection | Promise<ConfigureSection>;
 }
 
 /** Lo que `planFeatures` pone en `FeaturePlan.configureSections`: una
@@ -132,11 +132,48 @@ function isSectionFactory(entry: PlannedSection): entry is ConfigureSectionFacto
 /** Cada entrada de `planned` como `ConfigureSection`: las que ya lo son tal
  * cual, cada `ConfigureSectionFactory` construida con `cache()` — que sólo
  * se llama si alguna entrada la necesita. */
-export function resolveSections(
+export async function resolveSections(
   planned: readonly PlannedSection[],
   cache: () => SecretCache,
-): ConfigureSection[] {
-  return planned.map((entry) => (isSectionFactory(entry) ? entry.build(cache()) : entry));
+): Promise<ConfigureSection[]> {
+  return Promise.all(
+    planned.map((entry) => (isSectionFactory(entry) ? entry.build(cache()) : entry)),
+  );
+}
+
+/**
+ * La parte común de un `ConfigureSection` que `rayd` aplica en el acto
+ * (nunca `PENDING`) y sin error propio (`gateways`, `telemetry`):
+ * `checkResult` lanza lo que `raiseSectionError` diga y no hay espera.
+ * Cada subclase aporta `section`, `requiredFlag` y `fill`.
+ */
+export abstract class ImmediateSection implements ConfigureSection {
+  abstract readonly section: string;
+  abstract readonly requiredFlag: keyof AgentFeatures;
+  readonly settleTimeoutMs = 0;
+
+  abstract fill(request: ConfigureRequest): void | Promise<void>;
+
+  checkResult(code: number, errorClass: string): void {
+    raiseSectionError(this.section, code, errorClass);
+  }
+
+  checkStatus(_status: ConfigureStatusResponse, _final: boolean): boolean {
+    return true;
+  }
+}
+
+/**
+ * Un `ConfigureSection` que explica él mismo por qué el agente no lo
+ * soporta (hoy `telemetry`: un `rayd` 0.6 sin `AWS_REGION`), en lugar del
+ * mensaje genérico de `requireCapabilities`.
+ */
+export interface CapabilityGate {
+  requireSupport(features: AgentFeatures): void;
+}
+
+function isCapabilityGate(section: ConfigureSection): section is ConfigureSection & CapabilityGate {
+  return typeof (section as Partial<CapabilityGate>).requireSupport === "function";
 }
 
 /**
@@ -239,13 +276,18 @@ function codeName(code: SectionCode): string {
 /**
  * Puerta de capacidad previa al envío: la primera sección cuyo propio
  * `requiredFlag` esté en `false` en `features` lanza `UnimplementedError`
- * nombrándola, antes de construir un solo `ConfigureRequest`.
+ * nombrándola (o su propio error, si es un `CapabilityGate`), antes de
+ * construir un solo `ConfigureRequest`.
  */
 export function requireCapabilities(
   sections: readonly ConfigureSection[],
   features: AgentFeatures,
 ): void {
   for (const entry of sections) {
+    if (isCapabilityGate(entry)) {
+      entry.requireSupport(features);
+      continue;
+    }
     if (!features[entry.requiredFlag]) {
       throw new UnimplementedError(
         entry.section,

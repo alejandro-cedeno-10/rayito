@@ -90,6 +90,23 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   función comprueba su propio estado antes de hacer nada, y no espera
   ningún `flush` si no encoló nada).
 <!-- m15-rayd-otlp -->
+- **Exportador OTLP/HTTP a CloudWatch** (`m15-rayd-otlp`, ADR-021):
+  `rayd` exporta 7 gauges de CPU, memoria y disco cada `interval_s`
+  (15-300 s) sobre el `telemetry_export` de `ConfigureSandbox`, firmado con
+  SigV4 sobre el execution role o con una API key de CloudWatch Metrics
+  empujada por el SDK; cola acotada con backoff y jitter por sandbox
+  (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
+  vaciado de hasta 2 s que nunca pierde puntos aunque el hook lo corte, y
+  `/resume` (su `on_resume`, bajo el tope por participante de los hooks)
+  rehace el pool de conexiones sin esperar envíos previos. Firma SigV4 con
+  `aws-sigv4` (ya en `Cargo.lock`), corrigiendo el reloj del guest con la
+  cabecera `Date` de AWS; persistencia y funciones 0.6 comparten un único
+  proveedor de credenciales IMDS. Lee `traceparent` entrante y lo registra
+  como `trace_id`/`span_id`. Un subconjunto vendido y mínimo de los tipos de
+  OpenTelemetry (Apache-2.0, `crates/rayito-proto/vendor/opentelemetry/`).
+  `Health.features.telemetry_export` (y `root_egress`) sólo son `true` con
+  `AWS_REGION` conocido. Sin `telemetry=`, `rayd` no abre ninguna conexión
+  nueva: comportamiento idéntico a 0.5.x.
 <!-- m15-templates -->
 - **Templates declarativos** (`m15-templates`, ADR-022):
   `rayd_core::template` (`StartSpec`, `ReadyPoll`, `ready_decision`,

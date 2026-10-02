@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from rayito._configure_base import raise_section_error
+from rayito._configure_base import ImmediateSection
 from rayito._secret_gateway._domain import GatewayStatus, SecretGateway
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ SECTION_NAME: Final = "secret_gateway"
 
 
 @dataclass(frozen=True)
-class GatewaySection:
+class GatewaySection(ImmediateSection):
     """Implementa el `Protocol` `ConfigureSection` de `_configure_base.py`
     para `gateways=`. Guarda sólo las entradas de `gateways=` tal como las
     escribió el llamante y la `SecretCache` con la que resolverlas: ningún
@@ -71,24 +71,6 @@ class GatewaySection:
                 routes=[route(name, gateway) for name, gateway in self.gateways.items()]
             )
         )
-
-    def check_result(self, code: int, error_class: str) -> None:
-        """`INVALID`/`FAILED`/`UNSUPPORTED` lanzan
-        (`_configure_base.raise_section_error`); `rayd` aplica la sección
-        en el acto, nunca la deja `PENDING`."""
-        raise_section_error(SECTION_NAME, code, error_class)
-
-    @property
-    def settle_timeout_s(self) -> float:
-        """Sin espera: el puerto de cada ruta ya está en `ConfigureStatus`
-        en cuanto `Configure` responde `APPLIED`."""
-        return 0.0
-
-    def check_status(self, status: configure_pb2.ConfigureStatusResponse, *, final: bool) -> bool:
-        """Siempre asentada (`settle_timeout_s`); `after_apply` es quien lee
-        el estado de cada ruta."""
-        del status, final
-        return True
 
     def forget_cached_values(self) -> None:
         """Descarta de `cache` cada secreto que estas rutas inyectan, para que

@@ -52,7 +52,11 @@ impl ConfigureGrpc {
                 Some(self.features.lifecycle_events.apply(cfg).await)
             }
             ConfigSection::TelemetryExport => {
-                let cfg = request.telemetry_export?;
+                // Unlike its five sibling stub messages, `TelemetryExportConfig`
+                // (m15-rayd-otlp) has real fields (a `String` service name, a
+                // `oneof auth`), so it is not `Copy`; `request` is a shared
+                // reference, so this clones rather than moving out of it.
+                let cfg = request.telemetry_export.clone()?;
                 Some(self.features.telemetry_export.apply(cfg).await)
             }
             ConfigSection::SecretGateway => {

@@ -292,6 +292,17 @@ export {
   OptionalStacks,
   type OptionalStacksOptions,
 } from "./stacks/service.js";
+export {
+  DEFAULT_INTERVAL_S,
+  DEFAULT_SERVICE_NAME,
+  MAX_INTERVAL_S,
+  MIN_INTERVAL_S,
+  type NameStyleOption,
+  OtlpAuth,
+  TelemetryExport,
+  type TelemetryExportOptions,
+  type TelemetryHealth,
+} from "./telemetry-export/domain.js";
 export type {
   BuildClients,
   BuildHandle,

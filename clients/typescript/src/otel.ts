@@ -31,10 +31,15 @@
  * `stack`, porque el mensaje de un error del SDK puede llevar el propio dato
  * sensible que el span nunca debe ver.
  *
- * La propagación de `traceparent`/`tracestate` hacia `rayd`, la exportación
- * de métricas o logs del sandbox y la instrumentación del shim de E2B
- * quedan fuera de alcance (M13b); la exportación de los spans (y su coste)
- * la configura el `tracerProvider` que pasa el llamante.
+ * Desde 0.6 (m15-rayd-otlp, research Q92), con `tracerProvider` cada RPC
+ * del transporte del handle lleva además `traceparent` (y `tracestate`, si
+ * el propagador global de `@opentelemetry/api` lo usa; nunca `baggage`)
+ * hacia `rayd`, que lo registra como `trace_id`/`span_id` en sus logs
+ * (`telemetry-export/propagation.ts`). Sin la opción no se añade ninguna
+ * cabecera. La exportación de métricas del sandbox es `telemetry` (otra
+ * opción, con su propio coste); la instrumentación del shim de E2B queda
+ * fuera de alcance. La exportación de los spans (y su coste) la configura
+ * el `tracerProvider` que pasa el llamante.
  *
  * Coste y activación
  * -------------------

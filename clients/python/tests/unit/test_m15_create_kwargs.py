@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from rayito import AsyncSandbox, AsyncSandboxPool, Sandbox, SandboxPool
+from rayito import AsyncSandbox, AsyncSandboxPool, OtlpAuth, Sandbox, SandboxPool, TelemetryExport
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 
@@ -24,7 +24,13 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
         ("volumes", {"/mnt/v": object()}),
         # `events` validates its type and `logging` first: see
         # `test_m15_events_webhooks_feature_options.py`.
-        ("telemetry", object()),
+        # `telemetry=` (m15-rayd-otlp) validates for real now; a
+        # `TelemetryExport(auth=OtlpAuth.execution_role())` against
+        # `rayito-base` (not the caps variant) still raises
+        # `UnimplementedError` before any control plane is resolved, just
+        # via `_role_policy.require_caps_for` instead of an unconditional
+        # stub raise.
+        ("telemetry", TelemetryExport(auth=OtlpAuth.execution_role())),
         ("domain", object()),
     ],
 )
@@ -43,7 +49,9 @@ def test_sync_create_rejects_a_malformed_gateways_value_before_resolving_a_contr
 @pytest.mark.asyncio
 async def test_async_create_rejects_an_0_6_option_too() -> None:
     with pytest.raises(UnimplementedError):
-        await AsyncSandbox.create("rayito-base", telemetry=object())
+        await AsyncSandbox.create(
+            "rayito-base", telemetry=TelemetryExport(auth=OtlpAuth.execution_role())
+        )
 
 
 def test_pool_with_a_0_6_option_is_invalid_argument() -> None:

@@ -18,7 +18,9 @@ ver `_configure_base.require_capabilities`). `gateways=`: `plan_features`
 sólo valida su forma (pura, cero AWS) y devuelve un `GatewaySectionFactory`
 (`_configure_base.SectionFactory`) en `FeaturePlan.configure_sections` — el
 `ConfigureSandbox` de verdad, con cada cabecera ya resuelta, lo manda
-`create()`/`take()` una vez conocen la `SecretCache`. Cada función sustituye
+`create()`/`take()` una vez conocen la `SecretCache`. `telemetry=`
+(m15-rayd-otlp) se valida aquí y su sección se planea tras `run-microvm`
+(`planned_sections`). Cada función sustituye
 su propia rama por una implementación real en su propio cambio OpenSpec; ni
 esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
@@ -27,14 +29,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from rayito._configure_base import PlannedSection
 from rayito._lifecycle_events._options import validate_events_option
 from rayito._role_policy import require_caps_for
 from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
+from rayito._telemetry_export import TelemetrySectionFactory
+from rayito._telemetry_export import plan as plan_telemetry
 from rayito.exceptions import UnimplementedError
+
+if TYPE_CHECKING:
+    from rayito._telemetry_export import TelemetryExport
 
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
@@ -71,15 +78,44 @@ class FeatureOptions:
 
 @dataclass(frozen=True)
 class FeaturePlan:
-    """Lo que `create()` hace con las opciones una vez alguna función deja
-    de ser un stub: ajustes al plan de lanzamiento, secciones de
-    `ConfigureSandbox` a enviar tras `Health`, hooks a correr después de
-    que el agente esté listo y antes de matar el sandbox. Vacío en 0.6
-    foundations a propósito: `plan_features` lanza antes de llegar a
-    construir uno si alguna opción estaba puesta.
+    """Lo que `create()` hace con las opciones 0.6 una vez validadas:
+    `configure_sections`, las secciones de `ConfigureSandbox` que ya pueden
+    planearse antes de `run-microvm` (`mounts=`, `gateways=`), y
+    `telemetry`, el `TelemetryExport` ya validado cuya sección necesita los
+    hechos de imagen (el ARN y la versión de `run-microvm`, la memoria del
+    primer `Health`): `planned_sections` las junta en cuanto `create()` los
+    conoce.
     """
 
     configure_sections: tuple[PlannedSection, ...] = ()
+    telemetry: TelemetryExport | None = None
+
+
+@dataclass(frozen=True)
+class LaunchFacts:
+    """Lo que sólo se sabe tras `run-microvm` y el primer `Health`."""
+
+    image_arn: str
+    image_version: str
+    guest_memory_bytes: int | None
+
+
+def planned_sections(plan: FeaturePlan, facts: LaunchFacts) -> tuple[PlannedSection, ...]:
+    """Todas las secciones que `create()` manda en su único `Configure`:
+    las de `plan.configure_sections` más, con `telemetry=`, un
+    `TelemetrySectionFactory` sobre `facts`. `main.py` nunca nombra una
+    función concreta."""
+    if plan.telemetry is None:
+        return plan.configure_sections
+    return (
+        *plan.configure_sections,
+        TelemetrySectionFactory(
+            plan.telemetry,
+            image_arn=facts.image_arn,
+            image_version=facts.image_version,
+            guest_memory_bytes=facts.guest_memory_bytes,
+        ),
+    )
 
 
 def plan_features(
@@ -87,12 +123,12 @@ def plan_features(
 ) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
-    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` lo
-    usa para `require_caps_for` (s3-mounts, efs-volumes y rayd-otlp con rol
-    exigen la variante caps). `logging` es el `logging=` de `create()`:
-    `events=` exige que mande los logs a CloudWatch. No hace ninguna llamada
-    a AWS ni construye ningún cliente: `require_caps_for` es una
-    comprobación puramente sobre el nombre de la imagen.
+    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` y
+    `telemetry=` (con `OtlpAuth.execution_role()`) lo usan para exigir la
+    variante caps antes de lanzar (`require_caps_for`, una comprobación
+    puramente sobre el nombre de la imagen). `logging` es el `logging=` de
+    `create()`: `events=` exige que mande los logs a CloudWatch. No hace
+    ninguna llamada a AWS ni construye ningún cliente.
 
     `events=` se valida (tipo y `logging`) y después sigue lanzando
     `UnimplementedError`: su sección de `ConfigureSandbox` necesita
@@ -117,8 +153,11 @@ def plan_features(
     if options.events is not None:
         validate_events_option(options.events, logging)  # type: ignore[arg-type]
         raise UnimplementedError("events=", EVENTS_PENDING_REASON)
-    if options.telemetry is not None:
-        raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
+    telemetry = (
+        plan_telemetry(options.telemetry, image_variant=image_variant)
+        if options.telemetry is not None
+        else None
+    )
     if options.gateways is not None:
         # Sólo valida la forma (ninguna llamada a AWS: `validate_gateways`
         # es pura). La `SecretCache` que de verdad resuelve cada cabecera
@@ -127,4 +166,4 @@ def plan_features(
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
         raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
-    return FeaturePlan(configure_sections=tuple(sections))
+    return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry)

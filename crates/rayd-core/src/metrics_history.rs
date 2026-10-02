@@ -115,6 +115,13 @@ impl MetricsRing {
         }
     }
 
+    /// The most recent sample, if any (m15-rayd-otlp, ADR-021: the
+    /// exporter reads this instead of probing procfs a second time).
+    #[must_use]
+    pub fn latest(&self) -> Option<MetricsSample> {
+        self.samples.back().copied()
+    }
+
     /// The oldest retained sample of the whole ring, not of any range.
     #[must_use]
     pub fn oldest_unix_ms(&self) -> Option<i64> {
@@ -232,6 +239,13 @@ impl MetricsHistory {
             samples: ring.range(query),
             oldest_unix_ms: ring.oldest_unix_ms(),
         }
+    }
+
+    /// The most recent sample (m15-rayd-otlp, ADR-021), or `None` before
+    /// the sampler's first tick.
+    #[must_use]
+    pub fn latest(&self) -> Option<MetricsSample> {
+        self.ring().latest()
     }
 
     fn ring(&self) -> MutexGuard<'_, MetricsRing> {
@@ -581,5 +595,14 @@ mod tests {
             stamps(&history.query(&everything()).samples),
             [1_000, 2_000]
         );
+    }
+
+    #[test]
+    fn latest_is_none_before_the_first_sample_and_the_newest_after() {
+        let history = MetricsHistory::new(4);
+        assert_eq!(history.latest(), None);
+        history.record(sample(1_000, 10.0));
+        history.record(sample(2_000, 20.0));
+        assert_eq!(history.latest(), Some(sample(2_000, 20.0)));
     }
 }

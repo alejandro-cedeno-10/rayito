@@ -8,6 +8,7 @@ este módulo no importa `grpc`.
 from __future__ import annotations
 
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
@@ -173,6 +174,28 @@ def raise_section_error(section: str, code: int, error_class: str) -> None:
         raise error
 
 
+class ImmediateSection(ABC):
+    """La parte común de un `ConfigureSection` que `rayd` aplica en el acto
+    (nunca `PENDING`) y sin error propio (`gateways=`, `telemetry=`):
+    `check_result` lanza lo que `raise_section_error` diga y no hay espera.
+    Cada subclase aporta `section`, `required_flag` y `fill`."""
+
+    @property
+    @abstractmethod
+    def section(self) -> str: ...
+
+    def check_result(self, code: int, error_class: str) -> None:
+        raise_section_error(self.section, code, error_class)
+
+    @property
+    def settle_timeout_s(self) -> float:
+        return 0.0
+
+    def check_status(self, status: configure_pb2.ConfigureStatusResponse, *, final: bool) -> bool:
+        del status, final
+        return True
+
+
 class SectionFactory(Protocol):
     """Una entrada de `FeaturePlan.configure_sections` que todavía no es un
     `ConfigureSection`: necesita la `SecretCache` del handle, que
@@ -215,16 +238,27 @@ _WIRE_SECTION_NAMES: dict[int, str] = {
 }
 
 
+@runtime_checkable
+class CapabilityGate(Protocol):
+    """Un `ConfigureSection` que explica él mismo por qué el agente no lo
+    soporta (hoy `telemetry=`: un `rayd` 0.6 sin `AWS_REGION`), en lugar
+    del mensaje genérico de `require_capabilities`."""
+
+    def require_support(self, features: AgentFeatures) -> None: ...
+
+
 def require_capabilities(sections: Sequence[ConfigureSection], features: AgentFeatures) -> None:
     """Puerta de capacidad previa al envío: la primera sección cuyo propio
     `required_flag` esté en `False` en `features` lanza `UnimplementedError`
-    nombrándola, antes de construir un solo `ConfigureRequest`. Se llama
-    justo tras el primer `Health`, dentro del mismo `try`/`except` que
-    `_open` ya usa para terminar el sandbox ante cualquier fallo anterior a
-    `agent_ready` (salvo `keep_on_failure`): esta puerta reutiliza esa
-    terminación, no implementa la suya propia.
+    nombrándola (o su propio error, si es un `CapabilityGate`), antes de
+    construir un solo `ConfigureRequest`. `create()`/`take()` la llaman
+    dentro de `_apply_configure_sections`, que ya termina el sandbox ante
+    cualquier fallo (salvo `keep_on_failure`).
     """
     for entry in sections:
+        if isinstance(entry, CapabilityGate):
+            entry.require_support(features)
+            continue
         if not getattr(features, entry.required_flag, False):
             raise UnimplementedError(
                 entry.section,

@@ -81,6 +81,7 @@ from rayito._stacks._model import (
 )
 from rayito._stacks._service import OptionalStacks
 from rayito._stacks._service_async import AsyncOptionalStacks
+from rayito._telemetry_export import OtlpAuth, TelemetryExport, TelemetryHealth
 from rayito._templates import (
     AsyncTemplate,
     BaseImageRef,
@@ -241,6 +242,7 @@ __all__ = [
     "NetworkState",
     "NotFoundException",
     "OptionalStacks",
+    "OtlpAuth",
     "OutputMessage",
     "PersistenceException",
     "PieChart",
@@ -298,6 +300,8 @@ __all__ = [
     "StackStatus",
     "StartSpec",
     "SuperChart",
+    "TelemetryExport",
+    "TelemetryHealth",
     "Template",
     "TemplateException",
     "TemplateSpec",

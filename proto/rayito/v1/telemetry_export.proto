@@ -2,11 +2,92 @@ syntax = "proto3";
 
 package rayito.v1;
 
-// Owned by m15-rayd-otlp. Foundations only creates these two empty stub
-// messages (so `configure.proto` has a stable field to point at); the
-// feature that implements rayd-otlp owns every field number inside this
-// file from here on. Message names stay prefixed (`TelemetryExport*`) so
-// they never collide with another feature's messages inside `rayito.v1`.
-message TelemetryExportConfig {}
+// Owned by m15-rayd-otlp (ADR-021). `TelemetryExportConfig` is the complete
+// desired state of one `Configure` call's `telemetry_export` section
+// (ConfigSection.TELEMETRY_EXPORT, second in APPLY_ORDER): a present but
+// empty section stops the exporter, matching every other 0.6 section's
+// "present replaces, absent leaves untouched" rule.
+//
+// `SectionResult.error_class` values this feature returns (lowercase snake,
+// never an AWS message, documented here per the M15 shared-file protocol):
+// "invalid_interval" (outside 15..=300), "empty_service_name", "no_region"
+// (the agent was never told `AWS_REGION`: `rayd` cannot sign a request or
+// build the CloudWatch endpoint host without it), "missing_auth" (neither
+// `oneof auth` branch set), "role_not_permitted" (`execution_role` on a
+// guest whose IMDS reports no execution role at all -- a non-caps image
+// variant, ADR-012), "credentials_unavailable" (the broker's probe failed
+// for any other reason: a transient IMDS hiccup, never evidence the image
+// lacks a role), "sink_init_failed" (building the CloudWatch HTTPS client
+// failed, e.g. no native trust store).
+//
+// `TelemetryExportStatus.last_error_class` (below) is a *different* list,
+// from the background exporter/flush rather than from `apply()` itself:
+// "network" (a send timed out or the connection failed) or "rejected"
+// (CloudWatch answered with a non-2xx HTTP status).
+message TelemetryExportConfig {
+  // Export cadence in seconds, 15..=300 inclusive. Bounds fixed by the M15
+  // architecture (research options B1/B1', §6.3/§6.8: OT2 will measure
+  // billed bytes at this cadence against the real account quota of 500 TPS
+  // / 1000 points per request); not yet re-measured against real AWS, so
+  // treat them as provisional until the acceptance stage's OT-numbers land.
+  // There is no "0 means default" special case: 0 is INVALID like any
+  // other out-of-range value, so a caller that forgets to set this never
+  // silently gets a surprising cadence.
+  uint32 interval_s = 1;
+  // `Resource` attribute `service.name` (OTLP `Resource`, never empty).
+  string service_name = 2;
+  // Which metric-name family `rayd` emits: `rayito.sandbox.*` (default) or,
+  // for the E2B shim's `names="e2b"` alias (research §6.4), `e2b.sandbox.*`.
+  TelemetryExportNameStyle names = 3;
+  // The 4 closed `AttrKey` resource attributes besides the sandbox id
+  // (which `rayd` already knows from its own session): `rayd` has no local
+  // notion of its own image, so the SDK supplies these from the same
+  // `GetMicrovmImageVersion`/launch-plan data `_sizing.py` already reads.
+  // Never a path, a command or anything else user-controlled.
+  string image_arn = 6;
+  string image_version = 7;
+  uint32 image_memory_mib = 8;
+  oneof auth {
+    // SigV4, execution-role credentials from IMDS (research option B1).
+    // Needs `rayito-base-caps` (ADR-012/`_role_policy.require_caps_for`):
+    // the SDK checks this before `/run` when the image name already says
+    // so. `rayd` itself only checks that the guest has an execution role
+    // (`role_not_permitted` otherwise, and the SDK terminates the sandbox
+    // unless `keep_on_failure`); it cannot tell a caps image apart.
+    TelemetryExportExecutionRoleAuth execution_role = 4;
+    // A CloudWatch Metrics API key (an IAM user's service-specific
+    // credential for `cloudwatch.amazonaws.com`, account-wide, OTLP metrics
+    // ingestion only) the SDK resolves once (Secrets Manager) and pushes through this same `Configure` call
+    // (research option B1', preferred per OT9: the execution-role policy
+    // cannot be scoped by namespace). Works on `rayito-base`, no caps
+    // needed. Kept only in `rayd` memory (`SinkCredentials::Bearer`,
+    // Zeroizing), never echoed back by `ConfigureStatus` or logged.
+    TelemetryExportBearerAuth bearer = 5;
+  }
+}
 
-message TelemetryExportStatus {}
+// Every message/enum in this file carries the `TelemetryExport` prefix
+// (architecture §3): `rayito.v1` is a shared package, and an unprefixed
+// `NameStyle`/`BearerAuth` would be a likely name for a parallel 0.6
+// feature's own messages (secrets-gateway's own bearer-style auth, for
+// one).
+enum TelemetryExportNameStyle {
+  TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED = 0;
+  TELEMETRY_EXPORT_NAME_STYLE_RAYITO = 1;
+  TELEMETRY_EXPORT_NAME_STYLE_E2B = 2;
+}
+
+message TelemetryExportExecutionRoleAuth {}
+
+message TelemetryExportBearerAuth {
+  string token = 1;
+}
+
+// Served by `ConfigureService.ConfigureStatus`; mirrors
+// `rayd_core::telemetry::batcher::BatcherStats` (counts only, never a host,
+// a payload or a credential).
+message TelemetryExportStatus {
+  uint64 exported = 1;
+  uint64 dropped = 2;
+  string last_error_class = 3;
+}

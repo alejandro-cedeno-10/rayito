@@ -22,6 +22,9 @@ import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
 import { type SecretGateway, validateGateways } from "./secret-gateway/domain.js";
 import { GatewaySectionFactory } from "./secret-gateway/section.js";
+import type { TelemetryExport } from "./telemetry-export/domain.js";
+import { planTelemetry } from "./telemetry-export/domain.js";
+import { type TelemetryLaunchFacts, TelemetrySectionFactory } from "./telemetry-export/section.js";
 
 export const VOLUMES_CHANGE = "m15-efs-volumes";
 export const EVENTS_CHANGE = "m15-events-webhooks";
@@ -47,23 +50,29 @@ export interface FeatureOptions {
   readonly domain?: unknown;
 }
 
-/** Las secciones de `ConfigureSandbox` que `create()`/`take()` mandan tras
- * el primer `Health`: listas (`mounts`) o a la espera de la `SecretCache`
- * (`gateways`, un `ConfigureSectionFactory`). */
+/** Lo que `create()` hace con las opciones 0.6 una vez validadas:
+ * `configureSections`, las secciones de `ConfigureSandbox` que ya pueden
+ * planearse antes de `run-microvm` (`mounts`; `gateways`, un
+ * `ConfigureSectionFactory` a la espera de la `SecretCache`), y
+ * `telemetry`, el `TelemetryExport` ya validado cuya sección necesita los
+ * hechos de imagen: `plannedSections` las junta en cuanto `create()` los
+ * conoce. */
 export interface FeaturePlan {
   readonly configureSections: readonly PlannedSection[];
+  readonly telemetry?: TelemetryExport | undefined;
 }
 
-const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
+const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [], telemetry: undefined });
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) es la variante de imagen,
- * cuando el nombre ya permite decidirla; `mounts` lo usa para
- * `requireCapsFor`. `logging` es el `logging` de `create()`: `events` exige
+ * cuando el nombre ya permite decidirla; `mounts` y `telemetry` (con
+ * `OtlpAuth.executionRole()`) lo usan para exigir la variante caps antes
+ * de lanzar (`requireCapsFor`, una comprobación puramente sobre el nombre
+ * de la imagen). `logging` es el `logging` de `create()`: `events` exige
  * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
- * construye ningún cliente: `requireCapsFor` es una comprobación puramente
- * sobre el nombre de la imagen.
+ * construye ningún cliente.
  *
  * `events` se valida (tipo y `logging`) y después sigue lanzando
  * `UnimplementedError`: su sección de `ConfigureSandbox` necesita
@@ -96,9 +105,8 @@ export function planFeatures(
     validateEventsOption(options.events, logging);
     throw new UnimplementedError("events", EVENTS_PENDING_REASON);
   }
-  if (options.telemetry !== undefined) {
-    throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);
-  }
+  const telemetry =
+    options.telemetry === undefined ? undefined : planTelemetry(options.telemetry, imageVariant);
   if (options.gateways !== undefined) {
     // Sólo valida la forma (ninguna llamada a AWS: `validateGateways` es
     // pura). La `SecretCache` que de verdad resuelve cada cabecera llega
@@ -109,5 +117,22 @@ export function planFeatures(
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
   }
-  return sections.length === 0 ? EMPTY_PLAN : { configureSections: sections };
+  return sections.length === 0 && telemetry === undefined
+    ? EMPTY_PLAN
+    : { configureSections: sections, telemetry };
+}
+
+/**
+ * Todas las secciones que `create()` manda en su único `Configure`: las de
+ * `plan.configureSections` más, con `telemetry`, un
+ * `TelemetrySectionFactory` sobre `facts` (lo que sólo `run-microvm` y el
+ * primer `Health` saben). `sandbox.ts` nunca nombra una función concreta.
+ */
+export function plannedSections(
+  plan: FeaturePlan,
+  facts: TelemetryLaunchFacts,
+): readonly PlannedSection[] {
+  return plan.telemetry === undefined
+    ? plan.configureSections
+    : [...plan.configureSections, new TelemetrySectionFactory(plan.telemetry, facts)];
 }

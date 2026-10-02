@@ -1,6 +1,8 @@
 //! The `ObjectStore` port over `aws-sdk-s3` (design D2/D5/D7): one
-//! credentials provider built at startup (`IMDSv2` as root by default, the
-//! SDK's default chain only for `make dev-run`), one client per region
+//! credentials provider built at startup (`IMDSv2` as root by default —
+//! the same `imds_execution_role_provider()` instance `main` also hands to
+//! `ImdsCredentialBroker` — the SDK's default chain only for
+//! `make dev-run`), one client per region
 //! built on first use, `BehaviorVersion::latest()`, the SDK's default
 //! retries, no custom endpoint, no checksum, encryption, storage-class or
 //! ACL parameters (`AWS_API_NOTES.md` §17 is the contract). Multipart
@@ -68,16 +70,30 @@ pub struct S3ObjectStore {
     source: CredentialsSource,
 }
 
+/// The execution-role provider over `IMDSv2`. `main` builds exactly one
+/// and shares it between persistence (`S3ObjectStore::new`) and the 0.6
+/// features (`ImdsCredentialBroker::sharing`), so both read one IMDS cache
+/// with one refresh cycle.
+#[must_use]
+pub fn imds_execution_role_provider() -> SharedCredentialsProvider {
+    SharedCredentialsProvider::new(
+        ImdsCredentialsProvider::builder()
+            .profile(EXECUTION_ROLE_PROFILE)
+            .build(),
+    )
+}
+
 impl S3ObjectStore {
     /// `default_region` is the platform's `AWS_REGION`; a request may name
-    /// another one.
-    pub async fn new(source: CredentialsSource, default_region: Option<String>) -> Self {
+    /// another one. `imds` is the process-wide execution-role provider
+    /// (`imds_execution_role_provider()`), used when `source` is `Imds`.
+    pub async fn new(
+        source: CredentialsSource,
+        default_region: Option<String>,
+        imds: SharedCredentialsProvider,
+    ) -> Self {
         let provider = match source {
-            CredentialsSource::Imds => SharedCredentialsProvider::new(
-                ImdsCredentialsProvider::builder()
-                    .profile(EXECUTION_ROLE_PROFILE)
-                    .build(),
-            ),
+            CredentialsSource::Imds => imds,
             CredentialsSource::Default => SharedCredentialsProvider::new(
                 aws_config::default_provider::credentials::DefaultCredentialsChain::builder()
                     .build()

@@ -40,7 +40,7 @@ import {
   SandboxNotReadyError,
   TimeoutError,
 } from "../errors.js";
-import { planFeatures } from "../feature-options.js";
+import { planFeatures, plannedSections } from "../feature-options.js";
 import {
   type ConfigureRequest,
   type ConfigureResponse,
@@ -102,7 +102,10 @@ import {
 } from "../secrets/inject.js";
 import { defaultSizeCatalog } from "../sizing/catalog.js";
 import type { SizeInput } from "../sizing/sizing.js";
+import { EMPTY_TELEMETRY_HEALTH, type TelemetryHealth } from "../telemetry-export/domain.js";
+import { callMetadataProvidersFor } from "../telemetry-export/propagation.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
+import type { CallMetadataProvider } from "../transport/headers.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
 import {
@@ -374,12 +377,46 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
    * siete ausentes (su valor por defecto) el comportamiento es exactamente
    * el de 0.5.x. `size` ya no es un stub (m15-sizes-catalog): ver
-   * `sizing/sizing.ts`.
+   * `sizing/sizing.ts`; `telemetry` tampoco: ver su propio TSDoc debajo.
    */
   readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: SizeInput | undefined;
   readonly events?: unknown;
+  /**
+   * `TelemetryExport` (m15-rayd-otlp, ADR-021): hace que `rayd` exporte 7
+   * gauges de CPU, memoria y disco a CloudWatch cada `intervalS` (15–300 s,
+   * 60 por defecto), firmados con `OtlpAuth.executionRole()` (SigV4 sobre
+   * el execution role, exige `rayito-base-caps`) o con
+   * `OtlpAuth.bearer(secretName)` (experimental, funciona en
+   * `rayito-base`). Se envía como una sección de `ConfigureSandbox` justo
+   * después de que el agente esté listo; una imagen anterior a 0.6.0, o una
+   * 0.6.0 sin el exportador todavía implementado, termina el sandbox (salvo
+   * `keepOnFailure`) y lanza `UnimplementedError`.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `telemetry: new TelemetryExport({ ... })` en `create()`.
+   * Recursos y llamadas AWS: ninguno propio más allá de lo que adjuntes:
+   *   con `OtlpAuth.executionRole()` necesitas la política
+   *   `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+   *   `rayito stack deploy otlp-export`) en el execution role; `rayd` hace
+   *   un `PutMetricData` por lote exportado (uno por `intervalS`).
+   * Coste aproximado: $0 por la opción en sí; CloudWatch factura la ingesta
+   *   OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con `intervalS: 60`
+   *   (639 bytes por lote, `AWS_API_NOTES.md` Q120).
+   * IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto de la
+   *   cuenta (no se puede acotar por namespace, research OT9); con
+   *   `OtlpAuth.bearer(...)`, el permiso de lectura del secreto.
+   * Cómo apagarla: no pases `telemetry` (por defecto `undefined`); borra la
+   *   pila `otlp-export` si ya no la usa ningún sandbox.
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({
+   *     template: "rayito-base-caps", executionRoleArn,
+   *     telemetry: new TelemetryExport({ auth: OtlpAuth.executionRole() }),
+   *   });
+   *   await sbx.getTelemetryStatus(); // { exported, dropped, lastErrorClass }
+   */
   readonly telemetry?: unknown;
   readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
   readonly domain?: unknown;
@@ -692,6 +729,7 @@ export class Sandbox implements AsyncDisposable {
   static async create(options: SandboxCreateOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
     const instrumentation = instrumentationFor(options.tracerProvider);
+    const callMetadata = await callMetadataProvidersFor(options.tracerProvider);
     const binding = bindSecrets(options.secrets, options.secretCache);
     const transportSettings = resolveTransportSettings(options.transport);
     requireRoleForPersist(options.persist, options.executionRoleArn);
@@ -724,7 +762,7 @@ export class Sandbox implements AsyncDisposable {
         secretCache: options.secretCache,
       });
       taken.#core.transfer = transfer;
-      taken.#instrumentation = instrumentation;
+      taken.#useInstrumentation(instrumentation, callMetadata);
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
@@ -805,7 +843,7 @@ export class Sandbox implements AsyncDisposable {
           logger: options.logger,
           requireLifecycle: plan.lifecycleRequested,
         });
-        opened.#instrumentation = instrumentation;
+        opened.#useInstrumentation(instrumentation, callMetadata);
         opened.#core.transfer = transfer;
         opened.#secrets.set(secrets);
         if (requiresEnforcement(network)) {
@@ -815,7 +853,11 @@ export class Sandbox implements AsyncDisposable {
           );
         }
         await opened.#applyConfigureSections(
-          featurePlan.configureSections,
+          plannedSections(featurePlan, {
+            imageArn: info.template,
+            imageVersion: info.templateVersion ?? "",
+            guestMemoryBytes: opened.#readinessHealth?.memoryTotalBytes,
+          }),
           options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
           !(options.keepOnFailure ?? false),
         );
@@ -871,6 +913,7 @@ export class Sandbox implements AsyncDisposable {
   static async connect(sandboxId: string, options: SandboxConnectOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
     const instrumentation = instrumentationFor(options.tracerProvider);
+    const callMetadata = await callMetadataProvidersFor(options.tracerProvider);
     const token = requireAccessToken(options.accessToken);
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     const transportSettings = resolveTransportSettings(options.transport);
@@ -906,7 +949,7 @@ export class Sandbox implements AsyncDisposable {
           terminateOnFailure: false,
           logger: options.logger,
         });
-        sandbox.#instrumentation = instrumentation;
+        sandbox.#useInstrumentation(instrumentation, callMetadata);
         sandbox.#persist = bound;
         sandbox.#core.transfer = transfer;
         sandbox.#secrets.set(secrets);
@@ -1377,7 +1420,10 @@ export class Sandbox implements AsyncDisposable {
     const { signal } = options;
     signal?.throwIfAborted();
     if (options.tracerProvider !== undefined) {
-      this.#instrumentation = instrumentationFor(options.tracerProvider);
+      this.#useInstrumentation(
+        instrumentationFor(options.tracerProvider),
+        await callMetadataProvidersFor(options.tracerProvider),
+      );
     }
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     await this.#secrets.rebind(options);
@@ -1484,6 +1530,27 @@ export class Sandbox implements AsyncDisposable {
     );
     this.#core.recordHealth(response);
     return healthFromProto(response);
+  }
+
+  /**
+   * `ConfigureService.ConfigureStatus` → `TelemetryExportStatus`
+   * (m15-rayd-otlp). Always `{ exported: 0n, dropped: 0n, lastErrorClass:
+   * undefined }` if you never passed `telemetry` to `create()`/`connect()`,
+   * or if the image doesn't support the feature: never throws for that.
+   * An explicit call, not part of `getHealth()`, so the path without
+   * `telemetry` never pays this extra RPC.
+   */
+  async getTelemetryStatus(options: RequestOptions = {}): Promise<TelemetryHealth> {
+    const timeoutMs = this.#core.resolveRequestTimeout(options.requestTimeoutMs);
+    const response = await this.#configureStatus(timeoutMs, options.signal);
+    const status = response.telemetryExport;
+    return status === undefined
+      ? EMPTY_TELEMETRY_HEALTH
+      : {
+          exported: status.exported,
+          dropped: status.dropped,
+          lastErrorClass: status.lastErrorClass === "" ? undefined : status.lastErrorClass,
+        };
   }
 
   /**
@@ -1719,7 +1786,7 @@ export class Sandbox implements AsyncDisposable {
     timeoutMs: number,
   ): Promise<void> {
     const features = requireConfigureSupport(this.#core.agentFeatures, CONFIGURE_FEATURE);
-    const sections = resolveSections(planned, () => this.#sectionSecretCache());
+    const sections = await resolveSections(planned, () => this.#sectionSecretCache());
     requireCapabilities(sections, features);
     await this.#configureSections(sections, timeoutMs);
     const postApply = sections.filter(isPostApplySection);
@@ -1786,11 +1853,11 @@ export class Sandbox implements AsyncDisposable {
     );
   }
 
-  #configureStatus(timeoutMs: number): Promise<ConfigureStatusResponse> {
+  #configureStatus(timeoutMs: number, signal?: AbortSignal): Promise<ConfigureStatusResponse> {
     return this.#core.translatedUnary(() =>
       this.#core.clients.configure.configureStatus(
         create(ConfigureStatusRequestSchema, {}),
-        callOptions(timeoutMs, undefined),
+        callOptions(timeoutMs, signal),
       ),
     );
   }
@@ -1800,6 +1867,21 @@ export class Sandbox implements AsyncDisposable {
     if (gate !== undefined) {
       throw gate;
     }
+  }
+
+  /**
+   * Fija la `Instrumentation` del handle y las cabeceras por llamada de su
+   * transporte (`traceparent` hacia `rayd` sólo con `tracerProvider`,
+   * `callMetadataProvidersFor`): el único sitio que asigna
+   * `#instrumentation` tras construir el handle, para que los spans y la
+   * cabecera nunca se desincronicen.
+   */
+  #useInstrumentation(
+    instrumentation: Instrumentation,
+    callMetadata: readonly CallMetadataProvider[],
+  ): void {
+    this.#instrumentation = instrumentation;
+    this.#core.callMetadataProviders = callMetadata;
   }
 
   // ------------------------------------------------------------ persistence

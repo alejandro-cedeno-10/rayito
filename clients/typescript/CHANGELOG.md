@@ -91,6 +91,19 @@ versionado [SemVer](https://semver.org/lang/es/).
   exacta del log stream y una línea JSON por invocación del forwarder y del
   reconciliador).
 <!-- m15-rayd-otlp -->
+- **`telemetry`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
+  ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
+  nuevos (`OtlpAuth.executionRole()`, exige `rayito-base-caps`;
+  `OtlpAuth.bearer(secretName)`, experimental, funciona en `rayito-base`;
+  el nombre se resuelve bajo `rayito/` por la misma `SecretCache` que
+  `secrets`). Se envía como una sección de `ConfigureSandbox` tras `/run`;
+  una imagen cuyo `rayd` no exporta termina el sandbox (salvo
+  `keepOnFailure`) y lanza `UnimplementedError`. Con `tracerProvider`, cada
+  RPC del handle lleva además el `traceparent` del span de esa misma
+  llamada hacia `rayd`; sin él, ninguna cabecera nueva. El token de
+  `OtlpAuth.bearer(...)` es una API key de CloudWatch Metrics. `sbx.getTelemetryStatus()`
+  lee `ConfigureStatus`, como una llamada explícita aparte de `getHealth()`.
+  Sin `telemetry`, ningún comportamiento cambia frente a 0.5.x.
 <!-- m15-templates -->
 - **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
   por defecto): `Template` compila un DSL (igual al `Template` de E2B v2)

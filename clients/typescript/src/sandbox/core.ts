@@ -47,7 +47,7 @@ import {
   isStreamReset,
   translateRpcError,
 } from "../transport/errors.js";
-import { proxyAuthInterceptor } from "../transport/headers.js";
+import { type CallMetadataProvider, proxyAuthInterceptor } from "../transport/headers.js";
 import type { TokenRefresher } from "../transport/tokens.js";
 import {
   type OpenedTransport,
@@ -261,6 +261,10 @@ export class SandboxCore {
   transfer: ResolvedS3Staging | undefined;
   /** Configuración extra de los clientes S3 del SDK: sólo la fijan los tests, hacia un S3 falso local. */
   s3ClientOverrides: S3ClientOverrides | undefined;
+  /** Las cabeceras por llamada de cada RPC de este handle (`traceparent` con
+   * `tracerProvider`, m15-rayd-otlp); vacío por defecto. Lo fija
+   * `Sandbox.#useInstrumentation`. */
+  callMetadataProviders: readonly CallMetadataProvider[] = [];
 
   readonly unaryTransport: Transport;
   readonly #unarySession: OpenedTransport;
@@ -342,6 +346,7 @@ export class SandboxCore {
       port: DEFAULT_PORT,
       accessToken: this.accessToken,
       extraHeaders: this.transportSettings.extraHeaders,
+      callMetadata: () => this.callMetadataProviders,
     });
   }
 

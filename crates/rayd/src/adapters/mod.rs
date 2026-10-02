@@ -15,6 +15,7 @@
 pub mod bounded_sync;
 pub mod capabilities;
 pub mod child_registry;
+pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
@@ -26,6 +27,7 @@ pub mod mount_s3;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
+pub mod otlp_codec;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod pty_backend;
@@ -41,6 +43,9 @@ pub mod tar_archiver;
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
 pub use child_registry::ChildRegistry;
+pub use cloudwatch_otlp_sink::{
+    CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,
+};
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
@@ -60,6 +65,7 @@ pub use name_resolver::{NumericNameResolver, PlatformNameResolver};
 pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
 pub use orphan_reaper::OrphanReaper;
+pub use otlp_codec::ProstOtlpEncoder;
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };
@@ -68,7 +74,10 @@ pub use procfs_metrics::PlatformMetricsProbe;
 pub use pty_backend::NixPtyBackend;
 pub use pty_backend::PlatformPtyBackend;
 pub use random::OsRandomSource;
-pub use s3_store::{ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore};
+pub use s3_store::{
+    ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore,
+    imds_execution_role_provider,
+};
 pub use shell_ready_probe::{ReadyProbe, ShellReadyProbe};
 #[cfg(unix)]
 pub use sidecar_process::TokioSidecarLauncher;

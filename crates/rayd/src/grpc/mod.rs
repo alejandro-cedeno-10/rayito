@@ -3,9 +3,12 @@
 //! (ADR-011). Every server stream is wrapped so `/suspend` (or the
 //! deadline) closes it in the form its schema allows (design D7).
 //! `FilesystemService` accepts gzip requests and sends gzip responses only
-//! to calls that opt in (`CompressionOptInLayer`, outermost); its transfer
-//! RPCs and the read-after-upload barrier of every service come from
-//! `TransferServices` (ADR-010).
+//! to calls that opt in (`CompressionOptInLayer`, outermost of the four
+//! below it); its transfer RPCs and the read-after-upload barrier of every
+//! service come from `TransferServices` (ADR-010). `RequestContextLayer`
+//! (m15-rayd-otlp, ADR-021) wraps all of that: it only ever reads the
+//! inbound `traceparent` header to correlate this RPC's own log lines, so
+//! it changes no request/response and is the true outermost layer.
 
 mod access_token;
 mod client_abort;
@@ -21,6 +24,7 @@ mod persistence;
 mod process;
 mod pty;
 mod reject;
+mod request_context;
 mod timeout_gate;
 mod transfer;
 
@@ -57,6 +61,7 @@ use network::NetworkGrpc;
 pub use persistence::{PersistenceGrpc, status_for as persistence_status_for};
 pub use process::ProcessGrpc;
 pub use pty::PtyGrpc;
+pub use request_context::RequestContextLayer;
 pub use timeout_gate::SandboxTimeoutGateLayer;
 pub use transfer::TransferGrpc;
 
@@ -76,10 +81,13 @@ pub const MAX_CONCURRENT_STREAMS: u32 = 256;
 
 pub type GrpcRouter = Router<
     Stack<
-        ClientAbortLayer,
+        RequestContextLayer,
         Stack<
-            SandboxTimeoutGateLayer,
-            Stack<AccessTokenLayer, Stack<CompressionOptInLayer, Identity>>,
+            ClientAbortLayer,
+            Stack<
+                SandboxTimeoutGateLayer,
+                Stack<AccessTokenLayer, Stack<CompressionOptInLayer, Identity>>,
+            >,
         >,
     >,
 >;
@@ -217,7 +225,8 @@ pub fn router_with_features(
         .layer(CompressionOptInLayer)
         .layer(AccessTokenLayer::new(session.clone()))
         .layer(SandboxTimeoutGateLayer::new(session.clone()))
-        .layer(ClientAbortLayer);
+        .layer(ClientAbortLayer)
+        .layer(RequestContextLayer);
     server
         .add_service(HealthServiceServer::new(
             HealthGrpc::new(session, metrics, metrics_history, kernel_status, imds)

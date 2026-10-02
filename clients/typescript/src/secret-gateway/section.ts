@@ -10,8 +10,8 @@
 import { create } from "@bufbuild/protobuf";
 import {
   type ConfigureSectionFactory,
+  ImmediateSection,
   type PostApplySection,
-  raiseSectionError,
   type SectionApplied,
 } from "../configure/base.js";
 import type { ConfigureRequest, ConfigureStatusResponse } from "../gen/rayito/v1/configure_pb.js";
@@ -29,17 +29,16 @@ export const REQUIRED_FLAG = "secretGateway" as const;
 export const SECTION_NAME = "secret_gateway";
 
 /** Implementa `PostApplySection` (`configure/base.ts`) para `gateways`. */
-export class GatewaySection implements PostApplySection {
+export class GatewaySection extends ImmediateSection implements PostApplySection {
   readonly section = SECTION_NAME;
   readonly requiredFlag = REQUIRED_FLAG;
-  /** Sin espera: el puerto de cada ruta ya está en `ConfigureStatus` en
-   * cuanto `Configure` responde `APPLIED`; `rayd` nunca la deja `PENDING`. */
-  readonly settleTimeoutMs = 0;
 
   constructor(
     private readonly gateways: Readonly<Record<string, SecretGateway>>,
     private readonly cache: SecretCache,
-  ) {}
+  ) {
+    super();
+  }
 
   /** Resuelve cada cabecera (`SecretCache.get`: un acierto no llama a AWS)
    * y rellena `request.secretGateway`. El valor resuelto sólo vive en este
@@ -64,17 +63,6 @@ export class GatewaySection implements PostApplySection {
       }),
     );
     request.secretGateway = create(SecretGatewayConfigSchema, { routes });
-  }
-
-  /** `INVALID`/`FAILED`/`UNSUPPORTED` lanzan (`raiseSectionError`). */
-  checkResult(code: number, errorClass: string): void {
-    raiseSectionError(SECTION_NAME, code, errorClass);
-  }
-
-  /** Siempre asentada (`settleTimeoutMs`); `afterApply` es quien lee el
-   * estado de cada ruta. */
-  checkStatus(_status: ConfigureStatusResponse, _final: boolean): boolean {
-    return true;
   }
 
   /**

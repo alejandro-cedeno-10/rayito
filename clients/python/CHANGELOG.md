@@ -113,6 +113,24 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   reconciliador dejan una línea JSON por invocación con lo que aceptaron,
   rechazaron (por motivo) o sintetizaron.
 <!-- m15-rayd-otlp -->
+- **`telemetry=`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
+  ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
+  nuevos (`OtlpAuth.execution_role()`, exige `rayito-base-caps`;
+  `OtlpAuth.bearer(secret_name=...)`, experimental, funciona en
+  `rayito-base`; el nombre se resuelve bajo `rayito/` por la misma
+  `SecretCache` que `secrets=`). Se envía como una sección de
+  `ConfigureSandbox` tras `/run`; una imagen cuyo `rayd` no exporta termina
+  el sandbox (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
+  Con `tracer_provider=`, cada RPC del handle lleva además el `traceparent`
+  del span de esa misma llamada hacia `rayd` (lo calcula un interceptor
+  del canal en el hilo o la tarea que llama, no el `AuthMetadataPlugin`,
+  que grpc ejecuta en un hilo suyo sin el contexto OpenTelemetry del
+  llamante); sin él, ninguna cabecera nueva. El token de
+  `OtlpAuth.bearer(...)` es una API key de CloudWatch Metrics.
+  `sbx.get_telemetry_status()` (síncrono y `AsyncSandbox`) lee
+  `ConfigureStatus`, como una llamada explícita aparte de `get_health()`.
+  Sin `telemetry=`, ningún comportamiento cambia frente a 0.5.x (traza de
+  oro sin tocar).
 <!-- m15-templates -->
 - **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
   por defecto): `Template`/`AsyncTemplate` compilan un DSL (igual al

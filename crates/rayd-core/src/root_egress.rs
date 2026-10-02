@@ -16,7 +16,7 @@ pub enum RootEgressClass {
     /// `uidrange 1000-65535`), reads the execution role from IMDS and
     /// calls S3 with it.
     S3,
-    /// `rayd-otlp`: OTLP/HTTP metrics exported to `CloudWatch`, SigV4-signed
+    /// `rayd-otlp`: OTLP/HTTP metrics exported to `CloudWatch`, `SigV4`-signed
     /// with the execution role.
     CloudwatchOtlp,
     /// `secret-gateway`: the loopback listener's fixed upstream, reached as

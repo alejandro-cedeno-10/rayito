@@ -53,7 +53,7 @@ from rayito._configure_base import (
     settle_timeout_s,
     still_pending,
 )
-from rayito._feature_options import FeatureOptions, plan_features
+from rayito._feature_options import FeatureOptions, LaunchFacts, plan_features, planned_sections
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -201,6 +201,8 @@ from rayito._secrets import (
 )
 from rayito._size_catalog import DEFAULT_SIZE_CATALOG
 from rayito._sizing import SizeRequest
+from rayito._telemetry_export import TelemetryHealth
+from rayito._telemetry_export._propagation import call_metadata_providers
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -478,6 +480,7 @@ class Sandbox:
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
@@ -700,14 +703,57 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         `mounts=`, `volumes=`, `size=`, `events=`, `telemetry=`, `gateways=`
-         y `domain=` son las siete opciones 0.6 (M15); cada una llega en su
+         `mounts=`, `volumes=`, `size=`, `events=`, `gateways=` y `domain=`
+         son seis de las siete opciones 0.6 (M15); cada una llega en su
          propio cambio OpenSpec y, mientras siga siendo un stub, ponerla a
          algo distinto de `None` lanza `UnimplementedError` nombrando ese
          cambio, antes de `run-microvm` (`_feature_options.plan_features`).
          Ninguna hace ninguna llamada a AWS ni construye ningún cliente por
-         sí sola; con las siete en `None` (su valor por defecto) el
+         sí sola; con las seis en `None` (su valor por defecto) el
          comportamiento es exactamente el de 0.5.x.
+
+         `telemetry=` (m15-rayd-otlp, ADR-021) es la séptima y ya es real:
+         un `TelemetryExport` hace que `rayd` exporte 7 gauges de CPU,
+         memoria y disco a CloudWatch cada `interval_s` (15-300 s, 60 por
+         defecto), firmados con `OtlpAuth.execution_role()` (SigV4 sobre el
+         execution role, exige `rayito-base-caps`) o con
+         `OtlpAuth.bearer(secret_name=...)` (experimental: una API key de
+         CloudWatch Metrics, funciona en `rayito-base`). Se envía como una
+         sección de `ConfigureSandbox` justo después de que el agente esté
+         listo; una imagen anterior a 0.6.0, o una 0.6.0 sin el exportador
+         todavía implementado, termina el sandbox (salvo `keep_on_failure`)
+         y lanza `UnimplementedError`.
+
+         Coste y activación
+         -------------------
+         Activa: `telemetry=TelemetryExport(...)` en `create()`.
+         Recursos y llamadas AWS: ninguno propio más allá de lo que tú
+             adjuntes: con `OtlpAuth.execution_role()` necesitas la política
+             `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+             `rayito stack deploy otlp-export`) en el execution role;
+             con `OtlpAuth.bearer(...)` no hace falta ninguna política nueva
+             en el execution role, pero sí el permiso para leer el secreto.
+             `rayd` hace un `PutMetricData` por lote exportado (uno por
+             `interval_s`, agrupando las 7 gauges).
+         Coste aproximado: $0 por la opción en sí; CloudWatch factura la
+             ingesta OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con
+             `interval_s=60` (639 bytes por lote, `AWS_API_NOTES.md` Q120).
+         IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
+             de la cuenta (no se puede acotar por namespace, research OT9);
+             con `OtlpAuth.bearer(...)`, en su lugar el permiso de lectura
+             del secreto que guarda el token.
+         Cómo apagarla: no pases `telemetry=` (por defecto `None`); borra la
+             pila `otlp-export` si ya no la usa ningún sandbox.
+         Ejemplo:
+             from rayito import OtlpAuth, TelemetryExport
+
+             sbx = Sandbox.create(
+                 "rayito-base-caps",
+                 execution_role_arn=role_arn,
+                 telemetry=TelemetryExport(interval_s=60, service_name="agente",
+                                           auth=OtlpAuth.execution_role()),
+             )
+             sbx.get_telemetry_status()  # TelemetryHealth(exported, dropped, last_error_class)
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -772,7 +818,7 @@ class Sandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
-            taken._instrumentation = instrumentation
+            taken._use_instrumentation(instrumentation)
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
@@ -850,13 +896,24 @@ class Sandbox:
                 require_lifecycle=plan.lifecycle_requested,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
             if launch.enforce:
                 sandbox._apply_initial_network(launch)
             sandbox._apply_configure_sections(
-                feature_plan.configure_sections,
+                planned_sections(
+                    feature_plan,
+                    LaunchFacts(
+                        image_arn=info.template,
+                        image_version=info.template_version,
+                        guest_memory_bytes=(
+                            None
+                            if sandbox._readiness_health is None
+                            else sandbox._readiness_health.memory_total_bytes
+                        ),
+                    ),
+                ),
                 timeout=request_timeout,
                 terminate_on_failure=not keep_on_failure,
             )
@@ -933,7 +990,7 @@ class Sandbox:
             sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
         """
         if tracer_provider is not None:
-            self._instrumentation = instrumentation_for(tracer_provider)
+            self._use_instrumentation(instrumentation_for(tracer_provider))
         self._rebind_secrets(secrets, secret_cache)
         with self._instrumentation.span(
             "rayito.sandbox.connect",
@@ -1042,7 +1099,7 @@ class Sandbox:
                 terminate_on_failure=False,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._persist = bound
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
@@ -1610,6 +1667,23 @@ class Sandbox:
         self._record_health(response)
         return health_from_proto(response)
 
+    def get_telemetry_status(self, *, request_timeout: float | None = None) -> TelemetryHealth:
+        """`ConfigureService.ConfigureStatus` → `TelemetryExportStatus`
+        (m15-rayd-otlp). Siempre `TelemetryHealth()` (todo ceros) si nunca
+        pasaste `telemetry=` a `create()`/`connect()`, o si la imagen no
+        soporta la función: nunca lanza por eso. Llamada explícita, no parte
+        de `get_health()`, para que el camino sin `telemetry=` nunca pague
+        esta llamada extra.
+        """
+        timeout = self._resolve_request_timeout(request_timeout)
+        response = call_configure_status(self._configure, timeout=timeout)
+        status = response.telemetry_export
+        return TelemetryHealth(
+            exported=status.exported,
+            dropped=status.dropped,
+            last_error_class=status.last_error_class or None,
+        )
+
     def _wait_settled(self, pending: tuple[ConfigureSection, ...], *, timeout: float) -> None:
         """Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_S` hasta que
         ninguna sección de `pending` siga pendiente; agotado el mayor
@@ -2150,6 +2224,15 @@ class Sandbox:
         persistencia, transferencias): el del usuario si lo dio, el del
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
+
+    def _use_instrumentation(self, instrumentation: Instrumentation) -> None:
+        """Fija la `Instrumentation` del handle e instala (o retira) en su
+        `ProxyAuthPlugin` la propagación `traceparent` hacia `rayd` que
+        corresponde (`call_metadata_providers`): sólo con `tracer_provider=`.
+        Es el único sitio que asigna `_instrumentation` tras construir el
+        handle, para que los spans y la cabecera nunca se desincronicen."""
+        self._instrumentation = instrumentation
+        self._plugin.providers = call_metadata_providers(instrumentation)
 
     def _default_secret_cache(self) -> SecretCache:
         """La caché compartida del proceso para la región y la sesión de

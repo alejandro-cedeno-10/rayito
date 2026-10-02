@@ -20,32 +20,69 @@ pub mod template_start;
 
 use std::sync::Arc;
 
+use rayd_core::clock::SystemClock;
 use rayd_core::features::AgentFeatures;
+use rayd_core::metrics_history::MetricsHistory;
 use rayd_core::root_egress::RootEgressClass;
+use rayd_core::session::SandboxSession;
 use rayito_proto::v1::{
     EfsVolumesConfig, EfsVolumesStatus, LifecycleEventsConfig, LifecycleEventsStatus,
     S3MountsConfig, S3MountsStatus, SecretGatewayConfig, SecretGatewayStatus,
     TelemetryExportConfig, TelemetryExportStatus,
 };
 
+use crate::adapters::{ChildRegistry, ImdsCredentialBroker, PushedCredentials};
+use crate::grpc::PlatformProcessManager;
 use crate::lifecycle::LifecycleParticipant;
 use slot::ConfigurableFeature;
-
-use crate::grpc::PlatformProcessManager;
 
 /// What a feature's `build()` needs from `main` to construct its slot. A
 /// feature that needs credentials, a bucket name or other shared context
 /// adds its own field here in its own PR, never by widening `FeatureSet`
-/// itself; every other slot ignores it. `child_registry` is
-/// `m15-s3-mounts`'s (its `mount-s3` daemon registers each pid there, see
-/// `adapters::mount_s3`'s module doc). `processes` is `template_start`'s
-/// (ADR-022): `None` builds a slot that still reports `supported()`
-/// correctly but spawns nothing — the shape every test keeps using via
-/// `FeatureContext::default()`.
-#[derive(Default)]
+/// itself; every other slot ignores it.
+#[derive(Clone)]
 pub struct FeatureContext {
-    pub child_registry: Arc<crate::adapters::ChildRegistry>,
+    /// `m15-s3-mounts`: its `mount-s3` daemon registers each pid here (see
+    /// `adapters::mount_s3`'s module doc).
+    pub child_registry: Arc<ChildRegistry>,
+    /// `template_start` (ADR-022): `None` builds a slot that still reports
+    /// `supported()` correctly but spawns nothing.
     pub processes: Option<Arc<PlatformProcessManager>>,
+    /// `telemetry_export` (m15-rayd-otlp, ADR-021) reads the session,
+    /// signs with `credentials`/`pushed` and samples `history`.
+    pub session: Arc<SandboxSession>,
+    /// Built by `main` over the same execution-role provider instance
+    /// persistence's `S3ObjectStore` uses (`ImdsCredentialBroker::sharing`),
+    /// so every feature and persistence share one IMDS cache.
+    pub credentials: Arc<ImdsCredentialBroker>,
+    pub pushed: Arc<PushedCredentials>,
+    /// The same ring the 5 s sampler already feeds (`main`'s
+    /// `spawn_metrics_sampler`): `telemetry_export` reads it instead of
+    /// probing procfs a second time.
+    pub history: Arc<MetricsHistory>,
+    /// `AWS_REGION` as `main` read it; `None` means the platform never set
+    /// it (the same degrade `adapters::s3_store` already allows for
+    /// persistence) — `telemetry_export::build` reports `Unsupported`
+    /// rather than guess a region to sign with or to build the `CloudWatch`
+    /// endpoint host from.
+    pub region: Option<String>,
+}
+
+impl Default for FeatureContext {
+    /// The context every test (and `grpc::router_with_transfers`) builds
+    /// with: no process manager and `region: None`, so `template_start`
+    /// spawns nothing and `telemetry_export` stays `Unsupported`.
+    fn default() -> Self {
+        Self {
+            child_registry: Arc::default(),
+            processes: None,
+            session: Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test")),
+            credentials: Arc::new(ImdsCredentialBroker::new()),
+            pushed: Arc::new(PushedCredentials::new()),
+            history: Arc::new(MetricsHistory::default()),
+            region: None,
+        }
+    }
 }
 
 pub struct FeatureSet {
@@ -153,14 +190,10 @@ mod tests {
     // task, so `build()` needs a runtime.
     #[tokio::test]
     async fn every_slot_still_a_stub_starts_unsupported() {
-        // `s3_mounts` (`m15-s3-mounts`), `lifecycle_events`
-        // (`m15-events-webhooks`), `template_start` (`m15-templates`) and
-        // `secret_gateway` (`m15-secrets-gateway`) have real adapters,
-        // asserted separately in their own modules' tests; every other slot
-        // is still `Unsupported`.
+        // Every other slot has a real adapter (`telemetry_export` only with
+        // a region), asserted in its own module's tests and below.
         let set = build(&FeatureContext::default());
         assert!(!set.efs_volumes.supported());
-        assert!(!set.telemetry_export.supported());
     }
 
     #[tokio::test]
@@ -179,6 +212,9 @@ mod tests {
         assert_eq!(features.s3_mounts, set.s3_mounts.supported());
         assert_eq!(features.secret_gateway, set.secret_gateway.supported());
         assert!(features.lifecycle_events);
+        // `telemetry_export` needs a region (`FeatureContext::default()`
+        // has none): see the next test.
+        assert!(!features.telemetry_export);
         // `template_start` always understands the spec; without a
         // `template.json` (any test host) it has no participant.
         assert!(features.template_start);
@@ -206,5 +242,15 @@ mod tests {
                 rayd_core::lifecycle_events::PARTICIPANT_NAME
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_known_region_turns_on_the_telemetry_flag_and_its_root_egress_class() {
+        let set = build(&FeatureContext {
+            region: Some("us-east-1".to_owned()),
+            ..FeatureContext::default()
+        });
+        assert!(set.agent_features().telemetry_export);
+        assert!(set.root_egress().contains(&RootEgressClass::CloudwatchOtlp));
     }
 }

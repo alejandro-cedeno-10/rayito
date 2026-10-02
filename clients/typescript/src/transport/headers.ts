@@ -31,11 +31,27 @@ export const RESERVED_METADATA_PREFIXES: readonly string[] = ["x-aws-proxy-", "g
 const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
 const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
+/**
+ * Cabeceras calculadas en el momento de cada llamada (a diferencia de
+ * `extraHeaders`, fijas para la vida del transporte); el mismo seam que
+ * `CallMetadataProvider` de `rayito._transport` en Python.
+ * `telemetry-export/propagation.ts`'s `TraceparentProvider` (m15-rayd-otlp,
+ * research Q92) es la primera implementación: un `traceparent` distinto por
+ * RPC, porque cada llamada ocurre dentro de un span distinto.
+ */
+export interface CallMetadataProvider {
+  metadata(): ReadonlyArray<readonly [string, string]>;
+}
+
 export interface ProxyAuthOptions {
   readonly port: number;
   readonly accessToken: string | undefined;
   /** Metadata extra del caller, ya validada: va detrás de las cuatro cabeceras reservadas. */
   readonly extraHeaders?: Readonly<Record<string, string>> | undefined;
+  /** Se lee de nuevo en cada request y va al final de todo: así algo que se
+   * sabe después de abrir el transporte (la instrumentación de `create()`)
+   * puede activarse sin reabrirlo. Vacío por defecto. */
+  readonly callMetadata?: (() => readonly CallMetadataProvider[]) | undefined;
 }
 
 function isReservedKey(key: string): boolean {
@@ -92,6 +108,11 @@ export function proxyAuthInterceptor(store: TokenStore, options: ProxyAuthOption
     }
     for (const [key, value] of Object.entries(options.extraHeaders ?? {})) {
       request.header.set(key, value);
+    }
+    for (const provider of options.callMetadata?.() ?? []) {
+      for (const [key, value] of provider.metadata()) {
+        request.header.set(key, value);
+      }
     }
     return next(request);
   };
