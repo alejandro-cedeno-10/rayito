@@ -629,8 +629,8 @@ mod tests {
     async fn every_built_slot_has_its_own_state() {
         // Regression for the old process-wide singleton: two `FeatureSet`s
         // (two integration tests in one binary) never share a key.
-        let configured = build(&FeatureContext);
-        let fresh = build(&FeatureContext);
+        let configured = build(&FeatureContext::default());
+        let fresh = build(&FeatureContext::default());
         configured.apply(cfg("k_sbx", "sbx-1")).await;
         assert_eq!(configured.status().await.emitted, 1);
         assert_eq!(fresh.status().await.emitted, 0);

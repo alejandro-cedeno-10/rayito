@@ -36,6 +36,8 @@ import {
   S3_BUCKET_NAME_MIN,
 } from "../limits.js";
 import type { IdlePolicyInput, NetworkPolicyInput } from "../models.js";
+import type { SecretGateway } from "../secret-gateway/domain.js";
+import type { ResolvedSize } from "../sizing/sizing.js";
 import {
   asConnectError,
   isProxyForbidden,
@@ -246,6 +248,16 @@ export interface LaunchOptions {
   readonly keepOnFailure: boolean | undefined;
   /** La política de egress ya resuelta (con `allowInternetAccess: false` incorporado). */
   readonly network: NetworkPolicyInput | undefined;
+  /**
+   * `create({ gateways })` (m15-secrets-gateway): sólo los nombres de
+   * secreto que cada `SecretGateway.headers` selecciona, nunca un valor
+   * resuelto (`secret-gateway/section.ts` lo resuelve, justo antes de cada
+   * `Configure`). `reincarnate()` lo reenvía sin cambios, así que el
+   * sucesor vuelve a pedir el mismo conjunto de rutas.
+   */
+  readonly gateways: Readonly<Record<string, SecretGateway>> | undefined;
+  /** m15-sizes-catalog: el tamaño ya resuelto, o `undefined` sin `size`. */
+  readonly size: ResolvedSize | undefined;
 }
 
 export type CheckpointProgressCallback = (progress: CheckpointProgress) => void;

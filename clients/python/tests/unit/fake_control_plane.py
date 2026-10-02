@@ -27,7 +27,7 @@ import grpc.aio
 
 from rayito._aws import LaunchRequest, PortSpec, TokenBucket
 from rayito._limits import API_TPS, TERMINAL_STATES
-from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
+from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._transport import ProxyAuthPlugin
 from rayito.exceptions import SandboxNotFoundException
 
@@ -113,6 +113,11 @@ class FakeControlPlane:
         self._lock = threading.Lock()
         self.scripted_pages: list[tuple[SandboxListItem, ...]] | None = None
         self.page_requests: list[PageCall] = []
+        # m15-sizes-catalog: `minimumMemoryInMiB` por `(image_arn,
+        # image_version)`, puesto por `set_image_version_memory`; sin
+        # ninguno configurado, `get_microvm_image_version` falla como
+        # `GetMicrovmImageVersion` lo haría sobre una versión inexistente.
+        self._image_versions: dict[tuple[str, str], int] = {}
 
     # ------------------------------------------------------------- scripting
 
@@ -336,6 +341,23 @@ class FakeControlPlane:
         with self._lock:
             self._mints += 1
             return f"{JWE}.{self._mints}"
+
+    def set_image_version_memory(self, image_arn: str, image_version: str, memory_mib: int) -> None:
+        """m15-sizes-catalog: lo que `GetMicrovmImageVersion` debe devolver
+        para esa versión concreta."""
+        self._image_versions[(image_arn, image_version)] = memory_mib
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo:
+        self._enter("GetMicrovmImageVersion", None)
+        try:
+            return ImageVersionInfo(
+                minimum_memory_mib=self._image_versions[(image_arn, image_version)]
+            )
+        except KeyError:
+            raise SandboxNotFoundException(
+                f"no hay minimumMemoryInMiB configurado para {image_arn}@{image_version} "
+                "(usa set_image_version_memory en el test)"
+            ) from None
 
     # --------------------------------------------------------------- internals
 

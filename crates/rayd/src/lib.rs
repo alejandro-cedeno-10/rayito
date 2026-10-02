@@ -21,6 +21,7 @@ pub mod network;
 pub mod persistence;
 pub mod process;
 pub mod pty;
+pub mod secret_gateway;
 pub mod transfer;
 
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");

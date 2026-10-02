@@ -21,6 +21,7 @@ export const COST_DECLARATIONS = [
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
   { name: "class LifecycleEvents", pattern: /^(export )?declare class LifecycleEvents\b/ },
+  { name: "class SecretGateway", pattern: /^(export )?declare class SecretGateway\b/ },
 ];
 
 export const REQUIRED_HEADINGS = [

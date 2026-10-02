@@ -47,6 +47,14 @@ from rayito._payload import (
     generate_access_token,
     validate_access_token,
 )
+from rayito._sizing import (
+    ResolvedSize,
+    SizeRequest,
+    apply_size_suffix,
+    baseline_cpu_for,
+    resolve_size,
+    warn_if_rounded,
+)
 from rayito._transport import is_phase_gate, rpc_details
 from rayito.exceptions import (
     AuthenticationException,
@@ -550,6 +558,47 @@ def with_guest_facts(info: SandboxInfo, facts: GuestFacts) -> SandboxInfo:
         agent_version=facts.agent_version,
         cpu_count=facts.cpu_count,
         memory_mb=facts.memory_mb,
+    )
+
+
+def plan_size(size: str | SizeRequest | None, *, stacklevel: int) -> ResolvedSize | None:
+    """m15-sizes-catalog: resuelve `size=` fuera de `plan_features` (no es
+    una sección de `ConfigureSandbox`, es qué imagen lanzar) — pura, lanza
+    `InvalidArgumentException` antes de cualquier llamada a AWS si el
+    catálogo cerrado no cubre lo pedido, y avisa con `RayitoCompatWarning`
+    si no cae justo en un valor del catálogo. Compartida entre
+    `sandbox_sync`/`sandbox_async`'s `create()` para no duplicar esta
+    resolución; `stacklevel` es el del `warnings.warn` de cada llamador
+    (el `create()` público, no este módulo interno)."""
+    if size is None:
+        return None
+    resolved = resolve_size(size)
+    warn_if_rounded(resolved, stacklevel=stacklevel)
+    return resolved
+
+
+def sized_template_name(template_name: str, resolved_size: ResolvedSize | None) -> str:
+    """El nombre de plantilla con el sufijo de tamaño ya aplicado
+    (`apply_size_suffix`), o el mismo nombre si no se usó `size=`
+    (m15-sizes-catalog); compartida por las mismas razones que `plan_size`."""
+    if resolved_size is None:
+        return template_name
+    return apply_size_suffix(template_name, resolved_size)
+
+
+def with_size_facts(info: SandboxInfo, *, size_name: str, baseline_memory_mib: int) -> SandboxInfo:
+    """m15-sizes-catalog: `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+    se rellenan cuando `create(size=...)` se usó, y `baseline_memory_mib` es
+    el que `_size_catalog.ConventionCatalog` confirmó por AWS (no
+    necesariamente igual al resuelto en cliente, si la imagen se publicó a
+    mano). `cpu_count`/`memory_mb` (de `with_guest_facts`) siguen siendo lo
+    que el guest reporta de verdad (Q88: hasta 4x `baseline_memory_mib`),
+    nunca lo que este módulo estima."""
+    return dataclasses.replace(
+        info,
+        size=size_name,
+        baseline_memory_mib=baseline_memory_mib,
+        baseline_cpu=baseline_cpu_for(baseline_memory_mib),
     )
 
 

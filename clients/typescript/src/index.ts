@@ -143,6 +143,7 @@ export {
   type SandboxPoolOptions,
   type TakeOptions,
 } from "./pool/pool.js";
+export { type MountStatus, S3Mount, type S3MountOptions } from "./s3-mounts/domain.js";
 export {
   CodeClient,
   type ContextLike,
@@ -249,6 +250,13 @@ export {
   type UploadUrlOptions,
   type WaitOptions,
 } from "./sandbox/transfer.js";
+export {
+  type AllowRule,
+  GatewayStatus,
+  SecretGateway,
+  type SecretGatewayOptions,
+} from "./secret-gateway/domain.js";
+export { GatewayHandle } from "./secret-gateway/section.js";
 export { SecretCache, type SecretCacheOptions } from "./secrets/cache.js";
 export type { SecretOptions, SecretsInput } from "./secrets/inject.js";
 export { type SecretLike, SecretRef, type SecretRefOptions } from "./secrets/names.js";
@@ -259,6 +267,12 @@ export {
   type SecretStoreOptions,
   type SecretsManagerApi,
 } from "./secrets/store.js";
+export type {
+  ResolvedSize,
+  SizeInput,
+  SizeName,
+  SizeRequest,
+} from "./sizing/sizing.js";
 export type {
   CostStatement,
   DeployAction,

@@ -16,6 +16,7 @@ use rayd_core::code::KernelStatus;
 use rayd_core::health::HealthSnapshot;
 use rayd_core::metrics::{MetricsError, MetricsProbe, MetricsSnapshot, snapshot, unix_millis};
 use rayd_core::metrics_history::{HistoryPage, MetricsHistory, MetricsSample, RangeQuery};
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::health_service_server::HealthService;
 use rayito_proto::v1::{
@@ -83,11 +84,13 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        let features = self.features.as_deref().map_or_else(
+        let features = self.features.as_deref();
+        let flags = features.map_or_else(
             rayd_core::features::AgentFeatures::foundations_only,
             FeatureSet::agent_features,
         );
-        Ok(Response::new(to_response(snapshot, features)))
+        let root_egress = features.map(FeatureSet::root_egress).unwrap_or_default();
+        Ok(Response::new(to_response(snapshot, flags, &root_egress)))
     }
 
     async fn metrics(
@@ -136,6 +139,7 @@ impl HealthService for HealthGrpc {
 fn to_response(
     snapshot: HealthSnapshot,
     features: rayd_core::features::AgentFeatures,
+    root_egress: &[RootEgressClass],
 ) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
@@ -155,15 +159,20 @@ fn to_response(
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // Derived from the slots themselves (`FeatureSet::agent_features`):
-        // a feature that gives its slot a real adapter turns its own flag
-        // on without touching this file.
-        features: Some(agent_features_message(features)),
+        // Derived from the slots themselves (`FeatureSet::agent_features`/
+        // `root_egress`): each slot's own `supported()` and
+        // `root_egress_class()` say what *this* boot offers — e.g.
+        // `m15-s3-mounts` reports `false` without `CAP_SYS_ADMIN`, so a
+        // `rayito-base` agent never claims it — and a feature that gives
+        // its slot a real adapter turns its own flag on without touching
+        // this file.
+        features: Some(agent_features_message(features, root_egress)),
     }
 }
 
 fn agent_features_message(
     features: rayd_core::features::AgentFeatures,
+    root_egress: &[RootEgressClass],
 ) -> rayito_proto::v1::AgentFeatures {
     rayito_proto::v1::AgentFeatures {
         configure: features.configure,
@@ -173,8 +182,21 @@ fn agent_features_message(
         telemetry_export: features.telemetry_export,
         secret_gateway: features.secret_gateway,
         template_start: features.template_start,
-        // No feature opens a root-egress path yet (`root_egress.rs`).
-        root_egress: Vec::new(),
+        root_egress: root_egress
+            .iter()
+            .map(|class| i32::from(wire_root_egress(*class)))
+            .collect(),
+    }
+}
+
+fn wire_root_egress(class: RootEgressClass) -> rayito_proto::v1::RootEgressClass {
+    match class {
+        RootEgressClass::S3 => rayito_proto::v1::RootEgressClass::S3,
+        RootEgressClass::CloudwatchOtlp => rayito_proto::v1::RootEgressClass::CloudwatchOtlp,
+        RootEgressClass::SecretGatewayUpstream => {
+            rayito_proto::v1::RootEgressClass::SecretGatewayUpstream
+        }
+        RootEgressClass::Efs => rayito_proto::v1::RootEgressClass::Efs,
     }
 }
 
@@ -218,5 +240,49 @@ fn metrics_status(error: &MetricsError) -> Status {
         MetricsError::Malformed { .. } | MetricsError::Io { .. } => {
             Status::internal(error.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_root_egress_class_maps_to_its_own_wire_value() {
+        let cases = [
+            (RootEgressClass::S3, rayito_proto::v1::RootEgressClass::S3),
+            (
+                RootEgressClass::CloudwatchOtlp,
+                rayito_proto::v1::RootEgressClass::CloudwatchOtlp,
+            ),
+            (
+                RootEgressClass::SecretGatewayUpstream,
+                rayito_proto::v1::RootEgressClass::SecretGatewayUpstream,
+            ),
+            (RootEgressClass::Efs, rayito_proto::v1::RootEgressClass::Efs),
+        ];
+        for (class, wire) in cases {
+            assert_eq!(wire_root_egress(class), wire);
+        }
+    }
+
+    #[test]
+    fn the_message_copies_every_flag_and_the_declared_egress() {
+        let features = rayd_core::features::AgentFeatures {
+            s3_mounts: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        };
+        let message = agent_features_message(features, &[RootEgressClass::S3]);
+        assert!(message.configure);
+        assert!(message.s3_mounts);
+        assert!(!message.efs_volumes);
+        assert_eq!(
+            message.root_egress,
+            vec![i32::from(rayito_proto::v1::RootEgressClass::S3)]
+        );
+        let stubs_only =
+            agent_features_message(rayd_core::features::AgentFeatures::foundations_only(), &[]);
+        assert!(!stubs_only.s3_mounts);
+        assert!(stubs_only.root_egress.is_empty());
     }
 }

@@ -25,7 +25,13 @@ from rayito._limits import (
     TERMINAL_STATES,
     TOKEN_TTL_MINUTES,
 )
-from rayito._models import IdlePolicy, MicrovmListPage, SandboxInfo, SandboxListItem
+from rayito._models import (
+    IdlePolicy,
+    ImageVersionInfo,
+    MicrovmListPage,
+    SandboxInfo,
+    SandboxListItem,
+)
 from rayito._version import __version__
 from rayito.exceptions import (
     AuthenticationException,
@@ -148,6 +154,8 @@ class ControlPlane(Protocol):
     def resume_microvm(self, sandbox_id: str) -> bool: ...
 
     def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str: ...
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo: ...
 
 
 class TokenBucket:
@@ -440,6 +448,25 @@ class LambdaMicrovmsControlPlane:
             allowedPorts=[spec.to_api() for spec in ports],
         )
         return proxy_jwe_from_response(response["authToken"])
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo:
+        """Sin cuota propia en `apiTps` (CloudTrail-only, AWS_API_NOTES.md
+        §6/§24): `sizes-catalog.ConventionCatalog` es la única llamante y ya
+        la cachea por `(image_arn, image_version)`, así que no hace falta un
+        `TokenBucket` aquí."""
+        response = self._invoke(
+            "GetMicrovmImageVersion",
+            self._client.get_microvm_image_version,
+            imageIdentifier=image_arn,
+            imageVersion=image_version,
+        )
+        resources = response.get("resources") or []
+        if not resources:
+            raise SandboxException(
+                f"la versión {image_version} de {image_arn} no declara "
+                "resources[].minimumMemoryInMiB"
+            )
+        return ImageVersionInfo(minimum_memory_mib=int(resources[0]["minimumMemoryInMiB"]))
 
     def _invoke(
         self, operation: str, method: Callable[..., dict[str, Any]], **params: Any
