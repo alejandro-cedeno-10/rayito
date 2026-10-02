@@ -13,6 +13,7 @@ import {
   constantTimeEqual,
   portFromLabel,
   readCookie,
+  readEventCookie,
   RESERVED_PORTS,
   route,
   routeLabel,
@@ -101,6 +102,20 @@ test("trafficTokenAccepted: cookie con el token correcto", () => {
   const token = "otro-token";
   const headers = { cookie: { value: `rayito_tt=${token}` } };
   assert.equal(trafficTokenAccepted(headers, sha256Hex(token)), true);
+});
+
+test("readEventCookie lee el objeto `cookies` ya parseado de CloudFront", () => {
+  const cookies = { a: { value: "1" }, rayito_tt: { value: "el-token" } };
+  assert.equal(readEventCookie(cookies, "rayito_tt"), "el-token");
+  assert.equal(readEventCookie(cookies, "no-existe"), null);
+  assert.equal(readEventCookie(undefined, "rayito_tt"), null);
+});
+
+test("trafficTokenAccepted: cookie del objeto `cookies` del evento (Q96)", () => {
+  const token = "token-en-cookies";
+  const cookies = { rayito_tt: { value: token } };
+  assert.equal(trafficTokenAccepted({}, sha256Hex(token), cookies), true);
+  assert.equal(trafficTokenAccepted({}, sha256Hex("otro"), cookies), false);
 });
 
 test("trafficTokenAccepted: token ausente o incorrecto se rechaza", () => {

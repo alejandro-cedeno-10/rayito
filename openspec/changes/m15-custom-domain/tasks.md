@@ -59,6 +59,13 @@
       `RAYITO_E2E`/`RAYITO_TEMPLATE`. **Written, not run from this branch:
       D3 blocks executing these tests, not writing them (a PR #74 review
       finding) — gate for archive remains D3 + the AWS acceptance stage.**
+- [x] 3.5 AWS acceptance, part without D3 (2026-10-02, Q96): the
+      deployed `FunctionCode` did not compile on `cloudfront-js-2.0`
+      (`for...of`, default parameter); fixed, cookie read from
+      `request.cookies` first, and re-measured with `TestFunction`
+      (403/404/origin as in the Node tests). Off-by-default re-checked on
+      real AWS: a plain sandbox only calls `lambda-microvms` (+ `sts`).
+      DOM-2/3/5 end to end still need D3.
 
 ## 4. Stack `infra/custom-domain.yaml`
 

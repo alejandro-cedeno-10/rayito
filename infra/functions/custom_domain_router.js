@@ -35,6 +35,11 @@
 // este mismo fichero con cada `export ` de nivel superior quitado; las
 // declaraciones `export` de aquí existen sólo para que
 // `infra/functions/tests/*.test.mjs` las importe con Node directamente.
+//
+// `cloudfront-js-2.0` no es ES moderno completo: rechaza al compilar
+// `for...of` y los parámetros por defecto (medido con `TestFunction`, Q96 de
+// AWS_API_NOTES.md), y Node los acepta, así que los tests de Node no lo
+// detectan. Aquí sólo bucles con índice y valores por defecto explícitos.
 
 import cf from "cloudfront";
 import crypto from "crypto";
@@ -82,16 +87,27 @@ export function stripUpstreamProxyHeaders(headers) {
   }
 }
 
-/** La cookie `name` del valor crudo de la cabecera `cookie`, o `null`. */
+/** La cookie `name` del objeto `event.request.cookies` de CloudFront
+ * Functions (`{nombre: {value}}`), o `null`. CloudFront entrega ahí las
+ * cookies ya parseadas; con un evento de `TestFunction` que sólo trae
+ * `cookies`, leer la cabecera `cookie` daba 403 (Q96). */
+export function readEventCookie(cookies, name) {
+  const entry = cookies && cookies[name];
+  return entry && entry.value ? entry.value : null;
+}
+
+/** La cookie `name` del valor crudo de la cabecera `cookie`, o `null`
+ * (respaldo de `readEventCookie` por si la cabecera llega sin parsear). */
 export function readCookie(headers, name) {
   const cookieHeader = headers.cookie;
   if (!cookieHeader) {
     return null;
   }
   const entries = Array.isArray(cookieHeader) ? cookieHeader : [cookieHeader];
-  for (const entry of entries) {
-    const parts = (entry.value || "").split(";");
-    for (const part of parts) {
+  for (let i = 0; i < entries.length; i += 1) {
+    const parts = (entries[i].value || "").split(";");
+    for (let j = 0; j < parts.length; j += 1) {
+      const part = parts[j];
       const eq = part.indexOf("=");
       if (eq === -1) {
         continue;
@@ -127,13 +143,16 @@ export function constantTimeEqual(a, b) {
 
 /** `true` si el `traffic_token` que trae la petición coincide con el hash
  * guardado en la ruta (`metadata.t`); `metadata.t === ""` es una ruta
- * pública (sin token que comprobar). */
-export function trafficTokenAccepted(headers, metadataTokenHash) {
+ * pública (sin token que comprobar). `cookies` es `event.request.cookies`. */
+export function trafficTokenAccepted(headers, metadataTokenHash, cookies) {
   if (!metadataTokenHash) {
     return true;
   }
   const headerValue = headers[TRAFFIC_TOKEN_HEADER] && headers[TRAFFIC_TOKEN_HEADER].value;
-  const provided = headerValue || readCookie(headers, TRAFFIC_TOKEN_COOKIE);
+  const provided =
+    headerValue ||
+    readEventCookie(cookies, TRAFFIC_TOKEN_COOKIE) ||
+    readCookie(headers, TRAFFIC_TOKEN_COOKIE);
   if (!provided) {
     return false;
   }
@@ -155,7 +174,10 @@ export function trafficTokenAccepted(headers, metadataTokenHash) {
  *   ausente o incorrecto), o `{kind: "origin", domainName, customHeaders}`
  *   (pasa a `cf.updateRequestOrigin` tal cual).
  */
-export async function route(request, kvsGet, now = Date.now) {
+export async function route(request, kvsGet, now) {
+  // Sin parámetro por defecto (`now = Date.now`): `cloudfront-js-2.0` lo
+  // rechaza al compilar (`SyntaxError: Unexpected token "="`, Q96).
+  const clock = now || Date.now;
   stripUpstreamProxyHeaders(request.headers);
   const label = routeLabel(request.headers.host.value);
   const port = portFromLabel(label);
@@ -178,10 +200,10 @@ export async function route(request, kvsGet, now = Date.now) {
   // acotar una ruta huérfana (T25); tratarla como "no encontrada", no
   // "prohibida", porque desde fuera una ruta caducada no debe distinguirse
   // de una que nunca existió.
-  if (typeof metadata.x === "number" && now() >= metadata.x * 1000) {
+  if (typeof metadata.x === "number" && clock() >= metadata.x * 1000) {
     return { kind: "not-found" };
   }
-  if (!trafficTokenAccepted(request.headers, metadata.t)) {
+  if (!trafficTokenAccepted(request.headers, metadata.t, request.cookies)) {
     return { kind: "forbidden" };
   }
   return {

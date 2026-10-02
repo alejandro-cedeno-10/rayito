@@ -78,6 +78,31 @@ def test_function_code_matches_the_stripped_source_file() -> None:
     )
 
 
+#: Sintaxis que `cloudfront-js-2.0` rechaza al compilar y Node acepta
+#: (medido con `TestFunction`, Q96 de AWS_API_NOTES.md): `for...of` y los
+#: parámetros por defecto. Los tests de Node nunca lo detectarían.
+_UNSUPPORTED_RUNTIME_SYNTAX = {
+    "for...of": re.compile(r"\bfor\s*\([^)]*\bof\b"),
+    "parámetro por defecto": re.compile(r"\bfunction\b[^(]*\([^)]*="),
+}
+
+
+def _code_lines(source: str) -> list[str]:
+    """Las líneas de código, sin los comentarios `//` que citan la regla."""
+    comment_prefixes = ("//", "*", "/**")
+    return [line for line in source.splitlines() if not line.lstrip().startswith(comment_prefixes)]
+
+
+def test_function_code_avoids_syntax_the_runtime_rejects() -> None:
+    document = _template()
+    embedded = document["Resources"]["RouterFunction"]["Properties"]["FunctionCode"]
+    for line in _code_lines(embedded):
+        for name, pattern in _UNSUPPORTED_RUNTIME_SYNTAX.items():
+            assert not pattern.search(line), (
+                f"{name} no compila en cloudfront-js-2.0: {line.strip()}"
+            )
+
+
 def test_function_code_has_no_es_module_syntax() -> None:
     """El runtime `cloudfront-js-2.0` nunca ha documentado soporte para
     `export` en el código de la propia función; si `CreateFunction` lo
