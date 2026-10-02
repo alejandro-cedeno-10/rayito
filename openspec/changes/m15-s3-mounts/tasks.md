@@ -179,6 +179,15 @@ Low severity:
   e2e keeps `m15-s3-mounts.e2e.test.ts`: the vitest `e2e` project only
   collects `*.e2e.test.ts`.
 
+## 12. Serialized AWS acceptance (2026-10-02)
+
+- [x] 12.1 Image built from this branch (`rayito image publish --os-capabilities ALL --env RAYITO_ALLOWED_MOUNT_BUCKETS=<test bucket>` from `m15-sizes-catalog`). First build failed: `microdnf` cannot `dnf install` a local RPM (`AWS_API_NOTES.md` Q100); `image/Dockerfile` now installs `fuse fuse-libs` with `dnf` and the verified RPM with `rpm -i`. Installed size recorded (Q100).
+- [x] 12.2 `rayito stack deploy s3-mounts --param BucketName=… --param Prefixes='rayito-e2e-s3-mounts/*' --param ReadOnly=false`: `CREATE_COMPLETE` in 25 s with `CAPABILITY_IAM`; `PolicyArn` attached to the test execution role (Q104).
+- [x] 12.3 Every mount stayed `pending` → `timeout`: Mountpoint's FUSE session only answered uid 990, so uid 1000 got `EACCES` (Q101). `adapters::mount_s3::daemon_args` now passes `--allow-other` (unit-tested argv); the e2e `kill -0` assertion now expects `CommandExitException`/`CommandExitError` (a non-zero exit raises in `commands.run`).
+- [x] 12.4 e2e: `test_m15_s3_mounts.py` 4/4, `m15-s3-mounts.e2e.test.ts` 4/4 (Q102).
+- [x] 12.5 Manual checks: `create()` returns with mounts `mounted`; IAM-denied prefix → `MountException(iam_denied)`, non-allowlisted bucket → `MountException(not_allowed)`, non-caps image → `features.s3_mounts` false + `UnimplementedError`, VM `TERMINATED` in all three; symlinked `/home/user/x` → `invalid_path`, nothing mounted; writes outside the declared prefix `implicitDeny`; 0 `<defunct>` after 5 mount/unmount/relaunch cycles; no `Configure` call without `mounts=` (Q103, Q104).
+- [x] 12.6 Cleanup: only this run's sandboxes, both test images, the `s3-mounts` stack, the role attachment, the uploaded image zips, the run's log streams and every object under `rayito-e2e-s3-mounts/`; before/after inventory identical.
+
 ## 8. OpenSpec
 
 - [x] 8.1 `proposal.md`, `design.md`, `tasks.md` (this file).

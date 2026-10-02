@@ -1415,9 +1415,10 @@ esperando a que cada montaje esté montado). Depende de `rayito image
 publish --env` (`m15-sizes-catalog`) para fijar el allowlist de imagen.
 **Validado localmente** (unit tests Rust/Python/TypeScript, `cargo
 clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
-`openspec validate --strict`); **pendiente de aceptación en AWS real**
-(S3M-1..S3M-4, numeración real desde Q95 en la aceptación serializada de
-M15).
+`openspec validate --strict`); **aceptado en AWS real** el 2026-10-02
+(S3M-1..S3M-4 y las comprobaciones manuales, `AWS_API_NOTES.md`
+Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
+`microdnf` y añadió `--allow-other` al daemon).
 
 ### Funciones (pendientes de su propio cambio OpenSpec)
 

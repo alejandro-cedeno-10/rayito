@@ -82,4 +82,6 @@ server.
    '%{SIZE}' mount-s3`), done once during this change's AWS acceptance.
 3. **`AWS_API_NOTES.md` real question numbers** (S3M-1..S3M-4) are
    provisional until the serialized AWS acceptance stage hands out real
-   `Q95+` numbers, per the M15 architecture's rule 9.
+   `Q95+` numbers, per the M15 architecture's rule 9. Resolved by the
+   2026-10-02 acceptance: Q100–Q104 (72 677 112 B installed; see
+   `tasks.md` §12).

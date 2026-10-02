@@ -31,11 +31,12 @@ En cualquier otra imagen, `create()` termina el VM y lanza
     - **Cómo apagarla**: no pases `mounts=`; `rayito stack destroy
       s3-mounts` quita la política (no borra ningún objeto ni el bucket).
 
-!!! note "Experimental"
-    `Sandbox.create(mounts=)`/`create({ mounts })` y `sbx.mounts` están
-    implementados en los dos SDKs y en el agente, pero es nuevo: trátalo
-    como experimental hasta la campaña de medición S3M-1..S3M-4 de la
-    aceptación en AWS real.
+!!! note "Medido en AWS real"
+    `Sandbox.create(mounts=)`/`create({ mounts })` y `sbx.mounts` pasaron
+    la aceptación en AWS real (S3M-1..S3M-4, `AWS_API_NOTES.md`
+    Q100–Q104): lectura y escritura, `pause()`/`resume()` con el montaje
+    vivo, `allow_internet_access=False`, y el VM terminado ante un fallo
+    de montaje. `mount-s3` 1.24.0 añade 72,7 MB a la imagen.
 
 ## Cuándo usarlo
 
@@ -168,7 +169,9 @@ para esto.
   proceso que `rayd` lanza (`AWS_REGION`/`PATH` son las únicas variables).
 - El bucket y el prefijo **no son secretos** (como la `metadata` del
   sandbox): un proceso uid 1000 puede ver el nombre del bucket y el
-  prefijo en `/proc` del daemon, nunca una credencial.
+  prefijo en la línea de órdenes del daemon (`/proc/<pid>/cmdline`), nunca
+  una credencial; su entorno (`/proc/<pid>/environ`) ni siquiera es
+  legible, y tampoco puede enviarle señales.
 - El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen
   (config de imagen, no una opción por sandbox); vacío o ausente deniega
   todos los buckets.

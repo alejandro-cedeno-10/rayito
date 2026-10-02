@@ -1875,12 +1875,14 @@ por un `s3:prefix` condicional (parámetro `Prefixes`, coma-separado) y
 (hasta 4 por pila): la contención por prefijo no depende sólo de
 `mount-s3 --prefix` dentro de un guest que ejecuta código no confiable.
 
-**SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer
-`cmdline`/`environ` del proceso `mount-s3` (mismo `/proc` que cualquier
-otro proceso del guest); el bucket y el prefijo están declarados **no
+**SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer el
+`cmdline` del proceso `mount-s3` (mismo `/proc` que cualquier otro proceso
+del guest), no su `environ` (`EACCES`: el daemon es uid 990,
+`AWS_API_NOTES.md` Q103); el bucket y el prefijo están declarados **no
 secretos** (igual que la `metadata` de T4), así que esto no es una fuga —
 nunca hay una credencial en argv ni en entorno, documentado en T20
-(`SECURITY.md`).
+(`SECURITY.md`). El daemon recibe `--allow-other`: sin él Mountpoint sólo
+atiende a su propio uid y uid 1000 recibe `EACCES` (Q101).
 
 **Sin API en el shim de E2B**: E2B no tiene un equivalente a `mounts=`
 (fila 111 de `e2b-parity.md`, divergente desde 0.6.0).

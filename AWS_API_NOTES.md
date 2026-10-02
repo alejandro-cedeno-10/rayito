@@ -505,6 +505,11 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 93 | **SEC-3**: ¿puede uid 1000 leer la memoria o el entorno de `rayd` (`/proc/<pid>/mem`, `environ`, `process_vm_readv`, `ptrace`, core dumps), en la imagen por defecto y en `ALL`, también tras resume? | Q47: uid 1000 con `CapEff` 0 y `NoNewPrivs`; sin `CAP_SYS_PTRACE` | **Medido 2026-09-30** (uid 1000, ctypes; `rayd` es PID 1, Uid 0): en las dos imágenes, tras una pausa de 60 s (por defecto) y tras 70 min (`ALL`), `/proc/1/{environ,maps,mem,auxv,stack,syscall,io}` → `EACCES`, `/proc/1/fd` y `readlink(/proc/1/fd/1)` → `EACCES`, `pread` de `/proc/1/mem` → `EACCES`, `process_vm_readv` → `EPERM`, `PTRACE_ATTACH` y `PTRACE_SEIZE` → `EPERM`, `kill(1, 0)` → `EPERM`. Legibles: `/proc/1/cmdline` y `/proc/1/status` (Uid 0, `CapEff`, `NoNewPrivs` 1); sin `hidepid`. Sin Yama (`ptrace_scope` no existe), `core_pattern` `|/usr/lib/systemd/systemd-coredump …`, `suid_dumpable` 0, sin gdb/gcore/strace. El `environ` de los procesos de uid 1000 (sidecar, kernel) **sí** se lee |
 | 94 | **CP-7**: ¿pueden los procesos de uid 1000 escribir en el stdout de `rayd` (herencia o `/proc/1/fd/1`) y colar líneas en el stream de runtime? | Diseño de §5 (eventos por stdout de `rayd`): sin medir | **Medido 2026-09-30** (imagen por defecto y `ALL`, `logging` a CloudWatch): los fd de un proceso lanzado por `commands.run` son `0 → /dev/null` y `1, 2 → pipe` hacia `rayd` (salida de la RPC, no se reenvía a CloudWatch). Escribir como uid 1000 en `/proc/1/fd/1`, `/proc/1/fd/2`, `/dev/console`, `/dev/kmsg`, `/dev/tty1`, `/dev/ttyS0`, `/dev/hvc0` y en `/proc/<sidecar>/fd/{1,2}` → `EACCES` en todos. Ningún marcador escrito por uid 1000 apareció en el stream de runtime de la VM, que sólo contiene las líneas JSON de `rayd` (y las del sidecar reenviadas por `rayd` con `source: sidecar`) |
 | 95 | **Proxy local de M12 (`rayito sandbox proxy`)**: en una conexión HTTP/1.1 keep-alive o con pipelining, ¿el proxy de AWS valida `X-aws-proxy-auth` en cada petición o sólo en la primera? Y ¿un upgrade a WebSocket con `X-aws-proxy-auth`/`X-aws-proxy-port` en cabeceras (no en los subprotocolos de §7) llega al guest? | §7 sólo documenta la cabecera por petición y la autenticación de WebSocket por subprotocolo; nada sobre peticiones posteriores en la misma conexión ni sobre cabeceras en un upgrade | **Sin medir.** El proxy no cuenta con que AWS rechace las peticiones posteriores: las no-upgrade salen con `Connection: close` (el `Connection` del cliente se descarta) y el paso de WebSocket figura como implementado, no medido. Medir con un e2e de `test_sandbox_proxy_e2e.py` (dos peticiones en la misma conexión y un upgrade) |
+| 100 | **S3M imagen** (`m15-s3-mounts`): ¿instala `image/Dockerfile` `mount-s3` 1.24.0 (RPM propio de AWS, clavado por sha256) en `al2023-minimal` ARM64, y cuánto ocupa? | Q80: el paquete 1.22.3 de los repos de AL2023 instala 11,3 MB y la imagen crece +22,4 MB de code install; `dnf install /tmp/mount-s3.rpm` | **Medido 2026-10-02** (`rayito image publish --os-capabilities ALL`, build en AWS): la primera build **falla** en el `RUN` de `mount-s3` con `error: No package matches '/tmp/mount-s3.rpm'`: el `dnf` de `al2023-minimal` es un enlace a `microdnf`, que no instala un RPM local. Arreglo: `dnf install fuse fuse-libs` (las dependencias de `rpm -qpR`; `fuse` solo no arrastra `fuse-libs` con `microdnf`) y `rpm -i` del fichero ya verificado; con él la build termina (`launchable: true`, ≈ 3,5 min de `create`/`update-microvm-image` a imagen activa). Tamaños: RPM descargado 14 232 764 B; instalado (`rpm -q --queryformat '%{SIZE}'`) **`mount-s3` 72 677 112 B** (`/opt/aws/mountpoint-s3`, `du -sb` 72 685 304 B), `fuse` 749 519 B, `fuse-libs` 563 718 B. Imagen `rayito-base-caps` resultante: code install 1 444 290 560 B (1 445 888 000 B con la `rayd` de Q101), memoria del snapshot 909–914 MB, disco 27,9–38,6 MB. La estimación de +22,4 MB de Q80 no vale para 1.24.0: el RPM de AWS ocupa 6,4× el de AL2023 |
+| 101 | **S3M-1 previo**: con el `mount(2)` ya hecho por `rayd` (`allow_other` en las opciones del kernel) y `mount-s3 --foreground <bucket> /dev/fd/3 --uid 1000 --gid 1000` corriendo como uid 990, ¿puede uid 1000 usar el montaje? | Diseño de ADR-017: `allow_other` en el `mount(2)` basta | **Medido 2026-10-02: no.** El daemon vive (`SNl`) y `/proc/mounts` muestra `fuse rw,…,user_id=1000,group_id=1000,allow_other`, pero `stat`/`ls` como uid 1000 dan **`EACCES`**: la sesión FUSE de Mountpoint sólo atiende a su propio uid salvo que reciba `--allow-other`. La sonda de `rayd` (un `stat` como uid 1000) nunca acierta, el montaje se queda `pending` y a los 10 s es `failed`/`timeout`; `create()` lanza `MountException(code="timeout")` y termina el VM. Con `--allow-other` (lo que ya usaba Q80) el montaje está `mounted` cuando `create()` vuelve |
+| 102 | **S3M-1, S3M-3, S3M-4** (y latencias): lectura/escritura, `pause()`/`resume()` con montaje, `allow_internet_access=False` | Q80: montaje p50 0,117 s como root; ADR-017: `/suspend` no espera a S3 | **Medido 2026-10-02** (`rayito-base-caps` con la `rayd` de Q101, `ReadOnly=false`, prefijo `rayito-e2e-s3-mounts/<uuid>/`): `create()` con un montaje 5,92 s frente a 6,61 s sin él sobre la misma imagen (el montaje se asienta dentro del ruido del arranque) y vuelve con `sbx.mounts == {"/mnt/rw": "mounted"}`; el objeto sembrado antes se lee al instante; `echo > /mnt/rw/out.txt` 0,41 s y aparece en S3; `dd` de 8 MiB 18,6 MB/s; `>>` sobre un fichero existente `EPERM` (Mountpoint no hace append, igual que Q80); `pause()` 1,08 s y `resume()` 0,41 s con el montaje activo, que sigue `mounted` y legible tras `resume`. Con `allow_internet_access=False` el montaje funciona (el tráfico S3 de `mount-s3` va por la clase de egress de sistema `ROOT_EGRESS_CLASS_S3`, que `Health.features.root_egress` anuncia). RSS del daemon 16,2 MB. Suites e2e `test_m15_s3_mounts.py` y `m15-s3-mounts.e2e.test.ts`: **4/4 y 4/4**. S3M-3 mide `pause()` con el montaje vivo, no con S3 cortado (no hay forma de cortar S3 sólo para el daemon sin cortar el plano de control); el diseño no hace esperar a `/suspend` por S3 |
+| 103 | **S3M-2 / SEC-3 y aislamiento**: ¿qué ve y qué puede hacer uid 1000 sobre el daemon, y se respetan la ruta y el prefijo? | Diseño de T20: `environ`/`cmdline` legibles (residual aceptado), daemon no matable, `invalid_path` ante un enlace simbólico | **Medido 2026-10-02**: `cmdline` del daemon legible por uid 1000 (bucket, prefijo y flags; ninguna credencial); **`/proc/<pid>/environ` → `EACCES`** (mejor que el residual documentado: el daemon es uid 990 y uid 1000 no tiene `ptrace` sobre él); `kill -9 <pid>` → `Operation not permitted`; IMDS desde uid 1000 sin respuesta (bloqueo de M6 intacto) mientras uid 990 obtiene las credenciales. `ln -s /usr/local/bin /home/user/x` + `Configure` con `/home/user/x` → montaje `failed`/**`invalid_path`**, ningún `fuse` en `/proc/mounts`, `/usr/local/bin` intacto; `/etc/x` y `/mnt/../etc` → `SECTION_CODE_INVALID`/`invalid_path` sin tocar nada. IAM (`SimulatePrincipalPolicy` sobre el execution role con `RayitoS3MountAccess` de `Prefixes=rayito-e2e-s3-mounts/*`, `ReadOnly=false`): `PutObject`/`GetObject`/`DeleteObject` dentro del prefijo `allowed`, fuera (`rayito-e2e-s3m-outside/…`, `other/…`) **`implicitDeny`**; `ListBucket` con `s3:prefix` fuera del declarado o vacío `implicitDeny` |
+| 104 | **Fallos y apagado**: prefijo denegado por IAM, bucket fuera del allowlist, imagen sin `CAP_SYS_ADMIN`, ciclo de montar/desmontar/relanzar, pila `s3-mounts` | ADR-017: `create()` lanza `MountException`/`UnimplementedError` y termina el VM; `rayd` recoge sus hijos | **Medido 2026-10-02**: prefijo fuera de la política → `MountException(code="iam_denied")` a los 15,3 s de `create()`, VM `TERMINATED`; bucket fuera de `RAYITO_ALLOWED_MOUNT_BUCKETS` → `MountException(code="not_allowed")` (`SECTION_CODE_INVALID`) a los 7,2 s, VM `TERMINATED`; imagen sin caps (la `rayd` previa a Q101; la detección no cambia): `Health.features.s3_mounts` ausente/`false` aunque `mount-s3` y `rayito-mount` estén instalados, `mounts=` → `UnimplementedError` a los 6,4 s, VM `TERMINATED`. 5 ciclos de desmontar (sección vacía, `APPLIED`, 0 montajes FUSE) / montar / cambiar `read_only` / `pause()`+`resume()`: 6 pids de daemon distintos, siempre `mounted`, **0 procesos `<defunct>`**, un único `mount-s3` vivo y un único montaje al final (el zombi por montaje de Q80 no aparece). Sin `mounts=`: ninguna llamada `Configure` en el log de `rayd` y ningún `mount-s3`. `rayito stack deploy s3-mounts` 25 s hasta `CREATE_COMPLETE` con `CAPABILITY_IAM`; la plantilla de 4 huecos con un único prefijo genera 4 ARNs iguales; `destroy` lo borra limpio |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -982,19 +987,27 @@ binario `mount-s3` (Mountpoint for Amazon S3, `awslabs/mountpoint-s3`) que
 `rayd` lanza dentro del guest, y de IMDS, que `mount-s3` consulta por su
 cuenta.
 
-**Distribución del binario**: Mountpoint no está en los repos dnf de
-AL2023; AWS lo publica como RPM/DEB/tar.gz firmado en
-`s3.amazonaws.com/mountpoint-s3-release/<versión>/<arch>/...` (releases de
-`awslabs/mountpoint-s3` en GitHub). `image/Dockerfile` clava la versión
-exacta (`1.24.0`, arm64) y su sha256
+**Distribución del binario**: los repos dnf de AL2023 se quedan en
+`mount-s3` 1.22.3 (Q80); AWS publica cada versión como RPM/DEB/tar.gz
+firmado en `s3.amazonaws.com/mountpoint-s3-release/<versión>/<arch>/...`
+(releases de `awslabs/mountpoint-s3` en GitHub). `image/Dockerfile` clava
+la versión exacta (`1.24.0`, arm64) y su sha256
 (`3636465c56908c7f26182d6f31aaa77e4e145330833863104f4cca0db1788343`,
 calculado sobre el RPM descargado el 2026-10-01), verificado con
-`sha256sum -c` antes de `dnf install` sobre el fichero local — el mismo
+`sha256sum -c` antes de `rpm -i` sobre el fichero local — el mismo
 patrón que `scripts/check_pins.py` exige para el binario de Deno de
-`rayito-base-poly`.
+`rayito-base-poly`. **No `dnf install <fichero>.rpm`**: el `dnf` de
+`al2023-minimal` es `microdnf`, que rechaza un RPM local con
+`error: No package matches '/tmp/mount-s3.rpm'` (Q100); las dependencias
+del RPM (`fuse`, `fuse-libs`; libc/libgcc y `ca-certificates` ya están
+en la base) se instalan antes con `dnf` y `rpm -i` sigue comprobándolas.
 
-**Invocación**: `mount-s3 --foreground <bucket> /dev/fd/3 [--prefix <p>]
-[--read-only | --allow-overwrite --allow-delete]`. `/dev/fd/3` es el
+**Invocación**: `mount-s3 --foreground <bucket> /dev/fd/3 --allow-other
+--uid 1000 --gid 1000 [--prefix <p>] [--read-only | --allow-overwrite
+--allow-delete]`. `--allow-other` es obligatorio aunque las opciones del
+`mount(2)` ya lleven `allow_other`: sin él la sesión FUSE de Mountpoint
+sólo atiende a su propio uid (990) y todo acceso de uid 1000 es `EACCES`
+(Q101). `/dev/fd/3` es el
 descriptor que `rayd` ya adjuntó a `mount_path` con `mount(2)` (ABI de FUSE
 del kernel: `fd=<n>,rootmode=040000,user_id=1000,group_id=1000,allow_other`;
 el destino es `/proc/self/fd/<dirfd>` del directorio abierto componente a
@@ -1039,19 +1052,17 @@ falla a medias deja partes multipart huérfanas facturando almacenamiento
 indefinidamente. La plantilla crea un `AWS::IAM::ManagedPolicy`, así que
 `deploy()` pide `CAPABILITY_IAM`.
 
-**Tamaño de imagen (Q80 de la investigación out-of-scope)**: `fuse`
-(paquete AL2023, permisos/udev de `/dev/fuse`; Mountpoint habla FUSE por sí
-mismo, sin `libfuse`/`fusermount`) + el RPM de `mount-s3`: +22,4 MB
-estimados; una build real confirma la cifra exacta
-(`rpm -q --queryformat '%{SIZE}' mount-s3`) en la aceptación de este
-cambio.
+**Tamaño de imagen (Q100)**: `fuse` + `fuse-libs` (paquetes AL2023,
+1,3 MB) y el RPM de `mount-s3` 1.24.0 de AWS: **72 677 112 B instalados**
+(Q80 estimaba +22,4 MB con el paquete 1.22.3 de AL2023, que ocupa 6,4×
+menos).
 
-**Medido, pendiente de aceptación en AWS real** (S3M-1..S3M-4, numeración
-real desde Q95 en la aceptación serializada): montaje de lectura y
-escritura, que uid 1000 no pueda leer el entorno ni matar el daemon,
-`/suspend` con S3 inalcanzable, funcionamiento con
-`allow_internet_access=False`, ausencia de `<defunct>` tras un ciclo de
-montar/desmontar/relanzar.
+**Medido en AWS real (2026-10-02, Q100–Q104)**: lectura y escritura,
+`create()` que sólo vuelve con cada montaje `mounted`, uid 1000 sin acceso
+a `environ` ni a matar el daemon, `invalid_path` ante un enlace simbólico,
+`pause()`/`resume()` con el montaje vivo, `allow_internet_access=False`,
+`MountException`/`UnimplementedError` con el VM terminado y 0 procesos
+`<defunct>` tras cinco ciclos de montar/desmontar/relanzar.
 
 ## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
 

@@ -114,6 +114,14 @@ follows that established pin-by-version-and-sha256,
 
 ## What only the AWS acceptance stage can confirm
 
+Confirmed in the serialized AWS acceptance on 2026-10-02 (`AWS_API_NOTES.md`
+Q100–Q104). Two defects surfaced there and are fixed in this change: the
+image's `dnf` is `microdnf`, which cannot install a local RPM (now
+`rpm -i` after `dnf install fuse fuse-libs`, Q100), and `mount-s3` needs
+`--allow-other` or its FUSE session answers only uid 990 and the guest
+gets `EACCES` (Q101). Installed size is 72 677 112 B for `mount-s3`
+1.24.0, not Q80's +22.4 MB (that was AL2023's 1.22.3 package).
+
 - The exact installed-size delta of the new image layer (Q80 estimated
   +22.4 MB).
 - S3M-1..S3M-4 (read/write mounts, SEC-3's uid-1000 boundary, `/suspend`
