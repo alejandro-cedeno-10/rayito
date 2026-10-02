@@ -1411,12 +1411,13 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   repitiendo nada. Sin caché de capas, sólo ARM64, sólo `from_base_image()`
   compone de verdad. El lado del agente (`rayd` leyendo
   `/etc/rayito/template.json` y arrancando/sondeando el `start_cmd`) queda
-  como seguimiento no bloqueante: el disco de 58 GB de la VM compartida de
-  pruebas estuvo a 0 bytes libres durante toda la construcción en paralelo
-  de las ocho funciones de 0.6, así que ningún `cargo test`/`build` de
-  `rayd`/`rayd-core` pudo verificarse en esta sesión más allá del dominio
-  puro de `rayd-core::template` (compilación no confirmada por el mismo
-  motivo).
+  como seguimiento no bloqueante (misma integración con
+  `ProcessSpawner`/`ChildRegistry` que ya quedó pendiente para el reaper de
+  huérfanos de foundations); el dominio puro nuevo (`rayd_core::template`)
+  sí compila, pasa `cargo test --workspace` y clippy pedantic, verificado
+  por la CI de la PR (el disco de 58 GB de la VM Lima compartida estuvo en
+  0 bytes libres durante buena parte de la sesión por los
+  `CARGO_TARGET_DIR` acumulados de las ocho ramas en paralelo).
 - **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
   loopback.
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre

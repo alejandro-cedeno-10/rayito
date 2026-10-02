@@ -1869,10 +1869,10 @@ build concurrente en el mismo proceso antes de llamar a AWS.
 `setStartCmd()`/`set_start_cmd()` hornea `/etc/rayito/template.json`
 (`rayito.template/1`, dominio compartido en `rayd_core::template`); el
 lado del agente que lo lee y arranca/sondea el proceso queda como
-seguimiento no bloqueante (ver `openspec/changes/m15-templates/proposal.md`),
-deliberadamente no incluido en este cambio por la falta de espacio en el
-disco compartido de la VM de pruebas durante la construcción paralela de
-las ocho funciones de 0.6.
+seguimiento no bloqueante (ver `openspec/changes/m15-templates/proposal.md`):
+necesita la misma integración con `ProcessSpawner`/`ChildRegistry` que ya
+quedó pendiente para el reaper de huérfanos de `v06-foundations`, así que
+no entra de pasada junto a otros dieciséis ficheros nuevos.
 
 **Consecuencias.** Divergencias documentadas: sin caché de capas entre
 builds (0.6 no tiene una; `skip_cache()` sólo fuerza `force=True`); sólo

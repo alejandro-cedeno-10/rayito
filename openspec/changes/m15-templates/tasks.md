@@ -5,10 +5,17 @@
       unit-tested (JSON round-trip, the SDK's actual JSON shape, the
       retry/fail/ok decision table).
 - [x] 1.2 `crates/rayd-core/src/lib.rs`: `pub mod template;`.
-- [ ] 1.3 `cargo test -p rayd-core` inside the Lima VM. **Blocked this
-      session**: the shared VM's 58 GB disk was at 0 bytes free for the
-      whole session (see `proposal.md`'s non-blocking follow-ups). Needs a
-      follow-up run once disk is available.
+- [x] 1.3 `cargo fmt --all --check`, `cargo clippy --workspace
+      --all-targets --locked -- -D warnings` and `cargo test --workspace`
+      all clean — verified by the PR's own CI (`lint + test (x86_64)`,
+      `Analyze (rust)`, `rayd aarch64-unknown-linux-musl`), not inside the
+      Lima VM: the shared VM's 58 GB disk was at 0 bytes free for most of
+      this session (every sibling M15 branch has its own multi-GB
+      `CARGO_TARGET_DIR`), so `cargo` could not be bootstrapped there in
+      time; CI caught and this change fixed two real issues this way (a
+      `cargo fmt` line-length diff, and `Duration::from_secs_f64` panicking
+      on non-finite input, replaced with the non-panicking
+      `try_from_secs_f64`).
 - [ ] 1.4 (deferred, see `proposal.md`) `rayd` adapters
       (`adapters/fs_template_spec.rs`, `adapters/shell_ready_probe.rs`),
       `features/template_start.rs` real slot, `TemplateParticipant`

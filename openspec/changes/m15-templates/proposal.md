@@ -97,16 +97,17 @@ control plane of its own) is what this change builds.
   `features/template_start.rs`'s stub docstring already names as "a
   template's `ready_cmd` is a natural `LifecycleParticipant::ready_gate`"
   — and actually spawning `start_cmd` as a managed, `commands.list`-visible
-  process) is deferred. Two reasons: (1) the shared Lima VM used for
-  `cargo test` was at 0 bytes free for the whole of this session (every
-  sibling M15 feature branch has its own multi-GB `CARGO_TARGET_DIR` on
-  the same 58 GB disk), so no `rayd`/`rayd-core` compilation could be
-  verified at all, and shipping unverified `rayd` adapter code touching
-  shared process-management internals is a worse outcome than deferring
-  it; (2) wiring a managed, supervised `start_cmd` needs the same
-  `ProcessSpawner`/`ChildRegistry` integration foundations' own
-  orphan-reaper deferral already flagged as its own focused piece of work,
-  not something to bundle in as a drive-by. Until this lands, an image
+  process) is deferred: wiring a managed, supervised `start_cmd` needs the
+  same `ProcessSpawner`/`ChildRegistry` integration foundations' own
+  orphan-reaper deferral already flagged as its own focused piece of work
+  (touching shared process-management adapters used by the whole agent
+  lifecycle), not something to bundle in as a drive-by alongside sixteen
+  other new files. (`rayd_core::template` itself — the pure domain this
+  deferred work would build on — compiles, passes `cargo test
+  --workspace` and clippy pedantic cleanly, verified by this PR's own CI;
+  the shared Lima VM's disk was at 0 bytes free for most of this session,
+  so that verification happened in CI rather than locally, see below.)
+  Until this lands, an image
   built with `setStartCmd()` bakes `/etc/rayito/template.json` correctly,
   but nothing on the agent side reads it yet: `rayd` boots exactly as it
   does for an image with no template (TPL-15's "survives suspend/resume"
@@ -117,13 +118,17 @@ control plane of its own) is what this change builds.
   `create-microvm-image` -> log-based failure path end to end (steps 1 and
   2 of the plan below), but not a `setStartCmd()` image's actual
   start/ready behavior inside a launched sandbox (step 4).
-- **Disk-space cross-cutting risk.** The Lima VM's 58 GB disk was
-  completely exhausted by the combined `CARGO_TARGET_DIR`s of the sibling
-  M15 feature branches during this session (`efs-volumes`, `rayd-otlp`,
-  `secrets-gateway` each over 10 GB). Flagged for the maintainer/
-  orchestrator: either a larger disk, a shared `CARGO_TARGET_DIR` with
-  `sccache`, or pruning finished branches' target dirs before the next
-  round of parallel Rust work.
+- **Disk-space cross-cutting risk (observed, since resolved for this PR).**
+  The Lima VM's 58 GB disk was completely exhausted by the combined
+  `CARGO_TARGET_DIR`s of the sibling M15 feature branches for most of this
+  session (`efs-volumes`, `rayd-otlp`, `secrets-gateway` each over 10 GB;
+  it recovered to 11 GB free later in the session as sibling builds
+  finished and freed their own space). This PR's own Rust change ended up
+  verified by the PR's CI instead of locally for that reason. Flagged for
+  the maintainer/orchestrator regardless, since it will recur with the
+  next round of parallel Rust work: either a larger disk, a shared
+  `CARGO_TARGET_DIR` with `sccache`, or pruning finished branches' target
+  dirs between rounds.
 
 ## Impact
 
