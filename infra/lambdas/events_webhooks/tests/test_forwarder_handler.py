@@ -83,9 +83,9 @@ def test_reads_the_stack_key_the_template_names(
         _subscription_event(_line(event_id="evt-1", kind="created", occurred_at_ms=1)), None
     )
     assert result == {"accepted": 1, "rejected": 0}
-    assert secrets.requested_secret_ids == [template_environment("ForwarderFunction")[
-        "STACK_KEY_SECRET_ID"
-    ]]
+    assert secrets.requested_secret_ids == [
+        template_environment("ForwarderFunction")["STACK_KEY_SECRET_ID"]
+    ]
     assert table.items[(f"STATE#{SANDBOX_ID}", "STATE")]["last_kind"] == "created"
 
 
@@ -115,3 +115,20 @@ def test_a_duplicate_line_does_not_move_the_state(
     )
     forwarder.handler(_subscription_event(paused), None)  # CloudWatch Logs redelivery
     assert table.items[(f"STATE#{SANDBOX_ID}", "STATE")]["last_kind"] == "resumed"
+
+
+def test_logs_one_summary_line_with_counts_and_reasons_only(
+    wired: tuple[FakeTable, _FakeSecretsClient], capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = _line(event_id="evt-1", kind="created", occurred_at_ms=1)
+    forged = good.rsplit(" ", 1)[0] + " " + _b64(b"\x00" * 32)
+    result = forwarder.handler(_subscription_event(good, forged, "rayito.event.v1 garbage"), None)
+
+    assert result == {"accepted": 1, "rejected": 2}
+    (line,) = capsys.readouterr().out.splitlines()
+    assert json.loads(line) == {
+        "forwarded": 1,
+        "rejected": 2,
+        "rejected_by_reason": {"mac_invalid": 1, "malformed_line": 1},
+    }
+    assert SANDBOX_ID not in line

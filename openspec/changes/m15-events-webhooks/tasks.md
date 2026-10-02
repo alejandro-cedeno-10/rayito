@@ -48,7 +48,7 @@
 
 ## 6. AWS acceptance (separate, serialized stage — not run by this agent)
 
-- [ ] 6.1 CP-4: does `/terminate` arrive for a VM in RUNNING and in SUSPENDED (max duration 180 s)?
-- [ ] 6.2 CP-5: do lines written inside `/suspend` reach CloudWatch, and at what latency to the Lambda? Also confirms/corrects the forwarder's log-stream-naming assumption (§25).
-- [ ] 6.3 End-to-end: deploy the stack, a Function URL receiver, create → pause → resume → kill, 4 signed deliveries, a forged unsigned line dropped, a platform timeout synthesized by the reconciler, `get_events` ordering, destroy (secret force-deleted).
+- [x] 6.1 CP-4 (Q105: RUNNING yes, also on max-duration expiry as `killed{request}`; SUSPENDED no, reconciler covers it): does `/terminate` arrive for a VM in RUNNING and in SUSPENDED (max duration 180 s)?
+- [x] 6.2 CP-5 (Q106: `paused` ingested 226 ms after emission, before the freeze; stream `YYYY/MM/DD[<imageVersion>]<microvmId>`, forwarder check tightened): do lines written inside `/suspend` reach CloudWatch, and at what latency to the Lambda? Also confirms/corrects the forwarder's log-stream-naming assumption (§25).
+- [x] 6.3 End-to-end (2026-10-02; the platform timeout came through `/terminate`, the reconciler path was exercised by a kill while suspended; forwarder/reconciler summary log lines added, Q107; `--tag` for tag-policy accounts, Q108): deploy the stack, a Function URL receiver, create → pause → resume → kill, 4 signed deliveries, a forged unsigned line dropped, a platform timeout synthesized by the reconciler, `get_events` ordering, destroy (secret force-deleted).
 - [ ] 6.4 Cleanup: remove the receiver and the stack; budget cap $0.50 (§8 of the architecture).

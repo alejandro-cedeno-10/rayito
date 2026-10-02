@@ -76,10 +76,14 @@ same `FeatureSet`, and the first participant with work on `/resume` and
 
 ## Risks
 
-- **Log-stream-naming assumption (CP-5).** The forwarder's "sandbox_id
-  appears in the log stream name" check is not measured against a real
-  Lambda MicroVM's CloudWatch log stream yet — flagged in `AWS_API_NOTES.md`
-  §25 as the first thing the AWS acceptance stage should confirm.
+- **Log-stream naming (CP-5), measured.** The stream is
+  `YYYY/MM/DD[<imageVersion>]<microvmId>` (`AWS_API_NOTES.md` Q106); the
+  forwarder now requires it to end in `]<sandbox_id>` instead of the
+  original substring check.
+- **A sandbox killed while suspended gets no `/terminate`** (Q105): its
+  `killed{unknown}` comes only from the reconciler, up to one interval
+  late. A run-time `maximumDurationInSeconds` expiry *does* reach
+  `/terminate`, reported as `killed{request}` (the hook carries no reason).
 - **Reconciler only ever reports `unknown`, never `timeout`.** A consumer
   distinguishing the two in `get_events()`/webhook payloads will see fewer
   `timeout` events than the architecture originally described; documented

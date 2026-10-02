@@ -33,7 +33,10 @@ versionado [SemVer](https://semver.org/lang/es/).
   AWS llegan como `WebhookError` con sólo el código (`awsCode`). `events` en
   `Sandbox.create()` valida el tipo y que `logging` llegue a CloudWatch, y
   sigue lanzando `UnimplementedError` hasta que `create()` envíe la sección
-  tras `run-microvm` (ADR-020).
+  tras `run-microvm` (ADR-020). Aceptado en AWS real (`AWS_API_NOTES.md`
+  Q105–Q108); el `.gen.ts` lleva el código Lambda actualizado (comprobación
+  exacta del log stream y una línea JSON por invocación del forwarder y del
+  reconciliador).
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

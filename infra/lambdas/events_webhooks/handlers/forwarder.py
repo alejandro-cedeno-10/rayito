@@ -11,6 +11,7 @@ import base64
 import gzip
 import json
 import os
+from collections import Counter
 from typing import Any, Final
 
 import boto3
@@ -51,7 +52,7 @@ def handler(event: dict[str, Any], _context: object) -> dict[str, int]:
     stack_key = _secrets_singleton().read(os.environ[STACK_KEY_SECRET_ENV])
     store = _store_singleton()
     accepted = 0
-    rejected = 0
+    rejected: Counter[str] = Counter()
     for log_event in record.get("logEvents", []):
         message = log_event.get("message", "")
         if not message.startswith(LINE_TOKEN):
@@ -64,5 +65,24 @@ def handler(event: dict[str, Any], _context: object) -> dict[str, int]:
                 store.record_sandbox_state(decision.event)
             accepted += 1
         else:
-            rejected += 1
-    return {"accepted": accepted, "rejected": rejected}
+            rejected[decision.reason] += 1
+    _log_summary(accepted, rejected)
+    return {"accepted": accepted, "rejected": rejected.total()}
+
+
+def _log_summary(accepted: int, rejected: Counter[str]) -> None:
+    """One structured line per invocation: the counts and the closed
+    `REASON_*` strings only — never the line, the sandbox id or the MAC.
+    The return value of a CloudWatch Logs-invoked Lambda is not logged
+    anywhere, so without this a forged or malformed line is invisible
+    (AWS_API_NOTES.md §25, Q107)."""
+    print(
+        json.dumps(
+            {
+                "forwarded": accepted,
+                "rejected": rejected.total(),
+                "rejected_by_reason": dict(rejected),
+            },
+            sort_keys=True,
+        )
+    )

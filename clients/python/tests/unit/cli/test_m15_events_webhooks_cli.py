@@ -94,6 +94,52 @@ def test_deploy_forwards_its_arguments(runner: CliRunner, fake_events: FakeLifec
     assert fake_events.calls[0][0] == "deploy"
     assert fake_events.calls[0][1]["artifact_bucket"] == "mi-bucket"
     assert fake_events.calls[0][1]["log_group_name"] == "/rayito/rayito-base"
+    assert fake_events.calls[0][1]["tags"] == {}
+
+
+def test_deploy_forwards_repeated_tags(runner: CliRunner, fake_events: FakeLifecycleEvents) -> None:
+    # Measured in acceptance (AWS_API_NOTES.md §25, Q108): an organization
+    # tag policy can deny `sqs:CreateQueue`/`lambda:CreateFunction` without
+    # them, so the stack's own tags must be settable from the CLI too.
+    result = runner.invoke(
+        app,
+        [
+            "events",
+            "deploy",
+            "--artifact-bucket",
+            "mi-bucket",
+            "--log-group-name",
+            "/rayito/rayito-base",
+            "--tag",
+            "Owner=equipo",
+            "--tag",
+            "Environment=testing",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_events.calls[0][1]["tags"] == {"Owner": "equipo", "Environment": "testing"}
+
+
+def test_deploy_rejects_a_tag_without_equals(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "events",
+            "deploy",
+            "--artifact-bucket",
+            "b",
+            "--log-group-name",
+            "/g",
+            "--tag",
+            "x",
+            "--yes",
+        ],
+    )
+    assert result.exit_code != 0
+    assert fake_events.calls == []
 
 
 def test_deploy_without_yes_asks_for_confirmation(

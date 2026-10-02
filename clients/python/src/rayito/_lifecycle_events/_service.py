@@ -111,7 +111,9 @@ class LifecycleEvents:
             sobre la tabla y su índice, `DescribeStacks` sobre la pila y
             `GetSecretValue` sobre la clave del stack.
         Cómo apagarla: `destroy()` (fuerza el borrado del secreto: cualquier
-            webhook registrado deja de poder verificarse).
+            webhook registrado deja de poder verificarse); desvincula antes
+            `EventsOperatorPolicy` de quien la tenga, o la pila acaba en
+            `DELETE_FAILED` (AWS_API_NOTES.md Q108).
         Ejemplo:
             ev = LifecycleEvents()
             ev.deploy(artifact_bucket="mi-bucket", log_group_name="/rayito/rayito-base")
@@ -140,7 +142,10 @@ class LifecycleEvents:
         tabla con todos sus eventos y webhooks, las tres Lambdas, la
         suscripción, la cola de fallos y el scheduler. No toca los secretos
         de cada webhook (`rayito/webhooks/...`, de `SecretStore`) ni el log
-        group de la imagen, que esta pila nunca creó."""
+        group de la imagen, que esta pila nunca creó. Si `EventsOperatorPolicy`
+        sigue vinculada a algún usuario o rol, CloudFormation no puede
+        borrarla y la pila termina en `DELETE_FAILED` (`StackException`):
+        desvincúlala y repite (AWS_API_NOTES.md Q108)."""
         self._stacks.destroy(_COMPONENT, stack_name=self._stack_name, wait=wait)
 
     # -- Webhooks ----------------------------------------------------------

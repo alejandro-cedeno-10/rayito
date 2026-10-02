@@ -20,7 +20,7 @@ from rayito._stacks._model import StackComponent
 from rayito._stacks._registry import component_by_name
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._session import clients_of, json_mode
-from rayito.cli.stack import confirm_deploy, confirm_destroy
+from rayito.cli.stack import confirm_deploy, confirm_destroy, parse_pairs
 
 #: `events-webhooks`'s own `StackComponent`, the same one `rayito stack
 #: deploy events-webhooks` resolves by name: `confirm_deploy`/
@@ -49,14 +49,24 @@ def deploy_command(
         int, typer.Option("--reconciler-interval-minutes")
     ] = DEFAULT_RECONCILER_INTERVAL_MINUTES,
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
+    tag: Annotated[
+        list[str],
+        typer.Option(
+            "--tag",
+            help="Etiqueta K=V de la pila y de sus recursos; repetible (cuentas cuya "
+            "política de organización exige etiquetas al crear SQS/Lambda).",
+        ),
+    ] = [],  # noqa: B006
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
     ev = _events(ctx, stack_name)
+    tags = parse_pairs(tag, option="--tag")
     confirm_deploy(ctx, _COMPONENT, yes=yes)
     status = ev.deploy(
         artifact_bucket=artifact_bucket,
         log_group_name=log_group_name,
         reconciler_interval_minutes=reconciler_interval_minutes,
+        tags=tags,
     )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})

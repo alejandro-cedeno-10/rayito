@@ -35,17 +35,22 @@ tus webhooks con la firma de E2B.
     - **Cómo apagarla**: deja de pasar `events=`; `destroy()` borra el
       secreto (force-delete: cualquier webhook registrado deja de poder
       verificarse), la tabla, las tres Lambdas, la suscripción, la cola y el
-      scheduler. Los secretos de cada webhook (`rayito/webhooks/...`) y el
-      log group de la imagen se conservan: esta pila no los creó.
+      scheduler. Desvincula antes `EventsOperatorPolicy` de los usuarios y
+      roles a los que la vinculaste: si no, CloudFormation no puede borrarla
+      y la pila queda en `DELETE_FAILED`. Los secretos de cada webhook
+      (`rayito/webhooks/...`), el log group de la imagen y los log groups
+      `/aws/lambda/rayito-events-webhooks-*` que crean las propias Lambdas se
+      conservan: bórralos aparte si ya no los quieres.
 
-!!! warning "Pendiente de aceptación en AWS real; hueco de integración conocido"
-    La pila, los webhooks, `get_events` y el lado de `rayd` están
-    implementados y probados con fakes. `Sandbox.create(events=...)` todavía
-    **no**: valida la opción (un `LifecycleEvents` y `logging` con
-    CloudWatch) y lanza `UnimplementedError`, porque `create()` aún no envía
-    la sección de `ConfigureSandbox` tras `run-microvm` (necesita
-    `sandbox_id`). Hasta entonces ningún sandbox emite eventos. Ver ADR-020
-    en `ARCHITECTURE.md`.
+!!! warning "Hueco de integración conocido"
+    La pila, los webhooks, `get_events` y el lado de `rayd` pasaron la
+    aceptación en AWS real (2026-10-02, `AWS_API_NOTES.md` Q105–Q108) con la
+    sección de `ConfigureSandbox` enviada a mano. `Sandbox.create(events=...)`
+    todavía **no** la envía: valida la opción (un `LifecycleEvents` y
+    `logging` con CloudWatch) y lanza `UnimplementedError`, porque `create()`
+    aún no manda secciones tras `run-microvm` (necesita `sandbox_id`). Hasta
+    entonces ningún sandbox creado por el SDK emite eventos. Ver ADR-020 en
+    `ARCHITECTURE.md`.
 
 ## Cuándo usarlo
 
@@ -97,6 +102,7 @@ Lambdas):
 
     ```bash
     rayito events deploy --artifact-bucket mi-bucket --log-group-name /rayito/rayito-base
+    # si tu organización exige etiquetas al crear recursos: --tag Owner=mi-equipo --tag Environment=dev
     rayito events webhook add https://hooks.example.com/rayito --secret-name mi-webhook --type sandbox.lifecycle.killed
     rayito events list --limit 10
     ```
@@ -108,9 +114,15 @@ Lambdas):
    deriva el SDK: `HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)`.
    `rayd` nunca ve `stack_key`.
 2. Una suscripción de CloudWatch Logs reenvía cada línea a un forwarder
-   Lambda, que re-deriva `k_sbx`, comprueba que el `sandbox_id` coincide con
-   el log stream de origen, verifica el MAC (tiempo constante) y escribe el
-   evento de forma idempotente en DynamoDB (TTL 7 días).
+   Lambda, que re-deriva `k_sbx`, comprueba que el log stream de origen
+   (`YYYY/MM/DD[<versión>]<microvmId>`) termina en el `sandbox_id` del
+   evento, verifica el MAC (tiempo constante) y escribe el evento de forma
+   idempotente en DynamoDB (TTL 7 días). Cada invocación deja una línea JSON
+   en su log con cuántas líneas aceptó y rechazó y por qué
+   (`mac_invalid`, `sandbox_mismatch`, `malformed_line`). Medido: la línea
+   `paused` llega a CloudWatch antes de que la VM se congele, y un evento
+   tarda de 0,3 a 4 s en llegar a la tabla (10–14 s el primero, con el
+   forwarder en frío).
 3. Un deliverer (disparado por el stream de DynamoDB) entrega el evento a
    cada webhook suscrito a ese tipo, firmado al estilo E2B, con un guardián
    SSRF y hasta 3 intentos (sólo ante 5xx o error de red; un 4xx es la
@@ -121,7 +133,12 @@ Lambdas):
 4. Un reconciliador (cada `reconciler_interval_minutes`) compara
    `ListMicrovms` con los sandboxes que la tabla aún considera abiertos y
    sintetiza `killed{reason: "unknown"}`, con la generación y la imagen de
-   su último evento, para los que ya no aparecen.
+   su último evento, para los que ya no aparecen. Es el único `killed` de
+   un sandbox matado mientras estaba **pausado**: la plataforma no llama a
+   `/terminate` de un MicroVM suspendido, así que ese evento llega con hasta
+   un intervalo de retraso. Un sandbox que agota su `timeout` en marcha sí
+   pasa por `/terminate`, y su evento llega con `kill_reason: "request"`
+   (el hook no dice por qué muere la VM).
 
 ## Opciones de `LifecycleEvents`
 
@@ -130,7 +147,7 @@ Lambdas):
 | `stack_name` | `stackName` | `"rayito-events-webhooks"` | nombre de la pila |
 | `region` | `region` | la de la sesión | región de la pila |
 | `session` | `credentials` | la sesión por defecto | credenciales de AWS |
-| `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes })` | 5 minutos (mínimo 2) | despliega la pila |
+| `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=, tags=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes, tags })` | 5 minutos (mínimo 2); sin etiquetas | despliega la pila; `tags` se propagan a sus recursos |
 | `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
 | `get_events(sandbox_id=, types=, limit=, order=)` | `getEvents({ sandboxId, types, limit, order })` | `limit=100` (1–100), `order="desc"` | lee directamente de tu tabla DynamoDB; filtra `types` en DynamoDB y pagina hasta reunir `limit` |
 
@@ -142,6 +159,10 @@ Lambdas):
 | `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` | corrige el argumento antes de reintentar |
 | `UnimplementedError` | `UnimplementedError` | `events=` válido en `Sandbox.create()` (todavía no se envía su sección) | usa la fachada `LifecycleEvents` mientras tanto |
 | `StackException` | `StackError` | `deploy`/`destroy` de la pila falló (código `blocked`/`not_found`/`failed`) | ver [Pilas opcionales](pilas-opcionales.md) |
+| `StackException` (`failed`, la pila en `ROLLBACK_COMPLETE`) | `StackError` | una SCP o política de etiquetas de tu organización denegó `sqs:CreateQueue`/`lambda:CreateFunction` sin ciertas etiquetas | borra la pila fallida (`destroy()`) y repite `deploy(tags={...})` (CLI: `--tag K=V`) con las claves y valores que exige tu organización |
+| `StackException` (`failed`, la pila en `DELETE_FAILED`) | `StackError` | `destroy()` con `EventsOperatorPolicy` aún vinculada a un usuario o rol | desvincula la política y repite `destroy()` |
+| `InvalidArgumentException` desde `run-microvm` ("Logging cannot be enabled without providing executionRoleArn") | `InvalidArgumentError` | `logging="cloudwatch"` sin `execution_role_arn` | pasa un rol de ejecución con permiso de escritura en el log group de la imagen |
+| ningún evento en la tabla | — | el log group de `deploy(log_group_name=)` no es el de la imagen, o el forwarder rechaza las líneas | mira la línea JSON del forwarder (`rejected_by_reason`) en su log |
 
 ## Diferencias con E2B
 

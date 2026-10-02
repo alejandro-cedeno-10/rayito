@@ -1857,7 +1857,8 @@ evento se descarta y se cuenta (`random_unavailable`) en vez de emitir un
 
 Una suscripción de CloudWatch Logs reenvía cada línea a un Lambda
 *forwarder*, que re-deriva `k_sbx` del secreto del stack, comprueba que el
-`sandbox_id` de la línea coincide con el *log stream* de origen y escribe
+*log stream* de origen termina en el `sandbox_id` de la línea
+(`YYYY/MM/DD[<versión>]<microvmId>`, Q106) y escribe
 el evento, de forma idempotente, en una tabla DynamoDB (TTL 7 días). Sólo un
 evento nuevo mueve la fila `STATE#` del sandbox, y sólo hacia delante
 (escritura condicional sobre `last_seen_ms`); `killed` la deja como lápida

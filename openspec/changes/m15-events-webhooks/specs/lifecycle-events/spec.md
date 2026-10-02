@@ -33,7 +33,7 @@ On `/suspend` and `/terminate`, a configured `rayd` SHALL wait until the `paused
 - **THEN** the participant returns after exactly its share, reporting `timed_out`
 
 ### Requirement: The forwarder verifies the MAC and the sandbox identity before writing
-The forwarder Lambda SHALL re-derive `k_sbx = HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` from the stack-wide secret, using the `sandbox_id` carried inside the event JSON, and SHALL reject (count, never write) any line whose MAC does not match, in constant time, or whose `sandbox_id` does not appear in the CloudWatch Logs stream the line arrived on. Accepted events SHALL be written idempotently (a repeated `event_id` SHALL NOT create a second row or a Lambda error).
+The forwarder Lambda SHALL re-derive `k_sbx = HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` from the stack-wide secret, using the `sandbox_id` carried inside the event JSON, and SHALL reject (count, never write) any line whose MAC does not match, in constant time, or whose `sandbox_id` is not the microVM id that ends the CloudWatch Logs stream the line arrived on (`YYYY/MM/DD[<imageVersion>]<microvmId>`, measured in `AWS_API_NOTES.md` Q106). Accepted events SHALL be written idempotently (a repeated `event_id` SHALL NOT create a second row or a Lambda error). Each forwarder invocation SHALL log one structured line with the accepted count, the rejected count and the rejected count per closed reason, and SHALL NOT log the line, the `sandbox_id` or the MAC; each reconciler run SHALL log how many events it synthesized.
 
 #### Scenario: a forged line is dropped
 - **WHEN** a line's JSON is modified after the MAC was computed
@@ -42,6 +42,10 @@ The forwarder Lambda SHALL re-derive `k_sbx = HMAC-SHA256(stack_key, "rayito.eve
 #### Scenario: a sandbox cannot claim another sandbox's identity
 - **WHEN** a line's own derivable MAC is valid for its key but its `sandbox_id` field does not match the log stream it arrived on
 - **THEN** the forwarder rejects it
+
+#### Scenario: rejections are visible in the forwarder's log
+- **WHEN** an invocation accepts one line and rejects one forged and one malformed line
+- **THEN** its log holds one line `{"forwarded": 1, "rejected": 2, "rejected_by_reason": {"mac_invalid": 1, "malformed_line": 1}}` and no part of the rejected lines
 
 ### Requirement: The deliverer signs deliveries E2B-compatibly and blocks SSRF
 The deliverer SHALL sign each webhook request with `e2b-webhook-id`, `e2b-delivery-id`, `e2b-signature-version: v1` and `e2b-signature` (base64 without padding of `sha256(secret + payload)`), SHALL only ever connect over `https://`, SHALL NOT follow redirects, and SHALL resolve the target hostname, classify every candidate address, and connect only to one address already classified as safe — never re-resolving at connect time. It SHALL reject (not deliver, not retry) loopback, private, link-local (including the IMDS address), multicast, reserved and CGNAT (100.64.0.0/10) addresses. It SHALL attempt a delivery at most 3 times with backoff, retrying only a 5xx answer or a transport error, and SHALL read at most 64 KiB of any response. It SHALL record each (event, webhook) pair as `attempting` before the first attempt and `delivered` or `failed` after; only a `delivered` pair SHALL be skipped when its at-least-once trigger hands it the same event again, so a delivery is never lost to a crash or timeout and never repeated once delivered. It SHALL fit every attempt and backoff into the invocation's remaining time and, when that runs out, report the unfinished record as a batch item failure.

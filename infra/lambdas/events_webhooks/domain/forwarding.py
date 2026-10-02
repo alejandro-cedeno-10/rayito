@@ -8,6 +8,7 @@ is unit tested without a CloudWatch Logs payload or a real table.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 from domain.event import LifecycleEvent, MalformedEventLine, parse_event_line
 from domain.mac import derive_sandbox_key, verify_mac
@@ -17,6 +18,11 @@ from domain.mac import derive_sandbox_key, verify_mac
 REASON_MALFORMED = "malformed_line"
 REASON_MAC_INVALID = "mac_invalid"
 REASON_SANDBOX_MISMATCH = "sandbox_mismatch"
+
+#: A Lambda MicroVM image's log stream is `YYYY/MM/DD[<imageVersion>]<microvmId>`
+#: (measured, AWS_API_NOTES.md §25, Q106): the microVM id is everything
+#: after the closing bracket.
+LOG_STREAM_ID_SEPARATOR: Final = "]"
 
 
 @dataclass(frozen=True)
@@ -33,9 +39,9 @@ Decision = Accepted | Rejected
 
 
 def decide(*, log_stream: str, message: str, stack_key: bytes) -> Decision:
-    """`log_stream` must contain the event's own `sandbox_id` (the image's
-    CloudWatch Logs stream is named after the microVM, `AWS_API_NOTES.md`
-    §25) — this is what stops a sandbox from forging another sandbox's
+    """`log_stream` must end in `]<sandbox_id>` (the image's CloudWatch
+    Logs stream is named after the microVM, `AWS_API_NOTES.md` §25, Q106)
+    — this is what stops a sandbox from forging another sandbox's
     events even though it technically could compute *a* valid MAC for
     itself: the id in the signed payload and the id the log stream proves
     it came from must agree."""
@@ -47,14 +53,11 @@ def decide(*, log_stream: str, message: str, stack_key: bytes) -> Decision:
         event = LifecycleEvent.from_json_bytes(payload)
     except (KeyError, ValueError):
         return Rejected(REASON_MALFORMED)
-    # The exact log stream name of a Lambda MicroVM image is CP-5 in
-    # AWS_API_NOTES.md §25 — not measured yet, so this stays a substring
-    # check rather than an exact parse of an unconfirmed format (the MAC
-    # below is what actually authenticates the event; this is defence in
-    # depth). An empty `sandbox_id` is rejected unconditionally regardless:
-    # it is a substring of every string, so it would otherwise "match" any
-    # log stream at all.
-    if not event.sandbox_id or event.sandbox_id not in log_stream:
+    # An empty `sandbox_id` is rejected unconditionally: `endswith` would
+    # otherwise accept it against any stream that ends in the separator.
+    # The MAC below is what actually authenticates the event; this is
+    # defence in depth.
+    if not event.sandbox_id or not log_stream.endswith(LOG_STREAM_ID_SEPARATOR + event.sandbox_id):
         return Rejected(REASON_SANDBOX_MISMATCH)
     key = derive_sandbox_key(stack_key, event.sandbox_id)
     if not verify_mac(key, payload, mac):

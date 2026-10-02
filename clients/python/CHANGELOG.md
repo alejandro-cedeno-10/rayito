@@ -37,7 +37,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   que `logging` llegue a CloudWatch, y sigue lanzando `UnimplementedError`
   hasta que `create()` envíe la sección tras `run-microvm` (ADR-020); sin
   `events=`, ni un cliente DynamoDB/Secrets Manager nuevo ni una llamada
-  `ConfigureSandbox`.
+  `ConfigureSandbox`. `rayito events deploy --tag K=V` (repetible) para
+  cuentas cuya organización exige etiquetas al crear recursos. Aceptado en
+  AWS real (`AWS_API_NOTES.md` Q105–Q108): el forwarder exige que el log
+  stream termine en `]<sandbox_id>` (formato medido) y el forwarder y el
+  reconciliador dejan una línea JSON por invocación con lo que aceptaron,
+  rechazaron (por motivo) o sintetizaron.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

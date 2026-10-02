@@ -17,6 +17,7 @@ template also sets `AWS_DATA_PATH` to the same directory.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -71,7 +72,11 @@ def reconcile_window_ms() -> int:
 
 
 def handler(_event: dict[str, Any], _context: object) -> dict[str, int]:
-    return {"synthesized": reconcile(_store_singleton(), _lister_singleton())}
+    synthesized = reconcile(_store_singleton(), _lister_singleton())
+    # The Scheduler discards the return value: this line is the only
+    # record of what a run did (AWS_API_NOTES.md §25, Q107).
+    print(json.dumps({"synthesized": synthesized}))
+    return {"synthesized": synthesized}
 
 
 def reconcile(store: EventStore, lister: MicrovmLister) -> int:

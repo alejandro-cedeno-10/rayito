@@ -34,7 +34,9 @@ def _template_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RECONCILER_INTERVAL_MINUTES", str(_INTERVAL_MINUTES))
 
 
-def _store_with_open_sandbox(sandbox_id: str, *, generation: int = 3) -> tuple[FakeTable, DynamoDbStore]:
+def _store_with_open_sandbox(
+    sandbox_id: str, *, generation: int = 3
+) -> tuple[FakeTable, DynamoDbStore]:
     table = FakeTable()
     store = DynamoDbStore(table)
     store.record_sandbox_state(
@@ -84,3 +86,15 @@ def test_leaves_a_still_listed_sandbox_alone() -> None:
     _table, store = _store_with_open_sandbox("sbx-alive")
     assert reconciler.reconcile(store, _lister(("sbx-alive", "SUSPENDED"))) == 0
     assert [s.sandbox_id for s in store.open_sandboxes()] == ["sbx-alive"]
+
+
+def test_the_handler_logs_what_the_run_did(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _table, store = _store_with_open_sandbox("sbx-gone")
+    monkeypatch.setattr(reconciler, "_store_singleton", lambda: store)
+    monkeypatch.setattr(reconciler, "_lister_singleton", _lister)
+
+    assert reconciler.handler({}, None) == {"synthesized": 1}
+    assert reconciler.handler({}, None) == {"synthesized": 0}
+    assert capsys.readouterr().out.splitlines() == ['{"synthesized": 1}', '{"synthesized": 0}']

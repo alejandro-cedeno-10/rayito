@@ -34,7 +34,9 @@ def _resolve(stacks: OptionalStacks, component: str) -> StackComponent:
     raise typer.BadParameter(f"componente desconocido: {component!r}", param_hint="component")
 
 
-def _parse_pairs(values: list[str], *, option: str) -> dict[str, str]:
+def parse_pairs(values: list[str], *, option: str) -> dict[str, str]:
+    """`--param`/`--tag` `K=V` (repetibles) a un dict; también lo usa
+    `rayito events deploy --tag`."""
     parsed: dict[str, str] = {}
     for item in values:
         if "=" not in item:
@@ -150,9 +152,9 @@ def deploy_command(
     status = stacks.deploy(
         component,
         stack_name=stack_name,
-        parameters=_parse_pairs(param, option="--param"),
+        parameters=parse_pairs(param, option="--param"),
         artifact_bucket=artifact_bucket,
-        tags=_parse_pairs(tag, option="--tag"),
+        tags=parse_pairs(tag, option="--tag"),
     )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})

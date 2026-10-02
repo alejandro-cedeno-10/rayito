@@ -131,7 +131,8 @@ interface SecretsManagerModule {
  *   `secretsmanager:GetSecretValue` sobre la clave del stack.
  * Cómo apagarla: no pases `events`; `destroy()` borra el secreto
  *   (force-delete: cualquier webhook registrado deja de poder verificarse),
- *   la tabla, las tres Lambdas, la suscripción y el scheduler.
+ *   la tabla, las tres Lambdas, la suscripción y el scheduler (desvincula
+ *   antes `EventsOperatorPolicy`, o la pila acaba en `DELETE_FAILED`).
  * Ejemplo:
  *   const ev = new LifecycleEvents();
  *   await ev.deploy({ artifactBucket: "mi-bucket", logGroupName: "/rayito/rayito-base" });
@@ -192,7 +193,10 @@ export class LifecycleEvents {
    * todos sus eventos y webhooks, las tres Lambdas, la suscripción, la cola
    * de fallos y el scheduler. No toca los secretos de cada webhook
    * (`rayito/webhooks/...`, de `SecretStore`) ni el log group de la imagen,
-   * que esta pila nunca creó.
+   * que esta pila nunca creó. Si `EventsOperatorPolicy` sigue vinculada a
+   * algún usuario o rol, CloudFormation no puede borrarla y la pila termina
+   * en `DELETE_FAILED` (`StackError`): desvincúlala y repite
+   * (`AWS_API_NOTES.md` Q108).
    */
   async destroy(options: { wait?: boolean } = {}): Promise<void> {
     await this.#stacks.destroy(COMPONENT, {
