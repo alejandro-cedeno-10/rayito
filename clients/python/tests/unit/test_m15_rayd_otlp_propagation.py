@@ -131,3 +131,73 @@ async def test_an_async_handle_with_tracer_provider_sends_traceparent_to_rayd(
     await sbx.commands.run("echo hola")
     await sbx.kill()
     _assert_one_start_with_a_w3c_traceparent(fake_rayd)
+
+
+# -------------------------------- the traceparent is the caller's own span
+
+#: The span `commands.run()` opens around its `Start` RPC
+#: (`rayito.sandbox_sync.commands`/`rayito.sandbox_async.commands`).
+COMMANDS_RUN_SPAN = "rayito.commands.run"
+
+
+def _recording_tracer_provider() -> tuple[TracerProvider, InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return tracer_provider, exporter
+
+
+def _run_spans(exporter: InMemorySpanExporter) -> list[tuple[str, str]]:
+    return [
+        (f"{span.context.trace_id:032x}", f"{span.context.span_id:016x}")
+        for span in exporter.get_finished_spans()
+        if span.name == COMMANDS_RUN_SPAN
+    ]
+
+
+def _start_traceparents(fake_rayd: RaydEndpoint) -> list[tuple[str, str]]:
+    pairs = []
+    for metadata in fake_rayd.process.start_metadata:
+        _version, trace_id, span_id, _flags = metadata["traceparent"].split("-")
+        pairs.append((trace_id, span_id))
+    return pairs
+
+
+def test_each_sync_rpc_carries_the_span_active_on_the_calling_thread(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    """Acceptance (AWS, 2026-10-02) found every RPC carrying one fixed
+    `traceparent`: grpc runs an `AuthMetadataPlugin` on its own thread,
+    where the caller's OpenTelemetry context is not active. The header must
+    name the span of the very call that sent it."""
+    tracer_provider, exporter = _recording_tracer_provider()
+    _stub_launch_and_kill(control_plane, fake_rayd)
+    sbx = Sandbox.create(
+        IMAGE_ARN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        access_token=ACCESS_TOKEN,
+        tracer_provider=tracer_provider,
+    )
+    sbx.commands.run("echo uno")
+    sbx.commands.run("echo dos")
+    sbx.kill()
+    assert _start_traceparents(fake_rayd) == _run_spans(exporter)
+
+
+async def test_each_async_rpc_carries_the_span_active_in_the_calling_task(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    tracer_provider, exporter = _recording_tracer_provider()
+    _stub_launch_and_kill(control_plane, fake_rayd)
+    sbx = await AsyncSandbox.create(
+        IMAGE_ARN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        access_token=ACCESS_TOKEN,
+        tracer_provider=tracer_provider,
+    )
+    await sbx.commands.run("echo uno")
+    await sbx.commands.run("echo dos")
+    await sbx.kill()
+    assert _start_traceparents(fake_rayd) == _run_spans(exporter)

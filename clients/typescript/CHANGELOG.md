@@ -32,8 +32,9 @@ versionado [SemVer](https://semver.org/lang/es/).
   `secrets`). Se envía como una sección de `ConfigureSandbox` tras `/run`;
   una imagen cuyo `rayd` no exporta termina el sandbox (salvo
   `keepOnFailure`) y lanza `UnimplementedError`. Con `tracerProvider`, cada
-  RPC del handle lleva además `traceparent` hacia `rayd`; sin él, ninguna
-  cabecera nueva. `sbx.getTelemetryStatus()`
+  RPC del handle lleva además el `traceparent` del span de esa misma
+  llamada hacia `rayd`; sin él, ninguna cabecera nueva. El token de
+  `OtlpAuth.bearer(...)` es una API key de CloudWatch Metrics. `sbx.getTelemetryStatus()`
   lee `ConfigureStatus`, como una llamada explícita aparte de `getHealth()`.
   Sin `telemetry`, ningún comportamiento cambia frente a 0.5.x.
 <!-- m15-templates -->

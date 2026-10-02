@@ -260,6 +260,29 @@ describe("traceparent toward rayd (m15-rayd-otlp)", () => {
     }
   });
 
+  test("each Start carries the span of the very commands.run that sent it", async () => {
+    // Acceptance on AWS (2026-10-02) found the Python SDK sending one fixed
+    // traceparent on every RPC; this pins the same contract here.
+    const { sandbox, rayd, close } = await createTestSandbox({
+      create: { tracerProvider: provider },
+    });
+    try {
+      await sandbox.commands.run("echo uno");
+      await sandbox.commands.run("echo dos");
+      const runSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === "rayito.commands.run")
+        .map((span) => `${span.spanContext().traceId}-${span.spanContext().spanId}`);
+      const sent = rayd.process.startHeaders.map((headers) =>
+        (headers.traceparent ?? "").split("-").slice(1, 3).join("-"),
+      );
+      expect(runSpans).toHaveLength(2);
+      expect(sent).toEqual(runSpans);
+    } finally {
+      await close();
+    }
+  });
+
   test("without tracerProvider no RPC carries one, even with a global propagator", async () => {
     const { sandbox, rayd, close } = await createTestSandbox();
     try {

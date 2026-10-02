@@ -32,8 +32,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 - **Exportador OTLP/HTTP a CloudWatch** (`m15-rayd-otlp`, ADR-021):
   `rayd` exporta 7 gauges de CPU, memoria y disco cada `interval_s`
   (15-300 s) sobre el `telemetry_export` de `ConfigureSandbox`, firmado con
-  SigV4 sobre el execution role o con un token al portador empujado por el
-  SDK; cola acotada con backoff y jitter por sandbox
+  SigV4 sobre el execution role o con una API key de CloudWatch Metrics
+  empujada por el SDK; cola acotada con backoff y jitter por sandbox
   (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
   vaciado de hasta 2 s que nunca pierde puntos aunque el hook lo corte, y
   `/resume` (que ahora llama al `on_resume` de cada participante) rehace el

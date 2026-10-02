@@ -21,10 +21,11 @@ COMPONENT: StackComponent = StackComponent(
         creates=("AWS::IAM::ManagedPolicy",),
         idle_monthly="$0 (sólo IAM)",
         per_use=(
-            "Las métricas que de verdad se exporten se facturan como cualquier métrica "
-            "personalizada de CloudWatch, no por esta política.",
+            "Las métricas que de verdad se exporten se facturan como ingesta OTLP de "
+            "CloudWatch ($0,50/GB, ≈ $0,00002 por sandbox-hora con interval_s=60), "
+            "no por esta política.",
         ),
         removal="destroy() borra la política; no borra ninguna métrica ya exportada",
-        source="AWS_API_NOTES.md §26 (research OT1/OT9)",
+        source="AWS_API_NOTES.md §26 (research OT1/OT9, Q108)",
     ),
 )

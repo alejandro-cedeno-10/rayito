@@ -12,8 +12,10 @@ asignados por la etapa de aceptación, ≥ Q95):
   se activa.
 - **OT5**: la exportación sobrevive un ciclo `/suspend`/`/resume`, con un
   vaciado dentro del presupuesto de `/suspend`.
-- Una imagen sin caps y `OtlpAuth.execution_role()` sigue terminando el
-  sandbox y lanzando `UnimplementedError` incluso contra AWS real.
+- Una imagen cuyo nombre no permite saber la variante (un ARN) y sin
+  execution role: `rayd` rechaza la sección (`role_not_permitted`), el SDK
+  termina el sandbox y lanza `SandboxException`. Sobre un ARN no hay
+  chequeo de caps antes de lanzar (ver la guía): con rol, `rayd` exporta.
 
 No toca AWS si `RAYITO_E2E` no está a `1` (ver `conftest.py`): este fichero
 se recolecta siempre, pero sus casos se saltan por defecto.
@@ -28,7 +30,7 @@ import pytest
 
 from rayito import OtlpAuth, Sandbox, TelemetryExport
 from rayito._aws import LambdaMicrovmsControlPlane
-from rayito.exceptions import SandboxNotFoundException, UnimplementedError
+from rayito.exceptions import SandboxException, SandboxNotFoundException
 
 from .conftest import BootTimings, E2ESettings, create_test_sandbox
 
@@ -41,6 +43,9 @@ SUSPEND_PAUSE_SECONDS = 70
 #: Cuánto esperar, tras crear el sandbox, a que el primer lote (muestreado
 #: cada 5 s por el anillo de `MetricsHistory`) llegue a exportarse.
 FIRST_EXPORT_POLL_SECONDS = 20
+#: El mínimo que acepta `TelemetryExport` (15..=300 s): el primer lote llega
+#: dentro de `FIRST_EXPORT_POLL_SECONDS`.
+E2E_EXPORT_INTERVAL_SECONDS = 15
 FIRST_EXPORT_POLL_INTERVAL_SECONDS = 2
 
 
@@ -64,7 +69,13 @@ def test_execution_role_auth_exports_and_survives_a_suspend_resume_cycle(
     exportando después de un `/suspend`/`/resume`."""
     if not e2e_settings.execution_role_arn:
         pytest.skip(f"exporta {e2e_settings.execution_role_arn!r}: hace falta un execution role")
-    sbx = create_test_sandbox(e2e_settings, control_plane, template_arn, boot_timings)
+    sbx = create_test_sandbox(
+        e2e_settings,
+        control_plane,
+        template_arn,
+        boot_timings,
+        telemetry=TelemetryExport(interval_s=E2E_EXPORT_INTERVAL_SECONDS),
+    )
     try:
         health = sbx.get_health()
         assert health.lifecycle is not None, "se espera un rayd >= 0.3.0"
@@ -84,22 +95,20 @@ def test_execution_role_auth_exports_and_survives_a_suspend_resume_cycle(
             sbx.kill()
 
 
-def test_execution_role_auth_on_a_non_caps_image_still_terminates_and_raises(
+def test_execution_role_auth_without_a_role_terminates_and_raises(
     e2e_settings: E2ESettings,
     control_plane: LambdaMicrovmsControlPlane,
+    template_arn: str,
 ) -> None:
-    """Confirma contra AWS real que una imagen sin caps rechaza
-    `OtlpAuth.execution_role()` después de `/run` (cuando el nombre de la
-    imagen no permite decidirlo antes): el sandbox no queda facturando."""
-    non_caps_template = e2e_settings.template
-    if "caps" in non_caps_template:
-        pytest.skip("esta variante ya es la caps: usa una base sin caps para este caso")
-    with pytest.raises(UnimplementedError):
+    """Confirma contra AWS real que `OtlpAuth.execution_role()` sin execution
+    role se rechaza después de `/run` (sobre un ARN el SDK no puede decidir
+    antes): `rayd` responde `role_not_permitted` y el sandbox no queda
+    facturando."""
+    with pytest.raises(SandboxException, match="role_not_permitted"):
         Sandbox.create(
-            non_caps_template,
+            template_arn,
             telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             control_plane=control_plane,
         )
     # Si `create()` hubiera dejado algo vivo, el `sandbox_sweeper` de
-    # `conftest.py` lo detecta y falla el pre-flight de la siguiente sesión;
-    # no hace falta un aserto adicional aquí.
+    # `conftest.py` lo detecta y falla el pre-flight de la siguiente sesión.

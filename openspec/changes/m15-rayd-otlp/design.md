@@ -134,6 +134,16 @@ sets the channel's call-metadata providers from
 seam: `ProxyAuthOptions.callMetadata`, read per request by
 `proxyAuthInterceptor` from `SandboxCore.callMetadataProviders`.
 
+*AWS acceptance (Q113):* in Python the providers must not be evaluated by
+the `AuthMetadataPlugin` itself: grpc calls it on one of its own threads,
+where the caller's OpenTelemetry context is not active, so every RPC
+carried one fixed context. `ProxyAuthPlugin.providers` stays the mutable
+holder, but `TransportSettings.open_channel`/`open_aio_channel` now wrap
+the channel with interceptors (`_CallMetadataInterceptor`, and one per RPC
+kind for `grpc.aio`) that evaluate it on the calling thread or task. With
+no providers they pass the call through untouched. TypeScript's
+interceptor already ran in the caller's async context; a test now pins it.
+
 Without `tracer_provider=`/`tracerProvider` the provider list is empty, no
 `opentelemetry` module is imported and no header is added: the zero-cost
 golden test (Python) and `otel.integration.test.ts` (TypeScript, with a

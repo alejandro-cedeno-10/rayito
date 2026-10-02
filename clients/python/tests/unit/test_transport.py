@@ -184,7 +184,9 @@ def test_extra_metadata_reaches_rayd_on_the_anonymous_health_probe(
 def test_http_proxy_becomes_a_channel_option(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[list[tuple[str, object]]] = []
 
-    def capture(target: str, credentials: object, options: list[tuple[str, object]]) -> object:
+    def capture(
+        target: str, credentials: object, options: list[tuple[str, object]], **_: object
+    ) -> object:
         opened.append(options)
         return object()
 

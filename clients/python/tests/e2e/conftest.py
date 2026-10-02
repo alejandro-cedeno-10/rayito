@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from rayito import IdlePolicy, Sandbox
+from rayito import IdlePolicy, Sandbox, TelemetryExport
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito._sandbox_base import LoggingOption
 from rayito.exceptions import SandboxNotFoundException
@@ -116,11 +116,13 @@ def create_test_sandbox(
     *,
     timeout: int = TEST_SANDBOX_TIMEOUT_SECONDS,
     idle: IdlePolicy | None = None,
+    telemetry: TelemetryExport | None = None,
 ) -> Sandbox:
     """`create()` con los parámetros de todo sandbox de test; `create()` sólo
     vuelve con `agent_ready` y `kernel_ready`, así que el tiempo medido es
     `run-microvm -> kernel_ready` (incluye la rotación del kernel en `/run`).
-    `timeout` nunca supera los 1800 s del guardrail; `idle` sólo lo pasa M5."""
+    `timeout` nunca supera los 1800 s del guardrail; `idle` sólo lo pasa M5;
+    `telemetry`, m15-rayd-otlp."""
     assert timeout <= MAX_TEST_SANDBOX_TIMEOUT_SECONDS, "guardrail: timeout <= 1800 s"
     started = time.perf_counter()
     created = Sandbox.create(
@@ -132,6 +134,7 @@ def create_test_sandbox(
         ingress=["ALL_INGRESS"],
         logging=e2e_settings.logging,
         control_plane=control_plane,
+        telemetry=telemetry,
     )
     elapsed = time.perf_counter() - started
     boot_timings[created.sandbox_id] = elapsed

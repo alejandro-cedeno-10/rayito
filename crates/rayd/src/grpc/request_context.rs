@@ -3,16 +3,16 @@
 //! `grpc-trace-bin` nor `baggage`) and, when it parses, opens a `tracing`
 //! span carrying `trace_id`/`span_id` for the lifetime of that one RPC, so
 //! every log line the handler emits while handling it is correlated to the
-//! caller's trace. Without the header (every caller before
-//! `tracer_provider=` is wired into the live channel, and any caller that
-//! never sets one), `call()` instruments the request with
-//! `tracing::Span::none()` -- exactly today's no-span shape, so
+//! caller's trace. Without the header (any caller that never passes
+//! `tracer_provider=`/`tracerProvider`), `call()` instruments the request
+//! with `tracing::Span::none()` -- exactly 0.5.x's no-span shape, so
 //! `logging.rs`'s JSON lines carry no `span` object at all, unchanged.
 //!
 //! This is the `rayd`-side half of m15-rayd-otlp's traceparent propagation;
-//! the SDK side (`CallMetadataProvider`/`TraceparentProvider`) still needs
-//! the live-wiring follow-up `openspec/changes/m15-rayd-otlp/design.md` D8
-//! tracks before a caller ever actually sends this header.
+//! the SDK side (`TraceparentProvider`, evaluated per RPC on the caller's
+//! thread or task) sends the header when `tracer_provider=` is set. AWS
+//! acceptance (`AWS_API_NOTES.md` Q113) saw these fields in the runtime
+//! logs through the Lambda `MicroVM` proxy.
 
 use std::task::{Context, Poll};
 

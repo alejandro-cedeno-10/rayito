@@ -699,8 +699,8 @@ class Sandbox:
          memoria y disco a CloudWatch cada `interval_s` (15-300 s, 60 por
          defecto), firmados con `OtlpAuth.execution_role()` (SigV4 sobre el
          execution role, exige `rayito-base-caps`) o con
-         `OtlpAuth.bearer(secret_name=...)` (experimental: un token acotado
-         a un log group, funciona en `rayito-base`). Se envía como una
+         `OtlpAuth.bearer(secret_name=...)` (experimental: una API key de
+         CloudWatch Metrics, funciona en `rayito-base`). Se envía como una
          sección de `ConfigureSandbox` justo después de que el agente esté
          listo; una imagen anterior a 0.6.0, o una 0.6.0 sin el exportador
          todavía implementado, termina el sandbox (salvo `keep_on_failure`)
@@ -717,9 +717,9 @@ class Sandbox:
              en el execution role, pero sí el permiso para leer el secreto.
              `rayd` hace un `PutMetricData` por lote exportado (uno por
              `interval_s`, agrupando las 7 gauges).
-         Coste aproximado: $0 por la opción en sí; CloudWatch factura las
-             métricas personalizadas que de verdad se exporten (ver
-             la página de precios de CloudWatch, consultada 2026-09-30).
+         Coste aproximado: $0 por la opción en sí; CloudWatch factura la
+             ingesta OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con
+             `interval_s=60` (639 bytes por lote, `AWS_API_NOTES.md` Q108).
          IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
              de la cuenta (no se puede acotar por namespace, research OT9);
              con `OtlpAuth.bearer(...)`, en su lugar el permiso de lectura

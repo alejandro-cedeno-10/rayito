@@ -15,11 +15,15 @@ No SDK call SHALL build a `ConfigureService` stub request carrying a `telemetry_
 - **THEN** `InvalidArgumentException`/`InvalidArgumentError` is raised immediately, before `Sandbox.create()` does anything else
 
 ### Requirement: execution-role auth is gated to the caps image variant before launch when the image name allows it
-`plan_features`/`planFeatures` SHALL raise `UnimplementedError` before `run-microvm`/`RunMicrovm` when `telemetry=TelemetryExport(auth=OtlpAuth.execution_role())` is combined with a template name that resolves (by Rayito's `rayito-<variant>[-<size>]` convention) to a variant other than `base-caps`, and SHALL defer the decision to the agent's post-boot `Health.features` check when the variant cannot be determined from the name.
+`plan_features`/`planFeatures` SHALL raise `UnimplementedError` before `run-microvm`/`RunMicrovm` when `telemetry=TelemetryExport(auth=OtlpAuth.execution_role())` is combined with a template name that resolves (by Rayito's `rayito-<variant>[-<size>]` convention) to a variant other than `base-caps`, and SHALL otherwise defer to the agent, which only checks that the guest has an execution role: without one it rejects the section with `role_not_permitted`, and the SDK terminates the sandbox (unless `keep_on_failure`/`keepOnFailure`) and raises `SandboxException`/`SandboxError`.
 
 #### Scenario: execution-role auth on a known non-caps image is rejected before any AWS call
 - **WHEN** `Sandbox.create("rayito-base", telemetry=TelemetryExport(auth=OtlpAuth.execution_role()))` is called
 - **THEN** `UnimplementedError` is raised before `run-microvm` is called, naming the `base-caps` requirement
+
+#### Scenario: execution-role auth without a role on an unrecognised image name
+- **WHEN** `Sandbox.create(<image ARN>, telemetry=TelemetryExport(auth=OtlpAuth.execution_role()))` is called without `execution_role_arn`
+- **THEN** the agent rejects the section with `role_not_permitted`, the `MicroVM` is terminated and `SandboxException` is raised
 
 #### Scenario: bearer auth needs no caps variant
 - **WHEN** `Sandbox.create("rayito-base", telemetry=TelemetryExport(auth=OtlpAuth.bearer("otlp-key")))` is called
@@ -62,7 +66,7 @@ When `OtlpAuth.bearer(secret_name)` is used, the resolved secret value SHALL tra
 - **THEN** the SDK calls `GetSecretValue` with `SecretId="rayito/otlp-key"`, the same id `secrets={"X": "otlp-key"}` would read
 
 ### Requirement: `traceparent` reaches `rayd` only with `tracer_provider=`
-A handle created or connected with `tracer_provider=`/`tracerProvider` SHALL add W3C `traceparent` (and `tracestate` when the active propagator uses it, never `baggage`) to every RPC on its own channel, computed per call over the active span. Without that option, no RPC SHALL carry either header, even if the process has a global OpenTelemetry propagator registered.
+A handle created or connected with `tracer_provider=`/`tracerProvider` SHALL add W3C `traceparent` (and `tracestate` when the active propagator uses it, never `baggage`) to every RPC on its own channel, computed per call over the span active on the calling thread or task (not on a gRPC-internal thread). Without that option, no RPC SHALL carry either header, even if the process has a global OpenTelemetry propagator registered.
 
 #### Scenario: no trace header without the option
 - **WHEN** the 0.5.x golden-trace session runs with `tracer_provider` absent
@@ -71,6 +75,10 @@ A handle created or connected with `tracer_provider=`/`tracerProvider` SHALL add
 #### Scenario: the active span's context travels with the option
 - **WHEN** `commands.run(...)` is called on a handle created with `tracer_provider=`
 - **THEN** the `ProcessService.Start` request `rayd` receives carries a `traceparent` of the form `00-<32 hex>-<16 hex>-<2 hex>`
+
+#### Scenario: each RPC names its own span
+- **WHEN** `commands.run(...)` is called twice on a handle created with `tracer_provider=`
+- **THEN** each `ProcessService.Start` request carries the trace id and span id of the `rayito.commands.run` span of that same call
 
 ### Requirement: SigV4 exports survive a skewed guest clock
 `rayd` SHALL sign each execution-role export with its wall clock shifted by the skew the last AWS response's `Date` header revealed, whenever that skew exceeds 60 seconds, and SHALL report a refused export whose `Date` header changed that skew as a retryable network failure rather than a rejection.

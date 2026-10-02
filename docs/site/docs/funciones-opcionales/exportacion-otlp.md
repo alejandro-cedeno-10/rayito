@@ -17,14 +17,16 @@ OTLP/HTTP, firmadas con SigV4 o con un token al portador. <small>Desde 0.6.0</sm
       `OtlpAuth.execution_role()` necesitas la política IAM
       `RayitoOtlpExport` (`infra/otlp-export.yaml`,
       `rayito stack deploy otlp-export`) en el execution role.
-    - **Coste aproximado** (provisional hasta la medición OT2 de bytes reales
-      por sandbox-hora): $0 por la opción en sí; CloudWatch factura las
-      métricas OpenTelemetry a **$0,50 por GB ingerido**
-      ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
-      us-east-1, consultado 2026-10-02). La investigación (§6.3) estima
-      ≈ $0,00014 por sandbox-hora con `interval_s=60`. Ejemplo: 1 000
-      sandboxes al día de una hora cada uno = 30 000 sandbox-horas al mes
-      ≈ **$4,20/mes**; con `interval_s=15`, unas 4 veces más (≈ $17/mes).
+    - **Coste aproximado** (medido, Q108): $0 por la opción en sí;
+      CloudWatch factura las métricas OpenTelemetry a **$0,50 por GB
+      ingerido** ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
+      us-east-1, consultado 2026-10-02). Cada lote son 7 puntos en una
+      petición de 639 bytes de protobuf (353 bytes con gzip): con
+      `interval_s=60`, 60 lotes ≈ 38 KB por sandbox-hora ≈ **$0,00002 por
+      sandbox-hora** contando los bytes sin comprimir (la cota alta: AWS no
+      publica si factura sobre el cuerpo comprimido). Ejemplo: 1 000
+      sandboxes al día de una hora cada uno = 30 000 sandbox-horas al mes ≈
+      1,15 GB ≈ **$0,58/mes**; con `interval_s=15`, 4 veces más (≈ $2,30/mes).
       Más la política IAM, que no cuesta nada.
     - **Cardinalidad**: `sandbox_id` es un atributo de recurso, así que
       cada sandbox crea sus propias 7 series. Por OTLP se paga por bytes,
@@ -92,8 +94,12 @@ divide por ese factor antes de enviarla; ver `limits.md`).
     `rayito-base-caps` (o una derivada por tamaño, p. ej.
     `rayito-base-caps-4gb`): sin ella, `Sandbox.create()` lanza
     `UnimplementedError` antes de `run-microvm` cuando el nombre de la
-    imagen ya lo permite saber, o termina la `MicroVM` y lanza después de
-    `/run` en caso contrario.
+    imagen ya lo permite saber. Con un ARN o un nombre propio el SDK no
+    puede saber la variante y `rayd` sólo comprueba que haya execution
+    role: sin rol rechaza la sección (`role_not_permitted`), el SDK termina
+    la `MicroVM` y lanza `SandboxException`; con rol sobre una imagen sin
+    caps exporta igual, pero sus credenciales quedan legibles para uid 1000
+    (T1). Usa el nombre `rayito-base-caps` para que el chequeo sea previo.
 
     La política mínima de CloudWatch no puede acotarse por namespace: con
     esta opción, un sandbox comprometido puede escribir métricas arbitrarias
@@ -103,8 +109,15 @@ divide por ese factor antes de enviarla; ver `limits.md`).
 
 === "Token al portador (`OtlpAuth.bearer(...)`, experimental)"
 
-    Un secreto de Secrets Manager cuyo valor es un token de CloudWatch
-    acotado a un log group. El nombre se resuelve igual que en `secrets=` y
+    Un secreto de Secrets Manager cuyo valor es una API key de CloudWatch
+    Metrics: una credencial específica de servicio
+    (`iam create-service-specific-credential --service-name
+    cloudwatch.amazonaws.com`) de un usuario IAM con
+    `cloudwatch:CallWithBearerToken` y `cloudwatch:PutMetricData`. No se
+    acota a un log group ni a un namespace: sólo sirve para el endpoint de
+    ingesta OTLP de métricas, de toda la cuenta. Pon siempre
+    `--credential-age-days`. Una SCP de la organización que deniegue
+    `iam:CreateUser` impide crearla (Q111). El nombre se resuelve igual que en `secrets=` y
     `SecretStore`: bajo el prefijo `rayito/`, así que
     `OtlpAuth.bearer("otlp-key")` lee `rayito/otlp-key` (un ARN completo se
     usa tal cual). El SDK lo lee por la misma caché de secretos que
@@ -225,6 +238,8 @@ Con el token al portador, sólo cambia la autenticación:
 | `UnimplementedError` justo después de crear el sandbox (la VM ya se terminó, salvo `keep_on_failure=True`) | la imagen corre un `rayd` anterior a 0.6.0, o un `rayd` 0.6 que arrancó sin `AWS_REGION` | publica una imagen con el `rayd` del tag `rayd-v0.6.0` o posterior |
 | `SecretNotFoundException` / `SecretException` al enviar la sección | el secreto `rayito/<nombre>` no existe (el prefijo se añade solo) o no tiene `SecretString` | crea `rayito/<nombre>` (`SecretStore().create(...)`) o pasa el ARN completo |
 | `last_error_class="rejected"` justo tras un resume largo | el reloj del guest quedó atrasado más de 5 minutos | se corrige solo: `rayd` mide el desfase con la cabecera `Date` de AWS y reintenta; si persiste, abre un issue |
+| `SandboxException: telemetry_export: role_not_permitted` (la VM ya se terminó) | `OtlpAuth.execution_role()` sin `execution_role_arn=` | pasa el execution role con `RayitoOtlpExport`, o usa `OtlpAuth.bearer(...)` |
+| `last_error_class="rejected"` desde el primer lote con `OtlpAuth.bearer(...)` | CloudWatch rechaza la API key (caducada, inactiva o sin `cloudwatch:CallWithBearerToken`) | genera una nueva y actualiza el secreto (`SecretStore().update(...)`) |
 | `get_telemetry_status()` siempre en cero | nunca pasaste `telemetry=`, o la sección no aplicó | revisa el resultado de `create()` (si no lanzó, aplicó) |
 
 ## Diferencias con E2B
@@ -255,7 +270,15 @@ explícita y opt-in. El shim de E2B no añade ningún kwarg nuevo para esto;
       namespace.
     - Probado con dobles de `TelemetrySink`/`OtlpEncoder` en los dos SDK;
       la firma SigV4 la hace `aws-sigv4`, el mismo firmante que usa
-      `aws-sdk-s3`: no necesita una aceptación contra AWS real para la
-      lógica de dominio. La aceptación contra AWS real (cuota facturada, overhead
-      de CPU, comportamiento en `/suspend`/`/resume`) es un seguimiento
-      separado de esta entrega.
+      `aws-sdk-s3`.
+    - Aceptación contra AWS real (2026-10-02, `AWS_API_NOTES.md` Q108–Q113):
+      7 puntos por lote, 639 bytes (353 con gzip) y 0,01 s de CPU de `rayd`
+      por minuto con `interval_s=15` (Q108); SigV4 desde `rayito-base-caps`
+      exporta sin errores y sin `telemetry=` el `create()` no hace ninguna
+      llamada AWS nueva (Q109); `/suspend` no se retrasa, no se pierde
+      ningún punto y el primer lote tras 10 y 56 minutos suspendido sale con
+      el pool reconstruido (Q110); un 403 por firma caducada trae la
+      cabecera `Date` de la que `rayd` corrige su reloj (Q112); el
+      `traceparent` de cada llamada llega a los logs de `rayd` (Q113). La
+      autenticación por API key está verificada hasta el rechazo de una
+      clave inválida: emitir una real exige crear un usuario IAM (Q111).

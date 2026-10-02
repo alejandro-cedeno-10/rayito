@@ -251,3 +251,29 @@ explicitly deferred further (noted).
       response `Date` header (design.md D11); a refusal that changed the
       skew is retryable `network`. Added to the OT5 acceptance checklist.
 
+## 15. AWS acceptance (serialized stage, 2026-10-02)
+
+- [x] 15.1 Images `rayito-acc-otlp` and `rayito-acc-otlp-caps` built from
+      this branch; `otlp-export` stack deployed and its policy attached to
+      the execution role for the run; all removed afterwards.
+- [x] 15.2 OT1/OT9 regression over `aws-sigv4`, OT7 CPU, OT2 payload size,
+      zero-cost default `create()` (`AWS_API_NOTES.md` Q108, Q109).
+- [x] 15.3 OT5: suspend flush, resume after 10 min and after > 55 min
+      (Q110).
+- [x] 15.4 Bearer: a real CloudWatch Metrics API key cannot be minted in
+      the acceptance account (SCP denies `iam:CreateUser`); SDK resolution
+      (`rayito/otlp-key`, one `GetSecretValue`) and the bearer request path
+      verified with an invalid key, which CloudWatch rejects (Q111). Docs
+      corrected: the key is an IAM user's service-specific credential, not
+      log-group scoped.
+- [x] 15.5 Clock skew: a skewed SigV4 403 carries `Date`; guest clock set
+      10 min back (Q112).
+- [x] 15.6 `traceparent`: `trace_id`/`span_id` reach `rayd`'s runtime
+      logs, but every RPC carried one fixed context (grpc runs the
+      `AuthMetadataPlugin` on its own thread). Fixed: providers are
+      evaluated by a channel interceptor on the caller's thread/task
+      (sync + async); new unit tests in both SDKs assert each `Start`
+      carries its own `rayito.commands.run` span (Q113).
+- [x] 15.7 e2e: tests now pass `telemetry=` (they never did), the TS file
+      is renamed `*.e2e.test.ts` so the e2e project collects it, and the
+      non-caps case asserts the real contract (`role_not_permitted`).

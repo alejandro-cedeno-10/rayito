@@ -13,20 +13,24 @@
  *   `Health.features.telemetryExport` se activa.
  * - **OT5**: la exportación sobrevive un ciclo `/suspend`/`/resume`, con un
  *   vaciado dentro del presupuesto de `/suspend`.
- * - Una imagen sin caps y `OtlpAuth.executionRole()` sigue terminando el
- *   sandbox y lanzando `UnimplementedError` incluso contra AWS real.
+ * - Una imagen cuyo nombre no permite saber la variante (un ARN) y sin
+ *   execution role: `rayd` rechaza la sección (`role_not_permitted`), el SDK
+ *   termina el sandbox y lanza `SandboxError`. Sobre un ARN no hay chequeo
+ *   de caps antes de lanzar (ver la guía): con rol, `rayd` exporta.
  *
  * No toca AWS si `RAYITO_E2E` no está a `1`: este fichero se recolecta
  * siempre, pero su suite se salta por defecto (`describe.skipIf`).
  */
 
 import { describe, expect, test } from "vitest";
-import { OtlpAuth, Sandbox, TelemetryExport, UnimplementedError } from "../../src/index.js";
+import { OtlpAuth, Sandbox, TelemetryExport } from "../../src/index.js";
 import { createTestSandbox, e2eEnabled, sleep, useE2E, waitUntil } from "./helpers.js";
 
 const SUSPEND_PAUSE_MS = 70_000;
 const FIRST_EXPORT_BUDGET_MS = 20_000;
 const FIRST_EXPORT_POLL_MS = 2000;
+/** El mínimo que acepta `TelemetryExport` (15..=300 s). */
+const E2E_EXPORT_INTERVAL_S = 15;
 
 async function waitForFirstExport(sbx: Sandbox): Promise<void> {
   await waitUntil(
@@ -44,7 +48,9 @@ describe.skipIf(!e2eEnabled())("m15-rayd-otlp", () => {
     if (e2e.settings.executionRoleArn === undefined) {
       return;
     }
-    const sbx = await createTestSandbox(e2e);
+    const sbx = await createTestSandbox(e2e, {
+      telemetry: new TelemetryExport({ intervalS: E2E_EXPORT_INTERVAL_S }),
+    });
     const health = await sbx.getHealth();
     expect(health.lifecycle).toBeDefined();
 
@@ -61,19 +67,15 @@ describe.skipIf(!e2eEnabled())("m15-rayd-otlp", () => {
     expect(after.dropped).toBe(before.dropped);
   });
 
-  test("executionRole auth on a non-caps image still terminates and raises", async () => {
-    if (e2e.settings.template.includes("caps")) {
-      return;
-    }
+  test("executionRole auth without a role terminates and raises", async () => {
     await expect(
       Sandbox.create({
-        template: e2e.settings.template,
+        template: e2e.templateArn,
         telemetry: new TelemetryExport({ auth: OtlpAuth.executionRole() }),
         controlPlane: e2e.controlPlane,
       }),
-    ).rejects.toThrow(UnimplementedError);
-    // Si `create()` hubiera dejado algo vivo, el sweeper de `afterAll` de
-    // `useE2E()` lo detectaría (y lo terminaría) al listar los MicroVMs
-    // vivos de la imagen; no hace falta un aserto adicional aquí.
+    ).rejects.toThrow(/role_not_permitted/);
+    // Si `create()` hubiera dejado algo vivo, el pre-flight de `useE2E()`
+    // de la siguiente ejecución lo detectaría al listar los MicroVMs vivos.
   });
 });

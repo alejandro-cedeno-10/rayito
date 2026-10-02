@@ -33,8 +33,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `SecretCache` que `secrets=`). Se envía como una sección de
   `ConfigureSandbox` tras `/run`; una imagen cuyo `rayd` no exporta termina
   el sandbox (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
-  Con `tracer_provider=`, cada RPC del handle lleva además `traceparent`
-  hacia `rayd`; sin él, ninguna cabecera nueva.
+  Con `tracer_provider=`, cada RPC del handle lleva además el `traceparent`
+  del span de esa misma llamada hacia `rayd` (lo calcula un interceptor
+  del canal en el hilo o la tarea que llama, no el `AuthMetadataPlugin`,
+  que grpc ejecuta en un hilo suyo sin el contexto OpenTelemetry del
+  llamante); sin él, ninguna cabecera nueva. El token de
+  `OtlpAuth.bearer(...)` es una API key de CloudWatch Metrics.
   `sbx.get_telemetry_status()` (síncrono y `AsyncSandbox`) lee
   `ConfigureStatus`, como una llamada explícita aparte de `get_health()`.
   Sin `telemetry=`, ningún comportamiento cambia frente a 0.5.x (traza de

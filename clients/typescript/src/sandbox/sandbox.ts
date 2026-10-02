@@ -377,9 +377,9 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    *   `RayitoOtlpExport` (`infra/otlp-export.yaml`,
    *   `rayito stack deploy otlp-export`) en el execution role; `rayd` hace
    *   un `PutMetricData` por lote exportado (uno por `intervalS`).
-   * Coste aproximado: $0 por la opción en sí; CloudWatch factura las
-   *   métricas personalizadas que de verdad se exporten (ver la página de
-   *   precios de CloudWatch, consultada 2026-09-30).
+   * Coste aproximado: $0 por la opción en sí; CloudWatch factura la ingesta
+   *   OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con `intervalS: 60`
+   *   (639 bytes por lote, `AWS_API_NOTES.md` Q108).
    * IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto de la
    *   cuenta (no se puede acotar por namespace, research OT9); con
    *   `OtlpAuth.bearer(...)`, el permiso de lectura del secreto.

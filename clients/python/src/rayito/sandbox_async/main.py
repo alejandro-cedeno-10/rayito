@@ -568,8 +568,9 @@ class AsyncSandbox:
             `OtlpAuth.execution_role()` necesitas la política
             `RayitoOtlpExport` (`rayito stack deploy otlp-export`) en el
             execution role.
-        Coste aproximado: $0 por la opción; CloudWatch factura las métricas
-            personalizadas que de verdad se exporten.
+        Coste aproximado: $0 por la opción; CloudWatch factura la ingesta
+            OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con `interval_s=60`
+            (`AWS_API_NOTES.md` Q108).
         IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto de
             la cuenta (no se puede acotar por namespace, research OT9).
         Cómo apagarla: no pases `telemetry=` (por defecto `None`); borra la
