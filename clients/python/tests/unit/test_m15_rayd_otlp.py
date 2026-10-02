@@ -170,7 +170,7 @@ def test_resolve_bearer_token_error_never_repeats_the_secret_name() -> None:
 def test_section_names_itself_telemetry_export() -> None:
     section = TelemetryExportSection(
         telemetry=TelemetryExport(),
-        image_arn="arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
         image_version="3",
         image_memory_mib=2048,
         bearer_token=None,
@@ -183,7 +183,7 @@ def test_fill_builds_an_execution_role_section_with_image_facts() -> None:
     telemetry = TelemetryExport(interval_s=90, service_name="agente", names="e2b")
     section = TelemetryExportSection(
         telemetry=telemetry,
-        image_arn="arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base-caps",
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base-caps",
         image_version="7",
         image_memory_mib=4096,
         bearer_token=None,
@@ -204,7 +204,7 @@ def test_fill_builds_a_bearer_section_with_the_resolved_token_never_the_secret_n
     telemetry = TelemetryExport(auth=OtlpAuth.bearer("rayito/otlp-key"))
     section = TelemetryExportSection(
         telemetry=telemetry,
-        image_arn="arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
         image_version="1",
         image_memory_mib=2048,
         bearer_token="sk-resolved",
@@ -220,7 +220,7 @@ def test_build_section_resolves_bearer_only_when_auth_is_bearer() -> None:
     telemetry = TelemetryExport(auth=OtlpAuth.execution_role())
     section = build_section(
         telemetry,
-        image_arn="arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base-caps",
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base-caps",
         image_version="1",
         image_memory_mib=2048,
         region="us-east-1",
@@ -234,7 +234,7 @@ def test_build_section_resolves_the_bearer_token() -> None:
     telemetry = TelemetryExport(auth=OtlpAuth.bearer("rayito/otlp-key"))
     section = build_section(
         telemetry,
-        image_arn="arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+        image_arn="arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
         image_version="1",
         image_memory_mib=2048,
         region="us-east-1",

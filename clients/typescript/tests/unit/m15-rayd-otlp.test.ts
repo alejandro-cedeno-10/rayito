@@ -132,7 +132,7 @@ describe("TelemetryExportSection", () => {
   test("names itself telemetry_export", () => {
     const section = new TelemetryExportSection(
       new TelemetryExport(),
-      "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
       "3",
       2048,
       undefined,
@@ -145,7 +145,7 @@ describe("TelemetryExportSection", () => {
     const telemetry = new TelemetryExport({ intervalS: 90, serviceName: "agente", names: "e2b" });
     const section = new TelemetryExportSection(
       telemetry,
-      "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base-caps",
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base-caps",
       "7",
       4096,
       undefined,
@@ -166,7 +166,7 @@ describe("TelemetryExportSection", () => {
     const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
     const section = new TelemetryExportSection(
       telemetry,
-      "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
       "1",
       2048,
       "sk-resolved",
@@ -219,7 +219,7 @@ describe("buildSection", () => {
     const loader = vi.spyOn(optional, "loadOptionalPeer");
     const telemetry = new TelemetryExport({ auth: OtlpAuth.executionRole() });
     const section = await buildSection(telemetry, {
-      imageArn: "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base-caps",
+      imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base-caps",
       imageVersion: "1",
       imageMemoryMib: 2048,
       region: "us-east-1",
@@ -237,7 +237,7 @@ describe("buildSection", () => {
     );
     const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
     const section = await buildSection(telemetry, {
-      imageArn: "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base",
+      imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
       imageVersion: "1",
       imageMemoryMib: 2048,
       region: "us-east-1",

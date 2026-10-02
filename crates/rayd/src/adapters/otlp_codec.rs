@@ -139,7 +139,7 @@ mod tests {
     fn resource() -> ResourceAttrs {
         ResourceAttrs {
             sandbox_id: "mvm-test".to_owned(),
-            image_arn: "arn:aws:lambda:us-east-1:111111111111:microvm-image/rayito-base".to_owned(),
+            image_arn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base".to_owned(),
             image_version: "3".to_owned(),
             image_memory_mib: 2048,
         }
