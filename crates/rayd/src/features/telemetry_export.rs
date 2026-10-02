@@ -83,7 +83,9 @@ impl SharedState {
 
     fn sink_credentials(&self, auth: &TelemetryAuth) -> SinkCredentials {
         match auth {
-            TelemetryAuth::ExecutionRole => SinkCredentials::ExecutionRole(self.credentials.clone()),
+            TelemetryAuth::ExecutionRole => {
+                SinkCredentials::ExecutionRole(self.credentials.clone())
+            }
             TelemetryAuth::Bearer(token) => SinkCredentials::Bearer(token.clone()),
         }
     }
@@ -109,7 +111,9 @@ impl SharedState {
             _ => DomainNameStyle::Rayito,
         };
         let auth = match &cfg.auth {
-            Some(WireAuth::ExecutionRole(ExecutionRoleAuth {})) => Some(TelemetryAuth::ExecutionRole),
+            Some(WireAuth::ExecutionRole(ExecutionRoleAuth {})) => {
+                Some(TelemetryAuth::ExecutionRole)
+            }
             Some(WireAuth::Bearer(BearerAuth { token })) => {
                 Some(TelemetryAuth::Bearer(Zeroizing::new(token.clone())))
             }
@@ -212,7 +216,8 @@ impl SharedState {
             &pending,
         );
         let exported = u64::try_from(pending.len()).unwrap_or(u64::MAX);
-        match tokio::time::timeout(share, running.sink.send_with(&running.credentials, payload)).await
+        match tokio::time::timeout(share, running.sink.send_with(&running.credentials, payload))
+            .await
         {
             Ok(Ok(())) => {
                 lock_batcher(&running.batcher).record_exported(exported);
@@ -363,11 +368,17 @@ fn spawn_exporter(
             if pending.is_empty() {
                 continue;
             }
-            let payload =
-                ProstOtlpEncoder.encode(&config.resource, &config.service_name, config.names, &pending);
-            let outcome =
-                tokio::time::timeout(EXPORT_ATTEMPT_TIMEOUT, sink.send_with(&credentials, payload))
-                    .await;
+            let payload = ProstOtlpEncoder.encode(
+                &config.resource,
+                &config.service_name,
+                config.names,
+                &pending,
+            );
+            let outcome = tokio::time::timeout(
+                EXPORT_ATTEMPT_TIMEOUT,
+                sink.send_with(&credentials, payload),
+            )
+            .await;
             match outcome {
                 Ok(Ok(())) => {
                     attempt = 0;
@@ -377,15 +388,17 @@ fn spawn_exporter(
                 }
                 Ok(Err(error)) => {
                     attempt = attempt.saturating_add(1);
-                    retry_not_before =
-                        Some(tokio::time::Instant::now() + jittered_backoff(attempt, &OsRandomSource));
+                    retry_not_before = Some(
+                        tokio::time::Instant::now() + jittered_backoff(attempt, &OsRandomSource),
+                    );
                     lock_batcher(&batcher).enqueue(pending);
                     lock_batcher(&batcher).record_failure(sink_error_class(error));
                 }
                 Err(_elapsed) => {
                     attempt = attempt.saturating_add(1);
-                    retry_not_before =
-                        Some(tokio::time::Instant::now() + jittered_backoff(attempt, &OsRandomSource));
+                    retry_not_before = Some(
+                        tokio::time::Instant::now() + jittered_backoff(attempt, &OsRandomSource),
+                    );
                     lock_batcher(&batcher).enqueue(pending);
                     lock_batcher(&batcher).record_failure("network");
                 }
@@ -510,7 +523,9 @@ mod tests {
     #[tokio::test]
     async fn a_participant_with_nothing_running_reports_a_completed_noop_flush() {
         let feature = build(&context_with_region());
-        let participant = feature.participant().expect("telemetry always participates");
+        let participant = feature
+            .participant()
+            .expect("telemetry always participates");
         let report = participant.on_suspend(Duration::from_secs(1)).await;
         assert!(report.completed);
         assert!(!report.timed_out);

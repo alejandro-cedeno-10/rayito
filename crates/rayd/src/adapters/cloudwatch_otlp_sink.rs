@@ -183,9 +183,8 @@ impl CloudWatchOtlpSink {
         payload: Vec<u8>,
     ) -> Result<(), SinkError> {
         let compressed = gzip(&payload);
-        let (authorization, session_token) = self
-            .authorization_header(credentials, &compressed)
-            .await?;
+        let (authorization, session_token) =
+            self.authorization_header(credentials, &compressed).await?;
         let uri: Uri = format!("https://{}{OTLP_METRICS_PATH}", self.host)
             .parse()
             .map_err(|_invalid_uri| SinkError::Rejected)?;

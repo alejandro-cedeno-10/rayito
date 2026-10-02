@@ -38,7 +38,9 @@ pub use aws_sigv4::{SignedHeaders, SigningRequest, sign};
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
 pub use child_registry::ChildRegistry;
-pub use cloudwatch_otlp_sink::{CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError};
+pub use cloudwatch_otlp_sink::{
+    CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,
+};
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };

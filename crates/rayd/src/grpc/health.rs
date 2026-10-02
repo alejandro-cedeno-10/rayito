@@ -84,7 +84,10 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot, self.features.as_deref())))
+        Ok(Response::new(to_response(
+            snapshot,
+            self.features.as_deref(),
+        )))
     }
 
     async fn metrics(

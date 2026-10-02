@@ -9,10 +9,14 @@
 use std::time::SystemTime;
 
 use prost::Message;
-use rayd_core::telemetry::{ALL_GAUGES, AttrKey, MetricPoint, NameStyle, OtlpEncoder, ResourceAttrs};
+use rayd_core::telemetry::{
+    ALL_GAUGES, AttrKey, MetricPoint, NameStyle, OtlpEncoder, ResourceAttrs,
+};
 use rayito_proto::otlp::collector_metrics::ExportMetricsServiceRequest;
 use rayito_proto::otlp::common::{AnyValue, InstrumentationScope, KeyValue, any_value};
-use rayito_proto::otlp::metrics::{Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric, number_data_point};
+use rayito_proto::otlp::metrics::{
+    Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric, number_data_point,
+};
 use rayito_proto::otlp::resource::Resource;
 
 /// `InstrumentationScope.name`: identifies the exporter, not the gauges
@@ -128,7 +132,9 @@ fn group_into_metrics(points: &[MetricPoint], names: NameStyle) -> Vec<Metric> {
 fn unix_nanos(timestamp: SystemTime) -> u64 {
     timestamp
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }
 
 #[cfg(test)]
@@ -189,7 +195,11 @@ mod tests {
     fn resource_attributes_carry_exactly_the_4_closed_keys_plus_service_name() {
         let bytes = ProstOtlpEncoder.encode(&resource(), "agente", NameStyle::Rayito, &[]);
         let decoded = ExportMetricsServiceRequest::decode(bytes.as_slice()).unwrap_or_default();
-        let attrs = &decoded.resource_metrics[0].resource.as_ref().unwrap().attributes;
+        let attrs = &decoded.resource_metrics[0]
+            .resource
+            .as_ref()
+            .unwrap()
+            .attributes;
         let keys: Vec<&str> = attrs.iter().map(|kv| kv.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -205,8 +215,12 @@ mod tests {
 
     #[test]
     fn a_metric_point_carries_its_value_as_a_gauge_double() {
-        let bytes =
-            ProstOtlpEncoder.encode(&resource(), "agente", NameStyle::Rayito, &[point(GaugeKind::CpuUsedPct, 42.0)]);
+        let bytes = ProstOtlpEncoder.encode(
+            &resource(),
+            "agente",
+            NameStyle::Rayito,
+            &[point(GaugeKind::CpuUsedPct, 42.0)],
+        );
         let decoded = ExportMetricsServiceRequest::decode(bytes.as_slice()).unwrap_or_default();
         let metric = &decoded.resource_metrics[0].scope_metrics[0].metrics[0];
         let Some(metric::Data::Gauge(gauge)) = &metric.data else {

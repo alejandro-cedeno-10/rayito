@@ -62,8 +62,10 @@ pub fn sign(request: &SigningRequest<'_>) -> SignedHeaders {
     let signed_header_names = signed_header_names(request.session_token.is_some());
     let canonical_request =
         canonical_request(request, &amz_date, &payload_hash, signed_header_names);
-    let credential_scope =
-        format!("{date_stamp}/{}/{}/{TERMINATOR}", request.region, request.service);
+    let credential_scope = format!(
+        "{date_stamp}/{}/{}/{TERMINATOR}",
+        request.region, request.service
+    );
     let string_to_sign = format!(
         "{ALGORITHM}\n{amz_date}\n{credential_scope}\n{}",
         lower_hex(&sha256(canonical_request.as_bytes()))
@@ -298,9 +300,11 @@ mod tests {
         let mut request = sample_request(1_440_938_160);
         request.session_token = Some("FQoGZXIvYXdz...");
         let signed = sign(&request);
-        assert!(signed.authorization.contains(
-            "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
-        ));
+        assert!(
+            signed.authorization.contains(
+                "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
+            )
+        );
     }
 
     #[test]

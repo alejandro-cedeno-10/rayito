@@ -134,8 +134,8 @@ pub struct MetricPoint {
 #[allow(clippy::cast_precision_loss)]
 #[must_use]
 pub fn points_from_sample(sample: &MetricsSample) -> [MetricPoint; 7] {
-    let timestamp = SystemTime::UNIX_EPOCH
-        + Duration::from_millis(u64::try_from(sample.unix_ms).unwrap_or(0));
+    let timestamp =
+        SystemTime::UNIX_EPOCH + Duration::from_millis(u64::try_from(sample.unix_ms).unwrap_or(0));
     let point = |kind: GaugeKind, value: f64| MetricPoint {
         kind,
         value,
@@ -200,7 +200,10 @@ mod tests {
         let points = points_from_sample(&sample);
         assert_eq!(points.len(), 7);
         for point in &points {
-            assert_eq!(point.timestamp, SystemTime::UNIX_EPOCH + Duration::from_millis(1_000));
+            assert_eq!(
+                point.timestamp,
+                SystemTime::UNIX_EPOCH + Duration::from_millis(1_000)
+            );
         }
         assert_eq!(points[0].kind, GaugeKind::CpuUsedPct);
         assert_eq!(points[0].value, 12.5);

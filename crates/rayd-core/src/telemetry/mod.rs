@@ -23,7 +23,9 @@ pub use batcher::{
     BASE_BACKOFF, BatchPlan, Batcher, BatcherStats, MAX_BACKOFF, OtlpEncoder, QUEUE_CAPACITY,
     SinkError, TelemetrySink, jittered_backoff, plan_suspend_flush,
 };
-pub use config::{MAX_INTERVAL, MIN_INTERVAL, TelemetryAuth, TelemetryConfig, TelemetryConfigError};
+pub use config::{
+    MAX_INTERVAL, MIN_INTERVAL, TelemetryAuth, TelemetryConfig, TelemetryConfigError,
+};
 pub use model::{
     ALL_GAUGES, AttrKey, GaugeKind, MetricPoint, NameStyle, ResourceAttrs, points_from_sample,
 };
