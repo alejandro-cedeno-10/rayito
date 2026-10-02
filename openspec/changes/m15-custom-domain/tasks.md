@@ -2,9 +2,11 @@
 
 - [x] 1.1 §29: `DescribeKeyValueStore`/`PutKey`/`DeleteKey` (only parameters
       used, output fields read, `ETag` chaining), verified offline against
-      botocore 1.43.103's `cloudfront-keyvaluestore` model —
-      `signatureVersion: v4` (D2 of `design.md`, a correction to the
-      research's SigV4A assumption). CloudFormation resource shapes used
+      botocore 1.43.103's `cloudfront-keyvaluestore` model — its
+      `endpoint-rule-set-1.json` requires SigV4A despite `service-2.json`
+      declaring `signatureVersion: v4` (D2 of `design.md`; an earlier pass
+      of this task read the wrong field and concluded the opposite).
+      CloudFormation resource shapes used
       by `infra/custom-domain.yaml` (`AWS::CloudFront::{Distribution,
       Function,KeyValueStore}`), `cf.updateRequestOrigin`/`cf.kvs()`
       contract for the Function. DOM-1 re-derived (823 B JWE) and
@@ -34,7 +36,12 @@
       TypeScript `custom-domain/service.ts` (one async class).
       `deploy`/`status`/`destroy` as a thin facade over `OptionalStacks`;
       `register`/`unregister`/`refresh`/`hostFor`/`kvsArn` for route
-      management, with a chained `ETag` on every write.
+      management, with a chained `ETag` on every write (`register`/
+      `refresh` share a `_write_route`/`#writeRoute` that retries a bounded
+      number of times on an `ETag` conflict and rolls back best-effort if a
+      later write in the chain fails). `register` requires `traffic_token`
+      unless `public=True` is passed explicitly — a route is never public
+      by omission (SEC-T25).
 - [x] 3.2 "Coste y activación" docstring/TSDoc block on the class;
       registered in `check-dts-cost-blocks.mjs` (TypeScript).
 - [x] 3.3 Unit tests: `test_m15_custom_domain_service.py` (incl. "builds no
@@ -48,22 +55,29 @@
 ## 4. Stack `infra/custom-domain.yaml`
 
 - [x] 4.1 `AWS::CloudFront::Distribution` (wildcard alias, ACM cert
-      parameter, placeholder origin, `CachingDisabled`/`AllViewer` managed
-      policies, viewer-request Function association),
+      parameter, placeholder origin, `CachingDisabled`/
+      `AllViewerExceptHostHeader` managed policies — not plain `AllViewer`,
+      which would forward `Host` to the dynamically-chosen origin and break
+      its TLS/SNI check (DOM-2) —, viewer-request Function association),
       `AWS::CloudFront::Function` (`cloudfront-js-2.0`),
       `AWS::CloudFront::KeyValueStore`. No Lambda, no IAM beyond CloudFront.
 - [x] 4.2 `infra/functions/custom_domain_router.js`: strips viewer
-      `x-aws-proxy-*` headers, checks the route's `traffic_token` in
-      constant time, calls `cf.updateRequestOrigin`. Pure helpers unit
-      tested with `node:test` (`infra/functions/tests/
-      custom_domain_router.test.mjs`, via a minimal `cloudfront` module
-      shim since that builtin only exists inside CloudFront's own
-      runtime); `handler` itself is not exported, matching AWS's own
-      `AWS::CloudFront::Function` example, and is only exercised in the
-      AWS acceptance stage (DOM-2/3).
+      `x-aws-proxy-*` headers, denies reserved ports (`RESERVED_PORTS`,
+      kept in sync with `limits.json`) before touching the KVS, checks the
+      route's `traffic_token` in constant time against a lower-cased host
+      label, calls `cf.updateRequestOrigin`. The routing decision is a pure
+      `route(request, kvsGet)` function, unit tested with `node:test`
+      (`infra/functions/tests/custom_domain_router.test.mjs`, via a
+      minimal `cloudfront` module shim since that builtin only exists
+      inside CloudFront's own runtime) covering 404/403/success/header
+      stripping; `handler` itself (the thin `cf`-calling wrapper) is not
+      exported, matching AWS's own `AWS::CloudFront::Function` example, and
+      is only exercised in the AWS acceptance stage (DOM-2/3).
 - [x] 4.3 `scripts/tests/test_custom_domain_function_sync.py` keeps the
-      YAML's embedded `FunctionCode` byte-identical to the `.js` source
-      (CloudFormation has no file-include for this property).
+      YAML's embedded `FunctionCode` in sync with the `.js` source, minus
+      its `export` keywords (CloudFormation has no file-include for this
+      property, and `cloudfront-js-2.0` has never been documented to
+      support `export` in a function's own code).
 - [x] 4.4 `cfn-lint` 1.56.3 clean; `Makefile` `CUSTOM_DOMAIN_TEMPLATE`
       added to `infra-lint` (the `aws cloudformation validate-template`
       half of that target needs AWS and was not run from this branch).
@@ -77,16 +91,22 @@
 
 ## 5. CLI and exports
 
-- [x] 5.1 `cli/domain.py`: `deploy`/`status`/`destroy`, thin facade over
-      `rayito stack ... custom-domain`. `tests/unit/cli/test_m15_domain_cli.py`.
-      Updated the one pre-existing foundations test that asserted `domain
-      --help` was still a pending stub (`test_m15_stack_cli.py`).
+- [x] 5.1 `cli/domain.py`: `deploy` builds a `CustomDomain` (validates
+      `--public-domain` before touching AWS, prints the per-use cost
+      alongside the idle one); `status`/`destroy` go straight to
+      `OptionalStacks` instead, same as `rayito stack`, since neither needs
+      `--public-domain`; `destroy` prints what `destroy()` retains.
+      `tests/unit/cli/test_m15_domain_cli.py`. Updated the one pre-existing
+      foundations test that asserted `domain --help` was still a pending
+      stub (`test_m15_stack_cli.py`).
 - [x] 5.2 `rayito/__init__.py` / `src/index.ts` export `CustomDomain`,
       `AsyncCustomDomain` (Python), `CustomDomainRoute` and the option/
       result types.
-- [x] 5.3 `clients/typescript/package.json`: new optional peer
-      `@aws-sdk/client-cloudfront-keyvaluestore` (+ devDependency),
-      `pnpm-lock.yaml` updated.
+- [x] 5.3 `clients/typescript/package.json`: two new optional peers,
+      `@aws-sdk/client-cloudfront-keyvaluestore` and
+      `@aws-sdk/signature-v4a` (the data plane needs SigV4A, D2 of
+      `design.md`) (+ devDependencies), `pnpm-lock.yaml` updated. Python:
+      new `pyproject.toml` extra `custom-domain` (`awscrt`, same reason).
 
 ## 6. Off-by-default and zero-cost acceptance (§9 of the M15 architecture)
 
