@@ -37,11 +37,15 @@ from rayito._code_base import (
     StdoutCallback,
 )
 from rayito._configure_base import (
+    CONFIGURE_SETTLE_POLL_S,
+    ConfigureSection,
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
     require_capabilities,
     require_configure_support,
+    settle_timeout_s,
+    still_pending,
 )
 from rayito._feature_options import FeatureOptions, FeaturePlan, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -1559,17 +1563,32 @@ class Sandbox:
         """Ejecuta `plan.configure_sections` justo tras el primer `Health`
         (llamado sólo por `_open`): la puerta de capacidad
         (`require_capabilities`), luego una única `Configure` con todas las
-        secciones y, por último, el resultado de cada una traducido a su
-        propia excepción (`check_configure_response`). Cualquier excepción
-        de aquí sube tal cual a `_open`, que ya termina el sandbox (salvo
-        `keep_on_failure`) ante cualquier fallo en esta ventana — esta
-        función no implementa su propia terminación.
+        secciones, el resultado de cada una traducido a su propia excepción
+        (`check_configure_response`) y, para las que el agente dejó en
+        `PENDING`, la espera acotada a que se asienten (`_wait_settled`):
+        `create()` nunca devuelve un sandbox con un montaje todavía sin
+        montar. Cualquier excepción de aquí sube tal cual a `_open`, que ya
+        termina el sandbox (salvo `keep_on_failure`) ante cualquier fallo en
+        esta ventana — esta función no implementa su propia terminación.
         """
         features = require_configure_support(agent_features_from_health(ready), "configure")
         require_capabilities(plan.configure_sections, features)
         request = build_configure_request(plan.configure_sections)
         response = call_configure(self._configure_stub, request, timeout=self._request_timeout)
-        check_configure_response(response, plan.configure_sections)
+        self._wait_settled(check_configure_response(response, plan.configure_sections))
+
+    def _wait_settled(self, pending: tuple[ConfigureSection, ...]) -> None:
+        """Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_S` hasta que
+        ninguna sección de `pending` siga pendiente; agotado el mayor
+        `settle_timeout_s`, la última lectura es `final` y cada sección que
+        siga sin asentarse lanza su propia excepción de timeout."""
+        deadline = time.monotonic() + settle_timeout_s(pending)
+        while pending:
+            final = time.monotonic() >= deadline
+            status = call_configure_status(self._configure_stub, timeout=self._request_timeout)
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                time.sleep(CONFIGURE_SETTLE_POLL_S)
 
     @property
     def mounts(self) -> dict[str, MountStatus]:

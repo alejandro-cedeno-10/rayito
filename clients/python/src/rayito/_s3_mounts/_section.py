@@ -4,7 +4,8 @@ El RPC en sí lo hacen los adaptadores de M15 foundations
 (`sandbox_sync/configure.py` / `sandbox_async/configure.py`) sobre el
 `ConfigureRequest` que `S3MountsSection.fill` rellena — estructuralmente
 compatible con el Protocol `ConfigureSection` de `_configure_base.py`
-(`section`, `required_flag`, `fill`), sin heredar de él (Protocol).
+(`section`, `required_flag`, `fill`, `check_result`, `settle_timeout_s`,
+`check_status`), sin heredar de él (Protocol).
 """
 
 from __future__ import annotations
@@ -17,10 +18,25 @@ from rayito._mount_path import validate_mount_paths
 from rayito.exceptions import MountException, UnimplementedError
 from rayito.v1 import configure_pb2, s3_mounts_pb2
 
-from ._domain import MOUNT_ERROR_CLASSES, UNKNOWN_ERROR_CLASS, MountPhase, MountStatus, S3Mount
+from ._domain import (
+    MOUNT_ERROR_CLASSES,
+    TIMEOUT_ERROR_CLASS,
+    UNKNOWN_ERROR_CLASS,
+    MountPhase,
+    MountStatus,
+    S3Mount,
+)
 
 SECTION_NAME: Final = "s3_mounts"
 REQUIRED_FLAG: Final = "s3_mounts"
+
+#: Cuánto espera `create()` a que cada montaje pase de `"pending"` a
+#: `"mounted"`/`"failed"`. `rayd` ya acota attach + arranque + primera
+#: respuesta de cada montaje a 10 s (`MOUNT_READY_TIMEOUT`,
+#: `crates/rayd/src/features/s3_mounts.rs`) y lo marca `failed`/`timeout`
+#: él mismo; 5 s más cubren la planificación de su tarea y el último sondeo,
+#: para que el SDK informe del veredicto del agente en vez de adivinarlo.
+MOUNT_SETTLE_TIMEOUT_S: Final = 15.0
 
 _PHASE_TO_STATE: Final[dict[int, MountPhase]] = {
     s3_mounts_pb2.S3_MOUNT_PHASE_PENDING: "pending",
@@ -49,6 +65,13 @@ class S3MountsSection:
 
     def check_result(self, code: int, error_class: str) -> None:
         check_section_result(code, error_class)
+
+    @property
+    def settle_timeout_s(self) -> float:
+        return MOUNT_SETTLE_TIMEOUT_S
+
+    def check_status(self, status: configure_pb2.ConfigureStatusResponse, *, final: bool) -> bool:
+        return check_mounts_settled(from_proto_status(status.s3_mounts), self.mounts, final=final)
 
 
 def plan_s3_mounts(mounts: Mapping[str, S3Mount] | None) -> S3MountsSection | None:
@@ -90,9 +113,10 @@ def from_proto_status(status: s3_mounts_pb2.S3MountsStatus) -> dict[str, MountSt
 
 
 def check_section_result(code: int, error_class: str) -> None:
-    """`None` si la sección se aplicó o sigue asentándose (`PENDING`: un
-    montaje todavía asentándose no es un error, `sbx.mounts` lo reporta
-    como `"pending"`); en otro caso, la excepción que explica por qué.
+    """`None` si la sección se aplicó o sigue asentándose (`PENDING`: no es
+    un error todavía; `create()` sondea entonces `ConfigureStatus` hasta que
+    cada montaje se asiente, `check_mounts_settled`); en otro caso, la
+    excepción que explica por qué.
     `code` es el entero de `SectionCode` tal cual lo manda `rayd`, nunca una
     cadena comparada a mano: compararlo contra las constantes generadas
     (`configure_pb2.SECTION_CODE_*`) es lo que haría fallar una comprobación
@@ -111,3 +135,31 @@ def check_section_result(code: int, error_class: str) -> None:
         f"mounts=: la sección se rechazó ({code_name})",
         code=error_class if error_class in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS,
     )
+
+
+def check_mounts_settled(
+    states: Mapping[str, MountStatus], wanted: Mapping[str, S3Mount], *, final: bool
+) -> bool:
+    """`True` si cada ruta de `wanted` ya está `"mounted"`. El primer
+    montaje `"failed"` lanza `MountException` con su `last_error_class`
+    (así `create()` termina el sandbox en vez de devolver uno con el
+    montaje roto); con `final`, uno que siga `"pending"` (o que el agente
+    no reporte) lanza `MountException(code="timeout")`.
+    """
+    settled = True
+    for path in wanted:
+        state = states.get(path)
+        if state is not None and state.state == "failed":
+            code = state.last_error_class or UNKNOWN_ERROR_CLASS
+            raise MountException(
+                f"mounts=: {path} no se pudo montar ({code})",
+                code=code if code in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS,
+            )
+        if state is None or state.state != "mounted":
+            settled = False
+    if not settled and final:
+        raise MountException(
+            f"mounts=: algún montaje sigue sin asentarse tras {MOUNT_SETTLE_TIMEOUT_S:g} s",
+            code=TIMEOUT_ERROR_CLASS,
+        )
+    return settled

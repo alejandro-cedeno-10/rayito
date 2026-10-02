@@ -20,9 +20,13 @@ import {
 import {
   agentFeaturesFromHealth,
   buildConfigureRequest,
+  CONFIGURE_SETTLE_POLL_MS,
+  type ConfigureSection,
   checkConfigureResponse,
   requireCapabilities,
   requireConfigureSupport,
+  settleTimeoutMs,
+  stillPending,
 } from "../configure-base.js";
 import {
   errorMessage,
@@ -35,7 +39,10 @@ import {
 } from "../errors.js";
 import type { FeaturePlan } from "../feature-options.js";
 import { planFeatures } from "../feature-options.js";
-import { ConfigureStatusRequestSchema } from "../gen/rayito/v1/configure_pb.js";
+import {
+  ConfigureStatusRequestSchema,
+  type ConfigureStatusResponse,
+} from "../gen/rayito/v1/configure_pb.js";
 import {
   HealthRequestSchema,
   type HealthResponse,
@@ -73,7 +80,7 @@ import {
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import { resolveImageVariant } from "../role-policy.js";
-import type { MountStatus, S3Mount } from "../s3-mounts/domain.js";
+import type { MountStatus, S3MountsOption } from "../s3-mounts/domain.js";
 import { fromProtoStatus } from "../s3-mounts/section.js";
 import {
   bindSecrets,
@@ -356,7 +363,7 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * siete ausentes (su valor por defecto) el comportamiento es exactamente
    * el de 0.5.x.
    */
-  readonly mounts?: ReadonlyMap<string, S3Mount> | undefined;
+  readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: unknown;
   readonly events?: unknown;
@@ -1430,7 +1437,10 @@ export class Sandbox implements AsyncDisposable {
    * sólo por `#open`): la puerta de capacidad (`requireCapabilities`),
    * luego una única `Configure` con todas las secciones y, por último, el
    * resultado de cada una traducido a su propio error
-   * (`checkConfigureResponse`). Cualquier error de aquí sube tal cual a
+   * (`checkConfigureResponse`) y, para las que el agente dejó en
+   * `PENDING`, la espera acotada a que se asienten (`#waitSettled`):
+   * `create()` nunca devuelve un sandbox con un montaje todavía sin montar.
+   * Cualquier error de aquí sube tal cual a
    * `#open`, que ya termina el sandbox (salvo `keepOnFailure`) ante
    * cualquier fallo en esta ventana — este método no implementa su propia
    * terminación.
@@ -1443,7 +1453,35 @@ export class Sandbox implements AsyncDisposable {
     const response = await this.#core.translatedUnary(() =>
       this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
     );
-    checkConfigureResponse(response, plan.configureSections);
+    await this.#waitSettled(checkConfigureResponse(response, plan.configureSections));
+  }
+
+  /**
+   * Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_MS` hasta que
+   * ninguna sección de `pending` siga pendiente; agotado el mayor
+   * `settleTimeoutMs`, la última lectura es `final` y cada sección que siga
+   * sin asentarse lanza su propio error de timeout.
+   */
+  async #waitSettled(pending: ConfigureSection[]): Promise<void> {
+    const deadline = Date.now() + settleTimeoutMs(pending);
+    let remaining = pending;
+    while (remaining.length > 0) {
+      const final = Date.now() >= deadline;
+      remaining = stillPending(await this.#configureStatus(), remaining, final);
+      if (remaining.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, CONFIGURE_SETTLE_POLL_MS));
+      }
+    }
+  }
+
+  async #configureStatus(): Promise<ConfigureStatusResponse> {
+    const timeoutMs = this.#core.resolveRequestTimeout(undefined);
+    return this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configureStatus(
+        create(ConfigureStatusRequestSchema, {}),
+        callOptions(timeoutMs, undefined),
+      ),
+    );
   }
 
   /**
@@ -1453,13 +1491,7 @@ export class Sandbox implements AsyncDisposable {
    * `create()` no recibió `mounts`.
    */
   async mounts(): Promise<ReadonlyMap<string, MountStatus>> {
-    const timeoutMs = this.#core.resolveRequestTimeout(undefined);
-    const response = await this.#core.translatedUnary(() =>
-      this.#core.clients.configure.configureStatus(
-        create(ConfigureStatusRequestSchema, {}),
-        callOptions(timeoutMs, undefined),
-      ),
-    );
+    const response = await this.#configureStatus();
     return fromProtoStatus(response.s3Mounts ?? create(S3MountsStatusSchema, {}));
   }
 

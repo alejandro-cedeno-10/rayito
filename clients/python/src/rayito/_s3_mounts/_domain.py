@@ -27,6 +27,11 @@ MOUNT_ERROR_CLASSES: Final[tuple[str, ...]] = (
     "timeout",
 )
 
+#: La clase que `create()` informa cuando un montaje sigue `"pending"` al
+#: agotar su espera (`_section.MOUNT_SETTLE_TIMEOUT_S`); la misma cadena que
+#: el agente usa para su propio límite.
+TIMEOUT_ERROR_CLASS: Final = "timeout"
+
 #: Nunca confundir con una clase real del agente (nunca aparece en
 #: `MOUNT_ERROR_CLASSES`): `check_section_result` la usa en vez de adivinar
 #: una de las clases reales cuando el agente manda una que este SDK no

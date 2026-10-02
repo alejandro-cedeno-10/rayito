@@ -35,7 +35,7 @@ describe("Sandbox.create: 0.6 options", () => {
     await expect(
       Sandbox.create({
         template: "rayito-base",
-        mounts: new Map([["/mnt/d", new S3Mount({ bucket: "team-data" })]]),
+        mounts: { "/mnt/d": new S3Mount({ bucket: "team-data" }) },
       }),
     ).rejects.toThrow(UnimplementedError);
   });
@@ -45,7 +45,7 @@ describe("Sandbox.create: 0.6 options", () => {
     await expect(
       Sandbox.create({
         pool,
-        mounts: new Map([["/mnt/d", new S3Mount({ bucket: "team-data" })]]),
+        mounts: { "/mnt/d": new S3Mount({ bucket: "team-data" }) },
       }),
     ).rejects.toThrow(InvalidArgumentError);
   });

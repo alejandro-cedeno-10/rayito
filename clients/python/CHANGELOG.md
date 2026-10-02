@@ -34,8 +34,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   (`require_caps_for` lo exige antes de `run-microvm` cuando la imagen se
   nombra directamente; sobre un ARN opaco la decisión se difiere a
   `Health.features` tras `/run`, que termina el sandbox si falta la
-  capacidad). `sbx.mounts` (propiedad) da el estado en vivo de cada
-  montaje (`"pending"`/`"mounted"`/`"failed"`, `ConfigureStatus` en cada
+  capacidad). `create()` no vuelve hasta que cada montaje está montado:
+  sondea `ConfigureStatus` (como mucho 15 s) y, si uno falla o no se
+  asienta, termina el sandbox y lanza `MountException`. `sbx.mounts`
+  (propiedad) da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/`"failed"`, `ConfigureStatus` en cada
   lectura); una sección rechazada o un montaje fallido lanza
   `MountException` con un `code` cerrado (`network`, `iam_denied`,
   `not_found`, `not_allowed`, `invalid_path`, `helper_missing`,
@@ -45,7 +47,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
   componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`,
   desplegable con `rayito stack deploy s3-mounts --param
-  BucketName=...`).
+  BucketName=... --param Prefixes=...`, pide `CAPABILITY_IAM`), acotada
+  al bucket y a sus prefijos (hasta 4) también para leer, escribir y
+  borrar objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS`
+  de la imagen (`rayito image publish --env`, de `m15-sizes-catalog`).
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

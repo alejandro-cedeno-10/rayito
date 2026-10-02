@@ -18,8 +18,11 @@ from rayito._configure_base import (
     require_capabilities,
     require_configure_support,
     section_error,
+    settle_timeout_s,
+    still_pending,
 )
 from rayito._s3_mounts import S3Mount, plan_s3_mounts
+from rayito._s3_mounts._section import MOUNT_SETTLE_TIMEOUT_S
 from rayito.exceptions import MountException, SandboxException, UnimplementedError
 from rayito.v1 import configure_pb2, features_pb2, health_pb2, s3_mounts_pb2
 
@@ -131,4 +134,59 @@ def test_check_configure_response_ignores_a_result_for_a_section_not_sent() -> N
             )
         ]
     )
-    check_configure_response(response, ())
+    assert check_configure_response(response, ()) == ()
+
+
+def _result(code: configure_pb2.SectionCode) -> configure_pb2.ConfigureResponse:
+    return configure_pb2.ConfigureResponse(
+        results=[
+            configure_pb2.SectionResult(section=configure_pb2.CONFIG_SECTION_S3_MOUNTS, code=code)
+        ]
+    )
+
+
+def test_check_configure_response_returns_only_the_pending_sections() -> None:
+    section = _s3_mounts_section()
+    assert check_configure_response(_result(configure_pb2.SECTION_CODE_PENDING), (section,)) == (
+        section,
+    )
+    assert check_configure_response(_result(configure_pb2.SECTION_CODE_APPLIED), (section,)) == ()
+
+
+def test_settle_timeout_is_the_largest_pending_sections_own_bound() -> None:
+    assert settle_timeout_s(()) == 0.0
+    assert settle_timeout_s((_s3_mounts_section(),)) == MOUNT_SETTLE_TIMEOUT_S
+
+
+def _status(
+    phase: s3_mounts_pb2.S3MountPhase, error_class: str = ""
+) -> configure_pb2.ConfigureStatusResponse:
+    return configure_pb2.ConfigureStatusResponse(
+        s3_mounts=s3_mounts_pb2.S3MountsStatus(
+            mounts=[
+                s3_mounts_pb2.S3MountState(
+                    mount_path="/mnt/data", phase=phase, error_class=error_class
+                )
+            ]
+        )
+    )
+
+
+def test_still_pending_drops_a_settled_section_and_keeps_an_unsettled_one() -> None:
+    section = _s3_mounts_section()
+    mounted = _status(s3_mounts_pb2.S3_MOUNT_PHASE_MOUNTED)
+    pending = _status(s3_mounts_pb2.S3_MOUNT_PHASE_PENDING)
+    assert still_pending(mounted, (section,), final=False) == ()
+    assert still_pending(pending, (section,), final=False) == (section,)
+
+
+def test_still_pending_lets_the_section_raise_its_own_failure_and_timeout() -> None:
+    section = _s3_mounts_section()
+    failed = _status(s3_mounts_pb2.S3_MOUNT_PHASE_FAILED, "not_found")
+    with pytest.raises(MountException) as failure:
+        still_pending(failed, (section,), final=False)
+    assert failure.value.code == "not_found"
+    pending = _status(s3_mounts_pb2.S3_MOUNT_PHASE_PENDING)
+    with pytest.raises(MountException) as timeout:
+        still_pending(pending, (section,), final=True)
+    assert timeout.value.code == "timeout"

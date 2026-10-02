@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from rayito.exceptions import SandboxException, UnimplementedError
 from rayito.v1 import configure_pb2
@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     from rayito.v1 import features_pb2, health_pb2
 
 CONFIGURE_DOC: str = "docs/site/docs/funciones-opcionales/pilas-opcionales.md"
+
+#: Cadencia del sondeo de `ConfigureStatus` mientras alguna sección sigue
+#: `SECTION_CODE_PENDING` tras `Configure`: un montaje local responde en
+#: decenas de milisegundos una vez listo, así que un cuarto de segundo no
+#: añade latencia apreciable a `create()` ni martillea al agente.
+CONFIGURE_SETTLE_POLL_S: Final = 0.25
 
 
 @dataclass(frozen=True)
@@ -77,9 +83,11 @@ class ConfigureSection(Protocol):
     """Lo que una función 0.6 implementa para participar en una sola
     llamada a `Configure`: el nombre de su sección (para los logs y el
     orden), el flag de `AgentFeatures` que debe estar activo, cómo rellena
-    su campo del `ConfigureRequest` compartido (`fill`) y cómo traduce el
+    su campo del `ConfigureRequest` compartido (`fill`), cómo traduce el
     `SectionResult` que le corresponde en su propia excepción
-    (`check_result`)."""
+    (`check_result`) y, si el agente la deja en `SECTION_CODE_PENDING`,
+    cuánto esperar (`settle_timeout_s`) y cómo leer su estado en
+    `ConfigureStatus` (`check_status`)."""
 
     @property
     def section(self) -> str: ...
@@ -90,6 +98,14 @@ class ConfigureSection(Protocol):
     def fill(self, request: configure_pb2.ConfigureRequest) -> None: ...
 
     def check_result(self, code: int, error_class: str) -> None: ...
+
+    @property
+    def settle_timeout_s(self) -> float: ...
+
+    def check_status(self, status: configure_pb2.ConfigureStatusResponse, *, final: bool) -> bool:
+        """`True` si la sección ya se asentó con éxito; lanza su propia
+        excepción si falló, o si `final` y todavía no se ha asentado."""
+        ...
 
 
 def section_error(
@@ -154,19 +170,52 @@ def build_configure_request(
     return request
 
 
-def check_configure_response(
+def _sections_by_result(
     response: configure_pb2.ConfigureResponse, sections: Sequence[ConfigureSection]
-) -> None:
-    """Traduce cada `SectionResult` de `response` a la excepción de su
-    propia sección (`ConfigureSection.check_result`); un resultado para una
-    sección que `sections` no contiene (no debería ocurrir: el agente sólo
-    responde por lo que `ConfigureRequest` llevaba) se ignora en vez de
-    fallar de forma opaca.
-    """
+) -> list[tuple[ConfigureSection, configure_pb2.SectionResult]]:
+    """Cada `SectionResult` de `response` junto a su sección; un resultado
+    para una sección que `sections` no contiene (no debería ocurrir: el
+    agente sólo responde por lo que `ConfigureRequest` llevaba) se ignora en
+    vez de fallar de forma opaca."""
     by_name = {entry.section: entry for entry in sections}
+    paired: list[tuple[ConfigureSection, configure_pb2.SectionResult]] = []
     for result in response.results:
         name = _WIRE_SECTION_NAMES.get(result.section)
         entry = by_name.get(name) if name is not None else None
-        if entry is None:
-            continue
+        if entry is not None:
+            paired.append((entry, result))
+    return paired
+
+
+def check_configure_response(
+    response: configure_pb2.ConfigureResponse, sections: Sequence[ConfigureSection]
+) -> tuple[ConfigureSection, ...]:
+    """Traduce cada `SectionResult` de `response` a la excepción de su
+    propia sección (`ConfigureSection.check_result`) y devuelve las que
+    quedaron en `SECTION_CODE_PENDING`: `create()` no vuelve hasta que
+    `wait_settled`/su versión asíncrona las vea asentarse.
+    """
+    pending: list[ConfigureSection] = []
+    for entry, result in _sections_by_result(response, sections):
         entry.check_result(result.code, result.error_class)
+        if result.code == configure_pb2.SECTION_CODE_PENDING:
+            pending.append(entry)
+    return tuple(pending)
+
+
+def settle_timeout_s(pending: Sequence[ConfigureSection]) -> float:
+    """El mayor `settle_timeout_s` de las secciones pendientes: todas se
+    sondean juntas en la misma `ConfigureStatus`."""
+    return max((entry.settle_timeout_s for entry in pending), default=0.0)
+
+
+def still_pending(
+    status: configure_pb2.ConfigureStatusResponse,
+    pending: Sequence[ConfigureSection],
+    *,
+    final: bool,
+) -> tuple[ConfigureSection, ...]:
+    """Las secciones de `pending` que `status` todavía no da por asentadas;
+    cada una lanza su propia excepción si falló, o si `final` (se agotó
+    `settle_timeout_s`) y sigue sin asentarse."""
+    return tuple(entry for entry in pending if not entry.check_status(status, final=final))

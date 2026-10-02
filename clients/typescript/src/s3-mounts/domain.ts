@@ -27,6 +27,11 @@ export const MOUNT_ERROR_CLASSES = [
  * de hacerla visible. */
 export const UNKNOWN_ERROR_CLASS = "unknown";
 
+/** La clase que `create()` informa cuando un montaje sigue `"pending"` al
+ * agotar su espera (`section.ts`'s `MOUNT_SETTLE_TIMEOUT_MS`); la misma
+ * cadena que el agente usa para su propio límite. */
+export const TIMEOUT_ERROR_CLASS = "timeout";
+
 export interface S3MountOptions {
   readonly bucket: string;
   readonly prefix?: string;
@@ -71,6 +76,17 @@ export class S3Mount {
     this.allowOverwrite = allowOverwrite;
     this.allowDelete = allowDelete;
   }
+}
+
+/**
+ * `mounts` de `Sandbox.create()`: un objeto literal
+ * (`{ "/mnt/data": new S3Mount(...) }`, igual que `volumes`) o un `Map`.
+ */
+export type S3MountsOption = Readonly<Record<string, S3Mount>> | ReadonlyMap<string, S3Mount>;
+
+/** Las entradas de `mounts` en orden de inserción, sea cual sea su forma. */
+export function mountEntries(mounts: S3MountsOption): [string, S3Mount][] {
+  return mounts instanceof Map ? [...mounts.entries()] : Object.entries(mounts);
 }
 
 /** Lo que `sbx.mounts[path]` expone. `lastErrorClass` es `undefined` salvo

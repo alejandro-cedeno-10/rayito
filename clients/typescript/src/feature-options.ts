@@ -15,7 +15,7 @@
 import type { ConfigureSection } from "./configure-base.js";
 import { UnimplementedError } from "./errors.js";
 import { requireCapsFor } from "./role-policy.js";
-import type { S3Mount } from "./s3-mounts/domain.js";
+import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
 
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -27,7 +27,7 @@ export const DOMAIN_CHANGE = "m15-custom-domain";
 
 /** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
 export interface FeatureOptions {
-  readonly mounts?: ReadonlyMap<string, S3Mount> | undefined;
+  readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: unknown;
   readonly events?: unknown;

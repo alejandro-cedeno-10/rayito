@@ -32,7 +32,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   `mount-s3`/FUSE, sólo sobre `rayito-base-caps` (`requireCapsFor` lo
   exige antes de `run-microvm` cuando la imagen se nombra directamente;
   sobre un ARN opaco la decisión se difiere a `Health.features` tras
-  `/run`, que termina el sandbox si falta la capacidad). `sbx.mounts()`
+  `/run`, que termina el sandbox si falta la capacidad). `mounts` acepta
+  un objeto literal (como `volumes`) o un `Map`. `create()` no vuelve
+  hasta que cada montaje está montado: sondea `ConfigureStatus` (como
+  mucho 15 s) y, si uno falla o no se asienta, termina el sandbox y lanza
+  `MountError`. `sbx.mounts()`
   da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/
   `"failed"`, `ConfigureStatus` en cada llamada); una sección rechazada o
   un montaje fallido lanza `MountError` con un `code` cerrado (`network`,
@@ -41,7 +45,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   dedicado `rayito-mount` (uid 990) con credenciales resueltas por su
   propio acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
   relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
-  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`).
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`, pide
+  `CAPABILITY_IAM`; su plantilla ya va empaquetada en el SDK), acotada al
+  bucket y a sus prefijos (hasta 4) también para leer, escribir y borrar
+  objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la
+  imagen.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

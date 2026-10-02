@@ -15,11 +15,21 @@ import {
   type ConfigureRequest,
   ConfigureRequestSchema,
   type ConfigureResponse,
+  type ConfigureStatusResponse,
+  SectionCode,
+  type SectionResult,
 } from "./gen/rayito/v1/configure_pb.js";
 import type { AgentFeatures } from "./gen/rayito/v1/features_pb.js";
 import type { HealthResponse } from "./gen/rayito/v1/health_pb.js";
 
 export const CONFIGURE_DOC = "docs/site/docs/funciones-opcionales/pilas-opcionales.md";
+
+/** Cadencia del sondeo de `ConfigureStatus` mientras alguna sección sigue
+ * `PENDING` tras `Configure`: un montaje local responde en decenas de
+ * milisegundos una vez listo, así que un cuarto de segundo no añade
+ * latencia apreciable a `create()` ni martillea al agente. Espejo de
+ * `CONFIGURE_SETTLE_POLL_S` de Python. */
+export const CONFIGURE_SETTLE_POLL_MS = 250;
 
 /**
  * `undefined` cuando el agente es anterior a 0.6.0 (el campo `features`
@@ -56,14 +66,19 @@ export function requireConfigureSupport(
  * Lo que una función 0.6 implementa para participar en una sola llamada a
  * `Configure`: el nombre de su sección (para los logs y el orden), el flag
  * de `AgentFeatures` que debe estar activo, cómo rellena su campo del
- * `ConfigureRequest` compartido y cómo traduce el `SectionResult` que le
- * corresponde en su propio error.
+ * `ConfigureRequest` compartido, cómo traduce el `SectionResult` que le
+ * corresponde en su propio error y, si el agente la deja en `PENDING`,
+ * cuánto esperar (`settleTimeoutMs`) y cómo leer su estado en
+ * `ConfigureStatus` (`checkStatus`: `true` si ya se asentó; lanza su
+ * propio error si falló, o si `final` y todavía no se ha asentado).
  */
 export interface ConfigureSection {
   readonly section: string;
   readonly requiredFlag: keyof AgentFeatures;
+  readonly settleTimeoutMs: number;
   fill(request: ConfigureRequest): void;
   checkResult(code: number, errorClass: string): void;
+  checkStatus(status: ConfigureStatusResponse, final: boolean): boolean;
 }
 
 const WIRE_SECTION_NAMES: ReadonlyMap<ConfigSection, string> = new Map([
@@ -112,24 +127,58 @@ export function buildConfigureRequest(sections: readonly ConfigureSection[]): Co
   return request;
 }
 
+/** Cada `SectionResult` de `response` junto a su sección; un resultado para
+ * una sección que `sections` no contiene (no debería ocurrir: el agente
+ * sólo responde por lo que `ConfigureRequest` llevaba) se ignora en vez de
+ * fallar de forma opaca. */
+function sectionsByResult(
+  response: ConfigureResponse,
+  sections: readonly ConfigureSection[],
+): [ConfigureSection, SectionResult][] {
+  const byName = new Map(sections.map((entry) => [entry.section, entry] as const));
+  const paired: [ConfigureSection, SectionResult][] = [];
+  for (const result of response.results) {
+    const name = WIRE_SECTION_NAMES.get(result.section);
+    const entry = name === undefined ? undefined : byName.get(name);
+    if (entry !== undefined) {
+      paired.push([entry, result]);
+    }
+  }
+  return paired;
+}
+
 /**
  * Traduce cada `SectionResult` de `response` al error de su propia sección
- * (`ConfigureSection.checkResult`); un resultado para una sección que
- * `sections` no contiene (no debería ocurrir: el agente sólo responde por
- * lo que `ConfigureRequest` llevaba) se ignora en vez de fallar de forma
- * opaca.
+ * (`ConfigureSection.checkResult`) y devuelve las que quedaron en
+ * `PENDING`: `create()` no vuelve hasta verlas asentarse (`stillPending`).
  */
 export function checkConfigureResponse(
   response: ConfigureResponse,
   sections: readonly ConfigureSection[],
-): void {
-  const byName = new Map(sections.map((entry) => [entry.section, entry] as const));
-  for (const result of response.results) {
-    const name = WIRE_SECTION_NAMES.get(result.section);
-    const entry = name === undefined ? undefined : byName.get(name);
-    if (entry === undefined) {
-      continue;
-    }
+): ConfigureSection[] {
+  const pending: ConfigureSection[] = [];
+  for (const [entry, result] of sectionsByResult(response, sections)) {
     entry.checkResult(result.code, result.errorClass);
+    if (result.code === SectionCode.PENDING) {
+      pending.push(entry);
+    }
   }
+  return pending;
+}
+
+/** El mayor `settleTimeoutMs` de las secciones pendientes: todas se
+ * sondean juntas en la misma `ConfigureStatus`. */
+export function settleTimeoutMs(pending: readonly ConfigureSection[]): number {
+  return pending.reduce((longest, entry) => Math.max(longest, entry.settleTimeoutMs), 0);
+}
+
+/** Las secciones de `pending` que `status` todavía no da por asentadas;
+ * cada una lanza su propio error si falló, o si `final` y sigue sin
+ * asentarse. */
+export function stillPending(
+  status: ConfigureStatusResponse,
+  pending: readonly ConfigureSection[],
+  final: boolean,
+): ConfigureSection[] {
+  return pending.filter((entry) => !entry.checkStatus(status, final));
 }

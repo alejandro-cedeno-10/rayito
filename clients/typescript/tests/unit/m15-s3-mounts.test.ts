@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, test } from "vitest";
-
+import vectors from "../../../../testdata/s3-mounts/mount-specs.json" with { type: "json" };
 import { InvalidArgumentError, MountError, UnimplementedError } from "../../src/errors.js";
 import { ConfigureRequestSchema, SectionCode } from "../../src/gen/rayito/v1/configure_pb.js";
 import {
@@ -10,12 +10,44 @@ import {
 } from "../../src/gen/rayito/v1/s3_mounts_pb.js";
 import { S3Mount } from "../../src/s3-mounts/domain.js";
 import {
+  checkMountsSettled,
   checkSectionResult,
   fromProtoStatus,
   planS3Mounts,
   S3MountsSection,
   toProto,
 } from "../../src/s3-mounts/section.js";
+
+/** Compartidos con `rayd-core` y el SDK de Python: los tres validadores leen
+ * los mismos casos (ver su `description`). */
+type VectorMount = (typeof vectors.cases)[number]["mounts"][number];
+
+function planVector(mounts: readonly VectorMount[]): void {
+  planS3Mounts(
+    Object.fromEntries(
+      mounts.map((raw) => [
+        raw.path,
+        new S3Mount({
+          bucket: raw.bucket,
+          prefix: raw.prefix,
+          readOnly: raw.read_only,
+          allowOverwrite: raw.allow_overwrite,
+          allowDelete: raw.allow_delete,
+        }),
+      ]),
+    ),
+  );
+}
+
+describe("shared mount-spec vectors", () => {
+  test.each(vectors.cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
+    if (entry.sdk === "ok") {
+      expect(() => planVector(entry.mounts)).not.toThrow();
+    } else {
+      expect(() => planVector(entry.mounts)).toThrow(InvalidArgumentError);
+    }
+  });
+});
 
 describe("S3Mount domain", () => {
   test("defaults are read-only and bucket root", () => {
@@ -24,20 +56,6 @@ describe("S3Mount domain", () => {
     expect(mount.prefix).toBe("");
     expect(mount.allowOverwrite).toBe(false);
     expect(mount.allowDelete).toBe(false);
-  });
-
-  test("an empty bucket is rejected", () => {
-    expect(() => new S3Mount({ bucket: "" })).toThrow(InvalidArgumentError);
-  });
-
-  test("a prefix with a leading slash is rejected", () => {
-    expect(() => new S3Mount({ bucket: "team-data", prefix: "/team7/" })).toThrow(
-      InvalidArgumentError,
-    );
-  });
-
-  test.each(["allowOverwrite", "allowDelete"] as const)("%s requires readOnly: false", (field) => {
-    expect(() => new S3Mount({ bucket: "team-data", [field]: true })).toThrow(/readOnly/);
   });
 
   test("write flags are accepted with readOnly: false", () => {
@@ -57,9 +75,9 @@ describe("planS3Mounts", () => {
     expect(planS3Mounts(undefined)).toBeUndefined();
   });
 
-  test("validates paths before building a section", () => {
-    const mounts = new Map([["relative/path", new S3Mount({ bucket: "team-data" })]]);
-    expect(() => planS3Mounts(mounts)).toThrow(InvalidArgumentError);
+  test("accepts a plain object literal, like volumes", () => {
+    const section = planS3Mounts({ "/mnt/data": new S3Mount({ bucket: "team-data" }) });
+    expect(section?.mounts.get("/mnt/data")?.bucket).toBe("team-data");
   });
 
   test("returns a section with the required flag and name", () => {
@@ -154,5 +172,37 @@ describe("checkSectionResult", () => {
     } catch (error) {
       expect((error as MountError).code).toBe("unknown");
     }
+  });
+});
+
+describe("checkMountsSettled", () => {
+  const wanted = new Map([["/mnt/data", new S3Mount({ bucket: "team-data" })]]);
+
+  test("true once every wanted path is mounted", () => {
+    expect(checkMountsSettled(new Map([["/mnt/data", { state: "mounted" }]]), wanted, false)).toBe(
+      true,
+    );
+  });
+
+  test("keeps waiting while pending or unreported", () => {
+    expect(checkMountsSettled(new Map([["/mnt/data", { state: "pending" }]]), wanted, false)).toBe(
+      false,
+    );
+    expect(checkMountsSettled(new Map(), wanted, false)).toBe(false);
+  });
+
+  test("a failed mount raises its own error class", () => {
+    const states = new Map([
+      ["/mnt/data", { state: "failed" as const, lastErrorClass: "iam_denied" }],
+    ]);
+    expect(() => checkMountsSettled(states, wanted, false)).toThrow(
+      expect.objectContaining({ code: "iam_denied" }),
+    );
+  });
+
+  test("still pending at the deadline is a timeout", () => {
+    expect(() =>
+      checkMountsSettled(new Map([["/mnt/data", { state: "pending" }]]), wanted, true),
+    ).toThrow(expect.objectContaining({ code: "timeout" }));
   });
 });

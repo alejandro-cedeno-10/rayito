@@ -30,11 +30,15 @@ from rayito._code_base import (
     StdoutCallback,
 )
 from rayito._configure_base import (
+    CONFIGURE_SETTLE_POLL_S,
+    ConfigureSection,
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
     require_capabilities,
     require_configure_support,
+    settle_timeout_s,
+    still_pending,
 )
 from rayito._feature_options import FeatureOptions, FeaturePlan, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -1321,15 +1325,30 @@ class AsyncSandbox:
         self, plan: FeaturePlan, ready: health_pb2.HealthResponse
     ) -> None:
         """Misma lógica que `Sandbox._apply_configure_plan`, sobre el stub
-        asíncrono: `require_capabilities`, una única `Configure` y
-        `check_configure_response`; cualquier excepción sube a `_open`."""
+        asíncrono: `require_capabilities`, una única `Configure`,
+        `check_configure_response` y la espera acotada a las secciones
+        `PENDING`; cualquier excepción sube a `_open`."""
         features = require_configure_support(agent_features_from_health(ready), "configure")
         require_capabilities(plan.configure_sections, features)
         request = build_configure_request(plan.configure_sections)
         response = await call_configure(
             self._configure_stub, request, timeout=self._request_timeout
         )
-        check_configure_response(response, plan.configure_sections)
+        await self._wait_settled(check_configure_response(response, plan.configure_sections))
+
+    async def _wait_settled(self, pending: tuple[ConfigureSection, ...]) -> None:
+        """Misma espera que `Sandbox._wait_settled`, sobre el reloj del
+        bucle de eventos y `asyncio.sleep`."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + settle_timeout_s(pending)
+        while pending:
+            final = loop.time() >= deadline
+            status = await call_configure_status(
+                self._configure_stub, timeout=self._request_timeout
+            )
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                await asyncio.sleep(CONFIGURE_SETTLE_POLL_S)
 
     async def mounts(self) -> dict[str, MountStatus]:
         """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
