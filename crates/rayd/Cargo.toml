@@ -40,6 +40,7 @@ mimalloc = { workspace = true }
 getrandom = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
+aws-credential-types = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 sha2 = { workspace = true }

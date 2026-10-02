@@ -115,7 +115,6 @@ impl MetricsRing {
         }
     }
 
-    /// The oldest retained sample of the whole ring, not of any range.
     /// The most recent sample, if any (m15-rayd-otlp, ADR-021: the
     /// exporter reads this instead of probing procfs a second time).
     #[must_use]
@@ -123,6 +122,7 @@ impl MetricsRing {
         self.samples.back().copied()
     }
 
+    /// The oldest retained sample of the whole ring, not of any range.
     #[must_use]
     pub fn oldest_unix_ms(&self) -> Option<i64> {
         self.samples.front().map(|sample| sample.unix_ms)

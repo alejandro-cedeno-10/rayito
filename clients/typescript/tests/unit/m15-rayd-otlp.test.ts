@@ -1,22 +1,26 @@
 /**
- * m15-rayd-otlp: `telemetry-export/domain.ts` and `telemetry-export/section.ts`.
+ * m15-rayd-otlp: `telemetry-export/{domain,section,propagation}.ts`.
  * No real server or AWS SDK: validation is pure and `resolveBearerToken`
- * only needs a minimal client shaped like `SecretsManagerClient`.
+ * only needs a minimal client shaped like `SecretsManagerClient`;
+ * `TraceparentProvider` only needs a minimal module shaped like
+ * `@opentelemetry/api`'s `context`/`propagation` exports.
  */
 
 import { create } from "@bufbuild/protobuf";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { InvalidArgumentError, SecretError, UnimplementedError } from "../../src/errors.js";
 import { ConfigureRequestSchema } from "../../src/gen/rayito/v1/configure_pb.js";
-import { NameStyle } from "../../src/gen/rayito/v1/telemetry_export_pb.js";
+import { TelemetryExportNameStyle } from "../../src/gen/rayito/v1/telemetry_export_pb.js";
 import * as optional from "../../src/optional.js";
 import {
+  imageMemoryMibFromGuestBytes,
   MAX_INTERVAL_S,
   MIN_INTERVAL_S,
   OtlpAuth,
   planTelemetry,
   TelemetryExport,
 } from "../../src/telemetry-export/domain.js";
+import { TraceparentProvider } from "../../src/telemetry-export/propagation.js";
 import {
   buildSection,
   resolveBearerToken,
@@ -155,7 +159,7 @@ describe("TelemetryExportSection", () => {
     const config = request.telemetryExport;
     expect(config?.intervalS).toBe(90);
     expect(config?.serviceName).toBe("agente");
-    expect(config?.names).toBe(NameStyle.E2B);
+    expect(config?.names).toBe(TelemetryExportNameStyle.E2B);
     expect(config?.imageArn.endsWith("rayito-base-caps")).toBe(true);
     expect(config?.imageVersion).toBe("7");
     expect(config?.imageMemoryMib).toBe(4096);
@@ -248,5 +252,84 @@ describe("buildSection", () => {
     expect(
       request.telemetryExport?.auth.case === "bearer" && request.telemetryExport.auth.value.token,
     ).toBe("sk-test");
+  });
+});
+
+describe("imageMemoryMibFromGuestBytes", () => {
+  test("undefined (Health never read yet) is 0 MiB", () => {
+    expect(imageMemoryMibFromGuestBytes(undefined)).toBe(0);
+  });
+
+  test("divides the guest's 4x view down to the image's declared memory (Q88)", () => {
+    // 8 GiB of guest-visible memory -> a 2 GiB image (GUEST_MEMORY_MULTIPLIER = 4).
+    const guestBytes = 8 * 1024 * 1024 * 1024;
+    expect(imageMemoryMibFromGuestBytes(guestBytes)).toBe(2048);
+  });
+
+  test("floors rather than rounds, like the Python SDK's floor division", () => {
+    const almostFiveMib = 5 * 1024 * 1024 * 4 - 1;
+    expect(imageMemoryMibFromGuestBytes(almostFiveMib)).toBe(4);
+  });
+});
+
+/** Mirrors `fakeSecretsManagerModule`: the real `@opentelemetry/api` peer is
+ * never imported, `loadOptionalPeer` is spied on with a minimal fake shaped
+ * like its `context`/`propagation` exports. */
+function fakeOpenTelemetryModule(carrierToInject: Record<string, string>) {
+  const activeCalls: unknown[] = [];
+  return {
+    activeCalls,
+    module: {
+      context: {
+        active: () => {
+          const token = Symbol("active-context");
+          activeCalls.push(token);
+          return token;
+        },
+      },
+      propagation: {
+        inject: (_activeContext: unknown, carrier: Record<string, string>) => {
+          Object.assign(carrier, carrierToInject);
+        },
+      },
+    },
+  };
+}
+
+describe("TraceparentProvider", () => {
+  test("create() surfaces a clear error when @opentelemetry/api is missing", async () => {
+    vi.spyOn(optional, "loadOptionalPeer").mockRejectedValue(
+      new InvalidArgumentError("tracerProvider necesita el paquete opcional '@opentelemetry/api'"),
+    );
+    await expect(TraceparentProvider.create()).rejects.toThrow(InvalidArgumentError);
+  });
+
+  test("metadata() returns whatever the active context's propagator injected", async () => {
+    const fake = fakeOpenTelemetryModule({ traceparent: "00-a-b-01" });
+    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(fake.module);
+    const provider = await TraceparentProvider.create();
+    expect(provider.metadata()).toEqual([["traceparent", "00-a-b-01"]]);
+    expect(fake.activeCalls).toHaveLength(1);
+  });
+
+  test("metadata() never carries baggage, even when the propagator injects one", async () => {
+    const fake = fakeOpenTelemetryModule({
+      traceparent: "00-a-b-01",
+      baggage: "secret=value",
+    });
+    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(fake.module);
+    const provider = await TraceparentProvider.create();
+    const metadata = Object.fromEntries(provider.metadata());
+    expect(metadata.traceparent).toBe("00-a-b-01");
+    expect(metadata.baggage).toBeUndefined();
+  });
+
+  test("metadata() is computed fresh on every call, not fixed at create()", async () => {
+    const fake = fakeOpenTelemetryModule({ traceparent: "00-a-b-01" });
+    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(fake.module);
+    const provider = await TraceparentProvider.create();
+    provider.metadata();
+    provider.metadata();
+    expect(fake.activeCalls).toHaveLength(2);
   });
 });

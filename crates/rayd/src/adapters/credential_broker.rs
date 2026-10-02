@@ -29,8 +29,41 @@ use super::s3_store::EXECUTION_ROLE_PROFILE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialBrokerError {
+    /// IMDS answered the fixed `EXECUTION_ROLE_PROFILE` name with HTTP 404:
+    /// no execution role is attached to this guest at all (ADR-012: only
+    /// `rayito-base-caps`/derived images get one). Permanent for the life
+    /// of this boot, never worth retrying.
+    #[error("imds reports no execution role for this guest")]
+    RoleNotAttached,
+    /// Any other failure (timeout, 5xx, no route to IMDS): a broker
+    /// hiccup, not evidence the image lacks a role.
     #[error("imds credentials unavailable")]
     Unavailable,
+}
+
+/// Classifies a failed `provide_credentials()` call by walking its
+/// `source()` chain for the wording `aws-config` 1.12.0's
+/// `ImdsError::ErrorResponse`'s own `Display` impl uses
+/// (`imds/client/error.rs`: `"error response from IMDS (code: {status})"`).
+/// `ImdsCredentialsProvider::profile()` (used by `ImdsCredentialBroker`)
+/// skips the profile-discovery call that crate makes its own 404 check
+/// against, and its error types are crate-private, so this reads the
+/// rendered text instead of downcasting; falling back to `Unavailable`
+/// when the wording ever changes upstream is the fail-safe side (a classic
+/// 404 instead becomes a retryable "broker hiccup", never the other way
+/// round).
+fn classify(
+    source: &aws_credential_types::provider::error::CredentialsError,
+) -> CredentialBrokerError {
+    const NOT_FOUND_MARKER: &str = "code: 404";
+    let mut cursor: Option<&(dyn std::error::Error + 'static)> = Some(source);
+    while let Some(error) = cursor {
+        if error.to_string().contains(NOT_FOUND_MARKER) {
+            return CredentialBrokerError::RoleNotAttached;
+        }
+        cursor = error.source();
+    }
+    CredentialBrokerError::Unavailable
 }
 
 /// The execution-role credentials themselves, held only here: the secret
@@ -86,7 +119,7 @@ impl ImdsCredentialBroker {
             .provider
             .provide_credentials()
             .await
-            .map_err(|_source| CredentialBrokerError::Unavailable)?;
+            .map_err(|source| classify(&source))?;
         let credentials = GuestCredentials {
             access_key_id: fetched.access_key_id().to_owned(),
             secret_access_key: Zeroizing::new(fetched.secret_access_key().to_owned()),
@@ -104,6 +137,24 @@ impl ImdsCredentialBroker {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<GuestCredentials>> {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A broker whose `ensure()` returns `credentials` straight from the
+    /// cache, never touching IMDS: for other adapters' unit tests (e.g.
+    /// `cloudwatch_otlp_sink`'s) that need a real `ExecutionRole` lease to
+    /// exercise `SigV4` signing, consistent with this crate's convention
+    /// that no unit test below the acceptance stage touches a real
+    /// network (`adapters::s3_store`'s own IMDS path is likewise untested
+    /// here). Only ever compiled for `cargo test`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn seeded_for_test(credentials: GuestCredentials) -> Self {
+        Self {
+            provider: ImdsCredentialsProvider::builder()
+                .profile(EXECUTION_ROLE_PROFILE)
+                .build(),
+            live: Mutex::new(Some(credentials)),
+        }
     }
 }
 
@@ -159,7 +210,40 @@ impl PushedCredentials {
 
 #[cfg(test)]
 mod tests {
+    use aws_credential_types::provider::error::CredentialsError;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct Wrapped(&'static str);
+
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for Wrapped {}
+
+    #[test]
+    fn classify_recognizes_the_imds_404_wording_anywhere_in_the_source_chain() {
+        // The exact shape `aws-config` 1.12.0's `ImdsError::ErrorResponse`
+        // renders (`imds/client/error.rs`): "error response from IMDS
+        // (code: 404). <raw response Debug>".
+        let source = CredentialsError::provider_error(Wrapped(
+            "error response from IMDS (code: 404). HttpResponse { .. }",
+        ));
+        assert_eq!(classify(&source), CredentialBrokerError::RoleNotAttached);
+    }
+
+    #[test]
+    fn classify_treats_every_other_failure_as_a_generic_unavailable_broker() {
+        let timeout = CredentialsError::provider_error(Wrapped("dispatch failure: timed out"));
+        assert_eq!(classify(&timeout), CredentialBrokerError::Unavailable);
+        let server_error =
+            CredentialsError::provider_error(Wrapped("error response from IMDS (code: 500)."));
+        assert_eq!(classify(&server_error), CredentialBrokerError::Unavailable);
+    }
 
     #[test]
     fn pushed_credentials_round_trip_by_name() {

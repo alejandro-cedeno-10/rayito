@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+from rayito._limits import GUEST_MEMORY_MULTIPLIER
 from rayito._role_policy import require_caps_for
 from rayito.exceptions import InvalidArgumentException
 
@@ -24,6 +25,25 @@ DEFAULT_SERVICE_NAME: Final = "rayito"
 
 NameStyle = Literal["rayito", "e2b"]
 _NAME_STYLES: Final = ("rayito", "e2b")
+
+#: A MiB in bytes: the only unit conversion `image_memory_mib_from_guest_bytes`
+#: needs, named so it is never a bare `1024 * 1024` at each call site.
+BYTES_PER_MIB: Final = 1024 * 1024
+
+
+def image_memory_mib_from_guest_bytes(guest_memory_total_bytes: int | None) -> int:
+    """The image's declared memory in MiB, computed from the guest's own
+    `MemTotal` (`SandboxInfo.memory_mb`'s source, `Health.memory_total_bytes`):
+    the guest always sees `GUEST_MEMORY_MULTIPLIER` times the image's
+    declared memory (Q88, `docs/research/2026-10-e2b-out-of-scope.md` §16),
+    so dividing by it here is what actually makes `image_memory_mib` name
+    the image's memory rather than the guest's. `0` before `Health` has
+    ever been read (`guest_memory_total_bytes is None`), the same "not read
+    yet" default every other resource attribute here falls back to.
+    """
+    if guest_memory_total_bytes is None:
+        return 0
+    return guest_memory_total_bytes // (BYTES_PER_MIB * GUEST_MEMORY_MULTIPLIER)
 
 
 @dataclass(frozen=True)

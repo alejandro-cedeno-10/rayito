@@ -119,6 +119,37 @@ change's scope was deliberately narrowed after starting on it, following
 the same "stop when something doesn't fit instead of improvising" rule
 `v06-foundations` applied to the zombie reaper.
 
+**Post-review update (tasks.md §13.3):** a review of the first version
+flagged two gaps in this narrowing that were not actually part of the
+"reorder the live channel" risk D8 is about, and so are fixed directly
+rather than deferred further:
+
+- **`rayd`'s own side was entirely missing.** The architecture (§7.5)
+  always meant propagation to have two ends: the SDK injecting
+  `traceparent`, and `rayd` reading it back to correlate its own log
+  lines. Only the SDK side was ever planned as "disconnected" (because
+  wiring the *injection* into a live channel is the risky, shared-file
+  reorder); `rayd`'s *reading* side carries no such risk -- it is a new,
+  additive tower layer (`grpc::request_context`) that only ever reads one
+  header and, when present, opens a span for that RPC. It did not need
+  deferring and is implemented now.
+- **TypeScript had no `TraceparentProvider` at all**, let alone a
+  disconnected one -- a real parity gap, not a narrower version of
+  Python's. `telemetry-export/propagation.ts` now mirrors Python's
+  `_propagation.py` exactly (same scope: tested in isolation via a fake
+  `@opentelemetry/api` peer, not wired into the transport).
+
+**Still deferred, in both SDKs**, for exactly the reason D8 already gives:
+connecting the (now real, tested) provider to the live channel's auth
+plugin/interceptor requires reordering when that plugin is built relative
+to when the OTel instrumentation is known, in a file every other 0.6
+feature also touches (`sandbox_sync/main.py` and its mirrors). TypeScript
+additionally has no `CallMetadataProvider`-equivalent seam on its
+transport yet (Python's existed from foundations; TypeScript's does not),
+so TypeScript's live wiring needs that seam built first, same as this
+change already had to build TypeScript's `configure/` seam from scratch
+(D1-area work, §5 of `proposal.md`).
+
 ### D9. `check-dts-cost-blocks.mjs`'s `COST_DECLARATIONS` gets two more hard-coded entries, not a glob conversion
 
 `v06-foundations`'s own `design.md`/`proposal.md` left this array

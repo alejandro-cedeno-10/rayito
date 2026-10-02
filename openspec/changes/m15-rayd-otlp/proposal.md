@@ -89,19 +89,28 @@ token (works on `rayito-base`), opt-in only through `ConfigureSandbox`'s
 
 ## Non-blocking follow-up (explicitly deferred, tracked here)
 
-**`traceparent` propagation is implemented but not connected to the live
-channel.** Research Q92 asks for W3C `traceparent`/`tracestate` to reach
-`rayd`'s logs; `CallMetadataProvider` (the seam) and `TraceparentProvider`
-(the implementation, `opentelemetry.propagate.inject` under the hood) both
-exist and are unit-tested standalone. Wiring the provider into the actual
+**`traceparent` propagation is implemented on both ends but not connected
+to the live channel.** Research Q92 asks for W3C `traceparent`/`tracestate`
+to reach `rayd`'s logs. On `rayd`'s side, that is now done outright:
+`grpc::request_context`'s tower layer reads an inbound `traceparent` and
+opens a `trace_id`/`span_id` span for that RPC — purely additive, no
+reordering of anything, so it carried none of this follow-up's risk and
+ships live. On the SDK side, `CallMetadataProvider` (the seam, Python only)
+and `TraceparentProvider` (the implementation,
+`opentelemetry.propagate.inject` under the hood, now in **both** SDKs —
+`clients/typescript/src/telemetry-export/propagation.ts` closes what was a
+real parity gap, not merely a narrower version of Python's) exist and are
+unit-tested standalone. Wiring the provider into the actual
 `ProxyAuthPlugin` a live `Sandbox` uses requires reordering when the
 channel's auth plugin is constructed (inside `__init__`, before
 `_instrumentation` is known) against when the real OTel instrumentation is
 set (after `_open()` returns, in several call sites of
-`sandbox_sync/main.py` — a file shared by all seven 0.6 options) in both
-SDKs. That reordering is a real behavior change to a heavily-used, shared
-construction path; this change ships the tested, zero-risk pieces (the
-seam, the provider) and defers the live wiring rather than rush a
+`sandbox_sync/main.py` — a file shared by all seven 0.6 options) in Python,
+and TypeScript additionally has no `CallMetadataProvider`-equivalent seam
+on its transport yet to wire into in the first place. That reordering is a
+real behavior change to a heavily-used, shared construction path; this
+change ships the tested, zero-risk pieces (the seam, the provider, and now
+`rayd`'s reading side) and defers the live wiring rather than rush a
 higher-risk edit across a file every other 0.6 feature also touches,
 following the same reasoning foundations used for the orphan-zombie reaper
 (`proposal.md` of `v06-foundations`). Tracked in `design.md`.

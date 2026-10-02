@@ -1,11 +1,12 @@
 //! AWS Signature Version 4 for one fixed request shape: a `POST` with a
 //! binary body to a single AWS service endpoint (m15-rayd-otlp's
-//! `cloudwatch_otlp_sink`, service `monitoring`). No new crate: `rayd`'s
-//! `aws-config`/`aws-sdk-s3` dependency signs its own S3 calls internally
-//! and exposes no public signer, and the M15 shared-file protocol allows
-//! this feature to add vendored protos but not crates (§5), so HMAC-SHA256
-//! is built here from the `sha2` dependency already in the workspace
-//! (RFC 2104), verified against the RFC 4231 test vector below.
+//! `cloudwatch_otlp_sink`, service `monitoring`). `aws-sigv4` is a public
+//! crate and already in `Cargo.lock` (pulled in transitively by
+//! `aws-sdk-s3`), but the M15 shared-file protocol allows this feature to
+//! add vendored protos, not new *direct* crates (§5), so HMAC-SHA256 is
+//! built here from the `sha2` dependency already in the workspace
+//! (RFC 2104), verified against the RFC 4231 test vector below and against
+//! the official `SigV4` test suite's `post-vanilla` vector further down.
 //!
 //! Pure: no socket, no clock call (`timestamp` is a parameter), so every
 //! byte of what gets signed is a unit-testable function of its inputs.
@@ -314,6 +315,45 @@ mod tests {
         let mut second = sample_request(1_440_938_160);
         second.payload = b"b";
         assert_ne!(sign(&first).authorization, sign(&second).authorization);
+    }
+
+    /// The official AWS `SigV4` test suite's `post-vanilla` case (`AKIDEXAMPLE`,
+    /// confirmed from `aws/aws-cli` and `boto/botocore`'s own copies of
+    /// `tests/unit/botocore/auth/aws4_testsuite/post-vanilla/*`, the same
+    /// suite `aws-c-auth`'s `aws-sig-v4-test-suite` ships): a third-party,
+    /// independently-published fixture, not just this module agreeing with
+    /// itself. Its header set (`host;x-amz-date`, no `x-amz-content-sha256`)
+    /// differs from the one fixed header set `sign`/`canonical_request`
+    /// ever build, so this pins the lower-level primitives every header set
+    /// shares (`sha256`, `derive_signing_key`, `hmac_sha256`) directly,
+    /// bypassing `canonical_request`, rather than claiming `sign` itself
+    /// reproduces a request shape it cannot build.
+    ///
+    /// NOTE: the suite's documented secret is
+    /// `wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY` (a `+`, confirmed from
+    /// `botocore`'s `tests/unit/auth/test_sigv4.py`), one character off
+    /// from the `/`-variant AWS's own worked canonical-request example
+    /// uses (`sample_request` above) -- two different well-known
+    /// `AKIDEXAMPLE` fixtures that must not be swapped.
+    #[test]
+    fn matches_the_official_aws_sigv4_test_suite_post_vanilla_vector() {
+        const SECRET: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+        const CANONICAL_REQUEST: &str = "POST\n/\n\nhost:example.amazonaws.com\n\
+             x-amz-date:20150830T123600Z\n\nhost;x-amz-date\n\
+             e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        const EXPECTED_HASHED_CANONICAL_REQUEST: &str =
+            "553f88c9e4d10fc9e109e2aeb65f030801b70c2f6468faca261d401ae622fc87";
+        const EXPECTED_SIGNATURE: &str =
+            "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b";
+
+        let hashed_canonical_request = lower_hex(&sha256(CANONICAL_REQUEST.as_bytes()));
+        assert_eq!(hashed_canonical_request, EXPECTED_HASHED_CANONICAL_REQUEST);
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n20150830T123600Z\n20150830/us-east-1/service/aws4_request\n{hashed_canonical_request}"
+        );
+        let signing_key = derive_signing_key(SECRET, "20150830", "us-east-1", "service");
+        let signature = lower_hex(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+        assert_eq!(signature, EXPECTED_SIGNATURE);
     }
 
     #[test]

@@ -55,6 +55,12 @@ getrandom = "=0.4.3"
 # `sso` and `credentials-process` stay out; the trust store is the OS bundle.
 aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 aws-sdk-s3 = { version = "=1.149.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+# `aws-config`/`aws-sdk-s3` already pin this transitively (`Cargo.lock`
+# resolves it to the same 1.3.0 either way, so this adds no new crate to
+# the dependency tree); direct only so `adapters::credential_broker` can
+# name `CredentialsError` to classify an IMDS failure (m15-rayd-otlp,
+# ADR-021) instead of collapsing every broker error into one variant.
+aws-credential-types = { version = "=1.3.0", default-features = false }
 tar = "=0.4.46"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 # Presigned S3 transfers (ADR-010): an HTTP/1.1 client over the TLS stack

@@ -4,6 +4,10 @@ paquete que llama a AWS (`secretsmanager:GetSecretValue`, y sólo con
 `OtlpAuth.bearer(...)`): construida ya con los hechos de imagen (sólo
 conocidos tras `run-microvm`) y, si aplica, el valor del bearer ya resuelto
 -- nunca su nombre de secreto, y nunca en un log o una excepción.
+
+`require_telemetry_support` es el gate compartido por `Sandbox._apply_telemetry`
+y `AsyncSandbox._apply_telemetry`: antes de esto, cada uno repetía el mismo
+chequeo y el mismo mensaje de `UnimplementedError` por separado.
 """
 
 from __future__ import annotations
@@ -13,7 +17,8 @@ from typing import TYPE_CHECKING
 
 import boto3
 
-from rayito.exceptions import SecretException
+from rayito._configure_base import AgentFeatures, require_configure_support
+from rayito.exceptions import SecretException, UnimplementedError
 from rayito.v1 import telemetry_export_pb2
 
 from ._domain import TelemetryExport
@@ -22,9 +27,33 @@ if TYPE_CHECKING:
     from rayito.v1 import configure_pb2
 
 _NAMES_WIRE = {
-    "rayito": telemetry_export_pb2.NAME_STYLE_RAYITO,
-    "e2b": telemetry_export_pb2.NAME_STYLE_E2B,
+    "rayito": telemetry_export_pb2.TELEMETRY_EXPORT_NAME_STYLE_RAYITO,
+    "e2b": telemetry_export_pb2.TELEMETRY_EXPORT_NAME_STYLE_E2B,
 }
+
+#: `_apply_telemetry`'s own feature name, for `require_configure_support`'s
+#: message and for `UnimplementedError`'s first argument.
+TELEMETRY_FEATURE_NAME = "telemetry="
+_TELEMETRY_DOC = "docs/site/docs/funciones-opcionales/exportacion-otlp.md"
+
+
+def require_telemetry_support(features: AgentFeatures | None) -> None:
+    """`UnimplementedError` if the running agent never reports
+    `telemetry_export = true`: absent entirely (an agent older than 0.6.0,
+    via `require_configure_support`) or present but `False` (a 0.6.0 image
+    without the OTLP exporter implemented, `features::slot::Unsupported` on
+    `rayd`'s side). Shared verbatim by `Sandbox._apply_telemetry` and
+    `AsyncSandbox._apply_telemetry` so the gate and its message can never
+    drift between the two.
+    """
+    resolved = require_configure_support(features, TELEMETRY_FEATURE_NAME)
+    if not resolved.telemetry_export:
+        raise UnimplementedError(
+            TELEMETRY_FEATURE_NAME,
+            "esta imagen no tiene el exportador OTLP implementado todavía "
+            "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
+            doc=_TELEMETRY_DOC,
+        )
 
 
 def resolve_bearer_token(

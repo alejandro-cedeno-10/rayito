@@ -193,7 +193,7 @@ def test_fill_builds_an_execution_role_section_with_image_facts() -> None:
     config = request.telemetry_export
     assert config.interval_s == 90
     assert config.service_name == "agente"
-    assert config.names == telemetry_export_pb2.NAME_STYLE_E2B
+    assert config.names == telemetry_export_pb2.TELEMETRY_EXPORT_NAME_STYLE_E2B
     assert config.image_arn.endswith("rayito-base-caps")
     assert config.image_version == "7"
     assert config.image_memory_mib == 4096

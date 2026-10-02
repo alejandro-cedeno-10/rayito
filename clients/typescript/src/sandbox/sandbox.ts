@@ -18,11 +18,7 @@ import {
   PortSpec,
   sharedControlPlane,
 } from "../aws/control-plane.js";
-import {
-  agentFeaturesFromHealth,
-  requireConfigureSupport,
-  sectionError,
-} from "../configure/base.js";
+import { agentFeaturesFromHealth, sectionError } from "../configure/base.js";
 import { callConfigure, callConfigureStatus } from "../configure/rpc.js";
 import {
   errorMessage,
@@ -32,7 +28,6 @@ import {
   SandboxNotFoundError,
   SandboxNotReadyError,
   TimeoutError,
-  UnimplementedError,
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
 import { ConfigureRequestSchema, ConfigureService } from "../gen/rayito/v1/configure_pb.js";
@@ -79,10 +74,11 @@ import {
 } from "../secrets/inject.js";
 import {
   EMPTY_TELEMETRY_HEALTH,
+  imageMemoryMibFromGuestBytes,
   type TelemetryExport,
   type TelemetryHealth,
 } from "../telemetry-export/domain.js";
-import { buildSection } from "../telemetry-export/section.js";
+import { buildSection, requireTelemetrySupport } from "../telemetry-export/section.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -821,9 +817,12 @@ export class Sandbox implements AsyncDisposable {
           );
         }
         if (featurePlan.telemetry !== undefined) {
-          await opened.#applyTelemetry(featurePlan.telemetry, plane.region, {
-            credentials: awsClientSettingsOf(plane).credentials,
-          });
+          await opened.#applyTelemetry(
+            featurePlan.telemetry,
+            plane.region,
+            { credentials: awsClientSettingsOf(plane).credentials },
+            !(options.keepOnFailure ?? false),
+          );
         }
         return opened;
       },
@@ -1646,30 +1645,22 @@ export class Sandbox implements AsyncDisposable {
    * Post-boot (m15-rayd-otlp): exige `Health.features.telemetryExport`
    * antes de enviar la sección -- ausente del todo en un agente anterior a
    * 0.6, o presente pero `false` mientras la imagen no soporte la función
-   * (`features::slot::Unsupported` del lado de `rayd`). Cualquier fallo
-   * termina la `MicroVM` (salvo `keepOnFailure`), igual que
-   * `#applyInitialNetwork`: una opción 0.6 pedida que el sandbox no puede
-   * cumplir nunca deja una VM corriendo sin ella.
+   * (`features::slot::Unsupported` del lado de `rayd`). Un fallo cierra el
+   * cliente siempre; sólo termina la `MicroVM` si `terminateOnFailure`
+   * (igual que `#bindAndRestore`): el llamante pasa `!keepOnFailure`.
    */
   async #applyTelemetry(
     telemetry: TelemetryExport,
     region: string,
     aws: { readonly credentials: AwsClientSettings["credentials"] },
+    terminateOnFailure: boolean,
   ): Promise<void> {
     try {
-      const features = requireConfigureSupport(this.#readinessAgentFeatures, "telemetry");
-      if (!features.telemetryExport) {
-        throw new UnimplementedError(
-          "telemetry",
-          "esta imagen no tiene el exportador OTLP implementado todavía " +
-            "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
-          "docs/site/docs/funciones-opcionales/exportacion-otlp.md",
-        );
-      }
+      requireTelemetrySupport(this.#readinessAgentFeatures);
       const section = await buildSection(telemetry, {
         imageArn: this.#core.launchInfo.template,
         imageVersion: this.#core.launchInfo.templateVersion ?? "",
-        imageMemoryMib: Math.round((this.#readinessHealth?.memoryTotalBytes ?? 0) / (1024 * 1024)),
+        imageMemoryMib: imageMemoryMibFromGuestBytes(this.#readinessHealth?.memoryTotalBytes),
         region,
         credentials: aws.credentials,
       });
@@ -1689,7 +1680,9 @@ export class Sandbox implements AsyncDisposable {
       }
     } catch (error) {
       this.close();
-      await terminateQuietly(this.#core.controlPlane, this.sandboxId, this.#core.logger);
+      if (terminateOnFailure) {
+        await terminateQuietly(this.#core.controlPlane, this.sandboxId, this.#core.logger);
+      }
       throw error;
     }
   }

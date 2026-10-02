@@ -44,7 +44,7 @@ Once `Sandbox.create()`/`AsyncSandbox.create()`/`Sandbox.create()` (TypeScript) 
 - **THEN** `UnimplementedError` names "necesita una imagen 0.6.0 o posterior", distinct from the message raised when `features.telemetry_export` is merely `false`
 
 ### Requirement: a bearer token's value never appears in a log, an exception message or `ConfigureStatus`
-When `OtlpAuth.bearer(secret_name)` is used, the resolved secret value SHALL travel only inside the `BearerAuth.token` field of the `ConfigureRequest` sent to `rayd`; it SHALL NOT appear in any SDK log line, any raised exception's message, or any `TelemetryExportStatus` returned by `ConfigureStatus`. `rayd` SHALL hold it only in process memory (`Zeroizing`), never write it to a log line, and never echo it back in `ConfigureStatus`.
+When `OtlpAuth.bearer(secret_name)` is used, the resolved secret value SHALL travel only inside the `TelemetryExportBearerAuth.token` field of the `ConfigureRequest` sent to `rayd`; it SHALL NOT appear in any SDK log line, any raised exception's message, or any `TelemetryExportStatus` returned by `ConfigureStatus`. `rayd` SHALL hold it only in process memory (`Zeroizing`), never write it to a log line, and never echo it back in `ConfigureStatus`.
 
 #### Scenario: a secret resolution failure never repeats the secret's name
 - **WHEN** `resolve_bearer_token`/`resolveBearerToken` fails to read the named secret

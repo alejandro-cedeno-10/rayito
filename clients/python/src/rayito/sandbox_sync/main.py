@@ -39,7 +39,6 @@ from rayito._code_base import (
 from rayito._configure_base import (
     AgentFeatures,
     agent_features_from_health,
-    require_configure_support,
     section_error,
 )
 from rayito._feature_options import FeatureOptions, plan_features
@@ -182,7 +181,13 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
-from rayito._telemetry_export import TelemetryExport, TelemetryHealth, build_section
+from rayito._telemetry_export import (
+    TelemetryExport,
+    TelemetryHealth,
+    build_section,
+    image_memory_mib_from_guest_bytes,
+    require_telemetry_support,
+)
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -872,7 +877,10 @@ class Sandbox:
                 sandbox._apply_initial_network(launch)
             if feature_plan.telemetry is not None:
                 sandbox._apply_telemetry(
-                    feature_plan.telemetry, region=plane.region, session=session
+                    feature_plan.telemetry,
+                    region=plane.region,
+                    session=session,
+                    terminate_on_failure=not keep_on_failure,
                 )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
@@ -2035,31 +2043,27 @@ class Sandbox:
         *,
         region: str,
         session: boto3.session.Session | None,
+        terminate_on_failure: bool,
     ) -> None:
         """Post-boot (m15-rayd-otlp): exige `Health.features.telemetry_export`
         antes de enviar la sección -- ausente del todo en un agente anterior
         a 0.6, o presente pero `False` mientras la imagen no soporte la
-        función (`features::slot::Unsupported` del lado de `rayd`).
-        Cualquier fallo termina la `MicroVM` (salvo `keep_on_failure`), igual
-        que `_apply_initial_network` y `persist=`: una opción 0.6 pedida que
-        el sandbox no puede cumplir nunca deja una VM corriendo sin ella.
+        función (`features::slot::Unsupported` del lado de `rayd`). Un
+        fallo cierra el cliente siempre; sólo termina la `MicroVM` si
+        `terminate_on_failure` (igual que `persist=`, `_bind_and_restore`):
+        el llamante pasa `not keep_on_failure`.
         """
         try:
-            features = require_configure_support(self._readiness_agent_features, "telemetry=")
-            if not features.telemetry_export:
-                raise UnimplementedError(
-                    "telemetry=",
-                    "esta imagen no tiene el exportador OTLP implementado todavía "
-                    "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
-                    doc="docs/site/docs/funciones-opcionales/exportacion-otlp.md",
-                )
+            require_telemetry_support(self._readiness_agent_features)
             section = build_section(
                 telemetry,
                 image_arn=self._launch_info.template,
                 image_version=self._launch_info.template_version,
-                image_memory_mib=(self._readiness_health.memory_total_bytes // (1024 * 1024))
-                if self._readiness_health is not None
-                else 0,
+                image_memory_mib=image_memory_mib_from_guest_bytes(
+                    self._readiness_health.memory_total_bytes
+                    if self._readiness_health is not None
+                    else None
+                ),
                 region=region,
                 session=session,
             )
@@ -2078,7 +2082,8 @@ class Sandbox:
                     raise error
         except BaseException:
             self.close()
-            terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
+            if terminate_on_failure:
+                terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
             raise
 
     def _enforce_launch_policy(self, launch: NetworkLaunch) -> None:

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file rayito/v1/telemetry_export.proto.
  */
 export const file_rayito_v1_telemetry_export: GenFile = /*@__PURE__*/
-  fileDesc("CiByYXlpdG8vdjEvdGVsZW1ldHJ5X2V4cG9ydC5wcm90bxIJcmF5aXRvLnYxIpMCChVUZWxlbWV0cnlFeHBvcnRDb25maWcSEgoKaW50ZXJ2YWxfcxgBIAEoDRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSIwoFbmFtZXMYAyABKA4yFC5yYXlpdG8udjEuTmFtZVN0eWxlEhEKCWltYWdlX2FybhgGIAEoCRIVCg1pbWFnZV92ZXJzaW9uGAcgASgJEhgKEGltYWdlX21lbW9yeV9taWIYCCABKA0SNgoOZXhlY3V0aW9uX3JvbGUYBCABKAsyHC5yYXlpdG8udjEuRXhlY3V0aW9uUm9sZUF1dGhIABInCgZiZWFyZXIYBSABKAsyFS5yYXlpdG8udjEuQmVhcmVyQXV0aEgAQgYKBGF1dGgiEwoRRXhlY3V0aW9uUm9sZUF1dGgiGwoKQmVhcmVyQXV0aBINCgV0b2tlbhgBIAEoCSJUChVUZWxlbWV0cnlFeHBvcnRTdGF0dXMSEAoIZXhwb3J0ZWQYASABKAQSDwoHZHJvcHBlZBgCIAEoBBIYChBsYXN0X2Vycm9yX2NsYXNzGAMgASgJKlIKCU5hbWVTdHlsZRIaChZOQU1FX1NUWUxFX1VOU1BFQ0lGSUVEEAASFQoRTkFNRV9TVFlMRV9SQVlJVE8QARISCg5OQU1FX1NUWUxFX0UyQhACYgZwcm90bzM");
+  fileDesc("CiByYXlpdG8vdjEvdGVsZW1ldHJ5X2V4cG9ydC5wcm90bxIJcmF5aXRvLnYxIsACChVUZWxlbWV0cnlFeHBvcnRDb25maWcSEgoKaW50ZXJ2YWxfcxgBIAEoDRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSMgoFbmFtZXMYAyABKA4yIy5yYXlpdG8udjEuVGVsZW1ldHJ5RXhwb3J0TmFtZVN0eWxlEhEKCWltYWdlX2FybhgGIAEoCRIVCg1pbWFnZV92ZXJzaW9uGAcgASgJEhgKEGltYWdlX21lbW9yeV9taWIYCCABKA0SRQoOZXhlY3V0aW9uX3JvbGUYBCABKAsyKy5yYXlpdG8udjEuVGVsZW1ldHJ5RXhwb3J0RXhlY3V0aW9uUm9sZUF1dGhIABI2CgZiZWFyZXIYBSABKAsyJC5yYXlpdG8udjEuVGVsZW1ldHJ5RXhwb3J0QmVhcmVyQXV0aEgAQgYKBGF1dGgiIgogVGVsZW1ldHJ5RXhwb3J0RXhlY3V0aW9uUm9sZUF1dGgiKgoZVGVsZW1ldHJ5RXhwb3J0QmVhcmVyQXV0aBINCgV0b2tlbhgBIAEoCSJUChVUZWxlbWV0cnlFeHBvcnRTdGF0dXMSEAoIZXhwb3J0ZWQYASABKAQSDwoHZHJvcHBlZBgCIAEoBBIYChBsYXN0X2Vycm9yX2NsYXNzGAMgASgJKpQBChhUZWxlbWV0cnlFeHBvcnROYW1lU3R5bGUSKwonVEVMRU1FVFJZX0VYUE9SVF9OQU1FX1NUWUxFX1VOU1BFQ0lGSUVEEAASJgoiVEVMRU1FVFJZX0VYUE9SVF9OQU1FX1NUWUxFX1JBWUlUTxABEiMKH1RFTEVNRVRSWV9FWFBPUlRfTkFNRV9TVFlMRV9FMkIQAmIGcHJvdG8z");
 
 /**
  * Owned by m15-rayd-otlp (ADR-021). `TelemetryExportConfig` is the complete
@@ -25,7 +25,16 @@ export const file_rayito_v1_telemetry_export: GenFile = /*@__PURE__*/
  * (the agent was never told `AWS_REGION`: `rayd` cannot sign a request or
  * build the CloudWatch endpoint host without it), "missing_auth" (neither
  * `oneof auth` branch set), "role_not_permitted" (`execution_role` on a
- * non-caps image variant).
+ * guest whose IMDS reports no execution role at all -- a non-caps image
+ * variant, ADR-012), "credentials_unavailable" (the broker's probe failed
+ * for any other reason: a transient IMDS hiccup, never evidence the image
+ * lacks a role), "sink_init_failed" (building the CloudWatch HTTPS client
+ * failed, e.g. no native trust store).
+ *
+ * `TelemetryExportStatus.last_error_class` (below) is a *different* list,
+ * from the background exporter/flush rather than from `apply()` itself:
+ * "network" (a send timed out or the connection failed) or "rejected"
+ * (CloudWatch answered with a non-2xx HTTP status).
  *
  * @generated from message rayito.v1.TelemetryExportConfig
  */
@@ -55,9 +64,9 @@ export type TelemetryExportConfig = Message<"rayito.v1.TelemetryExportConfig"> &
    * Which metric-name family `rayd` emits: `rayito.sandbox.*` (default) or,
    * for the E2B shim's `names="e2b"` alias (research §6.4), `e2b.sandbox.*`.
    *
-   * @generated from field: rayito.v1.NameStyle names = 3;
+   * @generated from field: rayito.v1.TelemetryExportNameStyle names = 3;
    */
-  names: NameStyle;
+  names: TelemetryExportNameStyle;
 
   /**
    * The 4 closed `AttrKey` resource attributes besides the sandbox id
@@ -92,9 +101,9 @@ export type TelemetryExportConfig = Message<"rayito.v1.TelemetryExportConfig"> &
      * after boot and the SDK terminates the sandbox (unless
      * `keep_on_failure`) with `UnimplementedError`.
      *
-     * @generated from field: rayito.v1.ExecutionRoleAuth execution_role = 4;
+     * @generated from field: rayito.v1.TelemetryExportExecutionRoleAuth execution_role = 4;
      */
-    value: ExecutionRoleAuth;
+    value: TelemetryExportExecutionRoleAuth;
     case: "executionRole";
   } | {
     /**
@@ -102,12 +111,12 @@ export type TelemetryExportConfig = Message<"rayito.v1.TelemetryExportConfig"> &
      * Manager or any `str`) and pushes through this same `Configure` call
      * (research option B1', preferred per OT9: the execution-role policy
      * cannot be scoped by namespace). Works on `rayito-base`, no caps
-     * needed. Kept only in `rayd` memory (`PushedCredentials`, Zeroizing),
-     * never echoed back by `ConfigureStatus` or logged.
+     * needed. Kept only in `rayd` memory (`SinkCredentials::Bearer`,
+     * Zeroizing), never echoed back by `ConfigureStatus` or logged.
      *
-     * @generated from field: rayito.v1.BearerAuth bearer = 5;
+     * @generated from field: rayito.v1.TelemetryExportBearerAuth bearer = 5;
      */
-    value: BearerAuth;
+    value: TelemetryExportBearerAuth;
     case: "bearer";
   } | { case: undefined; value?: undefined };
 };
@@ -120,22 +129,22 @@ export const TelemetryExportConfigSchema: GenMessage<TelemetryExportConfig> = /*
   messageDesc(file_rayito_v1_telemetry_export, 0);
 
 /**
- * @generated from message rayito.v1.ExecutionRoleAuth
+ * @generated from message rayito.v1.TelemetryExportExecutionRoleAuth
  */
-export type ExecutionRoleAuth = Message<"rayito.v1.ExecutionRoleAuth"> & {
+export type TelemetryExportExecutionRoleAuth = Message<"rayito.v1.TelemetryExportExecutionRoleAuth"> & {
 };
 
 /**
- * Describes the message rayito.v1.ExecutionRoleAuth.
- * Use `create(ExecutionRoleAuthSchema)` to create a new message.
+ * Describes the message rayito.v1.TelemetryExportExecutionRoleAuth.
+ * Use `create(TelemetryExportExecutionRoleAuthSchema)` to create a new message.
  */
-export const ExecutionRoleAuthSchema: GenMessage<ExecutionRoleAuth> = /*@__PURE__*/
+export const TelemetryExportExecutionRoleAuthSchema: GenMessage<TelemetryExportExecutionRoleAuth> = /*@__PURE__*/
   messageDesc(file_rayito_v1_telemetry_export, 1);
 
 /**
- * @generated from message rayito.v1.BearerAuth
+ * @generated from message rayito.v1.TelemetryExportBearerAuth
  */
-export type BearerAuth = Message<"rayito.v1.BearerAuth"> & {
+export type TelemetryExportBearerAuth = Message<"rayito.v1.TelemetryExportBearerAuth"> & {
   /**
    * @generated from field: string token = 1;
    */
@@ -143,10 +152,10 @@ export type BearerAuth = Message<"rayito.v1.BearerAuth"> & {
 };
 
 /**
- * Describes the message rayito.v1.BearerAuth.
- * Use `create(BearerAuthSchema)` to create a new message.
+ * Describes the message rayito.v1.TelemetryExportBearerAuth.
+ * Use `create(TelemetryExportBearerAuthSchema)` to create a new message.
  */
-export const BearerAuthSchema: GenMessage<BearerAuth> = /*@__PURE__*/
+export const TelemetryExportBearerAuthSchema: GenMessage<TelemetryExportBearerAuth> = /*@__PURE__*/
   messageDesc(file_rayito_v1_telemetry_export, 2);
 
 /**
@@ -181,28 +190,34 @@ export const TelemetryExportStatusSchema: GenMessage<TelemetryExportStatus> = /*
   messageDesc(file_rayito_v1_telemetry_export, 3);
 
 /**
- * @generated from enum rayito.v1.NameStyle
+ * Every message/enum in this file carries the `TelemetryExport` prefix
+ * (architecture §3): `rayito.v1` is a shared package, and an unprefixed
+ * `NameStyle`/`BearerAuth` would be a likely name for a parallel 0.6
+ * feature's own messages (secrets-gateway's own bearer-style auth, for
+ * one).
+ *
+ * @generated from enum rayito.v1.TelemetryExportNameStyle
  */
-export enum NameStyle {
+export enum TelemetryExportNameStyle {
   /**
-   * @generated from enum value: NAME_STYLE_UNSPECIFIED = 0;
+   * @generated from enum value: TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED = 0;
    */
   UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: NAME_STYLE_RAYITO = 1;
+   * @generated from enum value: TELEMETRY_EXPORT_NAME_STYLE_RAYITO = 1;
    */
   RAYITO = 1,
 
   /**
-   * @generated from enum value: NAME_STYLE_E2B = 2;
+   * @generated from enum value: TELEMETRY_EXPORT_NAME_STYLE_E2B = 2;
    */
   E2B = 2,
 }
 
 /**
- * Describes the enum rayito.v1.NameStyle.
+ * Describes the enum rayito.v1.TelemetryExportNameStyle.
  */
-export const NameStyleSchema: GenEnum<NameStyle> = /*@__PURE__*/
+export const TelemetryExportNameStyleSchema: GenEnum<TelemetryExportNameStyle> = /*@__PURE__*/
   enumDesc(file_rayito_v1_telemetry_export, 0);
 

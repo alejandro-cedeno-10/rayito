@@ -14,7 +14,16 @@ package rayito.v1;
 // (the agent was never told `AWS_REGION`: `rayd` cannot sign a request or
 // build the CloudWatch endpoint host without it), "missing_auth" (neither
 // `oneof auth` branch set), "role_not_permitted" (`execution_role` on a
-// non-caps image variant).
+// guest whose IMDS reports no execution role at all -- a non-caps image
+// variant, ADR-012), "credentials_unavailable" (the broker's probe failed
+// for any other reason: a transient IMDS hiccup, never evidence the image
+// lacks a role), "sink_init_failed" (building the CloudWatch HTTPS client
+// failed, e.g. no native trust store).
+//
+// `TelemetryExportStatus.last_error_class` (below) is a *different* list,
+// from the background exporter/flush rather than from `apply()` itself:
+// "network" (a send timed out or the connection failed) or "rejected"
+// (CloudWatch answered with a non-2xx HTTP status).
 message TelemetryExportConfig {
   // Export cadence in seconds, 15..=300 inclusive. Bounds fixed by the M15
   // architecture (research options B1/B1', §6.3/§6.8: OT2 will measure
@@ -29,7 +38,7 @@ message TelemetryExportConfig {
   string service_name = 2;
   // Which metric-name family `rayd` emits: `rayito.sandbox.*` (default) or,
   // for the E2B shim's `names="e2b"` alias (research §6.4), `e2b.sandbox.*`.
-  NameStyle names = 3;
+  TelemetryExportNameStyle names = 3;
   // The 4 closed `AttrKey` resource attributes besides the sandbox id
   // (which `rayd` already knows from its own session): `rayd` has no local
   // notion of its own image, so the SDK supplies these from the same
@@ -45,26 +54,31 @@ message TelemetryExportConfig {
     // so, otherwise `rayd` reports `AgentFeatures.telemetry_export = false`
     // after boot and the SDK terminates the sandbox (unless
     // `keep_on_failure`) with `UnimplementedError`.
-    ExecutionRoleAuth execution_role = 4;
+    TelemetryExportExecutionRoleAuth execution_role = 4;
     // A log-group-scoped bearer token the SDK resolves once (Secrets
     // Manager or any `str`) and pushes through this same `Configure` call
     // (research option B1', preferred per OT9: the execution-role policy
     // cannot be scoped by namespace). Works on `rayito-base`, no caps
-    // needed. Kept only in `rayd` memory (`PushedCredentials`, Zeroizing),
-    // never echoed back by `ConfigureStatus` or logged.
-    BearerAuth bearer = 5;
+    // needed. Kept only in `rayd` memory (`SinkCredentials::Bearer`,
+    // Zeroizing), never echoed back by `ConfigureStatus` or logged.
+    TelemetryExportBearerAuth bearer = 5;
   }
 }
 
-enum NameStyle {
-  NAME_STYLE_UNSPECIFIED = 0;
-  NAME_STYLE_RAYITO = 1;
-  NAME_STYLE_E2B = 2;
+// Every message/enum in this file carries the `TelemetryExport` prefix
+// (architecture §3): `rayito.v1` is a shared package, and an unprefixed
+// `NameStyle`/`BearerAuth` would be a likely name for a parallel 0.6
+// feature's own messages (secrets-gateway's own bearer-style auth, for
+// one).
+enum TelemetryExportNameStyle {
+  TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED = 0;
+  TELEMETRY_EXPORT_NAME_STYLE_RAYITO = 1;
+  TELEMETRY_EXPORT_NAME_STYLE_E2B = 2;
 }
 
-message ExecutionRoleAuth {}
+message TelemetryExportExecutionRoleAuth {}
 
-message BearerAuth {
+message TelemetryExportBearerAuth {
   string token = 1;
 }
 

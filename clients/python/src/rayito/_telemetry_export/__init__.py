@@ -14,9 +14,15 @@ from ._domain import (
     OtlpAuth,
     TelemetryExport,
     TelemetryHealth,
+    image_memory_mib_from_guest_bytes,
     plan,
 )
-from ._section import TelemetryExportSection, build_section, resolve_bearer_token
+from ._section import (
+    TelemetryExportSection,
+    build_section,
+    require_telemetry_support,
+    resolve_bearer_token,
+)
 
 __all__ = [
     "DEFAULT_INTERVAL_S",
@@ -27,6 +33,8 @@ __all__ = [
     "TelemetryExportSection",
     "TelemetryHealth",
     "build_section",
+    "image_memory_mib_from_guest_bytes",
     "plan",
+    "require_telemetry_support",
     "resolve_bearer_token",
 ]

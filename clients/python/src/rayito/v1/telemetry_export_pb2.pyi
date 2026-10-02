@@ -6,14 +6,14 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class NameStyle(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+class TelemetryExportNameStyle(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    NAME_STYLE_UNSPECIFIED: _ClassVar[NameStyle]
-    NAME_STYLE_RAYITO: _ClassVar[NameStyle]
-    NAME_STYLE_E2B: _ClassVar[NameStyle]
-NAME_STYLE_UNSPECIFIED: NameStyle
-NAME_STYLE_RAYITO: NameStyle
-NAME_STYLE_E2B: NameStyle
+    TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED: _ClassVar[TelemetryExportNameStyle]
+    TELEMETRY_EXPORT_NAME_STYLE_RAYITO: _ClassVar[TelemetryExportNameStyle]
+    TELEMETRY_EXPORT_NAME_STYLE_E2B: _ClassVar[TelemetryExportNameStyle]
+TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED: TelemetryExportNameStyle
+TELEMETRY_EXPORT_NAME_STYLE_RAYITO: TelemetryExportNameStyle
+TELEMETRY_EXPORT_NAME_STYLE_E2B: TelemetryExportNameStyle
 
 class TelemetryExportConfig(_message.Message):
     __slots__ = ("interval_s", "service_name", "names", "image_arn", "image_version", "image_memory_mib", "execution_role", "bearer")
@@ -27,19 +27,19 @@ class TelemetryExportConfig(_message.Message):
     BEARER_FIELD_NUMBER: _ClassVar[int]
     interval_s: int
     service_name: str
-    names: NameStyle
+    names: TelemetryExportNameStyle
     image_arn: str
     image_version: str
     image_memory_mib: int
-    execution_role: ExecutionRoleAuth
-    bearer: BearerAuth
-    def __init__(self, interval_s: _Optional[int] = ..., service_name: _Optional[str] = ..., names: _Optional[_Union[NameStyle, str]] = ..., image_arn: _Optional[str] = ..., image_version: _Optional[str] = ..., image_memory_mib: _Optional[int] = ..., execution_role: _Optional[_Union[ExecutionRoleAuth, _Mapping]] = ..., bearer: _Optional[_Union[BearerAuth, _Mapping]] = ...) -> None: ...
+    execution_role: TelemetryExportExecutionRoleAuth
+    bearer: TelemetryExportBearerAuth
+    def __init__(self, interval_s: _Optional[int] = ..., service_name: _Optional[str] = ..., names: _Optional[_Union[TelemetryExportNameStyle, str]] = ..., image_arn: _Optional[str] = ..., image_version: _Optional[str] = ..., image_memory_mib: _Optional[int] = ..., execution_role: _Optional[_Union[TelemetryExportExecutionRoleAuth, _Mapping]] = ..., bearer: _Optional[_Union[TelemetryExportBearerAuth, _Mapping]] = ...) -> None: ...
 
-class ExecutionRoleAuth(_message.Message):
+class TelemetryExportExecutionRoleAuth(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
-class BearerAuth(_message.Message):
+class TelemetryExportBearerAuth(_message.Message):
     __slots__ = ("token",)
     TOKEN_FIELD_NUMBER: _ClassVar[int]
     token: str

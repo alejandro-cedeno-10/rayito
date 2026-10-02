@@ -40,12 +40,35 @@ use super::signed_http::FilteringResolver;
 const SIGV4_SERVICE: &str = "monitoring";
 const OTLP_METRICS_PATH: &str = "/v1/metrics";
 const CONTENT_TYPE: &str = "application/x-protobuf";
+/// Not AWS-mandated: a generous, round number for one TCP+TLS handshake to
+/// a fixed, well-connected AWS regional endpoint, well under
+/// `REQUEST_TIMEOUT` so a stuck handshake still leaves room for the POST
+/// itself to be attempted and time out on its own.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Caps one export POST, independent of `interval_s`: a hung endpoint must
-/// never pile up requests across ticks.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Caps the HTTP request itself (connect + send + response), independent
+/// of `interval_s`: a hung endpoint must never pile up requests across
+/// ticks. Deliberately *shorter* than the caller's own whole-attempt
+/// timeout (`features::telemetry_export::EXPORT_ATTEMPT_TIMEOUT`, 8 s,
+/// which also covers the `ImdsCredentialBroker` lease fetch
+/// `authorization_header` may need first): a nested timeout that can never
+/// fire first is dead code, so this one must stay below that 8 s, with
+/// room to spare for the lease fetch, rather than merely under it.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
+/// Comfortably above `interval_s`'s default (60 s) and minimum (15 s)
+/// would be too long to matter either way: this only governs how soon an
+/// idle pooled connection is dropped between ticks, not correctness, and
+/// hyper's own default is 90 s.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// One sandbox, one exporter, at most one in-flight POST at a time: a
+/// second idle connection only matters if a `/suspend` flush and a regular
+/// tick's send ever raced, which `SharedState`'s single `AsyncMutex`
+/// already rules out.
 const POOL_MAX_IDLE_PER_HOST: usize = 2;
+/// AWS's own header name for the `SigV4` session-token companion to a
+/// temporary credential's `Authorization` header (`SigV4-signing.html`).
+const SESSION_TOKEN_HEADER: &str = "x-amz-security-token";
+const X_AMZ_DATE_HEADER: &str = "x-amz-date";
+const X_AMZ_CONTENT_SHA256_HEADER: &str = "x-amz-content-sha256";
 
 /// Where this sink's credentials come from, mirroring
 /// `rayd_core::telemetry::TelemetryAuth` one to one but holding the live
@@ -112,16 +135,28 @@ impl CloudWatchOtlpSink {
         })
     }
 
+    /// The headers `send_with` must set beyond `Authorization` itself:
+    /// `SigV4` (`ExecutionRole`) signs `x-amz-date`/`x-amz-content-sha256`
+    /// (and, with a session token, `x-amz-security-token`) as part of
+    /// `SignedHeaders`, so every one of them has to actually reach
+    /// `CloudWatch` or the signature it sent never matches what it
+    /// receives (a guaranteed 403). `Bearer` signs nothing -- its
+    /// `Authorization` header is the whole credential -- so these stay
+    /// `None`.
     async fn authorization_header(
         &self,
         credentials: &SinkCredentials,
         payload: &[u8],
-    ) -> Result<(HeaderValue, Option<HeaderValue>), SinkError> {
+    ) -> Result<RequestAuthHeaders, SinkError> {
         match credentials {
             SinkCredentials::Bearer(token) => {
                 let value = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))
                     .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                Ok((value, None))
+                Ok(RequestAuthHeaders {
+                    authorization: value,
+                    session_token: None,
+                    sigv4_dates: None,
+                })
             }
             SinkCredentials::ExecutionRole(broker) => {
                 let leased = broker
@@ -149,10 +184,27 @@ impl CloudWatchOtlpSink {
                     .map(|token| HeaderValue::from_str(token.as_str()))
                     .transpose()
                     .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                Ok((authorization, token_header))
+                let x_amz_date = HeaderValue::from_str(&signed.x_amz_date)
+                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
+                let x_amz_content_sha256 = HeaderValue::from_str(&signed.x_amz_content_sha256)
+                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
+                Ok(RequestAuthHeaders {
+                    authorization,
+                    session_token: token_header,
+                    sigv4_dates: Some((x_amz_date, x_amz_content_sha256)),
+                })
             }
         }
     }
+}
+
+/// What `authorization_header` computes and `send_with` sets on the
+/// outgoing request; see `authorization_header`'s own doc comment for why
+/// `sigv4_dates` is only ever `Some` for `ExecutionRole`.
+struct RequestAuthHeaders {
+    authorization: HeaderValue,
+    session_token: Option<HeaderValue>,
+    sigv4_dates: Option<(HeaderValue, HeaderValue)>,
 }
 
 fn unix_seconds(timestamp: SystemTime) -> u64 {
@@ -182,24 +234,7 @@ impl CloudWatchOtlpSink {
         credentials: &SinkCredentials,
         payload: Vec<u8>,
     ) -> Result<(), SinkError> {
-        let compressed = gzip(&payload);
-        let (authorization, session_token) =
-            self.authorization_header(credentials, &compressed).await?;
-        let uri: Uri = format!("https://{}{OTLP_METRICS_PATH}", self.host)
-            .parse()
-            .map_err(|_invalid_uri| SinkError::Rejected)?;
-        let mut builder = Request::post(uri)
-            .header(header::HOST, self.host.as_str())
-            .header(header::USER_AGENT, self.user_agent.clone())
-            .header(header::CONTENT_TYPE, CONTENT_TYPE)
-            .header(header::CONTENT_ENCODING, "gzip")
-            .header(header::AUTHORIZATION, authorization);
-        if let Some(token) = session_token {
-            builder = builder.header("x-amz-security-token", token);
-        }
-        let request = builder
-            .body(Full::new(Bytes::from(compressed)))
-            .map_err(|_invalid_request| SinkError::Rejected)?;
+        let request = self.build_request(credentials, payload).await?;
         let response = tokio::time::timeout(REQUEST_TIMEOUT, self.client.request(request))
             .await
             .map_err(|_elapsed| SinkError::Network)?
@@ -213,6 +248,40 @@ impl CloudWatchOtlpSink {
         } else {
             Err(SinkError::Rejected)
         }
+    }
+
+    /// Everything `send_with` does up to (not including) actually opening
+    /// the connection: split out so a test can inspect exactly which
+    /// headers a given `SinkCredentials` produces without a real network
+    /// call (the critical bug this guards against: a signature computed
+    /// over headers the request never actually carried).
+    async fn build_request(
+        &self,
+        credentials: &SinkCredentials,
+        payload: Vec<u8>,
+    ) -> Result<Request<Full<Bytes>>, SinkError> {
+        let compressed = gzip(&payload);
+        let auth = self.authorization_header(credentials, &compressed).await?;
+        let uri: Uri = format!("https://{}{OTLP_METRICS_PATH}", self.host)
+            .parse()
+            .map_err(|_invalid_uri| SinkError::Rejected)?;
+        let mut builder = Request::post(uri)
+            .header(header::HOST, self.host.as_str())
+            .header(header::USER_AGENT, self.user_agent.clone())
+            .header(header::CONTENT_TYPE, CONTENT_TYPE)
+            .header(header::CONTENT_ENCODING, "gzip")
+            .header(header::AUTHORIZATION, auth.authorization);
+        if let Some(token) = auth.session_token {
+            builder = builder.header(SESSION_TOKEN_HEADER, token);
+        }
+        if let Some((x_amz_date, x_amz_content_sha256)) = auth.sigv4_dates {
+            builder = builder
+                .header(X_AMZ_DATE_HEADER, x_amz_date)
+                .header(X_AMZ_CONTENT_SHA256_HEADER, x_amz_content_sha256);
+        }
+        builder
+            .body(Full::new(Bytes::from(compressed)))
+            .map_err(|_invalid_request| SinkError::Rejected)
     }
 }
 
@@ -274,5 +343,79 @@ mod tests {
             panic!("the native trust store must be available in CI and in the Lima VM")
         });
         assert_eq!(sink.host, "monitoring.us-east-1.amazonaws.com");
+    }
+
+    fn sink() -> CloudWatchOtlpSink {
+        CloudWatchOtlpSink::new("us-east-1").unwrap_or_else(|_| {
+            panic!("the native trust store must be available in CI and in the Lima VM")
+        })
+    }
+
+    fn seeded_execution_role() -> SinkCredentials {
+        use crate::adapters::credential_broker::GuestCredentials;
+
+        SinkCredentials::ExecutionRole(Arc::new(ImdsCredentialBroker::seeded_for_test(
+            GuestCredentials {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: Zeroizing::new(
+                    "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".to_owned(),
+                ),
+                session_token: Some(Zeroizing::new("a-session-token".to_owned())),
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            },
+        )))
+    }
+
+    /// The critical bug this guards against: `sign()` computes a signature
+    /// whose `SignedHeaders` names `host`, `x-amz-content-sha256`,
+    /// `x-amz-date` and (with a token) `x-amz-security-token`, so every one
+    /// of those headers must actually be set on the request `send_with`
+    /// builds -- a signature `CloudWatch` cannot recompute from the headers
+    /// it actually receives is a guaranteed 403.
+    #[tokio::test]
+    async fn an_execution_role_request_carries_every_header_its_own_signature_names() {
+        let request = sink()
+            .build_request(&seeded_execution_role(), b"metrics".to_vec())
+            .await
+            .expect("a seeded, always-fresh broker never fails to sign");
+        let headers = request.headers();
+        assert!(headers.contains_key(http::header::HOST));
+        assert!(headers.contains_key(X_AMZ_DATE_HEADER));
+        assert!(headers.contains_key(X_AMZ_CONTENT_SHA256_HEADER));
+        assert!(headers.contains_key(SESSION_TOKEN_HEADER));
+        let authorization = headers
+            .get(http::header::AUTHORIZATION)
+            .expect("authorization header")
+            .to_str()
+            .unwrap_or_default();
+        assert!(
+            authorization.contains(
+                "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
+            )
+        );
+    }
+
+    /// A bearer-authenticated request never claims a `SigV4` signature it
+    /// never computed: no `x-amz-date`/`x-amz-content-sha256`, since
+    /// nothing signs them.
+    #[tokio::test]
+    async fn a_bearer_request_carries_no_sigv4_date_headers() {
+        let request = sink()
+            .build_request(
+                &SinkCredentials::Bearer(Zeroizing::new("sk-test".to_owned())),
+                b"metrics".to_vec(),
+            )
+            .await
+            .expect("bearer auth never fails to build a header value from a plain token");
+        let headers = request.headers();
+        assert!(!headers.contains_key(X_AMZ_DATE_HEADER));
+        assert!(!headers.contains_key(X_AMZ_CONTENT_SHA256_HEADER));
+        assert!(!headers.contains_key(SESSION_TOKEN_HEADER));
+        assert_eq!(
+            headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer sk-test")
+        );
     }
 }

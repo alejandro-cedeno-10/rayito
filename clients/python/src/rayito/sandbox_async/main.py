@@ -32,7 +32,6 @@ from rayito._code_base import (
 from rayito._configure_base import (
     AgentFeatures,
     agent_features_from_health,
-    require_configure_support,
     section_error,
 )
 from rayito._feature_options import FeatureOptions, plan_features
@@ -176,7 +175,13 @@ from rayito._secrets import (
     relaunch_secrets,
     shared_secret_cache,
 )
-from rayito._telemetry_export import TelemetryExport, TelemetryHealth, build_section
+from rayito._telemetry_export import (
+    TelemetryExport,
+    TelemetryHealth,
+    build_section,
+    image_memory_mib_from_guest_bytes,
+    require_telemetry_support,
+)
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -718,7 +723,10 @@ class AsyncSandbox:
                 await sandbox._apply_initial_network(launch)
             if feature_plan.telemetry is not None:
                 await sandbox._apply_telemetry(
-                    feature_plan.telemetry, region=plane.region, session=session
+                    feature_plan.telemetry,
+                    region=plane.region,
+                    session=session,
+                    terminate_on_failure=not keep_on_failure,
                 )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
@@ -1698,24 +1706,26 @@ class AsyncSandbox:
         *,
         region: str,
         session: boto3.session.Session | None,
+        terminate_on_failure: bool,
     ) -> None:
-        """Misma compuerta que `Sandbox._apply_telemetry` (m15-rayd-otlp)."""
+        """Misma compuerta y el mismo `terminate_on_failure` que
+        `Sandbox._apply_telemetry` (m15-rayd-otlp). `build_section` es
+        síncrona y, con `OtlpAuth.bearer(...)`, hace una llamada boto3
+        bloqueante (`secretsmanager:GetSecretValue`); se ejecuta en
+        `asyncio.to_thread` para no bloquear el bucle de eventos con ella.
+        """
         try:
-            features = require_configure_support(self._readiness_agent_features, "telemetry=")
-            if not features.telemetry_export:
-                raise UnimplementedError(
-                    "telemetry=",
-                    "esta imagen no tiene el exportador OTLP implementado todavía "
-                    "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
-                    doc="docs/site/docs/funciones-opcionales/exportacion-otlp.md",
-                )
-            section = build_section(
+            require_telemetry_support(self._readiness_agent_features)
+            section = await asyncio.to_thread(
+                build_section,
                 telemetry,
                 image_arn=self._launch_info.template,
                 image_version=self._launch_info.template_version,
-                image_memory_mib=(self._readiness_health.memory_total_bytes // (1024 * 1024))
-                if self._readiness_health is not None
-                else 0,
+                image_memory_mib=image_memory_mib_from_guest_bytes(
+                    self._readiness_health.memory_total_bytes
+                    if self._readiness_health is not None
+                    else None
+                ),
                 region=region,
                 session=session,
             )
@@ -1734,9 +1744,10 @@ class AsyncSandbox:
                     raise error
         except BaseException:
             await self.close()
-            await asyncio.to_thread(
-                terminate_quietly, self._control_plane, self.sandbox_id, self._logger
-            )
+            if terminate_on_failure:
+                await asyncio.to_thread(
+                    terminate_quietly, self._control_plane, self.sandbox_id, self._logger
+                )
             raise
 
     async def _enforce_launch_policy(self, launch: NetworkLaunch) -> None:

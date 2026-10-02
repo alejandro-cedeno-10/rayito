@@ -5,28 +5,56 @@
  * with `OtlpAuth.bearer(...)`): built already with the image facts (only
  * known after `run-microvm`) and, if applicable, the bearer's value already
  * resolved -- never its secret name, and never in a log or an exception.
+ *
+ * `requireTelemetrySupport` is the gate `Sandbox.#applyTelemetry` uses,
+ * split out so its message can never drift from a second copy.
  */
 
 import { create } from "@bufbuild/protobuf";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { loadOptionalSdkClient } from "../aws/optional-client.js";
 import type { ConfigureSection } from "../configure/base.js";
-import { SecretError } from "../errors.js";
+import { requireConfigureSupport } from "../configure/base.js";
+import { SecretError, UnimplementedError } from "../errors.js";
 import type { ConfigureRequest } from "../gen/rayito/v1/configure_pb.js";
+import type { AgentFeatures } from "../gen/rayito/v1/features_pb.js";
 import {
-  BearerAuthSchema,
-  ExecutionRoleAuthSchema,
-  NameStyle,
+  TelemetryExportBearerAuthSchema,
   TelemetryExportConfigSchema,
+  TelemetryExportExecutionRoleAuthSchema,
+  TelemetryExportNameStyle,
 } from "../gen/rayito/v1/telemetry_export_pb.js";
 import type { NameStyleOption, TelemetryExport } from "./domain.js";
 
 const SECRETS_MANAGER_PEER = "@aws-sdk/client-secrets-manager";
 
-const NAMES_WIRE: Record<NameStyleOption, NameStyle> = {
-  rayito: NameStyle.RAYITO,
-  e2b: NameStyle.E2B,
+const NAMES_WIRE: Record<NameStyleOption, TelemetryExportNameStyle> = {
+  rayito: TelemetryExportNameStyle.RAYITO,
+  e2b: TelemetryExportNameStyle.E2B,
 };
+
+const TELEMETRY_FEATURE_NAME = "telemetry";
+const TELEMETRY_DOC = "docs/site/docs/funciones-opcionales/exportacion-otlp.md";
+
+/**
+ * Throws `UnimplementedError` unless the running agent reports
+ * `telemetryExport: true`: absent entirely (an agent older than 0.6.0, via
+ * `requireConfigureSupport`) or present but `false` (a 0.6.0 image without
+ * the OTLP exporter implemented, `features::slot::Unsupported` on `rayd`'s
+ * side). Shared by `Sandbox.#applyTelemetry` so the gate and its message
+ * never drift from a second copy.
+ */
+export function requireTelemetrySupport(features: AgentFeatures | undefined): void {
+  const resolved = requireConfigureSupport(features, TELEMETRY_FEATURE_NAME);
+  if (!resolved.telemetryExport) {
+    throw new UnimplementedError(
+      TELEMETRY_FEATURE_NAME,
+      "esta imagen no tiene el exportador OTLP implementado todavía " +
+        "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
+      TELEMETRY_DOC,
+    );
+  }
+}
 
 interface SecretsManagerModule {
   readonly SecretsManagerClient: new (
@@ -88,8 +116,11 @@ export class TelemetryExportSection implements ConfigureSection {
       imageMemoryMib: this.imageMemoryMib,
       auth:
         this.bearerToken === undefined
-          ? { case: "executionRole", value: create(ExecutionRoleAuthSchema, {}) }
-          : { case: "bearer", value: create(BearerAuthSchema, { token: this.bearerToken }) },
+          ? { case: "executionRole", value: create(TelemetryExportExecutionRoleAuthSchema, {}) }
+          : {
+              case: "bearer",
+              value: create(TelemetryExportBearerAuthSchema, { token: this.bearerToken }),
+            },
     });
   }
 }

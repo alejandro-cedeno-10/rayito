@@ -9,6 +9,7 @@
  */
 
 import { InvalidArgumentError } from "../errors.js";
+import { GUEST_MEMORY_MULTIPLIER } from "../limits.js";
 import { requireCapsFor } from "../role-policy.js";
 
 /** 15..=300 s (research `docs/research/2026-10-e2b-out-of-scope.md` §6.3/§6.8,
@@ -21,6 +22,27 @@ export const DEFAULT_SERVICE_NAME = "rayito";
 
 export type NameStyleOption = "rayito" | "e2b";
 const NAME_STYLES: readonly NameStyleOption[] = ["rayito", "e2b"];
+
+/** A MiB in bytes: the only unit conversion `imageMemoryMibFromGuestBytes`
+ * needs, named so it is never a bare `1024 * 1024` at the call site. */
+export const BYTES_PER_MIB = 1024 * 1024;
+
+/**
+ * The image's declared memory in MiB, computed from the guest's own
+ * `memoryTotalBytes` (`Health`): the guest always sees
+ * `GUEST_MEMORY_MULTIPLIER` times the image's declared memory (Q88,
+ * `docs/research/2026-10-e2b-out-of-scope.md` §16), so dividing by it here
+ * is what actually makes `imageMemoryMib` name the image's memory rather
+ * than the guest's. `0` before `Health` has ever been read
+ * (`guestMemoryTotalBytes` undefined), the same "not read yet" default
+ * every other resource attribute here falls back to.
+ */
+export function imageMemoryMibFromGuestBytes(guestMemoryTotalBytes: number | undefined): number {
+  if (guestMemoryTotalBytes === undefined) {
+    return 0;
+  }
+  return Math.floor(guestMemoryTotalBytes / (BYTES_PER_MIB * GUEST_MEMORY_MULTIPLIER));
+}
 
 /**
  * How `rayd` signs each export (research §6.3: options B1/B1').

@@ -1,8 +1,8 @@
 # Exportación OTLP
 
 `rayd` (el agente dentro del `MicroVM`) exporta 7 métricas de CPU, memoria y
-disco a CloudWatch cada pocos segundos por OTLP/HTTP, firmadas con
-SigV4 o con un token al portador. <small>Desde 0.6.0</small>
+disco a CloudWatch cada `interval_s` (60 s por defecto, 15..=300 s) por
+OTLP/HTTP, firmadas con SigV4 o con un token al portador. <small>Desde 0.6.0</small>
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin `telemetry=` (TypeScript: `telemetry`)
@@ -57,8 +57,19 @@ Exactamente 7 gauges, muestreados del mismo anillo de 5 s que ya sirve
 
 Cada lote lleva 4 atributos de recurso, una lista cerrada (nunca una ruta,
 un comando o un valor de `metadata`): `sandbox_id`, `image_arn`,
-`image_version` e `image_memory_mib` (la vista del guest, que ve 4× la
-memoria declarada de la imagen; ver `limits.md`).
+`image_version` e `image_memory_mib` (la memoria **declarada** de la
+imagen, no la que ve el guest: el guest ve 4× esa cifra, así que el SDK
+divide por ese factor antes de enviarla; ver `limits.md`).
+
+!!! note "`get_telemetry_status()` es una llamada aparte"
+    El boceto original de la arquitectura preveía `sbx.get_health().telemetry`.
+    Esto habría obligado a `get_health()` -- que llama *todo* sandbox, use o
+    no `telemetry=` -- a hacer una llamada extra a `ConfigureStatus`
+    condicional (o siempre), arriesgando la garantía de "cero llamadas sin
+    la opción". `get_telemetry_status()`/`getTelemetryStatus()` es, en su
+    lugar, un método nuevo y explícito: nunca se llama si no lo pides, así
+    que esa garantía se cumple trivialmente (`design.md` D7 de
+    `m15-rayd-otlp` registra la decisión).
 
 ## Autenticación
 
