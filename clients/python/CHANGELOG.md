@@ -35,10 +35,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   minuto, inyectando cada cabecera vaultada (resuelta de Secrets Manager
   con la misma `SecretCache` que `secrets=`, nunca antes de `Configure`) y
   eliminando primero cualquier cabecera del mismo nombre que el sandbox
-  intente poner. `sbx.gateways["nombre"].url` da la URL de loopback
-  (`refresh()`/`arefresh()` rotan el secreto sin recrear el sandbox). Sin
-  `gateways=`, ningún cliente `secretsmanager` nuevo se construye y no se
-  manda ningún `ConfigureSandbox`.
+  intente poner. `sbx.gateways["nombre"].url` da la URL de loopback;
+  `refresh()`/`arefresh()` rotan el secreto sin recrear el sandbox (releen
+  Secrets Manager aunque la `SecretCache` no haya vencido, conservan el
+  puerto y lanzan si `rayd` rechaza la sección). También
+  `SandboxPool.take(gateways=)`/`AsyncSandboxPool.take(gateways=)`.
+  Cualquier fallo al configurarla tras `run-microvm` (imagen anterior a
+  0.6.0, flag ausente, secreto que falta, sección rechazada) termina el VM
+  salvo `keep_on_failure`. Sin `gateways=`, ningún cliente `secretsmanager`
+  nuevo se construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

@@ -18,6 +18,7 @@ import {
   QuotaExceededError,
   Sandbox,
   SandboxPool,
+  UnimplementedError,
   validatePoolConfig,
 } from "../../src/index.js";
 import { accessTokenSha256 } from "../../src/payload.js";
@@ -39,6 +40,7 @@ import { presentedTokenSha256 } from "./fake/common.js";
 import { IMAGE_ARN, JWE } from "./fake/control-plane.js";
 import { FakeClock, FakePoolControlPlane, maxCallsInWindow } from "./fake/pool-plane.js";
 import { RecordingLogger, sleep, waitUntil } from "./helpers.js";
+import { gateway } from "./m15-secrets-gateway-fixtures.js";
 
 const POOL_TIMEOUT_MS = 7_200_000;
 const POOL_MIN_REMAINING_MS = 3_600_000;
@@ -500,6 +502,32 @@ describe("SandboxPool", () => {
   });
 
   // ------------------------------------------------------------------ take
+
+  test("take with invalid gateways fails before claiming a slot", async () => {
+    const { plane, pool: make } = rig();
+    const pool = await make(1).start();
+    await waitIdle(pool, 1);
+    const before = plane.calls.length;
+    await expect(pool.take({ gateways: { "Not A Name": gateway() } })).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
+    expect(plane.calls.slice(before)).toEqual([]);
+    expect(pool.stats().ready).toBe(1);
+  });
+
+  test("take with gateways on a pre-0.6 slot terminates it", async () => {
+    // The fake `rayd` answers `Health` without `features` (a pre-0.6
+    // agent): `take({ gateways })` must neither hand back a sandbox whose
+    // gateway never opened nor leave the taken slot running and billing.
+    const { plane, pool: make } = rig();
+    const pool = await make(1).start();
+    await waitIdle(pool, 1);
+    const [slotId] = readyIds(pool);
+    await expect(pool.take({ gateways: { anthropic: gateway() } })).rejects.toBeInstanceOf(
+      UnimplementedError,
+    );
+    expect(plane.opsFor(slotId ?? "")).toContain("TerminateMicrovm");
+  });
 
   test("take pops the oldest and resumes explicitly without getMicrovm", async () => {
     const { plane, now, pool: make } = rig();

@@ -20,12 +20,17 @@ reenvía al `upstream` fijo que declaraste. El código del sandbox puede
       `ConfigureSandbox`. Ninguna variable de entorno lo enciende
       (ADR-014 regla 4).
     - **Activa**: `Sandbox.create(gateways={"nombre": SecretGateway(...)})`
-      (Python) / `Sandbox.create({ gateways: { nombre: new SecretGateway({...}) } })`
-      (TypeScript).
+      o `pool.take(gateways=...)` (Python) /
+      `Sandbox.create({ gateways: { nombre: new SecretGateway({...}) } })` o
+      `pool.take({ gateways })` (TypeScript). Exige una imagen 0.6.0 o
+      posterior: con una anterior, `create()`/`take()` termina el MicroVM
+      recién lanzado o tomado (salvo `keep_on_failure`/`keepOnFailure` en
+      `create()`) y lanza `UnimplementedError`.
     - **Recursos y llamadas AWS**: `secretsmanager:GetSecretValue` una vez
       por cabecera y TTL de la `SecretCache` que ya usa `secrets=`/`secrets`
-      (un acierto no llama a AWS); ningún recurso nuevo — reutiliza
-      `infra/secrets-access.yaml`.
+      (un acierto no llama a AWS), y una más por cabecera en cada
+      `sbx.gateways.refresh()` (siempre relee); ningún recurso nuevo —
+      reutiliza `infra/secrets-access.yaml`.
     - **Coste aproximado** (us-east-1, consultado 2026-09-30,
       [precios](https://aws.amazon.com/secrets-manager/pricing/)): el de
       `SecretCache` ($0,05 por 10 000 llamadas) más el del secreto en sí
@@ -41,27 +46,61 @@ reenvía al `upstream` fijo que declaraste. El código del sandbox puede
 Por cada ruta de `gateways=`/`gateways`:
 
 1. `rayd` abre un `TcpListener` en `127.0.0.1:<puerto elegido por el SO>`.
-2. Una petición entrante se compara contra la allowlist `allow`
+2. Una ruta de petición con un segmento `.` o `..` (tal cual o
+   codificado: `%2e`), un `/` o `\` codificado (`%2f`, `%5c`), una barra
+   invertida o un segmento vacío (`//`) se rechaza con 403 antes de mirar
+   la allowlist: `rayd` nunca normaliza la ruta, así que nunca reenvía una
+   que el `upstream` (o la CDN delante de él) pudiera normalizar a algo
+   fuera de `allow` — `/v1/../admin` no pasa por una regla `/v1/*`.
+3. Una petición entrante se compara contra la allowlist `allow`
    (`(método, ruta)`, exacta o con sufijo `/*`) y el límite
    `rate_per_minute`/`ratePerMinute` (un cubo de tokens; `0` usa el valor
    por defecto, 600). Si no pasa ninguna de las dos comprobaciones, la
    pasarela responde sin abrir ninguna conexión al `upstream` (403 fuera de
    la allowlist, 429 por encima del límite).
-3. Si pasa, `rayd` elimina de la petición cualquier cabecera cuyo nombre
+4. Si pasa, `rayd` elimina de la petición cualquier cabecera cuyo nombre
    coincida con una de `headers` (así el sandbox nunca puede suplantar ni
    leer de vuelta su propia credencial) e inyecta el valor real de cada
    una.
-4. Reenvía al `upstream` (siempre `https://host`, sin ruta ni query: esos
-   vienen de cada petición) por un cliente HTTPS compartido que nunca
-   resuelve un host a loopback, link-local o la IMDS del propio guest. La
+5. Reenvía al `upstream` (siempre `https://host`, sin ruta, query,
+   usuario ni fragmento: la ruta y la query vienen de cada petición) por
+   un cliente HTTPS compartido que nunca resuelve un host a loopback, link-local o la IMDS del propio guest. La
    petición y la respuesta se transmiten en flujo: una respuesta en
    Server-Sent Events o una subida troceada atraviesan la pasarela sin
-   cambios.
+   cambios. Si el `upstream` no acepta la conexión en 10 s o no envía la
+   cabecera de la respuesta en 600 s, la pasarela responde 504
+   (`upstream_timeout`); cualquier otro fallo tras conectar (TLS, conexión
+   cortada, respuesta malformada) es 502 (`upstream_error`). El cuerpo de
+   una respuesta en flujo no tiene tope.
+
+Los nombres de `headers` deben ser un *token* HTTP válido (RFC 9110), no
+pueden repetirse ignorando mayúsculas (`X-Api-Key` y `x-api-key` son el
+mismo) ni ser una cabecera de transporte que la pasarela fija ella misma
+(`host`, `content-length`, `transfer-encoding`, `connection`, `keep-alive`,
+`te`, `trailer`, `upgrade`, `proxy-authorization`, ...): el SDK lo rechaza
+al construir `SecretGateway`, y `rayd` vuelve a comprobarlo.
 
 El valor de cada cabecera vive sólo en la memoria de `rayd`, nunca en
 `repr`/`Debug`, nunca en un log: se resuelve justo antes de cada
 `ConfigureSandbox` (el propio RPC nunca se registra) y se expone una única
 vez, al construir la petición saliente.
+
+## Rotación
+
+`sbx.gateways.refresh()` (`await sbx.gateways.arefresh()` en
+`AsyncSandbox`) descarta de la `SecretCache` los secretos de la pasarela,
+los vuelve a leer de Secrets Manager (aunque su TTL no haya vencido) y manda
+un `ConfigureSandbox` nuevo. Cada ruta **conserva su puerto**: un proceso
+arrancado con `ANTHROPIC_BASE_URL=http://127.0.0.1:<puerto>` sigue
+funcionando, y su siguiente petición, incluso por una conexión keep-alive
+ya abierta, lleva el valor nuevo. Si `rayd` rechaza la configuración
+(por ejemplo un valor rotado con un salto de línea), `refresh()` lanza la
+misma excepción que `create()` y la pasarela sigue con la configuración
+anterior.
+
+Una ruta que deja de estar en la configuración se cierra de verdad: deja de
+aceptar conexiones, cierra en el acto las keep-alive inactivas y deja
+terminar como mucho la petición en curso.
 
 ## Límites
 
@@ -72,13 +111,22 @@ vez, al construir la petición saliente.
 | Reglas de `allow` por ruta | 32 | — |
 | `rate_per_minute`/`ratePerMinute` | `0` (= 600) o 1..6000 | 600 = 10 peticiones/s, un tope conservador para un agente llamando a una sola API de forma interactiva |
 | Nombre de ruta | 1-64 `[a-z0-9-]` | es la clave pública de `sbx.gateways["nombre"]` |
+| Espera a la cabecera de la respuesta | 600 s | basta para una petición larga a un LLM; un `upstream` atascado acaba en 504 en vez de colgar el comando para siempre |
+| Conexión al `upstream` | 10 s | — |
 
 ## Ejemplos
 
 === "Python"
 
     ```python
-    from rayito import Sandbox, SecretCache, SecretGateway, SecretStore
+    from rayito import (
+        PoolConfig,
+        Sandbox,
+        SandboxPool,
+        SecretCache,
+        SecretGateway,
+        SecretStore,
+    )
 
     store = SecretStore(region="us-east-1")          # no llama a AWS
     store.create("anthropic", "sk-ant-...")
@@ -97,17 +145,25 @@ vez, al construir la petición saliente.
     url = sbx.gateways["anthropic"].url               # "http://127.0.0.1:<puerto>"
     sbx.commands.run("python agent.py", envs={"ANTHROPIC_BASE_URL": url})
 
-    # rotar la credencial sin recrear el sandbox:
+    # rotar la credencial sin recrear el sandbox (mismo puerto, valor nuevo):
     store.update("anthropic", "sk-ant-nueva")
     sbx.gateways.refresh()
 
     sbx.kill()
+
+    # desde un pool: las plazas calientes nunca llevan la pasarela
+    with SandboxPool(PoolConfig(size=2, template="rayito-base")) as pool:
+        sbx = pool.take(gateways={"anthropic": SecretGateway(
+            upstream="https://api.anthropic.com",
+            headers={"x-api-key": "anthropic"},
+            allow=[("POST", "/v1/messages")],
+        )})
     ```
 
 === "TypeScript"
 
     ```ts
-    import { Sandbox, SecretCache, SecretGateway, SecretStore } from "rayito";
+    import { Sandbox, SandboxPool, SecretCache, SecretGateway, SecretStore } from "rayito";
 
     const store = new SecretStore({ region: "us-east-1" });   // no llama a AWS
     await store.create("anthropic", "sk-ant-...");
@@ -126,11 +182,23 @@ vez, al construir la petición saliente.
     const url = sbx.gateways.get("anthropic")!.url;   // "http://127.0.0.1:<puerto>"
     await sbx.commands.run("python agent.py", { envs: { ANTHROPIC_BASE_URL: url } });
 
-    // rotar la credencial sin recrear el sandbox:
+    // rotar la credencial sin recrear el sandbox (mismo puerto, valor nuevo):
     await store.update("anthropic", "sk-ant-nueva");
     await sbx.gateways.refresh();
 
     await sbx.kill();
+
+    // desde un pool: las plazas calientes nunca llevan la pasarela
+    await using pool = await new SandboxPool({ size: 2, template: "rayito-base" }).start();
+    const pooled = await pool.take({
+      gateways: {
+        anthropic: new SecretGateway({
+          upstream: "https://api.anthropic.com",
+          headers: { "x-api-key": "anthropic" },
+          allow: [["POST", "/v1/messages"]],
+        }),
+      },
+    });
     ```
 
 ## Divergencias con E2B

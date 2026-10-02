@@ -5,7 +5,7 @@
 //! than mutating anything, so the adapter (`rayd::secret_gateway::listener`)
 //! owns the only `Mutex` and the only real clock read.
 
-use super::route::GatewayRoute;
+use super::route::{GatewayRoute, path_is_safe};
 
 /// Why a request was refused, closed and lowercase-snake
 /// (`secret_gateway.proto`'s `error_class`); never an upstream message,
@@ -108,7 +108,12 @@ pub fn evaluate(
     bucket: TokenBucket,
     now_ms: u64,
 ) -> (TokenBucket, Decision) {
-    if !route.allows(method, path) {
+    // Checked before the allowlist itself: `rayd` never decodes or
+    // normalises `path`, so a dot-segment (raw or percent-encoded) must be
+    // refused here or `AllowRule::matches`'s prefix compare on a wildcard
+    // route stops being a real boundary (confused-deputy mitigation, T24;
+    // see `path_is_safe`'s doc comment for the attack it closes).
+    if !path_is_safe(path) || !route.allows(method, path) {
         return (bucket, Decision::Deny(GatewayErrorClass::NotAllowed));
     }
     let (next, allowed) = bucket.try_consume(route, now_ms);
@@ -189,6 +194,33 @@ mod tests {
             refilled.milli_tokens,
             u64::from(route.rate_per_minute()) * TOKEN_SCALE
         );
+    }
+
+    #[test]
+    fn a_dot_segment_is_denied_even_under_a_matching_wildcard_rule() {
+        // `route(60)` only allows exact `POST /v1/messages`; use a wildcard
+        // route instead so `AllowRule::matches` alone *would* say yes, and
+        // confirm `evaluate` denies it anyway (the actual confused-deputy
+        // boundary, T24).
+        use crate::secret_gateway::route::{GatewaySpec, RawRoute};
+        let spec = GatewaySpec::parse(vec![RawRoute {
+            name: "a".to_owned(),
+            upstream: "https://example.com".to_owned(),
+            headers: vec![],
+            allow: vec![("GET".to_owned(), "/v1/*".to_owned())],
+            rate_per_minute: 60,
+        }])
+        .unwrap();
+        let route = &spec.routes()[0];
+        let bucket = TokenBucket::full(route, 0);
+        for unsafe_path in ["/v1/../admin", "/v1/%2e%2e/admin", "/v1//admin"] {
+            let (_, decision) = evaluate(route, "GET", unsafe_path, bucket, 0);
+            assert_eq!(
+                decision,
+                Decision::Deny(GatewayErrorClass::NotAllowed),
+                "{unsafe_path} must be denied"
+            );
+        }
     }
 
     #[test]

@@ -8,13 +8,14 @@
  */
 
 import { create } from "@bufbuild/protobuf";
-import type { ConfigureSection } from "../configure-base.js";
-import type { ConfigureRequest } from "../gen/rayito/v1/configure_pb.js";
+import type { PostApplySection, SectionApplied } from "../configure/base.js";
+import type { ConfigureRequest, ConfigureStatusResponse } from "../gen/rayito/v1/configure_pb.js";
 import {
   SecretGatewayAllowRuleSchema,
   SecretGatewayConfigSchema,
   SecretGatewayRouteSchema,
   type SecretGatewayStatus,
+  SecretGatewayStatusSchema,
 } from "../gen/rayito/v1/secret_gateway_pb.js";
 import type { SecretCache } from "../secrets/cache.js";
 import { GatewayStatus, type SecretGateway } from "./domain.js";
@@ -22,8 +23,8 @@ import { GatewayStatus, type SecretGateway } from "./domain.js";
 export const REQUIRED_FLAG = "secretGateway" as const;
 export const SECTION_NAME = "secret_gateway";
 
-/** Implementa `ConfigureSection` (`configure-base.ts`) para `gateways`. */
-export class GatewaySection implements ConfigureSection {
+/** Implementa `PostApplySection` (`configure/base.ts`) para `gateways`. */
+export class GatewaySection implements PostApplySection {
   readonly section = SECTION_NAME;
   readonly requiredFlag = REQUIRED_FLAG;
 
@@ -56,6 +57,38 @@ export class GatewaySection implements ConfigureSection {
     );
     request.secretGateway = create(SecretGatewayConfigSchema, { routes });
   }
+
+  /**
+   * Descarta de `cache` cada secreto que estas rutas inyectan, para que el
+   * próximo `fill()` los relea de Secrets Manager aunque su TTL
+   * (`SecretCache.ttlSeconds`, 300 s por defecto) no haya vencido: sin
+   * esto, `sbx.gateways.refresh()` justo después de `SecretStore.update()`
+   * volvería a mandar el valor viejo.
+   */
+  forgetCachedValues(): void {
+    for (const gateway of Object.values(this.gateways)) {
+      for (const secret of Object.values(gateway.headers)) {
+        this.cache.invalidate(secret);
+      }
+    }
+  }
+
+  /**
+   * `PostApplySection`: el `sbx.gateways` que `create()`/`take()` guardan.
+   * Su `refresh()` olvida los valores en caché y vuelve a mandar esta
+   * sección (`applied.reapply`), así que siempre empuja la versión actual
+   * de cada secreto.
+   */
+  afterApply(applied: SectionApplied): GatewayHandle {
+    return new GatewayHandle(statusesOf(applied.status), async () => {
+      this.forgetCachedValues();
+      return statusesOf(await applied.reapply());
+    });
+  }
+}
+
+function statusesOf(status: ConfigureStatusResponse): Readonly<Record<string, GatewayStatus>> {
+  return gatewayStatusesFromProto(status.secretGateway ?? create(SecretGatewayStatusSchema, {}));
 }
 
 /**
@@ -91,9 +124,11 @@ export type GatewayRefresher = () => Promise<Readonly<Record<string, GatewayStat
  * `sbx.gateways`: un mapeo de sólo lectura `nombre -> GatewayStatus`. Sin
  * `gateways` es siempre un `GatewayHandle` vacío cuyo `refresh()` no hace
  * nada, así que llamarlo nunca es una rama especial. Con `gateways`,
- * `refresh()` vuelve a resolver cada cabecera (una `SecretCache` que ya
- * venció la relee) y manda un `Configure` nuevo — la forma de rotar un
- * secreto sin recrear el sandbox.
+ * `refresh()` relee cada cabecera de Secrets Manager (aunque la
+ * `SecretCache` no haya vencido) y manda un `Configure` nuevo — la forma
+ * de rotar un secreto sin recrear el sandbox. Cada ruta conserva su
+ * puerto; si `rayd` rechaza la sección, lanza y el estado anterior sigue
+ * en pie.
  */
 export class GatewayHandle {
   #statuses: Readonly<Record<string, GatewayStatus>>;

@@ -26,6 +26,7 @@ use tonic::{Request, Response, Status};
 
 use super::lifecycle::lifecycle_state;
 use crate::adapters::ImdsState;
+use crate::features::FeatureSet;
 
 pub const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -35,6 +36,7 @@ pub struct HealthGrpc {
     history: Arc<MetricsHistory>,
     kernel: Arc<dyn KernelStatus>,
     imds: Arc<ImdsState>,
+    features: Arc<FeatureSet>,
 }
 
 impl HealthGrpc {
@@ -44,6 +46,7 @@ impl HealthGrpc {
         history: Arc<MetricsHistory>,
         kernel: Arc<dyn KernelStatus>,
         imds: Arc<ImdsState>,
+        features: Arc<FeatureSet>,
     ) -> Self {
         Self {
             session,
@@ -51,6 +54,7 @@ impl HealthGrpc {
             history,
             kernel,
             imds,
+            features,
         }
     }
 }
@@ -67,7 +71,10 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot)))
+        Ok(Response::new(to_response(
+            snapshot,
+            self.features.secret_gateway.supported(),
+        )))
     }
 
     async fn metrics(
@@ -113,7 +120,7 @@ impl HealthService for HealthGrpc {
     }
 }
 
-fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
+fn to_response(snapshot: HealthSnapshot, secret_gateway_supported: bool) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
         kernel_ready: snapshot.kernel_ready,
@@ -133,15 +140,15 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
         // M15: every slot but `secret_gateway` (m15-secrets-gateway) is
-        // still `Unsupported` (`features::build`). The feature that gives a
-        // slot a real adapter updates this one call site
-        // (`rayd_core::features::AgentFeatures`), never `HealthGrpc`'s
-        // constructor: a feature's `ConfigurableFeature::supported()` is a
-        // fixed property of this build, never a per-request runtime check,
-        // so hard-coding its flag here is equivalent to threading
-        // `FeatureSet` through just to ask it.
+        // still `Unsupported` (`features::build`). `secret_gateway_supported`
+        // comes from `FeatureSet.secret_gateway.supported()` (`health()`,
+        // above), never a literal here: a slot that degrades to
+        // `Unsupported` at startup (no readable TLS trust store,
+        // `features::secret_gateway::build`) must report `false`, and a
+        // hard-coded `true` would keep claiming support a client would then
+        // find rejected by every `Configure` call.
         features: Some(agent_features_message(rayd_core::features::AgentFeatures {
-            secret_gateway: true,
+            secret_gateway: secret_gateway_supported,
             ..rayd_core::features::AgentFeatures::foundations_only()
         })),
     }

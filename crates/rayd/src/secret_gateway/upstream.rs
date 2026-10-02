@@ -34,6 +34,19 @@ use tower::Service;
 /// loopback-to-internet handshake, short enough that a stuck upstream
 /// never pins a sandbox command for long.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// No upstream request waits longer than this for its response *head*
+/// (status line and headers) once connected; separate from
+/// `CONNECT_TIMEOUT` because a slow TLS handshake and an upstream that
+/// accepted the connection but never answers at all are different
+/// failures, and without this bound the latter pins the forwarding task
+/// (and the sandbox command behind it) forever. 10 minutes: generous enough
+/// for a long-running LLM completion request to still be waiting on its
+/// first response byte, short enough that a genuinely stuck upstream is
+/// eventually reported rather than hung on indefinitely. An SSE response's
+/// *body*, once it starts, is unaffected (this only bounds the wait for the
+/// head; the open-ended stream after it is the caller's own concern, same
+/// as before this constant existed).
+pub const RESPONSE_HEAD_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long the pool keeps an idle connection to one upstream before
 /// closing it.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -61,6 +74,13 @@ impl StdError for UpstreamInitError {}
 pub enum ForwardError {
     Unreachable,
     Timeout,
+    /// The connection was established but the request still failed: a TLS
+    /// error, a malformed or truncated response, or the connection closing
+    /// mid-response. Distinct from `Timeout` (which only ever means
+    /// `CONNECT_TIMEOUT` or `RESPONSE_HEAD_TIMEOUT` actually elapsed) so
+    /// `GatewayStatus.last_error_class` does not call an upstream that
+    /// answered badly, or not at all, "timed out".
+    Upstream,
 }
 
 type BoxError = Box<dyn StdError + Send + Sync>;
@@ -173,15 +193,20 @@ impl GatewayUpstream {
     /// dials an IP literal directly, without ever asking
     /// `FilteringResolver`) or the connection could not be established
     /// (including a resolved address the resolver refused);
-    /// `ForwardError::Timeout` when it timed out (`CONNECT_TIMEOUT`).
+    /// `ForwardError::Timeout` when the connection attempt or the wait for
+    /// the response head timed out (`CONNECT_TIMEOUT`,
+    /// `RESPONSE_HEAD_TIMEOUT`); `ForwardError::Upstream` for every other
+    /// failure once connected (a TLS or framing error, a connection closed
+    /// mid-response).
     pub async fn send(&self, request: Request<Body>) -> Result<Response<Incoming>, ForwardError> {
         if literal_host_forbidden(request.uri()) {
             return Err(ForwardError::Unreachable);
         }
-        self.client
-            .request(request)
-            .await
-            .map_err(|error| classify(&error))
+        match tokio::time::timeout(RESPONSE_HEAD_TIMEOUT, self.client.request(request)).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(error)) => Err(classify(&error)),
+            Err(_elapsed) => Err(ForwardError::Timeout),
+        }
     }
 }
 
@@ -196,6 +221,13 @@ fn literal_host_forbidden(uri: &Uri) -> bool {
         .is_some_and(is_forbidden_address)
 }
 
+/// `hyper_util::client::legacy::Error::is_connect()` is only ever `true`
+/// for a failed connection attempt; every other error (TLS, framing, a
+/// connection reset mid-response) reached this far *after* connecting, so
+/// the fallback below must never call it `Timeout` — that class is reserved
+/// for the two cases `send` already covers explicitly: a genuine I/O
+/// timeout wrapped somewhere in the error chain, or `RESPONSE_HEAD_TIMEOUT`
+/// itself elapsing (handled in `send`, never reaching this function).
 fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
     let mut source: Option<&(dyn StdError + 'static)> = Some(error);
     while let Some(current) = source {
@@ -213,7 +245,7 @@ fn classify(error: &hyper_util::client::legacy::Error) -> ForwardError {
     if error.is_connect() {
         ForwardError::Unreachable
     } else {
-        ForwardError::Timeout
+        ForwardError::Upstream
     }
 }
 
@@ -262,5 +294,41 @@ mod tests {
             .unwrap();
         let error = upstream.send(request).await.unwrap_err();
         assert_eq!(error, ForwardError::Unreachable);
+    }
+
+    /// A connection the server accepts and then closes before any response
+    /// bytes arrive fails *after* `Connect` already succeeded — the actual
+    /// shape of the regression this finding closes (a TLS or framing error,
+    /// or the connection resetting mid-response). Built against a plain
+    /// `HttpConnector` (not `GatewayUpstream`'s HTTPS one): `is_connect()`
+    /// is true for the whole TLS handshake too, so an HTTPS target cannot
+    /// reach this branch without a certificate the client's native trust
+    /// store accepts; `classify` itself takes no connector type, so this
+    /// still exercises exactly the function `send` calls.
+    #[tokio::test]
+    async fn a_connection_closed_after_connecting_is_classified_as_upstream_not_timeout() {
+        use hyper_util::client::legacy::Client;
+        use hyper_util::client::legacy::connect::HttpConnector;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        let client: Client<HttpConnector, Body> =
+            Client::builder(TokioExecutor::new()).build(HttpConnector::new());
+        let request = Request::builder()
+            .uri(format!("http://127.0.0.1:{port}/"))
+            .body(Body::empty())
+            .unwrap();
+        let error = client.request(request).await.unwrap_err();
+        assert!(
+            !error.is_connect(),
+            "the TCP connect itself must have succeeded"
+        );
+        assert_eq!(classify(&error), ForwardError::Upstream);
     }
 }

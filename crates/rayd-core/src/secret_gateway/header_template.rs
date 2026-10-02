@@ -22,6 +22,20 @@ pub const HOP_BY_HOP_HEADERS: [&str; 8] = [
     "upgrade",
 ];
 
+/// Framing and routing headers the listener derives itself (`host` from
+/// `GatewayRoute::upstream`, `content-length`/`trailer` from the streamed
+/// body): a route that injected one of these could desynchronise the
+/// forwarded request or point it at another host.
+pub const FRAMING_HEADERS: [&str; 3] = ["host", "content-length", "trailer"];
+
+/// `true` when `lower_name` is a header no route may inject: a hop-by-hop
+/// header or one of `FRAMING_HEADERS`. `GatewaySpec::parse` rejects such a
+/// route (`invalid_header_name`) before any listener opens.
+#[must_use]
+pub fn is_reserved_header(lower_name: &str) -> bool {
+    FRAMING_HEADERS.contains(&lower_name) || HOP_BY_HOP_HEADERS.contains(&lower_name)
+}
+
 /// Lower-cased header names the listener must strip from the inbound
 /// request before it reaches the upstream: exactly the names the route
 /// injects, so the sandbox can never spoof its own gateway's credential by

@@ -50,10 +50,15 @@ the `SecretGatewayConfig`/`Status` proto stub and the `secret_gateway`
   branch now validates and returns a real plan instead of raising.
   `sandbox_{sync,async}/main.py` gain the generic `ConfigureSandbox`
   dispatch (`_apply_configure_sections`, reusable by every future 0.6
-  feature's own section) and the `gateways` property.
-- **TypeScript mirrors.** `configure-base.ts` (the `_configure_base.py`
+  feature's own section; it terminates the VM on any failure unless
+  `keep_on_failure`, and hands the post-`Configure` status to any
+  `PostApplySection`) and the `gateways` property. `SandboxPool.take()`
+  gains `gateways=` in both SDKs.
+- **TypeScript mirrors.** `configure/base.ts` (the `_configure_base.py`
   seam TS was missing: `AgentFeatures`, `requireConfigureSupport`,
-  `sectionError`, `configSectionName`), `secret-gateway/{domain,section}.ts`,
+  `sectionError`, `raiseForResults`, `PostApplySection`; placed at the
+  `configure/` path the 0.6 architecture reserves for foundations, which
+  had not created it yet; flagged for foundations to own), `secret-gateway/{domain,section}.ts`,
   `feature-options.ts`'s `gateways` branch, and the same dispatch wired into
   `sandbox/sandbox.ts`/`sandbox/core.ts` (`ConfigureService` client,
   `agentFeatures` on `SandboxCore`, `#applyConfigureSections`, `gateways`
@@ -97,7 +102,7 @@ re-asserted here.
   `gateways` property + `AgentFeatures` capture in `_record_health`), two
   new test files plus an update to the existing
   `test_m15_feature_options.py` parametrize list.
-- **TypeScript**: `configure-base.ts` (new), `secret-gateway/{domain,
+- **TypeScript**: `configure/base.ts` (new), `secret-gateway/{domain,
   section}.ts` (new), `feature-options.ts`, `sandbox/{sandbox,core}.ts`,
   `index.ts`.
 - **Docs/OpenSpec**: this change's own files plus a `docs-delta.md` for

@@ -29,6 +29,25 @@ export const LOOPBACK_HOST = "127.0.0.1";
 
 const ROUTE_NAME_PATTERN = new RegExp(`^[a-z0-9-]{1,${MAX_ROUTE_NAME_LEN}}$`);
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+// RFC 9110 §5.6.2 `token`: los mismos bytes que acepta
+// `rayd_core::secret_gateway::route::is_header_token_byte`.
+const HEADER_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+// Cabeceras hop-by-hop (RFC 9110 §7.6.1) y de framing/host: una ruta nunca
+// puede inyectarlas (mismo conjunto que
+// `rayd_core::secret_gateway::route::FORBIDDEN_INJECTED_HEADERS`).
+const FORBIDDEN_INJECTED_HEADERS = new Set([
+  "host",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "trailer",
+  "upgrade",
+]);
 
 export interface AllowRule {
   readonly method: string;
@@ -52,12 +71,13 @@ export interface SecretGatewayOptions {
  * Coste y activación
  * -------------------
  * Activa: `gateways: { nombre: new SecretGateway(...) }` en
- *     `Sandbox.create()`; sin él, `rayd` no abre ningún listener de loopback
- *     y el SDK no hace ninguna llamada a `ConfigureSandbox` ni a Secrets
- *     Manager.
+ *     `Sandbox.create()` (o `pool.take({ gateways })`); sin él, `rayd` no
+ *     abre ningún listener de loopback y el SDK no hace ninguna llamada a
+ *     `ConfigureSandbox` ni a Secrets Manager.
  * Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
- *     cabecera y TTL de la `SecretCache` que ya usa `secrets`; ningún
- *     recurso nuevo (reutiliza `infra/secrets-access.yaml`).
+ *     cabecera y TTL de la `SecretCache` que ya usa `secrets`, y una por
+ *     cabecera en cada `sbx.gateways.refresh()`; ningún recurso nuevo
+ *     (reutiliza `infra/secrets-access.yaml`).
  * Coste aproximado: el de `SecretCache` ($0,05 por 10 000 llamadas,
  *     us-east-1, 2026-09-30) más el del secreto en sí si no existía ya.
  * IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante
@@ -103,24 +123,61 @@ function validateUpstream(upstream: string): void {
     );
   }
   const rest = upstream.slice("https://".length);
-  if (rest === "" || rest.includes("/") || rest.includes("?") || rest.includes("#")) {
+  if (
+    rest === "" ||
+    rest.includes("/") ||
+    rest.includes("?") ||
+    rest.includes("#") ||
+    rest.includes("@")
+  ) {
     throw new InvalidArgumentError(
-      "SecretGateway.upstream no admite ruta, query ni fragmento: sólo esquema y host",
+      "SecretGateway.upstream no admite ruta, query, userinfo ni fragmento: sólo esquema y host",
     );
   }
 }
 
 function validateHeaders(headers: Readonly<Record<string, SecretLike>>): void {
-  const count = Object.keys(headers ?? {}).length;
+  const names = Object.keys(headers ?? {});
   if (
     headers === null ||
     typeof headers !== "object" ||
-    count < 1 ||
-    count > MAX_HEADERS_PER_ROUTE
+    names.length < 1 ||
+    names.length > MAX_HEADERS_PER_ROUTE
   ) {
     throw new InvalidArgumentError(
       `SecretGateway.headers debe tener entre 1 y ${MAX_HEADERS_PER_ROUTE} entradas`,
     );
+  }
+  validateHeaderNames(names);
+}
+
+/**
+ * Un nombre inválido fallaría en cada petición con un 502 en vez de aquí
+ * (`rayd` construye `http::HeaderName` justo antes de reenviar); uno
+ * prohibido (`host`, hop-by-hop, ...) dejaría que una ruta desincronice la
+ * petición o la apunte a otro host. Lower-case igual que
+ * `stripped_header_names` en el lado de `rayd`: dos nombres que sólo
+ * difieren en mayúsculas ('X-Api-Key' y 'x-api-key') son objetos distintos
+ * en un `Record`, así que sin esto inyectarían el valor dos veces.
+ */
+function validateHeaderNames(names: readonly string[]): void {
+  const seen = new Set<string>();
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (!HEADER_TOKEN_PATTERN.test(lower)) {
+      throw new InvalidArgumentError(
+        `nombre de cabecera inválido en headers: ${JSON.stringify(name)}`,
+      );
+    }
+    if (FORBIDDEN_INJECTED_HEADERS.has(lower)) {
+      throw new InvalidArgumentError(`headers no puede inyectar la cabecera reservada "${lower}"`);
+    }
+    if (seen.has(lower)) {
+      throw new InvalidArgumentError(
+        `headers tiene dos nombres que sólo difieren en mayúsculas: "${lower}"`,
+      );
+    }
+    seen.add(lower);
   }
 }
 

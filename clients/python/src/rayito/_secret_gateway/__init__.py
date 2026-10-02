@@ -19,6 +19,7 @@ from rayito._secret_gateway._domain import (
 )
 from rayito._secret_gateway._section import (
     EMPTY_GATEWAYS,
+    SECTION_NAME,
     GatewayHandle,
     GatewaySection,
     GatewaySectionFactory,
@@ -34,6 +35,7 @@ __all__ = [
     "MAX_ROUTES_PER_GATEWAY",
     "MAX_ROUTE_NAME_LEN",
     "MIN_RATE_PER_MINUTE",
+    "SECTION_NAME",
     "GatewayHandle",
     "GatewaySection",
     "GatewaySectionFactory",

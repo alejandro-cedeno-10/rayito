@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import builtins
 import dataclasses
+import functools
 import logging
 import threading
 import time
@@ -39,9 +40,12 @@ from rayito._code_base import (
 from rayito._configure_base import (
     CONFIGURE_DOC,
     AgentFeatures,
+    ConfigureSection,
+    PostApplySection,
+    SectionApplied,
     agent_features_from_health,
+    raise_for_results,
     require_configure_support,
-    section_error,
 )
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -172,13 +176,8 @@ from rayito._sandbox_base import (
     with_guest_facts,
     write_index_record,
 )
-from rayito._secret_gateway import (
-    EMPTY_GATEWAYS,
-    GatewayHandle,
-    GatewaySection,
-    GatewayStatus,
-    gateway_statuses_from_proto,
-)
+from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -458,7 +457,10 @@ class Sandbox:
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
         self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._agent_features: AgentFeatures | None = None
-        self._gateways: GatewayHandle = EMPTY_GATEWAYS
+        # Lo que `PostApplySection.after_apply` devolvió, por `section`
+        # (`_apply_configure_sections`); cada propiedad pública de una
+        # función 0.6 (`gateways`, ...) lee su entrada de aquí.
+        self._section_handles: dict[str, object] = {}
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
@@ -836,7 +838,9 @@ class Sandbox:
             if launch.enforce:
                 sandbox._apply_initial_network(launch)
             sandbox._apply_configure_sections(
-                feature_plan.configure_sections, timeout=request_timeout
+                feature_plan.configure_sections,
+                timeout=request_timeout,
+                terminate_on_failure=not keep_on_failure,
             )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
@@ -862,6 +866,7 @@ class Sandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            gateways=None if gateways is None else dict(gateways),
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1288,7 +1293,8 @@ class Sandbox:
         `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
         `"http://127.0.0.1:<puerto>"`, el host al que apuntar
         `ANTHROPIC_BASE_URL` y similares dentro del sandbox."""
-        return self._gateways
+        handle = self._section_handles.get(GATEWAY_SECTION)
+        return handle if isinstance(handle, GatewayHandle) else EMPTY_GATEWAYS
 
     # --------------------------------------------------------------- lifecycle
 
@@ -1920,8 +1926,10 @@ class Sandbox:
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
         y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
-        su propia fila en el mismo índice); las variables del kernel, los procesos y las
-        PTY no sobreviven, sólo los ficheros del `HOME`. Si el
+        su propia fila en el mismo índice) y las mismas `gateways=` (con cada
+        cabecera resuelta otra vez, nunca reenviando un valor ya leído); las
+        variables del kernel, los procesos y las PTY no sobreviven, sólo los
+        ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota
         con la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
         `create(persist=)`: un handle de `connect()` no conoce el lanzamiento."""
@@ -2086,19 +2094,46 @@ class Sandbox:
         return shared_secret_cache(self._control_plane.region, self._session)
 
     def _apply_configure_sections(
-        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+        self,
+        factories: Sequence[Callable[[SecretCache], Any]],
+        *,
+        timeout: float,
+        terminate_on_failure: bool,
     ) -> None:
         """Único punto de `create()` que llama a `ConfigureSandbox`: agrupa
         en una sola llamada las secciones 0.6 que `plan_features` dejó
         pendientes (hoy sólo `gateways=`; una función futura añade su propia
         entrada a `FeaturePlan.configure_sections`, nunca toca este método).
-        Cada entrada es un invocable de la `SecretCache` ya resuelta del
-        handle (`GatewaySectionFactory`); exige su flag en
-        `Health.features` antes de construir el `ConfigureRequest` y
-        traduce cada `SectionResult` a su excepción (`section_error`).
+
+        Igual que `_apply_initial_network`/`_bind_and_restore`: un fallo en
+        cualquier punto (imagen anterior a 0.6.0, flag no soportado, un
+        secreto que falta al resolver una cabecera, una sección
+        `INVALID`/`FAILED`) cierra el cliente y, salvo `keep_on_failure`,
+        termina el VM antes de relanzar — el caller nunca recibe un handle
+        de un sandbox cuya configuración pedida no se aplicó, así que nunca
+        pierde la única vía para apagarlo.
         """
         if not factories:
             return
+        try:
+            self._send_configure_sections(factories, timeout=timeout)
+        except BaseException:
+            self.close()
+            if terminate_on_failure:
+                terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
+            raise
+
+    def _send_configure_sections(
+        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+    ) -> None:
+        """La parte sin compuerta de `_apply_configure_sections`: cada
+        entrada es un invocable de la `SecretCache` ya resuelta del handle
+        (`GatewaySectionFactory`); exige su flag en `Health.features` antes
+        de construir el `ConfigureRequest`, traduce cada `SectionResult` a
+        su excepción (`_configure_base.raise_for_results`, la misma que usa
+        `_reapply_section`) y, si alguna sección es una `PostApplySection`,
+        pide `ConfigureStatus` una vez y guarda lo que devuelva su
+        `after_apply` en `_section_handles`."""
         features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
         cache = (
             self._secrets.cache
@@ -2116,34 +2151,33 @@ class Sandbox:
         request = configure_pb2.ConfigureRequest()
         for section in sections:
             section.fill(request)
-        response = call_configure(self._configure, request, timeout=timeout)
-        for result in response.results:
-            error = section_error(
-                configure_pb2.ConfigSection.Name(result.section),
-                configure_pb2.SectionCode.Name(result.code),
-                result.error_class,
-            )
-            if error is not None:
-                raise error
-        gateway_section = next((s for s in sections if isinstance(s, GatewaySection)), None)
-        if gateway_section is not None:
-            status = call_configure_status(self._configure, timeout=timeout)
-            self._gateways = GatewayHandle(
-                gateway_statuses_from_proto(status.secret_gateway),
-                refresher=lambda: self._refresh_gateways(gateway_section, timeout=timeout),
+        raise_for_results(call_configure(self._configure, request, timeout=timeout))
+        post_apply = [section for section in sections if isinstance(section, PostApplySection)]
+        if not post_apply:
+            return
+        status = call_configure_status(self._configure, timeout=timeout)
+        for section in post_apply:
+            self._section_handles[section.section] = section.after_apply(
+                SectionApplied(
+                    status=status,
+                    reapply=functools.partial(self._reapply_section, section, timeout=timeout),
+                )
             )
 
-    def _refresh_gateways(
-        self, section: GatewaySection, *, timeout: float
-    ) -> Mapping[str, GatewayStatus]:
-        """`sbx.gateways.refresh()`: vuelve a resolver cada cabecera (una
-        `SecretCache` vencida la relee) y manda un `Configure` nuevo — la
-        forma de rotar un secreto sin recrear el sandbox."""
+    def _reapply_section(
+        self, section: ConfigureSection, *, timeout: float
+    ) -> configure_pb2.ConfigureStatusResponse:
+        """El `SectionApplied.reapply` de cada `PostApplySection` (p. ej.
+        `sbx.gateways.refresh()`): vuelve a rellenar sólo esa sección, manda
+        un `Configure` nuevo y lo pasa por `raise_for_results` igual que
+        `create()` — una sección `INVALID` (un valor rotado con CR/LF) o
+        `FAILED` (`listen_failed`) lanza aquí, nunca devuelve un estado
+        vacío o a medio aplicar en silencio. Sólo si se aplicó pide el
+        `ConfigureStatus` nuevo."""
         request = configure_pb2.ConfigureRequest()
         section.fill(request)
-        call_configure(self._configure, request, timeout=timeout)
-        status = call_configure_status(self._configure, timeout=timeout)
-        return gateway_statuses_from_proto(status.secret_gateway)
+        raise_for_results(call_configure(self._configure, request, timeout=timeout))
+        return call_configure_status(self._configure, timeout=timeout)
 
     def _rebind_secrets(
         self,

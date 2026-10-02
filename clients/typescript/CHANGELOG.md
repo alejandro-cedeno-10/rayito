@@ -34,10 +34,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   inyectando cada cabecera vaultada (resuelta con la misma `SecretCache`
   que `secrets`, nunca antes de `Configure`) y eliminando primero
   cualquier cabecera del mismo nombre que el sandbox intente poner.
-  `sbx.gateways.get("nombre")?.url` da la URL de loopback (`refresh()`
-  rota el secreto sin recrear el sandbox). Sin `gateways`, ningún cliente
-  Secrets Manager nuevo se construye y no se manda ningún
-  `ConfigureSandbox`.
+  `sbx.gateways.get("nombre")?.url` da la URL de loopback; `refresh()`
+  rota el secreto sin recrear el sandbox (relee Secrets Manager aunque la
+  `SecretCache` no haya vencido, conserva el puerto y lanza si `rayd`
+  rechaza la sección). También `pool.take({ gateways })`. Cualquier fallo
+  al configurarla tras `run-microvm` (imagen anterior a 0.6.0, flag
+  ausente, secreto que falta, sección rechazada) termina el VM salvo
+  `keepOnFailure`. Sin `gateways`, ningún cliente Secrets Manager nuevo se
+  construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01

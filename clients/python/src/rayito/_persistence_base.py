@@ -201,6 +201,7 @@ def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
         "ingress": options.ingress,
         "egress": options.egress,
         "network": options.network,
+        "gateways": options.gateways,
         "logging": options.logging,
         "access_token": options.access_token,
         "ready_timeout": options.ready_timeout,

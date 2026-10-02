@@ -9,10 +9,10 @@
 ## 2. `rayd`/`rayd-core` adapters
 
 - [x] 2.1 `crates/rayd/src/secret_gateway/upstream.rs`: `GatewayUpstream` (hyper-util legacy client, `hyper-rustls`, OS trust store, `FilteringResolver` over `rayd_core::transfer::is_forbidden_address`, HTTP/1.1, unbuffered request/response bodies).
-- [x] 2.2 `crates/rayd/src/secret_gateway/listener.rs`: `GatewayRuntime` (one loopback `axum` listener per route, `apply` replaces the whole set and aborts every previously-started route on a partial failure so nothing leaks), the `forward` handler (decision → strip/inject headers → forward → strip hop-by-hop response headers, all streamed).
+- [x] 2.2 `crates/rayd/src/secret_gateway/listener.rs`: `GatewayRuntime` (one loopback `axum` listener per route; `apply` reconciles by route name, see 6.1, and restores the previous set untouched on a failed bind so nothing leaks), the `forward` handler (decision → strip/inject headers → forward → strip hop-by-hop response headers, all streamed).
 - [x] 2.3 `crates/rayd/src/features/secret_gateway.rs`: `SecretGatewayFeature` (`ConfigurableFeature` impl), `parse_spec` (proto → domain), falls back to `Unsupported` only if the OS trust store cannot load (mirrors `main::transfer_services`).
 - [x] 2.4 `grpc/configure.rs`: `request.secret_gateway.clone()` (the one section no longer `Copy`, now that it has real fields).
-- [x] 2.5 `grpc/health.rs`: `secret_gateway: true` and `root_egress: [SecretGatewayUpstream]` when supported.
+- [x] 2.5 `grpc/health.rs`: `secret_gateway` from `FeatureSet.secret_gateway.supported()` (see 6.8) and `root_egress: [SecretGatewayUpstream]` when supported.
 - [x] 2.6 `features/mod.rs`: updated test (`secret_gateway` is now the one supported slot).
 - [x] 2.7 Unit/integration tests: slot behaviour (applied/invalid/failed, previous state untouched on an invalid new config, status after apply, no participant, no listener before any `Configure`), `upstream.rs`'s forbidden-address classification. 231 total `rayd`+`rayd-core` tests pass; `cargo clippy --all-targets -- -W clippy::pedantic` clean on every file this change owns.
 
@@ -26,11 +26,11 @@
 
 ## 4. TypeScript mirrors
 
-- [x] 4.1 `configure-base.ts` (new: `AgentFeatures`, `agentFeaturesFromHealth`, `requireConfigureSupport`, `sectionError`, `configSectionName` — the seam foundations had not yet created for TS).
+- [x] 4.1 `configure/base.ts` (new: `AgentFeatures`, `agentFeaturesFromHealth`, `requireConfigureSupport`, `sectionError`, `configSectionName` — the seam foundations had not yet created for TS).
 - [x] 4.2 `secret-gateway/domain.ts`, `secret-gateway/section.ts`.
 - [x] 4.3 `feature-options.ts`: `gateways` branch mirrors Python's.
 - [x] 4.4 `sandbox/core.ts`: `ConfigureService` client, `agentFeatures` field, captured in `recordHealth`.
-- [x] 4.5 `sandbox/sandbox.ts`: `#applyConfigureSections`, `#refreshGateways`, `gateways` getter, `gateways` option typed `SecretGateway`.
+- [x] 4.5 `sandbox/sandbox.ts`: `#applyConfigureSections`, `#reapplySection`, `gateways` getter, `gateways` option typed `SecretGateway`.
 - [x] 4.6 `index.ts` exports.
 - [x] 4.7 Unit tests: `m15-secrets-gateway-domain.test.ts`, `m15-secrets-gateway-section.test.ts`; updated `m15-feature-options.test.ts` (gateways is no longer a stub).
 
@@ -44,6 +44,22 @@
 - [x] 5.6 `docs-delta.md` for `m15-docs-integration` (e2b-parity row 111, optional-features.md, cost.md, security.md T24).
 - [x] 5.7 This OpenSpec change (`proposal.md`, `tasks.md`, `design.md`, `specs/secret-gateway/spec.md`); `openspec validate m15-secrets-gateway --strict` passes.
 
-## 6. Not done in this change (tracked, not blocking)
+## 6. Review findings (PR #78)
 
-- [ ] 6.1 e2e tests (`clients/python/tests/e2e/test_m15_secrets_gateway.py`, `clients/typescript/tests/e2e/m15-secrets-gateway.test.ts`) against real AWS. **Gate for the serialized AWS acceptance stage; not run from this branch.**
+- [x] 6.1 `GatewayRuntime::apply` reconciles by route name: a kept name keeps its listener and port and swaps its `RouteState` in place; a removed route shuts down gracefully (idle keep-alive connections closed, in-flight request may finish, `ROUTE_SHUTDOWN_GRACE`). Tests: same name keeps its port, a reapply reaches an open keep-alive connection, a removed route closes an idle one.
+- [x] 6.2 `path_is_safe` refuses dot-segments (raw and percent-encoded), encoded `/`/`\`, backslashes and empty segments before the allowlist; shared vectors in `testdata/secret-gateway/request-paths.json`.
+- [x] 6.3 Header names validated in Rust, Python and TypeScript (RFC 9110 token, no hop-by-hop/framing name, unique ignoring case; `invalid_header_name`/`duplicate_header_name`); route-name charset (`invalid_route_name`) and upstream userinfo/fragment (`invalid_upstream_host`) enforced by `rayd`; shared vectors in `testdata/secret-gateway/header-names.json`.
+- [x] 6.4 `create()` terminates the VM on any configure failure unless `keep_on_failure` (Python sync/async, TypeScript); tests for pre-0.6, flag `false` and a `FAILED` section.
+- [x] 6.5 `refresh()` goes through the shared `raise_for_results`/`raiseForResults` and invalidates the gateway's secrets in `SecretCache` first; tests assert the rotated value reaches `ConfigureRequest`.
+- [x] 6.6 Generic `PostApplySection.after_apply`/`afterApply` hook: `create()`/`take()` name no feature.
+- [x] 6.7 `SandboxPool.take(gateways=)` in Python sync/async and TypeScript, validated before claiming a slot; a failure terminates the slot.
+- [x] 6.8 `Health.features.secret_gateway` derives from the built `FeatureSet` (shared with `ConfigureGrpc` in `grpc/mod.rs`), never hard-coded.
+- [x] 6.9 Upstream classification: only `CONNECT_TIMEOUT`/`RESPONSE_HEAD_TIMEOUT` are `upstream_timeout`; every other post-connect failure is `upstream_error`.
+- [x] 6.10 e2e files (`clients/python/tests/e2e/test_m15_secrets_gateway.py`, `clients/typescript/tests/e2e/m15-secrets-gateway.e2e.test.ts`), skipped unless the acceptance environment is set. **Run only by the serialized AWS acceptance stage.**
+- [x] 6.11 `reincarnate()` carries `gateways=` over (`LaunchOptions.gateways`, Python and TypeScript), re-resolving each header in the successor.
+
+## 7. Foundations follow-ups (not done here)
+
+- [ ] 7.1 Foundations should own `clients/typescript/src/configure/base.ts` (created here because foundations had not added the TS seam; `m15-rayd-otlp` and `m15-s3-mounts` create the same module, so whichever merges second reconciles it).
+- [ ] 7.2 Foundations should own the `FeatureSet` → `HealthGrpc` wiring in `grpc/mod.rs`/`grpc/health.rs` (this change builds the set once and passes it to both services; the next feature that flips a slot only edits `health.rs`'s `AgentFeatures` mapping, ideally replaced by a `FeatureSet::advertised()` helper).
+- [ ] 7.3 `create(pool=..., gateways=...)` stays rejected by the shared `POOL_REJECTED_OPTIONS`/`reject_launch_kwargs_with_pool` list (foundations-owned); call `pool.take(gateways=)` directly.

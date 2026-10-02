@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use super::header_template::is_reserved_header;
 use super::vault::SecretValue;
 
 /// 1-64 lowercase `[a-z0-9-]`, the same shape `rayito/v1/secret_gateway.proto`
@@ -45,6 +46,14 @@ pub const MAX_RATE_PER_MINUTE: u32 = 6_000;
 /// engine in the domain.
 pub const WILDCARD_SUFFIX: &str = "/*";
 
+/// Percent-encoded forms of `.`, `/` and `\` a client could use to smuggle a
+/// dot-segment past a literal `..`/`.` check: `rayd` never decodes the
+/// inbound path before comparing it against an `AllowRule` or forwarding it,
+/// so these must be rejected as raw substrings, case-insensitively (an
+/// upstream or a CDN in front of it routinely normalises `%2e` the same as
+/// `.`). Checked by `path_is_safe`.
+const FORBIDDEN_PATH_SUBSTRINGS: [&str; 3] = ["%2e", "%2f", "%5c"];
+
 /// Why a route, or the gateway spec it belongs to, was rejected before any
 /// listener opened. Mirrors the closed, lowercase-snake `error_class`
 /// strings `secret_gateway.proto` documents.
@@ -63,6 +72,10 @@ pub enum GatewaySpecError {
     InvalidMethod,
     EmptyPath,
     RateOutOfRange,
+    InvalidHeaderName,
+    DuplicateHeaderName,
+    InvalidUpstreamHost,
+    InvalidRouteName,
 }
 
 impl GatewaySpecError {
@@ -84,6 +97,10 @@ impl GatewaySpecError {
             Self::InvalidMethod => "invalid_method",
             Self::EmptyPath => "empty_path",
             Self::RateOutOfRange => "rate_out_of_range",
+            Self::InvalidHeaderName => "invalid_header_name",
+            Self::DuplicateHeaderName => "duplicate_header_name",
+            Self::InvalidUpstreamHost => "invalid_upstream_host",
+            Self::InvalidRouteName => "invalid_route_name",
         }
     }
 }
@@ -125,6 +142,32 @@ impl AllowRule {
             None => self.path == path,
         }
     }
+}
+
+/// `true` when `path` is safe to match against an `AllowRule` and forward
+/// unchanged: no dot-segment (`.`/`..`, raw or percent-encoded), no
+/// backslash and no empty segment (`//`). `rayd` never decodes or
+/// normalises the inbound path before this check or before forwarding it,
+/// so rejecting an unsafe one here — fail closed, before the allowlist ever
+/// sees it — is what keeps `AllowRule::matches`'s prefix compare a real
+/// boundary (confused-deputy mitigation, T24) instead of a string compare a
+/// request for `/v1/../admin` or `/v1/%2e%2e/admin` can walk around: an
+/// upstream or the CDN in front of it routinely collapses a `..` segment
+/// before routing on it.
+#[must_use]
+pub fn path_is_safe(path: &str) -> bool {
+    if path.contains('\\') || path.contains("//") {
+        return false;
+    }
+    let lower = path.to_ascii_lowercase();
+    if FORBIDDEN_PATH_SUBSTRINGS
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return false;
+    }
+    path.split('/')
+        .all(|segment| segment != "." && segment != "..")
 }
 
 /// A validated, ready-to-serve route: `GatewaySpec::parse` is the only way
@@ -231,6 +274,9 @@ impl GatewaySpec {
             if raw.name.len() > MAX_ROUTE_NAME_LEN {
                 return Err(GatewaySpecError::NameTooLong);
             }
+            if !is_route_name_charset(&raw.name) {
+                return Err(GatewaySpecError::InvalidRouteName);
+            }
             if !seen_names.insert(raw.name.clone()) {
                 return Err(GatewaySpecError::DuplicateRouteName);
             }
@@ -250,6 +296,63 @@ pub struct RawRoute {
     pub rate_per_minute: u32,
 }
 
+/// `true` for every byte RFC 9110 §5.6.2 allows in an HTTP header-field
+/// name (`token`); checked so `Configure` rejects an invalid name at parse
+/// time instead of every request failing with a 502 once the listener tries
+/// to build `http::HeaderName` from it.
+fn is_header_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// Lower-cases every header name (so `X-Api-Key` and `x-api-key` cannot
+/// both be configured, injecting the value twice), then rejects an invalid
+/// token, a duplicate after lower-casing, or a name a route must never be
+/// allowed to set itself (`header_template::is_reserved_header`).
+fn normalize_headers(
+    headers: Vec<(String, SecretValue)>,
+) -> Result<Vec<(String, SecretValue)>, GatewaySpecError> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut normalized = Vec::with_capacity(headers.len());
+    for (name, value) in headers {
+        let lower = name.to_ascii_lowercase();
+        if lower.is_empty() || !lower.bytes().all(is_header_token_byte) {
+            return Err(GatewaySpecError::InvalidHeaderName);
+        }
+        if is_reserved_header(&lower) {
+            return Err(GatewaySpecError::InvalidHeaderName);
+        }
+        if !seen.insert(lower.clone()) {
+            return Err(GatewaySpecError::DuplicateHeaderName);
+        }
+        normalized.push((lower, value));
+    }
+    Ok(normalized)
+}
+
+/// `[a-z0-9-]`, the shape `secret_gateway.proto` documents for a route's
+/// `name` (length is checked separately, against `MAX_ROUTE_NAME_LEN`).
+fn is_route_name_charset(name: &str) -> bool {
+    name.bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 fn parse_route(raw: RawRoute) -> Result<GatewayRoute, GatewaySpecError> {
     let RawRoute {
         name,
@@ -265,9 +368,18 @@ fn parse_route(raw: RawRoute) -> Result<GatewayRoute, GatewaySpecError> {
     if after_scheme.contains('/') || after_scheme.contains('?') {
         return Err(GatewaySpecError::UpstreamHasPathOrQuery);
     }
+    // Userinfo (`user@host`, rejected so a route can never be used to leak
+    // credentials through the URI itself) and a fragment (meaningless over
+    // the wire, but accepting one here would make `rayd`'s own parsing
+    // silently more permissive than the SDKs that already reject it) are
+    // invalid even though they are not a path or a query string.
+    if after_scheme.is_empty() || after_scheme.contains('@') || after_scheme.contains('#') {
+        return Err(GatewaySpecError::InvalidUpstreamHost);
+    }
     if headers.len() > MAX_HEADERS_PER_ROUTE {
         return Err(GatewaySpecError::TooManyHeaders);
     }
+    let headers = normalize_headers(headers)?;
     if allow.len() > MAX_ALLOW_RULES_PER_ROUTE {
         return Err(GatewaySpecError::TooManyAllowRules);
     }
@@ -474,5 +586,146 @@ mod tests {
             GatewaySpecError::UpstreamNotHttps.as_str(),
             "upstream_not_https"
         );
+    }
+
+    #[test]
+    fn an_upstream_with_userinfo_or_a_fragment_is_rejected() {
+        for upstream in ["https://user@example.com", "https://example.com#frag"] {
+            assert_eq!(
+                GatewaySpec::parse(vec![route("a", upstream, vec![], vec![("GET", "/x")], 60)]),
+                Err(GatewaySpecError::InvalidUpstreamHost),
+                "{upstream} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_upstream_host_is_rejected() {
+        assert_eq!(
+            GatewaySpec::parse(vec![route(
+                "a",
+                "https://",
+                vec![],
+                vec![("GET", "/x")],
+                60
+            )]),
+            Err(GatewaySpecError::InvalidUpstreamHost)
+        );
+    }
+
+    #[test]
+    fn a_route_name_outside_its_charset_is_rejected() {
+        for name in ["Anthropic", "my_route", "a b"] {
+            assert_eq!(
+                GatewaySpec::parse(vec![route(
+                    name,
+                    "https://example.com",
+                    vec![],
+                    vec![("GET", "/x")],
+                    60
+                )]),
+                Err(GatewaySpecError::InvalidRouteName),
+                "{name} should be rejected"
+            );
+        }
+    }
+
+    /// `testdata/secret-gateway/`: the same vectors the SDK tests read, so
+    /// `rayd` and both SDKs agree on every edge case by construction.
+    const HEADER_NAME_VECTORS: &str =
+        include_str!("../../../../testdata/secret-gateway/header-names.json");
+    const REQUEST_PATH_VECTORS: &str =
+        include_str!("../../../../testdata/secret-gateway/request-paths.json");
+
+    fn vector_strings(json: &str, key: &str) -> Vec<String> {
+        let vectors: serde_json::Value = serde_json::from_str(json).unwrap();
+        vectors[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn parse_with_headers(
+        headers: Vec<(String, SecretValue)>,
+    ) -> Result<GatewaySpec, GatewaySpecError> {
+        GatewaySpec::parse(vec![RawRoute {
+            name: "a".to_owned(),
+            upstream: "https://example.com".to_owned(),
+            headers,
+            allow: vec![("GET".to_owned(), "/x".to_owned())],
+            rate_per_minute: 60,
+        }])
+    }
+
+    #[test]
+    fn path_is_safe_rejects_every_shared_unsafe_vector() {
+        for unsafe_path in vector_strings(REQUEST_PATH_VECTORS, "unsafe") {
+            assert!(
+                !path_is_safe(&unsafe_path),
+                "{unsafe_path} should be unsafe"
+            );
+        }
+    }
+
+    #[test]
+    fn path_is_safe_accepts_every_shared_safe_vector() {
+        for safe_path in vector_strings(REQUEST_PATH_VECTORS, "safe") {
+            assert!(path_is_safe(&safe_path), "{safe_path} should be safe");
+        }
+    }
+
+    #[test]
+    fn every_shared_valid_header_name_parses() {
+        for name in vector_strings(HEADER_NAME_VECTORS, "valid") {
+            assert!(
+                parse_with_headers(vec![header(&name, "1")]).is_ok(),
+                "{name} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn every_shared_invalid_header_name_is_rejected() {
+        for name in vector_strings(HEADER_NAME_VECTORS, "invalid") {
+            assert_eq!(
+                parse_with_headers(vec![header(&name, "1")]).err(),
+                Some(GatewaySpecError::InvalidHeaderName),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn every_shared_duplicate_header_pair_is_rejected() {
+        let vectors: serde_json::Value = serde_json::from_str(HEADER_NAME_VECTORS).unwrap();
+        for pair in vectors["duplicates"].as_array().unwrap() {
+            let first = pair[0].as_str().unwrap();
+            let second = pair[1].as_str().unwrap();
+            assert_eq!(
+                parse_with_headers(vec![header(first, "1"), header(second, "2")]).err(),
+                Some(GatewaySpecError::DuplicateHeaderName),
+                "{first}/{second} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wildcard_rule_never_matches_a_dot_segment_bypass() {
+        // `AllowRule::matches` is a plain prefix compare; the dot-segment
+        // check belongs to the caller (`evaluate`), so this documents that
+        // `allows()` alone is *not* the confused-deputy boundary — see
+        // `decision::evaluate`'s own test for the end-to-end guarantee.
+        let spec = GatewaySpec::parse(vec![route(
+            "a",
+            "https://example.com",
+            vec![],
+            vec![("GET", "/v1/*")],
+            60,
+        )])
+        .unwrap();
+        let route = &spec.routes()[0];
+        assert!(route.allows("GET", "/v1/../admin"));
     }
 }

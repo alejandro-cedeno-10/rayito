@@ -11,6 +11,7 @@ import asyncio
 import builtins
 import contextlib
 import dataclasses
+import functools
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import datetime
@@ -32,9 +33,12 @@ from rayito._code_base import (
 from rayito._configure_base import (
     CONFIGURE_DOC,
     AgentFeatures,
+    ConfigureSection,
+    PostApplySection,
+    SectionApplied,
     agent_features_from_health,
+    raise_for_results,
     require_configure_support,
-    section_error,
 )
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -166,13 +170,8 @@ from rayito._sandbox_base import (
     with_guest_facts,
     write_index_record,
 )
-from rayito._secret_gateway import (
-    EMPTY_GATEWAYS,
-    GatewayHandle,
-    GatewaySection,
-    GatewayStatus,
-    gateway_statuses_from_proto,
-)
+from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -425,7 +424,10 @@ class AsyncSandbox:
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
         self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._agent_features: AgentFeatures | None = None
-        self._gateways: GatewayHandle = EMPTY_GATEWAYS
+        # Lo que `PostApplySection.after_apply` devolvió, por `section`
+        # (`_apply_configure_sections`); cada propiedad pública de una
+        # función 0.6 (`gateways`, ...) lee su entrada de aquí.
+        self._section_handles: dict[str, object] = {}
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
@@ -705,7 +707,9 @@ class AsyncSandbox:
             if launch.enforce:
                 await sandbox._apply_initial_network(launch)
             await sandbox._apply_configure_sections(
-                feature_plan.configure_sections, timeout=request_timeout
+                feature_plan.configure_sections,
+                timeout=request_timeout,
+                terminate_on_failure=not keep_on_failure,
             )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
@@ -731,6 +735,7 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            gateways=None if gateways is None else dict(gateways),
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -1082,7 +1087,8 @@ class AsyncSandbox:
     @property
     def gateways(self) -> GatewayHandle:
         """Misma semántica que `Sandbox.gateways`."""
-        return self._gateways
+        handle = self._section_handles.get(GATEWAY_SECTION)
+        return handle if isinstance(handle, GatewayHandle) else EMPTY_GATEWAYS
 
     # --------------------------------------------------------------- lifecycle
 
@@ -1764,12 +1770,32 @@ class AsyncSandbox:
         return shared_secret_cache(self._control_plane.region, self._session)
 
     async def _apply_configure_sections(
-        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+        self,
+        factories: Sequence[Callable[[SecretCache], Any]],
+        *,
+        timeout: float,
+        terminate_on_failure: bool,
     ) -> None:
         """Misma semántica que `Sandbox._apply_configure_sections`, sobre el
-        canal `grpc.aio`."""
+        canal `grpc.aio`: un fallo en cualquier punto cierra el cliente y,
+        salvo `keep_on_failure`, termina el VM antes de relanzar."""
         if not factories:
             return
+        try:
+            await self._send_configure_sections(factories, timeout=timeout)
+        except BaseException:
+            await self.close()
+            if terminate_on_failure:
+                await asyncio.to_thread(
+                    terminate_quietly, self._control_plane, self.sandbox_id, self._logger
+                )
+            raise
+
+    async def _send_configure_sections(
+        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+    ) -> None:
+        """Misma semántica que `Sandbox._send_configure_sections`, en
+        `asyncio`."""
         features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
         cache = (
             self._secrets.cache
@@ -1787,32 +1813,27 @@ class AsyncSandbox:
         request = configure_pb2.ConfigureRequest()
         for section in sections:
             section.fill(request)
-        response = await call_configure(self._configure, request, timeout=timeout)
-        for result in response.results:
-            error = section_error(
-                configure_pb2.ConfigSection.Name(result.section),
-                configure_pb2.SectionCode.Name(result.code),
-                result.error_class,
-            )
-            if error is not None:
-                raise error
-        gateway_section = next((s for s in sections if isinstance(s, GatewaySection)), None)
-        if gateway_section is not None:
-            status = await call_configure_status(self._configure, timeout=timeout)
-            self._gateways = GatewayHandle(
-                gateway_statuses_from_proto(status.secret_gateway),
-                async_refresher=lambda: self._refresh_gateways(gateway_section, timeout=timeout),
+        raise_for_results(await call_configure(self._configure, request, timeout=timeout))
+        post_apply = [section for section in sections if isinstance(section, PostApplySection)]
+        if not post_apply:
+            return
+        status = await call_configure_status(self._configure, timeout=timeout)
+        for section in post_apply:
+            self._section_handles[section.section] = section.after_apply(
+                SectionApplied(
+                    status=status,
+                    areapply=functools.partial(self._reapply_section, section, timeout=timeout),
+                )
             )
 
-    async def _refresh_gateways(
-        self, section: GatewaySection, *, timeout: float
-    ) -> Mapping[str, GatewayStatus]:
-        """Misma semántica que `Sandbox._refresh_gateways`, en `asyncio`."""
+    async def _reapply_section(
+        self, section: ConfigureSection, *, timeout: float
+    ) -> configure_pb2.ConfigureStatusResponse:
+        """Misma semántica que `Sandbox._reapply_section`, en `asyncio`."""
         request = configure_pb2.ConfigureRequest()
         section.fill(request)
-        await call_configure(self._configure, request, timeout=timeout)
-        status = await call_configure_status(self._configure, timeout=timeout)
-        return gateway_statuses_from_proto(status.secret_gateway)
+        raise_for_results(await call_configure(self._configure, request, timeout=timeout))
+        return await call_configure_status(self._configure, timeout=timeout)
 
     async def _rebind_secrets(
         self,

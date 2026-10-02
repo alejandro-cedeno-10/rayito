@@ -5,6 +5,9 @@
  */
 
 import { describe, expect, test } from "vitest";
+import headerNames from "../../../../testdata/secret-gateway/header-names.json" with {
+  type: "json",
+};
 import { InvalidArgumentError } from "../../src/errors.js";
 import {
   GatewayStatus,
@@ -41,6 +44,26 @@ describe("SecretGateway", () => {
       Array.from({ length: MAX_HEADERS_PER_ROUTE + 1 }, (_, i) => [`h${i}`, "s"]),
     );
     expect(() => gateway({ headers: tooMany })).toThrow(InvalidArgumentError);
+  });
+
+  test("an upstream with userinfo is rejected", () => {
+    expect(() => gateway({ upstream: "https://user:pass@api.anthropic.com" })).toThrow(
+      InvalidArgumentError,
+    );
+  });
+
+  // `testdata/secret-gateway/header-names.json`: the same vectors `rayd-core`
+  // and the Python SDK read, so the three layers agree on every name.
+  test.each(headerNames.valid)("shared valid header name is accepted: %j", (name) => {
+    expect(() => gateway({ headers: { [name]: "s" } })).not.toThrow();
+  });
+
+  test.each(headerNames.invalid)("shared invalid header name is rejected: %j", (name) => {
+    expect(() => gateway({ headers: { [name]: "s" } })).toThrow(InvalidArgumentError);
+  });
+
+  test.each(headerNames.duplicates)("shared duplicate pair is rejected: %s / %s", (a, b) => {
+    expect(() => gateway({ headers: { [a]: "a", [b]: "b" } })).toThrow(InvalidArgumentError);
   });
 
   test("allow must be non-empty, bounded and well-formed", () => {

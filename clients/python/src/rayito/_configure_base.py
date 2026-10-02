@@ -7,13 +7,15 @@ este módulo no importa `grpc`.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rayito.exceptions import SandboxException, UnimplementedError
+from rayito.v1 import configure_pb2
 
 if TYPE_CHECKING:
-    from rayito.v1 import configure_pb2, features_pb2, health_pb2
+    from rayito.v1 import features_pb2, health_pb2
 
 CONFIGURE_DOC: str = "docs/site/docs/funciones-opcionales/pilas-opcionales.md"
 
@@ -85,6 +87,38 @@ class ConfigureSection(Protocol):
     def fill(self, request: configure_pb2.ConfigureRequest) -> None: ...
 
 
+#: Vuelve a mandar una sola sección ya aplicada (`fill` otra vez, `Configure`,
+#: `raise_for_results`) y devuelve el `ConfigureStatus` resultante; síncrono
+#: en `Sandbox`, asíncrono en `AsyncSandbox`.
+Reapply = Callable[[], configure_pb2.ConfigureStatusResponse]
+AsyncReapply = Callable[[], Awaitable[configure_pb2.ConfigureStatusResponse]]
+
+
+@dataclass(frozen=True)
+class SectionApplied:
+    """Lo que `PostApplySection.after_apply` recibe una vez su `Configure`
+    se aplicó: el `ConfigureStatus` de ese momento y cómo volver a mandar
+    esa misma sección más tarde (`reapply` en `Sandbox`, `areapply` en
+    `AsyncSandbox`; el otro es `None`). `main.py` lo construye igual para
+    cualquier función, sin saber cuál es."""
+
+    status: configure_pb2.ConfigureStatusResponse
+    reapply: Reapply | None = None
+    areapply: AsyncReapply | None = None
+
+
+@runtime_checkable
+class PostApplySection(ConfigureSection, Protocol):
+    """Un `ConfigureSection` que además necesita algo después de aplicarse
+    (hoy `gateways=`: leer los puertos de `ConfigureStatus` y poder rotar).
+    `create()`/`take()` piden `ConfigureStatus` una sola vez si alguna
+    sección lo implementa y guardan lo que devuelve `after_apply` bajo su
+    `section`; la propiedad pública de esa función (`sbx.gateways`, ...) lo
+    lee de ahí. Así `main.py` nunca nombra una función concreta."""
+
+    def after_apply(self, applied: SectionApplied) -> object: ...
+
+
 def section_error(
     section: str, code_name: str, error_class: str
 ) -> SandboxException | UnimplementedError | None:
@@ -102,3 +136,21 @@ def section_error(
         )
     reason = error_class or code_name.removeprefix("SECTION_CODE_").lower()
     return SandboxException(f"{section}: {reason}")
+
+
+def raise_for_results(response: configure_pb2.ConfigureResponse) -> None:
+    """Translates every `SectionResult` in `response` through `section_error`
+    and raises the first one that is not `None`. The one call site both
+    `create()`'s bundled `Configure` (every pending 0.6 section at once) and
+    a later single-section call (a gateway's `refresh()`) must go through,
+    so an `INVALID`/`FAILED`/`UNSUPPORTED` section never passes silently on
+    one path just because it already raises on the other.
+    """
+    for result in response.results:
+        error = section_error(
+            configure_pb2.ConfigSection.Name(result.section),
+            configure_pb2.SectionCode.Name(result.code),
+            result.error_class,
+        )
+        if error is not None:
+            raise error

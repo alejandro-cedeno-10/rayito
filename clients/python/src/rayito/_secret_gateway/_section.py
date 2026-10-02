@@ -3,7 +3,7 @@ parte de esta función que toca AWS (`SecretCache.get`, en `fill()`, justo
 antes de cada `Configure`) o lee un mensaje de protobuf. `sandbox_sync`/
 `sandbox_async`'s `main.py` son quienes de verdad llaman al RPC; este
 módulo sólo construye la sección que les pasa y el mapeo `sbx.gateways`
-que reciben de vuelta.
+que reciben de vuelta (`GatewaySection.after_apply`).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 from rayito._secret_gateway._domain import GatewayStatus, SecretGateway
 
 if TYPE_CHECKING:
+    from rayito._configure_base import AsyncReapply, Reapply, SectionApplied
     from rayito._secrets import SecretCache
     from rayito.v1 import configure_pb2, secret_gateway_pb2
 
@@ -70,6 +71,45 @@ class GatewaySection:
             )
         )
 
+    def forget_cached_values(self) -> None:
+        """Descarta de `cache` cada secreto que estas rutas inyectan, para que
+        el próximo `fill()` los relea de Secrets Manager aunque su TTL
+        (`SecretCache.ttl_seconds`, 300 s por defecto) no haya vencido: sin
+        esto, `sbx.gateways.refresh()` justo después de
+        `SecretStore.update()` volvería a mandar el valor viejo."""
+        for gateway in self.gateways.values():
+            for secret in gateway.headers.values():
+                self.cache.invalidate(secret)
+
+    def after_apply(self, applied: SectionApplied) -> GatewayHandle:
+        """`PostApplySection`: el `sbx.gateways` que `create()`/`take()`
+        guardan. Su `refresh()`/`arefresh()` olvida los valores en caché y
+        vuelve a mandar esta sección (`applied.reapply`/`areapply`), así que
+        siempre empuja la versión actual de cada secreto."""
+        return GatewayHandle(
+            gateway_statuses_from_proto(applied.status.secret_gateway),
+            refresher=None if applied.reapply is None else self._refresher(applied.reapply),
+            async_refresher=(
+                None if applied.areapply is None else self._async_refresher(applied.areapply)
+            ),
+        )
+
+    def _refresher(self, reapply: Reapply) -> Callable[[], Mapping[str, GatewayStatus]]:
+        def refresh() -> Mapping[str, GatewayStatus]:
+            self.forget_cached_values()
+            return gateway_statuses_from_proto(reapply().secret_gateway)
+
+        return refresh
+
+    def _async_refresher(
+        self, areapply: AsyncReapply
+    ) -> Callable[[], Awaitable[Mapping[str, GatewayStatus]]]:
+        async def refresh() -> Mapping[str, GatewayStatus]:
+            self.forget_cached_values()
+            return gateway_statuses_from_proto((await areapply()).secret_gateway)
+
+        return refresh
+
 
 def gateway_statuses_from_proto(
     status: secret_gateway_pb2.SecretGatewayStatus,
@@ -111,9 +151,11 @@ class GatewayHandle(Mapping[str, GatewayStatus]):
     """`sbx.gateways`: un mapeo de sólo lectura `nombre -> GatewayStatus`.
     Sin `gateways=` es siempre un `GatewayHandle` vacío cuyo `refresh()`/
     `arefresh()` no hacen nada, así que llamarlos nunca es una rama especial
-    para quien los use. Con `gateways=`, resuelven otra vez cada cabecera
-    (una `SecretCache` que ya venció la relee) y mandan un `Configure`
-    nuevo — la forma de rotar un secreto sin recrear el sandbox.
+    para quien los use. Con `gateways=`, releen cada cabecera de Secrets
+    Manager (aunque la `SecretCache` no haya vencido) y mandan un
+    `Configure` nuevo — la forma de rotar un secreto sin recrear el
+    sandbox. Cada ruta conserva su puerto; si `rayd` rechaza la sección,
+    lanzan y el estado anterior sigue en pie.
 
     `Sandbox` (síncrono) pasa `refresher`; `AsyncSandbox` pasa
     `async_refresher` (mismo patrón que `SecretCache.get`/`aget`): cada uno

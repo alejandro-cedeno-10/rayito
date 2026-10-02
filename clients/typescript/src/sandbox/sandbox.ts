@@ -21,10 +21,11 @@ import {
   CONFIGURE_DOC,
   CONFIGURE_FEATURE,
   type ConfigureSection,
-  configSectionName,
+  type ConfigureSectionFactory,
+  isPostApplySection,
+  raiseForResults,
   requireConfigureSupport,
-  sectionError,
-} from "../configure-base.js";
+} from "../configure/base.js";
 import {
   errorMessage,
   IndexWriteError,
@@ -37,13 +38,15 @@ import {
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
 import {
+  type ConfigureRequest,
   ConfigureRequestSchema,
+  type ConfigureResponse,
   ConfigureStatusRequestSchema,
+  type ConfigureStatusResponse,
 } from "../gen/rayito/v1/configure_pb.js";
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
-import { SecretGatewayStatusSchema } from "../gen/rayito/v1/secret_gateway_pb.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
@@ -73,14 +76,12 @@ import {
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import { resolveImageVariant } from "../role-policy.js";
-import type { GatewayStatus, SecretGateway } from "../secret-gateway/domain.js";
+import type { SecretGateway } from "../secret-gateway/domain.js";
 import {
   EMPTY_GATEWAYS,
+  SECTION_NAME as GATEWAY_SECTION,
   GatewayHandle,
-  GatewaySection,
-  gatewayStatusesFromProto,
 } from "../secret-gateway/section.js";
-import type { SecretCache } from "../secrets/cache.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -652,7 +653,10 @@ export class Sandbox implements AsyncDisposable {
   #readinessHealth: SandboxHealth | undefined;
   readonly #secrets: SecretEnvs;
   #instrumentation: Instrumentation = NOOP;
-  #gateways: GatewayHandle = EMPTY_GATEWAYS;
+  /** Lo que `PostApplySection.afterApply` devolvió, por `section`
+   * (`#sendConfigureSections`); cada propiedad pública de una función 0.6
+   * (`gateways`, ...) lee su entrada de aquí. */
+  readonly #sectionHandles = new Map<string, unknown>();
 
   private constructor(core: SandboxCore) {
     this.#core = core;
@@ -792,10 +796,9 @@ export class Sandbox implements AsyncDisposable {
           );
         }
         await opened.#applyConfigureSections(
-          featurePlan.configureSections as readonly {
-            build(cache: SecretCache): ConfigureSection;
-          }[],
+          featurePlan.configureSections as readonly ConfigureSectionFactory[],
           options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+          !(options.keepOnFailure ?? false),
         );
         return opened;
       },
@@ -821,6 +824,7 @@ export class Sandbox implements AsyncDisposable {
       reconnectTimeoutMs: options.reconnectTimeoutMs,
       keepOnFailure: options.keepOnFailure,
       network: isEmptyPolicy(network) ? undefined : network,
+      gateways: options.gateways,
     };
     sandbox.#launchContext = {
       controlPlane: plane,
@@ -955,6 +959,24 @@ export class Sandbox implements AsyncDisposable {
     if (binding !== undefined) {
       sandbox.#secrets.set(binding);
     }
+  }
+
+  /**
+   * Acceso interno para el pool (aplica a la plaza ya tomada las secciones
+   * 0.6 de `take({ gateways })`, terminándola si alguna falla: una plaza
+   * se lanza siempre sin `keepOnFailure`); no forma parte de la API
+   * pública.
+   */
+  static applyConfigureSections(
+    sandbox: Sandbox,
+    factories: readonly unknown[],
+    timeoutMs: number,
+  ): Promise<void> {
+    return sandbox.#applyConfigureSections(
+      factories as readonly ConfigureSectionFactory[],
+      timeoutMs,
+      true,
+    );
   }
 
   /** Acceso interno para el pool (abre una plaza con su token y el calendario de toma); no forma parte de la API pública. */
@@ -1229,7 +1251,8 @@ export class Sandbox implements AsyncDisposable {
    * `"http://127.0.0.1:<puerto>"`, el host al que apuntar
    * `ANTHROPIC_BASE_URL` y similares dentro del sandbox. */
   get gateways(): GatewayHandle {
-    return this.#gateways;
+    const handle = this.#sectionHandles.get(GATEWAY_SECTION);
+    return handle instanceof GatewayHandle ? handle : EMPTY_GATEWAYS;
   }
 
   // --------------------------------------------------------------- transfers
@@ -1596,19 +1619,48 @@ export class Sandbox implements AsyncDisposable {
    * Único punto de `create()` que llama a `ConfigureSandbox`: agrupa en una
    * sola llamada las secciones 0.6 que `planFeatures` dejó pendientes (hoy
    * sólo `gateways`; una función futura añade su propia entrada a
-   * `FeaturePlan.configureSections`, nunca toca este método). Cada entrada
-   * es un `GatewaySectionFactory`-como-objeto (`{ build(cache) }`) sobre la
-   * `SecretCache` ya resuelta del handle; exige su flag en
-   * `Health.features` antes de construir el `ConfigureRequest` y traduce
-   * cada `SectionResult` a su excepción (`sectionError`).
+   * `FeaturePlan.configureSections`, nunca toca este método).
+   *
+   * Igual que `#applyInitialNetwork`: un fallo en cualquier punto (imagen
+   * anterior a 0.6.0, flag no soportado, un secreto que falta al resolver
+   * una cabecera, una sección `INVALID`/`FAILED`) cierra el cliente y,
+   * salvo `keepOnFailure`, termina el VM antes de relanzar — el caller
+   * nunca recibe un handle de un sandbox cuya configuración pedida no se
+   * aplicó.
    */
   async #applyConfigureSections(
-    factories: readonly { build(cache: SecretCache): ConfigureSection }[],
+    factories: readonly ConfigureSectionFactory[],
     timeoutMs: number,
+    terminateOnFailure: boolean,
   ): Promise<void> {
     if (factories.length === 0) {
       return;
     }
+    try {
+      await this.#sendConfigureSections(factories, timeoutMs);
+    } catch (error) {
+      this.close();
+      if (terminateOnFailure) {
+        await terminateQuietly(this.#core.controlPlane, this.sandboxId, this.#core.logger);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * La parte sin compuerta de `#applyConfigureSections`: cada entrada es un
+   * `GatewaySectionFactory`-como-objeto (`{ build(cache) }`) sobre la
+   * `SecretCache` ya resuelta del handle; exige su flag en
+   * `Health.features` antes de construir el `ConfigureRequest` y traduce
+   * cada `SectionResult` a su excepción (`raiseForResults`, la misma que
+   * usa `#reapplySection`) y, si alguna sección es una `PostApplySection`,
+   * pide `ConfigureStatus` una vez y guarda lo que devuelva su `afterApply`
+   * en `#sectionHandles`.
+   */
+  async #sendConfigureSections(
+    factories: readonly ConfigureSectionFactory[],
+    timeoutMs: number,
+  ): Promise<void> {
     const features = requireConfigureSupport(this.#core.agentFeatures, CONFIGURE_FEATURE);
     const cache =
       this.#secrets.binding?.cache ??
@@ -1630,49 +1682,51 @@ export class Sandbox implements AsyncDisposable {
     for (const section of sections) {
       await section.fill(request);
     }
-    const response = await this.#core.translatedUnary(() =>
-      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
-    );
-    for (const result of response.results) {
-      const error = sectionError(configSectionName(result.section), result);
-      if (error !== undefined) {
-        throw error;
-      }
+    raiseForResults(await this.#configure(request, timeoutMs));
+    const postApply = sections.filter(isPostApplySection);
+    if (postApply.length === 0) {
+      return;
     }
-    const gatewaySection = sections.find(
-      (section): section is GatewaySection => section instanceof GatewaySection,
-    );
-    if (gatewaySection !== undefined) {
-      const status = await this.#fetchConfigureStatus(timeoutMs);
-      this.#gateways = new GatewayHandle(gatewayStatusesFromProto(status), () =>
-        this.#refreshGateways(gatewaySection, timeoutMs),
+    const status = await this.#configureStatus(timeoutMs);
+    for (const section of postApply) {
+      this.#sectionHandles.set(
+        section.section,
+        section.afterApply({ status, reapply: () => this.#reapplySection(section, timeoutMs) }),
       );
     }
   }
 
-  async #fetchConfigureStatus(timeoutMs: number) {
-    const status = await this.#core.translatedUnary(() =>
+  /**
+   * El `SectionApplied.reapply` de cada `PostApplySection` (p. ej.
+   * `sbx.gateways.refresh()`): vuelve a rellenar sólo esa sección, manda un
+   * `Configure` nuevo y lo pasa por `raiseForResults` igual que `create()`
+   * — una sección `INVALID` (un valor rotado con CR/LF) o `FAILED`
+   * (`listen_failed`) lanza aquí, nunca devuelve un estado vacío o a medio
+   * aplicar en silencio. Sólo si se aplicó pide el `ConfigureStatus` nuevo.
+   */
+  async #reapplySection(
+    section: ConfigureSection,
+    timeoutMs: number,
+  ): Promise<ConfigureStatusResponse> {
+    const request = create(ConfigureRequestSchema, {});
+    await section.fill(request);
+    raiseForResults(await this.#configure(request, timeoutMs));
+    return this.#configureStatus(timeoutMs);
+  }
+
+  #configure(request: ConfigureRequest, timeoutMs: number): Promise<ConfigureResponse> {
+    return this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
+    );
+  }
+
+  #configureStatus(timeoutMs: number): Promise<ConfigureStatusResponse> {
+    return this.#core.translatedUnary(() =>
       this.#core.clients.configure.configureStatus(
         create(ConfigureStatusRequestSchema, {}),
         callOptions(timeoutMs, undefined),
       ),
     );
-    return status.secretGateway ?? create(SecretGatewayStatusSchema, {});
-  }
-
-  /** `sbx.gateways.refresh()`: vuelve a resolver cada cabecera (una
-   * `SecretCache` vencida la relee) y manda un `Configure` nuevo — la
-   * forma de rotar un secreto sin recrear el sandbox. */
-  async #refreshGateways(
-    section: GatewaySection,
-    timeoutMs: number,
-  ): Promise<Readonly<Record<string, GatewayStatus>>> {
-    const request = create(ConfigureRequestSchema, {});
-    await section.fill(request);
-    await this.#core.translatedUnary(() =>
-      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
-    );
-    return gatewayStatusesFromProto(await this.#fetchConfigureStatus(timeoutMs));
   }
 
   #throwUnlessEnforced(enforcement: EgressEnforcement, feature: string): void {

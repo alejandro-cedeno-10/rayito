@@ -186,11 +186,11 @@ pub fn router_with_transfers(
     // (stateless), so building the set fresh here needs no field on
     // `Services` yet. The feature that first needs shared context (a
     // bucket, a credential broker) threads `Arc<FeatureSet>` through
-    // `Services` in its own PR instead of building it here.
-    let configure = ConfigureGrpc::new(
-        session.clone(),
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
-    );
+    // `Services` in its own PR instead of building it here. Built once and
+    // shared with `HealthGrpc` so `Health.features` reports exactly what
+    // `Configure` will actually do, never a flag of its own.
+    let features = Arc::new(crate::features::build(&crate::features::FeatureContext));
+    let configure = ConfigureGrpc::new(session.clone(), features.clone());
     let mut server = Server::builder()
         .tcp_nodelay(true)
         .http2_keepalive_interval(Some(HTTP2_KEEPALIVE_INTERVAL))
@@ -207,6 +207,7 @@ pub fn router_with_transfers(
             metrics_history,
             kernel_status,
             imds,
+            features,
         )))
         .add_service(ProcessServiceServer::new(
             ProcessGrpc::with_keepalive_interval(

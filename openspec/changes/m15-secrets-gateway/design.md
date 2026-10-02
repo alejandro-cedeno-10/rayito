@@ -13,14 +13,42 @@ never read, documented as ADR-023 and threat T24 in
   touches another's state) and it matches the architecture's own wording
   ("One loopback HTTP listener per route"). The cost is one bound port per
   route (≤ 8), trivial against the guest's ephemeral port range.
-- **D2 — Replace-whole-state on every `Configure`, never a diff.**
-  `SecretGatewayConfig`'s own semantics already say a present section is
-  the complete desired state. Diffing routes (keep unchanged ones running,
-  only restart changed ones) would save a reconnect per unrelated route on
-  every rotation, but doubles the state machine for a feature whose
-  `Configure` calls are expected to be rare (initial setup, then only
-  rotation). Revisit if acceptance testing shows rotation is frequent
-  enough to matter.
+- **D2 — Replace-whole-state on every `Configure`, reconciled by route
+  name.** `SecretGatewayConfig`'s own semantics say a present section is
+  the complete desired state, and that still decides *which* routes exist.
+  But a route whose name is in both the old and the new config keeps its
+  listener and port, and only its `RouteState` (vaulted values, allow
+  rules, rate) is swapped in place (`SwappableState`, a `RwLock<Arc<_>>`
+  held only to clone or replace the `Arc`, never across an `.await`);
+  `forward` loads it once per request. Rebinding every route on every call
+  (the first version) moved the port on each `refresh()`, so a process
+  started with `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` got connection
+  refused after a rotation. Worse, since axum 0.8 runs every accepted
+  connection in its own detached task, aborting the accept loop left
+  keep-alive connections forwarding with the *old* credential. A removed
+  route is now shut down gracefully (`axum::serve(..).with_graceful_shutdown`
+  plus a per-route `CancellationToken`): it stops accepting, closes idle
+  keep-alive connections at once, lets an in-flight request finish, and
+  `apply` waits up to `ROUTE_SHUTDOWN_GRACE` (2 s) for it.
+- **D2b — Request paths are refused, never normalised.** `AllowRule` is a
+  plain prefix compare, and the path is forwarded verbatim, so a
+  dot-segment (`/v1/../admin`, `/v1/%2e%2e/admin`, `/v1/..%2fadmin`) would
+  pass a `/v1/*` rule and then be normalised to `/admin` by the upstream or
+  its CDN (the confused-deputy bypass T24 exists to stop).
+  `rayd_core::secret_gateway::route::path_is_safe` refuses (403
+  `not_allowed`) any path with a `.`/`..` segment, an encoded `.`, `/` or
+  `\`, a backslash or an empty segment, before the allowlist runs.
+  Normalising instead would mean the forwarded path differs from what the
+  sandbox sent, which is harder to reason about and to test. The edge cases
+  live in `testdata/secret-gateway/request-paths.json`.
+- **D2c — Header names are validated in all three layers.** An invalid
+  token used to surface only as a 502 on every request, and an injected
+  `host`/`content-length`/`transfer-encoding` could re-route or desync the
+  forwarded request. Python, TypeScript and `rayd` (the trust boundary for
+  a client that bypasses the SDK) now reject a non-RFC 9110 token, a
+  hop-by-hop or framing name (`header_template::is_reserved_header`), and
+  two names equal ignoring case, against the same
+  `testdata/secret-gateway/header-names.json` vectors.
 - **D3 — Header values arrive pre-resolved, never a secret name.** The
   proto message (`SecretGatewayConfig.routes[].headers`) carries the
   literal value, not a Secrets Manager ARN or name: `rayd` has no AWS
@@ -88,3 +116,34 @@ never read, documented as ADR-023 and threat T24 in
 
 None: `gateways=`/`gateways` is a brand-new, off-by-default option. No
 existing behaviour changes for a caller who never sets it.
+- **D8 — A generic post-apply hook, not feature names in `create()`.**
+  `_configure_base.PostApplySection`/`configure/base.ts`'s
+  `PostApplySection` add one optional method, `after_apply(SectionApplied)`
+  (`afterApply` in TS). It receives the `ConfigureStatus` taken once after
+  the bundled `Configure`, plus a `reapply` callable that re-fills only that
+  section, sends `Configure`, raises on any non-`APPLIED` result
+  (`raise_for_results`/`raiseForResults`, shared with `create()`) and
+  returns the new `ConfigureStatus`. `main.py`/`sandbox.ts` store what it
+  returns under the section's name, and `sbx.gateways` reads it from there.
+  The create path names no feature, so s3-mounts, efs-volumes, events and
+  telemetry add a section without touching those lines.
+- **D9 — Every configure failure after `run-microvm` terminates the VM.**
+  Same rule as `_apply_initial_network` (ADR-012): a pre-0.6 image, a
+  `false` flag, a missing secret, a failed RPC or a non-`APPLIED` section
+  closes the client and calls `TerminateMicrovm` unless
+  `keep_on_failure`/`keepOnFailure`. `SandboxPool.take(gateways=)` always
+  terminates the taken slot, since slots are launched without
+  `keep_on_failure`.
+- **D10 — `refresh()` always re-reads.** It invalidates every secret the
+  gateway injects in `SecretCache` before re-filling, so a rotation right
+  after `SecretStore.update()` never re-sends the cached value (TTL 300 s by
+  default). The cost is one `GetSecretValue` per injected secret per
+  `refresh()`.
+- **D11 — Upstream errors and timeouts.** Only an elapsed
+  `CONNECT_TIMEOUT` (10 s) or `RESPONSE_HEAD_TIMEOUT` (600 s, the wait for
+  the status line and headers; a streamed SSE body is never bounded) is
+  `upstream_timeout` (504). Any other failure after connecting (TLS, reset,
+  malformed response) is `upstream_error` (502). `Health.features.
+  secret_gateway` comes from the built `FeatureSet` (shared with
+  `ConfigureGrpc`), so a slot that degraded to `Unsupported` is never
+  advertised.

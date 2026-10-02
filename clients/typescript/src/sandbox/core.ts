@@ -17,7 +17,7 @@ import {
 } from "@connectrpc/connect";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import type { ControlPlane } from "../aws/control-plane.js";
-import { type AgentFeatures, agentFeaturesFromHealth } from "../configure-base.js";
+import { type AgentFeatures, agentFeaturesFromHealth } from "../configure/base.js";
 import {
   AuthenticationError,
   errorMessage,

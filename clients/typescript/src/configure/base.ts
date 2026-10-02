@@ -1,20 +1,29 @@
 /**
  * Parte pura de `ConfigureSandbox` (ADR-015): qué dice `Health.features`
- * sobre un agente, y cómo se traduce el resultado de una sección de
- * `Configure` a su excepción. Espejo de `rayito._configure_base`. Las
- * llamadas gRPC viven en `sandbox/core.ts` (vía los clientes Connect-ES de
+ * sobre un agente, cómo se traduce el resultado de una sección de
+ * `Configure` a su excepción y qué recibe una sección tras aplicarse
+ * (`PostApplySection`). Espejo de `rayito._configure_base`. Las llamadas
+ * gRPC viven en `sandbox/sandbox.ts` (vía los clientes Connect-ES de
  * `ConfigureService`); este módulo no importa `@connectrpc/connect`.
+ *
+ * Vive en `configure/` (la ruta que la arquitectura de 0.6 reserva al seam
+ * de foundations): foundations aún no lo había creado para TypeScript, y
+ * otras funciones 0.6 abiertas en paralelo crean el mismo módulo; quien
+ * fusione después las reconcilia en este fichero.
  */
 
-import { SandboxError, UnimplementedError } from "./errors.js";
+import { SandboxError, UnimplementedError } from "../errors.js";
 import {
   ConfigSection,
   type ConfigureRequest,
+  type ConfigureResponse,
+  type ConfigureStatusResponse,
   SectionCode,
   type SectionResult,
-} from "./gen/rayito/v1/configure_pb.js";
-import type { AgentFeatures as WireAgentFeatures } from "./gen/rayito/v1/features_pb.js";
-import type { HealthResponse } from "./gen/rayito/v1/health_pb.js";
+} from "../gen/rayito/v1/configure_pb.js";
+import type { AgentFeatures as WireAgentFeatures } from "../gen/rayito/v1/features_pb.js";
+import type { HealthResponse } from "../gen/rayito/v1/health_pb.js";
+import type { SecretCache } from "../secrets/cache.js";
 
 export const CONFIGURE_DOC = "docs/site/docs/funciones-opcionales/pilas-opcionales.md";
 export const CONFIGURE_FEATURE = "ConfigureSandbox";
@@ -85,6 +94,44 @@ export interface ConfigureSection {
 }
 
 /**
+ * Lo que `planFeatures` pone en `FeaturePlan.configureSections`: un
+ * `ConfigureSection` todavía sin resolver, a la espera de la `SecretCache`
+ * que `create()`/`take()` ya calculan para `secrets` (ver
+ * `GatewaySectionFactory`).
+ */
+export interface ConfigureSectionFactory {
+  build(cache: SecretCache): ConfigureSection;
+}
+
+/**
+ * Lo que `PostApplySection.afterApply` recibe una vez su `Configure` se
+ * aplicó: el `ConfigureStatus` de ese momento y cómo volver a mandar esa
+ * misma sección más tarde (`fill` otra vez, `Configure`, `raiseForResults`
+ * y el `ConfigureStatus` nuevo). `sandbox.ts` lo construye igual para
+ * cualquier función, sin saber cuál es.
+ */
+export interface SectionApplied {
+  readonly status: ConfigureStatusResponse;
+  readonly reapply: () => Promise<ConfigureStatusResponse>;
+}
+
+/**
+ * Un `ConfigureSection` que además necesita algo después de aplicarse (hoy
+ * `gateways`: leer los puertos de `ConfigureStatus` y poder rotar).
+ * `create()`/`take()` piden `ConfigureStatus` una sola vez si alguna
+ * sección lo implementa y guardan lo que devuelve `afterApply` bajo su
+ * `section`; la propiedad pública de esa función (`sbx.gateways`, ...) lo
+ * lee de ahí. Así `sandbox.ts` nunca nombra una función concreta.
+ */
+export interface PostApplySection extends ConfigureSection {
+  afterApply(applied: SectionApplied): unknown;
+}
+
+export function isPostApplySection(section: ConfigureSection): section is PostApplySection {
+  return typeof (section as Partial<PostApplySection>).afterApply === "function";
+}
+
+/**
  * `undefined` cuando la sección se aplicó o sigue asentándose (`PENDING`);
  * en otro caso el error que describe por qué no.
  */
@@ -101,6 +148,23 @@ export function sectionError(section: string, result: SectionResult): Error | un
   }
   const reason = result.errorClass || codeName(result.code);
   return new SandboxError(`${section}: ${reason}`);
+}
+
+/**
+ * Traduce cada `SectionResult` de `response` con `sectionError` y lanza el
+ * primero que no sea `undefined`. El único punto por el que deben pasar
+ * tanto el `Configure` agrupado que manda `create()`/`take()` como una
+ * llamada posterior de una sola sección (`SectionApplied.reapply`): los
+ * dos deben fallar exactamente igual ante `INVALID`/`FAILED`/`UNSUPPORTED`,
+ * nunca sólo uno de ellos en silencio.
+ */
+export function raiseForResults(response: ConfigureResponse): void {
+  for (const result of response.results) {
+    const error = sectionError(configSectionName(result.section), result);
+    if (error !== undefined) {
+      throw error;
+    }
+  }
 }
 
 /** Nombre snake_case de `result.section`, como cada feature nombra su

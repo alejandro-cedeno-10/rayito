@@ -4,6 +4,9 @@ construye un cliente ni toca la red."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from rayito._secret_gateway._domain import (
@@ -52,6 +55,37 @@ def test_headers_must_be_non_empty_and_bounded() -> None:
         gateway(headers={})
     with pytest.raises(InvalidArgumentException):
         gateway(headers={f"h{i}": "s" for i in range(MAX_HEADERS_PER_ROUTE + 1)})
+
+
+def test_an_upstream_with_userinfo_is_rejected() -> None:
+    with pytest.raises(InvalidArgumentException):
+        gateway(upstream="https://user:pass@api.anthropic.com")
+
+
+# `testdata/secret-gateway/header-names.json`: the same vectors `rayd-core`
+# and the TypeScript SDK read, so the three layers agree on every name.
+HEADER_NAME_VECTORS = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata/secret-gateway/header-names.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("name", HEADER_NAME_VECTORS["valid"])
+def test_every_shared_valid_header_name_is_accepted(name: str) -> None:
+    gateway(headers={name: "s"})
+
+
+@pytest.mark.parametrize("name", HEADER_NAME_VECTORS["invalid"])
+def test_every_shared_invalid_header_name_is_rejected(name: str) -> None:
+    with pytest.raises(InvalidArgumentException):
+        gateway(headers={name: "s"})
+
+
+@pytest.mark.parametrize("pair", HEADER_NAME_VECTORS["duplicates"])
+def test_every_shared_duplicate_header_pair_is_rejected(pair: list[str]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        gateway(headers={pair[0]: "a", pair[1]: "b"})
 
 
 def test_allow_must_be_non_empty_and_bounded_with_valid_entries() -> None:

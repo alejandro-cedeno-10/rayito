@@ -18,5 +18,5 @@ pub mod route;
 pub mod vault;
 
 pub use decision::{Decision, GatewayErrorClass, TokenBucket, evaluate};
-pub use route::{GatewayRoute, GatewaySpec, GatewaySpecError, RawRoute};
+pub use route::{GatewayRoute, GatewaySpec, GatewaySpecError, RawRoute, path_is_safe};
 pub use vault::{HeaderInjectionError, SecretValue};

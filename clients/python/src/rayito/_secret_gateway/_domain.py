@@ -41,6 +41,28 @@ _ROUTE_NAME_PATTERN: Final = re.compile(rf"[a-z0-9-]{{1,{MAX_ROUTE_NAME_LEN}}}")
 # E2B-style HTTP methods: ninguna pasarela admite un comodín de método, cada
 # una lista los que de verdad necesita.
 _VALID_METHODS: Final = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+# RFC 9110 §5.6.2 `token`: los mismos bytes que acepta
+# `rayd_core::secret_gateway::route::is_header_token_byte`.
+_HEADER_TOKEN_PATTERN: Final = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+# Cabeceras hop-by-hop (RFC 9110 §7.6.1) y de framing/host: una ruta nunca
+# puede inyectarlas, o podría desincronizar la petición reenviada o apuntarla
+# a un host distinto del de `upstream` (mismo conjunto que
+# `rayd_core::secret_gateway::route::FORBIDDEN_INJECTED_HEADERS`).
+_FORBIDDEN_INJECTED_HEADERS: Final = frozenset(
+    {
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "trailer",
+        "upgrade",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -54,13 +76,13 @@ class SecretGateway:
     Coste y activación
     -------------------
     Activa: `gateways={"nombre": SecretGateway(...)}` en `Sandbox.create()`
-        (o `SandboxPool.take()`); sin él, `rayd` no abre ningún listener de
+        (o `SandboxPool.take(gateways=)`); sin él, `rayd` no abre ningún listener de
         loopback y el SDK no hace ninguna llamada a `ConfigureSandbox` ni a
         Secrets Manager.
     Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
         cabecera y TTL de la `SecretCache` que ya usa `secrets=` (un acierto
-        no llama a AWS); ningún recurso nuevo (reutiliza
-        `infra/secrets-access.yaml`).
+        no llama a AWS), y una por cabecera en cada `sbx.gateways.refresh()`;
+        ningún recurso nuevo (reutiliza `infra/secrets-access.yaml`).
     Coste aproximado: el de `SecretCache` (`$0,05` por 10 000 llamadas,
         us-east-1, 2026-09-30) más el del secreto en sí si no existía ya.
     IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante,
@@ -98,9 +120,10 @@ def validate_gateway(gateway: SecretGateway) -> None:
             "SecretGateway.upstream debe ser 'https://host', sin ruta ni query"
         )
     rest = gateway.upstream.removeprefix("https://")
-    if not rest or "/" in rest or "?" in rest or "#" in rest:
+    if not rest or "/" in rest or "?" in rest or "#" in rest or "@" in rest:
         raise InvalidArgumentException(
-            "SecretGateway.upstream no admite ruta, query ni fragmento: sólo esquema y host"
+            "SecretGateway.upstream no admite ruta, query, userinfo ni fragmento: "
+            "sólo esquema y host"
         )
     if not isinstance(gateway.headers, Mapping) or not (
         1 <= len(gateway.headers) <= MAX_HEADERS_PER_ROUTE
@@ -108,6 +131,7 @@ def validate_gateway(gateway: SecretGateway) -> None:
         raise InvalidArgumentException(
             f"SecretGateway.headers debe tener entre 1 y {MAX_HEADERS_PER_ROUTE} entradas"
         )
+    _validate_header_names(gateway.headers)
     if not isinstance(gateway.allow, Sequence):
         raise InvalidArgumentException("SecretGateway.allow debe ser una lista de (método, ruta)")
     if not gateway.allow:
@@ -127,6 +151,30 @@ def validate_gateway(gateway: SecretGateway) -> None:
             "SecretGateway.rate_per_minute debe ser 0 (usa el valor por defecto) o estar en "
             f"{MIN_RATE_PER_MINUTE}..{MAX_RATE_PER_MINUTE}"
         )
+
+
+def _validate_header_names(headers: Mapping[str, str | SecretRef]) -> None:
+    """Un nombre inválido fallaría en cada petición con un 502 en vez de aquí
+    (`rayd` construye `http::HeaderName` justo antes de reenviar); uno
+    prohibido (`host`, hop-by-hop, ...) dejaría que una ruta desincronice la
+    petición o la apunte a otro host. Lo mismo lower-case que ya usa
+    `stripped_header_names` en el lado de `rayd`: dos nombres que sólo
+    difieren en mayúsculas ('X-Api-Key' y 'x-api-key') se cuentan como el
+    mismo, así que nunca inyectan el valor dos veces."""
+    seen: set[str] = set()
+    for name in headers:
+        lower = name.lower() if isinstance(name, str) else ""
+        if not lower or not _HEADER_TOKEN_PATTERN.fullmatch(lower):
+            raise InvalidArgumentException(f"nombre de cabecera inválido en headers: {name!r}")
+        if lower in _FORBIDDEN_INJECTED_HEADERS:
+            raise InvalidArgumentException(
+                f"headers no puede inyectar la cabecera reservada {lower!r}"
+            )
+        if lower in seen:
+            raise InvalidArgumentException(
+                f"headers tiene dos nombres que sólo difieren en mayúsculas: {lower!r}"
+            )
+        seen.add(lower)
 
 
 def _validate_allow_rule(rule: tuple[str, str]) -> None:
