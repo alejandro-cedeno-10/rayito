@@ -17,16 +17,29 @@ OTLP/HTTP, firmadas con SigV4 o con un token al portador. <small>Desde 0.6.0</sm
       `OtlpAuth.execution_role()` necesitas la política IAM
       `RayitoOtlpExport` (`infra/otlp-export.yaml`,
       `rayito stack deploy otlp-export`) en el execution role.
-    - **Coste aproximado**: $0 por la opción en sí; CloudWatch factura las
-      métricas personalizadas que de verdad se exporten, como cualquier otra
-      métrica personalizada (ver la
-      [página de precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
-      consultada 2026-09-30).
+    - **Coste aproximado** (provisional hasta la medición OT2 de bytes reales
+      por sandbox-hora): $0 por la opción en sí; CloudWatch factura las
+      métricas OpenTelemetry a **$0,50 por GB ingerido**
+      ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
+      us-east-1, consultado 2026-10-02). La investigación (§6.3) estima
+      ≈ $0,00014 por sandbox-hora con `interval_s=60`. Ejemplo: 1 000
+      sandboxes al día de una hora cada uno = 30 000 sandbox-horas al mes
+      ≈ **$4,20/mes**; con `interval_s=15`, unas 4 veces más (≈ $17/mes).
+      Más la política IAM, que no cuesta nada.
+    - **Cardinalidad**: `sandbox_id` es un atributo de recurso, así que
+      cada sandbox crea sus propias 7 series. Por OTLP se paga por bytes,
+      no por serie, así que muchos sandboxes cortos no multiplican la
+      factura de ingesta; pero si reenvías estas métricas como métricas
+      personalizadas clásicas ($0,30 por métrica y mes, prorrateado por
+      hora) cada sandbox costaría 7 × $0,30 / 730 h ≈ $0,0029 por hora
+      iniciada, unas 20 veces más, y los dashboards que agregan por
+      `sandbox_id` crecen con el número de sandboxes.
     - **IAM**: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
       de la cuenta — el endpoint OTLP de CloudWatch no admite acotar por
       namespace (investigado, ver "Fuentes y mediciones" abajo). Con
       `OtlpAuth.bearer(...)` en su lugar hace falta permiso para leer el
-      secreto que guarda el token.
+      secreto que guarda el token (`secretsmanager:GetSecretValue` sobre
+      `rayito/*`, la política `RayitoSecretsReader`).
     - **Cómo apagarla**: no pases `telemetry=` (por defecto `None`/`undefined`);
       borra la pila `otlp-export` (`rayito stack destroy otlp-export`) si ya
       no la usa ningún sandbox.
@@ -91,7 +104,11 @@ divide por ese factor antes de enviarla; ver `limits.md`).
 === "Token al portador (`OtlpAuth.bearer(...)`, experimental)"
 
     Un secreto de Secrets Manager cuyo valor es un token de CloudWatch
-    acotado a un log group. El SDK lo resuelve una vez, al enviar la
+    acotado a un log group. El nombre se resuelve igual que en `secrets=` y
+    `SecretStore`: bajo el prefijo `rayito/`, así que
+    `OtlpAuth.bearer("otlp-key")` lee `rayito/otlp-key` (un ARN completo se
+    usa tal cual). El SDK lo lee por la misma caché de secretos que
+    `secrets=` (como mucho un `GetSecretValue` cada 5 minutos), al enviar la
     sección, y lo empuja a `rayd` por `ConfigureSandbox` — nunca por una
     variable de entorno (ADR-014 regla 4) ni en texto plano en ningún lado;
     `rayd` lo guarda sólo en memoria. Funciona en `rayito-base`, sin caps.
@@ -184,7 +201,7 @@ Con el token al portador, sólo cambia la autenticación:
 
     sbx = Sandbox.create(
         "rayito-base",
-        telemetry=TelemetryExport(auth=OtlpAuth.bearer(secret_name="rayito/otlp-key")),
+        telemetry=TelemetryExport(auth=OtlpAuth.bearer(secret_name="otlp-key")),
     )
     sbx.kill()
     ```
@@ -196,7 +213,7 @@ Con el token al portador, sólo cambia la autenticación:
 
     await using sbx = await Sandbox.create({
       template: "rayito-base",
-      telemetry: new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") }),
+      telemetry: new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") }),
     });
     ```
 
@@ -205,8 +222,9 @@ Con el token al portador, sólo cambia la autenticación:
 | Síntoma | Causa | Qué hacer |
 |---|---|---|
 | `UnimplementedError` antes de `run-microvm`, nombra la variante caps | `OtlpAuth.execution_role()` sobre una imagen que no es `rayito-base-caps` (o derivada) | usa una imagen caps, o cambia a `OtlpAuth.bearer(...)` |
-| `UnimplementedError` justo después de crear el sandbox (la VM ya se terminó, salvo `keep_on_failure=True`) | la imagen corre un `rayd` anterior a 0.6.0, o 0.6.0 sin el exportador implementado todavía | publica una imagen con el `rayd` del tag `rayd-v0.6.0` o posterior |
-| `SecretException` al enviar la sección | `OtlpAuth.bearer(secret_name=...)` no existe o no tiene `SecretString` | revisa el secreto en Secrets Manager |
+| `UnimplementedError` justo después de crear el sandbox (la VM ya se terminó, salvo `keep_on_failure=True`) | la imagen corre un `rayd` anterior a 0.6.0, o un `rayd` 0.6 que arrancó sin `AWS_REGION` | publica una imagen con el `rayd` del tag `rayd-v0.6.0` o posterior |
+| `SecretNotFoundException` / `SecretException` al enviar la sección | el secreto `rayito/<nombre>` no existe (el prefijo se añade solo) o no tiene `SecretString` | crea `rayito/<nombre>` (`SecretStore().create(...)`) o pasa el ARN completo |
+| `last_error_class="rejected"` justo tras un resume largo | el reloj del guest quedó atrasado más de 5 minutos | se corrige solo: `rayd` mide el desfase con la cabecera `Date` de AWS y reintenta; si persiste, abre un issue |
 | `get_telemetry_status()` siempre en cero | nunca pasaste `telemetry=`, o la sección no aplicó | revisa el resultado de `create()` (si no lanzó, aplicó) |
 
 ## Diferencias con E2B
@@ -235,9 +253,9 @@ explícita y opt-in. El shim de E2B no añade ningún kwarg nuevo para esto;
       acepta SigV4 sobre `monitoring.<región>.amazonaws.com/v1/metrics` y
       que la acción `cloudwatch:PutMetricData` no se puede acotar por
       namespace.
-    - Probado con dobles de `TelemetrySink`/`OtlpEncoder` en los dos SDK y
-      con el signer `SigV4` de `rayd` contra el vector de prueba de
-      RFC 4231: no necesita una aceptación contra AWS real para la lógica
-      de dominio. La aceptación contra AWS real (cuota facturada, overhead
+    - Probado con dobles de `TelemetrySink`/`OtlpEncoder` en los dos SDK;
+      la firma SigV4 la hace `aws-sigv4`, el mismo firmante que usa
+      `aws-sdk-s3`: no necesita una aceptación contra AWS real para la
+      lógica de dominio. La aceptación contra AWS real (cuota facturada, overhead
       de CPU, comportamiento en `/suspend`/`/resume`) es un seguimiento
       separado de esta entrega.

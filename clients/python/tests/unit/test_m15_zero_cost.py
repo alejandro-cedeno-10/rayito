@@ -88,6 +88,10 @@ class _RecordingTransport(TransportSettings):
         return grpc.intercept_channel(channel, self._interceptor)
 
 
+#: The W3C trace headers `tracer_provider=` adds (research Q92); never sent
+#: without it.
+TRACE_HEADERS = frozenset({"traceparent", "tracestate"})
+
 #: `clientToken` (idempotency) is random per call; masked before comparing.
 MASKED_PARAMS = ("clientToken",)
 MASK = "<masked>"
@@ -151,6 +155,13 @@ def test_the_default_0_6_path_matches_the_0_5_x_golden_trace(
     }
     expected = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     assert trace == expected
+    # m15-rayd-otlp: without `tracer_provider=` no RPC carries a W3C trace
+    # header toward `rayd` (call-credential metadata never reaches a client
+    # interceptor, so this reads what the fake `rayd` actually received).
+    received = [*fake_rayd.process.start_metadata, *fake_rayd.servicer.health_calls]
+    assert received
+    for metadata in received:
+        assert TRACE_HEADERS.isdisjoint(metadata)
 
 
 def test_building_optionalstacks_creates_no_aws_client(monkeypatch: pytest.MonkeyPatch) -> None:

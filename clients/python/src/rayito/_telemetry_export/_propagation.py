@@ -7,19 +7,12 @@ interceptor W3C normal atraviesa ese proxy sin cambios).
 `TraceparentProvider` implementa el seam `CallMetadataProvider` de
 `rayito._transport` (ADR-015/021: calculado en cada llamada, no fijo para
 la vida del canal, porque cada RPC ocurre dentro de un span distinto).
-Sólo se construye cuando `rayito._otel.instrumentation_for()` ya construyó
-una instrumentación real (`tracer_provider=` puesto): sin eso, este módulo
-nunca importa `opentelemetry`.
-
-**Estado de esta entrega**: el proveedor existe y está probado de forma
-aislada (inyecta la cabecera igual que `opentelemetry.propagate.inject`),
-pero `sandbox_{sync,async}/main.py` todavía no lo conecta al canal gRPC
-real -- conectarlo exige reordenar cuándo se construye `ProxyAuthPlugin`
-frente a cuándo se conoce la instrumentación en varios puntos de un fichero
-compartido entre todas las funciones 0.6 (`sandbox_sync/main.py`), un
-cambio de más riesgo del que esta entrega puede probar a fondo. Queda
-como seguimiento razonado, no bloqueante (mismo patrón que el reaper de
-zombis huérfanos de foundations): ver `openspec/changes/m15-rayd-otlp/design.md`.
+`call_metadata_providers` es lo que instalan `Sandbox._use_instrumentation`
+y `AsyncSandbox._use_instrumentation` en el `ProxyAuthPlugin` del handle:
+`()` sin `tracer_provider=` (este módulo nunca importa `opentelemetry` y el
+canal manda exactamente las cabeceras de 0.5.x), un `TraceparentProvider`
+con él. Los canales de un solo uso (`Sandbox.kill`/`pause`/`resume`
+estáticos y el sondeo de `get_info`) no lo llevan: no hay handle.
 """
 
 from __future__ import annotations
@@ -27,7 +20,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rayito._transport import MetadataPairs
+    from rayito._otel import Instrumentation
+    from rayito._transport import CallMetadataProvider, MetadataPairs
 
 #: `baggage` nunca viaja hacia `rayd`, ni siquiera si el contexto activo
 #: tiene una (Q92): el proxy filtra claves `grpc-*` de forma inconsistente,
@@ -55,3 +49,12 @@ class TraceparentProvider:
         for key in _DROPPED_CARRIER_KEYS:
             carrier.pop(key, None)
         return tuple(carrier.items())
+
+
+def call_metadata_providers(
+    instrumentation: Instrumentation,
+) -> tuple[CallMetadataProvider, ...]:
+    """Los `CallMetadataProvider` del canal de un handle con esta
+    instrumentación: ninguno sin `tracer_provider=`, un
+    `TraceparentProvider` con él."""
+    return (TraceparentProvider(),) if instrumentation.propagates else ()

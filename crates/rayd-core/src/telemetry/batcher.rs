@@ -19,9 +19,10 @@ use crate::code::ports::RandomSource;
 use super::model::{MetricPoint, NameStyle, ResourceAttrs};
 
 /// Upper bound on buffered points. At the shortest allowed interval (15 s)
-/// and 7 gauges per tick, this holds roughly 9 minutes of samples
-/// (`500 / 7 / (60/15)` ticks) before the oldest point is dropped rather
-/// than growing without bound while the network is unreachable.
+/// and 7 gauges per tick, this holds roughly 18 minutes of samples
+/// (`500 / 7` ≈ 71 ticks, `71 × 15 s` ≈ 17.8 min; about 71 min at the
+/// default 60 s) before the oldest point is dropped rather than growing
+/// without bound while the network is unreachable.
 pub const QUEUE_CAPACITY: usize = 500;
 
 /// First retry delay; doubles per failed attempt up to `MAX_BACKOFF`.
@@ -72,9 +73,8 @@ impl Batcher {
     }
 
     /// Takes every buffered point out for one export attempt; the caller
-    /// (`features::telemetry_export`'s background task) puts them back
-    /// with `enqueue` on failure only if it chooses to retry before the
-    /// next sampling tick overtakes it.
+    /// (`features::telemetry_export::export_pending`) puts them back with
+    /// `enqueue` when the attempt fails, times out or is cancelled.
     #[must_use]
     pub fn drain(&mut self) -> Vec<MetricPoint> {
         self.queue.drain(..).collect()

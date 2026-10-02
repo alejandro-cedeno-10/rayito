@@ -52,7 +52,7 @@ def test_a_garbage_telemetry_value_is_invalid_argument_not_unimplemented() -> No
 
 def test_a_real_telemetry_value_with_an_unknown_image_variant_is_accepted() -> None:
     plan = plan_features(
-        FeatureOptions(telemetry=TelemetryExport(auth=OtlpAuth.bearer("rayito/otlp-key"))),
+        FeatureOptions(telemetry=TelemetryExport(auth=OtlpAuth.bearer("otlp-key"))),
         image_variant=None,
     )
     assert isinstance(plan.telemetry, TelemetryExport)

@@ -40,7 +40,7 @@ describe("feature-options", () => {
   });
 
   test("a real telemetry value with an unknown image variant is accepted", () => {
-    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") });
     const plan = planFeatures({ telemetry }, undefined);
     expect(plan.telemetry).toBe(telemetry);
   });

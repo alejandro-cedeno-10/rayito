@@ -22,7 +22,10 @@
 //! drive the same `export_pending` (drain → encode → send → record)
 //! through the `TelemetrySink` port, never `CloudWatchOtlpSink` directly —
 //! which is also what lets this module's own tests swap in a fake sink
-//! instead of a real network call.
+//! instead of a real network call. The exporter task is stopped by
+//! `JoinHandle::abort`, never awaited: `export_pending`'s `InFlight` guard
+//! puts drained points back if a send is cancelled mid-flight, so neither a
+//! re-`apply()` nor `/resume` ever waits out a send started before them.
 
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::Duration;
@@ -31,6 +34,7 @@ use rayd_core::configure::{SectionCode, SectionOutcome};
 use rayd_core::metrics_history::MetricsHistory;
 use rayd_core::session::SandboxSession;
 use rayd_core::suspend_sync::{ParticipantDemand, ParticipantReport};
+use rayd_core::telemetry::model::MetricPoint;
 use rayd_core::telemetry::{
     self as domain, Batcher, NameStyle as DomainNameStyle, OtlpEncoder as _, ResourceAttrs,
     TelemetryAuth, TelemetryConfig, TelemetrySink, jittered_backoff, points_from_sample,
@@ -40,7 +44,7 @@ use rayito_proto::v1::{
     TelemetryExportBearerAuth, TelemetryExportConfig, TelemetryExportExecutionRoleAuth,
     TelemetryExportNameStyle as WireNameStyle, TelemetryExportStatus,
 };
-use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
@@ -95,7 +99,6 @@ struct Running {
     credentials: SinkCredentials,
     sink: Arc<CloudWatchOtlpSink>,
     batcher: Arc<StdMutex<Batcher>>,
-    stop: Arc<Notify>,
     task: JoinHandle<()>,
 }
 
@@ -122,13 +125,13 @@ impl SharedState {
         }
     }
 
-    /// Stops and awaits whatever is currently running, leaving `running`
-    /// empty; a no-op when nothing was running.
+    /// Aborts whatever is currently running, leaving `running` empty; a
+    /// no-op when nothing was running. Never awaits the task: a send in
+    /// flight is cancelled (its points go back to the batcher through
+    /// `InFlight`) rather than waited out for up to `EXPORT_ATTEMPT_TIMEOUT`.
     async fn stop_running(&self) {
-        let previous = self.running.lock().await.take();
-        if let Some(running) = previous {
-            running.stop.notify_one();
-            let _ = running.task.await;
+        if let Some(running) = self.running.lock().await.take() {
+            running.task.abort();
         }
     }
 
@@ -197,21 +200,18 @@ impl SharedState {
         let sink = Arc::new(sink);
         let credentials = self.sink_credentials(&config.auth);
         let batcher = Arc::new(StdMutex::new(Batcher::default()));
-        let stop = Arc::new(Notify::new());
         let task = spawn_exporter(
             config.clone(),
             self.history.clone(),
             sink.clone(),
             credentials.clone(),
             batcher.clone(),
-            stop.clone(),
         );
         *self.running.lock().await = Some(Running {
             config,
             credentials,
             sink,
             batcher,
-            stop,
             task,
         });
         SectionOutcome::applied()
@@ -231,10 +231,12 @@ impl SharedState {
         }
     }
 
-    /// One best-effort flush within `share`; never blocks past it (the
-    /// caller, `hooks::mod`, also wraps this in its own
-    /// `tokio::time::timeout`). A failed or timed-out flush puts the
-    /// points back so the next regular tick (or the next `/suspend`)
+    /// One best-effort flush within `share`; never blocks past it. The
+    /// caller, `hooks::run_participants`, wraps this in its own
+    /// `tokio::time::timeout(share, ..)` started slightly earlier, so that
+    /// outer one usually fires first and drops this future mid-send: a
+    /// failed, timed-out or cancelled flush all put the points back
+    /// (`InFlight`) so the next regular tick (or the next `/suspend`)
     /// retries them, rather than losing them silently.
     async fn flush(&self, share: Duration) -> ParticipantReport {
         let guard = self.running.lock().await;
@@ -253,42 +255,32 @@ impl SharedState {
     /// on the monotonic clock, which does not advance while the `MicroVM`
     /// is suspended, so a connection opened before a long suspension can
     /// be handed back to the exporter as if it were still warm and fail on
-    /// the very first post-resume export. Tearing the running exporter
-    /// down and respawning it with a brand-new `CloudWatchOtlpSink` (and
-    /// therefore a brand-new connection pool) side-steps that; the batcher
+    /// the very first post-resume export. Respawning the exporter over a
+    /// brand-new `CloudWatchOtlpSink` (and therefore a brand-new connection
+    /// pool, `CloudWatchOtlpSink::rebuilt`) side-steps that; the batcher
     /// (and any points queued since the last successful export) moves to
-    /// the new task unchanged. A no-op when nothing is running, or when a
-    /// fresh sink cannot be built (the next explicit re-`apply()` or
-    /// `/resume` can retry; `apply()`'s own `sink_init_failed` handling
-    /// never panics on this either).
+    /// the new task unchanged. Non-blocking: the old task is aborted, never
+    /// awaited, so a send started before the suspension cannot hold
+    /// `/resume` for up to `EXPORT_ATTEMPT_TIMEOUT`. A no-op when nothing is
+    /// running; when a fresh sink cannot be built, the current exporter is
+    /// left running untouched rather than stopped.
     async fn rebuild_sink_on_resume(&self) {
         let mut guard = self.running.lock().await;
-        let Some(previous) = guard.take() else {
+        let Some(running) = guard.as_mut() else {
             return;
         };
-        previous.stop.notify_one();
-        let _ = previous.task.await;
-        let Ok(sink) = CloudWatchOtlpSink::new(&self.region) else {
+        let Ok(sink) = running.sink.rebuilt() else {
             return;
         };
-        let sink = Arc::new(sink);
-        let stop = Arc::new(Notify::new());
-        let task = spawn_exporter(
-            previous.config.clone(),
+        running.task.abort();
+        running.sink = Arc::new(sink);
+        running.task = spawn_exporter(
+            running.config.clone(),
             self.history.clone(),
-            sink.clone(),
-            previous.credentials.clone(),
-            previous.batcher.clone(),
-            stop.clone(),
+            running.sink.clone(),
+            running.credentials.clone(),
+            running.batcher.clone(),
         );
-        *guard = Some(Running {
-            config: previous.config,
-            credentials: previous.credentials,
-            sink,
-            batcher: previous.batcher,
-            stop,
-            task,
-        });
     }
 }
 
@@ -333,15 +325,49 @@ fn report_from_outcome(outcome: ExportOutcome) -> ParticipantReport {
     }
 }
 
+/// Points `export_pending` drained for one send that has not succeeded
+/// (yet). Dropping it without `delivered()` puts them back in the batcher:
+/// that covers a failed or timed-out send *and* a cancelled one — the
+/// future dropped mid-send by `hooks::run_participants`' own outer
+/// `tokio::time::timeout` around `/suspend`'s flush, or by
+/// `JoinHandle::abort` on a re-`apply()` or `/resume` — so no exit path
+/// loses drained points silently.
+struct InFlight<'a> {
+    batcher: &'a StdMutex<Batcher>,
+    points: Option<Vec<MetricPoint>>,
+}
+
+impl<'a> InFlight<'a> {
+    fn new(batcher: &'a StdMutex<Batcher>, points: Vec<MetricPoint>) -> Self {
+        Self {
+            batcher,
+            points: Some(points),
+        }
+    }
+
+    /// The send succeeded: nothing goes back to the batcher.
+    fn delivered(mut self) {
+        self.points = None;
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        if let Some(points) = self.points.take() {
+            lock_batcher(self.batcher).enqueue(points);
+        }
+    }
+}
+
 /// Drains whatever `batcher` holds and attempts one encode-and-send within
 /// `timeout` through the `TelemetrySink` port — never `CloudWatchOtlpSink`
 /// directly — so the exact same drain → encode → send → record sequence
 /// backs both the background tick (`spawn_exporter`) and `/suspend`'s
 /// bounded flush (`SharedState::flush`), and so this module's own tests
 /// can drive it with a fake sink instead of a real network call. A send
-/// failure or a timeout puts the drained points back (`Batcher::enqueue`)
-/// so the next attempt (the next tick, or the next `/suspend`) retries
-/// them rather than losing them silently.
+/// failure, a timeout or the caller dropping this future mid-send puts the
+/// drained points back (`InFlight`) so the next attempt (the next tick, or
+/// the next `/suspend`) retries them rather than losing them silently.
 async fn export_pending<S: TelemetrySink>(
     batcher: &StdMutex<Batcher>,
     sink: &S,
@@ -359,18 +385,20 @@ async fn export_pending<S: TelemetrySink>(
         &pending,
     );
     let exported = u64::try_from(pending.len()).unwrap_or(u64::MAX);
+    let in_flight = InFlight::new(batcher, pending);
     match tokio::time::timeout(timeout, sink.send(payload)).await {
         Ok(Ok(())) => {
+            in_flight.delivered();
             lock_batcher(batcher).record_exported(exported);
             ExportOutcome::Exported
         }
         Ok(Err(error)) => {
-            lock_batcher(batcher).enqueue(pending);
+            drop(in_flight);
             lock_batcher(batcher).record_failure(sink_error_class(error));
             ExportOutcome::Failed
         }
         Err(_elapsed) => {
-            lock_batcher(batcher).enqueue(pending);
+            drop(in_flight);
             lock_batcher(batcher).record_failure("network");
             ExportOutcome::TimedOut
         }
@@ -457,6 +485,9 @@ impl LifecycleParticipant for TelemetryParticipant {
         self.state.flush(share).await
     }
 
+    /// Called by `hooks::mod`'s `/resume` handler
+    /// (`run_participants_on_resume`); returns as soon as the new exporter
+    /// is spawned (`SharedState::rebuild_sink_on_resume`).
     async fn on_resume(&self) {
         self.state.rebuild_sink_on_resume().await;
     }
@@ -472,14 +503,14 @@ impl LifecycleParticipant for TelemetryParticipant {
 /// may include points from earlier failed attempts) through
 /// `export_pending`. A failed send backs off (`jittered_backoff`) before
 /// the next real attempt, but sampling itself never stops — a slow network
-/// only delays exporting, never observing.
+/// only delays exporting, never observing. The task runs until its owner
+/// aborts it (`SharedState::stop_running`, `rebuild_sink_on_resume`).
 fn spawn_exporter(
     config: TelemetryConfig,
     history: Arc<MetricsHistory>,
     sink: Arc<CloudWatchOtlpSink>,
     credentials: SinkCredentials,
     batcher: Arc<StdMutex<Batcher>>,
-    stop: Arc<Notify>,
 ) -> JoinHandle<()> {
     let sink = FixedCredentialsSink::new(sink, credentials);
     tokio::spawn(async move {
@@ -488,10 +519,7 @@ fn spawn_exporter(
         let mut attempt: u32 = 0;
         let mut retry_not_before: Option<tokio::time::Instant> = None;
         loop {
-            tokio::select! {
-                () = stop.notified() => return,
-                _ = ticker.tick() => {}
-            }
+            ticker.tick().await;
             if let Some(sample) = history.latest() {
                 lock_batcher(&batcher).enqueue(points_from_sample(&sample));
             }
@@ -737,15 +765,7 @@ mod tests {
     /// guards against a future caller forgetting that precondition).
     #[tokio::test]
     async fn no_sandbox_id_yet_degrades_to_an_empty_attribute_not_a_panic() {
-        let state = SharedState {
-            region: "us-east-1".to_owned(),
-            session: Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test")),
-            history: Arc::new(MetricsHistory::default()),
-            credentials: Arc::new(ImdsCredentialBroker::new()),
-            role_probe: Arc::new(AlwaysAvailable),
-            running: AsyncMutex::new(None),
-        };
-        assert_eq!(state.sandbox_id(), "");
+        assert_eq!(running_state().sandbox_id(), "");
     }
 
     // ------------------------------------------------------- export_pending
@@ -850,14 +870,6 @@ mod tests {
 
     #[tokio::test]
     async fn export_pending_re_enqueues_and_records_network_on_timeout() {
-        struct NeverResponds;
-
-        impl TelemetrySink for NeverResponds {
-            async fn send(&self, _payload: Vec<u8>) -> Result<(), SinkError> {
-                std::future::pending().await
-            }
-        }
-
         let batcher = StdMutex::new(Batcher::default());
         lock_batcher(&batcher).enqueue([one_point()]);
         let outcome = export_pending(
@@ -873,6 +885,117 @@ mod tests {
             lock_batcher(&batcher).stats().last_error_class.as_deref(),
             Some("network")
         );
+    }
+
+    struct NeverResponds;
+
+    impl TelemetrySink for NeverResponds {
+        async fn send(&self, _payload: Vec<u8>) -> Result<(), SinkError> {
+            std::future::pending().await
+        }
+    }
+
+    /// `hooks::run_participants` wraps `/suspend`'s flush in its own
+    /// `tokio::time::timeout(share, ..)`, created before `export_pending`'s
+    /// inner one, so in production its deadline is the earlier of the two
+    /// and it drops the future after `drain()`. Modelled here by giving the
+    /// inner attempt one extra millisecond (`OUTER_TIMER_HEAD_START`); with
+    /// equal deadlines the inner one wins instead. Either way the points
+    /// must still be queued, never lost silently.
+    #[tokio::test(start_paused = true)]
+    async fn a_flush_cut_off_by_the_hooks_outer_timeout_keeps_its_points_queued() {
+        const OUTER_TIMER_HEAD_START: Duration = Duration::from_millis(1);
+        let share = Duration::from_secs(2);
+        for (inner, outer_wins) in [(share + OUTER_TIMER_HEAD_START, true), (share, false)] {
+            let batcher = StdMutex::new(Batcher::default());
+            lock_batcher(&batcher).enqueue([one_point(), one_point()]);
+            let outer = tokio::time::timeout(
+                share,
+                export_pending(&batcher, &NeverResponds, &test_config(), inner),
+            )
+            .await;
+            assert_eq!(outer.is_err(), outer_wins, "inner timeout {inner:?}");
+            assert_eq!(lock_batcher(&batcher).len(), 2, "inner timeout {inner:?}");
+            assert_eq!(lock_batcher(&batcher).stats().dropped, 0);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_aborted_exporter_task_puts_its_in_flight_points_back() {
+        let batcher = Arc::new(StdMutex::new(Batcher::default()));
+        lock_batcher(&batcher).enqueue([one_point()]);
+        let task = tokio::spawn({
+            let batcher = batcher.clone();
+            async move {
+                export_pending(
+                    &batcher,
+                    &NeverResponds,
+                    &test_config(),
+                    EXPORT_ATTEMPT_TIMEOUT,
+                )
+                .await
+            }
+        });
+        tokio::task::yield_now().await;
+        assert!(lock_batcher(&batcher).is_empty(), "the send is in flight");
+        task.abort();
+        assert!(task.await.is_err_and(|error| error.is_cancelled()));
+        assert_eq!(lock_batcher(&batcher).len(), 1);
+    }
+
+    fn running_state() -> SharedState {
+        SharedState {
+            region: "us-east-1".to_owned(),
+            session: Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test")),
+            history: Arc::new(MetricsHistory::default()),
+            credentials: Arc::new(ImdsCredentialBroker::new()),
+            role_probe: Arc::new(AlwaysAvailable),
+            running: AsyncMutex::new(None),
+        }
+    }
+
+    fn bearer_section() -> TelemetryExportConfig {
+        TelemetryExportConfig {
+            interval_s: 60,
+            service_name: "agente".to_owned(),
+            auth: Some(WireAuth::Bearer(TelemetryExportBearerAuth {
+                token: "sk-test".to_owned(),
+            })),
+            ..Default::default()
+        }
+    }
+
+    /// `/resume`'s rebuild swaps in a fresh sink and a fresh task, keeps
+    /// the batcher (and whatever it holds), and returns without awaiting
+    /// the old task.
+    #[tokio::test]
+    async fn resume_respawns_the_exporter_over_a_fresh_sink_and_keeps_the_batcher() {
+        let state = running_state();
+        assert_eq!(
+            state.apply(bearer_section()).await.code,
+            SectionCode::Applied
+        );
+        let (old_sink, batcher) = {
+            let guard = state.running.lock().await;
+            let running = guard.as_ref().expect("applied");
+            lock_batcher(&running.batcher).enqueue([one_point()]);
+            (running.sink.clone(), running.batcher.clone())
+        };
+        tokio::time::timeout(Duration::from_secs(1), state.rebuild_sink_on_resume())
+            .await
+            .expect("the rebuild never waits on the old task");
+        let guard = state.running.lock().await;
+        let running = guard.as_ref().expect("still running after /resume");
+        assert!(!Arc::ptr_eq(&running.sink, &old_sink));
+        assert!(Arc::ptr_eq(&running.batcher, &batcher));
+        assert!(!running.task.is_finished());
+    }
+
+    #[tokio::test]
+    async fn resume_with_nothing_running_is_a_noop() {
+        let state = running_state();
+        state.rebuild_sink_on_resume().await;
+        assert!(state.running.lock().await.is_none());
     }
 
     #[test]

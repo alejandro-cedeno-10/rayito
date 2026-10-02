@@ -35,8 +35,13 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   SigV4 sobre el execution role o con un token al portador empujado por el
   SDK; cola acotada con backoff y jitter por sandbox
   (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
-  vaciado de hasta 2 s. Firmante SigV4 propio (HMAC-SHA256 sobre `sha2`,
-  sin crate nuevo) y un subconjunto vendido y mínimo de los tipos de
+  vaciado de hasta 2 s que nunca pierde puntos aunque el hook lo corte, y
+  `/resume` (que ahora llama al `on_resume` de cada participante) rehace el
+  pool de conexiones sin esperar envíos previos. Firma SigV4 con
+  `aws-sigv4` (ya en `Cargo.lock`), corrigiendo el reloj del guest con la
+  cabecera `Date` de AWS; persistencia y funciones 0.6 comparten un único
+  proveedor de credenciales IMDS. Lee `traceparent` entrante y lo registra
+  como `trace_id`/`span_id`. Un subconjunto vendido y mínimo de los tipos de
   OpenTelemetry (Apache-2.0, `crates/rayito-proto/vendor/opentelemetry/`).
   `Health.features.telemetry_export` (y `root_egress`) sólo son `true` con
   `AWS_REGION` conocido. Sin `telemetry=`, `rayd` no abre ninguna conexión

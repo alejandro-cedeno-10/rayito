@@ -187,7 +187,9 @@ from rayito._telemetry_export import (
     build_section,
     image_memory_mib_from_guest_bytes,
     require_telemetry_support,
+    resolve_bearer_token,
 )
+from rayito._telemetry_export._propagation import call_metadata_providers
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -798,7 +800,7 @@ class Sandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
-            taken._instrumentation = instrumentation
+            taken._use_instrumentation(instrumentation)
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
@@ -870,7 +872,7 @@ class Sandbox:
                 require_lifecycle=plan.lifecycle_requested,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
             if launch.enforce:
@@ -878,8 +880,6 @@ class Sandbox:
             if feature_plan.telemetry is not None:
                 sandbox._apply_telemetry(
                     feature_plan.telemetry,
-                    region=plane.region,
-                    session=session,
                     terminate_on_failure=not keep_on_failure,
                 )
         sandbox._launch_options = LaunchOptions(
@@ -953,7 +953,7 @@ class Sandbox:
             sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
         """
         if tracer_provider is not None:
-            self._instrumentation = instrumentation_for(tracer_provider)
+            self._use_instrumentation(instrumentation_for(tracer_provider))
         self._rebind_secrets(secrets, secret_cache)
         with self._instrumentation.span(
             "rayito.sandbox.connect",
@@ -1062,7 +1062,7 @@ class Sandbox:
                 terminate_on_failure=False,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._persist = bound
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
@@ -2041,17 +2041,16 @@ class Sandbox:
         self,
         telemetry: TelemetryExport,
         *,
-        region: str,
-        session: boto3.session.Session | None,
         terminate_on_failure: bool,
     ) -> None:
         """Post-boot (m15-rayd-otlp): exige `Health.features.telemetry_export`
         antes de enviar la sección -- ausente del todo en un agente anterior
-        a 0.6, o presente pero `False` mientras la imagen no soporte la
-        función (`features::slot::Unsupported` del lado de `rayd`). Un
-        fallo cierra el cliente siempre; sólo termina la `MicroVM` si
-        `terminate_on_failure` (igual que `persist=`, `_bind_and_restore`):
-        el llamante pasa `not keep_on_failure`.
+        a 0.6, o presente pero `False` cuando ese `rayd` no puede exportar
+        (arrancó sin `AWS_REGION`). El bearer de `OtlpAuth.bearer(...)` se
+        lee por la `SecretCache` compartida de este handle, la misma que
+        `secrets=`. Un fallo cierra el cliente siempre; sólo termina la
+        `MicroVM` si `terminate_on_failure` (igual que `persist=`,
+        `_bind_and_restore`): el llamante pasa `not keep_on_failure`.
         """
         try:
             require_telemetry_support(self._readiness_agent_features)
@@ -2064,8 +2063,7 @@ class Sandbox:
                     if self._readiness_health is not None
                     else None
                 ),
-                region=region,
-                session=session,
+                bearer_token=resolve_bearer_token(telemetry, self._default_secret_cache()),
             )
             request = configure_pb2.ConfigureRequest()
             section.fill(request)
@@ -2181,6 +2179,15 @@ class Sandbox:
         persistencia, transferencias): el del usuario si lo dio, el del
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
+
+    def _use_instrumentation(self, instrumentation: Instrumentation) -> None:
+        """Fija la `Instrumentation` del handle e instala (o retira) en su
+        `ProxyAuthPlugin` la propagación `traceparent` hacia `rayd` que
+        corresponde (`call_metadata_providers`): sólo con `tracer_provider=`.
+        Es el único sitio que asigna `_instrumentation` tras construir el
+        handle, para que los spans y la cabecera nunca se desincronicen."""
+        self._instrumentation = instrumentation
+        self._plugin.providers = call_metadata_providers(instrumentation)
 
     def _default_secret_cache(self) -> SecretCache:
         """La caché compartida del proceso para la región y la sesión de

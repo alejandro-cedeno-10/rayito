@@ -25,10 +25,14 @@ excepción es el único dato que entra: ni el mensaje ni la traza se graban
 (se sobrescriben con ese mismo nombre), porque el mensaje de una excepción
 del SDK puede incluir el propio dato sensible que el span nunca debe ver.
 
-La propagación de `traceparent`/`tracestate` hacia `rayd`, la exportación de
-métricas o logs del sandbox y la instrumentación del shim de E2B quedan
-fuera de alcance (M13b); la exportación de los spans (y su coste) la
-configura el proveedor que pasa el llamante.
+Desde 0.6 (m15-rayd-otlp, research Q92), con `tracer_provider=` cada RPC
+del canal del handle lleva además `traceparent` (y `tracestate`, si el
+propagador global lo usa; nunca `baggage`) hacia `rayd`, que lo registra
+como `trace_id`/`span_id` en sus logs (`rayito._telemetry_export._propagation`).
+Sin la opción no se añade ninguna cabecera. La exportación de métricas del
+sandbox es `telemetry=` (otra opción, con su propio coste); la
+instrumentación del shim de E2B queda fuera de alcance. La exportación de
+los spans (y su coste) la configura el proveedor que pasa el llamante.
 
 Coste y activación
 -------------------
@@ -99,7 +103,14 @@ class TracerProviderLike(Protocol):
 class Instrumentation:
     """Fachada de spans que guarda un `Sandbox`. `span()` es un gestor de
     contexto: entra al empezar la operación y sale al terminarla (falle o
-    no); sin excepción no toca el estado del span."""
+    no); sin excepción no toca el estado del span.
+
+    `propagates` dice si el canal gRPC del handle debe llevar `traceparent`
+    hacia `rayd` en cada llamada (m15-rayd-otlp, research Q92): sólo con
+    `tracer_provider=`; `NOOP` nunca, así que sin la opción el canal manda
+    exactamente las cabeceras de 0.5.x."""
+
+    propagates: bool = False
 
     def span(
         self, name: str, attributes: Mapping[str, Any] | None = None
@@ -155,6 +166,8 @@ class _OtelInstrumentation(Instrumentation):
     con los atributos ya validados contra `ALLOWED_SPAN_ATTRIBUTES`."""
 
     __slots__ = ("_trace", "_tracer")
+
+    propagates = True
 
     def __init__(self, tracer_provider: TracerProviderLike) -> None:
         trace = require_module("opentelemetry.trace", extra="otel", feature="tracer_provider")

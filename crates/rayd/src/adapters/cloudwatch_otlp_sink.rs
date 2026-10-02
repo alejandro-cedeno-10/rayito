@@ -9,12 +9,23 @@
 //! guards DNS resolution even though the host is a fixed AWS endpoint, not
 //! attacker-controlled input: belt and suspenders against a poisoned
 //! resolver.
+//!
+//! `SigV4` comes from `aws-sigv4` (the signer `aws-sdk-s3` itself uses,
+//! already locked at the same version), never a hand-rolled HMAC. Requests
+//! are signed with the guest's wall clock shifted by the skew the last AWS
+//! response's `Date` header revealed (`ClockSkew`), which is what the AWS
+//! SDKs do on their own: a guest clock left behind by a long suspension
+//! would otherwise get every export refused until it resyncs.
 
 use std::fmt;
 use std::io::{self, Write as _};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime};
 
+use aws_credential_types::Credentials;
+use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
+use aws_sigv4::sign::v4;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -31,8 +42,7 @@ use zeroize::Zeroizing;
 
 use rayd_core::transfer::is_forbidden_address;
 
-use super::aws_sigv4::{SigningRequest, sign};
-use super::credential_broker::ImdsCredentialBroker;
+use super::credential_broker::{GuestCredentials, ImdsCredentialBroker};
 use super::signed_http::FilteringResolver;
 
 /// `AWS_API_NOTES.md` §26: the fixed `SigV4` service name `CloudWatch`'s OTLP
@@ -64,11 +74,18 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// tick's send ever raced, which `SharedState`'s single `AsyncMutex`
 /// already rules out.
 const POOL_MAX_IDLE_PER_HOST: usize = 2;
-/// AWS's own header name for the `SigV4` session-token companion to a
-/// temporary credential's `Authorization` header (`SigV4-signing.html`).
-const SESSION_TOKEN_HEADER: &str = "x-amz-security-token";
-const X_AMZ_DATE_HEADER: &str = "x-amz-date";
-const X_AMZ_CONTENT_SHA256_HEADER: &str = "x-amz-content-sha256";
+/// `aws-credential-types`' `provider_name`: a debugging label only, never
+/// sent anywhere; names where the signing identity came from.
+const CREDENTIALS_PROVIDER_NAME: &str = "rayd-imds-execution-role";
+/// When the guest's wall clock and the `Date` an AWS response carries
+/// disagree by more than this, signing shifts its timestamp by the
+/// measured difference (`ClockSkew`). Well inside `SigV4`'s 5-minute window
+/// (`SigV4-signing.html`: a request whose `x-amz-date` is more than 5
+/// minutes off the server's time is refused), so the correction lands
+/// before a request is ever rejected for it; far above `Date`'s 1-second
+/// resolution plus one request's latency, so a healthy clock is never
+/// "corrected".
+const SKEW_CORRECTION_THRESHOLD: Duration = Duration::from_secs(60);
 
 /// Where this sink's credentials come from, mirroring
 /// `rayd_core::telemetry::TelemetryAuth` one to one but holding the live
@@ -92,6 +109,54 @@ impl fmt::Display for SinkInitError {
 
 impl std::error::Error for SinkInitError {}
 
+/// The offset, in milliseconds, between the guest's wall clock and AWS's
+/// (server minus guest) that signing applies; zero while the two agree
+/// within `SKEW_CORRECTION_THRESHOLD`. Re-measured from every response, so
+/// it also returns to zero once the guest clock resyncs.
+#[derive(Default)]
+struct ClockSkew(AtomicI64);
+
+impl ClockSkew {
+    fn signing_time(&self, now: SystemTime) -> SystemTime {
+        shifted(now, self.0.load(Ordering::Relaxed))
+    }
+
+    /// Records the skew `server_date` reveals against `received_at`;
+    /// whether it changed what the next request will be signed with.
+    fn observe(&self, server_date: SystemTime, received_at: SystemTime) -> bool {
+        let measured = skew_to_apply(server_date, received_at);
+        self.0.swap(measured, Ordering::Relaxed) != measured
+    }
+}
+
+/// Server minus guest, in milliseconds, or zero when within
+/// `SKEW_CORRECTION_THRESHOLD`.
+fn skew_to_apply(server_date: SystemTime, local: SystemTime) -> i64 {
+    let (magnitude, server_ahead) = match server_date.duration_since(local) {
+        Ok(ahead) => (ahead, true),
+        Err(behind) => (behind.duration(), false),
+    };
+    if magnitude <= SKEW_CORRECTION_THRESHOLD {
+        return 0;
+    }
+    let millis = i64::try_from(magnitude.as_millis()).unwrap_or(i64::MAX);
+    if server_ahead { millis } else { -millis }
+}
+
+fn shifted(now: SystemTime, offset_ms: i64) -> SystemTime {
+    let offset = Duration::from_millis(offset_ms.unsigned_abs());
+    if offset_ms >= 0 {
+        now.checked_add(offset).unwrap_or(now)
+    } else {
+        now.checked_sub(offset).unwrap_or(now)
+    }
+}
+
+fn server_date(headers: &http::HeaderMap) -> Option<SystemTime> {
+    let value = headers.get(header::DATE)?.to_str().ok()?;
+    httpdate::parse_http_date(value).ok()
+}
+
 pub struct CloudWatchOtlpSink {
     client: Client<
         hyper_rustls::HttpsConnector<HttpConnector<FilteringResolver<GaiResolver>>>,
@@ -100,6 +165,7 @@ pub struct CloudWatchOtlpSink {
     host: String,
     region: String,
     user_agent: HeaderValue,
+    skew: ClockSkew,
 }
 
 impl CloudWatchOtlpSink {
@@ -132,85 +198,70 @@ impl CloudWatchOtlpSink {
             host: format!("monitoring.{region}.amazonaws.com"),
             region: region.to_owned(),
             user_agent: HeaderValue::from_static(concat!("rayd/", env!("CARGO_PKG_VERSION"))),
+            skew: ClockSkew::default(),
         })
     }
 
-    /// The headers `send_with` must set beyond `Authorization` itself:
-    /// `SigV4` (`ExecutionRole`) signs `x-amz-date`/`x-amz-content-sha256`
-    /// (and, with a session token, `x-amz-security-token`) as part of
-    /// `SignedHeaders`, so every one of them has to actually reach
-    /// `CloudWatch` or the signature it sent never matches what it
-    /// receives (a guaranteed 403). `Bearer` signs nothing -- its
-    /// `Authorization` header is the whole credential -- so these stay
-    /// `None`.
-    async fn authorization_header(
-        &self,
-        credentials: &SinkCredentials,
-        payload: &[u8],
-    ) -> Result<RequestAuthHeaders, SinkError> {
-        match credentials {
-            SinkCredentials::Bearer(token) => {
-                let value = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))
-                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                Ok(RequestAuthHeaders {
-                    authorization: value,
-                    session_token: None,
-                    sigv4_dates: None,
-                })
-            }
-            SinkCredentials::ExecutionRole(broker) => {
-                let leased = broker
-                    .ensure()
-                    .await
-                    .map_err(|_unavailable| SinkError::Network)?;
-                let signed = sign(&SigningRequest {
-                    method: "POST",
-                    host: &self.host,
-                    path: OTLP_METRICS_PATH,
-                    payload,
-                    content_type: CONTENT_TYPE,
-                    region: &self.region,
-                    service: SIGV4_SERVICE,
-                    access_key_id: &leased.access_key_id,
-                    secret_access_key: leased.secret_access_key.as_str(),
-                    session_token: leased.session_token.as_ref().map(|token| token.as_str()),
-                    timestamp_unix: unix_seconds(SystemTime::now()),
-                });
-                let authorization = HeaderValue::from_str(&signed.authorization)
-                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                let token_header = leased
-                    .session_token
-                    .as_ref()
-                    .map(|token| HeaderValue::from_str(token.as_str()))
-                    .transpose()
-                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                let x_amz_date = HeaderValue::from_str(&signed.x_amz_date)
-                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                let x_amz_content_sha256 = HeaderValue::from_str(&signed.x_amz_content_sha256)
-                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
-                Ok(RequestAuthHeaders {
-                    authorization,
-                    session_token: token_header,
-                    sigv4_dates: Some((x_amz_date, x_amz_content_sha256)),
-                })
-            }
-        }
+    /// A brand-new sink (and therefore a brand-new connection pool) for the
+    /// same region, carrying over the clock skew measured so far:
+    /// `features::telemetry_export`'s `/resume` rebuild.
+    pub fn rebuilt(&self) -> Result<Self, SinkInitError> {
+        let fresh = Self::new(&self.region)?;
+        fresh
+            .skew
+            .0
+            .store(self.skew.0.load(Ordering::Relaxed), Ordering::Relaxed);
+        Ok(fresh)
     }
-}
 
-/// What `authorization_header` computes and `send_with` sets on the
-/// outgoing request; see `authorization_header`'s own doc comment for why
-/// `sigv4_dates` is only ever `Some` for `ExecutionRole`.
-struct RequestAuthHeaders {
-    authorization: HeaderValue,
-    session_token: Option<HeaderValue>,
-    sigv4_dates: Option<(HeaderValue, HeaderValue)>,
-}
-
-fn unix_seconds(timestamp: SystemTime) -> u64 {
-    timestamp
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
+    /// Signs `request` in place with `SigV4` (`aws-sigv4`, service
+    /// `monitoring`) over every header it already carries except the ones
+    /// `SigningSettings::default()` excludes (`user-agent`, ...); adds
+    /// `x-amz-date`, `authorization` and, for temporary credentials,
+    /// `x-amz-security-token`. The payload is the exact (gzipped) body sent.
+    fn sign_execution_role(
+        &self,
+        request: &mut Request<Full<Bytes>>,
+        body: &[u8],
+        leased: &GuestCredentials,
+    ) -> Result<(), SinkError> {
+        let identity = Credentials::new(
+            leased.access_key_id.as_str(),
+            leased.secret_access_key.as_str(),
+            leased
+                .session_token
+                .as_ref()
+                .map(|token| token.as_str().to_owned()),
+            Some(leased.expires_at),
+            CREDENTIALS_PROVIDER_NAME,
+        )
+        .into();
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(&self.region)
+            .name(SIGV4_SERVICE)
+            .time(self.skew.signing_time(SystemTime::now()))
+            .settings(SigningSettings::default())
+            .build()
+            .map_err(|_incomplete_params| SinkError::Rejected)?
+            .into();
+        let uri = request.uri().to_string();
+        let signable = SignableRequest::new(
+            request.method().as_str(),
+            uri,
+            request
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| Some((name.as_str(), value.to_str().ok()?))),
+            SignableBody::Bytes(body),
+        )
+        .map_err(|_unsignable| SinkError::Rejected)?;
+        let (instructions, _signature) = sign(signable, &params)
+            .map_err(|_unsignable| SinkError::Rejected)?
+            .into_parts();
+        instructions.apply_to_request_http1x(request);
+        Ok(())
+    }
 }
 
 fn gzip(payload: &[u8]) -> Vec<u8> {
@@ -229,6 +280,12 @@ fn gzip(payload: &[u8]) -> Vec<u8> {
 /// (`features::telemetry_export`) holds the current `SinkCredentials`
 /// alongside this sink and passes it fresh each call via `send_with`.
 impl CloudWatchOtlpSink {
+    /// A non-2xx answer is `Rejected` (not retried until the next tick's
+    /// backoff) unless its `Date` header just changed the clock skew this
+    /// sink signs with: then the refusal was most likely the stale guest
+    /// clock (`SigV4`'s 5-minute window) and the next attempt, signed with
+    /// the corrected time, should succeed, so it is reported as a
+    /// retryable `Network` failure instead.
     pub async fn send_with(
         &self,
         credentials: &SinkCredentials,
@@ -240,11 +297,15 @@ impl CloudWatchOtlpSink {
             .map_err(|_elapsed| SinkError::Network)?
             .map_err(|_connect_or_io_error| SinkError::Network)?;
         let status = response.status();
+        let skew_changed = server_date(response.headers())
+            .is_some_and(|date| self.skew.observe(date, SystemTime::now()));
         // Drain the body so the connection returns to the pool; the OTLP
         // endpoint's response body (if any) is never inspected.
         let _ = response.into_body().collect().await;
         if status.is_success() {
             Ok(())
+        } else if skew_changed {
+            Err(SinkError::Network)
         } else {
             Err(SinkError::Rejected)
         }
@@ -253,35 +314,38 @@ impl CloudWatchOtlpSink {
     /// Everything `send_with` does up to (not including) actually opening
     /// the connection: split out so a test can inspect exactly which
     /// headers a given `SinkCredentials` produces without a real network
-    /// call (the critical bug this guards against: a signature computed
-    /// over headers the request never actually carried).
+    /// call.
     async fn build_request(
         &self,
         credentials: &SinkCredentials,
         payload: Vec<u8>,
     ) -> Result<Request<Full<Bytes>>, SinkError> {
-        let compressed = gzip(&payload);
-        let auth = self.authorization_header(credentials, &compressed).await?;
+        let compressed = Bytes::from(gzip(&payload));
         let uri: Uri = format!("https://{}{OTLP_METRICS_PATH}", self.host)
             .parse()
             .map_err(|_invalid_uri| SinkError::Rejected)?;
-        let mut builder = Request::post(uri)
+        let mut request = Request::post(uri)
             .header(header::HOST, self.host.as_str())
             .header(header::USER_AGENT, self.user_agent.clone())
             .header(header::CONTENT_TYPE, CONTENT_TYPE)
             .header(header::CONTENT_ENCODING, "gzip")
-            .header(header::AUTHORIZATION, auth.authorization);
-        if let Some(token) = auth.session_token {
-            builder = builder.header(SESSION_TOKEN_HEADER, token);
+            .body(Full::new(compressed.clone()))
+            .map_err(|_invalid_request| SinkError::Rejected)?;
+        match credentials {
+            SinkCredentials::Bearer(token) => {
+                let value = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))
+                    .map_err(|_invalid_header_value| SinkError::Rejected)?;
+                request.headers_mut().insert(header::AUTHORIZATION, value);
+            }
+            SinkCredentials::ExecutionRole(broker) => {
+                let leased = broker
+                    .ensure()
+                    .await
+                    .map_err(|_unavailable| SinkError::Network)?;
+                self.sign_execution_role(&mut request, &compressed, &leased)?;
+            }
         }
-        if let Some((x_amz_date, x_amz_content_sha256)) = auth.sigv4_dates {
-            builder = builder
-                .header(X_AMZ_DATE_HEADER, x_amz_date)
-                .header(X_AMZ_CONTENT_SHA256_HEADER, x_amz_content_sha256);
-        }
-        builder
-            .body(Full::new(Bytes::from(compressed)))
-            .map_err(|_invalid_request| SinkError::Rejected)
+        Ok(request)
     }
 }
 
@@ -366,37 +430,113 @@ mod tests {
         )))
     }
 
-    /// The critical bug this guards against: `sign()` computes a signature
-    /// whose `SignedHeaders` names `host`, `x-amz-content-sha256`,
-    /// `x-amz-date` and (with a token) `x-amz-security-token`, so every one
-    /// of those headers must actually be set on the request `send_with`
-    /// builds -- a signature `CloudWatch` cannot recompute from the headers
-    /// it actually receives is a guaranteed 403.
+    const X_AMZ_DATE_HEADER: &str = "x-amz-date";
+    const SESSION_TOKEN_HEADER: &str = "x-amz-security-token";
+
+    fn header<'a>(request: &'a Request<Full<Bytes>>, name: &str) -> &'a str {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+    }
+
+    /// Every header the signature names must actually be on the request
+    /// `send_with` sends: a signature `CloudWatch` cannot recompute from the
+    /// headers it receives is a guaranteed 403.
     #[tokio::test]
     async fn an_execution_role_request_carries_every_header_its_own_signature_names() {
         let request = sink()
             .build_request(&seeded_execution_role(), b"metrics".to_vec())
             .await
             .expect("a seeded, always-fresh broker never fails to sign");
-        let headers = request.headers();
-        assert!(headers.contains_key(http::header::HOST));
-        assert!(headers.contains_key(X_AMZ_DATE_HEADER));
-        assert!(headers.contains_key(X_AMZ_CONTENT_SHA256_HEADER));
-        assert!(headers.contains_key(SESSION_TOKEN_HEADER));
-        let authorization = headers
-            .get(http::header::AUTHORIZATION)
-            .expect("authorization header")
-            .to_str()
+        let authorization = header(&request, "authorization");
+        assert!(authorization.starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"));
+        assert!(authorization.contains("/us-east-1/monitoring/aws4_request"));
+        let signed = authorization
+            .split("SignedHeaders=")
+            .nth(1)
+            .and_then(|rest| rest.split(',').next())
             .unwrap_or_default();
-        assert!(
-            authorization.contains(
-                "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
-            )
+        for name in signed.split(';') {
+            assert!(
+                request.headers().contains_key(name),
+                "{name} is signed but not sent"
+            );
+        }
+        assert!(signed.contains("host"));
+        assert!(signed.contains(X_AMZ_DATE_HEADER));
+        assert!(signed.contains(SESSION_TOKEN_HEADER));
+        assert!(!signed.contains("user-agent"));
+        assert_eq!(header(&request, SESSION_TOKEN_HEADER), "a-session-token");
+    }
+
+    #[test]
+    fn a_clock_within_the_threshold_is_never_corrected() {
+        let local = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert_eq!(skew_to_apply(local + SKEW_CORRECTION_THRESHOLD, local), 0);
+        assert_eq!(skew_to_apply(local - SKEW_CORRECTION_THRESHOLD, local), 0);
+    }
+
+    #[test]
+    fn a_guest_clock_left_behind_is_shifted_forward_by_the_measured_skew() {
+        let local = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let ten_minutes = Duration::from_secs(600);
+        let skew = ClockSkew::default();
+        assert!(skew.observe(local + ten_minutes, local));
+        assert_eq!(skew.signing_time(local), local + ten_minutes);
+        // Same skew again: nothing changed, so a refusal now is genuine.
+        assert!(!skew.observe(local + ten_minutes, local));
+    }
+
+    #[test]
+    fn a_guest_clock_running_ahead_is_shifted_back() {
+        let local = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let ten_minutes = Duration::from_secs(600);
+        let skew = ClockSkew::default();
+        assert!(skew.observe(local - ten_minutes, local));
+        assert_eq!(skew.signing_time(local), local - ten_minutes);
+    }
+
+    #[test]
+    fn the_correction_returns_to_zero_once_the_guest_clock_resyncs() {
+        let local = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let skew = ClockSkew::default();
+        skew.observe(local + Duration::from_secs(600), local);
+        assert!(skew.observe(local, local));
+        assert_eq!(skew.signing_time(local), local);
+    }
+
+    /// 2015-08-30T12:36:00Z, the timestamp of AWS's own `SigV4` examples.
+    const AWS_EXAMPLE_DATE_SINCE_EPOCH: Duration = Duration::from_mins(24_015_636);
+
+    #[test]
+    fn the_date_header_is_parsed_as_an_http_date() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            header::DATE,
+            HeaderValue::from_static("Sun, 30 Aug 2015 12:36:00 GMT"),
         );
+        assert_eq!(
+            server_date(&headers),
+            Some(SystemTime::UNIX_EPOCH + AWS_EXAMPLE_DATE_SINCE_EPOCH)
+        );
+        assert_eq!(server_date(&http::HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn a_rebuilt_sink_keeps_the_measured_skew() {
+        let original = sink();
+        original.skew.0.store(600_000, Ordering::Relaxed);
+        let rebuilt = original
+            .rebuilt()
+            .unwrap_or_else(|_| panic!("the native trust store must be available"));
+        assert_eq!(rebuilt.skew.0.load(Ordering::Relaxed), 600_000);
+        assert_eq!(rebuilt.host, original.host);
     }
 
     /// A bearer-authenticated request never claims a `SigV4` signature it
-    /// never computed: no `x-amz-date`/`x-amz-content-sha256`, since
+    /// never computed: no `x-amz-date`/`x-amz-security-token`, since
     /// nothing signs them.
     #[tokio::test]
     async fn a_bearer_request_carries_no_sigv4_date_headers() {
@@ -409,7 +549,6 @@ mod tests {
             .expect("bearer auth never fails to build a header value from a plain token");
         let headers = request.headers();
         assert!(!headers.contains_key(X_AMZ_DATE_HEADER));
-        assert!(!headers.contains_key(X_AMZ_CONTENT_SHA256_HEADER));
         assert!(!headers.contains_key(SESSION_TOKEN_HEADER));
         assert_eq!(
             headers

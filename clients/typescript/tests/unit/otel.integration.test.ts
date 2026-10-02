@@ -13,9 +13,12 @@ import {
   type Context,
   type ContextManager,
   context as contextApi,
+  propagation,
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
+  type TextMapPropagator,
+  trace,
 } from "@opentelemetry/api";
 import {
   BasicTracerProvider,
@@ -213,5 +216,61 @@ describe("un span padre del llamante", () => {
         expect(span.parentSpanId).toBe(parentSpanId);
       }
     });
+  });
+});
+
+/**
+ * The minimal W3C trace-context propagator this file needs (the real one
+ * lives in `@opentelemetry/core`, which the user's SDK registers; rayito
+ * never does): `traceparent` from the active span, nothing else.
+ */
+const W3C_TRACE_CONTEXT: TextMapPropagator = {
+  inject(activeContext, carrier, setter) {
+    const spanContext = trace.getSpanContext(activeContext);
+    if (spanContext === undefined) {
+      return;
+    }
+    const flags = spanContext.traceFlags.toString(16).padStart(2, "0");
+    setter.set(carrier, "traceparent", `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`);
+  },
+  extract: (activeContext) => activeContext,
+  fields: () => ["traceparent"],
+};
+
+describe("traceparent toward rayd (m15-rayd-otlp)", () => {
+  beforeEach(() => {
+    propagation.setGlobalPropagator(W3C_TRACE_CONTEXT);
+  });
+
+  afterEach(() => {
+    propagation.disable();
+  });
+
+  test("with tracerProvider every handle RPC carries the active span's traceparent", async () => {
+    const { sandbox, rayd, close } = await createTestSandbox({
+      create: { tracerProvider: provider },
+    });
+    try {
+      await sandbox.commands.run("echo hola");
+      const [headers] = rayd.process.startHeaders;
+      expect(headers?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+      expect(headers?.baggage).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  test("without tracerProvider no RPC carries one, even with a global propagator", async () => {
+    const { sandbox, rayd, close } = await createTestSandbox();
+    try {
+      await sandbox.commands.run("echo hola");
+      for (const headers of rayd.process.startHeaders) {
+        expect(headers.traceparent).toBeUndefined();
+        expect(headers.tracestate).toBeUndefined();
+      }
+      expect(rayd.process.startHeaders.length).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
   });
 });

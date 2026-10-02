@@ -580,6 +580,7 @@ async fn resume(State(state): State<HooksState>) -> Response {
         }
         resume_deadline(&state);
         state.network.on_resume().await;
+        run_participants_on_resume(&state.participants).await;
         let probe_started = Instant::now();
         let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
         let probe_ms = millis(probe_started.elapsed());
@@ -635,10 +636,45 @@ async fn terminate(State(state): State<HooksState>) -> Response {
             TERMINATING,
             HookCallOutcome::Nominal,
         );
+        run_participants_on_terminate(&state.participants).await;
         schedule_shutdown(state.shutdown.clone());
         TERMINATING.to_owned()
     })
     .await
+}
+
+/// Runs every participant's `on_resume` concurrently; with no participant
+/// configured this resolves immediately, same as `run_participants` on
+/// `/suspend`. Unlike `/suspend`'s flush, `/resume` has no
+/// `SuspendBudget`/`SuspendShares` of its own to divide, so each
+/// participant just runs under the hook's own overall deadline
+/// (`within_budget_extras`).
+async fn run_participants_on_resume(participants: &[Arc<dyn LifecycleParticipant>]) {
+    if participants.is_empty() {
+        return;
+    }
+    let mut joins = tokio::task::JoinSet::new();
+    #[allow(clippy::unnecessary_to_owned)]
+    for participant in participants.iter().cloned() {
+        joins.spawn(async move { participant.on_resume().await });
+    }
+    while joins.join_next().await.is_some() {}
+}
+
+/// Runs every participant's `on_terminate` concurrently, before
+/// `schedule_shutdown` starts winding the process down — a participant
+/// that queues a line (`lifecycle_events`) or flushes a buffer needs to run
+/// while stdout and the runtime are still alive.
+async fn run_participants_on_terminate(participants: &[Arc<dyn LifecycleParticipant>]) {
+    if participants.is_empty() {
+        return;
+    }
+    let mut joins = tokio::task::JoinSet::new();
+    #[allow(clippy::unnecessary_to_owned)]
+    for participant in participants.iter().cloned() {
+        joins.spawn(async move { participant.on_terminate().await });
+    }
+    while joins.join_next().await.is_some() {}
 }
 
 async fn within_budget<F>(hook: Hook, session: Arc<SandboxSession>, work: F) -> Response
@@ -1092,6 +1128,94 @@ mod tests {
                 fake.calls() <= 1,
                 "the hung filesystem gets no second thread"
             );
+        }
+    }
+
+    /// `/resume` reaches every registered `LifecycleParticipant`
+    /// (`run_participants_on_resume`): without this, a feature's resume
+    /// work (`telemetry_export`'s connection-pool rebuild) never runs.
+    mod participant_hooks {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        use axum::body::Body;
+        use axum::http::Request;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::suspend_sync::ParticipantDemand;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::adapters::OsRandomSource;
+
+        const DIGEST_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        #[derive(Default)]
+        struct CountingParticipant {
+            resumed: AtomicU32,
+        }
+
+        #[tonic::async_trait]
+        impl LifecycleParticipant for CountingParticipant {
+            fn demand(&self) -> ParticipantDemand {
+                ParticipantDemand {
+                    name: "counting",
+                    max: Duration::from_millis(1),
+                }
+            }
+
+            async fn on_resume(&self) {
+                self.resumed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        fn hooks(participant: Arc<CountingParticipant>) -> Router {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            router_with(HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network: NetworkManager::unavailable(session),
+                participants: vec![participant],
+            })
+        }
+
+        async fn post(router: &Router, hook: Hook, body: String) -> StatusCode {
+            let request = Request::post(hook_path(hook))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            router.clone().oneshot(request).await.unwrap().status()
+        }
+
+        fn run_body() -> String {
+            let payload = format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"}}");
+            serde_json::json!({"microvmId": "mvm-1", "runHookPayload": payload}).to_string()
+        }
+
+        #[tokio::test]
+        async fn a_changed_resume_calls_every_participants_on_resume_once() {
+            let participant = Arc::new(CountingParticipant::default());
+            let router = hooks(participant.clone());
+            assert_eq!(post(&router, Hook::Run, run_body()).await, StatusCode::OK);
+            assert_eq!(
+                post(&router, Hook::Suspend, String::new()).await,
+                StatusCode::OK
+            );
+            assert_eq!(participant.resumed.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                post(&router, Hook::Resume, String::new()).await,
+                StatusCode::OK
+            );
+            assert_eq!(participant.resumed.load(Ordering::SeqCst), 1);
+            // A repeated `/resume` changes nothing, participants included.
+            assert_eq!(
+                post(&router, Hook::Resume, String::new()).await,
+                StatusCode::OK
+            );
+            assert_eq!(participant.resumed.load(Ordering::SeqCst), 1);
         }
     }
 }

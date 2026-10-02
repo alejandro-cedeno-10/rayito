@@ -10,7 +10,6 @@
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
-pub mod aws_sigv4;
 pub mod bounded_sync;
 pub mod capabilities;
 pub mod child_registry;
@@ -34,7 +33,6 @@ pub mod signed_http;
 pub mod std_filesystem;
 pub mod tar_archiver;
 
-pub use aws_sigv4::{SignedHeaders, SigningRequest, sign};
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
 pub use child_registry::ChildRegistry;
@@ -66,7 +64,10 @@ pub use procfs_metrics::PlatformMetricsProbe;
 pub use pty_backend::NixPtyBackend;
 pub use pty_backend::PlatformPtyBackend;
 pub use random::OsRandomSource;
-pub use s3_store::{ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore};
+pub use s3_store::{
+    ABORT_BUDGET, CredentialsSource, EXECUTION_ROLE_PROFILE, S3ObjectStore,
+    imds_execution_role_provider,
+};
 #[cfg(unix)]
 pub use sidecar_process::TokioSidecarLauncher;
 pub use sidecar_process::{

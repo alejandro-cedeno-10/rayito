@@ -1,21 +1,24 @@
 /**
  * Adapts `TelemetryExport` to `ConfigureRequest.telemetryExport` (M15,
- * m15-rayd-otlp). Pure except `resolveBearerToken`, the only function in
- * this module that calls AWS (`secretsmanager:GetSecretValue`, and only
- * with `OtlpAuth.bearer(...)`): built already with the image facts (only
- * known after `run-microvm`) and, if applicable, the bearer's value already
- * resolved -- never its secret name, and never in a log or an exception.
+ * m15-rayd-otlp). `TelemetryExportSection` is pure: built with the image
+ * facts (only known after `run-microvm`) and, if applicable, the bearer's
+ * value already resolved -- never its secret name, and never in a log, an
+ * `inspect()` or an exception.
+ *
+ * `buildSection` reads `OtlpAuth.bearer(...)`'s secret through the handle's
+ * shared `SecretCache` (the same one `secrets` uses, so the same
+ * `SecretStore`): the same `rayito/` prefix rule (`resolveSecretId`), the
+ * same error translation and at most one `GetSecretValue` per TTL. That is
+ * this module's only AWS call, and only with `OtlpAuth.bearer(...)`.
  *
  * `requireTelemetrySupport` is the gate `Sandbox.#applyTelemetry` uses,
  * split out so its message can never drift from a second copy.
  */
 
 import { create } from "@bufbuild/protobuf";
-import type { AwsClientSettings } from "../aws/control-plane.js";
-import { loadOptionalSdkClient } from "../aws/optional-client.js";
 import type { ConfigureSection } from "../configure/base.js";
 import { requireConfigureSupport } from "../configure/base.js";
-import { SecretError, UnimplementedError } from "../errors.js";
+import { UnimplementedError } from "../errors.js";
 import type { ConfigureRequest } from "../gen/rayito/v1/configure_pb.js";
 import type { AgentFeatures } from "../gen/rayito/v1/features_pb.js";
 import {
@@ -24,9 +27,8 @@ import {
   TelemetryExportExecutionRoleAuthSchema,
   TelemetryExportNameStyle,
 } from "../gen/rayito/v1/telemetry_export_pb.js";
+import type { SecretCache } from "../secrets/cache.js";
 import type { NameStyleOption, TelemetryExport } from "./domain.js";
-
-const SECRETS_MANAGER_PEER = "@aws-sdk/client-secrets-manager";
 
 const NAMES_WIRE: Record<NameStyleOption, TelemetryExportNameStyle> = {
   rayito: TelemetryExportNameStyle.RAYITO,
@@ -35,76 +37,64 @@ const NAMES_WIRE: Record<NameStyleOption, TelemetryExportNameStyle> = {
 
 const TELEMETRY_FEATURE_NAME = "telemetry";
 const TELEMETRY_DOC = "docs/site/docs/funciones-opcionales/exportacion-otlp.md";
+/** The first `rayd` that ships the OTLP exporter (m15-rayd-otlp). */
+const REQUIRED_AGENT = "rayd 0.6.0";
 
 /**
  * Throws `UnimplementedError` unless the running agent reports
  * `telemetryExport: true`: absent entirely (an agent older than 0.6.0, via
- * `requireConfigureSupport`) or present but `false` (a 0.6.0 image without
- * the OTLP exporter implemented, `features::slot::Unsupported` on `rayd`'s
- * side). Shared by `Sandbox.#applyTelemetry` so the gate and its message
- * never drift from a second copy.
+ * `requireConfigureSupport`) or present but `false` (a 0.6 `rayd` started
+ * without `AWS_REGION`, so it has no CloudWatch endpoint to export to).
+ * Shared by `Sandbox.#applyTelemetry` so the gate and its message never
+ * drift from a second copy.
  */
 export function requireTelemetrySupport(features: AgentFeatures | undefined): void {
   const resolved = requireConfigureSupport(features, TELEMETRY_FEATURE_NAME);
   if (!resolved.telemetryExport) {
     throw new UnimplementedError(
       TELEMETRY_FEATURE_NAME,
-      "esta imagen no tiene el exportador OTLP implementado todavía " +
-        "(pendiente de medición, docs/research/2026-10-e2b-out-of-scope.md §6)",
+      `el rayd de esta imagen no admite exportar telemetría: es anterior a ${REQUIRED_AGENT} ` +
+        "o arrancó sin AWS_REGION. Usa una imagen rayito-base (o rayito-base-caps para " +
+        `OtlpAuth.executionRole()) publicada con ${REQUIRED_AGENT} o posterior`,
       TELEMETRY_DOC,
     );
   }
 }
 
-interface SecretsManagerModule {
-  readonly SecretsManagerClient: new (
-    config: object,
-  ) => { send(command: unknown): Promise<unknown> };
-  readonly GetSecretValueCommand: new (input: object) => unknown;
-}
-
 /**
- * Resolves `secretName`'s value once, when the section is sent (not
- * cached: unlike `SecretCache`, the value goes straight to `rayd` and is
- * not read again until the next `ConfigureSandbox`). The error message
- * never repeats the secret's name or its value.
+ * `OtlpAuth.bearer(...)`'s secret value, read through `cache` (its
+ * `rayito/` prefix and TTL), or `undefined` with `OtlpAuth.executionRole()`.
+ * Errors are `SecretCache.get`'s: they never repeat the name or the value.
  */
 export async function resolveBearerToken(
-  secretName: string,
-  region: string,
-  credentials: AwsClientSettings["credentials"],
-): Promise<string> {
-  const { sdk, send } = await loadOptionalSdkClient<SecretsManagerModule>(
-    SECRETS_MANAGER_PEER,
-    "telemetry (OtlpAuth.bearer)",
-    (module) => module.SecretsManagerClient,
-    region,
-    credentials,
-  );
-  let response: { SecretString?: string };
-  try {
-    response = await send(new sdk.GetSecretValueCommand({ SecretId: secretName }));
-  } catch (error) {
-    throw new SecretError("no se pudo leer el secreto de telemetry", { cause: error });
-  }
-  const value = response.SecretString;
-  if (!value) {
-    throw new SecretError("el secreto de telemetry no tiene SecretString");
-  }
-  return value;
+  telemetry: TelemetryExport,
+  cache: SecretCache,
+): Promise<string | undefined> {
+  const { kind, secretName } = telemetry.auth;
+  return kind === "bearer" && secretName !== undefined ? cache.get(secretName) : undefined;
 }
 
 export class TelemetryExportSection implements ConfigureSection {
   readonly section = "telemetry_export";
   readonly requiredFlag = "telemetry_export";
+  /** An ES private field, never a plain property: `util.inspect`,
+   * `console.log` and `JSON.stringify` cannot see it. */
+  readonly #bearerToken: string | undefined;
 
   constructor(
     private readonly telemetry: TelemetryExport,
     private readonly imageArn: string,
     private readonly imageVersion: string,
     private readonly imageMemoryMib: number,
-    private readonly bearerToken: string | undefined,
-  ) {}
+    bearerToken: string | undefined,
+  ) {
+    this.#bearerToken = bearerToken;
+  }
+
+  /** Whether a bearer token was resolved (never the token itself). */
+  get hasBearerToken(): boolean {
+    return this.#bearerToken !== undefined;
+  }
 
   fill(request: ConfigureRequest): void {
     request.telemetryExport = create(TelemetryExportConfigSchema, {
@@ -115,11 +105,11 @@ export class TelemetryExportSection implements ConfigureSection {
       imageVersion: this.imageVersion,
       imageMemoryMib: this.imageMemoryMib,
       auth:
-        this.bearerToken === undefined
+        this.#bearerToken === undefined
           ? { case: "executionRole", value: create(TelemetryExportExecutionRoleAuthSchema, {}) }
           : {
               case: "bearer",
-              value: create(TelemetryExportBearerAuthSchema, { token: this.bearerToken }),
+              value: create(TelemetryExportBearerAuthSchema, { token: this.#bearerToken }),
             },
     });
   }
@@ -129,25 +119,22 @@ export interface BuildSectionOptions {
   readonly imageArn: string;
   readonly imageVersion: string;
   readonly imageMemoryMib: number;
-  readonly region: string;
-  readonly credentials: AwsClientSettings["credentials"];
+  /** The handle's shared `SecretCache` (`sharedSecretCache(region, credentials)`). */
+  readonly secretCache: SecretCache;
 }
 
-/** Resolves `OtlpAuth.bearer` (if applicable) and builds the section ready
- * for `fill()`. Never called with `telemetry` absent. */
+/** Resolves `OtlpAuth.bearer` (if applicable, `resolveBearerToken`) and
+ * builds the section ready for `fill()`. Never called with `telemetry`
+ * absent. */
 export async function buildSection(
   telemetry: TelemetryExport,
   options: BuildSectionOptions,
 ): Promise<TelemetryExportSection> {
-  const bearerToken =
-    telemetry.auth.kind === "bearer" && telemetry.auth.secretName !== undefined
-      ? await resolveBearerToken(telemetry.auth.secretName, options.region, options.credentials)
-      : undefined;
   return new TelemetryExportSection(
     telemetry,
     options.imageArn,
     options.imageVersion,
     options.imageMemoryMib,
-    bearerToken,
+    await resolveBearerToken(telemetry, options.secretCache),
   );
 }

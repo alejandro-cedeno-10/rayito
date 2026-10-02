@@ -27,11 +27,13 @@ versionado [SemVer](https://semver.org/lang/es/).
 - **`telemetry`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
   ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
   nuevos (`OtlpAuth.executionRole()`, exige `rayito-base-caps`;
-  `OtlpAuth.bearer(secretName)`, experimental, funciona en `rayito-base`),
-  con `@aws-sdk/client-secrets-manager` como peer opcional sólo para el
-  bearer. Se envía como una sección de `ConfigureSandbox` tras `/run`; una
-  imagen sin el exportador implementado termina el sandbox (salvo
-  `keepOnFailure`) y lanza `UnimplementedError`. `sbx.getTelemetryStatus()`
+  `OtlpAuth.bearer(secretName)`, experimental, funciona en `rayito-base`;
+  el nombre se resuelve bajo `rayito/` por la misma `SecretCache` que
+  `secrets`). Se envía como una sección de `ConfigureSandbox` tras `/run`;
+  una imagen cuyo `rayd` no exporta termina el sandbox (salvo
+  `keepOnFailure`) y lanza `UnimplementedError`. Con `tracerProvider`, cada
+  RPC del handle lleva además `traceparent` hacia `rayd`; sin él, ninguna
+  cabecera nueva. `sbx.getTelemetryStatus()`
   lee `ConfigureStatus`, como una llamada explícita aparte de `getHealth()`.
   Sin `telemetry`, ningún comportamiento cambia frente a 0.5.x.
 <!-- m15-templates -->

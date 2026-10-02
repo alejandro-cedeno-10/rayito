@@ -72,20 +72,26 @@ readiness poll. This is honestly a *different* number (Q68: the guest sees
 4x the image's declared memory), documented as such in the proto comment
 and the AWS_API_NOTES §26 entry, not silently presented as the baseline.
 
-### D5. SigV4 signing is hand-written over `sha2`, not a new crate
+### D5. SigV4 signing uses `aws-sigv4`; direct dependencies only on crates already locked
 
-The M15 shared-file protocol (§5) allows this feature to add vendored
-protos but says "no crates." `aws-config`/`aws-sdk-s3` sign their own S3
-calls internally and expose no reusable public signer. `adapters::aws_sigv4`
-implements HMAC-SHA256 (RFC 2104) directly over the `sha2` dependency
-already in the workspace, verified against the RFC 4231 test vector and a
-hand-checked AWS worked SigV4 example (2015-08-30T12:36:00Z, the exact
-timestamp from AWS's own canonical-request documentation page), rather than
-asserting against a single hard-to-independently-verify end-to-end
-signature. The surrounding canonical-request/string-to-sign assembly is
-plain, well-documented string formatting that unit tests check component by
-component (payload hash, signed-header set, credential scope, session-token
-handling).
+*Superseded (second review of PR #81):* the first version hand-rolled
+HMAC-SHA256 and SigV4 over `sha2` on the reading that the M15 shared-file
+protocol (§5) forbids new direct crates, while the same PR added
+`aws-credential-types` as a direct dependency — two rules at once, and
+hand-written crypto that only added review and security surface. The rule
+this change now follows, stated once in the workspace `Cargo.toml`: a
+direct dependency is allowed only on a crate `aws-config`/`aws-sdk-s3`/
+`hyper` already pull in transitively, pinned to the exact version
+`Cargo.lock` already resolves, so the dependency tree gains no crate.
+Under it, `cloudwatch_otlp_sink` signs with `aws-sigv4` 1.6.0 (the signer
+`aws-sdk-s3` itself uses), `aws-credential-types` 1.3.0 provides the
+`Credentials` it signs with (its secret is zeroized internally) plus the
+`CredentialsError` `credential_broker` classifies, and `httpdate` 1.0.3
+parses the `Date` header D11 measures skew from. `adapters::aws_sigv4` is
+deleted. The signed headers are every header the request carries except
+`aws-sigv4`'s default exclusions (`user-agent`, ...), with the default
+`PayloadChecksumKind::NoHeader` — the payload hash still binds the body
+through the canonical request, as in the OT1 measurement (Q91).
 
 ### D6. The vendored OTLP proto is a hand-authored minimal subset, with real upstream field numbers
 
@@ -112,43 +118,31 @@ method keeps that guarantee trivially true (it is never called unless the
 caller asks) at the cost of a small API deviation from the sketch,
 documented in the feature's own docs page and this file.
 
-### D8. `traceparent` propagation ships as a tested, disconnected seam (see proposal.md's "Non-blocking follow-up")
+### D8. `traceparent` propagation is live, and only with `tracer_provider=`
 
-Covered in `proposal.md`; recorded here because it is the one place this
-change's scope was deliberately narrowed after starting on it, following
-the same "stop when something doesn't fit instead of improvising" rule
-`v06-foundations` applied to the zombie reaper.
+*Second review of PR #81:* the first version shipped the SDK half of §7.5
+as a tested but disconnected seam, citing the risk of reordering when a
+handle's auth plugin is built relative to when its instrumentation is
+known. That risk turned out not to need any reordering: Python's
+`ProxyAuthPlugin.providers` is already a public, mutable attribute read on
+every call, and every place that assigns a handle's instrumentation after
+construction now goes through one setter (`_use_instrumentation` in
+`Sandbox`/`AsyncSandbox`, `#useInstrumentation` in TypeScript) that also
+sets the channel's call-metadata providers from
+`call_metadata_providers(instrumentation)` /
+`callMetadataProvidersFor(tracerProvider)`. TypeScript gets the missing
+seam: `ProxyAuthOptions.callMetadata`, read per request by
+`proxyAuthInterceptor` from `SandboxCore.callMetadataProviders`.
 
-**Post-review update (tasks.md §13.3):** a review of the first version
-flagged two gaps in this narrowing that were not actually part of the
-"reorder the live channel" risk D8 is about, and so are fixed directly
-rather than deferred further:
-
-- **`rayd`'s own side was entirely missing.** The architecture (§7.5)
-  always meant propagation to have two ends: the SDK injecting
-  `traceparent`, and `rayd` reading it back to correlate its own log
-  lines. Only the SDK side was ever planned as "disconnected" (because
-  wiring the *injection* into a live channel is the risky, shared-file
-  reorder); `rayd`'s *reading* side carries no such risk -- it is a new,
-  additive tower layer (`grpc::request_context`) that only ever reads one
-  header and, when present, opens a span for that RPC. It did not need
-  deferring and is implemented now.
-- **TypeScript had no `TraceparentProvider` at all**, let alone a
-  disconnected one -- a real parity gap, not a narrower version of
-  Python's. `telemetry-export/propagation.ts` now mirrors Python's
-  `_propagation.py` exactly (same scope: tested in isolation via a fake
-  `@opentelemetry/api` peer, not wired into the transport).
-
-**Still deferred, in both SDKs**, for exactly the reason D8 already gives:
-connecting the (now real, tested) provider to the live channel's auth
-plugin/interceptor requires reordering when that plugin is built relative
-to when the OTel instrumentation is known, in a file every other 0.6
-feature also touches (`sandbox_sync/main.py` and its mirrors). TypeScript
-additionally has no `CallMetadataProvider`-equivalent seam on its
-transport yet (Python's existed from foundations; TypeScript's does not),
-so TypeScript's live wiring needs that seam built first, same as this
-change already had to build TypeScript's `configure/` seam from scratch
-(D1-area work, §5 of `proposal.md`).
+Without `tracer_provider=`/`tracerProvider` the provider list is empty, no
+`opentelemetry` module is imported and no header is added: the zero-cost
+golden test (Python) and `otel.integration.test.ts` (TypeScript, with a
+global propagator registered) assert that no request `rayd` receives
+carries `traceparent`/`tracestate`. With it, `rayd`'s
+`grpc::request_context` layer (unchanged) records the `trace_id`/`span_id`.
+One-shot channels with no handle (`Sandbox.kill`/`pause`/`resume` static
+methods, `get_info`'s probe) do not propagate: there is no handle
+instrumentation to read, and their spans already cover the call itself.
 
 ### D9. `check-dts-cost-blocks.mjs`'s `COST_DECLARATIONS` gets two more hard-coded entries, not a glob conversion
 
@@ -164,6 +158,50 @@ the same registry migration independently and conflicting. This change
 adds its two entries (`class TelemetryExport`, `opción telemetry`) to the
 existing array, each with a full "Coste y activación" TSDoc block that
 passes the existing check unchanged.
+
+### D10. `/resume` rebuilds the exporter without waiting, and no exit path loses drained points
+
+`hooks::mod`'s `/resume` handler now calls every `LifecycleParticipant`'s
+`on_resume` (`run_participants_on_resume`, also `on_terminate`), taken
+verbatim from `m15-events-webhooks`' identical hunk so whichever of the two
+PRs merges second merges cleanly. Before, nothing called `on_resume`, so
+the pool rebuild §13.6 described never ran. The rebuild itself
+(`SharedState::rebuild_sink_on_resume`) aborts the old exporter task
+instead of awaiting it — a send started before the suspension could
+otherwise hold `/resume` for up to `EXPORT_ATTEMPT_TIMEOUT` (8 s) — and
+keeps the current exporter running if a fresh sink cannot be built. Every
+stop is now `JoinHandle::abort`, which is only safe because
+`export_pending` wraps the drained points in an `InFlight` guard that
+re-enqueues them on drop: the same guard covers `/suspend`'s flush being
+dropped by `hooks::run_participants`' outer `timeout(share, ..)`, which is
+created first and so normally fires before the inner one.
+
+### D11. SigV4 signing corrects the guest clock from AWS's `Date` header
+
+`clock_offset_ms` (`Health`) measures wall-clock drift against the
+monotonic clock across a pause, not skew against AWS, and applying it
+would double-correct once the guest resyncs. The sink instead does what
+the AWS SDKs do: every response's `Date` header is compared with the guest
+clock; a difference above `SKEW_CORRECTION_THRESHOLD` (60 s, well inside
+SigV4's 5-minute window) is stored and applied to the next signature, and
+it returns to zero once the clock agrees again. A refused export whose
+`Date` changed the stored skew is reported as `network` (retried with the
+queued points) rather than `rejected`. The `/resume` rebuild carries the
+measured skew over (`CloudWatchOtlpSink::rebuilt`). Whether CloudWatch's
+OTLP 403 actually carries `Date` is on the OT5 acceptance checklist.
+
+### D12. The OTLP bearer is read through `SecretCache`, and one IMDS provider is shared
+
+`OtlpAuth.bearer(secret_name)` first used its own boto3 / SDK v3 client,
+looked the name up raw and skipped error translation, so `"otlp-key"`
+behaved differently here than in `secrets=`. Both SDKs now read it with
+the handle's shared `SecretCache` (`resolve_bearer_token`/
+`aresolve_bearer_token`, TypeScript `resolveBearerToken`), inheriting the
+`rayito/` prefix rule, `translate_error` and the TTL; `build_section` is
+pure. In `rayd`, `main` builds one `imds_execution_role_provider()` and
+hands it to both `S3ObjectStore` (persistence) and
+`ImdsCredentialBroker::sharing` (`FeatureContext`), so there is one IMDS
+cache and one refresh cycle, as §1(c) asks.
 
 ## Needs the maintainer
 

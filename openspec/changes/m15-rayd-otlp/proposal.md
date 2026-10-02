@@ -63,12 +63,13 @@ token (works on `rayito-base`), opt-in only through `ConfigureSandbox`'s
   foundations' seam in Python only, with "no consumer yet" written into
   their own docstrings; this change is that first consumer and also builds
   the equivalent TypeScript seam, which foundations had not created.
-- **`CallMetadataProvider` seam** (`_transport.py`/`transport/transport.ts`-
-  adjacent, additive and zero-risk): a per-call metadata hook for future
-  `traceparent` injection. The actual `TraceparentProvider`/
-  `_propagation.py` implementation exists and is unit-tested in isolation,
-  but is **not wired into the live gRPC channel** — see "Non-blocking
-  follow-up" below.
+- **`traceparent` propagation** (both SDKs, design.md D8): with
+  `tracer_provider=`/`tracerProvider`, every RPC on the handle's channel
+  carries W3C `traceparent` (`TraceparentProvider`, installed through the
+  `CallMetadataProvider` seam: `ProxyAuthPlugin.providers` in Python,
+  `ProxyAuthOptions.callMetadata` in TypeScript); `rayd`'s
+  `grpc::request_context` records it as `trace_id`/`span_id`. Without the
+  option no header is added and no `opentelemetry` module is imported.
 - **`infra/otlp-export.yaml`**: one IAM managed policy
   (`RayitoOtlpExport`, `cloudwatch:PutMetricData` on the account's default
   OTLP dataset — OT9 found this cannot be scoped by namespace). Fills the
@@ -87,33 +88,15 @@ token (works on `rayito-base`), opt-in only through `ConfigureSandbox`'s
   `m15-create-options.test.ts`), the full Python suite (2564 passed, 0
   failed) and the full TypeScript suite (1131 passed, 0 failed).
 
-## Non-blocking follow-up (explicitly deferred, tracked here)
+## Second review (PR #81)
 
-**`traceparent` propagation is implemented on both ends but not connected
-to the live channel.** Research Q92 asks for W3C `traceparent`/`tracestate`
-to reach `rayd`'s logs. On `rayd`'s side, that is now done outright:
-`grpc::request_context`'s tower layer reads an inbound `traceparent` and
-opens a `trace_id`/`span_id` span for that RPC — purely additive, no
-reordering of anything, so it carried none of this follow-up's risk and
-ships live. On the SDK side, `CallMetadataProvider` (the seam, Python only)
-and `TraceparentProvider` (the implementation,
-`opentelemetry.propagate.inject` under the hood, now in **both** SDKs —
-`clients/typescript/src/telemetry-export/propagation.ts` closes what was a
-real parity gap, not merely a narrower version of Python's) exist and are
-unit-tested standalone. Wiring the provider into the actual
-`ProxyAuthPlugin` a live `Sandbox` uses requires reordering when the
-channel's auth plugin is constructed (inside `__init__`, before
-`_instrumentation` is known) against when the real OTel instrumentation is
-set (after `_open()` returns, in several call sites of
-`sandbox_sync/main.py` — a file shared by all seven 0.6 options) in Python,
-and TypeScript additionally has no `CallMetadataProvider`-equivalent seam
-on its transport yet to wire into in the first place. That reordering is a
-real behavior change to a heavily-used, shared construction path; this
-change ships the tested, zero-risk pieces (the seam, the provider, and now
-`rayd`'s reading side) and defers the live wiring rather than rush a
-higher-risk edit across a file every other 0.6 feature also touches,
-following the same reasoning foundations used for the orphan-zombie reaper
-(`proposal.md` of `v06-foundations`). Tracked in `design.md`.
+A second review found the `/resume` pool rebuild was never called, a
+cancelled `/suspend` flush could lose drained points, the bearer bypassed
+`SecretCache` (and its `rayito/` prefix), the SDK half of `traceparent`
+was unwired, SigV4 was hand-rolled while a direct crate was added anyway,
+the IMDS provider was not actually shared, and a few smaller items. All
+are fixed in this change; design.md D5, D8, D10-D12 record the decisions
+and tasks.md §14 lists each fix.
 
 ## Impact
 

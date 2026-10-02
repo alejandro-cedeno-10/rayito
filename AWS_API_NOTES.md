@@ -1010,7 +1010,7 @@ for CloudFormation.
 | Body | `ExportMetricsServiceRequest` (OTLP collector proto), gzip-compressed | `rayd`'s `adapters::otlp_codec` builds it from a minimal vendored subset of `opentelemetry-proto` (`crates/rayito-proto/vendor/opentelemetry/`), never the full upstream schema |
 | `Content-Type` | `application/x-protobuf` | |
 | `Content-Encoding` | `gzip` | always sent; `rayd` never sends uncompressed |
-| Auth (SigV4) | `Authorization`, `x-amz-date`, `x-amz-content-sha256`, `x-amz-security-token` (if a session token) | service name `monitoring` (the classic CloudWatch SigV4 service, not a new one); signed over the execution role's IMDS credentials |
+| Auth (SigV4) | `Authorization`, `x-amz-date`, `x-amz-security-token` (if a session token) | service name `monitoring` (the classic CloudWatch SigV4 service, not a new one); signed by `aws-sigv4` over the execution role's IMDS credentials, with the guest clock corrected by the skew the last response's `Date` header revealed when it exceeds 60 s (SigV4 refuses requests more than 5 min off) |
 | Auth (bearer) | `Authorization: Bearer <token>` | a log-group-scoped CloudWatch API key, pushed into `rayd` by the SDK through `ConfigureSandbox`'s `telemetry_export` section (`BearerAuth.token`), never read from an environment variable |
 | IAM action authorized (SigV4 path) | `cloudwatch:PutMetricData` | on resource `arn:${Partition}:cloudwatch:${Region}:${Account}:dataset/default` — OT9 confirmed this **cannot be scoped by namespace**: the policy only names the account's single default OTLP dataset, so an execution role with this permission can export metrics under any name, not only `rayito.sandbox.*` (documented in T23 and the feature's "Coste y activación" block) |
 | Success | `200` | body not parsed by `rayd` (it only checks the HTTP status) |
@@ -1030,9 +1030,12 @@ Byte counts billed per sandbox-hour, the exporter's CPU overhead and its
 behaviour across a real `/suspend`/`/resume` cycle (OT2, OT5, OT7) are
 **not yet measured against real AWS**: this change implements and unit-
 tests the full client-side contract above (verified against the research's
-OT1 finding and a hand-written SigV4 signer checked against the RFC 4231
-HMAC-SHA256 test vector), but the AWS acceptance stage assigns the real
+OT1 finding; SigV4 by `aws-sigv4`, the signer `aws-sdk-s3` uses), but
+the AWS acceptance stage assigns the real
 `OT`-numbered Q entries (≥ Q95, per the M15 architecture §8) when it runs.
+OT5 must also confirm that a CloudWatch OTLP 403 carries a `Date` header
+(the skew correction relies on it) and that the first export after a long
+`/resume` succeeds over the rebuilt connection pool.
 
 ## 27. Logs de build y extras de imagen (`m15-templates`)
 

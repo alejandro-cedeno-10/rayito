@@ -29,9 +29,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
   nuevos (`OtlpAuth.execution_role()`, exige `rayito-base-caps`;
   `OtlpAuth.bearer(secret_name=...)`, experimental, funciona en
-  `rayito-base`). Se envía como una sección de `ConfigureSandbox` tras
-  `/run`; una imagen sin el exportador implementado termina el sandbox
-  (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
+  `rayito-base`; el nombre se resuelve bajo `rayito/` por la misma
+  `SecretCache` que `secrets=`). Se envía como una sección de
+  `ConfigureSandbox` tras `/run`; una imagen cuyo `rayd` no exporta termina
+  el sandbox (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
+  Con `tracer_provider=`, cada RPC del handle lleva además `traceparent`
+  hacia `rayd`; sin él, ninguna cabecera nueva.
   `sbx.get_telemetry_status()` (síncrono y `AsyncSandbox`) lee
   `ConfigureStatus`, como una llamada explícita aparte de `get_health()`.
   Sin `telemetry=`, ningún comportamiento cambia frente a 0.5.x (traza de

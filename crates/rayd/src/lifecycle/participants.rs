@@ -46,6 +46,10 @@ pub trait LifecycleParticipant: Send + Sync {
         }
     }
 
+    /// Called by a changed `/resume` (`hooks::mod`'s
+    /// `run_participants_on_resume`), awaited inside that hook's own
+    /// budget: keep it short and never wait on work started before the
+    /// suspension (spawn or abort instead).
     async fn on_resume(&self) {}
 
     async fn on_terminate(&self) {}

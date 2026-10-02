@@ -1,31 +1,24 @@
 //! Credential adapters for the 0.6 optional features (M15 foundations,
-//! ADR-015/016 context): one `ImdsCredentialsProvider` instance (the same
-//! type `adapters::s3_store` already builds for ADR-009 persistence) meant
-//! to be shared by every feature that needs the execution role inside the
-//! guest (s3-mounts, efs-volumes, rayd-otlp with role auth), plus
-//! `PushedCredentials`, the in-memory holder for values the SDK delivers
-//! through `ConfigureSandbox` instead of IMDS (secret-gateway's vaulted
-//! header values). Neither type is wired into a real feature yet — each
-//! feature's own adapter will take an `Arc<ImdsCredentialBroker>` once it
-//! exists.
+//! ADR-015/016 context): `ImdsCredentialBroker`, shared by every feature
+//! that needs the execution role inside the guest (s3-mounts, efs-volumes,
+//! rayd-otlp with role auth), plus `PushedCredentials`, the in-memory
+//! holder for values the SDK delivers through `ConfigureSandbox` instead of
+//! IMDS (secret-gateway's vaulted header values).
 //!
-//! `S3ObjectStore` still builds its own `ImdsCredentialsProvider` instance
-//! (ADR-009, unchanged by this change): collapsing the two into one shared
-//! instance is a follow-up for whichever feature first needs role
-//! credentials, tracked as an open question in
-//! `openspec/changes/v06-foundations/design.md`, not done speculatively
-//! here.
+//! `main` builds one broker over the process-wide
+//! `s3_store::imds_execution_role_provider()` and hands that same provider
+//! to `S3ObjectStore` (ADR-009 persistence) too (m15-rayd-otlp, ADR-021):
+//! one IMDS-backed provider instance, one IMDS cache, one refresh cycle.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
-use aws_config::imds::credentials::ImdsCredentialsProvider;
-use aws_sdk_s3::config::ProvideCredentials;
+use aws_sdk_s3::config::{ProvideCredentials, SharedCredentialsProvider};
 use rayd_core::credentials::{CredentialKind, CredentialLease, CredentialProvider};
 use zeroize::Zeroizing;
 
-use super::s3_store::EXECUTION_ROLE_PROFILE;
+use super::s3_store::imds_execution_role_provider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialBrokerError {
@@ -78,7 +71,7 @@ pub struct GuestCredentials {
 /// One IMDS-backed provider, cached behind `rayd_core::credentials`'
 /// refresh-margin rule so a feature's hot path never calls IMDS directly.
 pub struct ImdsCredentialBroker {
-    provider: ImdsCredentialsProvider,
+    provider: SharedCredentialsProvider,
     live: Mutex<Option<GuestCredentials>>,
 }
 
@@ -89,12 +82,19 @@ impl Default for ImdsCredentialBroker {
 }
 
 impl ImdsCredentialBroker {
+    /// A broker over its own, fresh execution-role provider: for tests and
+    /// for `FeatureContext::default()`. `main` uses `sharing` instead.
     #[must_use]
     pub fn new() -> Self {
+        Self::sharing(imds_execution_role_provider())
+    }
+
+    /// A broker over `provider`, the process-wide
+    /// `imds_execution_role_provider()` `main` also gives `S3ObjectStore`.
+    #[must_use]
+    pub fn sharing(provider: SharedCredentialsProvider) -> Self {
         Self {
-            provider: ImdsCredentialsProvider::builder()
-                .profile(EXECUTION_ROLE_PROFILE)
-                .build(),
+            provider,
             live: Mutex::new(None),
         }
     }
@@ -150,9 +150,7 @@ impl ImdsCredentialBroker {
     #[must_use]
     pub fn seeded_for_test(credentials: GuestCredentials) -> Self {
         Self {
-            provider: ImdsCredentialsProvider::builder()
-                .profile(EXECUTION_ROLE_PROFILE)
-                .build(),
+            provider: imds_execution_role_provider(),
             live: Mutex::new(Some(credentials)),
         }
     }

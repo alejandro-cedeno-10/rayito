@@ -19,6 +19,7 @@ from ._domain import (
 )
 from ._section import (
     TelemetryExportSection,
+    aresolve_bearer_token,
     build_section,
     require_telemetry_support,
     resolve_bearer_token,
@@ -32,6 +33,7 @@ __all__ = [
     "TelemetryExport",
     "TelemetryExportSection",
     "TelemetryHealth",
+    "aresolve_bearer_token",
     "build_section",
     "image_memory_mib_from_guest_bytes",
     "plan",

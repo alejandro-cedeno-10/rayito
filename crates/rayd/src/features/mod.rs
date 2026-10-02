@@ -38,6 +38,9 @@ use slot::ConfigurableFeature;
 #[derive(Clone)]
 pub struct FeatureContext {
     pub session: Arc<SandboxSession>,
+    /// Built by `main` over the same execution-role provider instance
+    /// persistence's `S3ObjectStore` uses (`ImdsCredentialBroker::sharing`),
+    /// so every feature and persistence share one IMDS cache.
     pub credentials: Arc<ImdsCredentialBroker>,
     pub pushed: Arc<PushedCredentials>,
     /// The same ring the 5 s sampler already feeds (`main`'s

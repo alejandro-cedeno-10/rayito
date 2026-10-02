@@ -118,14 +118,6 @@
 
 ## 12. Not done in this change (by design)
 
-- [ ] `traceparent` live wiring into the gRPC channel, in **both** SDKs
-      (proposal.md's non-blocking follow-up, design.md D8) -- narrowed by
-      §13 below: `rayd`'s own half (reading an inbound `traceparent`) is
-      now done, and TypeScript now has its own tested, disconnected
-      provider too (parity with Python); what remains deferred in both
-      SDKs is specifically connecting the provider to the live channel's
-      auth plugin/interceptor, plus a `CallMetadataProvider`-equivalent
-      seam on the TypeScript transport (which still has none).
 - [ ] AWS acceptance (OT1-OT12 Q-numbers): this change does not touch AWS;
       the serialized acceptance stage runs separately (see `aws_plan` in
       the delivery report).
@@ -175,7 +167,8 @@ explicitly deferred further (noted).
       exporter down and respawns it with a fresh `CloudWatchOtlpSink`
       (fresh connection pool), instead of relying on hyper's 30 s
       pool-idle timer, which runs on the monotonic clock and does not
-      advance while the `MicroVM` is suspended (OT5).
+      advance while the `MicroVM` is suspended (OT5). *Only effective
+      since 14.1: before it, no hook called `on_resume`.*
 - [x] 13.7 `proto/rayito/v1/telemetry_export.proto`: `NameStyle`,
       `ExecutionRoleAuth`, `BearerAuth` renamed to `TelemetryExportNameStyle`,
       `TelemetryExportExecutionRoleAuth`, `TelemetryExportBearerAuth`
@@ -211,3 +204,50 @@ explicitly deferred further (noted).
       `get_telemetry_status()` is a separate method rather than
       `get_health().telemetry` (design.md D7 already explained the
       decision; the public docs page didn't mention it).
+
+## 14. Second review fixes (PR #81)
+
+- [x] 14.1 `hooks/mod.rs`: a changed `/resume` now calls every
+      participant's `on_resume` (`run_participants_on_resume`; also
+      `on_terminate` before `schedule_shutdown`), the verbatim hunk
+      `m15-events-webhooks` adds, so the two PRs merge cleanly in either
+      order. New hooks-level test (`participant_hooks`) asserts a changed
+      `/resume` calls it once and a repeated one does not.
+- [x] 14.2 `features/telemetry_export.rs`: the `/resume` rebuild aborts the
+      old exporter instead of awaiting it under the lock (no more up-to-8 s
+      `/resume`), and keeps the current exporter if a fresh sink cannot be
+      built; `stop_running` aborts too; the `Notify` stop signal is gone.
+- [x] 14.3 `export_pending`: an `InFlight` drop guard re-enqueues drained
+      points when the future is dropped mid-send (the `/suspend` hook's
+      outer timeout, or an abort). Tests: a flush cut off by an outer
+      timeout equal to `share` (both deadline orders), and an aborted
+      exporter task, keep every point queued.
+- [x] 14.4 Bearer resolution goes through the handle's shared
+      `SecretCache` in Python (sync `get`, async `aget`) and TypeScript,
+      inheriting the `rayito/` prefix, `translate_error` and the TTL;
+      `build_section` is pure; the prefix is documented on `OtlpAuth.bearer`
+      and on the docs page.
+- [x] 14.5 `traceparent` is wired into the live channel in both SDKs when
+      `tracer_provider=`/`tracerProvider` is set (design.md D8); the
+      golden test asserts no trace header without it, new tests assert the
+      header with it (sync, async, TypeScript).
+- [x] 14.6 `adapters/aws_sigv4.rs` deleted: `cloudwatch_otlp_sink` signs
+      with `aws-sigv4` (already locked, same rule as
+      `aws-credential-types`; design.md D5). Supersedes 13.1's post-vanilla
+      vector test, which pinned the hand-rolled HMAC.
+- [x] 14.7 `main.rs` builds one `imds_execution_role_provider()` shared by
+      `S3ObjectStore` and `ImdsCredentialBroker::sharing` (`FeatureContext`).
+- [x] 14.8 `TelemetryExportSection`'s token is out of `repr` (Python
+      `field(repr=False)`) and out of `inspect`/`JSON.stringify` (TypeScript
+      `#bearerToken`); tests assert both.
+- [x] 14.9 `require_telemetry_support`/`requireTelemetrySupport`'s message
+      names the real causes (`rayd` older than 0.6.0, or started without
+      `AWS_REGION`) and the image to use.
+- [x] 14.10 `QUEUE_CAPACITY`'s doc arithmetic (≈ 18 min at 15 s, not 9).
+- [x] 14.11 Docs: worked cost estimate (provisional until OT2) and the
+      per-sandbox cardinality note on `exportacion-otlp.md`; clock-skew
+      and bearer-prefix notes.
+- [x] 14.12 `cloudwatch_otlp_sink`: SigV4 time corrected from the
+      response `Date` header (design.md D11); a refusal that changed the
+      skew is retryable `network`. Added to the OT5 acceptance checklist.
+

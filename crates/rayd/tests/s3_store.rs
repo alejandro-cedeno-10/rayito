@@ -15,7 +15,7 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use rayd::adapters::{CredentialsSource, S3ObjectStore};
+use rayd::adapters::{CredentialsSource, S3ObjectStore, imds_execution_role_provider};
 use rayd_core::persistence::{
     BucketName, ObjectBody, ObjectStore, PART_BYTES, PartSource, StoreError, StoreErrorKind,
     StoreTarget,
@@ -80,7 +80,12 @@ async fn twenty_mib_round_trip_and_not_found() {
         eprintln!("{BUCKET_ENV} not set; skipping");
         return;
     };
-    let store = S3ObjectStore::new(CredentialsSource::Default, target.region.clone()).await;
+    let store = S3ObjectStore::new(
+        CredentialsSource::Default,
+        target.region.clone(),
+        imds_execution_role_provider(),
+    )
+    .await;
     store.probe_credentials().await.unwrap();
 
     let payload: Vec<u8> = (0..ROUND_TRIP_BYTES)

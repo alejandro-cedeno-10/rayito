@@ -1,17 +1,21 @@
 /**
  * m15-rayd-otlp: `telemetry-export/{domain,section,propagation}.ts`.
- * No real server or AWS SDK: validation is pure and `resolveBearerToken`
- * only needs a minimal client shaped like `SecretsManagerClient`;
+ * No real server or AWS SDK: validation is pure and the bearer is resolved
+ * through a `SecretCache` over M13a's fake Secrets Manager (`secrets-fake.ts`);
  * `TraceparentProvider` only needs a minimal module shaped like
  * `@opentelemetry/api`'s `context`/`propagation` exports.
  */
 
+import { inspect } from "node:util";
 import { create } from "@bufbuild/protobuf";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { InvalidArgumentError, SecretError, UnimplementedError } from "../../src/errors.js";
+import { InvalidArgumentError, SecretNotFoundError, UnimplementedError } from "../../src/errors.js";
 import { ConfigureRequestSchema } from "../../src/gen/rayito/v1/configure_pb.js";
+import { AgentFeaturesSchema } from "../../src/gen/rayito/v1/features_pb.js";
 import { TelemetryExportNameStyle } from "../../src/gen/rayito/v1/telemetry_export_pb.js";
 import * as optional from "../../src/optional.js";
+import { SecretCache } from "../../src/secrets/cache.js";
+import { SecretStore } from "../../src/secrets/store.js";
 import {
   imageMemoryMibFromGuestBytes,
   MAX_INTERVAL_S,
@@ -20,36 +24,20 @@ import {
   planTelemetry,
   TelemetryExport,
 } from "../../src/telemetry-export/domain.js";
-import { TraceparentProvider } from "../../src/telemetry-export/propagation.js";
+import {
+  callMetadataProvidersFor,
+  TraceparentProvider,
+} from "../../src/telemetry-export/propagation.js";
 import {
   buildSection,
+  requireTelemetrySupport,
   resolveBearerToken,
   TelemetryExportSection,
 } from "../../src/telemetry-export/section.js";
+import { FakeSecretsManager, SENTINEL_NAME, SENTINEL_VALUE } from "./secrets-fake.js";
 
-class RecordedCommand {
-  constructor(readonly input: { SecretId: string }) {}
-}
-
-/** Mirrors `secrets-adapter.test.ts`'s `fakeModule`: the real peer is never
- * imported, `loadOptionalPeer` is spied on instead. */
-function fakeSecretsManagerModule(response: { SecretString?: string } | Error) {
-  const sent: RecordedCommand[] = [];
-  return {
-    sent,
-    module: {
-      SecretsManagerClient: class {
-        async send(recorded: RecordedCommand): Promise<unknown> {
-          sent.push(recorded);
-          if (response instanceof Error) {
-            throw response;
-          }
-          return response;
-        }
-      },
-      GetSecretValueCommand: RecordedCommand,
-    },
-  };
+function cacheOver(api: FakeSecretsManager): SecretCache {
+  return new SecretCache({ store: new SecretStore({ client: api, region: "us-east-1" }) });
 }
 
 afterEach(() => {
@@ -64,9 +52,9 @@ describe("OtlpAuth", () => {
   });
 
   test("bearer keeps the secret name", () => {
-    const auth = OtlpAuth.bearer("rayito/otlp-key");
+    const auth = OtlpAuth.bearer("otlp-key");
     expect(auth.kind).toBe("bearer");
-    expect(auth.secretName).toBe("rayito/otlp-key");
+    expect(auth.secretName).toBe("otlp-key");
   });
 
   test("bearer with a blank secret name is invalid", () => {
@@ -117,7 +105,7 @@ describe("planTelemetry", () => {
   });
 
   test("passes bearer auth on any image variant", () => {
-    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") });
     expect(planTelemetry(telemetry, "base")).toBe(telemetry);
   });
 
@@ -167,7 +155,7 @@ describe("TelemetryExportSection", () => {
   });
 
   test("fill builds a bearer section with the resolved token, never the secret name", () => {
-    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") });
     const section = new TelemetryExportSection(
       telemetry,
       "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
@@ -184,74 +172,123 @@ describe("TelemetryExportSection", () => {
 });
 
 describe("resolveBearerToken", () => {
-  test("returns the secret string and sends GetSecretValue with the secret id", async () => {
-    const fake = fakeSecretsManagerModule({ SecretString: "sk-test" });
-    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(fake.module);
-    const value = await resolveBearerToken("rayito/otlp-key", "us-east-1", undefined);
-    expect(value).toBe("sk-test");
-    expect(fake.sent).toEqual([new RecordedCommand({ SecretId: "rayito/otlp-key" })]);
+  test("executionRole never touches Secrets Manager", async () => {
+    const api = new FakeSecretsManager();
+    expect(await resolveBearerToken(new TelemetryExport(), cacheOver(api))).toBeUndefined();
+    expect(api.requests).toEqual([]);
   });
 
-  test("rejects an empty SecretString", async () => {
-    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(
-      fakeSecretsManagerModule({ SecretString: "" }).module,
-    );
-    await expect(resolveBearerToken("rayito/otlp-key", "us-east-1", undefined)).rejects.toThrow(
-      SecretError,
-    );
+  test("bearer resolves under the rayito/ prefix, like secrets", async () => {
+    const api = new FakeSecretsManager();
+    api.put("rayito/otlp-key", "sk-test");
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") });
+    expect(await resolveBearerToken(telemetry, cacheOver(api))).toBe("sk-test");
+    expect(api.requests).toEqual([["GetSecretValue", { SecretId: "rayito/otlp-key" }]]);
   });
 
-  test("wraps a client error without repeating the secret name", async () => {
-    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(
-      fakeSecretsManagerModule(new Error("boom")).module,
-    );
-    const secretName = "rayito/super-secret-name";
-    await expect(resolveBearerToken(secretName, "us-east-1", undefined)).rejects.toThrow(
-      SecretError,
-    );
-    try {
-      await resolveBearerToken(secretName, "us-east-1", undefined);
-      expect.unreachable();
-    } catch (error) {
-      expect(String(error)).not.toContain(secretName);
-    }
+  test("bearer reuses the cache within its TTL", async () => {
+    const api = new FakeSecretsManager();
+    api.put("rayito/otlp-key", "sk-test");
+    const cache = cacheOver(api);
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") });
+    await resolveBearerToken(telemetry, cache);
+    await resolveBearerToken(telemetry, cache);
+    expect(api.count("GetSecretValue")).toBe(1);
+  });
+
+  test("a missing secret is translated and never named", async () => {
+    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer(SENTINEL_NAME) });
+    const failure = resolveBearerToken(telemetry, cacheOver(new FakeSecretsManager()));
+    await expect(failure).rejects.toThrow(SecretNotFoundError);
+    await failure.catch((error: unknown) => {
+      expect(String(error)).not.toContain(SENTINEL_NAME);
+    });
   });
 });
 
 describe("buildSection", () => {
-  test("never resolves a bearer token when auth is executionRole", async () => {
-    const loader = vi.spyOn(optional, "loadOptionalPeer");
-    const telemetry = new TelemetryExport({ auth: OtlpAuth.executionRole() });
-    const section = await buildSection(telemetry, {
+  test("an executionRole section carries no bearer token", async () => {
+    const section = await buildSection(new TelemetryExport(), {
       imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base-caps",
       imageVersion: "1",
       imageMemoryMib: 2048,
-      region: "us-east-1",
-      credentials: undefined,
+      secretCache: cacheOver(new FakeSecretsManager()),
     });
     const request = create(ConfigureRequestSchema, {});
     section.fill(request);
     expect(request.telemetryExport?.auth.case).toBe("executionRole");
-    expect(loader).not.toHaveBeenCalled();
+    expect(section.hasBearerToken).toBe(false);
   });
 
-  test("resolves the bearer token when auth is bearer", async () => {
-    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(
-      fakeSecretsManagerModule({ SecretString: "sk-test" }).module,
-    );
-    const telemetry = new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") });
-    const section = await buildSection(telemetry, {
+  test("a bearer section carries the resolved token into fill()", async () => {
+    const api = new FakeSecretsManager();
+    api.put("rayito/otlp-key", "sk-test");
+    const section = await buildSection(new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") }), {
       imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
       imageVersion: "1",
       imageMemoryMib: 2048,
-      region: "us-east-1",
-      credentials: undefined,
+      secretCache: cacheOver(api),
     });
     const request = create(ConfigureRequestSchema, {});
     section.fill(request);
     expect(
       request.telemetryExport?.auth.case === "bearer" && request.telemetryExport.auth.value.token,
     ).toBe("sk-test");
+  });
+
+  test("the token never shows in inspect, console output or JSON", () => {
+    const section = new TelemetryExportSection(
+      new TelemetryExport({ auth: OtlpAuth.bearer("otlp-key") }),
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image/rayito-base",
+      "1",
+      2048,
+      SENTINEL_VALUE,
+    );
+    expect(inspect(section, { depth: 10, showHidden: true })).not.toContain(SENTINEL_VALUE);
+    expect(JSON.stringify(section)).not.toContain(SENTINEL_VALUE);
+    expect(section.hasBearerToken).toBe(true);
+  });
+});
+
+describe("requireTelemetrySupport", () => {
+  test("a 0.6 agent without the exporter names the real cause and the image", () => {
+    const features = create(AgentFeaturesSchema, {
+      configure: true,
+      telemetryExport: false,
+    });
+    expect(() => requireTelemetrySupport(features)).toThrow(UnimplementedError);
+    try {
+      requireTelemetrySupport(features);
+    } catch (error) {
+      expect(String((error as Error).message)).toContain("AWS_REGION");
+      expect(String((error as Error).message)).toContain("rayd 0.6.0");
+      expect(String((error as Error).message)).not.toContain("pendiente de medición");
+    }
+  });
+
+  test("an agent with the exporter passes the gate", () => {
+    const features = create(AgentFeaturesSchema, {
+      configure: true,
+      telemetryExport: true,
+    });
+    expect(() => requireTelemetrySupport(features)).not.toThrow();
+  });
+});
+
+describe("callMetadataProvidersFor", () => {
+  test("no tracerProvider installs nothing and imports nothing", async () => {
+    const loader = vi.spyOn(optional, "loadOptionalPeer");
+    expect(await callMetadataProvidersFor(undefined)).toEqual([]);
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  test("a tracerProvider installs one TraceparentProvider", async () => {
+    vi.spyOn(optional, "loadOptionalPeer").mockResolvedValue(
+      fakeOpenTelemetryModule({ traceparent: "00-a-b-01" }).module,
+    );
+    const providers = await callMetadataProvidersFor({ getTracer: () => ({}) as never });
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toBeInstanceOf(TraceparentProvider);
   });
 });
 

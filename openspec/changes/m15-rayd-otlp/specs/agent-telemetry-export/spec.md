@@ -22,7 +22,7 @@ No SDK call SHALL build a `ConfigureService` stub request carrying a `telemetry_
 - **THEN** `UnimplementedError` is raised before `run-microvm` is called, naming the `base-caps` requirement
 
 #### Scenario: bearer auth needs no caps variant
-- **WHEN** `Sandbox.create("rayito-base", telemetry=TelemetryExport(auth=OtlpAuth.bearer("rayito/otlp-key")))` is called
+- **WHEN** `Sandbox.create("rayito-base", telemetry=TelemetryExport(auth=OtlpAuth.bearer("otlp-key")))` is called
 - **THEN** the pre-launch caps check does not raise
 
 ### Requirement: a non-TelemetryExport value is rejected as an invalid argument, not as an unimplemented feature
@@ -50,6 +50,35 @@ When `OtlpAuth.bearer(secret_name)` is used, the resolved secret value SHALL tra
 - **WHEN** `resolve_bearer_token`/`resolveBearerToken` fails to read the named secret
 - **THEN** the raised `SecretException`/`SecretError`'s message does not contain the secret's name
 
+#### Scenario: the resolved section never prints its token
+- **WHEN** a `TelemetryExportSection` holding a resolved token is passed to `repr()` (Python) or `util.inspect`/`JSON.stringify` (TypeScript)
+- **THEN** the output does not contain the token
+
+### Requirement: a bearer secret name resolves exactly like `secrets=`
+`OtlpAuth.bearer(secret_name)` SHALL be read through the handle's shared `SecretCache` (the one `secrets=`/`secrets` uses when no `secret_cache` is given), so the name SHALL resolve under the same `rayito/` prefix (a full ARN is used as is), errors SHALL be translated the same way, and the value SHALL be fetched at most once per cache TTL.
+
+#### Scenario: a bare name reads the prefixed secret
+- **WHEN** `telemetry=TelemetryExport(auth=OtlpAuth.bearer("otlp-key"))` is applied
+- **THEN** the SDK calls `GetSecretValue` with `SecretId="rayito/otlp-key"`, the same id `secrets={"X": "otlp-key"}` would read
+
+### Requirement: `traceparent` reaches `rayd` only with `tracer_provider=`
+A handle created or connected with `tracer_provider=`/`tracerProvider` SHALL add W3C `traceparent` (and `tracestate` when the active propagator uses it, never `baggage`) to every RPC on its own channel, computed per call over the active span. Without that option, no RPC SHALL carry either header, even if the process has a global OpenTelemetry propagator registered.
+
+#### Scenario: no trace header without the option
+- **WHEN** the 0.5.x golden-trace session runs with `tracer_provider` absent
+- **THEN** no request `rayd` receives carries `traceparent` or `tracestate`
+
+#### Scenario: the active span's context travels with the option
+- **WHEN** `commands.run(...)` is called on a handle created with `tracer_provider=`
+- **THEN** the `ProcessService.Start` request `rayd` receives carries a `traceparent` of the form `00-<32 hex>-<16 hex>-<2 hex>`
+
+### Requirement: SigV4 exports survive a skewed guest clock
+`rayd` SHALL sign each execution-role export with its wall clock shifted by the skew the last AWS response's `Date` header revealed, whenever that skew exceeds 60 seconds, and SHALL report a refused export whose `Date` header changed that skew as a retryable network failure rather than a rejection.
+
+#### Scenario: a clock left behind by a long suspension is corrected
+- **WHEN** an export is refused and the response's `Date` is ten minutes ahead of the guest clock
+- **THEN** the next export is signed ten minutes ahead and the refused points stay queued for it
+
 ### Requirement: `get_telemetry_status()`/`getTelemetryStatus()` is an explicit call, never part of `get_health()`/`getHealth()`
 `get_health()`/`getHealth()` SHALL make exactly the RPCs it made before this change (one `HealthService.Health` call) regardless of whether `telemetry` was ever set. `get_telemetry_status()`/`getTelemetryStatus()` SHALL be a separate method that calls `ConfigureService.ConfigureStatus` and returns a `TelemetryHealth`/`TelemetryHealth` of all zeros/`undefined` when `rayd` never applied a `telemetry_export` section.
 
@@ -74,3 +103,11 @@ The exporter's `/suspend` flush SHALL run concurrently with the existing per-fil
 #### Scenario: a hung export never delays the /suspend response
 - **WHEN** `/suspend` fires while an export attempt is in flight and the endpoint never responds
 - **THEN** `/suspend` still answers 200 within its existing budget, and the unsent batch is re-queued rather than lost
+
+#### Scenario: a flush cut off by the hook's own timeout keeps its points
+- **WHEN** the `/suspend` hook's outer timeout drops the flush after it drained the queue but before the send resolved
+- **THEN** the drained points are back in the queue, and the dropped-points counter is unchanged
+
+#### Scenario: /resume never waits on a send started before the suspension
+- **WHEN** `/resume` fires while an export started before `/suspend` is still pending
+- **THEN** the exporter is respawned over a fresh connection pool without awaiting that send, whose points return to the queue

@@ -178,10 +178,12 @@ from rayito._secrets import (
 from rayito._telemetry_export import (
     TelemetryExport,
     TelemetryHealth,
+    aresolve_bearer_token,
     build_section,
     image_memory_mib_from_guest_bytes,
     require_telemetry_support,
 )
+from rayito._telemetry_export._propagation import call_metadata_providers
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -642,7 +644,7 @@ class AsyncSandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
-            taken._instrumentation = instrumentation
+            taken._use_instrumentation(instrumentation)
             return taken
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
@@ -716,7 +718,7 @@ class AsyncSandbox:
                 require_lifecycle=plan.lifecycle_requested,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
             if launch.enforce:
@@ -724,8 +726,6 @@ class AsyncSandbox:
             if feature_plan.telemetry is not None:
                 await sandbox._apply_telemetry(
                     feature_plan.telemetry,
-                    region=plane.region,
-                    session=session,
                     terminate_on_failure=not keep_on_failure,
                 )
         sandbox._launch_options = LaunchOptions(
@@ -798,7 +798,7 @@ class AsyncSandbox:
             await sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
         """
         if tracer_provider is not None:
-            self._instrumentation = instrumentation_for(tracer_provider)
+            self._use_instrumentation(instrumentation_for(tracer_provider))
         await self._rebind_secrets(secrets, secret_cache)
         with self._instrumentation.span(
             "rayito.sandbox.connect",
@@ -890,7 +890,7 @@ class AsyncSandbox:
                 terminate_on_failure=False,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._persist = bound
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
@@ -1704,20 +1704,17 @@ class AsyncSandbox:
         self,
         telemetry: TelemetryExport,
         *,
-        region: str,
-        session: boto3.session.Session | None,
         terminate_on_failure: bool,
     ) -> None:
-        """Misma compuerta y el mismo `terminate_on_failure` que
-        `Sandbox._apply_telemetry` (m15-rayd-otlp). `build_section` es
-        síncrona y, con `OtlpAuth.bearer(...)`, hace una llamada boto3
-        bloqueante (`secretsmanager:GetSecretValue`); se ejecuta en
-        `asyncio.to_thread` para no bloquear el bucle de eventos con ella.
+        """Misma compuerta, la misma `SecretCache` y el mismo
+        `terminate_on_failure` que `Sandbox._apply_telemetry`
+        (m15-rayd-otlp). El bearer se lee con `SecretCache.aget`: un acierto
+        no sale del bucle de eventos y un fallo corre en un hilo.
         """
         try:
             require_telemetry_support(self._readiness_agent_features)
-            section = await asyncio.to_thread(
-                build_section,
+            bearer_token = await aresolve_bearer_token(telemetry, self._default_secret_cache())
+            section = build_section(
                 telemetry,
                 image_arn=self._launch_info.template,
                 image_version=self._launch_info.template_version,
@@ -1726,8 +1723,7 @@ class AsyncSandbox:
                     if self._readiness_health is not None
                     else None
                 ),
-                region=region,
-                session=session,
+                bearer_token=bearer_token,
             )
             request = configure_pb2.ConfigureRequest()
             section.fill(request)
@@ -1837,6 +1833,11 @@ class AsyncSandbox:
         persistencia, transferencias): el del usuario si lo dio, el del
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
+
+    def _use_instrumentation(self, instrumentation: Instrumentation) -> None:
+        """Misma semántica que `Sandbox._use_instrumentation`."""
+        self._instrumentation = instrumentation
+        self._plugin.providers = call_metadata_providers(instrumentation)
 
     def _default_secret_cache(self) -> SecretCache:
         """Misma semántica que `Sandbox._default_secret_cache`."""

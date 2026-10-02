@@ -13,14 +13,19 @@
  * after that, computed fresh on every call over whatever span is active at
  * that moment (never fixed for the life of a channel).
  *
- * **Estado de esta entrega**: implemented and unit-tested in isolation,
- * exactly mirroring Python, but not yet wired into the live gRPC channel
- * (no `CallMetadataProvider` seam exists on the TypeScript transport
- * either) -- see `openspec/changes/m15-rayd-otlp/design.md` D8 and
- * `proposal.md`'s "Non-blocking follow-up".
+ * `callMetadataProvidersFor` is what `Sandbox.#useInstrumentation`
+ * installs on the handle's transport (`SandboxCore.callMetadataProviders`,
+ * read by `proxyAuthInterceptor` on every request): `[]` without
+ * `tracerProvider` (this module never imports `@opentelemetry/api` and the
+ * transport sends exactly 0.5.x's headers), one `TraceparentProvider` with
+ * it. It injects through `@opentelemetry/api`'s globally registered
+ * propagator, so the caller's SDK setup (W3C trace context by default in
+ * `NodeSDK`/`provider.register()`) decides the exact headers.
  */
 
 import { loadOptionalPeer } from "../optional.js";
+import type { TracerProviderLike } from "../otel.js";
+import type { CallMetadataProvider } from "../transport/headers.js";
 
 /** `baggage` never travels to `rayd`, even if the active context has one
  * (Q92): the proxy filters `grpc-*` keys inconsistently, so W3C
@@ -41,7 +46,7 @@ interface OpenTelemetryPropagationModule {
   readonly propagation: { inject(activeContext: unknown, carrier: Record<string, string>): void };
 }
 
-export class TraceparentProvider {
+export class TraceparentProvider implements CallMetadataProvider {
   private constructor(private readonly otel: OpenTelemetryPropagationModule) {}
 
   /** Resolves `@opentelemetry/api` once; throws `InvalidArgumentError`
@@ -65,4 +70,16 @@ export class TraceparentProvider {
     }
     return Object.entries(carrier);
   }
+}
+
+/** The call-metadata providers for a handle created with this
+ * `tracerProvider`: none (and no `@opentelemetry/api` import) without it,
+ * one `TraceparentProvider` with it. */
+export async function callMetadataProvidersFor(
+  tracerProvider: TracerProviderLike | undefined,
+): Promise<readonly CallMetadataProvider[]> {
+  if (tracerProvider === undefined) {
+    return [];
+  }
+  return [await TraceparentProvider.create()];
 }

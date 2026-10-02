@@ -52,10 +52,14 @@ class OtlpAuth:
 
     `execution_role()` es SigV4 sobre las credenciales IMDS del execution
     role: exige `rayito-base-caps` (o una variante derivada, por tamaño).
-    `bearer(secret_name=...)` es experimental (B1'): el valor del secreto se
-    resuelve una vez, al enviar la sección (`_section.resolve_bearer_token`),
-    y viaja a `rayd` por `ConfigureSandbox`, nunca por variables de entorno
-    (regla 4 de ADR-014) ni en texto plano en ningún lado; funciona en
+    `bearer(secret_name=...)` es experimental (B1'): `secret_name` se
+    resuelve igual que en `secrets=` y `SecretStore`, bajo el prefijo
+    `rayito/` (`"otlp-key"` lee `rayito/otlp-key`; un ARN completo se usa
+    tal cual), así que basta la política `RayitoSecretsReader` de
+    `infra/secrets-access.yaml`. El valor se lee al enviar la sección por
+    la `SecretCache` compartida (`_section.resolve_bearer_token`) y viaja a
+    `rayd` por `ConfigureSandbox`, nunca por variables de entorno (regla 4
+    de ADR-014) ni en texto plano en ningún lado; funciona en
     `rayito-base`, sin caps.
     """
 

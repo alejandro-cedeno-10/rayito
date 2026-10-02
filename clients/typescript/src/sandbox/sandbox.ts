@@ -8,7 +8,6 @@
 import { create } from "@bufbuild/protobuf";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import {
-  type AwsClientSettings,
   awsClientSettingsOf,
   type CommandSender,
   type ControlPlane,
@@ -78,8 +77,10 @@ import {
   type TelemetryExport,
   type TelemetryHealth,
 } from "../telemetry-export/domain.js";
+import { callMetadataProvidersFor } from "../telemetry-export/propagation.js";
 import { buildSection, requireTelemetrySupport } from "../telemetry-export/section.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
+import type { CallMetadataProvider } from "../transport/headers.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
 import {
@@ -700,6 +701,7 @@ export class Sandbox implements AsyncDisposable {
   static async create(options: SandboxCreateOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
     const instrumentation = instrumentationFor(options.tracerProvider);
+    const callMetadata = await callMetadataProvidersFor(options.tracerProvider);
     const binding = bindSecrets(options.secrets, options.secretCache);
     const transportSettings = resolveTransportSettings(options.transport);
     requireRoleForPersist(options.persist, options.executionRoleArn);
@@ -732,7 +734,7 @@ export class Sandbox implements AsyncDisposable {
         secretCache: options.secretCache,
       });
       taken.#core.transfer = transfer;
-      taken.#instrumentation = instrumentation;
+      taken.#useInstrumentation(instrumentation, callMetadata);
       return taken;
     }
     logAllowOnlyNotice(network, options.logger);
@@ -807,7 +809,7 @@ export class Sandbox implements AsyncDisposable {
           logger: options.logger,
           requireLifecycle: plan.lifecycleRequested,
         });
-        opened.#instrumentation = instrumentation;
+        opened.#useInstrumentation(instrumentation, callMetadata);
         opened.#core.transfer = transfer;
         opened.#secrets.set(secrets);
         if (requiresEnforcement(network)) {
@@ -817,12 +819,7 @@ export class Sandbox implements AsyncDisposable {
           );
         }
         if (featurePlan.telemetry !== undefined) {
-          await opened.#applyTelemetry(
-            featurePlan.telemetry,
-            plane.region,
-            { credentials: awsClientSettingsOf(plane).credentials },
-            !(options.keepOnFailure ?? false),
-          );
+          await opened.#applyTelemetry(featurePlan.telemetry, !(options.keepOnFailure ?? false));
         }
         return opened;
       },
@@ -874,6 +871,7 @@ export class Sandbox implements AsyncDisposable {
   static async connect(sandboxId: string, options: SandboxConnectOptions = {}): Promise<Sandbox> {
     options.signal?.throwIfAborted();
     const instrumentation = instrumentationFor(options.tracerProvider);
+    const callMetadata = await callMetadataProvidersFor(options.tracerProvider);
     const token = requireAccessToken(options.accessToken);
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     const transportSettings = resolveTransportSettings(options.transport);
@@ -909,7 +907,7 @@ export class Sandbox implements AsyncDisposable {
           terminateOnFailure: false,
           logger: options.logger,
         });
-        sandbox.#instrumentation = instrumentation;
+        sandbox.#useInstrumentation(instrumentation, callMetadata);
         sandbox.#persist = bound;
         sandbox.#core.transfer = transfer;
         sandbox.#secrets.set(secrets);
@@ -1345,7 +1343,10 @@ export class Sandbox implements AsyncDisposable {
     const { signal } = options;
     signal?.throwIfAborted();
     if (options.tracerProvider !== undefined) {
-      this.#instrumentation = instrumentationFor(options.tracerProvider);
+      this.#useInstrumentation(
+        instrumentationFor(options.tracerProvider),
+        await callMetadataProvidersFor(options.tracerProvider),
+      );
     }
     const requestedMs = optionalSetTimeoutMs(options.timeoutMs);
     await this.#secrets.rebind(options);
@@ -1644,25 +1645,24 @@ export class Sandbox implements AsyncDisposable {
   /**
    * Post-boot (m15-rayd-otlp): exige `Health.features.telemetryExport`
    * antes de enviar la sección -- ausente del todo en un agente anterior a
-   * 0.6, o presente pero `false` mientras la imagen no soporte la función
-   * (`features::slot::Unsupported` del lado de `rayd`). Un fallo cierra el
-   * cliente siempre; sólo termina la `MicroVM` si `terminateOnFailure`
-   * (igual que `#bindAndRestore`): el llamante pasa `!keepOnFailure`.
+   * 0.6, o presente pero `false` cuando ese `rayd` no puede exportar
+   * (arrancó sin `AWS_REGION`). El bearer de `OtlpAuth.bearer(...)` se lee
+   * por la `SecretCache` compartida de este handle, la misma que `secrets`.
+   * Un fallo cierra el cliente siempre; sólo termina la `MicroVM` si
+   * `terminateOnFailure` (igual que `#bindAndRestore`): el llamante pasa
+   * `!keepOnFailure`.
    */
-  async #applyTelemetry(
-    telemetry: TelemetryExport,
-    region: string,
-    aws: { readonly credentials: AwsClientSettings["credentials"] },
-    terminateOnFailure: boolean,
-  ): Promise<void> {
+  async #applyTelemetry(telemetry: TelemetryExport, terminateOnFailure: boolean): Promise<void> {
     try {
       requireTelemetrySupport(this.#readinessAgentFeatures);
       const section = await buildSection(telemetry, {
         imageArn: this.#core.launchInfo.template,
         imageVersion: this.#core.launchInfo.templateVersion ?? "",
         imageMemoryMib: imageMemoryMibFromGuestBytes(this.#readinessHealth?.memoryTotalBytes),
-        region,
-        credentials: aws.credentials,
+        secretCache: sharedSecretCache(
+          this.#core.controlPlane.region,
+          awsClientSettingsOf(this.#core.controlPlane).credentials,
+        ),
       });
       const request = create(ConfigureRequestSchema, {});
       section.fill(request);
@@ -1685,6 +1685,21 @@ export class Sandbox implements AsyncDisposable {
       }
       throw error;
     }
+  }
+
+  /**
+   * Fija la `Instrumentation` del handle y las cabeceras por llamada de su
+   * transporte (`traceparent` hacia `rayd` sólo con `tracerProvider`,
+   * `callMetadataProvidersFor`): el único sitio que asigna
+   * `#instrumentation` tras construir el handle, para que los spans y la
+   * cabecera nunca se desincronicen.
+   */
+  #useInstrumentation(
+    instrumentation: Instrumentation,
+    callMetadata: readonly CallMetadataProvider[],
+  ): void {
+    this.#instrumentation = instrumentation;
+    this.#core.callMetadataProviders = callMetadata;
   }
 
   // ------------------------------------------------------------ persistence
