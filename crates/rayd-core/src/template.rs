@@ -30,22 +30,27 @@ pub const TEMPLATE_SPEC_PATH: &str = "/etc/rayito/template.json";
 /// fallido; mismos campos que `ReadyPoll` del SDK.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ReadyPoll {
-    #[serde(rename = "interval_seconds")]
     pub interval_seconds: f64,
-    #[serde(rename = "timeout_seconds")]
     pub timeout_seconds: f64,
 }
 
 impl ReadyPoll {
     #[must_use]
     pub fn timeout(&self) -> Duration {
-        Duration::from_secs_f64(self.timeout_seconds.max(0.0))
+        seconds_to_duration(self.timeout_seconds)
     }
 
     #[must_use]
     pub fn interval(&self) -> Duration {
-        Duration::from_secs_f64(self.interval_seconds.max(0.0))
+        seconds_to_duration(self.interval_seconds)
     }
+}
+
+/// `Duration::try_from_secs_f64`, nunca `panic!`: un valor negativo, `NaN`
+/// o infinito (no deberían llegar del SDK, pero esto es un fichero leído
+/// del sistema de ficheros, no un valor de confianza) da `Duration::ZERO`.
+fn seconds_to_duration(seconds: f64) -> Duration {
+    Duration::try_from_secs_f64(seconds).unwrap_or(Duration::ZERO)
 }
 
 /// El `/etc/rayito/template.json` que `rayd` lee una sola vez, al arrancar
@@ -115,7 +120,10 @@ mod tests {
     #[test]
     fn no_ready_cmd_is_always_ok() {
         assert_eq!(ready_decision(None, None, false), TemplateReadyDecision::Ok);
-        assert_eq!(ready_decision(None, Some(1), true), TemplateReadyDecision::Ok);
+        assert_eq!(
+            ready_decision(None, Some(1), true),
+            TemplateReadyDecision::Ok
+        );
     }
 
     #[test]
