@@ -102,6 +102,8 @@ rayito stack deploy otlp-export
     ```python
     from rayito import OtlpAuth, Sandbox, TelemetryExport
 
+    role_arn = "arn:aws:iam::123456789012:role/rayito-sandbox-caps"
+
     sbx = Sandbox.create(
         "rayito-base-caps",
         execution_role_arn=role_arn,
@@ -114,6 +116,7 @@ rayito stack deploy otlp-export
     sbx.commands.run("python agent.py")
     status = sbx.get_telemetry_status()
     print(status.exported, status.dropped, status.last_error_class)
+    sbx.kill()
     ```
 
 === "Python (async)"
@@ -122,6 +125,8 @@ rayito stack deploy otlp-export
     import asyncio
 
     from rayito import AsyncSandbox, OtlpAuth, TelemetryExport
+
+    role_arn = "arn:aws:iam::123456789012:role/rayito-sandbox-caps"
 
 
     async def main() -> None:
@@ -132,6 +137,7 @@ rayito stack deploy otlp-export
         )
         await sbx.commands.run("python agent.py")
         print(await sbx.get_telemetry_status())
+        await sbx.kill()
 
 
     asyncio.run(main())
@@ -141,6 +147,8 @@ rayito stack deploy otlp-export
 
     ```ts
     import { OtlpAuth, Sandbox, TelemetryExport } from "rayito";
+
+    const roleArn = "arn:aws:iam::123456789012:role/rayito-sandbox-caps";
 
     await using sbx = await Sandbox.create({
       template: "rayito-base-caps",
@@ -161,13 +169,24 @@ Con el token al portador, sólo cambia la autenticación:
 === "Python"
 
     ```python
-    telemetry=TelemetryExport(auth=OtlpAuth.bearer(secret_name="rayito/otlp-key"))
+    from rayito import OtlpAuth, Sandbox, TelemetryExport
+
+    sbx = Sandbox.create(
+        "rayito-base",
+        telemetry=TelemetryExport(auth=OtlpAuth.bearer(secret_name="rayito/otlp-key")),
+    )
+    sbx.kill()
     ```
 
 === "TypeScript"
 
     ```ts
-    telemetry: new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") })
+    import { OtlpAuth, Sandbox, TelemetryExport } from "rayito";
+
+    await using sbx = await Sandbox.create({
+      template: "rayito-base",
+      telemetry: new TelemetryExport({ auth: OtlpAuth.bearer("rayito/otlp-key") }),
+    });
     ```
 
 ## Errores y solución de problemas
