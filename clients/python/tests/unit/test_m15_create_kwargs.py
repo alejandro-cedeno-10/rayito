@@ -35,7 +35,7 @@ def test_sync_create_rejects_each_remaining_stub_option_before_resolving_a_contr
 
 def test_sync_create_rejects_a_malformed_gateways_value_before_resolving_a_control_plane() -> None:
     with pytest.raises(InvalidArgumentException):
-        Sandbox.create("rayito-base", gateways={"anthropic": object()})  # type: ignore[arg-type]
+        Sandbox.create("rayito-base", gateways={"anthropic": object()})
 
 
 @pytest.mark.asyncio
