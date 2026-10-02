@@ -178,9 +178,10 @@ class Template:
     ) -> Self:
         """Hornea `/etc/rayito/template.json` (`rayito.template/1`). Al
         arrancar, un `rayd` 0.6 o posterior lo lee y, antes del `/ready` del
-        build (el snapshot ya lo lleva en marcha), lanza `start_cmd` como proceso gestionado (visible en
-        `commands.list()`); si hay `ready_cmd`, `/ready` responde 503 hasta
-        que el comando sale con 0, y falla al agotarse
+        build (el snapshot ya lo lleva en marcha), lanza `start_cmd` como
+        proceso gestionado (visible en `commands.list()`); si hay
+        `ready_cmd`, `/ready` responde 503 hasta que el comando sale con 0, y
+        500 al agotarse
         `ReadyPoll.timeout_seconds` (`wait_for_port`/`wait_for_url`/
         `wait_for_process`/`wait_for_file` en `_ready_cmds.py`; una cadena
         cruda se sondea con la cadencia por defecto, 0,5 s durante 60 s).
