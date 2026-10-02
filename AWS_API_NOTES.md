@@ -1064,11 +1064,120 @@ a `environ` ni a matar el daemon, `invalid_path` ante un enlace simbólico,
 `MountException`/`UnimplementedError` con el VM terminado y 0 procesos
 `<defunct>` tras cinco ciclos de montar/desmontar/relanzar.
 
-## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`)
+## 24. Recursos de imagen por tamaño (`m15-sizes-catalog`, **contrato de parámetros**)
 
-Pendiente: `m15-sizes-catalog` documenta aquí `GetMicrovmImageVersion`
-(lectura de `resources[0].minimumMemoryInMiB`) y las oleadas de
-`create-microvm-image --sizes`.
+El catálogo cerrado de `SUPPORTED_MEMORY_MIB` (512/1024/2048/4096/8192
+MiB) y el guardarraíles IAM de `infra/sizes-guard.yaml` sólo usan los
+parámetros de `GetMicrovmImageVersion` y el campo `Resource` de una
+política IAM; la regla dura 1 vale también aquí. Nombres verificados
+contra `docs/aws-api/model_summary.md` (generado del modelo
+`lambda-microvms` 2025-09-09) y contra el paquete
+`@aws-sdk/client-lambda-microvms` instalado (`GetMicrovmImageVersionCommand`
+exportado, confirmado con `node -e` el 2026-09-30, sin red).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier` (el ARN ya resuelto), `imageVersion` (el `template_version`/`templateVersion` que devolvió `RunMicrovm`, en `ConventionCatalog`; o el `latestActiveImageVersion` que devolvió `ListMicrovmImages`, en `cli/image.py`'s `active_code_artifact`) | `resources[0].minimumMemoryInMiB` (lo único que lee `ConventionCatalog`); `codeArtifact.uri` (lo único que lee `active_code_artifact` para `sameArtifact`, ver abajo) | `lambda:GetMicrovmImageVersion` (en CloudTrail; no aparece en `apiTps` porque el servicio no le fija una cuota propia) | `docs/aws-api/model_summary.md` §`GetMicrovmImageVersion` |
+
+`GetMicrovmImageVersion` no se llama nunca durante `create()`/`Sandbox.create()`:
+sólo la hace, y como mucho una vez por `(imageArn, imageVersion)` y por
+proceso (`ConventionCatalog`, cacheada), `get_info()`/`getInfo()` cuando el
+sandbox se lanzó con `size=`/`size`. Sin esa opción, cero llamadas nuevas:
+golden test de M15 foundations. La CLI (`rayito image sizes`) la llama por
+su cuenta, fuera del SDK en marcha: una vez por imagen ya publicada (la
+columna `sameArtifact`, code review de PR #76 #2), sin caché entre
+invocaciones de la CLI (cada invocación es un proceso nuevo) y sin lanzar
+ningún sandbox — gratis por la misma ausencia de cuota en `apiTps`.
+
+**Tamaños aceptados por `create-microvm-image` (Q87, medido 2026-09-30,
+`rayito-base`).** 512, 1024, 2048, 4096 y 8192 MiB construyen; 256, 3072,
+10240 y 16384 fallan con `ValidationException` **síncrona, sin crear
+ninguna imagen**: `"The requested memory size of N MiB is not supported by
+base MicroVM image arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1.
+Supported memory sizes in MiB are: [512, 1024, 2048, 4096, 8192]."` El
+modelo limita `resources` a un elemento (`ResourcesList` `max: 1`): un
+tamaño por versión, de ahí que `rayito image publish --sizes` publique una
+*versión de imagen* (nombre `<variant>-<size>`) por tamaño, no una sola
+versión con varios tamaños.
+
+**Guest vs. imagen, medido para los cinco tamaños (RES-2/Q88, confirma el
+punto suelto de Q61/Q68 para 2048 MiB).** `SandboxInfo.memory_mb`/`memoryMb`
+(el `MemTotal` real del guest, leído de `Health`) no es
+`minimumMemoryInMiB`: el guest ve memoria/512 vCPU (`nproc`) y hasta ≈4x la
+memoria nominal (`GUEST_MEMORY_MULTIPLIER` en `limits.json`) en los cinco
+tamaños:
+
+| `minimumMemoryInMiB` | vCPU del guest | `MemTotal` del guest | Disco raíz ext4 |
+|---|---|---|---|
+| 512 | 1 | 1 989 MiB | 8,3 GB |
+| 1024 | 2 | 3 998 MiB | 8,3 GB |
+| 2048 | 4 | 8 016 MiB | 8,3 GB |
+| 4096 | 8 | 16 052 MiB | 16,7 GB |
+| 8192 | 16 | 32 123 MiB | 33,6 GB |
+
+`_sizing.baseline_cpu_for`/`sizing.ts baselineCpuFor` codifica esta
+proporción (512 MiB por vCPU, `MIB_PER_VCPU_Q88`): medida para los cinco
+valores del catálogo, no una extrapolación. `/dev/shm` es 64 MiB en los
+cinco tamaños; el snapshot de memoria de una misma imagen mínima crece con
+el tamaño (446 MB a 512, 503 a 1024, 597 a 2048, 782 a 4096, 1 146 a 8192
+MiB), así que cada tamaño adicional publicado cuesta más almacenamiento de
+snapshot aun siendo la misma imagen.
+
+**Guardarraíles de coste por ARN (Q90, `sizes-guard`).** `lambda:RunMicrovm`
+acepta `Resource` con el ARN de una *imagen* (sin versión): una política
+IAM (`RayitoRunAllowedSizes`, `infra/sizes-guard.yaml`) con
+`Resource: [<ARN de cada imagen publicada y permitida>]` restringe qué
+tamaños puede lanzar una identidad, sin tocar ninguna imagen existente.
+`sizes-guard` es `CAPABILITY_IAM` (crea una `AWS::IAM::ManagedPolicy`, nada
+más): $0 en reposo y por uso.
+
+**Aceptación en AWS real (2026-10-02, PR #76, imágenes desechables
+`<nombre>`, `<nombre>-512mb`, `<nombre>-4gb`, ya borradas).**
+
+- **Q106 — `ListMicrovmImageVersions` no devuelve `environmentVariables`.**
+  Los items de la lista traen `baseImageArn`, `baseImageVersion`,
+  `buildRoleArn`, `codeArtifact`, `cpuConfigurations`, `createdAt`,
+  `description`, `egressNetworkConnectors`, `hooks`, `imageArn`,
+  `imageVersion`, `logging`, `resources`, `state`, `status` y `updatedAt`;
+  sólo `GetMicrovmImageVersion` añade `environmentVariables`. Consecuencia
+  medida antes del arreglo: repetir el mismo `rayito image publish --sizes
+  512mb,4gb --env K=V` construyó una versión nueva de las tres imágenes en
+  vez de reutilizarlas (cada imagen con sufijo hornea siempre
+  `RAYITO_BASELINE_MEMORY_MIB`, así que ningún `--sizes` reutilizaba
+  nunca). Con el arreglo (`_publish.echoed_environment_variables`: una
+  `GetMicrovmImageVersion` por candidata, de la más nueva a la más
+  antigua, sólo si la publicación lleva variables) la misma invocación
+  reutilizó las tres en 5 s. Sin `--env` ni `--sizes` el reuse sigue
+  siendo el de 0.5.x (sólo la lista, ninguna llamada nueva).
+- **Q107 — `sizes-guard` aplicado de verdad.** Con la política desplegada
+  por `rayito stack deploy sizes-guard --param ImageArns=<ARN sin versión
+  del baseline>,<ARN sin versión de -4gb>` adjunta a un rol de prueba que
+  además tenía `lambda:*` sobre `*`: `RunMicrovm` de `-512mb` (no listado)
+  → `AccessDeniedException` "... on resource: <ARN sin versión de la
+  imagen> with an explicit deny in an identity-based policy"; `-4gb` y el
+  baseline (listados) arrancan. Sin la política, el mismo rol lanzó
+  `-512mb` (control). Confirma Q90: `RunMicrovm` autoriza sólo contra el
+  ARN de imagen sin versión, así que el `NotResource` del Deny no bloquea
+  ningún otro recurso de la petición.
+- **Un tamaño no publicado** (`size="8gb"` sin `-8gb`): el SDK resuelve el
+  nombre en cliente y `RunMicrovm` lo rechaza de forma síncrona,
+  `SandboxNotFoundException`/`SandboxNotFoundError` "No active version
+  found for MicroVM image <ARN de -8gb>": ningún MicroVM se crea.
+- **Variables de imagen y comandos.** `environmentVariables` (las de
+  `--env` y `RAYITO_BASELINE_MEMORY_MIB`) no aparecen en el entorno de
+  `commands.run` (uid 1000) ni en el de su shell; `/proc/1/environ` (rayd,
+  root) no es legible para uid 1000. Son información declarada de la
+  imagen, legible con `GetMicrovmImageVersion`, no un canal hacia el
+  código de usuario.
+- Resto, sin sorpresas: `size="4gb"` → `RunMicrovm` + `CreateMicrovmAuthToken`
+  en `create()` (ninguna `GetMicrovmImageVersion`), una sola en el primer
+  `get_info()`/`getInfo()` y ninguna en el segundo; guest `nproc` 8 y
+  `MemTotal` 16 052 MiB (Q88); `SizeRequest(memory_mib=300)`/`{ memoryMib:
+  300 }` → `512mb` con `RayitoCompatWarning`; 9000 MiB, `"3gb"` y ARN +
+  `size` → `InvalidArgumentException`/`InvalidArgumentError` con cero
+  llamadas a AWS; `rayito image sizes --image-name <nombre>` → `sameArtifact:
+  true` para los dos tamaños; tres builds en 206 s (baseline primero, los
+  dos tamaños en paralelo después).
 
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 

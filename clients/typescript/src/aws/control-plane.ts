@@ -10,6 +10,7 @@
 import {
   CreateMicrovmAuthTokenCommand,
   GetMicrovmCommand,
+  GetMicrovmImageVersionCommand,
   LambdaMicrovmsClient,
   type LambdaMicrovmsClientConfig,
   ListMicrovmsCommand,
@@ -229,6 +230,13 @@ export interface ControlPlane {
     ports: readonly PortSpec[],
     options?: ControlPlaneCallOptions,
   ): Promise<string>;
+  /** m15-sizes-catalog: `resources[0].minimumMemoryInMiB` de una versión de
+   * imagen ya lanzada; sin cuota propia en `API_TPS` (sólo en CloudTrail). */
+  getMicrovmImageVersion(
+    imageArn: string,
+    imageVersion: string,
+    options?: ControlPlaneCallOptions,
+  ): Promise<number>;
   /**
    * Las credenciales y el proxy del cliente del SDK de este plano, para que
    * los clientes S3 de las transferencias los hereden (ADR-010). Un
@@ -644,6 +652,25 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
       options.signal,
     )) as { authToken?: Record<string, string> | undefined };
     return proxyJweFromResponse(response.authToken ?? {});
+  }
+
+  async getMicrovmImageVersion(
+    imageArn: string,
+    imageVersion: string,
+    options: ControlPlaneCallOptions = {},
+  ): Promise<number> {
+    const response = (await this.#invoke(
+      "GetMicrovmImageVersion",
+      new GetMicrovmImageVersionCommand({ imageIdentifier: imageArn, imageVersion }),
+      options.signal,
+    )) as { resources?: ReadonlyArray<{ minimumMemoryInMiB?: number }> | undefined };
+    const minimumMemoryInMiB = response.resources?.[0]?.minimumMemoryInMiB;
+    if (minimumMemoryInMiB === undefined) {
+      throw new SandboxError(
+        `la versión ${imageVersion} de ${imageArn} no declara resources[].minimumMemoryInMiB`,
+      );
+    }
+    return minimumMemoryInMiB;
   }
 
   /** Con `signal`: uno ya abortado no envía nada y abortar a mitad rechaza con su `reason`, sin traducirlo. */

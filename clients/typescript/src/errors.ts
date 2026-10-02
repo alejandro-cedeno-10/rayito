@@ -235,6 +235,17 @@ export class CapacityError extends Error {
 }
 
 /**
+ * El `type` de `process.emitWarning` para un aviso informativo de
+ * compatibilidad (sandbox lanzado igual, sólo se avisa) — el equivalente a
+ * `rayito.exceptions.RayitoCompatWarning` de Python. Vive aquí, no en
+ * `e2b/compat.ts` (que lo re-exporta por compatibilidad), porque código
+ * nativo fuera del shim de E2B también lo usa (`sizing/sizing.ts`'s
+ * `warnIfRounded`, m15-sizes-catalog): un módulo de dominio compartido no
+ * debería depender del paquete del shim para una sola constante.
+ */
+export const COMPAT_WARNING_TYPE = "RayitoCompatWarning";
+
+/**
  * Algo que este sandbox no puede dar: una capacidad de E2B sin primitiva en
  * Lambda MicroVMs o una imagen anterior a la que la ofrece. Queda fuera de la
  * jerarquía de `SandboxError`, como `NotImplementedError` en Python;

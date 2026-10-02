@@ -36,6 +36,7 @@ import {
   S3_BUCKET_NAME_MIN,
 } from "../limits.js";
 import type { IdlePolicyInput, NetworkPolicyInput } from "../models.js";
+import type { ResolvedSize } from "../sizing/sizing.js";
 import {
   asConnectError,
   isProxyForbidden,
@@ -246,6 +247,8 @@ export interface LaunchOptions {
   readonly keepOnFailure: boolean | undefined;
   /** La política de egress ya resuelta (con `allowInternetAccess: false` incorporado). */
   readonly network: NetworkPolicyInput | undefined;
+  /** m15-sizes-catalog: el tamaño ya resuelto, o `undefined` sin `size`. */
+  readonly size: ResolvedSize | undefined;
 }
 
 export type CheckpointProgressCallback = (progress: CheckpointProgress) => void;

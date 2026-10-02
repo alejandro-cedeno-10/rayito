@@ -164,17 +164,20 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secrets import (
@@ -188,6 +191,8 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import SizeRequest
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -532,7 +537,7 @@ class Sandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -757,6 +762,10 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
+        # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
+        resolved_size = plan_size(size, stacklevel=4)
         feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -775,7 +784,8 @@ class Sandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = plane.resolve_template_arn(resolve_template(template))
+        template_name = sized_template_name(resolve_template(template), resolved_size)
+        image_arn = plane.resolve_template_arn(template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -856,6 +866,7 @@ class Sandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            size=resolved_size,
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1339,12 +1350,33 @@ class Sandbox:
         `Health` sin RPC extra (quedan fijos en `/run`), y nunca se sondea
         un sandbox que no está `RUNNING` (la sonda lo despertaría). Los
         hechos del guest sólo van en el valor devuelto: `sbx.info` los deja
-        en `None`."""
+        en `None`. `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+        aparecen cuando `create(size=...)` se usó (m15-sizes-catalog): esa
+        única llamada a `GetMicrovmImageVersion` se cachea por versión de
+        imagen (`_size_catalog.DEFAULT_SIZE_CATALOG`), así que repetir
+        `get_info()` no repite la llamada a AWS. Esto vive en
+        `self._launch_options` (relleno sólo por `create()`/`take()`):
+        `Sandbox.connect(id).get_info()` deja `size`/`baseline_memory_mib`/
+        `baseline_cpu` en `None` aunque la imagen tenga el sufijo de un
+        tamaño, porque el handle de `connect()` nunca pasó por `create()`
+        en este proceso (no hay un `requested_size` que confirmar). No se
+        deriva del sufijo del nombre de la imagen a propósito: un nombre
+        que termine en `-4gb` por convención propia del operador, no por
+        `--sizes`, confirmaría un tamaño que nadie pidió."""
         info = self._control_plane.get_microvm(self.sandbox_id)
         if deadline_may_have_moved(info.state, self._lifecycle):
             self._refresh_health()
         self._info = dataclasses.replace(info, metadata=self.metadata, lifecycle=self._lifecycle)
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = DEFAULT_SIZE_CATALOG.minimum_memory_mib(
+                self._control_plane, result.template, result.template_version
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     def _class_get_info(

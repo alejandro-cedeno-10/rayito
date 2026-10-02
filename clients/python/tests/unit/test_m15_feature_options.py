@@ -1,8 +1,11 @@
 """`rayito._feature_options.plan_features`: con las siete opciones en
 `None` no pasa nada; `mounts=` (`m15-s3-mounts`, la primera en dejar de ser
-un stub) construye una `S3MountsSection` real; las otras seis, puestas a
-algo distinto de `None`, siguen lanzando `UnimplementedError` nombrando su
-propio cambio OpenSpec, antes de construir ningún `FeaturePlan`."""
+un stub) construye una `S3MountsSection` real; `size=` tampoco es ya un stub
+(m15-sizes-catalog), pero no produce ninguna sección: su propia resolución
+se prueba en `test_m15_sizes_catalog_domain.py` y
+`test_m15_sizes_catalog_create.py`, no aquí. Las otras, puestas a algo
+distinto de `None`, siguen lanzando `UnimplementedError` nombrando su propio
+cambio OpenSpec, antes de construir ningún `FeaturePlan`."""
 
 from __future__ import annotations
 
@@ -48,7 +51,6 @@ def test_mounts_with_an_unknown_image_variant_is_not_rejected_here() -> None:
     ("field", "value", "option_name", "change_slug"),
     [
         ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
-        ("size", "4gb", "size=", "m15-sizes-catalog"),
         ("events", object(), "events=", "m15-events-webhooks"),
         ("telemetry", object(), "telemetry=", "m15-rayd-otlp"),
         ("gateways", {"anthropic": object()}, "gateways=", "m15-secrets-gateway"),
@@ -73,3 +75,12 @@ def test_feature_options_defaults_are_all_none() -> None:
     assert options.telemetry is None
     assert options.gateways is None
     assert options.domain is None
+
+
+def test_size_no_longer_raises_and_produces_no_configure_section() -> None:
+    """m15-sizes-catalog: `size=` no es un ajuste de `ConfigureSandbox` (no
+    hay nada que aplicar dentro del guest), así que `plan_features` no
+    lanza y el plan sigue sin secciones; la resolución real vive en
+    `_sizing.resolve_size` y se ejecuta en `create()`, no aquí."""
+    plan = plan_features(FeatureOptions(size="4gb"))
+    assert plan.configure_sections == ()

@@ -20,7 +20,6 @@ const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-bas
 describe("Sandbox.create: 0.6 options", () => {
   test.each([
     ["volumes", { "/mnt/v": {} }],
-    ["size", "4gb"],
     ["events", {}],
     ["telemetry", {}],
     ["gateways", { anthropic: {} }],
@@ -48,5 +47,12 @@ describe("Sandbox.create: 0.6 options", () => {
         mounts: { "/mnt/d": new S3Mount({ bucket: "team-data" }) },
       }),
     ).rejects.toThrow(InvalidArgumentError);
+  });
+
+  test("pool with size is invalid argument even though size is implemented", async () => {
+    // m15-sizes-catalog: `size` ya resuelve de verdad, pero sigue sin poder
+    // combinarse con `pool` (architecture §7.3).
+    const pool = Object.create(Object.getPrototypeOf({})) as SandboxPool;
+    await expect(Sandbox.create({ pool, size: "4gb" })).rejects.toThrow(InvalidArgumentError);
   });
 });

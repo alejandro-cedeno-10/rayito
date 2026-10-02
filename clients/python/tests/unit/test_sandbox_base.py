@@ -29,16 +29,20 @@ from rayito._sandbox_base import (
     metadata_from_health,
     metadata_matches,
     metadata_probe_failure,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_access_token,
+    sized_template_name,
     warn_shared_access_token,
     with_guest_facts,
 )
+from rayito._sizing import SizeRequest
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
+    RayitoCompatWarning,
     SandboxException,
     SandboxNotFoundException,
     SandboxStateException,
@@ -368,3 +372,39 @@ def test_launch_plan_repr_hides_the_access_token_and_the_payload() -> None:
     assert env_secret not in text
     assert "access_token" not in text and "run_hook_payload" not in text
     assert "rayito-base" in text
+
+
+# --------------------------------------------------------------- plan_size
+
+
+def test_plan_size_is_none_without_size() -> None:
+    assert plan_size(None, stacklevel=3) is None
+
+
+def test_plan_size_resolves_a_catalog_name() -> None:
+    resolved = plan_size("4gb", stacklevel=3)
+    assert resolved is not None
+    assert resolved.name == "4gb"
+    assert resolved.memory_mib == 4096
+
+
+def test_plan_size_warns_when_rounded_up(recwarn: pytest.WarningsRecorder) -> None:
+    plan_size(SizeRequest(memory_mib=3000), stacklevel=3)
+    assert any(issubclass(w.category, RayitoCompatWarning) for w in recwarn.list)
+
+
+def test_plan_size_rejects_an_impossible_request_before_any_aws_call() -> None:
+    with pytest.raises(InvalidArgumentException):
+        plan_size(SizeRequest(memory_mib=16384), stacklevel=3)
+
+
+# --------------------------------------------------------- sized_template_name
+
+
+def test_sized_template_name_without_a_resolved_size_is_unchanged() -> None:
+    assert sized_template_name("rayito-base", None) == "rayito-base"
+
+
+def test_sized_template_name_applies_the_suffix() -> None:
+    resolved = plan_size("4gb", stacklevel=3)
+    assert sized_template_name("rayito-base", resolved) == "rayito-base-4gb"

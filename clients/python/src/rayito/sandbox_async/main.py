@@ -158,17 +158,20 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secrets import (
@@ -182,6 +185,8 @@ from rayito._secrets import (
     relaunch_secrets,
     shared_secret_cache,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import SizeRequest
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -493,7 +498,7 @@ class AsyncSandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -621,6 +626,10 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_sync`) resuelve `size=` aquí, no en `plan_features`: ver
+        # la versión sync para el porqué.
+        resolved_size = plan_size(size, stacklevel=4)
         feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -639,7 +648,8 @@ class AsyncSandbox:
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = await asyncio.to_thread(plane.resolve_template_arn, resolve_template(template))
+        template_name = sized_template_name(resolve_template(template), resolved_size)
+        image_arn = await asyncio.to_thread(plane.resolve_template_arn, template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -721,6 +731,7 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            size=resolved_size,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -1124,14 +1135,31 @@ class AsyncSandbox:
     @class_method_variant("_class_get_info")
     async def get_info(self) -> SandboxInfo:
         """Misma semántica que `Sandbox.get_info`: un `Health` sólo si el
-        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo."""
+        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo.
+        `size`/`baseline_memory_mib`/`baseline_cpu` sólo aparecen cuando
+        `create(size=...)` se usó (m15-sizes-catalog); ver la versión sync
+        para el porqué de la única llamada cacheada a
+        `GetMicrovmImageVersion`, y para por qué `AsyncSandbox.connect(id)`
+        los deja en `None` aunque la imagen lleve sufijo de tamaño."""
         refreshed = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
         if deadline_may_have_moved(refreshed.state, self._lifecycle):
             await self._refresh_health()
         self._info = dataclasses.replace(
             refreshed, metadata=self.metadata, lifecycle=self._lifecycle
         )
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = await asyncio.to_thread(
+                DEFAULT_SIZE_CATALOG.minimum_memory_mib,
+                self._control_plane,
+                result.template,
+                result.template_version,
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     async def _class_get_info(

@@ -62,6 +62,7 @@ import {
   type IdlePolicyInput,
   type NetworkPolicyInput,
   type NetworkState,
+  planSize,
   type ResolvedS3Staging,
   type S3Staging,
   type SandboxHealth,
@@ -69,7 +70,9 @@ import {
   type SandboxListItem,
   type SandboxMetrics,
   sandboxInfo,
+  sizedTemplateName,
   withLifecycle,
+  withSizeFacts,
 } from "../models.js";
 import {
   type Instrumentation,
@@ -90,6 +93,8 @@ import {
   sharedSecretCache,
   warm,
 } from "../secrets/inject.js";
+import { defaultSizeCatalog } from "../sizing/catalog.js";
+import type { SizeInput } from "../sizing/sizing.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -361,11 +366,12 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * `undefined` lanza `UnimplementedError` nombrando ese cambio, antes de
    * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
    * siete ausentes (su valor por defecto) el comportamiento es exactamente
-   * el de 0.5.x.
+   * el de 0.5.x. `size` ya no es un stub (m15-sizes-catalog): ver
+   * `sizing/sizing.ts`.
    */
   readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
-  readonly size?: unknown;
+  readonly size?: SizeInput | undefined;
   readonly events?: unknown;
   readonly telemetry?: unknown;
   readonly gateways?: Readonly<Record<string, unknown>> | undefined;
@@ -721,6 +727,10 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
+    // m15-sizes-catalog: `planSize` (`models.ts`) resuelve `size` aquí, no
+    // en `planFeatures`: no es una sección de ConfigureSandbox, es qué
+    // imagen lanzar.
+    const resolvedSize = planSize(options.size);
     const featurePlan = planFeatures(
       {
         mounts: options.mounts,
@@ -738,7 +748,8 @@ export class Sandbox implements AsyncDisposable {
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
-    const imageArn = await plane.resolveTemplateArn(resolveTemplate(options.template), {
+    const resolvedTemplateName = sizedTemplateName(resolveTemplate(options.template), resolvedSize);
+    const imageArn = await plane.resolveTemplateArn(resolvedTemplateName, {
       signal: options.signal,
     });
     const plan = buildLaunchPlan({
@@ -825,6 +836,7 @@ export class Sandbox implements AsyncDisposable {
       reconnectTimeoutMs: options.reconnectTimeoutMs,
       keepOnFailure: options.keepOnFailure,
       network: isEmptyPolicy(network) ? undefined : network,
+      size: resolvedSize,
     };
     sandbox.#launchContext = {
       controlPlane: plane,
@@ -1289,11 +1301,24 @@ export class Sandbox implements AsyncDisposable {
       await this.#refreshHealth();
     }
     this.#core.info = withLifecycle(info, this.#core.lifecycle);
-    return sandboxInfo({
+    const result = sandboxInfo({
       ...this.#core.info,
       ...this.#core.guestFacts,
       metadata: this.#core.metadata,
     });
+    const requestedSize = this.#launchOptions?.size;
+    if (requestedSize === undefined) {
+      return result;
+    }
+    // m15-sizes-catalog: única llamada a GetMicrovmImageVersion, cacheada
+    // por versión de imagen (defaultSizeCatalog), para confirmar lo que
+    // `create({ size })` ya resolvió en cliente.
+    const confirmedMib = await defaultSizeCatalog.minimumMemoryMib(
+      this.#core.controlPlane,
+      result.template,
+      result.templateVersion,
+    );
+    return withSizeFacts(result, { size: requestedSize.name, baselineMemoryMib: confirmedMib });
   }
 
   /**
