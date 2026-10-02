@@ -102,27 +102,68 @@
       26), `optional-features.md`, `cost.md`, `security.md` (T21),
       `limits.md`, for `m15-docs-integration` to apply.
 
-## 7. Measurement script (not run)
+## 7. Measurement script (not run by this change)
 
-- [x] 7.1 `scripts/measure/efs_volumes.py`: `plan`/`run --region --run-id`/
-      `report`/`cleanup --run-id`; idempotent by tag
-      (`rayito:measurement=efs-volumes`, `rayito:run-id`,
-      `rayito:expires-at`); state under `$XDG_STATE_HOME/rayito-measure/`.
-      `run`/`cleanup` provision and tear down the real infra (a throwaway
-      VPC/subnet plus the `efs-volumes` `OptionalStack`, via
-      `rayito.OptionalStacks`) behind an injectable `MeasurementAwsPort`,
-      resolved by the `rayito:run-id` tag before creating anything new;
-      `cleanup` only drops a stage from local state once its delete has
-      actually succeeded. **Still a scaffold, on purpose**: the EFS-2/3/8/
-      9/11/12/13/15/16 measurements that need a running MicroVM against
-      that file system/connector are not launched by this script — they
-      are gathered by hand by the AWS acceptance stage against the infra
-      `run` provisions. Only the infra lifecycle (create/discover/destroy)
-      is real; the measurement-taking itself is not implemented here.
-- [x] 7.2 `scripts/tests/test_measure_efs_volumes.py`: the script's
-      tag-based discovery, reverse-dependency-order cleanup and
-      partial-failure-keeps-state behaviour, against a fake
-      `MeasurementAwsPort` — no AWS calls.
+- [x] 7.1 `scripts/measure/efs_volumes.py`: `plan`/`run`/`report`/
+      `cleanup`; idempotent by tag (`rayito:measurement=efs-volumes`,
+      `rayito:run-id`, `rayito:expires-at`); state under
+      `$XDG_STATE_HOME/rayito-measure/`. `run` provisions a throwaway
+      VPC/subnet and the `efs-volumes` `OptionalStack` (via
+      `rayito.OptionalStacks`), tags the stack's always-retained file
+      system with the run id, creates one access point and attaches
+      `CallerPolicyArn` to `--execution-role-arn`.
+- [x] 7.2 The ★ stop criteria are automated (`AUTOMATED`), in research doc
+      §9 order, through `rayito.Sandbox` against `--caps-template`:
+      EFS-2 (tmpfs + `mount -t nfs4` to TEST-NET in caps; `EPERM` in the
+      default image with `--default-template`), EFS-3 (connector `ACTIVE`
+      + TCP 2049 to the mount target), EFS-8 (20 × `mount -t efs -o
+      tls,iam,accesspoint,mounttargetip` without systemd, p50/p95,
+      `efs-proxy` count), EFS-11 (pause 60 s/10 min/60 min × 3 cycles,
+      time to first correct read after resume) and EFS-13 (`pause()` with
+      the mount-target ingress revoked; the rule is always restored). Each
+      records pass/fail; a ★ failure marks the run stopped and calls
+      `cleanup` immediately; a stopped run refuses to resume.
+- [x] 7.3 `cleanup` walks `CLEANUP_ORDER` (detach client policy, stack,
+      retained file system + its access points, subnet, VPC) and only
+      drops a stage once its delete succeeded; results survive for
+      `report`. Nothing an AWS id/IP/ARN reaches state or stdout
+      (`redact`).
+- [x] 7.4 `scripts/tests/test_measure_efs_volumes.py`: fakes for
+      `MeasurementAwsPort` and `GuestPort` — campaign order, stop-and-clean
+      on a ★ failure, EFS-13 restoring ingress on a hang, redaction,
+      resume skipping answered steps, cleanup order. No AWS calls.
+
+### 7.5 Acceptance checklist (serialized AWS stage, cap $1.50, in order)
+
+This change does not run any of it. The acceptance agent follows it step
+by step and stops at the first ★ failure (the script then cleans up by
+itself; re-run `cleanup` until it exits 0 anyway).
+
+1. `cd clients/python && uv run python ../../scripts/measure/efs_volumes.py plan`
+   — check the estimate is under the cap.
+2. **EFS-7 (★, by hand)**: publish a throwaway `rayito-base-caps` version
+   with `amazon-efs-utils` (and `efs-proxy`) installed; record the
+   `codeInstallSizeInBytes`/`memorySnapshotSizeInBytes` delta and build
+   time in `AWS_API_NOTES.md` §16. If the package cannot be installed on
+   `al2023-minimal` ARM64, stop here (no infra exists yet).
+3. `... efs_volumes.py run --region <r> --run-id <id> --caps-template
+   <throwaway caps> --execution-role-arn <infra/iam.yaml role>
+   [--default-template <rayito-base>]` — measures EFS-2, 3, 8, 11, 13 and
+   stops + cleans up on the first ★ failure. `--efs11-pauses 60` only for
+   a quick smoke run; the go/no-go needs the default 60,600,3600.
+4. Only if step 3 exited 0, by hand against the infra it left up
+   (`rayito stack status efs-volumes --stack-name
+   rayito-efs-volumes-measure-<id>` for the outputs): EFS-4
+   (`INTERNET_EGRESS` + connector), EFS-5 (DNS of `<fs-id>.efs...`),
+   EFS-9 (throughput), EFS-12 (70-min pause), EFS-15 (two sandboxes on the
+   same access point), EFS-16 (policy denials: no AP, no TLS, role without
+   `ClientWrite` via `AllowWrite=false`, another tenant's AP).
+5. `... efs_volumes.py report --run-id <id>`; copy the redacted rows into
+   `AWS_API_NOTES.md` §16 and the research doc §9.
+6. `... efs_volumes.py cleanup --run-id <id>` until it exits 0; then
+   confirm no file system tagged `rayito:run-id=<id>`, no stack
+   `rayito-efs-volumes-measure-<id>` and no VPC with that tag remain, and
+   delete the throwaway caps image version (and only it).
 
 ## 8. OpenSpec
 

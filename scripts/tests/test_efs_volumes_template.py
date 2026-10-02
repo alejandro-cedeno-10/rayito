@@ -84,7 +84,9 @@ def referenced_names(node: Any) -> set[str]:
             names |= referenced_names(value)
         return names
     if isinstance(node, list):
-        return set().union(*(referenced_names(item) for item in node)) if node else set()
+        return (
+            set().union(*(referenced_names(item) for item in node)) if node else set()
+        )
     return set()
 
 
