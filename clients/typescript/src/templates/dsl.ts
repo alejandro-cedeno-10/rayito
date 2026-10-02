@@ -33,6 +33,11 @@ import type { ReadyCommand } from "./ready-cmds.js";
 
 export { DEFAULT_BASE_IMAGE_NAME };
 
+/** `pipInstall()`: rayito-base (al2023-minimal) no tiene `pip` en el PATH,
+ * sólo `python3 -m pip` (Q116: `RUN pip install` sale con 127); mismas
+ * banderas que las capas de `image/Dockerfile`. */
+export const PIP_INSTALL_COMMAND = "python3 -m pip install --no-cache-dir --break-system-packages";
+
 const UNSUPPORTED_BASE_REASON = (method: string): string =>
   `Template.${method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo ` +
   "fromBaseImage() sabe componer eso (siempre sobre un zip de codeArtifact ya publicado con " +
@@ -148,7 +153,7 @@ export class Template {
       throw new InvalidArgumentError("pipInstall: la lista de paquetes no puede ser vacía");
     }
     const args = extraArgs ? ` ${extraArgs}` : "";
-    return this.runCmd(`pip install --no-cache-dir${args} ${names.join(" ")}`);
+    return this.runCmd(`${PIP_INSTALL_COMMAND}${args} ${names.join(" ")}`);
   }
 
   aptInstall(..._args: unknown[]): never {

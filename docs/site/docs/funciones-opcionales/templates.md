@@ -31,11 +31,16 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
       ciclo de vida a ese prefijo; ningún build posterior lo vuelve a leer.
     - **IAM**: `RayitoTemplateBuilder` (`infra/templates.yaml`) sobre quien
       llama a `Template.build()`:
-      `CreateMicrovmImage`/`UpdateMicrovmImage`/`GetMicrovmImage*`/
-      `ListMicrovmImageVersions` sobre las imágenes de la cuenta y la
-      región, con un `Deny` explícito que impide crear o actualizar las
-      imágenes base publicadas (`ProtectedImageNamePrefix`, `rayito-base`
-      por defecto); `iam:PassRole` sobre el rol de build (el mismo que usa
+      `UpdateMicrovmImage`/`GetMicrovmImage*`/`ListMicrovmImageVersions`
+      sobre las imágenes de la cuenta y la región, con un `Deny` explícito
+      que impide actualizar las imágenes base publicadas
+      (`ProtectedImageNamePrefix`, `rayito-base` por defecto);
+      `CreateMicrovmImage` sobre `*`, porque AWS lo autoriza sobre `*` y no
+      sobre el ARN de la imagen nueva, así que no se puede acotar por nombre
+      (un `create` sobre un nombre que ya existe falla, de modo que tampoco
+      sobrescribe una base); `lambda:PassNetworkConnector` sobre los
+      conectores gestionados por AWS, que `create`/`update` pasan aunque no
+      nombres ninguno (`AWS_API_NOTES.md` Q114); `iam:PassRole` sobre el rol de build (el mismo que usa
       `rayito image publish`); `s3:PutObject`/`GetObject` en
       `rayito/templates/` del bucket de artefactos y `s3:GetObject` en el
       bucket de la imagen base (por defecto, el mismo); lectura del grupo
@@ -137,7 +142,7 @@ libre de AWS.
         .pip_install(["pandas==2.2.3"])
         .copy("app/", "/srv/app/")
         .set_envs({"MODE": "prod"})
-        .set_start_cmd("python -m http.server 8000", wait_for_port(8000))
+        .set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))
     )
     info = Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos")  # (2)!
     print(info.template_id)  # arn:aws:lambda:...:microvm-image:mi-template
@@ -160,7 +165,7 @@ libre de AWS.
 
     async def main() -> None:
         t = Template().from_base_image().set_start_cmd(
-            "python -m http.server 8000", wait_for_port(8000)
+            "python3 -m http.server 8000", wait_for_port(8000)
         )
         info = await AsyncTemplate.build(t, "mi-template", bucket="mi-bucket-de-artefactos")
         print(info.template_id)
@@ -179,7 +184,7 @@ libre de AWS.
       .pipInstall(["pandas==2.2.3"])
       .copy("app/", "/srv/app/")
       .setEnvs({ MODE: "prod" })
-      .setStartCmd("python -m http.server 8000", waitForPort(8000));
+      .setStartCmd("python3 -m http.server 8000", waitForPort(8000));
 
     const info = await Template.build(t, "mi-template", { bucket: "mi-bucket-de-artefactos" });
     console.log(info.templateId);

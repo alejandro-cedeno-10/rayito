@@ -255,7 +255,18 @@ def test_desired_configuration_copies_the_base_images_own_managed_base_not_itsel
         log_group="/rayito/x",
     )
     assert desired["baseImageArn"] == "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1"
-    assert desired["baseImageVersion"] == "1.0"
+    # El eco `1.0` (Q52) vuelve a la grafía mayor que create/update aceptan.
+    assert desired["baseImageVersion"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("echoed", "requested"),
+    [("1.0", "1"), ("1", "1"), (1, "1"), ("2.00", "2"), ("1.5", "1.5"), ("latest", "latest")],
+)
+def test_requestable_base_image_version_drops_only_a_zero_fraction(
+    echoed: Any, requested: str
+) -> None:
+    assert _images.requestable_base_image_version(echoed) == requested
 
 
 def test_desired_configuration_keeps_the_caps_variants_os_capabilities() -> None:

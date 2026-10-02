@@ -38,7 +38,7 @@ Ejemplo:
         Template()
         .from_base_image("rayito-base")
         .pip_install(["pandas==2.2.3"])
-        .set_start_cmd("python -m http.server 8000", wait_for_port(8000))
+        .set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))
     )
     info = Template.build(t, "mi-template", bucket="<bucket-de-artefactos>")
     sbx = Sandbox.create(info.template_id)

@@ -161,8 +161,27 @@ def inherited_configuration(base_version: dict[str, Any]) -> dict[str, Any]:
         if base_version.get(key) is not None
     }
     if BASE_IMAGE_VERSION_KEY in configuration:
-        configuration[BASE_IMAGE_VERSION_KEY] = str(configuration[BASE_IMAGE_VERSION_KEY])
+        configuration[BASE_IMAGE_VERSION_KEY] = requestable_base_image_version(
+            configuration[BASE_IMAGE_VERSION_KEY]
+        )
     return configuration
+
+
+def requestable_base_image_version(echoed: Any) -> str:
+    """La grafía de `baseImageVersion` que aceptan `create`/
+    `update-microvm-image`: la versión gestionada mayor (`1`), no la
+    normalizada (`1.0`) que devuelve `get-microvm-image-version` (Q52).
+    Reenviar el eco tal cual da `ValidationException` "Expected a single
+    major version number" (Q115). Una grafía no numérica o con parte
+    fraccionaria se deja intacta: la validación es de AWS."""
+    text = str(echoed)
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        return text
+    if not number.is_finite() or number != number.to_integral_value():
+        return text
+    return str(int(number))
 
 
 def submit_image_build(

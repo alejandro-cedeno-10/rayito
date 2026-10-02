@@ -182,10 +182,26 @@ export function inheritedConfiguration(
   for (const key of INHERITED_CONFIGURATION_KEYS) {
     const value = baseVersion[key];
     if (value !== undefined && value !== null) {
-      configuration[key] = key === BASE_IMAGE_VERSION_KEY ? String(value) : value;
+      configuration[key] =
+        key === BASE_IMAGE_VERSION_KEY ? requestableBaseImageVersion(value) : value;
     }
   }
   return configuration;
+}
+
+/** La grafía de `baseImageVersion` que aceptan `create`/`update-microvm-image`:
+ * la versión gestionada mayor (`1`), no la normalizada (`1.0`) que devuelve
+ * `get-microvm-image-version` (Q52). Reenviar el eco tal cual da
+ * `ValidationException` "Expected a single major version number" (Q115).
+ * Una grafía no numérica o con parte fraccionaria se deja intacta: la
+ * validación es de AWS. */
+export function requestableBaseImageVersion(echoed: unknown): string {
+  const text = String(echoed);
+  const number = Number(text);
+  if (text.trim() === "" || !Number.isInteger(number)) {
+    return text;
+  }
+  return String(number);
 }
 
 export interface SubmittedBuild {

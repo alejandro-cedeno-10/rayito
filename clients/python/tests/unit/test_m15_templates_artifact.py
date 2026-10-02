@@ -20,7 +20,8 @@ def test_assemble_artifact_keeps_every_base_entry_and_replaces_the_dockerfile() 
     artifact = assemble_artifact(base_zip, spec, ())
     entries = read_zip_entries(artifact)
     assert entries["rayd"] == b"\x7fELF..."
-    assert "RUN pip install --no-cache-dir pandas" in entries["Dockerfile"].decode()
+    dockerfile = entries["Dockerfile"].decode()
+    assert "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas" in dockerfile
 
 
 def test_assemble_artifact_adds_context_files_and_template_json_when_start_is_set() -> None:

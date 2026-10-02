@@ -225,3 +225,22 @@
       `origin/main`.
 - [ ] 10.2 Push and open the PR; wait for CI; fix until green.
 - [ ] 10.3 Do not merge (per instructions).
+
+## 11. AWS acceptance (serialized stage, 2026-10-02)
+
+- [x] 11.1 Base image with this branch's `rayd`, published under its own
+      name (`rayito-base` untouched), and `rayito stack deploy templates`.
+- [x] 11.2 Fix found: `create-microvm-image` rejects the inherited
+      `baseImageVersion` echo `1.0`; `inherited_configuration`/
+      `inheritedConfiguration` send the major form `1` (Q115).
+- [x] 11.3 Fix found: rayito-base has no `pip` on `PATH`;
+      `pip_install()`/`pipInstall()` compile to `python3 -m pip install
+      --no-cache-dir --break-system-packages` (Q116).
+- [x] 11.4 Fix found: `RayitoTemplateBuilder` could not create an image
+      (`CreateMicrovmImage` is authorized on `*`) nor pass the managed
+      egress connectors; `Deny` now covers `UpdateMicrovmImage` only (Q114).
+- [x] 11.5 Python and TypeScript e2e (successful build, failing `RUN` with
+      step/command/exit code, `ready_cmd` → `ready_server_error`), a
+      build under a role holding only `RayitoTemplateBuilder`, and TPL-15
+      (`set_start_cmd` + `wait_for_port`, `commands.list()`, `curl`,
+      pause/resume).

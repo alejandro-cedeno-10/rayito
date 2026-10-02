@@ -22,7 +22,7 @@ describe("templates/dockerfile", () => {
     expect(rendered).not.toContain("FROM");
     const lines = rendered.split("\n").filter((line) => line && !line.startsWith("#"));
     expect(lines).toEqual([
-      "RUN pip install --no-cache-dir pandas",
+      "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas",
       'COPY ["__rayito_context/app/", "/srv/app/"]',
     ]);
   });
@@ -32,11 +32,13 @@ describe("templates/dockerfile", () => {
     const composed = composeDockerfile(BASE_DOCKERFILE, spec);
     const lines = composed.trimEnd().split("\n");
     expect(lines[0]).toBe("FROM scratch");
-    expect(lines).toContain("RUN pip install --no-cache-dir pandas");
+    expect(lines).toContain(
+      "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas",
+    );
     expect(lines.at(-2)).toBe("USER root");
     expect(lines.at(-1)).toBe('CMD ["/usr/local/bin/rayd"]');
     expect(lines.indexOf("COPY rayd /usr/local/bin/rayd")).toBeLessThan(
-      lines.indexOf("RUN pip install --no-cache-dir pandas"),
+      lines.indexOf("RUN python3 -m pip install --no-cache-dir --break-system-packages pandas"),
     );
   });
 

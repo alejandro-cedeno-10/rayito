@@ -283,9 +283,12 @@ the call or from `E2B(...)`; with no bucket in either,
 the `RayitoTemplateBuilder` managed policy (`infra/templates.yaml`); it
 SHALL never create, and `destroy()` SHALL never delete, an S3 bucket, a
 MicroVM image or a Lambda function. The policy SHALL scope image actions
-to this account's `microvm-image:*`, SHALL deny creating or updating the
-images named by `ProtectedImageNamePrefix` (`rayito-base` by default), and
-SHALL never grant `Resource: "*"`.
+to this account's `microvm-image:*`, SHALL deny updating the images named
+by `ProtectedImageNamePrefix` (`rayito-base` by default), SHALL grant
+`lambda:PassNetworkConnector` only on the AWS managed connectors, and
+SHALL grant `Resource: "*"` only for `lambda:CreateMicrovmImage`, which
+AWS authorizes on `*` rather than on the new image's ARN (AWS_API_NOTES.md
+Q114).
 
 #### Scenario: deploying templates creates no bucket, image or function
 - **WHEN** `OptionalStacks.deploy("templates", parameters={...})` is
@@ -294,5 +297,6 @@ SHALL never grant `Resource: "*"`.
 
 #### Scenario: the builder cannot overwrite rayito-base
 - **WHEN** the policy's statements are read
-- **THEN** a `Deny` covers `CreateMicrovmImage`/`UpdateMicrovmImage` on
-  `microvm-image:${ProtectedImageNamePrefix}*`
+- **THEN** a `Deny` covers `UpdateMicrovmImage` on
+  `microvm-image:${ProtectedImageNamePrefix}*` (a create on an existing
+  name fails, so it cannot replace a base image either)

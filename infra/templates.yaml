@@ -68,18 +68,36 @@ Resources:
           - Sid: BuildMicrovmImages
             Effect: Allow
             Action:
-              - lambda:CreateMicrovmImage
               - lambda:UpdateMicrovmImage
               - lambda:GetMicrovmImage
               - lambda:GetMicrovmImageVersion
               - lambda:ListMicrovmImageVersions
             Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:*"
+          # CreateMicrovmImage is authorized on "*", not on the new image's
+          # ARN (AccessDeniedException "...lambda:CreateMicrovmImage on
+          # resource: *", AWS_API_NOTES.md Q114), so it cannot be scoped by
+          # name: a new name with the protected prefix can be created, but
+          # an existing base image is never replaced (create on an existing
+          # name fails) and every later build of it is an update, denied
+          # below.
+          - Sid: CreateMicrovmImages
+            Effect: Allow
+            Action:
+              - lambda:CreateMicrovmImage
+            Resource: "*"
           - Sid: NeverOverwriteBaseImages
             Effect: Deny
             Action:
-              - lambda:CreateMicrovmImage
               - lambda:UpdateMicrovmImage
             Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ProtectedImageNamePrefix}*"
+          # create/update-microvm-image pass the AWS managed egress
+          # connectors even when none is named (Q114, same rule as RunMicrovm
+          # in AWS_API_NOTES.md section 10).
+          - Sid: PassManagedNetworkConnectors
+            Effect: Allow
+            Action:
+              - lambda:PassNetworkConnector
+            Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:*"
           - Sid: PassBuildRole
             Effect: Allow
             Action:

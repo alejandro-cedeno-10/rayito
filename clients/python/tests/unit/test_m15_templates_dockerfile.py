@@ -23,7 +23,7 @@ def test_render_appended_layer_has_no_from_and_keeps_step_order() -> None:
     assert "FROM" not in rendered
     lines = [line for line in rendered.splitlines() if line and not line.startswith("#")]
     assert lines == [
-        "RUN pip install --no-cache-dir pandas",
+        "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas",
         'COPY ["__rayito_context/app/", "/srv/app/"]',
     ]
 
@@ -33,12 +33,12 @@ def test_compose_inserts_the_layer_before_the_final_cmd_and_repeats_it() -> None
     composed = compose_dockerfile(BASE_DOCKERFILE, spec)
     lines = composed.splitlines()
     assert lines[0] == "FROM scratch"
-    assert "RUN pip install --no-cache-dir pandas" in lines
+    assert "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas" in lines
     assert lines[-2] == "USER root"
     assert lines[-1] == 'CMD ["/usr/local/bin/rayd"]'
     # rayd's own COPY still happens before the new layer.
     assert lines.index("COPY rayd /usr/local/bin/rayd") < lines.index(
-        "RUN pip install --no-cache-dir pandas"
+        "RUN python3 -m pip install --no-cache-dir --break-system-packages pandas"
     )
 
 

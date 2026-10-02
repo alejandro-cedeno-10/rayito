@@ -28,7 +28,10 @@ describe("templates/dsl", () => {
       .copy("app/", "/srv/app/")
       .setEnvs({ MODE: "prod" });
     expect(t.spec.steps).toEqual([
-      { kind: "run", cmd: "pip install --no-cache-dir pandas==2.2.3" },
+      {
+        kind: "run",
+        cmd: "python3 -m pip install --no-cache-dir --break-system-packages pandas==2.2.3",
+      },
       { kind: "copy", src: "app/", dst: "/srv/app/" },
       { kind: "env", key: "MODE", value: "prod" },
     ]);

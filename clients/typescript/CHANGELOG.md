@@ -52,7 +52,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   opcional nuevo, sólo para explicar un build fallido). `infra/templates.yaml`
   (`rayito stack deploy templates`): sólo la política IAM
   `RayitoTemplateBuilder`, $0 en reposo, que no puede sobrescribir las
-  imágenes base publicadas.
+  imágenes base publicadas. Aceptación en AWS real: `pipInstall()` compila
+  a `python3 -m pip install --no-cache-dir --break-system-packages`
+  (rayito-base no tiene `pip` en el `PATH`); la versión gestionada que se
+  hereda se envía como `1`, no como el eco `1.0` que `create-microvm-image`
+  rechaza; la política concede `CreateMicrovmImage` sobre `*` (AWS no la
+  autoriza por ARN) y `lambda:PassNetworkConnector` sobre los conectores
+  gestionados, y su `Deny` cubre `UpdateMicrovmImage` sobre las bases
+  (`AWS_API_NOTES.md` Q114-Q116).
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

@@ -1,7 +1,8 @@
 """`infra/templates.yaml` (m15-templates), leída como datos: una sola
 política IAM gestionada (coste $0); las acciones de imagen acotadas a las
-imágenes de la cuenta y la región, nunca `Resource: "*"`; un `Deny` que
-impide crear o actualizar las imágenes base publicadas; ningún
+imágenes de la cuenta y la región, y `Resource: "*"` sólo para
+`CreateMicrovmImage`, que AWS autoriza sobre `*` (Q114); un `Deny` que
+impide actualizar las imágenes base publicadas; ningún
 `s3:GetObject` sobre todos los buckets; sin acciones inexistentes
 (`s3:HeadObject`) ni sin usar (`*MicrovmImageBuild*`)."""
 
@@ -23,6 +24,7 @@ ALLOWED_ACTIONS = frozenset(
         "lambda:GetMicrovmImageVersion",
         "lambda:ListMicrovmImageVersions",
         "iam:PassRole",
+        "lambda:PassNetworkConnector",
         "s3:GetObject",
         "s3:PutObject",
         "logs:DescribeLogStreams",
@@ -69,9 +71,12 @@ def test_every_action_is_on_the_allow_list() -> None:
         assert set(statement["Action"]) <= ALLOWED_ACTIONS, statement["Sid"]
 
 
-def test_no_statement_grants_every_resource() -> None:
-    for statement in statements().values():
-        assert statement["Resource"] != "*", statement["Sid"]
+def test_only_create_microvm_image_grants_every_resource() -> None:
+    """AWS autoriza `CreateMicrovmImage` sobre `*`, no sobre el ARN de la
+    imagen nueva (Q114): es la única acción que puede ir sin acotar."""
+    for sid, statement in statements().items():
+        if statement["Resource"] == "*":
+            assert statement["Action"] == ["lambda:CreateMicrovmImage"], sid
 
 
 def test_image_actions_are_scoped_to_this_accounts_images() -> None:
@@ -82,9 +87,20 @@ def test_image_actions_are_scoped_to_this_accounts_images() -> None:
 def test_the_published_base_images_can_never_be_overwritten() -> None:
     deny = statements()["NeverOverwriteBaseImages"]
     assert deny["Effect"] == "Deny"
-    assert set(deny["Action"]) == {"lambda:CreateMicrovmImage", "lambda:UpdateMicrovmImage"}
+    # Sólo update: create va sobre `*` (Q114) y no se puede acotar por nombre;
+    # create sobre un nombre existente falla, así que no sobrescribe nada.
+    assert deny["Action"] == ["lambda:UpdateMicrovmImage"]
     assert deny["Resource"] == {"Fn::Sub": f"{IMAGE_ARN}${{ProtectedImageNamePrefix}}*"}
     assert template()["Parameters"]["ProtectedImageNamePrefix"]["Default"] == "rayito-base"
+
+
+def test_only_the_aws_managed_network_connectors_can_be_passed() -> None:
+    passes = statements()["PassManagedNetworkConnectors"]
+    assert passes["Action"] == ["lambda:PassNetworkConnector"]
+    assert passes["Resource"] == {
+        "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:"
+        "aws-network-connector:*"
+    }
 
 
 def test_the_base_artifact_read_falls_back_to_the_artifact_bucket() -> None:

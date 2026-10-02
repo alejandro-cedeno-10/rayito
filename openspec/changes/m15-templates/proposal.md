@@ -76,10 +76,12 @@ control plane of its own) is what this change builds.
   pattern already used for `NotEnoughSpaceException`/`FileUploadException`.
 - **Infra** (`infra/templates.yaml`, OptionalStack `templates`): a single
   managed policy, `RayitoTemplateBuilder`
-  (`CreateMicrovmImage`/`UpdateMicrovmImage`/`GetMicrovmImage*`/
-  `ListMicrovmImageVersions` on this account's `microvm-image:*`, an
-  explicit `Deny` on creating/updating the published base images
-  (`ProtectedImageNamePrefix`), `iam:PassRole` on the build role, S3
+  (`UpdateMicrovmImage`/`GetMicrovmImage*`/`ListMicrovmImageVersions` on
+  this account's `microvm-image:*`, `CreateMicrovmImage` on `*` — the
+  only resource AWS authorizes it on, Q114 —, an explicit `Deny` on
+  updating the published base images (`ProtectedImageNamePrefix`),
+  `lambda:PassNetworkConnector` on the AWS managed connectors,
+  `iam:PassRole` on the build role, S3
   access to the artifact bucket and the base image's bucket — never `*` —
   and read-only CloudWatch Logs access) for whoever calls
   `Template.build()`. No bucket, no image, no Lambda function: $0 at rest.

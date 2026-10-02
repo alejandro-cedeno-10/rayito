@@ -6,6 +6,18 @@
 import type { BuildClients } from "../../src/templates/build.js";
 import { writeZip } from "../../src/templates/zip-node.js";
 
+/** Como AWS: `create-microvm-image` rechaza el eco normalizado (`1.0`)
+ * con `ValidationException` (Q115); el fake exige también a `update` la
+ * forma mayor (`1`), la única que se midió aceptada en ambos (Q52). */
+function rejectNormalisedBaseVersion(request: Record<string, unknown>): void {
+  const version = request["baseImageVersion"];
+  if (version !== undefined && !/^\d+$/.test(String(version))) {
+    const error = new Error("ValidationException");
+    error.name = "ValidationException";
+    throw error;
+  }
+}
+
 export interface FakeVersion {
   readonly state: string;
   readonly status: string;
@@ -95,6 +107,7 @@ export class FakeBuildClients implements BuildClients {
   ): Promise<{ imageArn: string; imageVersion: string }> {
     this.calls.push(["createMicrovmImage", name]);
     this.throwSubmitError();
+    rejectNormalisedBaseVersion(request);
     const arn = `arn:aws:lambda:${this.region}:${this.accountIdValue}:microvm-image:${name}`;
     const version = this.nextBuildVersion;
     this.images.set(arn, { state: "CREATED" });
@@ -114,6 +127,7 @@ export class FakeBuildClients implements BuildClients {
   ): Promise<{ imageArn: string; imageVersion: string }> {
     this.calls.push(["updateMicrovmImage", arn]);
     this.throwSubmitError();
+    rejectNormalisedBaseVersion(request);
     const version = this.nextBuildVersion;
     this.versions.set(this.versionKey(arn, version), {
       state: "SUCCESSFUL",

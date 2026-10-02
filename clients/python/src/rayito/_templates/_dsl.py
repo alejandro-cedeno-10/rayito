@@ -47,6 +47,11 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
 if TYPE_CHECKING:
     from rayito._templates._models import BuildHandle, BuildInfo, BuildStatus
 
+#: `pip_install()`: rayito-base (al2023-minimal) no tiene `pip` en el PATH,
+#: sólo `python3 -m pip` (Q116: `RUN pip install` sale con 127); mismas
+#: banderas que las capas de `image/Dockerfile`.
+PIP_INSTALL_COMMAND = "python3 -m pip install --no-cache-dir --break-system-packages"
+
 _UNSUPPORTED_BASE_REASON = (
     "Template.{method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo "
     "from_base_image() sabe componer eso (siempre sobre un zip de codeArtifact ya publicado con "
@@ -132,7 +137,7 @@ class Template:
         if not names:
             raise InvalidArgumentException("pip_install: la lista de paquetes no puede ser vacía")
         args = f" {extra_args}" if extra_args else ""
-        return self.run_cmd(f"pip install --no-cache-dir{args} " + " ".join(names))
+        return self.run_cmd(f"{PIP_INSTALL_COMMAND}{args} " + " ".join(names))
 
     def apt_install(self, *_args: Any, **_kwargs: Any) -> Self:
         raise UnimplementedError(

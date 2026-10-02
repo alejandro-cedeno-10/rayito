@@ -10,6 +10,7 @@ import {
   NotFoundError,
   TemplateError,
 } from "../../src/errors.js";
+import { requestableBaseImageVersion } from "../../src/images/gateway.js";
 import {
   _resetBuildClientsFactory,
   _setBuildClientsFactory,
@@ -209,7 +210,19 @@ describe("templates/build", () => {
       logGroup: "/rayito/x",
     });
     expect(desired["baseImageArn"]).toBe("arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1");
-    expect(desired["baseImageVersion"]).toBe("1.0");
+    // El eco `1.0` (Q52) vuelve a la grafía mayor que create/update aceptan.
+    expect(desired["baseImageVersion"]).toBe("1");
+  });
+
+  test.each([
+    ["1.0", "1"],
+    ["1", "1"],
+    [1, "1"],
+    ["2.00", "2"],
+    ["1.5", "1.5"],
+    ["latest", "latest"],
+  ])("requestableBaseImageVersion(%j) is %j", (echoed, requested) => {
+    expect(requestableBaseImageVersion(echoed)).toBe(requested);
   });
 
   test("a failing build still throws BuildError, not an unhandled type error", async () => {

@@ -91,6 +91,7 @@ class _FakeMicrovms:
         self._parent.calls.append(("create_microvm_image", name))
         if self._parent.submit_error_code is not None:
             raise _client_error(self._parent.submit_error_code)
+        _reject_normalised_base_version(request)
         arn = f"arn:aws:lambda:{self._parent.region}:{self._parent.account_id}:microvm-image:{name}"
         version = self._parent.next_build_version
         self._parent.images[arn] = {"state": "CREATED", **request}
@@ -107,6 +108,7 @@ class _FakeMicrovms:
         self._parent.calls.append(("update_microvm_image", imageIdentifier))
         if self._parent.submit_error_code is not None:
             raise _client_error(self._parent.submit_error_code)
+        _reject_normalised_base_version(request)
         version = self._parent.next_build_version
         self._parent.versions[(imageIdentifier, version)] = {
             "state": "SUCCESSFUL",
@@ -179,6 +181,15 @@ class _Readable:
 
     def read(self) -> bytes:
         return self._content
+
+
+def _reject_normalised_base_version(request: dict[str, Any]) -> None:
+    """Como AWS: `create-microvm-image` rechaza el eco normalizado (`1.0`)
+    con `ValidationException` (Q115); el fake exige también a `update` la
+    forma mayor (`1`), la única que se midió aceptada en ambos (Q52)."""
+    version = request.get("baseImageVersion")
+    if version is not None and not str(version).isdigit():
+        raise _client_error("ValidationException")
 
 
 def _client_error(code: str) -> Exception:

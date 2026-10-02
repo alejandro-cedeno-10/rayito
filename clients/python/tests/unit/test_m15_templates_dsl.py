@@ -36,7 +36,7 @@ def test_steps_compile_in_call_order() -> None:
         .set_envs({"MODE": "prod"})
     )
     assert t.spec.steps == (
-        RunStep("pip install --no-cache-dir pandas==2.2.3"),
+        RunStep("python3 -m pip install --no-cache-dir --break-system-packages pandas==2.2.3"),
         CopyStep("app/", "/srv/app/"),
         EnvStep("MODE", "prod"),
     )
