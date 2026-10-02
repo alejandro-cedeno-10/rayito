@@ -1405,16 +1405,15 @@ credenciales del execution role por su propio acceso a IMDS, sin que
 `RAYITO_ALLOWED_MOUNT_BUCKETS` (vacío o ausente deniega todo). IAM:
 `infra/s3-mounts.yaml` (`RayitoS3MountAccess`, componente `OptionalStack`
 `s3-mounts`). Sin API en el shim de E2B (fila 111 de `e2b-parity.md`,
-divergente). **Validado localmente** (unit tests Rust/Python/TypeScript,
-`cargo clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
+divergente). `Sandbox.create(mounts=)`/`create({ mounts })` y
+`sbx.mounts`/`sbx.mounts()` ya están cableados de punta a punta
+(`_feature_options.plan_features`/`feature-options.ts`,
+`create()`/`_open()` ejecutando `configure_sections` tras `Health`).
+**Validado localmente** (unit tests Rust/Python/TypeScript, `cargo
+clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
 `openspec validate --strict`); **pendiente de aceptación en AWS real**
 (S3M-1..S3M-4, numeración real desde Q95 en la aceptación serializada de
-M15) y de la integración final de `Sandbox.create(mounts=)`/`sbx.mounts`
-(hoy `_feature_options.plan_features` sigue lanzando `UnimplementedError`
-para `mounts=`, sin cambios de comportamiento respecto a 0.5.x: el dominio
-y el agente están listos, falta el cableado de `sandbox_{sync,async}/main.py`
-y `sandbox/sandbox.ts`, reservado por convención de M15 a quien integre
-las ocho funciones).
+M15).
 
 ### Funciones (pendientes de su propio cambio OpenSpec)
 

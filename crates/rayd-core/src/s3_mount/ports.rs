@@ -46,9 +46,11 @@ pub trait FuseDaemon: Send + Sync {
     /// Once `is_alive` has turned `false` for a `pid` this adapter spawned,
     /// the classified reason it exited — from its exit status and a
     /// stderr tail that is read here and never logged or returned as
-    /// text, only as this closed class. Reads the record exactly once
-    /// (subsequent calls for the same `pid` return the same class from a
-    /// cache, never panic): never called while `is_alive(pid)` is `true`.
+    /// text, only as this closed class. Consumes the record: the caller
+    /// asks exactly once per death, right after observing `is_alive` turn
+    /// `false`, so a second call for the same `pid` is never made and an
+    /// adapter is free to free the record's memory on read. Never called
+    /// while `is_alive(pid)` is still `true`.
     fn exit_class(&self, pid: i32) -> MountErrorClass;
 
     /// Best-effort `SIGTERM` to the process group; never panics on an

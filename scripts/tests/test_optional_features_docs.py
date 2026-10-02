@@ -26,6 +26,7 @@ FUNCTION_ANCHORS = (
     "secrets-crud",
     "metadata-index",
     "otel-sdk",
+    "s3-mounts",
 )
 
 DOCSTRING_MARKER = "Coste y activación"
@@ -143,8 +144,8 @@ def test_optional_features_table_header_matches_the_contract() -> None:
 def test_optional_features_table_has_one_row_per_function() -> None:
     page = read(OPTIONAL_FEATURES_PAGE)
     rows = parse_markdown_table(page, EXPECTED_TABLE_HEADER)
-    assert len(rows) == 4, (
-        f"se esperaban 4 filas de funciones con coste, hay {len(rows)}"
+    assert len(rows) == 5, (
+        f"se esperaban 5 filas de funciones con coste, hay {len(rows)}"
     )
     for anchor in FUNCTION_ANCHORS:
         assert f'id="{anchor}"' in page, (
