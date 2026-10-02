@@ -30,7 +30,7 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
     - **IAM**: ninguno adicional para lanzar con `size=`. `sizes-guard`
       (`RayitoRunAllowedSizes`) añade un Deny de `lambda:RunMicrovm` fuera
       de los ARN de imagen que el operador liste (no sólo un Allow: el
-      Allow solo no restringe nada si la identidad ya tiene el
+      Allow, por sí solo, no restringe nada si la identidad ya tiene el
       `microvm-image:*` de la `CallerPolicy` estándar de `infra/iam.yaml`,
       que es justo el caso típico); adjúntala a la identidad que crea
       sandboxes para impedir que lance un tamaño no publicado, sea cual sea
