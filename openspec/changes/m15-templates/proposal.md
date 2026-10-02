@@ -59,9 +59,12 @@ control plane of its own) is what this change builds.
   of a build is just an image name/ARN, launched exactly like any other
   image.
 - **E2B shim**: `rayito.e2b.Template`/`AsyncTemplate` (`e2b/_template.py`,
-  `e2b/template.ts`) are thin subtypes of the native classes — the Python
-  and JS E2B APIs already name their build methods the same way Rayito
-  does — adding only the four tag operations
+  `e2b/template.ts`) are thin subtypes of the native classes that inherit
+  the DSL and adapt E2B's build signature (`alias`, `cpu_count`/`cpuCount`
+  with a `RayitoCompatWarning`, `memory_mb`/`memoryMB` rounded up to a
+  supported size with a warning, `skip_cache`/`skipCache` as `force`;
+  `E2B(region, session, bucket)` binds `client.Template` like
+  `client.Secret`), adding the four tag operations
   (`aliasExists`/`assignTags`/`removeTags`/`getTags`) E2B has and
   `create`/`update-microvm-image` cannot give (no per-version tags), which
   raise `UnimplementedError`. `rayito.e2b.Template`/`AsyncTemplate` (the
@@ -74,67 +77,67 @@ control plane of its own) is what this change builds.
 - **Infra** (`infra/templates.yaml`, OptionalStack `templates`): a single
   managed policy, `RayitoTemplateBuilder`
   (`CreateMicrovmImage`/`UpdateMicrovmImage`/`GetMicrovmImage*`/
-  `ListMicrovmImageVersions`/`ListMicrovmImageBuilds`/
-  `GetMicrovmImageBuild`, `iam:PassRole` on the build role, S3 access to
-  the artifact bucket, and read-only CloudWatch Logs access) for whoever
-  calls `Template.build()`. No bucket, no image, no Lambda function: $0 at
-  rest.
+  `ListMicrovmImageVersions` on this account's `microvm-image:*`, an
+  explicit `Deny` on creating/updating the published base images
+  (`ProtectedImageNamePrefix`), `iam:PassRole` on the build role, S3
+  access to the artifact bucket and the base image's bucket — never `*` —
+  and read-only CloudWatch Logs access) for whoever calls
+  `Template.build()`. No bucket, no image, no Lambda function: $0 at rest.
+  Deviation from the plan, recorded in ADR-022: the stack does not create
+  an encrypted artifact bucket with lifecycle expiry; the bucket stays the
+  caller's, and the docs ask for a lifecycle rule on `rayito/templates/`.
+- **Shared image-build core**: `rayito/_images.py` and
+  `src/images/gateway.ts` (architecture §1(g)): the
+  `create`/`update-microvm-image` submission, the three-state gate, the
+  configuration reuse check (Q52 normalisation) and the content-addressed
+  upload, extracted from `cli/_publish.py` with no behaviour change and
+  consumed by both `rayito image publish` and `Template.build()`.
 - **Docs**: `docs/site/docs/funciones-opcionales/templates.md` (filled in,
   replacing the stub), `docs-delta.md` with the exact replacement rows for
   `e2b-parity.md` (56, 81, 89, 112), `optional-features.md`,
   `cost.md` and `security.md` (T26, template supply chain), applied later
   by `m15-docs-integration`.
 
-## Non-blocking follow-ups (explicitly deferred, tracked here for the next agent/maintainer)
+## Non-blocking follow-ups (tracked here for the next agent/maintainer)
 
-- **`rayd`-side start/ready cmd execution is not wired in this change.**
-  `rayd_core::template` (`StartSpec`, `ready_decision`) is complete and
-  unit-tested, matching the schema `_artifact.start_spec_to_json`/
-  `startSpecToJson` write. The adapter side (`adapters/fs_template_spec.rs`
-  reading `/etc/rayito/template.json` once at boot, `adapters/
-  shell_ready_probe.rs` running `ready_cmd`, a `TemplateParticipant`
-  plugging that into `LifecycleParticipant::ready_gate` — the seam
-  `features/template_start.rs`'s stub docstring already names as "a
-  template's `ready_cmd` is a natural `LifecycleParticipant::ready_gate`"
-  — and actually spawning `start_cmd` as a managed, `commands.list`-visible
-  process) is deferred: wiring a managed, supervised `start_cmd` needs the
-  same `ProcessSpawner`/`ChildRegistry` integration foundations' own
-  orphan-reaper deferral already flagged as its own focused piece of work
-  (touching shared process-management adapters used by the whole agent
-  lifecycle), not something to bundle in as a drive-by alongside sixteen
-  other new files. (`rayd_core::template` itself — the pure domain this
-  deferred work would build on — compiles, passes `cargo test
-  --workspace` and clippy pedantic cleanly, verified by this PR's own CI;
-  the shared Lima VM's disk was at 0 bytes free for most of this session,
-  so that verification happened in CI rather than locally, see below.)
-  Until this lands, an image
-  built with `setStartCmd()` bakes `/etc/rayito/template.json` correctly,
-  but nothing on the agent side reads it yet: `rayd` boots exactly as it
-  does for an image with no template (TPL-15's "survives suspend/resume"
-  acceptance criterion cannot be exercised until this follow-up ships).
-  **This also means `Template.build()`'s own e2e acceptance (and the
-  ADR-022 "fully implemented" claim) are blocked on this follow-up**: the
-  AWS stage can still exercise the DSL -> Dockerfile -> zip -> S3 ->
-  `create-microvm-image` -> log-based failure path end to end (steps 1 and
-  2 of the plan below), but not a `setStartCmd()` image's actual
-  start/ready behavior inside a launched sandbox (step 4).
-- **Disk-space cross-cutting risk (observed, since resolved for this PR).**
-  The Lima VM's 58 GB disk was completely exhausted by the combined
-  `CARGO_TARGET_DIR`s of the sibling M15 feature branches for most of this
-  session (`efs-volumes`, `rayd-otlp`, `secrets-gateway` each over 10 GB;
-  it recovered to 11 GB free later in the session as sibling builds
-  finished and freed their own space). This PR's own Rust change ended up
-  verified by the PR's CI instead of locally for that reason. Flagged for
-  the maintainer/orchestrator regardless, since it will recur with the
-  next round of parallel Rust work: either a larger disk, a shared
-  `CARGO_TARGET_DIR` with `sccache`, or pruning finished branches' target
-  dirs between rounds.
+- **Shared-file registries.** `check-dts-cost-blocks.mjs` now reads a
+  drop-in registry, `clients/typescript/scripts/cost-declarations/*.json`,
+  and templates registers its `class Template` declaration through its own
+  `templates.json` instead of a line in the shared `COST_DECLARATIONS`
+  list; sibling features can do the same without touching the script. The
+  remaining foundations-owned edits are one line or one entry each:
+  `crates/rayd-core/src/lib.rs` (`pub mod template;`),
+  `clients/typescript/package.json`/`pnpm-lock.yaml` (the optional
+  `@aws-sdk/client-cloudwatch-logs` peer) and
+  `clients/typescript/src/stacks/packaging.ts` (one generated-asset
+  entry); the PR body lists them for merge-order coordination. An
+  `optional_features.d/*.json` registry has no consumer yet (the
+  optional-features row ships through `docs-delta.md`); designing its
+  generator belongs to foundations.
+- **`cli/_publish.py` ownership.** The image-build core extraction touches
+  `cli/_publish.py`, which `m15-sizes-catalog` also edits; the extraction
+  is behaviour-preserving (the CLI tests pass unchanged except for two
+  imports moved to `rayito._images`) and should be merged before, or
+  rebased under, sizes-catalog.
+- **Compatibility row.** `Health.features.template_start` is now `true`:
+  foundations owns the 0.6 row of `rayito.cli._compat.COMPATIBILITY` and
+  `docs/site/docs/limits.md`.
+- **Disk-space cross-cutting risk.** The shared Lima VM's 58 GB disk keeps
+  filling with the sibling M15 branches' `CARGO_TARGET_DIR`s (it hit 0
+  bytes free twice during the review fixes); either a larger disk, a
+  shared `CARGO_TARGET_DIR` with `sccache`, or pruning finished branches'
+  target dirs between rounds.
 
 ## Impact
 
 - **Rust**: `crates/rayd-core/src/template.rs` (new, pure domain:
   `StartSpec`, `ReadyPoll`, `ready_decision`), `crates/rayd-core/src/lib.rs`
-  (`pub mod template;`). No `rayd` adapter changes (see follow-ups above).
+  (`pub mod template;`); `crates/rayd/src/adapters/{fs_template_spec,
+  shell_ready_probe}.rs`, `crates/rayd/src/features/template_start.rs`
+  (the real slot and its `TemplateParticipant`), `hooks/mod.rs` (calls
+  each participant's `on_run` after `/run`), `main.rs` (builds the
+  `FeatureSet` with the real `ProcessManager`), `grpc/health.rs`
+  (`AgentFeatures.template_start = true`).
   No proto changes (templates has no `ConfigureSandbox` section; start/
   ready happens at boot from a file, not a per-sandbox RPC).
 - **Python**: new package `clients/python/src/rayito/_templates/`

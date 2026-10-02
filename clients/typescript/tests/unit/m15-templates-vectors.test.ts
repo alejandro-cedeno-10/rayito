@@ -46,13 +46,9 @@ const VECTORS = JSON.parse(
 ) as Vectors;
 
 const HELPERS: Record<string, (...args: never[]) => ReadyCommand> = {
-  // biome-ignore lint/style/useNamingConvention: nombre del helper en el vector compartido
   wait_for_port: waitForPort,
-  // biome-ignore lint/style/useNamingConvention: nombre del helper en el vector compartido
   wait_for_url: waitForUrl,
-  // biome-ignore lint/style/useNamingConvention: nombre del helper en el vector compartido
   wait_for_process: waitForProcess,
-  // biome-ignore lint/style/useNamingConvention: nombre del helper en el vector compartido
   wait_for_file: waitForFile,
 };
 

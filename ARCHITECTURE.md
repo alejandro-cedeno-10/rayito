@@ -1867,22 +1867,38 @@ imagen (`BuildException(step, command, exit_code, log_tail)`) o, si
 guardia local (`MAX_CONCURRENT_BUILDS = 10`, Q83) rechaza un undécimo
 build concurrente en el mismo proceso antes de llamar a AWS.
 `setStartCmd()`/`set_start_cmd()` hornea `/etc/rayito/template.json`
-(`rayito.template/1`, dominio compartido en `rayd_core::template`); el
-lado del agente que lo lee y arranca/sondea el proceso queda como
-seguimiento no bloqueante (ver `openspec/changes/m15-templates/proposal.md`):
-necesita la misma integración con `ProcessSpawner`/`ChildRegistry` que ya
-quedó pendiente para el reaper de huérfanos de `v06-foundations`, así que
-no entra de pasada junto a otros dieciséis ficheros nuevos.
+(`rayito.template/1`, dominio compartido en `rayd_core::template`). En
+`rayd`, el slot `features::template_start` lo lee una vez al arrancar
+(`adapters::fs_template_spec`; ausente o inválido = arranque de 0.5.x) y,
+si existe, aporta un `LifecycleParticipant`: tras `/run` lanza
+`start_cmd` como proceso gestionado por `ProcessManager` y sondea
+`ready_cmd` con `/bin/sh -c` (`adapters::shell_ready_probe`); su
+`ready_gate` mantiene `/ready` en 503 hasta que `ready_cmd` sale con 0 y
+lo hace fallar al agotarse el plazo (`rayd_core::template::ready_decision`).
+
+El núcleo de build de imágenes (envío de `create`/`update-microvm-image`,
+gate de tres estados, reuso por configuración con la normalización Q52,
+subida por hash) vive en `rayito/_images.py` y `src/images/gateway.ts`,
+compartido con `rayito image publish`. La imagen compuesta hereda toda la
+configuración de la versión base (`additionalOsCapabilities` incluida).
+Los ficheros de contexto viajan bajo `__rayito_context/` en el zip, así
+que nunca sustituyen una entrada del zip base (T26).
 
 **Consecuencias.** Divergencias documentadas: sin caché de capas entre
-builds (0.6 no tiene una; `skip_cache()` sólo fuerza `force=True`); sólo
+builds (0.6 no tiene una; `skip_cache()` equivale a `force=True`); sólo
 ARM64; sin streaming en vivo de los pasos del build; el etiquetado de E2B
 (`assign_tags`/`remove_tags`/`get_tags`/`alias_exists`) no tiene análogo
 porque `create`/`update-microvm-image` etiqueta la imagen entera, no una
 versión. `Template.build()` necesita una política IAM separada de la de
 lanzar sandboxes (`RayitoTemplateBuilder`, `infra/templates.yaml`, un
 componente `OptionalStack`), para que un agente que crea sandboxes no
-pueda también publicar imágenes.
+pueda también publicar imágenes; esa política acota las acciones de
+imagen a `microvm-image:*` de la cuenta y deniega crear o actualizar las
+imágenes base publicadas. Desviación del plan: la pila no crea el bucket
+de artefactos cifrado con expiración (crear un bucket convertiría una
+pila de $0 sólo-IAM en una con datos que borrar al destruirla); el bucket
+es del cliente, y la guía y la pila le piden una regla de ciclo de vida
+sobre `rayito/templates/`.
 
 **Reversible.** Aditivo: ningún `Sandbox.create()` existente cambia de
 comportamiento, y nada se importa ni se construye hasta que se llama a

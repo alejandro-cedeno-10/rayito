@@ -37,14 +37,22 @@ versionado [SemVer](https://semver.org/lang/es/).
   `readyCmd`), sin repetir nada. `fromImage`/`fromTemplate`/
   `fromDockerfile`/`fromGcpRegistry`/`aptInstall` lanzan
   `UnimplementedError` (documentados en ADR-022). El shim
-  `rayito/e2b`'s `Template` ya construye de verdad; `BuildError`/
-  `TemplateError` del shim pasan a ser alias de las clases nativas (igual
-  patrón que `NotEnoughSpaceError`/`FileUploadError`). Sin llamar a
+  `rayito/e2b`'s `Template` ya construye de verdad, con la firma de E2B
+  (`{ alias, skipCache, memoryMB, cpuCount }`) y `new E2B({ bucket })`;
+  `BuildError`/`TemplateError` del shim pasan a ser alias de las clases
+  nativas (igual patrón que `NotEnoughSpaceError`/`FileUploadError`).
+  `setStartCmd()` necesita una imagen base con `rayd` 0.6. La imagen
+  compuesta hereda la configuración de la base
+  (`additionalOsCapabilities` incluida); `skipCache()` equivale a
+  `force: true`; la cuota de builds de AWS llega como
+  `reason: "build_quota"`. El núcleo de build vive en
+  `src/images/gateway.ts`. Sin llamar a
   `Template.build()`, el SDK no importa estáticamente
   `@aws-sdk/client-s3` ni carga `@aws-sdk/client-cloudwatch-logs` (peer
   opcional nuevo, sólo para explicar un build fallido). `infra/templates.yaml`
   (`rayito stack deploy templates`): sólo la política IAM
-  `RayitoTemplateBuilder`, $0 en reposo.
+  `RayitoTemplateBuilder`, $0 en reposo, que no puede sobrescribir las
+  imágenes base publicadas.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

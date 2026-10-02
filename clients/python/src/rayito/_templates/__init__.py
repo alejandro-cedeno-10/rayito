@@ -26,8 +26,9 @@ IAM: `RayitoTemplateBuilder` (`infra/templates.yaml`) sobre quien llama a
     `Template.build()`: `lambda:CreateMicrovmImage`/`UpdateMicrovmImage`/
     `GetMicrovmImage*`/`ListMicrovmImageVersions`, `iam:PassRole` sobre el
     rol de build (el mismo que usa `rayito image publish`), `s3:PutObject`/
-    `GetObject`/`HeadObject` en el bucket de artefactos, y lectura del grupo
-    de logs de la imagen.
+    `GetObject` en el bucket de artefactos (`HeadObject` lo autoriza
+    `GetObject`), y lectura del grupo de logs de la imagen; nunca crear o
+    actualizar las imágenes base publicadas.
 Cómo apagarla: no llames a `Template.build()`. Las versiones de imagen ya
     construidas se borran con `rayito image` (no las borra `Template`:
     `rayito-base` y sus templates comparten el mismo espacio de imágenes).
@@ -43,7 +44,7 @@ Ejemplo:
     sbx = Sandbox.create(info.template_id)
 
 Divergencias con E2B (ADR-022, `docs/site/docs/funciones-opcionales/templates.md`):
-sin caché de capas entre builds (`skip_cache()` sólo fuerza reconstruir);
+sin caché de capas entre builds (`skip_cache()` equivale a `force=True`);
 sólo ARM64; `from_image`/`from_template`/`from_dockerfile` fuera de
 alcance en 0.6 (sólo `from_base_image()` compone de verdad: inyectar
 `rayd` y sus hooks en una imagen externa no tiene aún un camino soportado);

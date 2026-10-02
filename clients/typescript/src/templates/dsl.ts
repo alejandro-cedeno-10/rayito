@@ -66,8 +66,9 @@ export interface SetStartCmdOptions {
  *     2026-10-01); el build en sí no se factura aparte.
  * IAM: `RayitoTemplateBuilder` (`infra/templates.yaml`): `lambda:CreateMicrovmImage`/
  *     `UpdateMicrovmImage`/`GetMicrovmImage*`/`ListMicrovmImageVersions`,
- *     `iam:PassRole` sobre el rol de build, `s3:PutObject`/`GetObject`/
- *     `HeadObject`, y lectura del grupo de logs de la imagen.
+ *     `iam:PassRole` sobre el rol de build, `s3:PutObject`/`GetObject`
+ *     (`HeadObject` lo autoriza `GetObject`), y lectura del grupo de logs de
+ *     la imagen; nunca crear o actualizar las imágenes base publicadas.
  * Cómo apagarla: no llames a `Template.build()`. Borra versiones de imagen
  *     con `rayito image` (no las borra `Template`).
  * Ejemplo:

@@ -246,7 +246,10 @@ describe("templates/build", () => {
   test("a caps base image builds a caps template", async () => {
     const clients = clientsWithBaseImage();
     const base = clients.versions.get(`${BASE_ARN}#1`);
-    clients.versions.set(`${BASE_ARN}#1`, { ...base!, additionalOsCapabilities: ["ALL"] });
+    if (base === undefined) {
+      throw new Error("clientsWithBaseImage() siempre siembra la versión 1");
+    }
+    clients.versions.set(`${BASE_ARN}#1`, { ...base, additionalOsCapabilities: ["ALL"] });
     _setBuildClientsFactory(() => clients);
 
     const handle = await buildInBackground(new Template().fromBaseImage(), "mi-template", {

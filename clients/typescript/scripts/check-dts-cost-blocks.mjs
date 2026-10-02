@@ -1,8 +1,27 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist");
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = resolve(SCRIPTS_DIR, "..", "dist");
+/**
+ * Registro de quita y pon: cada función opcional añade sus declaraciones en
+ * su propio `cost-declarations/<función>.json` (`[{ "name", "pattern" }]`,
+ * `pattern` como texto de una `RegExp`), sin tocar la lista de abajo; así
+ * dos ramas que añaden una función no chocan en este fichero.
+ */
+const DROP_IN_DIR = join(SCRIPTS_DIR, "cost-declarations");
+
+/** Las declaraciones de cada `cost-declarations/*.json`, en orden de fichero. */
+export function loadDropInDeclarations(dir = DROP_IN_DIR) {
+  const files = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".json")) : [];
+  return files.sort().flatMap((name) =>
+    JSON.parse(readFileSync(join(dir, name), "utf8")).map(({ name: declaration, pattern }) => ({
+      name: declaration,
+      pattern: new RegExp(pattern),
+    })),
+  );
+}
 
 /**
  * Declaraciones publicadas que activan algo con coste AWS (ADR-014). Cada una
@@ -16,8 +35,7 @@ export const COST_DECLARATIONS = [
   { name: "class Secret (e2b)", pattern: /^(export )?declare class Secret\b/ },
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
-  // m15-templates
-  { name: "class Template", pattern: /^(export )?declare class Template\b/ },
+  ...loadDropInDeclarations(),
 ];
 
 export const REQUIRED_HEADINGS = [

@@ -16,11 +16,17 @@
       `cargo fmt` line-length diff, and `Duration::from_secs_f64` panicking
       on non-finite input, replaced with the non-panicking
       `try_from_secs_f64`).
-- [ ] 1.4 (deferred, see `proposal.md`) `rayd` adapters
-      (`adapters/fs_template_spec.rs`, `adapters/shell_ready_probe.rs`),
-      `features/template_start.rs` real slot, `TemplateParticipant`
-      (`lifecycle/template_participant.rs`), `main.rs` participant
-      collection, managed `start_cmd` process visible in `commands.list`.
+- [x] 1.4 `rayd` adapters (`adapters/fs_template_spec.rs`,
+      `adapters/shell_ready_probe.rs`), `features/template_start.rs` real
+      slot with its `TemplateParticipant` (`LifecycleParticipant`:
+      `on_run` spawns `start_cmd` through `ProcessManager`, visible in
+      `commands.list`, and polls `ready_cmd`; `ready_gate` maps
+      `ready_decision`), `hooks/mod.rs` calling `on_run` after `/run`,
+      `main.rs` participant collection; `no_template_json_yields_no_participant`
+      proves `/ready`/`/suspend` are unchanged without `template.json`.
+      `cargo fmt`, `cargo clippy -p rayd -p rayd-core --all-targets -D
+      warnings` and `cargo test -p rayd -p rayd-core` clean in the Lima VM
+      (user `tester`, `-j 2`, under `flock`).
 
 ## 2. Python: domain and build pipeline
 
@@ -134,9 +140,11 @@
 - [x] 6.6 `stacks/components/templates.ts`: fills the stub.
 - [x] 6.7 `stacks/packaging.ts`: registers the `templates` generated
       asset.
-- [x] 6.8 `scripts/check-dts-cost-blocks.mjs`: `class Template` entry
-      added to `COST_DECLARATIONS`; the "Coste y activación" TSDoc block
-      added directly above the `Template` class.
+- [x] 6.8 `scripts/check-dts-cost-blocks.mjs` reads the drop-in
+      registry `scripts/cost-declarations/*.json`; templates registers
+      `class Template` in its own `cost-declarations/templates.json`; the
+      "Coste y activación" TSDoc block sits directly above the `Template`
+      class.
 
 ## 7. TypeScript gates
 
@@ -180,10 +188,39 @@
       section filled in.
 - [x] 8.10 `npx -y @fission-ai/openspec@1.10.0 validate --strict` passes.
 
-## 9. PR
+## 9. Review fixes
 
-- [x] 9.1 Branch `feat/templates`, worktree
+- [x] 9.1 Shared image-build core `rayito/_images.py` /
+      `src/images/gateway.ts`, extracted from `cli/_publish.py` with no
+      behaviour change; `Template.build()` consumes it (failed image
+      states settle the gate, Q52 reuse normalisation, `ACTIVE` check).
+- [x] 9.2 Composed configuration inherits every configuration key of the
+      base version (`additionalOsCapabilities` included).
+- [x] 9.3 `skip_cache()`/`skipCache()` acts as `force=True`.
+- [x] 9.4 `build()` holds its `MAX_CONCURRENT_BUILDS` slot through the
+      gate wait; `ServiceQuotaExceededException` maps to
+      `reason="build_quota"`; gate timeout is `reason="build_timeout"`.
+- [x] 9.5 Default `context_dir` resolved; a `src` escaping the context is
+      `reason="context_path_outside"` (both SDKs).
+- [x] 9.6 Context files under `__rayito_context/` in the zip (T26).
+- [x] 9.7 `COPY` JSON form, escaped `ENV`, line breaks rejected;
+      `shlex.quote`/`shellQuote` in ready commands; shared vectors in
+      `testdata/templates/dockerfile-cases.json` run by both SDKs.
+- [x] 9.8 Error messages carry the template name and state, never an
+      ARN or the raw `stateReason`.
+- [x] 9.9 Named defaults instead of repeated literals.
+- [x] 9.10 E2B shim build signature (`alias`, `skip_cache`, `cpu_count`,
+      `memory_mb`), `E2B(bucket=...)` binding, `TemplateException` for an
+      invalid name.
+- [x] 9.11 `infra/templates.yaml`: image actions scoped to
+      `microvm-image:*`, `Deny` on the published base images, no
+      `s3:HeadObject`/unused build actions, base-artifact read defaults to
+      the artifact bucket; `scripts/tests/test_templates_template.py`.
+
+## 10. PR
+
+- [x] 10.1 Branch `feat/templates`, worktree
       `~/github.com/alejandro-cedeno-10/rayito-wt-templates`, from
       `origin/main`.
-- [ ] 9.2 Push and open the PR; wait for CI; fix until green.
-- [ ] 9.3 Do not merge (per instructions).
+- [ ] 10.2 Push and open the PR; wait for CI; fix until green.
+- [ ] 10.3 Do not merge (per instructions).

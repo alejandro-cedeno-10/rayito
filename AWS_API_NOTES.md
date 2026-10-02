@@ -1001,7 +1001,8 @@ Q91) y su firma SigV4.
 
 `Template.build()` (Python `rayito/_templates/_build.py`, TypeScript
 `src/templates/build.ts`) reusa las mismas operaciones de
-`lambda-microvms` que `rayito image publish` (AWS_API_NOTES.md §4), más
+`lambda-microvms` que `rayito image publish` (AWS_API_NOTES.md §4), a
+través del mismo núcleo (`rayito/_images.py`, `src/images/gateway.ts`), más
 dos operaciones de `logs` sólo cuando un build no termina
 `SUCCESSFUL`+`ACTIVE`. Verificado contra el modelo `lambda-microvms` de
 botocore y el `@aws-sdk/client-lambda-microvms` instalado en este cambio
@@ -1042,13 +1043,20 @@ response"; `classify_ready_failure`/`classifyReadyFailure` traduce eso a
 
 **`RayitoTemplateBuilder`** (`infra/templates.yaml`) concede
 `lambda:CreateMicrovmImage`/`UpdateMicrovmImage`/`GetMicrovmImage`/
-`GetMicrovmImageVersion`/`ListMicrovmImageVersions`/
-`ListMicrovmImageBuilds`/`GetMicrovmImageBuild` sobre `Resource: "*"` (el
-API no soporta un ARN de imagen específico en estas acciones; el control
-real de qué se puede construir lo da `iam:PassRole` sobre el rol de
-build), `iam:PassRole` condicionado a `iam:PassedToService:
-lambda.amazonaws.com`, y S3/Logs acotados al bucket de artefactos y al
-prefijo de grupos de logs.
+`GetMicrovmImageVersion`/`ListMicrovmImageVersions` sobre
+`arn:<partición>:lambda:<región>:<cuenta>:microvm-image:*` (el mismo
+recurso que `infra/iam.yaml` usa para `rayito image publish`, §10) y un
+`Deny` de `CreateMicrovmImage`/`UpdateMicrovmImage` sobre
+`microvm-image:<ProtectedImageNamePrefix>*` (`rayito-base` por defecto),
+para que un template nunca sobrescriba una imagen base publicada;
+`iam:PassRole` sobre el rol de build condicionado a
+`iam:PassedToService: lambda.amazonaws.com`; `s3:GetObject`/`PutObject`
+sobre `rayito/templates/*` del bucket de artefactos (`HeadObject` no es
+una acción IAM: lo autoriza `s3:GetObject`), `s3:GetObject` sobre el
+bucket de la imagen base (por defecto, el de artefactos; nunca `*`), y
+`logs:DescribeLogStreams`/`GetLogEvents` sobre el prefijo de grupos de
+logs. La pila no crea el bucket de artefactos (ADR-022): su regla de
+ciclo de vida sobre `rayito/templates/` es del cliente.
 
 ## 28. Reutilización de Secrets Manager y pasarela (`m15-secrets-gateway`)
 

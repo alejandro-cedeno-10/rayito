@@ -39,11 +39,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `ready_cmd`), sin repetir nada. `from_image`/`from_template`/
   `from_dockerfile`/`from_gcp_registry`/`apt_install` lanzan
   `UnimplementedError` (documentados en ADR-022). El shim
-  `rayito.e2b.Template`/`AsyncTemplate` ya construye de verdad;
+  `rayito.e2b.Template`/`AsyncTemplate` ya construye de verdad, con la
+  firma de E2B (`alias`, `skip_cache`, `memory_mb` redondeado con
+  `RayitoCompatWarning`, `cpu_count` con aviso) y `E2B(bucket=...)`;
   `TemplateException`/`BuildException` del shim pasan a ser las clases
-  nativas. Sin llamar a `Template.build()`, el SDK no crea ningún cliente
-  nuevo. `infra/templates.yaml` (`rayito stack deploy templates`): sólo la
-  política IAM `RayitoTemplateBuilder`, $0 en reposo.
+  nativas. `set_start_cmd()` necesita una imagen base con `rayd` 0.6. La
+  imagen compuesta hereda la configuración de la base
+  (`additionalOsCapabilities` incluida); `skip_cache()` equivale a
+  `force=True`; la cuota de builds de AWS llega como
+  `reason="build_quota"`. El núcleo de build de imágenes pasa a
+  `rayito._images`, compartido con `rayito image publish` (sin cambio de
+  comportamiento). Sin llamar a `Template.build()`, el SDK no crea ningún
+  cliente nuevo. `infra/templates.yaml` (`rayito stack deploy templates`):
+  sólo la política IAM `RayitoTemplateBuilder`, $0 en reposo, que no puede
+  sobrescribir las imágenes base publicadas.
 <!-- m15-secrets-gateway -->
 <!-- m15-custom-domain -->
 

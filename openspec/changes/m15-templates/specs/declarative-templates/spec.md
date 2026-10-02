@@ -78,7 +78,8 @@ Two builds of the same `Template` spec against the same base version and
 `Template.build()` SHALL reuse an existing `SUCCESSFUL`/`ACTIVE` version
 whose configuration matches instead of calling
 `create`/`update-microvm-image` again, unless `force=True`/`force: true`
-is passed.
+is passed or the spec was built with `skip_cache()`/`skipCache()`, which
+SHALL behave exactly as `force`.
 
 #### Scenario: an identical rebuild makes no create/update call
 - **WHEN** `Template.build()` is called twice with the same spec, name,
@@ -91,6 +92,82 @@ is passed.
   prior build
 - **THEN** `update-microvm-image` (or `create-microvm-image` for a new
   name) is called again
+
+#### Scenario: skip_cache rebuilds even when nothing changed
+- **WHEN** `Template.build()` is called with a spec built with
+  `skip_cache()` after an identical prior build
+- **THEN** `update-microvm-image` is called again
+
+### Requirement: the composed image inherits the base version's whole configuration
+
+The `create`/`update-microvm-image` request of `Template.build()` SHALL
+carry every configuration key the base image version declares
+(`baseImageArn`, `baseImageVersion`, `buildRoleArn`, `cpuConfigurations`,
+`environmentVariables`, `additionalOsCapabilities`, `hooks`,
+`egressNetworkConnectors`), replacing only `codeArtifact`, `resources` and
+`logging`, through the image-build core shared with `rayito image publish`
+(`rayito._images`, `src/images/gateway.ts`).
+
+#### Scenario: a template over the caps variant keeps its OS capabilities
+- **WHEN** the base version declares `additionalOsCapabilities: ["ALL"]`
+- **THEN** the composed image's request carries
+  `additionalOsCapabilities: ["ALL"]`
+
+### Requirement: context files can neither escape the context nor replace base entries
+
+`copy(src, dst)` sources SHALL be read relative to the build context
+(`context_dir`/`contextDir`, the current directory by default), and a
+`src` that resolves outside it SHALL raise `BuildException`/`BuildError`
+with `reason="context_path_outside"` before any upload. Context files
+SHALL be stored under `__rayito_context/` in the artifact zip, and every
+rendered `COPY` SHALL read from there, so no context file can replace the
+composed `Dockerfile` or any entry of the base zip.
+
+#### Scenario: the default context directory works
+- **WHEN** `Template.build()` is called without `context_dir` from a
+  directory containing `app/main.py` and the spec has `copy("app/", ...)`
+- **THEN** the artifact contains `__rayito_context/app/main.py`
+
+#### Scenario: a project Dockerfile never replaces the composed one
+- **WHEN** the context contains a file named `Dockerfile` copied with
+  `copy(".", "/srv/app/")`
+- **THEN** the artifact's root `Dockerfile` is the composed one and the
+  project file is at `__rayito_context/Dockerfile`
+
+### Requirement: rendered Dockerfile values and ready commands are escaped identically in both SDKs
+
+`COPY` SHALL be rendered in its JSON-array form, `ENV` values SHALL escape
+`\`, `"` and `$`, an `ENV` key SHALL match `[A-Za-z_][A-Za-z0-9_]*`, and a
+line break in any value SHALL raise `InvalidArgumentException`/
+`InvalidArgumentError`. `wait_for_url`/`wait_for_process`/`wait_for_file`
+SHALL quote their argument with POSIX single quotes (`shlex.quote`).
+`testdata/templates/dockerfile-cases.json` SHALL be the shared vector
+file both SDKs' tests render.
+
+#### Scenario: a newline in RUN cannot inject an instruction
+- **WHEN** a step's command contains a newline
+- **THEN** rendering raises `InvalidArgumentException` in Python and
+  `InvalidArgumentError` in TypeScript
+
+### Requirement: rayd starts the template's start_cmd and gates /ready on its ready_cmd
+
+A `rayd` that finds a valid `/etc/rayito/template.json`
+(`rayito.template/1`) at boot SHALL, after a successful `/run`, start
+`start_cmd` as a managed process (listed by `commands.list`) and poll
+`ready_cmd` with `/bin/sh -c`: `/ready` SHALL answer not-ready while
+`ready_cmd` has not exited 0 within `ready_poll.timeout_seconds`, and
+fail once that deadline passes. A missing, unreadable, malformed or
+unknown-version file SHALL leave `/ready` and `/suspend` exactly as in
+0.5.x.
+
+#### Scenario: no template.json means no participant
+- **WHEN** `rayd` boots in an image without `/etc/rayito/template.json`
+- **THEN** no lifecycle participant is registered and `/ready` behaves as
+  in 0.5.x
+
+#### Scenario: the gate opens when the probe succeeds
+- **WHEN** `ready_cmd` exits non-zero, then zero, before the deadline
+- **THEN** the gate answers retry, then ok
 
 ### Requirement: a build with an unsupported memory size is rejected before any AWS call
 
@@ -136,11 +213,34 @@ simultaneous builds in the same process with
 "build_quota"})`, raised immediately, without calling AWS, and the guard
 SHALL always release its slot, including when the build raises.
 
+`Template.build()` SHALL hold its slot until the gate settles, not only
+while submitting; `build_in_background` holds it only while composing and
+submitting. An AWS `ServiceQuotaExceededException` from
+`create`/`update-microvm-image` SHALL raise the same
+`reason="build_quota"`.
+
 #### Scenario: the eleventh concurrent build is rejected locally
 - **WHEN** 10 builds are already in flight in the same process and an
   eleventh `Template.build()` is started
 - **THEN** it raises immediately with `reason="build_quota"`, before any
   AWS call
+
+#### Scenario: the account quota maps to build_quota
+- **WHEN** `create-microvm-image` answers `ServiceQuotaExceededException`
+- **THEN** `BuildException(reason="build_quota")` is raised, not a raw
+  SDK error
+
+### Requirement: template names are validated and errors never echo identifiers
+
+A template name SHALL be 1-64 characters of `[A-Za-z0-9_-]` or a full
+image ARN; anything else SHALL raise `TemplateException`/`TemplateError`
+before any AWS call. `BuildException`/`NotFoundException` messages SHALL
+name the template the caller passed and the image/version states, never an
+ARN or the raw `stateReason`.
+
+#### Scenario: an E2B name:tag is rejected
+- **WHEN** `Template.build(t, "mi-template:v1", bucket="b")` is called
+- **THEN** `TemplateException` is raised before any AWS call
 
 ### Requirement: the E2B shim's Template never raises AttributeError for a method E2B defines
 
@@ -152,19 +252,42 @@ work, delegating to the native class) and the four tag methods
 `UnimplementedError` naming the limitation (no per-version tagging in
 `create`/`update-microvm-image`) rather than being absent.
 
+The shim's build methods SHALL accept E2B's signature
+(`build(template, alias, cpu_count, memory_mb, skip_cache, on_build_logs,
+**opts)` in Python, `build(template, { alias, cpuCount, memoryMB,
+skipCache, onBuildLogs })` or `build(template, alias, {...})` in
+TypeScript): `skip_cache` maps to `force`, `memory_mb` rounds up to the
+next supported size with `RayitoCompatWarning`, `cpu_count` warns and is
+ignored, and `bucket`/`region`/`session` (TS: `bucket`/`region`) come from
+the call or from `E2B(...)`; with no bucket in either,
+`InvalidArgumentException`/`InvalidArgumentError` names the option.
+
 #### Scenario: calling an unimplemented tag method raises UnimplementedError, not AttributeError
 - **WHEN** `rayito.e2b.Template().assign_tags(...)` is called
 - **THEN** `UnimplementedError` is raised naming
   `Template.assignTags`/`Template.assign_tags`, not `AttributeError`
+
+#### Scenario: E2B's alias and skip_cache keywords work
+- **WHEN** `E2B(bucket="b").Template.build(t, alias="x", skip_cache=True)`
+  is called
+- **THEN** the native build runs for `x` with `bucket="b"` and `force=True`
 
 ### Requirement: the OptionalStack component templates provisions only IAM, never a bucket, image or function
 
 `OptionalStacks.deploy("templates")`/the TS equivalent SHALL create only
 the `RayitoTemplateBuilder` managed policy (`infra/templates.yaml`); it
 SHALL never create, and `destroy()` SHALL never delete, an S3 bucket, a
-MicroVM image or a Lambda function.
+MicroVM image or a Lambda function. The policy SHALL scope image actions
+to this account's `microvm-image:*`, SHALL deny creating or updating the
+images named by `ProtectedImageNamePrefix` (`rayito-base` by default), and
+SHALL never grant `Resource: "*"`.
 
 #### Scenario: deploying templates creates no bucket, image or function
 - **WHEN** `OptionalStacks.deploy("templates", parameters={...})` is
   called
 - **THEN** the stack's only resource is `AWS::IAM::ManagedPolicy`
+
+#### Scenario: the builder cannot overwrite rayito-base
+- **WHEN** the policy's statements are read
+- **THEN** a `Deny` covers `CreateMicrovmImage`/`UpdateMicrovmImage` on
+  `microvm-image:${ProtectedImageNamePrefix}*`
