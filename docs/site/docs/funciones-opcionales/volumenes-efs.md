@@ -161,7 +161,8 @@ destroy`).
 === "TypeScript"
 
     ```ts
-    import { E2B, VolumeStore } from "rayito/e2b";
+    import { VolumeStore } from "rayito";
+    import { E2B } from "rayito/e2b";
 
     const client = new E2B({ volumeStore: new VolumeStore({ fileSystemId: "fs-0123abcd" }) });
     const vol = await client.Volume.create("datos-agente-7");
