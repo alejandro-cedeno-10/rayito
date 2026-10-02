@@ -20,7 +20,10 @@ Subcommands:
 
 `run` provisions its own throwaway VPC and one subnet (tagged
 `rayito:run-id=<ID>`, discovered by that tag before ever creating a new
-one), then deploys the already-reviewed `efs-volumes` `OptionalStack`
+one) — or, with `--vpc-id`/`--subnet-id`, uses a network borrowed with its
+owner's permission that it never creates, records or deletes (an
+organization SCP can deny `ec2:CreateVpc`: AWS_API_NOTES.md §16 Q98) —
+then deploys the already-reviewed `efs-volumes` `OptionalStack`
 (`infra/efs-volumes.yaml`) into them through `rayito.OptionalStacks` —
 this script never re-implements the file system, mount target, connector,
 security groups or IAM resources that the stack already creates. The
@@ -794,12 +797,23 @@ def measure_efs2(ctx: StepContext) -> QuestionResult:
     passed = tmpfs.ok and nfs_kind not in {"EPERM", "ENODEV"}
     summary = f"caps: tmpfs {classify(tmpfs)}, nfs4 to TEST-NET {nfs_kind}"
     if ctx.options.default_template is not None:
+        summary += f"; default image: tmpfs {default_image_tmpfs(ctx, tmpfs_command)}"
+    return result("EFS-2", passed, summary)
+
+
+def default_image_tmpfs(ctx: StepContext, tmpfs_command: str) -> str:
+    """EFS-2's informational half: the default image's `mount -t tmpfs`
+    (expected `EPERM`). Never fails the ★ step: an image without
+    `RAYITO_ALLOW_ROOT=1` rejects `user="root"` before the mount even runs,
+    which is recorded by the exception's type only."""
+    try:
         with launched(ctx, template=ctx.options.default_template) as vm:
-            default = ctx.guest.run_as_root(
+            outcome = ctx.guest.run_as_root(
                 vm, tmpfs_command, timeout_seconds=QUICK_COMMAND_SECONDS
             )
-        summary += f"; default image: tmpfs {classify(default)}"
-    return result("EFS-2", passed, summary)
+    except Exception as exc:  # noqa: BLE001 - informational, recorded by type only
+        return f"not measured ({type(exc).__name__})"
+    return classify(outcome)
 
 
 def measure_efs3(ctx: StepContext) -> QuestionResult:
@@ -1066,13 +1080,20 @@ def _new_or_resumed_state(args: argparse.Namespace) -> RunState:
     return state
 
 
-def provision(
+@dataclass(frozen=True)
+class BorrowedNetwork:
+    """A VPC and subnet the caller already has permission to use
+    (`--vpc-id`/`--subnet-id`): `run` deploys into them but never creates,
+    records or deletes them, so `cleanup` cannot touch them."""
+
+    vpc_id: str
+    subnet_id: str
+
+
+def own_network(
     state: RunState, aws: MeasurementAwsPort, tags: Mapping[str, str]
-) -> tuple[Mapping[str, str], float | None]:
-    """VPC, subnet and the `efs-volumes` stack, each resolved first. The
-    stack and its retained file system are recorded *before* the deploy,
-    so a deploy that fails half-way is still cleaned up. Returns the
-    stack's outputs and how long a fresh deploy took (`None` if resumed)."""
+) -> tuple[str, str]:
+    """This run's throwaway VPC and subnet, each resolved by tag first."""
     vpc_id = aws.find_tagged_vpc(state.run_id)
     if vpc_id is None:
         vpc_id = aws.create_vpc(tags=tags)
@@ -1082,6 +1103,24 @@ def provision(
     if subnet_id is None:
         subnet_id = aws.create_subnet(vpc_id, tags=tags)
     _ensure_recorded(state, "subnet")
+    return vpc_id, subnet_id
+
+
+def provision(
+    state: RunState,
+    aws: MeasurementAwsPort,
+    tags: Mapping[str, str],
+    borrowed: BorrowedNetwork | None = None,
+) -> tuple[Mapping[str, str], float | None]:
+    """The network (own or `borrowed`) and the `efs-volumes` stack, each
+    resolved first. The stack and its retained file system are recorded
+    *before* the deploy, so a deploy that fails half-way is still cleaned
+    up. Returns the stack's outputs and how long a fresh deploy took
+    (`None` if resumed)."""
+    if borrowed is None:
+        vpc_id, subnet_id = own_network(state, aws, tags)
+    else:
+        vpc_id, subnet_id = borrowed.vpc_id, borrowed.subnet_id
 
     stack_name = measurement_stack_name(state.run_id)
     outputs = aws.stack_status(stack_name)
@@ -1159,6 +1198,12 @@ def cmd_plan(
     return 0
 
 
+def borrowed_network(args: argparse.Namespace) -> BorrowedNetwork | None:
+    if args.vpc_id is None or args.subnet_id is None:
+        return None
+    return BorrowedNetwork(vpc_id=args.vpc_id, subnet_id=args.subnet_id)
+
+
 def cmd_run(
     args: argparse.Namespace,
     *,
@@ -1175,6 +1220,11 @@ def cmd_run(
             file=sys.stderr,
         )
         return 1
+    if (args.vpc_id is None) != (args.subnet_id is None):
+        print(
+            "--vpc-id and --subnet-id go together (a borrowed network)", file=sys.stderr
+        )
+        return 2
     if not args.infra_only and (
         args.caps_template is None or args.execution_role_arn is None
     ):
@@ -1186,7 +1236,7 @@ def cmd_run(
 
     aws = port or real_port(region=state.region)
     tags = resource_tags(args.run_id, state.expires_at_ms)
-    outputs, deploy_seconds = provision(state, aws, tags)
+    outputs, deploy_seconds = provision(state, aws, tags, borrowed_network(args))
     print(f"state at {state_path(args.run_id)}; tags {tags}")
     print(
         "infra ready: throwaway VPC/subnet and the efs-volumes stack. No resource id is "
@@ -1320,6 +1370,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=_pause_list,
         default=list(EFS11_PAUSE_SECONDS),
         help="comma-separated EFS-11 pause lengths in seconds (default: research doc §9)",
+    )
+    run_parser.add_argument(
+        "--vpc-id",
+        help="borrowed VPC (with its owner's permission) instead of a throwaway one; "
+        "never created, recorded or deleted (needs --subnet-id)",
+    )
+    run_parser.add_argument(
+        "--subnet-id", help="borrowed subnet inside --vpc-id; never created or deleted"
     )
     run_parser.add_argument(
         "--infra-only",

@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from rayito._volumes._base import LIST_VISIBILITY_BUDGET_SECONDS, LIST_VISIBILITY_POLL_SECONDS
 from rayito._volumes._store import VolumeStore
 from rayito._volumes._store_async import AsyncVolumeStore
 from rayito.exceptions import VolumeNotFoundException
@@ -51,6 +52,72 @@ def test_create_is_idempotent_even_though_a_repeated_client_token_raises() -> No
     assert second.name == "datos-agente-7"
     assert len(api.access_points) == 1
     assert api.calls == ["create_access_point", "describe_access_points"]
+
+
+class FakeClock:
+    """Reloj y espera falsos para el reintento de `create` (Q99)."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def lagging_store(api: FakeEfsApi, clock: FakeClock) -> VolumeStore:
+    store = store_with(api)
+    store._clock = clock.clock
+    store._sleep = clock.sleep
+    return store
+
+
+def test_create_waits_for_an_existing_access_point_to_be_listed() -> None:
+    """Q99: right after `CreateAccessPoint`, `DescribeAccessPoints` may not
+    list the access point yet; a repeated `create()` (token already spent)
+    keeps polling `get` instead of failing with `VolumeNotFoundException`."""
+    api = FakeEfsApi()
+    clock = FakeClock()
+    store = lagging_store(api, clock)
+    first = store.create("datos-agente-7")
+    api.unlisted.add(first.access_point_id)
+    listed_after_polls = 3
+
+    def list_after_a_few_polls(seconds: float) -> None:
+        clock.sleep(seconds)
+        if len(clock.sleeps) == listed_after_polls:
+            api.unlisted.clear()
+
+    store._sleep = list_after_a_few_polls
+    second = store.create("datos-agente-7")
+    assert second.access_point_id == first.access_point_id
+    assert clock.sleeps == [LIST_VISIBILITY_POLL_SECONDS] * listed_after_polls
+
+
+def test_create_gives_up_once_the_listing_budget_is_spent() -> None:
+    api = FakeEfsApi()
+    clock = FakeClock()
+    store = lagging_store(api, clock)
+    first = store.create("datos-agente-7")
+    api.unlisted.add(first.access_point_id)
+    with pytest.raises(VolumeNotFoundException):
+        store.create("datos-agente-7")
+    assert clock.now >= LIST_VISIBILITY_BUDGET_SECONDS
+
+
+def test_destroy_of_a_stale_listed_access_point_returns_false() -> None:
+    """Q99: a just-deleted access point stays listed for a few seconds;
+    destroying it again is `False`, never `VolumeNotFoundException`."""
+    api = FakeEfsApi()
+    store = store_with(api)
+    volume = store.create("datos-agente-7")
+    api.stale[volume.access_point_id] = api.access_points.pop(volume.access_point_id)
+    assert store.destroy("datos-agente-7") is False
+    assert api.calls[-1] == "delete_access_point"
 
 
 def test_the_same_name_on_two_file_systems_does_not_share_a_client_token() -> None:

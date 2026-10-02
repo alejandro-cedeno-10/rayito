@@ -10,12 +10,13 @@ vivos.
     El dominio, el puerto `VolumeMounter` y el CRUD de volúmenes
     (`VolumeStore`) son reales y están probados. Pero `rayd` sólo trae
     `UnavailableEfsMounter` hasta que la campaña de medición EFS-1..EFS-20
-    se ejecute contra AWS real. EFS-1 (NFSv4.1 en el kernel del guest) ya
-    respondió que sí; quedan los criterios de parada EFS-2, EFS-3, EFS-8,
-    EFS-11 y EFS-13 (mount dentro del contenedor de la app, un conector VPC
-    propio que llegue al mount target, y `efs-utils` con TLS + IAM + access
-    point sin `systemd`, suspend/resume y `/suspend` con el mount target
-    inalcanzable). Hasta entonces, `Sandbox.create(volumes=...)` siempre
+    se ejecute contra AWS real. Ya respondieron que sí EFS-1 (NFSv4.1 en el
+    kernel del guest), EFS-2 (root monta dentro del contenedor de la app en
+    `rayito-base-caps`) y EFS-7 (`amazon-efs-utils` se instala en la imagen);
+    quedan los criterios de parada EFS-3, EFS-8, EFS-11 y EFS-13 (un
+    conector VPC propio que llegue al mount target, `efs-utils` con TLS +
+    IAM + access point sin `systemd`, suspend/resume y `/suspend` con el
+    mount target inalcanzable), que necesitan una VPC. Hasta entonces, `Sandbox.create(volumes=...)` siempre
     lanza `UnimplementedError`, incluso con una petición perfectamente
     válida. Ver
     [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md)
@@ -121,6 +122,15 @@ volumen es un *access point* con `RootDirectory.Path =
     await store.list();
     await store.destroy("datos-agente-7");
     ```
+
+!!! note "`list` y `get` tardan unos segundos en ponerse al día"
+    `DescribeAccessPoints` es eventualmente consistente (medido: hasta
+    ~11 s en listar un volumen nuevo y ~8 s en dejar de listar uno
+    borrado). `create` siempre devuelve el volumen recién creado y, si el
+    nombre ya existía, espera hasta 30 s a que aparezca en el listado;
+    `destroy` de un volumen que el listado aún muestra pero ya no existe
+    devuelve `False`. Un `get`/`list` justo después de `create` o `destroy`
+    puede ver el estado anterior.
 
 ## `Sandbox.create(volumes=)`: todavía `UnimplementedError`
 

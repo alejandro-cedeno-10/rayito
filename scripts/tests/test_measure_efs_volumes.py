@@ -56,6 +56,7 @@ class FakeMeasurementPort:
     isolated: bool = False
     calls: list[str] = field(default_factory=list)
     fail_on: str | None = None
+    deployed_into: tuple[str, str] | None = None
     _next_id: int = 1
 
     def _new_id(self, prefix: str) -> str:
@@ -105,6 +106,7 @@ class FakeMeasurementPort:
         self, stack_name: str, *, vpc_id: str, subnet_id: str, tags: dict[str, str]
     ) -> dict[str, str]:
         self.calls.append("deploy_stack")
+        self.deployed_into = (vpc_id, subnet_id)
         outputs = {
             "FileSystemId": self._new_id("fs"),
             "ConnectorArn": "arn:aws:lambda:us-east-1:123456789012:network-connector/fake",
@@ -217,6 +219,42 @@ def test_run_never_prints_a_real_resource_id(
     assert "subnet-0" not in out
     assert "fs-0" not in out
     assert "arn:aws" not in out
+
+
+#: A network the caller borrowed with its owner's permission (Q98: an SCP
+#: can deny `ec2:CreateVpc`); `run` must never create, record or delete it.
+BORROWED = [
+    "--vpc-id",
+    "vpc-0123456789abcdef0",
+    "--subnet-id",
+    "subnet-0123456789abcdef0",
+]
+
+
+def test_run_with_a_borrowed_network_never_creates_records_or_deletes_it() -> None:
+    fake = FakeMeasurementPort()
+    assert measure.main(RUN_INFRA + ["b1"] + BORROWED, port=fake) == 0
+    assert "create_vpc" not in fake.calls
+    assert "create_subnet" not in fake.calls
+    assert fake.deployed_into == ("vpc-0123456789abcdef0", "subnet-0123456789abcdef0")
+    state = measure.load_state("b1")
+    assert state is not None
+    assert state.resources == ["file-system", "stack"]
+
+    fake.calls.clear()
+    assert measure.main(["cleanup", "--run-id", "b1"], port=fake) == 0
+    assert "delete_vpc" not in fake.calls
+    assert "delete_subnet" not in fake.calls
+    assert fake.calls.count("destroy_stack") == 1
+
+
+@pytest.mark.parametrize("half", [BORROWED[:2], BORROWED[2:]])
+def test_run_refuses_half_a_borrowed_network_before_any_aws_call(
+    half: list[str],
+) -> None:
+    fake = FakeMeasurementPort()
+    assert measure.main(RUN_INFRA + ["b2"] + half, port=fake) == 2
+    assert fake.calls == []
 
 
 def test_report_without_a_run_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -430,6 +468,28 @@ def test_campaign_measures_every_automated_star_step_in_order_and_kills_its_vms(
         measure.EFS8_MOUNT_SAMPLES + 2  # EFS-8's samples, EFS-11's and EFS-13's mount
     )
     assert "client-policy" in state.resources  # still up for the manual steps
+
+
+def test_efs2_default_image_rejecting_root_never_fails_the_star_step() -> None:
+    """Without `RAYITO_ALLOW_ROOT=1` the default image rejects `user="root"`
+    (`PERMISSION_DENIED`) before `mount` runs; that informational half of
+    EFS-2 is recorded by type, the ★ verdict comes from the caps image."""
+
+    class RootRejectingGuest(FakeGuest):
+        def run_as_root(self, handle: str, command: str, *, timeout_seconds: float):
+            if self.launches[-1]["template"] == "rayito-base":
+                raise PermissionError("root rejected (fake)")
+            return super().run_as_root(handle, command, timeout_seconds=timeout_seconds)
+
+    fake, guest = FakeMeasurementPort(), RootRejectingGuest()
+    args = CAMPAIGN + ["d1", "--default-template", "rayito-base"]
+    assert measure.main(args, port=fake, guest=guest) == 0
+    state = measure.load_state("d1")
+    assert state is not None
+    efs2 = state.result_for("EFS-2")
+    assert efs2 is not None and efs2.answered
+    assert "default image: tmpfs not measured (PermissionError)" in efs2.summary
+    assert guest.live == set()
 
 
 def test_a_star_failure_stops_the_run_and_cleans_up(

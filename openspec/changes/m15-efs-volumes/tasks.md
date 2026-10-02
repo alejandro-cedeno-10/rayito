@@ -150,13 +150,18 @@ itself; re-run `cleanup` until it exits 0 anyway).
 1. `cd clients/python && uv run python ../../scripts/measure/efs_volumes.py plan`
    — check the estimate is under the cap.
 2. **EFS-7 (★, by hand)**: publish a throwaway `rayito-base-caps` version
-   with `amazon-efs-utils` (and `efs-proxy`) installed; record the
+   with `amazon-efs-utils` (and `efs-proxy`) installed, `ALL` and the image
+   environment variable `RAYITO_ALLOW_ROOT=1` (every automated step runs
+   as root; without it `rayd` rejects `user="root"`); record the
    `codeInstallSizeInBytes`/`memorySnapshotSizeInBytes` delta and build
    time in `AWS_API_NOTES.md` §16. If the package cannot be installed on
    `al2023-minimal` ARM64, stop here (no infra exists yet).
 3. `... efs_volumes.py run --region <r> --run-id <id> --caps-template
    <throwaway caps> --execution-role-arn <infra/iam.yaml role>
-   [--default-template <rayito-base>]` — measures EFS-2, 3, 8, 11, 13 and
+   [--default-template <rayito-base>] [--vpc-id <v> --subnet-id <s>]` —
+   `--vpc-id`/`--subnet-id` use a network borrowed with its owner's
+   permission instead of a throwaway VPC (never created or deleted by the
+   script; needed where an SCP denies `ec2:CreateVpc`, Q98) — measures EFS-2, 3, 8, 11, 13 and
    stops + cleans up on the first ★ failure. `--efs11-pauses 60` only for
    a quick smoke run; the go/no-go needs the default 60,600,3600.
 4. Only if step 3 exited 0, by hand against the infra it left up
@@ -172,6 +177,26 @@ itself; re-run `cleanup` until it exits 0 anyway).
    confirm no file system tagged `rayito:run-id=<id>`, no stack
    `rayito-efs-volumes-measure-<id>` and no VPC with that tag remain, and
    delete the throwaway caps image version (and only it).
+
+### 7.6 Acceptance run 2026-10-02 (results in `AWS_API_NOTES.md` §16 Q96–Q99)
+
+- [x] Step 1 `plan`: ~$0.82, under the $1.50 cap.
+- [x] Step 2 EFS-7 ★ passes (Q96): `amazon-efs-utils-3.1.3` from the
+      AL2023 repo, code install +197.6 MB, memory unchanged, build +10 s;
+      the real image layer must re-link `/usr/bin/python3` to 3.12.
+- [x] EFS-2 ★ passes (Q97), measured with `measure_efs2` without a VPC.
+- [ ] Step 3 **blocked** (Q98): the test account's organization SCP denies
+      `ec2:CreateVpc`; `run` stopped before creating anything. EFS-3, 8, 11
+      and 13 (★) and steps 4-5 wait for a VPC borrowed with permission
+      (`--vpc-id`/`--subnet-id`).
+- [x] Python + TypeScript e2e of the CRUD, the E2B shim and the
+      `volumes=`/`volume_mounts` gates against a throwaway file system;
+      found and fixed the `DescribeAccessPoints` lag (Q99).
+- [x] Off-by-default: a plain `create`/`run`/`kill` touches only
+      `lambda-microvms` (plus the `sts`/`sso` calls 0.5.1 already made).
+- [x] Cleanup: only this run's resources deleted (two throwaway images,
+      their zips and log groups, one file system); before/after inventory
+      identical.
 
 ## 8. OpenSpec
 

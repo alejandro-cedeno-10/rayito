@@ -36,6 +36,19 @@ _CLIENT_TOKEN_LENGTH = 64
 #: (`VolumeStore.create` lo atrapa y hace `get(name)` en su lugar).
 ACCESS_POINT_ALREADY_EXISTS: Final = "AccessPointAlreadyExists"
 
+#: `DescribeAccessPoints(FileSystemId=...)` es eventualmente consistente
+#: (AWS_API_NOTES.md §16 Q99, medido 2026-10-02 en tres ciclos
+#: crear/borrar): un access point recién creado tardó hasta 11 s en
+#: aparecer en el listado y uno recién borrado siguió listado como
+#: `available` hasta 8 s. `create()` de un nombre que ya existe sólo puede
+#: resolver su access point por ese listado, así que reintenta `get` durante
+#: este presupuesto (casi 3 veces el peor caso medido) antes de rendirse.
+LIST_VISIBILITY_BUDGET_SECONDS: Final = 30.0
+#: Pausa entre dos `DescribeAccessPoints` de ese reintento: el listado se
+#: puso al día en saltos de 1-10 s (Q99), así que sondear más rápido sólo
+#: gastaría llamadas.
+LIST_VISIBILITY_POLL_SECONDS: Final = 1.0
+
 
 class EfsApi(Protocol):
     """Lo que Rayito usa de un cliente boto3 `efs` (y sólo esto:

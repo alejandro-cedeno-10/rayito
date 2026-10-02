@@ -6,6 +6,8 @@ enseña `help(VolumeStore)`), como en `rayito._secrets.SecretStore`.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import Any
 
 import boto3
@@ -14,6 +16,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from rayito._aws import LazyClient, aws_code
 from rayito._volumes._base import (
     ACCESS_POINT_ALREADY_EXISTS,
+    LIST_VISIBILITY_BUDGET_SECONDS,
+    LIST_VISIBILITY_POLL_SECONDS,
     EfsApi,
     create_access_point_params,
     translate_error,
@@ -67,6 +71,10 @@ class VolumeStore:
         self._region = region
         self._session = session
         self._client = LazyClient("efs", region=region, session=session)
+        # Reloj y espera del reintento de `create` (Q99): sólo los tests los
+        # sustituyen, como en `SecretStore`.
+        self._sleep: Callable[[float], None] = time.sleep
+        self._clock: Callable[[], float] = time.monotonic
 
     @property
     def file_system_id(self) -> str:
@@ -90,14 +98,16 @@ class VolumeStore:
         (`ClientToken` es un hash de `file_system_id`+nombre). AWS no
         devuelve el access point ya creado para un `ClientToken` repetido:
         responde `AccessPointAlreadyExists`, que esta función atrapa para
-        devolver `get(name)` en su lugar."""
+        devolver `get(name)` en su lugar, reintentado durante
+        `LIST_VISIBILITY_BUDGET_SECONDS` porque el listado de EFS tarda en
+        mostrar un access point recién creado (Q99)."""
         validate_volume_name(name)
         params = create_access_point_params(self._file_system_id, name)
         try:
             described = self._call("create_access_point", **params)
         except VolumeException as exc:
             if exc.__cause__ is not None and aws_code(exc.__cause__) == ACCESS_POINT_ALREADY_EXISTS:
-                return self.get(name)
+                return self._get_once_listed(name)
             raise
         return EfsVolume(
             file_system_id=self._file_system_id,
@@ -119,7 +129,10 @@ class VolumeStore:
     def list(self) -> tuple[EfsVolume, ...]:
         """Todos los access points del sistema de ficheros con la etiqueta
         de volumen de Rayito, paginando `DescribeAccessPoints` hasta
-        agotar `NextToken`."""
+        agotar `NextToken`. Eventualmente consistente, como el propio
+        `DescribeAccessPoints` (Q99): un volumen recién creado puede tardar
+        unos segundos en aparecer y uno recién borrado seguir apareciendo
+        (también en `get`)."""
         volumes: list[EfsVolume] = []
         next_token: str | None = None
         while True:
@@ -145,8 +158,25 @@ class VolumeStore:
             volume = self.get(name)
         except VolumeNotFoundException:
             return False
-        self._call("delete_access_point", AccessPointId=volume.access_point_id)
+        try:
+            self._call("delete_access_point", AccessPointId=volume.access_point_id)
+        except VolumeNotFoundException:
+            # El listado aún mostraba un access point ya borrado (Q99).
+            return False
         return True
+
+    def _get_once_listed(self, name: str) -> EfsVolume:
+        """`get(name)` de un access point que EFS acaba de confirmar que
+        existe (`AccessPointAlreadyExists`) pero que su listado todavía
+        puede no mostrar: reintenta hasta `LIST_VISIBILITY_BUDGET_SECONDS`."""
+        deadline = self._clock() + LIST_VISIBILITY_BUDGET_SECONDS
+        while True:
+            try:
+                return self.get(name)
+            except VolumeNotFoundException:
+                if self._clock() >= deadline:
+                    raise
+            self._sleep(LIST_VISIBILITY_POLL_SECONDS)
 
     # ------------------------------------------------------------ internals
 

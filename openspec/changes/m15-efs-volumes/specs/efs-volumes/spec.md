@@ -27,11 +27,19 @@ Importing `rayito`/`rayito` (TS) SHALL NOT construct an `efs` client. Neither SH
 - **THEN** `UnimplementedError` is raised naming `m15-efs-volumes` and the EFS-1..EFS-20 campaign, and no `run-microvm`/`RunMicrovm` call is made
 
 ### Requirement: VolumeStore CRUD is real and uses only the documented EFS parameters
-`VolumeStore.create` SHALL call `CreateAccessPoint` with `PosixUser={Uid: 1000, Gid: 1000}`, `RootDirectory.Path` under `/rayito-volumes/`, a `ClientToken` derived deterministically from the volume name, and a `Tags` entry naming the volume; it SHALL be idempotent (two `create()` calls with the same name return the same access point). `get`/`list` SHALL use `DescribeAccessPoints` filtered to the store's `FileSystemId`. `destroy` SHALL use `DeleteAccessPoint` and SHALL NOT delete the directory's contents. No operation SHALL use an EFS API parameter absent from `AWS_API_NOTES.md` §22.
+`VolumeStore.create` SHALL call `CreateAccessPoint` with `PosixUser={Uid: 1000, Gid: 1000}`, `RootDirectory.Path` under `/rayito-volumes/`, a `ClientToken` derived deterministically from the volume name, and a `Tags` entry naming the volume; it SHALL be idempotent (two `create()` calls with the same name return the same access point). `get`/`list` SHALL use `DescribeAccessPoints` filtered to the store's `FileSystemId`. `destroy` SHALL use `DeleteAccessPoint` and SHALL NOT delete the directory's contents. Because `DescribeAccessPoints` is eventually consistent (`AWS_API_NOTES.md` §16 Q99), a `create()` answered `AccessPointAlreadyExists` SHALL retry `get` for a bounded budget before raising, and a `destroy()` whose `DeleteAccessPoint` answers `AccessPointNotFound` SHALL return `False`. No operation SHALL use an EFS API parameter absent from `AWS_API_NOTES.md` §22.
 
 #### Scenario: create is idempotent by name
 - **WHEN** `store.create("datos-7")` is called twice with the same `VolumeStore`
 - **THEN** both calls return the same `access_point_id`/`accessPointId` and only one access point exists
+
+#### Scenario: create tolerates a listing that lags behind
+- **WHEN** `store.create("datos-7")` is answered `AccessPointAlreadyExists` while `DescribeAccessPoints` does not list that access point yet
+- **THEN** it polls `get` until the access point is listed and returns it, raising `VolumeNotFoundException`/`VolumeNotFoundError` only once the bounded budget is spent
+
+#### Scenario: destroy of an already-deleted access point still listed returns false
+- **WHEN** `store.destroy("datos-7")` finds the volume in a stale listing and `DeleteAccessPoint` answers `AccessPointNotFound`
+- **THEN** it returns `False`/`false` instead of raising
 
 #### Scenario: destroy never deletes the directory's data
 - **WHEN** `store.destroy("datos-7")` succeeds

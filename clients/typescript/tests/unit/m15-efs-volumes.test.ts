@@ -8,7 +8,12 @@
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, UnimplementedError, VolumeNotFoundError } from "../../src/errors.js";
 import { EfsVolume } from "../../src/volumes/domain.js";
-import type { DescribedAccessPoint, EfsApi } from "../../src/volumes/efs.js";
+import {
+  type DescribedAccessPoint,
+  type EfsApi,
+  LIST_VISIBILITY_BUDGET_MS,
+  LIST_VISIBILITY_POLL_MS,
+} from "../../src/volumes/efs.js";
 import { requireVolumeSupport } from "../../src/volumes/section.js";
 import { VolumeStore } from "../../src/volumes/store.js";
 
@@ -24,6 +29,11 @@ class FakeEfsApi implements EfsApi {
     DescribedAccessPoint & { name: string; clientToken: string }
   >();
   readonly calls: string[] = [];
+  /** Simula el listado eventualmente consistente de EFS (Q99): los access
+   * points de `unlisted` existen pero `describeAccessPoints` aún no los
+   * devuelve, y los de `stale` ya se borraron pero sí los devuelve. */
+  readonly unlisted = new Set<string>();
+  readonly stale = new Map<string, DescribedAccessPoint & { name: string; clientToken: string }>();
   #nextId = 1;
 
   /** Como EFS de verdad: un `ClientToken` ya usado por un access point que
@@ -57,8 +67,11 @@ class FakeEfsApi implements EfsApi {
     FileSystemId: string;
   }): Promise<{ AccessPoints?: DescribedAccessPoint[] }> {
     this.calls.push("describeAccessPoints");
-    const points = [...this.accessPoints.values()]
-      .filter((ap) => ap.FileSystemId === input.FileSystemId)
+    const points = [...this.accessPoints.values(), ...this.stale.values()]
+      .filter(
+        (ap) =>
+          ap.FileSystemId === input.FileSystemId && !this.unlisted.has(ap.AccessPointId ?? ""),
+      )
       .map((ap) => ({
         AccessPointId: ap.AccessPointId,
         FileSystemId: ap.FileSystemId,
@@ -114,6 +127,61 @@ describe("VolumeStore", () => {
     expect(second.accessPointId).toBe(first.accessPointId);
     expect(fake.accessPoints.size).toBe(1);
     expect(fake.calls).toEqual(["createAccessPoint", "describeAccessPoints"]);
+  });
+
+  test("create waits for an existing access point to be listed (Q99)", async () => {
+    const fake = new FakeEfsApi();
+    let now = 0;
+    const sleeps: number[] = [];
+    const listedAfterPolls = 3;
+    const store = new VolumeStore({
+      fileSystemId: FILE_SYSTEM_ID,
+      client: fake,
+      now: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+        if (sleeps.length === listedAfterPolls) {
+          fake.unlisted.clear();
+        }
+      },
+    });
+    const first = await store.create("datos-agente-7");
+    fake.unlisted.add(first.accessPointId);
+    const second = await store.create("datos-agente-7");
+    expect(second.accessPointId).toBe(first.accessPointId);
+    expect(sleeps).toEqual(Array(listedAfterPolls).fill(LIST_VISIBILITY_POLL_MS));
+  });
+
+  test("create gives up once the listing budget is spent", async () => {
+    const fake = new FakeEfsApi();
+    let now = 0;
+    const store = new VolumeStore({
+      fileSystemId: FILE_SYSTEM_ID,
+      client: fake,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+    const first = await store.create("datos-agente-7");
+    fake.unlisted.add(first.accessPointId);
+    await expect(store.create("datos-agente-7")).rejects.toBeInstanceOf(VolumeNotFoundError);
+    expect(now).toBeGreaterThanOrEqual(LIST_VISIBILITY_BUDGET_MS);
+  });
+
+  test("destroy of a stale listed access point returns false (Q99)", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    const volume = await store.create("datos-agente-7");
+    const described = fake.accessPoints.get(volume.accessPointId);
+    expect(described).toBeDefined();
+    if (described !== undefined) {
+      fake.stale.set(volume.accessPointId, described);
+    }
+    fake.accessPoints.delete(volume.accessPointId);
+    expect(await store.destroy("datos-agente-7")).toBe(false);
+    expect(fake.calls.at(-1)).toBe("deleteAccessPoint");
   });
 
   test("the same name on two file systems does not share a client token", async () => {

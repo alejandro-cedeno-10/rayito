@@ -27,6 +27,18 @@ const CLIENT_TOKEN_LENGTH = 64;
  * `AccessPointAlreadyExists`, nunca el access point ya creado
  * (`VolumeStore.create` lo atrapa y hace `get(name)` en su lugar). */
 export const ACCESS_POINT_ALREADY_EXISTS = "AccessPointAlreadyExists";
+/** `DescribeAccessPoints({FileSystemId})` es eventualmente consistente
+ * (AWS_API_NOTES.md §16 Q99, medido 2026-10-02 en tres ciclos
+ * crear/borrar): un access point recién creado tardó hasta 11 s en aparecer
+ * en el listado y uno recién borrado siguió listado como `available` hasta
+ * 8 s. `create()` de un nombre que ya existe sólo puede resolver su access
+ * point por ese listado, así que reintenta `get` durante este presupuesto
+ * (casi 3 veces el peor caso medido). Espejo de
+ * `LIST_VISIBILITY_BUDGET_SECONDS` de `rayito._volumes._base`. */
+export const LIST_VISIBILITY_BUDGET_MS = 30_000;
+/** Pausa entre dos `DescribeAccessPoints` de ese reintento: el listado se
+ * puso al día en saltos de 1-10 s (Q99). */
+export const LIST_VISIBILITY_POLL_MS = 1_000;
 
 export type Credentials = AwsClientSettings["credentials"];
 

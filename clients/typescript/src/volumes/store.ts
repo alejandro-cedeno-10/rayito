@@ -15,6 +15,8 @@ import {
   type Credentials,
   createAccessPointParams,
   type EfsApi,
+  LIST_VISIBILITY_BUDGET_MS,
+  LIST_VISIBILITY_POLL_MS,
   newLazyEfsApi,
   translateError,
   volumeFromDescription,
@@ -27,6 +29,9 @@ export interface VolumeStoreOptions {
   readonly credentials?: Credentials | undefined;
   /** Un cliente propio con la forma de `EfsApi` (el agregado del SDK v3), p. ej. en tests. */
   readonly client?: EfsApi | undefined;
+  /** Reloj en ms y espera del reintento de `create` (Q99): sólo para tests. */
+  readonly now?: (() => number) | undefined;
+  readonly sleep?: ((ms: number) => Promise<void>) | undefined;
 }
 
 /**
@@ -63,11 +68,15 @@ export class VolumeStore {
   readonly #fileSystemId: string;
   readonly #region: string | undefined;
   readonly #api: LazyAwsApi<EfsApi>;
+  readonly #now: () => number;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(options: VolumeStoreOptions) {
     this.#fileSystemId = validateFileSystemId(options.fileSystemId);
     this.#region = options.region;
     this.#api = newLazyEfsApi(options.region, options.credentials, options.client);
+    this.#now = options.now ?? (() => performance.now());
+    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   get fileSystemId(): string {
@@ -88,7 +97,9 @@ export class VolumeStore {
    * nombre no crea dos access points (`ClientToken` es un hash de
    * `fileSystemId`+nombre). AWS no devuelve el access point ya creado para
    * un `ClientToken` repetido: responde `AccessPointAlreadyExists`, que
-   * esta función atrapa para devolver `get(name)` en su lugar.
+   * esta función atrapa para devolver `get(name)` en su lugar, reintentado
+   * durante `LIST_VISIBILITY_BUDGET_MS` porque el listado de EFS tarda en
+   * mostrar un access point recién creado (Q99).
    */
   async create(name: string): Promise<EfsVolume> {
     validateVolumeName(name);
@@ -103,7 +114,7 @@ export class VolumeStore {
       });
     } catch (error) {
       if (error instanceof VolumeError && error.awsCode === ACCESS_POINT_ALREADY_EXISTS) {
-        return this.get(name);
+        return this.#getOnceListed(name);
       }
       throw error;
     }
@@ -125,7 +136,10 @@ export class VolumeStore {
   }
 
   /** Todos los access points del sistema de ficheros con la etiqueta de
-   * volumen de Rayito, paginando hasta agotar `NextToken`. */
+   * volumen de Rayito, paginando hasta agotar `NextToken`. Eventualmente
+   * consistente, como el propio `DescribeAccessPoints` (Q99): un volumen
+   * recién creado puede tardar unos segundos en aparecer y uno recién
+   * borrado seguir apareciendo (también en `get`). */
   async list(): Promise<EfsVolume[]> {
     const volumes: EfsVolume[] = [];
     let nextToken: string | undefined;
@@ -163,8 +177,33 @@ export class VolumeStore {
       }
       throw error;
     }
-    await this.#call("deleteAccessPoint", { AccessPointId: volume.accessPointId });
+    try {
+      await this.#call("deleteAccessPoint", { AccessPointId: volume.accessPointId });
+    } catch (error) {
+      if (error instanceof VolumeNotFoundError) {
+        // El listado aún mostraba un access point ya borrado (Q99).
+        return false;
+      }
+      throw error;
+    }
     return true;
+  }
+
+  /** `get(name)` de un access point que EFS acaba de confirmar que existe
+   * (`AccessPointAlreadyExists`) pero que su listado todavía puede no
+   * mostrar: reintenta hasta `LIST_VISIBILITY_BUDGET_MS`. */
+  async #getOnceListed(name: string): Promise<EfsVolume> {
+    const deadline = this.#now() + LIST_VISIBILITY_BUDGET_MS;
+    for (;;) {
+      try {
+        return await this.get(name);
+      } catch (error) {
+        if (!(error instanceof VolumeNotFoundError) || this.#now() >= deadline) {
+          throw error;
+        }
+      }
+      await this.#sleep(LIST_VISIBILITY_POLL_MS);
+    }
   }
 
   async #call<K extends keyof EfsApi>(

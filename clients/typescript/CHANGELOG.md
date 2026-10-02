@@ -40,6 +40,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   `rayito stack {deploy,status,destroy} efs-volumes`
   (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, mount
   targets, grupo de seguridad NFS y conector de egress dedicado).
+  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
+  (medido en AWS real, `AWS_API_NOTES.md` §16 Q99: hasta 11 s en listar un
+  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
+  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
+  point que el listado aún mostraba pero ya no existe devuelve `false`.
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
