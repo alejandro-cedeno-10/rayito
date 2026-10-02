@@ -48,8 +48,9 @@ artifact bucket of the account that publishes.
 named size from the *same* artifact, named ``<image_name>-<size>``
 (``apply_size_suffix``/``_sizing.SIZE_NAMES``), each with its own
 ``resources[0].minimumMemoryInMiB`` and an ``environmentVariables``
-entry (``RAYITO_BASELINE_MEMORY_MIB``) baked in as declared information for
-user code, not something ``rayd``/the guest reads today. With ``--sizes``
+entry (``RAYITO_BASELINE_MEMORY_MIB``) baked in as declared image
+information, readable with ``get-microvm-image-version``; it does not
+reach ``commands.run``'s environment (Q107). With ``--sizes``
 every image this invocation publishes (baseline and sizes alike) is
 reported in a single output block: one JSON document, or one
 ``RAYITO_TEMPLATE=`` line for the baseline plus one
@@ -61,13 +62,16 @@ unaggregated). ``--env KEY=VALUE`` (repeatable) adds arbitrary
 included — the minimal, behavior-preserving seam this change needs
 (``PublishSettings.environment_variables``), not the full
 ``ImageBuildGateway``/``_images.py`` extraction the M15 architecture names
-and a future change may still do (tasks.md §10); it is never an activation
+and a future change may still do (tasks.md §11); it is never an activation
 switch (ADR-014 rule 4): it only configures the image's own guest
 environment, nothing about what the SDK does at ``Sandbox.create()``. A
-publish that drops ``--env`` compared to the version it would otherwise
-reuse builds a new one instead (``configuration_matches`` always compares
-``environmentVariables``, never just when `desired` happens to carry it):
-stale variables never survive by omission.
+``--env``/``--sizes`` publish only reuses a version whose
+``environmentVariables`` match exactly, read with
+``get-microvm-image-version`` because ``list-microvm-image-versions`` never
+echoes them (Q106, ``echoed_environment_variables``). Without ``--env`` the
+reuse check is 0.5.x's, list-only and with no extra call: a version built
+earlier *with* ``--env`` under the same name and artifact is then reused as
+is; pass ``--force`` to rebuild it without the variables.
 """
 
 from __future__ import annotations
@@ -353,10 +357,20 @@ def environment_variables_match(echoed: Any, desired: Mapping[str, str]) -> bool
     el dict `desired_configuration` arma para la petición: ese sólo lleva la
     clave cuando no está vacío, para que la petición a AWS siga siendo byte
     a byte la de antes de sizes-catalog). Una versión sin la clave (nunca
-    tuvo `--env`) cuenta como `{}`, igual que un `desired` vacío: así una
-    publicación sin `--env` no reutiliza una versión con variables
-    obsoletas (p.ej. un `RAYITO_ALLOWED_MOUNT_BUCKETS` que ya no aplica)."""
+    tuvo `--env`, o viene de `list-microvm-image-versions`, que nunca la
+    devuelve: Q106) cuenta como `{}`, igual que un `desired` vacío. Quién
+    lee de verdad `echoed`: `echoed_environment_variables`."""
     return dict(echoed or {}) == dict(desired)
+
+
+def settings_match(version: dict[str, Any], desired: dict[str, Any]) -> bool:
+    """Every key of `desired` except `environmentVariables`, which
+    `configuration_matches`/`published_version` compare on their own."""
+    return all(
+        value_matches(key, version.get(key), value)
+        for key, value in desired.items()
+        if key != ENVIRONMENT_VARIABLES_KEY
+    )
 
 
 def configuration_matches(
@@ -368,11 +382,29 @@ def configuration_matches(
         version.get(ENVIRONMENT_VARIABLES_KEY), environment_variables or {}
     ):
         return False
-    return all(
-        value_matches(key, version.get(key), value)
-        for key, value in desired.items()
-        if key != ENVIRONMENT_VARIABLES_KEY
+    return settings_match(version, desired)
+
+
+def echoed_environment_variables(
+    clients: PublishClients,
+    arn: str,
+    item: dict[str, Any],
+    environment_variables: Mapping[str, str],
+) -> Any:
+    """The `environmentVariables` a listed version was built with.
+    `list-microvm-image-versions` never echoes the key, only
+    `get-microvm-image-version` does (Q106, AWS_API_NOTES.md §24): without
+    this every `--env`/`--sizes` publish (sized images always bake
+    `RAYITO_BASELINE_MEMORY_MIB`) rebuilt instead of reusing. The extra
+    call (no `apiTps` quota of its own) only happens when this publish
+    asks for variables; without `--env` the list item is trusted as is,
+    the exact reuse check (and calls) of 0.5.x."""
+    if not environment_variables:
+        return item.get(ENVIRONMENT_VARIABLES_KEY)
+    response = clients.microvms.get_microvm_image_version(
+        imageIdentifier=arn, imageVersion=str(item["imageVersion"])
     )
+    return response.get(ENVIRONMENT_VARIABLES_KEY)
 
 
 def published_version(
@@ -381,19 +413,30 @@ def published_version(
     desired: dict[str, Any],
     environment_variables: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Newest launchable version already built from this artifact and config."""
+    """Newest launchable version already built from this artifact and config:
+    candidates matching every other key are checked newest first, so a
+    `--env` publish confirms its variables with as few
+    `get-microvm-image-version` calls as possible (see
+    `echoed_environment_variables`)."""
+    wanted = environment_variables or {}
     paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    matches = [
-        item
-        for page in paginator.paginate(imageIdentifier=arn)
-        for item in page["items"]
-        if item["state"] == "SUCCESSFUL"
-        and item["status"] == "ACTIVE"
-        and configuration_matches(item, desired, environment_variables)
-    ]
-    if not matches:
-        return None
-    return str(max(matches, key=lambda item: item["createdAt"])["imageVersion"])
+    candidates = sorted(
+        (
+            item
+            for page in paginator.paginate(imageIdentifier=arn)
+            for item in page["items"]
+            if item["state"] == "SUCCESSFUL"
+            and item["status"] == "ACTIVE"
+            and settings_match(item, desired)
+        ),
+        key=lambda item: item["createdAt"],
+        reverse=True,
+    )
+    for item in candidates:
+        echoed = echoed_environment_variables(clients, arn, item, wanted)
+        if environment_variables_match(echoed, wanted):
+            return str(item["imageVersion"])
+    return None
 
 
 def submit_build(

@@ -144,3 +144,22 @@ def test_sizes_command_human_table(
     assert result.exit_code == 0, result.stderr
     assert "2gb" in result.stdout and "rayito-base" in result.stdout
     assert "512mb" in result.stdout
+
+
+def test_sizes_command_image_name_overrides_the_variant_base_name(
+    runner: CliRunner, clients: Clients, stubbed_clients: Stubs
+) -> None:
+    """`--image-name` lista la familia que `publish --image-name` creó, con
+    la misma precedencia que `publish` (aceptación en AWS real de PR #76)."""
+    stubbed_clients.microvms.add_response(
+        "list_microvm_images",
+        {"items": [image_summary("mi-imagen")]},
+        {"nameFilter": "mi-imagen"},
+    )
+    result = runner.invoke(
+        app, ["--json", "image", "sizes", "--image-name", "mi-imagen"], obj=clients
+    )
+    assert result.exit_code == 0, result.stderr
+    rows = {row["size"]: row for row in json.loads(result.stdout)}
+    assert rows["2gb"]["name"] == "mi-imagen" and rows["2gb"]["published"] is True
+    assert rows["4gb"]["name"] == "mi-imagen-4gb" and rows["4gb"]["published"] is False

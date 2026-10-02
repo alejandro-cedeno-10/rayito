@@ -24,6 +24,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **Catálogo de tamaños, aceptación en AWS real** (`m15-sizes-catalog`):
+  `rayito image publish --env`/`--sizes` vuelve a reutilizar una versión
+  ya construida con la misma configuración: `list-microvm-image-versions`
+  no devuelve `environmentVariables` (Q106), así que antes toda imagen con
+  variables (cada imagen con sufijo de tamaño) se reconstruía en cada
+  publicación; ahora se confirman con `GetMicrovmImageVersion` (gratuita),
+  sólo cuando la publicación lleva variables. `rayito image sizes` acepta
+  `--image-name`, como `publish`, para listar una familia publicada con
+  nombre propio.
 - **Catálogo de tamaños** (`m15-sizes-catalog`, ADR-019, opcional y
   apagado por defecto): `Sandbox.create(size="4gb")`/`SizeRequest(memory_mib=...)`
   resuelve, enteramente en cliente y sin ningún RPC, al primer tamaño del

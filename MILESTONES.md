@@ -1396,8 +1396,8 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   `rayito-base-caps`.
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
-- **sizes-catalog** (`m15-sizes-catalog`, **entregado, pendiente de
-  aceptación en AWS real**): catálogo cerrado de cinco tamaños
+- **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
+  real el 2026-10-02**, Q106/Q107): catálogo cerrado de cinco tamaños
   (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de
   `ConfigureSandbox`; imágenes `<variant>[-<size>]` (`rayito image publish
   --sizes`, en oleadas de hasta 10 builds simultáneos, horneando

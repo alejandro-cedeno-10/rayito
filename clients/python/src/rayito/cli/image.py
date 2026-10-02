@@ -140,7 +140,7 @@ def parse_environment_assignments(raw: list[str]) -> dict[str, str]:
     microvm-image`; `PublishSettings.environment_variables`, el seam mínimo
     que esta función necesita en vez de la extracción completa de
     `_images.py`/`ImageBuildGateway` que nombra la arquitectura M15 —
-    `cli/_publish.py` tasks.md §10). Nunca secretos: cualquiera con
+    `cli/_publish.py` tasks.md §11). Nunca secretos: cualquiera con
     `GetMicrovmImageVersion` y todo proceso del guest la leen en claro; usa
     `SecretStore`/`secrets=` para eso (code review de PR #76)."""
     result: dict[str, str] = {}
@@ -350,7 +350,7 @@ def active_code_artifact(clients: Clients, image: dict[str, Any] | None) -> str 
     imagen publicada no cambia el presupuesto de coste de la CLI, y nunca
     lanza ningún sandbox (`sizes_command` la usa para `sameArtifact`, code
     review de PR #76: el reemplazo gratuito, sin booteo, del parity check
-    de `agent_version` que `doctor` no hace — tasks.md §10)."""
+    de `agent_version` que `doctor` no hace — tasks.md §11)."""
     if image is None or image.get("latestActiveImageVersion") is None:
         return None
     response = clients.microvms.get_microvm_image_version(
@@ -363,6 +363,13 @@ def active_code_artifact(clients: Clients, image: dict[str, Any] | None) -> str 
 def sizes_command(
     ctx: typer.Context,
     variant: Annotated[str, typer.Option("--variant", help="full, slim o poly.")] = "full",
+    image_name: Annotated[
+        str | None,
+        typer.Option(
+            "--image-name",
+            help="Nombre base de `image publish --image-name`; sustituye al de la variante.",
+        ),
+    ] = None,
 ) -> None:
     """Por cada tamaño del catálogo cerrado, qué imagen de esta variante ya
     publicó `rayito image publish --sizes` (o si ninguna): siempre una
@@ -376,8 +383,11 @@ def sizes_command(
     detecta un tamaño publicado desde un zip distinto al baseline (la
     deriva que un parity check de `agent_version` buscaría lanzando N
     sandboxes, aquí gratis y sin lanzar ninguno); `None` cuando el tamaño o
-    el baseline no tienen versión activa que comparar."""
-    base_name = default_image_name(validate_variant(variant))
+    el baseline no tienen versión activa que comparar. `--image-name` sigue
+    la misma precedencia que en `publish` (aceptación en AWS real de PR
+    #76: sin él, una familia publicada con `publish --image-name X --sizes`
+    no se podía listar)."""
+    base_name = image_name or default_image_name(validate_variant(variant))
     clients = clients_of(ctx)
     published = {image["name"]: image for image in listed_images(clients, base_name)}
     names = size_image_names(base_name)

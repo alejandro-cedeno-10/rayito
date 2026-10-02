@@ -213,7 +213,13 @@ def sized_image_response(state: str = "UPDATED") -> dict[str, Any]:
     return {"imageArn": SIZED_ARN, "name": "rayito-base-4gb", "state": state, "createdAt": T0}
 
 
+SIZED_ENVIRONMENT = {"RAYITO_BASELINE_MEMORY_MIB": "4096"}
+
+
 def sized_version_item(number: int, *, artifact_uri: str) -> dict[str, Any]:
+    """Un item de `list-microvm-image-versions`: como en AWS real (Q106),
+    sin `environmentVariables`; sólo `get-microvm-image-version` las
+    devuelve (`sized_version_detail`)."""
     return {
         "imageVersion": f"{number}.0",
         "state": "SUCCESSFUL",
@@ -228,8 +234,32 @@ def sized_version_item(number: int, *, artifact_uri: str) -> dict[str, Any]:
         "cpuConfigurations": [{"architecture": "ARM_64"}],
         "hooks": _publish.IMAGE_HOOKS,
         "logging": {"cloudWatch": {"logGroup": "/rayito/rayito-base-4gb"}},
-        "environmentVariables": {"RAYITO_BASELINE_MEMORY_MIB": "4096"},
     }
+
+
+def sized_version_detail(number: int, *, artifact_uri: str) -> dict[str, Any]:
+    """`get-microvm-image-version` de la misma versión: la única que trae
+    `environmentVariables` (Q106)."""
+    return {
+        **sized_version_item(number, artifact_uri=artifact_uri),
+        "environmentVariables": SIZED_ENVIRONMENT,
+    }
+
+
+def stub_sized_versions(stubs: Stubs, key: str) -> None:
+    """La lista de versiones del tamaño y el `get` que confirma sus
+    `environmentVariables` antes de reutilizarla (`published_version`)."""
+    uri = f"s3://bucket/{key}"
+    stubs.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [sized_version_item(3, artifact_uri=uri)]},
+        {"imageIdentifier": SIZED_ARN},
+    )
+    stubs.microvms.add_response(
+        "get_microvm_image_version",
+        sized_version_detail(3, artifact_uri=uri),
+        {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0"},
+    )
 
 
 def sized_build_item(version: str) -> dict[str, Any]:
@@ -256,11 +286,7 @@ def test_publish_sizes_reuses_an_already_built_version_without_touching_the_base
     stubbed_clients.microvms.add_response(
         "get_microvm_image", sized_image_response(), {"imageIdentifier": SIZED_ARN}
     )
-    stubbed_clients.microvms.add_response(
-        "list_microvm_image_versions",
-        {"items": [sized_version_item(3, artifact_uri=f"s3://bucket/{key}")]},
-        {"imageIdentifier": SIZED_ARN},
-    )
+    stub_sized_versions(stubbed_clients, key)
     stubbed_clients.microvms.add_response(
         "list_microvm_image_builds",
         {"items": [sized_build_item("3.0")]},
@@ -281,6 +307,31 @@ def test_publish_sizes_reuses_an_already_built_version_without_touching_the_base
     # El reuse no debería haber dejado ninguna respuesta de create/update sin usar.
     stubbed_clients.microvms.assert_no_pending_responses()
     stubbed_clients.s3.assert_no_pending_responses()
+
+
+def test_publish_sizes_rebuilds_when_the_echoed_environment_differs(
+    clients: Clients, stubbed_clients: Stubs, artifact: Path
+) -> None:
+    """Q106: una versión que coincide en todo lo que devuelve la lista pero
+    cuyas `environmentVariables` (leídas con `get`) no son las pedidas no se
+    reutiliza: `published_version` no encuentra ninguna."""
+    settings = _publish.sized_settings(base_settings(artifact=artifact), "4gb")
+    key = _publish.artifact_key(artifact.read_bytes())
+    uri = f"s3://bucket/{key}"
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [sized_version_item(3, artifact_uri=uri)]},
+        {"imageIdentifier": SIZED_ARN},
+    )
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image_version",
+        {**sized_version_item(3, artifact_uri=uri), "environmentVariables": {"OTRA": "x"}},
+        {"imageIdentifier": SIZED_ARN, "imageVersion": "3.0"},
+    )
+    desired = {"codeArtifact": {"uri": uri}}
+    found = _publish.published_version(clients, SIZED_ARN, desired, settings.environment_variables)
+    assert found is None
+    stubbed_clients.microvms.assert_no_pending_responses()
 
 
 def test_publish_sizes_with_no_sizes_makes_no_call(clients: Clients, artifact: Path) -> None:
@@ -388,11 +439,7 @@ def stub_sized_reuse(stubs: Stubs, key: str) -> None:
     stubs.microvms.add_response(
         "get_microvm_image", sized_image_response(), {"imageIdentifier": SIZED_ARN}
     )
-    stubs.microvms.add_response(
-        "list_microvm_image_versions",
-        {"items": [sized_version_item(3, artifact_uri=f"s3://bucket/{key}")]},
-        {"imageIdentifier": SIZED_ARN},
-    )
+    stub_sized_versions(stubs, key)
     stubs.microvms.add_response(
         "list_microvm_image_builds",
         {"items": [sized_build_item("3.0")]},

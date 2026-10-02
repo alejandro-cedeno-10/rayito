@@ -1046,6 +1046,54 @@ tamaños puede lanzar una identidad, sin tocar ninguna imagen existente.
 `sizes-guard` es `CAPABILITY_IAM` (crea una `AWS::IAM::ManagedPolicy`, nada
 más): $0 en reposo y por uso.
 
+**Aceptación en AWS real (2026-10-02, PR #76, imágenes desechables
+`<nombre>`, `<nombre>-512mb`, `<nombre>-4gb`, ya borradas).**
+
+- **Q106 — `ListMicrovmImageVersions` no devuelve `environmentVariables`.**
+  Los items de la lista traen `baseImageArn`, `baseImageVersion`,
+  `buildRoleArn`, `codeArtifact`, `cpuConfigurations`, `createdAt`,
+  `description`, `egressNetworkConnectors`, `hooks`, `imageArn`,
+  `imageVersion`, `logging`, `resources`, `state`, `status` y `updatedAt`;
+  sólo `GetMicrovmImageVersion` añade `environmentVariables`. Consecuencia
+  medida antes del arreglo: repetir el mismo `rayito image publish --sizes
+  512mb,4gb --env K=V` construyó una versión nueva de las tres imágenes en
+  vez de reutilizarlas (cada imagen con sufijo hornea siempre
+  `RAYITO_BASELINE_MEMORY_MIB`, así que ningún `--sizes` reutilizaba
+  nunca). Con el arreglo (`_publish.echoed_environment_variables`: una
+  `GetMicrovmImageVersion` por candidata, de la más nueva a la más
+  antigua, sólo si la publicación lleva variables) la misma invocación
+  reutilizó las tres en 5 s. Sin `--env` ni `--sizes` el reuse sigue
+  siendo el de 0.5.x (sólo la lista, ninguna llamada nueva).
+- **Q107 — `sizes-guard` aplicado de verdad.** Con la política desplegada
+  por `rayito stack deploy sizes-guard --param ImageArns=<ARN sin versión
+  del baseline>,<ARN sin versión de -4gb>` adjunta a un rol de prueba que
+  además tenía `lambda:*` sobre `*`: `RunMicrovm` de `-512mb` (no listado)
+  → `AccessDeniedException` "... on resource: <ARN sin versión de la
+  imagen> with an explicit deny in an identity-based policy"; `-4gb` y el
+  baseline (listados) arrancan. Sin la política, el mismo rol lanzó
+  `-512mb` (control). Confirma Q90: `RunMicrovm` autoriza sólo contra el
+  ARN de imagen sin versión, así que el `NotResource` del Deny no bloquea
+  ningún otro recurso de la petición.
+- **Un tamaño no publicado** (`size="8gb"` sin `-8gb`): el SDK resuelve el
+  nombre en cliente y `RunMicrovm` lo rechaza de forma síncrona,
+  `SandboxNotFoundException`/`SandboxNotFoundError` "No active version
+  found for MicroVM image <ARN de -8gb>": ningún MicroVM se crea.
+- **Variables de imagen y comandos.** `environmentVariables` (las de
+  `--env` y `RAYITO_BASELINE_MEMORY_MIB`) no aparecen en el entorno de
+  `commands.run` (uid 1000) ni en el de su shell; `/proc/1/environ` (rayd,
+  root) no es legible para uid 1000. Son información declarada de la
+  imagen, legible con `GetMicrovmImageVersion`, no un canal hacia el
+  código de usuario.
+- Resto, sin sorpresas: `size="4gb"` → `RunMicrovm` + `CreateMicrovmAuthToken`
+  en `create()` (ninguna `GetMicrovmImageVersion`), una sola en el primer
+  `get_info()`/`getInfo()` y ninguna en el segundo; guest `nproc` 8 y
+  `MemTotal` 16 052 MiB (Q88); `SizeRequest(memory_mib=300)`/`{ memoryMib:
+  300 }` → `512mb` con `RayitoCompatWarning`; 9000 MiB, `"3gb"` y ARN +
+  `size` → `InvalidArgumentException`/`InvalidArgumentError` con cero
+  llamadas a AWS; `rayito image sizes --image-name <nombre>` → `sameArtifact:
+  true` para los dos tamaños; tres builds en 206 s (baseline primero, los
+  dos tamaños en paralelo después).
+
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 
 Pendiente: `m15-events-webhooks` documenta aquí la suscripción de

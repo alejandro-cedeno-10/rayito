@@ -172,11 +172,28 @@
       `e2b-parity.md`, `optional-features.md`, `cost.md`, `security.md`
       (threat T27) and `limits.md`, for `m15-docs-integration` to apply.
 
-## 10. Not done in this change (explicitly out of scope)
+## 10. AWS acceptance (2026-10-02, serialized stage)
 
-- AWS acceptance (serialized stage, separate agent); `aws_plan` for it is
-  in this change's PR description / the task's final report, not in this
-  repo.
+- [x] 10.1 `rayito image publish --sizes 512mb,4gb --env K=V` on throwaway
+      image names; `--memory-mib`/`--env`/`--sizes` validation rejects
+      before any AWS call; `rayito image sizes --image-name` reports
+      `sameArtifact: true`.
+- [x] 10.2 Fix: reuse of `--env`/`--sizes` versions reads
+      `environmentVariables` with `GetMicrovmImageVersion` (Q106); the
+      repeated publish went from rebuilding all three images to reusing
+      them in 5 s.
+- [x] 10.3 Fix: `rayito image sizes --image-name`.
+- [x] 10.4 Python (sync, async, e2b shim) and TypeScript e2e: off by
+      default (no `GetMicrovmImageVersion`, size fields unset), one cached
+      `GetMicrovmImageVersion` per image version, rounding warning,
+      invalid sizes with zero AWS calls, unpublished size rejected by
+      `RunMicrovm` without creating a MicroVM.
+- [x] 10.5 `sizes-guard` deployed/destroyed via `rayito stack`; explicit
+      Deny enforced on a real `RunMicrovm` against an identity that also
+      had `lambda:*` (Q107).
+- [x] 10.6 Cleanup: before/after inventory identical.
+
+## 11. Not done in this change (explicitly out of scope)
 - `_images.py` extraction as a standalone `ImageBuildGateway` port: the
   M15 architecture names it, but nothing in this change needs the full
   port abstraction (only `environment_variables` and the

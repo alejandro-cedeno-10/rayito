@@ -111,7 +111,7 @@ Con un nombre o ARN lista `imageVersion`, `state`, `status`,
 ### `image sizes`
 
 ```bash
-rayito image sizes [--variant full|slim|poly]
+rayito image sizes [--variant full|slim|poly] [--image-name <nombre>]
 ```
 
 Por cada tamaño del catálogo cerrado (`512mb`/`1gb`/`2gb`/`4gb`/`8gb`,
@@ -124,7 +124,9 @@ por imagen publicada para `sameArtifact` — con sólo el baseline publicado,
 ninguna llamada adicional. Nunca construye, publica ni lanza nada.
 `sameArtifact` compara el `codeArtifact.uri` de la versión activa de cada
 tamaño contra la del baseline: `false` detecta un tamaño publicado desde un
-zip distinto, sin lanzar ningún sandbox.
+zip distinto, sin lanzar ningún sandbox. `--image-name` lista la familia
+publicada con `rayito image publish --image-name <nombre> --sizes ...`
+(`<nombre>`, `<nombre>-4gb`, ...) en lugar de la de la variante.
 
 ### `image prune`
 

@@ -49,11 +49,10 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
           sbx.commands.run("echo hola")
       ```
 
-!!! warning "Pendiente de aceptación en AWS real"
-    `size=`/`size`, `rayito image publish --sizes`/`--env` y el componente
-    `sizes-guard` están implementados y probados con el plano de control
-    simulado en los dos SDK. Su prueba contra AWS real (`MILESTONES.md`,
-    presupuesto `sizes-catalog` ≤ $0,45) todavía no se ha ejecutado.
+!!! success "Aceptado en AWS real (2026-10-02)"
+    `size=`/`size` (Python sync/async y TypeScript), `rayito image publish
+    --sizes`/`--env`, `rayito image sizes` y el componente `sizes-guard` se
+    probaron contra AWS real: ver `AWS_API_NOTES.md` §24 (Q106, Q107).
 
 ## Cuándo usarlo
 
@@ -203,8 +202,10 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   (repetible) añade variables de imagen (`environmentVariables`) a todas
   las que se publiquen en la invocación, baseline incluido — nunca un
   interruptor de activación del SDK (ADR-014 regla 4), sólo configuración
-  horneada en el guest. `rayito image publish` hornea además
-  `RAYITO_BASELINE_MEMORY_MIB` en cada imagen con sufijo.
+  horneada en la imagen. `rayito image publish` hornea además
+  `RAYITO_BASELINE_MEMORY_MIB` en cada imagen con sufijo. Ninguna de las
+  dos llega al entorno de `commands.run` (medido, Q107): son información
+  declarada de la imagen, que lees con `GetMicrovmImageVersion`.
   **Nunca pongas secretos en `--env`**: cualquiera con `GetMicrovmImageVersion`
   y todo proceso del guest los leen en claro; usa `SecretStore`/`secrets=`
   para eso.
@@ -214,8 +215,13 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   que ninguna se asiente (una oleada de hasta 10 construcciones
   simultáneas, el límite del servicio), así AWS las construye en paralelo.
 - Una versión ya construida con el mismo artefacto y configuración se
-  reutiliza, como en una publicación normal.
-- `rayito image sizes [--variant]` lista, por tamaño del catálogo cerrado,
+  reutiliza, como en una publicación normal. Con `--env` o `--sizes` la
+  comparación de variables usa una `GetMicrovmImageVersion` (gratuita) por
+  versión candidata, porque `list-microvm-image-versions` no las devuelve
+  (Q106); sin ninguno de los dos, la comprobación es la de 0.5.x, sin
+  llamadas nuevas, y una versión publicada antes *con* `--env` se
+  reutiliza tal cual: usa `--force` para reconstruirla sin variables.
+- `rayito image sizes [--variant | --image-name]` lista, por tamaño del catálogo cerrado,
   qué imagen de la variante ya se publicó (o si ninguna) y si comparte
   artefacto con el baseline (`sameArtifact`): siempre una
   `list-microvm-images`, y si hay algún tamaño adicional publicado además
@@ -245,6 +251,7 @@ stack destroy sizes-guard` borra la política; ninguna imagen se toca.
 |---|---|---|---|
 | `InvalidArgumentException` | `InvalidArgumentError` | `size=` pide más de 8192 MiB, un nombre que no existe en el catálogo, o se combina con un template dado por ARN | usa un nombre del catálogo o `SizeRequest(memory_mib=...)`/`{ memoryMib }`, y pasa el nombre de la imagen, no su ARN |
 | `InvalidArgumentException` | `InvalidArgumentError` | `create(pool=, size=)` | fija el tamaño publicando la imagen del `PoolConfig` con ese sufijo, no en `take()` |
+| `SandboxNotFoundException` | `SandboxNotFoundError` | `size=` pide un tamaño válido del catálogo que nunca publicaste (`No active version found for MicroVM image ...-8gb`); `RunMicrovm` lo rechaza sin crear ningún MicroVM | publícalo con `rayito image publish --sizes 8gb`, o pide un tamaño que exista (`rayito image sizes`) |
 | `RayitoCompatWarning` | aviso de `process.emitWarning` | `size=` no coincide exacto con un valor del catálogo | informativo: el sandbox se lanza igual, redondeado hacia arriba |
 
 ## Diferencias con E2B
