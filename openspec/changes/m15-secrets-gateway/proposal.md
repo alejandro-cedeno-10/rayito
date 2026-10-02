@@ -56,7 +56,7 @@ the `SecretGatewayConfig`/`Status` proto stub and the `secret_gateway`
   gains `gateways=` in both SDKs.
 - **TypeScript mirrors.** `configure/base.ts` (the `_configure_base.py`
   seam TS was missing: `AgentFeatures`, `requireConfigureSupport`,
-  `sectionError`, `raiseForResults`, `PostApplySection`; placed at the
+  `sectionError`, `raiseSectionError`, `PostApplySection`; placed at the
   `configure/` path the 0.6 architecture reserves for foundations, which
   had not created it yet; flagged for foundations to own), `secret-gateway/{domain,section}.ts`,
   `feature-options.ts`'s `gateways` branch, and the same dispatch wired into

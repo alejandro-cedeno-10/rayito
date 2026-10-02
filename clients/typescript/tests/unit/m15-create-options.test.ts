@@ -1,24 +1,27 @@
 /**
- * `Sandbox.create()`: las seis opciones 0.6 que siguen siendo un stub
- * lanzan `UnimplementedError` antes de resolver ningún plano de control (y
- * por tanto antes de cualquier llamada a AWS: `planFeatures` corre antes
- * de `resolveControlPlane`). `gateways` (m15-secrets-gateway) ya no es un
- * stub: con un valor mal formado lanza `InvalidArgumentError` en su lugar,
- * en el mismo punto. Espejo de `test_m15_create_kwargs.py`.
+ * `Sandbox.create()`: las opciones 0.6 que siguen siendo un stub lanzan
+ * `UnimplementedError` antes de resolver ningún plano de control (y por
+ * tanto antes de cualquier llamada a AWS: `planFeatures` corre antes de
+ * `resolveControlPlane`). `mounts` (`m15-s3-mounts`) ya no es un stub: en
+ * una imagen nombrada de una variante no-caps rechaza igual de pronto, por
+ * `requireCapsFor`; sobre una imagen opaca (un ARN) la decisión se difiere
+ * al agente, así que no puede probarse aquí sin tocar AWS. `gateways`
+ * (m15-secrets-gateway) tampoco: con un valor mal formado lanza
+ * `InvalidArgumentError` en su lugar, en el mismo punto. Espejo de
+ * `test_m15_create_kwargs.py`.
  */
 
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, UnimplementedError } from "../../src/errors.js";
 import type { SandboxPool } from "../../src/pool/pool.js";
+import { S3Mount } from "../../src/s3-mounts/domain.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 
 const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base";
 
 describe("Sandbox.create: 0.6 options", () => {
   test.each([
-    ["mounts", { "/mnt/d": {} }],
     ["volumes", { "/mnt/v": {} }],
-    ["size", "4gb"],
     ["events", {}],
     ["telemetry", {}],
     ["domain", {}],
@@ -34,10 +37,29 @@ describe("Sandbox.create: 0.6 options", () => {
     ).rejects.toThrow(InvalidArgumentError);
   });
 
+  test("mounts on a named non-caps image variant rejects before resolving a control plane", async () => {
+    await expect(
+      Sandbox.create({
+        template: "rayito-base",
+        mounts: { "/mnt/d": new S3Mount({ bucket: "team-data" }) },
+      }),
+    ).rejects.toThrow(UnimplementedError);
+  });
+
   test("pool with a 0.6 option is invalid argument", async () => {
     const pool = Object.create(Object.getPrototypeOf({})) as SandboxPool;
-    await expect(Sandbox.create({ pool, mounts: { "/mnt/d": {} } })).rejects.toThrow(
-      InvalidArgumentError,
-    );
+    await expect(
+      Sandbox.create({
+        pool,
+        mounts: { "/mnt/d": new S3Mount({ bucket: "team-data" }) },
+      }),
+    ).rejects.toThrow(InvalidArgumentError);
+  });
+
+  test("pool with size is invalid argument even though size is implemented", async () => {
+    // m15-sizes-catalog: `size` ya resuelve de verdad, pero sigue sin poder
+    // combinarse con `pool` (architecture §7.3).
+    const pool = Object.create(Object.getPrototypeOf({})) as SandboxPool;
+    await expect(Sandbox.create({ pool, size: "4gb" })).rejects.toThrow(InvalidArgumentError);
   });
 });

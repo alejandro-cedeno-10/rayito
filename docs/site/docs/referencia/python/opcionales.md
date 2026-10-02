@@ -23,6 +23,10 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 
 ::: rayito.DynamoDbIndex
 
+## Tamaños
+
+::: rayito.SizeRequest
+
 ## Pasarela de secretos
 
 ::: rayito.SecretGateway

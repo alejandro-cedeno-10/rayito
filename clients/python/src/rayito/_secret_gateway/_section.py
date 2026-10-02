@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from rayito._configure_base import raise_section_error
 from rayito._secret_gateway._domain import GatewayStatus, SecretGateway
 
 if TYPE_CHECKING:
@@ -70,6 +71,24 @@ class GatewaySection:
                 routes=[route(name, gateway) for name, gateway in self.gateways.items()]
             )
         )
+
+    def check_result(self, code: int, error_class: str) -> None:
+        """`INVALID`/`FAILED`/`UNSUPPORTED` lanzan
+        (`_configure_base.raise_section_error`); `rayd` aplica la sección
+        en el acto, nunca la deja `PENDING`."""
+        raise_section_error(SECTION_NAME, code, error_class)
+
+    @property
+    def settle_timeout_s(self) -> float:
+        """Sin espera: el puerto de cada ruta ya está en `ConfigureStatus`
+        en cuanto `Configure` responde `APPLIED`."""
+        return 0.0
+
+    def check_status(self, status: configure_pb2.ConfigureStatusResponse, *, final: bool) -> bool:
+        """Siempre asentada (`settle_timeout_s`); `after_apply` es quien lee
+        el estado de cada ruta."""
+        del status, final
+        return True
 
     def forget_cached_values(self) -> None:
         """Descarta de `cache` cada secreto que estas rutas inyectan, para que
@@ -131,14 +150,11 @@ def gateway_statuses_from_proto(
 class GatewaySectionFactory:
     """Lo que `_feature_options.plan_features` pone en
     `FeaturePlan.configure_sections` por cada `gateways=`: un
-    `ConfigureSection` todavía sin resolver, a la espera de la
-    `SecretCache` que `create()`/`take()` ya calculan para `secrets=` (la
-    misma, nunca una segunda). Fija la convención que sigue cualquier
-    entrada de `configure_sections` que necesite algo resuelto más tarde
-    que `plan_features` (`options.gateways is not None`, antes de abrir
-    ningún canal): un invocable de un solo argumento, la `SecretCache`
-    resuelta, que devuelve el `ConfigureSection` de verdad. `main.py` es
-    quien lo invoca, justo antes de la llamada a `Configure`.
+    `ConfigureSection` todavía sin resolver
+    (`_configure_base.SectionFactory`), a la espera de la `SecretCache` que
+    `create()`/`take()` ya calculan para `secrets=` (la misma, nunca una
+    segunda). `_configure_base.resolve_sections` lo invoca justo antes de
+    la llamada a `Configure`.
     """
 
     gateways: Mapping[str, SecretGateway]

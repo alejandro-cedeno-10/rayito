@@ -65,8 +65,10 @@ from rayito._models import (
 )
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
 from rayito._pool_base import PoolConfig, PoolSlotInfo, PoolStats
+from rayito._s3_mounts import MountStatus, S3Mount
 from rayito._secret_gateway import GatewayHandle, GatewayStatus, SecretGateway
 from rayito._secrets import SecretCache, SecretInfo, SecretPage, SecretRef, SecretStore
+from rayito._sizing import SizeRequest
 from rayito._stacks._model import (
     CostStatement,
     StackArtifact,
@@ -198,6 +200,7 @@ __all__ = [
     "Logs",
     "MicrovmListPage",
     "MountException",
+    "MountStatus",
     "NetworkOptions",
     "NetworkPolicy",
     "NetworkSelectorContext",
@@ -223,6 +226,7 @@ __all__ = [
     "RestoreProgress",
     "RestoreResult",
     "Result",
+    "S3Mount",
     "S3Prefix",
     "S3Staging",
     "Sandbox",
@@ -249,6 +253,7 @@ __all__ = [
     "SecretPage",
     "SecretRef",
     "SecretStore",
+    "SizeRequest",
     "StackArtifact",
     "StackComponent",
     "StackException",

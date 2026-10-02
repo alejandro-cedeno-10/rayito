@@ -1748,6 +1748,23 @@ veredicto con la decisión existente de `/ready` sin reemplazarla. Sin
 ningún participante registrado (el caso de 0.6 foundations: todos los slots
 son `Unsupported`), ambos hooks se comportan exactamente como en 0.5.x.
 
+`main` construye **un único** `Arc<FeatureSet>` por proceso y lo comparte:
+`grpc::router_with_features` se lo da a `ConfigureService` (aplica las
+secciones) y a `Health` (`FeatureSet::agent_features`, derivado de
+`supported()` de cada slot, así una función que gana un adaptador real
+enciende su propio flag sin tocar `health.rs`), y `FeatureSet::participants()`
+del mismo conjunto va a `HookServices.participants`. Nada de estado de
+función vive en un singleton de proceso: el harness de los tests de
+integración construye su propio `FeatureSet` por test igual que `main`.
+`/suspend`, `/resume` y `/terminate` ejecutan los participantes
+(`on_suspend`/`on_resume`/`on_terminate`) sólo ante una transición aceptada
+(`Transition::changed`), todos a través de un único bucle
+(`hooks::run_concurrently`), cada uno con su propio tope: su cuota de
+`SuspendShares` en `/suspend`, `PARTICIPANT_RESUME_TIMEOUT` (2 s, en
+paralelo con la sonda de kernels) en `/resume` y
+`PARTICIPANT_TERMINATE_TIMEOUT` (1 s, antes de `schedule_shutdown`) en
+`/terminate`. Un participante colgado cuesta su tope y nada más.
+
 **Consecuencias.** `ConfigureSandbox` nunca se llama con las siete opciones
 0.6 en `None`/`undefined`: el SDK pre-valida con `plan_features`/
 `planFeatures` antes de `run-microvm` y no construye ningún `ConfigureRequest`
@@ -1804,8 +1821,89 @@ los demás ni al SDK sin usarlo.
 
 ## ADR-017 — s3-mounts (M15, 0.6)
 
-Pendiente: lo completa `m15-s3-mounts` (montaje S3 vía `mount-s3`/FUSE en
-`rayito-base-caps`, credenciales IMDS nunca en argv/entorno).
+`mounts=` monta uno o más buckets S3 (o un prefijo suyo) en el guest con
+`mount-s3` (Mountpoint for Amazon S3), sólo sobre `rayito-base-caps` (o una
+variante derivada por tamaño): el execution role del sandbox necesita
+IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`).
+
+**Dominio** (`rayd_core::s3_mount`, puro): `S3Mount{mount_path, bucket,
+prefix, read_only, allow_overwrite, allow_delete}`, `MountErrorClass`
+(`network`/`iam_denied`/`not_found`/`not_allowed`/`helper_missing`/`timeout`,
+espejo exacto de `S3MountState.error_class` del proto y de `MountException
+.code`/`MountError.code` en ambos SDKs), `MountPhase`
+(`Pending`/`Mounted`/`Failed`) y `validate_mounts` (rechaza un bucket fuera
+del allowlist de la imagen o una ruta repetida en la misma petición, antes
+de tocar nada). `RAYITO_ALLOWED_MOUNT_BUCKETS` es configuración de imagen
+(`rayito image publish --env`), nunca un interruptor de activación por
+sandbox (ADR-014 regla 4): vacía o ausente deniega todo.
+
+**Puertos** (`rayd_core::s3_mount::ports`): `FuseDevice` (abre `/dev/fuse`
+y hace el `mount(2)` del ABI de FUSE del kernel — `fd`, `rootmode`,
+`user_id=1000`, `group_id=1000` — sobre `mount_path`) y `FuseDaemon`
+(lanza, comprueba y mata el proceso `mount-s3` bound a ese descriptor).
+
+**Adaptadores** (`rayd::adapters`): `LinuxFuseDevice` hace el `mount(2)`
+crudo con `libc` (sin depender del feature `mount` de `nix`, que el
+workspace no tiene) y **nunca sigue un enlace simbólico**: `rayd` es root y
+uid 1000 es dueño de `/home/user`, así que recorre la ruta desde `/`
+componente a componente con `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)`
+(creando lo que falte con `mkdirat`), rechaza cualquier enlace con
+`invalid_path` y monta sobre `/proc/self/fd/<dirfd>`; el desmontaje usa
+`UMOUNT_NOFOLLOW` sobre el descriptor del padre, en cada relanzamiento
+igual que en el primer montaje. `TokioMountS3Daemon` lanza
+`mount-s3 --foreground <bucket> /dev/fd/3 [--prefix p] [--read-only |
+--allow-overwrite --allow-delete]` como el usuario dedicado `rayito-mount`
+(uid/gid 990, creado en `image/Dockerfile`), con el entorno reconstruido
+desde cero (sólo `AWS_REGION`/`PATH`: nunca una credencial en argv ni en
+entorno, SEC-3) y reapea su propio hijo con `Child::wait()` en una tarea
+dedicada (independiente de `adapters::{child_registry,orphan_reaper}`,
+reservados a los procesos que pasan por `ProcessSpawner`): nunca hay dos
+sitios esperando el mismo pid. uid 990 está **por debajo** de
+`MIN_UNPRIVILEGED_ID` (1000), así que el blackhole de IMDS de M6
+(`uidrange 1000-65535`) no lo alcanza: `mount-s3` resuelve las credenciales
+del execution role por su **propio** acceso a IMDS, en su propio proceso,
+sin que `rayd` las toque nunca.
+
+**Slot** (`rayd::features::s3_mounts`): un `S3MountsFeature` real, cuyo
+`supported()` exige `CAP_SYS_ADMIN` en el conjunto efectivo de `rayd`
+(sólo `rayito-base-caps`: el binario y el usuario `rayito-mount` van en las
+cuatro variantes porque hay un único `Dockerfile`); `Health.features` y
+`root_egress` se derivan de cada slot (`FeatureSet::agent_features`/
+`root_egress`, `ConfigurableFeature::root_egress_class`). `apply()`
+responde `SECTION_CODE_PENDING` y monta en segundo plano; el SDK sondea
+`ConfigureStatus` hasta que cada montaje está `mounted` (15 s como mucho)
+y, si no, lanza `MountException`/`MountError` y termina el sandbox. `apply()` valida todo el
+`S3MountsConfig` (allowlist + rutas duplicadas) antes de montar o
+desmontar nada — una sección inválida no toca un solo montaje existente
+— desmonta lo que ya no está en la lista deseada, monta lo nuevo o lo que
+cambió de spec, y dos `Configure` seguidas con el mismo contenido son un
+no-op (ni un `/dev/fuse` nuevo ni un `mount-s3` relanzado).
+`ConfigurableFeature::participant()` devuelve un `LifecycleParticipant`
+cuya `demand().max` es `Duration::ZERO` (el `syncfs` acotado ya cubre el
+montaje FUSE, §7.2: "`/suspend` no añade ningún paso propio") y cuyo
+`on_resume` lanza, en paralelo, una sonda `stat` de 1 s por montaje (dentro
+del tope `PARTICIPANT_RESUME_TIMEOUT` de 2 s que `hooks` pone a todo el
+`on_resume`), relanzando el daemon si está muerto o no responde.
+
+**IAM** (`infra/s3-mounts.yaml`, `OptionalStack`): la política gestionada
+`RayitoS3MountAccess` (pide `CAPABILITY_IAM`) concede `ListBucket` acotado
+por un `s3:prefix` condicional (parámetro `Prefixes`, coma-separado) y
+`GetObject` (más `PutObject`/`DeleteObject`/`AbortMultipartUpload` con
+`ReadOnly=false`) sobre ARNs de objeto que llevan esos mismos prefijos
+(hasta 4 por pila): la contención por prefijo no depende sólo de
+`mount-s3 --prefix` dentro de un guest que ejecuta código no confiable.
+
+**SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer el
+`cmdline` del proceso `mount-s3` (mismo `/proc` que cualquier otro proceso
+del guest), no su `environ` (`EACCES`: el daemon es uid 990,
+`AWS_API_NOTES.md` Q103); el bucket y el prefijo están declarados **no
+secretos** (igual que la `metadata` de T4), así que esto no es una fuga —
+nunca hay una credencial en argv ni en entorno, documentado en T20
+(`SECURITY.md`). El daemon recibe `--allow-other`: sin él Mountpoint sólo
+atiende a su propio uid y uid 1000 recibe `EACCES` (Q101).
+
+**Sin API en el shim de E2B**: E2B no tiene un equivalente a `mounts=`
+(fila 111 de `e2b-parity.md`, divergente desde 0.6.0).
 
 ## ADR-018 — efs-volumes (M15, 0.6, experimental)
 
@@ -1814,8 +1912,74 @@ EFS-1..EFS-20 (`docs/research/2026-10-efs-persistence.md`).
 
 ## ADR-019 — sizes-catalog (M15, 0.6)
 
-Pendiente: lo completa `m15-sizes-catalog` (imágenes `<variant>[-<size>]`,
-catálogo de tamaños soportados, Q87/Q88).
+**Contexto.** `create-microvm-image` fija la memoria del guest con
+`resources[0].minimumMemoryInMiB` por *versión de imagen*, no por
+lanzamiento: no hay una API de tipo "RunMicrovm con este tamaño". Medido
+(AWS_API_NOTES.md §24, Q87): sólo 512/1024/2048/4096/8192 MiB construyen;
+256, 3072, 10240 y 16384 dan `ValidationException` síncrona sin crear
+nada. Medido también (RES-2/Q88, confirma el punto suelto de Q61/Q68) que
+el guest ve memoria/512 vCPU y hasta ~4x la memoria nominal en los cinco
+tamaños del catálogo (512→1 vCPU/1989 MiB, 1024→2/3998, 2048→4/8016,
+4096→8/16052, 8192→16/32123; disco raíz ext4 8,3 GB hasta 2048, 16,7 GB a
+4096, 33,6 GB a 8192). SPEC.md §4 decía "no hay, ni se promete, un
+resolvedor de tamaño por sandbox" (ADR-019 lo reemplaza; D1 deja la
+redacción exacta a decisión del mantenedor).
+
+**Decisión (opción A de §4 de la investigación).** Un catálogo cerrado de
+cinco tamaños (`SUPPORTED_MEMORY_MIB`/`SIZE_NAMES`:
+`512mb`/`1gb`/`2gb`/`4gb`/`8gb`), resuelto enteramente en el SDK, sin RPC ni
+sección de `ConfigureSandbox`: `size=`/`size` no es un ajuste del guest en
+marcha, es qué imagen lanzar. `resolveSize` (`_sizing.py`/`sizing.ts`)
+redondea siempre hacia arriba al primer valor publicado que cubra lo
+pedido (nunca por debajo) y avisa con `RayitoCompatWarning`/
+`RayitoCompatWarning` cuando no hay coincidencia exacta; por encima de
+`MAX_SUPPORTED_MEMORY_MIB` (8192) es `InvalidArgumentException` antes de
+cualquier llamada a AWS. El nombre de imagen sigue la convención
+`<variant>[-<size>]` con el sufijo siempre al final (`apply_size_suffix`/
+`applySizeSuffix`): el baseline (2048 MiB) nunca lleva sufijo, así que
+`rayito image publish` sin `--sizes` sigue publicando exactamente lo
+mismo que en 0.5.x. `rayito image publish --sizes 512mb,4gb` publica,
+desde el mismo artefacto, una imagen adicional por tamaño
+(`cli/_publish.py`: `sized_settings`/`publish_sizes`), horneando
+`RAYITO_BASELINE_MEMORY_MIB` en `environmentVariables` (configuración de
+imagen, nunca un interruptor de activación, ADR-014 regla 4) y sometiendo
+los `create`/`update-microvm-image` en oleadas de a lo sumo
+`MAX_CONCURRENT_IMAGE_BUILDS_Q83` (10) construcciones simultáneas antes de
+esperar a que ninguna se asiente. `ConventionCatalog`
+(`_size_catalog.py`/`sizing/catalog.ts`) hace, sólo cuando `size=`/`size`
+se usó, una única llamada gratuita a `GetMicrovmImageVersion` por versión
+de imagen (cacheada por `(imageArn, imageVersion)` y por proceso) para
+confirmar `resources[0].minimumMemoryInMiB` y rellenar
+`SandboxInfo.baselineMemoryMib`/`baselineCpu` en `get_info()`/`getInfo()`;
+`cpu_count`/`memory_mb` (`cpuCount`/`memoryMb`) siguen siendo lo que el
+guest reporta de verdad vía `Health`, nunca un valor derivado. `baselineCpu`
+es la proporción memoria/512 que RES-2/Q88 midió exactamente para los
+cinco tamaños del catálogo (no una extrapolación).
+`infra/sizes-guard.yaml` (`RayitoRunAllowedSizes`, componente
+`sizes-guard` de `OptionalStack`) es un guardarraíles de coste opcional:
+una política IAM que limita `lambda:RunMicrovm` a los ARN de imagen que el
+operador liste explícitamente, para que nadie lance, por accidente, un
+tamaño más caro que el publicado. `create(pool=, size=)` /
+`create({ pool, size })` es `InvalidArgumentException`/`InvalidArgumentError`:
+una plaza del pool ya salió de una imagen fija.
+
+**Consecuencias.** Sin `size=`/`size` (su valor por defecto) no hay ningún
+`GetMicrovmImageVersion`, ningún ajuste al nombre de la plantilla y el
+comportamiento es exactamente el de 0.5.x (golden test de M15
+foundations). `Template.build(memory_mb=)` (m15-templates) consume
+`resolveSize` sólo como lector, sin duplicar el catálogo.
+
+**Alternativas descartadas.** Resolver el tamaño en el agente (`rayd`)
+leyendo `minimumMemoryInMiB` de su propia `Health`: no sirve para decidir
+*qué imagen lanzar*, que es una decisión de antes de `run-microvm`.
+Permitir cualquier entero de memoria en `size=`: el catálogo de
+`create-microvm-image` ya es cerrado (Q87), así que aceptar cualquier
+valor sólo trasladaría el error de validación de cliente a AWS, más tarde
+y con una imagen a medio construir.
+
+**Reversible.** El catálogo es datos puros (`limits.json`); una imagen sin
+sufijo sigue siendo válida siempre. Borrar la pila `sizes-guard` no borra
+ninguna imagen ni versión.
 
 ## ADR-020 — events-webhooks (M15, 0.6)
 

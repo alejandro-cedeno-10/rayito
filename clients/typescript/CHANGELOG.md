@@ -18,14 +18,67 @@ versionado [SemVer](https://semver.org/lang/es/).
   `volumes`, `size`, `events`, `telemetry`, `gateways`, `domain`) existen
   ya en `SandboxCreateOptions` y lanzan `UnimplementedError` nombrando el
   cambio que las trae mientras sigan siendo un stub, antes de
-  `run-microvm`. Sin ninguna opción nueva, el comportamiento es byte a
+  `run-microvm`; en cuanto una deja de serlo (`mounts`, ver más abajo),
+  `create()` ejecuta sus `configureSections` justo tras el primer
+  `Health` (`configure-base.ts`: `requireCapabilities`,
+  `buildConfigureRequest`, `checkConfigureResponse`), dentro del mismo
+  camino que ya termina el sandbox ante cualquier fallo anterior a
+  `agentReady`. Sin ninguna opción nueva, el comportamiento es byte a
   byte el de 0.5.x.
 <!-- m15-s3-mounts -->
+- **`mounts` (`m15-s3-mounts`, ADR-017, experimental, apagado por
+  defecto)**: `Sandbox.create({ mounts })` monta uno o más buckets S3
+  (`new S3Mount({ bucket, prefix, readOnly: true, allowOverwrite: false,
+  allowDelete: false })`, exportado desde `rayito`) en el guest con
+  `mount-s3`/FUSE, sólo sobre `rayito-base-caps` (`requireCapsFor` lo
+  exige antes de `run-microvm` cuando la imagen se nombra directamente;
+  sobre un ARN opaco la decisión se difiere a `Health.features` tras
+  `/run`, que termina el sandbox si falta la capacidad). `mounts` acepta
+  un objeto literal (como `volumes`) o un `Map`. `create()` no vuelve
+  hasta que cada montaje está montado: sondea `ConfigureStatus` (como
+  mucho 15 s) y, si uno falla o no se asienta, termina el sandbox y lanza
+  `MountError`. `sbx.mounts()`
+  da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/
+  `"failed"`, `ConfigureStatus` en cada llamada); una sección rechazada o
+  un montaje fallido lanza `MountError` con un `code` cerrado (`network`,
+  `iam_denied`, `not_found`, `not_allowed`, `invalid_path`,
+  `helper_missing`, `timeout`). `rayd` lanza `mount-s3` como el usuario
+  dedicado `rayito-mount` (uid 990) con credenciales resueltas por su
+  propio acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
+  relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`, pide
+  `CAPABILITY_IAM`; su plantilla ya va empaquetada en el SDK), acotada al
+  bucket y a sus prefijos (hasta 4) también para leer, escribir y borrar
+  objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la
+  imagen.
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **Catálogo de tamaños** (`m15-sizes-catalog`, ADR-019, opcional y
+  apagado por defecto): `Sandbox.create({ size: "4gb" })`/
+  `{ memoryMib: ... }` resuelve, enteramente en cliente y sin ningún RPC,
+  al primer tamaño del catálogo cerrado (512mb/1gb/2gb/4gb/8gb, Q87) que
+  cubra lo pedido (redondea siempre hacia arriba, avisa con
+  `process.emitWarning(..., { type: "RayitoCompatWarning" })` si no encaja
+  exacto) y antepone el sufijo de imagen (`rayito-base-4gb`) antes de
+  resolver el ARN; `size` con un template dado por ARN, o por encima del
+  máximo publicado, es `InvalidArgumentError` antes de cualquier llamada a
+  AWS. `getInfo()` confirma, con una única llamada cacheada a
+  `GetMicrovmImageVersion` por versión de imagen, `SandboxInfo.baselineMemoryMib`
+  y `baselineCpu` (vCPU medido exactamente para los cinco tamaños del
+  catálogo); `cpuCount`/`memoryMb` siguen siendo lo que el guest reporta de
+  verdad. El shim `rayito/e2b` reporta ese mismo baseline en
+  `SandboxInfo.cpuCount`/`memoryMB` cuando `size` se usó (como E2B reporta
+  lo declarado por el template), la vista real del guest si no.
+  Guardarraíles de coste opcional `sizes-guard` (`RayitoRunAllowedSizes`:
+  un Deny de `lambda:RunMicrovm` fuera de los ARN de imagen permitidos,
+  efectivo aunque la identidad ya tenga el `microvm-image:*` de la
+  `CallerPolicy` estándar; `rayito image publish --sizes`/`--env` y
+  `rayito image sizes` son sólo CLI Python). Sin `size`, el comportamiento
+  sigue siendo exactamente el de 0.5.x.
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
+<!-- m15-secrets-gateway -->
 - **`gateways` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
   M15, ADR-023, opcional y apagado por defecto): `Sandbox.create({ gateways:
   { nombre: new SecretGateway({ upstream, headers, allow, ... }) } })` abre,

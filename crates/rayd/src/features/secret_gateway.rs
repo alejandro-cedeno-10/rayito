@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use rayd_core::configure::{SectionCode, SectionOutcome};
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::secret_gateway::vault::SecretValue;
 use rayd_core::secret_gateway::{GatewaySpec, GatewaySpecError, RawRoute};
 use rayito_proto::v1::{SecretGatewayConfig, SecretGatewayRouteState, SecretGatewayStatus};
@@ -75,6 +76,13 @@ impl ConfigurableFeature<SecretGatewayConfig, SecretGatewayStatus> for SecretGat
                 })
                 .collect(),
         }
+    }
+
+    /// The one adapter here that sends traffic out as root: each route's
+    /// fixed upstream, never a guest process's own route
+    /// (`rayd_core::root_egress`).
+    fn root_egress_class(&self) -> Option<RootEgressClass> {
+        Some(RootEgressClass::SecretGatewayUpstream)
     }
 }
 
@@ -158,6 +166,16 @@ mod tests {
         // reaching this slot, `rayd` opens no loopback socket at all.
         let feature = feature();
         assert!(feature.runtime.status().is_empty());
+    }
+
+    #[test]
+    fn it_declares_the_secret_gateway_upstream_root_egress() {
+        let feature: &dyn ConfigurableFeature<SecretGatewayConfig, SecretGatewayStatus> =
+            &feature();
+        assert_eq!(
+            feature.root_egress_class(),
+            Some(RootEgressClass::SecretGatewayUpstream)
+        );
     }
 
     #[test]

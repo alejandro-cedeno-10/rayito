@@ -1,21 +1,21 @@
 /**
  * Parte pura de `ConfigureSandbox` (ADR-015): qué dice `Health.features`
- * sobre un agente, cómo se traduce el resultado de una sección de
- * `Configure` a su excepción y qué recibe una sección tras aplicarse
- * (`PostApplySection`). Espejo de `rayito._configure_base`. Las llamadas
- * gRPC viven en `sandbox/sandbox.ts` (vía los clientes Connect-ES de
- * `ConfigureService`); este módulo no importa `@connectrpc/connect`.
- *
- * Vive en `configure/` (la ruta que la arquitectura de 0.6 reserva al seam
- * de foundations): foundations aún no lo había creado para TypeScript, y
- * otras funciones 0.6 abiertas en paralelo crean el mismo módulo; quien
- * fusione después las reconcilia en este fichero.
+ * sobre un agente, cómo se resuelve, se rellena y se aplica cada sección
+ * de `Configure` (capacidad, una única llamada, resultado por sección y la
+ * espera acotada a las secciones `PENDING`) y qué recibe una sección tras
+ * aplicarse (`PostApplySection`). Espejo de `rayito._configure_base`. Las
+ * llamadas gRPC viven en `sandbox/sandbox.ts` (vía los clientes Connect-ES
+ * de `ConfigureService`); este módulo no importa `@connectrpc/connect`.
  */
+
+import { randomUUID } from "node:crypto";
+import { create } from "@bufbuild/protobuf";
 
 import { SandboxError, UnimplementedError } from "../errors.js";
 import {
   ConfigSection,
   type ConfigureRequest,
+  ConfigureRequestSchema,
   type ConfigureResponse,
   type ConfigureStatusResponse,
   SectionCode,
@@ -27,6 +27,13 @@ import type { SecretCache } from "../secrets/cache.js";
 
 export const CONFIGURE_DOC = "docs/site/docs/funciones-opcionales/pilas-opcionales.md";
 export const CONFIGURE_FEATURE = "ConfigureSandbox";
+
+/** Cadencia del sondeo de `ConfigureStatus` mientras alguna sección sigue
+ * `PENDING` tras `Configure`: un montaje local responde en decenas de
+ * milisegundos una vez listo, así que un cuarto de segundo no añade
+ * latencia apreciable a `create()` ni martillea al agente. Espejo de
+ * `CONFIGURE_SETTLE_POLL_S` de Python. */
+export const CONFIGURE_SETTLE_POLL_MS = 250;
 
 /** Espejo de `AgentFeatures` (`features.proto`): qué funciones 0.6 soporta
  * el agente en ejecución. Ningún flag es secreto. */
@@ -83,32 +90,61 @@ export function requireConfigureSupport(
   return features;
 }
 
-/** Lo que una función 0.6 implementa para participar en una sola llamada a
- * `Configure`: el nombre de su sección (para el orden) y el flag de
- * `AgentFeatures` que debe estar activo, y cómo rellena su campo del
- * `ConfigureRequest` compartido. */
+/**
+ * Lo que una función 0.6 implementa para participar en una sola llamada a
+ * `Configure`: el nombre de su sección (para los logs y el orden), el flag
+ * de `AgentFeatures` que debe estar activo, cómo rellena su campo del
+ * `ConfigureRequest` compartido, cómo traduce el `SectionResult` que le
+ * corresponde en su propio error y, si el agente la deja en `PENDING`,
+ * cuánto esperar (`settleTimeoutMs`) y cómo leer su estado en
+ * `ConfigureStatus` (`checkStatus`: `true` si ya se asentó; lanza su
+ * propio error si falló, o si `final` y todavía no se ha asentado).
+ */
 export interface ConfigureSection {
   readonly section: string;
   readonly requiredFlag: keyof AgentFeatures;
+  readonly settleTimeoutMs: number;
   fill(request: ConfigureRequest): void | Promise<void>;
+  checkResult(code: number, errorClass: string): void;
+  checkStatus(status: ConfigureStatusResponse, final: boolean): boolean;
 }
 
 /**
- * Lo que `planFeatures` pone en `FeaturePlan.configureSections`: un
- * `ConfigureSection` todavía sin resolver, a la espera de la `SecretCache`
- * que `create()`/`take()` ya calculan para `secrets` (ver
- * `GatewaySectionFactory`).
+ * Una entrada de `FeaturePlan.configureSections` que todavía no es un
+ * `ConfigureSection`: necesita la `SecretCache` que `create()`/`take()` ya
+ * calculan para `secrets` (la misma, nunca una segunda). Hoy
+ * `GatewaySectionFactory`; `resolveSections` la construye justo antes de
+ * la llamada a `Configure`.
  */
 export interface ConfigureSectionFactory {
   build(cache: SecretCache): ConfigureSection;
 }
 
+/** Lo que `planFeatures` pone en `FeaturePlan.configureSections`: una
+ * sección ya lista (`mounts`) o una que espera la `SecretCache`
+ * (`gateways`). */
+export type PlannedSection = ConfigureSection | ConfigureSectionFactory;
+
+function isSectionFactory(entry: PlannedSection): entry is ConfigureSectionFactory {
+  return typeof (entry as Partial<ConfigureSectionFactory>).build === "function";
+}
+
+/** Cada entrada de `planned` como `ConfigureSection`: las que ya lo son tal
+ * cual, cada `ConfigureSectionFactory` construida con `cache()` — que sólo
+ * se llama si alguna entrada la necesita. */
+export function resolveSections(
+  planned: readonly PlannedSection[],
+  cache: () => SecretCache,
+): ConfigureSection[] {
+  return planned.map((entry) => (isSectionFactory(entry) ? entry.build(cache()) : entry));
+}
+
 /**
  * Lo que `PostApplySection.afterApply` recibe una vez su `Configure` se
  * aplicó: el `ConfigureStatus` de ese momento y cómo volver a mandar esa
- * misma sección más tarde (`fill` otra vez, `Configure`, `raiseForResults`
- * y el `ConfigureStatus` nuevo). `sandbox.ts` lo construye igual para
- * cualquier función, sin saber cuál es.
+ * misma sección más tarde (`fill` otra vez, `Configure`,
+ * `checkConfigureResponse` y el `ConfigureStatus` nuevo). `sandbox.ts` lo
+ * construye igual para cualquier función, sin saber cuál es.
  */
 export interface SectionApplied {
   readonly status: ConfigureStatusResponse;
@@ -135,41 +171,43 @@ export function isPostApplySection(section: ConfigureSection): section is PostAp
  * `undefined` cuando la sección se aplicó o sigue asentándose (`PENDING`);
  * en otro caso el error que describe por qué no.
  */
-export function sectionError(section: string, result: SectionResult): Error | undefined {
-  if (result.code === SectionCode.APPLIED || result.code === SectionCode.PENDING) {
+export function sectionError(
+  section: string,
+  code: SectionCode,
+  errorClass: string,
+): Error | undefined {
+  if (code === SectionCode.APPLIED || code === SectionCode.PENDING) {
     return undefined;
   }
-  if (result.code === SectionCode.UNSUPPORTED) {
+  if (code === SectionCode.UNSUPPORTED) {
     return new UnimplementedError(
       section,
       "esta imagen no tiene esta función implementada todavía",
       CONFIGURE_DOC,
     );
   }
-  const reason = result.errorClass || codeName(result.code);
+  const reason = errorClass || codeName(code);
   return new SandboxError(`${section}: ${reason}`);
 }
 
 /**
- * Traduce cada `SectionResult` de `response` con `sectionError` y lanza el
- * primero que no sea `undefined`. El único punto por el que deben pasar
- * tanto el `Configure` agrupado que manda `create()`/`take()` como una
- * llamada posterior de una sola sección (`SectionApplied.reapply`): los
- * dos deben fallar exactamente igual ante `INVALID`/`FAILED`/`UNSUPPORTED`,
- * nunca sólo uno de ellos en silencio.
+ * `ConfigureSection.checkResult` para una sección sin error propio (hoy
+ * `gateways`): lanza lo que `sectionError` diga, y nada si se aplicó o
+ * sigue `PENDING`. Así un `INVALID`/`FAILED`/`UNSUPPORTED` nunca pasa en
+ * silencio, ni en el `Configure` de `create()`/`take()` ni en uno
+ * posterior de una sola sección (`SectionApplied.reapply`), que pasan los
+ * dos por `checkConfigureResponse`.
  */
-export function raiseForResults(response: ConfigureResponse): void {
-  for (const result of response.results) {
-    const error = sectionError(configSectionName(result.section), result);
-    if (error !== undefined) {
-      throw error;
-    }
+export function raiseSectionError(section: string, code: SectionCode, errorClass: string): void {
+  const error = sectionError(section, code, errorClass);
+  if (error !== undefined) {
+    throw error;
   }
 }
 
-/** Nombre snake_case de `result.section`, como cada feature nombra su
- * propia `ConfigureSection.section` (mirroring Python's
- * `ConfigSection.Name(...)`, que protobuf-es no genera). */
+/** Nombre snake_case de `section`, como cada función nombra su propia
+ * `ConfigureSection.section` (mirroring Python's `ConfigSection.Name(...)`,
+ * que protobuf-es no genera). */
 export function configSectionName(section: ConfigSection): string {
   switch (section) {
     case ConfigSection.S3_MOUNTS:
@@ -196,6 +234,97 @@ function codeName(code: SectionCode): string {
     default:
       return "unspecified";
   }
+}
+
+/**
+ * Puerta de capacidad previa al envío: la primera sección cuyo propio
+ * `requiredFlag` esté en `false` en `features` lanza `UnimplementedError`
+ * nombrándola, antes de construir un solo `ConfigureRequest`.
+ */
+export function requireCapabilities(
+  sections: readonly ConfigureSection[],
+  features: AgentFeatures,
+): void {
+  for (const entry of sections) {
+    if (!features[entry.requiredFlag]) {
+      throw new UnimplementedError(
+        entry.section,
+        "esta imagen no tiene un adaptador real para esta función " +
+          "(agente anterior a 0.6.0, o variante de imagen sin el caps que necesita)",
+        CONFIGURE_DOC,
+      );
+    }
+  }
+}
+
+/**
+ * Un único `ConfigureRequest` con todas las secciones de `sections`
+ * rellenas (`fill` puede ser asíncrono: `gateways` resuelve cada cabecera
+ * de la `SecretCache` ahí); `requestId` es nuevo en cada llamada.
+ */
+export async function buildConfigureRequest(
+  sections: readonly ConfigureSection[],
+): Promise<ConfigureRequest> {
+  const request = create(ConfigureRequestSchema, { requestId: randomUUID() });
+  for (const entry of sections) {
+    await entry.fill(request);
+  }
+  return request;
+}
+
+/** Cada `SectionResult` de `response` junto a su sección; un resultado para
+ * una sección que `sections` no contiene (no debería ocurrir: el agente
+ * sólo responde por lo que `ConfigureRequest` llevaba) se ignora en vez de
+ * fallar de forma opaca. */
+function sectionsByResult(
+  response: ConfigureResponse,
+  sections: readonly ConfigureSection[],
+): [ConfigureSection, SectionResult][] {
+  const byName = new Map(sections.map((entry) => [entry.section, entry] as const));
+  const paired: [ConfigureSection, SectionResult][] = [];
+  for (const result of response.results) {
+    const entry = byName.get(configSectionName(result.section));
+    if (entry !== undefined) {
+      paired.push([entry, result]);
+    }
+  }
+  return paired;
+}
+
+/**
+ * Traduce cada `SectionResult` de `response` al error de su propia sección
+ * (`ConfigureSection.checkResult`) y devuelve las que quedaron en
+ * `PENDING`: `create()` no vuelve hasta verlas asentarse (`stillPending`).
+ */
+export function checkConfigureResponse(
+  response: ConfigureResponse,
+  sections: readonly ConfigureSection[],
+): ConfigureSection[] {
+  const pending: ConfigureSection[] = [];
+  for (const [entry, result] of sectionsByResult(response, sections)) {
+    entry.checkResult(result.code, result.errorClass);
+    if (result.code === SectionCode.PENDING) {
+      pending.push(entry);
+    }
+  }
+  return pending;
+}
+
+/** El mayor `settleTimeoutMs` de las secciones pendientes: todas se
+ * sondean juntas en la misma `ConfigureStatus`. */
+export function settleTimeoutMs(pending: readonly ConfigureSection[]): number {
+  return pending.reduce((longest, entry) => Math.max(longest, entry.settleTimeoutMs), 0);
+}
+
+/** Las secciones de `pending` que `status` todavía no da por asentadas;
+ * cada una lanza su propio error si falló, o si `final` y sigue sin
+ * asentarse. */
+export function stillPending(
+  status: ConfigureStatusResponse,
+  pending: readonly ConfigureSection[],
+  final: boolean,
+): ConfigureSection[] {
+  return pending.filter((entry) => !entry.checkStatus(status, final));
 }
 
 export { SectionCode };

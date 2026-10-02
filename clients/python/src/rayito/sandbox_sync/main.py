@@ -38,14 +38,20 @@ from rayito._code_base import (
     StdoutCallback,
 )
 from rayito._configure_base import (
-    CONFIGURE_DOC,
+    CONFIGURE_SETTLE_POLL_S,
     AgentFeatures,
     ConfigureSection,
+    PlannedSection,
     PostApplySection,
     SectionApplied,
     agent_features_from_health,
-    raise_for_results,
+    build_configure_request,
+    check_configure_response,
+    require_capabilities,
     require_configure_support,
+    resolve_sections,
+    settle_timeout_s,
+    still_pending,
 )
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -133,6 +139,7 @@ from rayito._process_base import (
     stream_failure_exception,
 )
 from rayito._role_policy import resolve_image_variant
+from rayito._s3_mounts import MountStatus, from_proto_status
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -163,17 +170,20 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
@@ -189,6 +199,8 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import SizeRequest
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -539,7 +551,7 @@ class Sandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -764,6 +776,10 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
+        # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
+        resolved_size = plan_size(size, stacklevel=4)
         feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -775,13 +791,15 @@ class Sandbox:
                 domain=domain,
             ),
             image_variant=resolve_image_variant(template),
+            logging=logging,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = plane.resolve_template_arn(resolve_template(template))
+        template_name = sized_template_name(resolve_template(template), resolved_size)
+        image_arn = plane.resolve_template_arn(template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -867,6 +885,7 @@ class Sandbox:
             network=launch.stored_policy,
             index=validated_index,
             gateways=None if gateways is None else dict(gateways),
+            size=resolved_size,
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -1349,12 +1368,33 @@ class Sandbox:
         `Health` sin RPC extra (quedan fijos en `/run`), y nunca se sondea
         un sandbox que no está `RUNNING` (la sonda lo despertaría). Los
         hechos del guest sólo van en el valor devuelto: `sbx.info` los deja
-        en `None`."""
+        en `None`. `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+        aparecen cuando `create(size=...)` se usó (m15-sizes-catalog): esa
+        única llamada a `GetMicrovmImageVersion` se cachea por versión de
+        imagen (`_size_catalog.DEFAULT_SIZE_CATALOG`), así que repetir
+        `get_info()` no repite la llamada a AWS. Esto vive en
+        `self._launch_options` (relleno sólo por `create()`/`take()`):
+        `Sandbox.connect(id).get_info()` deja `size`/`baseline_memory_mib`/
+        `baseline_cpu` en `None` aunque la imagen tenga el sufijo de un
+        tamaño, porque el handle de `connect()` nunca pasó por `create()`
+        en este proceso (no hay un `requested_size` que confirmar). No se
+        deriva del sufijo del nombre de la imagen a propósito: un nombre
+        que termine en `-4gb` por convención propia del operador, no por
+        `--sizes`, confirmaría un tamaño que nadie pidió."""
         info = self._control_plane.get_microvm(self.sandbox_id)
         if deadline_may_have_moved(info.state, self._lifecycle):
             self._refresh_health()
         self._info = dataclasses.replace(info, metadata=self.metadata, lifecycle=self._lifecycle)
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = DEFAULT_SIZE_CATALOG.minimum_memory_mib(
+                self._control_plane, result.template, result.template_version
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     def _class_get_info(
@@ -1569,6 +1609,29 @@ class Sandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    def _wait_settled(self, pending: tuple[ConfigureSection, ...], *, timeout: float) -> None:
+        """Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_S` hasta que
+        ninguna sección de `pending` siga pendiente; agotado el mayor
+        `settle_timeout_s`, la última lectura es `final` y cada sección que
+        siga sin asentarse lanza su propia excepción de timeout."""
+        deadline = time.monotonic() + settle_timeout_s(pending)
+        while pending:
+            final = time.monotonic() >= deadline
+            status = call_configure_status(self._configure, timeout=timeout)
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                time.sleep(CONFIGURE_SETTLE_POLL_S)
+
+    @property
+    def mounts(self) -> dict[str, MountStatus]:
+        """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
+        `ConfigureStatus` por lectura, nunca cacheada — un montaje puede
+        pasar de `"pending"` a `"mounted"`/`"failed"` entre dos lecturas de
+        esta propiedad. Vacío si `create()`/`take()` no recibió `mounts=`.
+        """
+        response = call_configure_status(self._configure, timeout=self._request_timeout)
+        return from_proto_status(response.s3_mounts)
 
     def upload_url(
         self,
@@ -2095,28 +2158,30 @@ class Sandbox:
 
     def _apply_configure_sections(
         self,
-        factories: Sequence[Callable[[SecretCache], Any]],
+        planned: Sequence[PlannedSection],
         *,
         timeout: float,
         terminate_on_failure: bool,
     ) -> None:
-        """Único punto de `create()` que llama a `ConfigureSandbox`: agrupa
-        en una sola llamada las secciones 0.6 que `plan_features` dejó
-        pendientes (hoy sólo `gateways=`; una función futura añade su propia
-        entrada a `FeaturePlan.configure_sections`, nunca toca este método).
+        """Único punto de `create()`/`take()` que llama a `ConfigureSandbox`:
+        agrupa en una sola llamada las secciones 0.6 que `plan_features`
+        dejó en `FeaturePlan.configure_sections` (`mounts=`, `gateways=`;
+        una función futura añade su propia entrada ahí, nunca toca este
+        método).
 
         Igual que `_apply_initial_network`/`_bind_and_restore`: un fallo en
         cualquier punto (imagen anterior a 0.6.0, flag no soportado, un
         secreto que falta al resolver una cabecera, una sección
-        `INVALID`/`FAILED`) cierra el cliente y, salvo `keep_on_failure`,
-        termina el VM antes de relanzar — el caller nunca recibe un handle
-        de un sandbox cuya configuración pedida no se aplicó, así que nunca
-        pierde la única vía para apagarlo.
+        `INVALID`/`FAILED`, un montaje que no se asienta) cierra el cliente
+        y, salvo `keep_on_failure`, termina el VM antes de relanzar — el
+        caller nunca recibe un handle de un sandbox cuya configuración
+        pedida no se aplicó, así que nunca pierde la única vía para
+        apagarlo.
         """
-        if not factories:
+        if not planned:
             return
         try:
-            self._send_configure_sections(factories, timeout=timeout)
+            self._send_configure_sections(planned, timeout=timeout)
         except BaseException:
             self.close()
             if terminate_on_failure:
@@ -2124,34 +2189,19 @@ class Sandbox:
             raise
 
     def _send_configure_sections(
-        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+        self, planned: Sequence[PlannedSection], *, timeout: float
     ) -> None:
-        """La parte sin compuerta de `_apply_configure_sections`: cada
-        entrada es un invocable de la `SecretCache` ya resuelta del handle
-        (`GatewaySectionFactory`); exige su flag en `Health.features` antes
-        de construir el `ConfigureRequest`, traduce cada `SectionResult` a
-        su excepción (`_configure_base.raise_for_results`, la misma que usa
-        `_reapply_section`) y, si alguna sección es una `PostApplySection`,
-        pide `ConfigureStatus` una vez y guarda lo que devuelva su
-        `after_apply` en `_section_handles`."""
+        """La parte sin compuerta de `_apply_configure_sections`: resuelve
+        cada entrada con la `SecretCache` del handle (`resolve_sections`,
+        sólo si alguna la necesita), exige su flag en `Health.features`
+        (`require_capabilities`) antes de construir el `ConfigureRequest`,
+        lo aplica (`_configure_sections`) y, si alguna sección es una
+        `PostApplySection`, pide `ConfigureStatus` una vez y guarda lo que
+        devuelva su `after_apply` en `_section_handles`."""
         features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
-        cache = (
-            self._secrets.cache
-            if self._secrets is not None and self._secrets.cache is not None
-            else self._default_secret_cache()
-        )
-        sections = [factory(cache) for factory in factories]
-        for section in sections:
-            if not getattr(features, section.required_flag, False):
-                raise UnimplementedError(
-                    section.section,
-                    "esta imagen no tiene esta función implementada todavía",
-                    doc=CONFIGURE_DOC,
-                )
-        request = configure_pb2.ConfigureRequest()
-        for section in sections:
-            section.fill(request)
-        raise_for_results(call_configure(self._configure, request, timeout=timeout))
+        sections = resolve_sections(planned, self._section_secret_cache)
+        require_capabilities(sections, features)
+        self._configure_sections(sections, timeout=timeout)
         post_apply = [section for section in sections if isinstance(section, PostApplySection)]
         if not post_apply:
             return
@@ -2164,19 +2214,34 @@ class Sandbox:
                 )
             )
 
+    def _configure_sections(self, sections: Sequence[ConfigureSection], *, timeout: float) -> None:
+        """Una `Configure` con `sections`, cada `SectionResult` traducido a la
+        excepción de su propia sección (`check_configure_response`) y, para
+        las que el agente dejó en `PENDING`, la espera acotada a que se
+        asienten (`_wait_settled`): nunca vuelve con un montaje todavía sin
+        montar. Lo comparten `create()`/`take()` y `_reapply_section`."""
+        request = build_configure_request(sections)
+        response = call_configure(self._configure, request, timeout=timeout)
+        self._wait_settled(check_configure_response(response, sections), timeout=timeout)
+
+    def _section_secret_cache(self) -> SecretCache:
+        """La `SecretCache` con la que se resuelve cada `SectionFactory`: la
+        de `secrets=` si el handle la tiene, la compartida del proceso si
+        no (la misma regla que `secrets=`, nunca una caché aparte)."""
+        if self._secrets is not None and self._secrets.cache is not None:
+            return self._secrets.cache
+        return self._default_secret_cache()
+
     def _reapply_section(
         self, section: ConfigureSection, *, timeout: float
     ) -> configure_pb2.ConfigureStatusResponse:
         """El `SectionApplied.reapply` de cada `PostApplySection` (p. ej.
-        `sbx.gateways.refresh()`): vuelve a rellenar sólo esa sección, manda
-        un `Configure` nuevo y lo pasa por `raise_for_results` igual que
-        `create()` — una sección `INVALID` (un valor rotado con CR/LF) o
-        `FAILED` (`listen_failed`) lanza aquí, nunca devuelve un estado
-        vacío o a medio aplicar en silencio. Sólo si se aplicó pide el
-        `ConfigureStatus` nuevo."""
-        request = configure_pb2.ConfigureRequest()
-        section.fill(request)
-        raise_for_results(call_configure(self._configure, request, timeout=timeout))
+        `sbx.gateways.refresh()`): vuelve a mandar sólo esa sección por el
+        mismo camino que `create()` (`_configure_sections`) — una sección
+        `INVALID` (un valor rotado con CR/LF) o `FAILED` (`listen_failed`)
+        lanza aquí, nunca devuelve un estado vacío o a medio aplicar en
+        silencio. Sólo si se aplicó pide el `ConfigureStatus` nuevo."""
+        self._configure_sections((section,), timeout=timeout)
         return call_configure_status(self._configure, timeout=timeout)
 
     def _rebind_secrets(

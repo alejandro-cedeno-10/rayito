@@ -31,14 +31,20 @@ from rayito._code_base import (
     StdoutCallback,
 )
 from rayito._configure_base import (
-    CONFIGURE_DOC,
+    CONFIGURE_SETTLE_POLL_S,
     AgentFeatures,
     ConfigureSection,
+    PlannedSection,
     PostApplySection,
     SectionApplied,
     agent_features_from_health,
-    raise_for_results,
+    build_configure_request,
+    check_configure_response,
+    require_capabilities,
     require_configure_support,
+    resolve_sections,
+    settle_timeout_s,
+    still_pending,
 )
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._index import DynamoDbIndex, validate_index
@@ -127,6 +133,7 @@ from rayito._process_base import (
     stream_failure_exception,
 )
 from rayito._role_policy import resolve_image_variant
+from rayito._s3_mounts import MountStatus, from_proto_status
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -157,17 +164,20 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
 from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
@@ -183,6 +193,8 @@ from rayito._secrets import (
     relaunch_secrets,
     shared_secret_cache,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import SizeRequest
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -504,7 +516,7 @@ class AsyncSandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -632,6 +644,10 @@ class AsyncSandbox:
         if validated_index is not None:
             # Sin llamadas a AWS: falla antes de lanzar nada.
             await asyncio.to_thread(validated_index.prepare)
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_sync`) resuelve `size=` aquí, no en `plan_features`: ver
+        # la versión sync para el porqué.
+        resolved_size = plan_size(size, stacklevel=4)
         feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
@@ -643,13 +659,15 @@ class AsyncSandbox:
                 domain=domain,
             ),
             image_variant=resolve_image_variant(template),
+            logging=logging,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = await asyncio.to_thread(plane.resolve_template_arn, resolve_template(template))
+        template_name = sized_template_name(resolve_template(template), resolved_size)
+        image_arn = await asyncio.to_thread(plane.resolve_template_arn, template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -736,6 +754,7 @@ class AsyncSandbox:
             network=launch.stored_policy,
             index=validated_index,
             gateways=None if gateways is None else dict(gateways),
+            size=resolved_size,
         )
         if persist is not None:
             await sandbox._bind_and_restore(
@@ -906,7 +925,8 @@ class AsyncSandbox:
         `terminate_on_failure`, todo fallo previo al primer `agent_ready` que no
         sea `SandboxNotReadyException` termina el MicroVM. `readiness` es el
         calendario del sondeo (`TakePoll` desde el pool) y `require_lifecycle`
-        la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque `lifecycle`."""
+        la puerta de agente 0.3.0 o posterior de un lanzamiento con bloque
+        `lifecycle`."""
         refresher = AsyncTokenRefresher(
             TokenRefresher(
                 TokenStore(),
@@ -1139,14 +1159,31 @@ class AsyncSandbox:
     @class_method_variant("_class_get_info")
     async def get_info(self) -> SandboxInfo:
         """Misma semántica que `Sandbox.get_info`: un `Health` sólo si el
-        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo."""
+        sandbox está `RUNNING` con plazo lógico gestionado, para refrescarlo.
+        `size`/`baseline_memory_mib`/`baseline_cpu` sólo aparecen cuando
+        `create(size=...)` se usó (m15-sizes-catalog); ver la versión sync
+        para el porqué de la única llamada cacheada a
+        `GetMicrovmImageVersion`, y para por qué `AsyncSandbox.connect(id)`
+        los deja en `None` aunque la imagen lleve sufijo de tamaño."""
         refreshed = await asyncio.to_thread(self._control_plane.get_microvm, self.sandbox_id)
         if deadline_may_have_moved(refreshed.state, self._lifecycle):
             await self._refresh_health()
         self._info = dataclasses.replace(
             refreshed, metadata=self.metadata, lifecycle=self._lifecycle
         )
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = await asyncio.to_thread(
+                DEFAULT_SIZE_CATALOG.minimum_memory_mib,
+                self._control_plane,
+                result.template,
+                result.template_version,
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     async def _class_get_info(
@@ -1336,6 +1373,26 @@ class AsyncSandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    async def _wait_settled(self, pending: tuple[ConfigureSection, ...], *, timeout: float) -> None:
+        """Misma espera que `Sandbox._wait_settled`, sobre el reloj del
+        bucle de eventos y `asyncio.sleep`."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + settle_timeout_s(pending)
+        while pending:
+            final = loop.time() >= deadline
+            status = await call_configure_status(self._configure, timeout=timeout)
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                await asyncio.sleep(CONFIGURE_SETTLE_POLL_S)
+
+    async def mounts(self) -> dict[str, MountStatus]:
+        """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
+        `ConfigureStatus` por lectura, nunca cacheada. Vacío si
+        `create()`/`take()` no recibió `mounts=`.
+        """
+        response = await call_configure_status(self._configure, timeout=self._request_timeout)
+        return from_proto_status(response.s3_mounts)
 
     async def upload_url(
         self,
@@ -1771,7 +1828,7 @@ class AsyncSandbox:
 
     async def _apply_configure_sections(
         self,
-        factories: Sequence[Callable[[SecretCache], Any]],
+        planned: Sequence[PlannedSection],
         *,
         timeout: float,
         terminate_on_failure: bool,
@@ -1779,10 +1836,10 @@ class AsyncSandbox:
         """Misma semántica que `Sandbox._apply_configure_sections`, sobre el
         canal `grpc.aio`: un fallo en cualquier punto cierra el cliente y,
         salvo `keep_on_failure`, termina el VM antes de relanzar."""
-        if not factories:
+        if not planned:
             return
         try:
-            await self._send_configure_sections(factories, timeout=timeout)
+            await self._send_configure_sections(planned, timeout=timeout)
         except BaseException:
             await self.close()
             if terminate_on_failure:
@@ -1792,28 +1849,14 @@ class AsyncSandbox:
             raise
 
     async def _send_configure_sections(
-        self, factories: Sequence[Callable[[SecretCache], Any]], *, timeout: float
+        self, planned: Sequence[PlannedSection], *, timeout: float
     ) -> None:
         """Misma semántica que `Sandbox._send_configure_sections`, en
         `asyncio`."""
         features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
-        cache = (
-            self._secrets.cache
-            if self._secrets is not None and self._secrets.cache is not None
-            else self._default_secret_cache()
-        )
-        sections = [factory(cache) for factory in factories]
-        for section in sections:
-            if not getattr(features, section.required_flag, False):
-                raise UnimplementedError(
-                    section.section,
-                    "esta imagen no tiene esta función implementada todavía",
-                    doc=CONFIGURE_DOC,
-                )
-        request = configure_pb2.ConfigureRequest()
-        for section in sections:
-            section.fill(request)
-        raise_for_results(await call_configure(self._configure, request, timeout=timeout))
+        sections = resolve_sections(planned, self._section_secret_cache)
+        require_capabilities(sections, features)
+        await self._configure_sections(sections, timeout=timeout)
         post_apply = [section for section in sections if isinstance(section, PostApplySection)]
         if not post_apply:
             return
@@ -1826,13 +1869,25 @@ class AsyncSandbox:
                 )
             )
 
+    async def _configure_sections(
+        self, sections: Sequence[ConfigureSection], *, timeout: float
+    ) -> None:
+        """Misma semántica que `Sandbox._configure_sections`, en `asyncio`."""
+        request = build_configure_request(sections)
+        response = await call_configure(self._configure, request, timeout=timeout)
+        await self._wait_settled(check_configure_response(response, sections), timeout=timeout)
+
+    def _section_secret_cache(self) -> SecretCache:
+        """Misma regla que `Sandbox._section_secret_cache`."""
+        if self._secrets is not None and self._secrets.cache is not None:
+            return self._secrets.cache
+        return self._default_secret_cache()
+
     async def _reapply_section(
         self, section: ConfigureSection, *, timeout: float
     ) -> configure_pb2.ConfigureStatusResponse:
         """Misma semántica que `Sandbox._reapply_section`, en `asyncio`."""
-        request = configure_pb2.ConfigureRequest()
-        section.fill(request)
-        raise_for_results(await call_configure(self._configure, request, timeout=timeout))
+        await self._configure_sections((section,), timeout=timeout)
         return await call_configure_status(self._configure, timeout=timeout)
 
     async def _rebind_secrets(

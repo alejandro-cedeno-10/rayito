@@ -12,6 +12,7 @@ import {
   type StackComponent,
   stackTags,
 } from "../../src/stacks/model.js";
+import { loadTemplate } from "../../src/stacks/packaging.js";
 import { COMPONENTS, componentByName } from "../../src/stacks/registry.js";
 import { OptionalStacks } from "../../src/stacks/service.js";
 import { VERSION } from "../../src/version.js";
@@ -60,7 +61,9 @@ describe("stacks/service: OptionalStacks", () => {
   test("deploying an unsupported component raises before touching the provisioner", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.deploy("s3-mounts")).rejects.toThrow(UnimplementedError);
+    // `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
+    // stub (`supported: false`) and makes the same point.
+    await expect(stacks.deploy("efs-volumes")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 
@@ -138,4 +141,23 @@ describe("stacks/service: OptionalStacks", () => {
     expect(componentByName("not-a-component")).toBeUndefined();
     expect(componentByName("metadata-index")).toBeDefined();
   });
+});
+
+/** Prefijo de tipo de todo recurso IAM de CloudFormation; una plantilla que
+ * crea uno exige `CAPABILITY_IAM` (o `CAPABILITY_NAMED_IAM`) en
+ * `CreateStack`/`UpdateStack`, o falla con `InsufficientCapabilitiesException`. */
+const IAM_RESOURCE_TYPE_PREFIX = "AWS::IAM::";
+
+describe("stacks/packaging", () => {
+  const supported = COMPONENTS.filter((entry) => entry.supported !== false);
+
+  test.each(supported.map((entry) => [entry.name, entry] as const))(
+    "%s: packaged, and declares a capability if it creates IAM resources",
+    async (_name, entry) => {
+      const template = await loadTemplate(entry);
+      if (template.includes(IAM_RESOURCE_TYPE_PREFIX)) {
+        expect(entry.capabilities ?? []).not.toHaveLength(0);
+      }
+    },
+  );
 });

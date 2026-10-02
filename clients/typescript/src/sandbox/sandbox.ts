@@ -18,13 +18,18 @@ import {
   sharedControlPlane,
 } from "../aws/control-plane.js";
 import {
-  CONFIGURE_DOC,
+  buildConfigureRequest,
   CONFIGURE_FEATURE,
+  CONFIGURE_SETTLE_POLL_MS,
   type ConfigureSection,
-  type ConfigureSectionFactory,
+  checkConfigureResponse,
   isPostApplySection,
-  raiseForResults,
+  type PlannedSection,
+  requireCapabilities,
   requireConfigureSupport,
+  resolveSections,
+  settleTimeoutMs,
+  stillPending,
 } from "../configure/base.js";
 import {
   errorMessage,
@@ -34,12 +39,10 @@ import {
   SandboxNotFoundError,
   SandboxNotReadyError,
   TimeoutError,
-  UnimplementedError,
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
 import {
   type ConfigureRequest,
-  ConfigureRequestSchema,
   type ConfigureResponse,
   ConfigureStatusRequestSchema,
   type ConfigureStatusResponse,
@@ -47,6 +50,7 @@ import {
 import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
+import { S3MountsStatusSchema } from "../gen/rayito/v1/s3_mounts_pb.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
@@ -58,6 +62,7 @@ import {
   type IdlePolicyInput,
   type NetworkPolicyInput,
   type NetworkState,
+  planSize,
   type ResolvedS3Staging,
   type S3Staging,
   type SandboxHealth,
@@ -65,7 +70,9 @@ import {
   type SandboxListItem,
   type SandboxMetrics,
   sandboxInfo,
+  sizedTemplateName,
   withLifecycle,
+  withSizeFacts,
 } from "../models.js";
 import {
   type Instrumentation,
@@ -76,12 +83,15 @@ import {
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import { resolveImageVariant } from "../role-policy.js";
+import type { MountStatus, S3MountsOption } from "../s3-mounts/domain.js";
+import { fromProtoStatus } from "../s3-mounts/section.js";
 import type { SecretGateway } from "../secret-gateway/domain.js";
 import {
   EMPTY_GATEWAYS,
   SECTION_NAME as GATEWAY_SECTION,
   GatewayHandle,
 } from "../secret-gateway/section.js";
+import type { SecretCache } from "../secrets/cache.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -90,6 +100,8 @@ import {
   sharedSecretCache,
   warm,
 } from "../secrets/inject.js";
+import { defaultSizeCatalog } from "../sizing/catalog.js";
+import type { SizeInput } from "../sizing/sizing.js";
 import { translateSetTimeoutError } from "../transport/errors.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
@@ -361,11 +373,12 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * `undefined` lanza `UnimplementedError` nombrando ese cambio, antes de
    * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
    * siete ausentes (su valor por defecto) el comportamiento es exactamente
-   * el de 0.5.x.
+   * el de 0.5.x. `size` ya no es un stub (m15-sizes-catalog): ver
+   * `sizing/sizing.ts`.
    */
-  readonly mounts?: Readonly<Record<string, unknown>> | undefined;
+  readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
-  readonly size?: unknown;
+  readonly size?: SizeInput | undefined;
   readonly events?: unknown;
   readonly telemetry?: unknown;
   readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
@@ -717,6 +730,10 @@ export class Sandbox implements AsyncDisposable {
     logAllowOnlyNotice(network, options.logger);
     // Sin E/S contra AWS: región y peer del índice antes de lanzar nada.
     await index?.prepare();
+    // m15-sizes-catalog: `planSize` (`models.ts`) resuelve `size` aquí, no
+    // en `planFeatures`: no es una sección de ConfigureSandbox, es qué
+    // imagen lanzar.
+    const resolvedSize = planSize(options.size);
     const featurePlan = planFeatures(
       {
         mounts: options.mounts,
@@ -728,12 +745,14 @@ export class Sandbox implements AsyncDisposable {
         domain: options.domain,
       },
       resolveImageVariant(options.template),
+      options.logging,
     );
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
-    const imageArn = await plane.resolveTemplateArn(resolveTemplate(options.template), {
+    const resolvedTemplateName = sizedTemplateName(resolveTemplate(options.template), resolvedSize);
+    const imageArn = await plane.resolveTemplateArn(resolvedTemplateName, {
       signal: options.signal,
     });
     const plan = buildLaunchPlan({
@@ -796,7 +815,7 @@ export class Sandbox implements AsyncDisposable {
           );
         }
         await opened.#applyConfigureSections(
-          featurePlan.configureSections as readonly ConfigureSectionFactory[],
+          featurePlan.configureSections,
           options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
           !(options.keepOnFailure ?? false),
         );
@@ -825,6 +844,7 @@ export class Sandbox implements AsyncDisposable {
       keepOnFailure: options.keepOnFailure,
       network: isEmptyPolicy(network) ? undefined : network,
       gateways: options.gateways,
+      size: resolvedSize,
     };
     sandbox.#launchContext = {
       controlPlane: plane,
@@ -969,14 +989,10 @@ export class Sandbox implements AsyncDisposable {
    */
   static applyConfigureSections(
     sandbox: Sandbox,
-    factories: readonly unknown[],
+    planned: readonly PlannedSection[],
     timeoutMs: number,
   ): Promise<void> {
-    return sandbox.#applyConfigureSections(
-      factories as readonly ConfigureSectionFactory[],
-      timeoutMs,
-      true,
-    );
+    return sandbox.#applyConfigureSections(planned, timeoutMs, true);
   }
 
   /** Acceso interno para el pool (abre una plaza con su token y el calendario de toma); no forma parte de la API pública. */
@@ -1313,11 +1329,24 @@ export class Sandbox implements AsyncDisposable {
       await this.#refreshHealth();
     }
     this.#core.info = withLifecycle(info, this.#core.lifecycle);
-    return sandboxInfo({
+    const result = sandboxInfo({
       ...this.#core.info,
       ...this.#core.guestFacts,
       metadata: this.#core.metadata,
     });
+    const requestedSize = this.#launchOptions?.size;
+    if (requestedSize === undefined) {
+      return result;
+    }
+    // m15-sizes-catalog: única llamada a GetMicrovmImageVersion, cacheada
+    // por versión de imagen (defaultSizeCatalog), para confirmar lo que
+    // `create({ size })` ya resolvió en cliente.
+    const confirmedMib = await defaultSizeCatalog.minimumMemoryMib(
+      this.#core.controlPlane,
+      result.template,
+      result.templateVersion,
+    );
+    return withSizeFacts(result, { size: requestedSize.name, baselineMemoryMib: confirmedMib });
   }
 
   /**
@@ -1455,6 +1484,35 @@ export class Sandbox implements AsyncDisposable {
     );
     this.#core.recordHealth(response);
     return healthFromProto(response);
+  }
+
+  /**
+   * Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_MS` hasta que
+   * ninguna sección de `pending` siga pendiente; agotado el mayor
+   * `settleTimeoutMs`, la última lectura es `final` y cada sección que siga
+   * sin asentarse lanza su propio error de timeout.
+   */
+  async #waitSettled(pending: ConfigureSection[], timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + settleTimeoutMs(pending);
+    let remaining = pending;
+    while (remaining.length > 0) {
+      const final = Date.now() >= deadline;
+      remaining = stillPending(await this.#configureStatus(timeoutMs), remaining, final);
+      if (remaining.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, CONFIGURE_SETTLE_POLL_MS));
+      }
+    }
+  }
+
+  /**
+   * Estado en vivo de cada `mounts` (`m15-s3-mounts`): una `ConfigureStatus`
+   * por lectura, nunca cacheada — un montaje puede pasar de `"pending"` a
+   * `"mounted"`/`"failed"` entre dos lecturas de este método. Vacío si
+   * `create()` no recibió `mounts`.
+   */
+  async mounts(): Promise<ReadonlyMap<string, MountStatus>> {
+    const response = await this.#configureStatus(this.#core.resolveRequestTimeout(undefined));
+    return fromProtoStatus(response.s3Mounts ?? create(S3MountsStatusSchema, {}));
   }
 
   /** Un `HostAccess` con el JWE que cubre `port` (acuñado si hace falta); 9000 está prohibido (ADR-006). */
@@ -1616,28 +1674,28 @@ export class Sandbox implements AsyncDisposable {
   }
 
   /**
-   * Único punto de `create()` que llama a `ConfigureSandbox`: agrupa en una
-   * sola llamada las secciones 0.6 que `planFeatures` dejó pendientes (hoy
-   * sólo `gateways`; una función futura añade su propia entrada a
-   * `FeaturePlan.configureSections`, nunca toca este método).
+   * Único punto de `create()`/`take()` que llama a `ConfigureSandbox`:
+   * agrupa en una sola llamada las secciones 0.6 que `planFeatures` dejó en
+   * `FeaturePlan.configureSections` (`mounts`, `gateways`; una función
+   * futura añade su propia entrada ahí, nunca toca este método).
    *
    * Igual que `#applyInitialNetwork`: un fallo en cualquier punto (imagen
    * anterior a 0.6.0, flag no soportado, un secreto que falta al resolver
-   * una cabecera, una sección `INVALID`/`FAILED`) cierra el cliente y,
-   * salvo `keepOnFailure`, termina el VM antes de relanzar — el caller
-   * nunca recibe un handle de un sandbox cuya configuración pedida no se
-   * aplicó.
+   * una cabecera, una sección `INVALID`/`FAILED`, un montaje que no se
+   * asienta) cierra el cliente y, salvo `keepOnFailure`, termina el VM
+   * antes de relanzar — el caller nunca recibe un handle de un sandbox
+   * cuya configuración pedida no se aplicó.
    */
   async #applyConfigureSections(
-    factories: readonly ConfigureSectionFactory[],
+    planned: readonly PlannedSection[],
     timeoutMs: number,
     terminateOnFailure: boolean,
   ): Promise<void> {
-    if (factories.length === 0) {
+    if (planned.length === 0) {
       return;
     }
     try {
-      await this.#sendConfigureSections(factories, timeoutMs);
+      await this.#sendConfigureSections(planned, timeoutMs);
     } catch (error) {
       this.close();
       if (terminateOnFailure) {
@@ -1648,41 +1706,22 @@ export class Sandbox implements AsyncDisposable {
   }
 
   /**
-   * La parte sin compuerta de `#applyConfigureSections`: cada entrada es un
-   * `GatewaySectionFactory`-como-objeto (`{ build(cache) }`) sobre la
-   * `SecretCache` ya resuelta del handle; exige su flag en
-   * `Health.features` antes de construir el `ConfigureRequest` y traduce
-   * cada `SectionResult` a su excepción (`raiseForResults`, la misma que
-   * usa `#reapplySection`) y, si alguna sección es una `PostApplySection`,
-   * pide `ConfigureStatus` una vez y guarda lo que devuelva su `afterApply`
-   * en `#sectionHandles`.
+   * La parte sin compuerta de `#applyConfigureSections`: resuelve cada
+   * entrada con la `SecretCache` del handle (`resolveSections`, sólo si
+   * alguna la necesita), exige su flag en `Health.features`
+   * (`requireCapabilities`) antes de construir el `ConfigureRequest`, la
+   * aplica (`#configureSections`) y, si alguna sección es una
+   * `PostApplySection`, pide `ConfigureStatus` una vez y guarda lo que
+   * devuelva su `afterApply` en `#sectionHandles`.
    */
   async #sendConfigureSections(
-    factories: readonly ConfigureSectionFactory[],
+    planned: readonly PlannedSection[],
     timeoutMs: number,
   ): Promise<void> {
     const features = requireConfigureSupport(this.#core.agentFeatures, CONFIGURE_FEATURE);
-    const cache =
-      this.#secrets.binding?.cache ??
-      sharedSecretCache(
-        this.#core.controlPlane.region,
-        awsClientSettingsOf(this.#core.controlPlane).credentials,
-      );
-    const sections = factories.map((factory) => factory.build(cache));
-    for (const section of sections) {
-      if (!features[section.requiredFlag]) {
-        throw new UnimplementedError(
-          section.section,
-          "esta imagen no tiene esta función implementada todavía",
-          CONFIGURE_DOC,
-        );
-      }
-    }
-    const request = create(ConfigureRequestSchema, {});
-    for (const section of sections) {
-      await section.fill(request);
-    }
-    raiseForResults(await this.#configure(request, timeoutMs));
+    const sections = resolveSections(planned, () => this.#sectionSecretCache());
+    requireCapabilities(sections, features);
+    await this.#configureSections(sections, timeoutMs);
     const postApply = sections.filter(isPostApplySection);
     if (postApply.length === 0) {
       return;
@@ -1697,20 +1736,47 @@ export class Sandbox implements AsyncDisposable {
   }
 
   /**
+   * Una `Configure` con `sections`, cada `SectionResult` traducido al error
+   * de su propia sección (`checkConfigureResponse`) y, para las que el
+   * agente dejó en `PENDING`, la espera acotada a que se asienten
+   * (`#waitSettled`): nunca vuelve con un montaje todavía sin montar. Lo
+   * comparten `create()`/`take()` y `#reapplySection`.
+   */
+  async #configureSections(
+    sections: readonly ConfigureSection[],
+    timeoutMs: number,
+  ): Promise<void> {
+    const request = await buildConfigureRequest(sections);
+    const response = await this.#configure(request, timeoutMs);
+    await this.#waitSettled(checkConfigureResponse(response, sections), timeoutMs);
+  }
+
+  /** La `SecretCache` con la que se construye cada `ConfigureSectionFactory`:
+   * la de `secrets` si el handle la tiene, la compartida del proceso si no
+   * (la misma regla que `secrets`, nunca una caché aparte). */
+  #sectionSecretCache(): SecretCache {
+    return (
+      this.#secrets.binding?.cache ??
+      sharedSecretCache(
+        this.#core.controlPlane.region,
+        awsClientSettingsOf(this.#core.controlPlane).credentials,
+      )
+    );
+  }
+
+  /**
    * El `SectionApplied.reapply` de cada `PostApplySection` (p. ej.
-   * `sbx.gateways.refresh()`): vuelve a rellenar sólo esa sección, manda un
-   * `Configure` nuevo y lo pasa por `raiseForResults` igual que `create()`
-   * — una sección `INVALID` (un valor rotado con CR/LF) o `FAILED`
-   * (`listen_failed`) lanza aquí, nunca devuelve un estado vacío o a medio
-   * aplicar en silencio. Sólo si se aplicó pide el `ConfigureStatus` nuevo.
+   * `sbx.gateways.refresh()`): vuelve a mandar sólo esa sección por el
+   * mismo camino que `create()` (`#configureSections`) — una sección
+   * `INVALID` (un valor rotado con CR/LF) o `FAILED` (`listen_failed`)
+   * lanza aquí, nunca devuelve un estado vacío o a medio aplicar en
+   * silencio. Sólo si se aplicó pide el `ConfigureStatus` nuevo.
    */
   async #reapplySection(
     section: ConfigureSection,
     timeoutMs: number,
   ): Promise<ConfigureStatusResponse> {
-    const request = create(ConfigureRequestSchema, {});
-    await section.fill(request);
-    raiseForResults(await this.#configure(request, timeoutMs));
+    await this.#configureSections([section], timeoutMs);
     return this.#configureStatus(timeoutMs);
   }
 

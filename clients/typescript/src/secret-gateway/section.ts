@@ -8,7 +8,12 @@
  */
 
 import { create } from "@bufbuild/protobuf";
-import type { PostApplySection, SectionApplied } from "../configure/base.js";
+import {
+  type ConfigureSectionFactory,
+  type PostApplySection,
+  raiseSectionError,
+  type SectionApplied,
+} from "../configure/base.js";
 import type { ConfigureRequest, ConfigureStatusResponse } from "../gen/rayito/v1/configure_pb.js";
 import {
   SecretGatewayAllowRuleSchema,
@@ -27,6 +32,9 @@ export const SECTION_NAME = "secret_gateway";
 export class GatewaySection implements PostApplySection {
   readonly section = SECTION_NAME;
   readonly requiredFlag = REQUIRED_FLAG;
+  /** Sin espera: el puerto de cada ruta ya está en `ConfigureStatus` en
+   * cuanto `Configure` responde `APPLIED`; `rayd` nunca la deja `PENDING`. */
+  readonly settleTimeoutMs = 0;
 
   constructor(
     private readonly gateways: Readonly<Record<string, SecretGateway>>,
@@ -56,6 +64,17 @@ export class GatewaySection implements PostApplySection {
       }),
     );
     request.secretGateway = create(SecretGatewayConfigSchema, { routes });
+  }
+
+  /** `INVALID`/`FAILED`/`UNSUPPORTED` lanzan (`raiseSectionError`). */
+  checkResult(code: number, errorClass: string): void {
+    raiseSectionError(SECTION_NAME, code, errorClass);
+  }
+
+  /** Siempre asentada (`settleTimeoutMs`); `afterApply` es quien lee el
+   * estado de cada ruta. */
+  checkStatus(_status: ConfigureStatusResponse, _final: boolean): boolean {
+    return true;
   }
 
   /**
@@ -95,12 +114,11 @@ function statusesOf(status: ConfigureStatusResponse): Readonly<Record<string, Ga
  * Lo que `planFeatures` pone en `FeaturePlan.configureSections` por cada
  * `gateways`: un `ConfigureSection` todavía sin resolver, a la espera de
  * la `SecretCache` que `Sandbox.create()` ya calcula para `secrets` (la
- * misma, nunca una segunda). Fija la convención que sigue cualquier
- * entrada de `configureSections` que necesite algo resuelto más tarde que
- * `planFeatures`: un invocable de un solo argumento, la `SecretCache`
- * resuelta, que devuelve el `ConfigureSection` de verdad.
+ * misma, nunca una segunda): un `ConfigureSectionFactory`
+ * (`configure/base.ts`) que `resolveSections` construye justo antes de la
+ * llamada a `Configure`.
  */
-export class GatewaySectionFactory {
+export class GatewaySectionFactory implements ConfigureSectionFactory {
   constructor(private readonly gateways: Readonly<Record<string, SecretGateway>>) {}
 
   build(cache: SecretCache): GatewaySection {

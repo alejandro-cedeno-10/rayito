@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from rayito._stacks._model import StackStatus
+from rayito._stacks._model import StackComponent, StackStatus
+from rayito._stacks._packaging import load_template
 from rayito._stacks._registry import COMPONENTS, component_by_name
 from rayito._stacks._service import OptionalStacks
 from rayito._stacks._service_async import AsyncOptionalStacks
@@ -27,8 +28,10 @@ def test_components_lists_the_full_catalog_with_no_provisioner_call() -> None:
 def test_deploying_an_unsupported_component_raises_before_touching_the_provisioner() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
-    with pytest.raises(UnimplementedError, match="s3-mounts"):
-        stacks.deploy("s3-mounts")
+    # `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
+    # stub (`supported=False`) and makes the same point.
+    with pytest.raises(UnimplementedError, match="efs-volumes"):
+        stacks.deploy("efs-volumes")
     assert fake.calls == []
 
 
@@ -155,3 +158,19 @@ async def test_async_optional_stacks_mirrors_the_sync_service() -> None:
     assert status.state == "CREATE_COMPLETE"
     await stacks.destroy("metadata-index")
     assert "delete" in [call[0] for call in fake.calls]
+
+
+#: Prefijo de tipo de todo recurso IAM de CloudFormation; una plantilla que
+#: crea uno exige `CAPABILITY_IAM` (o `CAPABILITY_NAMED_IAM`) en
+#: `CreateStack`/`UpdateStack`, o falla con `InsufficientCapabilitiesException`.
+IAM_RESOURCE_TYPE_PREFIX = "AWS::IAM::"
+
+
+@pytest.mark.parametrize(
+    "component", [c for c in COMPONENTS if c.supported], ids=lambda component: component.name
+)
+def test_every_template_that_creates_iam_resources_declares_a_capability(
+    component: StackComponent,
+) -> None:
+    if IAM_RESOURCE_TYPE_PREFIX in load_template(component):
+        assert component.capabilities, f"{component.name} crea IAM sin declarar CAPABILITY_IAM"

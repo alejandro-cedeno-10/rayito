@@ -192,6 +192,14 @@ export class LaunchObserver implements ControlPlane {
   ): Promise<string> {
     return this.#plane.createAuthToken(sandboxId, ports, options);
   }
+
+  getMicrovmImageVersion(
+    imageArn: string,
+    imageVersion: string,
+    options?: ControlPlaneCallOptions,
+  ): Promise<number> {
+    return this.#plane.getMicrovmImageVersion(imageArn, imageVersion, options);
+  }
 }
 
 class Semaphore {

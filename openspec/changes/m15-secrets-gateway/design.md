@@ -121,8 +121,9 @@ existing behaviour changes for a caller who never sets it.
   `PostApplySection` add one optional method, `after_apply(SectionApplied)`
   (`afterApply` in TS). It receives the `ConfigureStatus` taken once after
   the bundled `Configure`, plus a `reapply` callable that re-fills only that
-  section, sends `Configure`, raises on any non-`APPLIED` result
-  (`raise_for_results`/`raiseForResults`, shared with `create()`) and
+  section, sends `Configure`, raises on any non-`APPLIED` result (the
+  same per-section `check_configure_response`/`checkConfigureResponse`
+  as `create()`) and
   returns the new `ConfigureStatus`. `main.py`/`sandbox.ts` store what it
   returns under the section's name, and `sbx.gateways` reads it from there.
   The create path names no feature, so s3-mounts, efs-volumes, events and

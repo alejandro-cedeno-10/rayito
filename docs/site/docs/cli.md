@@ -52,8 +52,16 @@ del `doctor`, un error de AWS impreso como `AWS error <Code>: <Message>`);
 rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     --bucket <bucket> [--variant full|slim|poly] [--image-name N] \
     [--os-capabilities ALL] [--build-role-arn ARN | --stack-name rayito-m0-iam] \
-    [--memory-mib 2048] [--timeout-seconds 1800] [--force]
+    [--memory-mib 2048] [--timeout-seconds 1800] [--force] \
+    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]...
 ```
+
+`--sizes` publica, además del baseline (2048 MiB), una imagen con sufijo de
+tamaño por cada nombre listado desde el mismo artefacto; `--env KEY=VALUE`
+(repetible) hornea variables de imagen adicionales en todas las que publique
+la invocación. Con `--sizes`, `--memory-mib` sólo admite el valor por
+defecto (2048): el baseline de `--sizes` es siempre la imagen sin sufijo.
+Ver [Tamaños](funciones-opcionales/tamanos.md).
 
 Reproduce el pipeline de `make image-publish`:
 
@@ -99,6 +107,26 @@ rayito image list rayito-base            # versiones de una imagen, la más nuev
 
 Con un nombre o ARN lista `imageVersion`, `state`, `status`,
 `baseImageVersion`, el nombre del artefacto en S3 y `createdAt`.
+
+### `image sizes`
+
+```bash
+rayito image sizes [--variant full|slim|poly] [--image-name <nombre>]
+```
+
+Por cada tamaño del catálogo cerrado (`512mb`/`1gb`/`2gb`/`4gb`/`8gb`,
+[Tamaños](funciones-opcionales/tamanos.md)), qué imagen de la variante ya
+publicó `rayito image publish --sizes` (`name`, `published`, `imageArn`,
+`state`, `sameArtifact`, `createdAt`) o si ninguna. Siempre una
+`list-microvm-images` filtrada por el nombre base; si hay algún tamaño
+adicional publicado, además una `GetMicrovmImageVersion` (sin cuota propia)
+por imagen publicada para `sameArtifact` — con sólo el baseline publicado,
+ninguna llamada adicional. Nunca construye, publica ni lanza nada.
+`sameArtifact` compara el `codeArtifact.uri` de la versión activa de cada
+tamaño contra la del baseline: `false` detecta un tamaño publicado desde un
+zip distinto, sin lanzar ningún sandbox. `--image-name` lista la familia
+publicada con `rayito image publish --image-name <nombre> --sizes ...`
+(`<nombre>`, `<nombre>-4gb`, ...) en lugar de la de la variante.
 
 ### `image prune`
 
