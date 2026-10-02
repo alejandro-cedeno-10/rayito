@@ -18,8 +18,12 @@
 - [x] 2.3 `crates/rayd/src/adapters/efs_mount.rs`: `UnavailableEfsMounter`
       (`VolumeMounter` impl, always `Unsupported`), registered in
       `adapters/mod.rs`.
-- [x] 2.4 `features/efs_volumes.rs` stays `slot::Unsupported` (design.md
-      D1). `proto/rayito/v1/efs_volumes.proto` gains real fields, which
+- [x] 2.4 `features/efs_volumes.rs`: `EfsVolumesSlot` over the
+      `VolumeMounter` port (design.md D1): `supported()` is the mounter's
+      `support()`, `apply()` answers `UNSUPPORTED` while it is unsupported
+      (every shipped build), and behind a supporting mounter validates the
+      section into a `VolumePlan`, unmounts dropped/changed paths and mounts
+      the rest in plan order (tested with a fake mounter). `proto/rayito/v1/efs_volumes.proto` gains real fields, which
       requires two mechanical fixes in foundations'
       `crates/rayd/src/grpc/configure.rs` (its own code no longer compiles
       against a message with a `repeated` field): `request.efs_volumes?`
@@ -77,9 +81,13 @@
 - [x] 5.6 Fixed `m15-stacks.test.ts`/`test_m15_stacks_service.py`'s
       "destroy an unsupported component" test, which used `efs-volumes` as
       its example (now `sizes-guard`, design.md D4).
-- [x] 5.7 `scripts/check-dts-cost-blocks.mjs`: added `class VolumeStore`;
-      moved the TSDoc cost block onto the class declaration itself (a
-      file-header comment is dropped by tsdown's `.d.mts` bundling).
+- [x] 5.7 `class VolumeStore`'s cost check lives in the drop-in
+      `clients/typescript/cost-declarations/efs-volumes.json`;
+      `scripts/check-dts-cost-blocks.mjs` gains the glob foundations left
+      for the first feature that needed it (v06-foundations design E6),
+      without touching its shared `COST_DECLARATIONS` array. The TSDoc cost
+      block sits on the class declaration itself (a file-header comment is
+      dropped by tsdown's `.d.mts` bundling).
 - [x] 5.8 Tests: `m15-efs-volumes.test.ts`; `pnpm lint`/`typecheck`/`test`/
       `build`/`pack:check` all green.
 

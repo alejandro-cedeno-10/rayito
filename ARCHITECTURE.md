@@ -1822,9 +1822,10 @@ Rayito-owned VPC connector that reaches an EFS mount target (EFS-3), and
 **Decisión.** Split the feature in two. This change ships everything that
 does not depend on the campaign's answer: the pure domain and port
 (`rayd_core::volume`, `VolumeMounter`), `rayd`'s only adapter
-(`UnavailableEfsMounter`, always `Unsupported` — `features::efs_volumes`
-stays `slot::Unsupported` rather than a thin wrapper that could only ever
-refuse), a real `VolumeStore` CRUD over EFS access points (caller's
+(`UnavailableEfsMounter`, always `Unsupported`; `features::efs_volumes`
+holds it behind the port, so `Health.features.efs_volumes` is its
+`support()` and the section answers `UNSUPPORTED` until a real mounter
+lands), a real `VolumeStore` CRUD over EFS access points (caller's
 credentials, never the execution role), the `Sandbox.create(volumes=)`
 surface that validates eagerly (shape, mount path, `base-caps` variant)
 and always raises `UnimplementedError` naming the pending campaign, the

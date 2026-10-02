@@ -1,13 +1,13 @@
 //! Mount-path shape, shared by every feature that mounts something into
-//! the guest filesystem (`volume` today; `s3_mount` reuses it in its own
-//! change, m15-s3-mounts). Mirrors the SDK-side rule (`_mount_path.py` /
+//! the guest filesystem (`s3_mount` today; `efs_volumes` reuses it in its
+//! own change). Mirrors the SDK-side rule (`_mount_path.py` /
 //! `mount-path.ts`) so a non-SDK or buggy `ConfigureSandbox` caller cannot
 //! reach `rayd`'s own `mount(2)`/`create_dir_all` with a path the SDK
 //! would have already rejected — `rayd` never trusts the client to have
 //! run that check itself (the whole point of re-validating here, §9.2).
 //!
 //! Pure string checks only: `rayd` never touches the guest filesystem to
-//! decide whether a path is *allowed* (only the mounter's own
+//! decide whether a path is *allowed* (only `FuseDevice::attach`'s own
 //! `create_dir_all` touches it, afterwards).
 
 /// A sandbox has at most this many mount points between `mounts=` and
@@ -42,7 +42,7 @@ pub fn validate_mount_paths<'a>(paths: &[&'a str]) -> Result<(), (&'a str, Mount
         return Err((paths[0], MountPathError::TooMany));
     }
     for (index, path) in paths.iter().enumerate() {
-        if let Err(error) = validate_shape(path) {
+        if let Err(error) = validate_one(path) {
             return Err((path, error));
         }
         for other in &paths[..index] {
@@ -55,10 +55,10 @@ pub fn validate_mount_paths<'a>(paths: &[&'a str]) -> Result<(), (&'a str, Mount
 }
 
 /// One path's own shape, with no regard to any other mount in the same
-/// request — the building block `volume::spec::MountPath::parse` uses
-/// directly (it needs a typed, already-validated single path before a
-/// `VolumePlan` exists to check overlap across).
-pub fn validate_shape(path: &str) -> Result<(), MountPathError> {
+/// request. Public (additively, `m15-efs-volumes`) so
+/// `volume::spec::MountPath::parse` can validate a single typed path before
+/// a `VolumePlan` exists to check overlap across.
+pub fn validate_one(path: &str) -> Result<(), MountPathError> {
     if !path.starts_with('/') {
         return Err(MountPathError::InvalidShape);
     }
@@ -85,11 +85,8 @@ fn is_canonical(path: &str) -> bool {
         && !path.contains("//")
 }
 
-/// `true` if `first` and `second` are the same path, or one is an
-/// ancestor directory of the other (research doc §4.1 rule 2: "sin
-/// solapamientos ni anidamiento") — shared by `validate_mount_paths` (a
-/// request's own paths) and `volume::spec::MountPath::overlaps` (a
-/// `VolumePlan`'s already-typed paths).
+/// Public (additively, `m15-efs-volumes`) so `volume::spec::MountPath::overlaps`
+/// shares this exact rule for a `VolumePlan`'s already-typed paths.
 #[must_use]
 pub fn overlaps(first: &str, second: &str) -> bool {
     let first_dir = format!("{first}/");

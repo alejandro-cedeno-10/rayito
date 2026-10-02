@@ -4,9 +4,8 @@
 //! codebase are), so it returns boxed futures rather than using `async fn`
 //! in the trait; no tokio, nix or process type crosses into `rayd-core`
 //! itself. `adapters::efs_mount::UnavailableEfsMounter` is the only
-//! implementation today; `features::efs_volumes` does not wire it into a
-//! `FeatureSet` slot yet (`slot::Unsupported` instead — see that module's
-//! docs for why).
+//! implementation today; `features::efs_volumes` holds it as the slot's
+//! mounter, so `Health.features.efs_volumes` is this port's `support()`.
 
 use std::future::Future;
 use std::pin::Pin;

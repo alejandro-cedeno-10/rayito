@@ -80,7 +80,7 @@ pub struct MountPath(String);
 
 impl MountPath {
     pub fn parse(value: &str) -> Result<Self, VolumeError> {
-        mount_path::validate_shape(value).map_err(|_| VolumeError::InvalidPath)?;
+        mount_path::validate_one(value).map_err(|_| VolumeError::InvalidPath)?;
         Ok(Self(value.to_owned()))
     }
 

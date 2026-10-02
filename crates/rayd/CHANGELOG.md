@@ -30,8 +30,9 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   experimental): `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/
   `MountState`/`VolumeError`, puro) y el puerto `VolumeMounter`. El único
   adaptador de este cambio es `UnavailableEfsMounter`
-  (`support()` siempre `Unsupported`): `features::efs_volumes` sigue
-  `slot::Unsupported` y `Health.features.efs_volumes` sigue `false`,
+  (`support()` siempre `Unsupported`): `features::efs_volumes` lo usa
+  detrás del puerto, así que `Health.features.efs_volumes` es su
+  `support()` (`false`) y la sección `efs_volumes` responde `UNSUPPORTED`,
   pendiente de la campaña de medición EFS-1..EFS-20
   (`docs/research/2026-10-efs-persistence.md`). `proto/rayito/v1/efs_volumes.proto`
   gana sus mensajes reales (`EfsVolumesConfig`/`EfsVolumesStatus`).

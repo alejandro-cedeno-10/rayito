@@ -8,8 +8,9 @@
 //! itself is real and tested — see that module's docs). Once EFS-2
 //! (mount in caps), EFS-3 (own connector reaches 2049) and EFS-8
 //! (`efs-utils` with TLS+IAM+access point, no `systemd`) clear, a real
-//! `mount -t efs` adapter replaces this one; `features::efs_volumes::build`
-//! is the only call site that changes.
+//! `mount -t efs` adapter replaces this one in `features::efs_volumes::build`
+//! (the slot already dispatches through the port), plus whatever
+//! `/suspend`/`/resume` participation EFS-11/EFS-13 call for.
 
 use std::time::Duration;
 

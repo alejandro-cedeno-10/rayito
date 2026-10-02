@@ -9,28 +9,24 @@ later change once its stop criteria (EFS-2, EFS-3, EFS-8) clear. This
 
 ## Decisions
 
-### D1. `features::efs_volumes::build()` stays `slot::Unsupported`, not a thin wrapper over `UnavailableEfsMounter`
+### D1. `features::efs_volumes::build()` wires an `EfsVolumesSlot` over the `VolumeMounter` port
 
-The architecture names `adapters/efs_mount.rs` (`UnavailableEfsMounter`) as
-this change's deliverable, alongside `features/efs_volumes.rs`. Two shapes
-were possible: (a) keep the slot as the generic `slot::Unsupported` it
-already is, with `UnavailableEfsMounter` existing as a standalone,
-`VolumeMounter`-implementing, fully tested adapter that nothing wires up
-yet; or (b) build a real `EfsVolumesFeature` that implements
-`ConfigurableFeature<EfsVolumesConfig, EfsVolumesStatus>` by mapping the
-proto section to `VolumeSpec`s, validating them with `VolumePlan`, and then
-calling into `UnavailableEfsMounter` — which can only ever refuse.
-
-(a) was chosen. (b) would be real-looking glue code with zero behavioural
-difference from `slot::Unsupported` (both always answer
-`SECTION_CODE_UNSUPPORTED`), built on a mapping (proto `EfsVolumeMount` ->
-domain `VolumeSpec`) that the real adapter will need once it exists but
-that nothing can yet exercise end-to-end (no mount ever succeeds to
-validate the mapping against). Shipping it now means throwing it away or
-reverifying it once a real `VolumeMounter` lands; `slot::Unsupported` is
-honest, already covered by foundations' own test
-(`every_slot_starts_unsupported`), and `UnavailableEfsMounter` still proves
-the port is real and implementable.
+The architecture (§2/§7.1) wants `Health.features.efs_volumes` to come
+from the mounter's own `support()`, not a hard-coded flag. `build()`
+therefore returns `EfsVolumesSlot::new(Arc::new(UnavailableEfsMounter))`:
+`supported()` is `mounter.support() == Supported`, and `apply()` answers
+`SECTION_CODE_UNSUPPORTED` before reading the section while the mounter is
+unsupported — so every shipped build behaves exactly as `slot::Unsupported`
+did. Behind a mounter that does report support (only the fake in the
+module's tests today) the slot validates the section into a `VolumePlan`
+(`Invalid`, nothing touched, on a bad path, id or overlap), lazily
+unmounts entries the new plan drops or changes, and mounts the rest in plan
+order (`Failed` with the closed class on the first failure). A real
+`mount -t efs` adapter is then `build()`'s one line plus whatever
+`/suspend`/`/resume` participation EFS-11/EFS-13 call for; the dispatch
+itself does not change. An earlier revision kept `slot::Unsupported` and
+left `UnavailableEfsMounter` unused, which made the adapter dead code and
+the "one call site" promise untrue.
 
 ### D2. `volumes=`'s SDK gate does not thread `execution_role_arn`/`egress` through `_feature_options.plan_features`
 

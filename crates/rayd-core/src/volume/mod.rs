@@ -26,5 +26,5 @@ pub use ports::{
     BoxFuture, MountFailure, MountFailureClass, MountSupport, ProbeOutcome, UnmountMode,
     VolumeMounter,
 };
-pub use spec::{AccessPointId, FileSystemId, MountPath, VolumeSpec};
+pub use spec::{AccessPointId, FileSystemId, MountPath, MountTargetIp, VolumeSpec};
 pub use state::{MountState, MountTransition};
