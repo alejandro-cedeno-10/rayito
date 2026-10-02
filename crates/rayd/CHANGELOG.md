@@ -34,7 +34,7 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `rayd_core::template` (`StartSpec`, `ReadyPoll`, `ready_decision`,
   `rayito.template/1`) y el slot `template_start`: al arrancar, `rayd` lee
   `/etc/rayito/template.json` (`adapters/fs_template_spec.rs`; ausente o
-  inválido = arranque de 0.5.x) y, si existe, tras `/run` lanza
+  inválido = arranque de 0.5.x) y, si existe, antes del `/ready` del build lanza
   `start_cmd` como proceso gestionado (visible en `commands.list`) y
   sondea `ready_cmd` con `/bin/sh -c` (`adapters/shell_ready_probe.rs`);
   `/ready` responde 503 hasta que `ready_cmd` sale con 0 y falla al

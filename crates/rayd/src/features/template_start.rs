@@ -13,12 +13,14 @@
 //! that is `no_template_json_yields_no_participant` below).
 //!
 //! The actual work — spawning `start_cmd` as a managed process and polling
-//! `ready_cmd` — happens in `TemplateParticipant::on_run`, not here:
-//! `ProcessManager::start` requires the session to already accept new
-//! streams (`SandboxSession::accepts_new_streams`), which is only true
-//! after the `/run` hook has installed the sandbox's defaults. `build()`
-//! only ever does the synchronous, side-effect-free part (reading the
-//! file); `hooks::run` is what calls `on_run` once `/run` succeeds.
+//! `ready_cmd` — happens in `TemplateParticipant::on_boot`, which `main`
+//! calls before the hooks server answers anything: AWS calls `/ready`
+//! during the image build, before any `/run`, and the snapshot it takes
+//! then must already hold the running `start_cmd` (research §3.5), so a
+//! sandbox launched from it starts with the server up. The process is
+//! started with `ProcessManager::start_at_boot` (the stream gate opens
+//! only at `/run`). `build()` only ever does the synchronous,
+//! side-effect-free part (reading the file).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -114,7 +116,7 @@ impl ConfigurableFeature<(), ()> for TemplateStartFeature {
 }
 
 /// Shared, mutable half of a `TemplateParticipant`: only the ready-probe
-/// loop (`on_run`) ever writes `last_exit`, `ready_gate` only ever reads it,
+/// loop (`on_boot`) ever writes `last_exit`, `ready_gate` only ever reads it,
 /// and `deadline` is computed once, before the first probe, so both sides
 /// agree on when the plazo started (investigación §3.5: "el plazo... desde
 /// el primer sondeo").
@@ -187,7 +189,7 @@ impl TemplateParticipant {
         if self.spec.start_cmd.is_empty() {
             return;
         }
-        match processes.start(self.spawn_input()).await {
+        match processes.start_at_boot(self.spawn_input()).await {
             Ok((pid, _stream)) => {
                 tracing::info!(pid = pid.0, "template start_cmd spawned");
             }
@@ -233,7 +235,7 @@ impl LifecycleParticipant for TemplateParticipant {
         }
     }
 
-    async fn on_run(&self) {
+    async fn on_boot(&self) {
         self.start_the_managed_process().await;
         self.spawn_ready_probe_loop();
     }

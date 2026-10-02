@@ -1870,11 +1870,13 @@ build concurrente en el mismo proceso antes de llamar a AWS.
 (`rayito.template/1`, dominio compartido en `rayd_core::template`). En
 `rayd`, el slot `features::template_start` lo lee una vez al arrancar
 (`adapters::fs_template_spec`; ausente o inválido = arranque de 0.5.x) y,
-si existe, aporta un `LifecycleParticipant`: tras `/run` lanza
-`start_cmd` como proceso gestionado por `ProcessManager` y sondea
+si existe, aporta un `LifecycleParticipant`: en `on_boot`, antes de
+que el servidor de hooks conteste el `/ready` del build (así el snapshot
+ya lleva el proceso en marcha), lanza `start_cmd` como proceso gestionado por `ProcessManager` y sondea
 `ready_cmd` con `/bin/sh -c` (`adapters::shell_ready_probe`); su
 `ready_gate` mantiene `/ready` en 503 hasta que `ready_cmd` sale con 0 y
-lo hace fallar al agotarse el plazo (`rayd_core::template::ready_decision`).
+responde 500 al agotarse el plazo, que AWS trata como fallo definitivo
+(Q85; `rayd_core::template::ready_decision`). `Retry` sigue siendo 503.
 
 El núcleo de build de imágenes (envío de `create`/`update-microvm-image`,
 gate de tres estados, reuso por configuración con la normalización Q52,

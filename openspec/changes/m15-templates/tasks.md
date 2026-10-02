@@ -19,9 +19,10 @@
 - [x] 1.4 `rayd` adapters (`adapters/fs_template_spec.rs`,
       `adapters/shell_ready_probe.rs`), `features/template_start.rs` real
       slot with its `TemplateParticipant` (`LifecycleParticipant`:
-      `on_run` spawns `start_cmd` through `ProcessManager`, visible in
+      `on_boot`, before the build-time `/ready`, spawns `start_cmd` through
+      `ProcessManager::start_at_boot`, visible in
       `commands.list`, and polls `ready_cmd`; `ready_gate` maps
-      `ready_decision`), `hooks/mod.rs` calling `on_run` after `/run`,
+      `ready_decision`; `Fail` answers 500, Q85), `main.rs` calling `on_boot`,
       `main.rs` participant collection; `no_template_json_yields_no_participant`
       proves `/ready`/`/suspend` are unchanged without `template.json`.
       `cargo fmt`, `cargo clippy -p rayd -p rayd-core --all-targets -D

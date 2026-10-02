@@ -12,9 +12,9 @@ artefacto de build). Cubre los pasos 1-3 del plan de aceptación de
    `BuildException(reason="ready_client_error"|"ready_server_error")`.
 
 El paso 4 (el `start_cmd` horneado por `set_start_cmd()` sobrevive a un
-ciclo de suspend/resume dentro de un sandbox lanzado) queda fuera de este
-fichero a propósito: necesita el seguimiento no bloqueante de `rayd` leyendo
-`/etc/rayito/template.json` (ver `proposal.md`), todavía no implementado.
+ciclo de suspend/resume dentro de un sandbox lanzado) lo cubre la etapa de
+aceptación a mano (necesita una `rayito-base` publicada con el `rayd` de
+esta versión, que lee `/etc/rayito/template.json`).
 
 Cada build crea como mucho una versión de imagen nueva (`force=True` nunca
 se usa dos veces sobre el mismo nombre): tope de coste de la función en
@@ -41,6 +41,10 @@ from .conftest import E2ESettings
 pytestmark = pytest.mark.e2e
 
 BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET"
+#: Build (~115 s, Q85) + el plazo por defecto de un `ready_cmd` crudo (60 s,
+#: `DEFAULT_READY_TIMEOUT_SECONDS`) tras el cual `rayd` responde 500, con
+#: holgura para la cola de builds de la cuenta.
+READY_FAIL_BUDGET_SECONDS = 600.0
 
 
 def _bucket() -> str:
@@ -93,8 +97,10 @@ def test_a_ready_cmd_that_never_succeeds_fails_the_build(e2e_settings: E2ESettin
     t = Template().from_base_image(e2e_settings.template).set_start_cmd("sleep 3600", "exit 1")
     name = _run_name("fail-ready")
     with pytest.raises(BuildException) as excinfo:
-        Template.build(t, name, bucket=_bucket(), timeout=180.0, region=e2e_settings.region)
-    assert excinfo.value.reason in ("ready_client_error", "ready_server_error", None)
+        Template.build(
+            t, name, bucket=_bucket(), timeout=READY_FAIL_BUDGET_SECONDS, region=e2e_settings.region
+        )
+    assert excinfo.value.reason == "ready_server_error"
 
 
 def test_building_without_from_base_image_never_reaches_aws() -> None:

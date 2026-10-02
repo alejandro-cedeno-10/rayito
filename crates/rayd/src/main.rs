@@ -145,6 +145,28 @@ fn split_command(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(str::to_owned).collect()
 }
 
+/// The lifecycle participants of the 0.6 feature slots, each already past
+/// its `on_boot`. `FeatureContext.processes` is `template_start`'s own
+/// context (ADR-022): every other slot ignores it, so this is the one
+/// `FeatureSet` build that needs the real process manager;
+/// `grpc::router_with_transfers` builds its own, cheaper one for
+/// `ConfigureGrpc`, which never reads this slot. `on_boot` runs before the
+/// hooks server answers anything: the build-time `/ready` must already see
+/// a template's `start_cmd` running.
+async fn boot_participants(
+    processes: &Arc<PlatformProcessManager>,
+) -> Vec<Arc<dyn LifecycleParticipant>> {
+    let features = rayd::features::build(&rayd::features::FeatureContext {
+        processes: Some(processes.clone()),
+    });
+    let participants: Vec<Arc<dyn LifecycleParticipant>> =
+        features.template_start.participant().into_iter().collect();
+    for participant in &participants {
+        participant.on_boot().await;
+    }
+    participants
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<ExitCode> {
     let args = parse_args(std::env::args().skip(1))?;
@@ -200,17 +222,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    // `FeatureContext.processes` is `template_start`'s own context
-    // (ADR-022): every other slot still ignores it, so this is the one
-    // `FeatureSet` build in `main` that needs the real process manager, for
-    // `hooks::mod`'s participants below. `grpc::router_with_transfers`
-    // builds its own, cheaper `FeatureSet` for `ConfigureGrpc`, which never
-    // reads this slot.
-    let features = rayd::features::build(&rayd::features::FeatureContext {
-        processes: Some(processes.clone()),
-    });
-    let participants: Vec<Arc<dyn LifecycleParticipant>> =
-        features.template_start.participant().into_iter().collect();
+    let participants = boot_participants(&processes).await;
     let grpc = rayd::grpc::router_with_transfers(
         Services {
             session: session.clone(),

@@ -13,9 +13,9 @@
  *    `BuildError({ reason: "ready_client_error" | "ready_server_error" })`.
  *
  * El paso 4 (el `startCmd` horneado por `setStartCmd()` sobrevive a un
- * ciclo de suspend/resume dentro de un sandbox lanzado) queda fuera de este
- * fichero a propósito: necesita el seguimiento no bloqueante de `rayd`
- * leyendo `/etc/rayito/template.json` (ver `proposal.md`).
+ * ciclo de suspend/resume dentro de un sandbox lanzado) lo cubre la etapa
+ * de aceptación a mano (necesita una `rayito-base` publicada con el `rayd`
+ * de esta versión, que lee `/etc/rayito/template.json`).
  *
  * Nombres de imagen con un sufijo aleatorio por corrida; nada se borra aquí
  * (fuera de alcance de un agente de función): la limpieza de versiones de
@@ -28,6 +28,9 @@ import { BuildError, type BuildOptions, InvalidArgumentError, Template } from ".
 import { e2eEnabled, useE2E } from "./helpers.js";
 
 const BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET";
+/** Build (~115 s, Q85) + el plazo por defecto de un `readyCmd` crudo (60 s)
+ * tras el cual `rayd` responde 500, con holgura para la cola de builds. */
+const READY_FAIL_BUDGET_MS = 600_000;
 
 /** `exactOptionalPropertyTypes` no deja pasar `region: undefined`
  * explícito: esto omite la clave del todo cuando no hay región. */
@@ -86,13 +89,11 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     const name = runName("fail-ready");
     const error = await Template.build(t, name, {
       bucket: bucket(),
-      timeoutMs: 180_000,
+      timeoutMs: READY_FAIL_BUDGET_MS,
       ...regionOption(e2e.settings.region),
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(BuildError);
-    expect(["ready_client_error", "ready_server_error", undefined]).toContain(
-      (error as BuildError).reason,
-    );
+    expect((error as BuildError).reason).toBe("ready_server_error");
   });
 });
 

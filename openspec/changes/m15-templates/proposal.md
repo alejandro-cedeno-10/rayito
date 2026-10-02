@@ -135,7 +135,9 @@ control plane of its own) is what this change builds.
   (`pub mod template;`); `crates/rayd/src/adapters/{fs_template_spec,
   shell_ready_probe}.rs`, `crates/rayd/src/features/template_start.rs`
   (the real slot and its `TemplateParticipant`), `hooks/mod.rs` (calls
-  each participant's `on_run` after `/run`), `main.rs` (builds the
+  each participant's `on_run` after `/run`; `ReadyVerdict::Fail` answers
+  500), `lifecycle/participants.rs` (default no-op `on_boot`),
+  `process/manager.rs` (`start_at_boot`), `main.rs` (calls `on_boot`, builds the
   `FeatureSet` with the real `ProcessManager`), `grpc/health.rs`
   (`AgentFeatures.template_start = true`).
   No proto changes (templates has no `ConfigureSandbox` section; start/

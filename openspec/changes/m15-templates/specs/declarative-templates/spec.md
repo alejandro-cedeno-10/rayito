@@ -152,11 +152,12 @@ file both SDKs' tests render.
 ### Requirement: rayd starts the template's start_cmd and gates /ready on its ready_cmd
 
 A `rayd` that finds a valid `/etc/rayito/template.json`
-(`rayito.template/1`) at boot SHALL, after a successful `/run`, start
-`start_cmd` as a managed process (listed by `commands.list`) and poll
-`ready_cmd` with `/bin/sh -c`: `/ready` SHALL answer not-ready while
-`ready_cmd` has not exited 0 within `ready_poll.timeout_seconds`, and
-fail once that deadline passes. A missing, unreadable, malformed or
+(`rayito.template/1`) at boot SHALL, before answering any hook (so the
+build-time `/ready` snapshot already holds it), start `start_cmd` as a
+managed process (listed by `commands.list`) and poll `ready_cmd` with
+`/bin/sh -c`: `/ready` SHALL answer 503 while `ready_cmd` has not exited 0
+within `ready_poll.timeout_seconds`, and 500 once that deadline passes, so
+AWS fails the build at once with the "server error" `stateReason` (Q85). A missing, unreadable, malformed or
 unknown-version file SHALL leave `/ready` and `/suspend` exactly as in
 0.5.x.
 
@@ -168,6 +169,10 @@ unknown-version file SHALL leave `/ready` and `/suspend` exactly as in
 #### Scenario: the gate opens when the probe succeeds
 - **WHEN** `ready_cmd` exits non-zero, then zero, before the deadline
 - **THEN** the gate answers retry, then ok
+
+#### Scenario: a ready_cmd that never succeeds fails /ready with 500
+- **WHEN** the deadline passes with no zero exit
+- **THEN** `/ready` answers 500, not 503
 
 ### Requirement: a build with an unsupported memory size is rejected before any AWS call
 

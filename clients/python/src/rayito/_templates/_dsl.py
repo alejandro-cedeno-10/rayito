@@ -177,8 +177,8 @@ class Template:
         envs: dict[str, str] | None = None,
     ) -> Self:
         """Hornea `/etc/rayito/template.json` (`rayito.template/1`). Al
-        arrancar, un `rayd` 0.6 o posterior lo lee y, tras el hook `/run`,
-        lanza `start_cmd` como proceso gestionado (visible en
+        arrancar, un `rayd` 0.6 o posterior lo lee y, antes del `/ready` del
+        build (el snapshot ya lo lleva en marcha), lanza `start_cmd` como proceso gestionado (visible en
         `commands.list()`); si hay `ready_cmd`, `/ready` responde 503 hasta
         que el comando sale con 0, y falla al agotarse
         `ReadyPoll.timeout_seconds` (`wait_for_port`/`wait_for_url`/

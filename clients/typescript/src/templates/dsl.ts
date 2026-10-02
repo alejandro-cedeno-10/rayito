@@ -193,7 +193,8 @@ export class Template {
   // -- start / ready -------------------------------------------------------
 
   /** Hornea `/etc/rayito/template.json` (`rayito.template/1`). Al arrancar,
-   * un `rayd` 0.6 o posterior lo lee y, tras el hook `/run`, lanza
+   * un `rayd` 0.6 o posterior lo lee y, antes del `/ready` del build (el
+   * snapshot ya lo lleva en marcha), lanza
    * `startCmd` como proceso gestionado (visible en `commands.list()`); si
    * hay `readyCmd`, `/ready` responde 503 hasta que el comando sale con 0, y
    * falla al agotarse `ReadyPoll.timeoutSeconds` (una cadena cruda se sondea

@@ -94,7 +94,8 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
 - **`set_start_cmd`/`setStartCmd` necesita una imagen base con `rayd`
   0.6.** El `StartSpec` se hornea en `/etc/rayito/template.json`; un
   `rayd` 0.6 o posterior lo lee al arrancar, lanza `start_cmd` como
-  proceso gestionado tras el hook `/run` (aparece en `commands.list()`) y
+  proceso gestionado antes del `/ready` del build, así que el snapshot ya
+  lo lleva en marcha (aparece en `commands.list()`), y
   responde 503 en `/ready` hasta que `ready_cmd` sale con 0; si se agota
   su plazo, `/ready` falla y el build termina con
   `BuildException(reason="ready_server_error")`. Una imagen base publicada
