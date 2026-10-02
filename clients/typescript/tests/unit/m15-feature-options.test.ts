@@ -11,9 +11,8 @@ describe("feature-options", () => {
     ["mounts", { "/mnt/d": {} }, "mounts", "m15-s3-mounts"],
     ["volumes", { "/mnt/v": {} }, "volumes", "m15-efs-volumes"],
     ["size", "4gb", "size", "m15-sizes-catalog"],
-    // `events` left this stub list in m15-events-webhooks: it now
-    // validates (`logging: "cloudwatch"`) instead of always raising
-    // `UnimplementedError` — see `m15-events-webhooks-feature-options.test.ts`.
+    // `events` validates its type and `logging` first: see
+    // `m15-events-webhooks-feature-options.test.ts`.
     ["telemetry", {}, "telemetry", "m15-rayd-otlp"],
     ["gateways", { anthropic: {} }, "gateways", "m15-secrets-gateway"],
     ["domain", {}, "domain", "m15-custom-domain"],

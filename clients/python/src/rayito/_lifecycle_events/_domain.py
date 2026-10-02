@@ -18,6 +18,24 @@ KILL_REASONS: Final = ("request", "timeout", "unknown")
 
 DEFAULT_STACK_NAME: Final = "rayito-events-webhooks"
 
+#: `deploy(reconciler_interval_minutes=...)`'s default, mirrored by
+#: `infra/events-webhooks.yaml`'s own `ReconcilerIntervalMinutes` parameter
+#: default — kept as one constant so the sync API, the async API, the CLI
+#: and the TypeScript mirror (`DEFAULT_RECONCILER_INTERVAL_MINUTES` in
+#: `domain.ts`) can never drift from each other.
+DEFAULT_RECONCILER_INTERVAL_MINUTES: Final = 5
+
+#: `infra/events-webhooks.yaml`'s `ReconcilerIntervalMinutes` `MinValue`:
+#: EventBridge Scheduler only accepts `rate(1 minute)` (singular) for 1, and
+#: the template always renders `rate(N minutes)`, so 1 is excluded rather
+#: than special-cased.
+MIN_RECONCILER_INTERVAL_MINUTES: Final = 2
+
+#: `get_events(limit=...)`'s default, also `_MAX_GET_EVENTS_LIMIT` in
+#: `_service.py`/`_service_async.py` (a `DynamoDB` `Query`'s own practical
+#: page size for this table, AWS_API_NOTES.md §25).
+DEFAULT_GET_EVENTS_LIMIT: Final = 100
+
 
 def event_type(kind: str) -> str:
     return f"{EVENT_TYPE_PREFIX}{kind}"

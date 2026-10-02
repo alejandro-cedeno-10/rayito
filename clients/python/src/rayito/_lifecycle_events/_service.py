@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import re
 import secrets as _secrets_module
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final
 
 import boto3
 
-from rayito._lifecycle_events._domain import DEFAULT_STACK_NAME, EventRecord, WebhookInfo
-from rayito._lifecycle_events._dynamodb import delete_webhook as _delete_webhook
-from rayito._lifecycle_events._dynamodb import list_webhooks as _list_webhooks
-from rayito._lifecycle_events._dynamodb import put_webhook as _put_webhook
-from rayito._lifecycle_events._dynamodb import query_events as _query_events
+from rayito._lifecycle_events._domain import (
+    DEFAULT_GET_EVENTS_LIMIT,
+    DEFAULT_RECONCILER_INTERVAL_MINUTES,
+    DEFAULT_STACK_NAME,
+    EventRecord,
+    WebhookInfo,
+)
+from rayito._lifecycle_events._aws import BotoEventsGateway, EventsGateway
 from rayito._lifecycle_events._keys import derive_sandbox_key
 from rayito._lifecycle_events._section import LifecycleEventsSection
 from rayito._secrets import DEFAULT_SECRET_PREFIX, resolve_secret_id
@@ -39,8 +42,12 @@ WEBHOOK_SECRET_PREFIX: Final = f"{DEFAULT_SECRET_PREFIX}webhooks/"
 _COMPONENT: StackComponent = component_by_name("events-webhooks")  # type: ignore[assignment]
 
 _EVENT_TYPE_PATTERN: Final = re.compile(r"sandbox\.lifecycle\.(created|paused|resumed|killed)")
-_DEFAULT_GET_EVENTS_LIMIT: Final = 100
+#: Coincides with `DEFAULT_GET_EVENTS_LIMIT` today, but is a different
+#: knob (the hard ceiling `limit=` may never exceed, not the default when
+#: it is omitted) — a `DynamoDB` `Query`'s own practical page size for this
+#: table (AWS_API_NOTES.md §25), kept separate on purpose.
 _MAX_GET_EVENTS_LIMIT: Final = 100
+_MIN_GET_EVENTS_LIMIT: Final = 1
 
 
 def _validate_types(types: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -64,11 +71,11 @@ class LifecycleEvents:
         region: str | None = None,
         session: boto3.session.Session | None = None,
         stacks: OptionalStacks | None = None,
+        gateway: EventsGateway | None = None,
     ) -> None:
         self._stack_name = stack_name
-        self._region = region
-        self._session = session
         self._stacks = stacks or OptionalStacks(region=region, session=session)
+        self._gateway: EventsGateway = gateway or BotoEventsGateway(session, region)
         self._table_name: str | None = None
         self._stack_key_secret_id: str | None = None
         self._stack_key_cache: bytes | None = None
@@ -80,7 +87,7 @@ class LifecycleEvents:
         *,
         artifact_bucket: str,
         log_group_name: str,
-        reconciler_interval_minutes: int = 5,
+        reconciler_interval_minutes: int = DEFAULT_RECONCILER_INTERVAL_MINUTES,
         tags: dict[str, str] | None = None,
         wait: bool = True,
     ) -> StackStatus:
@@ -90,15 +97,19 @@ class LifecycleEvents:
         -------------------
         Activa: una llamada explícita a este método (o `rayito events deploy`).
         Recursos y llamadas AWS: un secreto de Secrets Manager (la clave
-            HMAC del stack), una tabla DynamoDB on-demand, tres funciones
-            Lambda, una suscripción de CloudWatch Logs y una regla de
-            EventBridge Scheduler (`rate(reconciler_interval_minutes)`).
-        Coste aproximado: $0,40/mes el secreto; DynamoDB y Lambda son
-            on-demand/por invocación ($0 en reposo); el Scheduler invoca el
+            HMAC del stack), una tabla DynamoDB on-demand con streams, tres
+            funciones Lambda, una suscripción de CloudWatch Logs, una cola
+            SQS de fallos del deliverer y una regla de EventBridge Scheduler
+            (`rate(reconciler_interval_minutes)`, mínimo 2).
+        Coste aproximado: $0,40/mes el secreto; DynamoDB, Lambda y SQS son
+            on-demand/por uso ($0 en reposo); el Scheduler invoca el
             reconciliador cada `reconciler_interval_minutes` minutos
             (~$0,0000002 por invocación, us-east-1, 2026-09-30).
         IAM: la política `EventsOperatorPolicy` que la pila emite (adjúntala
-            a quien llame a `events=`/`register_webhook`/`get_events`).
+            a quien llame a `events=`/`register_webhook`/`list_webhooks`/
+            `delete_webhook`/`get_events`): `PutItem`/`Query`/`DeleteItem`
+            sobre la tabla y su índice, `DescribeStacks` sobre la pila y
+            `GetSecretValue` sobre la clave del stack.
         Cómo apagarla: `destroy()` (fuerza el borrado del secreto: cualquier
             webhook registrado deja de poder verificarse).
         Ejemplo:
@@ -125,6 +136,11 @@ class LifecycleEvents:
         return self._stacks.status(_COMPONENT, stack_name=self._stack_name)
 
     def destroy(self, *, wait: bool = True) -> None:
+        """Borra la pila entera: el secreto del stack (force-delete), la
+        tabla con todos sus eventos y webhooks, las tres Lambdas, la
+        suscripción, la cola de fallos y el scheduler. No toca los secretos
+        de cada webhook (`rayito/webhooks/...`, de `SecretStore`) ni el log
+        group de la imagen, que esta pila nunca creó."""
         self._stacks.destroy(_COMPONENT, stack_name=self._stack_name, wait=wait)
 
     # -- Webhooks ----------------------------------------------------------
@@ -137,8 +153,8 @@ class LifecycleEvents:
             raise InvalidArgumentException("register_webhook: types no puede estar vacío")
         webhook_id = _secrets_module.token_hex(8)
         resolved_secret_id = resolve_secret_id(secret_name, WEBHOOK_SECRET_PREFIX)
-        _put_webhook(
-            self._table(),
+        self._gateway.put_webhook(
+            self._resolve_table_name(),
             webhook_id=webhook_id,
             url=url,
             secret_name=resolved_secret_id,
@@ -147,10 +163,10 @@ class LifecycleEvents:
         return WebhookInfo(webhook_id=webhook_id, url=url, types=validated_types)
 
     def list_webhooks(self) -> list[WebhookInfo]:
-        return _list_webhooks(self._table())
+        return self._gateway.list_webhooks(self._resolve_table_name())
 
     def delete_webhook(self, webhook_id: str) -> None:
-        _delete_webhook(self._table(), webhook_id)
+        self._gateway.delete_webhook(self._resolve_table_name(), webhook_id)
 
     # -- Events --------------------------------------------------------------
 
@@ -159,16 +175,22 @@ class LifecycleEvents:
         *,
         sandbox_id: str | None = None,
         types: Sequence[str] | None = None,
-        limit: int = _DEFAULT_GET_EVENTS_LIMIT,
+        limit: int = DEFAULT_GET_EVENTS_LIMIT,
         order: str = "desc",
     ) -> list[EventRecord]:
-        if limit > _MAX_GET_EVENTS_LIMIT:
-            raise InvalidArgumentException(f"get_events: limit <= {_MAX_GET_EVENTS_LIMIT}")
+        if not _MIN_GET_EVENTS_LIMIT <= limit <= _MAX_GET_EVENTS_LIMIT:
+            raise InvalidArgumentException(
+                f"get_events: limit entre {_MIN_GET_EVENTS_LIMIT} y {_MAX_GET_EVENTS_LIMIT}"
+            )
         if order not in ("asc", "desc"):
             raise InvalidArgumentException("get_events: order debe ser 'asc' o 'desc'")
         validated_types = _validate_types(types)
-        return _query_events(
-            self._table(), sandbox_id=sandbox_id, types=validated_types, limit=limit, order=order
+        return self._gateway.query_events(
+            self._resolve_table_name(),
+            sandbox_id=sandbox_id,
+            types=validated_types,
+            limit=limit,
+            order=order,
         )
 
     # -- Internals used by `_feature_options.plan_features` (events=) ------
@@ -191,14 +213,11 @@ class LifecycleEvents:
         )
 
     def _stack_key(self) -> bytes:
-        if self._stack_key_cache is not None:
-            return self._stack_key_cache
-        secret_id = self._resolve_stack_key_secret_id()
-        response = self._secrets_client().get_secret_value(SecretId=secret_id)
-        value = response.get("SecretString")
-        raw: bytes = value.encode("utf-8") if value is not None else bytes(response["SecretBinary"])
-        self._stack_key_cache = raw
-        return raw
+        if self._stack_key_cache is None:
+            self._stack_key_cache = self._gateway.read_secret(
+                self._resolve_stack_key_secret_id()
+            )
+        return self._stack_key_cache
 
     def _resolve_stack_key_secret_id(self) -> str:
         if self._stack_key_secret_id is not None:
@@ -221,10 +240,3 @@ class LifecycleEvents:
             )
         self._table_name = status.outputs["EventsTableName"]
         return self._table_name
-
-    def _table(self) -> Any:
-        resource = (self._session or boto3).resource("dynamodb", region_name=self._region)
-        return resource.Table(self._resolve_table_name())
-
-    def _secrets_client(self) -> Any:
-        return (self._session or boto3).client("secretsmanager", region_name=self._region)

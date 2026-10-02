@@ -20,7 +20,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from rayito.exceptions import InvalidArgumentException, UnimplementedError
+from rayito._lifecycle_events._options import validate_events_option
+from rayito.exceptions import UnimplementedError
 
 MOUNTS_CHANGE: Final = "m15-s3-mounts"
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
@@ -29,6 +30,14 @@ EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
 DOMAIN_CHANGE: Final = "m15-custom-domain"
+
+#: Por qué `events=` sigue sin aceptarse aunque `LifecycleEvents` ya
+#: funcione por su cuenta (ver `plan_features`).
+EVENTS_PENDING_REASON: Final = (
+    f"{EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm "
+    "(FeaturePlan.configure_sections); LifecycleEvents (deploy, register_webhook, "
+    "get_events) ya funciona fuera de create()"
+)
 
 
 @dataclass(frozen=True)
@@ -68,23 +77,17 @@ def plan_features(
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
     para cuando una función real lo necesite (s3-mounts, efs-volumes,
-    rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
-    `logging` es el `logging=` de `create()` (`m15-events-webhooks` lo
-    necesita: `events=` exige `logging="cloudwatch"`, para que el forwarder
-    tenga algo que leer). No hace ninguna llamada a AWS ni construye ningún
-    cliente.
+    rayd-otlp con rol exigen la variante caps). `logging` es el `logging=`
+    de `create()`: `events=` exige que mande los logs a CloudWatch. No hace
+    ninguna llamada a AWS ni construye ningún cliente.
 
-    `events=` ya valida y construye su propia `FeaturePlan`
-    (`_lifecycle_events._service.LifecycleEvents._build_section` hace la
-    derivación de `k_sbx`), pero **nada todavía envía esa sección**:
-    `create()` no llega a conocer `sandbox_id`/`image_arn`/`image_version`
-    hasta después de `run-microvm`, y ese punto (justo tras
-    `plane.run_microvm(plan.request)`, antes de `cls._open(...)`, en
-    `sandbox_sync/main.py`/`sandbox_async/main.py`) es un archivo exclusivo
-    de foundations. El seguimiento queda documentado en ADR-020: la pieza
-    que falta es, en ese punto exacto, por cada `FeaturePlan.configure_sections`
-    con un método `to_configure_section(sandbox_id, image_arn, image_version)`,
-    construir la sección y mandarla con una sola llamada a `Configure`.
+    `events=` se valida (tipo y `logging`) y después sigue lanzando
+    `UnimplementedError`: su sección de `ConfigureSandbox` necesita
+    `sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
+    `run-microvm`, y el envío de `FeaturePlan.configure_sections` tras el
+    primer `Health` todavía no existe en `create()` (ADR-020, "Hueco de
+    integración conocido"). Aceptarlo sin enviarla dejaría al usuario
+    pagando la pila sin recibir ningún evento.
     """
     del image_variant
     if options.mounts is not None:
@@ -93,11 +96,9 @@ def plan_features(
         raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
     if options.size is not None:
         raise UnimplementedError("size=", f"llega en 0.6 ({SIZE_CHANGE})")
-    if options.events is not None and logging != "cloudwatch":
-        raise InvalidArgumentException(
-            'events= necesita logging="cloudwatch" (si no, el forwarder no tiene '
-            "ningún log del que leer)"
-        )
+    if options.events is not None:
+        validate_events_option(options.events, logging)  # type: ignore[arg-type]
+        raise UnimplementedError("events=", EVENTS_PENDING_REASON)
     if options.telemetry is not None:
         raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
     if options.gateways is not None:

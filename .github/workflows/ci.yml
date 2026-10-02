@@ -77,6 +77,8 @@ jobs:
       - run: uvx ruff==0.16.7 check scripts
       - name: limits.json renders _limits.py and limits.ts without drift
         run: python3 scripts/gen_limits.py --check
+      - name: infra/*.yaml renders the SDKs' stack templates/artifacts without drift
+        run: python3 scripts/gen_stack_assets.py --check
       - name: Apache-2.0 declared in the five manifests, LICENSE and NOTICE copies identical
         run: python3 scripts/check_license.py
       - name: Python client unit tests, lint, format and types
@@ -86,8 +88,8 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy src tests
-      - name: scripts/ unit tests (bench, check_auditable, check_license, shims)
-        run: cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
+      - name: scripts/ and Lambda unit tests (bench, check_auditable, check_license, shims, events-webhooks handlers)
+        run: cd clients/python && uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests -p no:cacheprovider
       - name: Python wheel build and content checks
         run: |
           (cd clients/python && uv build)

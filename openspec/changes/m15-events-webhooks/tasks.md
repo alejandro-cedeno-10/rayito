@@ -14,23 +14,23 @@
 - [x] 2.2 `infra/lambdas/events_webhooks/`: `domain/{event,mac,signature,ssrf,dedupe,schema,forwarding}.py` (pure), `ports.py`, `adapters/{dynamodb,secrets,http_client,microvms}.py`, `handlers/{forwarder,deliverer,reconciler}.py`. `models/lambda-microvms/2025-09-09/service-2.json` bundled for the reconciler's `AWS_DATA_PATH` (decision 8).
 - [x] 2.3 `clients/python/src/rayito/_stacks/components/events_webhooks.py`: real `StackComponent` (parameters, artifact, cost statement). TS mirror `stacks/components/events-webhooks.ts`.
 - [x] 2.4 `scripts/gen_stack_assets.py`: `render_typescript` now measures the first physical line against biome's line width before deciding whether `TEMPLATE_BODY`/`ARTIFACT_BASE64` go on the same line or their own — the first component with real Lambda code (this one) was the first to hit the single-line-too-long case; `--check` and `pnpm lint` both pass.
-- [ ] 2.5 Lambda domain unit tests (`infra/lambdas/events_webhooks/tests/`): MAC verification, sandbox/log-stream mismatch, SSRF classification (loopback/private/link-local/CGNAT/IMDS), E2B signature vectors, dedupe window math. Wired into `scripts/tests`' `test-scripts` Makefile target.
+- [x] 2.5 Lambda domain unit tests (`infra/lambdas/events_webhooks/tests/`): MAC verification, sandbox/log-stream mismatch, SSRF classification (loopback/private/link-local/CGNAT/IMDS), E2B signature vectors, dedupe window math, deliverer handler against only the env vars the template sets, the http client's single-`Host`-header request. Wired into `scripts/tests`' `test-scripts` Makefile target.
 
 ## 3. SDK (Python)
 
 - [x] 3.1 `_lifecycle_events/{__init__,_domain,_keys,_section,_dynamodb,_service,_service_async}.py`: `LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/`destroy` over `OptionalStacks`; `register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` direct on DynamoDB); `_build_section` implemented and unit-tested, not yet called by `create()`.
-- [x] 3.2 `_feature_options.py`: `plan_features` takes `logging=`; `events=` validates `logging="cloudwatch"` before any AWS call. `sandbox_{sync,async}/main.py` thread `logging=logging` through the one existing call site (the only edit to those two foundations-owned files).
+- [x] 3.2 `_feature_options.py`: `events=` stays `UnimplementedError` (D5 — no edit to `sandbox_{sync,async}/main.py`, same stub shape as the other six 0.6 options until the shared post-`run-microvm` `Configure` dispatch lands).
 - [x] 3.3 `cli/events.py`: `deploy`/`status`/`destroy`/`list`, `webhook add`/`list`/`remove`.
 - [x] 3.4 `__init__.py` exports (`LifecycleEvents`, `AsyncLifecycleEvents`, `EventRecord`, `WebhookInfo`).
-- [ ] 3.5 Unit tests: `test_m15_events_webhooks_domain.py` (MAC/key derivation against the shared vectors), `test_m15_events_webhooks_service.py` (fakes for `OptionalStacks`/DynamoDB/Secrets Manager: deploy/status/destroy, register/list/delete webhook, get_events filtering and ordering, `_build_section`), `test_m15_events_webhooks_feature_options.py` (events without `logging="cloudwatch"` raises `InvalidArgumentException` before any AWS call; `events=None` plans nothing).
-- [ ] 3.6 Off-by-default: `events=None`/no `LifecycleEvents()` constructed builds no DynamoDB/Secrets Manager/CloudFormation client and sends no `ConfigureSandbox` call (extends `test_m15_zero_cost.py`'s existing guarantee; no edit to that shared file needed since the golden trace already has no 0.6 option set).
+- [x] 3.5 Unit tests: `test_m15_events_webhooks_domain.py` (MAC/key derivation against the shared vectors), `test_m15_events_webhooks_service.py` (fakes for `OptionalStacks`/DynamoDB/Secrets Manager: deploy/status/destroy, register/list/delete webhook, get_events filtering and ordering, `_build_section`); `events=`'s stub behaviour is covered by the shared `test_m15_feature_options.py`/`test_m15_create_kwargs.py` tables, parity with the other six options.
+- [x] 3.6 Off-by-default: `events=None`/no `LifecycleEvents()` constructed builds no DynamoDB/Secrets Manager/CloudFormation client and sends no `ConfigureSandbox` call (extends `test_m15_zero_cost.py`'s existing guarantee; no edit to that shared file needed since the golden trace already has no 0.6 option set).
 
 ## 4. SDK (TypeScript)
 
 - [x] 4.1 `src/lifecycle-events/{domain,keys,section,dynamodb,service}.ts`: `LifecycleEvents` (one async class).
-- [x] 4.2 `feature-options.ts`: `planFeatures` takes a third `logging` parameter; `sandbox/sandbox.ts` passes `options.logging` through the one existing call site.
+- [x] 4.2 `feature-options.ts`: `events` stays `UnimplementedError` (D5 — no edit to `sandbox/sandbox.ts`), mirroring the Python side.
 - [x] 4.3 `stacks/components/events-webhooks.ts`, `index.ts` exports.
-- [ ] 4.4 Unit tests: `m15-events-webhooks-domain.test.ts` (shared MAC vectors), `m15-events-webhooks-service.test.ts` (fake DynamoDB/Secrets Manager/stacks clients).
+- [x] 4.4 Unit tests: `m15-events-webhooks-domain.test.ts` (shared MAC vectors), `m15-events-webhooks-service.test.ts` (fake DynamoDB/Secrets Manager/stacks clients); `events`'s stub behaviour is covered by the shared `m15-feature-options.test.ts` table, parity with the other six options.
 - [x] 4.5 `pnpm typecheck` and `pnpm lint` clean.
 
 ## 5. OpenSpec, docs and changelogs

@@ -1,39 +1,48 @@
 /**
- * `planFeatures`'s `events` branch (m15-events-webhooks): validated before
- * any AWS call, requires `logging: "cloudwatch"`.
+ * `planFeatures`' `events` branch, espejo del test Python: la opción debe
+ * ser un `LifecycleEvents` y `logging` debe llegar a CloudWatch (validado
+ * con el mismo resolver que usa `run-microvm`); con ambos bien sigue
+ * lanzando `UnimplementedError` nombrando el envío de `ConfigureSandbox`
+ * que falta, antes de cualquier llamada a AWS.
  */
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { InvalidArgumentError, UnimplementedError } from "../../src/errors.js";
-import { planFeatures } from "../../src/feature-options.js";
-import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { EVENTS_CHANGE, planFeatures } from "../../src/feature-options.js";
+import { LifecycleEvents } from "../../src/lifecycle-events/service.js";
 
-const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base";
-
-describe("planFeatures events branch", () => {
-  test("events without cloudwatch logging is invalid argument", () => {
-    expect(() => planFeatures({ events: {} }, undefined, undefined)).toThrow(InvalidArgumentError);
-  });
-
-  test("events with disabled logging is also invalid argument", () => {
-    expect(() => planFeatures({ events: {} }, undefined, "disabled")).toThrow(InvalidArgumentError);
-  });
-
-  test("events with cloudwatch logging does not throw", () => {
-    expect(() => planFeatures({ events: {} }, undefined, "cloudwatch")).not.toThrow();
-  });
-
-  test("no events option ignores logging entirely", () => {
-    expect(() => planFeatures({}, undefined, undefined)).not.toThrow();
-  });
-
-  test("other branches still raise unimplemented", () => {
-    expect(() => planFeatures({ mounts: {} }, undefined, "cloudwatch")).toThrow(UnimplementedError);
-  });
-
-  test("Sandbox.create rejects events without cloudwatch logging before any control plane", async () => {
-    await expect(Sandbox.create({ template: TEMPLATE, events: {} })).rejects.toThrow(
+describe("planFeatures events", () => {
+  it("rejects anything that is not a LifecycleEvents", () => {
+    expect(() => planFeatures({ events: {} }, undefined, "cloudwatch")).toThrow(
       InvalidArgumentError,
     );
+  });
+
+  it.each([undefined, "disabled", { disabled: {} }])(
+    "needs logging that reaches CloudWatch (%o)",
+    (logging) => {
+      expect(() => planFeatures({ events: new LifecycleEvents() }, undefined, logging)).toThrow(
+        /cloudwatch/,
+      );
+    },
+  );
+
+  it.each(["cloudwatch", { cloudWatch: { logGroup: "/custom/group" } }])(
+    "is still unimplemented with a valid option, naming what is missing (%o)",
+    (logging) => {
+      let raised: unknown;
+      try {
+        planFeatures({ events: new LifecycleEvents() }, undefined, logging);
+      } catch (error) {
+        raised = error;
+      }
+      expect(raised).toBeInstanceOf(UnimplementedError);
+      expect(String((raised as Error).message)).toContain(EVENTS_CHANGE);
+      expect(String((raised as Error).message)).toContain("ConfigureSandbox");
+    },
+  );
+
+  it("ignores logging without events", () => {
+    expect(() => planFeatures({}, undefined, "disabled")).not.toThrow();
   });
 });

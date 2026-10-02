@@ -8,6 +8,10 @@ pila para `OptionalStacks`.
 
 from __future__ import annotations
 
+from rayito._lifecycle_events._domain import (
+    DEFAULT_RECONCILER_INTERVAL_MINUTES,
+    MIN_RECONCILER_INTERVAL_MINUTES,
+)
 from rayito._stacks._model import CostStatement, StackArtifact, StackComponent, StackParameter
 
 COMPONENT: StackComponent = StackComponent(
@@ -29,18 +33,12 @@ COMPONENT: StackComponent = StackComponent(
         ),
         StackParameter(
             "ReconcilerIntervalMinutes",
-            "Frecuencia del reconciliador (rate), en minutos; 5 por defecto.",
-            default="5",
-        ),
-        StackParameter(
-            "ReconcilerImageArn",
-            "ARN de imagen a anotar en un evento killed sintetizado; informativo.",
-            default="",
-        ),
-        StackParameter(
-            "ReconcilerImageVersion",
-            "Versión de imagen a anotar en un evento killed sintetizado; informativo.",
-            default="",
+            (
+                "Frecuencia del reconciliador (rate), en minutos; "
+                f"{DEFAULT_RECONCILER_INTERVAL_MINUTES} por defecto, "
+                f"mínimo {MIN_RECONCILER_INTERVAL_MINUTES}."
+            ),
+            default=str(DEFAULT_RECONCILER_INTERVAL_MINUTES),
         ),
     ),
     artifacts=(StackArtifact(name="events-webhooks", parameter_key="ArtifactS3Key"),),
@@ -52,20 +50,26 @@ COMPONENT: StackComponent = StackComponent(
             "AWS::Lambda::Function (x3)",
             "AWS::Logs::SubscriptionFilter",
             "AWS::Scheduler::Schedule",
+            "AWS::SQS::Queue (destino OnFailure del deliverer; vacía en condiciones normales)",
             "AWS::IAM::Role (x4) + AWS::IAM::ManagedPolicy",
         ),
-        idle_monthly="~$0,40/mes (el secreto; DynamoDB y Lambda son on-demand/por invocación)",
+        idle_monthly="~$0,40/mes (el secreto; DynamoDB, Lambda y SQS son on-demand/por uso)",
         per_use=(
             "Forwarder: 1 invocación Lambda por lote de líneas del log",
             "Deliverer: 1 invocación por lote del stream de DynamoDB",
             "Reconciliador: 1 invocación cada ReconcilerIntervalMinutes (~$0,0000002 c/u)",
             "~$1,25 por millón de eventos escritos (WRU) + lecturas de get_events (RRU)",
+            "SQS: sólo factura cuando un lote entero del deliverer falla "
+            "(BisectBatchOnFunctionError ya aísla el registro problemático); "
+            "dentro de la capa gratuita al volumen de este stack",
         ),
         removal=(
             "destroy() borra el secreto (force-delete: cualquier webhook ya registrado "
-            "deja de poder verificarse), la tabla, las tres Lambdas, la suscripción y el "
-            "scheduler"
+            "deja de poder verificarse), la tabla, las tres Lambdas, la suscripción, la "
+            "cola de fallos y el scheduler"
         ),
-        source="AWS_API_NOTES.md §25; precios de Lambda/DynamoDB/Scheduler us-east-1, 2026-09-30",
+        source=(
+            "AWS_API_NOTES.md §25; precios de Lambda/DynamoDB/Scheduler/SQS us-east-1, 2026-09-30"
+        ),
     ),
 )

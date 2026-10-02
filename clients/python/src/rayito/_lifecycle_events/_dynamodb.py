@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
+from rayito._lifecycle_events._domain import EVENT_TYPE_PREFIX, EventRecord, WebhookInfo
 
 GSI1_NAME = "gsi1"
 GSI1_PARTITION_VALUE = "EVENT"
@@ -61,6 +61,17 @@ def delete_webhook(table: Any, webhook_id: str) -> None:
     table.delete_item(Key={"pk": WEBHOOK_PK, "sk": webhook_id})
 
 
+#: DynamoDB's own cap on how many `Query` pages `query_events` will turn a
+#: single `get_events(types=..., limit=...)` call into: `FilterExpression`
+#: (below) is applied *after* `Limit` on each page, so a type-filtered
+#: query that matches rarely could otherwise paginate the entire table one
+#: `Limit`-sized page at a time. 25 pages of up to 100 raw rows each is
+#: already far more than `get_events` is meant for (a live tail of recent
+#: events, not a bulk export); beyond that, `query_events` stops and
+#: returns whatever it already found rather than scan without bound.
+_MAX_QUERY_PAGES = 25
+
+
 def query_events(
     table: Any,
     *,
@@ -71,29 +82,37 @@ def query_events(
 ) -> list[EventRecord]:
     """`sandbox_id=None` queries the sparse `gsi1` index (every sandbox);
     otherwise it queries that sandbox's own partition directly — cheaper,
-    and the common case. `types` filters client-side (the table does not
-    index on event kind, and the expected row count per sandbox is small)."""
+    and the common case. `types` becomes a `FilterExpression` on `kind`
+    (the table does not index on event kind) rather than a client-side
+    filter after the fact: DynamoDB applies `Limit` to the raw rows
+    *before* `FilterExpression` runs, so filtering only after fetching
+    `limit` rows could return fewer than `limit` matches even when more
+    exist — this paginates (`ExclusiveStartKey`) until `limit` matches are
+    collected, the table (this partition or the sparse index) is
+    exhausted, or `_MAX_QUERY_PAGES` is reached."""
     scan_forward = order == "asc"
+    kwargs: dict[str, Any] = {"ScanIndexForward": scan_forward, "Limit": limit}
     if sandbox_id is not None:
-        kwargs: dict[str, Any] = {
-            "KeyConditionExpression": "pk = :pk",
-            "ExpressionAttributeValues": {":pk": f"EVENT#{sandbox_id}"},
-            "ScanIndexForward": scan_forward,
-            "Limit": limit,
-        }
-        page = table.query(**kwargs)
+        kwargs["KeyConditionExpression"] = "pk = :pk"
+        kwargs["ExpressionAttributeValues"] = {":pk": f"EVENT#{sandbox_id}"}
     else:
-        kwargs = {
-            "IndexName": GSI1_NAME,
-            "KeyConditionExpression": "gsi1pk = :pk",
-            "ExpressionAttributeValues": {":pk": GSI1_PARTITION_VALUE},
-            "ScanIndexForward": scan_forward,
-            "Limit": limit,
-        }
-        page = table.query(**kwargs)
-    records = [_record_from_item(item) for item in page.get("Items", [])]
+        kwargs["IndexName"] = GSI1_NAME
+        kwargs["KeyConditionExpression"] = "gsi1pk = :pk"
+        kwargs["ExpressionAttributeValues"] = {":pk": GSI1_PARTITION_VALUE}
     if types is not None:
-        records = [record for record in records if record.type in types]
+        kinds = {event_type.removeprefix(EVENT_TYPE_PREFIX) for event_type in types}
+        names = {f":kind{index}": kind for index, kind in enumerate(sorted(kinds))}
+        kwargs["FilterExpression"] = f"kind IN ({', '.join(names)})"
+        kwargs["ExpressionAttributeValues"].update(names)
+
+    records: list[EventRecord] = []
+    for _page_number in range(_MAX_QUERY_PAGES):
+        page = table.query(**kwargs)
+        records.extend(_record_from_item(item) for item in page.get("Items", []))
+        last_key = page.get("LastEvaluatedKey")
+        if len(records) >= limit or not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
     return records[:limit]
 
 

@@ -13,10 +13,10 @@ from urllib.parse import urlsplit
 
 from domain.ssrf import IpAddress, first_safe_address
 
-#: Generous for a webhook receiver that may be a Lambda Function URL cold
-#: start; `deliverer.py`'s own retry budget (≤ 3 attempts) is what actually
-#: bounds total handler time, not this one connection.
-CONNECT_TIMEOUT_SECONDS = 10.0
+#: Only the status line matters; a receiver's body is read up to this much
+#: (and then dropped) so a hostile endpoint cannot stream an endless one
+#: into the deliverer's memory or time budget.
+MAX_RESPONSE_BYTES = 64 * 1024
 
 
 class SsrfBlocked(RuntimeError):
@@ -27,7 +27,7 @@ class SsrfBlocked(RuntimeError):
 class HttpsOnlySender:
     """Implements `ports.HttpSender`."""
 
-    def post(self, url: str, headers: dict[str, str], body: bytes) -> int:
+    def post(self, url: str, headers: dict[str, str], body: bytes, *, timeout: float) -> int:
         parts = urlsplit(url)
         if parts.scheme != "https":
             raise SsrfBlocked(f"esquema no permitido: {parts.scheme!r} (sólo https)")
@@ -41,7 +41,7 @@ class HttpsOnlySender:
         path = parts.path or "/"
         if parts.query:
             path = f"{path}?{parts.query}"
-        return _send(safe, port, hostname, path, headers, body)
+        return _send(safe, port, hostname, path, headers, body, timeout)
 
 
 def _resolve(hostname: str, port: int) -> list[IpAddress]:
@@ -69,6 +69,7 @@ def _send(
     path: str,
     headers: dict[str, str],
     body: bytes,
+    timeout: float,
 ) -> int:
     """Connects the raw TCP socket to `safe_address` (already checked by
     `domain.ssrf`, never re-resolved — that is the whole point), then does
@@ -77,10 +78,10 @@ def _send(
     `HTTPSConnection` cannot express this directly (it SNIs/verifies
     against whatever host you construct it with), so this builds the
     connection by hand from public `http.client`/`ssl`/`socket` APIs only
-    — no private attribute of either stdlib class."""
-    raw_socket = socket.create_connection(
-        (str(safe_address), port), timeout=CONNECT_TIMEOUT_SECONDS
-    )
+    — no private attribute of either stdlib class. `timeout` bounds the
+    connect and every later socket read/write (the deliverer derives it
+    from its remaining time budget)."""
+    raw_socket = socket.create_connection((str(safe_address), port), timeout=timeout)
     context = ssl.create_default_context()
     # `create_default_context()`'s own floor already excludes SSLv2/v3 on
     # any Python this project supports, but it does not *pin* a minimum —
@@ -89,16 +90,23 @@ def _send(
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     tls_socket = context.wrap_socket(raw_socket, server_hostname=hostname)
     try:
-        connection = http.client.HTTPConnection(hostname, port, timeout=CONNECT_TIMEOUT_SECONDS)
+        connection = http.client.HTTPConnection(hostname, port, timeout=timeout)
         connection.sock = tls_socket
-        connection.putrequest("POST", path, skip_host=False)
+        # `HTTPConnection.putrequest(skip_host=False)` would add its own
+        # `Host` header too — computed off `self.port` against `HTTPConnection
+        # .default_port` (80, since this is a plain `HTTPConnection` carrying
+        # a TLS socket, not an `HTTPSConnection`), so for port 443 it would
+        # read `Host: <host>:443` instead of the explicit one-header form
+        # below, and a server would see two `Host` headers (RFC 9112 requires
+        # it to reject that). `skip_host=True` leaves adding it to us.
+        connection.putrequest("POST", path, skip_host=True)
         connection.putheader("Host", hostname)
         for name, value in headers.items():
             connection.putheader(name, value)
         connection.putheader("Content-Length", str(len(body)))
         connection.endheaders(message_body=body)
         response = connection.getresponse()
-        response.read()
+        response.read(MAX_RESPONSE_BYTES)
         return response.status
     finally:
         tls_socket.close()

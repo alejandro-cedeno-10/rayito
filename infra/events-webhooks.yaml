@@ -5,8 +5,9 @@ Description: >-
   CloudWatch Logs subscription, stored for 7 days and delivered to
   registered webhooks with E2B-compatible signatures. Creates one Secrets
   Manager secret (the stack-wide HMAC key), one on-demand DynamoDB table,
-  three Lambda functions, one CloudWatch Logs subscription filter and one
-  EventBridge Scheduler rule. Deploy it only if you pass `events=` to
+  three Lambda functions, one CloudWatch Logs subscription filter, one SQS
+  queue (the deliverer's on-failure destination) and one EventBridge
+  Scheduler rule. Deploy it only if you pass `events=` to
   `Sandbox.create`; delete the stack to remove everything it created
   (the Secrets Manager secret is force-deleted, losing every already
   registered webhook's ability to re-verify old events). Action names and
@@ -33,20 +34,16 @@ Parameters:
     Description: sha256 of the Lambda zip (filled by `OptionalStacks.deploy`, never set by hand).
   ReconcilerIntervalMinutes:
     Type: Number
+    # Default: the SDKs' DEFAULT_RECONCILER_INTERVAL_MINUTES (pinned equal by
+    # scripts/tests/test_events_webhooks_template.py). MinValue 2: Scheduler
+    # needs the singular `rate(1 minute)` for 1, and ScheduleExpression
+    # below always renders `rate(N minutes)`.
     Default: 5
-    MinValue: 1
+    MinValue: 2
     MaxValue: 60
     Description: >-
       EventBridge Scheduler rate for the reconciler (§7.4: synthesizes
       `killed` events for sandboxes `ListMicrovms` no longer reports).
-  ReconcilerImageArn:
-    Type: String
-    Default: ""
-    Description: Stamped onto a synthesized `killed` event's `image_arn`; informational only.
-  ReconcilerImageVersion:
-    Type: String
-    Default: ""
-    Description: Stamped onto a synthesized `killed` event's `image_version`; informational only.
 
 Resources:
   # --- Secret -----------------------------------------------------------
@@ -119,7 +116,7 @@ Resources:
             Statement:
               - Sid: WriteEvents
                 Effect: Allow
-                Action: [dynamodb:PutItem, dynamodb:DeleteItem]
+                Action: dynamodb:PutItem
                 Resource: !GetAtt EventsTable.Arn
               - Sid: ReadStackKey
                 Effect: Allow
@@ -164,6 +161,10 @@ Resources:
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+              - Sid: SendToFailuresQueue
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DelivererFailuresQueue.Arn
 
   ReconcilerRole:
     Type: AWS::IAM::Role
@@ -181,11 +182,11 @@ Resources:
             Statement:
               - Sid: ReadAndWriteEvents
                 Effect: Allow
-                Action: [dynamodb:Scan, dynamodb:PutItem, dynamodb:DeleteItem]
+                Action: [dynamodb:Scan, dynamodb:PutItem]
                 Resource: !GetAtt EventsTable.Arn
               - Sid: ListMicrovms
                 Effect: Allow
-                Action: lambda-microvms:ListMicrovms
+                Action: lambda:ListMicrovms
                 Resource: "*"
               - Sid: WriteLogs
                 Effect: Allow
@@ -240,6 +241,19 @@ Resources:
         Variables:
           EVENTS_TABLE_NAME: !Ref EventsTable
 
+  # A record the deliverer reported as not finished (it ran out of time
+  # budget, `handlers/deliverer.py`) or that kept failing the whole
+  # invocation lands here once `MaximumRetryAttempts` is exhausted, instead
+  # of disappearing. A webhook that simply answered non-2xx after its
+  # attempts is logged by the deliverer, never sent here. Standard queue, no
+  # consumer shipped (read it with `aws sqs receive-message` or alarm on
+  # `ApproximateNumberOfMessagesVisible`); within the free tier at this
+  # stack's volume.
+  DelivererFailuresQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days, SQS's own maximum
+
   DelivererEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -248,6 +262,17 @@ Resources:
       StartingPosition: LATEST
       BatchSize: 10
       MaximumRetryAttempts: 2
+      # A batch that keeps failing is bisected until the one poison record
+      # is isolated, rather than retried whole twice and dropped — the
+      # other records in the batch still get through.
+      BisectBatchOnFunctionError: true
+      # The handler returns `batchItemFailures` (the first record it could
+      # not finish inside its time budget): the retry resumes there, and
+      # every webhook already marked `delivered` is skipped.
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt DelivererFailuresQueue.Arn
 
   ReconcilerFunction:
     Type: AWS::Lambda::Function
@@ -263,8 +288,15 @@ Resources:
       Environment:
         Variables:
           EVENTS_TABLE_NAME: !Ref EventsTable
-          RECONCILER_IMAGE_ARN: !Ref ReconcilerImageArn
-          RECONCILER_IMAGE_VERSION: !Ref ReconcilerImageVersion
+          # The same value the `ReconcilerSchedule` rule below runs on, so
+          # the dedupe window (`domain/dedupe.py`) can never drift from the
+          # actual schedule.
+          RECONCILER_INTERVAL_MINUTES: !Ref ReconcilerIntervalMinutes
+          # Decision 8: the Lambda runtime's boto3 does not know
+          # `lambda-microvms`; its model ships in the zip under `models/`
+          # (`scripts/gen_stack_assets.py`), and botocore reads this before
+          # any client exists.
+          AWS_DATA_PATH: /var/task/models
 
   ReconcilerSchedulerRole:
     Type: AWS::IAM::Role
@@ -293,15 +325,20 @@ Resources:
         Arn: !GetAtt ReconcilerFunction.Arn
         RoleArn: !GetAtt ReconcilerSchedulerRole.Arn
 
-  # --- Operator policy: the SDK caller only needs to read the stack key --
+  # --- Operator policy: everything LifecycleEvents() itself calls, direct
+  # on this stack's own table/secret/status; the three Lambdas have their
+  # own, separate least-privilege roles above. ---------------------------
   EventsOperatorPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       Description: >-
-        Attach to the identity calling LifecycleEvents(...)/events=: lets it
-        read the stack key to derive k_sbx (SecretStore itself is a
-        separate concern: register_webhook's own secret lives under
-        rayito/webhooks/, covered by secrets-access.yaml, not this policy).
+        Attach to the identity calling LifecycleEvents(...)/events=:
+        register_webhook/list_webhooks/delete_webhook/get_events read and
+        write the events table directly (no Lambda in that path), status()
+        resolves this stack's outputs, and deriving k_sbx reads the stack
+        key. SecretStore itself is a separate concern: register_webhook's
+        own secret lives under rayito/webhooks/, covered by
+        secrets-access.yaml, not this policy.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -309,6 +346,16 @@ Resources:
             Effect: Allow
             Action: secretsmanager:GetSecretValue
             Resource: !Ref StackKeySecret
+          - Sid: ReadWriteWebhooksAndEvents
+            Effect: Allow
+            Action: [dynamodb:PutItem, dynamodb:Query, dynamodb:DeleteItem]
+            Resource:
+              - !GetAtt EventsTable.Arn
+              - !Sub "${EventsTable.Arn}/index/gsi1"
+          - Sid: ResolveStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Ref "AWS::StackId"
 
 Outputs:
   EventsTableName:
@@ -321,3 +368,6 @@ Outputs:
     Value: !Ref EventsOperatorPolicy
   ReconcilerFunctionArn:
     Value: !GetAtt ReconcilerFunction.Arn
+  DelivererFailuresQueueUrl:
+    Description: Whole-batch delivery failures (OnFailure destination); empty under normal operation.
+    Value: !Ref DelivererFailuresQueue

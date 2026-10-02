@@ -55,15 +55,15 @@ A scheduled reconciler SHALL compare `ListMicrovms` against the sandboxes the ev
 - **THEN** exactly one synthesized `killed{reason: "unknown"}` event is written for it, even if the reconciler runs again before the next real event
 
 ### Requirement: events= and LifecycleEvents are off by default and never implicit
-`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. `events=` SHALL require `logging="cloudwatch"` (Python) / `logging: "cloudwatch"` (TypeScript) and SHALL raise `InvalidArgumentException`/`InvalidArgumentError` before any AWS call otherwise. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls.
+`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. Passing `events=` to `Sandbox.create()`/`AsyncSandbox.create()` SHALL raise `UnimplementedError` naming this change (D5: `create()` has nowhere yet to dispatch the resulting `ConfigureSandbox` section — see `ADR-020`), the same stub behaviour as the six other 0.6 options, until the shared "send `FeaturePlan.configure_sections` after `run-microvm`" wiring lands. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls, usable today without `Sandbox.create(events=...)`.
 
 #### Scenario: the zero-cost golden trace is unaffected
 - **WHEN** the existing `create → commands.run → files.write → pause → resume → commands.run → kill → list` scripted session runs with no 0.6 option set
 - **THEN** its boto3 operations, `runHookPayload` and gRPC method sequence are unchanged from `fixtures/zero_cost_0_5_trace.json`
 
-#### Scenario: events= without cloudwatch logging is rejected before launch
-- **WHEN** `Sandbox.create(events=ev)` is called without `logging="cloudwatch"`
-- **THEN** `InvalidArgumentException` is raised and no `RunMicrovm` call is made
+#### Scenario: events= is rejected before launch, like every other pending 0.6 option
+- **WHEN** `Sandbox.create(events=ev)` is called
+- **THEN** `UnimplementedError` is raised and no `RunMicrovm` call is made
 
 #### Scenario: building LifecycleEvents makes no AWS call
 - **WHEN** `LifecycleEvents()` is constructed

@@ -214,11 +214,7 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(EVENTS_WEBHOOKS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EVENTS_WEBHOOKS_TEMPLATE)"
 	uvx cfn-lint==1.56.3 --version
-	# lambda-microvms (W3037) is this project's own fictional AWS service
-	# (decision 8 of the M15 architecture): cfn-lint's IAM action database
-	# has never heard of it, which is expected and permanent, not a real
-	# finding — see infra/events-webhooks.yaml's ListMicrovms statement.
-	uvx cfn-lint==1.56.3 --ignore-checks W3037 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
+	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

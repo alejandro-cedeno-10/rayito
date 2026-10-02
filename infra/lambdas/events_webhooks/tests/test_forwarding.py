@@ -73,6 +73,14 @@ def test_a_line_with_a_forged_mac_is_rejected() -> None:
     assert decision.reason == REASON_MAC_INVALID
 
 
+def test_an_empty_sandbox_id_is_rejected_even_though_it_is_a_substring_of_anything() -> None:
+    # `"" in log_stream` is `True` for every `log_stream`, including an
+    # empty one — without an explicit check this would "match" anything.
+    decision = decide(log_stream="any-log-stream-at-all", message=_line(sandbox_id=""), stack_key=STACK_KEY)
+    assert isinstance(decision, Rejected)
+    assert decision.reason == REASON_SANDBOX_MISMATCH
+
+
 def test_a_malformed_line_is_rejected() -> None:
     decision = decide(log_stream=f"/{SANDBOX_ID}/", message="garbage", stack_key=STACK_KEY)
     assert isinstance(decision, Rejected)

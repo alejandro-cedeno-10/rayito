@@ -11,7 +11,7 @@ import type { AwsClientSettings } from "../aws/control-plane.js";
 import { awsCode, LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { WebhookError } from "../errors.js";
-import type { EventRecord, WebhookInfo } from "./domain.js";
+import { EVENT_TYPE_PREFIX, type EventRecord, type WebhookInfo } from "./domain.js";
 
 type Credentials = AwsClientSettings["credentials"];
 
@@ -30,10 +30,12 @@ export interface DynamoDbApi {
     TableName: string;
     IndexName?: string;
     KeyConditionExpression: string;
+    FilterExpression?: string;
     ExpressionAttributeValues: Item;
     ScanIndexForward?: boolean;
     Limit?: number;
-  }): Promise<{ Items?: Array<Record<string, Av>> }>;
+    ExclusiveStartKey?: Item;
+  }): Promise<{ Items?: Array<Record<string, Av>>; LastEvaluatedKey?: Item }>;
 }
 
 interface DynamoDbModule {
@@ -69,11 +71,23 @@ export function lazyApi(
   );
 }
 
-export function dynamoError(message: string, error: unknown): WebhookError {
-  return new WebhookError(message, {
-    awsCode: awsCode(error),
-    cause: sanitizeAwsError(error, { includeMessage: false }),
-  });
+/**
+ * Runs one AWS call of `LifecycleEvents.<operation>` and turns any AWS SDK
+ * error into a `WebhookError` that carries only the AWS error code: the
+ * original message names the table, the secret and the account (§6), so
+ * neither the message nor `cause` keeps it (`sanitizeAwsError` without
+ * message). Mirror of the Python `_aws._aws_call`.
+ */
+export async function awsCall<T>(operation: string, invoke: () => Promise<T>): Promise<T> {
+  try {
+    return await invoke();
+  } catch (error) {
+    const cause = sanitizeAwsError(error, { includeMessage: false });
+    throw new WebhookError(`LifecycleEvents.${operation}: AWS respondió ${cause.name}`, {
+      awsCode: awsCode(error),
+      cause,
+    });
+  }
 }
 
 export async function putWebhook(
@@ -94,12 +108,19 @@ export async function putWebhook(
 }
 
 export async function listWebhooks(api: DynamoDbApi, tableName: string): Promise<WebhookInfo[]> {
-  const response = await api.query({
-    TableName: tableName,
-    KeyConditionExpression: "pk = :pk",
-    ExpressionAttributeValues: { ":pk": { S: WEBHOOK_PK } },
-  });
-  return (response.Items ?? []).map((item) => ({
+  const items: Array<Record<string, Av>> = [];
+  let exclusiveStartKey: Item | undefined;
+  do {
+    const response = await api.query({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": { S: WEBHOOK_PK } },
+      ...(exclusiveStartKey === undefined ? {} : { ExclusiveStartKey: exclusiveStartKey }),
+    });
+    items.push(...(response.Items ?? []));
+    exclusiveStartKey = response.LastEvaluatedKey;
+  } while (exclusiveStartKey !== undefined);
+  return items.map((item) => ({
     webhookId: item.sk?.S ?? "",
     url: item.url?.S ?? "",
     types: item.types?.SS ?? [],
@@ -117,6 +138,18 @@ export async function deleteWebhook(
   });
 }
 
+/**
+ * DynamoDB's own cap on how many `Query` pages a single `getEvents({
+ * types, limit })` call turns into: `FilterExpression` (below) is applied
+ * *after* `Limit` on each page, so a type-filtered query that matches
+ * rarely could otherwise paginate the entire table one `Limit`-sized page
+ * at a time. 25 pages of up to 100 raw rows each is already far more than
+ * `getEvents` is meant for (a live tail of recent events, not a bulk
+ * export); beyond that, `queryEvents` stops and returns whatever it
+ * already found rather than scan without bound.
+ */
+const MAX_QUERY_PAGES = 25;
+
 export async function queryEvents(
   api: DynamoDbApi,
   tableName: string,
@@ -128,28 +161,43 @@ export async function queryEvents(
   },
 ): Promise<EventRecord[]> {
   const scanForward = options.order === "asc";
-  const response = await (options.sandboxId !== undefined
-    ? api.query({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": { S: `EVENT#${options.sandboxId}` } },
-        ScanIndexForward: scanForward,
-        Limit: options.limit,
-      })
-    : api.query({
-        TableName: tableName,
-        IndexName: GSI1_NAME,
-        KeyConditionExpression: "gsi1pk = :pk",
-        ExpressionAttributeValues: { ":pk": { S: GSI1_PARTITION_VALUE } },
-        ScanIndexForward: scanForward,
-        Limit: options.limit,
-      }));
-  const records = (response.Items ?? []).map(recordFromItem);
-  const filtered =
-    options.types === undefined
-      ? records
-      : records.filter((record) => options.types?.includes(`sandbox.lifecycle.${record.kind}`));
-  return filtered.slice(0, options.limit);
+  const values: Record<string, Av> =
+    options.sandboxId !== undefined
+      ? { ":pk": { S: `EVENT#${options.sandboxId}` } }
+      : { ":pk": { S: GSI1_PARTITION_VALUE } };
+  let filterExpression: string | undefined;
+  if (options.types !== undefined) {
+    const kinds = [...new Set(options.types.map((type) => type.replace(EVENT_TYPE_PREFIX, "")))];
+    kinds.forEach((kind, index) => {
+      values[`:kind${index}`] = { S: kind };
+    });
+    filterExpression = `kind IN (${kinds.map((_kind, index) => `:kind${index}`).join(", ")})`;
+  }
+
+  // DynamoDB applies `Limit` to the raw rows before `FilterExpression`
+  // runs, so fetch pages until `limit` matches are collected, the
+  // partition/index is exhausted, or `MAX_QUERY_PAGES` is reached.
+  const records: EventRecord[] = [];
+  let exclusiveStartKey: Item | undefined;
+  for (let page = 0; page < MAX_QUERY_PAGES; page += 1) {
+    const response = await api.query({
+      TableName: tableName,
+      ...(options.sandboxId === undefined
+        ? { IndexName: GSI1_NAME, KeyConditionExpression: "gsi1pk = :pk" }
+        : { KeyConditionExpression: "pk = :pk" }),
+      ...(filterExpression === undefined ? {} : { FilterExpression: filterExpression }),
+      ExpressionAttributeValues: values,
+      ScanIndexForward: scanForward,
+      Limit: options.limit,
+      ...(exclusiveStartKey === undefined ? {} : { ExclusiveStartKey: exclusiveStartKey }),
+    });
+    records.push(...(response.Items ?? []).map(recordFromItem));
+    exclusiveStartKey = response.LastEvaluatedKey;
+    if (records.length >= options.limit || exclusiveStartKey === undefined) {
+      break;
+    }
+  }
+  return records.slice(0, options.limit);
 }
 
 function recordFromItem(item: Record<string, Av>): EventRecord {

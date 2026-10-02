@@ -9,14 +9,21 @@
 
 import { randomBytes } from "node:crypto";
 import type { AwsClientSettings } from "../aws/control-plane.js";
-import { loadOptionalSdkClient } from "../aws/optional-client.js";
+import { type LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { InvalidArgumentError, WebhookError } from "../errors.js";
 import { DEFAULT_SECRET_PREFIX, resolveSecretId } from "../secrets/names.js";
 import type { StackComponent, StackStatus } from "../stacks/model.js";
 import { componentByName } from "../stacks/registry.js";
 import { OptionalStacks } from "../stacks/service.js";
-import { DEFAULT_STACK_NAME, type EventRecord, type WebhookInfo } from "./domain.js";
 import {
+  DEFAULT_GET_EVENTS_LIMIT,
+  DEFAULT_RECONCILER_INTERVAL_MINUTES,
+  DEFAULT_STACK_NAME,
+  type EventRecord,
+  type WebhookInfo,
+} from "./domain.js";
+import {
+  awsCall,
   type DynamoDbApi,
   deleteWebhook as deleteWebhookItem,
   lazyApi,
@@ -31,7 +38,12 @@ export const WEBHOOK_SECRET_PREFIX = `${DEFAULT_SECRET_PREFIX}webhooks/`;
 
 const COMPONENT: StackComponent = componentByName("events-webhooks") as StackComponent;
 const EVENT_TYPE_PATTERN = /^sandbox\.lifecycle\.(created|paused|resumed|killed)$/;
+// Coincides with `DEFAULT_GET_EVENTS_LIMIT` today, but is a different knob
+// (the hard ceiling `limit` may never exceed, not the default when it is
+// omitted) — a DynamoDB `Query`'s own practical page size for this table
+// (AWS_API_NOTES.md §25), kept separate on purpose.
 const MAX_GET_EVENTS_LIMIT = 100;
+const MIN_GET_EVENTS_LIMIT = 1;
 
 type Credentials = AwsClientSettings["credentials"];
 
@@ -51,10 +63,14 @@ function validateTypes(types: readonly string[] | undefined): readonly string[] 
 }
 
 /** A fake `GetSecretValue`, for tests only — the real path goes through
- * the optional `@aws-sdk/client-secrets-manager` peer. */
-export type SecretValueGetter = (input: {
-  readonly SecretId: string;
-}) => Promise<{ readonly SecretString?: string }>;
+ * the optional `@aws-sdk/client-secrets-manager` peer. `SecretBinary` is
+ * `Uint8Array` to match that SDK's own `GetSecretValueCommandOutput`
+ * (never a Node `Buffer` specifically — `Buffer` already *is* a
+ * `Uint8Array`, so this accepts both without importing the SDK's types). */
+export type SecretValueGetter = (input: { readonly SecretId: string }) => Promise<{
+  readonly SecretString?: string;
+  readonly SecretBinary?: Uint8Array;
+}>;
 
 export interface LifecycleEventsOptions {
   readonly stackName?: string;
@@ -102,16 +118,17 @@ interface SecretsManagerModule {
  *   funciones Lambda (forwarder/deliverer/reconciler), una suscripción de
  *   CloudWatch Logs y una regla de EventBridge Scheduler.
  *   `registerWebhook`/`listWebhooks`/`deleteWebhook`/`getEvents` llaman
- *   directamente a DynamoDB (`PutItem`/`Query`/`DeleteItem`/`Scan`), nunca a
- *   un Lambda.
+ *   directamente a DynamoDB (`PutItem`/`Query`/`DeleteItem`), nunca a un
+ *   Lambda. `deploy()` crea además una cola SQS de fallos del deliverer.
  * Coste aproximado: ~$0,40/mes el secreto; DynamoDB y Lambda son
  *   on-demand/por invocación ($0 en reposo); ~$1,25 por millón de eventos
  *   escritos (WRU) más las lecturas de `getEvents`; el reconciliador
  *   factura una invocación cada `reconcilerIntervalMinutes` (5 por
- *   defecto, ~$0,0000002 c/u). us-east-1, consultado 2026-09-30.
- * IAM: `secretsmanager:GetSecretValue` sobre el secreto del stack
- *   (`EventsOperatorPolicy`, salida de la pila), en las credenciales del
- *   llamante.
+ *   defecto, mínimo 2, ~$0,0000002 c/u). us-east-1, consultado 2026-09-30.
+ * IAM: `EventsOperatorPolicy` (salida de la pila), en las credenciales del
+ *   llamante: `PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice,
+ *   `cloudformation:DescribeStacks` sobre la pila y
+ *   `secretsmanager:GetSecretValue` sobre la clave del stack.
  * Cómo apagarla: no pases `events`; `destroy()` borra el secreto
  *   (force-delete: cualquier webhook registrado deja de poder verificarse),
  *   la tabla, las tres Lambdas, la suscripción y el scheduler.
@@ -130,6 +147,7 @@ export class LifecycleEvents {
   #tableName: string | undefined;
   #stackKeySecretId: string | undefined;
   #stackKeyCache: Buffer | undefined;
+  #lazyDynamoApi: LazyAwsApi<DynamoDbApi> | undefined;
 
   constructor(options: LifecycleEventsOptions = {}) {
     this.#stackName = options.stackName ?? DEFAULT_STACK_NAME;
@@ -153,7 +171,9 @@ export class LifecycleEvents {
       parameters: {
         ArtifactBucket: options.artifactBucket,
         LogGroupName: options.logGroupName,
-        ReconcilerIntervalMinutes: String(options.reconcilerIntervalMinutes ?? 5),
+        ReconcilerIntervalMinutes: String(
+          options.reconcilerIntervalMinutes ?? DEFAULT_RECONCILER_INTERVAL_MINUTES,
+        ),
       },
       tags: options.tags ?? {},
       ...(options.wait === undefined ? {} : { wait: options.wait }),
@@ -167,6 +187,13 @@ export class LifecycleEvents {
     return this.#stacks.status(COMPONENT, { stackName: this.#stackName });
   }
 
+  /**
+   * Borra la pila entera: el secreto del stack (force-delete), la tabla con
+   * todos sus eventos y webhooks, las tres Lambdas, la suscripción, la cola
+   * de fallos y el scheduler. No toca los secretos de cada webhook
+   * (`rayito/webhooks/...`, de `SecretStore`) ni el log group de la imagen,
+   * que esta pila nunca creó.
+   */
   async destroy(options: { wait?: boolean } = {}): Promise<void> {
     await this.#stacks.destroy(COMPONENT, {
       stackName: this.#stackName,
@@ -188,23 +215,23 @@ export class LifecycleEvents {
     const webhookId = randomBytes(8).toString("hex");
     const resolvedSecretId = resolveSecretId(options.secretName, WEBHOOK_SECRET_PREFIX);
     const api = await this.#dynamo();
-    await putWebhook(api, await this.#resolveTableName(), {
-      webhookId,
-      url,
-      secretName: resolvedSecretId,
-      types,
-    });
+    const tableName = await this.#resolveTableName();
+    await awsCall("registerWebhook", () =>
+      putWebhook(api, tableName, { webhookId, url, secretName: resolvedSecretId, types }),
+    );
     return { webhookId, url, types };
   }
 
   async listWebhooks(): Promise<WebhookInfo[]> {
     const api = await this.#dynamo();
-    return listWebhookItems(api, await this.#resolveTableName());
+    const tableName = await this.#resolveTableName();
+    return awsCall("listWebhooks", () => listWebhookItems(api, tableName));
   }
 
   async deleteWebhook(webhookId: string): Promise<void> {
     const api = await this.#dynamo();
-    await deleteWebhookItem(api, await this.#resolveTableName(), webhookId);
+    const tableName = await this.#resolveTableName();
+    await awsCall("deleteWebhook", () => deleteWebhookItem(api, tableName, webhookId));
   }
 
   async getEvents(
@@ -215,9 +242,11 @@ export class LifecycleEvents {
       order?: "asc" | "desc";
     } = {},
   ): Promise<EventRecord[]> {
-    const limit = options.limit ?? 100;
-    if (limit > MAX_GET_EVENTS_LIMIT) {
-      throw new InvalidArgumentError(`getEvents: limit <= ${MAX_GET_EVENTS_LIMIT}`);
+    const limit = options.limit ?? DEFAULT_GET_EVENTS_LIMIT;
+    if (!Number.isInteger(limit) || limit < MIN_GET_EVENTS_LIMIT || limit > MAX_GET_EVENTS_LIMIT) {
+      throw new InvalidArgumentError(
+        `getEvents: limit entre ${MIN_GET_EVENTS_LIMIT} y ${MAX_GET_EVENTS_LIMIT}`,
+      );
     }
     const order = options.order ?? "desc";
     if (order !== "asc" && order !== "desc") {
@@ -225,12 +254,10 @@ export class LifecycleEvents {
     }
     const types = validateTypes(options.types);
     const api = await this.#dynamo();
-    return queryEvents(api, await this.#resolveTableName(), {
-      sandboxId: options.sandboxId,
-      types,
-      limit,
-      order,
-    });
+    const tableName = await this.#resolveTableName();
+    return awsCall("getEvents", () =>
+      queryEvents(api, tableName, { sandboxId: options.sandboxId, types, limit, order }),
+    );
   }
 
   /** Ver `ADR-020`, "Hueco de integración conocido": no la llama todavía
@@ -255,11 +282,20 @@ export class LifecycleEvents {
       return this.#stackKeyCache;
     }
     const secretId = await this.#resolveStackKeySecretId();
-    const response = await this.#getSecret(secretId);
-    if (response.SecretString === undefined) {
-      throw new WebhookError("el secreto de la clave del stack no tiene SecretString");
+    const response = await awsCall("stackKey", () => this.#getSecret(secretId));
+    // Mirrors the Python SDK's own `_stack_key` exactly: `SecretString`
+    // first, `SecretBinary` otherwise — a secret rotated or recreated with
+    // `--secret-binary` must work here too, not only one created as a
+    // string.
+    if (response.SecretString !== undefined) {
+      this.#stackKeyCache = Buffer.from(response.SecretString, "utf8");
+    } else if (response.SecretBinary !== undefined) {
+      this.#stackKeyCache = Buffer.from(response.SecretBinary);
+    } else {
+      throw new WebhookError(
+        "LifecycleEvents.stackKey: el secreto no tiene SecretString ni SecretBinary",
+      );
     }
-    this.#stackKeyCache = Buffer.from(response.SecretString, "utf8");
     return this.#stackKeyCache;
   }
 
@@ -297,10 +333,16 @@ export class LifecycleEvents {
     if (this.#dynamoClient !== undefined) {
       return this.#dynamoClient;
     }
-    return lazyApi(this.#region, this.#credentials).get();
+    // `LazyAwsApi` caches the client on *itself* (`#pending`), so it must
+    // be built once per `LifecycleEvents` instance, not fresh on every
+    // call — `lazyApi(...)` alone is just a constructor, not a cache.
+    this.#lazyDynamoApi ??= lazyApi(this.#region, this.#credentials);
+    return this.#lazyDynamoApi.get();
   }
 
-  async #getSecret(secretId: string): Promise<{ SecretString?: string }> {
+  async #getSecret(
+    secretId: string,
+  ): Promise<{ SecretString?: string; SecretBinary?: Uint8Array }> {
     if (this.#getSecretValue !== undefined) {
       return this.#getSecretValue({ SecretId: secretId });
     }
@@ -311,6 +353,8 @@ export class LifecycleEvents {
       this.#region ?? process.env.AWS_REGION ?? "",
       this.#credentials,
     );
-    return send<{ SecretString?: string }>(new sdk.GetSecretValueCommand({ SecretId: secretId }));
+    return send<{ SecretString?: string; SecretBinary?: Uint8Array }>(
+      new sdk.GetSecretValueCommand({ SecretId: secretId }),
+    );
   }
 }

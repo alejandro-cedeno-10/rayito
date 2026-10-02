@@ -115,6 +115,85 @@ def test_deploy_without_yes_asks_for_confirmation(
     assert fake_events.calls == []
 
 
+def test_deploy_prints_the_cost_statement_before_confirming(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "events",
+            "deploy",
+            "--artifact-bucket",
+            "mi-bucket",
+            "--log-group-name",
+            "/rayito/rayito-base",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Coste y activación de events-webhooks" in result.output
+    assert "AWS::SQS::Queue" in result.output  # a `creates` entry, proof it's the real statement
+
+
+def test_deploy_with_json_never_prompts_like_rayito_stack_deploy(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    # Same contract as `rayito stack deploy` (optional-stacks spec): no
+    # prompt with `--yes` or with `--json`, which has no terminal to ask on.
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "events",
+            "deploy",
+            "--artifact-bucket",
+            "mi-bucket",
+            "--log-group-name",
+            "/rayito/rayito-base",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_events.calls[0][0] == "deploy"
+
+
+def test_deploy_with_json_and_yes_still_runs(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "events",
+            "deploy",
+            "--artifact-bucket",
+            "mi-bucket",
+            "--log-group-name",
+            "/rayito/rayito-base",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_events.calls[0][0] == "deploy"
+
+
+def test_destroy_prints_what_is_retained_before_confirming(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    result = runner.invoke(app, ["events", "destroy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Al borrar:" in result.output
+    assert fake_events.calls == [("destroy", {})]
+
+
+def test_destroy_without_yes_asks_for_confirmation(
+    runner: CliRunner, fake_events: FakeLifecycleEvents
+) -> None:
+    result = runner.invoke(app, ["events", "destroy"], input="n\n")
+    assert result.exit_code != 0
+    assert "Al borrar:" in result.output
+    assert fake_events.calls == []
+
+
 def test_webhook_add_forwards_url_secret_and_types(
     runner: CliRunner, fake_events: FakeLifecycleEvents
 ) -> None:

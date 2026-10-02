@@ -90,29 +90,28 @@ def test_each_lambda_role_is_scoped_to_what_it_needs() -> None:
     forwarder = role_actions("ForwarderRole")
     assert forwarder == {
         "dynamodb:PutItem",
-        "dynamodb:DeleteItem",
         "secretsmanager:GetSecretValue",
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
     }
     deliverer = role_actions("DelivererRole")
-    assert "lambda-microvms:ListMicrovms" not in deliverer
+    assert "lambda:ListMicrovms" not in deliverer
     assert "dynamodb:Scan" not in deliverer
     reconciler = role_actions("ReconcilerRole")
-    assert "lambda-microvms:ListMicrovms" in reconciler
+    assert "lambda:ListMicrovms" in reconciler
     assert "secretsmanager:GetSecretValue" not in reconciler
 
 
 def test_no_statement_grants_a_wildcard_dynamodb_or_secret_resource() -> None:
-    # `lambda-microvms:ListMicrovms` is the one legitimate exception: AWS
-    # defines no resource-level permissions for it (it lists every MicroVM
-    # in the account), so `Resource: "*"` there is correct, not a finding.
+    # `lambda:ListMicrovms` is the one legitimate exception: AWS defines no
+    # resource-level permissions for it (it lists every MicroVM in the
+    # account), so `Resource: "*"` there is correct, not a finding.
     for role in ("ForwarderRole", "DelivererRole", "ReconcilerRole"):
         policies = resources()[role]["Properties"]["Policies"]
         for policy in policies:
             for statement in policy["PolicyDocument"]["Statement"]:
-                if as_list(statement["Action"]) == ["lambda-microvms:ListMicrovms"]:
+                if as_list(statement["Action"]) == ["lambda:ListMicrovms"]:
                     continue
                 for resource in as_list(statement.get("Resource", [])):
                     if isinstance(resource, str):
@@ -127,10 +126,52 @@ def test_the_reconciler_schedule_targets_the_reconciler_function() -> None:
     }
 
 
-def test_the_bundled_lambda_microvms_model_is_inside_the_lambda_source() -> None:
-    model = LAMBDA_ROOT / "models" / "lambda-microvms" / "2025-09-09" / "service-2.json"
-    assert model.is_file(), "decision 8 de la arquitectura M15: el modelo debe ir en el zip"
-    assert model.read_bytes() == (REPO_ROOT / "docs" / "aws-api" / "service-2.json").read_bytes()
+def test_the_interval_parameter_matches_the_sdk_constants() -> None:
+    # `rate(N minutes)` is rejected by Scheduler for N = 1 (it wants the
+    # singular `minute`), hence the SDKs' minimum of 2; the default is the
+    # SDKs' own constant, never a second literal.
+    from rayito._lifecycle_events._domain import (
+        DEFAULT_RECONCILER_INTERVAL_MINUTES,
+        MIN_RECONCILER_INTERVAL_MINUTES,
+    )
+
+    parameter = template()["Parameters"]["ReconcilerIntervalMinutes"]
+    assert parameter["Default"] == DEFAULT_RECONCILER_INTERVAL_MINUTES
+    assert parameter["MinValue"] == MIN_RECONCILER_INTERVAL_MINUTES
+
+
+def test_the_reconciler_gets_its_interval_and_model_path_as_env_vars() -> None:
+    # The dedupe window (`domain/dedupe.py`) reads the same interval the
+    # schedule runs on; `AWS_DATA_PATH` points botocore at the bundled
+    # `lambda-microvms` model before any client exists (decision 8).
+    variables = resources()["ReconcilerFunction"]["Properties"]["Environment"]["Variables"]
+    assert variables["RECONCILER_INTERVAL_MINUTES"] == {"Ref": "ReconcilerIntervalMinutes"}
+    assert variables["AWS_DATA_PATH"] == "/var/task/models"
+
+
+def test_the_deliverer_reports_partial_batch_failures_and_keeps_failed_records() -> None:
+    mapping = resources()["DelivererEventSourceMapping"]["Properties"]
+    assert mapping["FunctionResponseTypes"] == ["ReportBatchItemFailures"]
+    assert mapping["BisectBatchOnFunctionError"] is True
+    assert mapping["DestinationConfig"]["OnFailure"]["Destination"] == {
+        "Fn::GetAtt": "DelivererFailuresQueue.Arn"
+    }
+
+
+def test_the_operator_policy_covers_every_sdk_call() -> None:
+    statements = resources()["EventsOperatorPolicy"]["Properties"]["PolicyDocument"]["Statement"]
+    actions = {action for statement in statements for action in as_list(statement["Action"])}
+    assert {
+        "secretsmanager:GetSecretValue",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:DeleteItem",
+        "cloudformation:DescribeStacks",
+    } <= actions
+    table_statement = next(
+        statement for statement in statements if "dynamodb:Query" in as_list(statement["Action"])
+    )
+    assert {"Fn::Sub": "${EventsTable.Arn}/index/gsi1"} in table_statement["Resource"]
 
 
 def test_no_account_id_or_bucket_name_is_hard_coded() -> None:

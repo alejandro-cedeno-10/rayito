@@ -6,7 +6,8 @@
  * `undefined` no hace nada: ni `ConfigureSandbox`, ni un cliente nuevo.
  */
 
-import { InvalidArgumentError, UnimplementedError } from "./errors.js";
+import { UnimplementedError } from "./errors.js";
+import { validateEventsOption } from "./lifecycle-events/options.js";
 
 export const MOUNTS_CHANGE = "m15-s3-mounts";
 export const VOLUMES_CHANGE = "m15-efs-volumes";
@@ -15,6 +16,13 @@ export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
 export const DOMAIN_CHANGE = "m15-custom-domain";
+
+/** Por qué `events` sigue sin aceptarse aunque `LifecycleEvents` ya
+ * funcione por su cuenta (ver `planFeatures`). */
+export const EVENTS_PENDING_REASON =
+  `${EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm ` +
+  "(FeaturePlan.configureSections); LifecycleEvents (deploy, registerWebhook, getEvents) " +
+  "ya funciona fuera de create()";
 
 /** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
 export interface FeatureOptions {
@@ -38,16 +46,17 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) queda para cuando una función
- * real lo necesite; ninguna rama de hoy lo usa. `logging` es el `logging`
- * de `create()` (`m15-events-webhooks` lo necesita: `events` exige
- * `logging: "cloudwatch"`). No hace ninguna llamada a AWS ni construye
- * ningún cliente.
+ * real lo necesite. `logging` es el `logging` de `create()`: `events` exige
+ * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
+ * construye ningún cliente.
  *
- * `events` ya valida aquí, pero nada envía todavía la sección: igual que
- * en el SDK Python (`_feature_options.plan_features`'s docstring),
- * `create()` no conoce `sandboxId`/`imageArn`/`imageVersion` hasta después
- * de `run-microvm`, y ese punto vive en `sandbox/sandbox.ts`, un fichero
- * exclusivo de foundations — ver ADR-020, "Hueco de integración conocido".
+ * `events` se valida (tipo y `logging`) y después sigue lanzando
+ * `UnimplementedError`: su sección de `ConfigureSandbox` necesita
+ * `sandboxId`/`imageArn`/`imageVersion`, que sólo existen tras
+ * `run-microvm`, y el envío de `FeaturePlan.configureSections` tras el
+ * primer `Health` todavía no existe en `create()` (ADR-020, "Hueco de
+ * integración conocido"). Aceptarlo sin enviarla dejaría al usuario
+ * pagando la pila sin recibir ningún evento.
  */
 export function planFeatures(
   options: FeatureOptions,
@@ -64,11 +73,9 @@ export function planFeatures(
   if (options.size !== undefined) {
     throw new UnimplementedError("size", `llega en 0.6 (${SIZE_CHANGE})`);
   }
-  if (options.events !== undefined && logging !== "cloudwatch") {
-    throw new InvalidArgumentError(
-      'events necesita logging: "cloudwatch" (si no, el forwarder no tiene ningún log del ' +
-        "que leer)",
-    );
+  if (options.events !== undefined) {
+    validateEventsOption(options.events, logging);
+    throw new UnimplementedError("events", EVENTS_PENDING_REASON);
   }
   if (options.telemetry !== undefined) {
     throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);

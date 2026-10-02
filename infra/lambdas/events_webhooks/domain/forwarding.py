@@ -47,7 +47,14 @@ def decide(*, log_stream: str, message: str, stack_key: bytes) -> Decision:
         event = LifecycleEvent.from_json_bytes(payload)
     except (KeyError, ValueError):
         return Rejected(REASON_MALFORMED)
-    if event.sandbox_id not in log_stream:
+    # The exact log stream name of a Lambda MicroVM image is CP-5 in
+    # AWS_API_NOTES.md §25 — not measured yet, so this stays a substring
+    # check rather than an exact parse of an unconfirmed format (the MAC
+    # below is what actually authenticates the event; this is defence in
+    # depth). An empty `sandbox_id` is rejected unconditionally regardless:
+    # it is a substring of every string, so it would otherwise "match" any
+    # log stream at all.
+    if not event.sandbox_id or event.sandbox_id not in log_stream:
         return Rejected(REASON_SANDBOX_MISMATCH)
     key = derive_sandbox_key(stack_key, event.sandbox_id)
     if not verify_mac(key, payload, mac):

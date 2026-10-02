@@ -47,10 +47,12 @@ deliveries, off by default and billed only when deployed and used.
   does not add), deterministic ids so re-running never duplicates.
 - **SDK**: `LifecycleEvents`/`AsyncLifecycleEvents` (deploy/status/destroy
   over `OptionalStacks`; `register_webhook`/`list_webhooks`/`delete_webhook`/
-  `get_events` direct on DynamoDB). `events=` on `Sandbox.create()` validates
-  (`logging="cloudwatch"` required) before any AWS call;
-  `LifecycleEvents._build_section` is implemented and unit-tested but not
-  yet called by `create()` (see the gap above). CLI `rayito events
+  `get_events` direct on DynamoDB, usable today). `events=` on
+  `Sandbox.create()` raises `UnimplementedError` naming this change, the
+  same stub behaviour as the other six pending 0.6 options — see the gap
+  above (D5): `LifecycleEvents._build_section` is implemented and
+  unit-tested in isolation, but `create()` has nowhere yet to send the
+  `ConfigureSandbox` section it builds. CLI `rayito events
   deploy|status|destroy|list` and `webhook add|list|remove`.
 - **TypeScript mirror**: `src/lifecycle-events/{domain,keys,section,dynamodb,service}.ts`,
   `LifecycleEvents` (one async class).
@@ -63,12 +65,13 @@ deliveries, off by default and billed only when deployed and used.
   grpc/configure.rs,hooks/mod.rs}` and `Cargo.toml`/`crates/rayd-core/Cargo.toml`
   (`hmac`), `proto/rayito/v1/lifecycle_events.proto`.
 - **Python**: `_lifecycle_events/` (new package), `_feature_options.py`
-  (events branch + `logging` parameter), `_stacks/components/events_webhooks.py`,
-  `cli/events.py`, `__init__.py`, `sandbox_{sync,async}/main.py` (one kwarg
-  threaded through, `logging=logging`).
+  (events branch, still `UnimplementedError`), `_stacks/components/events_webhooks.py`,
+  `cli/events.py`, `__init__.py`. No edit to `sandbox_{sync,async}/main.py`
+  (D5): `events=` stops at `plan_features`, same as the other six pending
+  0.6 options.
 - **TypeScript**: `src/lifecycle-events/`, `feature-options.ts`,
-  `stacks/components/events-webhooks.ts`, `index.ts`, `sandbox/sandbox.ts`
-  (same one-kwarg threading).
+  `stacks/components/events-webhooks.ts`, `index.ts`. No edit to
+  `sandbox/sandbox.ts`, for the same reason.
 - **Infra**: `infra/events-webhooks.yaml`, `infra/lambdas/events_webhooks/`.
 - **Scripts**: `scripts/gen_stack_assets.py` (TS generator line-width fix,
   needed for any Lambda-bearing component, not only this one).

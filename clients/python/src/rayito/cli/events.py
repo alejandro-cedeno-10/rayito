@@ -10,10 +10,23 @@ from typing import Annotated
 
 import typer
 
-from rayito._lifecycle_events._domain import DEFAULT_STACK_NAME
+from rayito._lifecycle_events._domain import (
+    DEFAULT_GET_EVENTS_LIMIT,
+    DEFAULT_RECONCILER_INTERVAL_MINUTES,
+    DEFAULT_STACK_NAME,
+)
 from rayito._lifecycle_events._service import LifecycleEvents
+from rayito._stacks._model import StackComponent
+from rayito._stacks._registry import component_by_name
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._session import clients_of, json_mode
+from rayito.cli.stack import confirm_deploy, confirm_destroy
+
+#: `events-webhooks`'s own `StackComponent`, the same one `rayito stack
+#: deploy events-webhooks` resolves by name: `confirm_deploy`/
+#: `confirm_destroy` (`cli/stack.py`) print its `CostStatement` and what
+#: `destroy` removes exactly as that command does (§4.6).
+_COMPONENT: StackComponent = component_by_name("events-webhooks")  # type: ignore[assignment]
 
 events_app = typer.Typer(
     no_args_is_help=True, help="Eventos de ciclo de vida y webhooks (events=)."
@@ -32,13 +45,14 @@ def deploy_command(
     ctx: typer.Context,
     artifact_bucket: Annotated[str, typer.Option("--artifact-bucket")],
     log_group_name: Annotated[str, typer.Option("--log-group-name")],
-    reconciler_interval_minutes: Annotated[int, typer.Option("--reconciler-interval-minutes")] = 5,
+    reconciler_interval_minutes: Annotated[
+        int, typer.Option("--reconciler-interval-minutes")
+    ] = DEFAULT_RECONCILER_INTERVAL_MINUTES,
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
     ev = _events(ctx, stack_name)
-    if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar events-webhooks?"):
-        raise typer.Exit(1)
+    confirm_deploy(ctx, _COMPONENT, yes=yes)
     status = ev.deploy(
         artifact_bucket=artifact_bucket,
         log_group_name=log_group_name,
@@ -72,8 +86,7 @@ def destroy_command(
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
-    if not yes and not json_mode(ctx) and not typer.confirm("¿Borrar la pila de events-webhooks?"):
-        raise typer.Exit(1)
+    confirm_destroy(ctx, _COMPONENT, yes=yes)
     _events(ctx, stack_name).destroy()
     if json_mode(ctx):
         emit_json({"name": "events-webhooks", "state": "destroyed"})
@@ -86,7 +99,7 @@ def list_events_command(
     ctx: typer.Context,
     sandbox_id: Annotated[str | None, typer.Option("--sandbox-id")] = None,
     event_type: Annotated[list[str], typer.Option("--type")] = [],  # noqa: B006
-    limit: Annotated[int, typer.Option("--limit")] = 100,
+    limit: Annotated[int, typer.Option("--limit")] = DEFAULT_GET_EVENTS_LIMIT,
     order: Annotated[str, typer.Option("--order")] = "desc",
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:

@@ -12,10 +12,17 @@ from typing import TYPE_CHECKING
 
 import boto3
 
-from rayito._lifecycle_events._domain import DEFAULT_STACK_NAME, EventRecord, WebhookInfo
+from rayito._lifecycle_events._domain import (
+    DEFAULT_GET_EVENTS_LIMIT,
+    DEFAULT_RECONCILER_INTERVAL_MINUTES,
+    DEFAULT_STACK_NAME,
+    EventRecord,
+    WebhookInfo,
+)
 from rayito._lifecycle_events._service import LifecycleEvents
 
 if TYPE_CHECKING:
+    from rayito._lifecycle_events._aws import EventsGateway
     from rayito._stacks._model import StackStatus
     from rayito._stacks._service import OptionalStacks
 
@@ -28,9 +35,10 @@ class AsyncLifecycleEvents:
         region: str | None = None,
         session: boto3.session.Session | None = None,
         stacks: OptionalStacks | None = None,
+        gateway: EventsGateway | None = None,
     ) -> None:
         self._inner = LifecycleEvents(
-            stack_name=stack_name, region=region, session=session, stacks=stacks
+            stack_name=stack_name, region=region, session=session, stacks=stacks, gateway=gateway
         )
 
     async def deploy(
@@ -38,7 +46,7 @@ class AsyncLifecycleEvents:
         *,
         artifact_bucket: str,
         log_group_name: str,
-        reconciler_interval_minutes: int = 5,
+        reconciler_interval_minutes: int = DEFAULT_RECONCILER_INTERVAL_MINUTES,
         tags: dict[str, str] | None = None,
         wait: bool = True,
     ) -> StackStatus:
@@ -75,7 +83,7 @@ class AsyncLifecycleEvents:
         *,
         sandbox_id: str | None = None,
         types: Sequence[str] | None = None,
-        limit: int = 100,
+        limit: int = DEFAULT_GET_EVENTS_LIMIT,
         order: str = "desc",
     ) -> list[EventRecord]:
         return await asyncio.to_thread(

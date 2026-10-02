@@ -14,6 +14,29 @@ export type KillReason = (typeof KILL_REASONS)[number];
 
 export const DEFAULT_STACK_NAME = "rayito-events-webhooks";
 
+/**
+ * `deploy({ reconcilerIntervalMinutes })`'s default, mirrored by
+ * `infra/events-webhooks.yaml`'s own `ReconcilerIntervalMinutes` parameter
+ * default — kept as one constant so the Python sync API, the async API,
+ * the CLI and this TypeScript mirror can never drift from each other.
+ */
+export const DEFAULT_RECONCILER_INTERVAL_MINUTES = 5;
+
+/**
+ * `infra/events-webhooks.yaml`'s `ReconcilerIntervalMinutes` `MinValue`:
+ * EventBridge Scheduler only accepts `rate(1 minute)` (singular) for 1, and
+ * the template always renders `rate(N minutes)`, so 1 is excluded rather
+ * than special-cased.
+ */
+export const MIN_RECONCILER_INTERVAL_MINUTES = 2;
+
+/**
+ * `getEvents({ limit })`'s default, also `MAX_GET_EVENTS_LIMIT` in
+ * `service.ts` (a DynamoDB `Query`'s own practical page size for this
+ * table, AWS_API_NOTES.md §25).
+ */
+export const DEFAULT_GET_EVENTS_LIMIT = 100;
+
 export function eventType(kind: EventKind): string {
   return `${EVENT_TYPE_PREFIX}${kind}`;
 }

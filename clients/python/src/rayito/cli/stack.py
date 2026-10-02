@@ -56,6 +56,29 @@ def _print_cost(component: StackComponent) -> None:
         echo(f"  Fuente: {component.cost.source}")
 
 
+def confirm_deploy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
+    """§4.6: imprime el `CostStatement` y pide confirmación salvo `--yes` o
+    `--json`. Compartido por `rayito stack deploy` y los atajos por función
+    (`rayito events deploy`), para que ambos lean igual."""
+    if not json_mode(ctx):
+        _print_cost(component)
+    if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
+        raise typer.Exit(1)
+
+
+def confirm_destroy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
+    """§4.6: dice qué se borra y qué se conserva y pide confirmación salvo
+    `--yes` o `--json`."""
+    if not json_mode(ctx):
+        echo(f"Al borrar: {component.cost.removal}")
+    if (
+        not yes
+        and not json_mode(ctx)
+        and not typer.confirm(f"¿Borrar la pila de {component.name}?")
+    ):
+        raise typer.Exit(1)
+
+
 @stack_app.command("list")
 def list_command(ctx: typer.Context) -> None:
     """El catálogo completo; nunca hace una llamada a AWS."""
@@ -119,12 +142,11 @@ def deploy_command(
 ) -> None:
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
-    if not json_mode(ctx):
-        _print_cost(resolved)
     if not resolved.supported:
+        if not json_mode(ctx):
+            _print_cost(resolved)
         raise UnimplementedError(f"rayito stack deploy {component}", resolved.description)
-    if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
-        raise typer.Exit(1)
+    confirm_deploy(ctx, resolved, yes=yes)
     status = stacks.deploy(
         component,
         stack_name=stack_name,
@@ -147,10 +169,7 @@ def destroy_command(
 ) -> None:
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
-    if not json_mode(ctx):
-        echo(f"Al borrar: {resolved.cost.removal}")
-    if not yes and not json_mode(ctx) and not typer.confirm(f"¿Borrar la pila de {component}?"):
-        raise typer.Exit(1)
+    confirm_destroy(ctx, resolved, yes=yes)
     stacks.destroy(component, stack_name=stack_name)
     if json_mode(ctx):
         emit_json({"name": component, "state": "destroyed"})

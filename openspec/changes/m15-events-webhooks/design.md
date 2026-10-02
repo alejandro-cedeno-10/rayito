@@ -44,16 +44,25 @@ the first to hit that seam.
   partitions) keeps the stack to one resource instead of three, and a sparse
   GSI (`gsi1pk="EVENT"` only on event rows) makes `get_events(sandbox_id=None)`
   a single index query instead of a table scan.
-- **D5 — Known integration gap, documented rather than forced.**
+- **D5 — Known integration gap: `events=` stays `UnimplementedError`.**
   `create()`'s actual dispatch of `FeaturePlan.configure_sections` into a
   `Configure` RPC call does not exist yet anywhere in the SDK (not only for
   this feature): `plan_features()` runs before `run-microvm`, so it cannot
-  build a section that needs `sandbox_id`. The missing piece — in
-  `sandbox_{sync,async}/main.py` and `sandbox/sandbox.ts`, both files this
-  change does not otherwise touch beyond one kwarg each — is named exactly
-  in `_feature_options.plan_features`'s docstring and in `ADR-020`, so
-  wiring it is a plumbing change, not a design one, whenever that lands
-  (here or in a later feature that also needs it).
+  build a section that needs `sandbox_id`, and the send itself needs a
+  gRPC channel/stub that only exists after `Health` first answers inside
+  `cls._open(...)` — a step later than `plan_features` runs. Rather than
+  accept `events=` and silently never deliver (a correctness and
+  off-by-default violation: the caller would believe events are flowing),
+  `events=` raises `UnimplementedError` exactly like the other six pending
+  0.6 options, and this change does not touch
+  `sandbox_{sync,async}/main.py`/`sandbox/sandbox.ts` at all. The missing
+  piece is named exactly in `_feature_options.plan_features`'s docstring
+  and in `ADR-020`, so wiring it, whenever it lands (here or in a later
+  change), is a plumbing change shared by all eight 0.6 options, not a
+  design one specific to this feature. `register_webhook`/`get_events`/
+  `deploy`/`destroy` (the `LifecycleEvents` facade, direct DynamoDB/Secrets
+  Manager/CloudFormation calls, no `Configure` RPC involved) are unaffected
+  and usable today.
 
 ## Risks
 

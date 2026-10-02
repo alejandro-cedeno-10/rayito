@@ -22,9 +22,7 @@ def test_with_everything_none_the_plan_is_empty() -> None:
         ("mounts", {"/mnt/d": object()}, "mounts=", "m15-s3-mounts"),
         ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
         ("size", "4gb", "size=", "m15-sizes-catalog"),
-        # `events` left m15-foundations' stub list in m15-events-webhooks:
-        # it now validates (`logging="cloudwatch"`) instead of always
-        # raising `UnimplementedError` — see
+        # `events` validates its type and `logging` first: see
         # `test_m15_events_webhooks_feature_options.py`.
         ("telemetry", object(), "telemetry=", "m15-rayd-otlp"),
         ("gateways", {"anthropic": object()}, "gateways=", "m15-secrets-gateway"),
