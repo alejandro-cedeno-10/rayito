@@ -99,7 +99,7 @@
       section.
 - [x] 6.7 Three CHANGELOGs' `<!-- m15-efs-volumes -->` anchors.
 - [x] 6.8 `docs-delta.md`: exact row replacements for `e2b-parity.md` (row
-      26), `optional-features.md`, `cost.md`, `security.md` (T21),
+      26), `optional-features.md`, `cost.md`, `security.md` (T20),
       `limits.md`, for `m15-docs-integration` to apply.
 
 ## 7. Measurement script (not run)

@@ -19,23 +19,36 @@ function awsError(name: string): Error {
 }
 
 class FakeEfsApi implements EfsApi {
-  readonly accessPoints = new Map<string, DescribedAccessPoint & { name: string }>();
+  readonly accessPoints = new Map<
+    string,
+    DescribedAccessPoint & { name: string; clientToken: string }
+  >();
   readonly calls: string[] = [];
   #nextId = 1;
 
+  /** Como EFS de verdad: un `ClientToken` ya usado por un access point que
+   * sigue vivo es `AccessPointAlreadyExists` (409), nunca el access point
+   * devuelto directamente — eso lo resuelve `VolumeStore.create` llamando a
+   * `get(name)`. */
   async createAccessPoint(input: {
+    ClientToken: string;
     FileSystemId: string;
     Tags: Array<{ Key: string; Value: string }>;
   }): Promise<DescribedAccessPoint> {
     this.calls.push("createAccessPoint");
-    const name = input.Tags.find((t) => t.Key === "rayito:volume")?.Value ?? "";
     for (const existing of this.accessPoints.values()) {
-      if (existing.name === name) {
-        return existing;
+      if (existing.clientToken === input.ClientToken) {
+        throw awsError("AccessPointAlreadyExists");
       }
     }
+    const name = input.Tags.find((t) => t.Key === "rayito:volume")?.Value ?? "";
     const accessPointId = `fsap-${(this.#nextId++).toString().padStart(8, "0")}`;
-    const described = { AccessPointId: accessPointId, FileSystemId: input.FileSystemId, name };
+    const described = {
+      AccessPointId: accessPointId,
+      FileSystemId: input.FileSystemId,
+      name,
+      clientToken: input.ClientToken,
+    };
     this.accessPoints.set(accessPointId, described);
     return described;
   }
@@ -92,13 +105,34 @@ describe("VolumeStore", () => {
     expect(fake.calls).toEqual([]);
   });
 
-  test("create is idempotent by name", async () => {
+  test("create is idempotent by name even though a repeated client token throws", async () => {
     const fake = new FakeEfsApi();
     const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
     const first = await store.create("datos-agente-7");
+    fake.calls.length = 0;
     const second = await store.create("datos-agente-7");
     expect(second.accessPointId).toBe(first.accessPointId);
     expect(fake.accessPoints.size).toBe(1);
+    expect(fake.calls).toEqual(["createAccessPoint", "describeAccessPoints"]);
+  });
+
+  test("the same name on two file systems does not share a client token", async () => {
+    const fake = new FakeEfsApi();
+    const firstStore = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    const secondStore = new VolumeStore({ fileSystemId: "fs-99999999", client: fake });
+    const first = await firstStore.create("datos-agente-7");
+    const second = await secondStore.create("datos-agente-7");
+    expect(first.accessPointId).not.toBe(second.accessPointId);
+    expect(fake.accessPoints.size).toBe(2);
+  });
+
+  test("recreating a destroyed name does not reuse a spent token", async () => {
+    const fake = new FakeEfsApi();
+    const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
+    const first = await store.create("datos-agente-7");
+    await store.destroy("datos-agente-7");
+    const second = await store.create("datos-agente-7");
+    expect(second.accessPointId).not.toBe(first.accessPointId);
   });
 
   test("get finds a volume by name and raises when missing", async () => {

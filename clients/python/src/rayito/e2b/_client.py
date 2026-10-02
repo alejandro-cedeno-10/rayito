@@ -75,9 +75,11 @@ class E2B:
         params = {"region": region, "session": session, "control_plane": control_plane, **applied}
         bound = {key: value for key, value in params.items() if value is not None}
         chosen_index = validate_index(index)
-        self.Sandbox: type[Sandbox] = bind_class(Sandbox, bound, _bound_index=chosen_index)
+        self.Sandbox: type[Sandbox] = bind_class(
+            Sandbox, bound, _bound_index=chosen_index, _bound_volume_store=volume_store
+        )
         self.AsyncSandbox: type[AsyncSandbox] = bind_class(
-            AsyncSandbox, bound, _bound_index=chosen_index
+            AsyncSandbox, bound, _bound_index=chosen_index, _bound_volume_store=volume_store
         )
         secret_bound: dict[str, Any] = {
             key: bound[key] for key in ("region", "session") if key in bound

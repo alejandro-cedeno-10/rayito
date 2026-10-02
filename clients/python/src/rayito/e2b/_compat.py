@@ -274,13 +274,11 @@ def map_network_update(
     return map_network(policy), allow
 
 
-def reject_resource_kwargs(*, mcp: Any, iam: Any, volume_mounts: Any) -> None:
+def reject_resource_kwargs(*, mcp: Any, iam: Any) -> None:
     if mcp is not None:
         raise unimplemented("mcp")
     if iam is not None:
         raise unimplemented("iam")
-    if volume_mounts is not None:
-        raise unimplemented("volume_mounts")
 
 
 def map_create_kwargs(
@@ -294,7 +292,7 @@ def map_create_kwargs(
     network: Mapping[str, Any] | None = None,
     iam: Any | None = None,
     lifecycle: Mapping[str, Any] | None = None,
-    volume_mounts: Any | None = None,
+    volumes: Mapping[str, Any] | None = None,
     logger: logging.Logger | None = None,
     *,
     max_lifetime: int | None = None,
@@ -313,15 +311,19 @@ def map_create_kwargs(
     control_plane: Any | None = None,
     transport: Any | None = None,
 ) -> CreateMapping:
-    """La tabla D5 en el orden posicional de E2B 2.x: `mcp`, `iam` y
-    `volume_mounts` son `UnimplementedError` antes de mapear nada; `timeout`
-    (300 s por defecto) es el plazo lógico que impone `rayd`, con
-    `max_lifetime` (por defecto `max(3600, min(timeout + 60, 28800))`) como
+    """La tabla D5 en el orden posicional de E2B 2.x: `mcp` e `iam` son
+    `UnimplementedError` antes de mapear nada; `timeout` (300 s por
+    defecto) es el plazo lógico que impone `rayd`, con `max_lifetime` (por
+    defecto `max(3600, min(timeout + 60, 28800))`) como
     `maximumDurationInSeconds`; `lifecycle` es `on_timeout` más la política
     de idle de la pausa; `allow_internet_access` y `network` son la política
     de egress en el guest sobre el conector `INTERNET_EGRESS`; `ingress` es
-    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa."""
-    reject_resource_kwargs(mcp=mcp, iam=iam, volume_mounts=volume_mounts)
+    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa. `volumes` ya
+    llega traducido desde `volume_mounts=` por `_sync.py`/`_async.py`'s
+    `_launch` (`rayito.e2b._volume.resolve_volume_mounts`, que sí hace
+    I/O); aquí sólo se reenvía al nativo `volumes=`, que valida la forma y
+    hoy siempre termina en `UnimplementedError` (`_volumes._section`)."""
+    reject_resource_kwargs(mcp=mcp, iam=iam)
     shim_lifecycle = map_lifecycle(lifecycle, auto_pause=auto_pause)
     native_network = map_network(network)
     resolved_timeout = E2B_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
@@ -359,6 +361,7 @@ def map_create_kwargs(
         "reconnect_timeout": reconnect_timeout,
         "control_plane": control_plane,
         "transport": transport,
+        "volumes": volumes,
     }
     native.update({name: value for name, value in optional.items() if value is not None})
     warnings = (SECURE_FALSE_WARNING,) if secure is False else ()

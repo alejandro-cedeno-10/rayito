@@ -11,15 +11,16 @@ from typing import Any
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rayito._aws import LazyClient
+from rayito._aws import LazyClient, aws_code
 from rayito._volumes._base import (
+    ACCESS_POINT_ALREADY_EXISTS,
     EfsApi,
     create_access_point_params,
     translate_error,
     volume_from_description,
 )
 from rayito._volumes._domain import EfsVolume, validate_file_system_id, validate_volume_name
-from rayito.exceptions import VolumeNotFoundException
+from rayito.exceptions import VolumeException, VolumeNotFoundException
 
 
 class VolumeStore:
@@ -45,7 +46,8 @@ class VolumeStore:
         LLAMANTE, no del execution role del MicroVM).
     Cómo apagarla: no instancies `VolumeStore`; borra con `destroy()` los
         volúmenes que ya no uses (el directorio que cubrían no se borra, sólo el
-        access point: ver `purge`, no implementado en 0.6).
+        access point: borrar los datos exige montar el sistema de ficheros desde
+        un sandbox, fuera de alcance en 0.6).
     Ejemplo:
         store = VolumeStore(file_system_id="fs-0123abcd", region="us-east-1")
         vol = store.create("datos-agente-7")
@@ -85,10 +87,18 @@ class VolumeStore:
         """`CreateAccessPoint` con uid/gid 1000:1000 y la ruta raíz
         `/rayito-volumes/<name>` (research doc §4.5). Idempotente: llamarla
         dos veces con el mismo nombre no crea dos access points
-        (`ClientToken` es un hash del nombre)."""
+        (`ClientToken` es un hash de `file_system_id`+nombre). AWS no
+        devuelve el access point ya creado para un `ClientToken` repetido:
+        responde `AccessPointAlreadyExists`, que esta función atrapa para
+        devolver `get(name)` en su lugar."""
         validate_volume_name(name)
         params = create_access_point_params(self._file_system_id, name)
-        described = self._call("create_access_point", **params)
+        try:
+            described = self._call("create_access_point", **params)
+        except VolumeException as exc:
+            if exc.__cause__ is not None and aws_code(exc.__cause__) == ACCESS_POINT_ALREADY_EXISTS:
+                return self.get(name)
+            raise
         return EfsVolume(
             file_system_id=self._file_system_id,
             access_point_id=str(described.get("AccessPointId", "")),

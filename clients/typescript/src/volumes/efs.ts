@@ -23,6 +23,10 @@ import {
 export const EFS_PEER = "@aws-sdk/client-efs";
 /** `ClientToken` acepta hasta 64 caracteres ASCII (modelo `efs`). */
 const CLIENT_TOKEN_LENGTH = 64;
+/** `ClientToken` repetido (mismo `FileSystemId`+nombre): EFS responde 409
+ * `AccessPointAlreadyExists`, nunca el access point ya creado
+ * (`VolumeStore.create` lo atrapa y hace `get(name)` en su lugar). */
+export const ACCESS_POINT_ALREADY_EXISTS = "AccessPointAlreadyExists";
 
 export type Credentials = AwsClientSettings["credentials"];
 
@@ -93,8 +97,14 @@ const IAM_ACTIONS: Readonly<Record<keyof EfsApi, string>> = Object.freeze({
   deleteAccessPoint: "elasticfilesystem:DeleteAccessPoint",
 });
 
-export function clientToken(name: string): string {
-  return createHash("sha256").update(name, "utf8").digest("hex").slice(0, CLIENT_TOKEN_LENGTH);
+/** Hash estable de `fileSystemId`+nombre lógico: scoped al sistema de
+ * ficheros (research doc §4.5) para que el mismo nombre en dos sistemas de
+ * ficheros del mismo llamante nunca comparta token. */
+export function clientToken(fileSystemId: string, name: string): string {
+  return createHash("sha256")
+    .update(`${fileSystemId}:${name}`, "utf8")
+    .digest("hex")
+    .slice(0, CLIENT_TOKEN_LENGTH);
 }
 
 export function rootDirectoryPath(name: string): string {
@@ -106,7 +116,7 @@ export function createAccessPointParams(
   name: string,
 ): Parameters<EfsApi["createAccessPoint"]>[0] {
   return {
-    ClientToken: clientToken(name),
+    ClientToken: clientToken(fileSystemId, name),
     FileSystemId: fileSystemId,
     PosixUser: { Uid: VOLUME_POSIX_UID, Gid: VOLUME_POSIX_GID },
     RootDirectory: {
@@ -158,7 +168,7 @@ export function translateError(operation: keyof EfsApi, error: unknown): Error {
         `sin permiso IAM ${IAM_ACTIONS[operation]} sobre el sistema de ficheros (credenciales del llamante)`,
         options,
       );
-    case "AccessPointAlreadyExists":
+    case ACCESS_POINT_ALREADY_EXISTS:
       return new VolumeError("ya existe un access point con ese nombre", options);
     case "AccessPointLimitExceeded":
       return new VolumeError(

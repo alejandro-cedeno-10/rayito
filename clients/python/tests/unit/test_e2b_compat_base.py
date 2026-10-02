@@ -329,15 +329,23 @@ def test_network_update_splits_the_internet_flag() -> None:
         map_network_update({"mask_request_host": "x"})
 
 
-@pytest.mark.parametrize(
-    ("kwarg", "feature"), [("mcp", "mcp"), ("iam", "iam"), ("volume_mounts", "volume_mounts")]
-)
+@pytest.mark.parametrize(("kwarg", "feature"), [("mcp", "mcp"), ("iam", "iam")])
 def test_resource_kwargs_are_unimplemented_before_mapping(kwarg: str, feature: str) -> None:
     kwargs: dict[str, Any] = {kwarg: {"x": {}}, "lifecycle": {"on_timeout": "freeze"}}
     with pytest.raises(UnimplementedError) as excinfo:
         map_create_kwargs(**kwargs)
     assert excinfo.value.feature == feature
     assert excinfo.value.reason == UNIMPLEMENTED_REASONS[feature]
+
+
+def test_map_create_kwargs_forwards_an_already_resolved_volumes_mapping() -> None:
+    """`volumes=` arrives already translated from `volume_mounts=` (by
+    `_sync.py`/`_async.py`'s `_launch`, via `resolve_volume_mounts`):
+    `map_create_kwargs` itself does no I/O, it only forwards the mapping to
+    the native kwargs."""
+    sentinel = {"/mnt/v": object()}
+    mapping = map_create_kwargs(volumes=sentinel)
+    assert mapping.native_kwargs["volumes"] is sentinel
 
 
 @pytest.mark.parametrize(

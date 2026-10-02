@@ -24,10 +24,10 @@ message EfsVolumeMount {
   // `fsap-[0-9a-f]{8,40}`.
   string access_point_id = 3;
   bool read_only = 4;
-  // Dotted-quad; empty lets the adapter resolve it itself. Set by the SDK
-  // from `DescribeMountTargets` to avoid depending on the guest resolving
-  // the VPC's private DNS zone for the mount target (research doc R3,
-  // EFS-5).
+  // Dotted-quad; empty lets the adapter resolve it itself (research doc
+  // R3, EFS-5: avoids depending on the guest resolving the VPC's private
+  // DNS zone for the mount target). Always empty today — no SDK calls
+  // `DescribeMountTargets` yet; that lands with the first real mounter.
   string mount_target_ip = 5;
 }
 

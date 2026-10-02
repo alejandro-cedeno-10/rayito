@@ -48,14 +48,18 @@ def validate_volume_name(name: str) -> str:
 
 
 def validate_file_system_id(value: str) -> str:
+    """Nunca repite `value` en el mensaje (§6 "los errores nunca repiten
+    … identificadores de sistema de ficheros"): sólo la forma esperada."""
     if not isinstance(value, str) or not FILE_SYSTEM_ID_PATTERN.match(value):
-        raise InvalidArgumentException(f"file_system_id inválido: {value!r}")
+        raise InvalidArgumentException("file_system_id inválido: se esperaba 'fs-' y 8-40 hex")
     return value
 
 
 def validate_access_point_id(value: str) -> str:
+    """Nunca repite `value` en el mensaje (§6, igual que
+    `validate_file_system_id`)."""
     if not isinstance(value, str) or not ACCESS_POINT_ID_PATTERN.match(value):
-        raise InvalidArgumentException(f"access_point_id inválido: {value!r}")
+        raise InvalidArgumentException("access_point_id inválido: se esperaba 'fsap-' y 8-40 hex")
     return value
 
 

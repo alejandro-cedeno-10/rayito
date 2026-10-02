@@ -56,10 +56,11 @@ pub enum ProbeOutcome {
     Gone,
 }
 
-/// Whether a mount should reject writes or allow them, as a raw mount
-/// option — not the source of truth for isolation, which is the execution
-/// role's IAM condition on `elasticfilesystem:AccessPointArn`
-/// (research doc §4.6).
+/// How `unmount` detaches a mount point. One variant today, kept as an enum
+/// (not a bool) because `/terminate` and a failed `/resume` remount are
+/// expected to need a forced `umount2(MNT_FORCE)` variant later, once the
+/// EFS measurement campaign exercises an unreachable mount target at
+/// unmount time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnmountMode {
     /// `umount -l`: detaches immediately, finishes once nothing still has

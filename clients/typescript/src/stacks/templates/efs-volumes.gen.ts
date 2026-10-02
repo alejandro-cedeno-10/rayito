@@ -46,17 +46,31 @@ Parameters:
     Description: >-
       "true" (default): deleting this stack keeps the file system and its
       data. "false": destroy() deletes them too, with everything they hold.
+  AllowWrite:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      "true" (default): RayitoEfsVolumeClient (below) also grants
+      elasticfilesystem:ClientWrite. "false": read-only, ClientMount only.
+      Never grants elasticfilesystem:ClientRootAccess either way (research
+      doc section 4.1 rule 5, root squash always on).
 
 Conditions:
   HasSubnet2: !Not [!Equals [!Ref SubnetId2, ""]]
   HasSubnet3: !Not [!Equals [!Ref SubnetId3, ""]]
   RetainFileSystem: !Equals [!Ref RetainData, "true"]
+  DeleteFileSystem: !Not [!Condition RetainFileSystem]
+  GrantClientWrite: !Equals [!Ref AllowWrite, "true"]
 
 Resources:
   # Egress from the connector's ENIs: only NFS (2049) to the mount-target
-  # security group, mirroring infra/egress-connector.yaml's localhost
-  # placeholder rule (EC2's implicit allow-all egress rule only disappears
-  # once at least one explicit rule exists).
+  # security group (added below as a separate SecurityGroupEgress, to
+  # avoid the circular reference a rule inline here would make with
+  # MountTargetSecurityGroup's own ingress), mirroring
+  # infra/egress-connector.yaml's localhost placeholder rule (EC2's
+  # implicit allow-all egress rule only disappears once at least one
+  # explicit rule exists).
   ConnectorSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -88,10 +102,36 @@ Resources:
         - Key: rayito
           Value: efs-volumes-mount-target
 
-  FileSystem:
+  # The connector's one piece of egress (research doc section 4.6): NFS to
+  # the mount targets. A separate resource, never an inline rule on either
+  # security group, so the two never reference each other's logical id at
+  # creation time (a circular reference CloudFormation would reject).
+  ConnectorEgressToMountTargets:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ConnectorSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      DestinationSecurityGroupId: !Ref MountTargetSecurityGroup
+      Description: NFS to the Rayito EFS mount targets only
+
+  # \`AWS::EFS::FileSystem\`'s \`DeletionPolicy\`/\`UpdateReplacePolicy\` cannot be
+  # an intrinsic (\`!If\`): that needs the \`AWS::LanguageExtensions\` transform,
+  # which in turn needs \`CAPABILITY_AUTO_EXPAND\` — forbidden by
+  # \`_stacks/_model.py\` (no component uses macros or SAM transforms). So
+  # this is two resources with a literal policy each, chosen by
+  # \`RetainFileSystem\`; mount targets and outputs below pick whichever one
+  # exists with \`!If\`. Their \`Properties\` are deliberately identical, kept
+  # in sync by \`scripts/tests/test_efs_volumes_template.py\` — a YAML anchor
+  # would dedupe them, but CloudFormation rejects aliases outright unless
+  # the template goes through \`aws cloudformation package\`/SAM first
+  # (cfn-lint W1101), which this stack's deploy path does not do.
+  FileSystemRetained:
     Type: AWS::EFS::FileSystem
-    DeletionPolicy: !If [RetainFileSystem, Retain, Delete]
-    UpdateReplacePolicy: !If [RetainFileSystem, Retain, Delete]
+    Condition: RetainFileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Encrypted: true
       PerformanceMode: generalPurpose
@@ -138,10 +178,59 @@ Resources:
               Bool:
                 elasticfilesystem:AccessedViaMountTarget: "false"
 
+  FileSystemDeletable:
+    Type: AWS::EFS::FileSystem
+    Condition: DeleteFileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+      FileSystemTags:
+        - Key: rayito
+          Value: efs-volumes
+      # Kept byte-for-byte identical to FileSystemRetained's policy above
+      # (see the comment there for why this isn't a YAML anchor); the three
+      # denies are research doc section 4.6.
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyNonTls
+            Effect: Deny
+            Principal: "*"
+            Action: "elasticfilesystem:*"
+            Resource: "*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+          - Sid: DenyWithoutAccessPoint
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+            Resource: "*"
+            Condition:
+              "Null":
+                elasticfilesystem:AccessPointArn: "true"
+          - Sid: DenyWithoutMountTarget
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+            Resource: "*"
+            Condition:
+              Bool:
+                elasticfilesystem:AccessedViaMountTarget: "false"
+
   MountTarget1:
     Type: AWS::EFS::MountTarget
     Properties:
-      FileSystemId: !Ref FileSystem
+      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
       SubnetId: !Ref SubnetId1
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -150,7 +239,7 @@ Resources:
     Type: AWS::EFS::MountTarget
     Condition: HasSubnet2
     Properties:
-      FileSystemId: !Ref FileSystem
+      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
       SubnetId: !Ref SubnetId2
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -159,7 +248,7 @@ Resources:
     Type: AWS::EFS::MountTarget
     Condition: HasSubnet3
     Properties:
-      FileSystemId: !Ref FileSystem
+      FileSystemId: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
       SubnetId: !Ref SubnetId3
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
@@ -195,6 +284,39 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
 
+  # Identity-side Allow the FileSystemPolicy's deny-only statements require
+  # (research doc section 4.6): without this attached to the MicroVM's
+  # execution role (infra/iam.yaml), ClientMount/ClientWrite are denied even
+  # with a valid access point, because the file-system policy above never
+  # grants anything by itself. Scoped to "some access point named" (the
+  # same elasticfilesystem:AccessPointArn condition key the deny statements
+  # use), never a specific access point, since VolumeStore.create() makes
+  # those after this stack already exists. Never
+  # elasticfilesystem:ClientRootAccess.
+  EfsVolumeClientPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      # No \`ManagedPolicyName\`: CloudFormation names it, so this stays under
+      # \`CAPABILITY_IAM\` alone (\`_stacks/_model.py\` forbids
+      # \`CAPABILITY_AUTO_EXPAND\`, but a *named* IAM resource would need the
+      # stronger \`CAPABILITY_NAMED_IAM\` for no benefit here).
+      Description: >-
+        Attach to the execution role that mounts volumes= on this file
+        system: elasticfilesystem:ClientMount (plus ClientWrite unless
+        AllowWrite=false) on an access point of FileSystemId, never
+        ClientRootAccess.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - elasticfilesystem:ClientMount
+              - !If [GrantClientWrite, elasticfilesystem:ClientWrite, !Ref AWS::NoValue]
+            Resource: !If [RetainFileSystem, !GetAtt FileSystemRetained.Arn, !GetAtt FileSystemDeletable.Arn]
+            Condition:
+              "Null":
+                elasticfilesystem:AccessPointArn: "false"
+
   Connector:
     Type: AWS::Lambda::NetworkConnector
     Properties:
@@ -215,9 +337,9 @@ Resources:
 Outputs:
   FileSystemId:
     Description: Pass it as VolumeStore(file_system_id=...).
-    Value: !Ref FileSystem
+    Value: !If [RetainFileSystem, !Ref FileSystemRetained, !Ref FileSystemDeletable]
   FileSystemArn:
-    Value: !GetAtt FileSystem.Arn
+    Value: !If [RetainFileSystem, !GetAtt FileSystemRetained.Arn, !GetAtt FileSystemDeletable.Arn]
   ConnectorArn:
     Description: Pass it as Sandbox.create(egress=[ConnectorArn]).
     Value: !GetAtt Connector.Arn
@@ -225,11 +347,19 @@ Outputs:
     Value: !GetAtt Connector.State
   MountTargetSecurityGroupId:
     Value: !Ref MountTargetSecurityGroup
+  CallerPolicyArn:
+    Description: >-
+      Attach to infra/iam.yaml's execution role so it can
+      ClientMount/ClientWrite an access point of this file system
+      (RayitoEfsVolumeClient; see CallerPolicyStatement for the separate
+      lambda:PassNetworkConnector statement).
+    Value: !Ref EfsVolumeClientPolicy
   CallerPolicyStatement:
     Description: >-
-      The statement the SDK caller needs on top of infra/iam.yaml's execution
-      role (elasticfilesystem:ClientMount/ClientWrite on the file system,
-      conditioned on an access point ARN) to pass this connector.
+      The lambda:PassNetworkConnector statement the SDK caller needs on top
+      of infra/iam.yaml's execution role to launch a sandbox with
+      egress=[ConnectorArn]; it does not cover ClientMount/ClientWrite
+      (that's CallerPolicyArn, above).
     Value: !Sub '{"Effect":"Allow","Action":"lambda:PassNetworkConnector","Resource":"\${Connector.Arn}"}'
 `;
 // Base64 of the component's Lambda source zip, or undefined when it has none.

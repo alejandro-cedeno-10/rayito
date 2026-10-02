@@ -10,11 +10,14 @@ vivos.
     El dominio, el puerto `VolumeMounter` y el CRUD de volúmenes
     (`VolumeStore`) son reales y están probados. Pero `rayd` sólo trae
     `UnavailableEfsMounter` hasta que la campaña de medición EFS-1..EFS-20
-    (tres criterios de parada: NFSv4.1 en el kernel del guest, un conector
-    VPC propio que llegue al mount target, y `efs-utils` con TLS + IAM +
-    access point sin `systemd`) se ejecute contra AWS real. Hasta entonces,
-    `Sandbox.create(volumes=...)` siempre lanza `UnimplementedError`, incluso
-    con una petición perfectamente válida. Ver
+    se ejecute contra AWS real. EFS-1 (NFSv4.1 en el kernel del guest) ya
+    respondió que sí; quedan los criterios de parada EFS-2, EFS-3, EFS-8,
+    EFS-11 y EFS-13 (mount dentro del contenedor de la app, un conector VPC
+    propio que llegue al mount target, y `efs-utils` con TLS + IAM + access
+    point sin `systemd`, suspend/resume y `/suspend` con el mount target
+    inalcanzable). Hasta entonces, `Sandbox.create(volumes=...)` siempre
+    lanza `UnimplementedError`, incluso con una petición perfectamente
+    válida. Ver
     [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md)
     para el estudio completo.
 
@@ -51,7 +54,7 @@ vivos.
 ## Cuándo usarlo (cuando el montaje llegue)
 
 - Varios sandboxes necesitan leer y escribir el **mismo** directorio a la
-  vez, o un sandbix necesita ver en vivo lo que otro escribió — algo que
+  vez, o un sandbox necesita ver en vivo lo que otro escribió — algo que
   `persist=` (checkpoint/restore) no da: dos sandboxes con `persist=` no
   comparten nada en vivo, y lo escrito entre checkpoints se pierde si la VM
   muere.
@@ -81,7 +84,7 @@ volumen es un *access point* con `RootDirectory.Path =
     1. Construirlo no llama a AWS: el cliente boto3 `efs` se crea en el
        primer método.
     2. `CreateAccessPoint`, idempotente por nombre (`ClientToken` es un
-       hash del nombre).
+       hash de `file_system_id`+nombre).
     3. `DeleteAccessPoint`; el directorio en sí no se borra.
 
 === "Python (async)"
@@ -136,6 +139,34 @@ Hoy, esta llamada valida la petición (rutas bajo `/mnt/` o `/home/user/`,
 como mucho 4 montajes entre `mounts=` y `volumes=`, tipos correctos) y
 **siempre** termina en `UnimplementedError` nombrando la campaña de
 medición pendiente — nunca una llamada a AWS a medias.
+
+## Shim E2B: `E2B(volume_store=...)`
+
+`client.Volume`/`client.AsyncVolume` (`rayito.e2b`) son `UnimplementedError`
+hasta que el cliente les liga un `VolumeStore`; ligado, el CRUD es el mismo
+que arriba, con los nombres de E2B (`Volume.create/connect/list/get_info/
+destroy`).
+
+=== "Python"
+
+    ```python
+    from rayito import VolumeStore
+    from rayito.e2b import E2B
+
+    client = E2B(volume_store=VolumeStore(file_system_id="fs-0123abcd"))
+    vol = client.Volume.create("datos-agente-7")  # sin volume_store: UnimplementedError
+    client.Volume.destroy(vol.volume_id)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { E2B, VolumeStore } from "rayito/e2b";
+
+    const client = new E2B({ volumeStore: new VolumeStore({ fileSystemId: "fs-0123abcd" }) });
+    const vol = await client.Volume.create("datos-agente-7");
+    await client.Volume.destroy(vol.volumeId);
+    ```
 
 ## Errores y solución de problemas
 

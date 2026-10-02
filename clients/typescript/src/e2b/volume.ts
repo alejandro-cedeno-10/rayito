@@ -11,7 +11,8 @@
  * `AccessPointId` de AWS: `VolumeStore` indexa por nombre.
  */
 
-import type { EfsVolume } from "../volumes/domain.js";
+import { InvalidArgumentError } from "../errors.js";
+import { EfsVolume } from "../volumes/domain.js";
 import type { VolumeStore } from "../volumes/store.js";
 import { unimplemented } from "./unimplemented.js";
 
@@ -90,10 +91,47 @@ export class Volume {
   remove(..._args: unknown[]): never {
     throw unimplemented("volume.readFile");
   }
+
+  updateMetadata(..._args: unknown[]): never {
+    throw unimplemented("volume.readFile");
+  }
 }
 
 export function bindVolume(store: VolumeStore): typeof Volume {
   return class BoundVolume extends Volume {
     static override readonly boundStore: VolumeStore = store;
   };
+}
+
+/**
+ * `Sandbox.create({ volumeMounts: {path: Volume|string} })` → `volumes:
+ * {path: EfsVolume}` (research doc §4.5 "Volume | name"): a bound `Volume`
+ * already carries its `volumeId`/`name`, no AWS call; a plain string name
+ * is looked up with `store.get(name)` (one `DescribeAccessPointsCommand`,
+ * the same `Volume.connect` would make). Called from `Sandbox.createFor`,
+ * never from the I/O-free `compat.ts` table, precisely because the
+ * plain-string case does call AWS.
+ */
+export async function resolveVolumeMounts(
+  volumeMounts: Readonly<Record<string, unknown>>,
+  store: VolumeStore,
+): Promise<Record<string, EfsVolume>> {
+  const resolved: Record<string, EfsVolume> = {};
+  for (const [path, value] of Object.entries(volumeMounts)) {
+    if (value instanceof Volume) {
+      resolved[path] = new EfsVolume({
+        fileSystemId: store.fileSystemId,
+        accessPointId: value.volumeId,
+        name: value.name,
+        region: store.region,
+      });
+    } else if (typeof value === "string") {
+      resolved[path] = await store.get(value);
+    } else {
+      throw new InvalidArgumentError(
+        `volumeMounts espera un Volume o un nombre de texto, se recibió ${typeof value}`,
+      );
+    }
+  }
+  return resolved;
 }

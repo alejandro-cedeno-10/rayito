@@ -58,6 +58,7 @@ import type {
   SandboxUrlOpts,
 } from "./types.js";
 import { rejectUnimplemented, unimplemented } from "./unimplemented.js";
+import { resolveVolumeMounts } from "./volume.js";
 
 export { LIFECYCLE_IMAGE_REASON } from "./compat.js";
 
@@ -65,6 +66,21 @@ export { LIFECYCLE_IMAGE_REASON } from "./compat.js";
 export const ENVD_PORT = 8080;
 export const UPLOAD_URL_PATH_MESSAGE =
   "uploadUrl necesita la ruta de destino: la URL de S3 no lleva el nombre del fichero";
+
+/** `opts.volumeMounts` → `volumes` (research doc §4.5), a través de
+ * `opts.volumeStore`; sin store, un `volumeMounts` no vacío es
+ * `UnimplementedError("Volume")`, la misma guardia que `client.Volume`. */
+async function resolveVolumeMountsOptFor(
+  opts: Pick<SandboxOpts, "volumeMounts" | "volumeStore">,
+): Promise<Record<string, unknown> | undefined> {
+  if (opts.volumeMounts === undefined) {
+    return undefined;
+  }
+  if (opts.volumeStore === undefined) {
+    throw unimplemented("Volume");
+  }
+  return resolveVolumeMounts(opts.volumeMounts, opts.volumeStore);
+}
 
 /** El paginador de `Sandbox.list()` de E2B: `hasNext`, `nextToken` y `nextItems()` con `SandboxInfo`. */
 export class SandboxPaginator {
@@ -237,15 +253,17 @@ export class Sandbox implements AsyncDisposable {
     const template = typeof templateOrOpts === "string" ? templateOrOpts : undefined;
     const call = typeof templateOrOpts === "string" ? (opts ?? {}) : (templateOrOpts ?? {});
     const merged = mergeBoundOpts(bound, call);
+    const volumes = await resolveVolumeMountsOptFor(merged);
     const mapping = mapCreateOptions(
       template ?? merged,
       template === undefined ? undefined : merged,
     );
+    const native = volumes === undefined ? mapping.native : { ...mapping.native, volumes };
     const config = new ConnectionConfig(merged);
     emitIgnoredWarnings(mapping.ignored);
     try {
-      const native = await NativeSandbox.create(mapping.native);
-      return new cls(native, bound, config);
+      const createdNative = await NativeSandbox.create(native);
+      return new cls(createdNative, bound, config);
     } catch (error) {
       throw lifecycleImageError(error);
     }

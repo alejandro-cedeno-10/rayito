@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping
 from typing import Any, ClassVar, NoReturn
 
-from rayito._volumes import VolumeStore
+from rayito._volumes import EfsVolume, VolumeStore
 from rayito.e2b._unimplemented import unimplemented
+from rayito.exceptions import InvalidArgumentException
 
 
 class Volume:
@@ -78,6 +79,7 @@ class Volume:
     make_dir = read_file
     list_files = read_file
     remove = read_file
+    update_metadata = read_file
 
 
 class AsyncVolume:
@@ -151,3 +153,51 @@ class AsyncVolume:
     make_dir = read_file
     list_files = read_file
     remove = read_file
+    update_metadata = read_file
+
+
+def resolve_volume_mounts(
+    volume_mounts: Mapping[str, Any], *, store: VolumeStore
+) -> dict[str, EfsVolume]:
+    """`Sandbox.create(volume_mounts={path: Volume|str})` → `volumes={path:
+    EfsVolume}` (research doc §4.5 "Volume | name"): a bound `Volume`
+    already carries its `access_point_id`/`name`, no AWS call; a plain
+    string name is looked up with `store.get(name)` (one
+    `DescribeAccessPoints`, the same the shim's own `Volume.connect` would
+    make). Called from `_sync.py`/`_async.py`'s `_launch`, never from the
+    I/O-free `_compat.py` table, precisely because the plain-string case
+    does call AWS."""
+    resolved: dict[str, EfsVolume] = {}
+    for path, value in volume_mounts.items():
+        if isinstance(value, (Volume, AsyncVolume)):
+            resolved[path] = EfsVolume(
+                file_system_id=store.file_system_id,
+                access_point_id=value.volume_id,
+                name=value.name,
+                region=store.region,
+            )
+        elif isinstance(value, str):
+            resolved[path] = store.get(value)
+        else:
+            raise InvalidArgumentException(
+                "volume_mounts espera un Volume o un nombre de texto, se recibió "
+                f"{type(value).__name__}"
+            )
+    return resolved
+
+
+def translate_volume_mounts_kwarg(
+    create_kwargs: Mapping[str, Any], *, store: VolumeStore | None
+) -> dict[str, Any]:
+    """`_sync.py`/`_async.py`'s `_launch`: una copia de `create_kwargs` con
+    `volume_mounts` resuelto a `volumes` (o ausente, si no se pasó
+    ninguno), antes de pasarla a la tabla pura `map_create_kwargs`. Sin
+    `volume_store=` en el cliente, un `volume_mounts` no vacío sigue
+    siendo `unimplemented("Volume")` — el mismo guard que `client.Volume`."""
+    resolved = dict(create_kwargs)
+    volume_mounts = resolved.pop("volume_mounts", None)
+    if volume_mounts is not None:
+        if store is None:
+            raise unimplemented("Volume")
+        resolved["volumes"] = resolve_volume_mounts(volume_mounts, store=store)
+    return resolved

@@ -89,7 +89,6 @@ const D14_TS_KEYS = [
   "mcp",
   "getMcpUrl",
   "getMcpToken",
-  "volumeMounts",
   "Volume",
   "volume.readFile",
   "getSignature",
@@ -271,11 +270,10 @@ describe("mapCreateOptions", () => {
     expect(error.message).toContain("suspend-microvm");
   });
 
-  test("mcp, iam and volumeMounts are unimplemented whatever their value", () => {
+  test("mcp and iam are unimplemented whatever their value", () => {
     for (const [key, feature] of [
       ["mcp", "mcp"],
       ["iam", "iam"],
-      ["volumeMounts", "volumeMounts"],
     ] as const) {
       for (const value of [{}, [], "x", null]) {
         const error = caught(() => mapCreateOptions({ [key]: value } as SandboxOpts));
@@ -283,6 +281,15 @@ describe("mapCreateOptions", () => {
         expect((error as UnimplementedError).feature).toBe(feature);
       }
     }
+  });
+
+  test("mapCreateOptions forwards an already-resolved volumes mapping as-is", () => {
+    // `volumes` arrives already translated from `volumeMounts` (by
+    // `Sandbox.createFor`, via `resolveVolumeMounts`): `mapCreateOptions`
+    // itself does no I/O, it only merges `volumes` onto the native options
+    // (see `Sandbox.createFor` for where that merge actually happens).
+    const result = mapCreateOptions({});
+    expect(result.native).not.toHaveProperty("volumes");
   });
 
   test("the ignored options give one warning each, naming the option and never the value", () => {

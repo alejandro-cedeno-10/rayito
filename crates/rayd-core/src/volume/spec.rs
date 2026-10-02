@@ -2,21 +2,22 @@
 //! (research doc §4.2, `VolumeSpec`). Validation never touches the network
 //! or the filesystem: it is string- and pattern-level only, the same split
 //! the SDK's `_mount_path.py`/`mount-path.ts` already use for `mounts=`.
+//! The mount-path shape itself lives in `rayd_core::mount_path`, shared
+//! with `s3_mount` (m15-s3-mounts), so the two sections can never drift
+//! apart on what a valid path is or how many a sandbox may have.
 
 use super::error::VolumeError;
+use crate::mount_path;
 
-/// Mount paths live under one of these roots (research doc §4.1 rule 2,
-/// mirrors `rayito._mount_path.ALLOWED_ROOTS`): never `/`, `/proc`, `/sys`,
-/// `/dev`, `/etc` or the home root itself, so a volume can never shadow a
-/// path `rayd` or another hook depends on.
-pub const ALLOWED_MOUNT_ROOTS: [&str; 2] = ["/mnt/", "/home/user/"];
-
+/// Re-exported so existing call sites and doc comments in this module
+/// keep their name; the canonical definitions live in
+/// `rayd_core::mount_path`, shared with `s3_mount`.
+pub use crate::mount_path::ALLOWED_ROOTS as ALLOWED_MOUNT_ROOTS;
 /// A sandbox has at most this many volumes in one `EfsVolumesConfig`
-/// (research doc §5 "Volúmenes por sandbox"); the SDK enforces the same
-/// cap jointly across `mounts=` and `volumes=` before either ever reaches
-/// `rayd` (`rayito._mount_path.MAX_MOUNTS`), so this is a second,
-/// independent backstop inside the agent, not the only one.
-pub const MAX_VOLUMES_PER_SANDBOX: usize = 4;
+/// (research doc §5 "Volúmenes por sandbox") — the same joint cap
+/// `mount_path::MAX_MOUNTS` enforces across `mounts=`/`volumes=` combined,
+/// never a second independent number that could silently drift from it.
+pub use crate::mount_path::MAX_MOUNTS as MAX_VOLUMES_PER_SANDBOX;
 
 /// Shortest and longest hex suffix AWS issues for an EFS file-system or
 /// access-point id (research doc R3: `fs-[0-9a-f]{8,40}`,
@@ -71,24 +72,15 @@ impl AccessPointId {
     }
 }
 
-/// A validated, canonical mount path under `ALLOWED_MOUNT_ROOTS`.
+/// A validated, canonical mount path under `ALLOWED_MOUNT_ROOTS`. Its shape
+/// check and `overlaps` are `rayd_core::mount_path`'s, not reimplemented
+/// here (see the module doc comment).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MountPath(String);
 
 impl MountPath {
     pub fn parse(value: &str) -> Result<Self, VolumeError> {
-        if !value.starts_with('/') {
-            return Err(VolumeError::InvalidPath);
-        }
-        if !is_canonical(value) {
-            return Err(VolumeError::InvalidPath);
-        }
-        let under_allowed_root = ALLOWED_MOUNT_ROOTS
-            .iter()
-            .any(|root| value.starts_with(root) && value.len() > root.trim_end_matches('/').len());
-        if !under_allowed_root {
-            return Err(VolumeError::InvalidPath);
-        }
+        mount_path::validate_shape(value).map_err(|_| VolumeError::InvalidPath)?;
         Ok(Self(value.to_owned()))
     }
 
@@ -102,24 +94,8 @@ impl MountPath {
     /// solapamientos ni anidamiento").
     #[must_use]
     pub fn overlaps(&self, other: &MountPath) -> bool {
-        if self.0 == other.0 {
-            return true;
-        }
-        let a = format!("{}/", self.0);
-        let b = format!("{}/", other.0);
-        a.starts_with(&b) || b.starts_with(&a)
+        mount_path::overlaps(&self.0, &other.0)
     }
-}
-
-fn is_canonical(path: &str) -> bool {
-    if path != "/" && path.ends_with('/') {
-        return false;
-    }
-    if path.contains("//") {
-        return false;
-    }
-    path.split('/')
-        .all(|segment| segment != "." && segment != "..")
 }
 
 /// A validated IPv4 dotted-quad, used for `efs-utils`' `mounttargetip=`

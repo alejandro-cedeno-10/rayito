@@ -20,10 +20,12 @@
 //! M15 (Rayito 0.6) adds the shared domain of the optional features:
 //! which zombies PID 1 may reap (`orphans`), the `ConfigureSandbox`
 //! contract (`configure`) and the capability flags `Health` reports
-//! (`features`, `root_egress`), and the credential-lease freshness rule
-//! shared by every feature that needs the execution role inside the guest
-//! (`credentials`). Each feature's own domain (`volume`, `s3_mount`, …)
-//! lives in its own module, added by that feature.
+//! (`features`, `root_egress`), the credential-lease freshness rule shared
+//! by every feature that needs the execution role inside the guest
+//! (`credentials`), and the mount-path shape every mounting feature
+//! re-validates before touching the guest filesystem (`mount_path`). Each
+//! feature's own domain (`volume`, `s3_mount`, …) lives in its own module,
+//! added by that feature.
 
 pub mod auth;
 pub mod capabilities;
@@ -38,6 +40,7 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod metrics;
 pub mod metrics_history;
+pub mod mount_path;
 pub mod network;
 pub mod orphans;
 pub mod persistence;

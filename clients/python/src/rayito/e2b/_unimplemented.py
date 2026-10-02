@@ -74,7 +74,6 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
         "mcp": MCP_REASON,
         "get_mcp_url": MCP_REASON,
         "get_mcp_token": MCP_REASON,
-        "volume_mounts": VOLUME_REASON,
         "Volume": VOLUME_REASON,
         "volume.read_file": VOLUME_CONTENT_REASON,
         "get_signature": (

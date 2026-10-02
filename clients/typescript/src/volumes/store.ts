@@ -8,9 +8,10 @@
  */
 
 import type { LazyAwsApi } from "../aws/optional-client.js";
-import { VolumeNotFoundError } from "../errors.js";
+import { VolumeError, VolumeNotFoundError } from "../errors.js";
 import { EfsVolume, validateFileSystemId, validateVolumeName } from "./domain.js";
 import {
+  ACCESS_POINT_ALREADY_EXISTS,
   type Credentials,
   createAccessPointParams,
   type EfsApi,
@@ -84,18 +85,28 @@ export class VolumeStore {
   /**
    * `CreateAccessPointCommand` con uid/gid 1000:1000 y la ruta raíz
    * `/rayito-volumes/<name>`. Idempotente: llamarla dos veces con el mismo
-   * nombre no crea dos access points (`ClientToken` es un hash del nombre).
+   * nombre no crea dos access points (`ClientToken` es un hash de
+   * `fileSystemId`+nombre). AWS no devuelve el access point ya creado para
+   * un `ClientToken` repetido: responde `AccessPointAlreadyExists`, que
+   * esta función atrapa para devolver `get(name)` en su lugar.
    */
   async create(name: string): Promise<EfsVolume> {
     validateVolumeName(name);
     const params = createAccessPointParams(this.#fileSystemId, name);
-    const described = await this.#call("createAccessPoint", params);
-    return new EfsVolume({
-      fileSystemId: this.#fileSystemId,
-      accessPointId: described.AccessPointId ?? "",
-      name,
-      region: this.#region,
-    });
+    try {
+      const described = await this.#call("createAccessPoint", params);
+      return new EfsVolume({
+        fileSystemId: this.#fileSystemId,
+        accessPointId: described.AccessPointId ?? "",
+        name,
+        region: this.#region,
+      });
+    } catch (error) {
+      if (error instanceof VolumeError && error.awsCode === ACCESS_POINT_ALREADY_EXISTS) {
+        return this.get(name);
+      }
+      throw error;
+    }
   }
 
   /**

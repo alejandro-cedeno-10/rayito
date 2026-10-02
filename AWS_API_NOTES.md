@@ -986,10 +986,16 @@ cambios de forma. Referencia de la API:
 
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
-| `CreateAccessPoint` (`create_access_point` / `CreateAccessPointCommand`) | `ClientToken` (hash del nombre lógico, idempotente), `FileSystemId`, `PosixUser={Uid, Gid}` (1000:1000, fijo), `RootDirectory={Path, CreationInfo={OwnerUid, OwnerGid, Permissions}}` (`Path` = `/rayito-volumes/<nombre>`, `CreationInfo` 1000:1000 `0750`), `Tags=[{Key, Value}]` (`rayito:volume=<nombre>`) | `AccessPointId`, `AccessPointArn`, `LifeCycleState` | `elasticfilesystem:CreateAccessPoint` sobre el sistema de ficheros | <https://docs.aws.amazon.com/efs/latest/ug/API_CreateAccessPoint.html> |
+| `CreateAccessPoint` (`create_access_point` / `CreateAccessPointCommand`) | `ClientToken` (hash de `FileSystemId`+nombre lógico, idempotente y scoped al sistema de ficheros), `FileSystemId`, `PosixUser={Uid, Gid}` (1000:1000, fijo), `RootDirectory={Path, CreationInfo={OwnerUid, OwnerGid, Permissions}}` (`Path` = `/rayito-volumes/<nombre>`, `CreationInfo` 1000:1000 `0750`), `Tags=[{Key, Value}]` (`rayito:volume=<nombre>`) | `AccessPointId`, `AccessPointArn`, `LifeCycleState` | `elasticfilesystem:CreateAccessPoint` sobre el sistema de ficheros | <https://docs.aws.amazon.com/efs/latest/ug/API_CreateAccessPoint.html> |
 | `DescribeAccessPoints` (`describe_access_points` / `DescribeAccessPointsCommand`) | `AccessPointId` **o** `FileSystemId` (mutuamente excluyentes, nunca ambos), `MaxResults`, `NextToken` | `AccessPoints[].{AccessPointId, AccessPointArn, FileSystemId, RootDirectory.Path, Tags, LifeCycleState}`, `NextToken` | `elasticfilesystem:DescribeAccessPoints` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeAccessPoints.html> |
 | `DeleteAccessPoint` (`delete_access_point` / `DeleteAccessPointCommand`) | `AccessPointId` | — (sin cuerpo; `204`) | `elasticfilesystem:DeleteAccessPoint` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteAccessPoint.html> |
 | `DescribeMountTargets` (`describe_mount_targets` / `DescribeMountTargetsCommand`) | `AccessPointId` **o** `FileSystemId` (uno de los dos; nunca `MountTargetId` desde este SDK) | `MountTargets[].{MountTargetId, SubnetId, LifeCycleState, IpAddress, AvailabilityZoneId}` | `elasticfilesystem:DescribeMountTargets` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html> |
+
+Un `ClientToken` ya usado por un access point que sigue vivo no devuelve
+ese access point: EFS responde `AccessPointAlreadyExists` (409), que
+`VolumeStore.create` atrapa para hacer `DescribeAccessPoints` él mismo
+(`get(name)`) — por eso `create()` sigue siendo idempotente de cara al
+llamante aunque EFS no lo sea a nivel de API.
 
 `LifeCycleState` es una cadena cerrada (`creating`, `available`,
 `updating`, `deleting`, `deleted`, `error`); `VolumeStore` sólo trata

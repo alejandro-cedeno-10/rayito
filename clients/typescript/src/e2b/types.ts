@@ -8,6 +8,7 @@ import type { DynamoDbIndex } from "../index/dynamodb.js";
 import type { EgressProxyInput, NetworkSelector } from "../models.js";
 import type { LoggingOption, PortLike } from "../sandbox/launch.js";
 import type { ListOrder } from "../sandbox/listing.js";
+import type { VolumeStore } from "../volumes/store.js";
 import type { ConnectionOpts } from "./connection.js";
 
 export type SandboxState = "running" | "paused";
@@ -73,7 +74,14 @@ export interface SandboxOpts extends ConnectionOpts {
   readonly mcp?: unknown;
   readonly network?: SandboxNetworkOpts | undefined;
   readonly iam?: unknown;
-  readonly volumeMounts?: unknown;
+  readonly volumeMounts?: Readonly<Record<string, unknown>> | undefined;
+  /**
+   * Extensión de Rayito (m15-efs-volumes, `undefined` por defecto; también
+   * `new E2B({ volumeStore })`): el store que resuelve `volumeMounts` a
+   * `volumes=` (un `Volume` ligado o un nombre de texto, research doc
+   * §4.5). Sin él, `volumeMounts` no vacío es `UnimplementedError("Volume")`.
+   */
+  readonly volumeStore?: VolumeStore | undefined;
   readonly lifecycle?: SandboxLifecycle | undefined;
   /** El tope de la plataforma; por defecto `max(3 600 000, min(timeoutMs + 60 000, 28 800 000))`. */
   readonly maxLifetimeMs?: number | undefined;

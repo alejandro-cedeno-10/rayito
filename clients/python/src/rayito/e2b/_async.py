@@ -41,6 +41,7 @@ from rayito._sandbox_base import (
     PortLike,
     class_method_variant,
 )
+from rayito._volumes import VolumeStore
 from rayito.e2b._compat import (
     NativeCall,
     class_metrics_unimplemented,
@@ -90,6 +91,7 @@ from rayito.e2b._sync import (
     instance_request_timeout,
 )
 from rayito.e2b._unimplemented import UnimplementedMember
+from rayito.e2b._volume import translate_volume_mounts_kwarg
 from rayito.exceptions import (
     InvalidArgumentException,
     LifecycleUnsupportedException,
@@ -109,6 +111,9 @@ class AsyncSandbox:
 
     _bound_params: ClassVar[Mapping[str, Any]] = EMPTY_PARAMS
     _bound_index: ClassVar[DynamoDbIndex | None] = None
+    #: Ver `Sandbox._bound_volume_store` (`_sync.py`): misma traducción de
+    #: `volume_mounts=` a `volumes=`, antes de la tabla pura.
+    _bound_volume_store: ClassVar[VolumeStore | None] = None
 
     def __init__(
         self, *, _native: NativeAsyncSandbox, _connection: ConnectionConfig | None = None
@@ -145,7 +150,10 @@ class AsyncSandbox:
 
     @classmethod
     async def _launch(cls, create_kwargs: Mapping[str, Any], api_params: Mapping[str, Any]) -> Self:
-        mapping = map_create_kwargs(**create_kwargs)
+        resolved_kwargs = translate_volume_mounts_kwarg(
+            create_kwargs, store=cls._bound_volume_store
+        )
+        mapping = map_create_kwargs(**resolved_kwargs)
         resolved = cls._native_call(mapping.native_kwargs, api_params, call="create")
         emit_warnings(mapping.warnings)
         try:

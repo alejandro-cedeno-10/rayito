@@ -50,7 +50,6 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   mcp: MCP_REASON,
   getMcpUrl: MCP_REASON,
   getMcpToken: MCP_REASON,
-  volumeMounts: VOLUME_REASON,
   Volume: VOLUME_REASON,
   "volume.readFile": VOLUME_CONTENT_REASON,
   getSignature:

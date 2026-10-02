@@ -47,6 +47,7 @@ export const COMPONENT: StackComponent = {
       "AWS::EC2::SecurityGroup (x2)",
       "AWS::Lambda::NetworkConnector",
       "AWS::IAM::Role",
+      "AWS::IAM::ManagedPolicy",
     ],
     idleMonthly:
       "$0,30/GB-mes (Standard) hasta los 30 días, luego $0,016/GB-mes (IA); " +

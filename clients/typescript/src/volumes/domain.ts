@@ -36,16 +36,19 @@ export function validateVolumeName(name: string): string {
   return name;
 }
 
+/** Nunca repite `value` en el mensaje (§6 "los errores nunca repiten …
+ * identificadores de sistema de ficheros"): sólo la forma esperada. */
 export function validateFileSystemId(value: string): string {
   if (!FILE_SYSTEM_ID_PATTERN.test(value)) {
-    throw new InvalidArgumentError(`fileSystemId inválido: ${JSON.stringify(value)}`);
+    throw new InvalidArgumentError("fileSystemId inválido: se esperaba 'fs-' y 8-40 hex");
   }
   return value;
 }
 
+/** Nunca repite `value` en el mensaje (§6, igual que `validateFileSystemId`). */
 export function validateAccessPointId(value: string): string {
   if (!ACCESS_POINT_ID_PATTERN.test(value)) {
-    throw new InvalidArgumentError(`accessPointId inválido: ${JSON.stringify(value)}`);
+    throw new InvalidArgumentError("accessPointId inválido: se esperaba 'fsap-' y 8-40 hex");
   }
   return value;
 }

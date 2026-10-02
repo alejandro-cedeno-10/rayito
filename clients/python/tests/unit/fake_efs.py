@@ -28,20 +28,26 @@ class FakeEfsApi:
     _next_id: int = 1
 
     def create_access_point(self, **params: Any) -> dict[str, Any]:
+        """Como EFS de verdad: un `ClientToken` ya usado por un access point
+        que sigue vivo es `AccessPointAlreadyExists` (409), nunca el access
+        point devuelto directamente — eso lo resuelve `VolumeStore.create`
+        llamando a `get(name)`."""
         self.calls.append("create_access_point")
+        token = params["ClientToken"]
+        for existing in self.access_points.values():
+            if existing.get("_token") == token:
+                raise client_error("AccessPointAlreadyExists", "ya existe", "CreateAccessPoint")
         name = next(
             (tag["Value"] for tag in params.get("Tags", []) if tag.get("Key") == "rayito:volume"),
             None,
         )
-        for existing in self.access_points.values():
-            if existing.get("_name") == name:
-                return dict(existing)
         access_point_id = f"fsap-{self._next_id:08d}"
         self._next_id += 1
         described = {
             "AccessPointId": access_point_id,
             "FileSystemId": params["FileSystemId"],
             "_name": name,
+            "_token": token,
         }
         self.access_points[access_point_id] = described
         return dict(described)
