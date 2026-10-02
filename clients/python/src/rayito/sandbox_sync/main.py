@@ -750,7 +750,7 @@ class Sandbox:
         # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
         # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
         # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
-        resolved_size = plan_size(size, stacklevel=3)
+        resolved_size = plan_size(size, stacklevel=4)
         plan_features(
             FeatureOptions(
                 mounts=mounts,

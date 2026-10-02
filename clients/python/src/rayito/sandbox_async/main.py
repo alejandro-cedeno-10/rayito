@@ -614,7 +614,7 @@ class AsyncSandbox:
         # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
         # `sandbox_sync`) resuelve `size=` aquí, no en `plan_features`: ver
         # la versión sync para el porqué.
-        resolved_size = plan_size(size, stacklevel=3)
+        resolved_size = plan_size(size, stacklevel=4)
         plan_features(
             FeatureOptions(
                 mounts=mounts,

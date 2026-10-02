@@ -21,11 +21,16 @@ Parameters:
   ImageArns:
     Type: CommaDelimitedList
     Description: >-
-      The full ARNs of every image version this policy allows
+      The image ARN (without a version) of every image this policy allows
       lambda:RunMicrovm on (the baseline plus every --sizes suffix you
-      published, e.g. the ARNs of rayito-base, rayito-base-512mb and
-      rayito-base-4gb). Pass them exactly as \`rayito image list\` prints
-      \`imageArn\`; a bare name is not a valid Resource for an IAM policy.
+      published, e.g. rayito-base, rayito-base-512mb and
+      rayito-base-4gb). lambda:RunMicrovm authorizes against the
+      unversioned image ARN (Q90, AWS_API_NOTES.md section 24): pass each
+      value exactly as \`rayito image list\` prints \`imageArn\`, never with a
+      trailing version segment — a version-qualified ARN would make the
+      Deny statement below match (and so deny) every launch for the
+      identity. A bare name is not a valid Resource for an IAM policy
+      either.
 
 Resources:
   RayitoRunAllowedSizes:

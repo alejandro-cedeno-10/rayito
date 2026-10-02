@@ -45,7 +45,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `size=` se usó (como E2B reporta lo declarado por el template), la vista
   real del guest si no. `rayito image sizes [--variant]` lista, por
   tamaño del catálogo cerrado, qué imagen ya se publicó (`list-microvm-
-  images`, ninguna llamada adicional). Guardarraíles de coste opcional
+  images`) y si comparte artefacto con el baseline (`sameArtifact`, una
+  `GetMicrovmImageVersion` sin cuota propia por imagen ya publicada, nunca
+  lanza ningún sandbox). Guardarraíles de coste opcional
   `rayito stack deploy sizes-guard` (`RayitoRunAllowedSizes`: un Deny de
   `lambda:RunMicrovm` fuera de los ARN de imagen permitidos, efectivo
   aunque la identidad ya tenga el `microvm-image:*` de la `CallerPolicy`

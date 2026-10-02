@@ -111,8 +111,10 @@ SETTLED_VERSION_STATES = frozenset({"SUCCESSFUL", "FAILED"})
 MISSING_OBJECT_CODES = frozenset({"404", "NoSuchKey", "NotFound", "403"})
 BASE_IMAGE_VERSION_KEY = "baseImageVersion"
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
-# Nombre de la variable de imagen que `--sizes` hornea: `rayd`/el guest la
-# leen para saber su propio baseline (Q88), nunca una llamada a AWS.
+# Nombre de la variable de imagen que `--sizes` hornea: información
+# declarada para que el código del usuario sepa el baseline de la imagen
+# (Q88) sin llamar a AWS; `rayd` no la lee hoy (0.6), ver el docstring del
+# módulo y `sized_settings`.
 BASELINE_MEMORY_ENV_VAR = "RAYITO_BASELINE_MEMORY_MIB"
 # Oleadas de construcción simultánea de `--sizes`: al menos 10 builds en
 # paralelo no degradan el servicio (Q83, docs/research/2026-10-e2b-out-of-
@@ -734,9 +736,12 @@ def publish_with_sizes(
     `RAYITO_TEMPLATE` en `stdout` y rompería a un script que sólo lee la
     última). Con `--json`, un sólo objeto (ver `aggregate_summary`); en
     texto plano, un único `RAYITO_TEMPLATE=<ARN del baseline>` seguido de un
-    `RAYITO_TEMPLATE_<SIZE>=<ARN>` por tamaño adicional (`size_env_var`).
-    Sin `size_names` esto nunca se llama: `publish()` ya es exactamente este
-    camino sin agregación."""
+    `RAYITO_TEMPLATE_<SIZE>=<ARN>` por tamaño adicional (`size_env_var`), y
+    sólo si *todas* las imágenes quedaron lanzables — igual que `publish()`
+    no imprime `RAYITO_TEMPLATE` en un build fallido, para que un script que
+    evalúe o lea la última línea de `stdout` nunca recoja el ARN de una
+    imagen no lanzable (code review de PR #76). Sin `size_names` esto nunca
+    se llama: `publish()` ya es exactamente este camino sin agregación."""
     emit = progress_emitter(json_output)
     require_matching_variant(settings)
     baseline = build_or_reuse(clients, settings, sleep=sleep, emit=emit)
@@ -747,7 +752,7 @@ def publish_with_sizes(
     document = aggregate_summary(baseline, sized)
     if json_output:
         emit_json(document)
-    else:
+    elif not failed:
         echo(f"RAYITO_TEMPLATE={baseline['imageArn']}")
         for size_name, summary in sized.items():
             echo(f"{size_env_var(size_name)}={summary['imageArn']}")

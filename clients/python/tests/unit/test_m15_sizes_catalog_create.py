@@ -116,6 +116,45 @@ def test_a_size_request_that_rounds_up_warns_once(
     assert len(rounding_warnings) == 1
 
 
+def test_the_rounding_warning_points_at_the_callers_create_call(
+    plane: FakeControlPlane, transport: TrackingTransport
+) -> None:
+    """code review de PR #76: `stacklevel` tiene que señalar la línea de
+    quien llama a `Sandbox.create(...)`, no el cuerpo de `create()` ni de
+    `plan_size`/`warn_if_rounded` (`sandbox_sync/main.py`)."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        Sandbox.create(
+            BASE_TEMPLATE,
+            size=SizeRequest(memory_mib=3000),
+            idle=None,
+            control_plane=plane,
+            transport=transport,
+            ready_timeout=10,
+        )
+    (warning,) = [w for w in caught if issubclass(w.category, RayitoCompatWarning)]
+    assert warning.filename == __file__
+
+
+@pytest.mark.asyncio
+async def test_the_rounding_warning_points_at_the_callers_create_call_async(
+    plane: FakeControlPlane, transport: TrackingTransport
+) -> None:
+    """Misma regla que la versión sync, para `sandbox_async/main.py`."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await AsyncSandbox.create(
+            BASE_TEMPLATE,
+            size=SizeRequest(memory_mib=3000),
+            idle=None,
+            control_plane=plane,
+            transport=transport,
+            ready_timeout=10,
+        )
+    (warning,) = [w for w in caught if issubclass(w.category, RayitoCompatWarning)]
+    assert warning.filename == __file__
+
+
 def test_size_with_an_arn_template_is_invalid_argument_before_any_aws_call(
     plane: FakeControlPlane, transport: TrackingTransport
 ) -> None:

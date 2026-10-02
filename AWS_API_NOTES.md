@@ -992,13 +992,17 @@ exportado, confirmado con `node -e` el 2026-09-30, sin red).
 
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
-| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier` (el ARN ya resuelto), `imageVersion` (el `template_version`/`templateVersion` que devolvió `RunMicrovm`) | `resources[0].minimumMemoryInMiB` (único campo que lee `ConventionCatalog`) | `lambda:GetMicrovmImageVersion` (en CloudTrail; no aparece en `apiTps` porque el servicio no le fija una cuota propia) | `docs/aws-api/model_summary.md` §`GetMicrovmImageVersion` |
+| `GetMicrovmImageVersion` (`get_microvm_image_version` / `GetMicrovmImageVersionCommand`) | `imageIdentifier` (el ARN ya resuelto), `imageVersion` (el `template_version`/`templateVersion` que devolvió `RunMicrovm`, en `ConventionCatalog`; o el `latestActiveImageVersion` que devolvió `ListMicrovmImages`, en `cli/image.py`'s `active_code_artifact`) | `resources[0].minimumMemoryInMiB` (lo único que lee `ConventionCatalog`); `codeArtifact.uri` (lo único que lee `active_code_artifact` para `sameArtifact`, ver abajo) | `lambda:GetMicrovmImageVersion` (en CloudTrail; no aparece en `apiTps` porque el servicio no le fija una cuota propia) | `docs/aws-api/model_summary.md` §`GetMicrovmImageVersion` |
 
 `GetMicrovmImageVersion` no se llama nunca durante `create()`/`Sandbox.create()`:
 sólo la hace, y como mucho una vez por `(imageArn, imageVersion)` y por
 proceso (`ConventionCatalog`, cacheada), `get_info()`/`getInfo()` cuando el
 sandbox se lanzó con `size=`/`size`. Sin esa opción, cero llamadas nuevas:
-golden test de M15 foundations.
+golden test de M15 foundations. La CLI (`rayito image sizes`) la llama por
+su cuenta, fuera del SDK en marcha: una vez por imagen ya publicada (la
+columna `sameArtifact`, code review de PR #76 #2), sin caché entre
+invocaciones de la CLI (cada invocación es un proceso nuevo) y sin lanzar
+ningún sandbox — gratis por la misma ausencia de cuota en `apiTps`.
 
 **Tamaños aceptados por `create-microvm-image` (Q87, medido 2026-09-30,
 `rayito-base`).** 512, 1024, 2048, 4096 y 8192 MiB construyen; 256, 3072,

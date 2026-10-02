@@ -38,10 +38,20 @@
       `validate_sizes`, `parse_environment_assignments`.
 - [x] 3.3 `cli/image.py`: `rayito image sizes [--variant]` (lista las
       imágenes `<variant>-<size>` ya publicadas vía `list-microvm-images`,
-      ninguna llamada adicional); `publish_with_sizes`,
+      más su columna `sameArtifact` vía `active_code_artifact`, una
+      `GetMicrovmImageVersion` sin cuota propia por imagen publicada —
+      nunca lanza nada); `publish_with_sizes`,
       `configuration_matches`/`published_version` ahora comparan siempre
       `environmentVariables` (code review de PR #76: agregación de salida
-      de `--sizes` y reuse con `--env` obsoleto).
+      de `--sizes`, reuse con `--env` obsoleto, y `sameArtifact` como
+      sustituto gratuito del parity check de `agent_version` que §10
+      documenta fuera de `doctor`).
+- [x] 3.4 `cli/image.py`: `--memory-mib` sólo admite `DEFAULT_MEMORY_MIB`
+      junto a `--sizes` (la regla "el baseline de `--sizes` es 2048 MiB"
+      pasa a cumplirse, no sólo a documentarse); `size_image_names` ya no
+      reimplementa el sufijo, llama a `_sizing.apply_size_suffix`;
+      `parse_environment_assignments` rechaza claves vacías o inválidas
+      (code review de PR #76).
 
 ## 4. Python: exports and stack component
 
@@ -92,7 +102,9 @@
       `m15-sizes-catalog-sizing.test.ts`: `resolve_size`/`resolveSize`
       rounding and errors, `apply_size_suffix`/`applySizeSuffix`,
       `baseline_cpu_for`/`baselineCpuFor` against the RES-2/Q88 table,
-      `warn_if_rounded`/`warnIfRounded`.
+      `warn_if_rounded`/`warnIfRounded`; TS also rejects `Object.prototype`
+      member names (`constructor`, `toString`, `__proto__`, …) as a `size`
+      (code review de PR #76: `Object.hasOwn` guard).
 - [x] 7.2 `test_m15_sizes_catalog_catalog.py` /
       `m15-sizes-catalog-catalog.test.ts`: `ConventionCatalog` caching,
       per-key isolation, concurrent-call sharing (TS), failed-read
@@ -102,14 +114,22 @@
       against the fake control plane — suffix applied, baseline kept
       unsuffixed, no `GetMicrovmImageVersion` without `size`, one cached
       call with it, rounding warning, ARN + size rejected, impossible size
-      rejected, all before any AWS call where applicable.
+      rejected, all before any AWS call where applicable; the rounding
+      warning's `stacklevel` points at the caller's own `create()` call
+      (sync and async), not at `rayito`'s own frames (code review de PR #76).
 - [x] 7.4 `test_m15_sizes_catalog_stack.py`: `sizes-guard` is `supported`,
       declares `ImageArns` required, rejects deploy without it, deploys
       with it.
 - [x] 7.5 `cli/test_image_sizes.py`: `validate_sizes`/
-      `parse_environment_assignments` (pure), `sized_settings`,
+      `parse_environment_assignments` (pure, including the code-review
+      additions: rejected keys, `--memory-mib` + `--sizes`), `sized_settings`,
       `desired_configuration` environment variables, `publish_sizes`
-      end-to-end reuse path with `Stubber`.
+      end-to-end reuse path with `Stubber`, `publish_with_sizes` printing
+      nothing in text mode on a failed build.
+- [x] 7.6b `cli/test_image_sizes_list.py`: `sizes_command`'s `sameArtifact`
+      column — `True`/`False`/`None` (not published, no active version)
+      against stubbed `GetMicrovmImageVersion` responses; `size_image_names`
+      against `_sizing.apply_size_suffix` directly.
 - [x] 7.6 Updated (not feature-owned, but required by implementing a
       previously-stub branch): `test_m15_feature_options.py`,
       `test_m15_create_kwargs.py`, `m15-feature-options.test.ts`,
@@ -163,22 +183,31 @@
   `prepare_build`/`reusable_version` split, both done). Left for whichever
   future change (e.g. `m15-templates`, which also publishes images) first
   needs to swap the adapter.
-- `doctor`'s `agent_version` parity check across a variant's published
-  sizes (the M15 architecture names it alongside `rayito image sizes`,
-  which this change does add). Every existing `agent_version` doctor check
-  reads it from a live sandbox's `Health` (the `agent`/`compatibility`
-  checks' `--launch` sandbox), and `doctor` boots exactly one sandbox
-  today regardless of flags; comparing `agent_version` across N published
-  sizes would mean `--launch` booting N sandboxes (one per size) instead
-  of one, a cost-shape change to a `doctor` invariant ("diez
-  comprobaciones", `CHECK_NAMES`/`PRE_LAUNCH_CHECKS`/`LAUNCH_CHECKS` fixed
-  at ten across `cli/_checks.py` and `cli/doctor.py`) with no Q-measurement
-  backing the extra cost it would add by default. `rayito image sizes`
-  already flags a drifted baseline indirectly (a 4gb image missing or
-  `UPDATE_FAILED` while the baseline is current); a dedicated agent-version
-  check needs its own design (e.g. an opt-in `doctor --check-sizes` that
-  only launches when the operator asks) and is left for a follow-up
-  change.
+- `doctor`'s own `agent_version` parity check across a variant's published
+  sizes, as a dedicated *eleventh* check, stays out of this change: every
+  existing `agent_version` doctor check reads it from a live sandbox's
+  `Health` (the `agent`/`compatibility` checks' `--launch` sandbox), and
+  `doctor` boots exactly one sandbox today regardless of flags; a check
+  that compared `agent_version` across N published sizes the same way
+  would mean `--launch` booting N sandboxes (one per size) instead of one,
+  a cost-shape change to a `doctor` invariant ("diez comprobaciones",
+  `CHECK_NAMES`/`PRE_LAUNCH_CHECKS`/`LAUNCH_CHECKS` fixed at ten across
+  `cli/_checks.py` and `cli/doctor.py`).
+  What the M15 architecture actually needs — catching a size published
+  from a different `rayd` build than the baseline — does **not** need any
+  of that (code review of PR #76 #2): every size is published from the
+  same artifact zip, so the `rayd` version is fixed by that artifact's
+  `codeArtifact.uri` (its sha256 S3 key), not by booting anything. This
+  change adds that as `rayito image sizes`'s `sameArtifact` column
+  (`cli/image.py`'s `active_code_artifact`): a free
+  `ListMicrovmImageVersions`-equivalent `GetMicrovmImageVersion` per
+  published image, comparing `codeArtifact.uri` of each size's latest
+  active version against the baseline's — no launch, no new check count,
+  no cost-shape change to `doctor`. Left for a follow-up: folding this same
+  comparison into `doctor` itself as an eleventh, explicitly opt-in check
+  (e.g. `doctor --check-sizes`) for operators who want it surfaced there
+  too, since `doctor`'s ten-check invariant is `m7-cli`'s, not this
+  change's, to revisit without sign-off.
 - TypeScript/shim `SandboxInfo` fields beyond `cpu_count`/`memory_mb`
   parity (`rayito.e2b._compat.shim_cpu_memory`/
   `clients/typescript/src/e2b/compat.ts`'s `shimCpuMemory`, both done in

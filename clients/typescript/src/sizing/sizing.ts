@@ -84,13 +84,16 @@ function requestedMemoryMib(size: SizeInput): number {
     }
     return size.memoryMib;
   }
-  const mib = NAME_TO_MEMORY_MIB[size];
-  if (mib === undefined) {
+  // `Object.hasOwn` (no `size in NAME_TO_MEMORY_MIB` ni indexar directo):
+  // un llamador JS sin tipos puede pasar "constructor"/"toString"/
+  // "__proto__", que `NAME_TO_MEMORY_MIB[size]` resolvería al miembro del
+  // prototipo de `Object` en vez de `undefined` (code review de PR #76).
+  if (!Object.hasOwn(NAME_TO_MEMORY_MIB, size)) {
     throw new InvalidArgumentError(
       `size=${JSON.stringify(size)}: admitidos ${SIZE_NAMES.join(", ")} o { memoryMib }`,
     );
   }
-  return mib;
+  return NAME_TO_MEMORY_MIB[size];
 }
 
 /**

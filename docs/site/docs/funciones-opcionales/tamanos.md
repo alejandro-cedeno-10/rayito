@@ -17,7 +17,10 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       proceso (cacheada), una llamada gratuita a `GetMicrovmImageVersion`
       para confirmar `minimumMemoryInMiB`. `rayito image publish --sizes`
       hace los mismos `create`/`update-microvm-image` que una publicación
-      normal, uno por tamaño adicional. `sizes-guard` crea una única
+      normal, uno por tamaño adicional. `rayito image sizes` añade, sólo si
+      hay algún tamaño adicional publicado, una `GetMicrovmImageVersion`
+      (también gratuita) por imagen publicada para `sameArtifact`; nunca
+      lanza ningún sandbox. `sizes-guard` crea una única
       `AWS::IAM::ManagedPolicy`.
     - **Coste aproximado**: $0 por `size=` en sí (una imagen más grande
       cuesta lo mismo por hora que lanzarla sin `size=` con esa misma
@@ -202,15 +205,23 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   interruptor de activación del SDK (ADR-014 regla 4), sólo configuración
   horneada en el guest. `rayito image publish` hornea además
   `RAYITO_BASELINE_MEMORY_MIB` en cada imagen con sufijo.
+  **Nunca pongas secretos en `--env`**: cualquiera con `GetMicrovmImageVersion`
+  y todo proceso del guest los leen en claro; usa `SecretStore`/`secrets=`
+  para eso.
+- Con `--sizes`, `--memory-mib` sólo admite el valor por defecto (2048 MiB):
+  la imagen sin sufijo de `--sizes` siempre es el baseline.
 - Las construcciones de más de un tamaño se piden todas antes de esperar a
   que ninguna se asiente (una oleada de hasta 10 construcciones
   simultáneas, el límite del servicio), así AWS las construye en paralelo.
 - Una versión ya construida con el mismo artefacto y configuración se
   reutiliza, como en una publicación normal.
 - `rayito image sizes [--variant]` lista, por tamaño del catálogo cerrado,
-  qué imagen de la variante ya se publicó (o si ninguna): una sola
-  `list-microvm-images`, ninguna llamada adicional a AWS. Ver
-  [CLI](../cli.md#image-sizes).
+  qué imagen de la variante ya se publicó (o si ninguna) y si comparte
+  artefacto con el baseline (`sameArtifact`): siempre una
+  `list-microvm-images`, y si hay algún tamaño adicional publicado además
+  una `GetMicrovmImageVersion` (sin cuota propia) por imagen ya publicada —
+  con sólo el baseline publicado, ninguna llamada adicional. Nunca lanza
+  ningún sandbox. Ver [CLI](../cli.md#image-sizes).
 
 ## Guardarraíles de coste (`sizes-guard`, opcional)
 

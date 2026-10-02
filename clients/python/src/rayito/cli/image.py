@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
-from rayito._sizing import BASELINE_MEMORY_MIB, NAME_TO_MEMORY_MIB, SIZE_NAMES
+from rayito._sizing import (
+    BASELINE_MEMORY_MIB,
+    NAME_TO_MEMORY_MIB,
+    SIZE_NAMES,
+    apply_size_suffix,
+    resolve_size,
+)
 from rayito.cli._artifact import VARIANTS, artifact_sha256, copy_sidecar, write_zip
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._prune import (
@@ -71,6 +78,11 @@ def validate_os_capabilities(value: str | None) -> str | None:
 BASELINE_SIZE_NAME = next(
     name for name, mib in NAME_TO_MEMORY_MIB.items() if mib == BASELINE_MEMORY_MIB
 )
+# `--sizes` nunca admite el baseline (ya lo publica `publish_command` sin
+# sufijo, ver `validate_sizes`): la ayuda de `--sizes` lista sólo lo que de
+# verdad se puede pasar, en vez de repetir `SIZE_NAMES` a mano y dejar que
+# se desalinee (code review de PR #76).
+EXTRA_SIZE_NAMES = tuple(name for name in SIZE_NAMES if name != BASELINE_SIZE_NAME)
 
 
 def validate_sizes(raw: str | None) -> tuple[str, ...]:
@@ -95,6 +107,32 @@ def validate_sizes(raw: str | None) -> tuple[str, ...]:
     return tuple(names)
 
 
+def validate_baseline_memory_mib(memory_mib: int, size_names: tuple[str, ...]) -> None:
+    """Con `--sizes`, `--memory-mib` sólo admite `DEFAULT_MEMORY_MIB`
+    (m15-sizes-catalog, code review de PR #76): la imagen sin sufijo que
+    `--sizes` publica es siempre el baseline (`BASELINE_SIZE_NAME`/
+    `validate_sizes`), así que un `--memory-mib` distinto rompería esa
+    regla en silencio — `Sandbox.create(size="2gb")` seguiría asumiendo
+    2048 MiB mientras la imagen sin sufijo fuera otra cosa. Sin `--sizes`
+    no hay regla que proteger: `--memory-mib` sigue siendo libre, como
+    antes de sizes-catalog."""
+    if size_names and memory_mib != DEFAULT_MEMORY_MIB:
+        raise typer.BadParameter(
+            f"--sizes publica el baseline sin sufijo a {DEFAULT_MEMORY_MIB} MiB "
+            "(la regla de sizes-catalog: la imagen sin sufijo siempre es el baseline); "
+            "quita --memory-mib o publica sin --sizes para elegir otro valor",
+            param_hint="--memory-mib",
+        )
+
+
+# `--env KEY=VALUE`: el mismo patrón de nombre de variable de entorno que
+# POSIX exige (letra o `_` inicial, luego alfanuméricos o `_`); rechaza
+# `=valor` (clave vacía) y claves con espacios o símbolos que
+# `environmentVariables` aceptaría pero que `rayd`/el guest no podrían
+# exportar como variable de entorno de verdad.
+ENV_KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def parse_environment_assignments(raw: list[str]) -> dict[str, str]:
     """`--env KEY=VALUE` (repetible, m15-sizes-catalog): nunca un
     interruptor de activación (ADR-014 regla 4), sólo configuración
@@ -102,12 +140,20 @@ def parse_environment_assignments(raw: list[str]) -> dict[str, str]:
     microvm-image`; `PublishSettings.environment_variables`, el seam mínimo
     que esta función necesita en vez de la extracción completa de
     `_images.py`/`ImageBuildGateway` que nombra la arquitectura M15 —
-    `cli/_publish.py` tasks.md §10)."""
+    `cli/_publish.py` tasks.md §10). Nunca secretos: cualquiera con
+    `GetMicrovmImageVersion` y todo proceso del guest la leen en claro; usa
+    `SecretStore`/`secrets=` para eso (code review de PR #76)."""
     result: dict[str, str] = {}
     for item in raw:
         if "=" not in item:
             raise typer.BadParameter(f"formato K=V esperado: {item!r}", param_hint="--env")
         key, _, value = item.partition("=")
+        if not ENV_KEY_PATTERN.fullmatch(key):
+            raise typer.BadParameter(
+                f"{key!r}: nombre de variable inválido (letras, dígitos y `_`, "
+                "sin empezar por un dígito)",
+                param_hint="--env",
+            )
         result[key] = value
     return result
 
@@ -164,14 +210,21 @@ def publish_command(
         typer.Option(
             "--sizes",
             help=(
-                "Tamaños extra separados por comas (512mb,1gb,2gb,4gb,8gb), "
+                f"Tamaños extra separados por comas ({','.join(EXTRA_SIZE_NAMES)}), "
                 "publicados además del baseline desde el mismo artefacto."
             ),
         ),
     ] = None,
     env: Annotated[
         list[str],
-        typer.Option("--env", help="KEY=VALUE horneado en environmentVariables (repetible)."),
+        typer.Option(
+            "--env",
+            help=(
+                "KEY=VALUE horneado en environmentVariables (repetible). Nunca secretos: "
+                "legible por GetMicrovmImageVersion y por todo proceso del guest; usa "
+                "SecretStore/secrets= para eso."
+            ),
+        ),
     ] = [],  # noqa: B006
 ) -> None:
     """Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
@@ -183,6 +236,7 @@ def publish_command(
     por tamaño, nunca uno por imagen. Sin `--sizes`, sólo el baseline, como
     antes de sizes-catalog."""
     size_names = validate_sizes(sizes)
+    validate_baseline_memory_mib(memory_mib, size_names)
     environment_variables = parse_environment_assignments(env)
     settings = PublishSettings(
         artifact=artifact,
@@ -275,19 +329,34 @@ def list_command(
     table(columns, [[row[column] for column in columns] for row in rows])
 
 
-SIZES_COLUMNS = ("size", "name", "published", "imageArn", "state", "createdAt")
+SIZES_COLUMNS = ("size", "name", "published", "imageArn", "state", "sameArtifact", "createdAt")
 
 
 def size_image_names(base_name: str) -> dict[str, str]:
     """El nombre de imagen que cada tamaño del catálogo cerrado tendría para
-    `base_name` (m15-sizes-catalog): el baseline (`BASELINE_SIZE_NAME`,
-    2048 MiB) nunca lleva sufijo, el resto sigue `<base_name>-<size>`
-    (`apply_size_suffix`). No dice si de verdad se publicó cada una; eso lo
-    cruza `sizes_command` con `list-microvm-images`."""
-    return {
-        size: base_name if size == BASELINE_SIZE_NAME else f"{base_name}-{size}"
-        for size in SIZE_NAMES
-    }
+    `base_name` (m15-sizes-catalog): la misma convención de sufijo que
+    `Sandbox.create(size=...)` resuelve en el SDK, vía `apply_size_suffix`
+    (nunca reimplementada aquí: una sola fuente para el sufijo, code review
+    de PR #76). No dice si de verdad se publicó cada una; eso lo cruza
+    `sizes_command` con `list-microvm-images`."""
+    return {size: apply_size_suffix(base_name, resolve_size(size)) for size in SIZE_NAMES}
+
+
+def active_code_artifact(clients: Clients, image: dict[str, Any] | None) -> str | None:
+    """El `codeArtifact.uri` (la clave sha256 de S3) de la versión activa
+    más reciente de una imagen ya publicada, o `None` si la imagen no se
+    publicó o no tiene ninguna versión activa. `GetMicrovmImageVersion` no
+    tiene cuota propia en `apiTps` (AWS_API_NOTES.md §24): una llamada por
+    imagen publicada no cambia el presupuesto de coste de la CLI, y nunca
+    lanza ningún sandbox (`sizes_command` la usa para `sameArtifact`, code
+    review de PR #76: el reemplazo gratuito, sin booteo, del parity check
+    de `agent_version` que `doctor` no hace — tasks.md §10)."""
+    if image is None or image.get("latestActiveImageVersion") is None:
+        return None
+    response = clients.microvms.get_microvm_image_version(
+        imageIdentifier=image["imageArn"], imageVersion=str(image["latestActiveImageVersion"])
+    )
+    return artifact_basename(response)
 
 
 @image_app.command("sizes")
@@ -296,23 +365,53 @@ def sizes_command(
     variant: Annotated[str, typer.Option("--variant", help="full, slim o poly.")] = "full",
 ) -> None:
     """Por cada tamaño del catálogo cerrado, qué imagen de esta variante ya
-    publicó `rayito image publish --sizes` (o si ninguna): una sola
-    `list-microvm-images` filtrada por el nombre base, ninguna llamada
-    adicional a AWS. No construye ni publica nada."""
+    publicó `rayito image publish --sizes` (o si ninguna): siempre una
+    `list-microvm-images` filtrada por el nombre base y, sólo si hay al
+    menos un tamaño adicional publicado, una `GetMicrovmImageVersion` (sin
+    cuota propia) por cada imagen publicada para `sameArtifact` (ver
+    `active_code_artifact`) — con sólo el baseline publicado, ninguna
+    llamada adicional, igual que antes de `sameArtifact`. Nunca construye,
+    publica ni lanza nada. `sameArtifact` compara el `codeArtifact.uri` de
+    la versión activa de cada tamaño contra el del baseline: `False`
+    detecta un tamaño publicado desde un zip distinto al baseline (la
+    deriva que un parity check de `agent_version` buscaría lanzando N
+    sandboxes, aquí gratis y sin lanzar ninguno); `None` cuando el tamaño o
+    el baseline no tienen versión activa que comparar."""
     base_name = default_image_name(validate_variant(variant))
     clients = clients_of(ctx)
     published = {image["name"]: image for image in listed_images(clients, base_name)}
-    rows = [
-        {
-            "size": size,
-            "name": name,
-            "published": name in published,
-            "imageArn": published.get(name, {}).get("imageArn"),
-            "state": published.get(name, {}).get("state"),
-            "createdAt": published.get(name, {}).get("createdAt"),
-        }
-        for size, name in size_image_names(base_name).items()
-    ]
+    names = size_image_names(base_name)
+    other_sizes_published = any(
+        size != BASELINE_SIZE_NAME and name in published for size, name in names.items()
+    )
+    # Sólo pide el `codeArtifact.uri` del baseline si hay con qué
+    # compararlo: con el catálogo entero sin tamaños extra, ni esta
+    # llamada gratuita hace falta (sigue "ninguna llamada adicional" en el
+    # caso común, `test_sizes_command_human_table`).
+    baseline_artifact = (
+        active_code_artifact(clients, published.get(names[BASELINE_SIZE_NAME]))
+        if other_sizes_published
+        else None
+    )
+    rows = []
+    for size, name in names.items():
+        image = published.get(name)
+        same_artifact = None
+        if size != BASELINE_SIZE_NAME and other_sizes_published:
+            artifact = active_code_artifact(clients, image)
+            if baseline_artifact is not None and artifact is not None:
+                same_artifact = artifact == baseline_artifact
+        rows.append(
+            {
+                "size": size,
+                "name": name,
+                "published": image is not None,
+                "imageArn": None if image is None else image["imageArn"],
+                "state": None if image is None else image["state"],
+                "sameArtifact": same_artifact,
+                "createdAt": None if image is None else image["createdAt"],
+            }
+        )
     if json_mode(ctx):
         emit_json(rows)
         return

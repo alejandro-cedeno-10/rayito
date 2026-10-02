@@ -21,7 +21,11 @@ from typer.testing import CliRunner
 from rayito.cli import _artifact, _publish
 from rayito.cli._session import Clients
 from rayito.cli.app import app
-from rayito.cli.image import parse_environment_assignments, validate_sizes
+from rayito.cli.image import (
+    parse_environment_assignments,
+    validate_baseline_memory_mib,
+    validate_sizes,
+)
 
 from .conftest import ACCOUNT_ID, BASE_IMAGE_ARN, IMAGE_ARN, REGION, Stubs, version_item
 
@@ -95,6 +99,25 @@ def test_validate_sizes_rejects_duplicates() -> None:
         validate_sizes("4gb,4gb")
 
 
+def test_validate_baseline_memory_mib_rejects_a_non_default_value_with_sizes() -> None:
+    """`rayito image publish --memory-mib 4096 --sizes 512mb` publicaría el
+    baseline (sin sufijo) a 4096 MiB, rompiendo la regla de que la imagen
+    sin sufijo siempre es el baseline de 2048 MiB (code review de PR #76):
+    rechazado antes de cualquier llamada a AWS."""
+    with pytest.raises(typer.BadParameter, match="--memory-mib"):
+        validate_baseline_memory_mib(4096, ("512mb",))
+
+
+def test_validate_baseline_memory_mib_allows_the_default_with_sizes() -> None:
+    validate_baseline_memory_mib(_publish.DEFAULT_MEMORY_MIB, ("512mb",))  # no lanza
+
+
+def test_validate_baseline_memory_mib_allows_any_value_without_sizes() -> None:
+    """Sin `--sizes` no hay baseline que proteger: `--memory-mib` sigue
+    siendo libre, exactamente como antes de sizes-catalog."""
+    validate_baseline_memory_mib(4096, ())  # no lanza
+
+
 # ------------------------------------------------------- parse_environment_assignments
 
 
@@ -112,6 +135,24 @@ def test_parse_environment_assignments_parses_key_value_pairs() -> None:
 def test_parse_environment_assignments_rejects_a_missing_equals() -> None:
     with pytest.raises(typer.BadParameter, match="K=V"):
         parse_environment_assignments(["RAYITO_FOO"])
+
+
+def test_parse_environment_assignments_rejects_an_empty_key() -> None:
+    """`=valor` (code review de PR #76): `environmentVariables` lo
+    aceptaría pero el guest no podría exportarlo como variable de entorno
+    de verdad."""
+    with pytest.raises(typer.BadParameter, match="inválido"):
+        parse_environment_assignments(["=valor"])
+
+
+@pytest.mark.parametrize("key", ["1FOO", "FOO BAR", "FOO-BAR", "FOO.BAR"])
+def test_parse_environment_assignments_rejects_an_invalid_key(key: str) -> None:
+    with pytest.raises(typer.BadParameter, match="inválido"):
+        parse_environment_assignments([f"{key}=valor"])
+
+
+def test_parse_environment_assignments_accepts_a_leading_underscore() -> None:
+    assert parse_environment_assignments(["_FOO=bar"]) == {"_FOO": "bar"}
 
 
 # ------------------------------------------------------------------------ sized_settings
@@ -402,17 +443,11 @@ def test_publish_with_sizes_plain_prints_the_baseline_line_once(
     assert f"RAYITO_TEMPLATE_4GB={SIZED_ARN}" in lines
 
 
-def test_publish_with_sizes_skips_sizes_when_the_baseline_fails(
-    runner: CliRunner,
-    clients: Clients,
-    stubbed_clients: Stubs,
-    artifact: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Si el baseline no queda lanzable, no tiene sentido gastar builds en
-    los tamaños: el documento agregado sólo trae el baseline fallido."""
-    monkeypatch.setattr("rayito.cli._publish.time.sleep", lambda seconds: None)
-    key = _publish.artifact_key(artifact.read_bytes())
+def stub_failed_baseline_build(stubbed_clients: Stubs, artifact: Path, key: str) -> None:
+    """El baseline sube el artefacto, no encuentra versión que reutilizar,
+    construye una nueva y el gate de tres estados la deja `UPDATE_FAILED`
+    (`test_publish_with_sizes_skips_sizes_when_the_baseline_fails` y la
+    versión en texto plano del mismo caso, code review de PR #76)."""
     stubbed_clients.s3.add_client_error(
         "head_object",
         service_error_code="404",
@@ -516,6 +551,20 @@ def test_publish_with_sizes_skips_sizes_when_the_baseline_fails(
         },
     )
 
+
+def test_publish_with_sizes_skips_sizes_when_the_baseline_fails(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si el baseline no queda lanzable, no tiene sentido gastar builds en
+    los tamaños: el documento agregado sólo trae el baseline fallido."""
+    monkeypatch.setattr("rayito.cli._publish.time.sleep", lambda seconds: None)
+    key = _publish.artifact_key(artifact.read_bytes())
+    stub_failed_baseline_build(stubbed_clients, artifact, key)
+
     result = runner.invoke(app, ["--json", *publish_args(artifact, "--sizes", "4gb")], obj=clients)
 
     assert result.exit_code == 1
@@ -523,4 +572,27 @@ def test_publish_with_sizes_skips_sizes_when_the_baseline_fails(
     assert document["launchable"] is False
     assert "sizes" not in document
     # No se intentó construir ni reutilizar ningún tamaño.
+    stubbed_clients.microvms.assert_no_pending_responses()
+
+
+def test_publish_with_sizes_plain_prints_nothing_when_the_baseline_fails(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """En texto plano, un build fallido no debe imprimir ningún
+    `RAYITO_TEMPLATE`/`RAYITO_TEMPLATE_<SIZE>` — igual que `publish()` sin
+    `--sizes` no imprime nada en un build fallido — para que un script que
+    evalúe o lea la última línea de `stdout` nunca recoja el ARN de una
+    imagen no lanzable (code review de PR #76)."""
+    monkeypatch.setattr("rayito.cli._publish.time.sleep", lambda seconds: None)
+    key = _publish.artifact_key(artifact.read_bytes())
+    stub_failed_baseline_build(stubbed_clients, artifact, key)
+
+    result = runner.invoke(app, publish_args(artifact, "--sizes", "4gb"), obj=clients)
+
+    assert result.exit_code == 1
+    assert "RAYITO_TEMPLATE" not in result.stdout
     stubbed_clients.microvms.assert_no_pending_responses()

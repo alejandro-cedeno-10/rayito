@@ -50,6 +50,17 @@ describe("sizing", () => {
     expect(() => resolveSize("huge" as never)).toThrow(InvalidArgumentError);
   });
 
+  test.each(["constructor", "toString", "__proto__", "hasOwnProperty"])(
+    "resolveSize rejects an Object.prototype member name (%s)",
+    (name) => {
+      // code review de PR #76: un llamador JS sin tipos puede pasar estas
+      // claves; sin Object.hasOwn resolverían al miembro del prototipo en
+      // vez de lanzar InvalidArgumentError.
+      expect(() => resolveSize(name as never)).toThrow(InvalidArgumentError);
+      expect(() => resolveSize(name as never)).toThrow(name);
+    },
+  );
+
   test.each([0, -1])("resolveSize rejects a non-positive request (%d)", (memoryMib) => {
     expect(() => resolveSize({ memoryMib })).toThrow(InvalidArgumentError);
   });

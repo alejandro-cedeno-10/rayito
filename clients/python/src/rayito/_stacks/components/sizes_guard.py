@@ -20,7 +20,10 @@ COMPONENT: StackComponent = StackComponent(
     parameters=(
         StackParameter(
             "ImageArns",
-            "ARN completos (CommaDelimitedList) de cada versión de imagen permitida.",
+            "ARN de imagen (CommaDelimitedList, sin versión) de cada imagen permitida, "
+            "exactamente como `rayito image list` imprime `imageArn` (Q90: RunMicrovm "
+            "autoriza contra el ARN sin versión; uno con versión haría que el Deny "
+            "denegara todos los lanzamientos de la identidad).",
             required=True,
         ),
     ),
