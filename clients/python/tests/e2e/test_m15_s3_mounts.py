@@ -28,6 +28,7 @@ import pytest
 
 from rayito import S3Mount, Sandbox
 from rayito._aws import LambdaMicrovmsControlPlane
+from rayito.exceptions import CommandExitException
 
 from .conftest import E2ESettings
 
@@ -143,8 +144,11 @@ def test_s3m_2_uid_1000_cannot_read_the_daemon_environ_or_argv(
     for forbidden in ("AKIA", "aws_secret", "aws_session_token"):
         assert forbidden.lower() not in stdout.lower()
 
-    kill_attempt = s3_mount_sandbox.commands.run(f"kill -0 {pid}")
-    assert kill_attempt.exit_code != 0, "uid 1000 no debería poder señalar al daemon"
+    # Un exit distinto de cero es `CommandExitException` en `commands.run`
+    # (contrato de E2B), no un resultado con `exit_code`.
+    with pytest.raises(CommandExitException) as kill_attempt:
+        s3_mount_sandbox.commands.run(f"kill -0 {pid}")
+    assert kill_attempt.value.exit_code != 0, "uid 1000 no debería poder señalar al daemon"
     report("S3M-2", "no credential in argv; daemon not killable by uid 1000")
 
 

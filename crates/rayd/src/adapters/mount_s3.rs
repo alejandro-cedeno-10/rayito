@@ -35,9 +35,9 @@ use super::child_registry::ChildRegistry;
 use super::fuse_device::{GUEST_GROUP_ID, GUEST_USER_ID};
 use super::sidecar_process::signal_process_group;
 
-/// AL2023 `mount-s3`/`fuse` packages (Q80 of the out-of-scope research,
-/// +22.4 MB measured on the image build); `image/Dockerfile` installs the
-/// binary on `PATH`.
+/// Mountpoint for Amazon S3 1.24.0, installed by `image/Dockerfile` from
+/// AWS's own pinned RPM (AL2023's repos stop at 1.22.3, Q80) on `PATH`
+/// (72 677 112 B installed, `AWS_API_NOTES.md` Q100).
 pub const MOUNT_S3_BINARY: &str = "mount-s3";
 /// `rayito-mount`, created by `image/Dockerfile`. Chosen below
 /// `rayd_core::process::identity::MIN_UNPRIVILEGED_ID` (1000) on purpose:
@@ -98,27 +98,7 @@ impl FuseDaemon for TokioMountS3Daemon {
     fn spawn(&self, fd: RawFd, mount: &S3Mount) -> Result<i32, MountErrorClass> {
         let mut command = Command::new(MOUNT_S3_BINARY);
         command
-            .arg("--foreground")
-            .arg(&mount.bucket)
-            .arg(format!("/dev/fd/{MOUNT_FD_SLOT}"))
-            .arg("--uid")
-            .arg(GUEST_USER_ID.to_string())
-            .arg("--gid")
-            .arg(GUEST_GROUP_ID.to_string());
-        if !mount.prefix.is_empty() {
-            command.arg("--prefix").arg(&mount.prefix);
-        }
-        if mount.read_only {
-            command.arg("--read-only");
-        } else {
-            if mount.allow_overwrite {
-                command.arg("--allow-overwrite");
-            }
-            if mount.allow_delete {
-                command.arg("--allow-delete");
-            }
-        }
-        command
+            .args(daemon_args(mount))
             .env_clear()
             .env("AWS_REGION", &self.region)
             .env("PATH", DEFAULT_PATH)
@@ -232,6 +212,42 @@ fn keep_tail(tail: &mut Vec<u8>, chunk: &[u8], cap: usize) {
     }
 }
 
+/// `mount-s3`'s argv for `mount` (everything after the binary name).
+/// `--allow-other` is what lets the guest (uid 1000) use the mount at all:
+/// the daemon runs as `rayito-mount` (uid 990), and without the flag
+/// Mountpoint's own FUSE session only answers requests from its owner, so
+/// every `stat`/`open` from uid 1000 gets `EACCES` even though the kernel
+/// mount already carries `allow_other` (`fuse_device::attach`) — measured
+/// on AWS, `AWS_API_NOTES.md` Q101: every mount stayed `pending` until the
+/// readiness probe timed out. `--uid`/`--gid` keep file ownership on the
+/// guest's user.
+fn daemon_args(mount: &S3Mount) -> Vec<String> {
+    let mut args = vec![
+        "--foreground".to_owned(),
+        mount.bucket.clone(),
+        format!("/dev/fd/{MOUNT_FD_SLOT}"),
+        "--allow-other".to_owned(),
+        "--uid".to_owned(),
+        GUEST_USER_ID.to_string(),
+        "--gid".to_owned(),
+        GUEST_GROUP_ID.to_string(),
+    ];
+    if !mount.prefix.is_empty() {
+        args.extend(["--prefix".to_owned(), mount.prefix.clone()]);
+    }
+    if mount.read_only {
+        args.push("--read-only".to_owned());
+    } else {
+        if mount.allow_overwrite {
+            args.push("--allow-overwrite".to_owned());
+        }
+        if mount.allow_delete {
+            args.push("--allow-delete".to_owned());
+        }
+    }
+    args
+}
+
 /// Best-effort classification of why `mount-s3 --foreground` exited before
 /// (or instead of) becoming ready: a closed, small heuristic over its own
 /// documented failure modes, never the raw text. Exiting cleanly
@@ -268,6 +284,45 @@ fn io_error(error: nix::Error) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mount_for(read_only: bool, prefix: &str) -> S3Mount {
+        S3Mount {
+            mount_path: "/mnt/data".to_owned(),
+            bucket: "team-data".to_owned(),
+            prefix: prefix.to_owned(),
+            read_only,
+            allow_overwrite: !read_only,
+            allow_delete: !read_only,
+        }
+    }
+
+    #[test]
+    fn daemon_args_always_let_the_guest_user_use_the_mount() {
+        let args = daemon_args(&mount_for(true, ""));
+        assert_eq!(
+            args,
+            [
+                "--foreground",
+                "team-data",
+                "/dev/fd/3",
+                "--allow-other",
+                "--uid",
+                "1000",
+                "--gid",
+                "1000",
+                "--read-only",
+            ]
+        );
+    }
+
+    #[test]
+    fn daemon_args_carry_the_prefix_and_write_flags_only_when_writable() {
+        let args = daemon_args(&mount_for(false, "runs/42/"));
+        assert!(args.windows(2).any(|pair| pair == ["--prefix", "runs/42/"]));
+        assert!(args.iter().any(|arg| arg == "--allow-overwrite"));
+        assert!(args.iter().any(|arg| arg == "--allow-delete"));
+        assert!(!args.iter().any(|arg| arg == "--read-only"));
+    }
 
     #[test]
     fn io_error_round_trips_the_errno_value() {

@@ -39,7 +39,9 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   so uid 1000 can never redirect a root mount onto a system directory by
   swapping its own folder for a symlink; `mount(2)` with `allow_other` plus a real
   `probe_ready` (a bounded, killable `stat` subprocess as the guest uid);
-  `adapters::mount_s3`: `mount-s3 --uid 1000 --gid 1000` run as the
+  `adapters::mount_s3`: `mount-s3 --allow-other --uid 1000 --gid 1000` (without
+  `--allow-other` Mountpoint answers only its own uid: every guest access
+  was `EACCES`, AWS_API_NOTES.md Q101) run as the
   dedicated `rayito-mount` user, uid 990, with a from-scratch environment
   — no credential ever in argv or env, SEC-3 — its pid registered in the
   shared `ChildRegistry`, its exit classified from its status and a

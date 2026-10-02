@@ -17,7 +17,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { Sandbox } from "../../src/index.js";
+import { CommandExitError, Sandbox } from "../../src/index.js";
 import { S3Mount } from "../../src/s3-mounts/domain.js";
 import { e2eEnabled, TEST_SANDBOX_TIMEOUT_MS, useE2E } from "./helpers.js";
 
@@ -100,8 +100,13 @@ describe.runIf(suiteEnabled)(
         expect(lower).not.toContain(forbidden);
       }
 
-      const killAttempt = await sandbox.commands.run(`kill -0 ${pid}`);
-      expect(killAttempt.exitCode).not.toBe(0);
+      // A non-zero exit rejects `commands.run` with `CommandExitError`
+      // (E2B contract) instead of resolving with an `exitCode`.
+      const killAttempt = await sandbox.commands
+        .run(`kill -0 ${pid}`)
+        .catch((error: unknown) => error);
+      expect(killAttempt).toBeInstanceOf(CommandExitError);
+      expect((killAttempt as CommandExitError).exitCode).not.toBe(0);
     });
 
     test("S3M-3: pause() responde dentro de su presupuesto aunque S3 no sea alcanzable", async () => {
