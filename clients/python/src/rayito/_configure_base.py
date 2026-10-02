@@ -77,8 +77,9 @@ class ConfigureSection(Protocol):
     """Lo que una función 0.6 implementa para participar en una sola
     llamada a `Configure`: el nombre de su sección (para los logs y el
     orden), el flag de `AgentFeatures` que debe estar activo, cómo rellena
-    su campo del `ConfigureRequest` compartido y cómo traduce el
-    `SectionResult` que le corresponde en su propia excepción (`fill`)."""
+    su campo del `ConfigureRequest` compartido (`fill`) y cómo traduce el
+    `SectionResult` que le corresponde en su propia excepción
+    (`check_result`)."""
 
     @property
     def section(self) -> str: ...

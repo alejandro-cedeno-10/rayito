@@ -1018,13 +1018,17 @@ persistencia de ADR-009); `PATH` es el único otro valor del entorno.
 
 **IAM (bucket, no prefijo)**: `infra/s3-mounts.yaml` concede
 `s3:ListBucket` acotado por un `s3:prefix` condicional (parámetro
-`Prefixes`) y `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` sobre el
-bucket entero (`arn:...:s3:::<Bucket>/*`): IAM no tiene una forma nativa de
-expresar "las acciones a nivel de objeto sólo bajo este prefijo" para una
-lista arbitraria de prefijos sin una plantilla por prefijo, así que la
-contención real de prefijo es responsabilidad de `mount-s3 --prefix` (y
-del allowlist `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen), no de IAM —
-la misma forma que la política de ejemplo que AWS publica para Mountpoint.
+`Prefixes`) y `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`/
+`s3:AbortMultipartUpload` sobre el bucket entero (`arn:...:s3:::<Bucket>/*`):
+IAM no tiene una forma nativa de expresar "las acciones a nivel de objeto
+sólo bajo este prefijo" para una lista arbitraria de prefijos sin una
+plantilla por prefijo, así que la contención real de prefijo es
+responsabilidad de `mount-s3 --prefix` (y del allowlist
+`RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen), no de IAM — la misma forma
+que la política de ejemplo que AWS publica para Mountpoint (que también
+incluye `AbortMultipartUpload`: sin él, una subida grande que falla a
+medias deja partes multipart huérfanas facturando almacenamiento
+indefinidamente).
 
 **Tamaño de imagen (Q80 de la investigación out-of-scope)**: `fuse`
 (paquete AL2023, permisos/udev de `/dev/fuse`; Mountpoint habla FUSE por sí
