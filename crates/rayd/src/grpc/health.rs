@@ -26,6 +26,7 @@ use tonic::{Request, Response, Status};
 
 use super::lifecycle::lifecycle_state;
 use crate::adapters::ImdsState;
+use crate::features::FeatureSet;
 
 pub const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -35,6 +36,11 @@ pub struct HealthGrpc {
     history: Arc<MetricsHistory>,
     kernel: Arc<dyn KernelStatus>,
     imds: Arc<ImdsState>,
+    /// The process's one `FeatureSet` (`grpc::router_with_features`);
+    /// `None` only for a `HealthGrpc` built without `with_features`, which
+    /// reports `AgentFeatures::foundations_only()` exactly like an
+    /// all-`Unsupported` set would.
+    features: Option<Arc<FeatureSet>>,
 }
 
 impl HealthGrpc {
@@ -51,7 +57,17 @@ impl HealthGrpc {
             history,
             kernel,
             imds,
+            features: None,
         }
+    }
+
+    /// Reports `features.agent_features()` in `Health.features`: the same
+    /// `FeatureSet` `ConfigureService` dispatches to, so a flag here and a
+    /// section's `Unsupported` outcome there can never disagree.
+    #[must_use]
+    pub fn with_features(mut self, features: Arc<FeatureSet>) -> Self {
+        self.features = Some(features);
+        self
     }
 }
 
@@ -67,7 +83,11 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot)))
+        let features = self.features.as_deref().map_or_else(
+            rayd_core::features::AgentFeatures::foundations_only,
+            FeatureSet::agent_features,
+        );
+        Ok(Response::new(to_response(snapshot, features)))
     }
 
     async fn metrics(
@@ -113,7 +133,10 @@ impl HealthService for HealthGrpc {
     }
 }
 
-fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
+fn to_response(
+    snapshot: HealthSnapshot,
+    features: rayd_core::features::AgentFeatures,
+) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
         kernel_ready: snapshot.kernel_ready,
@@ -132,19 +155,10 @@ fn to_response(snapshot: HealthSnapshot) -> HealthResponse {
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // M15 foundations: every feature slot started `Unsupported`
-        // (`features::build`), so only `ConfigureService` itself was
-        // reported. `m15-events-webhooks` is the first slot with a real
-        // adapter (`features::lifecycle_events::build`, always
-        // `supported() == true` — what stays inert without a
-        // `ConfigureSandbox` call is the key, not the slot), so this one
-        // call site adds that flag; the feature that gives the next slot a
-        // real adapter does the same here, never through `HealthGrpc`'s
-        // constructor.
-        features: Some(agent_features_message(rayd_core::features::AgentFeatures {
-            lifecycle_events: true,
-            ..rayd_core::features::AgentFeatures::foundations_only()
-        })),
+        // Derived from the slots themselves (`FeatureSet::agent_features`):
+        // a feature that gives its slot a real adapter turns its own flag
+        // on without touching this file.
+        features: Some(agent_features_message(features)),
     }
 }
 

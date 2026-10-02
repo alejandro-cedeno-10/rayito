@@ -1748,6 +1748,23 @@ veredicto con la decisión existente de `/ready` sin reemplazarla. Sin
 ningún participante registrado (el caso de 0.6 foundations: todos los slots
 son `Unsupported`), ambos hooks se comportan exactamente como en 0.5.x.
 
+`main` construye **un único** `Arc<FeatureSet>` por proceso y lo comparte:
+`grpc::router_with_features` se lo da a `ConfigureService` (aplica las
+secciones) y a `Health` (`FeatureSet::agent_features`, derivado de
+`supported()` de cada slot, así una función que gana un adaptador real
+enciende su propio flag sin tocar `health.rs`), y `FeatureSet::participants()`
+del mismo conjunto va a `HookServices.participants`. Nada de estado de
+función vive en un singleton de proceso: el harness de los tests de
+integración construye su propio `FeatureSet` por test igual que `main`.
+`/suspend`, `/resume` y `/terminate` ejecutan los participantes
+(`on_suspend`/`on_resume`/`on_terminate`) sólo ante una transición aceptada
+(`Transition::changed`), todos a través de un único bucle
+(`hooks::run_concurrently`), cada uno con su propio tope: su cuota de
+`SuspendShares` en `/suspend`, `PARTICIPANT_RESUME_TIMEOUT` (2 s, en
+paralelo con la sonda de kernels) en `/resume` y
+`PARTICIPANT_TERMINATE_TIMEOUT` (1 s, antes de `schedule_shutdown`) en
+`/terminate`. Un participante colgado cuesta su tope y nada más.
+
 **Consecuencias.** `ConfigureSandbox` nunca se llama con las siete opciones
 0.6 en `None`/`undefined`: el SDK pre-valida con `plan_features`/
 `planFeatures` antes de `run-microvm` y no construye ningún `ConfigureRequest`

@@ -24,18 +24,20 @@
 //! `on_resume` (one per actual `/resume`), so it is 0 for every sandbox
 //! that never paused.
 //!
-//! Known integration gap (documented rather than worked around): today
-//! `rayd::hooks::mod` only calls a participant's `on_suspend` and
-//! `ready_gate` (`/suspend`, `/ready`); `on_resume` and `on_terminate` are
-//! not yet invoked from `/resume`/`/terminate`. This PR wires them in
-//! `hooks::mod` and `main.rs` as the "first feature that needs shared
-//! context" foundations' own comments anticipated
-//! (`features::FeatureContext`, `grpc::Services`) — see those files' diffs
-//! for the two call sites. `paused` already works end to end because
-//! `run_participants` was wired for every slot from the start.
+//! `hooks::mod` calls `on_suspend`/`on_resume`/`on_terminate` once per
+//! accepted transition (ADR-015). `on_suspend` and `on_terminate` then wait
+//! for the sink to write and flush the line they queued
+//! (`LifecycleEventSink::flush`), bounded by `/suspend`'s share and by
+//! `hooks::PARTICIPANT_TERMINATE_TIMEOUT`: nothing else guarantees the
+//! drain task runs again before the VM freezes or the process exits, and a
+//! `paused` written after the resume would be out of order.
+//!
+//! State lives in the `LifecycleEventsFeature` that `features::build`
+//! returns, inside the process's one `FeatureSet` (`main` shares it between
+//! `ConfigureService` and the hooks), never in a process-wide singleton.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rayd_core::code::RandomSource;
@@ -50,6 +52,7 @@ use zeroize::Zeroizing;
 
 use super::FeatureContext;
 use super::slot::ConfigurableFeature;
+use crate::hooks::PARTICIPANT_TERMINATE_TIMEOUT;
 use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
 
 /// `SectionResult.error_class` for a section whose `sandbox_key` and
@@ -62,6 +65,15 @@ const ERROR_INVALID_SECTION: &str = "invalid_section";
 /// `LifecycleEventsStatus.last_error_class` once the sink has dropped at
 /// least one line (bounded queue, §7.4).
 const ERROR_QUEUE_FULL: &str = "queue_full";
+
+/// `LifecycleEventsStatus.last_error_class` once an event was dropped
+/// because the OS random source failed: an event without a fresh
+/// `event_id` would collide with every other such event in the
+/// deliverer's `DELIVERY#<event_id>` dedupe, so it is never emitted.
+const ERROR_RANDOM_UNAVAILABLE: &str = "random_unavailable";
+
+/// `event_id` length: 128 random bits, hex-encoded.
+const EVENT_ID_BYTES: usize = 16;
 
 struct ActiveState {
     key: Zeroizing<Vec<u8>>,
@@ -133,23 +145,24 @@ impl Inner {
     }
 
     /// Builds, MACs and enqueues one event, folding the result into the
-    /// counters `ConfigureStatus` reports. A no-op while `state` is `None`
-    /// (never configured, or cleared) — the off-by-default guarantee.
-    fn emit(&self, kind: EventKind, kill_reason: Option<KillReason>) {
+    /// counters `ConfigureStatus` reports. Returns whether a line was
+    /// queued: `false` while `state` is `None` (never configured, or
+    /// cleared — the off-by-default guarantee), when the random source
+    /// fails, or when the queue is full.
+    fn emit(&self, kind: EventKind, kill_reason: Option<KillReason>) -> bool {
         let guard = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(active) = guard.as_ref() else {
-            return;
+            return false;
         };
-        let mut id_bytes = [0u8; 16];
-        // A failed random read never blocks or fails the event: a
-        // all-zero id is still unique enough in practice (paired with
-        // `occurred_at_ms` and `sandbox_id`) and this path is already a
-        // last-resort the guest's own egress or lifecycle code never
-        // exercises in tests.
-        let _ = self.random.fill(&mut id_bytes);
+        let mut id_bytes = [0u8; EVENT_ID_BYTES];
+        if self.random.fill(&mut id_bytes).is_err() {
+            drop(guard);
+            self.count_dropped(ERROR_RANDOM_UNAVAILABLE);
+            return false;
+        }
         let event = LifecycleEvent {
             event_id: hex_encode(&id_bytes),
             sandbox_id: active.sandbox_id.clone(),
@@ -166,13 +179,34 @@ impl Inner {
         drop(guard);
         if self.sink.emit_line(&line) {
             self.emitted.fetch_add(1, Ordering::Relaxed);
+            true
         } else {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-            *self
-                .last_error_class
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ERROR_QUEUE_FULL);
+            self.count_dropped(ERROR_QUEUE_FULL);
+            false
         }
+    }
+
+    fn count_dropped(&self, error_class: &'static str) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+        *self
+            .last_error_class
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error_class);
+    }
+
+    /// Emits `kind` and, only if a line was actually queued, waits up to
+    /// `bound` for the sink to write and flush it. `true` when there was
+    /// nothing to wait for or the flush finished in time.
+    async fn emit_and_flush(
+        &self,
+        kind: EventKind,
+        kill_reason: Option<KillReason>,
+        bound: Duration,
+    ) -> bool {
+        if !self.emit(kind, kill_reason) {
+            return true;
+        }
+        tokio::time::timeout(bound, self.sink.flush()).await.is_ok()
     }
 }
 
@@ -224,17 +258,17 @@ impl LifecycleParticipant for Participant {
         }
     }
 
-    async fn on_suspend(&self, _share: Duration) -> ParticipantReport {
-        // Emitted first thing, before `hooks::mod`'s per-filesystem
-        // `syncfs` calls have necessarily finished (they run concurrently
-        // via `tokio::join!`), approximating "paused, before the syncs"
-        // (§7.4) without needing a dedicated ordering primitive: queuing a
-        // line is a handful of microseconds, so in practice it is already
-        // on the channel well before any `syncfs` completes.
-        self.inner.emit(EventKind::Paused, None);
+    async fn on_suspend(&self, share: Duration) -> ParticipantReport {
+        // Runs concurrently with `hooks::mod`'s per-filesystem `syncfs`
+        // calls; the VM freezes right after `/suspend` answers, so the line
+        // must be out (flushed) within this participant's share.
+        let completed = self
+            .inner
+            .emit_and_flush(EventKind::Paused, None, share)
+            .await;
         ParticipantReport {
-            completed: true,
-            timed_out: false,
+            completed,
+            timed_out: !completed,
         }
     }
 
@@ -248,12 +282,21 @@ impl LifecycleParticipant for Participant {
             active.generation.fetch_add(1, Ordering::Relaxed);
         }
         drop(guard);
+        // No flush: the process keeps running after `/resume`, so the
+        // drain task writes it on its own schedule, like `created`.
         self.inner.emit(EventKind::Resumed, None);
     }
 
     async fn on_terminate(&self) {
+        // The process exits right after `/terminate` answers: flush within
+        // the same cap `hooks::mod` gives every `on_terminate`.
         self.inner
-            .emit(EventKind::Killed, Some(KillReason::Request));
+            .emit_and_flush(
+                EventKind::Killed,
+                Some(KillReason::Request),
+                PARTICIPANT_TERMINATE_TIMEOUT,
+            )
+            .await;
     }
 
     fn ready_gate(&self) -> ReadyVerdict {
@@ -261,46 +304,21 @@ impl LifecycleParticipant for Participant {
     }
 }
 
-/// `rayd::grpc::mod` builds a fresh `FeatureSet` for `ConfigureService`, and
-/// `main.rs`/the integration test harness build a second one just to read
-/// `FeatureSet::participants()` for `HookServices` — rather than widen
-/// `grpc::Services`/`hooks::HookServices` to carry one shared
-/// `Arc<FeatureSet>` across eight other milestones' test files that
-/// construct them directly (`m15-events-webhooks` is the first feature
-/// with real mutable state; the next one that truly needs *external*
-/// context still threads `FeatureContext`/`Services` properly, per that
-/// struct's own doc comment), every call to `build()` hands back a thin
-/// wrapper over the **same** process-wide `Inner` — there is exactly one
-/// sandbox per `rayd` process, so this is a singleton-per-agent, not global
-/// mutable state in the general sense. `apply()` mutating it through the
-/// gRPC-side wrapper is what the hooks-side wrapper's `participant()` then
-/// reads.
-fn shared_inner() -> &'static Arc<Inner> {
-    static INNER: OnceLock<Arc<Inner>> = OnceLock::new();
-    INNER.get_or_init(|| {
-        Arc::new(Inner {
-            sink: Arc::new(crate::adapters::stdout_event_sink::spawn()),
-            random: Arc::new(crate::adapters::OsRandomSource),
-            clock: Arc::new(wall_clock_ms),
-            state: Mutex::new(None),
-            emitted: AtomicU64::new(0),
-            dropped: AtomicU64::new(0),
-            last_error_class: Mutex::new(None),
-        })
-    })
-}
-
+/// The slot `features::build` puts in the process's one `FeatureSet`: the
+/// real stdout sink (its drain task is spawned on the current Tokio
+/// runtime) and the OS random source.
 #[must_use]
 pub fn build(
     _ctx: &FeatureContext,
 ) -> Arc<dyn ConfigurableFeature<LifecycleEventsConfig, LifecycleEventsStatus>> {
-    Arc::new(LifecycleEventsFeature {
-        inner: shared_inner().clone(),
-    })
+    build_with(
+        Arc::new(crate::adapters::stdout_event_sink::spawn()),
+        Arc::new(crate::adapters::OsRandomSource),
+    )
 }
 
-/// Seam the unit tests use to inject a fake sink and a deterministic random
-/// source without spawning a real stdout-draining task per test.
+/// The same slot over any sink and random source (the unit tests inject
+/// fakes here).
 #[must_use]
 pub fn build_with(
     sink: Arc<dyn LifecycleEventSink>,
@@ -328,6 +346,8 @@ fn wall_clock_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex as StdMutex;
+
+    use rayd_core::lifecycle_events::SinkFlush;
 
     use super::*;
 
@@ -360,6 +380,37 @@ mod tests {
             }
             lines.push(line.to_owned());
             true
+        }
+
+        fn flush(&self) -> SinkFlush<'_> {
+            // `emit_line` already stored the line: nothing left to write.
+            Box::pin(std::future::ready(()))
+        }
+    }
+
+    /// A sink whose drain is stuck: lines are accepted, `flush` never
+    /// resolves. Counts flush calls so a test can tell "waited" from
+    /// "never asked".
+    #[derive(Default)]
+    struct StuckSink {
+        flushes: AtomicU64,
+    }
+
+    impl LifecycleEventSink for StuckSink {
+        fn emit_line(&self, _line: &str) -> bool {
+            true
+        }
+
+        fn flush(&self) -> SinkFlush<'_> {
+            self.flushes.fetch_add(1, Ordering::Relaxed);
+            Box::pin(std::future::pending())
+        }
+    }
+
+    struct FailingRandom;
+    impl RandomSource for FailingRandom {
+        fn fill(&self, _buf: &mut [u8]) -> Result<(), rayd_core::code::RandomError> {
+            Err(rayd_core::code::RandomError("no entropy".to_owned()))
         }
     }
 
@@ -505,5 +556,83 @@ mod tests {
         let demand = participant.demand();
         assert_eq!(demand.name, PARTICIPANT_NAME);
         assert_eq!(demand.max, SUSPEND_SHARE_MAX);
+    }
+
+    /// The participant waits for the flush up to its `/suspend` share and
+    /// never longer: with a stuck sink it reports `timed_out` right at the
+    /// share, instead of holding `/suspend` until the hook's own budget.
+    #[tokio::test(start_paused = true)]
+    async fn suspend_waits_for_the_flush_up_to_its_share_and_no_longer() {
+        let sink = Arc::new(StuckSink::default());
+        let feature = build_with(sink.clone(), Arc::new(FixedRandom));
+        feature.apply(cfg("k_sbx", "sbx-1")).await;
+        let participant = feature.participant().expect("always present");
+        let share = Duration::from_millis(300);
+
+        let started = tokio::time::Instant::now();
+        let report = participant.on_suspend(share).await;
+
+        assert_eq!(started.elapsed(), share);
+        assert!(!report.completed);
+        assert!(report.timed_out);
+        assert_eq!(sink.flushes.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn suspend_reports_completed_once_the_line_is_flushed() {
+        let feature = feature_with(Arc::new(FakeSink::default()));
+        feature.apply(cfg("k_sbx", "sbx-1")).await;
+        let participant = feature.participant().expect("always present");
+        let report = participant.on_suspend(SUSPEND_SHARE_MAX).await;
+        assert!(report.completed);
+        assert!(!report.timed_out);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn terminate_waits_for_the_flush_up_to_the_hooks_cap_and_no_longer() {
+        let sink = Arc::new(StuckSink::default());
+        let feature = build_with(sink.clone(), Arc::new(FixedRandom));
+        feature.apply(cfg("k_sbx", "sbx-1")).await;
+        let participant = feature.participant().expect("always present");
+
+        let started = tokio::time::Instant::now();
+        participant.on_terminate().await;
+
+        assert_eq!(started.elapsed(), PARTICIPANT_TERMINATE_TIMEOUT);
+        assert_eq!(sink.flushes.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unconfigured_feature_never_asks_the_sink_to_flush() {
+        let sink = Arc::new(StuckSink::default());
+        let feature = build_with(sink.clone(), Arc::new(FixedRandom));
+        let participant = feature.participant().expect("always present");
+        let report = participant.on_suspend(SUSPEND_SHARE_MAX).await;
+        participant.on_terminate().await;
+        assert!(report.completed);
+        assert_eq!(sink.flushes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn a_failed_random_source_drops_the_event_instead_of_reusing_an_id() {
+        let sink = Arc::new(FakeSink::default());
+        let feature = build_with(sink.clone(), Arc::new(FailingRandom));
+        feature.apply(cfg("k_sbx", "sbx-1")).await;
+        assert!(sink.lines().is_empty());
+        let status = feature.status().await;
+        assert_eq!(status.emitted, 0);
+        assert_eq!(status.dropped, 1);
+        assert_eq!(status.last_error_class, ERROR_RANDOM_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn every_built_slot_has_its_own_state() {
+        // Regression for the old process-wide singleton: two `FeatureSet`s
+        // (two integration tests in one binary) never share a key.
+        let configured = build(&FeatureContext);
+        let fresh = build(&FeatureContext);
+        configured.apply(cfg("k_sbx", "sbx-1")).await;
+        assert_eq!(configured.status().await.emitted, 1);
+        assert_eq!(fresh.status().await.emitted, 0);
     }
 }

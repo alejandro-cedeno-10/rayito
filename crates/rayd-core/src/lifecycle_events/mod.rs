@@ -11,7 +11,7 @@ pub mod mac;
 
 use std::time::Duration;
 
-pub use emit::{LIFECYCLE_EVENT_TOKEN, LifecycleEventSink, format_event_line};
+pub use emit::{LIFECYCLE_EVENT_TOKEN, LifecycleEventSink, SinkFlush, format_event_line};
 pub use event::{EventKind, KillReason, LifecycleEvent};
 pub use mac::{MAC_LEN, compute_mac};
 

@@ -1,9 +1,13 @@
 //! `FeatureSet`: the six 0.6 feature slots (M15 foundations, ADR-015),
-//! built once from `main` by `build(&FeatureContext)`. Every slot is
-//! `slot::Unsupported` in this build; each feature replaces its own
-//! field's construction (inside its own `features::<name>::build`) in its
-//! own PR — `FeatureSet`'s field list and `build`'s signature do not
-//! change for that.
+//! built once from `main` by `build(&FeatureContext)` and shared, as one
+//! `Arc<FeatureSet>`, by `ConfigureService`, `Health.features` and the
+//! hooks' lifecycle participants (`grpc::router_with_features`,
+//! `hooks::HookServices::participants`). Every slot but `lifecycle_events`
+//! (`m15-events-webhooks`) is `slot::Unsupported` in this build; each
+//! feature replaces its own field's construction
+//! (inside its own `features::<name>::build`) in its own PR —
+//! `FeatureSet`'s field list, `build`'s signature and the two views
+//! below (`agent_features`, `participants`) do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -28,13 +32,6 @@ use slot::ConfigurableFeature;
 /// Empty today, because every slot is still a stub: a feature that needs
 /// credentials, a bucket name or other shared context adds a field here in
 /// its own PR, never by widening `FeatureSet` itself.
-/// `m15-events-webhooks` does not need one: its event metadata
-/// (`sandbox_id`, image ARN/version) arrives in `LifecycleEventsConfig`
-/// itself (the SDK already knows all three at `Sandbox.create` time), and
-/// its `/resume` generation counter lives in its own participant — so
-/// `FeatureContext` stays a unit struct here, even though this feature is
-/// the one that first needed `FeatureSet` shared between the gRPC and
-/// hooks listeners (see `grpc::Services.features` and `main.rs`).
 #[derive(Default)]
 pub struct FeatureContext;
 
@@ -52,13 +49,31 @@ pub struct FeatureSet {
 }
 
 impl FeatureSet {
-    /// Every slot's `participant()`, in no particular order (`hooks::mod`'s
-    /// `SuspendShares::allocate` keys each one by its own `demand().name`,
-    /// so the list's order never matters). `main.rs` collects this once at
-    /// startup into `HookServices.participants`; with every slot still
-    /// `slot::Unsupported` (`participant() -> None`), this is empty and
-    /// `/suspend`/`/ready` stay byte-for-byte 0.5.x, which is also what the
-    /// zero-cost golden test pins.
+    /// `Health.features`: capability flags, never "currently configured"
+    /// (`rayd_core::features::AgentFeatures`: a flag means this build *has*
+    /// a real adapter for the slot, not that a section was ever applied).
+    /// With every slot `Unsupported` this equals
+    /// `AgentFeatures::foundations_only()`.
+    #[must_use]
+    pub fn agent_features(&self) -> rayd_core::features::AgentFeatures {
+        rayd_core::features::AgentFeatures {
+            configure: true,
+            s3_mounts: self.s3_mounts.supported(),
+            efs_volumes: self.efs_volumes.supported(),
+            lifecycle_events: self.lifecycle_events.supported(),
+            telemetry_export: self.telemetry_export.supported(),
+            secret_gateway: self.secret_gateway.supported(),
+            template_start: self.template_start.supported(),
+        }
+    }
+
+    /// Every slot's `LifecycleParticipant`, in no particular order
+    /// (`hooks::mod` keys each `/suspend` share by its own
+    /// `demand().name`). `main` hands this to `HookServices.participants`
+    /// from the same `FeatureSet` it gives the gRPC router, so a section
+    /// `ConfigureService` applied is the state `/suspend`/`/resume`/
+    /// `/terminate` act on. Empty while every slot is `Unsupported`, which
+    /// keeps every hook byte-for-byte 0.5.x.
     #[must_use]
     pub fn participants(&self) -> Vec<Arc<dyn LifecycleParticipant>> {
         [
@@ -91,37 +106,37 @@ pub fn build(ctx: &FeatureContext) -> FeatureSet {
 mod tests {
     use super::*;
 
-    // `#[tokio::test]`, not `#[test]`: `build()` now reaches
-    // `lifecycle_events::shared_inner()`, which spawns its stdout-draining
-    // task (`adapters::stdout_event_sink::spawn`) and so needs a runtime —
-    // every other slot stays a stateless `Unsupported`, so this is the one
-    // seam in `build()` that is no longer runtime-free.
+    // `#[tokio::test]`: `lifecycle_events::build` spawns its stdout drain
+    // task, so `build()` needs a runtime.
     #[tokio::test]
-    async fn every_still_stubbed_slot_starts_unsupported() {
+    async fn every_slot_but_lifecycle_events_starts_unsupported() {
         let set = build(&FeatureContext);
         assert!(!set.s3_mounts.supported());
         assert!(!set.efs_volumes.supported());
+        assert!(set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());
         assert!(!set.secret_gateway.supported());
         assert!(!set.template_start.supported());
     }
 
-    /// `m15-events-webhooks` replaced its stub: unlike the others, it is
-    /// always supported (what stays inert without a `ConfigureSandbox`
-    /// call is its key, not the slot itself — see that module's docs).
+    /// `lifecycle_events` is always supported and always a participant
+    /// (what stays inert without a `ConfigureSandbox` section is its key):
+    /// the flag is on and it is the one participant.
     #[tokio::test]
-    async fn lifecycle_events_is_supported_once_its_feature_lands() {
+    async fn lifecycle_events_is_reported_and_is_the_one_participant() {
         let set = build(&FeatureContext);
-        assert!(set.lifecycle_events.supported());
-    }
-
-    #[tokio::test]
-    async fn participants_is_empty_while_every_other_slot_is_still_a_stub() {
-        let set = build(&FeatureContext);
-        // `lifecycle_events` always returns `Some` from `participant()`,
-        // so with the other five still stubs the list has exactly one
-        // entry, not zero — pinning the point where `/suspend` and
-        // `/ready` stop being byte-for-byte 0.5.x behaviour.
-        assert_eq!(set.participants().len(), 1);
+        assert_eq!(
+            set.agent_features(),
+            rayd_core::features::AgentFeatures {
+                lifecycle_events: true,
+                ..rayd_core::features::AgentFeatures::foundations_only()
+            }
+        );
+        let participants = set.participants();
+        assert_eq!(participants.len(), 1);
+        assert_eq!(
+            participants[0].demand().name,
+            rayd_core::lifecycle_events::PARTICIPANT_NAME
+        );
     }
 }

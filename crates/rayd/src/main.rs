@@ -196,10 +196,15 @@ async fn main() -> anyhow::Result<ExitCode> {
     let transfers = transfer_services(&session, &files, &suspend);
     let (exit_reason, timeout) = deadline(&session, &shutdown, &suspend, &processes, &code)?;
 
+    // The process's one `FeatureSet` (ADR-015): `ConfigureService` applies
+    // sections to it, `Health.features` is derived from it and the hooks
+    // run its participants, so all three always see the same slots.
+    let features = Arc::new(rayd::features::build(&rayd::features::FeatureContext));
+
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    let grpc = rayd::grpc::router_with_transfers(
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes,
@@ -216,6 +221,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         },
         StreamSettings::default(),
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
@@ -232,13 +238,9 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // M15 (`m15-events-webhooks`): a fresh `FeatureSet` built here
-            // still shares this process's one `lifecycle_events` singleton
-            // with the one `rayd::grpc::router_with_transfers` built above
-            // for `ConfigureService` — see that call site's comment. Every
-            // other slot is still `slot::Unsupported` (`participant() ->
-            // None`), so this is empty for them, unchanged from 0.5.x.
-            participants: rayd::features::build(&rayd::features::FeatureContext).participants(),
+            // Empty while every slot is `Unsupported` (`participant()` is
+            // `None`), so every hook behaves exactly as in 0.5.x.
+            participants: features.participants(),
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());

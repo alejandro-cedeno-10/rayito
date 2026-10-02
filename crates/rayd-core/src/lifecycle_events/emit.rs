@@ -3,6 +3,9 @@
 //! only implementation; this module stays free of any actual I/O so the
 //! line format itself is unit-tested without touching stdout.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -34,7 +37,18 @@ pub fn format_event_line(event_json: &[u8], mac: &[u8]) -> String {
 /// — never an error, per §7.4 ("never turns a hook into an error").
 pub trait LifecycleEventSink: Send + Sync {
     fn emit_line(&self, line: &str) -> bool;
+
+    /// Resolves once every line `emit_line` accepted before this call has
+    /// been written and its destination flushed. It never gives up on its
+    /// own: the caller bounds it (`/suspend`'s share, `/terminate`'s cap),
+    /// because only the caller knows how long the VM or the process has
+    /// left before it freezes or exits.
+    fn flush(&self) -> SinkFlush<'_>;
 }
+
+/// The future `LifecycleEventSink::flush` returns (boxed, so the port stays
+/// object-safe and free of any async runtime).
+pub type SinkFlush<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 #[cfg(test)]
 mod tests {

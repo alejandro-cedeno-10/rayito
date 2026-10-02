@@ -400,7 +400,11 @@ pub async fn harness_with(options: Options) -> Harness {
         forced_exits.clone(),
     );
     let network = rayd::network::NetworkManager::unavailable(session.clone());
-    let grpc = rayd::grpc::router_with_transfers(
+    // One `FeatureSet` per harness, shared by the gRPC router and the hooks
+    // exactly as `main` shares it: a test's `Configure` is what its own
+    // `/suspend`/`/resume`/`/terminate` act on, and never another test's.
+    let features = Arc::new(rayd::features::build(&rayd::features::FeatureContext));
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes: processes.clone(),
@@ -421,6 +425,7 @@ pub async fn harness_with(options: Options) -> Harness {
             execute_keepalive_interval: KEEPALIVE,
         },
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(listener),
@@ -441,14 +446,7 @@ pub async fn harness_with(options: Options) -> Harness {
         user_probe: options.user_probe,
         timeout,
         network,
-        // M15 (`m15-events-webhooks`): a fresh `FeatureSet` built here still
-        // yields the slot that shares this process's one
-        // `lifecycle_events` singleton (`features::lifecycle_events::shared_inner`),
-        // so a test's `ConfigureSandbox` call (via the gRPC client on this
-        // same harness) is visible to `/suspend`/`/resume`/`/terminate`
-        // here — see `rayd::grpc::mod`'s comment at its own `features::build`
-        // call site.
-        participants: rayd::features::build(&rayd::features::FeatureContext).participants(),
+        participants: features.participants(),
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),

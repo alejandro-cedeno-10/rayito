@@ -25,6 +25,14 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `.proto` pasa a descubrirse por glob (`crates/rayito-proto/build.rs`).
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
+- **Un único `FeatureSet` por proceso y participantes acotados**
+  (`v06-foundations` §15, ADR-015): `main` comparte un `Arc<FeatureSet>`
+  entre `ConfigureService`, `Health.features` (derivado de `supported()` de
+  cada slot) y los hooks (`grpc::router_with_features`).
+  `/suspend`, `/resume` y `/terminate` llaman a `on_suspend`/`on_resume`/
+  `on_terminate` de cada participante sólo ante una transición aceptada,
+  cada uno con su propio tope (`PARTICIPANT_RESUME_TIMEOUT`,
+  `PARTICIPANT_TERMINATE_TIMEOUT`). Sin participantes, idéntico a 0.5.x.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
@@ -33,12 +41,14 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   una línea `rayito.event.v1 <b64url(json)> <b64url(hmac-sha256)>` en su
   propio stdout, sólo cuando `ConfigureSandbox` trae una
   `LifecycleEventsConfig` con clave (la deriva y empuja el SDK; `rayd`
-  nunca ve el secreto del stack). Cola acotada y no bloqueante; comparte el
-  `FeatureSet` entre el servicio gRPC `Configure` y los hooks HTTP
-  (`features::lifecycle_events::shared_inner`, un singleton por proceso).
-  Sin `events=`, cero líneas y cero coste (`/suspend` sigue siendo 0.5.x
-  byte a byte: el participante de esta función comprueba su propio estado
-  antes de hacer nada).
+  nunca ve el secreto del stack). Cola acotada y no bloqueante; `paused` y
+  `killed` esperan a que la línea salga a stdout (barrera `flush` en la
+  misma cola) dentro de la cuota de `/suspend` y del tope de `/terminate`.
+  Si la fuente aleatoria falla, el evento se descarta y se cuenta
+  (`random_unavailable`). El estado vive en el `FeatureSet` único del
+  proceso. Sin `events=`, cero líneas y cero coste (el participante de esta
+  función comprueba su propio estado antes de hacer nada, y no espera
+  ningún `flush` si no encoló nada).
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
