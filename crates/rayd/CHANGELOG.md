@@ -25,6 +25,14 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `.proto` pasa a descubrirse por glob (`crates/rayito-proto/build.rs`).
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
+- **Un único `FeatureSet` por proceso y participantes acotados**
+  (`v06-foundations` §15, ADR-015): `main` comparte un `Arc<FeatureSet>`
+  entre `ConfigureService`, `Health.features` (derivado de `supported()` de
+  cada slot) y los hooks (`grpc::router_with_features`).
+  `/suspend`, `/resume` y `/terminate` llaman a `on_suspend`/`on_resume`/
+  `on_terminate` de cada participante sólo ante una transición aceptada,
+  cada uno con su propio tope (`PARTICIPANT_RESUME_TIMEOUT`,
+  `PARTICIPANT_TERMINATE_TIMEOUT`). Sin participantes, idéntico a 0.5.x.
 - **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
   (`S3Mount`, `MountErrorClass` incl. `InvalidPath`,
   `validate_mounts`/`parse_allowed_buckets`, ports `FuseDevice`/`FuseDaemon`)
@@ -57,10 +65,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   whose FUSE connection did not. `supported()`/`Health.features.s3_mounts`
   require `CAP_SYS_ADMIN` in rayd's effective set (only `rayito-base-caps`
   has it; the binary, `/dev/fuse` and the `rayito-mount` user alone ship in
-  every variant) instead of a literal `true`. `Health.features` and
-  `root_egress` are now derived generically from `FeatureSet` (each slot's
-  `supported()` plus a new `ConfigurableFeature::root_egress_class()`), so
-  later features add nothing to `grpc/health.rs`. `s3_mounts.proto` now carries real fields (`S3Mount`,
+  every variant) instead of a literal `true`. `Health.features.root_egress`
+  is now derived generically from `FeatureSet` too (a new
+  `ConfigurableFeature::root_egress_class()`, reported only for a
+  `supported()` slot), so later features add nothing to `grpc/health.rs`. `s3_mounts.proto` now carries real fields (`S3Mount`,
   `S3MountState`, `S3MountPhase`). With no `S3MountsConfig` section sent,
   behaviour is unchanged from 0.5.x: no `/dev/fuse` open, no `mount-s3`
   spawn.

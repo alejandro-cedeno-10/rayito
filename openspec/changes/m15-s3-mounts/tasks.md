@@ -16,7 +16,7 @@
 
 - [x] 3.1 `adapters/fuse_device.rs` (`LinuxFuseDevice`): raw `libc::mount(2)`/`umount2`, no new Cargo dependency.
 - [x] 3.2 `adapters/mount_s3.rs` (`TokioMountS3Daemon`): spawns `mount-s3` as uid/gid 990 with a from-scratch environment, reaps its own child via a dedicated `tokio::spawn(... .wait() ...)` task (design.md D3).
-- [x] 3.3 `features/s3_mounts.rs`: real `S3MountsFeature` (`supported()==true`), diffing `apply()` (validate-all-before-touching-anything, unmount removed, mount new/changed, no-op on an unchanged re-apply), `status()`, and a `LifecycleParticipant` (zero `/suspend` share, `on_resume` relaunches a dead daemon via a 2 s `stat` probe). Unit-tested with fakes for both ports.
+- [x] 3.3 `features/s3_mounts.rs`: real `S3MountsFeature` (`supported()==true`), diffing `apply()` (validate-all-before-touching-anything, unmount removed, mount new/changed, no-op on an unchanged re-apply), `status()`, and a `LifecycleParticipant` (zero `/suspend` share, `on_resume` relaunches a dead daemon via a concurrent 1 s `stat` probe per mount, inside `hooks::PARTICIPANT_RESUME_TIMEOUT`). Unit-tested with fakes for both ports.
 - [x] 3.4 `grpc/health.rs`: the one call site flips `s3_mounts: true` (per that file's own pre-existing comment inviting this edit).
 - [x] 3.5 `grpc/configure.rs`: minimal, mechanical 1-line fix (`request.s3_mounts.clone()?`) made necessary by `S3MountsConfig` no longer being `Copy` now that it carries real fields — no other line of this foundations-owned file touched.
 - [x] 3.6 `image/Dockerfile`: `fuse` (AL2023 repo) + `mount-s3` (pinned RPM download + sha256, design.md D5) + the dedicated `rayito-mount` system user (uid/gid 990).

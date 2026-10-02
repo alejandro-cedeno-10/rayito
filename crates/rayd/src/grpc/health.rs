@@ -37,7 +37,11 @@ pub struct HealthGrpc {
     history: Arc<MetricsHistory>,
     kernel: Arc<dyn KernelStatus>,
     imds: Arc<ImdsState>,
-    features: Arc<FeatureSet>,
+    /// The process's one `FeatureSet` (`grpc::router_with_features`);
+    /// `None` only for a `HealthGrpc` built without `with_features`, which
+    /// reports `AgentFeatures::foundations_only()` exactly like an
+    /// all-`Unsupported` set would.
+    features: Option<Arc<FeatureSet>>,
 }
 
 impl HealthGrpc {
@@ -47,7 +51,6 @@ impl HealthGrpc {
         history: Arc<MetricsHistory>,
         kernel: Arc<dyn KernelStatus>,
         imds: Arc<ImdsState>,
-        features: Arc<FeatureSet>,
     ) -> Self {
         Self {
             session,
@@ -55,8 +58,17 @@ impl HealthGrpc {
             history,
             kernel,
             imds,
-            features,
+            features: None,
         }
+    }
+
+    /// Reports `features.agent_features()` in `Health.features`: the same
+    /// `FeatureSet` `ConfigureService` dispatches to, so a flag here and a
+    /// section's `Unsupported` outcome there can never disagree.
+    #[must_use]
+    pub fn with_features(mut self, features: Arc<FeatureSet>) -> Self {
+        self.features = Some(features);
+        self
     }
 }
 
@@ -72,7 +84,13 @@ impl HealthService for HealthGrpc {
         snapshot.imds_blocked = self.imds.blocked();
         snapshot.cpu_count = self.probe.cpu_count();
         snapshot.memory_total_bytes = self.probe.memory().map_or(0, |memory| memory.total);
-        Ok(Response::new(to_response(snapshot, &self.features)))
+        let features = self.features.as_deref();
+        let flags = features.map_or_else(
+            rayd_core::features::AgentFeatures::foundations_only,
+            FeatureSet::agent_features,
+        );
+        let root_egress = features.map(FeatureSet::root_egress).unwrap_or_default();
+        Ok(Response::new(to_response(snapshot, flags, &root_egress)))
     }
 
     async fn metrics(
@@ -118,7 +136,11 @@ impl HealthService for HealthGrpc {
     }
 }
 
-fn to_response(snapshot: HealthSnapshot, features: &FeatureSet) -> HealthResponse {
+fn to_response(
+    snapshot: HealthSnapshot,
+    features: rayd_core::features::AgentFeatures,
+    root_egress: &[RootEgressClass],
+) -> HealthResponse {
     HealthResponse {
         agent_ready: snapshot.agent_ready,
         kernel_ready: snapshot.kernel_ready,
@@ -137,16 +159,14 @@ fn to_response(snapshot: HealthSnapshot, features: &FeatureSet) -> HealthRespons
         )),
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
-        // Read live from the same `FeatureSet` `ConfigureGrpc` dispatches
-        // to, never a literal: each slot's own `supported()` and
-        // `root_egress_class()` (`FeatureSet::agent_features`/`root_egress`)
-        // say what *this* boot offers — e.g. `m15-s3-mounts` reports
-        // `false` without `CAP_SYS_ADMIN`, so a `rayito-base` agent never
-        // claims it even though the slot is the same build.
-        features: Some(agent_features_message(
-            features.agent_features(),
-            &features.root_egress(),
-        )),
+        // Derived from the slots themselves (`FeatureSet::agent_features`/
+        // `root_egress`): each slot's own `supported()` and
+        // `root_egress_class()` say what *this* boot offers — e.g.
+        // `m15-s3-mounts` reports `false` without `CAP_SYS_ADMIN`, so a
+        // `rayito-base` agent never claims it — and a feature that gives
+        // its slot a real adapter turns its own flag on without touching
+        // this file.
+        features: Some(agent_features_message(features, root_egress)),
     }
 }
 

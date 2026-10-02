@@ -48,11 +48,19 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) es la variante de imagen,
  * cuando el nombre ya permite decidirla; `mounts` lo usa para
- * `requireCapsFor`. No hace ninguna llamada a AWS ni construye ningún
+ * `requireCapsFor`. `logging` (el `logging` de `create()`, tal cual: una
+ * función que lee los logs del sandbox, como `events`, exige que lleguen a
+ * CloudWatch) queda para cuando una función real lo necesite; ninguna rama
+ * de hoy lo usa. No hace ninguna llamada a AWS ni construye ningún
  * cliente: `requireCapsFor` es una comprobación puramente sobre el nombre
  * de la imagen.
  */
-export function planFeatures(options: FeatureOptions, imageVariant?: string): FeaturePlan {
+export function planFeatures(
+  options: FeatureOptions,
+  imageVariant?: string,
+  logging?: unknown,
+): FeaturePlan {
+  void logging;
   const sections: ConfigureSection[] = [];
   if (options.mounts !== undefined) {
     requireCapsFor("mounts", imageVariant);

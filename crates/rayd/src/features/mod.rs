@@ -1,9 +1,13 @@
 //! `FeatureSet`: the six 0.6 feature slots (M15 foundations, ADR-015),
-//! built once from `main` by `build(&FeatureContext)`. Every slot is
-//! `slot::Unsupported` in this build; each feature replaces its own
-//! field's construction (inside its own `features::<name>::build`) in its
-//! own PR — `FeatureSet`'s field list and `build`'s signature do not
-//! change for that.
+//! built once from `main` by `build(&FeatureContext)` and shared, as one
+//! `Arc<FeatureSet>`, by `ConfigureService`, `Health.features` and the
+//! hooks' lifecycle participants (`grpc::router_with_features`,
+//! `hooks::HookServices::participants`). Each feature replaces its own
+//! field's construction (inside its own `features::<name>::build`, e.g.
+//! `m15-s3-mounts`'s real adapter) in its own PR, every other slot staying
+//! `slot::Unsupported` — `FeatureSet`'s field list, `build`'s signature and
+//! the three views below (`agent_features`, `root_egress`,
+//! `participants`) do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -23,6 +27,7 @@ use rayito_proto::v1::{
     TelemetryExportConfig, TelemetryExportStatus,
 };
 
+use crate::lifecycle::LifecycleParticipant;
 use slot::ConfigurableFeature;
 
 /// What a feature's `build()` needs from `main` to construct its slot.
@@ -50,19 +55,21 @@ pub struct FeatureSet {
 }
 
 impl FeatureSet {
-    /// `Health.features`, read live from every slot's own `supported()`:
-    /// a feature that gains a real adapter changes nothing here, only its
-    /// own `build()`.
+    /// `Health.features`: capability flags, never "currently configured"
+    /// (`rayd_core::features::AgentFeatures`: a flag means this build *has*
+    /// a real adapter for the slot, not that a section was ever applied),
+    /// read live from every slot's own `supported()`. With every slot
+    /// `Unsupported` this equals `AgentFeatures::foundations_only()`.
     #[must_use]
     pub fn agent_features(&self) -> AgentFeatures {
         AgentFeatures {
+            configure: true,
             s3_mounts: self.s3_mounts.supported(),
             efs_volumes: self.efs_volumes.supported(),
             lifecycle_events: self.lifecycle_events.supported(),
             telemetry_export: self.telemetry_export.supported(),
             secret_gateway: self.secret_gateway.supported(),
             template_start: self.template_start.supported(),
-            ..AgentFeatures::foundations_only()
         }
     }
 
@@ -78,6 +85,28 @@ impl FeatureSet {
             active_egress(self.telemetry_export.as_ref()),
             active_egress(self.secret_gateway.as_ref()),
             active_egress(self.template_start.as_ref()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    /// Every slot's `LifecycleParticipant`, in no particular order
+    /// (`hooks::mod` keys each `/suspend` share by its own
+    /// `demand().name`). `main` hands this to `HookServices.participants`
+    /// from the same `FeatureSet` it gives the gRPC router, so a section
+    /// `ConfigureService` applied is the state `/suspend`/`/resume`/
+    /// `/terminate` act on. Empty while every slot is `Unsupported`, which
+    /// keeps every hook byte-for-byte 0.5.x.
+    #[must_use]
+    pub fn participants(&self) -> Vec<Arc<dyn LifecycleParticipant>> {
+        [
+            self.s3_mounts.participant(),
+            self.efs_volumes.participant(),
+            self.lifecycle_events.participant(),
+            self.telemetry_export.participant(),
+            self.secret_gateway.participant(),
+            self.template_start.participant(),
         ]
         .into_iter()
         .flatten()
@@ -127,11 +156,11 @@ mod tests {
     }
 
     #[test]
-    fn agent_features_and_root_egress_are_read_from_the_slots() {
+    fn the_views_are_read_from_the_slots() {
         // Whatever this host makes of `s3_mounts` (a CI runner has no
         // `CAP_SYS_ADMIN`/`mount-s3`), the reported flag and the reported
         // root egress follow that slot's own `supported()`, and every stub
-        // stays `false` with no egress.
+        // stays `false` with no egress and no participant.
         let set = build(&FeatureContext::default());
         let features = set.agent_features();
         assert!(features.configure);
@@ -144,5 +173,11 @@ mod tests {
             Vec::new()
         };
         assert_eq!(set.root_egress(), expected);
+        let names: Vec<&str> = set
+            .participants()
+            .iter()
+            .map(|participant| participant.demand().name)
+            .collect();
+        assert_eq!(names, [s3_mounts::PARTICIPANT_NAME]);
     }
 }

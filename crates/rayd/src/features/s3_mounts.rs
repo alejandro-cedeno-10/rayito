@@ -55,6 +55,7 @@ use super::slot::ConfigurableFeature;
 use crate::adapters::{
     LinuxFuseDevice, MOUNT_S3_BINARY, TokioMountS3Daemon, detect_guest_capabilities,
 };
+use crate::hooks::PARTICIPANT_RESUME_TIMEOUT;
 use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
 
 /// Image-level bucket allowlist (`rayito image publish --env
@@ -93,10 +94,16 @@ const WATCHER_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const RELAUNCH_BACKOFF_BASE: Duration = Duration::from_millis(500);
 const RELAUNCH_BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// `/resume`'s own probe budget per mount (ADR-017): long enough for a
-/// local FUSE round-trip, short enough that an unresponsive connection
-/// never holds up the rest of `/resume`'s participants by more than this.
-const RESUME_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
-const PARTICIPANT_NAME: &str = "s3_mounts";
+/// local FUSE round-trip, and strictly inside `hooks::PARTICIPANT_RESUME_TIMEOUT`,
+/// the cap `hooks::mod` puts on this participant's whole `on_resume`. The
+/// mounts are probed concurrently, so an unresponsive connection is
+/// detected — and its relaunch started — before that cap cuts the call off.
+const RESUME_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+const _: () = assert!(
+    RESUME_PROBE_TIMEOUT.as_nanos() < PARTICIPANT_RESUME_TIMEOUT.as_nanos(),
+    "the s3-mounts probe must settle inside the participant's /resume cap"
+);
+pub(crate) const PARTICIPANT_NAME: &str = "s3_mounts";
 
 struct MountEntry {
     spec: S3Mount,
@@ -558,16 +565,22 @@ impl LifecycleParticipant for S3MountsParticipant {
     }
 
     async fn on_resume(&self) {
+        let mut probes = tokio::task::JoinSet::new();
         for path in self.inner.settled_paths() {
             let device = Arc::clone(&self.inner.device);
-            let probe_path = path.clone();
-            let responsive = tokio::time::timeout(
-                RESUME_PROBE_TIMEOUT,
-                tokio::task::spawn_blocking(move || device.probe_ready(&probe_path)),
-            )
-            .await
-            .is_ok_and(|joined| joined.unwrap_or(false));
-            if !responsive {
+            probes.spawn(async move {
+                let probe_path = path.clone();
+                let responsive = tokio::time::timeout(
+                    RESUME_PROBE_TIMEOUT,
+                    tokio::task::spawn_blocking(move || device.probe_ready(&probe_path)),
+                )
+                .await
+                .is_ok_and(|joined| joined.unwrap_or(false));
+                (path, responsive)
+            });
+        }
+        while let Some(joined) = probes.join_next().await {
+            if let Ok((path, false)) = joined {
                 self.inner.force_relaunch(&path);
             }
         }
