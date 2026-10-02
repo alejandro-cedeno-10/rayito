@@ -115,6 +115,10 @@ test("RESERVED_PORTS trae los dos puertos reservados de limits.json", () => {
 
 // -------------------------------------------------------------- route()
 
+// Año 2286 en epoch-segundos: "no caducada" para cualquier fixture que no
+// esté probando expiración a propósito.
+const FAR_FUTURE_EXPIRY = 9999999999;
+
 function fakeKvs(entries) {
   return async (key, format) => {
     if (!(key in entries)) {
@@ -145,7 +149,7 @@ test("route: 404 directo para un puerto reservado, sin consultar el KVS", async 
 test("route: 403 cuando la ruta exige traffic_token y no llega (o es incorrecto)", async () => {
   const entries = {
     "j:8000-ws-7": "a-jwe",
-    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: sha256Hex("correcto"), x: 1 }),
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: sha256Hex("correcto"), x: FAR_FUTURE_EXPIRY }),
   };
   const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries));
   assert.deepEqual(decision, { kind: "forbidden" });
@@ -154,7 +158,7 @@ test("route: 403 cuando la ruta exige traffic_token y no llega (o es incorrecto)
 test("route: entrega el origen y las cabeceras del proxy en el camino feliz", async () => {
   const entries = {
     "j:8000-ws-7": "a-jwe",
-    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: FAR_FUTURE_EXPIRY }),
   };
   const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries));
   assert.deepEqual(decision, {
@@ -167,7 +171,7 @@ test("route: entrega el origen y las cabeceras del proxy en el camino feliz", as
 test("route: borra una cabecera x-aws-proxy-* forjada por el viewer antes de decidir", async () => {
   const entries = {
     "j:8000-ws-7": "a-jwe",
-    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: FAR_FUTURE_EXPIRY }),
   };
   const request = requestFor("8000-ws-7.sbx.example.com", {
     "x-aws-proxy-auth": { value: "jwe-forjado" },
@@ -180,8 +184,43 @@ test("route: borra una cabecera x-aws-proxy-* forjada por el viewer antes de dec
 test("route: acepta un host en mayúsculas igual que en minúsculas", async () => {
   const entries = {
     "j:8000-ws-7": "a-jwe",
-    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1 }),
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: FAR_FUTURE_EXPIRY }),
   };
   const decision = await route(requestFor("8000-WS-7.SBX.Example.com"), fakeKvs(entries));
+  assert.equal(decision.kind, "origin");
+});
+
+// Hallazgo del review de PR #74 (T25): `m.x` es el único TTL que
+// `register()`/`refresh()` escriben; `route()` debe leerlo, o una ruta
+// huérfana sólo deja de servir cuando caduca el JWE en sí, del lado del
+// proxy de AWS, nunca por lo que el SDK documenta como su TTL.
+
+test("route: 404 cuando m.x ya pasó, con un reloj inyectado", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1_000 }),
+  };
+  // now() en milisegundos; m.x (1 000 s) ya pasó a los 1 000 001 s.
+  const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries), () => 1_000_001_000);
+  assert.deepEqual(decision, { kind: "not-found" });
+});
+
+test("route: 404, no 403, para una ruta caducada que también exige traffic_token", async () => {
+  // Una ruta caducada no debe distinguirse desde fuera de una que nunca
+  // existió: ni siquiera revela que haría falta un traffic_token.
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: sha256Hex("correcto"), x: 1_000 }),
+  };
+  const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries), () => 1_000_001_000);
+  assert.deepEqual(decision, { kind: "not-found" });
+});
+
+test("route: sirve la ruta justo antes de que m.x expire, con un reloj inyectado", async () => {
+  const entries = {
+    "j:8000-ws-7": "a-jwe",
+    "m:8000-ws-7": JSON.stringify({ e: "endpoint.example", t: "", x: 1_000 }),
+  };
+  const decision = await route(requestFor("8000-ws-7.sbx.example.com"), fakeKvs(entries), () => 999_000);
   assert.equal(decision.kind, "origin");
 });

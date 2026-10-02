@@ -13,7 +13,12 @@ import boto3
 import pytest
 
 from rayito._custom_domain._domain import MAX_KVS_VALUE_BYTES
-from rayito._custom_domain._service import CustomDomain, CustomDomainRoute
+from rayito._custom_domain._service import (
+    CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+    MAX_STACK_NAME_LENGTH,
+    CustomDomain,
+    CustomDomainRoute,
+)
 from rayito._custom_domain._service_async import AsyncCustomDomain
 from rayito._stacks._model import StackStatus
 from rayito.exceptions import CustomDomainException, InvalidArgumentException, StackException
@@ -76,6 +81,21 @@ def test_an_invalid_public_domain_is_rejected_at_construction() -> None:
         CustomDomain(public_domain="-not-valid-")
 
 
+def test_a_too_long_stack_name_is_rejected_at_construction() -> None:
+    """Hallazgo del review de PR #74: `RouterFunction`'s `Name`
+    (`rayito-custom-domain-router-<stack_name>`) no puede superar los 64
+    caracteres de `AWS::CloudFront::Function`; mejor fallar aquí con un
+    mensaje claro que dejar que CloudFormation lo rechace sin explicarlo."""
+    too_long = "x" * (MAX_STACK_NAME_LENGTH + 1)
+    with pytest.raises(InvalidArgumentException, match="RouterFunction"):
+        CustomDomain(public_domain=PUBLIC_DOMAIN, stack_name=too_long)
+
+
+def test_a_stack_name_at_the_limit_is_accepted() -> None:
+    at_limit = "x" * MAX_STACK_NAME_LENGTH
+    CustomDomain(public_domain=PUBLIC_DOMAIN, stack_name=at_limit)
+
+
 def test_deploy_delegates_to_optional_stacks_with_the_right_parameters() -> None:
     stacks = FakeStackProvisioner()
     kvs = FakeKeyValueStoreWriter()
@@ -83,6 +103,22 @@ def test_deploy_delegates_to_optional_stacks_with_the_right_parameters() -> None
     status = domain.deploy(certificate_arn="arn:aws:acm:us-east-1:111122223333:certificate/abc")
     assert status.state == "CREATE_COMPLETE"
     assert [call[0] for call in stacks.calls] == ["describe", "create", "wait", "describe"]
+
+
+def test_deploy_and_destroy_default_to_the_custom_domain_wait_timeout() -> None:
+    """Hallazgo del review de PR #74: el valor por defecto de
+    `OptionalStacks` (600 s) no basta para que CloudFront deshabilite y
+    borre una distribución; `deploy()`/`destroy()` deben pasar
+    `CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS` al provisioner, no el genérico."""
+    stacks = FakeStackProvisioner()
+    kvs = FakeKeyValueStoreWriter()
+    domain = CustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks, kvs_writer=kvs)
+    domain.deploy(certificate_arn="arn:aws:acm:us-east-1:111122223333:certificate/abc")
+    domain.destroy()
+    assert stacks.wait_timeouts == [
+        CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+        CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+    ]
 
 
 def test_deploy_caches_the_kvs_arn_from_the_stack_outputs() -> None:
@@ -223,6 +259,23 @@ def test_refresh_rewrites_both_keys_keeping_endpoint_and_token_hash() -> None:
     assert refreshed.expires_at.timestamp() == 1_000_000.0 + 2400
     assert refreshed.endpoint == route.endpoint
     assert refreshed.traffic_token_sha256 == route.traffic_token_sha256
+
+
+def test_refresh_does_not_roll_back_the_jwe_if_the_metadata_put_fails() -> None:
+    """Hallazgo del review de PR #74: a diferencia de `register()`, un
+    `refresh()` escribe sobre una ruta que ya servía tráfico. Si el segundo
+    `put` (`m:`) falla de forma permanente, borrar el `j:` que sí se
+    reescribió dejaría la ruta sin JWE — un 404 para toda petición — en vez
+    de simplemente no completar el refresh. `_write_route(rollback=False)`
+    deja `j:` tal cual quedó."""
+    domain, _stacks, kvs = _deployed_domain()
+    route = domain.register("ws-7", 8000, endpoint="e", jwe="old-jwe", public=True, ttl_seconds=60)
+    kvs.fail_put_once["m:8000-ws-7"] = "ValidationException"
+    with pytest.raises(CustomDomainException):
+        domain.refresh(route, jwe="new-jwe", ttl_seconds=2400)
+    # El `j:` que el refresh sí alcanzó a escribir sigue vivo: la ruta no se
+    # cae por un error transitorio en la segunda escritura.
+    assert kvs.stores[KVS_ARN]["j:8000-ws-7"] == "new-jwe"
 
 
 def test_unregister_removes_both_keys() -> None:

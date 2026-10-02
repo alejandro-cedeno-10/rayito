@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from rayito._custom_domain._service import CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS
 from rayito._stacks._service import OptionalStacks
 from rayito.cli import domain as domain_cli
 from rayito.cli._session import Clients
@@ -117,3 +118,7 @@ def test_destroy_with_yes_deletes_the_stack_and_prints_what_is_retained(
     assert result.exit_code == 0, result.output
     assert "Al borrar:" in result.output
     assert [call[0] for call in fake_provisioner.calls] == ["delete", "wait"]
+    # Hallazgo del review de PR #74: `destroy` va directo a `OptionalStacks`
+    # (sin pasar por `CustomDomain.destroy()`), así que la CLI es quien debe
+    # pasar explícitamente el timeout propio de esta función.
+    assert fake_provisioner.wait_timeouts == [CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS]

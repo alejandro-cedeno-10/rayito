@@ -1862,7 +1862,11 @@ toda cabecera `x-aws-proxy-*` que traiga el viewer, comprueba el
 `traffic_token` en tiempo constante cuando la ruta lo exige, y llama a
 `cf.updateRequestOrigin({domainName: meta.e, customHeaders: {...}})` — el
 origen real nunca está declarado de antemano en la plantilla, se elige por
-petición; una ruta sin entrada en el KVS recibe 404 directo de la Function.
+petición; una ruta sin entrada en el KVS, o cuyo `m.x` (expiración) ya
+pasó, recibe 404 directo de la Function (una ruta caducada no se
+distingue desde fuera de una que nunca existió, ni siquiera revela que
+exigía `traffic_token`), independientemente de que el JWE en sí también
+caduque del lado del proxy de AWS.
 `CustomDomain.register()`/`unregister()`/`refresh()` son las únicas
 escrituras al KVS (SDK), nunca la Function. Aunque `cloudfront-
 keyvaluestore` declara `signatureVersion: v4` en su `service-2.json`, su

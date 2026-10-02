@@ -1412,8 +1412,16 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   `Sandbox.create(domain=)`/`get_host()`/`expose()` queda como seguimiento
   no bloqueante (foundations no pre-añadió el `HostResolver`/`expose()`
   que la arquitectura preveía); `domain=` sigue lanzando
-  `UnimplementedError`. DOM-2/3/5/7/8 sin medir: necesitan D3 (dominio y
-  certificado ACM del mantenedor) y la etapa de aceptación AWS.
+  `UnimplementedError`, con un mensaje que ya nombra el seguimiento en vez
+  de este mismo cambio. `route()` sí acota una ruta huérfana por sí sola
+  (T25): comprueba `m.x` en cada petición y la trata como inexistente
+  (404) si ya caducó, sin depender sólo de la expiración del JWE. El
+  refresher Lambda opcional de la arquitectura (§7.8, `EnableRefresher`)
+  tampoco se construyó — **DOM-14, pendiente**, mismo motivo que el resto:
+  sin D3 no se puede medir contra AWS real, y `OptionalStacks` no soporta
+  todavía un artefacto condicional. DOM-2/3/5/7/8/14 sin medir: necesitan
+  D3 (dominio y certificado ACM del mantenedor) y la etapa de aceptación
+  AWS.
 
 ---
 

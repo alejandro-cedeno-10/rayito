@@ -13,10 +13,13 @@ from collections.abc import Callable
 import boto3
 
 from rayito._custom_domain._kvs import KeyValueStoreWriter
-from rayito._custom_domain._service import CustomDomain, CustomDomainRoute
+from rayito._custom_domain._service import (
+    CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+    CustomDomain,
+    CustomDomainRoute,
+)
 from rayito._stacks._model import StackStatus
 from rayito._stacks._port import StackProvisioner
-from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS
 
 
 class AsyncCustomDomain:
@@ -56,7 +59,7 @@ class AsyncCustomDomain:
         certificate_arn: str,
         tags: dict[str, str] | None = None,
         wait: bool = True,
-        wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
+        wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
     ) -> StackStatus:
         return await asyncio.to_thread(
             self._inner.deploy,
@@ -70,7 +73,7 @@ class AsyncCustomDomain:
         return await asyncio.to_thread(self._inner.status)
 
     async def destroy(
-        self, *, wait: bool = True, wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS
+        self, *, wait: bool = True, wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS
     ) -> None:
         await asyncio.to_thread(self._inner.destroy, wait=wait, wait_timeout=wait_timeout)
 

@@ -84,10 +84,27 @@ build, only a stack to deploy and a KeyValueStore to read/write.
 DOM-2 (HTTP/1.1 through `updateRequestOrigin`, header budget under 1,783
 characters), DOM-3 (WebSocket upgrade), DOM-5 (KVS put/delete propagation
 latency to edge), DOM-7 (keep-alive past JWE expiry — `CustomDomain.refresh()`
-is the mechanism, its timing is unverified against a real distribution) and
+is the mechanism, its timing is unverified against a real distribution),
 DOM-8 (auto-resume through the domain, which depends on the `Sandbox`
-wiring in D6). `docs/site/docs/funciones-opcionales/dominio-propio.md`
+wiring in D6) and **DOM-14** (new: whether the optional refresher Lambda
+that §7.8 of the M15 architecture describes — periodic, off by an
+`EnableRefresher` parameter default `false`, re-`PutKey`-ing `j:`/`m:`
+before a route's TTL runs out — works against the bundled
+`lambda-microvms`-style packaging this repo already uses for other
+components' Lambdas). `docs/site/docs/funciones-opcionales/dominio-propio.md`
 marks the feature experimental for exactly these reasons.
+
+**DOM-14 is deferred, not measured, same as the `Sandbox` wiring in D6.**
+`_stacks/components/custom_domain.py`'s module docstring already explains
+why: packaging and uploading a conditional Lambda artifact on every
+`deploy()` is not something `OptionalStacks`'s generic mechanism supports
+today, and a refresher Lambda cannot be exercised against real AWS in this
+change anyway (no D3). `CustomDomain.refresh()` on the SDK side covers the
+same need in the meantime (the caller invokes it before a route's JWE
+expires, DOM-7). Recorded here, in `tasks.md`, `MILESTONES.md`'s M15
+section and `docs-delta.md` so the acceptance stage marks DOM-14
+"pending", not "failed" — a review finding on PR #74 noted it was only in
+a module docstring before this note existed.
 
 ## Risks / trade-offs
 

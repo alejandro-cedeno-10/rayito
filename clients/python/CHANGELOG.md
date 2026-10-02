@@ -42,10 +42,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `cloudfront-keyvaluestore` exige SigV4A pese a declarar
   `signatureVersion: v4` en su modelo. Sin instanciar `CustomDomain` no hay
   ningún cliente `cloudfront-keyvaluestore` ni `cloudformation`.
-  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`: la
+  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`, con un
+  mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`: la
   integración con `get_host()`/`expose()` queda para un cambio posterior
-  (ver `ARCHITECTURE.md` ADR-024). DOM-2/3/5/7/8 pendientes de D3 (dominio
-  y certificado ACM del mantenedor) y de la aceptación contra AWS real.
+  (ver `ARCHITECTURE.md` ADR-024). La CloudFront Function trata una ruta
+  cuyo TTL (`register(ttl_seconds=)`/`refresh()`) ya pasó como si nunca
+  hubiera existido (404), no sólo cuando caduca el JWE en sí (T25).
+  `deploy()`/`destroy()` usan un timeout propio
+  (`CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`, 30 min) en vez del genérico de
+  `OptionalStacks`, porque CloudFront tarda bastante más en deshabilitar y
+  borrar una distribución; `refresh()` ya no deshace una escritura previa
+  si la segunda falla (sólo `register()` lo hace, al tratarse de claves
+  nuevas). DOM-2/3/5/7/8/14 pendientes de D3 (dominio y certificado ACM
+  del mantenedor) y de la aceptación contra AWS real.
 
 ## [0.5.1] - 2026-10-01
 

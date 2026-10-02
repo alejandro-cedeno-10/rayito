@@ -53,9 +53,13 @@ apagado por defecto: construirlo no llama a AWS, y sólo `deploy()`,
 
 `Sandbox.create(domain=)`/`get_host()`/`expose()` **no** están cableados
 todavía a `CustomDomain` en esta release: `domain=` sigue lanzando
-`UnimplementedError` (seguimiento no bloqueante, ver `ARCHITECTURE.md`
-ADR-024). DOM-2 (HTTP/1.1 por `cf.updateRequestOrigin`), DOM-3 (WebSocket),
-DOM-5 (latencia de propagación del KeyValueStore), DOM-7 (keep-alive tras
-caducar el JWE) y DOM-8 (auto-resume por el dominio) están pendientes de
-D3 (dominio y certificado ACM del mantenedor) y de la etapa de aceptación
-contra AWS real.
+`UnimplementedError`, con un mensaje que nombra ese seguimiento en vez de
+este cambio (seguimiento no bloqueante, ver `ARCHITECTURE.md` ADR-024). El
+refresher Lambda opcional que la arquitectura de M15 describe tampoco se
+construyó (**DOM-14, pendiente**): `CustomDomain.refresh()` cubre el mismo
+caso desde el SDK mientras tanto. DOM-2 (HTTP/1.1 por
+`cf.updateRequestOrigin`), DOM-3 (WebSocket), DOM-5 (latencia de
+propagación del KeyValueStore), DOM-7 (keep-alive tras caducar el JWE),
+DOM-8 (auto-resume por el dominio) y DOM-14 están pendientes de D3 (dominio
+y certificado ACM del mantenedor) y de la etapa de aceptación contra AWS
+real.

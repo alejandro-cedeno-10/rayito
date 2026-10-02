@@ -16,8 +16,9 @@ hostname público normal — sin las cabeceras `x-aws-proxy-auth`/
     directamente, pasándole el `endpoint` del sandbox y un JWE que tú
     mismo acuñas. Además, DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket), DOM-5
     (latencia de propagación del KeyValueStore), DOM-7 (mantener la ruta
-    viva más allá de la caducidad del JWE) y DOM-8 (auto-resume por el
-    dominio) siguen sin medirse contra una distribución real: hace falta
+    viva más allá de la caducidad del JWE), DOM-8 (auto-resume por el
+    dominio) y DOM-14 (el refresher Lambda opcional, tampoco construido
+    todavía) siguen sin medirse contra una distribución real: hace falta
     un dominio y un certificado ACM que sólo el mantenedor puede aportar.
 
 !!! info "Coste y activación"
@@ -91,8 +92,9 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
             traffic_token=traffic_token, ttl_seconds=2400,
         )
         print(route.host)  # (4)!
-        # ... antes de que caduque:
-        domain.refresh(route, jwe=jwe, ttl_seconds=2400)
+        # ... antes de que caduque, con un JWE recién acuñado (5):
+        fresh_jwe = sbx.get_host(8000).headers["x-aws-proxy-auth"]
+        domain.refresh(route, jwe=fresh_jwe, ttl_seconds=2400)
         domain.unregister(sbx.sandbox_id, 8000)
     ```
 
@@ -104,6 +106,13 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
        `register()` rechaza la llamada — una ruta sólo es pública con
        `public=True` explícito, nunca por omisión.
     4. `"8000-<sandbox_id>.sbx.tu-dominio.com"`.
+    5. `refresh()` necesita un JWE nuevo, no el mismo que `register()` ya
+       usó: `get_host()` lo vuelve a acuñar bajo demanda (o reutiliza el que
+       el `TokenRefresher` interno del transporte ya renovó pasados
+       `TOKEN_REFRESH_AFTER_MINUTES`). Volver a pasar el `jwe` original sólo
+       extiende `m.x` (el TTL de la ruta) sin renovar el token que de
+       verdad comprueba el proxy: en cuanto ese JWE original caduque, la
+       ruta empieza a fallar aunque acabes de "refrescarla".
 
 === "Python (async)"
 
@@ -168,8 +177,10 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
    `traffic_token` si la ruta no es pública, y llama a
    `cf.updateRequestOrigin()` con el `endpoint` real del sandbox y las
    cabeceras del proxy que hacen falta.
-3. Una ruta sin entrada en el `KeyValueStore` recibe 404 directo de la
-   Function: nunca llega al origen placeholder.
+3. Una ruta sin entrada en el `KeyValueStore`, o cuyo `ttl_seconds` ya
+   pasó, recibe 404 directo de la Function: nunca llega al origen
+   placeholder, y desde fuera no se distingue de una ruta que nunca
+   existió.
 
 ## Limitaciones conocidas
 
@@ -180,7 +191,10 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
   sólo se guarda como su hash sha256 — no hay forma de recuperarlo después
   de perderlo; genera uno nuevo y vuelve a registrar la ruta.
 - Una ruta no se borra sola cuando el sandbox muere: llama a
-  `unregister()` tú mismo (o deja que el JWE caduque, lo que deja la ruta
-  respondiendo con un 401/403 del lado del proxy de AWS, no de CloudFront).
+  `unregister()` tú mismo. Sin eso, la ruta se acota sola por dos lados
+  independientes: `ttl_seconds` de `register()`/`refresh()` (`m.x`, que la
+  propia CloudFront Function comprueba — una ruta caducada da 404, igual
+  que una que nunca existió) y la caducidad del JWE en sí, del lado del
+  proxy de AWS (401/403), lo primero que llegue.
 - Los puertos `8080` y `9000` (puerto de hooks y reservado) no se pueden
   exponer, igual que en el resto del SDK.

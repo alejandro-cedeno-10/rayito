@@ -71,11 +71,18 @@ Resources:
         // borra cualquier cabecera \`x-aws-proxy-*\` que traiga el viewer, para que
         // nadie pueda suplantar el origen o el JWE desde fuera; (2) rechaza sin
         // tocar el KVS un puerto reservado (RESERVED_PORTS, defensa en
-        // profundidad — el SDK ya nunca registra una ruta ahí); (3) si la ruta
-        // exige \`traffic_token\` (\`m.t\` no vacío), lo comprueba en tiempo constante
-        // contra la cabecera \`e2b-traffic-access-token\` o la cookie \`rayito_tt\`;
-        // (4) llama a \`cf.updateRequestOrigin\` con el endpoint de la ruta y las
-        // cabeceras que el proxy de AWS Lambda MicroVMs espera.
+        // profundidad — el SDK ya nunca registra una ruta ahí); (3) trata una ruta
+        // cuyo \`m.x\` (expires_at, epoch en segundos) ya pasó como si no existiera
+        // — un 404, igual que una ruta nunca registrada, no un 403 — porque
+        // \`register(ttl_seconds=)\`/\`refresh()\` sólo escriben ese campo, nadie lo
+        // borra solo (hallazgo del review de PR #74: antes \`route()\` nunca lo
+        // leía, así que una ruta huérfana sólo dejaba de servir cuando caducaba el
+        // JWE en sí, del lado del proxy de AWS, no por el TTL que el SDK dice
+        // ofrecer); (4) si la ruta exige \`traffic_token\` (\`m.t\` no vacío), lo
+        // comprueba en tiempo constante contra la cabecera
+        // \`e2b-traffic-access-token\` o la cookie \`rayito_tt\`; (5) llama a
+        // \`cf.updateRequestOrigin\` con el endpoint de la ruta y las cabeceras que
+        // el proxy de AWS Lambda MicroVMs espera.
         //
         // \`import cf from "cloudfront"\` es la forma documentada por AWS de acceder
         // a los builtins del runtime \`cloudfront-js-2.0\` (no una importación de
@@ -104,9 +111,9 @@ Resources:
         // \`limits.json\` \`reservedPorts\` (ADR-006: 8080 es \`rayd\`, 9000 los hooks);
         // espejo literal de \`RESERVED_PORTS\` en \`_limits.py\`/\`limits.ts\`, verificado
         // igual contra \`limits.json\` por
-        // \`scripts/tests/test_custom_domain_router_reserved_ports.py\` (este runtime
-        // no puede importar un módulo generado: CloudFront Functions sólo resuelve
-        // los builtins \`cloudfront\`/\`crypto\`, nunca un fichero propio).
+        // \`scripts/tests/test_custom_domain_function_sync.py::test_reserved_ports_match_limits_json\`
+        // (este runtime no puede importar un módulo generado: CloudFront Functions
+        // sólo resuelve los builtins \`cloudfront\`/\`crypto\`, nunca un fichero propio).
         const RESERVED_PORTS = [8080, 9000];
 
         /** "8000-ws-7.sbx.example.com" -> "8000-ws-7": la etiqueta es la primera
@@ -199,12 +206,15 @@ Resources:
          * CloudFront. \`kvsGet(key, format)\` es \`(key, format) =>
          * kvsHandle.get(key, {format})\` en producción (ver \`handler\` más abajo).
          *
-         * @returns \`{kind: "not-found"}\` (404: puerto reservado o sin ruta en el
-         *   KVS), \`{kind: "forbidden"}\` (403: \`traffic_token\` ausente o
-         *   incorrecto), o \`{kind: "origin", domainName, customHeaders}\` (pasa a
-         *   \`cf.updateRequestOrigin\` tal cual).
+         * @param now Reloj inyectable para los tests (epoch en milisegundos, como
+         *   \`Date.now()\`, su valor por defecto); \`metadata.x\` llega en segundos
+         *   (\`_domain.RouteMetadata.encode\`).
+         * @returns \`{kind: "not-found"}\` (404: puerto reservado, sin ruta en el
+         *   KVS, o \`m.x\` ya pasado), \`{kind: "forbidden"}\` (403: \`traffic_token\`
+         *   ausente o incorrecto), o \`{kind: "origin", domainName, customHeaders}\`
+         *   (pasa a \`cf.updateRequestOrigin\` tal cual).
          */
-        async function route(request, kvsGet) {
+        async function route(request, kvsGet, now = Date.now) {
           stripUpstreamProxyHeaders(request.headers);
           const label = routeLabel(request.headers.host.value);
           const port = portFromLabel(label);
@@ -221,6 +231,13 @@ Resources:
             jwe = await kvsGet(JWE_KEY_PREFIX + label, "string");
             metadata = await kvsGet(META_KEY_PREFIX + label, "json");
           } catch (err) {
+            return { kind: "not-found" };
+          }
+          // \`m.x\` es el único campo que \`register()\`/\`refresh()\` escriben para
+          // acotar una ruta huérfana (T25); tratarla como "no encontrada", no
+          // "prohibida", porque desde fuera una ruta caducada no debe distinguirse
+          // de una que nunca existió.
+          if (typeof metadata.x === "number" && now() >= metadata.x * 1000) {
             return { kind: "not-found" };
           }
           if (!trafficTokenAccepted(request.headers, metadata.t)) {

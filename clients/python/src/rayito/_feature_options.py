@@ -83,5 +83,16 @@ def plan_features(options: FeatureOptions, *, image_variant: str | None = None) 
     if options.gateways is not None:
         raise UnimplementedError("gateways=", f"llega en 0.6 ({GATEWAYS_CHANGE})")
     if options.domain is not None:
-        raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
+        # A diferencia de los otros seis, `DOMAIN_CHANGE` ya se fusionó: construyó
+        # `CustomDomain` (deploy/register/unregister/refresh) completa y probada,
+        # pero sin cablearla aquí (falta el seam `HostResolver` que la arquitectura
+        # de M15 §1(g) esperaba de foundations; ver MILESTONES.md "M15 — Rayito
+        # 0.6" y `ARCHITECTURE.md` ADR-024). El mensaje lo dice explícitamente para
+        # no mandar a quien lea el error de vuelta a un cambio que ya fusionó.
+        raise UnimplementedError(
+            "domain=",
+            f"{DOMAIN_CHANGE} construyó CustomDomain pero no la cableó a Sandbox.create()/"
+            "get_host()/expose(): usa rayito.CustomDomain directamente mientras tanto "
+            "(seguimiento no bloqueante, ver MILESTONES.md M15)",
+        )
     return FeaturePlan()

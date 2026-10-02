@@ -14,6 +14,9 @@ export class FakeStackProvisioner implements StackProvisioner {
   readonly calls: Array<readonly [string, ...unknown[]]> = [];
   nextUpdateOutcome: UpdateOutcome = "changed";
   failWait = false;
+  /** Cada `timeoutMs` que `wait()` recibió, en orden; espejo de
+   * `fake_stacks.FakeStackProvisioner.wait_timeouts`. */
+  readonly waitTimeoutsMs: number[] = [];
 
   async describe(stackName: string): Promise<StackStatus | undefined> {
     this.calls.push(["describe", stackName]);
@@ -50,8 +53,9 @@ export class FakeStackProvisioner implements StackProvisioner {
     this.stacks.delete(stackName);
   }
 
-  async wait(stackName: string, target: DeployTarget): Promise<void> {
+  async wait(stackName: string, target: DeployTarget, timeoutMs: number): Promise<void> {
     this.calls.push(["wait", stackName, target]);
+    this.waitTimeoutsMs.push(timeoutMs);
     if (this.failWait) {
       throw new StackError(`tiempo agotado esperando ${JSON.stringify(stackName)}`, {
         code: "in_progress",

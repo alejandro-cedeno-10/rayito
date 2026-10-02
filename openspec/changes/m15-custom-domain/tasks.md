@@ -47,10 +47,18 @@
 - [x] 3.3 Unit tests: `test_m15_custom_domain_service.py` (incl. "builds no
       boto3 client" and "construction makes no call"),
       `m15-custom-domain.test.ts` (service section).
-- [ ] 3.4 e2e `clients/python/tests/e2e/test_m15_custom_domain.py` /
-      `clients/typescript/tests/e2e/m15-custom-domain.test.ts`: DOM-2/3/5/7/8
-      against a real distribution. **Gate for archive; blocked on D3, not
-      run in this branch.**
+- [x] 3.4 e2e `clients/python/tests/e2e/test_m15_custom_domain.py` /
+      `clients/typescript/tests/e2e/custom-domain.e2e.test.ts` (TypeScript's
+      e2e suite only picks up `*.e2e.test.ts`, `vitest.config.ts`): deploy
+      the stack, register a token route, DOM-2 (HTTP/1.1), DOM-3 (WebSocket
+      upgrade, a minimal stdlib-only echo client+server, no new
+      dependency), 403 without the token, 404 after `unregister()`, destroy
+      the stack and confirm `status()` first — each skips as a whole unless
+      the environment brings a public domain, an ACM certificate ARN *and*
+      an acceptance run tag (`rayito:acceptance-run`), on top of the usual
+      `RAYITO_E2E`/`RAYITO_TEMPLATE`. **Written, not run from this branch:
+      D3 blocks executing these tests, not writing them (a PR #74 review
+      finding) — gate for archive remains D3 + the AWS acceptance stage.**
 
 ## 4. Stack `infra/custom-domain.yaml`
 
@@ -63,16 +71,22 @@
       `AWS::CloudFront::KeyValueStore`. No Lambda, no IAM beyond CloudFront.
 - [x] 4.2 `infra/functions/custom_domain_router.js`: strips viewer
       `x-aws-proxy-*` headers, denies reserved ports (`RESERVED_PORTS`,
-      kept in sync with `limits.json`) before touching the KVS, checks the
-      route's `traffic_token` in constant time against a lower-cased host
-      label, calls `cf.updateRequestOrigin`. The routing decision is a pure
-      `route(request, kvsGet)` function, unit tested with `node:test`
-      (`infra/functions/tests/custom_domain_router.test.mjs`, via a
-      minimal `cloudfront` module shim since that builtin only exists
-      inside CloudFront's own runtime) covering 404/403/success/header
-      stripping; `handler` itself (the thin `cf`-calling wrapper) is not
-      exported, matching AWS's own `AWS::CloudFront::Function` example, and
-      is only exercised in the AWS acceptance stage (DOM-2/3).
+      kept in sync with `limits.json`) before touching the KVS, treats a
+      route whose `m.x` (expiry) already passed as not-found — a 404, not a
+      403, so an expired route is indistinguishable from one that never
+      existed (T25; a PR #74 review finding: `route()` used to never read
+      `m.x` at all, so only the JWE's own AWS-side expiry bounded an
+      orphaned route) —, checks the route's `traffic_token` in constant
+      time against a lower-cased host label, calls
+      `cf.updateRequestOrigin`. The routing decision is a pure
+      `route(request, kvsGet, now = Date.now)` function, unit tested with
+      `node:test` (`infra/functions/tests/custom_domain_router.test.mjs`,
+      via a minimal `cloudfront` module shim since that builtin only
+      exists inside CloudFront's own runtime) covering
+      404/403/success/header-stripping/expiry-with-an-injected-clock;
+      `handler` itself (the thin `cf`-calling wrapper) is not exported,
+      matching AWS's own `AWS::CloudFront::Function` example, and is only
+      exercised in the AWS acceptance stage (DOM-2/3).
 - [x] 4.3 `scripts/tests/test_custom_domain_function_sync.py` keeps the
       YAML's embedded `FunctionCode` in sync with the `.js` source, minus
       its `export` keywords (CloudFormation has no file-include for this
@@ -88,6 +102,18 @@
       (`_templates/custom-domain.yaml`, `stacks/templates/
       custom-domain.gen.ts`) regenerated and committed; TypeScript
       `stacks/packaging.ts`'s `ASSETS` map updated with the new component.
+- [x] 4.7 The optional refresher Lambda from the M15 architecture (§7.8,
+      `EnableRefresher` parameter, `rate(10 minutes)` schedule) is **not**
+      built in this change: deferred, same precedent as the `Sandbox`
+      wiring in D6, and for a more concrete reason — `OptionalStacks`'s
+      generic deploy mechanism has no conditional-artifact support, so a
+      refresher Lambda would need its own packaging path just to stay off
+      by default, and it could not be exercised against real AWS here
+      anyway (no D3). Recorded as **DOM-14, pending** (not failed) in
+      `design.md`'s "What is explicitly unmeasured here", `MILESTONES.md`'s
+      M15 section and `docs-delta.md` — a PR #74 review finding noted this
+      was previously only in `_stacks/components/custom_domain.py`'s
+      module docstring, invisible to whoever runs the acceptance stage.
 
 ## 5. CLI and exports
 

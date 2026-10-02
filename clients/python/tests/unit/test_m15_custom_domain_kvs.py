@@ -104,3 +104,36 @@ def test_describe_without_awscrt_raises_a_clear_custom_domain_exception() -> Non
     writer = CloudFrontKvsWriter(session=_dummy_session())
     with pytest.raises(CustomDomainException, match=r"rayito\[custom-domain\]"):
         writer.describe(_DUMMY_KVS_ARN)
+
+
+def test_kvs_module_has_no_static_top_level_awscrt_import() -> None:
+    """Hallazgo del review de PR #74: `awscrt` nunca debe ser una
+    importación estática de nivel superior de este módulo (eso rompería
+    `import rayito._custom_domain._kvs` en el caso por defecto, sin el
+    extra `rayito[custom-domain]` instalado) — lo único que hace falta es
+    que boto3/botocore lo encuentren *a sí mismos*, perezosamente, al
+    firmar de verdad (D2 del cambio). No se comprueba vía `sys.modules`
+    tras `import rayito`: boto3 (dependencia obligatoria) ya dispara esa
+    detección de `awscrt` por su cuenta en cualquier entorno donde el
+    extra esté instalado, para *cualquier* cliente, así que ese síntoma no
+    distingue nada que dependa de este módulo."""
+    import ast
+    from pathlib import Path
+
+    import rayito._custom_domain._kvs as kvs_module
+
+    source = Path(kvs_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    # Sólo el cuerpo de nivel superior del módulo, nunca dentro de una
+    # función: una importación perezosa de `awscrt` *ahí dentro* sería
+    # legítima (y hoy no hace falta ninguna: boto3/botocore ya lo
+    # encuentran solos).
+    top_level_imports = {
+        alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
+    } | {
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    offenders = {name for name in top_level_imports if name.split(".")[0] == "awscrt"}
+    assert offenders == set()

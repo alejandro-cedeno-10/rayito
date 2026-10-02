@@ -39,9 +39,17 @@ versionado [SemVer](https://semver.org/lang/es/).
   keyvaluestore` y `@aws-sdk/signature-v4a` (el plano de datos del KVS
   exige SigV4A pese a declarar `signatureVersion: v4` en su modelo); sin
   instanciar `CustomDomain` no se importa ni se construye ninguno.
-  `domain` en `Sandbox.create()` sigue lanzando `UnimplementedError`: la
-  integración con `getHost()`/`expose()` queda para un cambio posterior.
-  DOM-2/3/5/7/8 pendientes de D3 y de la aceptación contra AWS real.
+  `domain` en `Sandbox.create()` sigue lanzando `UnimplementedError`, con
+  un mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`:
+  la integración con `getHost()`/`expose()` queda para un cambio
+  posterior. La CloudFront Function trata una ruta cuyo TTL
+  (`register({ttlSeconds})`/`refresh()`) ya pasó como si nunca hubiera
+  existido (404), no sólo cuando caduca el JWE en sí (T25). `deploy()`/
+  `destroy()` usan un timeout propio (`CUSTOM_DOMAIN_WAIT_TIMEOUT_MS`,
+  30 min) en vez del genérico de `OptionalStacks`; `refresh()` ya no
+  deshace una escritura previa si la segunda falla (sólo `register()` lo
+  hace). DOM-2/3/5/7/8/14 pendientes de D3 y de la aceptación contra AWS
+  real.
 
 ## [0.5.1] - 2026-10-01
 

@@ -23,8 +23,10 @@ import {
   validateRoutePort,
 } from "../../src/custom-domain/domain.js";
 import {
+  CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
   CustomDomain,
   type CustomDomainRoute,
+  MAX_STACK_NAME_LENGTH,
   STACK_COMPONENT,
 } from "../../src/custom-domain/service.js";
 import { CustomDomainError, InvalidArgumentError, StackError } from "../../src/errors.js";
@@ -134,6 +136,23 @@ describe("custom-domain/service", () => {
     expect(kvs.calls).toEqual([]);
   });
 
+  test("a too-long stackName is rejected at construction", () => {
+    // Hallazgo del review de PR #74: RouterFunction's Name
+    // (rayito-custom-domain-router-<stackName>) no puede superar los 64
+    // caracteres de AWS::CloudFront::Function.
+    const tooLong = "x".repeat(MAX_STACK_NAME_LENGTH + 1);
+    expect(() => new CustomDomain({ publicDomain: PUBLIC_DOMAIN, stackName: tooLong })).toThrow(
+      /RouterFunction/,
+    );
+  });
+
+  test("a stackName at the limit is accepted", () => {
+    const atLimit = "x".repeat(MAX_STACK_NAME_LENGTH);
+    expect(
+      () => new CustomDomain({ publicDomain: PUBLIC_DOMAIN, stackName: atLimit }),
+    ).not.toThrow();
+  });
+
   test("an invalid publicDomain is rejected at construction", () => {
     expect(() => new CustomDomain({ publicDomain: "-not-valid-" })).toThrow(InvalidArgumentError);
   });
@@ -149,6 +168,26 @@ describe("custom-domain/service", () => {
     const status = await domain.deploy({ certificateArn: CERTIFICATE_ARN });
     expect(status.state).toBe("CREATE_COMPLETE");
     expect(stacks.calls.map((c) => c[0])).toEqual(["describe", "create", "wait", "describe"]);
+  });
+
+  test("deploy and destroy default to the custom-domain wait timeout", async () => {
+    // Hallazgo del review de PR #74: el valor por defecto de `OptionalStacks`
+    // (600_000 ms) no basta para que CloudFront deshabilite y borre una
+    // distribución; deploy()/destroy() deben pasar
+    // CUSTOM_DOMAIN_WAIT_TIMEOUT_MS al provisioner, no el genérico.
+    const stacks = new FakeStackProvisioner();
+    const kvs = new FakeKeyValueStoreWriter();
+    const domain = new CustomDomain({
+      publicDomain: PUBLIC_DOMAIN,
+      provisioner: stacks,
+      kvsWriter: kvs,
+    });
+    await domain.deploy({ certificateArn: CERTIFICATE_ARN });
+    await domain.destroy();
+    expect(stacks.waitTimeoutsMs).toEqual([
+      CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
+      CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
+    ]);
   });
 
   test("deploy caches the KvsArn from the stack outputs", async () => {
@@ -313,6 +352,24 @@ describe("custom-domain/service", () => {
       expect(refreshed.expiresAt.getTime()).toBe((1_000_000 + 2400) * 1000);
       expect(refreshed.endpoint).toBe(route.endpoint);
       expect(refreshed.trafficTokenSha256).toBe(route.trafficTokenSha256);
+    });
+
+    test("refresh does not roll back the jwe if the metadata put fails", async () => {
+      // Hallazgo del review de PR #74: a diferencia de register(), refresh()
+      // escribe sobre una ruta que ya servía tráfico; si el PutKey de `m:`
+      // falla tras el de `j:`, borrar `j:` dejaría la ruta sin JWE (404 para
+      // toda petición) en vez de simplemente no completar el refresh.
+      const route = await domain.register("ws-7", 8000, {
+        endpoint: "e",
+        jwe: "old-jwe",
+        public: true,
+        ttlSeconds: 60,
+      });
+      kvs.failPutOnce.set("m:8000-ws-7", "ValidationException");
+      await expect(domain.refresh(route, { jwe: "new-jwe", ttlSeconds: 2400 })).rejects.toThrow(
+        CustomDomainError,
+      );
+      expect(kvs.stores.get(KVS_ARN)?.get("j:8000-ws-7")).toBe("new-jwe");
     });
 
     test("unregister removes both keys", async () => {

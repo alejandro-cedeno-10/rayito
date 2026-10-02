@@ -48,7 +48,7 @@ from rayito._custom_domain._kvs import (
 )
 from rayito._stacks._model import StackStatus
 from rayito._stacks._port import StackProvisioner
-from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks
+from rayito._stacks._service import OptionalStacks
 from rayito.exceptions import CustomDomainException, InvalidArgumentException
 
 #: Nombre fijo del componente `OptionalStack` que despliega esta función
@@ -73,6 +73,39 @@ MAX_ETAG_CONFLICT_RETRIES: Final = 3
 #: real usa ese nombre para un `IfMatch` que no coincide (sin confirmar
 #: contra una distribución real, D3).
 _ETAG_CONFLICT_AWS_CODES: Final = ("ConflictException", "PreconditionFailedException")
+
+#: Prefijo del recurso de `infra/custom-domain.yaml` con el nombre más largo
+#: de los dos que llevan `${AWS::StackName}` (`RouterFunction`; el
+#: `KeyValueStore` usa uno más corto, así que no es el que limita). Debe
+#: mantenerse igual que esa plantilla a mano: no hay aserción cruzada,
+#: `scripts/tests/test_custom_domain_function_sync.py` no cubre nombres de
+#: recurso.
+_ROUTER_FUNCTION_NAME_PREFIX: Final = "rayito-custom-domain-router-"
+
+#: Límite de `AWS::CloudFront::Function`'s `Name` (64 caracteres,
+#: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html).
+#: Un `--stack-name` que lo supere hace que CloudFormation rechace la
+#: plantilla con un error que no menciona el límite en absoluto (hallazgo
+#: del review de PR #74) — mejor fallar aquí con un mensaje claro.
+_CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH: Final = 64
+
+#: Longitud máxima de `stack_name` para que `RouterFunction`'s `Name` no
+#: supere `_CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH` (36 con el prefijo de
+#: arriba: por defecto, "rayito-custom-domain" deja de sobrar margen a
+#: partir de los 37 caracteres).
+MAX_STACK_NAME_LENGTH: Final = _CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH - len(
+    _ROUTER_FUNCTION_NAME_PREFIX
+)
+
+#: `deploy()`/`destroy()` esperan a que CloudFormation termine; el valor por
+#: defecto de `OptionalStacks` (`DEFAULT_WAIT_TIMEOUT_SECONDS`, 600 s) basta
+#: para la mayoría de componentes pero no para éste: una distribución
+#: CloudFront tarda ~15 min sólo en deshabilitarse antes de poder borrarse
+#: (`_stacks/components/custom_domain.py::COMPONENT.cost.removal`,
+#: `dominio-propio.md`), y crearla/actualizarla también puede superar los
+#: 10 min. 1800 s (30 min) de margen; cifra exacta por confirmar como DOM-15
+#: en la etapa de aceptación contra AWS real (`design.md` de este cambio).
+CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS: Final = 1800.0
 
 
 @dataclass(frozen=True)
@@ -161,6 +194,13 @@ class CustomDomain:
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.public_domain = validate_public_domain(public_domain)
+        if stack_name is not None and len(stack_name) > MAX_STACK_NAME_LENGTH:
+            raise InvalidArgumentException(
+                f"stack_name demasiado largo ({len(stack_name)} car., máximo "
+                f"{MAX_STACK_NAME_LENGTH}): el nombre de RouterFunction "
+                f"({_ROUTER_FUNCTION_NAME_PREFIX}<stack_name>) no puede superar "
+                f"{_CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH} caracteres"
+            )
         self._stack_name = stack_name
         self._explicit_kvs_arn = kvs_arn
         self._stacks = OptionalStacks(region=region, session=session, provisioner=provisioner)
@@ -176,7 +216,7 @@ class CustomDomain:
         certificate_arn: str,
         tags: dict[str, str] | None = None,
         wait: bool = True,
-        wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
+        wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
     ) -> StackStatus:
         """Despliega (o actualiza) `infra/custom-domain.yaml`. `certificate_arn`
         debe estar en `us-east-1` (requisito de CloudFront, D3: lo aporta
@@ -201,7 +241,7 @@ class CustomDomain:
         return status
 
     def destroy(
-        self, *, wait: bool = True, wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS
+        self, *, wait: bool = True, wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS
     ) -> None:
         self._stacks.destroy(
             STACK_COMPONENT, stack_name=self._stack_name, wait=wait, wait_timeout=wait_timeout
@@ -236,14 +276,27 @@ class CustomDomain:
         except CustomDomainException:
             pass
 
-    def _write_route(self, kvs_arn: str, writes: tuple[tuple[str, str], ...]) -> None:
+    def _write_route(
+        self, kvs_arn: str, writes: tuple[tuple[str, str], ...], *, rollback: bool
+    ) -> None:
         """Escribe `writes` (clave, valor) encadenando el `ETag` de un
-        `describe()` inicial. Si una escritura después de la primera falla,
-        borra en reversa (best-effort) las que sí se aplicaron antes de
-        relanzar, para no dejar la ruta a medias (p. ej. un `j:` vivo sin su
-        `m:`). Reintenta la secuencia completa desde `describe()` hasta
-        `MAX_ETAG_CONFLICT_RETRIES` veces si AWS rechaza el `ETag`
-        encadenado por una carrera con otro escritor de la misma ruta."""
+        `describe()` inicial. Reintenta la secuencia completa desde
+        `describe()` hasta `MAX_ETAG_CONFLICT_RETRIES` veces si AWS rechaza
+        el `ETag` encadenado por una carrera con otro escritor de la misma
+        ruta.
+
+        `rollback` distingue a quién pertenecían las claves antes de esta
+        llamada: `register()` de una ruta nueva pasa `True` (si la segunda
+        escritura falla, borra en reversa, best-effort, lo que la propia
+        llamada acababa de escribir, para no dejar un `j:` vivo sin su
+        `m:`). `refresh()` pasa `False`: ahí las claves ya existían con una
+        ruta sana sirviendo tráfico, así que un fallo a medias (p. ej. el
+        `PutKey` de `m:` tras el de `j:`) debe dejar lo que sí se escribió
+        tal cual, nunca borrarlo — borrar un `j:`/`m:` que ya eran la ruta
+        en producción convertiría un error transitorio del KVS en una
+        caída, aunque fuera breve, de una ruta que funcionaba. La Function
+        ignora `m:` huérfano (nunca lo lee), así que dejarlo así es
+        inocuo."""
         last_error: CustomDomainException | None = None
         for _ in range(MAX_ETAG_CONFLICT_RETRIES):
             etag = self._kvs.describe(kvs_arn)
@@ -253,8 +306,9 @@ class CustomDomain:
                     etag = self._kvs.put(kvs_arn, key, value, if_match=etag)
                     written.append(key)
             except CustomDomainException as exc:
-                for key in reversed(written):
-                    self._delete_best_effort(kvs_arn, key)
+                if rollback:
+                    for key in reversed(written):
+                        self._delete_best_effort(kvs_arn, key)
                 last_error = exc
                 if exc.aws_code in _ETAG_CONFLICT_AWS_CODES:
                     continue
@@ -275,12 +329,14 @@ class CustomDomain:
         ttl_seconds: int,
     ) -> CustomDomainRoute:
         """Escribe las dos claves de la ruta (`j:`/`m:`) con `ETag`
-        encadenado (`_write_route`): si la segunda escritura falla, la
-        primera se borra best-effort antes de relanzar, nunca se deja un
-        JWE vivo sin sus metadatos. Una ruta es pública (sin `traffic_token`
-        que comprobar) sólo con `public=True`, nunca por omisión: sin
-        `traffic_token` ni `public=True` se rechaza antes de tocar el KVS
-        (SEC-T25 — el valor por defecto nunca es "pública")."""
+        encadenado (`_write_route(..., rollback=True)`: ninguna de las dos
+        claves existía antes para este `label`, así que si la segunda
+        escritura falla, la primera se borra best-effort antes de relanzar
+        — nunca se deja un JWE vivo sin sus metadatos). Una ruta es pública
+        (sin `traffic_token` que comprobar) sólo con `public=True`, nunca
+        por omisión: sin `traffic_token` ni `public=True` se rechaza antes
+        de tocar el KVS (SEC-T25 — el valor por defecto nunca es
+        "pública")."""
         if not public and traffic_token is None:
             raise InvalidArgumentException(
                 "register() necesita traffic_token (o public=True para una ruta pública "
@@ -296,7 +352,9 @@ class CustomDomain:
             endpoint=endpoint, traffic_token_sha256=traffic_token_sha256, expires_at=expires_at
         ).encode()
         self._write_route(
-            self.kvs_arn(), ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata))
+            self.kvs_arn(),
+            ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata)),
+            rollback=True,
         )
         return CustomDomainRoute(
             alias=alias,
@@ -313,7 +371,13 @@ class CustomDomain:
         `_transport.TOKEN_REFRESH_AFTER_MINUTES`; esto hace lo mismo para la
         copia que vive en el KVS) y también `m:<label>`, para que su
         expiración no quede obsoleta: mismo `endpoint`/hash de
-        `traffic_token` que `route` ya tenía, sólo `expires_at` al día."""
+        `traffic_token` que `route` ya tenía, sólo `expires_at` al día.
+        `_write_route(..., rollback=False)`: a diferencia de `register()`,
+        aquí ambas claves ya existían con una ruta sana sirviendo tráfico,
+        así que un fallo a medias (p. ej. el `PutKey` de `m:` tras el de
+        `j:`) no debe borrar lo que sí se escribió — eso dejaría una ruta
+        que funcionaba sin su `j:` o su `m:` por un error transitorio del
+        KVS."""
         if ttl_seconds <= 0:
             raise InvalidArgumentException(f"ttl_seconds debe ser positivo: {ttl_seconds}")
         check_kvs_value_size(jwe)
@@ -325,7 +389,9 @@ class CustomDomain:
             expires_at=expires_at,
         ).encode()
         self._write_route(
-            self.kvs_arn(), ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata))
+            self.kvs_arn(),
+            ((kvs_json_key(label), jwe), (kvs_meta_key(label), metadata)),
+            rollback=False,
         )
         return CustomDomainRoute(
             alias=route.alias,

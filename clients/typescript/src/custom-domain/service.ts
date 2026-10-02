@@ -17,7 +17,7 @@ import type { AwsClientSettings } from "../aws/control-plane.js";
 import { CustomDomainError, InvalidArgumentError } from "../errors.js";
 import type { StackStatus } from "../stacks/model.js";
 import type { StackProvisioner } from "../stacks/port.js";
-import { DEFAULT_WAIT_TIMEOUT_MS, OptionalStacks } from "../stacks/service.js";
+import { OptionalStacks } from "../stacks/service.js";
 import {
   checkKvsValueSize,
   encodeRouteMetadata,
@@ -45,6 +45,34 @@ const MAX_ETAG_CONFLICT_RETRIES = 3;
  * reintenta desde `describe()`"; espejo de `_service._ETAG_CONFLICT_AWS_CODES`
  * (defensivo, sin confirmar contra una distribución real, D3). */
 const ETAG_CONFLICT_AWS_CODES = ["ConflictException", "PreconditionFailedException"];
+
+/** `deploy()`/`destroy()` esperan a que CloudFormation termine; el valor por
+ * defecto de `OptionalStacks` (`DEFAULT_WAIT_TIMEOUT_MS`, 600_000 ms) no
+ * basta para éste: una distribución CloudFront tarda ~15 min sólo en
+ * deshabilitarse antes de poder borrarse
+ * (`stacks/components/custom-domain.ts`'s `cost.removal`, `dominio-propio.md`),
+ * y crearla/actualizarla también puede superar los 10 min. 1 800 000 ms
+ * (30 min) de margen; cifra exacta por confirmar como DOM-15 en la etapa de
+ * aceptación contra AWS real. Espejo de
+ * `_service.CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`. */
+export const CUSTOM_DOMAIN_WAIT_TIMEOUT_MS = 1_800_000;
+
+/** Prefijo del recurso de `infra/custom-domain.yaml` con el nombre más
+ * largo de los dos que llevan `${AWS::StackName}` (`RouterFunction`); debe
+ * mantenerse igual que esa plantilla a mano. Espejo de
+ * `_service._ROUTER_FUNCTION_NAME_PREFIX`. */
+const ROUTER_FUNCTION_NAME_PREFIX = "rayito-custom-domain-router-";
+
+/** Límite de `AWS::CloudFront::Function`'s `Name` (64 caracteres,
+ * https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html).
+ * Espejo de `_service._CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH`. */
+const CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH = 64;
+
+/** Longitud máxima de `stackName` para que `RouterFunction`'s `Name` no
+ * supere `CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH`. Espejo de
+ * `_service.MAX_STACK_NAME_LENGTH`. */
+export const MAX_STACK_NAME_LENGTH =
+  CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH - ROUTER_FUNCTION_NAME_PREFIX.length;
 
 export interface CustomDomainOptions {
   readonly publicDomain: string;
@@ -158,6 +186,14 @@ export class CustomDomain {
 
   constructor(options: CustomDomainOptions) {
     this.publicDomain = validatePublicDomain(options.publicDomain);
+    if (options.stackName !== undefined && options.stackName.length > MAX_STACK_NAME_LENGTH) {
+      throw new InvalidArgumentError(
+        `stackName demasiado largo (${options.stackName.length} car., máximo ` +
+          `${MAX_STACK_NAME_LENGTH}): el nombre de RouterFunction ` +
+          `(${ROUTER_FUNCTION_NAME_PREFIX}<stackName>) no puede superar ` +
+          `${CLOUDFRONT_FUNCTION_NAME_MAX_LENGTH} caracteres`,
+      );
+    }
     this.#stackName = options.stackName;
     this.#explicitKvsArn = options.kvsArn;
     this.#stacks = new OptionalStacks({
@@ -184,7 +220,7 @@ export class CustomDomain {
       parameters: { PublicDomain: this.publicDomain, CertificateArn: options.certificateArn },
       ...(options.tags !== undefined ? { tags: options.tags } : {}),
       ...(options.wait !== undefined ? { wait: options.wait } : {}),
-      waitTimeoutMs: options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+      waitTimeoutMs: options.waitTimeoutMs ?? CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
     });
     this.#cachedKvsArn = resolveKvsArn(undefined, status);
     return status;
@@ -199,7 +235,11 @@ export class CustomDomain {
   async destroy(
     options: { readonly wait?: boolean; readonly waitTimeoutMs?: number } = {},
   ): Promise<void> {
-    await this.#stacks.destroy(STACK_COMPONENT, { ...this.#stackNameOption(), ...options });
+    await this.#stacks.destroy(STACK_COMPONENT, {
+      ...this.#stackNameOption(),
+      ...options,
+      waitTimeoutMs: options.waitTimeoutMs ?? CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
+    });
     this.#cachedKvsArn = undefined;
   }
 
@@ -229,15 +269,24 @@ export class CustomDomain {
 
   /**
    * Escribe `writes` (clave, valor) encadenando el `ETag` de un
-   * `describe()` inicial. Si una escritura después de la primera falla,
-   * borra en reversa (best-effort) las que sí se aplicaron antes de
-   * relanzar, para no dejar la ruta a medias. Reintenta la secuencia
-   * completa desde `describe()` hasta `MAX_ETAG_CONFLICT_RETRIES` veces si
-   * AWS rechaza el `ETag` encadenado por una carrera con otro escritor.
+   * `describe()` inicial. Reintenta la secuencia completa desde
+   * `describe()` hasta `MAX_ETAG_CONFLICT_RETRIES` veces si AWS rechaza el
+   * `ETag` encadenado por una carrera con otro escritor.
+   *
+   * `rollback` distingue a quién pertenecían las claves antes de esta
+   * llamada: `register()` de una ruta nueva pasa `true` (si la segunda
+   * escritura falla, borra en reversa, best-effort, lo que la propia
+   * llamada acababa de escribir, para no dejar un `j:` vivo sin su `m:`).
+   * `refresh()` pasa `false`: ahí las claves ya existían con una ruta sana
+   * sirviendo tráfico, así que un fallo a medias no debe borrar lo que sí
+   * se escribió — eso convertiría un error transitorio del KVS en una
+   * caída de una ruta que funcionaba. La Function ignora `m:` huérfano, así
+   * que dejarlo así es inocuo.
    */
   async #writeRoute(
     kvsArn: string,
     writes: ReadonlyArray<readonly [string, string]>,
+    rollback: boolean,
   ): Promise<void> {
     let lastError: CustomDomainError | undefined;
     for (let attempt = 0; attempt < MAX_ETAG_CONFLICT_RETRIES; attempt += 1) {
@@ -250,8 +299,10 @@ export class CustomDomain {
         }
         return;
       } catch (error) {
-        for (const key of written.reverse()) {
-          await this.#deleteBestEffort(kvsArn, key);
+        if (rollback) {
+          for (const key of written.reverse()) {
+            await this.#deleteBestEffort(kvsArn, key);
+          }
         }
         if (
           !(error instanceof CustomDomainError) ||
@@ -290,10 +341,15 @@ export class CustomDomain {
       trafficTokenSha256,
       expiresAt: expiresAtSeconds,
     });
-    await this.#writeRoute(this.kvsArn(), [
-      [kvsJsonKey(label), options.jwe],
-      [kvsMetaKey(label), metadata],
-    ]);
+    // rollback=true: ninguna de las dos claves existía antes para este `label`.
+    await this.#writeRoute(
+      this.kvsArn(),
+      [
+        [kvsJsonKey(label), options.jwe],
+        [kvsMetaKey(label), metadata],
+      ],
+      true,
+    );
     return routeOf(
       alias,
       port,
@@ -319,10 +375,17 @@ export class CustomDomain {
       trafficTokenSha256: route.trafficTokenSha256,
       expiresAt: expiresAtSeconds,
     });
-    await this.#writeRoute(this.kvsArn(), [
-      [kvsJsonKey(label), options.jwe],
-      [kvsMetaKey(label), metadata],
-    ]);
+    // rollback=false: a diferencia de register(), ambas claves ya existían
+    // con una ruta sana sirviendo tráfico; un fallo a medias no debe borrar
+    // lo que sí se escribió.
+    await this.#writeRoute(
+      this.kvsArn(),
+      [
+        [kvsJsonKey(label), options.jwe],
+        [kvsMetaKey(label), metadata],
+      ],
+      false,
+    );
     return routeOf(
       route.alias,
       route.port,

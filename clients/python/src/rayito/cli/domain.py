@@ -19,7 +19,11 @@ from typing import Annotated
 
 import typer
 
-from rayito._custom_domain._service import STACK_COMPONENT, CustomDomain
+from rayito._custom_domain._service import (
+    CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+    STACK_COMPONENT,
+    CustomDomain,
+)
 from rayito._stacks._registry import component_by_name
 from rayito._stacks._service import OptionalStacks
 from rayito.cli._console import echo, emit_json
@@ -106,7 +110,13 @@ def destroy_command(
         echo(f"Al borrar: {component.cost.removal}")
     if not yes and not json_mode(ctx) and not typer.confirm("¿Borrar la pila de dominio propio?"):
         raise typer.Exit(1)
-    _stacks(ctx).destroy(STACK_COMPONENT, stack_name=stack_name)
+    # `OptionalStacks.destroy` por sí sola usaría su propio
+    # `DEFAULT_WAIT_TIMEOUT_SECONDS` (600 s, `_stacks/_service.py`), que no
+    # alcanza para que CloudFront deshabilite y borre la distribución
+    # (`CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`).
+    _stacks(ctx).destroy(
+        STACK_COMPONENT, stack_name=stack_name, wait_timeout=CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS
+    )
     if json_mode(ctx):
         emit_json({"name": STACK_COMPONENT, "state": "destroyed"})
         return
