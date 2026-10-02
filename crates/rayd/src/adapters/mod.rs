@@ -16,8 +16,10 @@ pub mod child_registry;
 pub mod credential_broker;
 pub mod egress_routes;
 pub mod fs_identity;
+pub mod fuse_device;
 pub mod imds_block;
 pub mod ip_command;
+pub mod mount_s3;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
@@ -38,11 +40,13 @@ pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
 pub use fs_identity::FsIdentityGuard;
+pub use fuse_device::LinuxFuseDevice;
 pub use imds_block::{
     IMDS_ADDRESS, IMDS_VERIFY_BUDGET, ImdsBlock, ImdsProbe, ImdsState, USER_PROBE_CODE,
     USER_PROBE_PROGRAM, UserConnectProbe, install_imds_block, probe_root, rule_present,
     verify_imds_block,
 };
+pub use mount_s3::{MOUNT_S3_BINARY, MOUNT_USER_GID, MOUNT_USER_UID, TokioMountS3Daemon};
 #[cfg(unix)]
 pub use name_resolver::NixNameResolver;
 pub use name_resolver::{NumericNameResolver, PlatformNameResolver};

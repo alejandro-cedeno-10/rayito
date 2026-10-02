@@ -137,6 +137,7 @@ export {
   type SandboxPoolOptions,
   type TakeOptions,
 } from "./pool/pool.js";
+export { type MountStatus, S3Mount, type S3MountOptions } from "./s3-mounts/domain.js";
 export {
   CodeClient,
   type ContextLike,

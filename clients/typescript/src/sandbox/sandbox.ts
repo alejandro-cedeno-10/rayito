@@ -18,6 +18,17 @@ import {
   sharedControlPlane,
 } from "../aws/control-plane.js";
 import {
+  agentFeaturesFromHealth,
+  buildConfigureRequest,
+  CONFIGURE_SETTLE_POLL_MS,
+  type ConfigureSection,
+  checkConfigureResponse,
+  requireCapabilities,
+  requireConfigureSupport,
+  settleTimeoutMs,
+  stillPending,
+} from "../configure-base.js";
+import {
   errorMessage,
   IndexWriteError,
   InvalidArgumentError,
@@ -26,10 +37,20 @@ import {
   SandboxNotReadyError,
   TimeoutError,
 } from "../errors.js";
+import type { FeaturePlan } from "../feature-options.js";
 import { planFeatures } from "../feature-options.js";
-import { HealthRequestSchema, MetricsRequestSchema } from "../gen/rayito/v1/health_pb.js";
+import {
+  ConfigureStatusRequestSchema,
+  type ConfigureStatusResponse,
+} from "../gen/rayito/v1/configure_pb.js";
+import {
+  HealthRequestSchema,
+  type HealthResponse,
+  MetricsRequestSchema,
+} from "../gen/rayito/v1/health_pb.js";
 import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
+import { S3MountsStatusSchema } from "../gen/rayito/v1/s3_mounts_pb.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
@@ -62,6 +83,8 @@ import {
 import { rejectLaunchOptionsWithPool } from "../pool/core.js";
 import type { SandboxPool } from "../pool/pool.js";
 import { resolveImageVariant } from "../role-policy.js";
+import type { MountStatus, S3MountsOption } from "../s3-mounts/domain.js";
+import { fromProtoStatus } from "../s3-mounts/section.js";
 import {
   bindSecrets,
   type SecretBinding,
@@ -346,7 +369,7 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * el de 0.5.x. `size` ya no es un stub (m15-sizes-catalog): ver
    * `sizing/sizing.ts`.
    */
-  readonly mounts?: Readonly<Record<string, unknown>> | undefined;
+  readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: SizeInput | undefined;
   readonly events?: unknown;
@@ -618,6 +641,14 @@ export interface SandboxOpenOptions {
   readonly requireLifecycle?: boolean | undefined;
   /** Abortado durante la readiness: se trata como cualquier otro fallo de arranque. */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Sus `configureSections`, si las hay, se envían en una única `Configure`
+   * justo después de este mismo `Health` — dentro del mismo `try` de abajo,
+   * así que una capacidad que falte o una sección rechazada terminan el VM
+   * (salvo `keepOnFailure`) exactamente igual que cualquier otro fallo
+   * anterior a `agentReady`, sin un camino de terminación propio.
+   */
+  readonly plan?: FeaturePlan | undefined;
 }
 
 export class Sandbox implements AsyncDisposable {
@@ -700,7 +731,7 @@ export class Sandbox implements AsyncDisposable {
     // en `planFeatures`: no es una sección de ConfigureSandbox, es qué
     // imagen lanzar.
     const resolvedSize = planSize(options.size);
-    planFeatures(
+    const featurePlan = planFeatures(
       {
         mounts: options.mounts,
         volumes: options.volumes,
@@ -711,6 +742,7 @@ export class Sandbox implements AsyncDisposable {
         domain: options.domain,
       },
       resolveImageVariant(options.template),
+      options.logging,
     );
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>
@@ -769,6 +801,7 @@ export class Sandbox implements AsyncDisposable {
           terminateOnFailure: !(options.keepOnFailure ?? false),
           logger: options.logger,
           requireLifecycle: plan.lifecycleRequested,
+          plan: featurePlan,
         });
         opened.#instrumentation = instrumentation;
         opened.#core.transfer = transfer;
@@ -979,6 +1012,9 @@ export class Sandbox implements AsyncDisposable {
       sandbox.#readinessHealth = healthFromProto(ready);
       if (options.requireLifecycle === true && sandbox.#readinessHealth.lifecycle === undefined) {
         throw olderAgentError(info.templateName, sandbox.#readinessHealth.agentVersion);
+      }
+      if (options.plan !== undefined && options.plan.configureSections.length > 0) {
+        await sandbox.#applyConfigurePlan(options.plan, ready);
       }
     } catch (error) {
       sandbox?.close();
@@ -1420,6 +1456,69 @@ export class Sandbox implements AsyncDisposable {
     );
     this.#core.recordHealth(response);
     return healthFromProto(response);
+  }
+
+  /**
+   * Ejecuta `plan.configureSections` justo tras el primer `Health` (llamado
+   * sólo por `#open`): la puerta de capacidad (`requireCapabilities`),
+   * luego una única `Configure` con todas las secciones y, por último, el
+   * resultado de cada una traducido a su propio error
+   * (`checkConfigureResponse`) y, para las que el agente dejó en
+   * `PENDING`, la espera acotada a que se asienten (`#waitSettled`):
+   * `create()` nunca devuelve un sandbox con un montaje todavía sin montar.
+   * Cualquier error de aquí sube tal cual a
+   * `#open`, que ya termina el sandbox (salvo `keepOnFailure`) ante
+   * cualquier fallo en esta ventana — este método no implementa su propia
+   * terminación.
+   */
+  async #applyConfigurePlan(plan: FeaturePlan, ready: HealthResponse): Promise<void> {
+    const features = requireConfigureSupport(agentFeaturesFromHealth(ready), "configure");
+    requireCapabilities(plan.configureSections, features);
+    const request = buildConfigureRequest(plan.configureSections);
+    const timeoutMs = this.#core.resolveRequestTimeout(undefined);
+    const response = await this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
+    );
+    await this.#waitSettled(checkConfigureResponse(response, plan.configureSections));
+  }
+
+  /**
+   * Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_MS` hasta que
+   * ninguna sección de `pending` siga pendiente; agotado el mayor
+   * `settleTimeoutMs`, la última lectura es `final` y cada sección que siga
+   * sin asentarse lanza su propio error de timeout.
+   */
+  async #waitSettled(pending: ConfigureSection[]): Promise<void> {
+    const deadline = Date.now() + settleTimeoutMs(pending);
+    let remaining = pending;
+    while (remaining.length > 0) {
+      const final = Date.now() >= deadline;
+      remaining = stillPending(await this.#configureStatus(), remaining, final);
+      if (remaining.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, CONFIGURE_SETTLE_POLL_MS));
+      }
+    }
+  }
+
+  async #configureStatus(): Promise<ConfigureStatusResponse> {
+    const timeoutMs = this.#core.resolveRequestTimeout(undefined);
+    return this.#core.translatedUnary(() =>
+      this.#core.clients.configure.configureStatus(
+        create(ConfigureStatusRequestSchema, {}),
+        callOptions(timeoutMs, undefined),
+      ),
+    );
+  }
+
+  /**
+   * Estado en vivo de cada `mounts` (`m15-s3-mounts`): una `ConfigureStatus`
+   * por lectura, nunca cacheada — un montaje puede pasar de `"pending"` a
+   * `"mounted"`/`"failed"` entre dos lecturas de este método. Vacío si
+   * `create()` no recibió `mounts`.
+   */
+  async mounts(): Promise<ReadonlyMap<string, MountStatus>> {
+    const response = await this.#configureStatus();
+    return fromProtoStatus(response.s3Mounts ?? create(S3MountsStatusSchema, {}));
   }
 
   /** Un `HostAccess` con el JWE que cubre `port` (acuñado si hace falta); 9000 está prohibido (ADR-006). */

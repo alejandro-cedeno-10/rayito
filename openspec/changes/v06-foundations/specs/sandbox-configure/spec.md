@@ -46,3 +46,22 @@ No SDK call SHALL build a `ConfigureService` gRPC stub, send a `Configure` reque
 #### Scenario: an unresolvable image name defers to the agent
 - **WHEN** a caps-only feature option is set together with a custom image name or an ARN
 - **THEN** `require_caps_for` does not raise, and the decision is left to the post-boot `Health.features` check
+
+### Requirement: one FeatureSet per agent process backs ConfigureService, Health.features and the lifecycle participants
+`rayd` SHALL build exactly one `FeatureSet` per process and share it between `ConfigureService`, `Health.features` and the hooks' lifecycle participants. `Health.features` SHALL be derived from each slot's `supported()`; with every slot `Unsupported` it SHALL equal `AgentFeatures::foundations_only()` and the participant list SHALL be empty.
+
+#### Scenario: an all-Unsupported build reports foundations_only
+- **WHEN** `Health` is called on an agent whose six slots are all `Unsupported`
+- **THEN** `features` has `configure=true` and every other flag `false`, and `/suspend`, `/resume` and `/terminate` run no participant
+
+### Requirement: lifecycle participants run once per accepted transition, each under its own cap
+`/suspend`, `/resume` and `/terminate` SHALL call their participants' `on_suspend`, `on_resume` and `on_terminate` only when the hook's transition was accepted and changed the phase. Each call SHALL run concurrently with the others under its own cap: its `SuspendShares` allocation on `/suspend`, `PARTICIPANT_RESUME_TIMEOUT` on `/resume` and `PARTICIPANT_TERMINATE_TIMEOUT` on `/terminate`. A participant that exceeds its cap SHALL be abandoned and logged by name, and the hook SHALL still answer 200.
+
+#### Scenario: a repeated /terminate runs the participants once
+- **WHEN** `/terminate` is called twice
+- **THEN** each participant's `on_terminate` ran exactly once
+
+#### Scenario: a hung on_resume does not hold /resume
+- **WHEN** one participant's `on_resume` never returns
+- **THEN** `/resume` answers 200 after about `PARTICIPANT_RESUME_TIMEOUT`, and every other participant's `on_resume` still ran
+

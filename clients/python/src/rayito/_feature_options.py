@@ -9,9 +9,14 @@ el SDK aún no sabe cumplir. Con las siete en `None` (el valor por defecto)
 `plan_features` no hace nada: ni un `ConfigureSandbox`, ni un cliente AWS
 nuevo, el comportamiento exacto de 0.5.x.
 
-Cada función sustituye su propia rama por una implementación real en su
-propio cambio OpenSpec; ni esta firma ni `FeatureOptions`/`FeaturePlan`
-cambian para eso.
+`mounts=` (`m15-s3-mounts`) es la primera en dejar de ser un stub:
+`require_caps_for` corre aquí, antes de `run-microvm`, cuando
+`image_variant` ya permite decidirlo (un nombre `rayito-<variant>`); sobre
+cualquier otro nombre la decisión se difiere al agente (`Health.features`,
+comprobado después de `/run` por `create()`/`take()` — ver
+`_configure_base.require_capabilities`). Cada función sustituye su propia
+rama por una implementación real en su propio cambio OpenSpec; ni esta
+firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from rayito._configure_base import ConfigureSection
+from rayito._role_policy import require_caps_for
+from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito.exceptions import UnimplementedError
 
-MOUNTS_CHANGE: Final = "m15-s3-mounts"
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
@@ -39,7 +46,7 @@ class FeatureOptions:
     función en su propio módulo, nunca aquí.
     """
 
-    mounts: Mapping[str, Any] | None = None
+    mounts: Mapping[str, S3Mount] | None = None
     volumes: Mapping[str, Any] | None = None
     size: Any | None = None
     events: Any | None = None
@@ -58,19 +65,30 @@ class FeaturePlan:
     construir uno si alguna opción estaba puesta.
     """
 
-    configure_sections: tuple[Any, ...] = ()
+    configure_sections: tuple[ConfigureSection, ...] = ()
 
 
-def plan_features(options: FeatureOptions, *, image_variant: str | None = None) -> FeaturePlan:
+def plan_features(
+    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
-    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) queda
-    para cuando una función real lo necesite (s3-mounts, efs-volumes,
-    rayd-otlp con rol exigen la variante caps); ninguna rama de hoy lo usa.
-    No hace ninguna llamada a AWS ni construye ningún cliente.
+    0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
+    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` lo
+    usa para `require_caps_for` (s3-mounts, efs-volumes y rayd-otlp con rol
+    exigen la variante caps). `logging` (el `logging=` de `create()`, tal
+    cual: una función que lee los logs del sandbox, como `events=`, exige
+    que lleguen a CloudWatch) queda para cuando una función real lo
+    necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a AWS ni
+    construye ningún cliente: `require_caps_for` es una comprobación
+    puramente sobre el nombre de la imagen.
     """
-    del image_variant
+    del logging
+    sections: list[ConfigureSection] = []
     if options.mounts is not None:
-        raise UnimplementedError("mounts=", f"llega en 0.6 ({MOUNTS_CHANGE})")
+        require_caps_for("mounts=", image_variant)
+        section = plan_s3_mounts(options.mounts)
+        if section is not None:
+            sections.append(section)
     if options.volumes is not None:
         raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
     # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
@@ -86,4 +104,4 @@ def plan_features(options: FeatureOptions, *, image_variant: str | None = None) 
         raise UnimplementedError("gateways=", f"llega en 0.6 ({GATEWAYS_CHANGE})")
     if options.domain is not None:
         raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
-    return FeaturePlan()
+    return FeaturePlan(configure_sections=tuple(sections))

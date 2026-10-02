@@ -1748,6 +1748,23 @@ veredicto con la decisión existente de `/ready` sin reemplazarla. Sin
 ningún participante registrado (el caso de 0.6 foundations: todos los slots
 son `Unsupported`), ambos hooks se comportan exactamente como en 0.5.x.
 
+`main` construye **un único** `Arc<FeatureSet>` por proceso y lo comparte:
+`grpc::router_with_features` se lo da a `ConfigureService` (aplica las
+secciones) y a `Health` (`FeatureSet::agent_features`, derivado de
+`supported()` de cada slot, así una función que gana un adaptador real
+enciende su propio flag sin tocar `health.rs`), y `FeatureSet::participants()`
+del mismo conjunto va a `HookServices.participants`. Nada de estado de
+función vive en un singleton de proceso: el harness de los tests de
+integración construye su propio `FeatureSet` por test igual que `main`.
+`/suspend`, `/resume` y `/terminate` ejecutan los participantes
+(`on_suspend`/`on_resume`/`on_terminate`) sólo ante una transición aceptada
+(`Transition::changed`), todos a través de un único bucle
+(`hooks::run_concurrently`), cada uno con su propio tope: su cuota de
+`SuspendShares` en `/suspend`, `PARTICIPANT_RESUME_TIMEOUT` (2 s, en
+paralelo con la sonda de kernels) en `/resume` y
+`PARTICIPANT_TERMINATE_TIMEOUT` (1 s, antes de `schedule_shutdown`) en
+`/terminate`. Un participante colgado cuesta su tope y nada más.
+
 **Consecuencias.** `ConfigureSandbox` nunca se llama con las siete opciones
 0.6 en `None`/`undefined`: el SDK pre-valida con `plan_features`/
 `planFeatures` antes de `run-microvm` y no construye ningún `ConfigureRequest`
@@ -1804,8 +1821,89 @@ los demás ni al SDK sin usarlo.
 
 ## ADR-017 — s3-mounts (M15, 0.6)
 
-Pendiente: lo completa `m15-s3-mounts` (montaje S3 vía `mount-s3`/FUSE en
-`rayito-base-caps`, credenciales IMDS nunca en argv/entorno).
+`mounts=` monta uno o más buckets S3 (o un prefijo suyo) en el guest con
+`mount-s3` (Mountpoint for Amazon S3), sólo sobre `rayito-base-caps` (o una
+variante derivada por tamaño): el execution role del sandbox necesita
+IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`).
+
+**Dominio** (`rayd_core::s3_mount`, puro): `S3Mount{mount_path, bucket,
+prefix, read_only, allow_overwrite, allow_delete}`, `MountErrorClass`
+(`network`/`iam_denied`/`not_found`/`not_allowed`/`helper_missing`/`timeout`,
+espejo exacto de `S3MountState.error_class` del proto y de `MountException
+.code`/`MountError.code` en ambos SDKs), `MountPhase`
+(`Pending`/`Mounted`/`Failed`) y `validate_mounts` (rechaza un bucket fuera
+del allowlist de la imagen o una ruta repetida en la misma petición, antes
+de tocar nada). `RAYITO_ALLOWED_MOUNT_BUCKETS` es configuración de imagen
+(`rayito image publish --env`), nunca un interruptor de activación por
+sandbox (ADR-014 regla 4): vacía o ausente deniega todo.
+
+**Puertos** (`rayd_core::s3_mount::ports`): `FuseDevice` (abre `/dev/fuse`
+y hace el `mount(2)` del ABI de FUSE del kernel — `fd`, `rootmode`,
+`user_id=1000`, `group_id=1000` — sobre `mount_path`) y `FuseDaemon`
+(lanza, comprueba y mata el proceso `mount-s3` bound a ese descriptor).
+
+**Adaptadores** (`rayd::adapters`): `LinuxFuseDevice` hace el `mount(2)`
+crudo con `libc` (sin depender del feature `mount` de `nix`, que el
+workspace no tiene) y **nunca sigue un enlace simbólico**: `rayd` es root y
+uid 1000 es dueño de `/home/user`, así que recorre la ruta desde `/`
+componente a componente con `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)`
+(creando lo que falte con `mkdirat`), rechaza cualquier enlace con
+`invalid_path` y monta sobre `/proc/self/fd/<dirfd>`; el desmontaje usa
+`UMOUNT_NOFOLLOW` sobre el descriptor del padre, en cada relanzamiento
+igual que en el primer montaje. `TokioMountS3Daemon` lanza
+`mount-s3 --foreground <bucket> /dev/fd/3 [--prefix p] [--read-only |
+--allow-overwrite --allow-delete]` como el usuario dedicado `rayito-mount`
+(uid/gid 990, creado en `image/Dockerfile`), con el entorno reconstruido
+desde cero (sólo `AWS_REGION`/`PATH`: nunca una credencial en argv ni en
+entorno, SEC-3) y reapea su propio hijo con `Child::wait()` en una tarea
+dedicada (independiente de `adapters::{child_registry,orphan_reaper}`,
+reservados a los procesos que pasan por `ProcessSpawner`): nunca hay dos
+sitios esperando el mismo pid. uid 990 está **por debajo** de
+`MIN_UNPRIVILEGED_ID` (1000), así que el blackhole de IMDS de M6
+(`uidrange 1000-65535`) no lo alcanza: `mount-s3` resuelve las credenciales
+del execution role por su **propio** acceso a IMDS, en su propio proceso,
+sin que `rayd` las toque nunca.
+
+**Slot** (`rayd::features::s3_mounts`): un `S3MountsFeature` real, cuyo
+`supported()` exige `CAP_SYS_ADMIN` en el conjunto efectivo de `rayd`
+(sólo `rayito-base-caps`: el binario y el usuario `rayito-mount` van en las
+cuatro variantes porque hay un único `Dockerfile`); `Health.features` y
+`root_egress` se derivan de cada slot (`FeatureSet::agent_features`/
+`root_egress`, `ConfigurableFeature::root_egress_class`). `apply()`
+responde `SECTION_CODE_PENDING` y monta en segundo plano; el SDK sondea
+`ConfigureStatus` hasta que cada montaje está `mounted` (15 s como mucho)
+y, si no, lanza `MountException`/`MountError` y termina el sandbox. `apply()` valida todo el
+`S3MountsConfig` (allowlist + rutas duplicadas) antes de montar o
+desmontar nada — una sección inválida no toca un solo montaje existente
+— desmonta lo que ya no está en la lista deseada, monta lo nuevo o lo que
+cambió de spec, y dos `Configure` seguidas con el mismo contenido son un
+no-op (ni un `/dev/fuse` nuevo ni un `mount-s3` relanzado).
+`ConfigurableFeature::participant()` devuelve un `LifecycleParticipant`
+cuya `demand().max` es `Duration::ZERO` (el `syncfs` acotado ya cubre el
+montaje FUSE, §7.2: "`/suspend` no añade ningún paso propio") y cuyo
+`on_resume` lanza, en paralelo, una sonda `stat` de 1 s por montaje (dentro
+del tope `PARTICIPANT_RESUME_TIMEOUT` de 2 s que `hooks` pone a todo el
+`on_resume`), relanzando el daemon si está muerto o no responde.
+
+**IAM** (`infra/s3-mounts.yaml`, `OptionalStack`): la política gestionada
+`RayitoS3MountAccess` (pide `CAPABILITY_IAM`) concede `ListBucket` acotado
+por un `s3:prefix` condicional (parámetro `Prefixes`, coma-separado) y
+`GetObject` (más `PutObject`/`DeleteObject`/`AbortMultipartUpload` con
+`ReadOnly=false`) sobre ARNs de objeto que llevan esos mismos prefijos
+(hasta 4 por pila): la contención por prefijo no depende sólo de
+`mount-s3 --prefix` dentro de un guest que ejecuta código no confiable.
+
+**SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer el
+`cmdline` del proceso `mount-s3` (mismo `/proc` que cualquier otro proceso
+del guest), no su `environ` (`EACCES`: el daemon es uid 990,
+`AWS_API_NOTES.md` Q103); el bucket y el prefijo están declarados **no
+secretos** (igual que la `metadata` de T4), así que esto no es una fuga —
+nunca hay una credencial en argv ni en entorno, documentado en T20
+(`SECURITY.md`). El daemon recibe `--allow-other`: sin él Mountpoint sólo
+atiende a su propio uid y uid 1000 recibe `EACCES` (Q101).
+
+**Sin API en el shim de E2B**: E2B no tiene un equivalente a `mounts=`
+(fila 111 de `e2b-parity.md`, divergente desde 0.6.0).
 
 ## ADR-018 — efs-volumes (M15, 0.6, experimental)
 

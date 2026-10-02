@@ -11,8 +11,10 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RootEgressClass {
-    /// `s3-mounts`: the `mount-s3` daemon reads the execution role from IMDS
-    /// as root before dropping to the dedicated mount user.
+    /// `s3-mounts`: the `mount-s3` daemon, run as the dedicated
+    /// `rayito-mount` system user (uid 990, below the M6 IMDS blackhole's
+    /// `uidrange 1000-65535`), reads the execution role from IMDS and
+    /// calls S3 with it.
     S3,
     /// `rayd-otlp`: OTLP/HTTP metrics exported to `CloudWatch`, SigV4-signed
     /// with the execution role.
