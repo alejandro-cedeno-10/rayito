@@ -47,6 +47,9 @@ sha2 = "=0.11.0"
 subtle = { version = "=2.6.1", default-features = false }
 zeroize = { version = "=1.9.0", features = ["derive"] }
 base64 = "=0.23.1"
+# Event-line MAC (m15-events-webhooks, ADR-020): `k_sbx` is already derived
+# by the SDK, so `rayd-core` only needs the HMAC primitive, not a KDF.
+hmac = "=0.13.0"
 tempfile = "=3.27.0"
 notify = { version = "=8.2.0", default-features = false }
 mimalloc = "=0.1.52"

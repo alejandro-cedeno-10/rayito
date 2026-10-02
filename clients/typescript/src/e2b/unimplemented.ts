@@ -19,6 +19,12 @@ const MCP_REASON =
   "(AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp";
 const VOLUME_REASON =
   "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o upload_url/download_url";
+// m15-templates: create/update-microvm-image no expone un Tags por versión (sólo por imagen,
+// con lambda:TagResource aparte), así que el etiquetado de E2B no tiene análogo todavía.
+const TEMPLATE_TAGS_REASON =
+  "create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con " +
+  "lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de " +
+  "AWS mientras tanto";
 
 export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.freeze({
   fork: NO_MEMORY_COPY_REASON,
@@ -49,9 +55,12 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   getSignature:
     "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo " +
     "WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3",
-  Template:
-    "SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un Dockerfile y " +
-    "rayito image publish",
+  // m15-templates: Template ya construye de verdad (./template.js, sobre rayito.Template);
+  // sólo el etiquetado de E2B sigue sin equivalente.
+  "Template.aliasExists": TEMPLATE_TAGS_REASON,
+  "Template.assignTags": TEMPLATE_TAGS_REASON,
+  "Template.removeTags": TEMPLATE_TAGS_REASON,
+  "Template.getTags": TEMPLATE_TAGS_REASON,
 });
 
 /** El `UnimplementedError` de la tabla, con la página de compatibilidad como `doc`. */

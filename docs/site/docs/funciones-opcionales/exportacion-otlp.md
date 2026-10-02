@@ -17,7 +17,7 @@ OTLP/HTTP, firmadas con SigV4 o con un token al portador. <small>Desde 0.6.0</sm
       `OtlpAuth.execution_role()` necesitas la política IAM
       `RayitoOtlpExport` (`infra/otlp-export.yaml`,
       `rayito stack deploy otlp-export`) en el execution role.
-    - **Coste aproximado** (medido, Q108): $0 por la opción en sí;
+    - **Coste aproximado** (medido, Q120): $0 por la opción en sí;
       CloudWatch factura las métricas OpenTelemetry a **$0,50 por GB
       ingerido** ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
       us-east-1, consultado 2026-10-02). Cada lote son 7 puntos en una
@@ -271,9 +271,9 @@ explícita y opt-in. El shim de E2B no añade ningún kwarg nuevo para esto;
     - Probado con dobles de `TelemetrySink`/`OtlpEncoder` en los dos SDK;
       la firma SigV4 la hace `aws-sigv4`, el mismo firmante que usa
       `aws-sdk-s3`.
-    - Aceptación contra AWS real (2026-10-02, `AWS_API_NOTES.md` Q108–Q113):
+    - Aceptación contra AWS real (2026-10-02, `AWS_API_NOTES.md` Q109–Q113, Q120):
       7 puntos por lote, 639 bytes (353 con gzip) y 0,01 s de CPU de `rayd`
-      por minuto con `interval_s=15` (Q108); SigV4 desde `rayito-base-caps`
+      por minuto con `interval_s=15` (Q120); SigV4 desde `rayito-base-caps`
       exporta sin errores y sin `telemetry=` el `create()` no hace ninguna
       llamada AWS nueva (Q109); `/suspend` no se retrasa, no se pierde
       ningún punto y el primer lote tras 10 y 56 minutos suspendido sale con

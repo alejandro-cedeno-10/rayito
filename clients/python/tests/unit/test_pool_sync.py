@@ -28,11 +28,13 @@ from rayito import (
 from rayito._payload import access_token_sha256
 from rayito._pool_base import SlotRecord
 from rayito._s3 import S3Gateway
+from rayito._secret_gateway import SecretGateway
 from rayito._transport import ACCESS_TOKEN_KEY
 from rayito.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
     QuotaExceededException,
+    UnimplementedError,
 )
 
 from .conftest import DEADLINE_KEY, IMAGE_ARN, JWE, FakeClock
@@ -331,6 +333,48 @@ def test_empty_pool_falls_back_to_create(make_pool: PoolFactory, plane: FakeCont
             sandbox.kill()
     wait_idle(pool, 2)
     assert pool.stats().launched == 5
+
+
+def test_take_with_invalid_gateways_fails_before_claiming_a_slot(
+    make_pool: PoolFactory, plane: FakeControlPlane
+) -> None:
+    pool = make_pool(size=1).start()
+    wait_idle(pool, 1)
+    before = len(plane.calls)
+    with pytest.raises(InvalidArgumentException):
+        pool.take(
+            gateways={
+                "Not A Name": SecretGateway(
+                    upstream="https://example.com",
+                    headers={"x-api-key": "k"},
+                    allow=[("GET", "/x")],
+                )
+            }
+        )
+    assert plane.calls[before:] == []
+    assert pool.stats().ready == 1
+
+
+def test_take_with_gateways_on_a_pre_06_slot_terminates_it(
+    make_pool: PoolFactory, plane: FakeControlPlane
+) -> None:
+    """The fake `rayd` answers `Health` without `features` (a pre-0.6
+    agent): `take(gateways=)` must not hand back a sandbox whose gateway was
+    never opened, nor leave the taken slot running and billing."""
+    pool = make_pool(size=1).start()
+    wait_idle(pool, 1)
+    (slot_id,) = ready_ids(pool)
+    with pytest.raises(UnimplementedError):
+        pool.take(
+            gateways={
+                "anthropic": SecretGateway(
+                    upstream="https://example.com",
+                    headers={"x-api-key": "k"},
+                    allow=[("GET", "/x")],
+                )
+            }
+        )
+    assert "TerminateMicrovm" in ops_for(plane, slot_id)
 
 
 def test_take_wait_is_served_by_a_refill(make_pool: PoolFactory, plane: FakeControlPlane) -> None:

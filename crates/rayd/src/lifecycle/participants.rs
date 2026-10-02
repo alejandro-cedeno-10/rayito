@@ -12,11 +12,12 @@ use std::time::Duration;
 use rayd_core::suspend_sync::{ParticipantDemand, ParticipantReport};
 
 /// What a participant's `ready_gate` tells `/ready`: `Ok` lets the existing
-/// decision stand, `Retry` or `Fail` both keep `/ready` answering 503 (AWS
-/// retries) rather than ever declare the sandbox ready while the
-/// participant says it should not be — `/suspend` always answers 200
-/// regardless (design D7), but `/ready` is the one hook that gates the
-/// snapshot, so it is the one place a feature can hold it back.
+/// decision stand, `Retry` keeps `/ready` answering 503 (AWS retries) and
+/// `Fail` answers 500, which AWS treats as definitive and fails the build
+/// at once (Q85, `AWS_API_NOTES.md` §27) instead of retrying until
+/// `readyTimeoutInSeconds` — `/suspend` always answers 200 regardless
+/// (design D7), but `/ready` is the one hook that gates the snapshot, so it
+/// is the one place a feature can hold it back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadyVerdict {
     Retry,
@@ -29,6 +30,11 @@ pub trait LifecycleParticipant: Send + Sync {
     /// The name and upper bound `hooks::mod` allocates this participant's
     /// `/suspend` share with (`rayd_core::suspend_sync::SuspendShares`).
     fn demand(&self) -> ParticipantDemand;
+
+    /// Runs once at boot, before the hooks server answers anything — in
+    /// particular before the build-time `/ready` that lets AWS take the
+    /// snapshot. A no-op unless a feature needs work in the snapshot.
+    async fn on_boot(&self) {}
 
     async fn on_run(&self) {}
 

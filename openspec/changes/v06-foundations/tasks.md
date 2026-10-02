@@ -119,3 +119,18 @@
 
 - [x] 14.1 Branch `feat/v06-foundations`, worktree `rayito-wt-v06-foundations`, commits signed (`git commit -s -S`) with the required attribution lines.
 - [ ] 14.2 PR opened against `main`; CI green; merged with a merge commit (`gh pr merge --merge`).
+
+## 15. Follow-up: one shared `FeatureSet` and bounded participants
+
+Shared wiring every 0.6 feature needs, moved here instead of each feature PR
+editing `main.rs`/`grpc`/`hooks` on its own (review of PR #79).
+
+- [x] 15.1 `FeatureSet::agent_features()` (derived from each slot's `supported()`) and `FeatureSet::participants()`.
+- [x] 15.2 `grpc::router_with_features(services, settings, transfers, Arc<FeatureSet>)`; `router_with_transfers` builds its own set and delegates. `HealthGrpc::with_features` reports `agent_features()`.
+- [x] 15.3 `main.rs` and `crates/rayd/tests/common/mod.rs` build one `Arc<FeatureSet>` and give it to the gRPC router and its `participants()` to `HookServices`.
+- [x] 15.4 `hooks::run_concurrently`: one loop for `/suspend`, `/resume` and `/terminate`, each participant under its own cap (`SuspendShares`, `PARTICIPANT_RESUME_TIMEOUT`, `PARTICIPANT_TERMINATE_TIMEOUT`); `/resume`'s participants run concurrently with the kernel probe.
+- [x] 15.5 Participants run only for an accepted transition (`Transition::changed`): a repeated `/suspend` or `/terminate` does not run them again.
+- [x] 15.6 Workspace pin `hmac = "=0.13.0"` (first user: `m15-events-webhooks`'s event-line MAC).
+- [x] 15.7 `plan_features(..., logging=)` / `planFeatures(options, imageVariant, logging)`: `create()` passes its `logging` option through the seam (unused here; `events=` needs a CloudWatch-enabled `logging`).
+- [x] 15.8 Unit tests: all-`Unsupported` set reports `foundations_only()` and no participants; participants run once per accepted transition; a hung `on_resume`/`on_terminate` is cut at its cap.
+

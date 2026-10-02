@@ -1,0 +1,50 @@
+{
+  "_comment": "Vectores compartidos de m15-templates (investigación §6): ambos SDKs (clients/python/tests/unit/test_m15_templates_vectors.py y clients/typescript/tests/unit/m15-templates-vectors.test.ts) deben renderizar exactamente estas líneas y estos ready_cmd, o rechazar con el mismo tipo de error.",
+  "layer_cases": [
+    {
+      "name": "copy usa la forma JSON bajo el prefijo reservado del contexto",
+      "steps": [{"kind": "copy", "src": "app/", "dst": "/srv/app/"}],
+      "lines": ["COPY [\"__rayito_context/app/\", \"/srv/app/\"]"]
+    },
+    {
+      "name": "copy con espacios y comillas",
+      "steps": [{"kind": "copy", "src": "mis datos/\"a\".txt", "dst": "/srv/mis datos/a.txt"}],
+      "lines": ["COPY [\"__rayito_context/mis datos/\\\"a\\\".txt\", \"/srv/mis datos/a.txt\"]"]
+    },
+    {
+      "name": "env escapa barra invertida, comillas y dólar",
+      "steps": [{"kind": "env", "key": "GREETING", "value": "di \"hola\" a $USER\\n"}],
+      "lines": ["ENV GREETING=\"di \\\"hola\\\" a \\$USER\\\\n\""]
+    },
+    {
+      "name": "run, workdir y user se copian tal cual",
+      "steps": [
+        {"kind": "workdir", "path": "/srv/app"},
+        {"kind": "user", "user": "1000"},
+        {"kind": "run", "cmd": "pip install --no-cache-dir 'pandas>=2' && echo ok"}
+      ],
+      "lines": [
+        "WORKDIR /srv/app",
+        "USER 1000",
+        "RUN pip install --no-cache-dir 'pandas>=2' && echo ok"
+      ]
+    }
+  ],
+  "rejected_steps": [
+    {"name": "salto de línea en RUN inyectaría otra instrucción", "steps": [{"kind": "run", "cmd": "echo a\nUSER root"}]},
+    {"name": "retorno de carro en ENV", "steps": [{"kind": "env", "key": "A", "value": "x\ry"}]},
+    {"name": "salto de línea en COPY", "steps": [{"kind": "copy", "src": "a\nb", "dst": "/x"}]},
+    {"name": "clave ENV inválida", "steps": [{"kind": "env", "key": "A B", "value": "1"}]},
+    {"name": "salto de línea en WORKDIR", "steps": [{"kind": "workdir", "path": "/a\n/b"}]},
+    {"name": "salto de línea en USER", "steps": [{"kind": "user", "user": "1000\nRUN id"}]}
+  ],
+  "ready_cases": [
+    {"helper": "wait_for_port", "args": [8000], "cmd": "cat < /dev/null > /dev/tcp/127.0.0.1/8000"},
+    {"helper": "wait_for_url", "args": ["http://localhost:8000/health"], "cmd": "test \"$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health)\" = '200'"},
+    {"helper": "wait_for_url", "args": ["http://localhost:8000/?q=it's $(id)", 204], "cmd": "test \"$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8000/?q=it'\"'\"'s $(id)')\" = '204'"},
+    {"helper": "wait_for_process", "args": ["uvicorn main:app"], "cmd": "pgrep -f 'uvicorn main:app' > /dev/null"},
+    {"helper": "wait_for_file", "args": ["/tmp/ready"], "cmd": "test -e /tmp/ready"},
+    {"helper": "wait_for_file", "args": ["/tmp/it's ready"], "cmd": "test -e '/tmp/it'\"'\"'s ready'"},
+    {"helper": "wait_for_file", "args": [""], "cmd": "test -e ''"}
+  ]
+}

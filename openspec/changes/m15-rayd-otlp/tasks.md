@@ -257,7 +257,7 @@ explicitly deferred further (noted).
       this branch; `otlp-export` stack deployed and its policy attached to
       the execution role for the run; all removed afterwards.
 - [x] 15.2 OT1/OT9 regression over `aws-sigv4`, OT7 CPU, OT2 payload size,
-      zero-cost default `create()` (`AWS_API_NOTES.md` Q108, Q109).
+      zero-cost default `create()` (`AWS_API_NOTES.md` Q120, Q109).
 - [x] 15.3 OT5: suspend flush, resume after 10 min and after > 55 min
       (Q110).
 - [x] 15.4 Bearer: a real CloudWatch Metrics API key cannot be minted in
@@ -277,3 +277,20 @@ explicitly deferred further (noted).
 - [x] 15.7 e2e: tests now pass `telemetry=` (they never did), the TS file
       is renamed `*.e2e.test.ts` so the e2e project collects it, and the
       non-caps case asserts the real contract (`role_not_permitted`).
+
+## Integration with the merged 0.6 features
+
+- [x] Merged with `v06-foundations` §15 and the 0.6 features already on
+      `main`: rayd keeps foundations' one `FeatureSet`, generic
+      `Health.features`/`root_egress` (this slot declares
+      `CloudwatchOtlp` through `root_egress_class()`) and its capped
+      participant runners; `FeatureContext` carries this feature's session,
+      credentials, history and region next to the other features' fields.
+      In both SDKs `telemetry=` goes through the shared `ConfigureSandbox`
+      pipeline (`_apply_configure_sections`/`#applyConfigureSections`) as a
+      `TelemetrySectionFactory` built from the launch facts
+      (`planned_sections`/`plannedSections`), with `require_telemetry_support`
+      as the section's own capability gate; `_apply_telemetry`/
+      `#applyTelemetry`, `configure/rpc.ts` and `aresolve_bearer_token`
+      are gone. The OT2/OT7 measurement is `AWS_API_NOTES.md` Q120 (Q108
+      already named an events-webhooks measurement).

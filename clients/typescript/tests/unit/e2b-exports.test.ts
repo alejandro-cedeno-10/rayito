@@ -89,9 +89,14 @@ describe("rayito/e2b exports", () => {
     expect(new e2b.GitAuthError("x")).toBeInstanceOf(e2b.AuthenticationError);
     expect(new e2b.GitUpstreamError("x")).toBeInstanceOf(e2b.SandboxError);
     expect(new e2b.TemplateError("x")).toBeInstanceOf(e2b.SandboxError);
+    // m15-templates: el shim ya construye de verdad, así que BuildError/TemplateError son las
+    // clases nativas (mismo patrón que NotEnoughSpaceError/FileUploadError), no los stand-ins
+    // que nunca se lanzaban.
+    expect(e2b.BuildError).toBe(native.BuildError);
+    expect(e2b.TemplateError).toBe(native.TemplateError);
     const build = new e2b.BuildError("x");
     expect(build).toBeInstanceOf(Error);
-    expect(build).not.toBeInstanceOf(e2b.SandboxError);
+    expect(build).toBeInstanceOf(e2b.SandboxError);
     expect(build.name).toBe("BuildError");
     expect(e2b.Sandbox).not.toBe(native.Sandbox);
   });

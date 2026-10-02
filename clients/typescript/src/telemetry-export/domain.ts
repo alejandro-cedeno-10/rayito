@@ -95,7 +95,7 @@ export interface TelemetryExportOptions {
  *   execution role; `rayd` hace un `PutMetricData` por lote exportado.
  * Coste aproximado: $0 por la opción en sí; CloudWatch factura la ingesta
  *   OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con `intervalS: 60`
- *   (`AWS_API_NOTES.md` Q108).
+ *   (`AWS_API_NOTES.md` Q120).
  * IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto de la
  *   cuenta (no se puede acotar por namespace, research OT9); con
  *   `OtlpAuth.bearer(...)`, el permiso de lectura del secreto.

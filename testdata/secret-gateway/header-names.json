@@ -1,0 +1,28 @@
+{
+  "_comment": "Shared vectors for a SecretGateway route's injected header names (m15-secrets-gateway). Read by rayd-core (route.rs tests), Python (test_m15_secrets_gateway_domain.py) and TypeScript (m15-secrets-gateway-domain.test.ts): all three must accept every 'valid' name and reject every 'invalid' one and every 'duplicates' pair.",
+  "valid": ["x-api-key", "X-Api-Key", "authorization", "anthropic-version", "x_custom.token~1"],
+  "invalid": [
+    "",
+    "x api key",
+    "x\tapi",
+    "x:api",
+    "x-api-key\r\n",
+    "clé",
+    "host",
+    "Host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "trailers",
+    "upgrade"
+  ],
+  "duplicates": [
+    ["X-Api-Key", "x-api-key"],
+    ["AUTHORIZATION", "authorization"]
+  ]
+}

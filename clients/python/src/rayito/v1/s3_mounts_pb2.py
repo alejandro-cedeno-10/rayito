@@ -24,15 +24,21 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19rayito/v1/s3_mounts.proto\x12\trayito.v1\"\x10\n\x0eS3MountsConfig\"\x10\n\x0eS3MountsStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19rayito/v1/s3_mounts.proto\x12\trayito.v1\"<\n\x0eS3MountsConfig\x12*\n\x06mounts\x18\x01 \x03(\x0b\x32\x12.rayito.v1.S3MountR\x06mounts\"\xc1\x01\n\x07S3Mount\x12\x1d\n\nmount_path\x18\x01 \x01(\tR\tmountPath\x12\x16\n\x06\x62ucket\x18\x02 \x01(\tR\x06\x62ucket\x12\x16\n\x06prefix\x18\x03 \x01(\tR\x06prefix\x12\x1b\n\tread_only\x18\x04 \x01(\x08R\x08readOnly\x12\'\n\x0f\x61llow_overwrite\x18\x05 \x01(\x08R\x0e\x61llowOverwrite\x12!\n\x0c\x61llow_delete\x18\x06 \x01(\x08R\x0b\x61llowDelete\"A\n\x0eS3MountsStatus\x12/\n\x06mounts\x18\x01 \x03(\x0b\x32\x17.rayito.v1.S3MountStateR\x06mounts\"}\n\x0cS3MountState\x12\x1d\n\nmount_path\x18\x01 \x01(\tR\tmountPath\x12-\n\x05phase\x18\x02 \x01(\x0e\x32\x17.rayito.v1.S3MountPhaseR\x05phase\x12\x1f\n\x0b\x65rror_class\x18\x03 \x01(\tR\nerrorClass*\x81\x01\n\x0cS3MountPhase\x12\x1e\n\x1aS3_MOUNT_PHASE_UNSPECIFIED\x10\x00\x12\x1a\n\x16S3_MOUNT_PHASE_PENDING\x10\x01\x12\x1a\n\x16S3_MOUNT_PHASE_MOUNTED\x10\x02\x12\x19\n\x15S3_MOUNT_PHASE_FAILED\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.s3_mounts_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_S3MOUNTPHASE']._serialized_start=493
+  _globals['_S3MOUNTPHASE']._serialized_end=622
   _globals['_S3MOUNTSCONFIG']._serialized_start=40
-  _globals['_S3MOUNTSCONFIG']._serialized_end=56
-  _globals['_S3MOUNTSSTATUS']._serialized_start=58
-  _globals['_S3MOUNTSSTATUS']._serialized_end=74
+  _globals['_S3MOUNTSCONFIG']._serialized_end=100
+  _globals['_S3MOUNT']._serialized_start=103
+  _globals['_S3MOUNT']._serialized_end=296
+  _globals['_S3MOUNTSSTATUS']._serialized_start=298
+  _globals['_S3MOUNTSSTATUS']._serialized_end=363
+  _globals['_S3MOUNTSTATE']._serialized_start=365
+  _globals['_S3MOUNTSTATE']._serialized_end=490
 # @@protoc_insertion_point(module_scope)

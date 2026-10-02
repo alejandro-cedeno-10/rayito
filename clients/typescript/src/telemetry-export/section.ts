@@ -11,16 +11,23 @@
  * same error translation and at most one `GetSecretValue` per TTL. That is
  * this module's only AWS call, and only with `OtlpAuth.bearer(...)`.
  *
- * `requireTelemetrySupport` is the gate `Sandbox.#applyTelemetry` uses,
- * split out so its message can never drift from a second copy.
+ * `requireTelemetrySupport` is the section's own capability gate
+ * (`configure/base.ts`'s `CapabilityGate`): `create()` sends the section
+ * through the same `#applyConfigureSections` as `mounts`/`gateways`, from
+ * a `TelemetrySectionFactory` (the image facts are only known after
+ * `run-microvm` and the first `Health`).
  */
 
 import { create } from "@bufbuild/protobuf";
-import type { ConfigureSection } from "../configure/base.js";
-import { requireConfigureSupport } from "../configure/base.js";
+import {
+  type AgentFeatures,
+  type CapabilityGate,
+  type ConfigureSectionFactory,
+  ImmediateSection,
+  requireConfigureSupport,
+} from "../configure/base.js";
 import { UnimplementedError } from "../errors.js";
 import type { ConfigureRequest } from "../gen/rayito/v1/configure_pb.js";
-import type { AgentFeatures } from "../gen/rayito/v1/features_pb.js";
 import {
   TelemetryExportBearerAuthSchema,
   TelemetryExportConfigSchema,
@@ -28,7 +35,11 @@ import {
   TelemetryExportNameStyle,
 } from "../gen/rayito/v1/telemetry_export_pb.js";
 import type { SecretCache } from "../secrets/cache.js";
-import type { NameStyleOption, TelemetryExport } from "./domain.js";
+import {
+  imageMemoryMibFromGuestBytes,
+  type NameStyleOption,
+  type TelemetryExport,
+} from "./domain.js";
 
 const NAMES_WIRE: Record<NameStyleOption, TelemetryExportNameStyle> = {
   rayito: TelemetryExportNameStyle.RAYITO,
@@ -45,8 +56,7 @@ const REQUIRED_AGENT = "rayd 0.6.0";
  * `telemetryExport: true`: absent entirely (an agent older than 0.6.0, via
  * `requireConfigureSupport`) or present but `false` (a 0.6 `rayd` started
  * without `AWS_REGION`, so it has no CloudWatch endpoint to export to).
- * Shared by `Sandbox.#applyTelemetry` so the gate and its message never
- * drift from a second copy.
+ * `TelemetryExportSection.requireSupport`.
  */
 export function requireTelemetrySupport(features: AgentFeatures | undefined): void {
   const resolved = requireConfigureSupport(features, TELEMETRY_FEATURE_NAME);
@@ -74,9 +84,9 @@ export async function resolveBearerToken(
   return kind === "bearer" && secretName !== undefined ? cache.get(secretName) : undefined;
 }
 
-export class TelemetryExportSection implements ConfigureSection {
+export class TelemetryExportSection extends ImmediateSection implements CapabilityGate {
   readonly section = "telemetry_export";
-  readonly requiredFlag = "telemetry_export";
+  readonly requiredFlag = "telemetryExport";
   /** An ES private field, never a plain property: `util.inspect`,
    * `console.log` and `JSON.stringify` cannot see it. */
   readonly #bearerToken: string | undefined;
@@ -88,7 +98,12 @@ export class TelemetryExportSection implements ConfigureSection {
     private readonly imageMemoryMib: number,
     bearerToken: string | undefined,
   ) {
+    super();
     this.#bearerToken = bearerToken;
+  }
+
+  requireSupport(features: AgentFeatures): void {
+    requireTelemetrySupport(features);
   }
 
   /** Whether a bearer token was resolved (never the token itself). */
@@ -137,4 +152,33 @@ export async function buildSection(
     options.imageMemoryMib,
     await resolveBearerToken(telemetry, options.secretCache),
   );
+}
+
+/** What only `run-microvm` and the first `Health` know. */
+export interface TelemetryLaunchFacts {
+  readonly imageArn: string;
+  readonly imageVersion: string;
+  readonly guestMemoryBytes: number | undefined;
+}
+
+/**
+ * `configure/base.ts`'s `ConfigureSectionFactory` for `telemetry`: the
+ * image facts already fixed; `OtlpAuth.bearer(...)`'s secret is read
+ * through the handle's `SecretCache` when `resolveSections` builds it,
+ * right before the `Configure`.
+ */
+export class TelemetrySectionFactory implements ConfigureSectionFactory {
+  constructor(
+    private readonly telemetry: TelemetryExport,
+    private readonly facts: TelemetryLaunchFacts,
+  ) {}
+
+  build(cache: SecretCache): Promise<TelemetryExportSection> {
+    return buildSection(this.telemetry, {
+      imageArn: this.facts.imageArn,
+      imageVersion: this.facts.imageVersion,
+      imageMemoryMib: imageMemoryMibFromGuestBytes(this.facts.guestMemoryBytes),
+      secretCache: cache,
+    });
+  }
 }

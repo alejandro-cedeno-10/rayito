@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use rayd_core::configure::{SectionCode, SectionOutcome};
 use rayd_core::metrics_history::MetricsHistory;
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::session::SandboxSession;
 use rayd_core::suspend_sync::{ParticipantDemand, ParticipantReport};
 use rayd_core::telemetry::model::MetricPoint;
@@ -469,6 +470,12 @@ impl ConfigurableFeature<TelemetryExportConfig, TelemetryExportStatus> for Telem
 
     fn participant(&self) -> Option<Arc<dyn LifecycleParticipant>> {
         Some(self.participant.clone())
+    }
+
+    /// The exporter signs and sends as root, straight to the regional
+    /// `CloudWatch` OTLP endpoint (`rayd_core::root_egress`).
+    fn root_egress_class(&self) -> Option<RootEgressClass> {
+        Some(RootEgressClass::CloudwatchOtlp)
     }
 }
 

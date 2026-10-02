@@ -16,6 +16,7 @@ from rayito.e2b._async import AsyncSandbox
 from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_params
 from rayito.e2b._secret import AsyncSecret, Secret
 from rayito.e2b._sync import Sandbox
+from rayito.e2b._template import AsyncTemplate, Template
 from rayito.e2b._unimplemented import unimplemented
 from rayito.e2b.exceptions import RayitoCompatWarning
 
@@ -41,14 +42,19 @@ class E2B:
     (un `None` de la llamada cae al del cliente; `headers` de la llamada
     sustituyen a las del cliente). Los `ApiParams` ignorados avisan una sola
     vez, aquí. `client.Secret`/`client.AsyncSecret` usan su `region` y su
-    `session` (Secrets Manager en esa cuenta). `Template` y `Volume` (y sus
-    `Async*`) son `UnimplementedError`.
+    `session` (Secrets Manager en esa cuenta).
 
     `index=DynamoDbIndex(...)` (extensión de Rayito, `None` por defecto) lo
     usan `client.Sandbox.list` y `client.AsyncSandbox.list` cuando la
     llamada no pasa otro: `query.metadata` sobre sandboxes en pausa con
     `dynamodb:BatchGetItem` (ver `rayito.DynamoDbIndex`, "Coste y
-    activación"). Ninguna otra llamada lo usa."""
+    activación"). Ninguna otra llamada lo usa.
+
+    `client.Template`/`client.AsyncTemplate` (m15-templates) usan su
+    `region`, su `session` y `bucket=` (extensión de Rayito: el bucket de
+    artefactos de `Template.build`, `None` por defecto; sin él cada
+    `build` debe pasar `bucket=`). `Volume`/`AsyncVolume` siguen siendo
+    `UnimplementedError`."""
 
     def __init__(
         self,
@@ -57,6 +63,7 @@ class E2B:
         session: Any | None = None,
         control_plane: Any | None = None,
         index: DynamoDbIndex | None = None,
+        bucket: str | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -79,14 +86,9 @@ class E2B:
         }
         self.Secret: type[Secret] = bind_class(Secret, secret_bound)
         self.AsyncSecret: type[AsyncSecret] = bind_class(AsyncSecret, secret_bound)
-
-    @property
-    def Template(self) -> NoReturn:
-        raise unimplemented("Template")
-
-    @property
-    def AsyncTemplate(self) -> NoReturn:
-        raise unimplemented("Template")
+        template_bound = {**secret_bound, **({"bucket": bucket} if bucket is not None else {})}
+        self.Template: type[Template] = bind_class(Template, template_bound)
+        self.AsyncTemplate: type[AsyncTemplate] = bind_class(AsyncTemplate, template_bound)
 
     @property
     def Volume(self) -> NoReturn:

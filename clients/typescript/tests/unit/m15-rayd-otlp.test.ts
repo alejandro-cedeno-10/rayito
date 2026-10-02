@@ -130,7 +130,8 @@ describe("TelemetryExportSection", () => {
       undefined,
     );
     expect(section.section).toBe("telemetry_export");
-    expect(section.requiredFlag).toBe("telemetry_export");
+    // `requiredFlag` names the `AgentFeatures` field (camelCase in TS).
+    expect(section.requiredFlag).toBe("telemetryExport");
   });
 
   test("fill builds an executionRole section with image facts", () => {

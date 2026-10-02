@@ -13,6 +13,14 @@ import {
   PORT_MAX,
   PORT_MIN,
 } from "./limits.js";
+import {
+  applySizeSuffix,
+  baselineCpuFor,
+  type ResolvedSize,
+  resolveSize,
+  type SizeInput,
+  warnIfRounded,
+} from "./sizing/sizing.js";
 
 export const PROXY_AUTH_HEADER = "x-aws-proxy-auth";
 export const PROXY_PORT_HEADER = "x-aws-proxy-port";
@@ -105,6 +113,9 @@ export interface SandboxInfoFields {
   readonly cpuCount?: number | undefined;
   readonly memoryMb?: number | undefined;
   readonly metadata?: Readonly<Record<string, string>> | undefined;
+  readonly size?: string | undefined;
+  readonly baselineMemoryMib?: number | undefined;
+  readonly baselineCpu?: number | undefined;
 }
 
 /**
@@ -123,7 +134,14 @@ export interface SandboxInfoFields {
  * `egressNetworkConnectors`), vacíos si la respuesta no los trae.
  * `metadata` son los de `create({ metadata })` tal como los devolvió el
  * último `Health` (`get-microvm` no los conoce): `undefined` si no se
- * leyeron del agente y `{}` si se leyeron vacíos.
+ * leyeron del agente y `{}` si se leyeron vacíos. `size`,
+ * `baselineMemoryMib` y `baselineCpu` sólo se rellenan cuando
+ * `create({ size })` se usó (m15-sizes-catalog): `size` es el sufijo
+ * resuelto, `baselineMemoryMib` el `minimumMemoryInMiB` publicado de la
+ * imagen lanzada (confirmado por `ConventionCatalog`) y `baselineCpu` los
+ * vCPU del guest para ese `minimumMemoryInMiB` (RES-2/Q88, medido
+ * exactamente para los cinco tamaños del catálogo). El guest real puede
+ * ver hasta 4x `baselineMemoryMib` en `memoryMb` (también Q88).
  */
 export interface SandboxInfo extends SandboxInfoFields {
   readonly terminatedAt: Date | undefined;
@@ -137,6 +155,9 @@ export interface SandboxInfo extends SandboxInfoFields {
   readonly cpuCount: number | undefined;
   readonly memoryMb: number | undefined;
   readonly metadata: Readonly<Record<string, string>> | undefined;
+  readonly size: string | undefined;
+  readonly baselineMemoryMib: number | undefined;
+  readonly baselineCpu: number | undefined;
   readonly endpointUrl: string;
   readonly expiresAt: Date;
   readonly platformExpiresAt: Date;
@@ -176,6 +197,9 @@ export function sandboxInfo(fields: SandboxInfoFields): SandboxInfo {
     cpuCount: fields.cpuCount,
     memoryMb: fields.memoryMb,
     metadata: fields.metadata === undefined ? undefined : Object.freeze({ ...fields.metadata }),
+    size: fields.size,
+    baselineMemoryMib: fields.baselineMemoryMib,
+    baselineCpu: fields.baselineCpu,
     endpointUrl: `https://${fields.endpoint}`,
     expiresAt,
     platformExpiresAt,
@@ -194,6 +218,50 @@ export function withLifecycle(
   lifecycle: SandboxLifecycle | undefined,
 ): SandboxInfo {
   return sandboxInfo({ ...info, lifecycle });
+}
+
+/**
+ * m15-sizes-catalog: resuelve `size` fuera de `planFeatures` (no es una
+ * sección de `ConfigureSandbox`, es qué imagen lanzar) — pura, lanza
+ * `InvalidArgumentError` antes de cualquier llamada a AWS si el catálogo
+ * cerrado no cubre lo pedido, y avisa con `RayitoCompatWarning` si no cae
+ * justo en un valor del catálogo. `undefined` si `size` no se usó.
+ */
+export function planSize(size: SizeInput | undefined): ResolvedSize | undefined {
+  if (size === undefined) {
+    return undefined;
+  }
+  const resolved = resolveSize(size);
+  warnIfRounded(resolved);
+  return resolved;
+}
+
+/**
+ * El nombre de plantilla con el sufijo de tamaño ya aplicado
+ * (`applySizeSuffix`), o el mismo nombre si no se usó `size`
+ * (m15-sizes-catalog).
+ */
+export function sizedTemplateName(
+  templateName: string,
+  resolvedSize: ResolvedSize | undefined,
+): string {
+  return resolvedSize === undefined ? templateName : applySizeSuffix(templateName, resolvedSize);
+}
+
+/** m15-sizes-catalog: `size`/`baselineMemoryMib`/`baselineCpu` sólo se
+ * rellenan cuando `create({ size })` se usó; `cpuCount`/`memoryMb` siguen
+ * siendo lo que el guest reporta de verdad (Q88), nunca lo que aquí se
+ * estima. */
+export function withSizeFacts(
+  info: SandboxInfo,
+  facts: { readonly size: string; readonly baselineMemoryMib: number },
+): SandboxInfo {
+  return sandboxInfo({
+    ...info,
+    size: facts.size,
+    baselineMemoryMib: facts.baselineMemoryMib,
+    baselineCpu: baselineCpuFor(facts.baselineMemoryMib),
+  });
 }
 
 /**

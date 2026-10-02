@@ -43,7 +43,12 @@ impl ConfigureGrpc {
     ) -> Option<SectionOutcome> {
         match section {
             ConfigSection::LifecycleEvents => {
-                let cfg = request.lifecycle_events?;
+                // Unlike the other sections (still empty `{}` messages,
+                // hence `Copy`), `LifecycleEventsConfig` now carries owned
+                // bytes/strings (`m15-events-webhooks`), so it cannot be
+                // moved out of `request: &ConfigureRequest` — cloned
+                // instead, once per `Configure` call.
+                let cfg = request.lifecycle_events.clone()?;
                 Some(self.features.lifecycle_events.apply(cfg).await)
             }
             ConfigSection::TelemetryExport => {
@@ -55,11 +60,18 @@ impl ConfigureGrpc {
                 Some(self.features.telemetry_export.apply(cfg).await)
             }
             ConfigSection::SecretGateway => {
-                let cfg = request.secret_gateway?;
+                // Unlike the other four sections (today still empty, `Copy`
+                // stub messages), `SecretGatewayConfig` carries real fields
+                // (`routes`), so it is not `Copy` and must be cloned out of
+                // `request`, which this method only ever borrows.
+                let cfg = request.secret_gateway.clone()?;
                 Some(self.features.secret_gateway.apply(cfg).await)
             }
             ConfigSection::S3Mounts => {
-                let cfg = request.s3_mounts?;
+                // `.clone()`: unlike the other sections, `S3MountsConfig`
+                // now carries real fields (`m15-s3-mounts`), so it is no
+                // longer `Copy` and `request` is only borrowed here.
+                let cfg = request.s3_mounts.clone()?;
                 Some(self.features.s3_mounts.apply(cfg).await)
             }
             ConfigSection::EfsVolumes => {
@@ -143,7 +155,7 @@ fn proto_code(code: SectionCode) -> rayito_proto::v1::SectionCode {
 mod tests {
     use rayd_core::clock::SystemClock;
     use rayd_core::session::RunHookInput;
-    use rayito_proto::v1::S3MountsConfig;
+    use rayito_proto::v1::{EfsVolumesConfig, S3MountsConfig};
 
     use super::*;
     use crate::features::{self, FeatureContext};
@@ -189,10 +201,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_present_section_against_every_slot_still_unsupported_reports_unsupported() {
+    async fn a_present_section_against_a_slot_still_unsupported_reports_unsupported() {
+        // `s3_mounts` has a real adapter since `m15-s3-mounts`; `efs_volumes`
+        // is still a stub (`features::efs_volumes::build` -> `Unsupported`)
+        // and makes the same point.
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            efs_volumes: Some(EfsVolumesConfig {}),
+            ..Default::default()
+        };
+        let response = service
+            .configure(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(
+            response.results[0].section,
+            i32::from(rayito_proto::v1::ConfigSection::EfsVolumes)
+        );
+        assert_eq!(
+            response.results[0].code,
+            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_present_s3_mounts_section_now_applies_instead_of_reporting_unsupported() {
+        let service = running_service();
+        let request = ConfigureRequest {
+            s3_mounts: Some(S3MountsConfig::default()),
             ..Default::default()
         };
         let response = service
@@ -207,7 +245,7 @@ mod tests {
         );
         assert_eq!(
             response.results[0].code,
-            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+            i32::from(rayito_proto::v1::SectionCode::Applied)
         );
     }
 
@@ -221,7 +259,7 @@ mod tests {
             .into_inner();
         assert_eq!(
             response.s3_mounts,
-            Some(rayito_proto::v1::S3MountsStatus {})
+            Some(rayito_proto::v1::S3MountsStatus::default())
         );
         assert_eq!(
             response.efs_volumes,
@@ -274,7 +312,7 @@ mod tests {
             .finish();
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            s3_mounts: Some(S3MountsConfig::default()),
             request_id: "a-request-id".to_owned(),
             ..Default::default()
         };

@@ -17,7 +17,6 @@ from rayito._telemetry_export import (
     TelemetryExport,
     TelemetryExportSection,
     TelemetryHealth,
-    aresolve_bearer_token,
     build_section,
     plan,
     require_telemetry_support,
@@ -152,13 +151,6 @@ def test_bearer_takes_a_full_arn_as_is() -> None:
     arn = api.secrets["team/otlp-key"].arn
     telemetry = TelemetryExport(auth=OtlpAuth.bearer(arn))
     assert resolve_bearer_token(telemetry, cache_over(api)) == "sk-test"
-
-
-async def test_async_bearer_resolution_matches_the_sync_one() -> None:
-    api = FakeSecretsManager()
-    api.put("rayito/otlp-key", "sk-test")
-    telemetry = TelemetryExport(auth=OtlpAuth.bearer("otlp-key"))
-    assert await aresolve_bearer_token(telemetry, cache_over(api)) == "sk-test"
 
 
 def test_a_missing_bearer_secret_is_translated_and_never_named() -> None:

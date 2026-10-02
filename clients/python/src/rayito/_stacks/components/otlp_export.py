@@ -26,6 +26,6 @@ COMPONENT: StackComponent = StackComponent(
             "no por esta política.",
         ),
         removal="destroy() borra la política; no borra ninguna métrica ya exportada",
-        source="AWS_API_NOTES.md §26 (research OT1/OT9, Q108)",
+        source="AWS_API_NOTES.md §26 (research OT1/OT9, Q120)",
     ),
 )

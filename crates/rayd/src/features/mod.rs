@@ -1,9 +1,14 @@
 //! `FeatureSet`: the six 0.6 feature slots (M15 foundations, ADR-015),
-//! built once from `main` by `build(&FeatureContext)`. Every slot is
-//! `slot::Unsupported` in this build; each feature replaces its own
-//! field's construction (inside its own `features::<name>::build`) in its
-//! own PR — `FeatureSet`'s field list and `build`'s signature do not
-//! change for that.
+//! built once from `main` by `build(&FeatureContext)` and shared, as one
+//! `Arc<FeatureSet>`, by `ConfigureService`, `Health.features` and the
+//! hooks' lifecycle participants (`grpc::router_with_features`,
+//! `hooks::HookServices::participants`). Each feature replaces its own
+//! field's construction (inside its own `features::<name>::build`, e.g.
+//! `m15-s3-mounts`'s, `m15-events-webhooks`'s, `m15-templates`'s and
+//! `m15-secrets-gateway`'s real adapters) in its own PR, every other slot
+//! staying `slot::Unsupported` — `FeatureSet`'s field list, `build`'s
+//! signature and the three views below (`agent_features`, `root_egress`,
+//! `participants`) do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -16,7 +21,9 @@ pub mod template_start;
 use std::sync::Arc;
 
 use rayd_core::clock::SystemClock;
+use rayd_core::features::AgentFeatures;
 use rayd_core::metrics_history::MetricsHistory;
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::{
     EfsVolumesConfig, EfsVolumesStatus, LifecycleEventsConfig, LifecycleEventsStatus,
@@ -24,19 +31,25 @@ use rayito_proto::v1::{
     TelemetryExportConfig, TelemetryExportStatus,
 };
 
-use crate::adapters::{ImdsCredentialBroker, PushedCredentials};
+use crate::adapters::{ChildRegistry, ImdsCredentialBroker, PushedCredentials};
+use crate::grpc::PlatformProcessManager;
+use crate::lifecycle::LifecycleParticipant;
 use slot::ConfigurableFeature;
 
-/// What a feature's `build()` needs from `main` to construct its slot.
-/// `s3_mounts`/`efs_volumes`/`lifecycle_events`/`secret_gateway`/`template_start`
-/// still ignore every field (every slot but `telemetry_export`'s is a
-/// stub); `telemetry_export` is the first to need shared context
-/// (m15-rayd-otlp, ADR-021), which is why this struct already carries the
-/// session, the shared IMDS credential broker, the pushed-credentials
-/// holder and the region — a future feature needing something else adds a
-/// field here too, never by widening `FeatureSet` itself.
+/// What a feature's `build()` needs from `main` to construct its slot. A
+/// feature that needs credentials, a bucket name or other shared context
+/// adds its own field here in its own PR, never by widening `FeatureSet`
+/// itself; every other slot ignores it.
 #[derive(Clone)]
 pub struct FeatureContext {
+    /// `m15-s3-mounts`: its `mount-s3` daemon registers each pid here (see
+    /// `adapters::mount_s3`'s module doc).
+    pub child_registry: Arc<ChildRegistry>,
+    /// `template_start` (ADR-022): `None` builds a slot that still reports
+    /// `supported()` correctly but spawns nothing.
+    pub processes: Option<Arc<PlatformProcessManager>>,
+    /// `telemetry_export` (m15-rayd-otlp, ADR-021) reads the session,
+    /// signs with `credentials`/`pushed` and samples `history`.
     pub session: Arc<SandboxSession>,
     /// Built by `main` over the same execution-role provider instance
     /// persistence's `S3ObjectStore` uses (`ImdsCredentialBroker::sharing`),
@@ -56,13 +69,13 @@ pub struct FeatureContext {
 }
 
 impl Default for FeatureContext {
-    /// Only for tests and for the `ConfigureGrpc`/`features::build` call
-    /// sites that have not been threaded with real context yet: `region:
-    /// None` keeps every slot, including `telemetry_export`, `Unsupported`
-    /// (`every_slot_starts_unsupported` below), exactly like before this
-    /// struct grew fields.
+    /// The context every test (and `grpc::router_with_transfers`) builds
+    /// with: no process manager and `region: None`, so `template_start`
+    /// spawns nothing and `telemetry_export` stays `Unsupported`.
     fn default() -> Self {
         Self {
+            child_registry: Arc::default(),
+            processes: None,
             session: Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test")),
             credentials: Arc::new(ImdsCredentialBroker::new()),
             pushed: Arc::new(PushedCredentials::new()),
@@ -87,11 +100,13 @@ pub struct FeatureSet {
 
 impl FeatureSet {
     /// `Health.features`: capability flags, never "currently configured"
-    /// (`AgentFeatures`'s own doc comment: a flag means this build *has* a
-    /// real adapter, not that a section was ever applied).
+    /// (`rayd_core::features::AgentFeatures`: a flag means this build *has*
+    /// a real adapter for the slot, not that a section was ever applied),
+    /// read live from every slot's own `supported()`. With every slot
+    /// `Unsupported` this equals `AgentFeatures::foundations_only()`.
     #[must_use]
-    pub fn agent_features(&self) -> rayd_core::features::AgentFeatures {
-        rayd_core::features::AgentFeatures {
+    pub fn agent_features(&self) -> AgentFeatures {
+        AgentFeatures {
             configure: true,
             s3_mounts: self.s3_mounts.supported(),
             efs_volumes: self.efs_volumes.supported(),
@@ -102,23 +117,33 @@ impl FeatureSet {
         }
     }
 
-    /// `Health.features.root_egress`: same capability-based rule as
-    /// `agent_features` (`rayd_core::root_egress`'s own doc comment: "once
-    /// it has a real adapter"), never a host or an IP.
+    /// `Health.features.root_egress`: the declared class of every supported
+    /// slot that opens one (`ConfigurableFeature::root_egress_class`), in
+    /// `FeatureSet` field order.
     #[must_use]
-    pub fn root_egress(&self) -> Vec<rayd_core::root_egress::RootEgressClass> {
-        let mut classes = Vec::new();
-        if self.telemetry_export.supported() {
-            classes.push(rayd_core::root_egress::RootEgressClass::CloudwatchOtlp);
-        }
-        classes
+    pub fn root_egress(&self) -> Vec<RootEgressClass> {
+        [
+            active_egress(self.s3_mounts.as_ref()),
+            active_egress(self.efs_volumes.as_ref()),
+            active_egress(self.lifecycle_events.as_ref()),
+            active_egress(self.telemetry_export.as_ref()),
+            active_egress(self.secret_gateway.as_ref()),
+            active_egress(self.template_start.as_ref()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
-    /// Every slot's `LifecycleParticipant`, for `hooks::HookServices::participants`
-    /// (`main`): generic over all six slots so a future feature's
-    /// `participant()` is picked up here without `main` changing again.
+    /// Every slot's `LifecycleParticipant`, in no particular order
+    /// (`hooks::mod` keys each `/suspend` share by its own
+    /// `demand().name`). `main` hands this to `HookServices.participants`
+    /// from the same `FeatureSet` it gives the gRPC router, so a section
+    /// `ConfigureService` applied is the state `/suspend`/`/resume`/
+    /// `/terminate` act on. Empty while every slot is `Unsupported`, which
+    /// keeps every hook byte-for-byte 0.5.x.
     #[must_use]
-    pub fn participants(&self) -> Vec<Arc<dyn crate::lifecycle::LifecycleParticipant>> {
+    pub fn participants(&self) -> Vec<Arc<dyn LifecycleParticipant>> {
         [
             self.s3_mounts.participant(),
             self.efs_volumes.participant(),
@@ -130,6 +155,18 @@ impl FeatureSet {
         .into_iter()
         .flatten()
         .collect()
+    }
+}
+
+/// A slot's root-egress class, only while it is `supported()`: an
+/// `Unsupported` stub never opens one, whatever it would declare.
+fn active_egress<Cfg, Status>(
+    slot: &dyn ConfigurableFeature<Cfg, Status>,
+) -> Option<RootEgressClass> {
+    if slot.supported() {
+        slot.root_egress_class()
+    } else {
+        None
     }
 }
 
@@ -149,38 +186,71 @@ pub fn build(ctx: &FeatureContext) -> FeatureSet {
 mod tests {
     use super::*;
 
-    #[test]
-    fn every_slot_starts_unsupported() {
+    // `#[tokio::test]`: `lifecycle_events::build` spawns its stdout drain
+    // task, so `build()` needs a runtime.
+    #[tokio::test]
+    async fn every_slot_still_a_stub_starts_unsupported() {
+        // Every other slot has a real adapter (`telemetry_export` only with
+        // a region), asserted in its own module's tests and below.
         let set = build(&FeatureContext::default());
-        assert!(!set.s3_mounts.supported());
         assert!(!set.efs_volumes.supported());
-        assert!(!set.lifecycle_events.supported());
-        assert!(!set.telemetry_export.supported());
-        assert!(!set.secret_gateway.supported());
-        assert!(!set.template_start.supported());
     }
 
-    #[test]
-    fn with_no_region_agent_features_and_root_egress_stay_at_their_0_6_0_defaults() {
+    #[tokio::test]
+    async fn the_views_are_read_from_the_slots() {
+        // Whatever this host makes of `s3_mounts` (a CI runner has no
+        // `CAP_SYS_ADMIN`/`mount-s3`) or `secret_gateway` (it degrades
+        // without a TLS trust store), the reported flags and the reported
+        // root egress follow each slot's own `supported()`, in `FeatureSet`
+        // field order; `lifecycle_events` is always supported and always a
+        // participant (what stays inert without a `ConfigureSandbox`
+        // section is its key), and every stub stays `false` with no egress
+        // and no participant.
         let set = build(&FeatureContext::default());
+        let features = set.agent_features();
+        assert!(features.configure);
+        assert_eq!(features.s3_mounts, set.s3_mounts.supported());
+        assert_eq!(features.secret_gateway, set.secret_gateway.supported());
+        assert!(features.lifecycle_events);
+        // `telemetry_export` needs a region (`FeatureContext::default()`
+        // has none): see the next test.
+        assert!(!features.telemetry_export);
+        // `template_start` always understands the spec; without a
+        // `template.json` (any test host) it has no participant.
+        assert!(features.template_start);
+        assert!(!features.efs_volumes);
+        let expected: Vec<RootEgressClass> = [
+            (set.s3_mounts.supported(), RootEgressClass::S3),
+            (
+                set.secret_gateway.supported(),
+                RootEgressClass::SecretGatewayUpstream,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(supported, class)| supported.then_some(class))
+        .collect();
+        assert_eq!(set.root_egress(), expected);
+        let names: Vec<&str> = set
+            .participants()
+            .iter()
+            .map(|participant| participant.demand().name)
+            .collect();
         assert_eq!(
-            set.agent_features(),
-            rayd_core::features::AgentFeatures::foundations_only()
+            names,
+            [
+                s3_mounts::PARTICIPANT_NAME,
+                rayd_core::lifecycle_events::PARTICIPANT_NAME
+            ]
         );
-        assert!(set.root_egress().is_empty());
-        assert!(set.participants().is_empty());
     }
 
-    #[test]
-    fn a_known_region_turns_on_the_telemetry_flag_and_its_root_egress_class() {
+    #[tokio::test]
+    async fn a_known_region_turns_on_the_telemetry_flag_and_its_root_egress_class() {
         let set = build(&FeatureContext {
             region: Some("us-east-1".to_owned()),
             ..FeatureContext::default()
         });
         assert!(set.agent_features().telemetry_export);
-        assert_eq!(
-            set.root_egress(),
-            vec![rayd_core::root_egress::RootEgressClass::CloudwatchOtlp]
-        );
+        assert!(set.root_egress().contains(&RootEgressClass::CloudwatchOtlp));
     }
 }

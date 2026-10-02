@@ -168,15 +168,11 @@ pub fn router_with_settings(services: Services, settings: StreamSettings) -> Grp
     router_with_transfers(services, settings, TransferServices::unavailable())
 }
 
-/// `router`/`router_with_settings`/`router_with_transfers` all build a
-/// fresh, default-context `FeatureSet` here (every slot but
-/// `telemetry_export` is still `Unsupported` either way, and
-/// `telemetry_export` itself reports `Unsupported` without a region,
-/// `FeatureContext::default()`'s own guarantee) — unchanged behaviour for
-/// every existing caller, including the integration tests that build
-/// `Services` directly. `main` is the one caller with real shared context
-/// (credentials, the metrics-history ring, the region), so it calls
-/// `router_with_features` instead, which this function also backs.
+/// `router_with_features` with a freshly built `FeatureSet` of its own —
+/// for the integration tests and any caller that never shares the set with
+/// a hooks listener. `main` builds the process's one `FeatureSet` itself
+/// and calls `router_with_features`, so `ConfigureService`, `Health` and
+/// the hooks' participants all act on the same slots.
 #[must_use]
 pub fn router_with_transfers(
     services: Services,
@@ -193,13 +189,10 @@ pub fn router_with_transfers(
     )
 }
 
-/// Like `router_with_transfers`, but with `main`'s real `FeatureSet`
-/// (m15-rayd-otlp, ADR-021: the first feature needing shared context)
-/// threaded to both `HealthGrpc` and `ConfigureGrpc`, so a `Health` call
-/// and a `Configure`/`ConfigureStatus` call always agree on what is
-/// actually running — building two separate `FeatureSet`s here (one
-/// discarded) would otherwise let a stateful feature's `Configure`d state
-/// diverge from what `Health` reports.
+/// The router over an explicit `FeatureSet`, shared by `ConfigureGrpc`
+/// (sections are applied to it) and `HealthGrpc` (`Health.features` is
+/// derived from it). Pass the same `Arc` whose `participants()` went into
+/// `hooks::HookServices`.
 #[must_use]
 pub fn router_with_features(
     services: Services,

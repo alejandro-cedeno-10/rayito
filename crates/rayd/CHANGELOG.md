@@ -25,10 +25,71 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `.proto` pasa a descubrirse por glob (`crates/rayito-proto/build.rs`).
   Sin ninguna sección de `ConfigureSandbox`, el comportamiento es
   idéntico al de 0.5.x.
+- **Un único `FeatureSet` por proceso y participantes acotados**
+  (`v06-foundations` §15, ADR-015): `main` comparte un `Arc<FeatureSet>`
+  entre `ConfigureService`, `Health.features` (derivado de `supported()` de
+  cada slot) y los hooks (`grpc::router_with_features`).
+  `/suspend`, `/resume` y `/terminate` llaman a `on_suspend`/`on_resume`/
+  `on_terminate` de cada participante sólo ante una transición aceptada,
+  cada uno con su propio tope (`PARTICIPANT_RESUME_TIMEOUT`,
+  `PARTICIPANT_TERMINATE_TIMEOUT`). Sin participantes, idéntico a 0.5.x.
 <!-- m15-s3-mounts -->
+- **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
+  (`S3Mount`, `MountErrorClass` incl. `InvalidPath`,
+  `validate_mounts`/`parse_allowed_buckets`, ports `FuseDevice`/`FuseDaemon`)
+  and `rayd_core::mount_path` (the absolute/canonical/allowed-roots/
+  no-overlap/max-count check, shared with a future `efs_volumes`, re-run
+  here before anything else so a non-SDK or buggy client can never steer
+  `mount(2)` outside `/mnt/`/`/home/user/`). The Linux adapters
+  (`adapters::fuse_device`: the mountpoint is walked from `/` one
+  component at a time with `O_PATH|O_DIRECTORY|O_NOFOLLOW` (missing ones
+  created with `mkdirat`), any symlink is `invalid_path`, and `mount(2)`/
+  `umount2(MNT_DETACH|UMOUNT_NOFOLLOW)` only ever see `/proc/self/fd/<n>`,
+  so uid 1000 can never redirect a root mount onto a system directory by
+  swapping its own folder for a symlink; `mount(2)` with `allow_other` plus a real
+  `probe_ready` (a bounded, killable `stat` subprocess as the guest uid);
+  `adapters::mount_s3`: `mount-s3 --allow-other --uid 1000 --gid 1000` (without
+  `--allow-other` Mountpoint answers only its own uid: every guest access
+  was `EACCES`, AWS_API_NOTES.md Q101) run as the
+  dedicated `rayito-mount` user, uid 990, with a from-scratch environment
+  — no credential ever in argv or env, SEC-3 — its pid registered in the
+  shared `ChildRegistry`, its exit classified from its status and a
+  stderr ring buffer drained for the daemon's whole life, so a chatty
+  daemon never blocks on a full pipe, and classified from its *last*
+  bytes, never logged) and a real
+  `features::s3_mounts::S3MountsFeature`: `apply()` reports
+  `SECTION_CODE_PENDING` immediately and settles each mount to
+  `Mounted`/`Failed` in the background; a background watcher relaunches a
+  dead daemon with a fresh FUSE attach and backoff, each relaunch as its
+  own task and never on top of an attempt still `Pending`; `/resume`'s probe
+  forces the same relaunch for a daemon that survived the snapshot but
+  whose FUSE connection did not. `supported()`/`Health.features.s3_mounts`
+  require `CAP_SYS_ADMIN` in rayd's effective set (only `rayito-base-caps`
+  has it; the binary, `/dev/fuse` and the `rayito-mount` user alone ship in
+  every variant) instead of a literal `true`. `Health.features.root_egress`
+  is now derived generically from `FeatureSet` too (a new
+  `ConfigurableFeature::root_egress_class()`, reported only for a
+  `supported()` slot), so later features add nothing to `grpc/health.rs`. `s3_mounts.proto` now carries real fields (`S3Mount`,
+  `S3MountState`, `S3MountPhase`). With no `S3MountsConfig` section sent,
+  behaviour is unchanged from 0.5.x: no `/dev/fuse` open, no `mount-s3`
+  spawn.
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
 <!-- m15-events-webhooks -->
+- **Eventos de ciclo de vida firmados** (`m15-events-webhooks`, ADR-020):
+  `rayd` emite `created`/`paused`/`resumed`/`killed{reason: request}` como
+  una línea `rayito.event.v1 <b64url(json)> <b64url(hmac-sha256)>` en su
+  propio stdout, sólo cuando `ConfigureSandbox` trae una
+  `LifecycleEventsConfig` con clave (la deriva y empuja el SDK; `rayd`
+  nunca ve el secreto del stack). Cola acotada y no bloqueante; `paused` y
+  `killed` esperan a que la línea salga a stdout (barrera `flush` en la
+  misma cola) dentro de la cuota de `/suspend` y del tope de `/terminate`.
+  Si la fuente aleatoria falla, el evento se descarta y se cuenta
+  (`random_unavailable`). El estado vive en el `FeatureSet` único del
+  proceso. Sin `events=`, cero líneas y cero coste (el participante de esta
+  función comprueba su propio estado antes de hacer nada, y no espera
+  ningún `flush` si no encoló nada).
+<!-- m15-rayd-otlp -->
 - **Exportador OTLP/HTTP a CloudWatch** (`m15-rayd-otlp`, ADR-021):
   `rayd` exporta 7 gauges de CPU, memoria y disco cada `interval_s`
   (15-300 s) sobre el `telemetry_export` de `ConfigureSandbox`, firmado con
@@ -36,8 +97,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   empujada por el SDK; cola acotada con backoff y jitter por sandbox
   (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
   vaciado de hasta 2 s que nunca pierde puntos aunque el hook lo corte, y
-  `/resume` (que ahora llama al `on_resume` de cada participante) rehace el
-  pool de conexiones sin esperar envíos previos. Firma SigV4 con
+  `/resume` (su `on_resume`, bajo el tope por participante de los hooks)
+  rehace el pool de conexiones sin esperar envíos previos. Firma SigV4 con
   `aws-sigv4` (ya en `Cargo.lock`), corrigiendo el reloj del guest con la
   cabecera `Date` de AWS; persistencia y funciones 0.6 comparten un único
   proveedor de credenciales IMDS. Lee `traceparent` entrante y lo registra
@@ -47,7 +108,43 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `AWS_REGION` conocido. Sin `telemetry=`, `rayd` no abre ninguna conexión
   nueva: comportamiento idéntico a 0.5.x.
 <!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022):
+  `rayd_core::template` (`StartSpec`, `ReadyPoll`, `ready_decision`,
+  `rayito.template/1`) y el slot `template_start`: al arrancar, `rayd` lee
+  `/etc/rayito/template.json` (`adapters/fs_template_spec.rs`; ausente o
+  inválido = arranque de 0.5.x) y, si existe, antes del `/ready` del build lanza
+  `start_cmd` como proceso gestionado (visible en `commands.list`) y
+  sondea `ready_cmd` con `/bin/sh -c` (`adapters/shell_ready_probe.rs`);
+  `/ready` responde 503 hasta que `ready_cmd` sale con 0 y falla al
+  agotarse su plazo. `Health.features.template_start` pasa a `true`.
 <!-- m15-secrets-gateway -->
+- **Pasarela de secretos en loopback** (`m15-secrets-gateway`, M15, ADR-023):
+  el slot `secret_gateway` deja de ser `Unsupported`. Un listener `axum`
+  por ruta de `SecretGatewayConfig` (`rayd::secret_gateway`), con
+  allowlist de método/ruta y límite de peticiones por minuto (cubo de
+  tokens entero y determinista, `rayd_core::secret_gateway`) antes de
+  reenviar al `upstream` fijo de la ruta por un cliente HTTPS compartido
+  (`GatewayUpstream`: raíz de confianza del SO, `FilteringResolver` para
+  que un `upstream` nunca resuelva a loopback/link-local/IMDS, cuerpos en
+  flujo sin bufferizar). Las cabeceras del guest con el mismo nombre que
+  una vaultada se eliminan antes de inyectar el valor real (T24): el
+  código del sandbox nunca puede leer ni suplantar su propio secreto. Una
+  ruta de petición con segmentos `.`/`..` (también codificados), un `/` o
+  `\` codificado, una barra invertida o un segmento vacío se rechaza (403)
+  antes de la allowlist. Los nombres de cabecera se validan (token RFC
+  9110, únicos sin distinguir mayúsculas, nunca `host`/`content-length`/
+  hop-by-hop: `invalid_header_name`/`duplicate_header_name`), igual que el
+  nombre de ruta (`invalid_route_name`) y el `upstream`
+  (`invalid_upstream_host`). Un `Configure` que repite el nombre de una
+  ruta conserva su listener y su puerto y sólo cambia su estado (la
+  siguiente petición, también por una conexión keep-alive abierta, ya lo
+  ve); una ruta retirada cierra sus conexiones keep-alive. Sólo un
+  `CONNECT_TIMEOUT` (10 s) o `RESPONSE_HEAD_TIMEOUT` (600 s) es
+  `upstream_timeout`; cualquier otro fallo tras conectar es
+  `upstream_error`. `Health.features.secret_gateway` sale del `FeatureSet`
+  construido: si el slot degrada a `Unsupported` (sin raíz de confianza),
+  no se anuncia. Sin ningún `Configure` con `secret_gateway`, `rayd` no
+  abre ningún socket de loopback para esta función.
 <!-- m15-custom-domain -->
 
 ## [0.5.1] - 2026-10-01
