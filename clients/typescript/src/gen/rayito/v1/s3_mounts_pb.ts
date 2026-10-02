@@ -2,26 +2,37 @@
 // @generated from file rayito/v1/s3_mounts.proto (package rayito.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file rayito/v1/s3_mounts.proto.
  */
 export const file_rayito_v1_s3_mounts: GenFile = /*@__PURE__*/
-  fileDesc("ChlyYXlpdG8vdjEvczNfbW91bnRzLnByb3RvEglyYXlpdG8udjEiEAoOUzNNb3VudHNDb25maWciEAoOUzNNb3VudHNTdGF0dXNiBnByb3RvMw");
+  fileDesc("ChlyYXlpdG8vdjEvczNfbW91bnRzLnByb3RvEglyYXlpdG8udjEiNAoOUzNNb3VudHNDb25maWcSIgoGbW91bnRzGAEgAygLMhIucmF5aXRvLnYxLlMzTW91bnQifwoHUzNNb3VudBISCgptb3VudF9wYXRoGAEgASgJEg4KBmJ1Y2tldBgCIAEoCRIOCgZwcmVmaXgYAyABKAkSEQoJcmVhZF9vbmx5GAQgASgIEhcKD2FsbG93X292ZXJ3cml0ZRgFIAEoCBIUCgxhbGxvd19kZWxldGUYBiABKAgiOQoOUzNNb3VudHNTdGF0dXMSJwoGbW91bnRzGAEgAygLMhcucmF5aXRvLnYxLlMzTW91bnRTdGF0ZSJfCgxTM01vdW50U3RhdGUSEgoKbW91bnRfcGF0aBgBIAEoCRImCgVwaGFzZRgCIAEoDjIXLnJheWl0by52MS5TM01vdW50UGhhc2USEwoLZXJyb3JfY2xhc3MYAyABKAkqgQEKDFMzTW91bnRQaGFzZRIeChpTM19NT1VOVF9QSEFTRV9VTlNQRUNJRklFRBAAEhoKFlMzX01PVU5UX1BIQVNFX1BFTkRJTkcQARIaChZTM19NT1VOVF9QSEFTRV9NT1VOVEVEEAISGQoVUzNfTU9VTlRfUEhBU0VfRkFJTEVEEANiBnByb3RvMw");
 
 /**
- * Owned by m15-s3-mounts. Foundations only creates these two empty stub
- * messages (so `configure.proto` has a stable field to point at); the
- * feature that implements s3-mounts owns every field number inside this
- * file from here on. Message names stay prefixed (`S3Mount*`) so they
- * never collide with another feature's messages inside `rayito.v1`.
+ * Owned by m15-s3-mounts: montajes de buckets S3 vía `mount-s3`/FUSE, sólo
+ * sobre `rayito-base-caps` (o una variante derivada por tamaño). Una
+ * `S3MountsConfig` presente sustituye el conjunto de montajes anterior
+ * entero (vacía los desmonta todos); el bucket y el prefijo no son
+ * secretos (como cualquier otro metadato), así que viajan en claro — las
+ * credenciales nunca pasan por aquí: el daemon `mount-s3` las obtiene de
+ * IMDS, en su propio proceso, como uid 990 (ADR-017).
  *
  * @generated from message rayito.v1.S3MountsConfig
  */
 export type S3MountsConfig = Message<"rayito.v1.S3MountsConfig"> & {
+  /**
+   * Montajes deseados, en el orden en que `rayd` los aplica. Repetir una
+   * misma `mount_path` dentro de la misma petición dos veces dejaría el
+   * resultado del montaje indeterminado, así que se rechaza con
+   * `SECTION_CODE_INVALID` antes de montar nada.
+   *
+   * @generated from field: repeated rayito.v1.S3Mount mounts = 1;
+   */
+  mounts: S3Mount[];
 };
 
 /**
@@ -32,9 +43,69 @@ export const S3MountsConfigSchema: GenMessage<S3MountsConfig> = /*@__PURE__*/
   messageDesc(file_rayito_v1_s3_mounts, 0);
 
 /**
+ * @generated from message rayito.v1.S3Mount
+ */
+export type S3Mount = Message<"rayito.v1.S3Mount"> & {
+  /**
+   * Ruta absoluta y canónica del punto de montaje en el guest (validada
+   * por el SDK con la misma regla que `volumes=`, `_mount_path.py` /
+   * `mount-path.ts`: bajo `/mnt/` o `/home/user/`, sin solapar con otro
+   * montaje o volumen).
+   *
+   * @generated from field: string mount_path = 1;
+   */
+  mountPath: string;
+
+  /**
+   * @generated from field: string bucket = 2;
+   */
+  bucket: string;
+
+  /**
+   * Prefijo de objeto bajo el que `mount-s3` expone el bucket; cadena
+   * vacía monta el bucket entero.
+   *
+   * @generated from field: string prefix = 3;
+   */
+  prefix: string;
+
+  /**
+   * Por defecto `true`: sin este flag a `false` explícitamente, el
+   * montaje nunca admite escritura (principio de mínimo privilegio).
+   *
+   * @generated from field: bool read_only = 4;
+   */
+  readOnly: boolean;
+
+  /**
+   * Sólo tienen efecto con `read_only = false`; `mount-s3` los traduce a
+   * sus propias banderas `--allow-overwrite`/`--allow-delete`.
+   *
+   * @generated from field: bool allow_overwrite = 5;
+   */
+  allowOverwrite: boolean;
+
+  /**
+   * @generated from field: bool allow_delete = 6;
+   */
+  allowDelete: boolean;
+};
+
+/**
+ * Describes the message rayito.v1.S3Mount.
+ * Use `create(S3MountSchema)` to create a new message.
+ */
+export const S3MountSchema: GenMessage<S3Mount> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_s3_mounts, 1);
+
+/**
  * @generated from message rayito.v1.S3MountsStatus
  */
 export type S3MountsStatus = Message<"rayito.v1.S3MountsStatus"> & {
+  /**
+   * @generated from field: repeated rayito.v1.S3MountState mounts = 1;
+   */
+  mounts: S3MountState[];
 };
 
 /**
@@ -42,5 +113,70 @@ export type S3MountsStatus = Message<"rayito.v1.S3MountsStatus"> & {
  * Use `create(S3MountsStatusSchema)` to create a new message.
  */
 export const S3MountsStatusSchema: GenMessage<S3MountsStatus> = /*@__PURE__*/
-  messageDesc(file_rayito_v1_s3_mounts, 1);
+  messageDesc(file_rayito_v1_s3_mounts, 2);
+
+/**
+ * @generated from message rayito.v1.S3MountState
+ */
+export type S3MountState = Message<"rayito.v1.S3MountState"> & {
+  /**
+   * @generated from field: string mount_path = 1;
+   */
+  mountPath: string;
+
+  /**
+   * @generated from field: rayito.v1.S3MountPhase phase = 2;
+   */
+  phase: S3MountPhase;
+
+  /**
+   * Cadena snake_case cerrada (nunca el mensaje de AWS, un host o un
+   * identificador de cuenta): `network`, `iam_denied`, `not_found`,
+   * `not_allowed`, `helper_missing` o `timeout`. Vacía salvo en
+   * `S3_MOUNT_PHASE_FAILED`.
+   *
+   * @generated from field: string error_class = 3;
+   */
+  errorClass: string;
+};
+
+/**
+ * Describes the message rayito.v1.S3MountState.
+ * Use `create(S3MountStateSchema)` to create a new message.
+ */
+export const S3MountStateSchema: GenMessage<S3MountState> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_s3_mounts, 3);
+
+/**
+ * @generated from enum rayito.v1.S3MountPhase
+ */
+export enum S3MountPhase {
+  /**
+   * @generated from enum value: S3_MOUNT_PHASE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Aceptado, montaje FUSE y daemon `mount-s3` todavía asentándose.
+   *
+   * @generated from enum value: S3_MOUNT_PHASE_PENDING = 1;
+   */
+  PENDING = 1,
+
+  /**
+   * @generated from enum value: S3_MOUNT_PHASE_MOUNTED = 2;
+   */
+  MOUNTED = 2,
+
+  /**
+   * @generated from enum value: S3_MOUNT_PHASE_FAILED = 3;
+   */
+  FAILED = 3,
+}
+
+/**
+ * Describes the enum rayito.v1.S3MountPhase.
+ */
+export const S3MountPhaseSchema: GenEnum<S3MountPhase> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_s3_mounts, 0);
 

@@ -199,7 +199,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     // The process's one `FeatureSet` (ADR-015): `ConfigureService` applies
     // sections to it, `Health.features` is derived from it and the hooks
     // run its participants, so all three always see the same slots.
-    let features = Arc::new(rayd::features::build(&rayd::features::FeatureContext));
+    let features = Arc::new(rayd::features::build(
+        &rayd::features::FeatureContext::default(),
+    ));
 
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 

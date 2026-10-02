@@ -36,7 +36,18 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
-from rayito._feature_options import FeatureOptions, plan_features
+from rayito._configure_base import (
+    CONFIGURE_SETTLE_POLL_S,
+    ConfigureSection,
+    agent_features_from_health,
+    build_configure_request,
+    check_configure_response,
+    require_capabilities,
+    require_configure_support,
+    settle_timeout_s,
+    still_pending,
+)
+from rayito._feature_options import FeatureOptions, FeaturePlan, plan_features
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -122,6 +133,7 @@ from rayito._process_base import (
     stream_failure_exception,
 )
 from rayito._role_policy import resolve_image_variant
+from rayito._s3_mounts import MountStatus, from_proto_status
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -205,6 +217,7 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
+from rayito.sandbox_sync.configure import call_configure, call_configure_status
 from rayito.sandbox_sync.filesystem import Filesystem
 from rayito.sandbox_sync.git import Git
 from rayito.sandbox_sync.lifecycle import DeadlineTrigger, set_timeout_once
@@ -214,6 +227,7 @@ from rayito.sandbox_sync.pty import Pty
 from rayito.sandbox_sync.transfer import Transfers
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -444,6 +458,7 @@ class Sandbox:
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._configure_stub = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
@@ -742,7 +757,7 @@ class Sandbox:
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
-        plan_features(
+        feature_plan = plan_features(
             FeatureOptions(
                 mounts=mounts,
                 volumes=volumes,
@@ -809,6 +824,7 @@ class Sandbox:
                 reconnect_timeout=reconnect_timeout,
                 terminate_on_failure=not keep_on_failure,
                 require_lifecycle=plan.lifecycle_requested,
+                plan=feature_plan,
                 logger=logger,
             )
             sandbox._instrumentation = instrumentation
@@ -1022,6 +1038,7 @@ class Sandbox:
         terminate_on_failure: bool,
         readiness: type[ReadinessPoll] = ReadinessPoll,
         require_lifecycle: bool = False,
+        plan: FeaturePlan | None = None,
         logger: logging.Logger | None = None,
     ) -> Self:
         """Acuña el JWE, abre el canal y espera a `Health`.
@@ -1037,6 +1054,13 @@ class Sandbox:
         exige que el `Health` de readiness lo traiga: un agente anterior a 0.3.0
         es `LifecycleUnsupportedException` dentro de este mismo camino de
         fallo, así que nunca queda un sandbox con un timeout sin imponer.
+        `plan` (por defecto `None`, equivalente a un `FeaturePlan()` vacío):
+        sus `configure_sections`, si las hay, se envían en una única
+        `Configure` justo después de este mismo `Health` — dentro del mismo
+        `try` de abajo, así que una capacidad que falte (`Health.features`
+        con el flag en `False`) o una sección rechazada terminan el VM
+        (salvo `keep_on_failure`) exactamente igual que cualquier otro
+        fallo anterior a `agent_ready`, sin un camino de terminación propio.
         """
         refresher = TokenRefresher(
             TokenStore(),
@@ -1062,6 +1086,8 @@ class Sandbox:
             )
             if require_lifecycle and lifecycle_from_proto(ready) is None:
                 raise older_agent_error(info.template_name, str(ready.agent_version))
+            if plan is not None and plan.configure_sections:
+                sandbox._apply_configure_plan(plan, ready)
         except BaseException as exc:
             if sandbox is not None:
                 sandbox.close()
@@ -1533,6 +1559,47 @@ class Sandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    def _apply_configure_plan(self, plan: FeaturePlan, ready: health_pb2.HealthResponse) -> None:
+        """Ejecuta `plan.configure_sections` justo tras el primer `Health`
+        (llamado sólo por `_open`): la puerta de capacidad
+        (`require_capabilities`), luego una única `Configure` con todas las
+        secciones, el resultado de cada una traducido a su propia excepción
+        (`check_configure_response`) y, para las que el agente dejó en
+        `PENDING`, la espera acotada a que se asienten (`_wait_settled`):
+        `create()` nunca devuelve un sandbox con un montaje todavía sin
+        montar. Cualquier excepción de aquí sube tal cual a `_open`, que ya
+        termina el sandbox (salvo `keep_on_failure`) ante cualquier fallo en
+        esta ventana — esta función no implementa su propia terminación.
+        """
+        features = require_configure_support(agent_features_from_health(ready), "configure")
+        require_capabilities(plan.configure_sections, features)
+        request = build_configure_request(plan.configure_sections)
+        response = call_configure(self._configure_stub, request, timeout=self._request_timeout)
+        self._wait_settled(check_configure_response(response, plan.configure_sections))
+
+    def _wait_settled(self, pending: tuple[ConfigureSection, ...]) -> None:
+        """Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_S` hasta que
+        ninguna sección de `pending` siga pendiente; agotado el mayor
+        `settle_timeout_s`, la última lectura es `final` y cada sección que
+        siga sin asentarse lanza su propia excepción de timeout."""
+        deadline = time.monotonic() + settle_timeout_s(pending)
+        while pending:
+            final = time.monotonic() >= deadline
+            status = call_configure_status(self._configure_stub, timeout=self._request_timeout)
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                time.sleep(CONFIGURE_SETTLE_POLL_S)
+
+    @property
+    def mounts(self) -> dict[str, MountStatus]:
+        """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
+        `ConfigureStatus` por lectura, nunca cacheada — un montaje puede
+        pasar de `"pending"` a `"mounted"`/`"failed"` entre dos lecturas de
+        esta propiedad. Vacío si `create()`/`take()` no recibió `mounts=`.
+        """
+        response = call_configure_status(self._configure_stub, timeout=self._request_timeout)
+        return from_proto_status(response.s3_mounts)
 
     def upload_url(
         self,

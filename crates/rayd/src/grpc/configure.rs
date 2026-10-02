@@ -55,7 +55,10 @@ impl ConfigureGrpc {
                 Some(self.features.secret_gateway.apply(cfg).await)
             }
             ConfigSection::S3Mounts => {
-                let cfg = request.s3_mounts?;
+                // `.clone()`: unlike the other sections, `S3MountsConfig`
+                // now carries real fields (`m15-s3-mounts`), so it is no
+                // longer `Copy` and `request` is only borrowed here.
+                let cfg = request.s3_mounts.clone()?;
                 Some(self.features.s3_mounts.apply(cfg).await)
             }
             ConfigSection::EfsVolumes => {
@@ -139,7 +142,7 @@ fn proto_code(code: SectionCode) -> rayito_proto::v1::SectionCode {
 mod tests {
     use rayd_core::clock::SystemClock;
     use rayd_core::session::RunHookInput;
-    use rayito_proto::v1::S3MountsConfig;
+    use rayito_proto::v1::{EfsVolumesConfig, S3MountsConfig};
 
     use super::*;
     use crate::features::{self, FeatureContext};
@@ -152,13 +155,19 @@ mod tests {
             sandbox_id: Some("mvm-test"),
             payload: Some(RUN_PAYLOAD),
         });
-        ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)))
+        ConfigureGrpc::new(
+            session,
+            Arc::new(features::build(&FeatureContext::default())),
+        )
     }
 
     #[tokio::test]
     async fn configure_before_run_is_failed_precondition_not_running() {
         let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
-        let service = ConfigureGrpc::new(session, Arc::new(features::build(&FeatureContext)));
+        let service = ConfigureGrpc::new(
+            session,
+            Arc::new(features::build(&FeatureContext::default())),
+        );
         let status = service
             .configure(Request::new(ConfigureRequest::default()))
             .await
@@ -179,10 +188,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_present_section_against_every_slot_still_unsupported_reports_unsupported() {
+    async fn a_present_section_against_a_slot_still_unsupported_reports_unsupported() {
+        // `s3_mounts` has a real adapter since `m15-s3-mounts`; `efs_volumes`
+        // is still a stub (`features::efs_volumes::build` -> `Unsupported`)
+        // and makes the same point.
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            efs_volumes: Some(EfsVolumesConfig {}),
+            ..Default::default()
+        };
+        let response = service
+            .configure(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(
+            response.results[0].section,
+            i32::from(rayito_proto::v1::ConfigSection::EfsVolumes)
+        );
+        assert_eq!(
+            response.results[0].code,
+            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_present_s3_mounts_section_now_applies_instead_of_reporting_unsupported() {
+        let service = running_service();
+        let request = ConfigureRequest {
+            s3_mounts: Some(S3MountsConfig::default()),
             ..Default::default()
         };
         let response = service
@@ -197,7 +232,7 @@ mod tests {
         );
         assert_eq!(
             response.results[0].code,
-            i32::from(rayito_proto::v1::SectionCode::Unsupported)
+            i32::from(rayito_proto::v1::SectionCode::Applied)
         );
     }
 
@@ -211,7 +246,7 @@ mod tests {
             .into_inner();
         assert_eq!(
             response.s3_mounts,
-            Some(rayito_proto::v1::S3MountsStatus {})
+            Some(rayito_proto::v1::S3MountsStatus::default())
         );
         assert_eq!(
             response.efs_volumes,
@@ -264,7 +299,7 @@ mod tests {
             .finish();
         let service = running_service();
         let request = ConfigureRequest {
-            s3_mounts: Some(S3MountsConfig {}),
+            s3_mounts: Some(S3MountsConfig::default()),
             request_id: "a-request-id".to_owned(),
             ..Default::default()
         };

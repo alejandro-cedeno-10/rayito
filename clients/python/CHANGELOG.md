@@ -17,10 +17,40 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   siete opciones 0.6 de `Sandbox.create()` (`mounts`, `volumes`, `size`,
   `events`, `telemetry`, `gateways`, `domain`) existen ya en la firma y
   lanzan `UnimplementedError` nombrando el cambio que las trae mientras
-  sigan siendo un stub, antes de `run-microvm`. Fila de compatibilidad
-  "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna opción nueva,
-  el comportamiento es byte a byte el de 0.5.x (traza de oro en
+  sigan siendo un stub, antes de `run-microvm`; en cuanto una deja de
+  serlo (`mounts=`, ver más abajo), `create()`/`take()` ejecutan sus
+  `configure_sections` justo tras el primer `Health` (`_configure_base`:
+  `require_capabilities`, `build_configure_request`,
+  `check_configure_response`), dentro del mismo camino que ya termina el
+  sandbox ante cualquier fallo anterior a `agent_ready`. Fila de
+  compatibilidad "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna
+  opción nueva, el comportamiento es byte a byte el de 0.5.x (traza de oro en
   `tests/unit/fixtures/zero_cost_0_5_trace.json`).
+- **`mounts=` (`m15-s3-mounts`, ADR-017, experimental, apagado por
+  defecto)**: `Sandbox.create(mounts=)`/`AsyncSandbox.create(mounts=)`
+  monta uno o más buckets S3 (`S3Mount(bucket=, prefix=, read_only=True,
+  allow_overwrite=False, allow_delete=False)`, exportado desde `rayito`)
+  en el guest con `mount-s3`/FUSE, sólo sobre `rayito-base-caps`
+  (`require_caps_for` lo exige antes de `run-microvm` cuando la imagen se
+  nombra directamente; sobre un ARN opaco la decisión se difiere a
+  `Health.features` tras `/run`, que termina el sandbox si falta la
+  capacidad). `create()` no vuelve hasta que cada montaje está montado:
+  sondea `ConfigureStatus` (como mucho 15 s) y, si uno falla o no se
+  asienta, termina el sandbox y lanza `MountException`. `sbx.mounts`
+  (propiedad) da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/`"failed"`, `ConfigureStatus` en cada
+  lectura); una sección rechazada o un montaje fallido lanza
+  `MountException` con un `code` cerrado (`network`, `iam_denied`,
+  `not_found`, `not_allowed`, `invalid_path`, `helper_missing`,
+  `timeout`). `rayd` lanza `mount-s3` como el usuario dedicado
+  `rayito-mount` (uid 990) con credenciales resueltas por su propio
+  acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
+  relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`,
+  desplegable con `rayito stack deploy s3-mounts --param
+  BucketName=... --param Prefixes=...`, pide `CAPABILITY_IAM`), acotada
+  al bucket y a sus prefijos (hasta 4) también para leer, escribir y
+  borrar objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS`
+  de la imagen (`rayito image publish --env`, de `m15-sizes-catalog`).
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use rayd_core::configure::SectionOutcome;
+use rayd_core::root_egress::RootEgressClass;
 
 use crate::lifecycle::LifecycleParticipant;
 
@@ -31,6 +32,15 @@ pub trait ConfigurableFeature<Cfg, Status>: Send + Sync {
     /// default, and always what `Unsupported` returns) means the feature
     /// never runs anything of its own around those hooks.
     fn participant(&self) -> Option<Arc<dyn LifecycleParticipant>> {
+        None
+    }
+
+    /// The root-egress path this slot opens when it is `supported()`
+    /// (`rayd_core::root_egress`), reported in `Health.features.root_egress`
+    /// by `FeatureSet::root_egress`. `None` (the default, and always what
+    /// `Unsupported` returns) means the feature never sends traffic as
+    /// anything other than the uid-1000 routes ADR-012 governs.
+    fn root_egress_class(&self) -> Option<RootEgressClass> {
         None
     }
 }
@@ -77,5 +87,6 @@ mod tests {
         assert_eq!(feature.apply(()).await.code, SectionCode::Unsupported);
         assert_eq!(feature.status().await, FakeStatus::default());
         assert!(feature.participant().is_none());
+        assert!(feature.root_egress_class().is_none());
     }
 }

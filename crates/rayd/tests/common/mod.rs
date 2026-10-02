@@ -403,7 +403,9 @@ pub async fn harness_with(options: Options) -> Harness {
     // One `FeatureSet` per harness, shared by the gRPC router and the hooks
     // exactly as `main` shares it: a test's `Configure` is what its own
     // `/suspend`/`/resume`/`/terminate` act on, and never another test's.
-    let features = Arc::new(rayd::features::build(&rayd::features::FeatureContext));
+    let features = Arc::new(rayd::features::build(
+        &rayd::features::FeatureContext::default(),
+    ));
     let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),

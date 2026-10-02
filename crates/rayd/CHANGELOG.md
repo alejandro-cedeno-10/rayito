@@ -33,6 +33,45 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `on_terminate` de cada participante sólo ante una transición aceptada,
   cada uno con su propio tope (`PARTICIPANT_RESUME_TIMEOUT`,
   `PARTICIPANT_TERMINATE_TIMEOUT`). Sin participantes, idéntico a 0.5.x.
+- **`s3_mounts` feature slot (`m15-s3-mounts`, ADR-017)**: `rayd_core::s3_mount`
+  (`S3Mount`, `MountErrorClass` incl. `InvalidPath`,
+  `validate_mounts`/`parse_allowed_buckets`, ports `FuseDevice`/`FuseDaemon`)
+  and `rayd_core::mount_path` (the absolute/canonical/allowed-roots/
+  no-overlap/max-count check, shared with a future `efs_volumes`, re-run
+  here before anything else so a non-SDK or buggy client can never steer
+  `mount(2)` outside `/mnt/`/`/home/user/`). The Linux adapters
+  (`adapters::fuse_device`: the mountpoint is walked from `/` one
+  component at a time with `O_PATH|O_DIRECTORY|O_NOFOLLOW` (missing ones
+  created with `mkdirat`), any symlink is `invalid_path`, and `mount(2)`/
+  `umount2(MNT_DETACH|UMOUNT_NOFOLLOW)` only ever see `/proc/self/fd/<n>`,
+  so uid 1000 can never redirect a root mount onto a system directory by
+  swapping its own folder for a symlink; `mount(2)` with `allow_other` plus a real
+  `probe_ready` (a bounded, killable `stat` subprocess as the guest uid);
+  `adapters::mount_s3`: `mount-s3 --allow-other --uid 1000 --gid 1000` (without
+  `--allow-other` Mountpoint answers only its own uid: every guest access
+  was `EACCES`, AWS_API_NOTES.md Q101) run as the
+  dedicated `rayito-mount` user, uid 990, with a from-scratch environment
+  — no credential ever in argv or env, SEC-3 — its pid registered in the
+  shared `ChildRegistry`, its exit classified from its status and a
+  stderr ring buffer drained for the daemon's whole life, so a chatty
+  daemon never blocks on a full pipe, and classified from its *last*
+  bytes, never logged) and a real
+  `features::s3_mounts::S3MountsFeature`: `apply()` reports
+  `SECTION_CODE_PENDING` immediately and settles each mount to
+  `Mounted`/`Failed` in the background; a background watcher relaunches a
+  dead daemon with a fresh FUSE attach and backoff, each relaunch as its
+  own task and never on top of an attempt still `Pending`; `/resume`'s probe
+  forces the same relaunch for a daemon that survived the snapshot but
+  whose FUSE connection did not. `supported()`/`Health.features.s3_mounts`
+  require `CAP_SYS_ADMIN` in rayd's effective set (only `rayito-base-caps`
+  has it; the binary, `/dev/fuse` and the `rayito-mount` user alone ship in
+  every variant) instead of a literal `true`. `Health.features.root_egress`
+  is now derived generically from `FeatureSet` too (a new
+  `ConfigurableFeature::root_egress_class()`, reported only for a
+  `supported()` slot), so later features add nothing to `grpc/health.rs`. `s3_mounts.proto` now carries real fields (`S3Mount`,
+  `S3MountState`, `S3MountPhase`). With no `S3MountsConfig` section sent,
+  behaviour is unchanged from 0.5.x: no `/dev/fuse` open, no `mount-s3`
+  spawn.
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->

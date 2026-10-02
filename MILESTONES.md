@@ -1390,10 +1390,38 @@ ambos SDKs) fija la secuencia exacta de operaciones boto3/AWS SDK v3 y de
 métodos gRPC de `create → commands.run → files.write → pause → resume →
 commands.run → kill → list`; ningún test de la suite existente cambia.
 
+### s3-mounts (`m15-s3-mounts`, ADR-017)
+
+`mounts=` monta uno o más buckets S3 en el guest vía `mount-s3`/FUSE, sólo
+sobre `rayito-base-caps`. Dominio puro (`rayd_core::s3_mount`), puertos
+`FuseDevice`/`FuseDaemon`, adaptadores Linux (`libc::mount(2)` directo,
+`mount-s3` lanzado como el usuario dedicado `rayito-mount` uid 990 con el
+entorno reconstruido desde cero — nunca una credencial en argv ni en
+entorno, SEC-3; la ruta de montaje se resuelve sin seguir enlaces
+simbólicos) y un slot real en `FeatureSet` (`supported()` exige
+`CAP_SYS_ADMIN`, así que sólo `rayito-base-caps` anuncia
+`Health.features.s3_mounts`). uid 990 queda fuera del rango que el
+blackhole de IMDS de M6 cubre, así que `mount-s3` resuelve las
+credenciales del execution role por su propio acceso a IMDS, sin que
+`rayd` las toque. El bucket debe estar en el allowlist de imagen
+`RAYITO_ALLOWED_MOUNT_BUCKETS` (vacío o ausente deniega todo). IAM:
+`infra/s3-mounts.yaml` (`RayitoS3MountAccess`, componente `OptionalStack`
+`s3-mounts`). Sin API en el shim de E2B (fila 111 de `e2b-parity.md`,
+divergente). `Sandbox.create(mounts=)`/`create({ mounts })` y
+`sbx.mounts`/`sbx.mounts()` ya están cableados de punta a punta
+(`_feature_options.plan_features`/`feature-options.ts`,
+`create()`/`_open()` ejecutando `configure_sections` tras `Health` y
+esperando a que cada montaje esté montado). Depende de `rayito image
+publish --env` (`m15-sizes-catalog`) para fijar el allowlist de imagen.
+**Validado localmente** (unit tests Rust/Python/TypeScript, `cargo
+clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
+`openspec validate --strict`); **aceptado en AWS real** el 2026-10-02
+(S3M-1..S3M-4 y las comprobaciones manuales, `AWS_API_NOTES.md`
+Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
+`microdnf` y añadió `--allow-other` al daemon).
+
 ### Funciones (pendientes de su propio cambio OpenSpec)
 
-- **s3-mounts** (`m15-s3-mounts`): montaje S3 vía `mount-s3`/FUSE en
-  `rayito-base-caps`.
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
 - **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.

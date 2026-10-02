@@ -1,0 +1,113 @@
+{
+  "description": "Shared mount-spec vectors for m15-s3-mounts: the same cases drive rayd-core (crates/rayd-core/src/s3_mount/spec.rs), the Python SDK (clients/python/tests/unit/test_m15_s3_mounts.py) and the TypeScript SDK (clients/typescript/tests/unit/m15-s3-mounts.test.ts). `sdk` is what Sandbox.create(mounts=) decides before launching anything (`ok` or `invalid_argument`); `agent` is what rayd's own re-validation answers for the same section (`ok`, or the MountErrorClass of a SECTION_CODE_INVALID), with `allowed_buckets` as the image's RAYITO_ALLOWED_MOUNT_BUCKETS. Bucket names here are placeholders, never real resources. Where only the SDK enforces a field rule (an empty bucket aside: the allowlist catches it), the agent answers `ok`: rayd passes `prefix` to `mount-s3 --prefix` untouched and ignores write flags on a read-only mount.",
+  "allowed_buckets": ["team-data", "runs-bucket"],
+  "cases": [
+    {
+      "name": "one read-only mount under /mnt",
+      "mounts": [{"path": "/mnt/data", "bucket": "team-data", "prefix": "team7/", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "ok",
+      "agent": "ok"
+    },
+    {
+      "name": "a writable mount under /home/user next to a read-only one",
+      "mounts": [
+        {"path": "/mnt/data", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/home/user/out", "bucket": "runs-bucket", "prefix": "runs/42/", "read_only": false, "allow_overwrite": true, "allow_delete": true}
+      ],
+      "sdk": "ok",
+      "agent": "ok"
+    },
+    {
+      "name": "four mounts is the maximum",
+      "mounts": [
+        {"path": "/mnt/a", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/b", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/c", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/d", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}
+      ],
+      "sdk": "ok",
+      "agent": "ok"
+    },
+    {
+      "name": "five mounts is too many",
+      "mounts": [
+        {"path": "/mnt/a", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/b", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/c", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/d", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/e", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}
+      ],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a system directory outside the allowed roots",
+      "mounts": [{"path": "/etc/cron.d", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a relative path",
+      "mounts": [{"path": "mnt/data", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a dot-dot segment escaping the root",
+      "mounts": [{"path": "/mnt/../etc", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a doubled slash",
+      "mounts": [{"path": "/mnt//data", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a trailing slash",
+      "mounts": [{"path": "/mnt/data/", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "an allowed root itself",
+      "mounts": [{"path": "/home/user", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "one mount nested under another",
+      "mounts": [
+        {"path": "/mnt/data", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false},
+        {"path": "/mnt/data/sub", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}
+      ],
+      "sdk": "invalid_argument",
+      "agent": "invalid_path"
+    },
+    {
+      "name": "a bucket outside the image allowlist",
+      "mounts": [{"path": "/mnt/data", "bucket": "other-bucket", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "ok",
+      "agent": "not_allowed"
+    },
+    {
+      "name": "an empty bucket",
+      "mounts": [{"path": "/mnt/data", "bucket": "", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "not_allowed"
+    },
+    {
+      "name": "a prefix with a leading slash",
+      "mounts": [{"path": "/mnt/data", "bucket": "team-data", "prefix": "/team7/", "read_only": true, "allow_overwrite": false, "allow_delete": false}],
+      "sdk": "invalid_argument",
+      "agent": "ok"
+    },
+    {
+      "name": "write flags on a read-only mount",
+      "mounts": [{"path": "/mnt/data", "bucket": "team-data", "prefix": "", "read_only": true, "allow_overwrite": false, "allow_delete": true}],
+      "sdk": "invalid_argument",
+      "agent": "ok"
+    }
+  ]
+}

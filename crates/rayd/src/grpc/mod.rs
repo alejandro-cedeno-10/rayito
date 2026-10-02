@@ -175,7 +175,9 @@ pub fn router_with_transfers(
         services,
         settings,
         transfers,
-        Arc::new(crate::features::build(&crate::features::FeatureContext)),
+        Arc::new(crate::features::build(
+            &crate::features::FeatureContext::default(),
+        )),
     )
 }
 
