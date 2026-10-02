@@ -1,8 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "dist");
+/** Un `<función>.json` por función 0.6 (`[{ name, pattern }]`, `pattern` en
+ * texto de `RegExp`): cada una añade sus declaraciones sin editar este
+ * fichero compartido (el registro drop-in que el plan M15 nombra). */
+const DROP_IN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "cost-declarations");
 
 /**
  * Declaraciones publicadas que activan algo con coste AWS (ADR-014). Cada una
@@ -16,8 +20,28 @@ export const COST_DECLARATIONS = [
   { name: "class Secret (e2b)", pattern: /^(export )?declare class Secret\b/ },
   { name: "opción secrets", pattern: /^\s*readonly secrets\?: SecretsInput\b/ },
   { name: "opción secretCache", pattern: /^\s*readonly secretCache\?: SecretCache\b/ },
-  { name: "class VolumeStore", pattern: /^(export )?declare class VolumeStore\b/ },
 ];
+
+/** Las declaraciones de `cost-declarations/*.json`, en orden de fichero. */
+export function dropInDeclarations(dir = DROP_IN_DIR) {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .flatMap((name) =>
+      JSON.parse(readFileSync(join(dir, name), "utf8")).map(({ name: label, pattern }) => ({
+        name: label,
+        pattern: new RegExp(pattern),
+      })),
+    );
+}
+
+/** `COST_DECLARATIONS` más las de cada función en `cost-declarations/`. */
+export function allDeclarations() {
+  return [...COST_DECLARATIONS, ...dropInDeclarations()];
+}
 
 export const REQUIRED_HEADINGS = [
   "Coste y activación",
@@ -46,12 +70,12 @@ export function docBefore(lines, index) {
 }
 
 /** Los fallos (`fichero:línea: qué falta`) de un `.d.mts`; vacío si está bien. */
-export function checkDeclarations(file, text) {
+export function checkDeclarations(file, text, declarations = allDeclarations()) {
   const failures = [];
   const found = new Set();
   const lines = text.split("\n");
   lines.forEach((line, index) => {
-    for (const declaration of COST_DECLARATIONS) {
+    for (const declaration of declarations) {
       if (!declaration.pattern.test(line)) {
         continue;
       }
@@ -71,16 +95,21 @@ function main() {
   if (files.length === 0) {
     throw new Error("no hay dist/*.d.mts: ejecuta `pnpm build` antes");
   }
+  const declarations = allDeclarations();
   const failures = [];
   const found = new Set();
   for (const name of files) {
-    const result = checkDeclarations(name, readFileSync(join(DIST_DIR, name), "utf8"));
+    const result = checkDeclarations(
+      name,
+      readFileSync(join(DIST_DIR, name), "utf8"),
+      declarations,
+    );
     failures.push(...result.failures);
     for (const declaration of result.found) {
       found.add(declaration);
     }
   }
-  for (const declaration of COST_DECLARATIONS) {
+  for (const declaration of declarations) {
     if (!found.has(declaration.name)) {
       failures.push(`ningún dist/*.d.mts declara ${declaration.name}`);
     }
@@ -88,7 +117,7 @@ function main() {
   if (failures.length > 0) {
     throw new Error(`bloques "Coste y activación" incompletos:\n${failures.join("\n")}`);
   }
-  console.log(`check-dts-cost-blocks: OK (${COST_DECLARATIONS.length} declaraciones)`);
+  console.log(`check-dts-cost-blocks: OK (${declarations.length} declaraciones)`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

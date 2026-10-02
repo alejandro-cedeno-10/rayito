@@ -1,0 +1,1 @@
+[{ "name": "class VolumeStore", "pattern": "^(export )?declare class VolumeStore\\b" }]
