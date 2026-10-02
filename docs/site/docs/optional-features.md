@@ -16,7 +16,6 @@ CloudFormation; Rayito no hospeda ningún servidor.
 | [Gestión de secretos (CRUD)](secrets.md) | apagada | `SecretStore(...)`: crear, listar, actualizar y borrar secretos (también `Secret` del shim de E2B) | $0,40 por secreto y mes **hasta que lo borras** + $0,05 por 10 000 llamadas | administrar los secretos `rayito/*` (`RayitoSecretsAdmin`) | no instanciar `SecretStore` y `destroy()` los secretos creados |
 | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) | apagado | `index=DynamoDbIndex(...)`: filtrar `list()` por metadatos también sobre sandboxes en pausa | ≈ $0,03/mes para 10 000 sandboxes; tabla vacía, $0 | escribir y leer en tu tabla (`RayitoIndexWriter`, `RayitoIndexReader`) | no pasar `index=`; borrar la pila de la tabla |
 | [Trazas OpenTelemetry](funciones-opcionales/opentelemetry.md) | apagadas | `tracer_provider=` / `tracerProvider`: spans `rayito.*` de tus llamadas | $0 desde Rayito; lo que cueste tu exportador | ninguno propio | no pasar `tracer_provider=` |
-| [Montajes S3](funciones-opcionales/montajes-s3.md) | apagados | `mounts=` / `mounts`: monta un bucket S3 (o un prefijo suyo) como una carpeta normal, sólo sobre `rayito-base-caps` | $0 desde Rayito; lo normal de S3 del bucket que montes | la política `RayitoS3MountAccess` sobre tu bucket | no pasar `mounts=` |
 | [Proxy local](funciones-opcionales/proxy-local.md) (`rayito sandbox proxy`) | — (sólo CLI) | sirve un puerto del sandbox en `127.0.0.1` | $0: usa llamadas gratuitas de Lambda | el que ya da `infra/iam.yaml` | `Ctrl+C` |
 
 Cada nombre lleva a la guía completa de la función; debajo hay un
@@ -194,44 +193,6 @@ Guía completa, nombres de span, atributos y lo que nunca se registra:
 Sin `tracer_provider=`/`tracerProvider` (por defecto): ningún span y ningún
 import de `opentelemetry`/`@opentelemetry/api` en tiempo de ejecución.
 
-<a id="s3-mounts"></a>
-
-### Montajes S3
-
-Guía completa, rutas de montaje y seguridad: [Montajes
-S3](funciones-opcionales/montajes-s3.md).
-
-=== "Python"
-
-    ```python
-    from rayito import S3Mount, Sandbox
-
-    sbx = Sandbox.create(
-        "rayito-base-caps",
-        execution_role_arn="arn:aws:iam::<cuenta>:role/mi-execution-role",
-        mounts={"/mnt/data": S3Mount(bucket="mi-bucket", prefix="team7/")},
-    )
-    sbx.commands.run("ls /mnt/data")
-    sbx.kill()
-    ```
-
-=== "TypeScript"
-
-    ```ts
-    import { Sandbox, S3Mount } from "rayito";
-
-    const sbx = await Sandbox.create({
-      template: "rayito-base-caps",
-      executionRoleArn: "arn:aws:iam::<cuenta>:role/mi-execution-role",
-      mounts: new Map([["/mnt/data", new S3Mount({ bucket: "mi-bucket", prefix: "team7/" })]]),
-    });
-    await sbx.commands.run("ls /mnt/data");
-    await sbx.kill();
-    ```
-
-Sin `mounts=`/`mounts` (por defecto): `rayd` no abre `/dev/fuse` ni lanza
-`mount-s3`.
-
 <a id="local-proxy"></a>
 
 ### `rayito sandbox proxy`
@@ -258,7 +219,6 @@ y el fichero del SDK donde está documentada.
 | [Gestión de secretos (CRUD)](#secrets-crud) | disponible (0.5.0) | `SecretStore(...)` | `new SecretStore({...})` | sin instanciar = sin cliente boto3/SDK | Crear, actualizar, listar y borrar secretos nativos de Rayito bajo un prefijo (y el shim `Secret`/`AsyncSecret` de E2B) | Un secreto de Secrets Manager por `create`; `secretsmanager:CreateSecret/PutSecretValue/UpdateSecret/DescribeSecret/ListSecrets/DeleteSecret` (`AWS_API_NOTES.md` §19) | SM: $0,40/secreto-mes **hasta `destroy`** + $0,05/10 000 llamadas ([precios de Secrets Manager](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30, us-east-1) | CRUD de Secrets Manager bajo el prefijo configurado (`rayito/` por defecto; `destroy` necesita `DescribeSecret` además de `DeleteSecret`) y `ListSecrets` en `*` (política `RayitoSecretsAdmin` de `infra/secrets-access.yaml`, que ya incluye las dos); añade `kms:GenerateDataKey`/`kms:Decrypt` sobre la clave si se pasa `kms_key_id=`/`kmsKeyId` (clave gestionada por el cliente); sin ese parámetro, la clave gestionada por AWS no cobra ni exige permiso KMS aparte | No instanciar `SecretStore` / `new SecretStore(...)` (llamadas explícitas únicamente) y `destroy()` los secretos creados | `clients/python/src/rayito/_secrets.py` / `clients/typescript/src/secrets/store.ts` |
 | [Índice de metadatos (DynamoDB)](#metadata-index) | implementado en 0.5.0, pendiente de aceptación en AWS real | `index=DynamoDbIndex(...)` | `index: new DynamoDbIndex({...})` | `None` / `undefined` | Escribe una fila inmutable por sandbox (`metadata`, imagen, `startedAt`, TTL) en tu tabla DynamoDB al crearlo (`create()`, `PoolConfig`) y la une con `list-microvms` para filtrar `list()`/`paginate()` por metadatos también sobre `SUSPENDED`, sin sondear `Health` ni despertar nada; también en el shim (`Sandbox.list(..., index=)`, `E2B(index=)`) y la CLI (`--index-table`) | `dynamodb:PutItem` una vez por sandbox creado (condicional) y `dynamodb:BatchGetItem` una vez por página de `list-microvms` al listar con `metadata` + `index`; la tabla la despliegas tú (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`); nunca `DeleteItem` | DynamoDB on-demand ([precios de DynamoDB on-demand](https://aws.amazon.com/dynamodb/pricing/on-demand/), consultado 2026-09-30, us-east-1): $0,625 por millón de WRU (~1 por `create` ≈ $0,000000625) + $0,125 por millón de RRU (`BatchGetItem` se factura por ítem leído: 0,5 RRU por sandbox candidato, lectura eventualmente consistente de ≤ 4 KB) + $0,25/GB-mes tras 25 GB gratis; borrado por TTL gratis. Ejemplo: 10 000 sandboxes/mes ≈ 10 000 WRU ($0,006) y un `list()` diario sobre ellos ≈ 300 000 ítems × 0,5 = 150 000 RRU ($0,019): ≈ $0,03/mes; tabla vacía $0 | `dynamodb:PutItem` (escritor, política `RayitoIndexWriter`) y `dynamodb:BatchGetItem` (lector, `RayitoIndexReader`) sobre el ARN de la tabla, en las credenciales del **llamante** | No pasar `index=` / `index` (o pasar `None`/`undefined`); borrar el stack de `infra/metadata-index.yaml` para dejar de pagar el almacenamiento | `clients/python/src/rayito/_index.py` / `clients/typescript/src/index/dynamodb.ts` |
 | [Trazas OpenTelemetry del SDK](#otel-sdk) | disponible (0.5.0) | `tracer_provider=` | `tracerProvider` | `None` / `undefined` | Instrumenta `create/connect/kill/pause/resume` (instancia y clase/estático), `commands.run`, `run_code`/`runCode` y `files.*` con spans `rayito.*` (`SpanKind.CLIENT`) sobre el `TracerProvider` que ya tengas configurado | Ninguno propio: Rayito no crea ni llama ningún servicio AWS por esto — el coste depende de **tu** exportador (CloudWatch, un collector propio, …) | $0 desde Rayito: el exportador OTel lo paga y lo configura quien lo activa, no este SDK ([precios de CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) sólo si exportas ahí, consultado 2026-09-30) | Ninguno propio de Rayito; el que exija tu exportador OTel | No pasar `tracer_provider=` / `tracerProvider` (o pasar `None`/`undefined`) | `clients/python/src/rayito/_otel.py` / `clients/typescript/src/otel.ts` |
-| [Montajes S3](#s3-mounts) | implementado en 0.6.0, pendiente de aceptación en AWS real | `mounts=` | `mounts` | `None` / `undefined` | Monta uno o más buckets S3 (o un prefijo suyo) en el guest con `mount-s3`/FUSE, sólo sobre `rayito-base-caps`; `read_only=True` por defecto, `allow_overwrite`/`allow_delete` exigen `read_only=False`; `sbx.mounts` da el estado en vivo de cada montaje | Ningún recurso nuevo por sí solo; `mount-s3` lee/escribe el bucket que montes bajo las credenciales del execution role, vía IMDS propio (nunca en argv/entorno); el bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen | $0 propio de Rayito; pagas las peticiones y el almacenamiento normales de S3 del bucket que montes ([precios de S3](https://aws.amazon.com/s3/pricing/), consultado 2026-10-01, us-east-1) | política `RayitoS3MountAccess` (`infra/s3-mounts.yaml`, desplegada con `rayito stack deploy s3-mounts --param BucketName=...`) en el execution role | No pasar `mounts=` / `mounts` (o pasar `None`/`undefined`); `rayito stack destroy s3-mounts` quita la política | `clients/python/src/rayito/_s3_mounts/` / `clients/typescript/src/s3-mounts/` |
 
 Una fila pasa a "disponible" cuando la función está aceptada contra AWS
 real (ver el aviso de [De un vistazo](#de-un-vistazo)).

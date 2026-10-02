@@ -18,8 +18,9 @@ pub enum MountErrorClass {
     NotAllowed,
     /// The mount path's own shape is invalid (not absolute/canonical, not
     /// under an allowed root) or it overlaps another path in the same
-    /// request — distinct from `NotAllowed` (a bucket-allowlist decision)
-    /// so a caller never confuses the two.
+    /// request, or — found only at attach time — one of its components is
+    /// a symlink or not a directory — distinct from `NotAllowed` (a
+    /// bucket-allowlist decision) so a caller never confuses the two.
     InvalidPath,
     /// `/dev/fuse` or the `mount-s3` binary is missing from the image.
     HelperMissing,

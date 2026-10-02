@@ -5,7 +5,7 @@
 //! before `ConfigureSandbox` is ever called (`_mount_path.py` /
 //! `mount-path.ts`), but `rayd` never trusts a client to have run that
 //! check itself: a non-SDK or buggy caller could otherwise steer
-//! `FuseDevice::attach`'s own `create_dir_all`/`mount(2)` at an arbitrary
+//! `FuseDevice::attach`'s own `mkdirat`/`mount(2)` at an arbitrary
 //! path (`/etc/cron.d`, `/usr/local/bin`, `/`), so `rayd_core::mount_path`
 //! is re-run here, first, before anything else.
 
@@ -78,6 +78,50 @@ pub fn validate_mounts(mounts: &[S3Mount], allowed: &[String]) -> Result<(), Mou
 mod tests {
     use super::*;
 
+    /// Shared with both SDKs' unit tests, so the three validators can never
+    /// drift apart on what a mount spec may look like.
+    const SHARED_VECTORS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../testdata/s3-mounts/mount-specs.json"
+    ));
+
+    fn vector_mount(raw: &serde_json::Value) -> S3Mount {
+        let text = |key: &str| raw[key].as_str().unwrap().to_owned();
+        let flag = |key: &str| raw[key].as_bool().unwrap();
+        S3Mount {
+            mount_path: text("path"),
+            bucket: text("bucket"),
+            prefix: text("prefix"),
+            read_only: flag("read_only"),
+            allow_overwrite: flag("allow_overwrite"),
+            allow_delete: flag("allow_delete"),
+        }
+    }
+
+    #[test]
+    fn the_shared_vectors_get_the_agent_answer_they_document() {
+        let vectors: serde_json::Value = serde_json::from_str(SHARED_VECTORS).unwrap();
+        let allowed: Vec<String> = vectors["allowed_buckets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bucket| bucket.as_str().unwrap().to_owned())
+            .collect();
+        for case in vectors["cases"].as_array().unwrap() {
+            let mounts: Vec<S3Mount> = case["mounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(vector_mount)
+                .collect();
+            let answer = match validate_mounts(&mounts, &allowed) {
+                Ok(()) => "ok",
+                Err(error) => error.class.as_str(),
+            };
+            assert_eq!(answer, case["agent"].as_str().unwrap(), "{}", case["name"]);
+        }
+    }
+
     fn mount(path: &str, bucket: &str) -> S3Mount {
         S3Mount {
             mount_path: path.to_owned(),
@@ -106,19 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bucket_on_the_allowlist_passes() {
-        let allowed = vec!["team-data".to_owned()];
-        assert!(validate_mounts(&[mount("/mnt/data", "team-data")], &allowed).is_ok());
-    }
-
-    #[test]
-    fn a_bucket_outside_the_allowlist_is_rejected() {
-        let allowed = vec!["team-data".to_owned()];
-        let error = validate_mounts(&[mount("/mnt/data", "other-bucket")], &allowed).unwrap_err();
-        assert_eq!(error.class, MountErrorClass::NotAllowed);
-    }
-
-    #[test]
     fn duplicate_mount_paths_in_one_request_are_rejected_as_invalid_path() {
         let allowed = vec!["team-data".to_owned()];
         let mounts = vec![
@@ -127,23 +158,6 @@ mod tests {
         ];
         let error = validate_mounts(&mounts, &allowed).unwrap_err();
         assert_eq!(error.mount_path, "/mnt/data");
-        assert_eq!(error.class, MountErrorClass::InvalidPath);
-    }
-
-    #[test]
-    fn distinct_paths_against_the_same_allowed_bucket_both_pass() {
-        let allowed = vec!["team-data".to_owned()];
-        let mounts = vec![mount("/mnt/a", "team-data"), mount("/mnt/b", "team-data")];
-        assert!(validate_mounts(&mounts, &allowed).is_ok());
-    }
-
-    #[test]
-    fn a_path_outside_the_allowed_roots_is_rejected_as_invalid_path_before_the_allowlist_runs() {
-        // Even an allowlisted bucket cannot rescue a malicious/buggy
-        // caller that names a path outside `/mnt/`/`/home/user/`: shape
-        // is checked first.
-        let allowed = vec!["team-data".to_owned()];
-        let error = validate_mounts(&[mount("/etc/cron.d", "team-data")], &allowed).unwrap_err();
         assert_eq!(error.class, MountErrorClass::InvalidPath);
     }
 }

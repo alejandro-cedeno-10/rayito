@@ -11,12 +11,15 @@ use super::spec::S3Mount;
 
 /// Opens `/dev/fuse` and performs the `mount(2)` that attaches it at
 /// `mount.mount_path`, creating the mountpoint directory first if it does
-/// not exist. On success the returned descriptor is the one `FuseDaemon`
+/// not exist. Never follows a symlink in any component of the path (uid
+/// 1000 owns `/home/user` and could plant one): such a path is
+/// `MountErrorClass::InvalidPath`. On success the returned descriptor is the one `FuseDaemon`
 /// hands to `mount-s3` as `/dev/fd/<fd>`.
 pub trait FuseDevice: Send + Sync {
     fn attach(&self, mount: &S3Mount) -> Result<RawFd, MountErrorClass>;
 
-    /// `umount2(MNT_DETACH)` on `mount_path`, then closes the descriptor
+    /// `umount2(MNT_DETACH | UMOUNT_NOFOLLOW)` on `mount_path` (ancestors
+    /// resolved without following symlinks, like `attach`), then closes the descriptor
     /// `attach` returned for it. Idempotent from the caller's point of
     /// view only in the sense that calling it twice for the same `fd` is a
     /// bug the caller must never commit — ownership of `fd` passes here,

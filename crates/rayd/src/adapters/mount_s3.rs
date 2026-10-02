@@ -28,7 +28,7 @@ use rayd_core::process::env::DEFAULT_PATH;
 use rayd_core::s3_mount::{FuseDaemon, MountErrorClass, S3Mount};
 // `tokio::process::Command::pre_exec` is an inherent method (unix-only), so
 // no `CommandExt` trait import is needed to call it.
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use super::child_registry::ChildRegistry;
@@ -51,11 +51,15 @@ pub const MOUNT_USER_GID: u32 = 990;
 /// descriptor here before `exec`, so the `/dev/fd/<N>` argument is always
 /// this fixed number regardless of what `attach()` happened to return.
 const MOUNT_FD_SLOT: RawFd = 3;
-/// How much of `mount-s3`'s stderr `classify_exit` looks at; only the
-/// *class* it maps to ever crosses the wire or a log line (`MountErrorClass`
-/// is the closed set that does) — the bytes themselves are read here and
-/// discarded the moment classification is done.
+/// How much of `mount-s3`'s stderr `classify_exit` looks at: the *last*
+/// bytes it wrote (its final error is what explains the exit), kept in a
+/// bounded ring by `drain_stderr_tail`. Only the *class* it maps to ever
+/// crosses the wire or a log line (`MountErrorClass` is the closed set
+/// that does) — the bytes themselves are discarded the moment
+/// classification is done.
 const STDERR_TAIL_BYTES: usize = 4096;
+/// One `read` of the stderr pipe while draining it.
+const STDERR_READ_CHUNK_BYTES: usize = 1024;
 
 /// Spawns `mount-s3` with `tokio::process` directly rather than through
 /// `rayd_core::process::ProcessSpawner`: that port's `SpawnSpec` plans a
@@ -158,18 +162,17 @@ impl FuseDaemon for TokioMountS3Daemon {
         let exited = Arc::clone(&self.exited);
         let registry = Arc::clone(&self.registry);
         tokio::spawn(async move {
-            // Reads concurrently with `wait()` so a full stderr pipe can
-            // never deadlock the exit; bounded to `STDERR_TAIL_BYTES` (a
-            // chatty daemon does not grow this task's own memory).
+            // Drains stderr for the daemon's whole life, concurrently with
+            // `wait()`: a long-running daemon that keeps logging must never
+            // fill the pipe (~64 KiB) and block on `write(2)`, which would
+            // hang every FUSE request under the mount. Only the last
+            // `STDERR_TAIL_BYTES` are kept, so a chatty daemon does not
+            // grow this task's own memory either.
             let read_stderr = async {
-                let mut buffer = Vec::new();
-                if let Some(pipe) = stderr.as_mut() {
-                    let _ = pipe
-                        .take(STDERR_TAIL_BYTES as u64)
-                        .read_to_end(&mut buffer)
-                        .await;
+                match stderr.as_mut() {
+                    Some(pipe) => drain_stderr_tail(pipe).await,
+                    None => Vec::new(),
                 }
-                buffer
             };
             let (status, tail) = tokio::join!(child.wait(), read_stderr);
             registry.unregister(pid);
@@ -205,6 +208,27 @@ impl FuseDaemon for TokioMountS3Daemon {
         if let Ok(pid_u32) = u32::try_from(pid) {
             signal_process_group(pid_u32, Signal::SIGTERM as i32);
         }
+    }
+}
+
+/// Reads `pipe` to EOF, keeping only its last `STDERR_TAIL_BYTES`.
+async fn drain_stderr_tail<R: AsyncRead + Unpin>(pipe: &mut R) -> Vec<u8> {
+    let mut tail = Vec::with_capacity(STDERR_TAIL_BYTES);
+    let mut chunk = [0u8; STDERR_READ_CHUNK_BYTES];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) | Err(_) => return tail,
+            Ok(read) => keep_tail(&mut tail, &chunk[..read], STDERR_TAIL_BYTES),
+        }
+    }
+}
+
+/// Appends `chunk` to `tail`, then drops the oldest bytes beyond `cap`.
+fn keep_tail(tail: &mut Vec<u8>, chunk: &[u8], cap: usize) {
+    tail.extend_from_slice(chunk);
+    let excess = tail.len().saturating_sub(cap);
+    if excess > 0 {
+        tail.drain(..excess);
     }
 }
 
@@ -273,6 +297,31 @@ mod tests {
             classify_exit(ok_status.as_ref(), b"connection reset"),
             MountErrorClass::Network
         );
+    }
+
+    #[test]
+    fn keep_tail_keeps_only_the_most_recent_bytes() {
+        let mut tail = Vec::new();
+        keep_tail(&mut tail, b"abcdef", 4);
+        assert_eq!(tail, b"cdef");
+        keep_tail(&mut tail, b"gh", 4);
+        assert_eq!(tail, b"efgh");
+        keep_tail(&mut tail, b"", 4);
+        assert_eq!(tail, b"efgh");
+    }
+
+    #[tokio::test]
+    async fn the_drain_reads_past_the_tail_bound_and_keeps_the_final_error() {
+        // A daemon that logs far more than the pipe buffer before failing:
+        // every byte is consumed (nothing left to block a writer) and the
+        // classified tail is the *last* message, not the first warnings.
+        let mut noise = vec![b'w'; 256 * 1024];
+        noise.extend_from_slice(b"\nError: Access Denied");
+        let mut pipe: &[u8] = &noise;
+        let tail = drain_stderr_tail(&mut pipe).await;
+        assert!(pipe.is_empty());
+        assert_eq!(tail.len(), STDERR_TAIL_BYTES);
+        assert_eq!(classify_exit(None, &tail), MountErrorClass::IamDenied);
     }
 
     #[test]

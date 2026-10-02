@@ -18,8 +18,8 @@ página sólo dice **qué hay** y dónde está documentado.
 | Estado | Qué significa | Filas |
 |---|---|---|
 | implementado | la feature de E2B funciona con el mismo contrato; "antes de 0.3.0" si ya estaba en 0.2.0 | 72 (24 antes de 0.3.0, 48 en 0.3.0) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla opcional) | 23 |
-| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 7 |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla opcional) | 22 |
+| fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera (plano de control, montajes compartidos, templates, escritorio); lanza `UnimplementedError` o no existe | 8 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
 Ninguna fila se aproxima en silencio: lo que no está implementado lanza
@@ -156,7 +156,7 @@ ya estaba en 0.2.0). **Doc** enlaza la página donde se explica cómo usarlo.
 | 108 | exportación de telemetría OTel (docs, Enterprise) | divergente (0.5.0) | la exportación de telemetría del sandbox no existe; en su lugar, spans del lado cliente del SDK nativo con `tracer_provider=`/`tracerProvider` (nombres `rayito.*`, apagados por defecto), que no son la exportación de métricas/logs del sandbox de E2B (Enterprise) — análogo en tu cuenta: logs de runtime en CloudWatch y el historial de `get_metrics`; el shim de E2B no está instrumentado | [Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional) |
 | 109 | receta de acceso SSH (sshd + websocat, docs) | divergente (0.3.0) | `rayito sandbox connect` da una terminal PTY interactiva; una receta con sshd necesita una imagen propia y un cliente que hable la autenticación por subprotocolo WebSocket | [CLI](cli.md) |
 | 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | para desarrollo: `rayito sandbox proxy <id> --port N` expone un puerto del guest en localhost; un dominio público queda para un add-on opcional en la cuenta del cliente (ADR-014), no incluido | [CLI](cli.md#proxy) |
-| 111 | montajes de buckets s3fs/gcsfuse (docs) | divergente (0.6.0) | `mounts=`/`mounts` monta un bucket S3 (no gcsfuse) con `mount-s3`/FUSE, sólo sobre `rayito-base-caps`; lo monta `rayd`, no hay API equivalente en el shim de E2B | [Montajes S3](funciones-opcionales/montajes-s3.md) |
+| 111 | montajes de buckets s3fs/gcsfuse (docs) | fuera por SPEC | receta de template más montajes compartidos en vivo, fuera por `SPEC.md` §4; FUSE en `rayito-base-caps` no está medido; análogos: persistencia en S3 y transferencias por S3 | [Ficheros](files.md) |
 | 112 | CLI de E2B (`auth`, `sandbox list/create/connect/exec/kill/metrics`, `template`, `snapshots`, `fork`) | divergente (0.3.0) | añade `sandbox create/connect/exec/metrics` a los `list/kill/logs` que ya había ([CLI](cli.md)); `auth`, `template`, `snapshots` y `fork` siguen fuera | [CLI](cli.md) |
 | 113 | SDK de escritorio (`e2b-desktop`) | fuera por SPEC | `SPEC.md` §4 (Desktop/GUI) | [Compatibilidad](e2b-compat.md) |
 

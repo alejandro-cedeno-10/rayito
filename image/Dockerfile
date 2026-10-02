@@ -94,9 +94,12 @@ RUN for tool in /bin/bash whoami id sleep head tr env python3 /usr/bin/python3 p
          || echo "pty devices: /dev/ptmx not visible at build (informative)"; }
 
 # m15-s3-mounts (ADR-017): el daemon `mount-s3` (Mountpoint for Amazon S3)
-# para `mounts=`, sólo útil sobre `rayito-base-caps` (una imagen base sin
-# capacidad sin usar es $0 extra de AWS; el binario vive en las cuatro
-# variantes porque hay un único Dockerfile, igual que `iproute` de M6).
+# para `mounts=`, sólo útil sobre `rayito-base-caps`. El binario, `fuse` y
+# el usuario `rayito-mount` viven en las cuatro variantes porque hay un
+# único Dockerfile (igual que `iproute` de M6; sin usar son $0 extra de
+# AWS): por eso `rayd` no decide por su presencia sino por `CAP_SYS_ADMIN`
+# en su conjunto efectivo (`features::s3_mounts::detect_s3_mounts_supported`),
+# y sólo así anuncia `features.s3_mounts`.
 # Mountpoint no está en los repos dnf de AL2023: AWS lo distribuye como
 # RPM propio (releases firmadas de `awslabs/mountpoint-s3`), así que se
 # clava por versión exacta y sha256, verificado con `sha256sum -c` antes de

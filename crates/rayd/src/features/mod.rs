@@ -15,6 +15,8 @@ pub mod template_start;
 
 use std::sync::Arc;
 
+use rayd_core::features::AgentFeatures;
+use rayd_core::root_egress::RootEgressClass;
 use rayito_proto::v1::{
     EfsVolumesConfig, EfsVolumesStatus, LifecycleEventsConfig, LifecycleEventsStatus,
     S3MountsConfig, S3MountsStatus, SecretGatewayConfig, SecretGatewayStatus,
@@ -47,6 +49,54 @@ pub struct FeatureSet {
     pub template_start: Arc<dyn ConfigurableFeature<(), ()>>,
 }
 
+impl FeatureSet {
+    /// `Health.features`, read live from every slot's own `supported()`:
+    /// a feature that gains a real adapter changes nothing here, only its
+    /// own `build()`.
+    #[must_use]
+    pub fn agent_features(&self) -> AgentFeatures {
+        AgentFeatures {
+            s3_mounts: self.s3_mounts.supported(),
+            efs_volumes: self.efs_volumes.supported(),
+            lifecycle_events: self.lifecycle_events.supported(),
+            telemetry_export: self.telemetry_export.supported(),
+            secret_gateway: self.secret_gateway.supported(),
+            template_start: self.template_start.supported(),
+            ..AgentFeatures::foundations_only()
+        }
+    }
+
+    /// `Health.features.root_egress`: the declared class of every supported
+    /// slot that opens one (`ConfigurableFeature::root_egress_class`), in
+    /// `FeatureSet` field order.
+    #[must_use]
+    pub fn root_egress(&self) -> Vec<RootEgressClass> {
+        [
+            active_egress(self.s3_mounts.as_ref()),
+            active_egress(self.efs_volumes.as_ref()),
+            active_egress(self.lifecycle_events.as_ref()),
+            active_egress(self.telemetry_export.as_ref()),
+            active_egress(self.secret_gateway.as_ref()),
+            active_egress(self.template_start.as_ref()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
+/// A slot's root-egress class, only while it is `supported()`: an
+/// `Unsupported` stub never opens one, whatever it would declare.
+fn active_egress<Cfg, Status>(
+    slot: &dyn ConfigurableFeature<Cfg, Status>,
+) -> Option<RootEgressClass> {
+    if slot.supported() {
+        slot.root_egress_class()
+    } else {
+        None
+    }
+}
+
 #[must_use]
 pub fn build(ctx: &FeatureContext) -> FeatureSet {
     FeatureSet {
@@ -74,5 +124,25 @@ mod tests {
         assert!(!set.telemetry_export.supported());
         assert!(!set.secret_gateway.supported());
         assert!(!set.template_start.supported());
+    }
+
+    #[test]
+    fn agent_features_and_root_egress_are_read_from_the_slots() {
+        // Whatever this host makes of `s3_mounts` (a CI runner has no
+        // `CAP_SYS_ADMIN`/`mount-s3`), the reported flag and the reported
+        // root egress follow that slot's own `supported()`, and every stub
+        // stays `false` with no egress.
+        let set = build(&FeatureContext::default());
+        let features = set.agent_features();
+        assert!(features.configure);
+        assert_eq!(features.s3_mounts, set.s3_mounts.supported());
+        assert!(!features.efs_volumes);
+        assert!(!features.secret_gateway);
+        let expected: Vec<RootEgressClass> = if set.s3_mounts.supported() {
+            vec![RootEgressClass::S3]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(set.root_egress(), expected);
     }
 }

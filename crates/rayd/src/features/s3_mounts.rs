@@ -13,8 +13,11 @@
 //! `Inner::run_mount`); `ConfigureStatus` (or `sbx.mounts`) is how a caller
 //! learns it reached `Mounted` or `Failed`. The same background machinery
 //! also supervises every mount while `RUNNING`: `Inner::watch_tick`, polled
-//! on a fixed interval, relaunches any mount whose daemon died, with a
-//! backoff that grows per consecutive failure; `/resume`'s own probe
+//! on a fixed interval, relaunches (as its own task, so one slow mount never
+//! stalls supervision of the others) any settled mount whose daemon died,
+//! with a backoff that grows per consecutive failure; a mount still
+//! `Pending` belongs to the attempt in flight and is never relaunched on
+//! top of it. `/resume`'s own probe
 //! forces the same relaunch path for a mount whose daemon survived the
 //! snapshot but whose FUSE connection did not answer afterwards. Every
 //! relaunch re-attaches a fresh FUSE descriptor rather than reusing the
@@ -37,6 +40,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use rayd_core::configure::{SectionCode, SectionOutcome};
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::s3_mount::{
     self, FuseDaemon, FuseDevice, MountErrorClass, MountPhase, MountState, S3Mount,
 };
@@ -48,7 +52,9 @@ use rayito_proto::v1::{
 
 use super::FeatureContext;
 use super::slot::ConfigurableFeature;
-use crate::adapters::{LinuxFuseDevice, MOUNT_S3_BINARY, TokioMountS3Daemon};
+use crate::adapters::{
+    LinuxFuseDevice, MOUNT_S3_BINARY, TokioMountS3Daemon, detect_guest_capabilities,
+};
 use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
 
 /// Image-level bucket allowlist (`rayito image publish --env
@@ -61,11 +67,11 @@ const ALLOWED_BUCKETS_ENV: &str = "RAYITO_ALLOWED_MOUNT_BUCKETS";
 /// comes from this, never a per-request value.
 const AWS_REGION_ENV: &str = "AWS_REGION";
 const FUSE_DEVICE_PATH: &str = "/dev/fuse";
-/// `image/Dockerfile` creates this system account only on the
-/// `rayito-base-caps` build stage; its presence (alongside the binary and
-/// the device) is what tells `build()` this image variant actually has the
-/// feature, instead of the flag being `true` unconditionally regardless of
-/// image.
+/// The system account `image/Dockerfile` creates for the `mount-s3`
+/// daemon. Like the binary, it exists in all four image variants (one
+/// Dockerfile builds them all), so it only proves the image is new enough;
+/// `detect_s3_mounts_supported` also requires `CAP_SYS_ADMIN`, which is
+/// what actually tells `rayito-base-caps` apart.
 const MOUNT_USER_NAME: &str = "rayito-mount";
 /// Bound on one mount's attach-spawn-settle sequence before it is reported
 /// `Failed`/`timeout` instead of staying `Pending`. Provisional — no
@@ -324,16 +330,6 @@ impl Inner {
         }
     }
 
-    /// Claims a fresh generation for `spec.mount_path`, tears down
-    /// whatever the previous entry owned, and runs the attempt — the one
-    /// sequence every (re)mount, first or relaunched, goes through.
-    async fn claim_and_run(self: &Arc<Self>, spec: S3Mount) {
-        let generation = self.new_generation();
-        let (old_fd, old_pid) = self.claim(spec.clone(), generation);
-        self.teardown(&spec.mount_path, old_fd, old_pid);
-        Arc::clone(self).run_mount(spec, generation).await;
-    }
-
     fn status(&self) -> S3MountsStatus {
         let mounts = self.lock();
         S3MountsStatus {
@@ -344,33 +340,64 @@ impl Inner {
         }
     }
 
-    /// One pass of the continuous `RUNNING`-time supervisor: every mount
-    /// whose daemon is not alive, whose backoff has elapsed, is relaunched
-    /// with a fresh FUSE attach (never the old descriptor — see the module
-    /// doc on why a dead daemon's old connection cannot be reused).
-    async fn watch_tick(self: &Arc<Self>) {
+    /// One pass of the continuous `RUNNING`-time supervisor: every settled
+    /// mount whose daemon is not alive, whose backoff has elapsed, is
+    /// relaunched with a fresh FUSE attach (never the old descriptor — see
+    /// the module doc on why a dead daemon's old connection cannot be
+    /// reused). `Pending` entries are skipped: their attempt is still in
+    /// flight (`claim` leaves `pid == -1` until `run_mount` publishes one),
+    /// and claiming them again would only make that attempt stale and run
+    /// attach/spawn twice.
+    fn watch_tick(self: &Arc<Self>) {
         let due: Vec<S3Mount> = {
             let mounts = self.lock();
             mounts
                 .values()
+                .filter(|entry| entry.state.phase != MountPhase::Pending)
                 .filter(|entry| entry.pid < 0 || !self.daemon.is_alive(entry.pid))
                 .filter(|entry| entry.retry_at.is_none_or(|at| Instant::now() >= at))
                 .map(|entry| entry.spec.clone())
                 .collect()
         };
         for spec in due {
-            self.claim_and_run(spec).await;
+            self.claim_and_spawn(spec);
         }
+    }
+
+    /// Claims a fresh generation for `spec.mount_path` (visible as
+    /// `Pending` immediately), tears down whatever the previous entry
+    /// owned, and spawns the attempt as its own task — the one sequence
+    /// every (re)mount, first or relaunched, goes through. Synchronous up
+    /// to the spawn, so the entry is already `Pending` (and skipped by
+    /// `watch_tick`) before the caller's next look at the table.
+    fn claim_and_spawn(self: &Arc<Self>, spec: S3Mount) {
+        let generation = self.new_generation();
+        let (old_fd, old_pid) = self.claim(spec.clone(), generation);
+        self.teardown(&spec.mount_path, old_fd, old_pid);
+        let inner = Arc::clone(self);
+        tokio::spawn(async move {
+            inner.run_mount(spec, generation).await;
+        });
     }
 
     /// Forces a relaunch regardless of `is_alive` — `/resume`'s probe
     /// calls this for a mount whose daemon process is technically still
     /// running but whose FUSE connection did not survive the snapshot.
-    async fn force_relaunch(self: &Arc<Self>, path: &str) {
+    fn force_relaunch(self: &Arc<Self>, path: &str) {
         let spec = { self.lock().get(path).map(|entry| entry.spec.clone()) };
         if let Some(spec) = spec {
-            self.claim_and_run(spec).await;
+            self.claim_and_spawn(spec);
         }
+    }
+
+    /// Paths whose attempt has settled (`Mounted` or `Failed`): the only
+    /// ones `/resume`'s probe may force a relaunch of.
+    fn settled_paths(&self) -> Vec<String> {
+        self.lock()
+            .iter()
+            .filter(|(_, entry)| entry.state.phase != MountPhase::Pending)
+            .map(|(path, _)| path.clone())
+            .collect()
     }
 }
 
@@ -428,7 +455,7 @@ impl S3MountsFeature {
             handle.spawn(async move {
                 loop {
                     tokio::time::sleep(WATCHER_POLL_INTERVAL).await;
-                    watcher.watch_tick().await;
+                    watcher.watch_tick();
                 }
             });
         }
@@ -480,13 +507,7 @@ impl ConfigurableFeature<S3MountsConfig, S3MountsStatus> for S3MountsFeature {
                 continue;
             }
             any_pending = true;
-            let generation = self.inner.new_generation();
-            let (old_fd, old_pid) = self.inner.claim(mount.clone(), generation);
-            self.inner.teardown(&mount.mount_path, old_fd, old_pid);
-            let inner = Arc::clone(&self.inner);
-            tokio::spawn(async move {
-                inner.run_mount(mount, generation).await;
-            });
+            self.inner.claim_and_spawn(mount);
         }
         if any_pending {
             SectionOutcome {
@@ -506,6 +527,12 @@ impl ConfigurableFeature<S3MountsConfig, S3MountsStatus> for S3MountsFeature {
         Some(Arc::new(S3MountsParticipant {
             inner: Arc::clone(&self.inner),
         }))
+    }
+
+    /// The `mount-s3` daemon (uid 990, below the M6 `uidrange 1000-65535`
+    /// blackhole) reaches IMDS and S3 directly with the execution role.
+    fn root_egress_class(&self) -> Option<RootEgressClass> {
+        Some(RootEgressClass::S3)
     }
 }
 
@@ -531,8 +558,7 @@ impl LifecycleParticipant for S3MountsParticipant {
     }
 
     async fn on_resume(&self) {
-        let paths: Vec<String> = { self.inner.lock().keys().cloned().collect() };
-        for path in paths {
+        for path in self.inner.settled_paths() {
             let device = Arc::clone(&self.inner.device);
             let probe_path = path.clone();
             let responsive = tokio::time::timeout(
@@ -542,7 +568,7 @@ impl LifecycleParticipant for S3MountsParticipant {
             .await
             .is_ok_and(|joined| joined.unwrap_or(false));
             if !responsive {
-                self.inner.force_relaunch(&path).await;
+                self.inner.force_relaunch(&path);
             }
         }
     }
@@ -582,14 +608,22 @@ fn to_wire_state(state: &MountState) -> WireMountState {
     }
 }
 
-/// Real preconditions for this image variant to actually offer `mounts=`:
-/// only `image/Dockerfile`'s `rayito-base-caps` stage installs the
-/// `mount-s3` binary, creates `/dev/fuse`'s access and the dedicated
-/// `rayito-mount` system account — `rayito-base` has none of the three.
-/// Computed once at `build()` time: none of the three changes for the life
-/// of the process.
+/// Real preconditions for this boot to actually offer `mounts=`. The
+/// binary and the `rayito-mount` account ship in all four image variants
+/// (one `image/Dockerfile` builds them all; only the published
+/// `additionalOsCapabilities` differ), so they only prove the image is new
+/// enough. What tells `rayito-base-caps` apart is the capability itself:
+/// `mount(2)` needs `CAP_SYS_ADMIN` in rayd's effective set (VOL-1/Q79:
+/// root without it gets `EPERM` even for a tmpfs), and `/dev/fuse` only
+/// exists with it. Without this check a `rayito-base` agent would report
+/// `features.s3_mounts = true`, the SDK's after-boot capability gate would
+/// never fire for a custom image name, and the mount would fail later as
+/// `helper_missing` instead of `UnimplementedError` before `create()`
+/// returns. Computed once at `build()` time: none of these changes for the
+/// life of the process.
 fn detect_s3_mounts_supported() -> bool {
-    binary_on_path(MOUNT_S3_BINARY)
+    detect_guest_capabilities().sys_admin()
+        && binary_on_path(MOUNT_S3_BINARY)
         && std::path::Path::new(FUSE_DEVICE_PATH).exists()
         && system_user_exists(MOUNT_USER_NAME)
 }
@@ -784,6 +818,7 @@ mod tests {
     async fn a_supported_build_claims_support() {
         let (feature, ..) = feature(&["team-data"]);
         assert!(feature.supported());
+        assert_eq!(feature.root_egress_class(), Some(RootEgressClass::S3));
     }
 
     #[tokio::test]
@@ -1024,6 +1059,39 @@ mod tests {
                 .unwrap()
                 .contains(&"/mnt/data".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn a_pending_mount_is_never_relaunched_on_top_of_its_own_attempt() {
+        // Never ready, with a bound far beyond the test: the entry stays
+        // `Pending` for the whole test, first with `pid == -1` (the window
+        // right after `claim`) and then with the spawned pid published.
+        let device = Arc::new(FakeDevice::default());
+        let daemon = Arc::new(FakeDaemon::default());
+        let feature = S3MountsFeature::with_ready_timeout(
+            device.clone() as Arc<dyn FuseDevice>,
+            daemon.clone() as Arc<dyn FuseDaemon>,
+            vec!["team-data".to_owned()],
+            true,
+            Duration::from_secs(60),
+        );
+        feature
+            .apply(S3MountsConfig {
+                mounts: vec![wire_mount("/mnt/data", "team-data", true)],
+            })
+            .await;
+        feature.inner.watch_tick();
+        for _ in 0..200 {
+            if !daemon.alive.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        feature.inner.watch_tick();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(*device.next_fd.lock().unwrap(), 1);
+        assert_eq!(*daemon.alive.lock().unwrap(), vec![1]);
+        assert!(daemon.killed.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

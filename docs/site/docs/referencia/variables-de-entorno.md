@@ -52,7 +52,6 @@ Detalle: [Servidor MCP](../mcp.md#variables-de-entorno).
 | Variable | Dónde | Qué hace |
 |---|---|---|
 | `RAYITO_ALLOW_ROOT=1` | en el `Dockerfile` de la imagen, nunca en el SDK | permite `user="root"` en comandos y terminales; por defecto todo corre como uid 1000 |
-| `RAYITO_ALLOWED_MOUNT_BUCKETS` | en el `Dockerfile`/`rayito image publish --env`, nunca por sandbox | lista de buckets (coma-separados) que `mounts=` puede montar; vacía o ausente deniega todos (nunca permite todos) |
 
 ## AWS
 

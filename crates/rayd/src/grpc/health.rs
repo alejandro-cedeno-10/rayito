@@ -16,6 +16,7 @@ use rayd_core::code::KernelStatus;
 use rayd_core::health::HealthSnapshot;
 use rayd_core::metrics::{MetricsError, MetricsProbe, MetricsSnapshot, snapshot, unix_millis};
 use rayd_core::metrics_history::{HistoryPage, MetricsHistory, MetricsSample, RangeQuery};
+use rayd_core::root_egress::RootEgressClass;
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::health_service_server::HealthService;
 use rayito_proto::v1::{
@@ -137,28 +138,22 @@ fn to_response(snapshot: HealthSnapshot, features: &FeatureSet) -> HealthRespons
         cpu_count: snapshot.cpu_count,
         memory_total_bytes: snapshot.memory_total_bytes,
         // Read live from the same `FeatureSet` `ConfigureGrpc` dispatches
-        // to, never a literal: `m15-s3-mounts`'s own `supported()` reflects
-        // whether *this* image variant actually has the binary, the
-        // device and the mount user (`features::s3_mounts::build`), so a
-        // `rayito-base` agent reports `false` here even though the slot
-        // itself is the same build.
-        features: Some(agent_features_message(features.s3_mounts.supported())),
+        // to, never a literal: each slot's own `supported()` and
+        // `root_egress_class()` (`FeatureSet::agent_features`/`root_egress`)
+        // say what *this* boot offers — e.g. `m15-s3-mounts` reports
+        // `false` without `CAP_SYS_ADMIN`, so a `rayito-base` agent never
+        // claims it even though the slot is the same build.
+        features: Some(agent_features_message(
+            features.agent_features(),
+            &features.root_egress(),
+        )),
     }
 }
 
-fn agent_features_message(s3_mounts_supported: bool) -> rayito_proto::v1::AgentFeatures {
-    let features = rayd_core::features::AgentFeatures {
-        s3_mounts: s3_mounts_supported,
-        ..rayd_core::features::AgentFeatures::foundations_only()
-    };
-    let mut root_egress = Vec::new();
-    if s3_mounts_supported {
-        // `mount-s3` reads the execution role from IMDS as root before
-        // dropping to the dedicated mount user (ADR-017); every other
-        // feature's root-egress class is still unreported until it has a
-        // real adapter.
-        root_egress.push(i32::from(rayito_proto::v1::RootEgressClass::S3));
-    }
+fn agent_features_message(
+    features: rayd_core::features::AgentFeatures,
+    root_egress: &[RootEgressClass],
+) -> rayito_proto::v1::AgentFeatures {
     rayito_proto::v1::AgentFeatures {
         configure: features.configure,
         s3_mounts: features.s3_mounts,
@@ -167,7 +162,21 @@ fn agent_features_message(s3_mounts_supported: bool) -> rayito_proto::v1::AgentF
         telemetry_export: features.telemetry_export,
         secret_gateway: features.secret_gateway,
         template_start: features.template_start,
-        root_egress,
+        root_egress: root_egress
+            .iter()
+            .map(|class| i32::from(wire_root_egress(*class)))
+            .collect(),
+    }
+}
+
+fn wire_root_egress(class: RootEgressClass) -> rayito_proto::v1::RootEgressClass {
+    match class {
+        RootEgressClass::S3 => rayito_proto::v1::RootEgressClass::S3,
+        RootEgressClass::CloudwatchOtlp => rayito_proto::v1::RootEgressClass::CloudwatchOtlp,
+        RootEgressClass::SecretGatewayUpstream => {
+            rayito_proto::v1::RootEgressClass::SecretGatewayUpstream
+        }
+        RootEgressClass::Efs => rayito_proto::v1::RootEgressClass::Efs,
     }
 }
 
@@ -211,5 +220,49 @@ fn metrics_status(error: &MetricsError) -> Status {
         MetricsError::Malformed { .. } | MetricsError::Io { .. } => {
             Status::internal(error.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_root_egress_class_maps_to_its_own_wire_value() {
+        let cases = [
+            (RootEgressClass::S3, rayito_proto::v1::RootEgressClass::S3),
+            (
+                RootEgressClass::CloudwatchOtlp,
+                rayito_proto::v1::RootEgressClass::CloudwatchOtlp,
+            ),
+            (
+                RootEgressClass::SecretGatewayUpstream,
+                rayito_proto::v1::RootEgressClass::SecretGatewayUpstream,
+            ),
+            (RootEgressClass::Efs, rayito_proto::v1::RootEgressClass::Efs),
+        ];
+        for (class, wire) in cases {
+            assert_eq!(wire_root_egress(class), wire);
+        }
+    }
+
+    #[test]
+    fn the_message_copies_every_flag_and_the_declared_egress() {
+        let features = rayd_core::features::AgentFeatures {
+            s3_mounts: true,
+            ..rayd_core::features::AgentFeatures::foundations_only()
+        };
+        let message = agent_features_message(features, &[RootEgressClass::S3]);
+        assert!(message.configure);
+        assert!(message.s3_mounts);
+        assert!(!message.efs_volumes);
+        assert_eq!(
+            message.root_egress,
+            vec![i32::from(rayito_proto::v1::RootEgressClass::S3)]
+        );
+        let stubs_only =
+            agent_features_message(rayd_core::features::AgentFeatures::foundations_only(), &[]);
+        assert!(!stubs_only.s3_mounts);
+        assert!(stubs_only.root_egress.is_empty());
     }
 }
