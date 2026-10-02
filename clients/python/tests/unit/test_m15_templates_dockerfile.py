@@ -22,7 +22,10 @@ def test_render_appended_layer_has_no_from_and_keeps_step_order() -> None:
     rendered = render_appended_layer(spec)
     assert "FROM" not in rendered
     lines = [line for line in rendered.splitlines() if line and not line.startswith("#")]
-    assert lines == ["RUN pip install --no-cache-dir pandas", "COPY app/ /srv/app/"]
+    assert lines == [
+        "RUN pip install --no-cache-dir pandas",
+        'COPY ["__rayito_context/app/", "/srv/app/"]',
+    ]
 
 
 def test_compose_inserts_the_layer_before_the_final_cmd_and_repeats_it() -> None:
@@ -44,7 +47,7 @@ def test_compose_adds_the_template_json_copy_only_when_start_is_set() -> None:
     assert "__rayito_template.json" not in without_start
 
     with_start = compose_dockerfile(BASE_DOCKERFILE, Template().set_start_cmd("python app.py").spec)
-    assert "COPY __rayito_template.json /etc/rayito/template.json" in with_start
+    assert 'COPY ["__rayito_template.json", "/etc/rayito/template.json"]' in with_start
 
 
 def test_compose_without_a_terminal_instruction_raises_build_exception() -> None:
@@ -57,4 +60,4 @@ def test_rebuilding_an_already_composed_image_does_not_stack_layers() -> None:
     second = compose_dockerfile(first, Template().copy("app/", "/srv/app/").spec)
     assert second.count(LAYER_BEGIN_MARKER) == 1
     assert "pip install" not in second
-    assert "COPY app/ /srv/app/" in second
+    assert 'COPY ["__rayito_context/app/", "/srv/app/"]' in second

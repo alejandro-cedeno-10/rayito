@@ -5,7 +5,7 @@
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { BuildError } from "../../src/errors.js";
 import { DockerIgnore, filesHash } from "../../src/templates/context.js";
@@ -65,5 +65,27 @@ describe("templates/context", () => {
     ];
     expect(filesHash(a)).toBe(filesHash(b));
     expect(filesHash(a)).not.toBe(filesHash(c));
+  });
+
+  test("collectContextFiles accepts a relative contextDir, like the default '.'", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rayito-templates-"));
+    await mkdir(join(dir, "app"), { recursive: true });
+    await writeFile(join(dir, "app", "main.py"), "print(1)");
+
+    const entries = await collectContextFiles(relative(process.cwd(), dir), [
+      copy("app/", "/srv/app/"),
+    ]);
+
+    expect(entries.map(([path]) => path)).toEqual(["app/main.py"]);
+  });
+
+  test("collectContextFiles rejects a source outside the context", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rayito-templates-"));
+    await mkdir(join(dir, "context"));
+    await writeFile(join(dir, "secret.txt"), "outside");
+
+    await expect(
+      collectContextFiles(join(dir, "context"), [copy("../secret.txt", "/srv/secret.txt")]),
+    ).rejects.toMatchObject({ reason: "context_path_outside" });
   });
 });

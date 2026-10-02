@@ -38,6 +38,9 @@ class FakeBuildClients:
     calls: list[tuple[str, ...]] = field(default_factory=list)
     #: Qué devuelve `submit_build` (create/update-microvm-image).
     next_build_version: str = "1"
+    #: Código de `ClientError` que create/update-microvm-image lanzan en vez
+    #: de aceptar el build (p. ej. `ServiceQuotaExceededException`, Q83).
+    submit_error_code: str | None = None
 
     @property
     def region(self) -> str:
@@ -86,6 +89,8 @@ class _FakeMicrovms:
 
     def create_microvm_image(self, *, name: str, **request: Any) -> dict[str, Any]:
         self._parent.calls.append(("create_microvm_image", name))
+        if self._parent.submit_error_code is not None:
+            raise _client_error(self._parent.submit_error_code)
         arn = f"arn:aws:lambda:{self._parent.region}:{self._parent.account_id}:microvm-image:{name}"
         version = self._parent.next_build_version
         self._parent.images[arn] = {"state": "CREATED", **request}
@@ -100,6 +105,8 @@ class _FakeMicrovms:
 
     def update_microvm_image(self, *, imageIdentifier: str, **request: Any) -> dict[str, Any]:
         self._parent.calls.append(("update_microvm_image", imageIdentifier))
+        if self._parent.submit_error_code is not None:
+            raise _client_error(self._parent.submit_error_code)
         version = self._parent.next_build_version
         self._parent.versions[(imageIdentifier, version)] = {
             "state": "SUCCESSFUL",

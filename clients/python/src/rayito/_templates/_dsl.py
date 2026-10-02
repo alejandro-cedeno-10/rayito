@@ -22,6 +22,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
+from rayito._images import (
+    DEFAULT_BASE_IMAGE_NAME,
+    DEFAULT_BUILD_TIMEOUT_SECONDS,
+    DEFAULT_MEMORY_MIB,
+)
 from rayito._templates._instructions import (
     BASE_IMAGE_KIND,
     DEFAULT_TEMPLATE_USER,
@@ -41,12 +46,6 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 if TYPE_CHECKING:
     from rayito._templates._models import BuildHandle, BuildInfo, BuildStatus
-
-#: Nombre por defecto de `rayito image publish` (`cli/_publish.py`
-#: `DEFAULT_IMAGE_NAME`, repetido aquí porque ese módulo es de
-#: `sizes-catalog` y `_templates` no debe importarlo): la imagen que
-#: `from_base_image()` compone cuando no se nombra una explícita.
-DEFAULT_BASE_IMAGE_NAME = "rayito-base"
 
 _UNSUPPORTED_BASE_REASON = (
     "Template.{method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo "
@@ -161,8 +160,9 @@ class Template:
 
     def skip_cache(self, *, skip_cache: bool = True) -> Self:
         """0.6 no tiene caché de capas propia (investigación §3.4): esto
-        sólo fuerza `Template.build(force=True)` en vez de reusar una
-        versión existente con la misma configuración."""
+        hace que `Template.build()`/`build_in_background()` se comporten
+        como con `force=True` — envían un build nuevo aunque ya exista una
+        versión con la misma configuración."""
         return self._with(self._spec.with_skip_cache(skip_cache=skip_cache))
 
     # -- start / ready -----------------------------------------------------
@@ -176,12 +176,16 @@ class Template:
         workdir: str | None = None,
         envs: dict[str, str] | None = None,
     ) -> Self:
-        """Hornea `/etc/rayito/template.json` (`rayito.template/1`): `rayd`
-        arranca `start_cmd` como proceso gestionado antes del primer
-        `/ready` y, si hay `ready_cmd`, lo sondea hasta que sale con 0 o se
-        agota `ReadyPoll.timeout_seconds` (`wait_for_port`/`wait_for_url`/
+        """Hornea `/etc/rayito/template.json` (`rayito.template/1`). Al
+        arrancar, un `rayd` 0.6 o posterior lo lee y, tras el hook `/run`,
+        lanza `start_cmd` como proceso gestionado (visible en
+        `commands.list()`); si hay `ready_cmd`, `/ready` responde 503 hasta
+        que el comando sale con 0, y falla al agotarse
+        `ReadyPoll.timeout_seconds` (`wait_for_port`/`wait_for_url`/
         `wait_for_process`/`wait_for_file` en `_ready_cmds.py`; una cadena
-        cruda también vale, sin sondeo (un solo intento))."""
+        cruda se sondea con la cadencia por defecto, 0,5 s durante 60 s).
+        Requiere que la imagen base se haya publicado con `rayd` 0.6 o
+        posterior: un `rayd` anterior ignora el fichero."""
         if not start_cmd.strip():
             raise InvalidArgumentException("set_start_cmd: start_cmd no puede ser vacío")
         poll: ReadyPoll | None
@@ -225,10 +229,10 @@ class Template:
         name: str,
         *,
         bucket: str,
-        memory_mb: int = 2048,
+        memory_mb: int = DEFAULT_MEMORY_MIB,
         cpu_count: int | None = None,
         force: bool = False,
-        timeout: float = 1800.0,
+        timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
         base_image_version: str | None = None,
         build_role_arn: str | None = None,
         on_build_logs: Any = None,
@@ -261,7 +265,7 @@ class Template:
         name: str,
         *,
         bucket: str,
-        memory_mb: int = 2048,
+        memory_mb: int = DEFAULT_MEMORY_MIB,
         cpu_count: int | None = None,
         force: bool = False,
         base_image_version: str | None = None,
@@ -312,10 +316,10 @@ class AsyncTemplate(Template):
         name: str,
         *,
         bucket: str,
-        memory_mb: int = 2048,
+        memory_mb: int = DEFAULT_MEMORY_MIB,
         cpu_count: int | None = None,
         force: bool = False,
-        timeout: float = 1800.0,
+        timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
         base_image_version: str | None = None,
         build_role_arn: str | None = None,
         on_build_logs: Any = None,
@@ -348,7 +352,7 @@ class AsyncTemplate(Template):
         name: str,
         *,
         bucket: str,
-        memory_mb: int = 2048,
+        memory_mb: int = DEFAULT_MEMORY_MIB,
         cpu_count: int | None = None,
         force: bool = False,
         base_image_version: str | None = None,

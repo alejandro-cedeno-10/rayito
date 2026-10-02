@@ -21,7 +21,10 @@ describe("templates/dockerfile", () => {
     const rendered = renderAppendedLayer(spec);
     expect(rendered).not.toContain("FROM");
     const lines = rendered.split("\n").filter((line) => line && !line.startsWith("#"));
-    expect(lines).toEqual(["RUN pip install --no-cache-dir pandas", "COPY app/ /srv/app/"]);
+    expect(lines).toEqual([
+      "RUN pip install --no-cache-dir pandas",
+      'COPY ["__rayito_context/app/", "/srv/app/"]',
+    ]);
   });
 
   test("compose inserts the layer before the final CMD and repeats it", () => {
@@ -48,7 +51,7 @@ describe("templates/dockerfile", () => {
       BASE_DOCKERFILE,
       new Template().setStartCmd("python app.py").spec,
     );
-    expect(withStart).toContain("COPY __rayito_template.json /etc/rayito/template.json");
+    expect(withStart).toContain('COPY ["__rayito_template.json", "/etc/rayito/template.json"]');
   });
 
   test("compose without a terminal instruction raises BuildError", () => {
@@ -62,6 +65,6 @@ describe("templates/dockerfile", () => {
     const second = composeDockerfile(first, new Template().copy("app/", "/srv/app/").spec);
     expect(second.split(LAYER_BEGIN_MARKER).length - 1).toBe(1);
     expect(second).not.toContain("pip install");
-    expect(second).toContain("COPY app/ /srv/app/");
+    expect(second).toContain('COPY ["__rayito_context/app/", "/srv/app/"]');
   });
 });

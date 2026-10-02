@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS, DEFAULT_MEMORY_MIB
 from rayito._templates import _build
 from rayito._templates._models import BuildHandle, BuildInfo, BuildStatus
 
@@ -19,10 +20,10 @@ async def build(
     name: str,
     *,
     bucket: str,
-    memory_mb: int = 2048,
+    memory_mb: int = DEFAULT_MEMORY_MIB,
     cpu_count: int | None = None,
     force: bool = False,
-    timeout: float = _build.DEFAULT_BUILD_TIMEOUT_SECONDS,
+    timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
     base_image_version: str | None = None,
     build_role_arn: str | None = None,
     on_build_logs: Callable[[str], None] | None = None,
@@ -53,7 +54,7 @@ async def build_in_background(
     name: str,
     *,
     bucket: str,
-    memory_mb: int = 2048,
+    memory_mb: int = DEFAULT_MEMORY_MIB,
     cpu_count: int | None = None,
     force: bool = False,
     base_image_version: str | None = None,

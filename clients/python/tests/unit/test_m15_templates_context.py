@@ -44,6 +44,32 @@ def test_collect_context_files_raises_build_exception_for_a_missing_source(tmp_p
         collect_context_files(tmp_path, [CopyStep("missing/", "/srv/missing/")])
 
 
+def test_collect_context_files_works_with_the_default_context_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduce the blocker: `Template.build(t, name, bucket=...)` with no
+    `context_dir=` resolves `Path()` to the current directory before
+    comparing it to an already-absolute `src`; without resolving the root
+    first, `relative_to` raised a raw `ValueError`."""
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text("print(1)")
+    monkeypatch.chdir(tmp_path)
+
+    entries = collect_context_files(Path(), [CopyStep("app/", "/srv/app/")])
+
+    assert dict(entries)["app/main.py"] == b"print(1)"
+
+
+def test_collect_context_files_rejects_a_source_outside_the_context(tmp_path: Path) -> None:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    (tmp_path / "secret.txt").write_text("outside")
+
+    with pytest.raises(BuildException) as excinfo:
+        collect_context_files(context_dir, [CopyStep("../secret.txt", "/srv/secret.txt")])
+    assert excinfo.value.reason == "context_path_outside"
+
+
 def test_files_hash_is_order_independent_and_content_sensitive() -> None:
     a = [("x.py", b"1"), ("y.py", b"2")]
     b = [("y.py", b"2"), ("x.py", b"1")]

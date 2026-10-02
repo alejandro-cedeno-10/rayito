@@ -50,8 +50,10 @@ class E2B:
     `dynamodb:BatchGetItem` (ver `rayito.DynamoDbIndex`, "Coste y
     activación"). Ninguna otra llamada lo usa.
 
-    `client.Template`/`client.AsyncTemplate` son las clases reales
-    (m15-templates); `Volume`/`AsyncVolume` siguen siendo
+    `client.Template`/`client.AsyncTemplate` (m15-templates) usan su
+    `region`, su `session` y `bucket=` (extensión de Rayito: el bucket de
+    artefactos de `Template.build`, `None` por defecto; sin él cada
+    `build` debe pasar `bucket=`). `Volume`/`AsyncVolume` siguen siendo
     `UnimplementedError`."""
 
     def __init__(
@@ -61,6 +63,7 @@ class E2B:
         session: Any | None = None,
         control_plane: Any | None = None,
         index: DynamoDbIndex | None = None,
+        bucket: str | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -83,14 +86,9 @@ class E2B:
         }
         self.Secret: type[Secret] = bind_class(Secret, secret_bound)
         self.AsyncSecret: type[AsyncSecret] = bind_class(AsyncSecret, secret_bound)
-
-    @property
-    def Template(self) -> type[Template]:
-        return Template
-
-    @property
-    def AsyncTemplate(self) -> type[AsyncTemplate]:
-        return AsyncTemplate
+        template_bound = {**secret_bound, **({"bucket": bucket} if bucket is not None else {})}
+        self.Template: type[Template] = bind_class(Template, template_bound)
+        self.AsyncTemplate: type[AsyncTemplate] = bind_class(AsyncTemplate, template_bound)
 
     @property
     def Volume(self) -> NoReturn:

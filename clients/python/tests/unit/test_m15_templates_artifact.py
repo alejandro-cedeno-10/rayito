@@ -28,7 +28,7 @@ def test_assemble_artifact_adds_context_files_and_template_json_when_start_is_se
     spec = Template().copy("app/main.py", "/srv/main.py").set_start_cmd("python /srv/main.py").spec
     artifact = assemble_artifact(base_zip, spec, [("app/main.py", b"print(1)")])
     entries = read_zip_entries(artifact)
-    assert entries["app/main.py"] == b"print(1)"
+    assert entries["__rayito_context/app/main.py"] == b"print(1)"
     assert TEMPLATE_JSON_CONTEXT_PATH in entries
 
 
@@ -49,3 +49,19 @@ def test_start_spec_to_json_round_trips_the_essential_fields() -> None:
     assert payload["start_cmd"] == "run.sh"
     assert payload["ready_cmd"] == "test -e /tmp/ready"
     assert payload["envs"] == {"A": "1"}
+
+
+def test_a_context_file_named_like_a_base_entry_never_replaces_it() -> None:
+    """T26: a project `Dockerfile` or `rayd` copied with `.copy(".", ...)`
+    lands under the reserved context prefix, never over the composed
+    Dockerfile or the agent binary of the base zip."""
+    base_zip = make_base_zip(BASE_DOCKERFILE, {"rayd": b"\x7fELF"})
+    spec = Template().copy(".", "/srv/app/").spec
+    artifact = assemble_artifact(
+        base_zip, spec, [("Dockerfile", b"FROM evil"), ("rayd", b"not the agent")]
+    )
+    entries = read_zip_entries(artifact)
+    assert entries["rayd"] == b"\x7fELF"
+    assert entries["Dockerfile"].decode().startswith("FROM scratch")
+    assert entries["__rayito_context/Dockerfile"] == b"FROM evil"
+    assert entries["__rayito_context/rayd"] == b"not the agent"

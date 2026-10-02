@@ -1,17 +1,18 @@
 """Adaptador de AWS de `Template.build()` (m15-templates, investigación §3.4
-paso 2: "mover el núcleo de `cli/_publish.py` a un módulo del SDK
-compartido"; aquí no se reusa ese módulo porque pasa a ser de
-`sizes-catalog` tras su extracción — la forma de las llamadas es la misma
-`create-microvm-image`/`update-microvm-image` y el mismo gate de tres
-estados).
+paso 2: el núcleo de `create`/`update-microvm-image`, el gate de tres
+estados y el reuso por configuración viven en `rayito._images`, compartido
+con `rayito image publish`; aquí sólo queda lo propio de un template).
 
 Pipeline: resuelve la versión de la imagen base -> descarga su
 `codeArtifact` (`s3:GetObject`) -> compone el Dockerfile y el zip
 (`_dockerfile.py`/`_artifact.py`) -> sube el artefacto por hash de
-contenido (como `cli/_publish.py` `artifact_key`, se salta la subida si ya
-existe) -> `create`/`update-microvm-image` -> sondea el gate de tres
-estados -> en caso de fallo, relee el grupo de logs
-(`logs:GetLogEvents`) y traduce a `BuildException`.
+contenido (se salta la subida si ya existe) -> `create`/`update-microvm-image`
+-> sondea el gate de tres estados -> en caso de fallo, relee el grupo de
+logs (`logs:GetLogEvents`) y traduce a `BuildException`.
+
+Los mensajes de error nunca repiten un ARN (lleva el ID de cuenta) ni el
+`stateReason` crudo de AWS: sólo el nombre que pasó el llamante, el estado
+y un `reason` estable (investigación §6).
 
 Cada nombre de parámetro AWS usado aquí aparece en `AWS_API_NOTES.md` §27.
 """
@@ -19,6 +20,7 @@ Cada nombre de parámetro AWS usado aquí aparece en `AWS_API_NOTES.md` §27.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +30,24 @@ import boto3
 from botocore.exceptions import ClientError
 
 from rayito._aws import LazyClient
+from rayito._images import (
+    ACTIVE_VERSION_STATUS,
+    BUILD_QUOTA_ERROR_CODE,
+    DEFAULT_BUILD_TIMEOUT_SECONDS,
+    DEFAULT_MEMORY_MIB,
+    LOG_GROUP_PREFIX,
+    SUCCESSFUL_VERSION_STATE,
+    VersionGate,
+    account_image_arn,
+    client_error_code,
+    find_reusable_version,
+    image_exists,
+    inherited_configuration,
+    read_gate,
+    submit_image_build,
+    upload_if_absent,
+    wait_for_gate,
+)
 from rayito._limits import SUPPORTED_MEMORY_MIB
 from rayito._templates._artifact import assemble_artifact
 from rayito._templates._concurrency import build_slot
@@ -35,27 +55,26 @@ from rayito._templates._context import collect_context_files
 from rayito._templates._instructions import BASE_IMAGE_KIND, BaseImageRef, CopyStep, TemplateSpec
 from rayito._templates._logs import classify_ready_failure, parse_build_failure
 from rayito._templates._models import BuildHandle, BuildInfo, BuildStatus
-from rayito.exceptions import BuildException, InvalidArgumentException, NotFoundException
+from rayito.exceptions import (
+    BuildException,
+    InvalidArgumentException,
+    NotFoundException,
+    TemplateException,
+)
 
-#: Clave S3 del artefacto: `rayito/templates/<sha256-del-zip>.zip`, igual
-#: de contenido-direccionada que `cli/_publish.py` `artifact_key` (reusar
+#: Clave S3 del artefacto: `rayito/templates/<sha256-del-zip>.zip`,
+#: direccionada por contenido como `cli/_publish.py` `artifact_key` (reusar
 #: una versión exige el mismo artefacto y la misma configuración).
 S3_KEY_PREFIX: Final = "rayito/templates"
-#: Grupo de logs de la imagen que compone este template; `AWS_API_NOTES.md`
-#: §27 ("`rayito image publish`" usa el mismo prefijo `/rayito/<nombre>`).
-LOG_GROUP_PREFIX: Final = "/rayito"
-POLL_INTERVAL_SECONDS: Final = 10.0
-DEFAULT_BUILD_TIMEOUT_SECONDS: Final = 1800.0
-LAUNCHABLE_IMAGE_STATES: Final = frozenset({"CREATED", "UPDATED"})
-SETTLED_VERSION_STATES: Final = frozenset({"SUCCESSFUL", "FAILED"})
-MISSING_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound", "403"})
-ACTIVE_VERSION_STATUS: Final = "ACTIVE"
-SUCCESSFUL_VERSION_STATE: Final = "SUCCESSFUL"
-
-#: `rayito image publish` fija el `cpuConfigurations` a ARM64 (único
-#: soportado por Lambda MicroVMs hoy): `Template.build()` hereda la misma
-#: restricción, documentada como divergencia de E2B (ADR-022).
-CPU_ARCHITECTURE: Final = "ARM_64"
+#: Descripción de cada versión que crea `Template.build()`.
+BUILD_DESCRIPTION: Final = "rayito template build"
+#: `name` de `CreateMicrovmImageRequest`: 1-64 de `[a-zA-Z0-9-_]`
+#: (`AWS_API_NOTES.md` §4). Un `"nombre:tag"` de E2B no cabe ahí.
+TEMPLATE_NAME_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,64}")
+#: Líneas de log que se releen para explicar un fallo (`GetLogEvents`
+#: `limit`, `AWS_API_NOTES.md` §27).
+BUILD_LOG_LINES: Final = 500
+FAILED_VERSION_STATE: Final = "FAILED"
 
 
 class BuildClients(Protocol):
@@ -121,54 +140,55 @@ class _Clients:
         return self._account_id
 
 
-def _client_error_code(exc: ClientError) -> str:
-    return str(exc.response.get("Error", {}).get("Code", ""))
+def validate_template_name(name: str) -> None:
+    """`TemplateException` si `name` no es un nombre de imagen válido; un
+    ARN completo se acepta tal cual (`Template.exists(arn)`)."""
+    if name.startswith("arn:"):
+        return
+    if TEMPLATE_NAME_PATTERN.fullmatch(name) is None:
+        raise TemplateException(
+            f"nombre de template inválido {name!r}: 1-64 caracteres de [A-Za-z0-9_-] "
+            "(sin ':tag'; Lambda MicroVMs versiona cada build por su cuenta)"
+        )
 
 
 def image_arn(clients: BuildClients, name: str) -> str:
-    if name.startswith("arn:"):
-        return name
-    return f"arn:aws:lambda:{clients.region}:{clients.account_id}:microvm-image:{name}"
+    return account_image_arn(clients.region, clients.account_id, name)
 
 
-def _image_exists(clients: BuildClients, arn: str) -> bool:
-    try:
-        clients.microvms.get_microvm_image(imageIdentifier=arn)
-    except ClientError as exc:
-        if _client_error_code(exc) == "ResourceNotFoundException":
-            return False
-        raise
-    return True
+def _newest_version(items: list[dict[str, Any]]) -> str | None:
+    if not items:
+        return None
+    return str(max(items, key=lambda item: item["createdAt"])["imageVersion"])
+
+
+def _list_versions(clients: BuildClients, arn: str) -> list[dict[str, Any]]:
+    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
+    return [item for page in paginator.paginate(imageIdentifier=arn) for item in page["items"]]
 
 
 def resolve_base_version(
-    clients: BuildClients, base_arn: str, version: str | None
+    clients: BuildClients, base_name: str, version: str | None
 ) -> dict[str, Any]:
     """La versión de la imagen base a componer: la pedida, o la más
     reciente `SUCCESSFUL`/`ACTIVE` (como `run-microvm` sin `imageVersion`
     explícita)."""
-    if version is not None:
-        return dict(
-            clients.microvms.get_microvm_image_version(
-                imageIdentifier=base_arn, imageVersion=version
-            )
+    base_arn = image_arn(clients, base_name)
+    if version is None:
+        version = _newest_version(
+            [
+                item
+                for item in _list_versions(clients, base_arn)
+                if item["state"] == SUCCESSFUL_VERSION_STATE
+                and item["status"] == ACTIVE_VERSION_STATUS
+            ]
         )
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    candidates = [
-        item
-        for page in paginator.paginate(imageIdentifier=base_arn)
-        for item in page["items"]
-        if item["state"] == SUCCESSFUL_VERSION_STATE and item["status"] == ACTIVE_VERSION_STATUS
-    ]
-    if not candidates:
+    if version is None:
         raise NotFoundException(
-            f"la imagen base {base_arn!r} no tiene ninguna versión activa que componer"
+            f"la imagen base {base_name!r} no tiene ninguna versión activa que componer"
         )
-    latest = max(candidates, key=lambda item: item["createdAt"])
     return dict(
-        clients.microvms.get_microvm_image_version(
-            imageIdentifier=base_arn, imageVersion=str(latest["imageVersion"])
-        )
+        clients.microvms.get_microvm_image_version(imageIdentifier=base_arn, imageVersion=version)
     )
 
 
@@ -196,20 +216,9 @@ def fetch_base_artifact(clients: BuildClients, base_version: dict[str, Any]) -> 
     return content
 
 
-def _object_exists(clients: BuildClients, bucket: str, key: str) -> bool:
-    try:
-        clients.s3.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        if _client_error_code(exc) in MISSING_OBJECT_CODES:
-            return False
-        raise
-    return True
-
-
 def upload_artifact(clients: BuildClients, bucket: str, payload: bytes) -> str:
     key = f"{S3_KEY_PREFIX}/{hashlib.sha256(payload).hexdigest()}.zip"
-    if not _object_exists(clients, bucket, key):
-        clients.s3.put_object(Bucket=bucket, Key=key, Body=payload)
+    upload_if_absent(clients, bucket, key, payload)
     return f"s3://{bucket}/{key}"
 
 
@@ -220,6 +229,10 @@ def _validate_memory(memory_mb: int) -> None:
         )
 
 
+def log_group_of(name: str) -> str:
+    return f"{LOG_GROUP_PREFIX}/{name}"
+
+
 def desired_configuration(
     *,
     artifact_uri: str,
@@ -228,87 +241,45 @@ def desired_configuration(
     log_group: str,
 ) -> dict[str, Any]:
     """El cuerpo de `create`/`update-microvm-image` para la nueva imagen del
-    template. `baseImageArn`/`baseImageVersion`/`buildRoleArn`/`hooks` se
-    copian de la versión de `rayito-base` que se está componiendo (**no**
-    es su propio `imageArn`/`imageVersion`: esos identifican a
-    `rayito-base` misma, que sólo sirve aquí para traer su `codeArtifact`;
-    el `baseImageArn` que importa es el que `rayito-base` declaró al
-    publicarse, la imagen gestionada de AWS, por ejemplo `al2023-1`)."""
+    template: toda la configuración que la versión de `rayito-base`
+    declaró al publicarse (`inherited_configuration`: `baseImageArn` de la
+    imagen gestionada, `buildRoleArn`, `hooks`, `additionalOsCapabilities`
+    de la variante `caps`, ...) más el artefacto, la memoria y el grupo de
+    logs propios del template. El `imageArn`/`imageVersion` de
+    `rayito-base` misma no se copian: sólo sirven para traer su
+    `codeArtifact`."""
     return {
-        "baseImageArn": base_image_version["baseImageArn"],
-        "baseImageVersion": str(base_image_version["baseImageVersion"]),
-        "buildRoleArn": base_image_version["buildRoleArn"],
+        **inherited_configuration(base_image_version),
         "codeArtifact": {"uri": artifact_uri},
         "resources": [{"minimumMemoryInMiB": memory_mb}],
-        "cpuConfigurations": [{"architecture": CPU_ARCHITECTURE}],
-        "hooks": base_image_version["hooks"],
         "logging": {"cloudWatch": {"logGroup": log_group}},
     }
-
-
-def _configuration_matches(version: dict[str, Any], desired: dict[str, Any]) -> bool:
-    return all(version.get(key) == value for key, value in desired.items())
-
-
-def _reusable_version(clients: BuildClients, arn: str, desired: dict[str, Any]) -> str | None:
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    matches = [
-        item
-        for page in paginator.paginate(imageIdentifier=arn)
-        for item in page["items"]
-        if item["state"] == SUCCESSFUL_VERSION_STATE
-        and item["status"] == ACTIVE_VERSION_STATUS
-        and _configuration_matches(item, desired)
-    ]
-    if not matches:
-        return None
-    return str(max(matches, key=lambda item: item["createdAt"])["imageVersion"])
 
 
 def submit_build(
     clients: BuildClients, name: str, arn: str, desired: dict[str, Any]
 ) -> tuple[str, str]:
-    request = {**desired, "description": "rayito template build"}
-    if _image_exists(clients, arn):
-        response = clients.microvms.update_microvm_image(imageIdentifier=arn, **request)
-    else:
-        response = clients.microvms.create_microvm_image(name=name, **request)
-    return str(response["imageArn"]), str(response["imageVersion"])
+    """`create`/`update-microvm-image`; la cuota de 10 builds simultáneos
+    por cuenta (Q83) llega como `BuildException(reason="build_quota")`, la
+    misma que da el guardia local de `_concurrency.py`."""
+    try:
+        submitted = submit_image_build(
+            clients, name, arn, {**desired, "description": BUILD_DESCRIPTION}
+        )
+    except ClientError as exc:
+        if client_error_code(exc) == BUILD_QUOTA_ERROR_CODE:
+            raise BuildException(
+                f"AWS rechazó el build del template {name!r}: cuota de builds simultáneos "
+                "de la cuenta agotada (Q83); reintenta cuando termine alguno",
+                reason="build_quota",
+            ) from None
+        raise
+    return submitted.arn, submitted.version
 
 
-def _read_gate(clients: BuildClients, arn: str, version: str) -> tuple[str, str, str, str | None]:
-    image = clients.microvms.get_microvm_image(imageIdentifier=arn)
-    detail = clients.microvms.get_microvm_image_version(imageIdentifier=arn, imageVersion=version)
-    return (
-        str(image["state"]),
-        str(detail["state"]),
-        str(detail["status"]),
-        detail.get("stateReason"),
-    )
-
-
-def _settled(image_state: str, version_state: str) -> bool:
-    return version_state in SETTLED_VERSION_STATES and (
-        image_state in LAUNCHABLE_IMAGE_STATES or version_state == "FAILED"
-    )
-
-
-def wait_for_gate(
-    clients: BuildClients,
-    arn: str,
-    version: str,
-    timeout_seconds: float,
-    sleep: Callable[[float], None] = time.sleep,
-) -> tuple[str, str, str, str | None]:
-    started = time.monotonic()
-    while True:
-        gate = _read_gate(clients, arn, version)
-        if _settled(gate[0], gate[1]) or time.monotonic() - started >= timeout_seconds:
-            return gate
-        sleep(POLL_INTERVAL_SECONDS)
-
-
-def _read_build_logs(clients: BuildClients, log_group: str, limit: int = 500) -> list[str]:
+def _read_build_logs(
+    clients: BuildClients, log_group: str, limit: int = BUILD_LOG_LINES
+) -> list[str]:
     try:
         streams = clients.logs.describe_log_streams(
             logGroupName=log_group, orderBy="LastEventTime", descending=True, limit=1
@@ -323,15 +294,19 @@ def _read_build_logs(clients: BuildClients, log_group: str, limit: int = 500) ->
     return [str(event["message"]) for event in events]
 
 
-def _raise_for_failure(
-    clients: BuildClients, log_group: str, version_state: str, state_reason: str | None
-) -> None:
-    ready_reason = classify_ready_failure(state_reason)
+def _raise_for_failure(clients: BuildClients, name: str, gate: VersionGate) -> None:
+    """`stateReason` sólo se usa para clasificar (`classify_ready_failure`),
+    nunca se copia al mensaje: es texto libre de AWS."""
+    ready_reason = classify_ready_failure(gate.state_reason)
     if ready_reason is not None:
-        raise BuildException(state_reason or "el ready cmd falló", reason=ready_reason)
-    detail = parse_build_failure(_read_build_logs(clients, log_group))
+        raise BuildException(
+            f"el ready cmd del template {name!r} respondió con un error HTTP durante el build",
+            reason=ready_reason,
+        )
+    detail = parse_build_failure(_read_build_logs(clients, log_group_of(name)))
     raise BuildException(
-        state_reason or f"el build terminó en estado {version_state}",
+        f"el build del template {name!r} terminó en imagen={gate.image_state} "
+        f"versión={gate.version_state}",
         step=detail.step,
         command=detail.command,
         exit_code=detail.exit_code,
@@ -347,8 +322,7 @@ def _compose(
             "Template.build: llama a from_base_image() antes de construir (0.6 sólo compone "
             "sobre una imagen rayito-base ya publicada)"
         )
-    base_arn = image_arn(clients, spec.base.name)
-    base_version = resolve_base_version(clients, base_arn, spec.base.version)
+    base_version = resolve_base_version(clients, spec.base.name, spec.base.version)
     base_zip = fetch_base_artifact(clients, base_version)
     copies = [step for step in spec.steps if isinstance(step, CopyStep)]
     context_files = collect_context_files(context_dir, copies)
@@ -365,68 +339,62 @@ def _spec_with_base_version(spec: TemplateSpec, base_image_version: str | None) 
     return spec.with_base(BaseImageRef(spec.base.kind, spec.base.name, base_image_version))
 
 
-def submit(
+def _submit_unslotted(
     template: Any,
     name: str,
     *,
     bucket: str,
     memory_mb: int,
-    cpu_count: int | None,
     force: bool,
     base_image_version: str | None,
-    build_role_arn: str | None,
     region: str | None,
     session: Any,
-    context_dir: Path | None = None,
+    context_dir: Path | None,
 ) -> BuildHandle:
-    """Lo común a `build()`/`build_in_background()`: compone el artefacto,
-    lo sube y envía `create`/`update-microvm-image`. `cpu_count` y
-    `build_role_arn` se validan pero se ignoran (la CPU es siempre
-    `ARM_64`, Q87; el rol de build es el de la imagen base,
-    `baseImageVersion.buildRoleArn`, el mismo que usa `rayito image
-    publish`): documentado en el ADR-022 como alcance de 0.6."""
+    validate_template_name(name)
     _validate_memory(memory_mb)
-    del cpu_count, build_role_arn
     spec = _spec_with_base_version(template.spec, base_image_version)
-    resolved_context_dir = context_dir if context_dir is not None else Path()
-    with build_slot():
-        clients = _Clients(region=region, session=session)
-        artifact, base_version = _compose(clients, spec, resolved_context_dir)
-        artifact_uri = upload_artifact(clients, bucket, artifact)
-        arn = image_arn(clients, name)
-        log_group = f"{LOG_GROUP_PREFIX}/{name}"
-        desired = desired_configuration(
-            artifact_uri=artifact_uri,
-            memory_mb=memory_mb,
-            base_image_version=base_version,
-            log_group=log_group,
-        )
-        if not force:
-            reusable = _reusable_version(clients, arn, desired)
-            if reusable is not None:
-                return BuildHandle(
-                    arn=arn, version=reusable, name=name, region=region, session=session
-                )
-        submitted_arn, version = submit_build(clients, name, arn, desired)
-        return BuildHandle(
-            arn=submitted_arn, version=version, name=name, region=region, session=session
-        )
+    clients = _Clients(region=region, session=session)
+    artifact, base_version = _compose(clients, spec, context_dir or Path())
+    artifact_uri = upload_artifact(clients, bucket, artifact)
+    arn = image_arn(clients, name)
+    desired = desired_configuration(
+        artifact_uri=artifact_uri,
+        memory_mb=memory_mb,
+        base_image_version=base_version,
+        log_group=log_group_of(name),
+    )
+    # `skip_cache()` del DSL es `force=True`: E2B lo documenta como
+    # "reconstruir aunque nada haya cambiado".
+    if not (force or spec.skip_cache):
+        reusable = find_reusable_version(clients, arn, desired)
+        if reusable is not None:
+            return BuildHandle(arn=arn, version=reusable, name=name, region=region, session=session)
+    submitted_arn, version = submit_build(clients, name, arn, desired)
+    return BuildHandle(
+        arn=submitted_arn, version=version, name=name, region=region, session=session
+    )
 
 
 def get_build_status(handle: BuildHandle) -> BuildStatus:
     clients = _Clients(region=handle.region, session=handle.session)
-    image_state, version_state, _version_status, state_reason = _read_gate(
-        clients, handle.arn, handle.version
-    )
-    if not _settled(image_state, version_state):
+    gate = read_gate(clients, handle.arn, handle.version)
+    if not gate.settled:
         return BuildStatus(state="IN_PROGRESS")
-    if version_state == "FAILED":
-        return BuildStatus(state="FAILED", error_message=state_reason)
-    return BuildStatus(
-        state="SUCCESSFUL",
-        info=BuildInfo(
-            template_id=handle.arn, build_id=f"{handle.version}/{handle.name}", alias=handle.name
-        ),
+    if not gate.launchable:
+        return BuildStatus(
+            state="FAILED",
+            error_message=(
+                f"imagen={gate.image_state} versión={gate.version_state} "
+                f"estado={gate.version_status}"
+            ),
+        )
+    return BuildStatus(state="SUCCESSFUL", info=_build_info(handle))
+
+
+def _build_info(handle: BuildHandle) -> BuildInfo:
+    return BuildInfo(
+        template_id=handle.arn, build_id=f"{handle.version}/{handle.name}", alias=handle.name
     )
 
 
@@ -436,18 +404,19 @@ def await_build(
     timeout: float,
     on_build_logs: Callable[[str], None] | None,
 ) -> BuildInfo:
-    image_state, version_state, _version_status, state_reason = wait_for_gate(
-        clients, handle.arn, handle.version, timeout
-    )
-    log_group = f"{LOG_GROUP_PREFIX}/{handle.name}"
+    gate, timed_out = wait_for_gate(clients, handle.arn, handle.version, timeout, time.sleep)
     if on_build_logs is not None:
-        for line in _read_build_logs(clients, log_group):
+        for line in _read_build_logs(clients, log_group_of(handle.name)):
             on_build_logs(line)
-    if version_state != SUCCESSFUL_VERSION_STATE or image_state not in LAUNCHABLE_IMAGE_STATES:
-        _raise_for_failure(clients, log_group, version_state, state_reason)
-    return BuildInfo(
-        template_id=handle.arn, build_id=f"{handle.version}/{handle.name}", alias=handle.name
-    )
+    if timed_out:
+        raise BuildException(
+            f"el build del template {handle.name!r} no terminó en {timeout:.0f} s; sigue en AWS "
+            "y Template.get_build_status() puede consultarlo",
+            reason="build_timeout",
+        )
+    if not gate.launchable:
+        _raise_for_failure(clients, handle.name, gate)
+    return _build_info(handle)
 
 
 def build(
@@ -455,7 +424,7 @@ def build(
     name: str,
     *,
     bucket: str,
-    memory_mb: int = 2048,
+    memory_mb: int = DEFAULT_MEMORY_MIB,
     cpu_count: int | None = None,
     force: bool = False,
     timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
@@ -466,21 +435,26 @@ def build(
     session: Any = None,
     context_dir: Path | None = None,
 ) -> BuildInfo:
-    handle = submit(
-        template,
-        name,
-        bucket=bucket,
-        memory_mb=memory_mb,
-        cpu_count=cpu_count,
-        force=force,
-        base_image_version=base_image_version,
-        build_role_arn=build_role_arn,
-        region=region,
-        session=session,
-        context_dir=context_dir,
-    )
-    clients = _Clients(region=region, session=session)
-    return await_build(clients, handle, timeout, on_build_logs)
+    """Envía el build y espera el gate. El hueco de `build_slot()` se
+    mantiene durante toda la espera: limita builds en vuelo en AWS desde
+    este proceso, no sólo envíos. `cpu_count` y `build_role_arn` se
+    aceptan pero se ignoran (la CPU sale de `memory_mb`, Q87; el rol de
+    build es el de la imagen base): alcance de 0.6 según el ADR-022."""
+    del cpu_count, build_role_arn
+    with build_slot():
+        handle = _submit_unslotted(
+            template,
+            name,
+            bucket=bucket,
+            memory_mb=memory_mb,
+            force=force,
+            base_image_version=base_image_version,
+            region=region,
+            session=session,
+            context_dir=context_dir,
+        )
+        clients = _Clients(region=region, session=session)
+        return await_build(clients, handle, timeout, on_build_logs)
 
 
 def build_in_background(
@@ -488,7 +462,7 @@ def build_in_background(
     name: str,
     *,
     bucket: str,
-    memory_mb: int = 2048,
+    memory_mb: int = DEFAULT_MEMORY_MIB,
     cpu_count: int | None = None,
     force: bool = False,
     base_image_version: str | None = None,
@@ -497,35 +471,39 @@ def build_in_background(
     session: Any = None,
     context_dir: Path | None = None,
 ) -> BuildHandle:
-    return submit(
-        template,
-        name,
-        bucket=bucket,
-        memory_mb=memory_mb,
-        cpu_count=cpu_count,
-        force=force,
-        base_image_version=base_image_version,
-        build_role_arn=build_role_arn,
-        region=region,
-        session=session,
-        context_dir=context_dir,
-    )
+    """Como `build()` pero vuelve tras el envío. El hueco local sólo cubre
+    la composición y el envío: un build en segundo plano sigue en AWS sin
+    contar contra `MAX_CONCURRENT_BUILDS` (la cuota real de AWS sí lo
+    cuenta y llega como `BuildException(reason="build_quota")`)."""
+    del cpu_count, build_role_arn
+    with build_slot():
+        return _submit_unslotted(
+            template,
+            name,
+            bucket=bucket,
+            memory_mb=memory_mb,
+            force=force,
+            base_image_version=base_image_version,
+            region=region,
+            session=session,
+            context_dir=context_dir,
+        )
 
 
 def template_exists(name: str, *, region: str | None = None, session: Any = None) -> bool:
+    validate_template_name(name)
     clients = _Clients(region=region, session=session)
-    return _image_exists(clients, image_arn(clients, name))
+    return image_exists(clients, image_arn(clients, name))
 
 
-def _latest_version(clients: BuildClients, arn: str) -> str:
-    """La versión más reciente de `arn`, sin filtrar por estado (a
+def _latest_version(clients: BuildClients, name: str) -> str:
+    """La versión más reciente de `name`, sin filtrar por estado (a
     diferencia de `resolve_base_version`): `rayito template status`/`logs`
     sin `--version` quiere ver el build más reciente aunque haya fallado."""
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    items = [item for page in paginator.paginate(imageIdentifier=arn) for item in page["items"]]
-    if not items:
-        raise NotFoundException(f"la imagen {arn!r} no tiene ninguna versión")
-    return str(max(items, key=lambda item: item["createdAt"])["imageVersion"])
+    version = _newest_version(_list_versions(clients, image_arn(clients, name)))
+    if version is None:
+        raise NotFoundException(f"el template {name!r} no tiene ninguna versión")
+    return version
 
 
 def status_by_name(
@@ -533,18 +511,25 @@ def status_by_name(
 ) -> BuildStatus:
     """`rayito template status`: resuelve `version` (la más reciente si no
     se da una) y delega en `get_build_status`."""
+    validate_template_name(name)
     clients = _Clients(region=region, session=session)
-    arn = image_arn(clients, name)
-    resolved_version = version if version is not None else _latest_version(clients, arn)
+    resolved_version = version if version is not None else _latest_version(clients, name)
     return get_build_status(
-        BuildHandle(arn=arn, version=resolved_version, name=name, region=region, session=session)
+        BuildHandle(
+            arn=image_arn(clients, name),
+            version=resolved_version,
+            name=name,
+            region=region,
+            session=session,
+        )
     )
 
 
 def read_recent_logs(
-    name: str, *, region: str | None = None, session: Any = None, limit: int = 500
+    name: str, *, region: str | None = None, session: Any = None, limit: int = BUILD_LOG_LINES
 ) -> list[str]:
     """`rayito template logs`: las líneas más recientes del grupo de logs
     de la imagen, sin importar si el último build terminó bien o mal."""
+    validate_template_name(name)
     clients = _Clients(region=region, session=session)
-    return _read_build_logs(clients, f"{LOG_GROUP_PREFIX}/{name}", limit)
+    return _read_build_logs(clients, log_group_of(name), limit)

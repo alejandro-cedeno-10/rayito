@@ -18,6 +18,7 @@ import pytest
 from botocore.stub import ANY
 from typer.testing import CliRunner
 
+from rayito import _images
 from rayito.cli import _artifact, _publish
 from rayito.cli._session import Clients
 from rayito.cli.app import app
@@ -91,8 +92,8 @@ def test_configuration_matches_never_reuses_a_default_version_for_the_variant() 
         FakeClients(), settings(os_capabilities="ALL"), "s3://b/k.zip"
     )
     default_version = {k: v for k, v in caps.items() if k != "additionalOsCapabilities"}
-    assert not _publish.configuration_matches(default_version, caps)
-    assert _publish.configuration_matches(caps, caps)
+    assert not _images.configuration_matches(default_version, caps)
+    assert _images.configuration_matches(caps, caps)
 
 
 def test_configuration_matches_reuses_a_version_echoing_normalised_base() -> None:
@@ -101,15 +102,15 @@ def test_configuration_matches_reuses_a_version_echoing_normalised_base() -> Non
     )
     echoed_by_list = {**desired, "baseImageVersion": "1.0"}
     other_base = {**desired, "baseImageVersion": "2"}
-    assert _publish.configuration_matches(echoed_by_list, desired)
-    assert not _publish.configuration_matches(other_base, desired)
-    assert not _publish.configuration_matches(
+    assert _images.configuration_matches(echoed_by_list, desired)
+    assert not _images.configuration_matches(other_base, desired)
+    assert not _images.configuration_matches(
         {**echoed_by_list, "codeArtifact": {"uri": "s3://b/other.zip"}}, desired
     )
 
 
 def test_base_image_version_matches_only_numerically_equal_spellings() -> None:
-    matches = _publish.base_image_version_matches
+    matches = _images.base_image_version_matches
     assert matches("1.0", "1")
     assert matches("1", "1.0")
     assert matches("1.0", "1.0")

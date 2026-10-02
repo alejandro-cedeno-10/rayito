@@ -27,7 +27,26 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { clientConfig } from "../aws/control-plane.js";
 import { awsCode, loadOptionalSdkClient, type OptionalSdkClient } from "../aws/optional-client.js";
-import { BuildError, InvalidArgumentError, NotFoundError } from "../errors.js";
+import { BuildError, InvalidArgumentError, NotFoundError, TemplateError } from "../errors.js";
+import {
+  accountImageArn,
+  BUILD_QUOTA_ERROR_CODE,
+  DEFAULT_BUILD_TIMEOUT_MS,
+  DEFAULT_MEMORY_MIB,
+  findReusableVersion,
+  type ImageBuildClients,
+  inheritedConfiguration,
+  isActiveSuccessful,
+  LOG_GROUP_PREFIX,
+  MISSING_OBJECT_CODES,
+  newestVersion,
+  readGate,
+  type SubmittedBuild,
+  submitImageBuild,
+  uploadIfAbsent,
+  type VersionGate,
+  waitForGate,
+} from "../images/gateway.js";
 import { SUPPORTED_MEMORY_MIB } from "../limits.js";
 import { assembleArtifact } from "./artifact.js";
 import { withBuildSlot } from "./concurrency.js";
@@ -37,14 +56,12 @@ import type { Template } from "./dsl.js";
 import { BASE_IMAGE_KIND, type TemplateSpec } from "./instructions.js";
 import { classifyReadyFailure, parseBuildFailure } from "./logs.js";
 
+/** Clave S3 del artefacto, direccionada por contenido (`rayito/templates/<sha256>.zip`). */
 const S3_KEY_PREFIX = "rayito/templates";
-const LOG_GROUP_PREFIX = "/rayito";
-const POLL_INTERVAL_MS = 10_000;
-const DEFAULT_BUILD_TIMEOUT_MS = 1_800_000;
-const LAUNCHABLE_IMAGE_STATES = new Set(["CREATED", "UPDATED"]);
-const SETTLED_VERSION_STATES = new Set(["SUCCESSFUL", "FAILED"]);
-const MISSING_OBJECT_CODES = new Set(["404", "NoSuchKey", "NotFound", "403"]);
-const CPU_ARCHITECTURE = "ARM_64";
+/** Descripción de cada versión que crea `Template.build()`. */
+const BUILD_DESCRIPTION = "rayito template build";
+/** Líneas de log que se releen para explicar un fallo (`GetLogEvents` `limit`, §27). */
+const BUILD_LOG_LINES = 500;
 const CLOUDWATCH_LOGS_PEER = "@aws-sdk/client-cloudwatch-logs";
 
 export interface BuildOptions {
@@ -82,27 +99,12 @@ export interface BuildStatus {
 }
 
 /** Lo que el pipeline de `Template.build()` necesita (puerto, para poder
- * probar con un doble sin AWS real). */
-export interface BuildClients {
+ * probar con un doble sin AWS real): el de `images/gateway.ts` más la
+ * cuenta, la descarga del zip base y la lectura de logs. */
+export interface BuildClients extends ImageBuildClients {
   readonly region: string;
   accountId(): Promise<string>;
-  getMicrovmImage(arn: string): Promise<{ state: string } | undefined>;
-  getMicrovmImageVersion(
-    arn: string,
-    version: string,
-  ): Promise<Record<string, unknown> | undefined>;
-  listActiveSuccessfulVersions(arn: string): Promise<Array<Record<string, unknown>>>;
   getObject(bucket: string, key: string): Promise<Uint8Array | undefined>;
-  headObject(bucket: string, key: string): Promise<boolean>;
-  putObject(bucket: string, key: string, body: Uint8Array): Promise<void>;
-  createMicrovmImage(
-    name: string,
-    request: Record<string, unknown>,
-  ): Promise<{ imageArn: string; imageVersion: string }>;
-  updateMicrovmImage(
-    arn: string,
-    request: Record<string, unknown>,
-  ): Promise<{ imageArn: string; imageVersion: string }>;
   readBuildLogs(logGroup: string): Promise<string[]>;
 }
 
@@ -194,16 +196,14 @@ class AwsBuildClients implements BuildClients {
     }
   }
 
-  async listActiveSuccessfulVersions(arn: string): Promise<Array<Record<string, unknown>>> {
+  async listMicrovmImageVersions(arn: string): Promise<Array<Record<string, unknown>>> {
     const items: Array<Record<string, unknown>> = [];
     for await (const page of paginateListMicrovmImageVersions(
       { client: this.#microvms },
       { imageIdentifier: arn },
     )) {
       for (const item of page.items ?? []) {
-        if (item.state === "SUCCESSFUL" && item.status === "ACTIVE") {
-          items.push(item as unknown as Record<string, unknown>);
-        }
+        items.push(item as unknown as Record<string, unknown>);
       }
     }
     return items;
@@ -306,18 +306,37 @@ class AwsBuildClients implements BuildClients {
       new sdk.GetLogEventsCommand({
         logGroupName: logGroup,
         logStreamName: streamName,
-        limit: 500,
+        limit: BUILD_LOG_LINES,
       }),
     );
     return (events.events ?? []).map((event) => event.message ?? "");
   }
 }
 
-function imageArn(clients: BuildClients, name: string, accountId: string): string {
+/** `name` de `CreateMicrovmImageRequest`: 1-64 de `[a-zA-Z0-9-_]`
+ * (`AWS_API_NOTES.md` §4). Un `"nombre:tag"` de E2B no cabe ahí. */
+const TEMPLATE_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** `TemplateError` si `name` no es un nombre de imagen válido; un ARN
+ * completo se acepta tal cual. Espejo de `_build.validate_template_name`. */
+export function validateTemplateName(name: string): void {
   if (name.startsWith("arn:")) {
-    return name;
+    return;
   }
-  return `arn:aws:lambda:${clients.region}:${accountId}:microvm-image:${name}`;
+  if (!TEMPLATE_NAME_PATTERN.test(name)) {
+    throw new TemplateError(
+      `nombre de template inválido ${JSON.stringify(name)}: 1-64 caracteres de [A-Za-z0-9_-] ` +
+        "(sin ':tag'; Lambda MicroVMs versiona cada build por su cuenta)",
+    );
+  }
+}
+
+function imageArn(clients: BuildClients, name: string, accountId: string): string {
+  return accountImageArn(clients.region, accountId, name);
+}
+
+function logGroupOf(name: string): string {
+  return `${LOG_GROUP_PREFIX}/${name}`;
 }
 
 function validateMemory(memoryMb: number): void {
@@ -330,32 +349,18 @@ function validateMemory(memoryMb: number): void {
 
 async function resolveBaseVersion(
   clients: BuildClients,
-  baseArn: string,
+  baseName: string,
   version: string | undefined,
 ): Promise<Record<string, unknown>> {
-  if (version !== undefined) {
-    const detail = await clients.getMicrovmImageVersion(baseArn, version);
-    if (detail === undefined) {
-      throw new NotFoundError(`la imagen base ${baseArn} no tiene la versión ${version}`);
-    }
-    return detail;
-  }
-  const candidates = await clients.listActiveSuccessfulVersions(baseArn);
-  if (candidates.length === 0) {
-    throw new NotFoundError(
-      `la imagen base ${baseArn} no tiene ninguna versión activa que componer`,
-    );
-  }
-  const latest = candidates.reduce((best, item) =>
-    new Date(best["createdAt"] as string | number | Date).getTime() >
-    new Date(item["createdAt"] as string | number | Date).getTime()
-      ? best
-      : item,
-  );
-  const detail = await clients.getMicrovmImageVersion(baseArn, String(latest["imageVersion"]));
+  const baseArn = imageArn(clients, baseName, await clients.accountId());
+  const resolved =
+    version ??
+    newestVersion((await clients.listMicrovmImageVersions(baseArn)).filter(isActiveSuccessful));
+  const detail =
+    resolved === undefined ? undefined : await clients.getMicrovmImageVersion(baseArn, resolved);
   if (detail === undefined) {
     throw new NotFoundError(
-      `la imagen base ${baseArn} no tiene ninguna versión activa que componer`,
+      `la imagen base ${JSON.stringify(baseName)} no tiene ninguna versión activa que componer`,
     );
   }
   return detail;
@@ -400,60 +405,50 @@ async function uploadArtifact(
   payload: Uint8Array,
 ): Promise<string> {
   const key = `${S3_KEY_PREFIX}/${createHash("sha256").update(payload).digest("hex")}.zip`;
-  if (!(await clients.headObject(bucket, key))) {
-    await clients.putObject(bucket, key, payload);
-  }
+  await uploadIfAbsent(clients, bucket, key, payload);
   return `s3://${bucket}/${key}`;
 }
 
+/** El cuerpo de `create`/`update-microvm-image`: toda la configuración que
+ * la versión base declaró (`inheritedConfiguration`, incluida
+ * `additionalOsCapabilities` de la variante `caps`) más el artefacto, la
+ * memoria y el grupo de logs propios del template. */
 function desiredConfiguration(options: {
   artifactUri: string;
   memoryMb: number;
   baseImageVersion: Record<string, unknown>;
   logGroup: string;
 }): Record<string, unknown> {
-  const base = options.baseImageVersion;
   return {
-    baseImageArn: base["baseImageArn"],
-    baseImageVersion: String(base["baseImageVersion"]),
-    buildRoleArn: base["buildRoleArn"],
+    ...inheritedConfiguration(options.baseImageVersion),
     codeArtifact: { uri: options.artifactUri },
     resources: [{ minimumMemoryInMiB: options.memoryMb }],
-    cpuConfigurations: [{ architecture: CPU_ARCHITECTURE }],
-    hooks: base["hooks"],
     logging: { cloudWatch: { logGroup: options.logGroup } },
   };
 }
 
-function configurationMatches(
-  version: Record<string, unknown>,
-  desired: Record<string, unknown>,
-): boolean {
-  return Object.entries(desired).every(([key, value]) => deepEqual(version[key], value));
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-async function reusableVersion(
+/** La cuota de 10 builds simultáneos (Q83) llega como `BuildError({reason: "build_quota"})`. */
+async function submitBuild(
   clients: BuildClients,
+  name: string,
   arn: string,
   desired: Record<string, unknown>,
-): Promise<string | undefined> {
-  const candidates = (await clients.listActiveSuccessfulVersions(arn)).filter((item) =>
-    configurationMatches(item, desired),
-  );
-  if (candidates.length === 0) {
-    return undefined;
+): Promise<SubmittedBuild> {
+  try {
+    return await submitImageBuild(clients, name, arn, {
+      ...desired,
+      description: BUILD_DESCRIPTION,
+    });
+  } catch (error) {
+    if (awsCode(error) === BUILD_QUOTA_ERROR_CODE) {
+      throw new BuildError(
+        `AWS rechazó el build del template ${JSON.stringify(name)}: cuota de builds ` +
+          "simultáneos de la cuenta agotada (Q83); reintenta cuando termine alguno",
+        { reason: "build_quota" },
+      );
+    }
+    throw error;
   }
-  const latest = candidates.reduce((best, item) =>
-    new Date(best["createdAt"] as string | number | Date).getTime() >
-    new Date(item["createdAt"] as string | number | Date).getTime()
-      ? best
-      : item,
-  );
-  return String(latest["imageVersion"]);
 }
 
 function composeSpec(template: Template, baseImageVersion: string | undefined): TemplateSpec {
@@ -475,9 +470,7 @@ async function compose(
         "imagen rayito-base ya publicada)",
     );
   }
-  const accountId = await clients.accountId();
-  const baseArn = imageArn(clients, spec.base.name, accountId);
-  const baseVersion = await resolveBaseVersion(clients, baseArn, spec.base.version);
+  const baseVersion = await resolveBaseVersion(clients, spec.base.name, spec.base.version);
   const baseZip = await fetchBaseArtifact(clients, baseVersion);
   const contextFiles = await collectContextFiles(contextDir, copySteps(spec.steps));
   return { artifact: assembleArtifact(baseZip, spec, contextFiles), baseVersion };
@@ -505,111 +498,65 @@ export function _setBuildClientsFactory(factory: typeof buildClientsFactory): vo
   createBuildClients = factory;
 }
 
-async function submit(
+async function submitUnslotted(
   template: Template,
   name: string,
   options: BuildOptions,
 ): Promise<BuildHandle> {
-  const memoryMb = options.memoryMb ?? 2048;
+  validateTemplateName(name);
+  const memoryMb = options.memoryMb ?? DEFAULT_MEMORY_MIB;
   validateMemory(memoryMb);
   const spec = composeSpec(template, options.baseImageVersion);
-  return withBuildSlot(async () => {
-    const clients = createBuildClients(options.region, options.credentials);
-    const { artifact, baseVersion } = await compose(clients, spec, options.contextDir ?? ".");
-    const artifactUri = await uploadArtifact(clients, options.bucket, artifact);
-    const accountId = await clients.accountId();
-    const arn = imageArn(clients, name, accountId);
-    const logGroup = `${LOG_GROUP_PREFIX}/${name}`;
-    const desired = desiredConfiguration({
-      artifactUri,
-      memoryMb,
-      baseImageVersion: baseVersion,
-      logGroup,
-    });
-    if (!(options.force ?? false)) {
-      const reusable = await reusableVersion(clients, arn, desired);
-      if (reusable !== undefined) {
-        return {
-          arn,
-          version: reusable,
-          name,
-          region: options.region,
-          credentials: options.credentials,
-        };
-      }
-    }
-    const existing = await clients.getMicrovmImage(arn);
-    const response =
-      existing === undefined
-        ? await clients.createMicrovmImage(name, desired)
-        : await clients.updateMicrovmImage(arn, desired);
-    return {
-      arn: response.imageArn,
-      version: response.imageVersion,
-      name,
-      region: options.region,
-      credentials: options.credentials,
-    };
+  const clients = createBuildClients(options.region, options.credentials);
+  const { artifact, baseVersion } = await compose(clients, spec, options.contextDir ?? ".");
+  const artifactUri = await uploadArtifact(clients, options.bucket, artifact);
+  const arn = imageArn(clients, name, await clients.accountId());
+  const desired = desiredConfiguration({
+    artifactUri,
+    memoryMb,
+    baseImageVersion: baseVersion,
+    logGroup: logGroupOf(name),
   });
+  const handle = { name, region: options.region, credentials: options.credentials };
+  // `skipCache()` del DSL es `force: true` (E2B: "reconstruir aunque nada cambie").
+  if (!(options.force ?? false) && !spec.skipCache) {
+    const reusable = await findReusableVersion(clients, arn, desired);
+    if (reusable !== undefined) {
+      return { ...handle, arn, version: reusable };
+    }
+  }
+  const submitted = await submitBuild(clients, name, arn, desired);
+  return { ...handle, arn: submitted.arn, version: submitted.version };
 }
 
-function settled(imageState: string, versionState: string): boolean {
-  return (
-    SETTLED_VERSION_STATES.has(versionState) &&
-    (LAUNCHABLE_IMAGE_STATES.has(imageState) || versionState === "FAILED")
-  );
-}
-
-async function readGate(
-  clients: BuildClients,
-  arn: string,
-  version: string,
-): Promise<{ imageState: string; versionState: string; stateReason: string | undefined }> {
-  const image = await clients.getMicrovmImage(arn);
-  const detail = await clients.getMicrovmImageVersion(arn, version);
+function buildInfo(handle: BuildHandle): BuildInfo {
   return {
-    imageState: image?.state ?? "",
-    versionState: String(detail?.["state"] ?? ""),
-    stateReason: detail?.["stateReason"] as string | undefined,
+    templateId: handle.arn,
+    buildId: `${handle.version}/${handle.name}`,
+    alias: handle.name,
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForGate(
-  clients: BuildClients,
-  arn: string,
-  version: string,
-  timeoutMs: number,
-): Promise<{ imageState: string; versionState: string; stateReason: string | undefined }> {
-  const started = Date.now();
-  for (;;) {
-    const gate = await readGate(clients, arn, version);
-    if (settled(gate.imageState, gate.versionState) || Date.now() - started >= timeoutMs) {
-      return gate;
-    }
-    await sleep(POLL_INTERVAL_MS);
-  }
-}
-
-function raiseForFailure(
-  versionState: string,
-  stateReason: string | undefined,
-  logLines: string[],
-): never {
-  const readyReason = classifyReadyFailure(stateReason);
+/** `stateReason` sólo clasifica (`classifyReadyFailure`); nunca se copia al mensaje. */
+function raiseForFailure(name: string, gate: VersionGate, logLines: string[]): never {
+  const readyReason = classifyReadyFailure(gate.stateReason);
   if (readyReason !== undefined) {
-    throw new BuildError(stateReason ?? "el ready cmd falló", { reason: readyReason });
+    throw new BuildError(
+      `el ready cmd del template ${JSON.stringify(name)} respondió con un error HTTP durante el build`,
+      { reason: readyReason },
+    );
   }
   const detail = parseBuildFailure(logLines);
-  throw new BuildError(stateReason ?? `el build terminó en estado ${versionState}`, {
-    step: detail.step,
-    command: detail.command,
-    exitCode: detail.exitCode,
-    logTail: detail.logTail,
-  });
+  throw new BuildError(
+    `el build del template ${JSON.stringify(name)} terminó en imagen=${gate.imageState} ` +
+      `versión=${gate.versionState}`,
+    {
+      step: detail.step,
+      command: detail.command,
+      exitCode: detail.exitCode,
+      logTail: detail.logTail,
+    },
+  );
 }
 
 async function awaitBuild(
@@ -618,77 +565,85 @@ async function awaitBuild(
   timeoutMs: number,
   onBuildLogs: ((line: string) => void) | undefined,
 ): Promise<BuildInfo> {
-  const gate = await waitForGate(clients, handle.arn, handle.version, timeoutMs);
-  const logGroup = `${LOG_GROUP_PREFIX}/${handle.name}`;
-  const logLines =
-    onBuildLogs !== undefined || gate.versionState === "FAILED"
-      ? await clients.readBuildLogs(logGroup)
-      : [];
+  const { gate, timedOut } = await waitForGate(clients, handle.arn, handle.version, timeoutMs);
+  const needsLogs = onBuildLogs !== undefined || (!timedOut && !gate.launchable);
+  const logLines = needsLogs ? await clients.readBuildLogs(logGroupOf(handle.name)) : [];
   if (onBuildLogs !== undefined) {
     for (const line of logLines) {
       onBuildLogs(line);
     }
   }
-  if (gate.versionState !== "SUCCESSFUL" || !LAUNCHABLE_IMAGE_STATES.has(gate.imageState)) {
-    raiseForFailure(gate.versionState, gate.stateReason, logLines);
+  if (timedOut) {
+    throw new BuildError(
+      `el build del template ${JSON.stringify(handle.name)} no terminó en ` +
+        `${Math.round(timeoutMs / 1000)} s; sigue en AWS y Template.getBuildStatus() puede consultarlo`,
+      { reason: "build_timeout" },
+    );
   }
-  return {
-    templateId: handle.arn,
-    buildId: `${handle.version}/${handle.name}`,
-    alias: handle.name,
-  };
+  if (!gate.launchable) {
+    raiseForFailure(handle.name, gate, logLines);
+  }
+  return buildInfo(handle);
 }
 
+/** Envía el build y espera el gate; el hueco de `withBuildSlot` se mantiene
+ * durante toda la espera (limita builds en vuelo, no sólo envíos). */
 export async function build(
   template: Template,
   name: string,
   options: BuildOptions,
 ): Promise<BuildInfo> {
-  const handle = await submit(template, name, options);
-  const clients = createBuildClients(options.region, options.credentials);
-  return awaitBuild(
-    clients,
-    handle,
-    options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
-    options.onBuildLogs,
-  );
+  return withBuildSlot(async () => {
+    const handle = await submitUnslotted(template, name, options);
+    const clients = createBuildClients(options.region, options.credentials);
+    return awaitBuild(
+      clients,
+      handle,
+      options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
+      options.onBuildLogs,
+    );
+  });
 }
 
+/** Como `build` pero vuelve tras el envío: el hueco local sólo cubre la
+ * composición y el envío; un build en segundo plano sigue en AWS sin contar
+ * contra `MAX_CONCURRENT_BUILDS` (la cuota real de AWS sí lo cuenta y llega
+ * como `BuildError({reason: "build_quota"})`). */
 export async function buildInBackground(
   template: Template,
   name: string,
   options: BuildOptions,
 ): Promise<BuildHandle> {
-  return submit(template, name, options);
+  return withBuildSlot(() => submitUnslotted(template, name, options));
 }
 
 export async function getBuildStatus(handle: BuildHandle): Promise<BuildStatus> {
   const clients = createBuildClients(handle.region, handle.credentials);
   const gate = await readGate(clients, handle.arn, handle.version);
-  if (!settled(gate.imageState, gate.versionState)) {
+  if (!gate.settled) {
     return { state: "IN_PROGRESS" };
   }
-  if (gate.versionState === "FAILED") {
-    return { state: "FAILED", errorMessage: gate.stateReason };
+  if (!gate.launchable) {
+    return {
+      state: "FAILED",
+      errorMessage: `imagen=${gate.imageState} versión=${gate.versionState} estado=${gate.versionStatus}`,
+    };
   }
-  return {
-    state: "SUCCESSFUL",
-    info: {
-      templateId: handle.arn,
-      buildId: `${handle.version}/${handle.name}`,
-      alias: handle.name,
-    },
-  };
+  return { state: "SUCCESSFUL", info: buildInfo(handle) };
 }
 
 export async function templateExists(
   name: string,
   options: { region?: string; credentials?: BuildOptions["credentials"] } = {},
 ): Promise<boolean> {
+  validateTemplateName(name);
   const clients = createBuildClients(options.region, options.credentials);
-  const accountId = await clients.accountId();
-  const arn = imageArn(clients, name, accountId);
+  const arn = imageArn(clients, name, await clients.accountId());
   return (await clients.getMicrovmImage(arn)) !== undefined;
 }
 
-export { desiredConfiguration as _desiredConfigurationForTests, imageArn as _imageArnForTests };
+export {
+  desiredConfiguration as _desiredConfigurationForTests,
+  imageArn as _imageArnForTests,
+  resolveBaseVersion as _resolveBaseVersionForTests,
+};

@@ -8,6 +8,7 @@
  */
 
 import { InvalidArgumentError, UnimplementedError } from "../errors.js";
+import { DEFAULT_BASE_IMAGE_NAME } from "../images/gateway.js";
 import {
   type BuildHandle,
   type BuildInfo,
@@ -30,9 +31,7 @@ import {
 } from "./instructions.js";
 import type { ReadyCommand } from "./ready-cmds.js";
 
-/** Nombre por defecto de `rayito image publish`: la imagen que
- * `fromBaseImage()` compone cuando no se nombra una explícita. */
-export const DEFAULT_BASE_IMAGE_NAME = "rayito-base";
+export { DEFAULT_BASE_IMAGE_NAME };
 
 const UNSUPPORTED_BASE_REASON = (method: string): string =>
   `Template.${method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo ` +
@@ -183,17 +182,23 @@ export class Template {
     return this.withStep({ kind: "user", user });
   }
 
-  /** 0.6 no tiene caché de capas propia: esto sólo fuerza `Template.build({force: true})`
-   * en vez de reusar una versión existente con la misma configuración. */
+  /** 0.6 no tiene caché de capas propia: esto hace que `Template.build()`/
+   * `buildInBackground()` se comporten como con `{ force: true }` — envían un
+   * build nuevo aunque ya exista una versión con la misma configuración. */
   skipCache(value = true): this {
     return this.withSpec({ ...this.spec, skipCache: value });
   }
 
   // -- start / ready -------------------------------------------------------
 
-  /** Hornea `/etc/rayito/template.json`: `rayd` arranca `startCmd` como
-   * proceso gestionado antes del primer `/ready` y, si hay `readyCmd`, lo
-   * sondea hasta que sale con 0 o se agota `ReadyPoll.timeoutSeconds`. */
+  /** Hornea `/etc/rayito/template.json` (`rayito.template/1`). Al arrancar,
+   * un `rayd` 0.6 o posterior lo lee y, tras el hook `/run`, lanza
+   * `startCmd` como proceso gestionado (visible en `commands.list()`); si
+   * hay `readyCmd`, `/ready` responde 503 hasta que el comando sale con 0, y
+   * falla al agotarse `ReadyPoll.timeoutSeconds` (una cadena cruda se sondea
+   * con la cadencia por defecto, 0,5 s durante 60 s). Requiere que la imagen
+   * base se haya publicado con `rayd` 0.6 o posterior: un `rayd` anterior
+   * ignora el fichero. */
   setStartCmd(
     startCmd: string,
     readyCmd?: ReadyCommand | string,

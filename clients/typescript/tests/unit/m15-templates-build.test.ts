@@ -4,7 +4,12 @@
  */
 
 import { afterEach, describe, expect, test } from "vitest";
-import { BuildError, InvalidArgumentError, NotFoundError } from "../../src/errors.js";
+import {
+  BuildError,
+  InvalidArgumentError,
+  NotFoundError,
+  TemplateError,
+} from "../../src/errors.js";
 import {
   _resetBuildClientsFactory,
   _setBuildClientsFactory,
@@ -15,6 +20,7 @@ import {
   _imageArnForTests as imageArn,
   templateExists,
 } from "../../src/templates/build.js";
+import { buildsInFlight } from "../../src/templates/concurrency.js";
 import { Template } from "../../src/templates/dsl.js";
 import { FakeBuildClients, makeBaseZip } from "./m15-fake-build-clients.js";
 
@@ -216,5 +222,126 @@ describe("templates/build", () => {
         contextDir: ".",
       }),
     ).rejects.toBeInstanceOf(BuildError);
+  });
+
+  test("desiredConfiguration keeps the caps variant's OS capabilities", () => {
+    const desired = desiredConfiguration({
+      artifactUri: "s3://bucket/key.zip",
+      memoryMb: 2048,
+      baseImageVersion: {
+        baseImageArn: "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        baseImageVersion: "1.0",
+        buildRoleArn: "arn:aws:iam::123456789012:role/rayito-build",
+        hooks: BASE_HOOKS,
+        cpuConfigurations: [{ architecture: "ARM_64" }],
+        additionalOsCapabilities: ["ALL"],
+      },
+      logGroup: "/rayito/x",
+    });
+    expect(desired["additionalOsCapabilities"]).toEqual(["ALL"]);
+    expect(desired["cpuConfigurations"]).toEqual([{ architecture: "ARM_64" }]);
+    expect(desired["codeArtifact"]).toEqual({ uri: "s3://bucket/key.zip" });
+  });
+
+  test("a caps base image builds a caps template", async () => {
+    const clients = clientsWithBaseImage();
+    const base = clients.versions.get(`${BASE_ARN}#1`);
+    clients.versions.set(`${BASE_ARN}#1`, { ...base!, additionalOsCapabilities: ["ALL"] });
+    _setBuildClientsFactory(() => clients);
+
+    const handle = await buildInBackground(new Template().fromBaseImage(), "mi-template", {
+      bucket: BUCKET,
+      contextDir: ".",
+    });
+
+    expect(
+      clients.versions.get(`${handle.arn}#${handle.version}`)?.["additionalOsCapabilities"],
+    ).toEqual(["ALL"]);
+  });
+
+  test("skipCache rebuilds even with an identical configuration", async () => {
+    const clients = clientsWithBaseImage();
+    _setBuildClientsFactory(() => clients);
+
+    await build(new Template().fromBaseImage(), "mi-template", { bucket: BUCKET, contextDir: "." });
+    clients.calls.length = 0;
+    await build(new Template().fromBaseImage().skipCache(), "mi-template", {
+      bucket: BUCKET,
+      contextDir: ".",
+    });
+
+    expect(clients.calls.some((call) => call[0] === "updateMicrovmImage")).toBe(true);
+  });
+
+  test("the AWS build quota is a BuildError with reason build_quota", async () => {
+    const clients = clientsWithBaseImage();
+    clients.submitErrorName = "ServiceQuotaExceededException";
+    _setBuildClientsFactory(() => clients);
+
+    await expect(
+      buildInBackground(new Template().fromBaseImage(), "mi-template", {
+        bucket: BUCKET,
+        contextDir: ".",
+      }),
+    ).rejects.toMatchObject({ reason: "build_quota" });
+  });
+
+  test("build holds its slot while waiting for the gate", async () => {
+    const clients = clientsWithBaseImage();
+    const slotsDuringGate: number[] = [];
+    const original = clients.getMicrovmImageVersion.bind(clients);
+    clients.getMicrovmImageVersion = async (arn, version) => {
+      if (arn.endsWith(":mi-template")) {
+        slotsDuringGate.push(buildsInFlight());
+      }
+      return original(arn, version);
+    };
+    _setBuildClientsFactory(() => clients);
+
+    await build(new Template().fromBaseImage(), "mi-template", { bucket: BUCKET, contextDir: "." });
+
+    expect(slotsDuringGate.length).toBeGreaterThan(0);
+    expect(slotsDuringGate.every((slots) => slots === 1)).toBe(true);
+    expect(buildsInFlight()).toBe(0);
+  });
+
+  test.each(["mi-template:v1", "", "con espacio", "x".repeat(65)])(
+    "an invalid template name %j is a TemplateError",
+    async (name) => {
+      await expect(
+        build(new Template().fromBaseImage(), name, { bucket: BUCKET }),
+      ).rejects.toBeInstanceOf(TemplateError);
+    },
+  );
+
+  test("a failed build message names the template, not the ARN or AWS text", async () => {
+    const clients = clientsWithBaseImage();
+    clients.failNextBuildWith("Build failed for arn:aws:lambda:us-east-1:123456789012:x");
+    _setBuildClientsFactory(() => clients);
+
+    const error = await build(new Template().fromBaseImage(), "mi-template", {
+      bucket: BUCKET,
+      contextDir: ".",
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught as BuildError,
+    );
+
+    expect(error).toBeInstanceOf(BuildError);
+    expect(error?.message).toContain("mi-template");
+    expect(error?.message).not.toContain(clients.accountIdValue);
+    expect(error?.message).not.toContain("Build failed for");
+  });
+
+  test("a missing base image is NotFoundError without the account id", async () => {
+    _setBuildClientsFactory(() => new FakeBuildClients());
+    const error = await build(new Template().fromBaseImage(), "mi-template", {
+      bucket: BUCKET,
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught as Error,
+    );
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect(error?.message).not.toContain("123456789012");
   });
 });

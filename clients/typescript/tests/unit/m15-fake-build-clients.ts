@@ -37,6 +37,9 @@ export class FakeBuildClients implements BuildClients {
   readonly objects = new Map<string, Uint8Array>();
   logLines: string[] = [];
   nextBuildVersion = "1";
+  /** Nombre del error del SDK que create/update-microvm-image lanzan en
+   * vez de aceptar el build (p. ej. `ServiceQuotaExceededException`, Q83). */
+  submitErrorName: string | undefined;
   readonly calls: Array<[string, ...unknown[]]> = [];
 
   private key(bucket: string, objectKey: string): string {
@@ -64,13 +67,10 @@ export class FakeBuildClients implements BuildClients {
     return this.versions.get(this.versionKey(arn, version));
   }
 
-  async listActiveSuccessfulVersions(arn: string): Promise<Array<Record<string, unknown>>> {
-    this.calls.push(["listActiveSuccessfulVersions", arn]);
+  async listMicrovmImageVersions(arn: string): Promise<Array<Record<string, unknown>>> {
+    this.calls.push(["listMicrovmImageVersions", arn]);
     return [...this.versions.entries()]
-      .filter(
-        ([key, item]) =>
-          key.startsWith(`${arn}#`) && item.state === "SUCCESSFUL" && item.status === "ACTIVE",
-      )
+      .filter(([key]) => key.startsWith(`${arn}#`))
       .map(([, item]) => item);
   }
 
@@ -94,6 +94,7 @@ export class FakeBuildClients implements BuildClients {
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }> {
     this.calls.push(["createMicrovmImage", name]);
+    this.throwSubmitError();
     const arn = `arn:aws:lambda:${this.region}:${this.accountIdValue}:microvm-image:${name}`;
     const version = this.nextBuildVersion;
     this.images.set(arn, { state: "CREATED" });
@@ -112,6 +113,7 @@ export class FakeBuildClients implements BuildClients {
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }> {
     this.calls.push(["updateMicrovmImage", arn]);
+    this.throwSubmitError();
     const version = this.nextBuildVersion;
     this.versions.set(this.versionKey(arn, version), {
       state: "SUCCESSFUL",
@@ -121,6 +123,14 @@ export class FakeBuildClients implements BuildClients {
       ...request,
     });
     return { imageArn: arn, imageVersion: version };
+  }
+
+  private throwSubmitError(): void {
+    if (this.submitErrorName !== undefined) {
+      const error = new Error(this.submitErrorName);
+      error.name = this.submitErrorName;
+      throw error;
+    }
   }
 
   async readBuildLogs(_logGroup: string): Promise<string[]> {

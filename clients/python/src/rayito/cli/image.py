@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 import typer
 
+from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS, DEFAULT_MEMORY_MIB
 from rayito.cli._artifact import VARIANTS, artifact_sha256, copy_sidecar, write_zip
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._prune import (
@@ -19,8 +20,6 @@ from rayito.cli._prune import (
 )
 from rayito.cli._prune import run as run_prune
 from rayito.cli._publish import (
-    DEFAULT_BUILD_TIMEOUT_SECONDS,
-    DEFAULT_MEMORY_MIB,
     DEFAULT_STACK_NAME,
     OS_CAPABILITY_CHOICES,
     PublishSettings,

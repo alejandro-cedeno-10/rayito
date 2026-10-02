@@ -52,35 +52,36 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._images import (
+    DEFAULT_BASE_IMAGE_NAME,
+    LOG_GROUP_PREFIX,
+    VersionGate,
+    account_image_arn,
+    find_reusable_version,
+    image_exists,
+    submit_image_build,
+    upload_if_absent,
+)
+from rayito._images import wait_for_gate as wait_for_image_gate
 from rayito.cli._artifact import VARIANTS, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
 
-DEFAULT_IMAGE_NAME = "rayito-base"
+DEFAULT_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME
 DEFAULT_IMAGE_NAMES = {
     "full": DEFAULT_IMAGE_NAME,
     "slim": f"{DEFAULT_IMAGE_NAME}-slim",
     "poly": f"{DEFAULT_IMAGE_NAME}-poly",
 }
 DEFAULT_STACK_NAME = "rayito-m0-iam"
-DEFAULT_MEMORY_MIB = 2048
 OS_CAPABILITY_CHOICES = ("ALL",)
 BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
-LOG_GROUP_PREFIX = "/rayito"
 HOOKS_PORT = 9000
-POLL_INTERVAL_SECONDS = 10.0
-DEFAULT_BUILD_TIMEOUT_SECONDS = 1800.0
-LAUNCHABLE_IMAGE_STATES = frozenset({"CREATED", "UPDATED"})
-FAILED_IMAGE_STATES = frozenset({"CREATE_FAILED", "UPDATE_FAILED"})
-SETTLED_VERSION_STATES = frozenset({"SUCCESSFUL", "FAILED"})
-MISSING_OBJECT_CODES = frozenset({"404", "NoSuchKey", "NotFound", "403"})
-BASE_IMAGE_VERSION_KEY = "baseImageVersion"
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
 
 IMAGE_HOOKS: dict[str, Any] = {
@@ -148,39 +149,6 @@ class PublishSettings:
         return f"{LOG_GROUP_PREFIX}/{self.image_name}"
 
 
-@dataclass(frozen=True)
-class VersionGate:
-    """The three independent states that must all pass before ``run-microvm``."""
-
-    image_state: str
-    version_state: str
-    version_status: str
-    state_reason: str | None
-
-    @property
-    def launchable(self) -> bool:
-        return (
-            self.image_state in LAUNCHABLE_IMAGE_STATES
-            and self.version_state == "SUCCESSFUL"
-            and self.version_status == "ACTIVE"
-        )
-
-    @property
-    def settled(self) -> bool:
-        version_done = self.version_state in SETTLED_VERSION_STATES
-        image_done = self.image_state in LAUNCHABLE_IMAGE_STATES | FAILED_IMAGE_STATES
-        return (version_done and image_done) or self.version_state == "FAILED"
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "imageState": self.image_state,
-            "versionState": self.version_state,
-            "versionStatus": self.version_status,
-            "stateReason": self.state_reason,
-            "launchable": self.launchable,
-        }
-
-
 def default_image_name(variant: str) -> str:
     if variant not in VARIANTS:
         raise ValueError(f"variant desconocida: {variant!r} (admitidas: {', '.join(VARIANTS)})")
@@ -199,28 +167,14 @@ def artifact_key(payload: bytes) -> str:
     return f"{S3_KEY_PREFIX}/rayd-{hashlib.sha256(payload).hexdigest()[:12]}.zip"
 
 
-def object_exists(clients: PublishClients, bucket: str, key: str) -> bool:
-    """A 403 also counts as absent: without ``s3:ListBucket`` S3 answers 403
-    instead of 404 to a HEAD of a missing key, and a permission that is really
-    missing surfaces on the ``put_object`` that follows."""
-    try:
-        clients.s3.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        if client_error_code(exc) in MISSING_OBJECT_CODES:
-            return False
-        raise
-    return True
-
-
 def upload_artifact(clients: PublishClients, settings: PublishSettings, emit: Emitter) -> str:
     payload = settings.artifact.read_bytes()
     key = artifact_key(payload)
     uri = f"s3://{settings.bucket}/{key}"
-    if object_exists(clients, settings.bucket, key):
-        emit(f"artifact already in S3, skipping upload: {uri}")
-    else:
-        clients.s3.put_object(Bucket=settings.bucket, Key=key, Body=payload)
+    if upload_if_absent(clients, settings.bucket, key, payload):
         emit(f"uploaded {uri} ({len(payload)} bytes)")
+    else:
+        emit(f"artifact already in S3, skipping upload: {uri}")
     return uri
 
 
@@ -238,7 +192,7 @@ def build_role_arn(clients: PublishClients, settings: PublishSettings) -> str:
 
 
 def image_arn(clients: PublishClients, image_name: str) -> str:
-    return f"arn:aws:lambda:{clients.region}:{clients.account_id}:microvm-image:{image_name}"
+    return account_image_arn(clients.region, clients.account_id, image_name)
 
 
 def base_image_arn(region: str) -> str:
@@ -264,57 +218,6 @@ def desired_configuration(
     return configuration
 
 
-def image_exists(clients: PublishClients, arn: str) -> bool:
-    try:
-        clients.microvms.get_microvm_image(imageIdentifier=arn)
-    except ClientError as exc:
-        if client_error_code(exc) == "ResourceNotFoundException":
-            return False
-        raise
-    return True
-
-
-def base_image_version_matches(echoed: Any, desired: Any) -> bool:
-    """``1`` and ``1.0`` name the same managed version: the API accepts the
-    ``list-managed-microvm-image-versions`` spelling and echoes the
-    normalised one (AWS_API_NOTES.md Q52). Non-numeric spellings only match
-    exactly."""
-    if not isinstance(echoed, str) or not isinstance(desired, str):
-        return bool(echoed == desired)
-    if echoed == desired:
-        return True
-    try:
-        return Decimal(echoed) == Decimal(desired)
-    except InvalidOperation:
-        return False
-
-
-def value_matches(key: str, echoed: Any, desired: Any) -> bool:
-    if key == BASE_IMAGE_VERSION_KEY:
-        return base_image_version_matches(echoed, desired)
-    return bool(echoed == desired)
-
-
-def configuration_matches(version: dict[str, Any], desired: dict[str, Any]) -> bool:
-    return all(value_matches(key, version.get(key), value) for key, value in desired.items())
-
-
-def published_version(clients: PublishClients, arn: str, desired: dict[str, Any]) -> str | None:
-    """Newest launchable version already built from this artifact and config."""
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    matches = [
-        item
-        for page in paginator.paginate(imageIdentifier=arn)
-        for item in page["items"]
-        if item["state"] == "SUCCESSFUL"
-        and item["status"] == "ACTIVE"
-        and configuration_matches(item, desired)
-    ]
-    if not matches:
-        return None
-    return str(max(matches, key=lambda item: item["createdAt"])["imageVersion"])
-
-
 def submit_build(
     clients: PublishClients,
     settings: PublishSettings,
@@ -323,24 +226,10 @@ def submit_build(
     emit: Emitter,
 ) -> tuple[str, str]:
     request = {**desired, "description": f"rayd {utc_now()}"}
-    if image_exists(clients, arn):
-        response = clients.microvms.update_microvm_image(imageIdentifier=arn, **request)
-        emit(f"update-microvm-image accepted: version {response['imageVersion']}")
-    else:
-        response = clients.microvms.create_microvm_image(name=settings.image_name, **request)
-        emit(f"create-microvm-image accepted: version {response['imageVersion']}")
-    return str(response["imageArn"]), str(response["imageVersion"])
-
-
-def read_gate(clients: PublishClients, arn: str, version: str) -> VersionGate:
-    image = clients.microvms.get_microvm_image(imageIdentifier=arn)
-    detail = clients.microvms.get_microvm_image_version(imageIdentifier=arn, imageVersion=version)
-    return VersionGate(
-        image_state=str(image["state"]),
-        version_state=str(detail["state"]),
-        version_status=str(detail["status"]),
-        state_reason=detail.get("stateReason"),
-    )
+    submitted = submit_image_build(clients, settings.image_name, arn, request)
+    operation = "create" if submitted.created else "update"
+    emit(f"{operation}-microvm-image accepted: version {submitted.version}")
+    return submitted.arn, submitted.version
 
 
 def wait_for_gate(
@@ -351,17 +240,16 @@ def wait_for_gate(
     emit: Emitter,
     sleep: Sleeper,
 ) -> VersionGate:
-    started = time.monotonic()
-    while True:
-        gate = read_gate(clients, arn, version)
-        elapsed = time.monotonic() - started
+    def report(gate: VersionGate, elapsed: float) -> None:
         emit(
             f"  image={gate.image_state} version={version} state={gate.version_state} "
             f"status={gate.version_status} ({elapsed:.0f}s)"
         )
-        if gate.settled or elapsed >= timeout_seconds:
-            return gate
-        sleep(POLL_INTERVAL_SECONDS)
+
+    gate, _timed_out = wait_for_image_gate(
+        clients, arn, version, timeout_seconds, sleep, on_tick=report
+    )
+    return gate
 
 
 def latest_build(clients: PublishClients, arn: str, version: str) -> dict[str, Any]:
@@ -477,7 +365,7 @@ def publish(
     artifact_uri = upload_artifact(clients, settings, emit)
     desired = desired_configuration(clients, settings, artifact_uri)
     if not settings.force and image_exists(clients, arn):
-        existing = published_version(clients, arn, desired)
+        existing = find_reusable_version(clients, arn, desired)
         if existing:
             emit(f"version {existing} already built from this artifact and config; reusing")
             build = latest_build(clients, arn, existing)

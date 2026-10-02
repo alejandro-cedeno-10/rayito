@@ -14,7 +14,11 @@ import zipfile
 from collections.abc import Sequence
 from typing import Final
 
-from rayito._templates._dockerfile import TEMPLATE_JSON_CONTEXT_PATH, compose_dockerfile
+from rayito._templates._dockerfile import (
+    TEMPLATE_JSON_CONTEXT_PATH,
+    compose_dockerfile,
+    context_entry_path,
+)
 from rayito._templates._instructions import TEMPLATE_SPEC_VERSION, StartSpec, TemplateSpec
 
 #: Zip determinista: toda entrada usa esta fecha fija (igual que
@@ -66,13 +70,16 @@ def assemble_artifact(
     zip de la imagen base (un `RUN`/`COPY` de su propio Dockerfile puede
     necesitar cualquiera de ellas), con su `Dockerfile` sustituido por la
     composición (`compose_dockerfile`), más cada fichero de `context_files`
-    (ya ordenado y filtrado, `_context.collect_context_files`) y
-    `template.json` si `spec.start` está puesto. Determinista: mismas
+    (ya ordenado y filtrado, `_context.collect_context_files`) bajo
+    `CONTEXT_ENTRY_PREFIX` — nunca en el espacio de nombres de la imagen
+    base, así que un fichero del usuario no puede sustituir el Dockerfile
+    compuesto ni el binario de `rayd` — y `template.json` si `spec.start`
+    está puesto. Determinista: mismas
     entradas, mismos bytes, siempre el mismo zip."""
     entries = read_zip_entries(base_zip)
     base_dockerfile = entries.get(DOCKERFILE_NAME, b"").decode("utf-8")
     entries[DOCKERFILE_NAME] = compose_dockerfile(base_dockerfile, spec).encode("utf-8")
-    entries.update(context_files)
+    entries.update((context_entry_path(relpath), content) for relpath, content in context_files)
     if spec.start is not None:
         entries[TEMPLATE_JSON_CONTEXT_PATH] = start_spec_to_json(spec.start)
     buffer = io.BytesIO()

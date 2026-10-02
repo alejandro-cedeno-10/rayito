@@ -79,22 +79,40 @@ def _iter_files(root: Path, source: Path) -> Iterator[Path]:
         )
 
 
+def _ensure_contained(root: Path, source: Path, src: str) -> None:
+    """Rechaza un `CopyStep.src` que resuelve fuera de `root` (un `../..`,
+    o un enlace simbólico que escapa): sin esto, `Template.build()` leería
+    y empaquetaría ficheros ajenos al contexto declarado."""
+    try:
+        source.relative_to(root)
+    except ValueError as exc:
+        raise BuildException(
+            f"la ruta de contexto {src!r} sale del contexto de build ({root})",
+            reason="context_path_outside",
+        ) from exc
+
+
 def collect_context_files(
     context_dir: Path, copies: Sequence[CopyStep], *, ignore: DockerIgnore | None = None
 ) -> tuple[tuple[str, bytes], ...]:
     """`(ruta_relativa_al_contexto, contenido)`, ordenado y sin duplicados,
     para cada `CopyStep.src` bajo `context_dir`; filtrado por `ignore`
-    (por defecto, `context_dir/.dockerignore` si existe)."""
+    (por defecto, `context_dir/.dockerignore` si existe). `context_dir` se
+    resuelve una sola vez (`Path().resolve()` incluido: el valor por
+    defecto de `Template.build()`) para que tanto la comprobación de
+    contención como `relative_to` comparen dos rutas absolutas."""
+    resolved_root = context_dir.resolve()
     resolved_ignore = (
         ignore
         if ignore is not None
-        else DockerIgnore.from_file(context_dir / DOCKERIGNORE_FILENAME)
+        else DockerIgnore.from_file(resolved_root / DOCKERIGNORE_FILENAME)
     )
     seen: dict[str, bytes] = {}
     for step in copies:
-        source = (context_dir / step.src).resolve()
-        for path in _iter_files(context_dir, source):
-            relpath = path.relative_to(context_dir).as_posix()
+        source = (resolved_root / step.src).resolve()
+        _ensure_contained(resolved_root, source, step.src)
+        for path in _iter_files(resolved_root, source):
+            relpath = path.relative_to(resolved_root).as_posix()
             if resolved_ignore.matches(relpath):
                 continue
             seen[relpath] = path.read_bytes()

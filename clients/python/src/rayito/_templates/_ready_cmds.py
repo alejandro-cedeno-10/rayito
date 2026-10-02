@@ -2,10 +2,15 @@
 compilan a una cadena de shell que `rayd` ejecuta con `/bin/sh -c` y
 comprueban el código de salida, 0 = listo). Cada helper acepta `.timeout()`
 para fijar `ReadyPoll.timeout_seconds` en vez del valor por defecto.
+
+Cada argumento va entrecomillado con `shlex.quote` (POSIX `'...'`, sin
+expansión de `$()`); `ready-cmds.ts` usa el mismo algoritmo y
+`testdata/templates/dockerfile-cases.json` fija la salida de ambos.
 """
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from typing import Final
 
@@ -51,15 +56,15 @@ def wait_for_port(port: int) -> ReadyCommand:
 def wait_for_url(url: str, *, status: int = 200) -> ReadyCommand:
     """Listo cuando `url` responde `status` (curl, sólo cabeceras)."""
     return _ready_command(
-        f"test \"$(curl -s -o /dev/null -w '%{{http_code}}' {url!r})\" = '{status}'"
+        f"test \"$(curl -s -o /dev/null -w '%{{http_code}}' {shlex.quote(url)})\" = '{status}'"
     )
 
 
 def wait_for_process(name: str) -> ReadyCommand:
     """Listo cuando hay un proceso cuyo nombre contiene `name` (`pgrep -f`)."""
-    return _ready_command(f"pgrep -f {name!r} > /dev/null")
+    return _ready_command(f"pgrep -f {shlex.quote(name)} > /dev/null")
 
 
 def wait_for_file(path: str) -> ReadyCommand:
     """Listo cuando `path` existe."""
-    return _ready_command(f"test -e {path!r}")
+    return _ready_command(f"test -e {shlex.quote(path)}")

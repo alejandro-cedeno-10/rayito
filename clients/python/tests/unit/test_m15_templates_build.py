@@ -6,13 +6,19 @@ paso/comando/código de salida del log."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from rayito import Template
-from rayito._templates import _build
+from rayito import Template, _images
+from rayito._templates import _build, _concurrency
 from rayito._templates._build import desired_configuration, image_arn
-from rayito.exceptions import BuildException, InvalidArgumentException, NotFoundException
+from rayito.exceptions import (
+    BuildException,
+    InvalidArgumentException,
+    NotFoundException,
+    TemplateException,
+)
 
 from .fake_templates import FakeBuildClients, make_base_zip
 
@@ -250,3 +256,130 @@ def test_desired_configuration_copies_the_base_images_own_managed_base_not_itsel
     )
     assert desired["baseImageArn"] == "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1"
     assert desired["baseImageVersion"] == "1.0"
+
+
+def test_desired_configuration_keeps_the_caps_variants_os_capabilities() -> None:
+    """A template over `rayito-base-caps` must stay a caps image: the
+    composed configuration inherits `additionalOsCapabilities` (and any
+    other configuration key the base version declares)."""
+    caps_version = {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "1.0",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/rayito-build",
+        "hooks": BASE_HOOKS,
+        "cpuConfigurations": [{"architecture": "ARM_64"}],
+        "additionalOsCapabilities": ["ALL"],
+    }
+    desired = desired_configuration(
+        artifact_uri="s3://bucket/key.zip",
+        memory_mb=2048,
+        base_image_version=caps_version,
+        log_group="/rayito/x",
+    )
+    assert desired["additionalOsCapabilities"] == ["ALL"]
+    assert desired["cpuConfigurations"] == [{"architecture": "ARM_64"}]
+    assert desired["codeArtifact"] == {"uri": "s3://bucket/key.zip"}
+
+
+def test_a_caps_base_image_builds_a_caps_template(monkeypatch: pytest.MonkeyPatch) -> None:
+    clients = _clients_with_base_image()
+    clients.versions[(BASE_ARN, "1")]["additionalOsCapabilities"] = ["ALL"]
+    monkeypatch.setattr(_build, "_Clients", lambda **_kwargs: clients)
+
+    handle = _build.build_in_background(
+        Template().from_base_image(), "mi-template", bucket=BUCKET, context_dir=Path()
+    )
+
+    assert clients.versions[(handle.arn, handle.version)]["additionalOsCapabilities"] == ["ALL"]
+
+
+def test_skip_cache_rebuilds_even_with_an_identical_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients = _clients_with_base_image()
+    monkeypatch.setattr(_build, "_Clients", lambda **_kwargs: clients)
+    monkeypatch.setattr("rayito._templates._build.time.sleep", lambda _seconds: None)
+
+    _build.build(Template().from_base_image(), "mi-template", bucket=BUCKET, context_dir=Path())
+    clients.calls.clear()
+    _build.build(
+        Template().from_base_image().skip_cache(),
+        "mi-template",
+        bucket=BUCKET,
+        context_dir=Path(),
+    )
+
+    assert any(call[0] == "update_microvm_image" for call in clients.calls)
+
+
+def test_the_aws_build_quota_is_a_build_exception_with_reason_build_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients = _clients_with_base_image(submit_error_code="ServiceQuotaExceededException")
+    monkeypatch.setattr(_build, "_Clients", lambda **_kwargs: clients)
+
+    with pytest.raises(BuildException) as excinfo:
+        _build.build_in_background(
+            Template().from_base_image(), "mi-template", bucket=BUCKET, context_dir=Path()
+        )
+    assert excinfo.value.reason == "build_quota"
+
+
+def test_build_holds_its_slot_while_waiting_for_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    clients = _clients_with_base_image()
+    monkeypatch.setattr(_build, "_Clients", lambda **_kwargs: clients)
+    free_slots_while_waiting: list[int] = []
+    real_wait = _images.wait_for_gate
+
+    def _spy(*args: Any, **kwargs: Any) -> Any:
+        free_slots_while_waiting.append(_concurrency._SLOTS._value)
+        return real_wait(*args, **kwargs)
+
+    monkeypatch.setattr("rayito._templates._build.wait_for_gate", _spy)
+    _build.build(Template().from_base_image(), "mi-template", bucket=BUCKET, context_dir=Path())
+
+    assert free_slots_while_waiting == [_concurrency.MAX_CONCURRENT_BUILDS - 1]
+    assert _concurrency._SLOTS._value == _concurrency.MAX_CONCURRENT_BUILDS
+
+
+@pytest.mark.parametrize("name", ["mi-template:v1", "", "con espacio", "x" * 65])
+def test_an_invalid_template_name_is_a_template_exception(name: str) -> None:
+    with pytest.raises(TemplateException):
+        _build.build(Template().from_base_image(), name, bucket=BUCKET)
+
+
+def test_a_failed_build_message_names_the_template_not_the_arn_or_aws_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients = _clients_with_base_image()
+
+    def _fake_create(*, name: str, **request: object) -> dict[str, str]:
+        arn = image_arn(clients, name)
+        clients.versions[(arn, "1")] = {
+            "state": "FAILED",
+            "status": "INACTIVE",
+            "imageVersion": "1",
+            "createdAt": 3,
+            "stateReason": f"Build failed for {arn}",
+        }
+        clients.images[arn] = {"state": "CREATE_FAILED"}
+        return {"imageArn": arn, "imageVersion": "1"}
+
+    monkeypatch.setattr(
+        clients.microvms.__class__, "create_microvm_image", lambda self, **kw: _fake_create(**kw)
+    )
+    monkeypatch.setattr(_build, "_Clients", lambda **_kwargs: clients)
+
+    with pytest.raises(BuildException) as excinfo:
+        _build.build(Template().from_base_image(), "mi-template", bucket=BUCKET, context_dir=Path())
+    message = str(excinfo.value)
+    assert "mi-template" in message
+    assert clients.account_id not in message
+    assert "Build failed for" not in message
+
+
+def test_a_missing_base_image_is_not_found_without_the_account_id() -> None:
+    clients = FakeBuildClients()
+    with pytest.raises(NotFoundException) as excinfo:
+        _build.resolve_base_version(clients, "rayito-base", None)
+    assert clients.account_id not in str(excinfo.value)

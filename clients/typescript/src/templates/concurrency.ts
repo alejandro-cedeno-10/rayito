@@ -12,6 +12,11 @@ export const MAX_CONCURRENT_BUILDS = 10;
 
 let inFlight = 0;
 
+/** Cuántos huecos de build tiene reservados este proceso ahora mismo. */
+export function buildsInFlight(): number {
+  return inFlight;
+}
+
 /** Reserva un hueco de build para este proceso y lo libera al terminar
  * `fn` (éxito o error); si ya hay `MAX_CONCURRENT_BUILDS` en vuelo, lanza
  * `BuildError({reason: "build_quota"})` en el acto. */
