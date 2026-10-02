@@ -53,6 +53,9 @@
 - [x] 2.12 Unit tests: `test_m15_templates_{dsl,dockerfile,context,
       artifact,logs,concurrency,build,build_async}.py`,
       `tests/unit/fake_templates.py` (new fake, never edits a shared one).
+- [x] 2.13 `tests/e2e/test_m15_templates.py` (gated by `RAYITO_E2E=1`,
+      run only in the AWS acceptance stage): a successful build, a build
+      failing a RUN step, a build failing its `ready_cmd`.
 
 ## 3. Python: E2B shim and stacks
 
@@ -112,6 +115,9 @@
       added as optional peer + devDependency.
 - [x] 5.12 `index.ts`: exports every public name, plus `BuildError`/
       `TemplateError` promoted to real exports (design.md T5).
+- [x] 5.13 `tests/e2e/m15-templates.e2e.test.ts` (gated by
+      `RAYITO_E2E=1`, run only in the AWS acceptance stage): same three
+      scenarios as the Python e2e file.
 
 ## 6. TypeScript: E2B shim and stacks
 
