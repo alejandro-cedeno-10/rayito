@@ -45,3 +45,36 @@ The `s3_mounts` feature's `LifecycleParticipant::demand().max` SHALL be zero: th
 #### Scenario: deploying without BucketName fails before touching the provisioner
 - **WHEN** `OptionalStacks().deploy("s3-mounts")` is called with no `BucketName` parameter
 - **THEN** `InvalidArgumentException`/`InvalidArgumentError` is raised and the `StackProvisioner` records zero calls
+
+### Requirement: the mountpoint is never resolved through a symlink
+`rayd` SHALL open every component of a mount path without following symlinks before `mount(2)`, SHALL reject a path any of whose components is a symlink or not a directory with `invalid_path`, and SHALL perform `mount(2)`/`umount2(2)` only through `/proc/self/fd` descriptors of the directories it opened, on the first attach and on every relaunch.
+
+#### Scenario: a symlinked mount directory is rejected
+- **WHEN** the mount directory (or one of its ancestors) is a symlink to a system directory at attach time
+- **THEN** the attach fails with `invalid_path` and nothing is created or mounted inside the symlink's target
+
+### Requirement: the agent only claims s3_mounts with CAP_SYS_ADMIN
+`Health.features.s3_mounts` (and the slot's `supported()`) SHALL be `true` only when rayd's effective capability set contains `CAP_SYS_ADMIN` and the `mount-s3` binary, `/dev/fuse` and the `rayito-mount` user are present; `root_egress` SHALL list `S3` only while the slot is supported.
+
+#### Scenario: an image without CAP_SYS_ADMIN reports no support
+- **WHEN** the agent boots without `CAP_SYS_ADMIN` even though `mount-s3` is installed
+- **THEN** `Health.features.s3_mounts` is `false` and `root_egress` does not contain `S3`
+
+### Requirement: create() returns only once every requested mount is mounted
+After a `Configure` call whose `s3_mounts` result is `SECTION_CODE_PENDING`, `Sandbox.create()` SHALL poll `ConfigureStatus` until every requested mount is `mounted`, bounded by the mount settle timeout; a mount reported `failed` SHALL raise `MountException`/`MountError` with its `last_error_class` as `code`, and one still `pending` at the deadline SHALL raise it with `code = "timeout"`, in both cases terminating the sandbox unless `keep_on_failure`.
+
+#### Scenario: a failed mount fails create()
+- **WHEN** `ConfigureStatus` reports a requested mount as `failed` with `error_class = "iam_denied"`
+- **THEN** `create()` raises `MountException` with `code == "iam_denied"` instead of returning a sandbox
+
+#### Scenario: a mount that settles is readable when create() returns
+- **WHEN** `ConfigureStatus` reports the mount `pending` and then `mounted`
+- **THEN** `create()` returns only after the `mounted` reading
+
+### Requirement: the s3-mounts IAM policy is scoped to the declared prefixes
+The `RayitoS3MountAccess` policy SHALL scope `s3:ListBucket` with an `s3:prefix` condition and SHALL scope every object-level action to object ARNs that carry the declared prefixes, and the `s3-mounts` component SHALL declare `CAPABILITY_IAM`.
+
+#### Scenario: object actions never cover the whole bucket unless asked
+- **WHEN** the stack is deployed with `Prefixes=runs/*`
+- **THEN** `GetObject`, `PutObject` and `DeleteObject` apply only to `arn:<partition>:s3:::<bucket>/runs/*`
+

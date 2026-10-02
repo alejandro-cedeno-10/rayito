@@ -1397,8 +1397,10 @@ sobre `rayito-base-caps`. Dominio puro (`rayd_core::s3_mount`), puertos
 `FuseDevice`/`FuseDaemon`, adaptadores Linux (`libc::mount(2)` directo,
 `mount-s3` lanzado como el usuario dedicado `rayito-mount` uid 990 con el
 entorno reconstruido desde cero — nunca una credencial en argv ni en
-entorno, SEC-3) y un slot real en `FeatureSet` (`supported()==true`,
-`Health.features.s3_mounts==true`). uid 990 queda fuera del rango que el
+entorno, SEC-3; la ruta de montaje se resuelve sin seguir enlaces
+simbólicos) y un slot real en `FeatureSet` (`supported()` exige
+`CAP_SYS_ADMIN`, así que sólo `rayito-base-caps` anuncia
+`Health.features.s3_mounts`). uid 990 queda fuera del rango que el
 blackhole de IMDS de M6 cubre, así que `mount-s3` resuelve las
 credenciales del execution role por su propio acceso a IMDS, sin que
 `rayd` las toque. El bucket debe estar en el allowlist de imagen
@@ -1408,7 +1410,9 @@ credenciales del execution role por su propio acceso a IMDS, sin que
 divergente). `Sandbox.create(mounts=)`/`create({ mounts })` y
 `sbx.mounts`/`sbx.mounts()` ya están cableados de punta a punta
 (`_feature_options.plan_features`/`feature-options.ts`,
-`create()`/`_open()` ejecutando `configure_sections` tras `Health`).
+`create()`/`_open()` ejecutando `configure_sections` tras `Health` y
+esperando a que cada montaje esté montado). Depende de `rayito image
+publish --env` (`m15-sizes-catalog`) para fijar el allowlist de imagen.
 **Validado localmente** (unit tests Rust/Python/TypeScript, `cargo
 clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
 `openspec validate --strict`); **pendiente de aceptación en AWS real**

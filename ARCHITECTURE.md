@@ -1827,7 +1827,13 @@ y hace el `mount(2)` del ABI de FUSE del kernel — `fd`, `rootmode`,
 
 **Adaptadores** (`rayd::adapters`): `LinuxFuseDevice` hace el `mount(2)`
 crudo con `libc` (sin depender del feature `mount` de `nix`, que el
-workspace no tiene). `TokioMountS3Daemon` lanza
+workspace no tiene) y **nunca sigue un enlace simbólico**: `rayd` es root y
+uid 1000 es dueño de `/home/user`, así que recorre la ruta desde `/`
+componente a componente con `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)`
+(creando lo que falte con `mkdirat`), rechaza cualquier enlace con
+`invalid_path` y monta sobre `/proc/self/fd/<dirfd>`; el desmontaje usa
+`UMOUNT_NOFOLLOW` sobre el descriptor del padre, en cada relanzamiento
+igual que en el primer montaje. `TokioMountS3Daemon` lanza
 `mount-s3 --foreground <bucket> /dev/fd/3 [--prefix p] [--read-only |
 --allow-overwrite --allow-delete]` como el usuario dedicado `rayito-mount`
 (uid/gid 990, creado en `image/Dockerfile`), con el entorno reconstruido
@@ -1841,8 +1847,15 @@ sitios esperando el mismo pid. uid 990 está **por debajo** de
 del execution role por su **propio** acceso a IMDS, en su propio proceso,
 sin que `rayd` las toque nunca.
 
-**Slot** (`rayd::features::s3_mounts`): un `S3MountsFeature` real
-(`supported() == true` desde este cambio); `apply()` valida todo el
+**Slot** (`rayd::features::s3_mounts`): un `S3MountsFeature` real, cuyo
+`supported()` exige `CAP_SYS_ADMIN` en el conjunto efectivo de `rayd`
+(sólo `rayito-base-caps`: el binario y el usuario `rayito-mount` van en las
+cuatro variantes porque hay un único `Dockerfile`); `Health.features` y
+`root_egress` se derivan de cada slot (`FeatureSet::agent_features`/
+`root_egress`, `ConfigurableFeature::root_egress_class`). `apply()`
+responde `SECTION_CODE_PENDING` y monta en segundo plano; el SDK sondea
+`ConfigureStatus` hasta que cada montaje está `mounted` (15 s como mucho)
+y, si no, lanza `MountException`/`MountError` y termina el sandbox. `apply()` valida todo el
 `S3MountsConfig` (allowlist + rutas duplicadas) antes de montar o
 desmontar nada — una sección inválida no toca un solo montaje existente
 — desmonta lo que ya no está en la lista deseada, monta lo nuevo o lo que
@@ -1855,14 +1868,12 @@ montaje FUSE, §7.2: "`/suspend` no añade ningún paso propio") y cuyo
 si está muerto o no responde.
 
 **IAM** (`infra/s3-mounts.yaml`, `OptionalStack`): la política gestionada
-`RayitoS3MountAccess` concede `ListBucket` acotado por un `s3:prefix`
-condicional (parámetro `Prefixes`, coma-separado) y `GetObject` (más
-`PutObject`/`DeleteObject` con `ReadOnly=false`) sobre el bucket entero —
-IAM no tiene el concepto de "prefijo" de una clave de objeto como sí lo
-tiene `ListBucket`, la misma forma que la política de ejemplo que publica
-AWS para Mountpoint—; la contención real por prefijo la hace
-`mount-s3 --prefix` en tiempo de montaje, respaldada por el allowlist de
-bucket de la imagen.
+`RayitoS3MountAccess` (pide `CAPABILITY_IAM`) concede `ListBucket` acotado
+por un `s3:prefix` condicional (parámetro `Prefixes`, coma-separado) y
+`GetObject` (más `PutObject`/`DeleteObject`/`AbortMultipartUpload` con
+`ReadOnly=false`) sobre ARNs de objeto que llevan esos mismos prefijos
+(hasta 4 por pila): la contención por prefijo no depende sólo de
+`mount-s3 --prefix` dentro de un guest que ejecuta código no confiable.
 
 **SEC-3 (residual aceptado, no un fallo)**: uid 1000 puede leer
 `cmdline`/`environ` del proceso `mount-s3` (mismo `/proc` que cualquier

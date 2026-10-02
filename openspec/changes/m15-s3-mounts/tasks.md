@@ -56,7 +56,7 @@
 
 ## 7a. e2e (not run here; feature-build agents must not touch AWS)
 
-- [x] 7a.1 `clients/python/tests/e2e/test_s3_mounts_e2e.py`: S3M-1..S3M-4, gated on `RAYITO_E2E=1` + `RAYITO_TEMPLATE_CAPS` + `RAYITO_S3_MOUNT_BUCKET`. Review follow-up: no longer self-skips on `UnimplementedError` now that `Sandbox.create(mounts=)` is wired — it runs for real once those env vars are set.
+- [x] 7a.1 `clients/python/tests/e2e/test_m15_s3_mounts.py` (renamed from `test_s3_mounts_e2e.py` in review round 2): S3M-1..S3M-4, gated on `RAYITO_E2E=1` + `RAYITO_TEMPLATE_CAPS` + `RAYITO_S3_MOUNT_BUCKET`. Review follow-up: no longer self-skips on `UnimplementedError` now that `Sandbox.create(mounts=)` is wired — it runs for real once those env vars are set.
 - [x] 7a.2 `clients/typescript/tests/e2e/m15-s3-mounts.e2e.test.ts`: the same four scenarios, mirroring the Python file; same un-skip.
 - [x] 7a.3 Verified only by collection (`pytest --collect-only`: 4 deselected; `vitest run`/`tsc --noEmit`: typecheck and collection clean) — never run against AWS from here.
 
@@ -128,16 +128,56 @@ Low severity:
   `UNKNOWN_ERROR_CLASS`, `SectionCode` enum). A new `invalid_path` class
   (Rust `MountErrorClass::InvalidPath`, mirrored in both SDKs) reports a
   duplicate/invalid mount path distinctly from `not_allowed`.
-- [ ] 10.11 Not done: renaming the e2e test files, and the shared
-  `testdata/s3-mounts/mount-specs.json` vectors file. The existing names
-  (`test_s3_mounts_e2e.py`, `m15-s3-mounts.e2e.test.ts`) already match this
-  repo's real, established pattern for a topic-suffixed e2e file (see
-  `test_metadata_index_e2e.py`, `test_secrets_e2e.py`, and every
-  `*.e2e.test.ts` in `clients/typescript/tests/e2e/`), so renaming them
-  would not actually improve consistency; left as a judgment call for a
-  maintainer to override. The shared JSON vectors file was not created —
-  genuinely not done, due to time, not a design decision — a reasonable
-  follow-up.
+- [x] 10.11 Done in review round 2 (11.12): the Python e2e file is
+  `test_m15_s3_mounts.py`, and `testdata/s3-mounts/mount-specs.json`
+  drives the Rust, Python and TypeScript validation tests.
+
+## 11. Review round 2 (PR #75 findings)
+
+- [x] 11.1 (high) Symlink-safe mountpoint: `adapters::fuse_device` walks the
+  path from `/` with `O_PATH|O_DIRECTORY|O_NOFOLLOW` (+ `mkdirat`), rejects
+  a symlink as `invalid_path`, mounts on `/proc/self/fd/<dirfd>` and
+  unmounts with `UMOUNT_NOFOLLOW` through the parent's descriptor; tests
+  with a symlinked mount directory and a symlinked ancestor (design D6).
+- [x] 11.2 (high) `detect_s3_mounts_supported` also requires
+  `CAP_SYS_ADMIN` (`adapters::capabilities`); misleading comments in
+  `health.rs`, `MOUNT_USER_NAME`, `image/Dockerfile` and
+  `rayd_core::root_egress` fixed (design D7).
+- [x] 11.3 (high) The guide documents the required image allowlist and the
+  `rayito image publish --env` step, which this change depends on from
+  `m15-sizes-catalog` (PR #76): merge after it.
+- [x] 11.4 (high) `s3-mounts` component declares `CAPABILITY_IAM` in both
+  SDKs; the TS template is now packaged (`stacks/packaging.ts` had no
+  `s3-mounts` entry); a test in each SDK asserts that every supported
+  component whose template creates `AWS::IAM::*` declares a capability.
+- [x] 11.5 (medium) `mount-s3`'s stderr is drained for the daemon's whole
+  life into a 4 KiB ring buffer; classification reads the last bytes.
+- [x] 11.6 (medium) `create()` polls `ConfigureStatus` until every mount is
+  `mounted` (15 s bound) and raises `MountException`/`MountError` with
+  the agent's class otherwise (design D8); docs example and spec updated.
+- [x] 11.7 (medium) Object-level IAM actions scoped per prefix (up to 4);
+  template Description and `AWS_API_NOTES.md` §23 corrected (design D4).
+- [x] 11.8 (medium) Direct edits to shared doc tables reverted
+  (`SECURITY.md`, `security.md`, `e2b-parity.md`, `cost.md`,
+  `optional-features.md`, `referencia/errores.md`,
+  `referencia/variables-de-entorno.md`,
+  `scripts/tests/test_optional_features_docs.py`); their rows live only
+  in `docs-delta.md`, refreshed to the final wording.
+- [x] 11.9 (medium) `Health.features`/`root_egress` derived generically from
+  `FeatureSet` (`agent_features()`, `root_egress()`, new
+  `ConfigurableFeature::root_egress_class()`). The generic Configure
+  plumbing (`require_capabilities`, `build_configure_request`,
+  `check_configure_response`, the settle wait, `_apply_configure_plan`/
+  `#applyConfigurePlan`) is flagged in the PR for the maintainer as
+  foundations-level code later features should build on, not re-edit.
+- [x] 11.10 (low) `watch_tick` skips `Pending` entries and spawns each
+  relaunch as its own task (`claim_and_spawn`); `/resume` only probes
+  settled mounts.
+- [x] 11.11 (low) TS `mounts` accepts `Readonly<Record<string, S3Mount>>`
+  (and still a `ReadonlyMap`); docs use the object form.
+- [x] 11.12 (low) Shared vectors and the Python e2e rename (10.11). The TS
+  e2e keeps `m15-s3-mounts.e2e.test.ts`: the vitest `e2e` project only
+  collects `*.e2e.test.ts`.
 
 ## 8. OpenSpec
 

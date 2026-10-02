@@ -3,15 +3,19 @@
 Monta uno o más buckets S3 (o un prefijo suyo) como una carpeta normal
 dentro del sandbox, con [Mountpoint for Amazon S3](https://github.com/awslabs/mountpoint-s3)
 (`mount-s3`). Sólo sobre `rayito-base-caps` (o una variante derivada por
-tamaño): el daemon necesita las credenciales del execution role por IMDS, y
-`rayito-base` no las concede dentro del guest.
+tamaño): `mount(2)` necesita `CAP_SYS_ADMIN`, que sólo esa variante da al
+agente, y el daemon necesita las credenciales del execution role por IMDS.
+En cualquier otra imagen, `create()` termina el VM y lanza
+`UnimplementedError`.
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin `mounts=` (TypeScript: `mounts`) `rayd`
       no abre `/dev/fuse` ni lanza nada.
     - **Activa**: `mounts={"/mnt/data": S3Mount(bucket="...", prefix="...")}`
-      en `Sandbox.create()` (necesita `execution_role_arn=` y una imagen
-      `rayito-base-caps`).
+      en `Sandbox.create()`. Necesita tres cosas: una imagen
+      `rayito-base-caps` publicada con el bucket en su allowlist
+      (`RAYITO_ALLOWED_MOUNT_BUCKETS`, ver abajo), `execution_role_arn=` y
+      la política IAM de la pila `s3-mounts` en ese rol.
     - **Recursos y llamadas AWS**: ninguno nuevo por sí solo. `mount-s3`
       hace las llamadas normales de S3 (`GetObject`/`ListObjectsV2`, y
       `PutObject`/`DeleteObject` con escritura) contra el bucket que
@@ -28,9 +32,10 @@ tamaño): el daemon necesita las credenciales del execution role por IMDS, y
       s3-mounts` quita la política (no borra ningún objeto ni el bucket).
 
 !!! note "Experimental"
-    Funciona de punta a punta (`Sandbox.create(mounts=)`/`create({ mounts })`,
-    `sbx.mounts`), pero es nuevo: trátalo como experimental hasta la
-    campaña de medición S3M-1..S3M-4 de la aceptación en AWS real.
+    `Sandbox.create(mounts=)`/`create({ mounts })` y `sbx.mounts` están
+    implementados en los dos SDKs y en el agente, pero es nuevo: trátalo
+    como experimental hasta la campaña de medición S3M-1..S3M-4 de la
+    aceptación en AWS real.
 
 ## Cuándo usarlo
 
@@ -52,7 +57,49 @@ dentro del guest: bajo `/mnt/` o `/home/user/`, sin solaparse con otro
 montaje (la misma regla que compartirá `volumes=` de `m15-efs-volumes`), y
 como mucho 4 montajes en total por sandbox.
 
+## Antes de empezar: el allowlist de la imagen (obligatorio)
+
+`rayd` sólo monta los buckets que la propia imagen declara en
+`RAYITO_ALLOWED_MOUNT_BUCKETS` (coma-separados). Es configuración de la
+imagen, no una opción por sandbox: así el código que llama a `create()` no
+puede montar un bucket que quien publica la imagen no autorizó. **Vacío o
+ausente deniega todos los buckets**: cada montaje acaba en
+`MountException(code="not_allowed")`.
+
+```bash
+rayito image publish --artifact rayito-image.zip --base-image-version 1 \
+  --image-name rayito-base-caps --os-capabilities ALL \
+  --env RAYITO_ALLOWED_MOUNT_BUCKETS=mi-bucket,otro-bucket
+```
+
+!!! warning "Depende de `rayito image publish --env`"
+    La opción `--env` llega con el catálogo de tamaños (`m15-sizes-catalog`).
+    Hasta entonces, añade `ENV RAYITO_ALLOWED_MOUNT_BUCKETS=...` a un
+    `Dockerfile` propio sobre `rayito-base-caps`.
+
+## Desplegar la política IAM
+
+```bash
+rayito stack deploy s3-mounts --param BucketName=mi-bucket \
+  --param Prefixes='team7/*,runs/*' --param ReadOnly=false
+```
+
+La política `RayitoS3MountAccess` cubre un solo bucket (una pila por
+bucket) y, dentro de él, sólo los prefijos de `Prefixes` (hasta 4,
+acabados en `*`; `*` por defecto es todo el bucket), también para leer,
+escribir y borrar objetos: un sandbox que sólo debe escribir `runs/42/` no
+puede tocar objetos de otro prefijo. `rayito stack status s3-mounts`
+muestra el ARN de la política ya creada; añádelo al execution role del
+sandbox. `rayito stack destroy s3-mounts` la quita (nunca borra el bucket
+ni sus objetos).
+
 ## Ejemplo
+
+`create()` no vuelve hasta que cada montaje está montado: si alguno falla
+(o sigue sin responder tras 15 s), termina el VM y lanza `MountException`
+con el motivo en `code` (`iam_denied`, `not_found`, `not_allowed`,
+`invalid_path`, `helper_missing`, `network` o `timeout`). En cuanto
+`create()` vuelve, la carpeta ya se puede leer.
 
 === "Python"
 
@@ -85,28 +132,27 @@ como mucho 4 montajes en total por sandbox.
     const sbx = await Sandbox.create({
       template: "rayito-base-caps",
       executionRoleArn: "arn:aws:iam::<cuenta>:role/mi-execution-role",
-      mounts: new Map([
-        ["/mnt/data", new S3Mount({ bucket: "mi-bucket", prefix: "team7/" })],
-        [
-          "/mnt/out",
-          new S3Mount({ bucket: "mi-bucket", prefix: "runs/42/", readOnly: false, allowOverwrite: true }),
-        ],
-      ]),
+      mounts: {
+        "/mnt/data": new S3Mount({ bucket: "mi-bucket", prefix: "team7/" }),
+        "/mnt/out": new S3Mount({
+          bucket: "mi-bucket",
+          prefix: "runs/42/",
+          readOnly: false,
+          allowOverwrite: true,
+        }),
+      },
     });
     await sbx.commands.run("python3 -c \"import pandas; pandas.read_csv('/mnt/data/datos.csv')\"");
     console.log(await sbx.mounts()); // Map { "/mnt/data" => { state: "mounted" }, ... }
     await sbx.kill();
     ```
 
-## Desplegar la política IAM
+`mounts` también acepta un `Map` en TypeScript.
 
-```bash
-rayito stack deploy s3-mounts --param BucketName=mi-bucket --param ReadOnly=false
-```
-
-`rayito stack status s3-mounts` muestra el ARN de la política ya creada;
-añádelo al execution role del sandbox. `rayito stack destroy s3-mounts` la
-quita (nunca borra el bucket ni sus objetos).
+`sbx.mounts` (TypeScript: `await sbx.mounts()`) lee el estado en vivo en
+cada llamada: si el daemon de un montaje muere más tarde, `rayd` lo
+relanza solo y, mientras tanto, ese montaje aparece como `"pending"` o
+`"failed"`.
 
 ## Divergencias con E2B
 
@@ -126,5 +172,13 @@ para esto.
 - El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen
   (config de imagen, no una opción por sandbox); vacío o ausente deniega
   todos los buckets.
+- `rayd` monta como root, pero nunca sigue un enlace simbólico en la ruta
+  de montaje (ni al crearla ni al relanzar un montaje): si el código del
+  sandbox cambia `/home/user/<carpeta>` por un enlace a un directorio del
+  sistema, el montaje falla con `invalid_path` en vez de montar el bucket
+  encima de ese directorio.
+- La política IAM se acota a los prefijos que declares, también para
+  escribir y borrar: la contención no depende sólo de `mount-s3 --prefix`
+  dentro de un guest que ejecuta código no confiable.
 
 Detalle completo: [Seguridad](../security.md), amenaza T20.

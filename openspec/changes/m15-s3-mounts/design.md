@@ -47,20 +47,58 @@ become an unreaped zombie. When `OrphanReaper` is eventually wired in, this
 daemon's pid is still never double-waited: it is never a zombie to begin
 with, because this adapter's own task always wins the race to reap it.
 
-### D4. IAM policy scopes object actions to the bucket, not to `Prefixes`
+### D4. IAM policy scopes object actions to the declared prefixes too
 
-`infra/s3-mounts.yaml`'s `Prefixes` parameter narrows `s3:ListBucket` (IAM's
-`s3:prefix` condition key natively accepts a list via `StringLike`), but
-`GetObject`/`PutObject`/`DeleteObject` are scoped to `<bucket>/*`: an IAM
-resource ARN has no native "any of these N prefixes" form without one
-statement per prefix, and CloudFormation has no map-over-a-parameter-list
-primitive without a macro (`CAPABILITY_AUTO_EXPAND`, which this template
-avoids, matching the rest of M15 foundations' stacks). This mirrors AWS's
-own published example IAM policy for Mountpoint, which does the same
-bucket-level scoping. Real prefix containment is `mount-s3 --prefix` plus
-`RAYITO_ALLOWED_MOUNT_BUCKETS`; `ListBucket`'s own narrowing is defense in
-depth, not the only thing standing between a mount and the rest of the
-bucket.
+`infra/s3-mounts.yaml`'s `Prefixes` parameter narrows `s3:ListBucket`
+(IAM's `s3:prefix` condition key accepts the list via `StringLike`) **and**
+`GetObject`/`PutObject`/`DeleteObject`/`AbortMultipartUpload`, whose
+resources are object ARNs that carry the prefix
+(`arn:<partition>:s3:::<bucket>/team7/*`). Containment must not rest only
+on `mount-s3 --prefix` inside a guest that runs untrusted code: a sandbox
+meant to write `runs/42/` must not be able to overwrite or delete another
+prefix's objects with the execution role. CloudFormation has no
+map-over-a-list primitive without the `AWS::LanguageExtensions` transform
+(`CAPABILITY_AUTO_EXPAND`, which `OptionalStack` never requests), and
+`Fn::Join`'s delimiter cannot be an intrinsic, so the template pads the
+list with its own first entry to four slots and picks each one with
+`Fn::Select` inside an `Fn::Sub`: up to four prefixes per stack (a second
+stack for more); a shorter list only repeats a resource, the same grant.
+
+### D6. The mountpoint is resolved without following symlinks
+
+`rayd` runs as root, and uid 1000 owns `/home/user`: a lexically valid path
+could be swapped for a symlink (before `Configure`, or between an unmount
+and a watcher/`/resume` relaunch) so that root mounts a writable bucket
+over `/usr/local/bin` or `/etc/cron.d`. `adapters::fuse_device` therefore
+never passes the path to a syscall that follows links: it walks it from `/`
+with `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)` (creating missing components
+with `mkdirat` and re-opening them the same way), rejects any symlink as
+`invalid_path`, mounts on `/proc/self/fd/<dirfd>` and unmounts through
+`/proc/self/fd/<parentfd>/<last>` with `UMOUNT_NOFOLLOW`. A component-wise
+walk was preferred to `openat2(RESOLVE_NO_SYMLINKS)` because it needs no
+kernel-version probe and is unit-testable beneath a temporary root.
+
+### D7. Support is decided by `CAP_SYS_ADMIN`, not by what the image ships
+
+One `image/Dockerfile` builds all four variants, so `mount-s3`, `fuse` and
+the `rayito-mount` user exist everywhere; only `rayito-base-caps` is
+published with `additionalOsCapabilities: ["ALL"]`. `supported()` (and so
+`Health.features.s3_mounts`) also requires `CAP_SYS_ADMIN` in rayd's
+effective set (`adapters::capabilities`), the same `CapEff` reading M6
+already logs; without it the SDK's after-boot gate terminates the VM and
+raises `UnimplementedError` even for a custom image name.
+
+### D8. `create()` waits for every mount to settle
+
+`rayd` answers `SECTION_CODE_PENDING` for a new mount and attaches in the
+background, so the SDK polls `ConfigureStatus` (every 250 ms, up to
+`MOUNT_SETTLE_TIMEOUT` = rayd's own 10 s readiness bound plus 5 s) until
+each requested mount is `mounted`; a `failed` one raises
+`MountException(code=last_error_class)` and a still-`pending` one at the
+deadline raises `code="timeout"`, both inside `_open`'s existing
+terminate-on-failure window. The polling loop lives in the generic
+Configure plumbing (`ConfigureSection.settle_timeout_s`/`check_status`), so
+any later section that also answers `PENDING` reuses it.
 
 ### D5. `mount-s3` is fetched by pinned RPM download, not `dnf install` from an AL2023 repo
 
