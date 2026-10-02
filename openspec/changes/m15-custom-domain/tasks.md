@@ -117,9 +117,10 @@
       `v06-foundations` (still `UnimplementedError`, before `run-microvm`);
       the zero-cost golden tests (`test_m15_zero_cost.py`,
       `zero-cost-defaults.test.ts`) were not touched and still pass.
-- [x] 6.3 Full `uv run pytest` (2612 passed), `ruff check`, `ruff format
-      --check`, `mypy` clean on the touched files. Full `pnpm test`
-      (1173 unit + 11 `node:test`), `pnpm lint`, `pnpm typecheck`,
+- [x] 6.3 Full `uv run pytest` (2619 passed, 1 skipped without `awscrt`),
+      `ruff check`, `ruff format --check`, `mypy` clean on the touched
+      files. Full `pnpm vitest run --project unit` (1179 passed) + 20
+      `node:test` of the Function, `pnpm lint`, `pnpm typecheck`,
       `pnpm pack:check` (incl. `check-dts-cost-blocks.mjs`) clean.
 
 ## 7. Docs
