@@ -32,24 +32,26 @@ propio stdout, sólo cuando `ConfigureSandbox` trae una clave por sandbox
 (derivada y empujada por el SDK; `rayd` nunca ve el secreto del stack). Una
 pila opcional (`infra/events-webhooks.yaml`) los verifica, guarda en
 DynamoDB (TTL 7 días) y entrega a tus webhooks con firma compatible con
-E2B, con un guardián SSRF. Un reconciliador (`rate(5 min)`) sintetiza
-`killed{unknown}` para sandboxes que `ListMicrovms` ya no reporta. Nuevo:
-`LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/`destroy`,
-`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), CLI
-`rayito events`. Apagado por defecto; `events=` exige
-`logging="cloudwatch"`.
+E2B, con un guardián SSRF y sin perder entregas (reclamo `attempting` →
+`delivered`/`failed`, reintento sólo ante 5xx, presupuesto de tiempo por
+invocación). Un reconciliador (cada `ReconcilerIntervalMinutes`, 5 por
+defecto) sintetiza `killed{unknown}` para sandboxes que `ListMicrovms` ya no
+reporta. Nuevo: `LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/
+`destroy`, `register_webhook`/`list_webhooks`/`delete_webhook`/
+`get_events`), CLI `rayito events`. Apagado por defecto.
 
 **Pendiente de la aceptación contra AWS real:** CP-4/CP-5 (si `/terminate`
 llega siempre y si las líneas de `/suspend` alcanzan CloudWatch a tiempo),
 el supuesto del forwarder sobre el nombre del *log stream*, y el flujo de
-extremo a extremo (entrega firmada, línea forjada descartada, timeout
+extremo a extremo (entrega firmada, línea forjada descartada, `killed`
 sintetizado). Ver `AWS_API_NOTES.md` §25 y `ADR-020`.
 
-**Hueco de integración conocido:** `create()` todavía no envía la sección
-de `ConfigureSandbox` de esta función (necesita `sandbox_id`, que sólo se
-conoce después de `run-microvm`); `events=` ya valida, pero la clave por
-sandbox aún no llega a `rayd` en esta iteración. Ver `ADR-020`, "Hueco de
-integración conocido".
+**Hueco de integración conocido:** `Sandbox.create(events=...)` valida la
+opción (un `LifecycleEvents` y `logging` con CloudWatch) y sigue lanzando
+`UnimplementedError`: la sección necesita `sandbox_id`, que sólo existe tras
+`run-microvm`, y `create()` todavía no envía `FeaturePlan.configure_sections`
+tras el primer `Health`. Hasta entonces ningún sandbox emite eventos. Ver
+`ADR-020`.
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 

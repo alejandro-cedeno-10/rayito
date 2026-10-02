@@ -20,40 +20,51 @@ deliveries, off by default and billed only when deployed and used.
   `rayito.event.v1 <b64url(event)> <b64url(hmac-sha256)>`; the key (`k_sbx`)
   is derived by the SDK and pushed through `ConfigureSandbox`, never
   computed by `rayd`. A bounded, non-blocking queue; zero lines without the
-  section. `features::lifecycle_events` is the first feature slot with a
-  real adapter (always `supported()`, but inert without a key) — it keeps
-  its live state behind a process-wide singleton rather than widen
-  `grpc::Services`/`hooks::HookServices` across eight other milestones'
-  test files; see `ADR-020`'s "Known integration gap" for the one piece
-  (`create()`'s post-`run-microvm` dispatch) this change does not wire.
+  section. `paused`/`killed` wait (bounded by `/suspend`'s share and by
+  `/terminate`'s participant cap) for the sink to write and flush the line
+  before the VM freezes or the process exits. `features::lifecycle_events`
+  is the first feature slot with a real adapter (always `supported()`, but
+  inert without a key); its state lives in the process's one `FeatureSet`,
+  shared by `ConfigureService` and the hooks through the foundations
+  wiring (`v06-foundations` §15, PR #87), never in a singleton.
 - **`infra/events-webhooks.yaml`** (`OptionalStack`): a stack-wide HMAC
   secret, an on-demand DynamoDB table (streams on), three Lambdas
   (forwarder/deliverer/reconciler, Python 3.12, `infra/lambdas/events_webhooks/`),
-  a CloudWatch Logs subscription filter and an EventBridge Scheduler rule.
-  The reconciler bundles `docs/aws-api/service-2.json` under `models/` and
-  sets `AWS_DATA_PATH` (decision 8) to call `lambda-microvms:ListMicrovms`
-  from a Lambda runtime that has never heard of that service.
+  a CloudWatch Logs subscription filter, an SQS queue (the deliverer's
+  on-failure destination) and an EventBridge Scheduler rule.
+  `scripts/gen_stack_assets.py` injects `docs/aws-api/service-2.json` into
+  the zip under `models/lambda-microvms/<apiVersion>/` (decision 8); the
+  reconciler builds its client from a dedicated botocore session pointed
+  there, and the template also sets `AWS_DATA_PATH`.
 - **Forwarder**: re-derives `k_sbx` from the stack secret, checks the event's
   `sandbox_id` against its own log stream, verifies the MAC
-  (constant-time), writes idempotently.
+  (constant-time), writes idempotently. Only a newly written event moves the
+  sandbox's `STATE#` row, only forward in time; `killed` leaves a tombstone.
 - **Deliverer**: E2B-compatible signature (`e2b-signature` = base64 of
   `sha256(secret + payload)`, no padding), an SSRF guard (resolve, classify,
   connect to the checked address — never re-resolve), https-only, no
-  redirects, ≤ 3 retries, deduplicated against DynamoDB Streams' at-least-
-  once delivery.
-- **Reconciler**: `rate(5 min)`, compares `ListMicrovms` against sandboxes
-  the table still considers open, synthesizes `killed{unknown}` (not yet
-  `timeout`: that needs per-sandbox max-duration tracking this iteration
-  does not add), deterministic ids so re-running never duplicates.
+  redirects, ≤ 3 attempts and only for 5xx or transport errors, a 64 KiB
+  response cap. Each (event, webhook) pair is claimed (`attempting`) before
+  its first attempt and finished `delivered`/`failed`; only `delivered` is
+  skipped on redelivery, so nothing is lost. Attempts fit the invocation's
+  remaining time; an unfinished record is reported in `batchItemFailures`.
+- **Reconciler**: every `ReconcilerIntervalMinutes` (default 5, minimum 2),
+  compares `ListMicrovms` against sandboxes the table still considers open,
+  synthesizes `killed{unknown}` with the generation and image of the
+  sandbox's last event (not yet `timeout`: that needs per-sandbox
+  max-duration tracking this iteration does not add), deterministic ids
+  over a window equal to the schedule's own interval.
 - **SDK**: `LifecycleEvents`/`AsyncLifecycleEvents` (deploy/status/destroy
   over `OptionalStacks`; `register_webhook`/`list_webhooks`/`delete_webhook`/
-  `get_events` direct on DynamoDB, usable today). `events=` on
-  `Sandbox.create()` raises `UnimplementedError` naming this change, the
-  same stub behaviour as the other six pending 0.6 options — see the gap
-  above (D5): `LifecycleEvents._build_section` is implemented and
-  unit-tested in isolation, but `create()` has nowhere yet to send the
-  `ConfigureSandbox` section it builds. CLI `rayito events
-  deploy|status|destroy|list` and `webhook add|list|remove`.
+  `get_events` direct on DynamoDB, usable today; AWS errors surface as
+  `WebhookException`/`WebhookError` carrying only the AWS error code).
+  `events=` on `Sandbox.create()` validates its type and that `logging`
+  reaches CloudWatch, then raises `UnimplementedError` naming the missing
+  post-`run-microvm` `ConfigureSandbox` send (D5):
+  `LifecycleEvents._build_section` is implemented and unit-tested, but
+  `create()` has nowhere yet to send the section. CLI `rayito events
+  deploy|status|destroy|list` and `webhook add|list|remove`, reusing
+  `rayito stack`'s cost/confirmation helpers.
 - **TypeScript mirror**: `src/lifecycle-events/{domain,keys,section,dynamodb,service}.ts`,
   `LifecycleEvents` (one async class).
 
@@ -61,19 +72,23 @@ deliveries, off by default and billed only when deployed and used.
 
 - **Rust**: `crates/rayd-core/src/lifecycle_events/{mod,event,mac,emit}.rs`,
   `crates/rayd/src/{features/lifecycle_events.rs,adapters/stdout_event_sink.rs}`,
-  minimal additive edits to `crates/rayd/src/{features/mod.rs,grpc/health.rs,
-  grpc/configure.rs,hooks/mod.rs}` and `Cargo.toml`/`crates/rayd-core/Cargo.toml`
-  (`hmac`), `proto/rayito/v1/lifecycle_events.proto`.
+  `grpc/configure.rs` (the section is cloned out of the request), the
+  slot's own tests in `features/mod.rs`, `crates/rayd-core/Cargo.toml`
+  (`hmac`), `proto/rayito/v1/lifecycle_events.proto`. The shared wiring
+  (`main.rs`, `grpc/mod.rs`, `grpc/health.rs`, `hooks/mod.rs`,
+  `tests/common`, the workspace `hmac` pin) is foundations' (PR #87).
 - **Python**: `_lifecycle_events/` (new package), `_feature_options.py`
-  (events branch, still `UnimplementedError`), `_stacks/components/events_webhooks.py`,
-  `cli/events.py`, `__init__.py`. No edit to `sandbox_{sync,async}/main.py`
-  (D5): `events=` stops at `plan_features`, same as the other six pending
-  0.6 options.
+  (events branch: validation, then `UnimplementedError`),
+  `_stacks/components/events_webhooks.py`, `cli/events.py`, `cli/stack.py`
+  (`confirm_deploy`/`confirm_destroy` extracted for reuse), `__init__.py`
+  exports. `create()`'s `logging=` reaches `plan_features` through
+  foundations' seam (PR #87); no other edit to `sandbox_{sync,async}/main.py`.
 - **TypeScript**: `src/lifecycle-events/`, `feature-options.ts`,
-  `stacks/components/events-webhooks.ts`, `index.ts`. No edit to
-  `sandbox/sandbox.ts`, for the same reason.
+  `stacks/components/events-webhooks.ts`, `index.ts` exports.
 - **Infra**: `infra/events-webhooks.yaml`, `infra/lambdas/events_webhooks/`.
-- **Scripts**: `scripts/gen_stack_assets.py` (TS generator line-width fix,
-  needed for any Lambda-bearing component, not only this one).
+- **Scripts**: `scripts/gen_stack_assets.py` (TS generator line-width fix;
+  the artifact is an allowlist of `.py` sources outside `tests/`,
+  `__pycache__` and hidden directories, plus the injected service model),
+  and its drift check in CI.
 - **No change** to 0.5.x behaviour without `events=`/`LifecycleEvents`: no
   new AWS client, no `ConfigureSandbox` call, no stdout line.

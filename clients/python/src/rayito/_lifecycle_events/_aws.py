@@ -30,7 +30,13 @@ class EventsGateway(Protocol):
     adaptador real y los tests usan sesiones falsas por debajo de él."""
 
     def put_webhook(
-        self, table_name: str, *, webhook_id: str, url: str, secret_name: str, types: tuple[str, ...]
+        self,
+        table_name: str,
+        *,
+        webhook_id: str,
+        url: str,
+        secret_name: str,
+        types: tuple[str, ...],
     ) -> None: ...
 
     def list_webhooks(self, table_name: str) -> list[WebhookInfo]: ...
@@ -73,7 +79,13 @@ class BotoEventsGateway:
         self._region = region
 
     def put_webhook(
-        self, table_name: str, *, webhook_id: str, url: str, secret_name: str, types: tuple[str, ...]
+        self,
+        table_name: str,
+        *,
+        webhook_id: str,
+        url: str,
+        secret_name: str,
+        types: tuple[str, ...],
     ) -> None:
         _aws_call(
             "register_webhook",

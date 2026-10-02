@@ -483,19 +483,23 @@ Nunca se despliega sola ni el SDK la crea. Acciones y parámetros:
 |---|---|
 | `EventsTableName` | `AWS::DynamoDB::Table` on-demand, streams (`NEW_IMAGE`), GSI `gsi1` para listar por todos los sandboxes |
 | `StackKeySecretArn` | `AWS::SecretsManager::Secret`: la clave HMAC del stack; el SDK la lee para derivar `k_sbx` por sandbox, el forwarder la lee para verificar |
-| `OperatorPolicyArn` | `EventsOperatorPolicy`: `secretsmanager:GetSecretValue` sólo sobre el secreto del stack, para las credenciales del **llamante** |
-| `ReconcilerFunctionArn` | El Lambda reconciliador (`rate(ReconcilerIntervalMinutes)`) |
+| `OperatorPolicyArn` | `EventsOperatorPolicy`, para las credenciales del **llamante**: `dynamodb:PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice `gsi1` (`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), `cloudformation:DescribeStacks` sobre esta pila (resolver sus salidas) y `secretsmanager:GetSecretValue` sólo sobre el secreto del stack |
+| `ReconcilerFunctionArn` | El Lambda reconciliador (`rate(<ReconcilerIntervalMinutes> minutes)`, 5 por defecto, mínimo 2) |
+| `DelivererFailuresQueueUrl` | Cola SQS: los registros del stream que agotan sus reintentos; vacía en condiciones normales |
 
 Tres funciones Lambda (forwarder, deliverer, reconciliador; Python 3.12,
 `infra/lambdas/events_webhooks/`), una suscripción de CloudWatch Logs sobre
-`LogGroupName` (parámetro) y una regla de EventBridge Scheduler. El
-reconciliador agrupa `docs/aws-api/service-2.json` bajo `models/` dentro de
-su propio zip y fija `AWS_DATA_PATH` para poder llamar a
-`lambda-microvms:ListMicrovms` desde un runtime de Lambda que no conoce ese
+`LogGroupName` (parámetro), una cola SQS de fallos y una regla de
+EventBridge Scheduler. `scripts/gen_stack_assets.py` inyecta
+`docs/aws-api/service-2.json` en el zip bajo
+`models/lambda-microvms/<apiVersion>/` y el reconciliador construye su
+cliente desde una sesión botocore apuntada ahí (la plantilla también fija
+`AWS_DATA_PATH`), para poder llamar a `ListMicrovms` (acción IAM
+`lambda:ListMicrovms`) desde un runtime de Lambda que no conoce ese
 servicio (decisión 8 de la arquitectura M15).
 
-**Coste**: ~$0,40/mes el secreto; DynamoDB y Lambda son on-demand/por
-invocación ($0 en reposo); ~$1,25 por millón de eventos escritos (WRU) más
+**Coste**: ~$0,40/mes el secreto; DynamoDB, Lambda y SQS son on-demand/por
+uso ($0 en reposo); ~$1,25 por millón de eventos escritos (WRU) más
 las lecturas de `get_events`; el reconciliador factura una invocación cada
 `ReconcilerIntervalMinutes` (5 por defecto, ~$0,0000002 c/u). us-east-1,
 consultado 2026-09-30.
@@ -525,10 +529,10 @@ aws cloudformation delete-stack --stack-name rayito-events-webhooks
 ```
 
 Borra el secreto (force-delete: cualquier webhook ya registrado deja de
-poder verificarse), la tabla, las tres Lambdas, la suscripción y el
-scheduler. Deja de pasar `events=` en el SDK.
+poder verificarse), la tabla, las tres Lambdas, la suscripción, la cola y
+el scheduler. Conserva los secretos de cada webhook (`rayito/webhooks/...`)
+y el log group de la imagen, que esta pila no creó. Deja de pasar `events=`
+en el SDK.
 
-Estado: validada con `cfn-lint` 1.56.3 (`--ignore-checks W3037`: esa regla
-no conoce el servicio ficticio `lambda-microvms` de este proyecto, no es un
-hallazgo real); `make infra-lint` la incluye (`validate-template` +
-`cfn-lint`).
+Estado: `make infra-lint` la incluye (`validate-template` + `cfn-lint`
+1.56.3).

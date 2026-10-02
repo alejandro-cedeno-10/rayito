@@ -25,6 +25,13 @@ derive or store the stack-wide secret.
 - **WHEN** a configured sandbox is suspended and resumed
 - **THEN** the `resumed` event's `generation` is one more than the `created` event's
 
+### Requirement: paused and killed are flushed before the hook answers, within a bound
+On `/suspend` and `/terminate`, a configured `rayd` SHALL wait until the `paused`/`killed` line it queued has been written to stdout and stdout flushed, for at most its `/suspend` share (never more than `SUSPEND_SHARE_MAX`) and at most `PARTICIPANT_TERMINATE_TIMEOUT` respectively, and SHALL NOT wait at all when no line was queued. If the OS random source fails, `rayd` SHALL drop the event and count it with `last_error_class = "random_unavailable"` rather than emit an `event_id` that is not fresh.
+
+#### Scenario: a stuck sink costs the share and no more
+- **WHEN** the sink never finishes flushing during `/suspend`
+- **THEN** the participant returns after exactly its share, reporting `timed_out`
+
 ### Requirement: The forwarder verifies the MAC and the sandbox identity before writing
 The forwarder Lambda SHALL re-derive `k_sbx = HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` from the stack-wide secret, using the `sandbox_id` carried inside the event JSON, and SHALL reject (count, never write) any line whose MAC does not match, in constant time, or whose `sandbox_id` does not appear in the CloudWatch Logs stream the line arrived on. Accepted events SHALL be written idempotently (a repeated `event_id` SHALL NOT create a second row or a Lambda error).
 
@@ -37,33 +44,45 @@ The forwarder Lambda SHALL re-derive `k_sbx = HMAC-SHA256(stack_key, "rayito.eve
 - **THEN** the forwarder rejects it
 
 ### Requirement: The deliverer signs deliveries E2B-compatibly and blocks SSRF
-The deliverer SHALL sign each webhook request with `e2b-webhook-id`, `e2b-delivery-id`, `e2b-signature-version: v1` and `e2b-signature` (base64 without padding of `sha256(secret + payload)`), SHALL only ever connect over `https://`, SHALL NOT follow redirects, and SHALL resolve the target hostname, classify every candidate address, and connect only to one address already classified as safe — never re-resolving at connect time. It SHALL reject (not deliver, not retry) loopback, private, link-local (including the IMDS address), multicast, reserved and CGNAT (100.64.0.0/10) addresses. It SHALL retry a failed delivery at most 3 times with backoff and SHALL deduplicate against its own at-least-once trigger so one event is never delivered twice to the same webhook for the same `event_id`.
+The deliverer SHALL sign each webhook request with `e2b-webhook-id`, `e2b-delivery-id`, `e2b-signature-version: v1` and `e2b-signature` (base64 without padding of `sha256(secret + payload)`), SHALL only ever connect over `https://`, SHALL NOT follow redirects, and SHALL resolve the target hostname, classify every candidate address, and connect only to one address already classified as safe — never re-resolving at connect time. It SHALL reject (not deliver, not retry) loopback, private, link-local (including the IMDS address), multicast, reserved and CGNAT (100.64.0.0/10) addresses. It SHALL attempt a delivery at most 3 times with backoff, retrying only a 5xx answer or a transport error, and SHALL read at most 64 KiB of any response. It SHALL record each (event, webhook) pair as `attempting` before the first attempt and `delivered` or `failed` after; only a `delivered` pair SHALL be skipped when its at-least-once trigger hands it the same event again, so a delivery is never lost to a crash or timeout and never repeated once delivered. It SHALL fit every attempt and backoff into the invocation's remaining time and, when that runs out, report the unfinished record as a batch item failure.
 
 #### Scenario: an SSRF target is never dialed
 - **WHEN** a webhook URL resolves to `169.254.169.254` or any other blocked address
 - **THEN** no connection is attempted and the delivery is not retried
+
+#### Scenario: a failed delivery is attempted again on redelivery
+- **WHEN** a webhook answered 500 to every attempt and the stream redelivers the same record
+- **THEN** the deliverer attempts that webhook again, and a pair already `delivered` is not attempted
 
 #### Scenario: a signature a verifier can check
 - **WHEN** a webhook receives a delivery
 - **THEN** `base64_decode(e2b-signature)` equals `sha256(secret + raw_body_bytes)`
 
 ### Requirement: The reconciler synthesizes killed events for sandboxes that vanished
-A scheduled reconciler SHALL compare `ListMicrovms` against the sandboxes the events table still considers open (no `killed` event recorded) and SHALL write a `killed{reason: "unknown"}` event, with a deterministic id, for each one missing from the live set — re-running the reconciler over the same gap SHALL NOT create a second event.
+A scheduled reconciler SHALL compare `ListMicrovms` against the sandboxes the events table still considers open (no `killed` event recorded) and SHALL write a `killed{reason: "unknown"}` event, with a deterministic id and the generation and image of the sandbox's last recorded event, for each one missing from the live set (or listed only in a terminal state) — re-running the reconciler over the same gap SHALL NOT create a second event. A sandbox's recorded state SHALL only move forward in time, and SHALL stay `killed` once a `killed` event is recorded, so a late or duplicate line can never reopen it.
 
 #### Scenario: a vanished sandbox gets a killed event
 - **WHEN** a sandbox the table considers open does not appear in `ListMicrovms`
 - **THEN** exactly one synthesized `killed{reason: "unknown"}` event is written for it, even if the reconciler runs again before the next real event
 
+#### Scenario: a line after killed does not reopen the sandbox
+- **WHEN** a `resumed` line arrives after the sandbox's `killed` was recorded
+- **THEN** the sandbox stays closed and the reconciler synthesizes nothing for it
+
 ### Requirement: events= and LifecycleEvents are off by default and never implicit
-`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. Passing `events=` to `Sandbox.create()`/`AsyncSandbox.create()` SHALL raise `UnimplementedError` naming this change (D5: `create()` has nowhere yet to dispatch the resulting `ConfigureSandbox` section — see `ADR-020`), the same stub behaviour as the six other 0.6 options, until the shared "send `FeaturePlan.configure_sections` after `run-microvm`" wiring lands. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls, usable today without `Sandbox.create(events=...)`.
+`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. Passing to `Sandbox.create()`/`AsyncSandbox.create()` an `events=` that is not a `LifecycleEvents`/`AsyncLifecycleEvents`, or with a `logging` that does not reach CloudWatch, SHALL raise `InvalidArgumentException`; a valid `events=` SHALL raise `UnimplementedError` naming this change and the missing `ConfigureSandbox` send (D5: `create()` has nowhere yet to dispatch the section — see `ADR-020`), until the shared "send `FeaturePlan.configure_sections` after `run-microvm`" wiring lands. Every AWS error from `LifecycleEvents` SHALL surface as `WebhookException`/`WebhookError` carrying only the AWS error code, never an ARN or account id. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls, usable today without `Sandbox.create(events=...)`.
 
 #### Scenario: the zero-cost golden trace is unaffected
 - **WHEN** the existing `create → commands.run → files.write → pause → resume → commands.run → kill → list` scripted session runs with no 0.6 option set
 - **THEN** its boto3 operations, `runHookPayload` and gRPC method sequence are unchanged from `fixtures/zero_cost_0_5_trace.json`
 
-#### Scenario: events= is rejected before launch, like every other pending 0.6 option
-- **WHEN** `Sandbox.create(events=ev)` is called
+#### Scenario: events= is rejected before launch
+- **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="cloudwatch")` is called
 - **THEN** `UnimplementedError` is raised and no `RunMicrovm` call is made
+
+#### Scenario: events= without CloudWatch logging is invalid
+- **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="disabled")` is called
+- **THEN** `InvalidArgumentException` is raised before any AWS call
 
 #### Scenario: building LifecycleEvents makes no AWS call
 - **WHEN** `LifecycleEvents()` is constructed

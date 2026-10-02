@@ -60,9 +60,9 @@ class FakeTable:
         if filter_expression is not None:
             wanted_kinds = {
                 values[token.strip()]
-                for token in filter_expression.removeprefix("kind IN (").removesuffix(")").split(
-                    ","
-                )
+                for token in filter_expression.removeprefix("kind IN (")
+                .removesuffix(")")
+                .split(",")
             }
             page = [item for item in page if item["kind"] in wanted_kinds]
 

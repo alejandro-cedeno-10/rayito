@@ -1003,14 +1003,21 @@ imagen Lambda MicroVM no está medido todavía.
 claves en `infra/lambdas/events_webhooks/domain/schema.py`, duplicado a
 propósito en `clients/python/src/rayito/_lifecycle_events/_dynamodb.py` — un
 zip de Lambda y el SDK son artefactos desplegables distintos): `PutItem`
-(forwarder: evento idempotente por `pk`+`sk`; deliverer: marca de
-deduplicación de entrega), `DeleteItem` (al confirmarse `killed`, borra la
-fila `STATE#<sandbox_id>`), `Query` (deliverer: webhooks por tipo; SDK:
-`get_events` por sandbox o por el GSI `gsi1` para todos), `Scan`
-(reconciliador: sandboxes abiertos — `FilterExpression` sobre `STATE#`,
-volumen acotado por la concurrencia de MicroVMs de la cuenta),
+condicional (forwarder: evento idempotente, `attribute_not_exists(pk)`; la
+fila `STATE#<sandbox_id>` sólo avanza — `last_kind <> killed AND
+last_seen_ms <= :seen` — y `killed` queda como lápida con TTL; deliverer:
+`delivery_status` de cada entrega, reclamable salvo `delivered`), `Query`
+(deliverer: webhooks por tipo; SDK: `get_events` por sandbox o por el GSI
+`gsi1` para todos, con `FilterExpression` sobre `kind` y paginación por
+`LastEvaluatedKey`; `list_webhooks`), `DeleteItem` (SDK: `delete_webhook`),
+`Scan` (reconciliador: sandboxes abiertos — `FilterExpression` sobre
+`STATE#` y `last_kind <> killed`, volumen acotado por la concurrencia de
+MicroVMs de la cuenta y los 7 días de TTL de las lápidas),
 `GetRecords`/`GetShardIterator`/`DescribeStream`/`ListStreams` (el
-*event source mapping* del deliverer sobre el stream de la tabla).
+*event source mapping* del deliverer sobre el stream de la tabla, con
+`FunctionResponseTypes: [ReportBatchItemFailures]`,
+`BisectBatchOnFunctionError` y destino `OnFailure` una cola SQS:
+`sqs:SendMessage` en el rol del deliverer).
 
 **Secrets Manager**: `GetSecretValue` sobre el secreto HMAC del stack
 (forwarder, y el SDK para derivar `k_sbx`) y sobre cada secreto de webhook
@@ -1019,17 +1026,25 @@ desde esta pila: el secreto de un webhook se crea aparte, con
 `SecretStore(prefix="rayito/webhooks/")`.
 
 **EventBridge Scheduler**: una `AWS::Scheduler::Schedule`,
-`rate(ReconcilerIntervalMinutes minutes)` (5 por defecto), destino el
+`rate(ReconcilerIntervalMinutes minutes)` (5 por defecto; mínimo 2 porque
+Scheduler sólo acepta `rate(1 minute)` en singular para 1), destino el
 *reconciler* Lambda vía un rol propio con sólo `lambda:InvokeFunction` sobre
 esa función.
 
 **`lambda-microvms` desde el reconciliador** (decisión 8 de la arquitectura
-M15): el runtime gestionado de Lambda no conoce este servicio, así que el
-zip incluye `docs/aws-api/service-2.json` bajo
-`models/lambda-microvms/2025-09-09/service-2.json` y el handler fija
-`AWS_DATA_PATH` a ese directorio antes de construir el cliente boto3.
-`ListMicrovms` (paginado por `nextToken`) — el campo `microvmId` de cada
-`items[]` es el `sandbox_id` del resto del SDK.
+M15): el runtime gestionado de Lambda no conoce este servicio, así que
+`scripts/gen_stack_assets.py` inyecta `docs/aws-api/service-2.json` en el
+zip como `models/lambda-microvms/<apiVersion>/service-2.json`. El handler
+construye el cliente desde una sesión botocore propia con `data_path` a ese
+directorio (fijado antes de que exista su *loader*, que lee `data_path` una
+sola vez al crearse), y la plantilla fija además `AWS_DATA_PATH`.
+`ListMicrovms` (paginado por `nextToken`, acción IAM `lambda:ListMicrovms`,
+§10) — el campo `microvmId` de cada `items[]` es el `sandbox_id` del resto
+del SDK; un `state` `TERMINATING`/`TERMINATED` cuenta como no vivo.
+
+**IAM del llamante** (`EventsOperatorPolicy`): `dynamodb:PutItem`/`Query`/
+`DeleteItem` sobre la tabla y `…/index/gsi1`, `cloudformation:DescribeStacks`
+sobre la pila y `secretsmanager:GetSecretValue` sobre el secreto del stack.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 

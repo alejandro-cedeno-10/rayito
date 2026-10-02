@@ -2,30 +2,32 @@
 
 M15 foundations (`v06-foundations`) built `ConfigureSandbox`, `AgentFeatures`
 and the `LifecycleParticipant`/`FeatureSet` scaffolding for eight parallel
-features, but every slot shipped as `slot::Unsupported`, and the wiring
-between `ConfigureService` (gRPC) and the hooks listener (`/suspend`,
-`/resume`, `/ready`, `/terminate`) was left as two *independent* `FeatureSet`
-instances — workable only because every slot was stateless. This is the
-first feature with real, mutable, per-process state (a pushed key), so it is
-the first to hit that seam.
+features, with every slot shipped as `slot::Unsupported`. This is the first
+feature with real, mutable, per-process state (a pushed key), so it is the
+first that needs `ConfigureService` and the hooks listener to act on the
+same `FeatureSet`, and the first participant with work on `/resume` and
+`/terminate`.
 
 ## Decisions
 
-- **D1 — A process-wide singleton, not a widened `Services`/`HookServices`.**
-  `features::lifecycle_events::shared_inner()` is a `OnceLock<Arc<Inner>>`:
-  every call to `build()` (one inside `grpc::router_with_transfers`, one
-  inside `main.rs` for `HookServices.participants`, one inside the
-  integration test harness) hands back a thin wrapper over the *same*
-  `Inner`. There is exactly one sandbox per `rayd` process, so this is a
-  singleton-per-agent, not global mutable state in the general sense.
-  **Rejected alternative**: add `features: Arc<FeatureSet>` to
-  `grpc::Services`. This looked cleaner but has 9 construction call sites
-  across `main.rs` and eight unrelated milestones' integration test files
-  (`m1_hello.rs` .. `m9_network.rs`) — a blast radius far out of proportion
-  to what this feature needs, and exactly the kind of cross-feature
-  collision the M15 plan's "shared-file protocol" exists to avoid. The
-  singleton gets the same observable behaviour (one shared state) with a
-  change confined to this feature's own file.
+- **D1 — One `FeatureSet` per process, wired by foundations.** `main` builds
+  one `Arc<FeatureSet>` and shares it between `ConfigureService`, `Health`
+  and `HookServices.participants`; the hooks call `on_suspend`/`on_resume`/
+  `on_terminate` once per accepted transition, each under its own cap
+  (`v06-foundations` §15, PR #87). This feature only fills its own slot.
+  **Rejected alternative** (the first iteration of this change): a
+  process-wide `OnceLock` singleton behind every `build()`. It avoided the
+  shared files, but every `#[tokio::test]` in one integration binary shared
+  one state and one drain task spawned on whichever test's runtime ran
+  first, so later tests silently lost events and leaked keys.
+- **D1b — Flush before the VM freezes or the process exits.** A queued line
+  is only on stdout once the drain task runs; nothing guarantees that before
+  `/suspend` answers (the VM freezes) or `/terminate` answers (the process
+  exits). `LifecycleEventSink::flush` puts a barrier on the same FIFO
+  channel, acknowledged after the lines ahead of it are written and stdout
+  is flushed. `on_suspend` waits for it up to its share, `on_terminate` up
+  to `hooks::PARTICIPANT_TERMINATE_TIMEOUT`; with no key configured nothing
+  is queued and nothing waits.
 - **D2 — `rayd` never derives `k_sbx`.** The SDK computes
   `HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` and pushes only
   the result through `ConfigureSandbox`; the stack-wide secret never reaches
@@ -44,25 +46,33 @@ the first to hit that seam.
   partitions) keeps the stack to one resource instead of three, and a sparse
   GSI (`gsi1pk="EVENT"` only on event rows) makes `get_events(sandbox_id=None)`
   a single index query instead of a table scan.
-- **D5 — Known integration gap: `events=` stays `UnimplementedError`.**
-  `create()`'s actual dispatch of `FeaturePlan.configure_sections` into a
-  `Configure` RPC call does not exist yet anywhere in the SDK (not only for
-  this feature): `plan_features()` runs before `run-microvm`, so it cannot
-  build a section that needs `sandbox_id`, and the send itself needs a
-  gRPC channel/stub that only exists after `Health` first answers inside
-  `cls._open(...)` — a step later than `plan_features` runs. Rather than
-  accept `events=` and silently never deliver (a correctness and
-  off-by-default violation: the caller would believe events are flowing),
-  `events=` raises `UnimplementedError` exactly like the other six pending
-  0.6 options, and this change does not touch
-  `sandbox_{sync,async}/main.py`/`sandbox/sandbox.ts` at all. The missing
-  piece is named exactly in `_feature_options.plan_features`'s docstring
-  and in `ADR-020`, so wiring it, whenever it lands (here or in a later
-  change), is a plumbing change shared by all eight 0.6 options, not a
-  design one specific to this feature. `register_webhook`/`get_events`/
-  `deploy`/`destroy` (the `LifecycleEvents` facade, direct DynamoDB/Secrets
-  Manager/CloudFormation calls, no `Configure` RPC involved) are unaffected
-  and usable today.
+- **D4b — State only moves forward; deliveries are never lost.** The
+  forwarder updates `STATE#` only for a newly written event and only when it
+  is not older than the recorded one (a conditional write on
+  `last_seen_ms`); `killed` stays as a tombstone with the events' TTL, so a
+  late or duplicate line cannot reopen a sandbox and make the reconciler
+  synthesize a second `killed`. The deliverer records a `delivery_status`
+  per (event, webhook): `attempting` before the first attempt,
+  `delivered`/`failed` after; only `delivered` is skipped, so a crash, a
+  timeout or an unreadable secret never loses a delivery. Attempts and
+  backoff are fitted into `context.get_remaining_time_in_millis()`; when
+  time runs out the record is reported in `batchItemFailures` and the stream
+  retries from it (records that exhaust the stream's retries go to an SQS
+  queue). Only 5xx and transport errors are retried.
+- **D5 — Known integration gap: `events=` validates, then stays
+  `UnimplementedError`.** `create()`'s dispatch of
+  `FeaturePlan.configure_sections` into a `Configure` RPC does not exist yet
+  anywhere in the SDK: `plan_features()` runs before `run-microvm`, so it
+  cannot build a section that needs `sandbox_id`, and the send needs the
+  gRPC stub that only exists after the first `Health` inside `_open`.
+  Accepting `events=` and never sending its key would leave the caller
+  paying for the stack and believing events flow. So `events=` checks what
+  it can before launch (a `LifecycleEvents`/`AsyncLifecycleEvents`, and a
+  `logging` the shared resolver maps to `cloudWatch`) and then raises
+  `UnimplementedError` naming the missing send. `create()` passes its
+  `logging` to `plan_features` through foundations' seam (PR #87).
+  `register_webhook`/`get_events`/`deploy`/`destroy` are unaffected and
+  usable today.
 
 ## Risks
 

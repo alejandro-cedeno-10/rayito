@@ -23,6 +23,17 @@ versionado [SemVer](https://semver.org/lang/es/).
 <!-- m15-s3-mounts -->
 <!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **`LifecycleEvents`** (`m15-events-webhooks`, opcional y apagado por
+  defecto): despliega `infra/events-webhooks.yaml` (`deploy`/`status`/
+  `destroy`, componente `events-webhooks` de `OptionalStacks`), registra
+  webhooks compatibles con E2B (`registerWebhook`/`listWebhooks`/
+  `deleteWebhook`, paginado) y lee el historial (`getEvents`, 1–100 filas,
+  filtrado por tipo en DynamoDB), con `@aws-sdk/client-dynamodb` y
+  `@aws-sdk/client-secrets-manager` como peers opcionales. Los errores de
+  AWS llegan como `WebhookError` con sólo el código (`awsCode`). `events` en
+  `Sandbox.create()` valida el tipo y que `logging` llegue a CloudWatch, y
+  sigue lanzando `UnimplementedError` hasta que `create()` envíe la sección
+  tras `run-microvm` (ADR-020).
 <!-- m15-events-webhooks -->
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->

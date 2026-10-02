@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final
 
 import boto3
 
+from rayito._lifecycle_events._aws import BotoEventsGateway, EventsGateway
 from rayito._lifecycle_events._domain import (
     DEFAULT_GET_EVENTS_LIMIT,
     DEFAULT_RECONCILER_INTERVAL_MINUTES,
@@ -20,7 +21,6 @@ from rayito._lifecycle_events._domain import (
     EventRecord,
     WebhookInfo,
 )
-from rayito._lifecycle_events._aws import BotoEventsGateway, EventsGateway
 from rayito._lifecycle_events._keys import derive_sandbox_key
 from rayito._lifecycle_events._section import LifecycleEventsSection
 from rayito._secrets import DEFAULT_SECRET_PREFIX, resolve_secret_id
@@ -214,9 +214,7 @@ class LifecycleEvents:
 
     def _stack_key(self) -> bytes:
         if self._stack_key_cache is None:
-            self._stack_key_cache = self._gateway.read_secret(
-                self._resolve_stack_key_secret_id()
-            )
+            self._stack_key_cache = self._gateway.read_secret(self._resolve_stack_key_secret_id())
         return self._stack_key_cache
 
     def _resolve_stack_key_secret_id(self) -> str:

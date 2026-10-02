@@ -1401,12 +1401,13 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   `paused`/`resumed`/`killed` por stdout, firmados HMAC con una clave que
   deriva el SDK (nunca `rayd`); un forwarder Lambda verifica y guarda en
   DynamoDB (TTL 7 días), un deliverer entrega a webhooks firmados al
-  estilo E2B (con guardián SSRF), un reconciler (`rate(5 min)`) sintetiza
-  `killed` para sandboxes que `ListMicrovms` ya no reporta. ADR-020.
-  Hueco de integración documentado, no bloqueante: `create()` todavía no
-  envía la sección `ConfigureSandbox` de esta función (necesita tocar un
-  fichero exclusivo de foundations; la pieza que falta queda anotada en
-  `_feature_options.plan_features`).
+  estilo E2B (con guardián SSRF), un reconciler (cada
+  `ReconcilerIntervalMinutes`, 5 por defecto) sintetiza `killed` para
+  sandboxes que `ListMicrovms` ya no reporta. ADR-020. Hueco de
+  integración documentado: `create(events=...)` valida y sigue en
+  `UnimplementedError` hasta que `create()` envíe
+  `FeaturePlan.configure_sections` tras el primer `Health` (seam de
+  foundations); la fachada `LifecycleEvents` funciona ya.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
 - **templates** (`m15-templates`): DSL de templates declarativos.
