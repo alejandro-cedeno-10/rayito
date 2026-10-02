@@ -47,7 +47,7 @@ export class E2B {
     const { ignored } = splitConnectionOpts(opts);
     emitIgnoredWarnings(ignored);
     validateIndex(opts.index);
-    this.Sandbox = bindSandbox(withoutIgnored(opts));
+    this.Sandbox = bindSandbox(withoutIgnored(opts), opts.volumeStore);
     this.Secret = bindSecret(opts.region === undefined ? {} : { region: opts.region });
     this.#volumeStore = opts.volumeStore;
   }

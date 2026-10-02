@@ -32,9 +32,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
   y los errores `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
   El shim de E2B (`Volume`) hace CRUD real sobre
-  `new E2B({ volumeStore })`; sus operaciones de contenido
-  (`readFile`/`writeFile`/`makeDir`/`list`/`remove`) y `volumeMounts` sin
-  volumen configurado siguen `UnimplementedError`. Componente
+  `new E2B({ volumeStore })` (`volumeId` es el nombre del volumen, el mismo
+  que reciben `connect`/`getInfo`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `volumeMounts` valida sin llamar a AWS y siempre lanza
+  `UnimplementedError`. Componente
   `rayito stack {deploy,status,destroy} efs-volumes`
   (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, mount
   targets, grupo de seguridad NFS y conector de egress dedicado).

@@ -33,9 +33,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `EfsVolume`, `VolumeStatus` y las excepciones `VolumeException`/
   `VolumeNotFoundException`/`VolumePathNotFoundException`. El shim de E2B
   (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
-  `E2B(volume_store=...)`; sus operaciones de contenido
-  (`read_file`/`write_file`/`make_dir`/`list`/`remove`) y `volume_mounts=`
-  sin volumen configurado siguen `UnimplementedError`. Componente
+  `E2B(volume_store=...)` (`volume_id` es el nombre del volumen, el mismo
+  que reciben `connect`/`get_info`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `volume_mounts=` valida sin llamar a AWS y siempre lanza
+  `UnimplementedError`. Componente
   `rayito stack {deploy,status,destroy} efs-volumes`
   (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, mount
   targets, grupo de seguridad NFS y conector de egress dedicado).

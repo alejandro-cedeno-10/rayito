@@ -338,14 +338,16 @@ def test_resource_kwargs_are_unimplemented_before_mapping(kwarg: str, feature: s
     assert excinfo.value.reason == UNIMPLEMENTED_REASONS[feature]
 
 
-def test_map_create_kwargs_forwards_an_already_resolved_volumes_mapping() -> None:
-    """`volumes=` arrives already translated from `volume_mounts=` (by
-    `_sync.py`/`_async.py`'s `_launch`, via `resolve_volume_mounts`):
-    `map_create_kwargs` itself does no I/O, it only forwards the mapping to
-    the native kwargs."""
-    sentinel = {"/mnt/v": object()}
-    mapping = map_create_kwargs(volumes=sentinel)
-    assert mapping.native_kwargs["volumes"] is sentinel
+def test_volume_mounts_is_gated_after_mcp_and_iam_without_any_io() -> None:
+    """`volume_mounts=` goes through the shim's I/O-free volume gate right
+    after the `mcp`/`iam` rejections (`rayito.e2b._volume`): `mcp` still
+    wins, and without a bound store it is `UnimplementedError("Volume")`."""
+    with pytest.raises(UnimplementedError) as excinfo:
+        map_create_kwargs(mcp={"x": {}}, volume_mounts={"/mnt/v": "datos"})
+    assert excinfo.value.feature == "mcp"
+    with pytest.raises(UnimplementedError) as excinfo:
+        map_create_kwargs(volume_mounts={"/mnt/v": "datos"})
+    assert excinfo.value.feature == "Volume"
 
 
 @pytest.mark.parametrize(

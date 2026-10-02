@@ -75,7 +75,7 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
         "get_mcp_url": MCP_REASON,
         "get_mcp_token": MCP_REASON,
         "Volume": VOLUME_REASON,
-        "volume.read_file": VOLUME_CONTENT_REASON,
+        "volume.content": VOLUME_CONTENT_REASON,
         "get_signature": (
             "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el "
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "

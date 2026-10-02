@@ -91,7 +91,6 @@ from rayito.e2b._models import (
     SandboxState,
 )
 from rayito.e2b._unimplemented import UnimplementedMember
-from rayito.e2b._volume import translate_volume_mounts_kwarg
 from rayito.e2b.exceptions import RayitoCompatWarning
 from rayito.exceptions import (
     InvalidArgumentException,
@@ -138,10 +137,9 @@ class Sandbox:
 
     _bound_params: ClassVar[Mapping[str, Any]] = EMPTY_PARAMS
     _bound_index: ClassVar[DynamoDbIndex | None] = None
-    #: `E2B(volume_store=...)`'s store, used to translate `volume_mounts=`
-    #: into `volumes=` before `_launch` calls the pure `map_create_kwargs`
-    #: (`rayito.e2b._volume.resolve_volume_mounts`); `None` outside a
-    #: bound client, same contract as `client.Volume` itself.
+    #: `E2B(volume_store=...)`'s store, handed by `_launch` to the pure
+    #: `map_create_kwargs` for its `volume_mounts=` gate (no I/O); `None`
+    #: outside a bound client, same contract as `client.Volume` itself.
     _bound_volume_store: ClassVar[VolumeStore | None] = None
 
     def __init__(
@@ -298,10 +296,7 @@ class Sandbox:
     def _launch(
         cls, create_kwargs: Mapping[str, Any], api_params: Mapping[str, Any]
     ) -> tuple[NativeSandbox, ConnectionConfig]:
-        resolved_kwargs = translate_volume_mounts_kwarg(
-            create_kwargs, store=cls._bound_volume_store
-        )
-        mapping = map_create_kwargs(**resolved_kwargs)
+        mapping = map_create_kwargs(**create_kwargs, volume_store=cls._bound_volume_store)
         resolved = cls._native_call(mapping.native_kwargs, api_params, call="create")
         emit_warnings(mapping.warnings)
         try:

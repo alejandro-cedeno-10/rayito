@@ -25,6 +25,7 @@ from rayito._models import PtySize as NativePtySize
 from rayito._models import SandboxInfo as NativeSandboxInfo
 from rayito._models import SandboxMetrics as NativeSandboxMetrics
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR, LoggingOption, PortLike
+from rayito._volumes import VolumeStore
 from rayito.e2b._connection import (
     API_PARAM_NAMES,
     ConnectionSettings,
@@ -43,6 +44,7 @@ from rayito.e2b._models import (
     SandboxState,
 )
 from rayito.e2b._unimplemented import unimplemented
+from rayito.e2b._volume import require_volume_mount_support
 from rayito.e2b.exceptions import NotFoundException, UnimplementedError
 from rayito.exceptions import InvalidArgumentException
 
@@ -292,7 +294,7 @@ def map_create_kwargs(
     network: Mapping[str, Any] | None = None,
     iam: Any | None = None,
     lifecycle: Mapping[str, Any] | None = None,
-    volumes: Mapping[str, Any] | None = None,
+    volume_mounts: Mapping[str, Any] | None = None,
     logger: logging.Logger | None = None,
     *,
     max_lifetime: int | None = None,
@@ -310,6 +312,7 @@ def map_create_kwargs(
     keep_on_failure: bool = False,
     control_plane: Any | None = None,
     transport: Any | None = None,
+    volume_store: VolumeStore | None = None,
 ) -> CreateMapping:
     """La tabla D5 en el orden posicional de E2B 2.x: `mcp` e `iam` son
     `UnimplementedError` antes de mapear nada; `timeout` (300 s por
@@ -318,12 +321,14 @@ def map_create_kwargs(
     `maximumDurationInSeconds`; `lifecycle` es `on_timeout` más la política
     de idle de la pausa; `allow_internet_access` y `network` son la política
     de egress en el guest sobre el conector `INTERNET_EGRESS`; `ingress` es
-    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa. `volumes` ya
-    llega traducido desde `volume_mounts=` por `_sync.py`/`_async.py`'s
-    `_launch` (`rayito.e2b._volume.resolve_volume_mounts`, que sí hace
-    I/O); aquí sólo se reenvía al nativo `volumes=`, que valida la forma y
-    hoy siempre termina en `UnimplementedError` (`_volumes._section`)."""
+    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa.
+    `volume_mounts` pasa, justo después de `mcp`/`iam`, por la misma puerta
+    sin I/O que `volumes=` (`rayito.e2b._volume.require_volume_mount_support`)
+    con el `volume_store` que `_launch` trae del cliente `E2B(volume_store=)`;
+    hoy siempre termina en `UnimplementedError`, sin ninguna llamada a AWS."""
     reject_resource_kwargs(mcp=mcp, iam=iam)
+    if volume_mounts is not None:
+        require_volume_mount_support(volume_mounts, store=volume_store, template=template)
     shim_lifecycle = map_lifecycle(lifecycle, auto_pause=auto_pause)
     native_network = map_network(network)
     resolved_timeout = E2B_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
@@ -361,7 +366,6 @@ def map_create_kwargs(
         "reconnect_timeout": reconnect_timeout,
         "control_plane": control_plane,
         "transport": transport,
-        "volumes": volumes,
     }
     native.update({name: value for name, value in optional.items() if value is not None})
     warnings = (SECURE_FALSE_WARNING,) if secure is False else ()

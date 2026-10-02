@@ -4,13 +4,16 @@
  * (nunca dentro de la promesa que devuelve); ligado vía
  * `new E2B({ volumeStore })`, el CRUD delega en el `VolumeStore`; las
  * operaciones de contenido (`readFile`/`writeFile`/`makeDir`/`list`/
- * `remove`/`updateMetadata`) son siempre `UnimplementedError`, ligado o no.
- * Espejo de `test_m15_efs_volumes_shim.py`.
+ * `remove`/`updateMetadata`) son siempre `UnimplementedError("volume.content")`,
+ * ligado o no. `volumeId` es el nombre lógico en todas partes (el ida y
+ * vuelta `destroy(vol.volumeId)` de E2B funciona) y `volumeMounts` pasa por
+ * una puerta sin I/O antes de cualquier llamada a AWS. Espejo de
+ * `test_m15_efs_volumes_shim.py`.
  */
 
 import { describe, expect, test } from "vitest";
-import { E2B, UnimplementedError, Volume } from "../../src/e2b/index.js";
-import { resolveVolumeMounts } from "../../src/e2b/volume.js";
+import { E2B, Sandbox, UnimplementedError, Volume } from "../../src/e2b/index.js";
+import { requireVolumeMountSupport } from "../../src/e2b/volume.js";
 import { InvalidArgumentError } from "../../src/errors.js";
 import type { DescribedAccessPoint, EfsApi } from "../../src/volumes/efs.js";
 import { VolumeStore } from "../../src/volumes/store.js";
@@ -33,12 +36,14 @@ function awsError(name: string): Error {
 
 class FakeEfsApi implements EfsApi {
   readonly accessPoints = new Map<string, DescribedAccessPoint & { name: string }>();
+  readonly calls: string[] = [];
   #nextId = 1;
 
   async createAccessPoint(input: {
     FileSystemId: string;
     Tags: Array<{ Key: string; Value: string }>;
   }): Promise<DescribedAccessPoint> {
+    this.calls.push("createAccessPoint");
     const name = input.Tags.find((t) => t.Key === "rayito:volume")?.Value ?? "";
     const accessPointId = `fsap-${(this.#nextId++).toString().padStart(8, "0")}`;
     const described = { AccessPointId: accessPointId, FileSystemId: input.FileSystemId, name };
@@ -49,6 +54,7 @@ class FakeEfsApi implements EfsApi {
   async describeAccessPoints(input: {
     FileSystemId: string;
   }): Promise<{ AccessPoints?: DescribedAccessPoint[] }> {
+    this.calls.push("describeAccessPoints");
     const points = [...this.accessPoints.values()]
       .filter((ap) => ap.FileSystemId === input.FileSystemId)
       .map((ap) => ({
@@ -60,12 +66,22 @@ class FakeEfsApi implements EfsApi {
   }
 
   async deleteAccessPoint(input: { AccessPointId: string }): Promise<unknown> {
+    this.calls.push("deleteAccessPoint");
     if (!this.accessPoints.has(input.AccessPointId)) {
       throw awsError("AccessPointNotFound");
     }
     this.accessPoints.delete(input.AccessPointId);
     return {};
   }
+}
+
+function caught(call: () => unknown): unknown {
+  try {
+    call();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected a throw");
 }
 
 function storeWith(api: FakeEfsApi): VolumeStore {
@@ -86,10 +102,10 @@ describe("unbound Volume", () => {
   });
 
   test.each(CONTENT_METHODS)("%s is refused unbound", (method) => {
-    const instance = new Volume("fsap-0123abcd", "x");
-    expect(() => (instance[method] as (...args: unknown[]) => unknown)()).toThrow(
-      UnimplementedError,
-    );
+    const instance = new Volume("datos-agente-7");
+    const error = caught(() => (instance[method] as (...args: unknown[]) => unknown)());
+    expect(error).toBeInstanceOf(UnimplementedError);
+    expect((error as UnimplementedError).feature).toBe("volume.content");
   });
 });
 
@@ -117,6 +133,19 @@ describe("bound Volume", () => {
     expect(await client.Volume.destroy("datos-agente-7")).toBe(false);
   });
 
+  test("volumeId round-trips through connect, getInfo and destroy", async () => {
+    const api = new FakeEfsApi();
+    const client = new E2B({ volumeStore: storeWith(api) });
+    const vol = await client.Volume.create("ws");
+    expect(vol.volumeId).toBe("ws");
+    expect(vol.name).toBe("ws");
+    expect(vol.accessPointId).toMatch(/^fsap-/);
+    expect((await client.Volume.connect(vol.volumeId)).accessPointId).toBe(vol.accessPointId);
+    expect((await client.Volume.getInfo(vol.volumeId)).volumeId).toBe("ws");
+    expect(await client.Volume.destroy(vol.volumeId)).toBe(true);
+    expect(api.accessPoints.size).toBe(0);
+  });
+
   test.each(CONTENT_METHODS)("%s is refused even when bound", async (method) => {
     const client = new E2B({ volumeStore: storeWith(new FakeEfsApi()) });
     const vol = await client.Volume.create("datos-agente-7");
@@ -124,28 +153,64 @@ describe("bound Volume", () => {
   });
 });
 
-describe("resolveVolumeMounts", () => {
-  test("resolves a bound Volume instance without any AWS call", async () => {
-    const api = new FakeEfsApi();
-    const store = storeWith(api);
-    const vol = new Volume("fsap-0123abcd", "datos-agente-7");
-    const resolved = await resolveVolumeMounts({ "/mnt/v": vol }, store);
-    expect(resolved["/mnt/v"]?.accessPointId).toBe("fsap-0123abcd");
-    expect(api.accessPoints.size).toBe(0);
+describe("volumeMounts gate", () => {
+  test("without a bound store it is UnimplementedError('Volume')", () => {
+    const error = caught(() => requireVolumeMountSupport({ "/mnt/v": "x" }, undefined, undefined));
+    expect((error as UnimplementedError).feature).toBe("Volume");
   });
 
-  test("resolves a plain name through the store", async () => {
+  test.each([
+    ["plain name", "datos-agente-7"],
+    ["bound volume", new Volume("datos-agente-7")],
+  ])("%s: never calls AWS and ends unimplemented", (_label, value) => {
     const api = new FakeEfsApi();
-    const store = storeWith(api);
-    await store.create("datos-agente-7");
-    const resolved = await resolveVolumeMounts({ "/mnt/v": "datos-agente-7" }, store);
-    expect(resolved["/mnt/v"]?.name).toBe("datos-agente-7");
+    const error = caught(() =>
+      requireVolumeMountSupport({ "/mnt/v": value }, storeWith(api), "rayito-base-caps"),
+    );
+    expect((error as UnimplementedError).feature).toBe("volumeMounts");
+    expect(api.calls).toEqual([]);
   });
 
-  test("rejects an unsupported value type", async () => {
+  test("checks paths, then caps, before the final unimplemented", () => {
     const store = storeWith(new FakeEfsApi());
-    await expect(resolveVolumeMounts({ "/mnt/v": 123 }, store)).rejects.toThrow(
+    expect(() => requireVolumeMountSupport({ relative: "x" }, store, "rayito-base")).toThrow(
       InvalidArgumentError,
     );
+    expect(() => requireVolumeMountSupport({ "/mnt/v": "x" }, store, "rayito-base")).toThrow(
+      /base-caps/,
+    );
+  });
+
+  test.each([[{}], [{ "/mnt/v": 123 }], [{ "/mnt/v": "no valid name!" }], [["x"]]])(
+    "rejects a malformed request %#",
+    (mounts) => {
+      expect(() =>
+        requireVolumeMountSupport(mounts, storeWith(new FakeEfsApi()), "rayito-base-caps"),
+      ).toThrow(InvalidArgumentError);
+    },
+  );
+
+  test("Sandbox.create with volumeMounts makes no AWS call, after mcp/iam", async () => {
+    const api = new FakeEfsApi();
+    const client = new E2B({ volumeStore: storeWith(api) });
+    await expect(
+      client.Sandbox.create("rayito-base-caps", { volumeMounts: { "/mnt/v": "datos" } }),
+    ).rejects.toThrow(UnimplementedError);
+    await expect(
+      client.Sandbox.create("rayito-base-caps", {
+        mcp: { github: {} },
+        volumeMounts: { "/mnt/v": "datos" },
+      }),
+    ).rejects.toMatchObject({ feature: "mcp" });
+    expect(api.calls).toEqual([]);
+  });
+
+  test("a per-call volumeStore is not an option: the store is client-bound only", async () => {
+    const api = new FakeEfsApi();
+    const opts = { volumeMounts: { "/mnt/v": "datos" }, volumeStore: storeWith(api) };
+    await expect(Sandbox.create("rayito-base-caps", opts)).rejects.toMatchObject({
+      feature: "Volume",
+    });
+    expect(api.calls).toEqual([]);
   });
 });

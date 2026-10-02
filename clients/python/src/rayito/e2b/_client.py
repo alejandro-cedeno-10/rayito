@@ -18,7 +18,7 @@ from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_
 from rayito.e2b._secret import AsyncSecret, Secret
 from rayito.e2b._sync import Sandbox
 from rayito.e2b._unimplemented import unimplemented
-from rayito.e2b._volume import AsyncVolume, Volume
+from rayito.e2b._volume import AsyncVolume, Volume, require_sync_store
 from rayito.e2b.exceptions import RayitoCompatWarning
 
 BoundClass = TypeVar("BoundClass", bound=type)
@@ -75,6 +75,7 @@ class E2B:
         params = {"region": region, "session": session, "control_plane": control_plane, **applied}
         bound = {key: value for key, value in params.items() if value is not None}
         chosen_index = validate_index(index)
+        volume_store = require_sync_store(volume_store)
         self.Sandbox: type[Sandbox] = bind_class(
             Sandbox, bound, _bound_index=chosen_index, _bound_volume_store=volume_store
         )

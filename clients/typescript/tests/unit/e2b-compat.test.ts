@@ -90,7 +90,7 @@ const D14_TS_KEYS = [
   "getMcpUrl",
   "getMcpToken",
   "Volume",
-  "volume.readFile",
+  "volume.content",
   "getSignature",
   "Template",
 ];
@@ -283,12 +283,10 @@ describe("mapCreateOptions", () => {
     }
   });
 
-  test("mapCreateOptions forwards an already-resolved volumes mapping as-is", () => {
-    // `volumes` arrives already translated from `volumeMounts` (by
-    // `Sandbox.createFor`, via `resolveVolumeMounts`): `mapCreateOptions`
-    // itself does no I/O, it only merges `volumes` onto the native options
-    // (see `Sandbox.createFor` for where that merge actually happens).
-    const result = mapCreateOptions({});
+  test("mapCreateOptions never maps volumeMounts to native volumes", () => {
+    // `volumeMounts` is gated by `Sandbox.createFor` after these rejections
+    // (`requireVolumeMountSupport`, no I/O); the pure table never forwards it.
+    const result = mapCreateOptions({ volumeMounts: { "/mnt/v": "datos" } });
     expect(result.native).not.toHaveProperty("volumes");
   });
 

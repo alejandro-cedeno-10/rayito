@@ -115,7 +115,7 @@ def test_the_table_covers_d14() -> None:
         "get_mcp_url",
         "get_mcp_token",
         "Volume",
-        "volume.read_file",
+        "volume.content",
         "get_signature",
         "Template",
     }

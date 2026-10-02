@@ -452,9 +452,8 @@ function rejectUnsupportedCreateOpts(opts: SandboxOpts): void {
   if (opts.iam !== undefined) {
     throw unimplemented("iam");
   }
-  // `volumeMounts` is not rejected here: `Sandbox.createFor` resolves it
-  // (I/O, via the bound `volumeStore`) into `volumes` before this pure
-  // table ever sees it.
+  // `volumeMounts` is gated right after this, by `Sandbox.createFor`
+  // (`requireVolumeMountSupport`), which holds the client's `volumeStore`.
 }
 
 function lifecycleIdle(lifecycle: ShimLifecycle): IdlePolicyInput | null {

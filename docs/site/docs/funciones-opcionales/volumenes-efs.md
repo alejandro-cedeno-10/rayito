@@ -148,9 +148,16 @@ medición pendiente — nunca una llamada a AWS a medias.
 ## Shim E2B: `E2B(volume_store=...)`
 
 `client.Volume`/`client.AsyncVolume` (`rayito.e2b`) son `UnimplementedError`
-hasta que el cliente les liga un `VolumeStore`; ligado, el CRUD es el mismo
-que arriba, con los nombres de E2B (`Volume.create/connect/list/get_info/
-destroy`).
+hasta que el cliente les liga un `VolumeStore` (sólo en el constructor del
+cliente, nunca por llamada; en Python, el `VolumeStore` síncrono: un
+`AsyncVolumeStore` es `InvalidArgumentException`). Ligado, el CRUD es el
+mismo que arriba, con los nombres de E2B (`Volume.create/connect/list/
+get_info/destroy`). `volume_id`/`volumeId` es el **nombre** del volumen, el
+mismo identificador que reciben `connect`/`get_info`/`destroy`; el
+`AccessPointId` va aparte, en `access_point_id`/`accessPointId`.
+`Sandbox.create(volume_mounts={ruta: Volume|nombre})` valida la petición
+sin ninguna llamada a AWS (un nombre de texto no se busca) y hoy siempre
+termina en `UnimplementedError`, igual que `volumes=`.
 
 === "Python"
 

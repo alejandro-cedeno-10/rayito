@@ -35,10 +35,10 @@ for the serialized AWS acceptance stage.
 - **`rayd::adapters::efs_mount::UnavailableEfsMounter`**: the only adapter
   this change ships. Always reports `MountSupport::Unsupported`; demonstrates
   the port boundary without pretending to mount anything.
-  `features::efs_volumes::build()` stays `slot::Unsupported` (an
-  `EfsVolumesConfig` section always answers `SECTION_CODE_UNSUPPORTED`):
-  wiring a real dispatch onto an adapter that can only ever refuse would be
-  dead code.
+  `features::efs_volumes::build()` wires it into an `EfsVolumesSlot` whose
+  `supported()` is the mounter's `support()`, so an `EfsVolumesConfig`
+  section answers `SECTION_CODE_UNSUPPORTED` in every shipped build; the
+  slot's validate/plan/mount dispatch is exercised with a fake mounter.
 - **`proto/rayito/v1/efs_volumes.proto`**: `EfsVolumesConfig`
   (`repeated EfsVolumeMount`) / `EfsVolumesStatus` (`repeated
   EfsVolumeStatus`, `EfsVolumeState` mirroring `MountState`) — complete now
@@ -65,10 +65,11 @@ for the serialized AWS acceptance stage.
   `aws efs delete-file-system`.
 - **E2B shim**: `Volume`/`AsyncVolume` move out of
   `e2b/_unimplemented.py` into `e2b/_volume.py` (TS: `e2b/volume.ts`), with
-  real `create`/`connect`/`list`/`get_info`/`destroy` over a configured
-  `VolumeStore`; content operations
-  (`read_file`/`write_file`/`make_dir`/`list`/`remove`) stay
-  `UnimplementedError` (no data plane outside a MicroVM).
+  real `create`/`connect`/`list`/`get_info`/`destroy` over a
+  client-bound `VolumeStore` (`volume_id` = the logical name);
+  `volume_mounts=` goes through the same I/O-free gate as `volumes=`;
+  content operations stay `UnimplementedError("volume.content")` (no data
+  plane outside a MicroVM).
 - **`scripts/measure/efs_volumes.py`**: `plan`/`run --region --run-id`/
   `report`/`cleanup --run-id`, idempotent (resolves by tag), tags every
   resource `rayito:measurement=efs-volumes`, never writes account IDs or

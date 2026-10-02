@@ -51,7 +51,7 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   getMcpUrl: MCP_REASON,
   getMcpToken: MCP_REASON,
   Volume: VOLUME_REASON,
-  "volume.readFile": VOLUME_CONTENT_REASON,
+  "volume.content": VOLUME_CONTENT_REASON,
   getSignature:
     "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo " +
     "WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3",

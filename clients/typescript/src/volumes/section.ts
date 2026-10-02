@@ -15,6 +15,27 @@ import { EfsVolume } from "./domain.js";
 export const MEASUREMENT_DOC = "docs/research/2026-10-efs-persistence.md";
 
 /**
+ * Lo que comparten `volumes` y el `volumeMounts` del shim de E2B, sin I/O:
+ * rutas válidas, variante caps y, después, siempre `UnimplementedError`
+ * (ningún `VolumeMounter` real todavía). Espejo de
+ * `rayito._volumes._section.require_volume_mounts`.
+ */
+export function requireVolumeMounts(
+  paths: readonly string[],
+  imageVariant: string | undefined,
+  feature = "volumes",
+): never {
+  validateMountPaths(paths);
+  requireCapsFor(feature, imageVariant);
+  throw new UnimplementedError(
+    feature,
+    "es experimental: necesita una imagen rayito-base-caps con amazon-efs-utils y " +
+      "executionRoleArn más un conector egress a infra/efs-volumes.yaml, pendiente de la " +
+      `campaña de medición EFS-1..EFS-20 (${MEASUREMENT_DOC})`,
+  );
+}
+
+/**
  * Valida `volumes` por completo y después lanza siempre
  * `UnimplementedError`. El orden importa (rutas y forma antes que caps)
  * para que el primer error que vea el llamante sea siempre el más
@@ -33,12 +54,5 @@ export function requireVolumeSupport(
       throw new InvalidArgumentError("volumes espera valores EfsVolume");
     }
   }
-  validateMountPaths(Object.keys(volumes));
-  requireCapsFor("volumes", imageVariant);
-  throw new UnimplementedError(
-    "volumes",
-    "es experimental: necesita una imagen rayito-base-caps con amazon-efs-utils y " +
-      "executionRoleArn más un conector egress a infra/efs-volumes.yaml, pendiente de la " +
-      `campaña de medición EFS-1..EFS-20 (${MEASUREMENT_DOC})`,
-  );
+  requireVolumeMounts(Object.keys(volumes), imageVariant);
 }
