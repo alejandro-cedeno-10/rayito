@@ -2,12 +2,30 @@ syntax = "proto3";
 
 package rayito.v1;
 
-// Owned by m15-events-webhooks. Foundations only creates these two empty
-// stub messages (so `configure.proto` has a stable field to point at); the
-// feature that implements events-webhooks owns every field number inside
-// this file from here on. Message names stay prefixed
-// (`LifecycleEvent*`) so they never collide with another feature's
-// messages inside `rayito.v1`.
-message LifecycleEventsConfig {}
+// Owned by m15-events-webhooks. The section is the complete desired state:
+// an empty `LifecycleEventsConfig{}` (every field at its zero value) clears
+// it, same as any other `ConfigureRequest` section (`configure.proto`).
+//
+// `sandbox_key` is `k_sbx`, already derived by the SDK as
+// `HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` — the
+// stack-wide HMAC secret never reaches the guest, so a compromised sandbox
+// only ever reveals its own key. `sandbox_id`, `image_arn` and
+// `image_version` are carried here (rather than read back out of `rayd`'s
+// own session) so the event schema never depends on how the agent happens
+// to learn its own identity; the SDK already knows all three at
+// `Sandbox.create` time.
+message LifecycleEventsConfig {
+  bytes sandbox_key = 1;
+  string sandbox_id = 2;
+  string image_arn = 3;
+  string image_version = 4;
+}
 
-message LifecycleEventsStatus {}
+// Counters only — never the key, never an event body. `last_error_class` is
+// one of the lowercase snake strings this file documents at the sink
+// (`"queue_full"`); empty when nothing has failed.
+message LifecycleEventsStatus {
+  uint64 emitted = 1;
+  uint64 dropped = 2;
+  string last_error_class = 3;
+}

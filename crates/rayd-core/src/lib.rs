@@ -36,6 +36,7 @@ pub mod filesystem;
 pub mod health;
 pub mod hooks;
 pub mod lifecycle;
+pub mod lifecycle_events;
 pub mod metrics;
 pub mod metrics_history;
 pub mod mount_path;

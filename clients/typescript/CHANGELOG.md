@@ -76,6 +76,20 @@ versionado [SemVer](https://semver.org/lang/es/).
   `rayito image sizes` son sólo CLI Python). Sin `size`, el comportamiento
   sigue siendo exactamente el de 0.5.x.
 <!-- m15-events-webhooks -->
+- **`LifecycleEvents`** (`m15-events-webhooks`, opcional y apagado por
+  defecto): despliega `infra/events-webhooks.yaml` (`deploy`/`status`/
+  `destroy`, componente `events-webhooks` de `OptionalStacks`), registra
+  webhooks compatibles con E2B (`registerWebhook`/`listWebhooks`/
+  `deleteWebhook`, paginado) y lee el historial (`getEvents`, 1–100 filas,
+  filtrado por tipo en DynamoDB), con `@aws-sdk/client-dynamodb` y
+  `@aws-sdk/client-secrets-manager` como peers opcionales. Los errores de
+  AWS llegan como `WebhookError` con sólo el código (`awsCode`). `events` en
+  `Sandbox.create()` valida el tipo y que `logging` llegue a CloudWatch, y
+  sigue lanzando `UnimplementedError` hasta que `create()` envíe la sección
+  tras `run-microvm` (ADR-020). Aceptado en AWS real (`AWS_API_NOTES.md`
+  Q105–Q108); el `.gen.ts` lleva el código Lambda actualizado (comprobación
+  exacta del log stream y una línea JSON por invocación del forwarder y del
+  reconciliador).
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->

@@ -22,7 +22,8 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
     [
         ("mounts", {"/mnt/d": object()}),
         ("volumes", {"/mnt/v": object()}),
-        ("events", object()),
+        # `events` validates its type and `logging` first: see
+        # `test_m15_events_webhooks_feature_options.py`.
         ("telemetry", object()),
         ("domain", object()),
     ],

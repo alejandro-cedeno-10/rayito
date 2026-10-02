@@ -34,7 +34,9 @@ def _resolve(stacks: OptionalStacks, component: str) -> StackComponent:
     raise typer.BadParameter(f"componente desconocido: {component!r}", param_hint="component")
 
 
-def _parse_pairs(values: list[str], *, option: str) -> dict[str, str]:
+def parse_pairs(values: list[str], *, option: str) -> dict[str, str]:
+    """`--param`/`--tag` `K=V` (repetibles) a un dict; también lo usa
+    `rayito events deploy --tag`."""
     parsed: dict[str, str] = {}
     for item in values:
         if "=" not in item:
@@ -54,6 +56,29 @@ def _print_cost(component: StackComponent) -> None:
     echo(f"  Cómo apagarla: rayito stack destroy {component.name} ({component.cost.removal})")
     if component.cost.source:
         echo(f"  Fuente: {component.cost.source}")
+
+
+def confirm_deploy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
+    """§4.6: imprime el `CostStatement` y pide confirmación salvo `--yes` o
+    `--json`. Compartido por `rayito stack deploy` y los atajos por función
+    (`rayito events deploy`), para que ambos lean igual."""
+    if not json_mode(ctx):
+        _print_cost(component)
+    if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
+        raise typer.Exit(1)
+
+
+def confirm_destroy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
+    """§4.6: dice qué se borra y qué se conserva y pide confirmación salvo
+    `--yes` o `--json`."""
+    if not json_mode(ctx):
+        echo(f"Al borrar: {component.cost.removal}")
+    if (
+        not yes
+        and not json_mode(ctx)
+        and not typer.confirm(f"¿Borrar la pila de {component.name}?")
+    ):
+        raise typer.Exit(1)
 
 
 @stack_app.command("list")
@@ -119,18 +144,17 @@ def deploy_command(
 ) -> None:
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
-    if not json_mode(ctx):
-        _print_cost(resolved)
     if not resolved.supported:
+        if not json_mode(ctx):
+            _print_cost(resolved)
         raise UnimplementedError(f"rayito stack deploy {component}", resolved.description)
-    if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
-        raise typer.Exit(1)
+    confirm_deploy(ctx, resolved, yes=yes)
     status = stacks.deploy(
         component,
         stack_name=stack_name,
-        parameters=_parse_pairs(param, option="--param"),
+        parameters=parse_pairs(param, option="--param"),
         artifact_bucket=artifact_bucket,
-        tags=_parse_pairs(tag, option="--tag"),
+        tags=parse_pairs(tag, option="--tag"),
     )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})
@@ -147,10 +171,7 @@ def destroy_command(
 ) -> None:
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
-    if not json_mode(ctx):
-        echo(f"Al borrar: {resolved.cost.removal}")
-    if not yes and not json_mode(ctx) and not typer.confirm(f"¿Borrar la pila de {component}?"):
-        raise typer.Exit(1)
+    confirm_destroy(ctx, resolved, yes=yes)
     stacks.destroy(component, stack_name=stack_name)
     if json_mode(ctx):
         emit_json({"name": component, "state": "destroyed"})

@@ -1425,7 +1425,7 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
 - **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
-  real el 2026-10-02**, Q106/Q107): catálogo cerrado de cinco tamaños
+  real el 2026-10-02**, Q118/Q119): catálogo cerrado de cinco tamaños
   (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de
   `ConfigureSandbox`; imágenes `<variant>[-<size>]` (`rayito image publish
   --sizes`, en oleadas de hasta 10 builds simultáneos, horneando
@@ -1435,8 +1435,18 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   vCPU medido exactamente para los cinco tamaños, RES-2/Q88); guardarraíles
   IAM opcional `sizes-guard` (`RayitoRunAllowedSizes`, Q90). Sin `size=`
   (su valor por defecto), cero llamadas nuevas.
-- **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
-  firmados y webhooks compatibles con E2B.
+- **events-webhooks** (`m15-events-webhooks`): `rayd` emite `created`/
+  `paused`/`resumed`/`killed` por stdout, firmados HMAC con una clave que
+  deriva el SDK (nunca `rayd`); un forwarder Lambda verifica y guarda en
+  DynamoDB (TTL 7 días), un deliverer entrega a webhooks firmados al
+  estilo E2B (con guardián SSRF), un reconciler (cada
+  `ReconcilerIntervalMinutes`, 5 por defecto) sintetiza `killed` para
+  sandboxes que `ListMicrovms` ya no reporta. ADR-020. Hueco de
+  integración documentado: `create(events=...)` valida y sigue en
+  `UnimplementedError` hasta que su sección entre en
+  `FeaturePlan.configure_sections` (el envío tras el primer `Health` ya
+  existe desde `m15-s3-mounts`/`m15-secrets-gateway`); la fachada
+  `LifecycleEvents` funciona ya.
 - **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
   CloudWatch.
 - **templates** (`m15-templates`): DSL de templates declarativos.

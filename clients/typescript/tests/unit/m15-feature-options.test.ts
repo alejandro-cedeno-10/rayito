@@ -31,7 +31,8 @@ describe("feature-options", () => {
 
   test.each([
     ["volumes", { "/mnt/v": {} }, "volumes", "m15-efs-volumes"],
-    ["events", {}, "events", "m15-events-webhooks"],
+    // `events` validates its type and `logging` first: see
+    // `m15-events-webhooks-feature-options.test.ts`.
     ["telemetry", {}, "telemetry", "m15-rayd-otlp"],
     ["domain", {}, "domain", "m15-custom-domain"],
   ] as const)(

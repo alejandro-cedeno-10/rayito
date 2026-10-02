@@ -95,12 +95,20 @@ def test_status_of_an_undeployed_component_is_none(
     assert json.loads(result.output) is None
 
 
-def test_events_template_domain_stub_subapps_print_pending_help(runner: CliRunner) -> None:
+def test_template_domain_stub_subapps_print_pending_help(runner: CliRunner) -> None:
     for name, slug in (
-        ("events", "m15-events-webhooks"),
         ("template", "m15-templates"),
         ("domain", "m15-custom-domain"),
     ):
         result = runner.invoke(app, [name, "--help"])
         assert result.exit_code == 0, result.output
         assert slug in result.output
+
+
+def test_events_subapp_left_the_pending_stub_in_m15_events_webhooks(runner: CliRunner) -> None:
+    # `events` is no longer a stub (m15-events-webhooks); see
+    # `test_m15_events_webhooks_cli.py` for its real subcommands.
+    result = runner.invoke(app, ["events", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "m15-events-webhooks" not in result.output
+    assert "webhook" in result.output

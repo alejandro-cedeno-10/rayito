@@ -54,7 +54,8 @@ def test_mounts_with_an_unknown_image_variant_is_not_rejected_here() -> None:
     ("field", "value", "option_name", "change_slug"),
     [
         ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
-        ("events", object(), "events=", "m15-events-webhooks"),
+        # `events` validates its type and `logging` first: see
+        # `test_m15_events_webhooks_feature_options.py`.
         ("telemetry", object(), "telemetry=", "m15-rayd-otlp"),
         ("domain", object(), "domain=", "m15-custom-domain"),
     ],

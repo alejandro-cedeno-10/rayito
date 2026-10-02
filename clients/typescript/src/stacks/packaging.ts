@@ -8,6 +8,7 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as eventsWebhooks from "./templates/events-webhooks.gen.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
 import * as s3Mounts from "./templates/s3-mounts.gen.js";
 import * as secretsAccess from "./templates/secrets-access.gen.js";
@@ -19,6 +20,7 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "events-webhooks": eventsWebhooks,
   "metadata-index": metadataIndex,
   "s3-mounts": s3Mounts,
   "secrets-access": secretsAccess,

@@ -179,7 +179,7 @@
       before any AWS call; `rayito image sizes --image-name` reports
       `sameArtifact: true`.
 - [x] 10.2 Fix: reuse of `--env`/`--sizes` versions reads
-      `environmentVariables` with `GetMicrovmImageVersion` (Q106); the
+      `environmentVariables` with `GetMicrovmImageVersion` (Q118); the
       repeated publish went from rebuilding all three images to reusing
       them in 5 s.
 - [x] 10.3 Fix: `rayito image sizes --image-name`.
@@ -190,7 +190,7 @@
       `RunMicrovm` without creating a MicroVM.
 - [x] 10.5 `sizes-guard` deployed/destroyed via `rayito stack`; explicit
       Deny enforced on a real `RunMicrovm` against an identity that also
-      had `lambda:*` (Q107).
+      had `lambda:*` (Q119).
 - [x] 10.6 Cleanup: before/after inventory identical.
 
 ## 11. Not done in this change (explicitly out of scope)

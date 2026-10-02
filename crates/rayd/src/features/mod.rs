@@ -4,10 +4,11 @@
 //! hooks' lifecycle participants (`grpc::router_with_features`,
 //! `hooks::HookServices::participants`). Each feature replaces its own
 //! field's construction (inside its own `features::<name>::build`, e.g.
-//! `m15-s3-mounts`'s and `m15-secrets-gateway`'s real adapters) in its own
-//! PR, every other slot staying `slot::Unsupported` — `FeatureSet`'s field
-//! list, `build`'s signature and the three views below (`agent_features`,
-//! `root_egress`, `participants`) do not change for that.
+//! `m15-s3-mounts`'s, `m15-events-webhooks`'s and `m15-secrets-gateway`'s
+//! real adapters) in its own PR, every other slot staying
+//! `slot::Unsupported` — `FeatureSet`'s field list, `build`'s signature and
+//! the three views below (`agent_features`, `root_egress`, `participants`)
+//! do not change for that.
 
 pub mod efs_volumes;
 pub mod lifecycle_events;
@@ -142,35 +143,36 @@ pub fn build(ctx: &FeatureContext) -> FeatureSet {
 mod tests {
     use super::*;
 
-    #[test]
-    fn every_slot_still_a_stub_starts_unsupported() {
-        // `s3_mounts` (`m15-s3-mounts`) and `secret_gateway`
-        // (`m15-secrets-gateway`) have real adapters, asserted separately in
-        // their own modules' tests; every other slot is still `Unsupported`.
+    // `#[tokio::test]`: `lifecycle_events::build` spawns its stdout drain
+    // task, so `build()` needs a runtime.
+    #[tokio::test]
+    async fn every_slot_still_a_stub_starts_unsupported() {
+        // `s3_mounts` (`m15-s3-mounts`), `lifecycle_events`
+        // (`m15-events-webhooks`) and `secret_gateway` (`m15-secrets-gateway`)
+        // have real adapters, asserted separately in their own modules'
+        // tests; every other slot is still `Unsupported`.
         let set = build(&FeatureContext::default());
         assert!(!set.efs_volumes.supported());
-        assert!(!set.lifecycle_events.supported());
         assert!(!set.telemetry_export.supported());
-        // m15-secrets-gateway: the first 0.6 feature with a real adapter
-        // (`features::secret_gateway::build`), so this is the one slot this
-        // build actually supports.
-        assert!(set.secret_gateway.supported());
         assert!(!set.template_start.supported());
     }
 
-    #[test]
-    fn the_views_are_read_from_the_slots() {
+    #[tokio::test]
+    async fn the_views_are_read_from_the_slots() {
         // Whatever this host makes of `s3_mounts` (a CI runner has no
         // `CAP_SYS_ADMIN`/`mount-s3`) or `secret_gateway` (it degrades
         // without a TLS trust store), the reported flags and the reported
         // root egress follow each slot's own `supported()`, in `FeatureSet`
-        // field order, and every stub stays `false` with no egress and no
-        // participant.
+        // field order; `lifecycle_events` is always supported and always a
+        // participant (what stays inert without a `ConfigureSandbox`
+        // section is its key), and every stub stays `false` with no egress
+        // and no participant.
         let set = build(&FeatureContext::default());
         let features = set.agent_features();
         assert!(features.configure);
         assert_eq!(features.s3_mounts, set.s3_mounts.supported());
         assert_eq!(features.secret_gateway, set.secret_gateway.supported());
+        assert!(features.lifecycle_events);
         assert!(!features.efs_volumes);
         let expected: Vec<RootEgressClass> = [
             (set.s3_mounts.supported(), RootEgressClass::S3),
@@ -188,6 +190,12 @@ mod tests {
             .iter()
             .map(|participant| participant.demand().name)
             .collect();
-        assert_eq!(names, [s3_mounts::PARTICIPANT_NAME]);
+        assert_eq!(
+            names,
+            [
+                s3_mounts::PARTICIPANT_NAME,
+                rayd_core::lifecycle_events::PARTICIPANT_NAME
+            ]
+        );
     }
 }

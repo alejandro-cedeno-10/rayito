@@ -57,7 +57,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - **Catálogo de tamaños, aceptación en AWS real** (`m15-sizes-catalog`):
   `rayito image publish --env`/`--sizes` vuelve a reutilizar una versión
   ya construida con la misma configuración: `list-microvm-image-versions`
-  no devuelve `environmentVariables` (Q106), así que antes toda imagen con
+  no devuelve `environmentVariables` (Q118), así que antes toda imagen con
   variables (cada imagen con sufijo de tamaño) se reconstruía en cada
   publicación; ahora se confirman con `GetMicrovmImageVersion` (gratuita),
   sólo cuando la publicación lleva variables. `rayito image sizes` acepta
@@ -93,6 +93,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   estándar). Sin `size=`, el comportamiento sigue siendo exactamente el de
   0.5.x.
 <!-- m15-events-webhooks -->
+- **`LifecycleEvents`/`AsyncLifecycleEvents`** (`m15-events-webhooks`,
+  opcional y apagado por defecto): despliega `infra/events-webhooks.yaml`
+  (`deploy`/`status`/`destroy`, componente `events-webhooks` de
+  `OptionalStacks`), registra webhooks compatibles con E2B
+  (`register_webhook`/`list_webhooks`/`delete_webhook`) y lee el historial
+  (`get_events`, 1–100 filas, filtrado por tipo en DynamoDB). CLI
+  `rayito events deploy|status|destroy|list` y `rayito events webhook
+  add|list|remove`, con el mismo bloque de coste y confirmación que
+  `rayito stack`. Los errores de AWS llegan como `WebhookException` con sólo
+  el código (`aws_code`). `events=` en `Sandbox.create()` valida el tipo y
+  que `logging` llegue a CloudWatch, y sigue lanzando `UnimplementedError`
+  hasta que `create()` envíe la sección tras `run-microvm` (ADR-020); sin
+  `events=`, ni un cliente DynamoDB/Secrets Manager nuevo ni una llamada
+  `ConfigureSandbox`. `rayito events deploy --tag K=V` (repetible) para
+  cuentas cuya organización exige etiquetas al crear recursos. Aceptado en
+  AWS real (`AWS_API_NOTES.md` Q105–Q108): el forwarder exige que el log
+  stream termine en `]<sandbox_id>` (formato medido) y el forwarder y el
+  reconciliador dejan una línea JSON por invocación con lo que aceptaron,
+  rechazaron (por motivo) o sintetizaron.
 <!-- m15-rayd-otlp -->
 <!-- m15-templates -->
 <!-- m15-secrets-gateway -->

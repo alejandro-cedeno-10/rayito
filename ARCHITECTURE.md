@@ -1983,9 +1983,66 @@ ninguna imagen ni versión.
 
 ## ADR-020 — events-webhooks (M15, 0.6)
 
-Pendiente: lo completa `m15-events-webhooks` (eventos de ciclo de vida
-firmados por HMAC, forwarder/deliverer/reconciler en Lambda, webhooks
-compatibles con E2B).
+`rayd` emite una línea por evento de ciclo de vida (`created`, `paused`,
+`resumed`, `killed`) en su propio stdout: `rayito.event.v1 <b64url(json)>
+<b64url(mac)>`. La clave (`k_sbx`) la deriva el SDK —
+`HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` — y la empuja una
+vez por `ConfigureSandbox` (`LifecycleEventsConfig.sandbox_key`); `rayd`
+nunca ve `stack_key`, así que un sandbox comprometido sólo revela su propia
+clave. `created` se emite la primera vez que la sección trae una clave;
+`paused`/`resumed` en `/suspend`/`/resume` y `killed{reason: request}` en
+`/terminate`, a través del participante de la función (ADR-015: una vez por
+transición aceptada). `paused` y `killed` esperan a que la línea salga
+(`LifecycleEventSink::flush`: una barrera en la misma cola que la tarea de
+drenaje reconoce tras escribir y vaciar stdout), acotado por la cuota de
+`/suspend` (≤ `SUSPEND_SHARE_MAX`, 1 s) y por
+`PARTICIPANT_TERMINATE_TIMEOUT`: sin eso el VM podía congelarse, o el
+proceso salir, con la línea aún en cola. Si la fuente aleatoria falla, el
+evento se descarta y se cuenta (`random_unavailable`) en vez de emitir un
+`event_id` repetido. El estado vive en el `FeatureSet` único del proceso
+(ADR-015), nunca en un singleton.
+
+Una suscripción de CloudWatch Logs reenvía cada línea a un Lambda
+*forwarder*, que re-deriva `k_sbx` del secreto del stack, comprueba que el
+*log stream* de origen termina en el `sandbox_id` de la línea
+(`YYYY/MM/DD[<versión>]<microvmId>`, Q106) y escribe
+el evento, de forma idempotente, en una tabla DynamoDB (TTL 7 días). Sólo un
+evento nuevo mueve la fila `STATE#` del sandbox, y sólo hacia delante
+(escritura condicional sobre `last_seen_ms`); `killed` la deja como lápida
+con TTL, así que una línea tardía nunca reabre un sandbox. Un *deliverer*
+(disparado por DynamoDB Streams) entrega el evento a cada webhook suscrito a
+ese tipo, firmado al estilo E2B (`e2b-signature` = base64 sin relleno de
+`sha256(secreto + payload)`), con un guardián SSRF (resuelve DNS, rechaza
+loopback/privada/link-local/CGNAT, conecta a la dirección ya comprobada —
+nunca una segunda resolución), hasta 3 intentos sólo ante 5xx o error de
+transporte y una lectura de respuesta acotada a 64 KiB. Cada par
+`(evento, webhook)` se reclama (`attempting`) antes del primer intento y se
+cierra como `delivered` o `failed`; sólo `delivered` se salta en una
+reentrega, así que un fallo o un timeout nunca pierde una entrega. Cada
+intento cabe en el tiempo que le queda a la invocación; si se agota, el
+registro pendiente vuelve como `batchItemFailures` y el stream reintenta
+desde ahí (lo que agota sus reintentos va a una cola SQS). Un *reconciler*
+(cada `ReconcilerIntervalMinutes`, 5 por defecto, mínimo 2) compara
+`ListMicrovms` con los sandboxes que la tabla aún considera abiertos y
+sintetiza `killed{unknown}` con la generación y la imagen de su último
+evento — sólo `unknown`: distinguir `timeout` exige conocer la duración
+máxima de cada sandbox, que esta iteración no rastrea. Su cliente
+`lambda-microvms` sale de una sesión botocore propia cuyo `data_path` es el
+modelo que `scripts/gen_stack_assets.py` inyecta en el zip desde
+`docs/aws-api/service-2.json` (decisión 8).
+
+**Hueco de integración conocido:** `Sandbox.create(events=...)` valida la
+opción (un `LifecycleEvents` y un `logging` que llegue a CloudWatch) y
+después sigue lanzando `UnimplementedError`. La sección necesita
+`sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
+`run-microvm`, y todavía no entra en `FeaturePlan.configure_sections` (el
+envío tras el primer `Health` ya existe: `_apply_configure_sections`/
+`#applyConfigureSections`, de `m15-s3-mounts`/`m15-secrets-gateway`).
+Aceptar `events=` sin enviarla dejaría al usuario pagando la pila sin
+recibir ningún evento. `LifecycleEvents._build_section` / `buildSection`
+construyen la sección real y están probadas; conectarlas a ese envío es
+fontanería pendiente. Hasta entonces la pila, los webhooks y
+`get_events` funcionan, pero ningún sandbox emite eventos.
 
 ## ADR-021 — rayd-otlp (M15, 0.6)
 

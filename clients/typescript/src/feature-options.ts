@@ -16,6 +16,7 @@
 
 import type { PlannedSection } from "./configure/base.js";
 import { UnimplementedError } from "./errors.js";
+import { validateEventsOption } from "./lifecycle-events/options.js";
 import { requireCapsFor } from "./role-policy.js";
 import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
@@ -27,6 +28,13 @@ export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
 export const DOMAIN_CHANGE = "m15-custom-domain";
+
+/** Por qué `events` sigue sin aceptarse aunque `LifecycleEvents` ya
+ * funcione por su cuenta (ver `planFeatures`). */
+export const EVENTS_PENDING_REASON =
+  `${EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm ` +
+  "(FeaturePlan.configureSections); LifecycleEvents (deploy, registerWebhook, getEvents) " +
+  "ya funciona fuera de create()";
 
 /** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
 export interface FeatureOptions {
@@ -52,19 +60,23 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [] });
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) es la variante de imagen,
  * cuando el nombre ya permite decidirla; `mounts` lo usa para
- * `requireCapsFor`. `logging` (el `logging` de `create()`, tal cual: una
- * función que lee los logs del sandbox, como `events`, exige que lleguen a
- * CloudWatch) queda para cuando una función real lo necesite; ninguna rama
- * de hoy lo usa. No hace ninguna llamada a AWS ni construye ningún
- * cliente: `requireCapsFor` es una comprobación puramente sobre el nombre
- * de la imagen.
+ * `requireCapsFor`. `logging` es el `logging` de `create()`: `events` exige
+ * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
+ * construye ningún cliente: `requireCapsFor` es una comprobación puramente
+ * sobre el nombre de la imagen.
+ *
+ * `events` se valida (tipo y `logging`) y después sigue lanzando
+ * `UnimplementedError`: su sección de `ConfigureSandbox` necesita
+ * `sandboxId`/`imageArn`/`imageVersion`, que sólo existen tras
+ * `run-microvm`, y todavía no entra en `FeaturePlan.configureSections`
+ * (ADR-020, "Hueco de integración conocido"). Aceptarlo sin enviarla
+ * dejaría al usuario pagando la pila sin recibir ningún evento.
  */
 export function planFeatures(
   options: FeatureOptions,
   imageVariant?: string,
   logging?: unknown,
 ): FeaturePlan {
-  void logging;
   const sections: PlannedSection[] = [];
   if (options.mounts !== undefined) {
     requireCapsFor("mounts", imageVariant);
@@ -81,7 +93,8 @@ export function planFeatures(
   // del guest en marcha), así que `create()` la resuelve por su cuenta con
   // `sizing/sizing.ts` antes de pedir el ARN de la plantilla.
   if (options.events !== undefined) {
-    throw new UnimplementedError("events", `llega en 0.6 (${EVENTS_CHANGE})`);
+    validateEventsOption(options.events, logging);
+    throw new UnimplementedError("events", EVENTS_PENDING_REASON);
   }
   if (options.telemetry !== undefined) {
     throw new UnimplementedError("telemetry", `llega en 0.6 (${TELEMETRY_CHANGE})`);

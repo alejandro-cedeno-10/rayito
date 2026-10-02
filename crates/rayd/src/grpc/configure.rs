@@ -43,7 +43,12 @@ impl ConfigureGrpc {
     ) -> Option<SectionOutcome> {
         match section {
             ConfigSection::LifecycleEvents => {
-                let cfg = request.lifecycle_events?;
+                // Unlike the other sections (still empty `{}` messages,
+                // hence `Copy`), `LifecycleEventsConfig` now carries owned
+                // bytes/strings (`m15-events-webhooks`), so it cannot be
+                // moved out of `request: &ConfigureRequest` — cloned
+                // instead, once per `Configure` call.
+                let cfg = request.lifecycle_events.clone()?;
                 Some(self.features.lifecycle_events.apply(cfg).await)
             }
             ConfigSection::TelemetryExport => {

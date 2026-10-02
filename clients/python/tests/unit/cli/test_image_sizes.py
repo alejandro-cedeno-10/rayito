@@ -217,7 +217,7 @@ SIZED_ENVIRONMENT = {"RAYITO_BASELINE_MEMORY_MIB": "4096"}
 
 
 def sized_version_item(number: int, *, artifact_uri: str) -> dict[str, Any]:
-    """Un item de `list-microvm-image-versions`: como en AWS real (Q106),
+    """Un item de `list-microvm-image-versions`: como en AWS real (Q118),
     sin `environmentVariables`; sólo `get-microvm-image-version` las
     devuelve (`sized_version_detail`)."""
     return {
@@ -239,7 +239,7 @@ def sized_version_item(number: int, *, artifact_uri: str) -> dict[str, Any]:
 
 def sized_version_detail(number: int, *, artifact_uri: str) -> dict[str, Any]:
     """`get-microvm-image-version` de la misma versión: la única que trae
-    `environmentVariables` (Q106)."""
+    `environmentVariables` (Q118)."""
     return {
         **sized_version_item(number, artifact_uri=artifact_uri),
         "environmentVariables": SIZED_ENVIRONMENT,
@@ -312,7 +312,7 @@ def test_publish_sizes_reuses_an_already_built_version_without_touching_the_base
 def test_publish_sizes_rebuilds_when_the_echoed_environment_differs(
     clients: Clients, stubbed_clients: Stubs, artifact: Path
 ) -> None:
-    """Q106: una versión que coincide en todo lo que devuelve la lista pero
+    """Q118: una versión que coincide en todo lo que devuelve la lista pero
     cuyas `environmentVariables` (leídas con `get`) no son las pedidas no se
     reutiliza: `published_version` no encuentra ninguna."""
     settings = _publish.sized_settings(base_settings(artifact=artifact), "4gb")

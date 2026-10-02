@@ -31,6 +31,7 @@ pub mod s3_store;
 pub mod sidecar_process;
 pub mod signed_http;
 pub mod std_filesystem;
+pub mod stdout_event_sink;
 pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
@@ -72,6 +73,7 @@ pub use signed_http::{FilteringResolver, HyperSignedHttp, SignedHttpInitError};
 pub use std_filesystem::PlatformFileSystem;
 #[cfg(unix)]
 pub use std_filesystem::StdFileSystem;
+pub use stdout_event_sink::StdoutEventSink;
 pub use tar_archiver::PlatformHomeArchiver;
 #[cfg(unix)]
 pub use tar_archiver::TarHomeArchiver;

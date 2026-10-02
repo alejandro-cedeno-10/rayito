@@ -52,7 +52,7 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
 !!! success "Aceptado en AWS real (2026-10-02)"
     `size=`/`size` (Python sync/async y TypeScript), `rayito image publish
     --sizes`/`--env`, `rayito image sizes` y el componente `sizes-guard` se
-    probaron contra AWS real: ver `AWS_API_NOTES.md` §24 (Q106, Q107).
+    probaron contra AWS real: ver `AWS_API_NOTES.md` §24 (Q118, Q119).
 
 ## Cuándo usarlo
 
@@ -204,7 +204,7 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   interruptor de activación del SDK (ADR-014 regla 4), sólo configuración
   horneada en la imagen. `rayito image publish` hornea además
   `RAYITO_BASELINE_MEMORY_MIB` en cada imagen con sufijo. Ninguna de las
-  dos llega al entorno de `commands.run` (medido, Q107): son información
+  dos llega al entorno de `commands.run` (medido, Q119): son información
   declarada de la imagen, que lees con `GetMicrovmImageVersion`.
   **Nunca pongas secretos en `--env`**: cualquiera con `GetMicrovmImageVersion`
   y todo proceso del guest los leen en claro; usa `SecretStore`/`secrets=`
@@ -218,7 +218,7 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   reutiliza, como en una publicación normal. Con `--env` o `--sizes` la
   comparación de variables usa una `GetMicrovmImageVersion` (gratuita) por
   versión candidata, porque `list-microvm-image-versions` no las devuelve
-  (Q106); sin ninguno de los dos, la comprobación es la de 0.5.x, sin
+  (Q118); sin ninguno de los dos, la comprobación es la de 0.5.x, sin
   llamadas nuevas, y una versión publicada antes *con* `--env` se
   reutiliza tal cual: usa `--force` para reconstruirla sin variables.
 - `rayito image sizes [--variant | --image-name]` lista, por tamaño del catálogo cerrado,

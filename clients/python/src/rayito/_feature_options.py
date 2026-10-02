@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from rayito._configure_base import PlannedSection
+from rayito._lifecycle_events._options import validate_events_option
 from rayito._role_policy import require_caps_for
 from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
@@ -40,6 +41,14 @@ EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
 DOMAIN_CHANGE: Final = "m15-custom-domain"
+
+#: Por qué `events=` sigue sin aceptarse aunque `LifecycleEvents` ya
+#: funcione por su cuenta (ver `plan_features`).
+EVENTS_PENDING_REASON: Final = (
+    f"{EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm "
+    "(FeaturePlan.configure_sections); LifecycleEvents (deploy, register_webhook, "
+    "get_events) ya funciona fuera de create()"
+)
 
 
 @dataclass(frozen=True)
@@ -80,14 +89,18 @@ def plan_features(
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
     variante de imagen, cuando el nombre ya permite decidirla; `mounts=` lo
     usa para `require_caps_for` (s3-mounts, efs-volumes y rayd-otlp con rol
-    exigen la variante caps). `logging` (el `logging=` de `create()`, tal
-    cual: una función que lee los logs del sandbox, como `events=`, exige
-    que lleguen a CloudWatch) queda para cuando una función real lo
-    necesite; ninguna rama de hoy lo usa. No hace ninguna llamada a AWS ni
-    construye ningún cliente: `require_caps_for` es una comprobación
-    puramente sobre el nombre de la imagen.
+    exigen la variante caps). `logging` es el `logging=` de `create()`:
+    `events=` exige que mande los logs a CloudWatch. No hace ninguna llamada
+    a AWS ni construye ningún cliente: `require_caps_for` es una
+    comprobación puramente sobre el nombre de la imagen.
+
+    `events=` se valida (tipo y `logging`) y después sigue lanzando
+    `UnimplementedError`: su sección de `ConfigureSandbox` necesita
+    `sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
+    `run-microvm`, y todavía no entra en `FeaturePlan.configure_sections`
+    (ADR-020, "Hueco de integración conocido"). Aceptarlo sin enviarla
+    dejaría al usuario pagando la pila sin recibir ningún evento.
     """
-    del logging
     sections: list[PlannedSection] = []
     if options.mounts is not None:
         require_caps_for("mounts=", image_variant)
@@ -102,7 +115,8 @@ def plan_features(
     # con `_sizing.resolve_size`/`apply_size_suffix` antes de pedir el ARN
     # de la plantilla, y aquí no hay nada que comprobar ni que lanzar.
     if options.events is not None:
-        raise UnimplementedError("events=", f"llega en 0.6 ({EVENTS_CHANGE})")
+        validate_events_option(options.events, logging)  # type: ignore[arg-type]
+        raise UnimplementedError("events=", EVENTS_PENDING_REASON)
     if options.telemetry is not None:
         raise UnimplementedError("telemetry=", f"llega en 0.6 ({TELEMETRY_CHANGE})")
     if options.gateways is not None:

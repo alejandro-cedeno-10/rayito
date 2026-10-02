@@ -50,7 +50,7 @@ named size from the *same* artifact, named ``<image_name>-<size>``
 ``resources[0].minimumMemoryInMiB`` and an ``environmentVariables``
 entry (``RAYITO_BASELINE_MEMORY_MIB``) baked in as declared image
 information, readable with ``get-microvm-image-version``; it does not
-reach ``commands.run``'s environment (Q107). With ``--sizes``
+reach ``commands.run``'s environment (Q119). With ``--sizes``
 every image this invocation publishes (baseline and sizes alike) is
 reported in a single output block: one JSON document, or one
 ``RAYITO_TEMPLATE=`` line for the baseline plus one
@@ -68,7 +68,7 @@ environment, nothing about what the SDK does at ``Sandbox.create()``. A
 ``--env``/``--sizes`` publish only reuses a version whose
 ``environmentVariables`` match exactly, read with
 ``get-microvm-image-version`` because ``list-microvm-image-versions`` never
-echoes them (Q106, ``echoed_environment_variables``). Without ``--env`` the
+echoes them (Q118, ``echoed_environment_variables``). Without ``--env`` the
 reuse check is 0.5.x's, list-only and with no extra call: a version built
 earlier *with* ``--env`` under the same name and artifact is then reused as
 is; pass ``--force`` to rebuild it without the variables.
@@ -358,7 +358,7 @@ def environment_variables_match(echoed: Any, desired: Mapping[str, str]) -> bool
     clave cuando no está vacío, para que la petición a AWS siga siendo byte
     a byte la de antes de sizes-catalog). Una versión sin la clave (nunca
     tuvo `--env`, o viene de `list-microvm-image-versions`, que nunca la
-    devuelve: Q106) cuenta como `{}`, igual que un `desired` vacío. Quién
+    devuelve: Q118) cuenta como `{}`, igual que un `desired` vacío. Quién
     lee de verdad `echoed`: `echoed_environment_variables`."""
     return dict(echoed or {}) == dict(desired)
 
@@ -393,7 +393,7 @@ def echoed_environment_variables(
 ) -> Any:
     """The `environmentVariables` a listed version was built with.
     `list-microvm-image-versions` never echoes the key, only
-    `get-microvm-image-version` does (Q106, AWS_API_NOTES.md §24): without
+    `get-microvm-image-version` does (Q118, AWS_API_NOTES.md §24): without
     this every `--env`/`--sizes` publish (sized images always bake
     `RAYITO_BASELINE_MEMORY_MIB`) rebuilt instead of reusing. The extra
     call (no `apiTps` quota of its own) only happens when this publish
