@@ -655,17 +655,16 @@ fn system_user_exists(name: &str) -> bool {
 }
 
 #[must_use]
-pub fn build(ctx: &FeatureContext) -> Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>> {
+pub fn build(
+    _ctx: &FeatureContext,
+) -> Arc<dyn ConfigurableFeature<S3MountsConfig, S3MountsStatus>> {
     let allowed_buckets =
         s3_mount::parse_allowed_buckets(&std::env::var(ALLOWED_BUCKETS_ENV).unwrap_or_default());
     let region = std::env::var(AWS_REGION_ENV).unwrap_or_default();
     let supported = detect_s3_mounts_supported();
     Arc::new(S3MountsFeature::new(
         Arc::new(LinuxFuseDevice),
-        Arc::new(TokioMountS3Daemon::new(
-            region,
-            Arc::clone(&ctx.child_registry),
-        )),
+        Arc::new(TokioMountS3Daemon::new(region)),
         allowed_buckets,
         supported,
     ))

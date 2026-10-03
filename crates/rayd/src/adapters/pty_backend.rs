@@ -45,8 +45,8 @@ mod unix {
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
     use tokio::process::{Child, Command};
 
-    use crate::adapters::IdentitySwitch;
     use crate::adapters::process_spawner::PreExecPlan;
+    use crate::adapters::{ChildRegistry, IdentitySwitch};
     use crate::process::child::{ChildReader, ChildWriter, WaitFuture};
     use crate::pty::child::{PtyIo, PtyResizer};
 
@@ -105,7 +105,9 @@ mod unix {
                     plan.apply()
                 });
             }
-            let child = command.spawn().map_err(|error| spawn_error(&error))?;
+            let child = ChildRegistry::process()
+                .spawn(&mut command)
+                .map_err(|error| spawn_error(&error))?;
             let pid = child
                 .id()
                 .ok_or_else(|| SpawnError::Failed("el hijo no tiene pid".to_owned()))?;

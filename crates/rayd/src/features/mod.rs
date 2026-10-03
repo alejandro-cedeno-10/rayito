@@ -31,7 +31,7 @@ use rayito_proto::v1::{
     TelemetryExportConfig, TelemetryExportStatus,
 };
 
-use crate::adapters::{ChildRegistry, ImdsCredentialBroker, PushedCredentials};
+use crate::adapters::{ImdsCredentialBroker, PushedCredentials};
 use crate::grpc::PlatformProcessManager;
 use crate::lifecycle::LifecycleParticipant;
 use slot::ConfigurableFeature;
@@ -42,9 +42,6 @@ use slot::ConfigurableFeature;
 /// itself; every other slot ignores it.
 #[derive(Clone)]
 pub struct FeatureContext {
-    /// `m15-s3-mounts`: its `mount-s3` daemon registers each pid here (see
-    /// `adapters::mount_s3`'s module doc).
-    pub child_registry: Arc<ChildRegistry>,
     /// `template_start` (ADR-022): `None` builds a slot that still reports
     /// `supported()` correctly but spawns nothing.
     pub processes: Option<Arc<PlatformProcessManager>>,
@@ -74,7 +71,6 @@ impl Default for FeatureContext {
     /// spawns nothing and `telemetry_export` stays `Unsupported`.
     fn default() -> Self {
         Self {
-            child_registry: Arc::default(),
             processes: None,
             session: Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test")),
             credentials: Arc::new(ImdsCredentialBroker::new()),

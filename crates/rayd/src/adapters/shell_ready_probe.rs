@@ -21,6 +21,8 @@ use std::time::Duration;
 use rayd_core::pty::FALLBACK_SHELL;
 use tokio::process::Command;
 
+use super::child_registry::ChildRegistry;
+
 #[tonic::async_trait]
 pub trait ReadyProbe: Send + Sync {
     /// The exit code of `cmd`, or `None` when it could not even be spawned
@@ -35,15 +37,15 @@ pub struct ShellReadyProbe;
 #[tonic::async_trait]
 impl ReadyProbe for ShellReadyProbe {
     async fn probe(&self, cmd: &str, budget: Duration) -> Option<i32> {
-        let mut child = Command::new(FALLBACK_SHELL)
+        let mut command = Command::new(FALLBACK_SHELL);
+        command
             .arg("-c")
             .arg(cmd)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .ok()?;
+            .kill_on_drop(true);
+        let mut child = ChildRegistry::process().spawn(&mut command).ok()?;
         match tokio::time::timeout(budget, child.wait()).await {
             Ok(Ok(status)) => status.code(),
             Ok(Err(_)) | Err(_) => None,

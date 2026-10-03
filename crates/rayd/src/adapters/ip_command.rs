@@ -15,6 +15,8 @@ use rayd_core::network::{Family, IP_COMMAND_TIMEOUT};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 
+use super::child_registry::ChildRegistry;
+
 /// `ip` as found on `PATH`, then where AL2023 keeps it for root.
 pub const IP_BINARIES: [&str; 2] = ["ip", "/usr/sbin/ip"];
 
@@ -92,7 +94,7 @@ async fn run_binary(
     } else {
         Stdio::null()
     });
-    let mut child = command.spawn()?;
+    let mut child = ChildRegistry::process().spawn(&mut command)?;
     if let Ok(output) = tokio::time::timeout(budget, collect(&mut child, input)).await {
         return output;
     }
