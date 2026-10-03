@@ -84,9 +84,10 @@ same `FeatureSet`, and the first participant with work on `/resume` and
   `LifecycleEvents`' own gateway (once per instance), never through the
   handle's `SecretCache`: the stack key is not a user secret and may be
   binary. `main.py`/`sandbox.ts` name no feature; any failure terminates
-  the sandbox like every other section. `reincarnate()` does not replay it
-  (as with `mounts=`/`telemetry=`) and `pool=` rejects it like every 0.6
-  option.
+  the sandbox like every other section. `reincarnate()` replays it like
+  every other section (change `m15-reincarnate-configure-replay`: the
+  successor derives `k_sbx` from its own `sandbox_id`) and `pool=` rejects
+  it like every 0.6 option.
 
 ## Risks
 

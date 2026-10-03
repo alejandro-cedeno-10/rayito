@@ -6,6 +6,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
+  (`m15-reincarnate-configure-replay`, sync y async): hasta ahora sólo
+  reenviaba `gateways=` y un sucesor perdía `mounts=`, `events=` y
+  `telemetry=`. `create()` guarda sus opciones 0.6 en
+  `LaunchOptions.features` (`relaunch_features`: todas menos `size`, que ya
+  va en el ARN de la imagen) y `reincarnate()` las reenvía campo a campo
+  (`feature_kwargs`) al `create()` del sucesor, que las aplica por el mismo
+  camino en su único `Configure`: `events=` deriva `k_sbx` del nuevo
+  `sandbox_id`, `mounts=` espera otra vez a `mounted` y `telemetry=` usa la
+  imagen y la memoria del sucesor. `LaunchOptions.gateways` pasa a
+  `LaunchOptions.features.gateways` (atributo interno).
+
 ## [0.6.0] - 2026-10-03
 
 ### Added

@@ -48,6 +48,19 @@ export interface FeatureOptions {
   readonly domain?: unknown;
 }
 
+/**
+ * Lo que `create()` guarda en `LaunchOptions.features` para que
+ * `reincarnate()` lance el sucesor con las mismas secciones de
+ * ConfigureSandbox: las opciones tal cual (de solo lectura, se guardan por
+ * referencia) salvo `size`, que ya va dentro del ARN de plantilla resuelto
+ * (`LaunchOptions.template`); repetirlo sobre un ARN es
+ * `InvalidArgumentError` (`applySizeSuffix`).
+ */
+export function relaunchFeatures<T extends FeatureOptions>(options: T): Omit<T, "size"> {
+  const { size: _resolvedIntoTemplate, ...features } = options;
+  return features;
+}
+
 /** Lo que `create()` hace con las opciones 0.6 una vez validadas:
  * `configureSections`, las secciones de `ConfigureSandbox` que ya pueden
  * planearse antes de `run-microvm` (`mounts`; `gateways`, un

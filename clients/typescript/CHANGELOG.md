@@ -6,6 +6,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
+  (`m15-reincarnate-configure-replay`): hasta ahora sólo reenviaba
+  `gateways` y un sucesor perdía `mounts`, `events` y `telemetry`.
+  `create()` guarda sus opciones 0.6 en `LaunchOptions.features`
+  (`relaunchFeatures`: todas menos `size`) y `reincarnate()` las reenvía
+  (`relaunchCreateOptions`) al `create()` del sucesor, que las aplica por el
+  mismo camino en su único `Configure`: `events` deriva `k_sbx` del nuevo
+  `sandboxId`, `mounts` espera otra vez a `mounted` y `telemetry` usa la
+  imagen y la memoria del sucesor. De paso, `reincarnate()` de un sandbox
+  creado con `size` ya no reenvía el tamaño resuelto junto al ARN de la
+  imagen (que ya lo lleva), combinación que `create()` rechaza.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added

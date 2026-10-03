@@ -46,7 +46,13 @@ from rayito._configure_base import (
     settle_timeout_s,
     still_pending,
 )
-from rayito._feature_options import FeatureOptions, LaunchFacts, plan_features, planned_sections
+from rayito._feature_options import (
+    FeatureOptions,
+    LaunchFacts,
+    plan_features,
+    planned_sections,
+    relaunch_features,
+)
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -699,16 +705,17 @@ class AsyncSandbox:
         # `sandbox_sync`) resuelve `size=` aquí, no en `plan_features`: ver
         # la versión sync para el porqué.
         resolved_size = plan_size(size, stacklevel=4)
+        feature_options = FeatureOptions(
+            mounts=mounts,
+            volumes=volumes,
+            size=size,
+            events=events,
+            telemetry=telemetry,
+            gateways=gateways,
+            domain=domain,
+        )
         feature_plan = plan_features(
-            FeatureOptions(
-                mounts=mounts,
-                volumes=volumes,
-                size=size,
-                events=events,
-                telemetry=telemetry,
-                gateways=gateways,
-                domain=domain,
-            ),
+            feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
         )
@@ -816,7 +823,7 @@ class AsyncSandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
-            gateways=None if gateways is None else dict(gateways),
+            features=relaunch_features(feature_options),
             size=resolved_size,
         )
         if persist is not None:
@@ -1750,7 +1757,9 @@ class AsyncSandbox:
         persist_timeout: float = DEFAULT_PERSIST_TIMEOUT_SECONDS,
     ) -> Self:
         """Misma semántica que `Sandbox.reincarnate`: checkpoint → `create(persist=)`
-        con las mismas opciones (restaura) → `kill()` de este sandbox."""
+        con las mismas opciones (restaura, y reaplica `mounts=`/`events=`/
+        `telemetry=`/`gateways=` en el `Configure` del sucesor) → `kill()` de
+        este sandbox."""
         options = self._launch_options
         if options is None:
             raise reincarnate_requires_create_error()

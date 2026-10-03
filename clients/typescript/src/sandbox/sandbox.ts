@@ -40,7 +40,12 @@ import {
   SandboxNotReadyError,
   TimeoutError,
 } from "../errors.js";
-import { planFeatures, plannedSections } from "../feature-options.js";
+import {
+  type FeatureOptions,
+  planFeatures,
+  plannedSections,
+  relaunchFeatures,
+} from "../feature-options.js";
 import {
   type ConfigureRequest,
   type ConfigureResponse,
@@ -186,6 +191,7 @@ import {
   type RestoreResult,
   reincarnateRequiresCreateError,
   reincarnateRequiresPersistError,
+  relaunchCreateOptions,
   requireNamedPersist,
   requireRoleForPersist,
   type S3Prefix,
@@ -806,16 +812,17 @@ export class Sandbox implements AsyncDisposable {
     // en `planFeatures`: no es una sección de ConfigureSandbox, es qué
     // imagen lanzar.
     const resolvedSize = planSize(options.size);
+    const featureOptions = {
+      mounts: options.mounts,
+      volumes: options.volumes,
+      size: options.size,
+      events: options.events,
+      telemetry: options.telemetry,
+      gateways: options.gateways,
+      domain: options.domain,
+    } satisfies FeatureOptions;
     const featurePlan = planFeatures(
-      {
-        mounts: options.mounts,
-        volumes: options.volumes,
-        size: options.size,
-        events: options.events,
-        telemetry: options.telemetry,
-        gateways: options.gateways,
-        domain: options.domain,
-      },
+      featureOptions,
       resolveImageVariant(options.template),
       options.logging,
     );
@@ -920,7 +927,7 @@ export class Sandbox implements AsyncDisposable {
       reconnectTimeoutMs: options.reconnectTimeoutMs,
       keepOnFailure: options.keepOnFailure,
       network: isEmptyPolicy(network) ? undefined : network,
-      gateways: options.gateways,
+      features: relaunchFeatures(featureOptions),
       size: resolvedSize,
     };
     sandbox.#launchContext = {
@@ -1947,7 +1954,13 @@ export class Sandbox implements AsyncDisposable {
    * opciones (que restaura, incluidos `maxLifetimeMs` y `onTimeout`) →
    * `kill()` de este sandbox. El nuevo tiene un tope fresco, otro `sandboxId`
    * y otro token salvo que el original fuera explícito (con `index` en el
-   * `create()`, el nuevo escribe su propia fila en el mismo índice); kernels, procesos y
+   * `create()`, el nuevo escribe su propia fila en el mismo índice) y las
+   * mismas opciones 0.6 que acaban en `Configure` (`mounts`, `events`,
+   * `telemetry`, `gateways`): el sucesor las vuelve a planear y aplicar por el
+   * mismo camino que `create()`, con sus propios hechos (`events` deriva
+   * `k_sbx` del nuevo `sandboxId`, `mounts` espera otra vez a `mounted`,
+   * `telemetry` usa la imagen y la memoria del sucesor, cada cabecera de
+   * `gateways` se resuelve otra vez); kernels, procesos y
    * PTY no sobreviven (ADR-007). Si el
    * `create()` falla, este sandbox sigue vivo y se relanza el mismo error
    * (con sus campos tipados: `code`, `state`...) con la `uri` del checkpoint
@@ -1968,7 +1981,7 @@ export class Sandbox implements AsyncDisposable {
     let successor: Sandbox;
     try {
       successor = await Sandbox.create({
-        ...launch,
+        ...relaunchCreateOptions(launch),
         controlPlane: context.controlPlane,
         transport: context.transport,
         logger: context.logger,
