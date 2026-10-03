@@ -184,7 +184,7 @@ class _RecordingProvisioner(FakeStackProvisioner):
 
     created_parameters: dict[str, str] | None = None
 
-    def create(self, component, *, stack_name, template_body, parameters, tags):  # type: ignore[no-untyped-def,override]
+    def create(self, component, *, stack_name, template_body, parameters, tags):  # type: ignore[no-untyped-def]
         self.created_parameters = dict(parameters)
         super().create(
             component,
