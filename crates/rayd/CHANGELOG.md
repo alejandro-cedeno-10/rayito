@@ -10,6 +10,20 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rayd` (PID 1) recoge los zombis huérfanos** (`rayd-orphan-reaper`,
+  Q80): un demonio con doble `fork` (o `mount-s3` en modo daemon) ya no deja
+  procesos `<defunct>` colgados de `rayd` durante toda la vida del sandbox.
+  Todo hijo de `rayd` (procesos, PTYs, el sidecar de kernels, `mount-s3`,
+  sondas internas) se lanza por un único `ChildRegistry` por proceso que lo
+  registra con su pid y su hora de arranque antes de que ninguna pasada de
+  recogida pueda verlo; el reaper, en cada `SIGCHLD` y cada 5 s, sólo hace
+  `waitpid` sobre los zombis reasignados a `rayd` que no son suyos, así que
+  los códigos de salida de comandos, PTYs, kernels y `mount-s3` nunca se
+  pierden. Sólo se activa como PID 1 (o *child subreaper*). `clippy.toml`
+  prohíbe lanzar procesos fuera de `ChildRegistry::spawn`.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added

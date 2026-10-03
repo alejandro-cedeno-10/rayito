@@ -1376,13 +1376,13 @@ aplicación fijo, participantes de `/suspend`/`/ready`), el convenio
 nueve componentes, `metadata-index` y `secrets-access` migrados), el
 reaper de zombies huérfanos de PID 1 (`rayd_core::orphans`, Q80), el
 broker de credenciales IMDS compartido (`rayd::adapters::credential_broker`)
-y la fila de compatibilidad 0.6. Zombie reaping se entrega como dominio y
-adaptador completos y probados (`ChildRegistry`, `OrphanReaper`) sin
-activarse todavía en `main.rs`: el registro de PIDs en
-`process_spawner`/`pty_backend`/`sidecar_process` queda como seguimiento
-no bloqueante (ver el informe de cierre de `m15-foundations`), porque
-activarlo sin ese registro arriesgaría robarle a tokio el estado de
-salida de sus propios hijos. Un cambio OpenSpec (`v06-foundations`).
+y la fila de compatibilidad 0.6. Un cambio OpenSpec (`v06-foundations`).
+El reaper de huérfanos se entregó dormido y se activó después en su propio
+cambio (`rayd-orphan-reaper`): todo hijo de `rayd` se lanza por un único
+`ChildRegistry` por proceso que lo registra (pid y hora de arranque) bajo un
+candado que la pasada de recogida toma en exclusiva, y `main.rs` recoge en
+cada `SIGCHLD` y cada 5 s sólo los zombis reasignados que no son suyos, sin
+robarle nunca a tokio el estado de salida de sus propios hijos.
 
 **Criterio de aceptación: sin ninguna de las siete opciones 0.6 =
 comportamiento de 0.5.x.** La traza de oro (`fixtures/zero_cost_0_5_trace.json`,
@@ -1456,8 +1456,8 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   mínimo de los tipos de OpenTelemetry (Apache-2.0) para no acoplar
   `rayd-core` a `opentelemetry-proto`. La propagación W3C `traceparent` del
   lado del SDK tiene su seam y su implementación, pero queda sin conectar
-  al canal gRPC real (seguimiento razonado y no bloqueante, igual que el
-  reaper de zombis huérfanos de foundations; ver el diseño del cambio). La
+  al canal gRPC real (seguimiento razonado y no bloqueante; ver el diseño
+  del cambio). La
   política IAM mínima de CloudWatch no se puede acotar por namespace
   (investigado, OT9): documentado en T23. Sin AWS real todavía: la
   aceptación (bytes facturados, overhead de CPU, comportamiento en
@@ -1472,9 +1472,7 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   repitiendo nada. Sin caché de capas, sólo ARM64, sólo `from_base_image()`
   compone de verdad. El lado del agente (`rayd` leyendo
   `/etc/rayito/template.json` y arrancando/sondeando el `start_cmd`) queda
-  como seguimiento no bloqueante (misma integración con
-  `ProcessSpawner`/`ChildRegistry` que ya quedó pendiente para el reaper de
-  huérfanos de foundations); el dominio puro nuevo (`rayd_core::template`)
+  como seguimiento no bloqueante; el dominio puro nuevo (`rayd_core::template`)
   sí compila, pasa `cargo test --workspace` y clippy pedantic, verificado
   por la CI de la PR (el disco de 58 GB de la VM Lima compartida estuvo en
   0 bytes libres durante buena parte de la sesión por los

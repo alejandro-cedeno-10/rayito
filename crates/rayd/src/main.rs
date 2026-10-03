@@ -5,7 +5,8 @@
 //! shared output budget, the code manager with its kernel sidecar, the
 //! persistence manager over the S3 store (execution role by `IMDSv2`) and
 //! the tar archiver, the presigned-transfer manager over its credential-free
-//! HTTPS client (ADR-010), the suspend broadcast, the metrics probe and the 5 s
+//! HTTPS client (ADR-010), the suspend broadcast, PID 1's orphan reaper
+//! (`rayd-orphan-reaper`), the metrics probe and the 5 s
 //! metrics sampler with its history ring and the logical deadline's watcher
 //! thread to the gRPC and hooks listeners on `0.0.0.0`, and stops both on
 //! SIGTERM, Ctrl-C, the `/terminate` hook or a kill-mode deadline, which
@@ -19,11 +20,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use aws_sdk_s3::config::SharedCredentialsProvider;
 use rayd::adapters::{
-    CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock, ImdsCredentialBroker, ImdsState,
-    OsRandomSource, PlatformMetricsProbe, PushedCredentials, S3ObjectStore, SpawnPlatform,
-    USER_PROBE_CODE, USER_PROBE_PROGRAM, UserConnectProbe, detect_guest_capabilities,
-    detect_spawn_platform, imds_execution_role_provider, inherited_nofile_limits,
-    install_imds_block, prepare_socket_root,
+    ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
+    ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
+    PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
+    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
+    imds_execution_role_provider, inherited_nofile_limits, install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
 use rayd::features::{FeatureContext, FeatureSet};
@@ -33,8 +34,8 @@ use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServi
 use rayd::hooks::HookServices;
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
-    StreamCloser, SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper,
-    spawn_timeout_watcher,
+    StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
+    spawn_reaper, spawn_timeout_watcher,
 };
 use rayd::network::NetworkManager;
 use rayd::persistence::platform_persistence_manager;
@@ -205,6 +206,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let reapers: Vec<Arc<dyn Reaper>> = vec![processes.clone(), code.clone()];
     let _reaper = spawn_reaper(DEFAULT_REAPER_INTERVAL, reapers);
+    let _orphan_reaper = spawn_orphan_reaper();
     let metrics: Arc<dyn MetricsProbe> = Arc::new(PlatformMetricsProbe::default());
     let metrics_history = Arc::new(MetricsHistory::default());
     let _sampler = spawn_metrics_sampler(
@@ -288,7 +290,6 @@ fn build_feature_set(
     processes: &Arc<PlatformProcessManager>,
 ) -> Arc<FeatureSet> {
     Arc::new(rayd::features::build(&FeatureContext {
-        child_registry: Arc::default(),
         processes: Some(processes.clone()),
         session: session.clone(),
         credentials: Arc::new(ImdsCredentialBroker::sharing(execution_role)),
@@ -551,6 +552,22 @@ fn log_spawn_platform(platform: &SpawnPlatform) {
             "rayd is not root: processes run as its own user and limits are clamped"
         ),
     }
+}
+
+/// PID 1's orphan reaper (`rayd-orphan-reaper`, Q80) over the process-wide
+/// `ChildRegistry` every launcher spawns through: on each `SIGCHLD` and on
+/// the shared 5 s sweep it reaps the zombies re-parented to `rayd` that it
+/// did not spawn itself. `None` when `rayd` is not where orphans re-parent
+/// (not PID 1 and not a child subreaper: a developer's shell).
+fn spawn_orphan_reaper() -> Option<tokio::task::JoinHandle<()>> {
+    let reaper = OrphanReaper::new(ChildRegistry::process());
+    tracing::info!(
+        orphan_reaper = reaper.is_active(),
+        "orphan reaping configured"
+    );
+    reaper
+        .is_active()
+        .then(|| spawn_child_reaper(DEFAULT_REAPER_INTERVAL, Arc::new(reaper)))
 }
 
 fn spawn_stop_signal_handler(shutdown: CancellationToken) {

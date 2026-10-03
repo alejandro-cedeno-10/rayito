@@ -7,8 +7,10 @@
 //! the tar/gzip home archiver, the S3 object store (ADR-009) and the
 //! credential-free HTTPS client of presigned transfers (ADR-010), the
 //! bounded per-filesystem `syncfs` of `/suspend`, the boot-time reader of
-//! `/etc/rayito/template.json` and the shell runner behind a template's
-//! `ready_cmd` (ADR-022, `features::template_start`).
+//! `/etc/rayito/template.json`, the shell runner behind a template's
+//! `ready_cmd` (ADR-022, `features::template_start`), and the process-wide
+//! child registry with the `/proc` table PID 1's orphan reaper sweeps
+//! (`rayd-orphan-reaper`).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -30,6 +32,7 @@ pub mod orphan_reaper;
 pub mod otlp_codec;
 pub mod process_spawner;
 pub mod procfs_metrics;
+pub mod procfs_process_table;
 pub mod pty_backend;
 pub mod random;
 pub mod s3_store;
@@ -42,7 +45,7 @@ pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
-pub use child_registry::ChildRegistry;
+pub use child_registry::{ChildRegistry, SpawnChild};
 pub use cloudwatch_otlp_sink::{
     CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,
 };
@@ -70,6 +73,7 @@ pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };
 pub use procfs_metrics::PlatformMetricsProbe;
+pub use procfs_process_table::ProcfsProcessTable;
 #[cfg(unix)]
 pub use pty_backend::NixPtyBackend;
 pub use pty_backend::PlatformPtyBackend;
