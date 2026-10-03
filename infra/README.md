@@ -518,8 +518,9 @@ aws cloudformation deploy \
 ```
 
 `OptionalStacks.deploy("events-webhooks", artifact_bucket=...)` / `rayito
-events deploy` hacen esto por ti: suben el zip, calculan `ArtifactS3Key` y
-despliegan. `CAPABILITY_IAM` es obligatorio (la plantilla crea varios roles
+events deploy` / `rayito stack deploy events-webhooks --artifact-bucket ...
+--param LogGroupName=...` hacen esto por ti: suben el zip, calculan
+`ArtifactS3Key`, pasan el mismo bucket como `ArtifactBucket` y despliegan. `CAPABILITY_IAM` es obligatorio (la plantilla crea varios roles
 IAM).
 
 ### Borrar (apagarlo)

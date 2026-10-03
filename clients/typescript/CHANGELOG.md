@@ -164,6 +164,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
+### Fixed
+
+- `OptionalStacks.deploy("events-webhooks", { artifactBucket })` ya no exige
+  repetir `parameters.ArtifactBucket`: `StackArtifact.bucketParameterKey`
+  pasa a la plantilla el mismo bucket al que se sube el código, y un valor
+  distinto es `InvalidArgumentError` antes de subir nada (aceptación 0.6 en
+  AWS real).
+
 ## [0.5.1] - 2026-10-01
 
 ### Fixed

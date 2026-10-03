@@ -161,3 +161,38 @@ describe("stacks/packaging", () => {
     },
   );
 });
+
+class RecordingProvisioner extends FakeStackProvisioner {
+  createdParameters: Readonly<Record<string, string>> | undefined;
+
+  override async create(
+    component: Parameters<FakeStackProvisioner["create"]>[0],
+    options: { readonly stackName: string; readonly parameters?: Readonly<Record<string, string>> },
+  ): Promise<void> {
+    this.createdParameters = { ...(options.parameters ?? {}) };
+    await super.create(component, options);
+  }
+}
+
+describe("OptionalStacks artifact bucket parameter", () => {
+  test("events-webhooks gets ArtifactBucket from artifactBucket (0.6 AWS acceptance)", async () => {
+    const provisioner = new RecordingProvisioner();
+    await new OptionalStacks({ provisioner }).deploy("events-webhooks", {
+      parameters: { LogGroupName: "/rayito/x" },
+      artifactBucket: "bucket-a",
+    });
+    expect(provisioner.createdParameters?.ArtifactBucket).toBe("bucket-a");
+    expect(provisioner.createdParameters?.ArtifactS3Key).toBeTruthy();
+  });
+
+  test("a conflicting ArtifactBucket is rejected before any upload", async () => {
+    const provisioner = new FakeStackProvisioner();
+    await expect(
+      new OptionalStacks({ provisioner }).deploy("events-webhooks", {
+        parameters: { LogGroupName: "/rayito/x", ArtifactBucket: "bucket-b" },
+        artifactBucket: "bucket-a",
+      }),
+    ).rejects.toThrow(/ArtifactBucket/);
+    expect(provisioner.calls).toEqual([]);
+  });
+});

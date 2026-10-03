@@ -97,6 +97,37 @@ function resolvedParameters(
   return resolved;
 }
 
+/**
+ * `given` más, para cada artefacto con `bucketParameterKey`, ese parámetro
+ * con `artifactBucket` (el bucket al que `deploy()` sube el código). Uno ya
+ * pasado con otro valor es `InvalidArgumentError`: la plantilla apuntaría a
+ * un bucket donde el código no está. Espejo de `_with_artifact_bucket`.
+ */
+function withArtifactBucket(
+  component: StackComponent,
+  given: Readonly<Record<string, string>>,
+  artifactBucket: string | undefined,
+): Record<string, string> {
+  const resolved: Record<string, string> = { ...given };
+  if (!artifactBucket) {
+    return resolved;
+  }
+  for (const artifact of component.artifacts ?? []) {
+    const key = artifact.bucketParameterKey;
+    if (key === undefined) {
+      continue;
+    }
+    if ((resolved[key] ?? artifactBucket) !== artifactBucket) {
+      throw new InvalidArgumentError(
+        `${component.name}: el parámetro ${key} debe ser el mismo bucket que artifactBucket ` +
+          "(es donde se sube el código); omítelo",
+      );
+    }
+    resolved[key] = artifactBucket;
+  }
+  return resolved;
+}
+
 export class OptionalStacks {
   readonly #provisioner: StackProvisioner;
 
@@ -127,13 +158,17 @@ export class OptionalStacks {
     const resolved = resolveComponent(component);
     requireSupported(resolved);
     const name = options.stackName ?? `rayito-${resolved.name}`;
-    const parameters = resolvedParameters(resolved, options.parameters ?? {});
-    if ((resolved.artifacts?.length ?? 0) > 0) {
-      if (!options.artifactBucket) {
-        throw new InvalidArgumentError(
-          `${resolved.name} necesita artifactBucket: sube el código Lambda del componente`,
-        );
-      }
+    const hasArtifacts = (resolved.artifacts?.length ?? 0) > 0;
+    if (hasArtifacts && !options.artifactBucket) {
+      throw new InvalidArgumentError(
+        `${resolved.name} necesita artifactBucket: sube el código Lambda del componente`,
+      );
+    }
+    const parameters = resolvedParameters(
+      resolved,
+      withArtifactBucket(resolved, options.parameters ?? {}, options.artifactBucket),
+    );
+    if (hasArtifacts && options.artifactBucket) {
       const data = await loadArtifact(resolved);
       const key = await artifactKey(data);
       await this.#provisioner.putArtifact(options.artifactBucket, key, data);
