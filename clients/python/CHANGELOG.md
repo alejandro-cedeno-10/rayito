@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - **Convenio `OptionalStack` y `ConfigureSandbox`** (`v06-foundations`,

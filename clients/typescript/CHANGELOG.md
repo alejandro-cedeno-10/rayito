@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - **Convenio `OptionalStack` y `ConfigureSandbox`** (`v06-foundations`,

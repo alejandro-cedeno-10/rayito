@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - **`ConfigureService` y los seis slots de función 0.6** (`v06-foundations`,
