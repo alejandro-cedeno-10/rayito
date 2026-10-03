@@ -22,10 +22,13 @@ export interface StackParameter {
 
 /** Un fichero que `deploy()` sube a `artifactBucket` antes de desplegar la
  * plantilla (código Lambda); `parameterKey` es el parámetro de la plantilla
- * al que se pasa la clave S3 resultante (sha256 del contenido). */
+ * al que se pasa la clave S3 resultante (sha256 del contenido).
+ * `bucketParameterKey`, si la plantilla también necesita el bucket, es el
+ * parámetro al que `deploy()` pasa el mismo `artifactBucket`. */
 export interface StackArtifact {
   readonly name: string;
   readonly parameterKey: string;
+  readonly bucketParameterKey?: string;
 }
 
 /** El bloque "Coste y activación" de cada componente, de forma estructurada. */

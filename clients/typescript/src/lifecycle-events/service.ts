@@ -174,7 +174,6 @@ export class LifecycleEvents implements LifecycleEventsSectionSource {
       stackName: this.#stackName,
       artifactBucket: options.artifactBucket,
       parameters: {
-        ArtifactBucket: options.artifactBucket,
         LogGroupName: options.logGroupName,
         ReconcilerIntervalMinutes: String(
           options.reconcilerIntervalMinutes ?? DEFAULT_RECONCILER_INTERVAL_MINUTES,

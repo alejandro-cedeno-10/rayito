@@ -41,7 +41,13 @@ COMPONENT: StackComponent = StackComponent(
             default=str(DEFAULT_RECONCILER_INTERVAL_MINUTES),
         ),
     ),
-    artifacts=(StackArtifact(name="events-webhooks", parameter_key="ArtifactS3Key"),),
+    artifacts=(
+        StackArtifact(
+            name="events-webhooks",
+            parameter_key="ArtifactS3Key",
+            bucket_parameter_key="ArtifactBucket",
+        ),
+    ),
     capabilities=("CAPABILITY_IAM",),
     cost=CostStatement(
         creates=(

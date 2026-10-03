@@ -34,7 +34,13 @@ export const COMPONENT: StackComponent = {
       default: String(DEFAULT_RECONCILER_INTERVAL_MINUTES),
     },
   ],
-  artifacts: [{ name: "events-webhooks", parameterKey: "ArtifactS3Key" }],
+  artifacts: [
+    {
+      name: "events-webhooks",
+      parameterKey: "ArtifactS3Key",
+      bucketParameterKey: "ArtifactBucket",
+    },
+  ],
   capabilities: ["CAPABILITY_IAM"],
   cost: {
     creates: [

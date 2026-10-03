@@ -191,6 +191,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   nuevo se construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
 
+### Fixed
+
+- `rayito stack deploy events-webhooks --artifact-bucket B` (y
+  `OptionalStacks.deploy("events-webhooks", artifact_bucket=B)`) ya no exige
+  repetir `--param ArtifactBucket=B`: `StackArtifact.bucket_parameter_key`
+  pasa a la plantilla el mismo bucket al que se sube el código, y un valor
+  distinto es `InvalidArgumentException` antes de subir nada (aceptación 0.6
+  en AWS real).
+
 ## [0.5.1] - 2026-10-01
 
 ### Fixed

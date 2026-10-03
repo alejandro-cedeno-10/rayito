@@ -174,3 +174,56 @@ def test_every_template_that_creates_iam_resources_declares_a_capability(
 ) -> None:
     if IAM_RESOURCE_TYPE_PREFIX in load_template(component):
         assert component.capabilities, f"{component.name} crea IAM sin declarar CAPABILITY_IAM"
+
+
+# ------------------------------------------- artifact bucket as a parameter
+
+
+class _RecordingProvisioner(FakeStackProvisioner):
+    """Records the parameters `create()` received (the shared fake does not)."""
+
+    created_parameters: dict[str, str] | None = None
+
+    def create(self, component, *, stack_name, template_body, parameters, tags):  # type: ignore[no-untyped-def,override]
+        self.created_parameters = dict(parameters)
+        super().create(
+            component,
+            stack_name=stack_name,
+            template_body=template_body,
+            parameters=parameters,
+            tags=tags,
+        )
+
+
+def test_events_webhooks_gets_its_bucket_parameter_from_artifact_bucket() -> None:
+    """`rayito stack deploy events-webhooks --artifact-bucket B` (no
+    `--param ArtifactBucket=B`) found in the 0.6 AWS acceptance: the
+    template's `ArtifactBucket` is the bucket the code was uploaded to."""
+    provisioner = _RecordingProvisioner()
+    OptionalStacks(provisioner=provisioner).deploy(
+        "events-webhooks", parameters={"LogGroupName": "/rayito/x"}, artifact_bucket="bucket-a"
+    )
+    assert provisioner.created_parameters is not None
+    assert provisioner.created_parameters["ArtifactBucket"] == "bucket-a"
+    assert provisioner.created_parameters["ArtifactS3Key"]
+    assert ("put_artifact", "bucket-a", provisioner.created_parameters["ArtifactS3Key"]) in (
+        provisioner.calls
+    )
+
+
+def test_a_conflicting_bucket_parameter_is_rejected_before_any_upload() -> None:
+    provisioner = FakeStackProvisioner()
+    with pytest.raises(InvalidArgumentException, match="ArtifactBucket"):
+        OptionalStacks(provisioner=provisioner).deploy(
+            "events-webhooks",
+            parameters={"LogGroupName": "/rayito/x", "ArtifactBucket": "bucket-b"},
+            artifact_bucket="bucket-a",
+        )
+    assert provisioner.calls == []
+
+
+def test_a_component_with_artifacts_still_needs_artifact_bucket() -> None:
+    with pytest.raises(InvalidArgumentException, match="artifact_bucket"):
+        OptionalStacks(provisioner=FakeStackProvisioner()).deploy(
+            "events-webhooks", parameters={"LogGroupName": "/rayito/x"}
+        )

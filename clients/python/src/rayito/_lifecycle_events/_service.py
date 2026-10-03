@@ -123,7 +123,6 @@ class LifecycleEvents:
             stack_name=self._stack_name,
             artifact_bucket=artifact_bucket,
             parameters={
-                "ArtifactBucket": artifact_bucket,
                 "LogGroupName": log_group_name,
                 "ReconcilerIntervalMinutes": str(reconciler_interval_minutes),
             },

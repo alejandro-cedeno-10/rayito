@@ -44,10 +44,15 @@ class StackArtifact:
     """Un fichero que `deploy()` sube a `artifact_bucket` antes de
     desplegar la plantilla (código Lambda); `parameter_key` es el parámetro
     de la plantilla al que se pasa la clave S3 resultante (`sha256` del
-    contenido, `_packaging.artifact_key`)."""
+    contenido, `_packaging.artifact_key`). `bucket_parameter_key`, si la
+    plantilla también necesita el bucket (p. ej. `Code.S3Bucket` de una
+    Lambda), es el parámetro al que `deploy()` pasa el mismo
+    `artifact_bucket`: así ni la CLI genérica ni la fachada de la función
+    tienen que repetirlo como `--param`."""
 
     name: str
     parameter_key: str
+    bucket_parameter_key: str | None = None
 
 
 @dataclass(frozen=True)
