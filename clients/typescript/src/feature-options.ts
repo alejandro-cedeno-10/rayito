@@ -23,9 +23,9 @@ import { validateEventsOption } from "./lifecycle-events/options.js";
 import { LifecycleEventsSectionFactory } from "./lifecycle-events/section.js";
 import type { LifecycleEvents } from "./lifecycle-events/service.js";
 import { requireCapsFor } from "./role-policy.js";
-import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
-import { type SecretGateway, validateGateways } from "./secret-gateway/domain.js";
+import type { SandboxCreateOptions } from "./sandbox/sandbox.js";
+import { validateGateways } from "./secret-gateway/domain.js";
 import { GatewaySectionFactory } from "./secret-gateway/section.js";
 import type { TelemetryExport } from "./telemetry-export/domain.js";
 import { planTelemetry } from "./telemetry-export/domain.js";
@@ -37,15 +37,27 @@ export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
 export const DOMAIN_CHANGE = "m15-custom-domain";
 
-/** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
-export interface FeatureOptions {
-  readonly mounts?: S3MountsOption | undefined;
-  readonly volumes?: Readonly<Record<string, unknown>> | undefined;
-  readonly size?: unknown;
-  readonly events?: unknown;
-  readonly telemetry?: unknown;
-  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
-  readonly domain?: unknown;
+/**
+ * Los siete kwargs 0.6 de `Sandbox.create()`, agrupados: los mismos tipos (y
+ * el mismo TSDoc, con su bloque "Coste y activación") que
+ * `SandboxCreateOptions`, la única fuente de cada uno.
+ */
+export type FeatureOptions = Pick<
+  SandboxCreateOptions,
+  "mounts" | "volumes" | "size" | "events" | "telemetry" | "gateways" | "domain"
+>;
+
+/**
+ * Lo que `create()` guarda en `LaunchOptions.features` para que
+ * `reincarnate()` lance el sucesor con las mismas secciones de
+ * ConfigureSandbox: las opciones tal cual (de solo lectura, se guardan por
+ * referencia) salvo `size`, que ya va dentro del ARN de plantilla resuelto
+ * (`LaunchOptions.template`); repetirlo sobre un ARN es
+ * `InvalidArgumentError` (`applySizeSuffix`).
+ */
+export function relaunchFeatures<T extends FeatureOptions>(options: T): Omit<T, "size"> {
+  const { size: _resolvedIntoTemplate, ...features } = options;
+  return features;
 }
 
 /** Lo que `create()` hace con las opciones 0.6 una vez validadas:

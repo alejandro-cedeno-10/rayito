@@ -53,7 +53,13 @@ from rayito._configure_base import (
     settle_timeout_s,
     still_pending,
 )
-from rayito._feature_options import FeatureOptions, LaunchFacts, plan_features, planned_sections
+from rayito._feature_options import (
+    FeatureOptions,
+    LaunchFacts,
+    plan_features,
+    planned_sections,
+    relaunch_features,
+)
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -863,16 +869,17 @@ class Sandbox:
         # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
         # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
         resolved_size = plan_size(size, stacklevel=4)
+        feature_options = FeatureOptions(
+            mounts=mounts,
+            volumes=volumes,
+            size=size,
+            events=events,
+            telemetry=telemetry,
+            gateways=gateways,
+            domain=domain,
+        )
         feature_plan = plan_features(
-            FeatureOptions(
-                mounts=mounts,
-                volumes=volumes,
-                size=size,
-                events=events,
-                telemetry=telemetry,
-                gateways=gateways,
-                domain=domain,
-            ),
+            feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
         )
@@ -979,7 +986,7 @@ class Sandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
-            gateways=None if gateways is None else dict(gateways),
+            features=relaunch_features(feature_options),
             size=resolved_size,
         )
         if persist is not None:
@@ -2101,8 +2108,14 @@ class Sandbox:
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
         y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
-        su propia fila en el mismo índice) y las mismas `gateways=` (con cada
-        cabecera resuelta otra vez, nunca reenviando un valor ya leído); las
+        su propia fila en el mismo índice) y las mismas opciones 0.6 que
+        acaban en `ConfigureSandbox` (`mounts=`, `events=`, `telemetry=`,
+        `gateways=`): el sucesor las vuelve a planear y aplicar en su único
+        `Configure` por el mismo camino que `create()`, con sus propios
+        hechos — `events=` deriva `k_sbx` del nuevo `sandbox_id`, `mounts=`
+        espera otra vez a `mounted`, `telemetry=` usa la imagen y la memoria
+        del sucesor y cada cabecera de `gateways=` se resuelve otra vez,
+        nunca reenviando un valor ya leído; las
         variables del kernel, los procesos y las PTY no sobreviven, sólo los
         ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota

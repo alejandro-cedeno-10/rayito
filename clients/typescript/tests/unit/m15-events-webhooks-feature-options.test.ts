@@ -14,7 +14,9 @@ import { LifecycleEvents } from "../../src/lifecycle-events/service.js";
 
 describe("planFeatures events", () => {
   it("rejects anything that is not a LifecycleEvents", () => {
-    expect(() => planFeatures({ events: {} }, undefined, "cloudwatch")).toThrow(
+    // Un llamante JavaScript sin tipos: `planFeatures` valida en tiempo de ejecución.
+    const notEvents = {} as unknown as LifecycleEvents;
+    expect(() => planFeatures({ events: notEvents }, undefined, "cloudwatch")).toThrow(
       InvalidArgumentError,
     );
   });

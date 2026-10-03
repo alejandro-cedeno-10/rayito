@@ -2063,8 +2063,11 @@ lifecycle_events` y la manda en el único `Configure`. Cualquier fallo (pila
 sin desplegar, agente anterior a 0.6.0, sección `INVALID`) termina el
 sandbox salvo `keep_on_failure`. `AsyncLifecycleEvents` aporta su
 `LifecycleEvents` interno: la resolución corre en un hilo también en
-`AsyncSandbox.create()`. `reincarnate()` no la repite (igual que `mounts=`/
-`telemetry=`), y `pool=`/`take()` la rechazan como el resto de opciones 0.6.
+`AsyncSandbox.create()`. `reincarnate()` la repite como al resto de
+secciones (m15-reincarnate-configure-replay: `LaunchOptions.features`
+reenvía `mounts=`/`events=`/`telemetry=`/`gateways=` al `create()` del
+sucesor, que deriva `k_sbx` del nuevo `sandbox_id`), y `pool=`/`take()` la
+rechazan como el resto de opciones 0.6.
 
 ## ADR-021 — rayd-otlp (M15, 0.6)
 

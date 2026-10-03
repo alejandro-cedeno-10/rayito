@@ -29,7 +29,7 @@ esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Final
 
 from rayito._configure_base import PlannedSection
@@ -69,6 +69,32 @@ class FeatureOptions:
     telemetry: Any | None = None
     gateways: Mapping[str, Any] | None = None
     domain: Any | None = None
+
+
+def relaunch_features(options: FeatureOptions) -> FeatureOptions:
+    """Lo que `create()` guarda en `LaunchOptions.features` para que
+    `reincarnate()` lance el sucesor con las mismas secciones de
+    `ConfigureSandbox`: las siete opciones tal cual (copiando los
+    `Mapping` para que una mutación posterior del llamante no cambie el
+    relanzamiento) salvo `size`, que ya va dentro del ARN de plantilla
+    resuelto (`LaunchOptions.template`); repetirlo sobre un ARN es
+    `InvalidArgumentException` (`_sizing.apply_size_suffix`)."""
+    return replace(
+        options,
+        mounts=None if options.mounts is None else dict(options.mounts),
+        volumes=None if options.volumes is None else dict(options.volumes),
+        gateways=None if options.gateways is None else dict(options.gateways),
+        size=None,
+    )
+
+
+def feature_kwargs(options: FeatureOptions | None) -> dict[str, Any]:
+    """Los kwargs de `create()` que reproducen `options` campo a campo
+    (vacío sin opciones): una opción 0.6 nueva en `FeatureOptions` se
+    reenvía sola en `reincarnate()`, sin tocar `launch_kwargs`."""
+    if options is None:
+        return {}
+    return {option.name: getattr(options, option.name) for option in fields(options)}
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,7 @@ from typing import Any, Final
 
 import grpc
 
+from rayito._feature_options import feature_kwargs
 from rayito._limits import DEFAULT_PERSIST_TIMEOUT_SECONDS, PERSIST_EXCLUDE_MAX
 from rayito._models import (
     CheckpointProgress,
@@ -185,7 +186,10 @@ def reincarnate_requires_persist_error() -> InvalidArgumentException:
 
 
 def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
-    """Los kwargs de `create()` que reproducen el lanzamiento original."""
+    """Los kwargs de `create()` que reproducen el lanzamiento original,
+    incluidas las opciones 0.6 (`feature_kwargs`): el sucesor vuelve a
+    mandar en su único `ConfigureSandbox` todas las secciones que mandó el
+    original, resueltas otra vez con sus propios hechos."""
     return {
         "template": options.template,
         "template_version": options.template_version,
@@ -201,7 +205,6 @@ def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
         "ingress": options.ingress,
         "egress": options.egress,
         "network": options.network,
-        "gateways": options.gateways,
         "logging": options.logging,
         "access_token": options.access_token,
         "ready_timeout": options.ready_timeout,
@@ -210,6 +213,7 @@ def launch_kwargs(options: LaunchOptions) -> dict[str, Any]:
         "keep_on_failure": options.keep_on_failure,
         "control_plane": options.control_plane,
         "transport": options.transport,
+        **feature_kwargs(options.features),
     }
 
 

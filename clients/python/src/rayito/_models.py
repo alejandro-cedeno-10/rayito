@@ -46,6 +46,7 @@ from rayito._sizing import ResolvedSize
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
+    from rayito._feature_options import FeatureOptions
     from rayito._index import DynamoDbIndex
 
 REDACTED: Final = "<redacted>"
@@ -912,13 +913,18 @@ class LaunchOptions:
     on_timeout: TimeoutActionName | None = None
     network: NetworkPolicy | None = None
     index: DynamoDbIndex | None = None
-    # `create(gateways=)` (m15-secrets-gateway): sólo los nombres de secreto
-    # que cada `SecretGateway.headers` selecciona, nunca un valor resuelto
-    # (`_secret_gateway._section.GatewaySection.fill` es quien lo resuelve,
-    # justo antes de cada `Configure`), así que no hace falta redactar esto
-    # en `__repr__` como `envs`. `reincarnate()` lo reenvía sin cambios: el
-    # sucesor vuelve a pedir el mismo conjunto de rutas.
-    gateways: Mapping[str, Any] | None = None
+    # Las opciones 0.6 que `create()` convierte en secciones de su único
+    # `ConfigureSandbox` (`mounts=`, `events=`, `telemetry=`, `gateways=`),
+    # ya pasadas por `relaunch_features`: `reincarnate()` las reenvía a
+    # `create()`, que vuelve a planearlas y resolverlas por el mismo camino
+    # (`plan_features` → `planned_sections` → `_apply_configure_sections`)
+    # con los hechos del sucesor — `k_sbx` derivada de su `sandbox_id`, los
+    # montajes esperados hasta `mounted`, la telemetría con su imagen y su
+    # memoria, cada cabecera de `gateways=` leída otra vez. Sólo guarda
+    # referencias (nombres de secreto, objetos de configuración), nunca un
+    # valor resuelto, así que no hace falta redactarlo en `__repr__`.
+    # `None` sólo en un `LaunchOptions` construido a mano sin opciones 0.6.
+    features: FeatureOptions | None = None
     size: ResolvedSize | None = None
 
     def __repr__(self) -> str:
