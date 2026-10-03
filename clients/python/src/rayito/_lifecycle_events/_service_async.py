@@ -41,6 +41,12 @@ class AsyncLifecycleEvents:
             stack_name=stack_name, region=region, session=session, stacks=stacks, gateway=gateway
         )
 
+    @property
+    def _sync_events(self) -> LifecycleEvents:
+        """El `LifecycleEvents` al que delega: `Sandbox.create(events=...)`
+        construye la sección con él (`validate_events_option`)."""
+        return self._inner
+
     async def deploy(
         self,
         *,

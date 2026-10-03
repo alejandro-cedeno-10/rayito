@@ -712,6 +712,43 @@ class Sandbox:
          sí sola; con las seis en `None` (su valor por defecto) el
          comportamiento es exactamente el de 0.5.x.
 
+         `events=` (m15-events-webhooks, ADR-020) ya es real: un
+         `LifecycleEvents`/`AsyncLifecycleEvents` (con su pila
+         `events-webhooks` ya desplegada) hace que el SDK derive la clave
+         de este sandbox (`k_sbx`, de la clave del stack y el `sandbox_id`)
+         y la mande a `rayd` en el mismo `ConfigureSandbox` que el resto de
+         secciones, justo después de que el agente esté listo; desde ahí
+         `rayd` emite `created`/`paused`/`resumed`/`killed` firmados. Exige
+         un `logging=` que llegue a CloudWatch (`InvalidArgumentException`
+         antes de lanzar si no). Si la pila no está desplegada, la clave no
+         se puede leer o la imagen es anterior a 0.6.0, termina el sandbox
+         (salvo `keep_on_failure`) y relanza el error.
+
+         Coste y activación
+         -------------------
+         Activa: `events=LifecycleEvents(...)` en `create()`, tras
+             `LifecycleEvents().deploy(...)` (o `rayito events deploy`).
+         Recursos y llamadas AWS: un `secretsmanager:GetSecretValue` de la
+             clave del stack por instancia de `LifecycleEvents` (más un
+             `cloudformation:DescribeStacks` si no se desplegó con esa
+             misma instancia); la pila hace el resto (forwarder,
+             deliverer, reconciliador).
+         Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto
+             por uso; ver `LifecycleEvents.deploy`); la opción en sí, una
+             lectura de Secrets Manager ($0,05 por 10 000).
+         IAM: `EventsOperatorPolicy` (salida de la pila) en las
+             credenciales del llamante; el execution role necesita escribir
+             en el log group de la imagen (`logging="cloudwatch"`).
+         Cómo apagarla: no pases `events=` (por defecto `None`);
+             `LifecycleEvents().destroy()` borra la pila.
+         Ejemplo:
+             from rayito import LifecycleEvents
+
+             events = LifecycleEvents()
+             sbx = Sandbox.create(execution_role_arn=role_arn,
+                                  logging="cloudwatch", events=events)
+             events.get_events(sandbox_id=sbx.sandbox_id)  # created, ...
+
          `telemetry=` (m15-rayd-otlp, ADR-021) es la séptima y ya es real:
          un `TelemetryExport` hace que `rayd` exporte 7 gauges de CPU,
          memoria y disco a CloudWatch cada `interval_s` (15-300 s, 60 por
@@ -905,6 +942,7 @@ class Sandbox:
                 planned_sections(
                     feature_plan,
                     LaunchFacts(
+                        sandbox_id=info.sandbox_id,
                         image_arn=info.template,
                         image_version=info.template_version,
                         guest_memory_bytes=(

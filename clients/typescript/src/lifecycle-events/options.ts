@@ -23,8 +23,9 @@ export function sendsLogsToCloudWatch(logging: LoggingOption): boolean {
 
 /** `events` debe ser un `LifecycleEvents` y `logging` debe enviar a
  * CloudWatch; si no, `InvalidArgumentError` antes de cualquier llamada a
- * AWS. */
-export function validateEventsOption(events: unknown, logging: unknown): void {
+ * AWS. Devuelve el mismo `LifecycleEvents`, ya tipado, para
+ * `FeaturePlan.events`. */
+export function validateEventsOption(events: unknown, logging: unknown): LifecycleEvents {
   if (!(events instanceof LifecycleEvents)) {
     throw new InvalidArgumentError("events debe ser un LifecycleEvents");
   }
@@ -34,4 +35,5 @@ export function validateEventsOption(events: unknown, logging: unknown): void {
         "las líneas de evento de los logs del sandbox",
     );
   }
+  return events;
 }

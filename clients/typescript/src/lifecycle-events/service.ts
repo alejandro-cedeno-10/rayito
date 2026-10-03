@@ -32,7 +32,11 @@ import {
   queryEvents,
 } from "./dynamodb.js";
 import { deriveSandboxKey } from "./keys.js";
-import { type LifecycleEventsSection, lifecycleEventsSection } from "./section.js";
+import {
+  LifecycleEventsSection,
+  type LifecycleEventsSectionFacts,
+  type LifecycleEventsSectionSource,
+} from "./section.js";
 
 export const WEBHOOK_SECRET_PREFIX = `${DEFAULT_SECRET_PREFIX}webhooks/`;
 
@@ -138,7 +142,7 @@ interface SecretsManagerModule {
  *   await ev.deploy({ artifactBucket: "mi-bucket", logGroupName: "/rayito/rayito-base" });
  *   await ev.registerWebhook("https://hooks.example.com", { secretName: "mi-webhook", types: ["sandbox.lifecycle.killed"] });
  */
-export class LifecycleEvents {
+export class LifecycleEvents implements LifecycleEventsSectionSource {
   readonly #stackName: string;
   readonly #region: string | undefined;
   readonly #credentials: Credentials;
@@ -264,21 +268,14 @@ export class LifecycleEvents {
     );
   }
 
-  /** Ver `ADR-020`, "Hueco de integración conocido": no la llama todavía
-   * ningún `create()`. */
-  async buildSection(options: {
-    sandboxId: string;
-    imageArn: string;
-    imageVersion: string;
-  }): Promise<LifecycleEventsSection> {
+  /** La sección de `ConfigureSandbox` de un sandbox ya lanzado:
+   * `LifecycleEventsSectionFactory` la pide justo antes del único
+   * `Configure` de `create()`. Lee la clave del stack (un `GetSecretValue`,
+   * cacheado mientras viva esta instancia) y deriva `k_sbx`; la clave del
+   * stack nunca sale de este objeto. */
+  async buildSection(facts: LifecycleEventsSectionFacts): Promise<LifecycleEventsSection> {
     const stackKey = await this.#stackKey();
-    const sandboxKey = deriveSandboxKey(stackKey, options.sandboxId);
-    return lifecycleEventsSection({
-      sandboxKey,
-      sandboxId: options.sandboxId,
-      imageArn: options.imageArn,
-      imageVersion: options.imageVersion,
-    });
+    return new LifecycleEventsSection(deriveSandboxKey(stackKey, facts.sandboxId), facts);
   }
 
   async #stackKey(): Promise<Buffer> {

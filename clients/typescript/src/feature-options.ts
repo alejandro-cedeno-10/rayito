@@ -12,11 +12,16 @@
  * `requireCapabilities` de `configure/base.ts` antes del `Configure`).
  * `gateways`: sólo se valida su forma; la sección de verdad la construye
  * `create()`/`take()` con su `SecretCache` (`GatewaySectionFactory`).
+ * `telemetry` (m15-rayd-otlp) y `events` (m15-events-webhooks) se validan
+ * aquí y su sección se planea tras `run-microvm` (`plannedSections`),
+ * porque necesitan hechos que sólo existen entonces.
  */
 
 import type { PlannedSection } from "./configure/base.js";
 import { UnimplementedError } from "./errors.js";
 import { validateEventsOption } from "./lifecycle-events/options.js";
+import { LifecycleEventsSectionFactory } from "./lifecycle-events/section.js";
+import type { LifecycleEvents } from "./lifecycle-events/service.js";
 import { requireCapsFor } from "./role-policy.js";
 import type { S3MountsOption } from "./s3-mounts/domain.js";
 import { planS3Mounts } from "./s3-mounts/section.js";
@@ -31,13 +36,6 @@ export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
 export const DOMAIN_CHANGE = "m15-custom-domain";
-
-/** Por qué `events` sigue sin aceptarse aunque `LifecycleEvents` ya
- * funcione por su cuenta (ver `planFeatures`). */
-export const EVENTS_PENDING_REASON =
-  `${EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm ` +
-  "(FeaturePlan.configureSections); LifecycleEvents (deploy, registerWebhook, getEvents) " +
-  "ya funciona fuera de create()";
 
 /** Los siete kwargs 0.6 de `Sandbox.create()`, agrupados. */
 export interface FeatureOptions {
@@ -55,14 +53,25 @@ export interface FeatureOptions {
  * planearse antes de `run-microvm` (`mounts`; `gateways`, un
  * `ConfigureSectionFactory` a la espera de la `SecretCache`), y
  * `telemetry`, el `TelemetryExport` ya validado cuya sección necesita los
- * hechos de imagen: `plannedSections` las junta en cuanto `create()` los
- * conoce. */
+ * hechos de imagen, y `events`, el `LifecycleEvents` cuya sección necesita
+ * además el `sandboxId` para derivar `k_sbx`: `plannedSections` las junta
+ * en cuanto `create()` conoce esos hechos. */
 export interface FeaturePlan {
   readonly configureSections: readonly PlannedSection[];
   readonly telemetry?: TelemetryExport | undefined;
+  readonly events?: LifecycleEvents | undefined;
 }
 
-const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [], telemetry: undefined });
+/** Lo que sólo `run-microvm` y el primer `Health` saben. */
+export interface LaunchFacts extends TelemetryLaunchFacts {
+  readonly sandboxId: string;
+}
+
+const EMPTY_PLAN: FeaturePlan = Object.freeze({
+  configureSections: [],
+  telemetry: undefined,
+  events: undefined,
+});
 
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
@@ -74,12 +83,11 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({ configureSections: [], telemetry
  * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
  * construye ningún cliente.
  *
- * `events` se valida (tipo y `logging`) y después sigue lanzando
- * `UnimplementedError`: su sección de `ConfigureSandbox` necesita
- * `sandboxId`/`imageArn`/`imageVersion`, que sólo existen tras
- * `run-microvm`, y todavía no entra en `FeaturePlan.configureSections`
- * (ADR-020, "Hueco de integración conocido"). Aceptarlo sin enviarla
- * dejaría al usuario pagando la pila sin recibir ningún evento.
+ * `events` se valida aquí (tipo y `logging`) y viaja en
+ * `FeaturePlan.events`: su sección necesita `sandboxId`/`imageArn`/
+ * `imageVersion`, que sólo existen tras `run-microvm`, así que
+ * `plannedSections` la añade entonces (ADR-020). La clave del stack se lee
+ * justo antes del `Configure`, nunca aquí.
  */
 export function planFeatures(
   options: FeatureOptions,
@@ -101,10 +109,8 @@ export function planFeatures(
   // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste
   // del guest en marcha), así que `create()` la resuelve por su cuenta con
   // `sizing/sizing.ts` antes de pedir el ARN de la plantilla.
-  if (options.events !== undefined) {
-    validateEventsOption(options.events, logging);
-    throw new UnimplementedError("events", EVENTS_PENDING_REASON);
-  }
+  const events =
+    options.events === undefined ? undefined : validateEventsOption(options.events, logging);
   const telemetry =
     options.telemetry === undefined ? undefined : planTelemetry(options.telemetry, imageVariant);
   if (options.gateways !== undefined) {
@@ -117,22 +123,32 @@ export function planFeatures(
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
   }
-  return sections.length === 0 && telemetry === undefined
+  return sections.length === 0 && telemetry === undefined && events === undefined
     ? EMPTY_PLAN
-    : { configureSections: sections, telemetry };
+    : { configureSections: sections, telemetry, events };
 }
 
 /**
  * Todas las secciones que `create()` manda en su único `Configure`: las de
  * `plan.configureSections` más, con `telemetry`, un
- * `TelemetrySectionFactory` sobre `facts` (lo que sólo `run-microvm` y el
- * primer `Health` saben). `sandbox.ts` nunca nombra una función concreta.
+ * `TelemetrySectionFactory` y, con `events`, un
+ * `LifecycleEventsSectionFactory`, ambos sobre `facts` (lo que sólo
+ * `run-microvm` y el primer `Health` saben). `sandbox.ts` nunca nombra una
+ * función concreta.
  */
-export function plannedSections(
-  plan: FeaturePlan,
-  facts: TelemetryLaunchFacts,
-): readonly PlannedSection[] {
-  return plan.telemetry === undefined
-    ? plan.configureSections
-    : [...plan.configureSections, new TelemetrySectionFactory(plan.telemetry, facts)];
+export function plannedSections(plan: FeaturePlan, facts: LaunchFacts): readonly PlannedSection[] {
+  const sections: PlannedSection[] = [...plan.configureSections];
+  if (plan.telemetry !== undefined) {
+    sections.push(new TelemetrySectionFactory(plan.telemetry, facts));
+  }
+  if (plan.events !== undefined) {
+    sections.push(
+      new LifecycleEventsSectionFactory(plan.events, {
+        sandboxId: facts.sandboxId,
+        imageArn: facts.imageArn,
+        imageVersion: facts.imageVersion,
+      }),
+    );
+  }
+  return sections;
 }

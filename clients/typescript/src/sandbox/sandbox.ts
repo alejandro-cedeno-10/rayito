@@ -52,6 +52,7 @@ import { TimeoutMode } from "../gen/rayito/v1/lifecycle_pb.js";
 import { GetNetworkRequestSchema, NetworkService } from "../gen/rayito/v1/network_pb.js";
 import { S3MountsStatusSchema } from "../gen/rayito/v1/s3_mounts_pb.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
+import type { LifecycleEvents } from "../lifecycle-events/service.js";
 import { DEFAULT_PORT, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
 import {
@@ -382,7 +383,40 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
   readonly mounts?: S3MountsOption | undefined;
   readonly volumes?: Readonly<Record<string, unknown>> | undefined;
   readonly size?: SizeInput | undefined;
-  readonly events?: unknown;
+  /**
+   * `LifecycleEvents` (m15-events-webhooks, ADR-020): con su pila
+   * `events-webhooks` ya desplegada, el SDK deriva la clave de este sandbox
+   * (`k_sbx`, de la clave del stack y el `sandboxId`) y la manda a `rayd`
+   * en el mismo `ConfigureSandbox` que el resto de secciones, justo después
+   * de que el agente esté listo; desde ahí `rayd` emite `created`/`paused`/
+   * `resumed`/`killed` firmados. Exige un `logging` que llegue a CloudWatch
+   * (`InvalidArgumentError` antes de lanzar si no). Si la pila no está
+   * desplegada, la clave no se puede leer o la imagen es anterior a 0.6.0,
+   * termina el sandbox (salvo `keepOnFailure`) y relanza el error.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `events: new LifecycleEvents()` en `create()`, tras
+   *   `deploy(...)` (o `rayito events deploy`).
+   * Recursos y llamadas AWS: un `secretsmanager:GetSecretValue` de la clave
+   *   del stack por instancia de `LifecycleEvents` (más un
+   *   `cloudformation:DescribeStacks` si no se desplegó con esa misma
+   *   instancia); la pila hace el resto (forwarder, deliverer,
+   *   reconciliador).
+   * Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto por
+   *   uso; ver `LifecycleEvents.deploy`); la opción en sí, una lectura de
+   *   Secrets Manager ($0,05 por 10 000).
+   * IAM: `EventsOperatorPolicy` (salida de la pila) en las credenciales del
+   *   llamante; el execution role necesita escribir en el log group de la
+   *   imagen (`logging: "cloudwatch"`).
+   * Cómo apagarla: no pases `events` (por defecto `undefined`);
+   *   `destroy()` borra la pila.
+   * Ejemplo:
+   *   const events = new LifecycleEvents();
+   *   const sbx = await Sandbox.create({ executionRoleArn, logging: "cloudwatch", events });
+   *   await events.getEvents({ sandboxId: sbx.sandboxId });
+   */
+  readonly events?: LifecycleEvents | undefined;
   /**
    * `TelemetryExport` (m15-rayd-otlp, ADR-021): hace que `rayd` exporte 7
    * gauges de CPU, memoria y disco a CloudWatch cada `intervalS` (15–300 s,
@@ -854,6 +888,7 @@ export class Sandbox implements AsyncDisposable {
         }
         await opened.#applyConfigureSections(
           plannedSections(featurePlan, {
+            sandboxId: info.sandboxId,
             imageArn: info.template,
             imageVersion: info.templateVersion ?? "",
             guestMemoryBytes: opened.#readinessHealth?.memoryTotalBytes,

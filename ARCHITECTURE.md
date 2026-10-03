@@ -2031,18 +2031,22 @@ máxima de cada sandbox, que esta iteración no rastrea. Su cliente
 modelo que `scripts/gen_stack_assets.py` inyecta en el zip desde
 `docs/aws-api/service-2.json` (decisión 8).
 
-**Hueco de integración conocido:** `Sandbox.create(events=...)` valida la
-opción (un `LifecycleEvents` y un `logging` que llegue a CloudWatch) y
-después sigue lanzando `UnimplementedError`. La sección necesita
-`sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
-`run-microvm`, y todavía no entra en `FeaturePlan.configure_sections` (el
-envío tras el primer `Health` ya existe: `_apply_configure_sections`/
-`#applyConfigureSections`, de `m15-s3-mounts`/`m15-secrets-gateway`).
-Aceptar `events=` sin enviarla dejaría al usuario pagando la pila sin
-recibir ningún evento. `LifecycleEvents._build_section` / `buildSection`
-construyen la sección real y están probadas; conectarlas a ese envío es
-fontanería pendiente. Hasta entonces la pila, los webhooks y
-`get_events` funcionan, pero ningún sandbox emite eventos.
+**Envío desde `create()`:** `plan_features`/`planFeatures` valida
+`events=` antes de `run-microvm` (un `LifecycleEvents`/`AsyncLifecycleEvents`
+y un `logging` que llegue a CloudWatch) y lo deja en `FeaturePlan.events`;
+la sección necesita `sandbox_id`/`image_arn`/`image_version`, así que
+`planned_sections`/`plannedSections` añade un
+`LifecycleEventsSectionFactory` en cuanto `run-microvm` los da, y el mismo
+`_apply_configure_sections`/`#applyConfigureSections` que `mounts=`/
+`gateways=`/`telemetry=` la resuelve (un `GetSecretValue` de la clave del
+stack por instancia de `LifecycleEvents`, nunca por la `SecretCache` de
+`secrets=`: no es un secreto del usuario), exige `Health.features.
+lifecycle_events` y la manda en el único `Configure`. Cualquier fallo (pila
+sin desplegar, agente anterior a 0.6.0, sección `INVALID`) termina el
+sandbox salvo `keep_on_failure`. `AsyncLifecycleEvents` aporta su
+`LifecycleEvents` interno: la resolución corre en un hilo también en
+`AsyncSandbox.create()`. `reincarnate()` no la repite (igual que `mounts=`/
+`telemetry=`), y `pool=`/`take()` la rechazan como el resto de opciones 0.6.
 
 ## ADR-021 — rayd-otlp (M15, 0.6)
 

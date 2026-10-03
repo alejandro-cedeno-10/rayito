@@ -78,7 +78,8 @@ deliveries, off by default and billed only when deployed and used.
   (`main.rs`, `grpc/mod.rs`, `grpc/health.rs`, `hooks/mod.rs`,
   `tests/common`, the workspace `hmac` pin) is foundations' (PR #87).
 - **Python**: `_lifecycle_events/` (new package), `_feature_options.py`
-  (events branch: validation, then `UnimplementedError`),
+  (events branch: validation, then `FeaturePlan.events`, sent after
+  `run-microvm` by `LifecycleEventsSectionFactory` — D6),
   `_stacks/components/events_webhooks.py`, `cli/events.py`, `cli/stack.py`
   (`confirm_deploy`/`confirm_destroy` extracted for reuse), `__init__.py`
   exports. `create()`'s `logging=` reaches `plan_features` through

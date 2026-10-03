@@ -19,8 +19,9 @@ sólo valida su forma (pura, cero AWS) y devuelve un `GatewaySectionFactory`
 (`_configure_base.SectionFactory`) en `FeaturePlan.configure_sections` — el
 `ConfigureSandbox` de verdad, con cada cabecera ya resuelta, lo manda
 `create()`/`take()` una vez conocen la `SecretCache`. `telemetry=`
-(m15-rayd-otlp) se valida aquí y su sección se planea tras `run-microvm`
-(`planned_sections`). Cada función sustituye
+(m15-rayd-otlp) y `events=` (m15-events-webhooks) se validan aquí y su
+sección se planea tras `run-microvm` (`planned_sections`), porque necesitan
+hechos que sólo existen entonces. Cada función sustituye
 su propia rama por una implementación real en su propio cambio OpenSpec; ni
 esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
@@ -33,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from rayito._configure_base import PlannedSection
 from rayito._lifecycle_events._options import validate_events_option
+from rayito._lifecycle_events._section import LifecycleEventsSectionFactory
 from rayito._role_policy import require_caps_for
 from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
@@ -41,6 +43,7 @@ from rayito._telemetry_export import plan as plan_telemetry
 from rayito.exceptions import UnimplementedError
 
 if TYPE_CHECKING:
+    from rayito._lifecycle_events._service import LifecycleEvents
     from rayito._telemetry_export import TelemetryExport
 
 VOLUMES_CHANGE: Final = "m15-efs-volumes"
@@ -48,14 +51,6 @@ EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
 DOMAIN_CHANGE: Final = "m15-custom-domain"
-
-#: Por qué `events=` sigue sin aceptarse aunque `LifecycleEvents` ya
-#: funcione por su cuenta (ver `plan_features`).
-EVENTS_PENDING_REASON: Final = (
-    f"{EVENTS_CHANGE}: falta enviar su sección de ConfigureSandbox tras run-microvm "
-    "(FeaturePlan.configure_sections); LifecycleEvents (deploy, register_webhook, "
-    "get_events) ya funciona fuera de create()"
-)
 
 
 @dataclass(frozen=True)
@@ -80,21 +75,25 @@ class FeatureOptions:
 class FeaturePlan:
     """Lo que `create()` hace con las opciones 0.6 una vez validadas:
     `configure_sections`, las secciones de `ConfigureSandbox` que ya pueden
-    planearse antes de `run-microvm` (`mounts=`, `gateways=`), y
+    planearse antes de `run-microvm` (`mounts=`, `gateways=`);
     `telemetry`, el `TelemetryExport` ya validado cuya sección necesita los
     hechos de imagen (el ARN y la versión de `run-microvm`, la memoria del
-    primer `Health`): `planned_sections` las junta en cuanto `create()` los
-    conoce.
+    primer `Health`); y `events`, el `LifecycleEvents` (síncrono, también
+    para `AsyncLifecycleEvents`) cuya sección necesita además el
+    `sandbox_id` para derivar `k_sbx`. `planned_sections` las junta en
+    cuanto `create()` conoce esos hechos.
     """
 
     configure_sections: tuple[PlannedSection, ...] = ()
     telemetry: TelemetryExport | None = None
+    events: LifecycleEvents | None = None
 
 
 @dataclass(frozen=True)
 class LaunchFacts:
     """Lo que sólo se sabe tras `run-microvm` y el primer `Health`."""
 
+    sandbox_id: str
     image_arn: str
     image_version: str
     guest_memory_bytes: int | None
@@ -103,19 +102,29 @@ class LaunchFacts:
 def planned_sections(plan: FeaturePlan, facts: LaunchFacts) -> tuple[PlannedSection, ...]:
     """Todas las secciones que `create()` manda en su único `Configure`:
     las de `plan.configure_sections` más, con `telemetry=`, un
-    `TelemetrySectionFactory` sobre `facts`. `main.py` nunca nombra una
-    función concreta."""
-    if plan.telemetry is None:
-        return plan.configure_sections
-    return (
-        *plan.configure_sections,
-        TelemetrySectionFactory(
-            plan.telemetry,
-            image_arn=facts.image_arn,
-            image_version=facts.image_version,
-            guest_memory_bytes=facts.guest_memory_bytes,
-        ),
-    )
+    `TelemetrySectionFactory` y, con `events=`, un
+    `LifecycleEventsSectionFactory`, ambos sobre `facts`. `main.py` nunca
+    nombra una función concreta."""
+    sections: list[PlannedSection] = list(plan.configure_sections)
+    if plan.telemetry is not None:
+        sections.append(
+            TelemetrySectionFactory(
+                plan.telemetry,
+                image_arn=facts.image_arn,
+                image_version=facts.image_version,
+                guest_memory_bytes=facts.guest_memory_bytes,
+            )
+        )
+    if plan.events is not None:
+        sections.append(
+            LifecycleEventsSectionFactory(
+                plan.events,
+                sandbox_id=facts.sandbox_id,
+                image_arn=facts.image_arn,
+                image_version=facts.image_version,
+            )
+        )
+    return tuple(sections)
 
 
 def plan_features(
@@ -130,12 +139,11 @@ def plan_features(
     `create()`: `events=` exige que mande los logs a CloudWatch. No hace
     ninguna llamada a AWS ni construye ningún cliente.
 
-    `events=` se valida (tipo y `logging`) y después sigue lanzando
-    `UnimplementedError`: su sección de `ConfigureSandbox` necesita
-    `sandbox_id`/`image_arn`/`image_version`, que sólo existen tras
-    `run-microvm`, y todavía no entra en `FeaturePlan.configure_sections`
-    (ADR-020, "Hueco de integración conocido"). Aceptarlo sin enviarla
-    dejaría al usuario pagando la pila sin recibir ningún evento.
+    `events=` se valida aquí (tipo y `logging`) y viaja en
+    `FeaturePlan.events`: su sección necesita `sandbox_id`/`image_arn`/
+    `image_version`, que sólo existen tras `run-microvm`, así que
+    `planned_sections` la añade entonces (ADR-020). La clave del stack se
+    lee justo antes del `Configure`, nunca aquí.
     """
     sections: list[PlannedSection] = []
     if options.mounts is not None:
@@ -150,9 +158,11 @@ def plan_features(
     # es qué imagen lanzar), así que `create()` la resuelve por su cuenta
     # con `_sizing.resolve_size`/`apply_size_suffix` antes de pedir el ARN
     # de la plantilla, y aquí no hay nada que comprobar ni que lanzar.
-    if options.events is not None:
+    events = (
         validate_events_option(options.events, logging)  # type: ignore[arg-type]
-        raise UnimplementedError("events=", EVENTS_PENDING_REASON)
+        if options.events is not None
+        else None
+    )
     telemetry = (
         plan_telemetry(options.telemetry, image_variant=image_variant)
         if options.telemetry is not None
@@ -166,4 +176,4 @@ def plan_features(
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
         raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
-    return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry)
+    return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry, events=events)

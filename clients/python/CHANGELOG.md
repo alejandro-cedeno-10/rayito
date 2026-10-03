@@ -102,11 +102,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `rayito events deploy|status|destroy|list` y `rayito events webhook
   add|list|remove`, con el mismo bloque de coste y confirmación que
   `rayito stack`. Los errores de AWS llegan como `WebhookException` con sólo
-  el código (`aws_code`). `events=` en `Sandbox.create()` valida el tipo y
-  que `logging` llegue a CloudWatch, y sigue lanzando `UnimplementedError`
-  hasta que `create()` envíe la sección tras `run-microvm` (ADR-020); sin
-  `events=`, ni un cliente DynamoDB/Secrets Manager nuevo ni una llamada
-  `ConfigureSandbox`. `rayito events deploy --tag K=V` (repetible) para
+  el código (`aws_code`). `events=` en `Sandbox.create()`/
+  `AsyncSandbox.create()` valida el tipo y que `logging` llegue a CloudWatch
+  antes de lanzar y, tras `run-microvm`, manda la clave del sandbox
+  (`k_sbx`, derivada de la clave del stack y el `sandbox_id`; un
+  `GetSecretValue` por instancia de `LifecycleEvents`) en el mismo
+  `ConfigureSandbox` que `mounts=`/`gateways=`/`telemetry=`
+  (`LifecycleEventsSectionFactory`, ADR-020); sin la pila desplegada, sin
+  `lifecycle_events` en el agente o con la sección rechazada, termina el
+  sandbox (salvo `keep_on_failure`). Sin `events=`, ni un cliente
+  DynamoDB/Secrets Manager nuevo ni una llamada `ConfigureSandbox`. `rayito events deploy --tag K=V` (repetible) para
   cuentas cuya organización exige etiquetas al crear recursos. Aceptado en
   AWS real (`AWS_API_NOTES.md` Q105–Q108): el forwarder exige que el log
   stream termine en `]<sandbox_id>` (formato medido) y el forwarder y el

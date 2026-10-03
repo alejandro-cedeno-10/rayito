@@ -55,12 +55,12 @@ el supuesto del forwarder sobre el nombre del *log stream*, y el flujo de
 extremo a extremo (entrega firmada, línea forjada descartada, `killed`
 sintetizado). Ver `AWS_API_NOTES.md` §25 y `ADR-020`.
 
-**Hueco de integración conocido:** `Sandbox.create(events=...)` valida la
-opción (un `LifecycleEvents` y `logging` con CloudWatch) y sigue lanzando
-`UnimplementedError`: la sección necesita `sandbox_id`, que sólo existe tras
-`run-microvm`, y `create()` todavía no envía `FeaturePlan.configure_sections`
-tras el primer `Health`. Hasta entonces ningún sandbox emite eventos. Ver
-`ADR-020`.
+**`Sandbox.create(events=...)`:** valida la opción (un `LifecycleEvents` y
+`logging` con CloudWatch) antes de lanzar y, tras `run-microvm`, manda la
+clave del sandbox (`k_sbx`, derivada de la clave del stack y el
+`sandbox_id`) en el mismo `ConfigureSandbox` que `mounts=`/`gateways=`/
+`telemetry=`; si la pila no está desplegada o la imagen no lo soporta,
+termina el sandbox. Ver `ADR-020`.
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 
