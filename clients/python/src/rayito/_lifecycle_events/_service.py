@@ -198,16 +198,17 @@ class LifecycleEvents:
             order=order,
         )
 
-    # -- Internals used by `_feature_options.plan_features` (events=) ------
+    # -- Internals used by `create(events=...)` (`LifecycleEventsSectionFactory`)
 
     def _build_section(
         self, *, sandbox_id: str, image_arn: str, image_version: str
     ) -> LifecycleEventsSection:
         """Builds the per-sandbox `ConfigureSection` once `sandbox_id` is
-        known (after `run-microvm`). Not yet called by `create()` — see
-        ADR-020's "Known integration gap" note; this method is unit tested
-        in isolation so that wiring is a pure plumbing change when it
-        lands."""
+        known (after `run-microvm`): `LifecycleEventsSectionFactory` calls it
+        from `resolve_sections`, right before `create()`'s single
+        `Configure`. Reads the stack key (one `GetSecretValue`, cached for
+        this instance's lifetime) and derives `k_sbx`; the stack key itself
+        never leaves this object."""
         stack_key = self._stack_key()
         sandbox_key = derive_sandbox_key(stack_key, sandbox_id)
         return LifecycleEventsSection(

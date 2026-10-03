@@ -1,14 +1,15 @@
 /**
  * `planFeatures`' `events` branch, espejo del test Python: la opción debe
  * ser un `LifecycleEvents` y `logging` debe llegar a CloudWatch (validado
- * con el mismo resolver que usa `run-microvm`); con ambos bien sigue
- * lanzando `UnimplementedError` nombrando el envío de `ConfigureSandbox`
- * que falta, antes de cualquier llamada a AWS.
+ * con el mismo resolver que usa `run-microvm`), ambos antes de cualquier
+ * llamada a AWS. Con ambos bien la opción queda planeada
+ * (`FeaturePlan.events`) y se envía tras `run-microvm`: ver
+ * `m15-events-create-wiring.test.ts`.
  */
 
 import { describe, expect, it } from "vitest";
-import { InvalidArgumentError, UnimplementedError } from "../../src/errors.js";
-import { EVENTS_CHANGE, planFeatures } from "../../src/feature-options.js";
+import { InvalidArgumentError } from "../../src/errors.js";
+import { planFeatures } from "../../src/feature-options.js";
 import { LifecycleEvents } from "../../src/lifecycle-events/service.js";
 
 describe("planFeatures events", () => {
@@ -28,17 +29,10 @@ describe("planFeatures events", () => {
   );
 
   it.each(["cloudwatch", { cloudWatch: { logGroup: "/custom/group" } }])(
-    "is still unimplemented with a valid option, naming what is missing (%o)",
+    "plans a valid option as FeaturePlan.events (%o)",
     (logging) => {
-      let raised: unknown;
-      try {
-        planFeatures({ events: new LifecycleEvents() }, undefined, logging);
-      } catch (error) {
-        raised = error;
-      }
-      expect(raised).toBeInstanceOf(UnimplementedError);
-      expect(String((raised as Error).message)).toContain(EVENTS_CHANGE);
-      expect(String((raised as Error).message)).toContain("ConfigureSandbox");
+      const events = new LifecycleEvents();
+      expect(planFeatures({ events }, undefined, logging).events).toBe(events);
     },
   );
 

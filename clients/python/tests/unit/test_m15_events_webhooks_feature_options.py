@@ -1,9 +1,9 @@
 """`plan_features`' `events=` branch: the option must be a
 `LifecycleEvents`/`AsyncLifecycleEvents` and `logging=` must reach
-CloudWatch (validated through the same resolver `run-microvm` uses); with
-both right it still raises `UnimplementedError` naming the missing
-`ConfigureSandbox` send, before any control plane is resolved — accepting
-it silently would leave the user paying for the stack with no events.
+CloudWatch (validated through the same resolver `run-microvm` uses), both
+checked before any control plane is resolved. With both right the option is
+planned (`FeaturePlan.events`) and sent after `run-microvm`: see
+`test_m15_events_create_wiring.py`.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 
 from rayito import AsyncLifecycleEvents, LifecycleEvents, Sandbox
-from rayito._feature_options import EVENTS_CHANGE, FeatureOptions, plan_features
-from rayito.exceptions import InvalidArgumentException, UnimplementedError
+from rayito._feature_options import FeatureOptions, plan_features
+from rayito.exceptions import InvalidArgumentException
 
 
 def test_events_must_be_a_lifecycle_events() -> None:
@@ -37,21 +37,16 @@ def test_an_invalid_logging_value_is_the_resolvers_own_error() -> None:
 @pytest.mark.parametrize(
     "logging", ["cloudwatch", {"cloudWatch": {"logGroup": "/custom/group"}}], ids=str
 )
-def test_a_valid_events_option_is_still_unimplemented_naming_what_is_missing(
-    events: object, logging: object
-) -> None:
-    with pytest.raises(UnimplementedError) as raised:
-        plan_features(FeatureOptions(events=events), logging=logging)
-    assert EVENTS_CHANGE in str(raised.value)
-    assert "ConfigureSandbox" in str(raised.value)
+def test_a_valid_events_option_is_planned(events: object, logging: object) -> None:
+    assert plan_features(FeatureOptions(events=events), logging=logging).events is not None
 
 
 def test_no_events_option_ignores_logging_entirely() -> None:
     plan_features(FeatureOptions(), logging="disabled")
 
 
-def test_create_rejects_events_before_any_control_plane() -> None:
+def test_create_rejects_events_without_cloudwatch_before_any_control_plane() -> None:
     # No session, no region: reaching `resolve_control_plane` would fail
     # differently, so this proves the rejection comes first.
-    with pytest.raises(UnimplementedError):
-        Sandbox.create("rayito-base", events=LifecycleEvents(), logging="cloudwatch")
+    with pytest.raises(InvalidArgumentException, match="cloudwatch"):
+        Sandbox.create("rayito-base", events=LifecycleEvents(), logging="disabled")

@@ -1441,12 +1441,9 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   DynamoDB (TTL 7 días), un deliverer entrega a webhooks firmados al
   estilo E2B (con guardián SSRF), un reconciler (cada
   `ReconcilerIntervalMinutes`, 5 por defecto) sintetiza `killed` para
-  sandboxes que `ListMicrovms` ya no reporta. ADR-020. Hueco de
-  integración documentado: `create(events=...)` valida y sigue en
-  `UnimplementedError` hasta que su sección entre en
-  `FeaturePlan.configure_sections` (el envío tras el primer `Health` ya
-  existe desde `m15-s3-mounts`/`m15-secrets-gateway`); la fachada
-  `LifecycleEvents` funciona ya.
+  sandboxes que `ListMicrovms` ya no reporta. ADR-020.
+  `create(events=...)` manda `k_sbx` en el mismo `ConfigureSandbox` que
+  el resto de opciones 0.6, tras `run-microvm` (`LifecycleEventsSectionFactory`).
 - **rayd-otlp** (`m15-rayd-otlp`, ADR-021): `rayd` exporta 7 gauges de CPU,
   memoria y disco a CloudWatch cada `interval_s` (15-300 s) por OTLP/HTTP,
   firmado con SigV4 sobre el execution role (`OtlpAuth.execution_role()`,

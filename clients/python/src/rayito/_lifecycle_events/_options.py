@@ -6,10 +6,13 @@ ninguna llamada a AWS.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from rayito._sandbox_base import LoggingOption, logging_config
 from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    from rayito._lifecycle_events._service import LifecycleEvents
 
 #: `logging_config` sólo usa el nombre de la plantilla para el log group de
 #: `"cloudwatch"`; aquí sólo importa qué clave resuelve (`cloudWatch` o
@@ -25,10 +28,13 @@ def sends_logs_to_cloudwatch(logging: LoggingOption) -> bool:
     return _CLOUDWATCH_KEY in logging_config(logging, template_name=_ANY_TEMPLATE)
 
 
-def validate_events_option(events: object, logging: LoggingOption) -> None:
+def validate_events_option(events: object, logging: LoggingOption) -> LifecycleEvents:
     """`events=` debe ser un `LifecycleEvents`/`AsyncLifecycleEvents` y
     `logging=` debe enviar a CloudWatch; si no, `InvalidArgumentException`
-    antes de cualquier llamada a AWS."""
+    antes de cualquier llamada a AWS. Devuelve el `LifecycleEvents` síncrono
+    que construirá la sección (el propio, o el que envuelve un
+    `AsyncLifecycleEvents`): `resolve_sections` corre en un hilo también en
+    `AsyncSandbox.create()`, así que una sola implementación sirve a los dos."""
     from rayito._lifecycle_events._service import LifecycleEvents
     from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
 
@@ -39,3 +45,4 @@ def validate_events_option(events: object, logging: LoggingOption) -> None:
             'events= necesita logging="cloudwatch" (o {"cloudWatch": {...}}): el forwarder '
             "lee las líneas de evento de los logs del sandbox"
         )
+    return events if isinstance(events, LifecycleEvents) else events._sync_events

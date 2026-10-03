@@ -603,6 +603,29 @@ class AsyncSandbox:
                 "rayito-base-caps", execution_role_arn=role_arn,
                 telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             )
+
+        `events=` (m15-events-webhooks, ADR-020) manda a `rayd` la clave de
+        este sandbox (`k_sbx`) en el mismo `ConfigureSandbox`, como en
+        `Sandbox.create`; acepta `AsyncLifecycleEvents` o `LifecycleEvents`
+        y exige un `logging=` que llegue a CloudWatch.
+
+        Coste y activación
+        -------------------
+        Activa: `events=AsyncLifecycleEvents(...)` en `create()`, con la
+            pila `events-webhooks` ya desplegada.
+        Recursos y llamadas AWS: un `secretsmanager:GetSecretValue` de la
+            clave del stack por instancia (más un `DescribeStacks` si no se
+            desplegó con ella); la pila hace el resto.
+        Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto por
+            uso); la opción en sí, una lectura de Secrets Manager.
+        IAM: `EventsOperatorPolicy` en las credenciales del llamante.
+        Cómo apagarla: no pases `events=` (por defecto `None`).
+        Ejemplo:
+            from rayito import AsyncLifecycleEvents
+            events = AsyncLifecycleEvents()
+            sbx = await AsyncSandbox.create(
+                execution_role_arn=role_arn, logging="cloudwatch", events=events,
+            )
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -756,6 +779,7 @@ class AsyncSandbox:
                 planned_sections(
                     feature_plan,
                     LaunchFacts(
+                        sandbox_id=info.sandbox_id,
                         image_arn=info.template,
                         image_version=info.template_version,
                         guest_memory_bytes=(

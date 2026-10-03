@@ -74,15 +74,19 @@ A scheduled reconciler SHALL compare `ListMicrovms` against the sandboxes the ev
 - **THEN** the sandbox stays closed and the reconciler synthesizes nothing for it
 
 ### Requirement: events= and LifecycleEvents are off by default and never implicit
-`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. Passing to `Sandbox.create()`/`AsyncSandbox.create()` an `events=` that is not a `LifecycleEvents`/`AsyncLifecycleEvents`, or with a `logging` that does not reach CloudWatch, SHALL raise `InvalidArgumentException`; a valid `events=` SHALL raise `UnimplementedError` naming this change and the missing `ConfigureSandbox` send (D5: `create()` has nowhere yet to dispatch the section — see `ADR-020`), until the shared "send `FeaturePlan.configure_sections` after `run-microvm`" wiring lands. Every AWS error from `LifecycleEvents` SHALL surface as `WebhookException`/`WebhookError` carrying only the AWS error code, never an ARN or account id. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls, usable today without `Sandbox.create(events=...)`.
+`events=`/`events` on `Sandbox.create()` SHALL default to `None`/`undefined`; without it, the SDK SHALL build no DynamoDB, Secrets Manager or CloudFormation client and SHALL send no `ConfigureSandbox` call. Passing to `Sandbox.create()`/`AsyncSandbox.create()` an `events=` that is not a `LifecycleEvents`/`AsyncLifecycleEvents`, or with a `logging` that does not reach CloudWatch, SHALL raise `InvalidArgumentException`. A valid `events=` SHALL be sent, after `run-microvm` and the first `Health`, as a `LifecycleEventsConfig` section of the same single `ConfigureSandbox` call that carries every other 0.6 section, with `sandbox_key = HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` derived by the SDK from the stack's secret (read at most once per `LifecycleEvents` instance) and the `sandbox_id`/`image_arn`/`image_version` of that launch; if the stack is not deployed, its key cannot be read, the agent does not report `lifecycle_events` support or the section is not applied, `create()` SHALL terminate the sandbox (unless `keep_on_failure`) and raise. Every AWS error from `LifecycleEvents` SHALL surface as `WebhookException`/`WebhookError` carrying only the AWS error code, never an ARN or account id. Constructing `LifecycleEvents`/`AsyncLifecycleEvents` SHALL make no AWS call; `deploy`/`status`/`destroy`/`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events` SHALL each be explicit calls, usable today without `Sandbox.create(events=...)`.
 
 #### Scenario: the zero-cost golden trace is unaffected
 - **WHEN** the existing `create → commands.run → files.write → pause → resume → commands.run → kill → list` scripted session runs with no 0.6 option set
 - **THEN** its boto3 operations, `runHookPayload` and gRPC method sequence are unchanged from `fixtures/zero_cost_0_5_trace.json`
 
-#### Scenario: events= is rejected before launch
-- **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="cloudwatch")` is called
-- **THEN** `UnimplementedError` is raised and no `RunMicrovm` call is made
+#### Scenario: events= sends the sandbox key in the single Configure
+- **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="cloudwatch", execution_role_arn=...)` launches against a 0.6 agent reporting `lifecycle_events`
+- **THEN** exactly one `ConfigureSandbox` call carries a `LifecycleEventsConfig` whose `sandbox_key` is the derived `k_sbx` for that `sandbox_id`, never the stack key
+
+#### Scenario: events= without a deployed stack terminates the sandbox
+- **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="cloudwatch")` runs and the `events-webhooks` stack does not exist
+- **THEN** `WebhookException` is raised and the MicroVM is terminated
 
 #### Scenario: events= without CloudWatch logging is invalid
 - **WHEN** `Sandbox.create(events=LifecycleEvents(), logging="disabled")` is called

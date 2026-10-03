@@ -13,7 +13,12 @@ tus webhooks con la firma de E2B.
       `rayito events deploy`); después, `events=LifecycleEvents(...)` en
       `Sandbox.create()` junto con un `logging` que llegue a CloudWatch
       (`"cloudwatch"` o `{"cloudWatch": {...}}`: el forwarder lee de ahí).
-    - **Recursos y llamadas AWS**: `deploy()` crea en tu cuenta
+    - **Recursos y llamadas AWS**: `Sandbox.create(events=...)` hace un
+      `secretsmanager:GetSecretValue` de la clave del stack por instancia de
+      `LifecycleEvents` (más un `cloudformation:DescribeStacks` si esa
+      instancia no fue la que desplegó la pila) y manda la clave de ese
+      sandbox a `rayd` en el mismo `ConfigureSandbox` que el resto de
+      opciones 0.6. `deploy()` crea en tu cuenta
       (`infra/events-webhooks.yaml`) un secreto HMAC, una tabla DynamoDB
       on-demand con streams, tres Lambdas, una suscripción de CloudWatch
       Logs, una cola SQS para las entregas que agotan sus reintentos y una
@@ -41,16 +46,6 @@ tus webhooks con la firma de E2B.
       (`rayito/webhooks/...`), el log group de la imagen y los log groups
       `/aws/lambda/rayito-events-webhooks-*` que crean las propias Lambdas se
       conservan: bórralos aparte si ya no los quieres.
-
-!!! warning "Hueco de integración conocido"
-    La pila, los webhooks, `get_events` y el lado de `rayd` pasaron la
-    aceptación en AWS real (2026-10-02, `AWS_API_NOTES.md` Q105–Q108) con la
-    sección de `ConfigureSandbox` enviada a mano. `Sandbox.create(events=...)`
-    todavía **no** la envía: valida la opción (un `LifecycleEvents` y
-    `logging` con CloudWatch) y lanza `UnimplementedError`, porque `create()`
-    aún no manda secciones tras `run-microvm` (necesita `sandbox_id`). Hasta
-    entonces ningún sandbox creado por el SDK emite eventos. Ver ADR-020 en
-    `ARCHITECTURE.md`.
 
 ## Cuándo usarlo
 
@@ -107,6 +102,57 @@ Lambdas):
     rayito events list --limit 10
     ```
 
+Después, crea sandboxes que emitan eventos. `events=` necesita un `logging`
+que llegue a CloudWatch (el forwarder lee de ahí, así que también un
+`execution_role_arn` con permiso de escritura en el log group de la imagen)
+y una imagen con `rayd` 0.6.0 o posterior:
+
+=== "Python"
+
+    ```python
+    from rayito import LifecycleEvents, Sandbox
+
+    role_arn = "arn:aws:iam::111122223333:role/rayito-sandbox"  # escribe en el log group
+    events = LifecycleEvents()  # la misma pila de antes
+    sbx = Sandbox.create(
+        execution_role_arn=role_arn,
+        logging="cloudwatch",
+        events=events,
+    )
+    sbx.pause()
+    sbx.resume()
+    sbx.kill()
+    # created, paused, resumed, killed (unos segundos después)
+    for event in events.get_events(sandbox_id=sbx.sandbox_id, order="asc"):
+        print(event.type)
+    ```
+
+    Con `AsyncSandbox.create(events=AsyncLifecycleEvents(), ...)` es igual.
+
+=== "TypeScript"
+
+    ```ts
+    import { LifecycleEvents, Sandbox } from "rayito";
+
+    const roleArn = "arn:aws:iam::111122223333:role/rayito-sandbox"; // escribe en el log group
+    const events = new LifecycleEvents(); // la misma pila de antes
+    const sbx = await Sandbox.create({ executionRoleArn: roleArn, logging: "cloudwatch", events });
+    await sbx.pause();
+    await sbx.resume();
+    await sbx.kill();
+    // created, paused, resumed, killed (unos segundos después)
+    for (const event of await events.getEvents({ sandboxId: sbx.sandboxId, order: "asc" })) {
+      console.log(event.kind);
+    }
+    ```
+
+`create()` lee la clave del stack, deriva la de este sandbox (`k_sbx`) y la
+manda a `rayd` justo después de que el agente esté listo, en el mismo
+`ConfigureSandbox` que `mounts=`/`gateways=`/`telemetry=`. Si la pila no está
+desplegada, la clave no se puede leer, la imagen es anterior a 0.6.0 o `rayd`
+rechaza la sección, `create()` termina el sandbox (salvo `keep_on_failure`)
+y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
+
 ## Cómo funciona
 
 1. `rayd` emite `rayito.event.v1 <b64url(json)> <b64url(hmac)>` por stdout,
@@ -157,7 +203,8 @@ Lambdas):
 |---|---|---|---|
 | `WebhookException` | `WebhookError` | una llamada a DynamoDB o Secrets Manager falló (`aws_code`/`awsCode` trae sólo el código de AWS, nunca ARNs ni la cuenta), o la pila no está desplegada | revisa los permisos de `EventsOperatorPolicy`; llama a `deploy()` primero |
 | `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` | corrige el argumento antes de reintentar |
-| `UnimplementedError` | `UnimplementedError` | `events=` válido en `Sandbox.create()` (todavía no se envía su sección) | usa la fachada `LifecycleEvents` mientras tanto |
+| `UnimplementedError` | `UnimplementedError` | `Sandbox.create(events=...)` sobre una imagen anterior a 0.6.0 (el sandbox se termina) | usa una imagen publicada con `rayd` 0.6.0 o posterior |
+| `WebhookException` (desde `create()`) | `WebhookError` | `Sandbox.create(events=...)` sin la pila desplegada, o sin permiso para leer su clave (el sandbox se termina) | despliega la pila o vincula `EventsOperatorPolicy` a quien llama |
 | `StackException` | `StackError` | `deploy`/`destroy` de la pila falló (código `blocked`/`not_found`/`failed`) | ver [Pilas opcionales](pilas-opcionales.md) |
 | `StackException` (`failed`, la pila en `ROLLBACK_COMPLETE`) | `StackError` | una SCP o política de etiquetas de tu organización denegó `sqs:CreateQueue`/`lambda:CreateFunction` sin ciertas etiquetas | borra la pila fallida (`destroy()`) y repite `deploy(tags={...})` (CLI: `--tag K=V`) con las claves y valores que exige tu organización |
 | `StackException` (`failed`, la pila en `DELETE_FAILED`) | `StackError` | `destroy()` con `EventsOperatorPolicy` aún vinculada a un usuario o rol | desvincula la política y repite `destroy()` |
@@ -186,6 +233,6 @@ Rayito sin cambios (mismas cabeceras `e2b-*` y el mismo esquema de firma).
       `AWS_API_NOTES.md` §25, en
       [GitHub](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md).
     - Despliegue y borrado: [`infra/README.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md).
-    - Decisión de diseño (ConfigureSandbox, el hueco de integración
-      conocido, el guardián SSRF): ADR-020 en
+    - Decisión de diseño (ConfigureSandbox, la derivación de `k_sbx`, el
+      guardián SSRF): ADR-020 en
       [`ARCHITECTURE.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/ARCHITECTURE.md).

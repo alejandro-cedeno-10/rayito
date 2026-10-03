@@ -59,8 +59,8 @@ same `FeatureSet`, and the first participant with work on `/resume` and
   time runs out the record is reported in `batchItemFailures` and the stream
   retries from it (records that exhaust the stream's retries go to an SQS
   queue). Only 5xx and transport errors are retried.
-- **D5 — Known integration gap: `events=` validates, then stays
-  `UnimplementedError`.** `create()`'s dispatch of
+- **D5 — (superseded by D6) Known integration gap: `events=` validates,
+  then stays `UnimplementedError`.** `create()`'s dispatch of
   `FeaturePlan.configure_sections` into a `Configure` RPC does not exist yet
   anywhere in the SDK: `plan_features()` runs before `run-microvm`, so it
   cannot build a section that needs `sandbox_id`, and the send needs the
@@ -73,6 +73,20 @@ same `FeatureSet`, and the first participant with work on `/resume` and
   `logging` to `plan_features` through foundations' seam (PR #87).
   `register_webhook`/`get_events`/`deploy`/`destroy` are unaffected and
   usable today.
+- **D6 — `events=` rides the shared Configure path.** Once foundations'
+  single post-ready `Configure` path existed for `mounts=`/`gateways=`/
+  `telemetry=`, `plan_features` keeps the validated `LifecycleEvents` in
+  `FeaturePlan.events` (an `AsyncLifecycleEvents` contributes its inner
+  sync instance: section resolution already runs in a worker thread in
+  `AsyncSandbox.create()`), `LaunchFacts` gains `sandbox_id`, and
+  `planned_sections` appends a `LifecycleEventsSectionFactory` next to
+  telemetry's. The factory reads the stack key through the
+  `LifecycleEvents`' own gateway (once per instance), never through the
+  handle's `SecretCache`: the stack key is not a user secret and may be
+  binary. `main.py`/`sandbox.ts` name no feature; any failure terminates
+  the sandbox like every other section. `reincarnate()` does not replay it
+  (as with `mounts=`/`telemetry=`) and `pool=` rejects it like every 0.6
+  option.
 
 ## Risks
 

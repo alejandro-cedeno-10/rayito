@@ -84,9 +84,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   filtrado por tipo en DynamoDB), con `@aws-sdk/client-dynamodb` y
   `@aws-sdk/client-secrets-manager` como peers opcionales. Los errores de
   AWS llegan como `WebhookError` con sólo el código (`awsCode`). `events` en
-  `Sandbox.create()` valida el tipo y que `logging` llegue a CloudWatch, y
-  sigue lanzando `UnimplementedError` hasta que `create()` envíe la sección
-  tras `run-microvm` (ADR-020). Aceptado en AWS real (`AWS_API_NOTES.md`
+  `Sandbox.create()` valida el tipo y que `logging` llegue a CloudWatch
+  antes de lanzar y, tras `run-microvm`, manda la clave del sandbox (`k_sbx`,
+  derivada de la clave del stack y el `sandboxId`; un `GetSecretValue` por
+  instancia de `LifecycleEvents`) en el mismo `ConfigureSandbox` que
+  `mounts`/`gateways`/`telemetry` (`LifecycleEventsSectionFactory`); sin la
+  pila desplegada, sin `lifecycleEvents` en el agente o con la sección
+  rechazada, termina el sandbox (salvo `keepOnFailure`). `events` pasa a
+  tiparse `LifecycleEvents` en `SandboxCreateOptions`. Aceptado en AWS real (`AWS_API_NOTES.md`
   Q105–Q108); el `.gen.ts` lleva el código Lambda actualizado (comprobación
   exacta del log stream y una línea JSON por invocación del forwarder y del
   reconciliador).

@@ -52,3 +52,10 @@
 - [x] 6.2 CP-5 (Q106: `paused` ingested 226 ms after emission, before the freeze; stream `YYYY/MM/DD[<imageVersion>]<microvmId>`, forwarder check tightened): do lines written inside `/suspend` reach CloudWatch, and at what latency to the Lambda? Also confirms/corrects the forwarder's log-stream-naming assumption (§25).
 - [x] 6.3 End-to-end (2026-10-02; the platform timeout came through `/terminate`, the reconciler path was exercised by a kill while suspended; forwarder/reconciler summary log lines added, Q107; `--tag` for tag-policy accounts, Q108): deploy the stack, a Function URL receiver, create → pause → resume → kill, 4 signed deliveries, a forged unsigned line dropped, a platform timeout synthesized by the reconciler, `get_events` ordering, destroy (secret force-deleted).
 - [ ] 6.4 Cleanup: remove the receiver and the stack; budget cap $0.50 (§8 of the architecture).
+
+## 7. `create(events=...)` wiring (D6)
+
+- [x] 7.1 Python: `FeaturePlan.events`, `LaunchFacts.sandbox_id`, `planned_sections` appends `LifecycleEventsSectionFactory` (`_lifecycle_events/_section.py`); `LifecycleEventsSection` is an `ImmediateSection` with `sandbox_key` out of `repr`; `validate_events_option` returns the sync `LifecycleEvents` (`AsyncLifecycleEvents._sync_events`); `EVENTS_PENDING_REASON` removed.
+- [x] 7.2 TypeScript: same (`FeaturePlan.events`, `LaunchFacts`, `LifecycleEventsSection` class with `requiredFlag = "lifecycleEvents"` and `k_sbx` in an ES private field, `LifecycleEventsSectionFactory`); `SandboxCreateOptions.events` typed `LifecycleEvents`.
+- [x] 7.3 Unit tests: `test_m15_events_create_wiring.py` / `m15-events-create-wiring.test.ts` (planning, derived key in the single `Configure`, stack key read once per instance, terminate on no flag / pre-0.6 agent / undeployed stack / `INVALID`); the feature-options tests now assert the option is planned.
+- [x] 7.4 Docs: `eventos-y-webhooks.md` (gap warning removed, Python+TS `create(events=...)` example, error rows), ADR-020, `MILESTONES.md`, `RELEASE_NOTES_0.6.0.md`, `docs-delta.md` row, CHANGELOGs.
