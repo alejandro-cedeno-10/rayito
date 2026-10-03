@@ -120,7 +120,7 @@ mod unix {
 
     use super::{MAX_SIDECAR_LOG_LINE_BYTES, emit_sidecar_log, parse_sidecar_log_line};
     use crate::adapters::process_spawner::PreExecPlan;
-    use crate::adapters::{IdentitySwitch, io_error_name};
+    use crate::adapters::{ChildRegistry, IdentitySwitch, io_error_name};
 
     pub const REQUEST_QUEUE_CAPACITY: usize = 1024;
 
@@ -183,7 +183,9 @@ mod unix {
             // allocates nothing and takes no locks, which is what
             // async-signal-safety requires here.
             unsafe { command.pre_exec(move || plan.apply()) };
-            let mut child = command.spawn().map_err(|error| spawn_error(&error))?;
+            let mut child = ChildRegistry::process()
+                .spawn(&mut command)
+                .map_err(|error| spawn_error(&error))?;
             let pid = child
                 .id()
                 .ok_or_else(|| SpawnError::Failed("el hijo no tiene pid".to_owned()))?;

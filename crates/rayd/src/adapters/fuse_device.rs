@@ -28,6 +28,8 @@ use std::time::{Duration, Instant};
 
 use rayd_core::s3_mount::{FuseDevice, MountErrorClass, S3Mount};
 
+use super::child_registry::ChildRegistry;
+
 const FUSE_DEVICE_PATH: &str = "/dev/fuse";
 /// Where every mount-path walk starts; `rayd_core::mount_path` already
 /// guarantees an absolute path under one of its `ALLOWED_ROOTS`.
@@ -128,15 +130,15 @@ impl FuseDevice for LinuxFuseDevice {
         // lets the kernel accept that, but exercising it here is also what
         // proves a *guest* `stat`/`open` would succeed, which is the thing
         // `sbx.mounts == "mounted"` is actually promising the caller.
-        let mut child = match Command::new(STAT_BINARY)
+        let mut command = Command::new(STAT_BINARY);
+        command
             .arg(mount_path)
             .uid(GUEST_USER_ID)
             .gid(GUEST_GROUP_ID)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+            .stderr(Stdio::null());
+        let mut child = match ChildRegistry::process().spawn(&mut command) {
             Ok(child) => child,
             Err(_spawn_error) => return false,
         };

@@ -9,13 +9,10 @@
 //! `uidrange 1000-65535` (ADR-012).
 //!
 //! This adapter reaps its own children by `.wait()`-ing each one on a
-//! dedicated task the moment it is spawned, *and* registers the pid in the
-//! shared `ChildRegistry` for that same window: `adapters::orphan_reaper`
-//! (reserved for a re-parented zombie, never a pid rayd is still waiting on
-//! itself) must never win the race to `waitpid` a `mount-s3` this task has
-//! not yet reaped — registering closes that window instead of relying on
-//! `orphan_reaper` not being wired into the PID-1 loop yet (`features::mod`
-//! `FeatureContext`'s own non-blocking follow-up).
+//! dedicated task the moment it is spawned, and spawns them through the
+//! process-wide `ChildRegistry`, so PID 1's orphan reaper
+//! (`adapters::orphan_reaper`, reserved for re-parented zombies) never wins
+//! the race to `waitpid` a `mount-s3` this task has not reaped yet.
 
 use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
@@ -68,7 +65,6 @@ const STDERR_READ_CHUNK_BYTES: usize = 1024;
 /// a fixed, non-request-supplied identity.
 pub struct TokioMountS3Daemon {
     region: String,
-    registry: Arc<ChildRegistry>,
     /// `Arc` (rather than a bare `Mutex`) so the reap task spawned by
     /// `spawn()` below can hold its own clone of the same set without
     /// borrowing `self` past this call's lifetime.
@@ -80,10 +76,9 @@ pub struct TokioMountS3Daemon {
 
 impl TokioMountS3Daemon {
     #[must_use]
-    pub fn new(region: String, registry: Arc<ChildRegistry>) -> Self {
+    pub fn new(region: String) -> Self {
         Self {
             region,
-            registry,
             alive: Arc::new(Mutex::new(HashSet::new())),
             exited: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -130,17 +125,15 @@ impl FuseDaemon for TokioMountS3Daemon {
                 Ok(())
             });
         }
-        let mut child = command
-            .spawn()
+        let mut child = ChildRegistry::process()
+            .spawn(&mut command)
             .map_err(|_io_error| MountErrorClass::HelperMissing)?;
         let pid = i32::try_from(child.id().ok_or(MountErrorClass::HelperMissing)?)
             .map_err(|_overflow| MountErrorClass::HelperMissing)?;
         let mut stderr = child.stderr.take();
         self.alive_set().insert(pid);
-        self.registry.register(pid);
         let alive = Arc::clone(&self.alive);
         let exited = Arc::clone(&self.exited);
-        let registry = Arc::clone(&self.registry);
         tokio::spawn(async move {
             // Drains stderr for the daemon's whole life, concurrently with
             // `wait()`: a long-running daemon that keeps logging must never
@@ -155,7 +148,6 @@ impl FuseDaemon for TokioMountS3Daemon {
                 }
             };
             let (status, tail) = tokio::join!(child.wait(), read_stderr);
-            registry.unregister(pid);
             let class = classify_exit(status.as_ref().ok(), &tail);
             exited
                 .lock()
@@ -332,7 +324,7 @@ mod tests {
 
     #[test]
     fn classify_exit_reads_the_closed_classes_from_known_stderr_phrases() {
-        let ok_status = std::process::Command::new("true").status().ok();
+        let ok_status = Some(std::os::unix::process::ExitStatusExt::from_raw(0));
         assert_eq!(
             classify_exit(ok_status.as_ref(), b"Access Denied by bucket policy"),
             MountErrorClass::IamDenied

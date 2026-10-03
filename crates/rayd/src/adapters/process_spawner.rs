@@ -83,6 +83,7 @@ mod unix {
     use tokio::process::{Child, Command};
 
     use super::{IdentitySwitch, SpawnPlatform};
+    use crate::adapters::ChildRegistry;
     use crate::process::child::{ChildIo, ChildReader, ChildWriter, WaitFuture};
 
     #[must_use]
@@ -201,7 +202,9 @@ mod unix {
             // allocates nothing and takes no locks, which is what
             // async-signal-safety requires here.
             unsafe { command.pre_exec(move || plan.apply()) };
-            let child = command.spawn().map_err(|error| spawn_error(&error))?;
+            let child = ChildRegistry::process()
+                .spawn(&mut command)
+                .map_err(|error| spawn_error(&error))?;
             let pid = child
                 .id()
                 .ok_or_else(|| SpawnError::Failed("el hijo no tiene pid".to_owned()))?;

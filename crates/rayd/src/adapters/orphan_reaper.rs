@@ -1,20 +1,18 @@
-//! Adapter side of PID-1 zombie reaping (M15 foundations, Q80 finding):
-//! reads `/proc/[pid]/stat` for zombies re-parented to `rayd`'s own pid and
-//! calls `waitpid(pid, WNOHANG)` on exactly the ones
-//! `rayd_core::orphans::orphans_to_reap` names — never `waitpid(-1, _)`,
-//! which could steal the exit status tokio's own `Child::wait` is waiting
-//! on for a pid `rayd` spawned directly (`ChildRegistry`).
+//! PID 1's orphan reaping (`rayd-orphan-reaper`, Q80): a `Reaper` that runs
+//! one `ChildRegistry::sweep_orphans` pass for `rayd`'s own pid, so a
+//! double-forked daemon that exits inside the sandbox never stays
+//! `<defunct>` under `rayd`, while every child `rayd` spawned itself keeps
+//! its exit status for its own `wait` (`adapters::child_registry`).
 //!
-//! Only meaningful when `rayd` actually is PID 1 (the normal case inside the
-//! `MicroVM`; integration tests and a developer's shell are not), so
-//! `reap_expired` is a no-op everywhere else: wired into `main`'s existing
-//! 5 s `Reaper` tick (`lifecycle::spawn_reaper`) unconditionally, it costs
-//! one `/proc` scan and never reaps a pid outside a real init process.
+//! Active only where orphans actually re-parent to `rayd`: as PID 1 (the
+//! `MicroVM`) or as a child subreaper (an integration test standing in for
+//! it). Anywhere else the process that adopts orphans is someone else, so
+//! `reap_expired` does nothing. `lifecycle::spawn_child_reaper` runs it on
+//! every `SIGCHLD` and on a periodic sweep.
 
-use std::fs;
 use std::sync::Arc;
 
-use rayd_core::orphans::{ZombieEntry, orphans_to_reap};
+use rayd_core::orphans::adopts_orphans;
 
 use crate::lifecycle::Reaper;
 
@@ -23,124 +21,135 @@ use super::child_registry::ChildRegistry;
 pub struct OrphanReaper {
     registry: Arc<ChildRegistry>,
     own_pid: i32,
+    active: bool,
 }
 
 impl OrphanReaper {
+    /// Over this process's own pid and child-subreaper attribute, read
+    /// once: neither changes for the life of `rayd`.
     #[must_use]
     pub fn new(registry: Arc<ChildRegistry>) -> Self {
+        let own_pid = own_pid();
+        Self::for_pid(
+            registry,
+            own_pid,
+            adopts_orphans(own_pid, is_child_subreaper()),
+        )
+    }
+
+    fn for_pid(registry: Arc<ChildRegistry>, own_pid: i32, active: bool) -> Self {
         Self {
             registry,
-            own_pid: own_pid(),
+            own_pid,
+            active,
         }
+    }
+
+    /// Whether orphans re-parent to this process, i.e. whether reaping
+    /// does anything here.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// One pass; the pids it reaped (always empty when inactive).
+    #[must_use]
+    pub fn sweep(&self) -> Vec<i32> {
+        if !self.active {
+            return Vec::new();
+        }
+        self.registry.sweep_orphans(self.own_pid)
     }
 }
 
 impl Reaper for OrphanReaper {
     fn reap_expired(&self) {
-        if self.own_pid != 1 {
-            return;
-        }
-        let zombies = read_zombies();
-        let registry = &self.registry;
-        for pid in orphans_to_reap(&zombies, self.own_pid, |pid| registry.is_owned(pid)) {
-            reap(pid);
+        let reaped = self.sweep();
+        if !reaped.is_empty() {
+            tracing::debug!(orphans_reaped = reaped.len(), "orphan zombies reaped");
         }
     }
 }
 
-#[cfg(unix)]
 fn own_pid() -> i32 {
     // A real pid always fits i32 (Linux caps pid_max well under 2^31); a
-    // value that somehow didn't would just never equal 1, i.e. never match
-    // the PID-1 guard, which is the safe direction to fail in.
+    // value that somehow didn't would never equal any `ppid`, which is the
+    // safe direction to fail in.
     i32::try_from(std::process::id()).unwrap_or(-1)
 }
 
-#[cfg(not(unix))]
-fn own_pid() -> i32 {
-    -1 // never 1: this adapter only ever runs on the Linux guest.
+#[cfg(target_os = "linux")]
+fn is_child_subreaper() -> bool {
+    nix::sys::prctl::get_child_subreaper().unwrap_or(false)
 }
 
-fn read_zombies() -> Vec<ZombieEntry> {
-    let Ok(entries) = fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let pid: i32 = entry.file_name().to_str()?.parse().ok()?;
-            let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-            parse_stat(pid, &stat)
-        })
-        .collect()
+#[cfg(not(target_os = "linux"))]
+fn is_child_subreaper() -> bool {
+    false
 }
-
-/// `/proc/[pid]/stat` (`proc(5)`): `pid (comm) state ppid ...`. `comm` may
-/// itself contain spaces or parentheses, so the split is on the *last*
-/// `)`, never the first.
-fn parse_stat(pid: i32, text: &str) -> Option<ZombieEntry> {
-    let after_comm = text.rsplit_once(')')?.1;
-    let mut fields = after_comm.split_whitespace();
-    if fields.next()? != "Z" {
-        return None;
-    }
-    let parent_pid: i32 = fields.next()?.parse().ok()?;
-    Some(ZombieEntry {
-        pid,
-        ppid: parent_pid,
-    })
-}
-
-#[cfg(unix)]
-fn reap(pid: i32) {
-    use nix::sys::wait::{WaitPidFlag, waitpid};
-    use nix::unistd::Pid;
-    // WNOHANG: a zombie is already dead, so this never blocks; the result
-    // is intentionally discarded — ECHILD (already reaped by someone else
-    // this tick) and a real status are both "done" for this pid.
-    let _ = waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG));
-}
-
-#[cfg(not(unix))]
-fn reap(_pid: i32) {}
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use rayd_core::orphans::{ProcEntry, ProcessTable};
+
     use super::*;
 
-    #[test]
-    fn a_zombie_line_parses_to_its_pid_and_ppid() {
-        let stat = "50 (sleep) Z 1 50 50 0 -1 1077944576 0 0 0 0 0 0 0 0 20 0 1 0";
-        assert_eq!(parse_stat(50, stat), Some(ZombieEntry { pid: 50, ppid: 1 }));
+    const OWN_PID: i32 = 4_321;
+
+    struct OneOrphan {
+        reaped: Mutex<Vec<i32>>,
+    }
+
+    impl ProcessTable for OneOrphan {
+        fn snapshot(&self) -> Vec<ProcEntry> {
+            vec![ProcEntry {
+                pid: 50,
+                ppid: OWN_PID,
+                zombie: true,
+                start_ticks: 1,
+            }]
+        }
+
+        fn entry(&self, _pid: i32) -> Option<ProcEntry> {
+            None
+        }
+
+        fn reap(&self, pid: i32) {
+            self.reaped.lock().unwrap().push(pid);
+        }
+    }
+
+    fn reaper(active: bool) -> (OrphanReaper, Arc<OneOrphan>) {
+        let table = Arc::new(OneOrphan {
+            reaped: Mutex::default(),
+        });
+        let registry = Arc::new(ChildRegistry::new(
+            Arc::clone(&table) as Arc<dyn ProcessTable>
+        ));
+        (OrphanReaper::for_pid(registry, OWN_PID, active), table)
     }
 
     #[test]
-    fn a_running_process_is_not_a_zombie() {
-        let stat = "50 (sleep) S 1 50 50 0 -1 1077944576 0 0 0 0 0 0 0 0 20 0 1 0";
-        assert_eq!(parse_stat(50, stat), None);
-    }
-
-    #[test]
-    fn a_comm_containing_spaces_and_parens_does_not_confuse_the_split() {
-        let stat = "50 (my (weird) prog) Z 7 50 50 0 -1 1077944576 0 0 0 0 0 0 0 0 20 0 1 0";
-        assert_eq!(parse_stat(50, stat), Some(ZombieEntry { pid: 50, ppid: 7 }));
-    }
-
-    #[test]
-    fn a_malformed_line_is_skipped_rather_than_panicking() {
-        assert_eq!(parse_stat(50, "garbage"), None);
-        assert_eq!(parse_stat(50, "50 (sleep) Z"), None);
-        assert_eq!(parse_stat(50, "50 (sleep) Z notanumber"), None);
-    }
-
-    #[test]
-    fn reap_expired_does_nothing_when_rayd_is_not_pid_1() {
-        // Every test runner's own pid is never 1; this just proves the
-        // guard short-circuits before touching /proc at all.
-        let reaper = OrphanReaper {
-            registry: Arc::new(ChildRegistry::new()),
-            own_pid: 4321,
-        };
+    fn an_active_reaper_reaps_the_orphans_of_its_own_pid() {
+        let (reaper, table) = reaper(true);
         reaper.reap_expired();
+        assert_eq!(*table.reaped.lock().unwrap(), vec![50]);
+    }
+
+    #[test]
+    fn an_inactive_reaper_never_touches_the_table() {
+        let (reaper, table) = reaper(false);
+        assert!(!reaper.is_active());
+        assert!(reaper.sweep().is_empty());
+        assert!(table.reaped.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_test_runner_that_is_neither_init_nor_a_subreaper_is_inactive() {
+        // Every test runner's own pid is never 1, and this unit-test binary
+        // never sets PR_SET_CHILD_SUBREAPER.
+        assert!(!OrphanReaper::new(ChildRegistry::process()).is_active());
     }
 }

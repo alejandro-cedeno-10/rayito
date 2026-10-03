@@ -552,6 +552,7 @@ crates/rayd             adaptadores + main. Único sitio con tonic/axum/tokio-pr
 | `network` (M9, ADR-012) | gramática de `allow_out`/`deny_out` (`cidr`, `entry`: CIDR, IP, `*.dominio`, `ALL_TRAFFIC`), `policy` (semántica de E2B: un permitido gana, sin `deny_out` no se restringe nada; modos `Unrestricted`/`Routes`/`ProxyOnly`; `UpstreamProxy` con credenciales `Zeroizing`), `route_plan` (tablas 101/102/103, prioridades 150/151/149; `IMDS_TABLE`/`IMDS_PRIORITY` 100, por delante de todo slot), `swap` (cambio atómico, rollback, recuperación con deny-all de emergencia en `RECOVERY_SLOT`), `installation` (`Installation`: política, plan, slot y guardia DNS instalados, con sus transiciones), `probe` (`ip route get` por uid, `ip -o addr show`; el veredicto de verificación por observación, `VerifyFailure`), `special_address` (`SpecialAddress`: la única clasificación de loopback, no especificada, IMDS, link-local, multicast y broadcast), `guard` (`TargetGuard`: las direcciones especiales y las propias del guest; `UpstreamGuard`), `proxy_protocol` (HTTP CONNECT/forward, SOCKS5 servidor y cliente RFC 1928/1929; `ConnectFailure` con su respuesta HTTP y SOCKS), `proxy_env` (las ocho variables `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`), `state` (`EgressEnforcement`), `error` (`NetworkError::status_class`) |
 | `metrics_history` (M9) | `MetricsHistory`: anillo de 5 760 muestras procfs (5 s × 8 h), rango inclusivo, reducción a `max_points` (última muestra de cada tramo con `cpu_used_pct` promediado) y el estado puro del muestreador |
 | `filesystem::metadata` (M9) | `FileMetadata`: claves de caracteres de token HTTP en minúsculas, valores ASCII imprimible, ≤ 64 claves y ≤ 4 000 B, nombre `user.rayito.<clave>`; errores fijos que nunca citan una clave ni un valor |
+| `orphans` (Q80, `rayd-orphan-reaper`) | qué zombis puede recoger el PID 1: `ProcEntry` (pid, ppid, zombi, hora de arranque del campo 22 de `/proc/[pid]/stat`), `OwnedChildren` (los hijos que lanzó el propio `rayd`, por pid **y** hora de arranque, para que un pid reciclado nunca pase por propio; se olvidan solos cuando salen de la tabla de procesos), `orphans_to_reap`/`sweep` (olvidar los que ya salieron y recoger con un `waitpid(pid, WNOHANG)` exacto cada zombi reasignado a `rayd` que no es suyo, nunca `waitpid(-1)`) y `adopts_orphans` (PID 1 o *child subreaper*) |
 | `filesystem::write` | `DISK_RESERVE_BYTES` 256 MiB: `check_disk_reserve(free)` con el `free_bytes` del puerto (`statvfs` del ancestro existente más profundo) antes de crear el temporal (`DiskReserve`/`DiskFull` → `RESOURCE_EXHAUSTED` con detalle `disk_reserve`/`disk_full`) |
 
 Puertos (traits) que el dominio necesita del mundo exterior:
@@ -573,6 +574,7 @@ Puertos (traits) que el dominio necesita del mundo exterior:
 | `SignedHttp` (M9) | `send(SignedRequest{GET/PUT/DELETE, url Zeroizing}, body)` → cabecera + cuerpo en streaming; `HttpError{kind}` sin URL, host ni dirección (ADR-010) |
 | `SelfTerminator` (M9) | `begin`/`force` la salida de `rayd` al vencer el plazo en modo `kill` (ADR-011) |
 | `MetricsProbe` (M9) | una lectura procfs (CPU, memoria con caché, disco) para el muestreador de `MetricsHistory` |
+| `ProcessTable` (`rayd-orphan-reaper`) | instantánea de la tabla de procesos, una entrada por pid y `reap(pid)` sobre exactamente ese pid |
 
 **`rayd` (adaptadores)**:
 
@@ -638,11 +640,27 @@ Puertos (traits) que el dominio necesita del mundo exterior:
   `127.0.0.1:0` con 128 conexiones, la cadena SOCKS5 al proxy del operador y
   los contadores `egress_proxy_stats`); `grpc/compression.rs`
   (`CompressionOptInLayer`: gzip sólo con `rayito-compress: gzip`).
+  `rayd-orphan-reaper` (Q80): `adapters/child_registry.rs` (`ChildRegistry`,
+  uno por proceso como la lista de hijos del kernel: **todo** hijo de `rayd`
+  —procesos, shells de PTY, el sidecar, `mount-s3`, la sonda `stat` del
+  montaje, `ip`, el `ready_cmd` de un template— se lanza con
+  `ChildRegistry::spawn`, que sostiene un candado compartido desde antes del
+  `fork` hasta registrar el hijo; la pasada de recogida lo toma en exclusiva,
+  así que nunca ve un hijo que existe y aún no está registrado; el
+  `clippy.toml` del workspace prohíbe `Command::spawn`/`status`/`output` en
+  cualquier otro sitio), `adapters/procfs_process_table.rs`
+  (`ProcfsProcessTable`), `adapters/orphan_reaper.rs` (`OrphanReaper`, activo
+  sólo si `rayd` es PID 1 o *child subreaper*) y
+  `lifecycle::spawn_child_reaper` (una pasada en el pool bloqueante en cada
+  `SIGCHLD` y cada 5 s). Así un demonio con doble `fork` no deja `<defunct>`
+  colgado de `rayd`, y tokio sigue recibiendo el estado de salida de cada
+  hijo propio.
 - `main.rs`: parseo de flags, wiring, arranque de los dos listeners, `anyhow`
   sólo aquí.
 
 Reglas: `unwrap_used`/`expect_used` denegados en el workspace (permitidos en
-tests vía `clippy.toml`); los tests de dominio corren en Windows con puertos
+tests vía `clippy.toml`); `Command::spawn`/`status`/`output` de `std` y de
+`tokio` prohibidos fuera de `ChildRegistry::spawn` (`disallowed-methods`); los tests de dominio corren en Windows con puertos
 falsos; los de adaptadores necesitan Linux (WSL2 o CI).
 
 ### Política de egress (M9)
@@ -1856,9 +1874,9 @@ igual que en el primer montaje. `TokioMountS3Daemon` lanza
 (uid/gid 990, creado en `image/Dockerfile`), con el entorno reconstruido
 desde cero (sólo `AWS_REGION`/`PATH`: nunca una credencial en argv ni en
 entorno, SEC-3) y reapea su propio hijo con `Child::wait()` en una tarea
-dedicada (independiente de `adapters::{child_registry,orphan_reaper}`,
-reservados a los procesos que pasan por `ProcessSpawner`): nunca hay dos
-sitios esperando el mismo pid. uid 990 está **por debajo** de
+dedicada; lo lanza con `ChildRegistry::spawn`, así que el reaper de
+huérfanos del PID 1 (`rayd-orphan-reaper`) nunca le roba ese estado de
+salida: nunca hay dos sitios esperando el mismo pid. uid 990 está **por debajo** de
 `MIN_UNPRIVILEGED_ID` (1000), así que el blackhole de IMDS de M6
 (`uidrange 1000-65535`) no lo alcanza: `mount-s3` resuelve las credenciales
 del execution role por su **propio** acceso a IMDS, en su propio proceso,
@@ -2096,8 +2114,7 @@ pero **no está conectada todavía al canal gRPC real**: hacerlo bien exige
 reordenar cuándo se construye el canal de autenticación frente a cuándo se
 conoce la instrumentación OTel en varios puntos de un fichero compartido
 entre las siete funciones 0.6 (`sandbox_sync/main.py` y su espejo). Es un
-seguimiento razonado y no bloqueante (mismo patrón que el reaper de zombis
-huérfanos de M15 foundations), registrado en
+seguimiento razonado y no bloqueante, registrado en
 `openspec/changes/m15-rayd-otlp/design.md`.
 
 **Consecuencias.** Sin `telemetry=`/`telemetry`, `rayd` no abre ninguna
