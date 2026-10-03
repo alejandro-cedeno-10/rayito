@@ -48,7 +48,6 @@ import {
 import { type OpenedStream, type SandboxCore, type StreamStarter, withTimeout } from "./core.js";
 import type { LoggingOption, PortLike } from "./launch.js";
 import type { OnTimeout } from "./lifecycle.js";
-import type { SandboxCreateOptions } from "./sandbox.js";
 
 export const DEFAULT_PERSIST_TIMEOUT_MS = DEFAULT_PERSIST_TIMEOUT_SECONDS * 1000;
 export const EXCLUDE_MAX_BYTES = 4096;
@@ -227,7 +226,7 @@ export interface RestoreResult {
 }
 
 /** Las opciones 0.6 de `create()` que `reincarnate()` reenvía (todas menos `size`). */
-export type RelaunchedFeatures = Omit<Pick<SandboxCreateOptions, keyof FeatureOptions>, "size">;
+export type RelaunchedFeatures = Omit<FeatureOptions, "size">;
 
 /** Lo que `create()` recibió, para que `reincarnate()` lance el siguiente igual. */
 export interface LaunchOptions {
