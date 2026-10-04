@@ -13,6 +13,14 @@ página sólo dice **qué hay** y dónde está documentado.
     [`AWS_API_NOTES.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)
     (Qnn).
 
+!!! tip "Lo nuevo de 0.6"
+    0.6.0 convierte en reales los templates de E2B (filas 56, 81, 89) y
+    añade, como funciones opcionales en tu cuenta, los análogos de los
+    eventos y webhooks (107), la exportación de telemetría (108), los
+    montajes de buckets (111) y el tamaño por imagen (82); `gateways=` cubre
+    el caso de `Secret.fill()` en las reglas de red. Resumen:
+    [Novedades de 0.6.0](novedades/0.6.0.md).
+
 ## Estados
 
 | Estado | Qué significa | Filas |
@@ -71,7 +79,7 @@ ya estaba en 0.2.0). **Doc** enlaza la página donde se explica cómo usarlo.
 | 23 | `lifecycle.on_timeout={"action": "pause", "keep_memory": False}` y `pause(keep_memory=False)` | imposible en la plataforma | `suspend-microvm` siempre guarda la memoria y un resume de sólo ficheros exigiría el mismo id con arranque en frío (§5); el análogo es `checkpoint_files()` + `kill()`, con un id nuevo | [Plazo](lifecycle.md) |
 | 24 | `Sandbox.create(iam=)` + `Secret.iam_token` (identidad JWT-SVID) | imposible en la plataforma | los MicroVMs no emiten tokens con audiencia; la única identidad es el execution role por IMDSv2 (§9) y un emisor propio sería un servicio de plano de control (`SPEC.md` §4) | [Seguridad](security.md) |
 | 25 | `Sandbox.create(mcp=)` + `get_mcp_url()` / `get_mcp_token()` | imposible en la plataforma | el contrato (URL, token fijo) no se sostiene: cada petición necesita además un JWE en cabecera con TTL ≤ 60 min (§3, §7) y no hay Docker para los servidores del catálogo; Rayito trae `rayito-mcp` en el cliente | [MCP](mcp.md) |
-| 26 | `Sandbox.create(volume_mounts=)` + API `Volume`/`AsyncVolume` | fuera por SPEC | `SPEC.md` §4 deja fuera EFS y los montajes compartidos; análogos: persistencia en S3 y transferencias por S3; `UnimplementedError` explícito | [Ficheros](files.md) |
+| 26 | `Sandbox.create(volume_mounts=)` + API `Volume`/`AsyncVolume` | fuera por SPEC | `SPEC.md` §4 deja fuera EFS y los montajes compartidos; análogos: persistencia en S3, transferencias por S3 y, desde 0.6.0, `mounts=` para un bucket montado; `UnimplementedError` explícito. Unos volúmenes EFS opcionales están [en desarrollo](novedades/index.md#en-desarrollo) | [Ficheros](files.md), [Montajes S3](funciones-opcionales/montajes-s3.md) |
 | 27 | `Sandbox.connect(id, timeout=)` (forma de clase) | divergente (0.3.0) | `timeout` alarga el plazo (`AT_LEAST`, semántica de E2B); sigue haciendo falta el access token del sandbox | [Plazo](lifecycle.md) |
 | 28 | `sbx.connect()` (forma de instancia) | implementado (0.3.0) | desde 0.4.0, `headers=`/`proxy=`/`retries=` avisan con `RayitoCompatWarning` y no se aplican (`Sandbox.connect(sandbox_id, ...)` sí los aplica) | [Compatibilidad](e2b-compat.md#se-mapea-con-una-nota) |
 | 29 | `connect(on_resume='reboot')` | imposible en la plataforma | `resume-microvm` siempre restaura memoria y disco (§5); el análogo es `reincarnate()`, con un id nuevo | [Persistencia](persistence.md) |
@@ -155,7 +163,7 @@ ya estaba en 0.2.0). **Doc** enlaza la página donde se explica cómo usarlo.
 | 107 | API REST y webhooks de eventos de ciclo de vida (docs) | divergente (0.6.0) | `events=LifecycleEvents(...)` en `create()` más la pila opcional `events-webhooks` en tu cuenta (`rayito events deploy`, ≈ $0,40/mes): `created`/`paused`/`resumed`/`killed` guardados en DynamoDB (`get_events`) y entregados a tus webhooks con la firma de E2B; sin API REST hospedada | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
 | 108 | exportación de telemetría OTel (docs, Enterprise) | divergente (0.6.0) | `telemetry=TelemetryExport(...)` en `create()`: `rayd` exporta 7 métricas de CPU, memoria y disco por OTLP/HTTP (a CloudWatch por defecto; `names="e2b"` usa los nombres de E2B); sin logs ni trazas del sandbox. Desde 0.5.0, además, spans del lado cliente con `tracer_provider=`/`tracerProvider` | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md), [Observabilidad](observability.md#trazas-opentelemetry-del-sdk-opcional) |
 | 109 | receta de acceso SSH (sshd + websocat, docs) | divergente (0.3.0) | `rayito sandbox connect` da una terminal PTY interactiva; una receta con sshd necesita una imagen propia y un cliente que hable la autenticación por subprotocolo WebSocket | [CLI](cli.md) |
-| 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | para desarrollo: `rayito sandbox proxy <id> --port N` expone un puerto del guest en localhost; un dominio público queda para un add-on opcional en la cuenta del cliente (ADR-014), no incluido | [CLI](cli.md#proxy) |
+| 110 | dominio propio vía proxy inverso (docs) | fuera por SPEC | para desarrollo: `rayito sandbox proxy <id> --port N` expone un puerto del guest en localhost; un dominio público queda para un add-on opcional en la cuenta del cliente (ADR-014), [en desarrollo](novedades/index.md#en-desarrollo) y no incluido | [CLI](cli.md#proxy) |
 | 111 | montajes de buckets s3fs/gcsfuse (docs) | divergente (0.6.0) | `mounts={"/mnt/data": S3Mount(...)}` en `create()`: Mountpoint for Amazon S3 (`mount-s3`), sólo S3 (sin GCS) y sólo en `rayito-base-caps`, con los buckets permitidos por la imagen (`RAYITO_ALLOWED_MOUNT_BUCKETS`) y la política de la pila `s3-mounts` | [Montajes S3](funciones-opcionales/montajes-s3.md) |
 | 112 | CLI de E2B (`auth`, `sandbox list/create/connect/exec/kill/metrics`, `template`, `snapshots`, `fork`) | divergente (0.3.0) | añade `sandbox create/connect/exec/metrics` a los `list/kill/logs` que ya había; desde 0.6.0 `rayito template build/status/logs`; `auth`, `snapshots` y `fork` siguen fuera | [CLI](cli.md) |
 | 113 | SDK de escritorio (`e2b-desktop`) | fuera por SPEC | `SPEC.md` §4 (Desktop/GUI) | [Compatibilidad](e2b-compat.md) |
