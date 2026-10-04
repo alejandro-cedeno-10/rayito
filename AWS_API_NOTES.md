@@ -524,6 +524,9 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 116 | ¿Funciona `RUN pip install …` sobre `rayito-base`? | `pip_install()` compilaba a `pip install --no-cache-dir` | **Medido 2026-10-02**: no. El build del caso correcto falla en el paso del template con `/bin/sh: line 1: pip: command not found` (exit **127**): al2023-minimal sólo trae `python3 -m pip` (`image/Dockerfile` usa `python3 -m pip install --no-cache-dir --break-system-packages`). `pip_install()`/`pipInstall()` compilan ahora a esa misma orden (`PIP_INSTALL_COMMAND`). Tras el cambio, e2e Python 4 passed (build correcto 190 s, `RUN` fallido 105 s con step/command/exit_code, `ready_cmd` `exit 1` → `ready_server_error` en 214 s) y TypeScript 4 passed (209 s, 105 s, 218 s). |
 | 117 | **TPL-15**: ¿arranca el `start_cmd` horneado por `set_start_cmd()` como proceso gestionado y sobrevive a pause/resume? | `rayd` lee `/etc/rayito/template.json` y lanza `start_cmd` antes del `/ready` del build | **Medido 2026-10-02** (`set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))`; `python` no existe en rayito-base, sólo `python3`): build **228 s**; `Sandbox.create(info.template_id)` en 5,6 s; `commands.list()` muestra `/bin/sh -c 'python3 -m http.server 8000'` con tag **`template_start`** y `curl localhost:8000` → **200**; `pause()` 1,1 s, `resume()` 0,4 s (`resume_generation` 1): el mismo pid sigue listado y `curl` vuelve a dar 200. |
 | 120 | **OT2 + OT7** (m15-rayd-otlp): bytes por lote y por sandbox-hora; CPU del exportador | §6.3: ≈ $0,00014 por sandbox-hora con `interval_s=60` (ASUMIDO) | **Medido 2026-10-02** (imagen caps con el `rayd` de PR #81, `interval_s=15`): cada lote son **7 puntos** (uno por gauge: `exported` sube de 7 en 7, 56 tras ~2 min). El `ExportMetricsServiceRequest` que construye `ProstOtlpEncoder` con un `sandbox_id` y un ARN de imagen reales ocupa **639 bytes** (353 con gzip, lo que viaja). Con `interval_s=60` son ≈ 38 KB por sandbox-hora sin comprimir ≈ **$0,00002/sandbox-hora** a $0,50/GB (cota alta; AWS no publica si factura comprimido o no), unas 7 veces menos que la estimación. Cost Explorer y `AWS/Usage` no exponen bytes de ingesta OTLP dentro de la sesión (Cost Explorer tarda ~24 h; `AWS/Usage` sólo da `CallCount` de `PutMetricData`). CPU de `rayd` en 120 s, mismo tipo de imagen: **0,02 s con el exportador frente a 0,01 s sin él** (`/proc/<pid>/stat`, 100 Hz): ≈ 0,008 % de una vCPU |
+| 121 | **DOM-0** (aceptación de `m15-custom-domain`, 2026-10-02): ¿compila y enruta el `FunctionCode` de `infra/custom-domain.yaml` en el runtime real `cloudfront-js-2.0`? (DOM-2/DOM-3 requieren además D3) | Sólo probado con `node:test` y una `kvsGet` falsa; el comentario de la Function decía "nunca se ha comprobado contra una distribución real" | **Medido 2026-10-02** con `CreateFunction` (etapa `DEVELOPMENT`, sin distribución) + un KeyValueStore asociado + `TestFunction` (gratuito), ambos borrados al terminar: **el código tal como estaba no compilaba** — `SyntaxError: Token "of" not supported in this version` (`for...of` en `readCookie`) y, tras quitarlo, `SyntaxError: Unexpected token "="` (parámetro por defecto `now = Date.now` en `route`); con una distribución real **toda** petición habría fallado en la Function. Arreglado (bucles con índice, `now || Date.now`) y re-medido: token correcto en cabecera → la petición sigue (sin la `x-aws-proxy-auth` falsificada por el viewer, que se borra); sin token o con token erróneo → 403; ruta pública → sigue; `m.x` vencido, ruta inexistente y puerto 8080 → 404; utilización de cómputo 7–14 %. Un evento con el token sólo en `request.cookies` (donde CloudFront entrega las cookies ya parseadas) daba 403 porque la Function sólo leía la cabecera `cookie`: ahora lee primero `request.cookies` (`readEventCookie`) y la cabecera queda de respaldo. `cf.updateRequestOrigin` con un `domainName` que no es un origen declarado no lanza en `TestFunction` (su efecto no aparece en `FunctionOutput`). **Pendiente (D3)**: DOM-2/DOM-3/DOM-5 de extremo a extremo: en la cuenta de aceptación no hay ningún dominio propio del mantenedor (sin zonas de Route 53; los únicos certificados ACM pertenecen a dominios corporativos ajenos al proyecto, que no se usan), así que el e2e de dominio propio se salta, como está previsto |
+| 140 | **DOM-0 bis** (aceptación de `m15-custom-domain` con distribución, 2026-10-04): ¿despliega `infra/custom-domain.yaml` tal cual por `CustomDomain.deploy()`? | Q121 sólo creó la Function con `CreateFunction` y un `Comment` corto; nadie había creado la pila entera | **Medido 2026-10-04** (e2e Python, `alternate_domain_names` con 4 hostnames exactos bajo el comodín de un certificado de prueba, sin DNS): **no**. El `RouteKeyValueStore` se crea en ~10 s, pero `RouterFunction` falla al instante con `InvalidRequest` "The parameter Comment is too big": CloudFront limita a **128 caracteres** el `Comment` de `FunctionConfig`, de `CreateKeyValueStore` y de `DistributionConfig` (<https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_FunctionConfig.html>, consultada 2026-10-04) y el de la plantilla tenía ~380. Además, el `Comment` de la distribución interpolaba `PublicDomain` (hasta 253 caracteres). Arreglo: `Comment` corto en la Function, la distribución nombra la pila (≤ 36 caracteres, `MAX_STACK_NAME_LENGTH`) y `test_every_cloudfront_comment_fits_in_128_characters` comprueba los tres con el peor caso de cada referencia. El rollback borró el KVS; `destroy()` sobre la pila en `ROLLBACK_COMPLETE` tardó 2 s y no dejó nada |
+| 141 | ¿Se puede crear la distribución de `m15-custom-domain` desde un rol de administrador de una cuenta dentro de una organización? | §29: la pila sólo necesita permisos de CloudFront de quien despliega | **Medido 2026-10-04**: depende de la organización. Con Q140 arreglado, KVS y Function se crean, pero `Distribution` falla con `AccessDenied` "... is not authorized to perform: cloudfront:CreateDistribution ... with an explicit deny in a service control policy": una SCP de la organización gana a cualquier política del rol (<https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html>). La pila hace rollback sola (KVS y Function borrados) y `destroy()` la quita en 2 s; el SDK sólo informa `ROLLBACK_COMPLETE`, el motivo está en los eventos de la pila. Igual en Python y TypeScript (las dos e2e, mismo resultado y misma limpieza). DOM-2/3/5/7/8 quedan **SIN MEDIR** hasta correr las e2e en una cuenta que permita `CreateDistribution` |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -1416,8 +1419,132 @@ exactamente las mismas operaciones de AWS que 0.5.x (`RunMicrovm`,
 Manager) y el guest tiene los mismos listeners. Pendiente de SEC-7: SSE de
 una API LLM real (necesita una clave de proveedor; no se midió).
 
-## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
+## 29. CloudFront, KeyValueStore y Functions (`m15-custom-domain`, **contrato de parámetros** para el KVS)
 
-Pendiente: `m15-custom-domain` documenta aquí `CreateDistribution`/
-`UpdateKeyValueStore` (SigV4A, `@aws-sdk/signature-v4a`) y el contrato de
-la CloudFront Function de enrutado.
+`CustomDomain` (Python `rayito/_custom_domain/`, TypeScript
+`src/custom-domain/`) no llama directamente a `CreateDistribution`,
+`CreateFunction` ni `CreateKeyValueStore`: la distribución, la Function y
+el KeyValueStore los crea `infra/custom-domain.yaml` a través del
+`OptionalStack` genérico (`OptionalStacks.deploy`, ADR-016, §21 de este
+documento). Lo único que `CustomDomain` llama en tiempo de ejecución es el
+plano de datos del KeyValueStore, para `register()`/`unregister()`/
+`refresh()`.
+
+**Corrección a una "corrección" anterior de este mismo documento:** una
+revisión previa de este cambio había anotado aquí que escribir en un
+KeyValueStore de CloudFront no necesita SigV4A, leyendo sólo
+`metadata.signatureVersion == "v4"` del modelo `cloudfront-keyvaluestore/
+2022-07-26` de botocore 1.43.103. Eso mira el campo equivocado:
+`endpoint-rule-set-1.json` del mismo servicio fija
+`"authSchemes": [{"name": "sigv4a", ...}]` en sus reglas de endpoint, y es
+la resolución de endpoint quien elige el firmante de verdad, no
+`metadata.signatureVersion`. Comprobado sin red con credenciales ficticias
+y un hook `before-send`: `boto3` `describe_key_value_store` firma con
+`AWS4-ECDSA-P256-SHA256` (SigV4A) cuando `awscrt` está instalado, y lanza
+`MissingDependencyException` ("This operation requires an additional
+dependency. Use pip install botocore[crt]") cuando no lo está. El SDK de
+JavaScript v3 falla igual sin un firmante SigV4A. Así que **sí hace falta
+SigV4A**: Python instala `awscrt` con el extra opcional
+`rayito[custom-domain]` (`pyproject.toml`); TypeScript declara
+`@aws-sdk/signature-v4a` como peer opcional además del peer habitual
+`@aws-sdk/client-cloudfront-keyvaluestore`. Sin ninguno de los dos, cada
+llamada falla con un mensaje propio que nombra el paquete que falta, nunca
+con el error crudo de la dependencia.
+
+**Estas son las únicas operaciones y los únicos parámetros de
+`cloudfront-keyvaluestore` que los SDKs pueden usar** (regla dura 1). Los
+nombres de Python están verificados contra el modelo de botocore
+1.43.103; los de JavaScript contra los mismos nombres de comando (sufijo
+`Command`) que expone `@aws-sdk/client-cloudfront-keyvaluestore`.
+Referencia de la API:
+<https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/>
+(consultada 2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `DescribeKeyValueStore` (`describe_key_value_store` / `DescribeKeyValueStoreCommand`) | `KvsARN` | `ETag` | `cloudfront-keyvaluestore:DescribeKeyValueStore` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DescribeKeyValueStore.html> |
+| `PutKey` (`put_key` / `PutKeyCommand`) | `KvsARN`, `Key`, `Value`, `IfMatch` (el `ETag` de la llamada anterior, encadenado) | `ETag` (el nuevo, para la siguiente escritura) | `cloudfront-keyvaluestore:PutKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_PutKey.html> |
+| `DeleteKey` (`delete_key` / `DeleteKeyCommand`) | `KvsARN`, `Key`, `IfMatch` | `ETag` | `cloudfront-keyvaluestore:DeleteKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DeleteKey.html> |
+
+Una ruta ocupa dos claves (`DOM-1`, re-derivado de un JWE real de
+`create-microvm-auth-token`: 823 B, por debajo del límite de 1024 B por
+valor de este servicio): `j:<puerto>-<alias>` (el JWE tal cual) y
+`m:<puerto>-<alias>` (JSON compacto `{"e": endpoint, "t": sha256(traffic_token)
+o "", "x": expiración epoch}`). `register()` hace `DescribeKeyValueStore` +
+2 `PutKey` encadenados por `ETag`; `refresh()` sólo reescribe `j:`;
+`unregister()` hace `DescribeKeyValueStore` + hasta 2 `DeleteKey`, y trata
+`ResourceNotFoundException` (clave ya borrada) como éxito — nunca
+`DescribeKeyValueStore` falla así, sólo `PutKey`/`DeleteKey` sobre una
+clave ausente.
+
+Constructor de cliente: Python `LazyClient("cloudfront-keyvaluestore",
+region=…, session=…)` (necesita `awscrt`, extra `rayito[custom-domain]`,
+para firmar SigV4A); TypeScript `loadOptionalSdkClient("@aws-sdk/client-
+cloudfront-keyvaluestore", …)`, que además carga el peer opcional
+`@aws-sdk/signature-v4a` antes de construir el cliente (ambos fallan con un
+mensaje propio, no con el error crudo del SDK, si falta cualquiera de los
+dos paquetes). Ningún cliente se construye hasta el primer
+`register`/`unregister`/`refresh`; construir `CustomDomain()` no llama a
+AWS.
+
+**CloudFront Function** (`infra/functions/custom_domain_router.js`,
+runtime `cloudfront-js-2.0`, asociada en `viewer-request`, único evento
+donde `cf.updateRequestOrigin` está disponible): abre un `kvs = cf.kvs()`
+una vez a nivel de módulo (el almacén asociado en `FunctionConfig.
+KeyValueStoreAssociations` no necesita id explícito), lee
+`j:<label>`/`m:<label>` con `await kvs.get(key, {format: ...})` (lanza si
+la clave no existe, capturado para responder 404), y llama a
+`cf.updateRequestOrigin({domainName: meta.e, customHeaders: {"x-aws-proxy-
+auth": jwe, "x-aws-proxy-port": puerto}})`. `updateRequestOrigin` no exige
+que `domainName` sea un origen ya declarado en la distribución (verificado
+contra la documentación de AWS antes de escribir la plantilla); el origen
+"placeholder" de `infra/custom-domain.yaml` nunca se contacta de verdad.
+DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket) y DOM-5 (latencia de propagación
+del KVS a los edges) quedan **SIN MEDIR** hasta la etapa de aceptación AWS
+con una distribución real (el e2e la automatiza; ver abajo). El primer
+intento (2026-10-04) encontró que el `Comment` de la Function superaba los
+128 caracteres que CloudFront admite en los tres recursos (Q140, arreglado)
+y después chocó con una SCP de la organización de la cuenta de pruebas que
+deniega `cloudfront:CreateDistribution` (Q141): quien despliegue esta pila
+dentro de una organización necesita que ninguna SCP le niegue esa acción. Lo que sí se midió sin
+dominio (Q121, `TestFunction`): el `FunctionCode` no compilaba en
+`cloudfront-js-2.0` (`for...of` y un parámetro por defecto); arreglado y
+re-medido, las decisiones 403/404/origen salen como en los tests de Node.
+
+**Comprobación DOM-2 — `OriginRequestPolicy` no puede forwardear `Host`.**
+`DefaultCacheBehavior` usa la política gestionada `AllViewerExceptHostHeader`
+(`b689b0a8-53d0-40ab-baf2-68738e2966ac`), no `AllViewer`
+(`216adef6-5c7f-47e4-b989-5492eafa07d3`, usada por error en una versión
+anterior de esta plantilla). Razón: si se forwardea `Host`, CloudFront
+comprueba el certificado TLS del origen elegido por `updateRequestOrigin`
+contra ese `Host` (y lo manda como SNI); el certificado del endpoint de AWS
+Lambda MicroVMs nunca coincide con `<puerto>-<alias>.<PublicDomain>`, así
+que toda petición acabaría en 502. `AllViewerExceptHostHeader` forwardea
+todo lo demás que el proxy de AWS Lambda MicroVMs y los upgrades WebSocket
+necesitan, sin ese campo. Pendiente de confirmar contra una distribución
+real en la etapa de aceptación AWS: `aws cloudfront test-function`
+(gratuito) sobre `RouterFunction` es parte de ese plan.
+
+**Parámetro `AlternateDomainNames` de la plantilla** (`CommaDelimitedList`,
+por defecto vacío = alias comodín `*.<PublicDomain>`): lista explícita de
+nombres alternativos de la distribución
+(`DistributionConfig.Aliases`). CloudFront rechaza el mismo nombre
+alternativo en dos distribuciones (`CNAMEAlreadyExists`) y, si dos
+distribuciones solapan (`*.sbx.example.com` en una y
+`8000-x.sbx.example.com` en otra), envía la petición a la del nombre más
+específico
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html>,
+consultada 2026-10-03). Cuota por defecto: 100 nombres por distribución
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html>).
+El certificado debe cubrir cada nombre (un comodín cubre un solo nivel).
+Si ya existe un registro DNS comodín que apunta a OTRA distribución,
+añadir un nombre más específico falla con "incorrectly configured DNS
+record" (CloudFront resuelve el nombre al validarlo;
+<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/troubleshooting-distributions.html>).
+El SDK valida la lista antes de llamar a AWS
+(`validate_alternate_domain_names`) y el e2e la usa para aislar cada
+corrida con nombres aleatorios. Sin DNS, un cliente llega a la
+distribución conectando al `DistributionDomainName` y mandando el
+hostname propio como SNI y como `Host` (`curl --connect-to`): CloudFront
+elige la distribución por el `Host`, y rechaza con 421 (domain fronting) un
+SNI distinto del `Host` cuyo certificado no lo cubra.

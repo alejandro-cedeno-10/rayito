@@ -6,6 +6,42 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- **Dominio propio** (`m15-custom-domain`, ADR-024, experimental y apagado
+  por defecto): la clase `CustomDomain` despliega una distribución
+  CloudFront con alias comodín, una CloudFront Function de enrutado
+  (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`);
+  `register`/`unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.
+  <tu dominio>`. `register()` exige `trafficToken` salvo `public: true`
+  explícito — nunca hay una ruta pública por omisión — y
+  reintenta/limpia sus dos escrituras encadenadas al KVS ante una carrera
+  de `ETag`. Nuevos peers opcionales `@aws-sdk/client-cloudfront-
+  keyvaluestore` y `@aws-sdk/signature-v4a` (el plano de datos del KVS
+  exige SigV4A pese a declarar `signatureVersion: v4` en su modelo); sin
+  instanciar `CustomDomain` no se importa ni se construye ninguno.
+  `domain` en `Sandbox.create()` sigue lanzando `UnimplementedError`, con
+  un mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`:
+  la integración con `getHost()`/`expose()` queda para un cambio
+  posterior. La CloudFront Function trata una ruta cuyo TTL
+  (`register({ttlSeconds})`/`refresh()`) ya pasó como si nunca hubiera
+  existido (404), no sólo cuando caduca el JWE en sí (T25). `deploy()`/
+  `destroy()` usan un timeout propio (`CUSTOM_DOMAIN_WAIT_TIMEOUT_MS`,
+  30 min) en vez del genérico de `OptionalStacks`; `refresh()` ya no
+  deshace una escritura previa si la segunda falla (sólo `register()` lo
+  hace). `deploy({ alternateDomainNames })` sustituye el alias comodín por
+  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a
+  AWS; las líneas de coste del componente `custom-domain` son ya las mismas
+  que en Python. El e2e toma el dominio y el certificado sólo de
+  `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos, usa una
+  pila y unos hostnames aleatorios por corrida, llega a la distribución sin
+  DNS y da a sus hooks el timeout propio de CloudFront en vez del genérico
+  de 300 s. DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real;
+  DOM-14 (el refresher Lambda) no se construyó.
+  La plantilla ya cabe en los 128 caracteres que CloudFront admite en
+  cada `Comment` (la primera pila real fallaba en la Function; la
+  distribución nombra ahora la pila, no el dominio).
+
 ### Fixed
 
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**

@@ -201,5 +201,17 @@ def plan_features(
         # `secrets=` — ver `GatewaySectionFactory`.
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
-        raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
+        # A diferencia de `volumes=` (aún sin construir), `DOMAIN_CHANGE` sí
+        # construye `CustomDomain` (deploy/register/unregister/refresh) completa
+        # y probada, pero sin cablearla aquí (falta el seam `HostResolver` que la
+        # arquitectura de M15 §1(g) esperaba de foundations; ver MILESTONES.md
+        # "M15 — Rayito 0.6" y `ARCHITECTURE.md` ADR-024). El mensaje lo dice
+        # explícitamente para no mandar a quien lea el error a esperar un cambio
+        # que ya existe.
+        raise UnimplementedError(
+            "domain=",
+            f"{DOMAIN_CHANGE} construyó CustomDomain pero no la cableó a Sandbox.create()/"
+            "get_host()/expose(): usa rayito.CustomDomain directamente mientras tanto "
+            "(seguimiento no bloqueante, ver MILESTONES.md M15)",
+        )
     return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry, events=events)

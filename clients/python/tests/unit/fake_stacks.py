@@ -22,6 +22,14 @@ class FakeStackProvisioner:
     calls: list[tuple[str, ...]] = field(default_factory=list)
     next_update_outcome: UpdateOutcome = "changed"
     fail_wait: bool = False
+    #: Cada `timeout` que `wait()` recibió, en orden; permite a un test de
+    #: una función concreta comprobar que le llegó el `wait_timeout` que
+    #: esperaba (p. ej. `CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`) sin tener que
+    #: inspeccionar `calls`, cuyas tuplas no lo llevan.
+    wait_timeouts: list[float] = field(default_factory=list)
+    #: Los `parameters` del último `create`/`update` de cada pila, para que
+    #: una fachada pueda comprobar qué parámetros de plantilla pasó.
+    parameters: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def describe(self, stack_name: str) -> StackStatus | None:
         self.calls.append(("describe", stack_name))
@@ -37,6 +45,7 @@ class FakeStackProvisioner:
         tags: dict[str, str],
     ) -> None:
         self.calls.append(("create", stack_name))
+        self.parameters[stack_name] = dict(parameters)
         self.stacks[stack_name] = StackStatus(
             name=stack_name,
             state="CREATE_COMPLETE",
@@ -53,6 +62,7 @@ class FakeStackProvisioner:
         tags: dict[str, str],
     ) -> UpdateOutcome:
         self.calls.append(("update", stack_name))
+        self.parameters[stack_name] = dict(parameters)
         if self.next_update_outcome == "changed":
             existing = self.stacks.get(stack_name)
             outputs = existing.outputs if existing else {}
@@ -67,6 +77,7 @@ class FakeStackProvisioner:
 
     def wait(self, stack_name: str, target: DeployTarget, timeout: float) -> None:
         self.calls.append(("wait", stack_name, target))
+        self.wait_timeouts.append(timeout)
         if self.fail_wait:
             raise StackException(f"tiempo agotado esperando {stack_name!r}", code="in_progress")
 

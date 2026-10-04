@@ -8,6 +8,7 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as customDomain from "./templates/custom-domain.gen.js";
 import * as eventsWebhooks from "./templates/events-webhooks.gen.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
 import * as otlpExport from "./templates/otlp-export.gen.js";
@@ -22,6 +23,7 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "custom-domain": customDomain,
   "events-webhooks": eventsWebhooks,
   "metadata-index": metadataIndex,
   "otlp-export": otlpExport,

@@ -133,7 +133,18 @@ export function planFeatures(
     sections.push(new GatewaySectionFactory(validateGateways(options.gateways)));
   }
   if (options.domain !== undefined) {
-    throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
+    // A diferencia de las otras seis, `DOMAIN_CHANGE` ya se fusionó: construyó
+    // `CustomDomain` (deploy/register/unregister/refresh) completa y probada,
+    // pero sin cablearla aquí (falta el seam `HostResolver` que la arquitectura
+    // de M15 §1(g) esperaba de foundations; ver MILESTONES.md "M15 — Rayito
+    // 0.6" y ARCHITECTURE.md ADR-024). El mensaje lo dice explícitamente para
+    // no mandar a quien lea el error de vuelta a un cambio que ya fusionó.
+    throw new UnimplementedError(
+      "domain",
+      `${DOMAIN_CHANGE} construyó CustomDomain pero no la cableó a Sandbox.create()/` +
+        "get_host()/expose(): usa rayito.CustomDomain directamente mientras tanto " +
+        "(seguimiento no bloqueante, ver MILESTONES.md M15)",
+    );
   }
   return sections.length === 0 && telemetry === undefined && events === undefined
     ? EMPTY_PLAN

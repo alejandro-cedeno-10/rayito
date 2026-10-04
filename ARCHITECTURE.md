@@ -2268,5 +2268,72 @@ cambio ven comportamiento distinto.
 
 ## ADR-024 — custom-domain (M15, 0.6)
 
-Pendiente: lo completa `m15-custom-domain` (dominio propio sobre CloudFront,
-JWE de enrutado en un KeyValueStore firmado con SigV4A; necesita D3).
+**Contexto.** E2B da un hostname público estable por sandbox
+(`allow_public_traffic`, `get_host()`). Rayito 0.5.x no tiene equivalente:
+todo request necesita las cabeceras `x-aws-proxy-auth`/`x-aws-proxy-port`
+que ya lleva `HostAccess`, lo que es correcto para un cliente programático
+pero inviable para un navegador, un webhook o un `<iframe>`
+(`e2b-parity.md` fila 15, "imposible en la plataforma").
+
+**Decisión.** `CustomDomain` (`OptionalStack` componente `custom-domain`,
+ADR-016) despliega una distribución CloudFront con alias comodín
+(`*.<PublicDomain>`), una CloudFront Function de enrutado en runtime
+`cloudfront-js-2.0` asociada en `viewer-request` y un `KeyValueStore`
+asociado a esa Function. El hostname de una ruta es
+`{puerto}-{alias}.<PublicDomain>` (`alias` el `sandbox_id`); cada ruta
+ocupa dos claves del KVS, `j:<label>` (el JWE vigente de
+`create-microvm-auth-token`, 823 B medidos) y `m:<label>` (JSON compacto:
+`endpoint`, sha256 del `traffic_token` o cadena vacía, expiración), porque
+ambos no caben en el límite de 1 KiB por valor del KVS. La Function borra
+toda cabecera `x-aws-proxy-*` que traiga el viewer, comprueba el
+`traffic_token` en tiempo constante cuando la ruta lo exige, y llama a
+`cf.updateRequestOrigin({domainName: meta.e, customHeaders: {...}})` — el
+origen real nunca está declarado de antemano en la plantilla, se elige por
+petición; una ruta sin entrada en el KVS, o cuyo `m.x` (expiración) ya
+pasó, recibe 404 directo de la Function (una ruta caducada no se
+distingue desde fuera de una que nunca existió, ni siquiera revela que
+exigía `traffic_token`), independientemente de que el JWE en sí también
+caduque del lado del proxy de AWS.
+`CustomDomain.register()`/`unregister()`/`refresh()` son las únicas
+escrituras al KVS (SDK), nunca la Function. Aunque `cloudfront-
+keyvaluestore` declara `signatureVersion: v4` en su `service-2.json`, su
+`endpoint-rule-set-1.json` fija `authSchemes: sigv4a` y es la resolución de
+endpoint quien manda: el plano de datos **sí necesita SigV4A** (verificado
+offline contra botocore 1.43.103 con credenciales ficticias y un hook
+`before-send`). `awscrt` (extra `rayito[custom-domain]`) y
+`@aws-sdk/signature-v4a` (peer opcional) son dependencias reales de esta
+función; sin ellas cada llamada falla con un mensaje propio en vez del
+error crudo del SDK.
+
+**Consecuencias.** `custom-domain` es la única función de M15 sin ningún
+componente en `rayd`: todo vive en la distribución y en el SDK. La
+integración con `Sandbox.create(domain=)`/`get_host()`/`expose()`/
+`unexpose()` queda fuera de `m15-custom-domain`: la arquitectura esperaba
+que foundations pre-añadiera un `HostResolver` y los miembros delegados
+`expose()`/`unexpose()` (§1(g)), pero `v06-foundations` no llegó a
+hacerlo, y `sandbox_{sync,async}/main.py` es de foundations en lo que toca
+a kwargs, delegaciones y exports (§5). `domain=` sigue lanzando
+`UnimplementedError` hasta que esa integración se construya como
+seguimiento propio — el mismo criterio que usó `v06-foundations` para no
+activar el reaper de zombies a medias. Mientras tanto, `CustomDomain` es
+utilizable de forma independiente: desplegar la pila y llamar a
+`register()`/`unregister()` a mano con el JWE y el `endpoint` que el
+código llamante ya tiene. DOM-2 (HTTP/1.1 por `updateRequestOrigin`),
+DOM-3 (WebSocket), DOM-5 (latencia de propagación del KVS), DOM-7
+(keep-alive tras caducar el JWE) y DOM-8 (auto-resume por el dominio)
+quedan sin medir hasta D3 (dominio y certificado ACM del mantenedor) y la
+etapa de aceptación AWS.
+
+**Alternativas descartadas.** Lambda@Edge en vez de una CloudFront
+Function: correría en `origin-request` (sólo en cache miss, y aquí nada es
+cacheable) y añadiría una Lambda por petición donde una Function basta y
+es más barata. Guardar el JWE y los metadatos en una única clave del KVS:
+no cabe bajo el límite de 1 KiB junto con los metadatos (D1 de
+`design.md` del cambio). Asumir que el servicio firma con SigV4 llano sólo
+porque `service-2.json` declara `signatureVersion: v4`: la resolución de
+endpoint del servicio exige SigV4A de verdad (D2 del mismo documento,
+corregido tras verificarlo offline).
+
+**Reversible.** `destroy()` borra la distribución, la Function y el KVS;
+ninguna ruta sobrevive. Mientras `domain=` siga sin cablear, no tocar
+`CustomDomain` dejaría el SDK exactamente como en 0.5.x/`v06-foundations`.

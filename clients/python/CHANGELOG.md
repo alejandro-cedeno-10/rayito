@@ -6,6 +6,47 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Added
+
+- **Dominio propio** (`m15-custom-domain`, ADR-024, experimental y apagado
+  por defecto): `CustomDomain`/`AsyncCustomDomain` despliegan una
+  distribución CloudFront con alias comodín, una CloudFront Function de
+  enrutado (`cloudfront-js-2.0`) y un KeyValueStore (`infra/
+  custom-domain.yaml`, `rayito domain deploy|status|destroy`); `register`/
+  `unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.<tu
+  dominio>` sin que la Function necesite confiar en nada que el viewer
+  mande. `register()` exige `traffic_token` salvo `public=True` explícito
+  — nunca hay una ruta pública por omisión — y reintenta/limpia sus dos
+  escrituras encadenadas al KVS ante una carrera de `ETag`. Nuevo extra
+  `rayito[custom-domain]` (`awscrt`): el plano de datos de
+  `cloudfront-keyvaluestore` exige SigV4A pese a declarar
+  `signatureVersion: v4` en su modelo. Sin instanciar `CustomDomain` no hay
+  ningún cliente `cloudfront-keyvaluestore` ni `cloudformation`.
+  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`, con un
+  mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`: la
+  integración con `get_host()`/`expose()` queda para un cambio posterior
+  (ver `ARCHITECTURE.md` ADR-024). La CloudFront Function trata una ruta
+  cuyo TTL (`register(ttl_seconds=)`/`refresh()`) ya pasó como si nunca
+  hubiera existido (404), no sólo cuando caduca el JWE en sí (T25).
+  `deploy()`/`destroy()` usan un timeout propio
+  (`CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`, 30 min) en vez del genérico de
+  `OptionalStacks`, porque CloudFront tarda bastante más en deshabilitar y
+  borrar una distribución; `refresh()` ya no deshace una escritura previa
+  si la segunda falla (sólo `register()` lo hace, al tratarse de claves
+  nuevas). `deploy(alternate_domain_names=[...])` (y `rayito domain deploy
+  --alternate-domain-name`, repetible) sustituye el alias comodín por
+  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a AWS:
+  sirve si otra distribución ya tiene `*.<dominio>`. `rayito domain deploy`
+  imprime a qué apuntar el `CNAME`. El e2e toma el dominio y el certificado
+  sólo de `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos,
+  usa una pila y unos hostnames aleatorios por corrida y llega a la
+  distribución sin DNS (SNI y `Host` propios contra su `*.cloudfront.net`).
+  DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real; DOM-14 (el
+  refresher Lambda) no se construyó.
+  La plantilla ya cabe en los 128 caracteres que CloudFront admite en
+  cada `Comment` (la primera pila real fallaba en la Function; la
+  distribución nombra ahora la pila, no el dominio).
+
 ### Fixed
 
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
