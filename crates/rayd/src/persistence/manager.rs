@@ -14,7 +14,7 @@ use rayd_core::persistence::{
     BlockingRunner, CheckpointDone, CheckpointRequestInfo, Counters, HomeArchiver, JoinFailure,
     ManifestMeta, ObjectStore, PersistenceDeps, PersistenceError, PersistenceGate,
     PreparedCheckpoint, PreparedRestore, ProgressSampler, RestoreDone, RestoreRequestInfo,
-    Snapshot, prepare_checkpoint, prepare_restore, run_checkpoint, run_restore,
+    SessionScope, Snapshot, prepare_checkpoint, prepare_restore, run_checkpoint, run_restore,
 };
 use rayd_core::process::{UserLookup, UserPolicy};
 use rayd_core::session::SandboxSession;
@@ -185,7 +185,12 @@ where
     ) -> Result<CheckpointStream, PersistenceError> {
         self.stream_gate()?;
         let default_user = self.session.spawn_defaults().user;
-        let prepared = prepare_checkpoint(&self.deps, request, default_user.as_deref()).await?;
+        let binding = self.session.persist_binding();
+        let scope = SessionScope {
+            default_user: default_user.as_deref(),
+            binding: binding.as_ref(),
+        };
+        let prepared = prepare_checkpoint(&self.deps, request, scope).await?;
         let (sender, receiver) = mpsc::channel(EVENT_CAPACITY);
         let deps = self.deps.clone();
         let settings = self.settings;
@@ -224,7 +229,12 @@ where
     ) -> Result<RestoreStream, PersistenceError> {
         self.stream_gate()?;
         let default_user = self.session.spawn_defaults().user;
-        let prepared = prepare_restore(&self.deps, request, default_user.as_deref()).await?;
+        let binding = self.session.persist_binding();
+        let scope = SessionScope {
+            default_user: default_user.as_deref(),
+            binding: binding.as_ref(),
+        };
+        let prepared = prepare_restore(&self.deps, request, scope).await?;
         let (sender, receiver) = mpsc::channel(EVENT_CAPACITY);
         let deps = self.deps.clone();
         let interval = self.settings.progress_interval;

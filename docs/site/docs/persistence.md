@@ -112,14 +112,29 @@ un `HOME` persistido: `s3://bucket/prefix/name/`.
   final, sin `//`, `.` ni `..`, sólo el conjunto seguro de S3
   (`A-Za-z0-9!_.*'()-/`).
 
-**El prefijo no separa inquilinos.** `Checkpoint` y `Restore` aceptan
-cualquier `bucket`/`prefix`/`name` sintácticamente válido: `rayd` no
-comprueba que el destino sea el del sandbox que lo pide, y el `sandbox_id`
-del manifest es informativo. El único límite es hasta dónde llega el
-execution role, es decir todo `<bucket>/<prefix>/*`, así que quien tenga el
-access token de un sandbox puede leer o sobrescribir el `HOME` de cualquier
-otro bajo ese mismo prefijo. Para inquilinos que no confían entre sí: un
-execution role y un prefijo por inquilino, no un `name` por inquilino.
+**El prefijo separa inquilinos cuando el sandbox lo liga.** Con
+`create(persist=)`, el SDK manda en el `runHookPayload` el bucket y el `prefix`
+(la base, no el `name`: el `name` por defecto es el `sandbox_id`, que aún no
+existe al lanzar) y `rayd` rechaza con
+`PersistenceException(code="permission_denied")` cualquier `Checkpoint` o
+`Restore` fuera de `<bucket>/<prefix>`, antes de tocar S3, aunque el execution
+role alcance todo el bucket. Para inquilinos que no confían entre sí basta un
+`prefix` por inquilino bajo el `PersistencePrefix` del despliegue
+(`prefix="rayito-home/acme"`); un `name` por inquilino no los separa. Dentro de
+su base, un sandbox puede leer y escribir cualquier `name`: un
+`restore_files(source=)` desde otro `name` de la misma base funciona, y desde
+otra base responde `permission_denied`.
+
+Límites del ligado:
+
+- Lo fija el `create` y no cambia en toda la vida del sandbox:
+  `connect(persist=)` sólo cambia el destino por defecto del cliente.
+- Un sandbox creado **sin** `persist=`, o con un SDK o un `rayd` anteriores a
+  esta corrección, no liga nada: `rayd` acepta cualquier destino válido y el
+  único límite es hasta dónde llega su execution role. No des a un sandbox sin
+  `persist=` un rol que alcance el prefijo de persistencia, o usa un rol por
+  inquilino.
+- El `sandbox_id` del manifest sigue siendo informativo.
 
 Bajo el prefijo hay dos objetos: `home.tar.gz` (tar POSIX/GNU comprimido con
 gzip nivel 1) y `manifest.json` (sha256 del archivo, tamaños, recuentos,

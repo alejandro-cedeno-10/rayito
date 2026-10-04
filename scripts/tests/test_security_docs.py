@@ -12,8 +12,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 RETIRED_SENTENCES = {
-    "SECURITY.md": ("el kernel no se reinicia", "la máquina que ejecuta el SDK"),
-    "ARCHITECTURE.md": ("cada hook se audita",),
+    "SECURITY.md": (
+        "el kernel no se reinicia",
+        "la máquina que ejecuta el SDK",
+        "contra el origen de dentro de la VM no hay mitigación hoy",
+        "salvo `/validate`, que no pasa por `audit()`",
+    ),
+    "ARCHITECTURE.md": (
+        "cada hook se audita",
+        "ni suplantar ni leer de vuelta su propio secreto",
+    ),
+    "docs/site/docs/funciones-opcionales/pasarela-de-secretos.md": (
+        "suplantar ni leer de vuelta su propia credencial",
+    ),
     "infra/README.md": (
         "otra rama, otro environment u otro repositorio no pueden asumirlo",
     ),
@@ -114,10 +125,14 @@ def test_t2_names_the_in_vm_origin() -> None:
             "un `/terminate` falso se lleva la VM",
             "un `/validate` falso reinicia el contexto `default` del kernel",
             "acota sólo el origen externo",
-            "queda pendiente",
+            "**comprobación del uid del par**",
+            "`/proc/net/tcp`",
+            "`peer_refused`",
         ),
     )
-    assert_silent("SECURITY.md T2", row, ("el kernel no se reinicia",))
+    assert_silent(
+        "SECURITY.md T2", row, ("el kernel no se reinicia", "queda pendiente")
+    )
 
     origin = paragraph(architecture_md(), "**Origen de los hooks")
     assert_says(
@@ -127,8 +142,12 @@ def test_t2_names_the_in_vm_origin() -> None:
             "No acota el de dentro de la VM",
             "`0.0.0.0:9000`",
             "un proceso uid 1000 alcanza los hooks por loopback",
-            "queda pendiente",
+            "comprueba el uid del par",
+            "`peer_refused`",
         ),
+    )
+    assert_silent(
+        "ARCHITECTURE.md «Origen de los hooks»", origin, ("queda pendiente",)
     )
 
     adr = section(architecture_md(), "## ADR-006")
@@ -139,9 +158,10 @@ def test_t2_names_the_in_vm_origin() -> None:
             "acota el origen **externo** y sólo ése",
             "cualquier proceso uid 1000 de dentro de la VM",
             "`0.0.0.0:9000`",
-            "queda pendiente",
+            "comprueba además el uid del par",
         ),
     )
+    assert_silent("ARCHITECTURE.md ADR-006", adr, ("queda pendiente",))
 
 
 def test_audit_scope_is_runtime_hooks() -> None:
@@ -152,10 +172,14 @@ def test_audit_scope_is_runtime_hooks() -> None:
         (
             "`hook_audit` de cada hook de runtime",
             "`/ready` y `/validate` son hooks de build",
-            "no se auditan",
+            "se audita como anomalía",
         ),
     )
-    assert_silent("SECURITY.md T2", row, ("de cada hook tras", "cada hook se audita"))
+    assert_silent(
+        "SECURITY.md T2",
+        row,
+        ("de cada hook tras", "cada hook se audita", "no se auditan"),
+    )
 
     origin = paragraph(architecture_md(), "**Origen de los hooks")
     assert_says(
@@ -164,15 +188,21 @@ def test_audit_scope_is_runtime_hooks() -> None:
         (
             "cada hook de runtime se audita",
             "`/ready` y `/validate` son hooks de build",
-            "nunca llegan a `audit()`",
+            "se auditan como anomalía",
         ),
     )
     assert_silent(
-        "ARCHITECTURE.md «Origen de los hooks»", origin, ("cada hook se audita",)
+        "ARCHITECTURE.md «Origen de los hooks»",
+        origin,
+        ("cada hook se audita", "nunca llegan a `audit()`"),
     )
 
     adr = section(architecture_md(), "## ADR-006")
-    assert_says("ARCHITECTURE.md ADR-006", adr, ("sólo los hooks de runtime",))
+    assert_says(
+        "ARCHITECTURE.md ADR-006",
+        adr,
+        ("cubre los hooks de runtime y, tras el `/run`, también esos dos hooks de build",),
+    )
 
 
 def test_metadata_is_readable_from_inside_the_vm() -> None:
@@ -201,16 +231,30 @@ def test_metadata_is_readable_from_inside_the_vm() -> None:
     )
 
 
-def test_prefix_is_not_a_tenant_boundary() -> None:
+def test_prefix_is_a_tenant_boundary_only_when_bound() -> None:
+    """C-07: `create(persist=)` liga el sandbox a su bucket y a su base en el
+    `runHookPayload` y `rayd` rechaza lo de fuera; un sandbox sin `persist=`
+    no liga nada. Ningún texto puede volver a llamar pendiente al ligado ni
+    decir que `rayd` nunca comprueba el destino."""
     row = threat_row("T15")
     assert_says(
         "SECURITY.md T15",
         row,
         (
-            "no separa inquilinos",
+            "liga el sandbox en el `runHookPayload`",
+            "`PERMISSION_DENIED`",
+            "un `prefix` por inquilino",
+            "un `name` por inquilino no",
+            "Sin ese bloque",
             "no liga el `S3Location` al sandbox",
-            "un execution role y un prefijo por inquilino",
-            "queda pendiente",
+        ),
+    )
+    assert_silent(
+        "SECURITY.md T15",
+        row,
+        (
+            "ligar el destino al sandbox en el `runHookPayload` queda pendiente",
+            "el prefijo **no separa inquilinos**",
         ),
     )
 
@@ -219,9 +263,19 @@ def test_prefix_is_not_a_tenant_boundary() -> None:
         "docs/site/docs/persistence.md «S3Prefix»",
         page,
         (
+            "El prefijo separa inquilinos cuando el sandbox lo liga",
+            '`PersistenceException(code="permission_denied")`',
+            "`prefix` por inquilino",
+            "un `name` por inquilino no los separa",
+            "Un sandbox creado **sin** `persist=`",
+        ),
+    )
+    assert_silent(
+        "docs/site/docs/persistence.md «S3Prefix»",
+        page,
+        (
             "El prefijo no separa inquilinos",
             "no comprueba que el destino sea el del sandbox que lo pide",
-            "un execution role y un prefijo por inquilino",
         ),
     )
 
@@ -229,7 +283,12 @@ def test_prefix_is_not_a_tenant_boundary() -> None:
     assert_says(
         "docs/site/docs/security.md «Persistencia en S3 (T15)»",
         summary,
-        ("no separa inquilinos", "no liga el destino al sandbox que lo pide"),
+        ("`persist=` liga", "`prefix` por inquilino", "creado sin `persist=` no liga nada"),
+    )
+    assert_silent(
+        "docs/site/docs/security.md «Persistencia en S3 (T15)»",
+        summary,
+        ("no liga el destino al sandbox que lo pide",),
     )
 
 
@@ -372,7 +431,12 @@ def test_c10_and_c12_are_closed_in_the_security_audit() -> None:
     assert_says(
         "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
         still_open,
-        ("**C-07**", "**C-06** queda aceptado con razón escrita"),
+        ("**C-06** queda aceptado con razón escrita", "Del ligado de C-07 queda una decisión"),
+    )
+    assert_silent(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("el binding del `S3Location` al sandbox (**C-07**)",),
     )
 
 
@@ -396,6 +460,74 @@ def test_t18_user_secret_custody_is_in_the_threat_model() -> None:
     site = flatten(site_doc("security"))
     assert "## Custodia de secretos del usuario (T18)" in site_doc("security")
     assert "el código del sandbox puede leer un secreto inyectado" in site
+
+
+def test_c01_c02_c03_are_closed_in_the_security_audit() -> None:
+    """`sec-sandbox-isolation` cierra en código C-01 (uid del par), C-02 (la
+    guarda por `run_claimed` de `/validate`) y C-03 (`audit()` en `/ready` y
+    `/validate`): §9 gana sus filas de código y "Lo que sigue abierto" ya no
+    las nombra, pero sí la medición en AWS real de la que depende ir más
+    allá."""
+    audit = security_audit_md()
+
+    fixes = section(audit, "## 9. Estado de las correcciones")
+    assert_says(
+        "docs/SECURITY_AUDIT.md §9",
+        fixes,
+        (
+            "| C-01 (código) |",
+            "`guard_peers`",
+            "| C-02 (código) |",
+            "a_validate_after_run_never_touches_the_default_kernel",
+            "| C-03 (código) |",
+            "build_hooks_before_run_are_never_counted",
+        ),
+    )
+
+    still_open = section(audit, "### Lo que sigue abierto")
+    assert_silent(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("**C-01**", "**C-02**", "**C-03**"),
+    )
+    assert_says(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("el uid que posee la conexión de cada hook de la plataforma",),
+    )
+
+
+def test_t24_qualifies_the_gateway_guarantee() -> None:
+    """La pasarela de secretos devuelve el cuerpo del `upstream` sin
+    inspeccionar: T24 y la página de la función dicen que el sandbox no
+    puede leer el secreto **salvo que el `upstream` permitido lo refleje**,
+    y la página avisa de no listar endpoints de eco en `allow`."""
+    assert_says(
+        "SECURITY.md T24",
+        threat_row("T24"),
+        (
+            "ADR-023",
+            "**sin cambios**",
+            "**salvo que el `upstream` permitido lo refleje**",
+            "`allow` nunca debe listar un endpoint así",
+        ),
+    )
+    page = flatten(site_doc("funciones-opcionales/pasarela-de-secretos"))
+    assert_says(
+        "pasarela-de-secretos.md",
+        page,
+        (
+            "salvo que el `upstream` permitido lo refleje",
+            "## Lo que la pasarela no puede impedir",
+            "**sin cambios**",
+            "nunca una de depuración o de eco",
+        ),
+    )
+    assert_says(
+        "docs/site/docs/security.md",
+        flatten(site_doc("security")),
+        ("Pasarela de secretos (T24)", "Hooks de ciclo de vida forjados desde dentro de la VM (T2)"),
+    )
 
 
 EXACT_RAYD_IDENTITY = (

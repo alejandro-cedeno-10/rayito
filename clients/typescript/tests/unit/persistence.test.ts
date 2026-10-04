@@ -227,6 +227,22 @@ describe("Sandbox.create({ persist })", () => {
     }
   });
 
+  it("binds the bucket and the base prefix in the runHookPayload", async () => {
+    const { plane } = await persistedSandbox(
+      new S3Prefix({ bucket: BUCKET, prefix: "tenants/acme" }),
+    );
+    const payload = JSON.parse(plane.launches.at(-1)?.runHookPayload ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(payload.persist).toEqual({ bucket: BUCKET, key_prefix: "tenants/acme" });
+  });
+
+  it("binds nothing without persist", async () => {
+    const { plane } = await createTestSandbox();
+    expect(plane.launches.at(-1)?.runHookPayload).not.toContain("persist");
+  });
+
   it("binds without a name to the sandbox id and does not restore", async () => {
     const { sandbox, rayd } = await persistedSandbox();
     expect(sandbox.persist?.equals(prefix(SANDBOX_ID))).toBe(true);
