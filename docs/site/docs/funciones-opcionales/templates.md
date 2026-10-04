@@ -121,6 +121,66 @@ necesitas ese contenido, cópialo como fichero real dentro del contexto.
 Los ficheros van bajo `__rayito_context/` dentro del zip: nunca sustituyen
 el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
 
+### `.dockerignore`
+
+Los dos SDKs siguen la semántica de `.dockerignore` de Docker (con los
+mismos vectores de prueba):
+
+- Cada patrón queda **anclado en la raíz del contexto**: `README.md` no
+  excluye `docs/README.md`, y `/build`, `build` y `build/` son lo mismo.
+- `*` y `?` **no cruzan `/`**: `*.pyc` sólo excluye los de la raíz; para
+  cualquier profundidad, `**/*.pyc`.
+- `**` es cero o más directorios: `**/.env` excluye el `.env` de la raíz y
+  los de cualquier subdirectorio (el idioma que genera `docker init`).
+- Un patrón que casa con un directorio excluye todo lo que hay dentro, y
+  el último patrón que casa gana: `node_modules` seguido de
+  `!node_modules/keep.js` deja pasar `keep.js`.
+
+```text
+**/.env
+**/.env.*
+**/.git
+**/node_modules
+**/*.pem
+```
+
+Si el contexto va a empaquetar algo que suele llevar secretos (`.env`,
+`.env.*`, `.git/`, `.aws/`, `.ssh/`, `*.pem`, `*.key`), el SDK avisa con
+las rutas (nunca el contenido) antes de subir nada: en la imagen, cualquier
+código del sandbox podría leerlo. Para que el aviso pare un build en CI:
+
+=== "Python"
+
+    ```python
+    import warnings
+
+    from rayito import Template
+
+    warnings.filterwarnings("error", message="el contexto de build empaqueta")
+    t = Template().from_base_image().copy(".", "/app")
+    Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    process.on("warning", (warning) => {
+      if (warning.name === "RayitoContextWarning") {
+        console.error(warning.message);
+        process.exit(1);
+      }
+    });
+    const t = new Template().fromBaseImage().copy(".", "/app");
+    await Template.build(t, "mi-template", { bucket: "mi-bucket-de-artefactos" });
+    ```
+
+!!! warning "Cambio de comportamiento en 0.6.x"
+    Antes, `*` cruzaba `/` (`*.pyc` excluía también `sub/x.pyc`) y `**/X`
+    no casaba en la raíz. Si tu `.dockerignore` contaba con lo primero,
+    añade `**/` delante del patrón.
+
 ## Errores
 
 | `reason` | Qué pasó |

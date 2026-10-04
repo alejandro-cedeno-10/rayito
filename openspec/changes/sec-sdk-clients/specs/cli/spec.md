@@ -26,6 +26,21 @@
 - **WHEN** every slot is taken and another allowlisted request arrives
 - **THEN** it is answered `503` and the upstream is not opened
 
+### Requirement: The local proxy forwards a single message per connection
+`rayito sandbox proxy` SHALL forward to the upstream only the first request of each client connection: its rewritten head and exactly its body, delimited by a `Transfer-Encoding` whose final coding is `chunked` or by `Content-Length` (no body when neither is present). A request whose framing is ambiguous (`Transfer-Encoding` together with `Content-Length`, a `Transfer-Encoding` whose final coding is not `chunked`, several distinct or non-numeric `Content-Length` values) SHALL be answered `400 Bad Request` without opening the upstream. After the first request no client byte SHALL be forwarded. For an upgrade request the proxy SHALL read the upstream response head within `UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS`: informational `1xx` responses pass through; `101` starts the bidirectional tunnel; any other final response SHALL be forwarded with `Connection: close` and its body delimited per RFC 9112 §6.3, after which both sides are closed; a missing or invalid response head SHALL be answered `502`.
+
+#### Scenario: an upgrade refused with 200 keep-alive
+- **WHEN** the guest answers an upgrade request with `200` and `Connection: keep-alive` and the client then sends a second request carrying `X-aws-proxy-port: 9000`
+- **THEN** the client receives the `200` with `Connection: close`, and the upstream receives only the rewritten first request
+
+#### Scenario: a pipelined request after a body
+- **WHEN** a `POST` with `Content-Length: 5` is followed on the same connection by another request
+- **THEN** the upstream receives the rewritten head and exactly the five body bytes, and nothing else
+
+#### Scenario: ambiguous framing
+- **WHEN** a request carries both `Transfer-Encoding: chunked` and `Content-Length`
+- **THEN** the proxy answers `400` and never opens the upstream
+
 ### Requirement: CLI output neutralises terminal control characters
 `rayito.cli._console.echo` SHALL, when its output stream is a terminal, render every C0 control character except tab and newline, DEL and every C1 control character as a visible `\xNN` escape before printing; output redirected to a file or a pipe SHALL be unchanged. Interactive `exec`/`connect` passthrough SHALL NOT go through this path.
 

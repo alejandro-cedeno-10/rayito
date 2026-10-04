@@ -296,7 +296,11 @@ curl http://127.0.0.1:8000/
 - Cabeceras: quita cualquier `x-aws-proxy-*` que traiga el cliente, fija
   `Host` al endpoint del sandbox, añade `X-aws-proxy-auth` (el JWE vigente)
   y `X-aws-proxy-port`, y fuerza `Connection: close` salvo en una petición
-  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sin JWE
+  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sólo reenvía
+  la primera petición de cada conexión, con su cuerpo delimitado por
+  `Content-Length` o `chunked` (`400` si es ambiguo); un upgrade al que el
+  sandbox no responde `101` se reenvía con `Connection: close` y se
+  cierra. Sin JWE
   vigente o sin conexión al sandbox responde `502` y escribe el motivo en
   stderr; la cabecera tiene que llegar en 30 s y la conexión al sandbox
   abrirse en 30 s. Nunca registra el JWE, las cabeceras, los cuerpos

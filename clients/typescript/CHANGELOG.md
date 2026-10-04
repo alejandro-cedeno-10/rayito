@@ -8,6 +8,17 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Security
 
+- **`.dockerignore` con la semántica de Docker** en `Template.build`:
+  anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
+  `**/.git` y el resto de los valores de `docker init` excluyen también los
+  de la raíz, que antes acababan en la imagen), un directorio excluido
+  excluye lo de dentro y la última coincidencia gana; mismos vectores que el
+  SDK de Python. **Cambio**: `*` y `?` ya no cruzan `/` (`*.pyc` sólo
+  excluye los de la raíz; usa `**/*.pyc`). Un `process.emitWarning` de tipo
+  `RayitoContextWarning` (con las rutas, nunca el contenido) avisa si el
+  contexto va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o
+  `*.key`. Cada fichero del contexto se vuelve a comprobar dentro del
+  contexto y se abre con `O_NOFOLLOW` justo antes de leerlo.
 - **`Template.build()`**: un rechazo de AWS distinto de la cuota es ahora
   `BuildError({ reason: "aws_error" })` con el resumen saneado como mensaje y
   `cause`, y el adaptador sanea cada llamada al SDK de AWS (el error crudo de

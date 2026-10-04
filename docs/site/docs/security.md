@@ -16,7 +16,7 @@ hooks, snapshot).
 | Escalada a root dentro del guest | Procesos, PTYs y kernels como uid 1000; root sólo con `user="root"` **y** `RAYITO_ALLOW_ROOT=1` en la imagen |
 | Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels; en el cliente, la salida guardada de un comando o una PTY está acotada a 64 MiB por descriptor (`max_output_bytes`/`maxOutputBytes`, `truncated` lo indica) |
 | Credenciales de git en el sandbox | `clone`/`push`/`pull` con `username`/`password` corren sin hooks ni credential helpers, se niegan si la configuración de git reescribe URLs y siempre intentan quitar el token de `.git/config` al acabar; **riesgo residual**: el código del sandbox con el mismo usuario puede capturarlo igualmente: trátalo como revelado y usa tokens de vida corta y de un solo repositorio ([Git](git.md#credenciales)) |
-| Contenido de terceros en un build de template | los enlaces simbólicos dentro de un directorio copiado nunca se siguen (como Docker), así que un enlace a un fichero de tu máquina no acaba en el artefacto ni en la imagen ([Templates](funciones-opcionales/templates.md)) |
+| Contenido de terceros o secretos en un build de template | los enlaces simbólicos dentro de un directorio copiado nunca se siguen (como Docker), así que un enlace a un fichero de tu máquina no acaba en el artefacto ni en la imagen; `.dockerignore` sigue la semántica de Docker (`**/.env` excluye también el `.env` de la raíz) y el SDK avisa si va a empaquetar `.env`, `.git/`, `.aws/`, `.ssh/` o claves `*.pem`/`*.key`, que cualquier código del sandbox podría leer ([Templates](funciones-opcionales/templates.md#contexto-de-build)) |
 | Logs de CloudWatch o de build con secuencias de escape | la CLI muestra los caracteres de control como `\xNN` visibles cuando escribe en una terminal; con un execution role, el código de un sandbox puede escribir en cualquier stream de `/rayito/*`, así que los logs de runtime no prueban integridad |
 | `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, `O_NOFOLLOW`, sin `..` |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
@@ -196,7 +196,12 @@ proxy sólo reenvía peticiones cuyo `Host` es de loopback con el puerto
 local, la dirección de `--bind`, `<id>.localhost` o un `--allowed-host`
 (si no, `421`) y cuyo `Origin`, si lo trae, es uno de esos orígenes o un
 `--allow-origin` (si no, `403`); como mucho `--max-connections` (8)
-conexiones a la vez (`503` después). **Cookies**: no se separan por puerto,
+conexiones a la vez (`503` después). Por cada conexión sólo reenvía **un
+mensaje**: la primera petición reescrita, con su cuerpo delimitado por
+`Content-Length` o `chunked` (una delimitación ambigua es `400`); nada de lo
+que el cliente mande después llega al upstream, y un upgrade que el guest
+no acepta con `101` se responde con `Connection: close` y se cierra, en vez
+de quedar como túnel sin filtrar. **Cookies**: no se separan por puerto,
 así que lo que el sandbox sirve en `http://127.0.0.1:<puerto>` recibe las
 cookies de tus otras apps locales y comparte "sitio" con ellas; ábrelo en
 `http://<id>.localhost:<puerto>` (tarro propio, la CLI lo anuncia) o en un

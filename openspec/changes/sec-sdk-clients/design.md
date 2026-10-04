@@ -77,3 +77,24 @@ surface (the proxy and the terminal sanitizer are CLI-only, so Python-only).
   `decode_access_token`/`decodeAccessToken` after the canonical-base64url
   check, without echoing the token. `ProxyToken.jwe` is `field(repr=False)`
   / `defineHidden`; `DoctorContext.minted_token` is `repr=False`.
+- **D14 One message per proxied connection.** Pure framing rules in
+  `cli/_http_framing.py` (RFC 9112 §6.3); `_forward` relays the first
+  request's body exactly (`Content-Length`, or the `chunked` framing chunk
+  by chunk) and then stops reading the client. Non-upgrade responses are
+  piped until the upstream closes (it got `Connection: close`). Upgrade
+  responses are parsed: `1xx` pass, `101` tunnels, anything else is
+  forwarded with `Connection: close` and a delimited body, then both sides
+  close. Ambiguous request framing is `400` (the proxy is an intermediary
+  and must not pick one interpretation). Re-parsing and re-rewriting each
+  pipelined request was rejected: more code for a client pattern browsers
+  do not use with `Connection: close`.
+- **D15 `.dockerignore`.** Docker (moby `patternmatcher`) semantics in a
+  pure module per SDK, matched by segments without regular expressions
+  (polynomial even for hostile patterns; consecutive `**` collapse). A
+  `**` glued to other characters inside a segment is a `*`, as in
+  `.gitignore` (moby's regex would let it cross `/`; documented edge).
+  `*` no longer crossing `/` is a behaviour change that could package a
+  nested file an old pattern excluded, so the SDKs warn when likely secrets
+  are packaged; the warning never excludes (the user's `.dockerignore`
+  stays the only source of truth). Shared vectors keep the SDKs in parity.
+

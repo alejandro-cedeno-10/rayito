@@ -1,7 +1,7 @@
 ## Why
 
 A security sweep of the SDK clients (Python `rayito`, TypeScript `rayito`,
-the CLI) confirmed nine findings, one medium and eight low/info. None needs
+the CLI) confirmed eleven findings, two medium and nine low/info. None needs
 a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
 
 - **CLI-PROXY-01 (medium)**: `rayito sandbox proxy` attached the operator's
@@ -11,6 +11,14 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   concurrent connections either.
 - **CLI-PROXY-02 (low)**: content served through the proxy shares the
   `127.0.0.1`/`localhost` cookie jar and "site" with other local apps.
+- **TPL-IGNORE-01 (medium)**: `.dockerignore` patterns in Docker's `**/`
+  form (the `docker init` defaults `**/.env`, `**/.git`, …) never matched
+  root-level paths in either SDK, so a root `.env` or `.git/` ended up in
+  the image, readable by any sandbox code.
+- **CLI-PROXY-03 (info)**: after the first request the proxy piped client
+  bytes verbatim; for an upgrade the guest refused with a keep-alive
+  response, later requests reached the upstream unrewritten (their own
+  `x-aws-proxy-*` kept) over an authenticated connection.
 - **TPL-SYMLINK-01 (low)**: the Python build-context walk (and the image
   zip) followed symlinks inside copied directories, so a link to a local
   file could end up in the uploaded artifact and the image (TypeScript and
@@ -39,7 +47,12 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   announcement offers `http://<id>.localhost:<port>` (separate cookie jar).
   `http_authority`/`is_wildcard` move to a shared stdlib-only module.
 - Python build context and image zip never follow symlinks inside a copied
-  directory (TypeScript gains tests pinning the same rule).
+  directory (TypeScript gains tests pinning the same rule); each context
+  file is re-checked and opened with `O_NOFOLLOW` before reading.
+- `.dockerignore` follows Docker's semantics in both SDKs (shared vectors);
+  both SDKs warn when likely secrets are packaged.
+- The proxy forwards one message per connection (`400` on ambiguous body
+  framing; a refused upgrade is answered with `Connection: close`).
 - Git: the clean URL is always restored (operation error wins, a warning
   without URL/remote/path when the token may remain), a clone that fails
   other than by a git exit still strips origin, credentialed invocations
@@ -56,7 +69,7 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   the default cap; `rayito sandbox exec` keeps nothing.
 - `ACCESS_TOKEN_MIN_BYTES` (16, `limits.json`) enforced when decoding a
   caller token; the JWE is hidden from `repr`/`inspect`.
-- `SECURITY.md` (T3, T4, T7, T9, T18, logging hygiene), `security.md`,
+- `SECURITY.md` (T3, T4, T7, T9, T18, T20, logging hygiene), `security.md`,
   `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`,
   `variables-de-entorno.md`, both CHANGELOGs.
 
@@ -67,6 +80,7 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   needs `--allowed-host`; access tokens shorter than 16 bytes are rejected;
   `Template.build` raises `BuildException(reason="aws_error")` instead of a
   raw `ClientError`; credentialed git commands no longer run hooks or
-  credential helpers.
+  credential helpers; in `.dockerignore`, `*` and `?` no longer cross `/`;
+  the proxy answers `400` to ambiguous body framing.
 - No runtime (`rayd`), proto, infra or IAM change; no AWS call added; no
   cost. Acceptance is the local gates.

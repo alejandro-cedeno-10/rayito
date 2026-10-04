@@ -20,10 +20,28 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `--max-connections` (8) conexiones a la vez (`503` después). Anuncia
   también `http://<id>.localhost:<puerto>`, con cookies separadas de tus
   otras apps locales.
+- **`rayito sandbox proxy` reenvía un solo mensaje por conexión**: la
+  primera petición, con su cuerpo delimitado por `Content-Length` o
+  `chunked`; lo que el cliente mande después por esa conexión ya no llega
+  al upstream sin reescribir, y un upgrade al que el sandbox no responde
+  `101` se reenvía con `Connection: close` y se cierra en vez de quedar como
+  túnel sin filtrar. **Cambio**: una delimitación ambigua
+  (`Transfer-Encoding` junto a `Content-Length`, un `Transfer-Encoding` que
+  no acaba en `chunked`, varios `Content-Length` distintos) es `400`.
+- **`.dockerignore` con la semántica de Docker** en `Template.build`:
+  anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
+  `**/.git` y el resto de los valores de `docker init` excluyen también los
+  de la raíz, que antes acababan en la imagen), un directorio excluido
+  excluye lo de dentro y la última coincidencia gana. **Cambio**: `*` y `?`
+  ya no cruzan `/` (`*.pyc` sólo excluye los de la raíz; usa `**/*.pyc`).
+  Un `UserWarning` (con las rutas, nunca el contenido) avisa si el contexto
+  va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o `*.key`.
 - **`Template.build` y `rayito image publish` no siguen enlaces simbólicos**
   dentro de un directorio copiado (ni a fichero ni a directorio), como
   Docker y el SDK de TypeScript: un enlace a un fichero de tu máquina ya no
-  acaba en el artefacto de S3 ni en la imagen.
+  acaba en el artefacto de S3 ni en la imagen. Cada fichero del contexto se
+  vuelve a comprobar dentro del contexto y se abre con `O_NOFOLLOW` justo
+  antes de leerlo.
 - **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
   restauran siempre la URL sin credenciales (también si vence la orden o la
   restauración), conservan el error de la operación y avisan por el logger

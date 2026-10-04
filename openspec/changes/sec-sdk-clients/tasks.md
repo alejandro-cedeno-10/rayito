@@ -35,8 +35,15 @@
 - [x] 7.1 Repr/inspect tests and the redaction
 - [x] 7.2 Minimum-length tests and the check
 
-## 8. Docs and gates
+## 8. Proxy framing (CLI-PROXY-03) and `.dockerignore` (TPL-IGNORE-01)
 
-- [x] 8.1 `SECURITY.md`, `security.md`, `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`, `variables-de-entorno.md`
-- [x] 8.2 CHANGELOG `[Unreleased]` → `Security` in both packages
-- [x] 8.3 Python, TypeScript, docs, OpenSpec and root gates
+- [x] 8.1 Tests: refused upgrade never tunnels a second request, chunked refusal body, 101 tunnel, 1xx pass-through, invalid upgrade response 502, pipelined request after a `Content-Length`/`chunked`/no body, ambiguous framing 400, malformed chunk
+- [x] 8.2 `cli/_http_framing.py` and the single-message `_forward`
+- [x] 8.3 Shared `testdata/templates/dockerignore-vectors.json`, pytest and vitest runners, hostile-pattern timing test
+- [x] 8.4 `_dockerignore.py`/`dockerignore.ts`, likely-secrets warning, `O_NOFOLLOW` contained read, extra symlink tests (deep `/proc/self/environ` link, top-level `src` links)
+
+## 9. Docs and gates
+
+- [x] 9.1 `SECURITY.md` (T3, T20), `security.md`, `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`, `variables-de-entorno.md`
+- [x] 9.2 CHANGELOG `[Unreleased]` → `Security` in both packages
+- [x] 9.3 Python, TypeScript, docs, OpenSpec and root gates
