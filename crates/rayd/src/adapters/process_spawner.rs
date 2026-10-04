@@ -241,7 +241,7 @@ mod unix {
     /// pipes) so all of them get the same posture; only the sandbox's own
     /// processes and PTYs carry a CPU budget. The seal and the signal reset
     /// themselves live in `exec_posture`, which the internal launchers
-    /// (`fuse_device`'s probe, `mount_s3`) apply too.
+    /// (the `mountpoint` probe, `mount_s3`) apply too.
     pub(crate) struct PreExecPlan {
         limits: [(Resource, rlim_t, rlim_t); 3],
         cpu: Option<(rlim_t, rlim_t)>,

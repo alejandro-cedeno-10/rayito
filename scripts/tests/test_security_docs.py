@@ -410,8 +410,51 @@ def test_cosign_recipes_bind_the_installed_version() -> None:
     tag: a downgrade to an older signed asset, or one re-signed under another
     tag, would verify. The recipes name the exact identity of the version
     being installed."""
-    for relative in ("docs/site/docs/verify.md", "README.md"):
+    for relative in (
+        "docs/site/docs/verify.md",
+        "README.md",
+        "docs/site/docs/primeros-pasos/configurar-aws.md",
+    ):
         text = read(relative)
         assert "certificate-identity-regexp" not in text, relative
         assert EXACT_RAYD_IDENTITY in text, relative
         assert "RAYD_VERSION=" in text, relative
+
+
+def test_the_release_recipe_verifies_before_publishing() -> None:
+    """``rayito image publish`` checks no signature, and a token with
+    ``contents: write`` can replace a release asset: the recommended recipe
+    verifies the bundle and ``SHA256SUMS`` before it publishes anything
+    (``sec-supply-chain-followups``, SC-A08)."""
+    page = read("docs/site/docs/primeros-pasos/configurar-aws.md")
+    recipe = page[page.index('=== "Desde la release (recomendado)"') : page.index(
+        '=== "Desde el código fuente"'
+    )]
+
+    assert recipe.index("cosign verify-blob") < recipe.index("rayito image publish")
+    assert recipe.index("sha256sum -c") < recipe.index("rayito image publish")
+    assert "SHA256SUMS" in recipe
+    assert_silent("configurar-aws.md", flatten(recipe), ("Opcional pero recomendable",))
+
+
+def test_verify_states_what_a_signature_proves() -> None:
+    """A signature proves the official workflow signed it from that tag,
+    after the ``release`` environment approved the run; it does not prove
+    the tagged commit was reviewed on ``main`` (SC-A01)."""
+    proof = section(read("docs/site/docs/verify.md"), "### Qué prueba la firma")
+
+    assert_says(
+        "verify.md «Qué prueba la firma»",
+        proof,
+        (
+            "environment `release`",
+            "antes de que exista el token OIDC",
+            "un ensayo (`dry_run`) no firma",
+            "crear un tag `rayd-v*`",
+        ),
+    )
+    assert_silent(
+        "verify.md",
+        flatten(read("docs/site/docs/verify.md")),
+        ("sube los assets en otro que exige la aprobación del mantenedor",),
+    )

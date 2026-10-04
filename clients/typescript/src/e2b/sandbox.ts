@@ -58,6 +58,7 @@ import type {
   SandboxUrlOpts,
 } from "./types.js";
 import { rejectUnimplemented, unimplemented } from "./unimplemented.js";
+import { planVolumeMounts, resolveVolumeMounts, type ShimVolumeConfig } from "./volume.js";
 
 export { LIFECYCLE_IMAGE_REASON } from "./compat.js";
 
@@ -228,11 +229,20 @@ export class Sandbox implements AsyncDisposable {
 
   // ------------------------------------------------- static implementations
 
+  /**
+   * `volumes` es lo que `new E2B({ volumeStore, volumeConnectorArn })` liga
+   * al cliente (como `E2B(volume_store=, volume_connector_arn=)` en Python):
+   * `volumeMounts` pasa por su puerta sin I/O (`planVolumeMounts`) justo
+   * después de los rechazos de `mapCreateOptions` (`mcp`/`iam`); después se
+   * resuelve cada nombre contra el store y el sandbox se lanza con el
+   * `volumes` nativo y ese único conector de egress, nunca `INTERNET_EGRESS`.
+   */
   protected static async createFor(
     cls: typeof Sandbox,
     bound: ConnectionOpts,
     templateOrOpts: string | SandboxOpts | undefined,
     opts: SandboxOpts | undefined,
+    volumes?: ShimVolumeConfig,
   ): Promise<Sandbox> {
     const template = typeof templateOrOpts === "string" ? templateOrOpts : undefined;
     const call = typeof templateOrOpts === "string" ? (opts ?? {}) : (templateOrOpts ?? {});
@@ -241,10 +251,23 @@ export class Sandbox implements AsyncDisposable {
       template ?? merged,
       template === undefined ? undefined : merged,
     );
+    const planned =
+      merged.volumeMounts === undefined
+        ? undefined
+        : planVolumeMounts(merged.volumeMounts, volumes, merged.allowInternetAccess);
     const config = new ConnectionConfig(merged);
     emitIgnoredWarnings(mapping.ignored);
+    const nativeOptions =
+      planned === undefined
+        ? mapping.native
+        : {
+            ...mapping.native,
+            egress: [planned.connectorArn],
+            allowInternetAccess: merged.allowInternetAccess === false ? false : undefined,
+            volumes: await resolveVolumeMounts(planned),
+          };
     try {
-      const native = await NativeSandbox.create(mapping.native);
+      const native = await NativeSandbox.create(nativeOptions);
       return new cls(native, bound, config);
     } catch (error) {
       throw lifecycleImageError(error);
@@ -619,14 +642,14 @@ export class Sandbox implements AsyncDisposable {
  * `opts` con los de la llamada (gana la llamada salvo `undefined`) y las
  * instancias guardan el enlace para sus propias llamadas.
  */
-export function bindSandbox(opts: ConnectionOpts): typeof Sandbox {
+export function bindSandbox(opts: ConnectionOpts, volumes?: ShimVolumeConfig): typeof Sandbox {
   const bound: ConnectionOpts = Object.freeze({ ...opts });
   return class BoundSandbox extends Sandbox {
     static override create(
       templateOrOpts?: string | SandboxOpts,
       createOpts?: SandboxOpts,
     ): Promise<Sandbox> {
-      return Sandbox.createFor(BoundSandbox, bound, templateOrOpts, createOpts);
+      return Sandbox.createFor(BoundSandbox, bound, templateOrOpts, createOpts, volumes);
     }
 
     static override connect(sandboxId: string, connectOpts: SandboxConnectOpts = {}) {

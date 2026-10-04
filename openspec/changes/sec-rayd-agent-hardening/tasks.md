@@ -9,7 +9,7 @@
   `adapters::dir_walk` and the descriptor-based `StdFileSystem` (walk,
   `*at` calls, `O_EXCL` temp files, iterative removal, `O_PATH` metadata,
   `fstatfs` refusal of `proc`/`sysfs`/`devpts`).
-- [x] 1.4 `fuse_device` reuses `dir_walk`.
+- [x] 1.4 `mountpoint` (`fuse_device`, `efs_mount`) reuses `dir_walk`.
 
 ## 2. Secrets gateway (RAYD-02)
 

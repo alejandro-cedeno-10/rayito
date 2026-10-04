@@ -38,7 +38,7 @@ A second review pass confirmed three more (and restated C-01 as info):
 - Filesystem adapter: every operation but `realpath` walks the parent of
   the canonical path one component at a time with `O_PATH | O_NOFOLLOW`
   (`adapters::dir_walk`, shared with the mountpoint walk of
-  `fuse_device`) and acts with `*at` calls on that descriptor; a symlink in
+  `mountpoint`, used by both mount features) and acts with `*at` calls on that descriptor; a symlink in
   the walk or a directory on `proc`/`sysfs`/`devpts` answers the new port
   error `FsIoError::Redirected`, which the domain maps to `Denied`. Writes
   create their temp file with `O_EXCL` inside the walked directory and
@@ -82,7 +82,7 @@ A second review pass confirmed three more (and restated C-01 as info):
 
 - Rust: `rayd-core` (`filesystem`, `secret_gateway::route`,
   `network::policy`, new `hook_origin`, `session`), `rayd` (adapters
-  `std_filesystem`, `fuse_device`, `mount_s3`, `process_spawner`, new
+  `std_filesystem`, `mountpoint`, `mount_s3`, `process_spawner`, new
   `dir_walk`, `exec_posture`, `proc_net_sockets`, `capped_listener`,
   `procfs_process_table`, `sidecar_process`; `hooks` with `hooks::serve`;
   `code` supervisor and manager; `main`), `rayd-core` (`listeners`,

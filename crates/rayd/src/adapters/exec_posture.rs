@@ -4,7 +4,7 @@
 //! with the mask cleared. `PreExecPlan` (`process_spawner`: commands, PTY
 //! shells, the kernel sidecar) applies it after its limits and identity
 //! drop; `ExecPosture` applies it, after a fixed identity drop, for the
-//! internal launchers that are not user code (`fuse_device`'s readiness
+//! internal launchers that are not user code (`mountpoint`'s readiness
 //! probe, `mount_s3`'s daemon), so no launcher hands a child another
 //! terminal's master or a root-held descriptor (SEC-3, T18). Everything
 //! here runs in the forked child: no allocation, no lock.

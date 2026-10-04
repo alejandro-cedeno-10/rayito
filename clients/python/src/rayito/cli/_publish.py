@@ -26,6 +26,14 @@ publishes ``rayito-base``. The artifact's marker must match the flag, checked
 before any AWS call; ``--image-name`` still overrides the default name. Hooks,
 memory, ``/validate`` and the three-state gate are identical for the variants.
 
+``--with-efs`` (``m15-efs-volumes``) publishes a zip built with
+``image_zip.py --with-efs`` (the ``efs_variant`` marker makes the
+Dockerfile's conditional layer install ``amazon-efs-utils``); it requires
+``--os-capabilities ALL`` (mounting needs ``CAP_SYS_ADMIN``) and the ``full``
+variant, and its default name is ``rayito-base-caps-efs``. The marker and the
+flag must agree, checked before any AWS call (``require_matching_variant``):
+an efs artifact never publishes under a plain name, nor the reverse.
+
 ``--os-capabilities ALL`` adds ``additionalOsCapabilities: ["ALL"]`` (the only
 value the service model accepts) and nothing else to the image configuration:
 with it ``rayd`` installs the IMDS block for uid 1000 at boot. Publish it under
@@ -97,7 +105,7 @@ from rayito._images import (
 )
 from rayito._images import wait_for_gate as wait_for_image_gate
 from rayito._sizing import NAME_TO_MEMORY_MIB
-from rayito.cli._artifact import VARIANTS, marker_variant
+from rayito.cli._artifact import VARIANTS, marker_has_efs, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
 
 DEFAULT_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME
@@ -106,8 +114,17 @@ DEFAULT_IMAGE_NAMES = {
     "slim": f"{DEFAULT_IMAGE_NAME}-slim",
     "poly": f"{DEFAULT_IMAGE_NAME}-poly",
 }
+#: `--with-efs` (m15-efs-volumes): the caps image with `amazon-efs-utils`;
+#: `_role_policy.EFS_CAPS_VARIANT` counts it as a caps variant.
+EFS_IMAGE_NAME = f"{DEFAULT_IMAGE_NAME}-caps-efs"
+#: The only variant `--with-efs` combines with: it is the caps image (the
+#: `full` artifact) plus one layer, never slim or poly.
+EFS_BASE_VARIANT = "full"
 DEFAULT_STACK_NAME = "rayito-m0-iam"
-OS_CAPABILITY_CHOICES = ("ALL",)
+#: `additionalOsCapabilities` value (the only one the service model accepts):
+#: `--with-efs` requires it, because `rayd` only mounts with `CAP_SYS_ADMIN`.
+ALL_OS_CAPABILITIES = "ALL"
+OS_CAPABILITY_CHOICES = (ALL_OS_CAPABILITIES,)
 BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
 HOOKS_PORT = 9000
@@ -190,16 +207,37 @@ class PublishSettings:
     # Vacío (igual que antes de sizes-catalog) no añade `environmentVariables`
     # a la configuración: ver `desired_configuration`.
     environment_variables: Mapping[str, str] = field(default_factory=dict)
+    # m15-efs-volumes: `--with-efs`, checked against the artifact's marker
+    # by `require_matching_variant`.
+    with_efs: bool = False
 
     @property
     def log_group(self) -> str:
         return f"{LOG_GROUP_PREFIX}/{self.image_name}"
 
 
-def default_image_name(variant: str) -> str:
+def default_image_name(variant: str, *, with_efs: bool = False) -> str:
     if variant not in VARIANTS:
         raise ValueError(f"variant desconocida: {variant!r} (admitidas: {', '.join(VARIANTS)})")
+    if with_efs:
+        require_efs_combination(variant, ALL_OS_CAPABILITIES)
+        return EFS_IMAGE_NAME
     return DEFAULT_IMAGE_NAMES[variant]
+
+
+def require_efs_combination(variant: str, os_capabilities: str | None) -> None:
+    """`--with-efs` only on the `full` variant with `--os-capabilities ALL`:
+    the image is `rayito-base-caps` plus the `amazon-efs-utils` layer, and
+    without `CAP_SYS_ADMIN` `rayd` would never advertise
+    `Health.features.efs_volumes` (an image that pays for the layer and can
+    never use it)."""
+    if variant != EFS_BASE_VARIANT:
+        raise ValueError(f"--with-efs sólo con --variant {EFS_BASE_VARIANT}, no {variant!r}")
+    if os_capabilities != ALL_OS_CAPABILITIES:
+        raise ValueError(
+            f"--with-efs necesita --os-capabilities {ALL_OS_CAPABILITIES}: rayd sólo monta "
+            "EFS con CAP_SYS_ADMIN"
+        )
 
 
 def utc_now() -> str:
@@ -394,6 +432,22 @@ def require_matching_variant(settings: PublishSettings) -> None:
             f"{settings.artifact} is a {found} artifact but --variant {settings.variant} "
             f"was given; build it with `image_zip.py --variant {settings.variant}`"
         )
+    has_efs = marker_has_efs(settings.artifact)
+    if has_efs and not settings.with_efs:
+        fail(
+            f"{settings.artifact} carries the amazon-efs-utils marker; publish it with "
+            "--with-efs (or rebuild it without `image_zip.py --with-efs`)"
+        )
+    if settings.with_efs and not has_efs:
+        fail(
+            f"--with-efs was given but {settings.artifact} has no amazon-efs-utils marker; "
+            "build it with `image_zip.py --with-efs`"
+        )
+    if settings.with_efs:
+        try:
+            require_efs_combination(settings.variant, settings.os_capabilities)
+        except ValueError as exc:
+            fail(str(exc))
 
 
 def progress_emitter(json_output: bool) -> Emitter:

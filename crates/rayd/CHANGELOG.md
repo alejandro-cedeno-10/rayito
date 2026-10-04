@@ -10,6 +10,40 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Added
+
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, experimental):
+  `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/`MountState`/`VolumeError`,
+  la atribución de `efs-proxy` y la decisión de `/resume`, todo puro) y el
+  adaptador real `EfsUtilsMounter` (`mount -t efs -o tls,iam,accesspoint`,
+  medido en AWS real, `AWS_API_NOTES.md` §16 Q128), activo sólo en una
+  imagen con `amazon-efs-utils` y `CAP_SYS_ADMIN` (en las demás
+  `Health.features.efs_volumes` es `false` y la sección responde
+  `UNSUPPORTED`). Monta sobre un directorio de root y enlaza el resultado a
+  la ruta pedida sin seguir enlaces simbólicos (recorrido compartido con
+  `mounts=`, `adapters::mountpoint`); termina el `efs-proxy` de cada volumen
+  al desmontar y en `/terminate` (`umount` no lo para, Q128); en `/resume`
+  remonta el volumen cuya pausa cruzó la caducidad de las credenciales del
+  túnel o cuya sonda falla (en segundo plano si no cabe en el presupuesto,
+  con el estado en `ConfigureStatus`; Q129); en `/suspend` vacía cada
+  volumen con plazo y lo marca `degraded`/`flush_timeout` si no termina
+  (Q130). `proto/rayito/v1/efs_volumes.proto` documenta las clases nuevas
+  (`invalid_path`, `credentials_expired`, `flush_timeout`, `stale`,
+  `unreachable`, `gone`).
+
+### Changed
+
+- `EfsUtilsMounter` pasa `AWS_REGION` (la región del MicroVM) al entorno de
+  `mount -t efs`: `amazon-efs-utils` 3.1.3 la lee antes que su
+  `efs-utils.conf`, así que una imagen sin región horneada monta en
+  cualquier región. Sin `AWS_REGION`, el helper sigue con sus propios
+  respaldos.
+- `image/Dockerfile`: capa condicional de
+  `amazon-efs-utils-3.1.3-1.amzn2023` (sólo con el marcador `efs_variant` de
+  `--with-efs`), que rehace el enlace de `/usr/bin/python3` a 3.12;
+  `scripts/check_pins.py` clava su NEVRA y ve los `dnf install` dentro de
+  `if …; then`.
+
 ### Security
 
 - **Las operaciones de ficheros ya no vuelven a resolver la ruta que la
@@ -79,6 +113,24 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `cosign verify-blob --certificate-identity
   "…/release.yml@refs/tags/rayd-v${RAYD_VERSION}"` en vez de una regexp que
   aceptaba la firma de cualquier tag `rayd-v*` (`docs/site/docs/verify.md`).
+- **Firmar `rayd` espera la aprobación del mantenedor.** `rayd-sign` corre en
+  el environment `release` y sólo cuando el run publica: sin aprobación no
+  hay token OIDC ni certificado de Sigstore con la identidad
+  `release.yml@refs/tags/rayd-v<versión>`, y un ensayo (`dry_run`) ya no
+  firma. Antes, un ensayo lanzado desde un tag `rayd-v*` firmaba con la
+  identidad exacta que verifican los usuarios sin pasar por ningún revisor.
+  `verify.md` dice ahora qué prueba la firma y qué no.
+- **La receta recomendada de `rayito-image.zip` verifica antes de
+  publicar**: descarga `SHA256SUMS`, comprueba el bundle con
+  `cosign verify-blob` y la suma, y sólo después llama a
+  `rayito image publish` (`docs/site/docs/primeros-pasos/configurar-aws.md`).
+  Ya no es un paso opcional: un asset de una release se podría reemplazar
+  con un token del repositorio.
+- **CI sin cachés donde hay credenciales y con herramientas fijadas**: los
+  jobs del sitio de documentación y del e2e ya no restauran cachés de
+  Actions; uv se instala fijado por versión y sha256 en todos los workflows
+  y nunca re-bloquea un `uv.lock` desfasado; pip-audit y cfn-lint salen de
+  requisitos con `--hash` en vez de `uvx`.
 
 ## [0.6.1] - 2026-10-04
 

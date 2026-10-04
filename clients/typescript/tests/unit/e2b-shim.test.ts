@@ -196,7 +196,7 @@ describe("unimplemented members", () => {
       ["mcp", () => Sandbox.create(IMAGE_ARN, { controlPlane: plane, mcp: { github: {} } })],
       ["iam", () => Sandbox.create(IMAGE_ARN, { controlPlane: plane, iam: { audience: "x" } })],
       [
-        "volumeMounts",
+        "Volume",
         () => Sandbox.create(IMAGE_ARN, { controlPlane: plane, volumeMounts: { v: "/m" } }),
       ],
       [

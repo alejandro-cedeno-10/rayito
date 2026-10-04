@@ -7,11 +7,16 @@ Description: >-
   etiquetas: publicar una imagen sigue siendo una acción del mantenedor.
 
 Parameters:
-  GitHubRepository:
+  GitHubSubjectPrefix:
     Type: String
-    Default: alejandro-cedeno-10/rayito
-    Description: "owner/repo cuyo workflow asume el rol"
-    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    Description: >-
+      Prefijo exacto del claim sub que emite GitHub para el repositorio cuyo
+      workflow asume el rol: el sub_claim_prefix de
+      `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`. Con
+      sujetos inmutables es repo:<owner>@<owner_id>/<repo>@<repo_id>; sin
+      ellos, repo:<owner>/<repo>. Sin valor por defecto: los ids son del
+      repositorio de quien despliega (infra/README.md).
+    AllowedPattern: "^repo:[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?$"
   GitHubEnvironment:
     Type: String
     Default: e2e
@@ -54,7 +59,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Ref RoleName
-      Description: !Sub "GitHub Actions e2e for ${GitHubRepository} (environment ${GitHubEnvironment})"
+      Description: !Sub "GitHub Actions e2e for ${GitHubSubjectPrefix} (environment ${GitHubEnvironment})"
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -69,7 +74,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepository}:environment:${GitHubEnvironment}"
+                token.actions.githubusercontent.com:sub: !Sub "${GitHubSubjectPrefix}:environment:${GitHubEnvironment}"
       Policies:
         - PolicyName: rayito-e2e-microvms
           PolicyDocument:
@@ -107,4 +112,4 @@ Outputs:
     Value: !GetAtt E2eRole.Arn
   TrustedSubject:
     Description: "claim sub exacto que el trust acepta"
-    Value: !Sub "repo:${GitHubRepository}:environment:${GitHubEnvironment}"
+    Value: !Sub "${GitHubSubjectPrefix}:environment:${GitHubEnvironment}"

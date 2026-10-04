@@ -70,8 +70,16 @@ export type S3Mount = Message<"rayito.v1.S3Mount"> & {
   prefix: string;
 
   /**
-   * Por defecto `true`: sin este flag a `false` explícitamente, el
-   * montaje nunca admite escritura (principio de mínimo privilegio).
+   * El valor seguro es `true` (principio de mínimo privilegio), pero
+   * proto3 pone a `false` el default de cable de todo `bool`: un cliente
+   * que omita este campo pide un montaje de lectura-escritura, no de sólo
+   * lectura. Por eso ningún SDK deja que `S3Mount` construya su propio
+   * `S3MountsConfig` sin fijarlo explícitamente — `to_proto()`/`toProto()`
+   * siempre mandan el valor real de `S3Mount.read_only`/`S3Mount.readOnly`
+   * (que sí tiene `true` como valor por defecto del lado del SDK) — así
+   * que esta ambigüedad del cable nunca llega a importar en la práctica,
+   * pero un cliente que no sea el SDK debe fijar este campo explícitamente
+   * para obtener sólo lectura.
    *
    * @generated from field: bool read_only = 4;
    */

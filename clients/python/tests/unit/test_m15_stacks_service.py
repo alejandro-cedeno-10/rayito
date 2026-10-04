@@ -28,10 +28,9 @@ def test_components_lists_the_full_catalog_with_no_provisioner_call() -> None:
 def test_deploying_an_unsupported_component_raises_before_touching_the_provisioner() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
-    # `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
-    # stub (`supported=False`) and makes the same point.
-    with pytest.raises(UnimplementedError, match="efs-volumes"):
-        stacks.deploy("efs-volumes")
+    # `custom-domain` is the last stub (`supported=False`) on this branch.
+    with pytest.raises(UnimplementedError, match="custom-domain"):
+        stacks.deploy("custom-domain")
     assert fake.calls == []
 
 
@@ -39,7 +38,7 @@ def test_destroying_an_unsupported_component_also_raises_first() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
     with pytest.raises(UnimplementedError):
-        stacks.destroy("efs-volumes")
+        stacks.destroy("custom-domain")
     assert fake.calls == []
 
 

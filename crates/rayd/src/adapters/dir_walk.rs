@@ -10,7 +10,7 @@
 //! renaming or replacing an ancestor after it was opened cannot redirect
 //! the rest of the walk; the caller then runs `openat`, `fstatat`,
 //! `unlinkat`, `renameat` or `mkdirat` against the descriptor it gets
-//! back (`fuse_device` for mountpoints, `std_filesystem` for every
+//! back (`mountpoint` for both mount features, `std_filesystem` for every
 //! filesystem RPC).
 
 use std::os::fd::{AsFd, OwnedFd};

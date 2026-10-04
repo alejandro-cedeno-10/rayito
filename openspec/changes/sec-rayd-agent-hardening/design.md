@@ -43,7 +43,8 @@ operation's own semantics (`fstatat(AT_SYMLINK_NOFOLLOW)`, `openat` with
   permission for the open), skip anything but regular files and
   directories, and read the set through `/proc/self/fd/<n>`, which names
   that inode (`flistxattr` refuses an `O_PATH` descriptor).
-- `fuse_device`'s mountpoint walk now uses the same module (no
+- The mountpoint walk both mount features share (`mountpoint`, used by
+  `fuse_device` and `efs_mount`) now uses the same module (no
   duplication); its error mapping is unchanged.
 - The fake enforces the same contract (a symlink in a component the port
   does not follow is `Redirected`) and can swap a directory for a symlink
@@ -70,7 +71,8 @@ with `CLOSE_RANGE_CLOEXEC`, `fcntl` fallback) and
 `reset_signal_dispositions`, used by `PreExecPlan` and by `ExecPosture`
 (`as_user(uid, gid)`, `inheriting_up_to(slot)`). The probe is built by
 `guest_command`: `env_clear()`, `PATH=DEFAULT_PATH`, null stdio, posture in
-`pre_exec`, binary `/usr/bin/stat`. `mount-s3` keeps its `dup2` onto
+`pre_exec`, binary `/usr/bin/stat` (in `mountpoint`, so the EFS volume
+probe gets it too). `mount-s3` keeps its `dup2` onto
 `MOUNT_FD_SLOT` and seals above it.
 
 ### D4. Egress `Host` rewrite: document, do not refuse (RAYD-06)
