@@ -10,6 +10,22 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- **Los assets firmados de `rayd` se construyen sin credenciales y no se
+  pueden reemplazar desde la release.** `release.yml` parte el job `rayd` en
+  `rayd-build` (sólo lectura), `rayd-sign` (token OIDC, sin checkout ni
+  herramientas de build, firma lo que `sha256sum -c` confirma que salió del
+  build) y `rayd-upload` (environment `release` con aprobación del
+  mantenedor, sin `--clobber`). Ningún job de la release restaura ya una
+  caché de Actions: zig se descarga contra un sha256 fijado y las
+  herramientas de cargo se compilan en una raíz nueva en cada release.
+  Publicar exige que el commit del tag esté en `main`.
+- **La receta de verificación liga la firma a la versión que instalas**:
+  `cosign verify-blob --certificate-identity
+  "…/release.yml@refs/tags/rayd-v${RAYD_VERSION}"` en vez de una regexp que
+  aceptaba la firma de cualquier tag `rayd-v*` (`docs/site/docs/verify.md`).
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed
