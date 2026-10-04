@@ -1,0 +1,28 @@
+name: zig (verified)
+description: >-
+  Descarga zig 0.16.0 de ziglang.org, la comprueba contra un sha256 fijado y
+  la pone en PATH. Sustituye a mlugg/setup-zig, que guarda el tarball y la
+  caché global de zig en la caché de Actions y, con un acierto de caché, no
+  vuelve a comprobar la firma: un job de main podía plantar ahí lo que luego
+  enlazaba el rayd de una release (sec-supply-chain-ci, SC-01).
+
+# ZIG_SHA256 es el `shasum` de https://ziglang.org/download/index.json para
+# zig-x86_64-linux-0.16.0.tar.xz, comprobado además con la firma minisign de
+# ziglang.org (clave RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U)
+# el 2026-10-04. Subir de versión: cambiar las dos variables a la vez.
+runs:
+  using: composite
+  steps:
+    - name: zig checked against a pinned sha256 (never restored from a cache)
+      shell: bash
+      env:
+        ZIG_VERSION: 0.16.0
+        ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+      run: |
+        mkdir -p "$RUNNER_TEMP/zig"
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/zig/zig.tar.xz" \
+          "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+        echo "${ZIG_SHA256}  $RUNNER_TEMP/zig/zig.tar.xz" | sha256sum -c -
+        tar -xJf "$RUNNER_TEMP/zig/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components=1
+        echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/zig/zig" version
