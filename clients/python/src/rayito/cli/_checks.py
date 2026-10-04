@@ -148,7 +148,7 @@ class DoctorContext:
     resolved_version: str | None = None
     launched: Sandbox | None = None
     target_sandbox: SandboxInfo | None = None
-    minted_token: str | None = None
+    minted_token: str | None = field(default=None, repr=False)
     health: SandboxHealth | None = None
     transport: TransportSettings = field(default_factory=TransportSettings)
     probe_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS
