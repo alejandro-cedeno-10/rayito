@@ -9,7 +9,9 @@ El sandbox le manda peticiones sin credencial; la pasarela comprueba una
 allowlist de método/ruta y un límite de peticiones por minuto, inyecta la
 cabecera real (resuelta de Secrets Manager, nunca guardada en el sandbox) y
 reenvía al `upstream` fijo que declaraste. El código del sandbox puede
-**usar** el secreto; no puede **leerlo**.
+**usar** el secreto; no puede **leerlo**, salvo que el `upstream` permitido
+lo refleje en su respuesta (ver [Lo que la pasarela no puede
+impedir](#lo-que-la-pasarela-no-puede-impedir)).
 
 <small>Desde 0.6.0 (M15, ADR-023).</small>
 
@@ -59,9 +61,8 @@ Por cada ruta de `gateways=`/`gateways`:
    pasarela responde sin abrir ninguna conexión al `upstream` (403 fuera de
    la allowlist, 429 por encima del límite).
 4. Si pasa, `rayd` elimina de la petición cualquier cabecera cuyo nombre
-   coincida con una de `headers` (así el sandbox nunca puede suplantar ni
-   leer de vuelta su propia credencial) e inyecta el valor real de cada
-   una.
+   coincida con una de `headers` (así el sandbox nunca puede suplantar su
+   propia credencial) e inyecta el valor real de cada una.
 5. Reenvía al `upstream` (siempre `https://host`, sin ruta, query,
    usuario ni fragmento: la ruta y la query vienen de cada petición) por
    un cliente HTTPS compartido que nunca resuelve un host a loopback, link-local o la IMDS del propio guest. La
@@ -72,6 +73,24 @@ Por cada ruta de `gateways=`/`gateways`:
    (`upstream_timeout`); cualquier otro fallo tras conectar (TLS, conexión
    cortada, respuesta malformada) es 502 (`upstream_error`). El cuerpo de
    una respuesta en flujo no tiene tope.
+6. La respuesta del `upstream` llega al sandbox con su estado y su cuerpo
+   **sin cambios**. De sus cabeceras, `rayd` elimina las de transporte, las
+   que llevan el nombre de una de `headers` y cualquiera cuyo valor
+   contenga uno de los valores inyectados (de 8 caracteres o más).
+
+## Lo que la pasarela no puede impedir
+
+!!! warning "Un endpoint que refleja la petición entrega el secreto"
+    La pasarela no inspecciona el cuerpo de la respuesta. Si una regla de
+    `allow` apunta a un endpoint que devuelve las cabeceras de la petición
+    (rutas de depuración o de eco del tipo `/headers` o `/anything`,
+    páginas de error verbosas que repiten `Authorization` o `x-api-key`),
+    el código del sandbox lee el secreto en ese cuerpo. La garantía es «el
+    sandbox puede usar el secreto y no puede leerlo **salvo que el
+    `upstream` permitido lo refleje**»: es un límite que la pasarela no
+    puede imponer por ti. Lista en `allow` sólo las rutas que tu agente
+    necesita y nunca una de depuración o de eco
+    ([`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md), T24).
 
 Los nombres de `headers` deben ser un *token* HTTP válido (RFC 9110), no
 pueden repetirse ignorando mayúsculas (`X-Api-Key` y `x-api-key` son el

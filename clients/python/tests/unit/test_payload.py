@@ -6,6 +6,7 @@ import json
 import pytest
 
 from rayito._limits import ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS
+from rayito._models import S3Prefix
 from rayito._payload import (
     access_token_sha256,
     build_run_hook_payload,
@@ -146,3 +147,17 @@ def test_a_caller_token_shorter_than_the_minimum_is_rejected_without_echoing_it(
 def test_a_token_at_the_minimum_is_accepted() -> None:
     token = encode_access_token(b"x" * ACCESS_TOKEN_MIN_BYTES)
     assert validate_access_token(token) == token
+
+
+def test_persist_block_binds_the_bucket_and_the_base_prefix() -> None:
+    """C-07: `rayd` liga el sandbox a la base del operador, no a `prefix/name`
+    (el `name` por defecto es el `sandbox_id`, que aún no existe al lanzar)."""
+    bound = json.loads(
+        build_run_hook_payload(
+            access_token=TOKEN,
+            persist=S3Prefix("amzn-s3-demo-bucket", prefix="tenants/acme", name="agent-7"),
+        )
+    )
+    assert bound["persist"] == {"bucket": "amzn-s3-demo-bucket", "key_prefix": "tenants/acme"}
+    assert bound["v"] == 1
+    assert "persist" not in json.loads(build_run_hook_payload(access_token=TOKEN))

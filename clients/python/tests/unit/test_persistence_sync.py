@@ -4,6 +4,7 @@ control con Stubber."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -99,6 +100,43 @@ def sandbox(control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint) -> Iter
 
 
 # ------------------------------------------------------------ create rules
+
+
+def captured_payloads(control_plane: StubbedControlPlane) -> list[dict[str, Any]]:
+    """Los `runHookPayload` que cada `run_microvm` envía, ya parseados."""
+    payloads: list[dict[str, Any]] = []
+    original = control_plane.plane.run_microvm
+
+    def spy(request: Any) -> Any:
+        payloads.append(json.loads(request.run_hook_payload))
+        return original(request)
+
+    control_plane.plane.run_microvm = spy  # type: ignore[method-assign]
+    return payloads
+
+
+def test_create_persist_binds_the_bucket_and_base_prefix_in_the_payload(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    payloads = captured_payloads(control_plane)
+    created = create(control_plane, fake_rayd, persist=S3Prefix(BUCKET, prefix="tenants/acme"))
+    try:
+        assert payloads[-1]["persist"] == {"bucket": BUCKET, "key_prefix": "tenants/acme"}
+    finally:
+        stub_terminate(control_plane)
+        created.kill()
+
+
+def test_create_without_persist_binds_nothing(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    payloads = captured_payloads(control_plane)
+    created = create(control_plane, fake_rayd)
+    try:
+        assert "persist" not in payloads[-1]
+    finally:
+        stub_terminate(control_plane)
+        created.kill()
 
 
 def test_persist_without_role_is_rejected_before_any_plane_call(

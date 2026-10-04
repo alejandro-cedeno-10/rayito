@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { InvalidArgumentError } from "./errors.js";
 import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
 import { type LifecycleBlock, lifecycleBlockToWire } from "./sandbox/lifecycle.js";
+import type { S3Prefix } from "./sandbox/persistence.js";
 import { stripTrailing } from "./strings.js";
 
 export const PAYLOAD_VERSION = 1;
@@ -85,6 +86,15 @@ export interface RunHookPayloadOptions {
   readonly networkEnforce?: boolean | undefined;
   /** El plazo lógico (ADR-011), ya validado por `resolveLifecycle`; sin él no viaja la clave. */
   readonly lifecycle?: LifecycleBlock | undefined;
+  /**
+   * El `S3Prefix` de `create({ persist })`: añade
+   * `"persist": {"bucket": ..., "key_prefix": <prefix>}` y `rayd` liga a ese
+   * bucket y a esa base cada `Checkpoint`/`Restore` del sandbox, con
+   * `PERMISSION_DENIED` fuera de ella (C-07). Viaja la base (`prefix`), no
+   * `prefix/name`: el `name` por defecto es el `sandboxId`, que aún no existe
+   * al lanzar, y un restore desde otro `name` de la misma base es legítimo.
+   */
+  readonly persist?: S3Prefix | undefined;
 }
 
 /**
@@ -121,6 +131,9 @@ export function buildRunHookPayload(options: RunHookPayloadOptions): string {
   if (options.lifecycle !== undefined) {
     payload.lifecycle = lifecycleBlockToWire(options.lifecycle);
   }
+  if (options.persist !== undefined) {
+    payload.persist = persistBinding(options.persist);
+  }
   const text = asciiJson(sortedKeys(payload));
   if (text.length > RUN_HOOK_PAYLOAD_MAX_CHARS) {
     throw new InvalidArgumentError(
@@ -130,6 +143,11 @@ export function buildRunHookPayload(options: RunHookPayloadOptions): string {
     );
   }
   return text;
+}
+
+/** El bloque `persist` del payload: el bucket y la base del `S3Prefix`. */
+export function persistBinding(persist: S3Prefix): { bucket: string; key_prefix: string } {
+  return { bucket: persist.bucket, key_prefix: persist.prefix };
 }
 
 export function validatedEnvs(envs: Readonly<Record<string, string>>): Record<string, string> {

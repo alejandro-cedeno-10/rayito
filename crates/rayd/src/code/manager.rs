@@ -375,11 +375,31 @@ impl CodeManager {
         self.session
             .stream_gate()
             .map_err(|phase| CodeError::NotAcceptingStreams { phase })?;
-        self.execute_unchecked(input).await
+        self.start_execution(input).await
     }
 
-    /// `/validate` runs before `/run`, so it skips the phase gate.
+    /// `/validate` runs before `/run`, so it skips the stream gate; the
+    /// build gate takes its place, so this path never runs a cell once the
+    /// boot accepted `/run` (the `default` context is the operator's then).
     pub async fn execute_unchecked(
+        self: &Arc<Self>,
+        input: ExecuteInput,
+    ) -> Result<ExecutionSubscriberStream, CodeError> {
+        self.build_gate()?;
+        self.start_execution(input).await
+    }
+
+    /// Build-hook work runs only while the boot is still a build:
+    /// `Booting` or `Ready`, with no `/run` accepted.
+    pub fn build_gate(&self) -> Result<(), CodeError> {
+        self.session
+            .build_gate()
+            .map_err(|phase| CodeError::NotAcceptingStreams { phase })
+    }
+
+    /// Readiness, context, code size, envs; then the origin stream. Every
+    /// caller has already passed a phase gate.
+    async fn start_execution(
         self: &Arc<Self>,
         input: ExecuteInput,
     ) -> Result<ExecutionSubscriberStream, CodeError> {

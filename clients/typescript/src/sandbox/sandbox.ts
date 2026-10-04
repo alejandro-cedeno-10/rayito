@@ -959,6 +959,7 @@ export class Sandbox implements AsyncDisposable {
       logging: options.logging,
       accessToken: options.accessToken,
       networkEnforce: requiresEnforcement(network),
+      persist: options.persist,
     });
     options.signal?.throwIfAborted();
     const sandbox = await instrumentation.span(

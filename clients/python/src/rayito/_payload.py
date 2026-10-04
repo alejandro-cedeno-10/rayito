@@ -24,6 +24,7 @@ from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._lifecycle_base import LifecycleBlock
+    from rayito._models import S3Prefix
 
 PAYLOAD_VERSION: Final = 1
 DEFAULT_USER: Final = "user"
@@ -83,6 +84,7 @@ def build_run_hook_payload(
     cpu_time_limit: int | None = None,
     lifecycle: LifecycleBlock | None = None,
     network_enforce: bool = False,
+    persist: S3Prefix | None = None,
 ) -> str:
     """Serializa el payload y falla si supera el límite del modelo (4096 chars).
 
@@ -97,6 +99,13 @@ def build_run_hook_payload(
     `network_enforce` añade `"network": {"enforce": true}` (ADR-012): `rayd`
     instala deny-all antes de responder a `/run` y la política real llega
     después por `UpdateNetwork`; el payload nunca lleva reglas ni credenciales.
+    `persist` (el `S3Prefix` de `create(persist=)`) añade
+    `"persist": {"bucket": ..., "key_prefix": <prefix>}`: `rayd` liga a ese
+    bucket y a esa base cada `Checkpoint`/`Restore` del sandbox y rechaza con
+    `PERMISSION_DENIED` cualquier ubicación fuera de ella (C-07). Viaja la base
+    (`prefix`), no `prefix/name`: el `name` por defecto es el `sandbox_id`,
+    que aún no existe al lanzar, y un restore desde otro `name` de la misma
+    base sigue siendo legítimo.
     """
     if not access_token:
         raise InvalidArgumentException("access_token no puede estar vacío")
@@ -116,6 +125,8 @@ def build_run_hook_payload(
         payload["lifecycle"] = lifecycle.to_wire()
     if network_enforce:
         payload["network"] = {"enforce": True}
+    if persist is not None:
+        payload["persist"] = persist_binding(persist)
     text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     if len(text) > RUN_HOOK_PAYLOAD_MAX_CHARS:
         raise InvalidArgumentException(
@@ -125,6 +136,11 @@ def build_run_hook_payload(
             "files.write()."
         )
     return text
+
+
+def persist_binding(persist: S3Prefix) -> dict[str, str]:
+    """El bloque `persist` del payload: el bucket y la base del `S3Prefix`."""
+    return {"bucket": persist.bucket, "key_prefix": persist.prefix}
 
 
 def validated_cpu_time_limit(cpu_time_limit: int) -> int:

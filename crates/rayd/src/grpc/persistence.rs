@@ -286,21 +286,27 @@ mod tests {
         _shutdown: CancellationToken,
     }
 
+    const UNBOUND_PAYLOAD: &str = "{\"v\":1,\"token_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}";
+    /// The same payload with the `persist` scope `create(persist=)` sends.
+    const BOUND_PAYLOAD: &str = "{\"v\":1,\"token_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"persist\":{\"bucket\":\"my-bucket\",\"key_prefix\":\"rayito/mine\"}}";
+
     /// A session past `/run` (the stream gate is open) with `mvm-test` as
     /// the sandbox id the manifest records.
-    fn running_session() -> Arc<SandboxSession> {
+    fn running_session(payload: &str) -> Arc<SandboxSession> {
         let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
         session.run(RunHookInput {
             sandbox_id: Some("mvm-test"),
-            payload: Some(
-                "{\"v\":1,\"token_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
-            ),
+            payload: Some(payload),
         });
         session
     }
 
     async fn fixture() -> Fixture {
-        let session = running_session();
+        fixture_with(UNBOUND_PAYLOAD).await
+    }
+
+    async fn fixture_with(payload: &str) -> Fixture {
+        let session = running_session(payload);
         let store = FakeStore::default();
         let archiver = Arc::new(FakeArchiver::default());
         let manager = PersistenceManager::new(
@@ -533,6 +539,51 @@ mod tests {
                 .contains(&"put_multipart".to_owned()),
             "the network is never touched without credentials"
         );
+    }
+
+    #[tokio::test]
+    async fn a_bound_sandbox_reaches_only_the_homes_under_its_scope() {
+        let mut fixture = fixture_with(BOUND_PAYLOAD).await;
+        fixture.archiver.set_home(home());
+        seed_checkpoint(&fixture.store, "rayito/other", &home());
+        let operations_before = fixture.store.operations().len();
+        let read = fixture
+            .client
+            .restore(restore_request("other"))
+            .await
+            .unwrap_err();
+        assert_eq!(read.code(), Code::PermissionDenied);
+        assert_eq!(
+            read.message(),
+            "la ubicación queda fuera del prefijo de persistencia ligado al sandbox"
+        );
+        let write = fixture
+            .client
+            .checkpoint(checkpoint_request("other", &[]))
+            .await
+            .unwrap_err();
+        assert_eq!(write.code(), Code::PermissionDenied);
+        let sibling = fixture
+            .client
+            .checkpoint(checkpoint_request("mine-evil", &[]))
+            .await
+            .unwrap_err();
+        assert_eq!(sibling.code(), Code::PermissionDenied);
+        assert_eq!(
+            fixture.store.operations().len(),
+            operations_before,
+            "a refused location never reaches the store"
+        );
+        let mut own = fixture
+            .client
+            .checkpoint(checkpoint_request("mine/agent-7", &[]))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(matches!(
+            collect_checkpoint(&mut own).await.last(),
+            Some(checkpoint_event::Event::Done(_))
+        ));
     }
 
     #[tokio::test]

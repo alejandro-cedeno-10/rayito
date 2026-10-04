@@ -17,6 +17,11 @@ use super::policy::{EgressMode, EgressPolicy};
 /// The sandbox user and anything it could become; never root nor the
 /// platform agent's uids 991-994 (Q48). Shared with the IMDS block.
 pub const SANDBOX_UID_RANGE: &str = "1000-65535";
+/// The bounds of `SANDBOX_UID_RANGE` as numbers, for the code that
+/// classifies a uid instead of handing the range to `ip rule` (the hooks'
+/// peer check, `hook_peer`). A unit test pins both spellings together.
+pub const SANDBOX_UID_MIN: u32 = 1000;
+pub const SANDBOX_UID_MAX: u32 = 65_535;
 
 /// The IMDS block's routing table and rule priority (`rayd`'s
 /// `imds_block` adapter): the rule must sort before every egress slot, so
@@ -153,6 +158,14 @@ mod tests {
     use super::*;
     use crate::network::entry::ALL_TRAFFIC;
     use crate::network::policy::{PolicyInput, UpstreamInput};
+
+    #[test]
+    fn the_numeric_bounds_spell_the_ip_rule_range() {
+        assert_eq!(
+            SANDBOX_UID_RANGE,
+            format!("{SANDBOX_UID_MIN}-{SANDBOX_UID_MAX}")
+        );
+    }
 
     fn policy(allow: &[&str], deny: &[&str]) -> EgressPolicy {
         EgressPolicy::parse(PolicyInput {
