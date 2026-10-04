@@ -295,17 +295,19 @@ def validate_pty_dimension(value: object, *, field: str) -> int:
 
 @dataclass(frozen=True)
 class CommandResult:
-    """Salida completa de un comando que terminó con exit code 0.
+    """Salida de un comando que terminó con exit code 0.
 
     Un exit code distinto de cero llega como `CommandExitException`, que lleva
     los mismos campos; `error` queda reservado para futuros estados sin
-    excepción y es `None` en M2.
+    excepción y es `None` en M2. `truncated` es `True` cuando `stdout` o
+    `stderr` superaron `max_output_bytes` y sólo conservan su final.
     """
 
     stdout: str
     stderr: str
     exit_code: int
     error: str | None = None
+    truncated: bool = False
 
 
 @dataclass(frozen=True)

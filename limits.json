@@ -90,5 +90,7 @@
   "supportedMemoryMiB": [512, 1024, 2048, 4096, 8192],
   "guestMemoryMultiplier": 4,
   "efsVolumesMaxPerSandbox": 4,
-  "reservedPorts": [8080, 9000]
+  "reservedPorts": [8080, 9000],
+  "accessTokenMinBytes": 16,
+  "commandOutputMaxBytes": 67108864
 }

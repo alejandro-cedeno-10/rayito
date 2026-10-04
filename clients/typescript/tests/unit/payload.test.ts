@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "../../src/errors.js";
-import { RUN_HOOK_PAYLOAD_MAX_CHARS } from "../../src/limits.js";
+import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "../../src/limits.js";
 import {
   accessTokenSha256,
   buildRunHookPayload,
@@ -147,5 +147,27 @@ describe("runHookPayload", () => {
     expect(validatedEnvs({ A: "1" })).toEqual({ A: "1" });
     expect(() => validatedEnvs({ "": "1" })).toThrow(InvalidArgumentError);
     expect(() => validatedEnvs({ A: 1 as unknown as string })).toThrow(InvalidArgumentError);
+  });
+});
+
+describe("caller-supplied access tokens", () => {
+  test("a token shorter than the minimum is rejected without echoing it", () => {
+    const short = encodeAccessToken(new Uint8Array(ACCESS_TOKEN_MIN_BYTES - 1).fill(120));
+    expect(() => validateAccessToken(short)).toThrow(InvalidArgumentError);
+    expect(() => validateAccessToken(short)).toThrow(/demasiado corto/);
+    try {
+      validateAccessToken(short);
+    } catch (error) {
+      expect((error as Error).message).not.toContain(short);
+      expect((error as Error).message).toContain(String(ACCESS_TOKEN_MIN_BYTES));
+    }
+    expect(() => accessTokenSha256(encodeAccessToken(new Uint8Array([65])))).toThrow(
+      /demasiado corto/,
+    );
+  });
+
+  test("a token at the minimum is accepted", () => {
+    const token = encodeAccessToken(new Uint8Array(ACCESS_TOKEN_MIN_BYTES).fill(120));
+    expect(validateAccessToken(token)).toBe(token);
   });
 });

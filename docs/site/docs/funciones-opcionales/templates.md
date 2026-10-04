@@ -110,10 +110,76 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
 
 `copy("app/", "/srv/app/")` lee `app/` relativo a `context_dir=`/
 `contextDir` (por defecto, el directorio actual) y respeta su
-`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un enlace
-simbólico hacia fuera) da `BuildException(reason="context_path_outside")`.
+`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un `src`
+que es un enlace simbólico hacia fuera) da
+`BuildException(reason="context_path_outside")`. Dentro de un directorio
+copiado, los enlaces simbólicos (a fichero o a directorio) **nunca se
+siguen**, igual que en Docker y en los dos SDKs: un `config ->
+~/.aws/credentials` dentro de `app/` no acaba en el artefacto que se sube a
+S3 ni en la imagen, donde el código del sandbox lo podría leer. Si
+necesitas ese contenido, cópialo como fichero real dentro del contexto.
 Los ficheros van bajo `__rayito_context/` dentro del zip: nunca sustituyen
 el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
+
+### `.dockerignore`
+
+Los dos SDKs siguen la semántica de `.dockerignore` de Docker (con los
+mismos vectores de prueba):
+
+- Cada patrón queda **anclado en la raíz del contexto**: `README.md` no
+  excluye `docs/README.md`, y `/build`, `build` y `build/` son lo mismo.
+- `*` y `?` **no cruzan `/`**: `*.pyc` sólo excluye los de la raíz; para
+  cualquier profundidad, `**/*.pyc`.
+- `**` es cero o más directorios: `**/.env` excluye el `.env` de la raíz y
+  los de cualquier subdirectorio (el idioma que genera `docker init`).
+- Un patrón que casa con un directorio excluye todo lo que hay dentro, y
+  el último patrón que casa gana: `node_modules` seguido de
+  `!node_modules/keep.js` deja pasar `keep.js`.
+
+```text
+**/.env
+**/.env.*
+**/.git
+**/node_modules
+**/*.pem
+```
+
+Si el contexto va a empaquetar algo que suele llevar secretos (`.env`,
+`.env.*`, `.git/`, `.aws/`, `.ssh/`, `*.pem`, `*.key`), el SDK avisa con
+las rutas (nunca el contenido) antes de subir nada: en la imagen, cualquier
+código del sandbox podría leerlo. Para que el aviso pare un build en CI:
+
+=== "Python"
+
+    ```python
+    import warnings
+
+    from rayito import Template
+
+    warnings.filterwarnings("error", message="el contexto de build empaqueta")
+    t = Template().from_base_image().copy(".", "/app")
+    Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    process.on("warning", (warning) => {
+      if (warning.name === "RayitoContextWarning") {
+        console.error(warning.message);
+        process.exit(1);
+      }
+    });
+    const t = new Template().fromBaseImage().copy(".", "/app");
+    await Template.build(t, "mi-template", { bucket: "mi-bucket-de-artefactos" });
+    ```
+
+!!! warning "Cambio de comportamiento en 0.6.x"
+    Antes, `*` cruzaba `/` (`*.pyc` excluía también `sub/x.pyc`) y `**/X`
+    no casaba en la raíz. Si tu `.dockerignore` contaba con lo primero,
+    añade `**/` delante del patrón.
 
 ## Errores
 
@@ -122,12 +188,13 @@ el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
 | `None` + `step`/`command`/`exit_code`/`log_tail` | un `RUN` del Dockerfile compuesto salió con error |
 | `ready_client_error` / `ready_server_error` | el proceso detrás de `/ready` respondió 4xx/5xx durante el build (Q85) |
 | `build_quota` | ya hay 10 builds en marcha en este proceso, o AWS rechazó el undécimo de la cuenta (Q83) |
+| `aws_error` | AWS rechazó el build por otro motivo; el mensaje y la causa llevan sólo el código y el mensaje saneados (sin la cadena canónica de un error de firma) |
 | `build_timeout` | el build no terminó en `timeout`; sigue en AWS y `get_build_status()` lo consulta |
 | `context_path_missing` / `context_path_outside` | un `copy()` nombra algo que no existe, o fuera del contexto |
 | `base_image_not_s3` / `base_image_missing_artifact` / `base_image_missing_entrypoint` | la imagen base no es una imagen `rayito-*` publicada con `rayito image publish` |
 
 Los mensajes nombran el template que pasaste, nunca un ARN ni el texto
-libre de AWS.
+libre de AWS sin sanear.
 
 ## Ejemplo rápido
 

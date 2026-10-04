@@ -1,0 +1,271 @@
+{
+  "_comment": "Semántica de .dockerignore de Docker (moby/patternmatcher, MatchesOrParentMatches). Ambos SDKs (clients/python/tests/unit/test_dockerignore_vectors.py y clients/typescript/tests/unit/dockerignore-vectors.test.ts) deben excluir exactamente 'excluded' y dejar pasar 'included' con el mismo texto de .dockerignore.",
+  "cases": [
+    {
+      "name": "defaults de docker init: '**/' también casa en la raíz",
+      "dockerignore": "**/.classpath\n**/.dockerignore\n**/.env\n**/.git\n**/.gitignore\n**/.project\n**/.settings\n**/.toolstarget\n**/.vs\n**/.vscode\n**/*.*proj.user\n**/*.dbmdl\n**/*.jfm\n**/bin\n**/charts\n**/docker-compose*\n**/compose.y*ml\n**/Dockerfile*\n**/node_modules\n**/npm-debug.log\n**/obj\n**/secrets.dev.yaml\n**/values.dev.yaml\nLICENSE\nREADME.md\n",
+      "excluded": [
+        ".env",
+        ".git/config",
+        ".git/objects/ab/cdef",
+        "secrets.dev.yaml",
+        "node_modules/left-pad/index.js",
+        "Dockerfile",
+        "README.md",
+        "LICENSE",
+        "sub/.env",
+        "a/b/.git/HEAD",
+        "svc/secrets.dev.yaml",
+        "web/node_modules/x.js",
+        "compose.yaml",
+        "api/bin/app.dll",
+        "app.csproj.user"
+      ],
+      "included": [
+        "src/app.py",
+        "docs/README.md",
+        "environment.txt",
+        ".envrc",
+        "pkg/LICENSE",
+        "binary/data",
+        "src/.gitkeep"
+      ]
+    },
+    {
+      "name": "'*' y '?' no cruzan '/'",
+      "dockerignore": "*.pyc\nfile?.txt\n",
+      "excluded": [
+        "x.pyc",
+        "file1.txt"
+      ],
+      "included": [
+        "sub/x.pyc",
+        "file10.txt",
+        "dir/file1.txt",
+        "file/.txt"
+      ]
+    },
+    {
+      "name": "'**/' delante excluye a cualquier profundidad",
+      "dockerignore": "**/*.pyc\n",
+      "excluded": [
+        "x.pyc",
+        "a/x.pyc",
+        "a/b/c/x.pyc"
+      ],
+      "included": [
+        "x.py",
+        "pyc/readme"
+      ]
+    },
+    {
+      "name": "anclado en la raíz, con o sin '/' inicial o final",
+      "dockerignore": "/build\ndist/\ntmp\n",
+      "excluded": [
+        "build/out.o",
+        "dist/app.js",
+        "tmp",
+        "tmp/a/b"
+      ],
+      "included": [
+        "src/build/out.o",
+        "lib/dist/app.js",
+        "src/tmp",
+        "tmpfile"
+      ]
+    },
+    {
+      "name": "un directorio padre excluye a sus descendientes",
+      "dockerignore": "docs\nsecrets/*\n",
+      "excluded": [
+        "docs/a/b.md",
+        "docs",
+        "secrets/key",
+        "secrets/sub/key"
+      ],
+      "included": [
+        "src/docs/a.md",
+        "docsite/index.html"
+      ]
+    },
+    {
+      "name": "negación: el último patrón que casa gana",
+      "dockerignore": "*.md\n!README.md\n!/docs\nCHANGELOG.md\n",
+      "excluded": [
+        "CHANGELOG.md",
+        "NOTES.md"
+      ],
+      "included": [
+        "README.md",
+        "src/notes.md",
+        "docs/guide.md"
+      ]
+    },
+    {
+      "name": "negación anterior a la exclusión no rescata",
+      "dockerignore": "!README.md\n*.md\n",
+      "excluded": [
+        "README.md",
+        "x.md"
+      ],
+      "included": [
+        "readme.txt"
+      ]
+    },
+    {
+      "name": "excepción dentro de un directorio excluido",
+      "dockerignore": "node_modules\n!node_modules/keep.js\n",
+      "excluded": [
+        "node_modules/a.js",
+        "node_modules/sub/b.js"
+      ],
+      "included": [
+        "node_modules/keep.js",
+        "src/node_modules/a.js"
+      ]
+    },
+    {
+      "name": "'**' en medio: cero o más segmentos",
+      "dockerignore": "a/**/b\n",
+      "excluded": [
+        "a/b",
+        "a/x/b",
+        "a/x/y/b",
+        "a/x/y/b/c"
+      ],
+      "included": [
+        "a/xb",
+        "b",
+        "x/a/b",
+        "a/b2"
+      ]
+    },
+    {
+      "name": "'**' al final: al menos un segmento",
+      "dockerignore": "logs/**\n",
+      "excluded": [
+        "logs/a",
+        "logs/a/b"
+      ],
+      "included": [
+        "logs",
+        "logsx/a",
+        "app/logs/a"
+      ]
+    },
+    {
+      "name": "'**' solo excluye todo y una negación rescata un directorio",
+      "dockerignore": "**\n!src\n!Dockerfile\n",
+      "excluded": [
+        ".env",
+        "a/b/c",
+        "README.md"
+      ],
+      "included": [
+        "src/main.py",
+        "src/a/b.py",
+        "Dockerfile"
+      ]
+    },
+    {
+      "name": "'**' pegado a otros caracteres cuenta como '*'",
+      "dockerignore": "foo**\n",
+      "excluded": [
+        "foo",
+        "foobar",
+        "foobar/x"
+      ],
+      "included": [
+        "a/foobar",
+        "barfoo"
+      ]
+    },
+    {
+      "name": "limpieza del patrón como filepath.Clean",
+      "dockerignore": "./build//out/../\n//cache//\nx/./y\n",
+      "excluded": [
+        "build/a.o",
+        "cache/a",
+        "x/y"
+      ],
+      "included": [
+        "out/a.o",
+        "build2"
+      ]
+    },
+    {
+      "name": "clases de caracteres, rangos y negación de clase",
+      "dockerignore": "[ab].txt\n[!x-z].log\n[^q].tmp\n[]].cfg\n",
+      "excluded": [
+        "a.txt",
+        "b.txt",
+        "c.log",
+        "a.tmp",
+        "].cfg"
+      ],
+      "included": [
+        "c.txt",
+        "x.log",
+        "y.log",
+        "q.tmp",
+        "ab.txt",
+        "/.txt"
+      ]
+    },
+    {
+      "name": "un '[' sin cerrar es un literal",
+      "dockerignore": "[abc\n",
+      "excluded": [
+        "[abc"
+      ],
+      "included": [
+        "a",
+        "abc"
+      ]
+    },
+    {
+      "name": "'\\\\' escapa el carácter siguiente",
+      "dockerignore": "\\*.txt\nfile\\?\n",
+      "excluded": [
+        "*.txt",
+        "file?"
+      ],
+      "included": [
+        "a.txt",
+        "files"
+      ]
+    },
+    {
+      "name": "comentarios, líneas vacías, espacios y CRLF",
+      "dockerignore": "# comentario\r\n\r\n   .env   \r\n  # otro\r\n!\r\n/\r\n.\r\n",
+      "excluded": [
+        ".env"
+      ],
+      "included": [
+        "# comentario",
+        "comentario",
+        "src/a.py"
+      ]
+    },
+    {
+      "name": "'#' sólo comenta al principio de la línea",
+      "dockerignore": "a#b\n",
+      "excluded": [
+        "a#b"
+      ],
+      "included": [
+        "a"
+      ]
+    },
+    {
+      "name": "un BOM UTF-8 al principio no forma parte del primer patrón",
+      "dockerignore": "﻿.env\n",
+      "excluded": [
+        ".env"
+      ],
+      "included": [
+        "﻿.env"
+      ]
+    }
+  ]
+}

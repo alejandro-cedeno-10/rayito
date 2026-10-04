@@ -25,7 +25,11 @@ metadatos, OpenTelemetry): esas sólo se activan con una opción del SDK.
     Si la exportas, cada `create()` de ese proceso reutiliza el mismo
     secreto, así que una fuga abre todos sus sandboxes, no uno. Por defecto
     `create()` genera 32 bytes aleatorios por sandbox. Úsala para `connect()`
-    o la CLI desde otro proceso, no en el proceso que crea sandboxes.
+    o la CLI desde otro proceso, no en el proceso que crea sandboxes. Un
+    token propio (aquí, en `access_token=`/`accessToken` o en
+    `--token-file`) tiene que ser base64url de al menos 16 bytes aleatorios
+    (`ACCESS_TOKEN_MIN_BYTES`); uno más corto es `InvalidArgumentException`
+    / `InvalidArgumentError`, sin repetir el token en el mensaje.
 
 ## CLI
 

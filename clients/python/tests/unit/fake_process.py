@@ -335,6 +335,7 @@ class CannedReply:
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
+    times_out: bool = False
 
 
 def run_canned(process: FakeProcess, reply: CannedReply) -> None:
@@ -342,7 +343,7 @@ def run_canned(process: FakeProcess, reply: CannedReply) -> None:
         process.publish("stdout", reply.stdout.encode())
     if reply.stderr:
         process.publish("stderr", reply.stderr.encode())
-    process.finish(exited(reply.exit_code))
+    process.finish(timed_out() if reply.times_out else exited(reply.exit_code))
 
 
 def run_unknown(process: FakeProcess, name: str) -> None:

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import grpc
 
+from rayito._limits import COMMAND_OUTPUT_MAX_BYTES
 from rayito._models import CommandResult, ProcessInfo
 from rayito._process_base import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -35,6 +36,7 @@ from rayito._process_base import (
     stream_deadline,
     suspending_reason,
     validate_from_seq,
+    validate_max_output_bytes,
     validate_pid,
 )
 from rayito._sandbox_base import GateRetry, ReconnectBudget
@@ -79,6 +81,7 @@ class AsyncCommands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult: ...
 
     @overload
@@ -97,6 +100,7 @@ class AsyncCommands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> AsyncCommandHandle: ...
 
     @overload
@@ -115,6 +119,7 @@ class AsyncCommands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult | AsyncCommandHandle: ...
 
     async def run(
@@ -132,8 +137,10 @@ class AsyncCommands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult | AsyncCommandHandle:
         """Misma semántica que `Commands.run`; los callbacks corren en el loop."""
+        validate_max_output_bytes(max_output_bytes)
         envs = await self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
@@ -150,6 +157,7 @@ class AsyncCommands:
                 on_stderr=on_stderr,
                 request_timeout=request_timeout,
                 foreground=not background,
+                max_output_bytes=max_output_bytes,
             )
             if background:
                 return handle
@@ -170,6 +178,7 @@ class AsyncCommands:
         on_stderr: OutputCallback | None = None,
         timeout: float | None = None,
         request_timeout: float | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> AsyncCommandHandle:
         """Misma semántica que `Commands.connect`."""
         return await self._attach(
@@ -179,6 +188,7 @@ class AsyncCommands:
             on_stdout=on_stdout,
             on_stderr=on_stderr,
             request_timeout=request_timeout,
+            max_output_bytes=validate_max_output_bytes(max_output_bytes),
         )
 
     async def list(self, *, request_timeout: float | None = None) -> list[ProcessInfo]:
@@ -236,9 +246,12 @@ class AsyncCommands:
         on_stderr: OutputCallback | None,
         request_timeout: float | None,
         foreground: bool = False,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> AsyncCommandHandle:
         call, first = await self._sandbox._open_stream(start, service=PROCESS_STUB, stream=stream)
-        accumulator = OutputAccumulator(on_stdout=on_stdout, on_stderr=on_stderr)
+        accumulator = OutputAccumulator(
+            on_stdout=on_stdout, on_stderr=on_stderr, max_bytes=max_output_bytes
+        )
         progress = CommandProgress(pid_from_start_event(first), accumulator)
         return AsyncCommandHandle(
             commands=self,

@@ -1,8 +1,16 @@
 /**
  * `sandbox.git`: el módulo git de E2B 2.x sobre `commands.run` (sin RPC
  * nuevo). Cada operación es un `git [-C <ruta>] <args…>` entre comillas, en
- * primer plano y con `GIT_TERMINAL_PROMPT=0`. Nunca registra nada: el comando
- * lleva las credenciales cuando se pasan, y sólo viaja en `StartRequest.cmd`.
+ * primer plano y con `GIT_TERMINAL_PROMPT=0`. El comando lleva las
+ * credenciales cuando se pasan, y sólo viaja en `StartRequest.cmd`; lo único
+ * que se registra (con el `logger` inyectado) es el aviso
+ * `credentialsMayRemainMessage`, sin URL, remoto ni ruta.
+ *
+ * Con credenciales, antes de enviarlas se comprueba que la configuración de
+ * git no reescribe URLs (`url.*.insteadOf`, `GitAuthError` si lo hace) y la
+ * orden corre sin hooks ni credential helpers (`CREDENTIAL_ISOLATION_ARGS`).
+ * Eso no las protege de código que ya corre en el sandbox con el mismo
+ * usuario (shell de login, `/proc`): ver `SECURITY.md` T9.
  */
 
 import {
@@ -11,6 +19,7 @@ import {
   GitUpstreamError,
   InvalidArgumentError,
 } from "../errors.js";
+import type { Logger } from "../logger.js";
 import type { CommandResult } from "../models.js";
 import type { CommandOptions } from "./commands.js";
 import {
@@ -22,7 +31,9 @@ import {
   commitArgs,
   createBranchArgs,
   credentialApproveCommand,
+  credentialsMayRemainMessage,
   deleteBranchArgs,
+  GIT_CONFIG_NO_MATCH_EXIT_CODE,
   type GitAction,
   type GitBranches,
   type GitConfigScope,
@@ -32,9 +43,11 @@ import {
   gitCommand,
   gitEnvs,
   hasUpstreamArgs,
+  hasUrlRewrites,
   initArgs,
   isAuthFailure,
   isMissingUpstream,
+  isolatedArgs,
   parseGitBranches,
   parseGitStatus,
   pullArgs,
@@ -53,6 +66,8 @@ import {
   setConfigArgs,
   statusArgs,
   upstreamErrorMessage,
+  urlRewriteCheckArgs,
+  urlRewriteErrorMessage,
   withCredentials,
 } from "./git-args.js";
 
@@ -195,27 +210,47 @@ function gitFailure(
  */
 export class Git {
   readonly #commands: GitCommandRunner;
+  readonly #logger: Logger | undefined;
 
-  constructor(commands: GitCommandRunner) {
+  constructor(commands: GitCommandRunner, logger?: Logger) {
     this.#commands = commands;
+    this.#logger = logger;
   }
 
   async clone(url: string, opts: GitCloneOpts = {}): Promise<CommandResult> {
     requireUsernameForPassword("clone", opts);
     const plan = buildClonePlan({ url, ...opts });
-    try {
-      const result = await this.#runGit(plan.args, undefined, opts);
+    if (plan.credentialed) {
+      await this.#refuseUrlRewrites(undefined, opts, "clone");
+    }
+    const strip = async (): Promise<void> => {
       if (plan.sanitizedUrl !== undefined) {
-        await this.#runGit(
+        await this.#restoreRemote(
           remoteSetUrlArgs(DEFAULT_GIT_REMOTE, plan.sanitizedUrl),
           plan.repoPath,
           opts,
+          "clone",
         );
       }
-      return result;
+    };
+    let result: CommandResult;
+    try {
+      result = await this.#runGit(plan.args, undefined, opts);
+    } catch (error) {
+      if (!(error instanceof CommandExitError)) {
+        await this.#settle(async () => {
+          await strip();
+          return undefined;
+        });
+      }
+      throw gitFailure(error, "clone", opts);
+    }
+    try {
+      await strip();
     } catch (error) {
       throw gitFailure(error, "clone", opts);
     }
+    return result;
   }
 
   init(path: string, opts: GitInitOpts = {}): Promise<CommandResult> {
@@ -294,7 +329,7 @@ export class Git {
     if (opts.username && opts.password) {
       const remote = await this.#remoteName(path, opts);
       return this.#withRemoteCredentials(path, remote, opts, "push", () =>
-        this.#runGit(pushArgs({ ...opts, remote }), path, opts),
+        this.#runGit(isolatedArgs(pushArgs({ ...opts, remote })), path, opts),
       );
     }
     try {
@@ -312,7 +347,7 @@ export class Git {
     if (opts.username && opts.password) {
       const remote = await this.#remoteName(path, opts);
       return this.#withRemoteCredentials(path, remote, opts, "pull", () =>
-        this.#runGit(pullArgs({ ...opts, remote }), path, opts),
+        this.#runGit(isolatedArgs(pullArgs({ ...opts, remote })), path, opts),
       );
     }
     try {
@@ -361,9 +396,11 @@ export class Git {
   }
 
   /**
-   * `remote get-url` → `remote set-url` con credenciales → la operación →
-   * `remote set-url` con la URL original, siempre (también si la operación
-   * falló). Un fallo al restaurar sólo se lanza si la operación salió bien.
+   * Comprobación de reescrituras de URL → `remote get-url` → `remote set-url`
+   * con credenciales → la operación → `remote set-url` con la URL original,
+   * siempre (también si la operación o el propio `set-url` fallaron). Un
+   * fallo al restaurar sólo se lanza si la operación salió bien, y en los dos
+   * casos deja el aviso `credentialsMayRemainMessage`.
    */
   async #withRemoteCredentials(
     path: string,
@@ -372,6 +409,7 @@ export class Git {
     action: "push" | "pull",
     operation: () => Promise<CommandResult>,
   ): Promise<CommandResult> {
+    await this.#refuseUrlRewrites(path, opts, action);
     const original = await this.#remoteUrl(path, remote, opts);
     const credentialed = withCredentials(original, opts.username, opts.password);
     const outcome = await this.#settle(async () => {
@@ -379,7 +417,7 @@ export class Git {
       return operation();
     });
     const restored = await this.#settle(() =>
-      this.#runGit(remoteSetUrlArgs(remote, original), path, opts),
+      this.#restoreRemote(remoteSetUrlArgs(remote, original), path, opts, action),
     );
     if (outcome.failed) {
       throw gitFailure(outcome.error, action, opts);
@@ -390,10 +428,48 @@ export class Git {
     return outcome.value;
   }
 
-  async #settle(
-    operation: () => Promise<CommandResult>,
+  /** Devuelve un remoto a su URL sin credenciales; si no puede, avisa (sin URL, remoto ni ruta) y relanza. */
+  async #restoreRemote(
+    args: readonly string[],
+    path: string | undefined,
+    opts: GitRequestOpts,
+    action: GitAction,
+  ): Promise<CommandResult> {
+    try {
+      return await this.#runGit(args, path, opts);
+    } catch (error) {
+      this.#logger?.warn?.(credentialsMayRemainMessage(action));
+      throw error;
+    }
+  }
+
+  /**
+   * `GitAuthError` antes de enviar credenciales si la configuración efectiva
+   * (global, de sistema y, con `repoPath`, la del repo) reescribe URLs.
+   */
+  async #refuseUrlRewrites(
+    repoPath: string | undefined,
+    opts: GitRequestOpts,
+    action: GitAction,
+  ): Promise<void> {
+    let found: string;
+    try {
+      found = (await this.#runGit(urlRewriteCheckArgs(), repoPath, opts)).stdout;
+    } catch (error) {
+      if (error instanceof CommandExitError && error.exitCode === GIT_CONFIG_NO_MATCH_EXIT_CODE) {
+        return;
+      }
+      throw gitFailure(error, undefined, {});
+    }
+    if (hasUrlRewrites(found)) {
+      throw new GitAuthError(urlRewriteErrorMessage(action));
+    }
+  }
+
+  async #settle<T>(
+    operation: () => Promise<T>,
   ): Promise<
-    | { readonly failed: false; readonly value: CommandResult }
+    | { readonly failed: false; readonly value: T }
     | { readonly failed: true; readonly error: unknown }
   > {
     try {
