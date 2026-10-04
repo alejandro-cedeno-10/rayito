@@ -97,7 +97,7 @@ IAM, $0 en reposo). Divergencias: sin caché de capas, sólo ARM64, sólo
 por versión.
 
 **Pendiente de la aceptación serializada contra AWS real** (plan y tope de
-coste en `openspec/changes/m15-templates/proposal.md` y en el plan de
+coste en `openspec/changes/archive/2026-10-03-m15-templates/proposal.md` y en el plan de
 aceptación del agente): un build real de principio a fin, uno que falle en
 un paso del Dockerfile, uno con un `ready_cmd` que falle, y la supervivencia
 del `start_cmd` a un ciclo de suspend/resume (necesita una imagen

@@ -175,14 +175,38 @@ cargo publish --dry-run -p rayito-proto
 
 1. Preparar el PR de release-please con `make release-pr`
    (`scripts/prepare_release_pr.py`; `RELEASE_PR_ARGS=--dry-run` para ver
-   el diff sin subir nada). Pone la versión en `Cargo.lock` (rayd,
-   rayd-core, rayito-proto) y en `clients/python/uv.lock`, convierte el
-   `## [Unreleased]` escrito a mano durante el ciclo en `## [x.y.z] - fecha`
-   (descartando las notas que genera release-please) y rehace el PR como un
-   único commit firmado: el ruleset de `main` exige firmas y los commits
-   que crea release-please por la API no lo están. Revisar después que las
-   versiones de `pyproject.toml`, `src/rayito/_version.py`, `package.json`,
-   `src/version.ts`, `Cargo.toml` y `Cargo.lock` son idénticas.
+   el diff sin subir nada). El commit se construye **desde el árbol de
+   `origin/main`**, nunca desde el de la rama de release-please: esa rama
+   puede haberse cortado antes de los últimos merges y copiar su árbol los
+   revierte en silencio (le pasó a 0.5.1). De release-please sólo se toma el
+   número de versión de su `.release-please-manifest.json`; los ficheros que
+   lo llevan se derivan de `release-please-config.json` (el manifiesto, el
+   fichero propio de cada `release-type` —`pyproject.toml`,
+   `package.json`— y los `extra-files`: `src/rayito/_version.py`,
+   `src/version.ts`, `Cargo.toml` y las entradas de rayd, rayd-core y
+   rayito-proto en `Cargo.lock`). Además regenera `clients/python/uv.lock`,
+   convierte el `## [Unreleased]` escrito a mano durante el ciclo en
+   `## [x.y.z] - fecha` (descartando las notas que genera release-please),
+   pone al día los enlaces de comparación del pie de cada CHANGELOG
+   (`[Unreleased]: …/compare/<tag x.y.z>...HEAD` y
+   `[x.y.z]: …/compare/<tag anterior>...<tag x.y.z>`) y rehace el PR como un
+   único commit firmado: el ruleset de `main` exige firmas y los commits que
+   crea release-please por la API no lo están.
+   - **Guarda**: antes de commitear, `git diff --name-only origin/main` debe
+     quedar dentro de manifiesto, ficheros de versión, lockfiles y
+     CHANGELOG; también aborta si release-please movió un fichero que la
+     configuración no explica, o si un fichero de versión que `main` no
+     tocó desde la base de release-please no queda idéntico al de su rama
+     (contraste de los actualizadores con los de release-please). En todos
+     los casos sale con código 2 sin commitear ni subir nada.
+   - **Trailers**: `RELEASE_PR_ARGS='--trailer "Co-Authored-By: …"'`
+     (repetible) o la variable `RELEASE_PR_TRAILERS` (uno por línea) los
+     añade al mensaje, antes del `Signed-off-by`, sin `--amend` posterior.
+   - La rama `release-please--branches--main` no puede estar abierta en otro
+     worktree: el script la recrea en el actual.
+   Revisar después que las versiones de `pyproject.toml`,
+   `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
+   y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
    `python scripts/check_license.py`, `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please

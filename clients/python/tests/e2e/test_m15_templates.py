@@ -1,7 +1,7 @@
 """m15-templates contra AWS real (`RAYITO_E2E=1`, `RAYITO_TEMPLATE` y
 `RAYITO_E2E_TEMPLATE_BUCKET` con un bucket S3 ya existente para el
 artefacto de build). Cubre los pasos 1-3 del plan de aceptación de
-`openspec/changes/m15-templates/proposal.md`:
+`openspec/changes/archive/2026-10-03-m15-templates/proposal.md`:
 
 1. un build correcto (`pip_install` + `copy` + `set_start_cmd`), esperando
    `BuildInfo` y que la imagen quede lanzable.
@@ -18,7 +18,7 @@ esta versión, que lee `/etc/rayito/template.json`).
 
 Cada build crea como mucho una versión de imagen nueva (`force=True` nunca
 se usa dos veces sobre el mismo nombre): tope de coste de la función en
-`openspec/changes/m15-templates/proposal.md` (≈ $0,80, templates es la más
+`openspec/changes/archive/2026-10-03-m15-templates/proposal.md` (≈ $0,80, templates es la más
 cara de las ocho). Los nombres de imagen llevan un sufijo aleatorio por
 corrida para no chocar entre corridas concurrentes; nada se borra aquí
 (fuera de alcance de un agente de función, ver AWS_API_NOTES.md y el plan
