@@ -42,13 +42,25 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
       conectores gestionados por AWS, que `create`/`update` pasan aunque no
       nombres ninguno (`AWS_API_NOTES.md` Q114); `iam:PassRole` sobre el rol de build (el mismo que usa
       `rayito image publish`); `s3:PutObject`/`GetObject` en
-      `rayito/templates/` del bucket de artefactos y `s3:GetObject` en el
-      bucket de la imagen base (por defecto, el mismo); lectura del grupo
-      de logs de la imagen. Deliberadamente separada de cualquier política
-      de lanzar sandboxes.
+      `rayito/templates/` del bucket de artefactos y `s3:GetObject` sólo en
+      `rayito/*` del bucket de la imagen base (por defecto, el mismo; nunca
+      el bucket entero, que puede guardar también los `HOME` persistidos y
+      las transferencias de los sandboxes); lectura del grupo de logs de la
+      imagen. Deliberadamente separada de cualquier política de lanzar
+      sandboxes.
     - **Cómo apagarla**: no llames a `Template.build()`/
       `buildInBackground()`. Las versiones de imagen ya construidas se
       borran con `rayito image` (no las borra `Template`).
+
+!!! warning "Publica antes todos los nombres protegidos que vayas a usar"
+    Como `CreateMicrovmImage` no se puede acotar por nombre, quien tenga
+    `RayitoTemplateBuilder` puede **crear** una imagen con un nombre
+    protegido que todavía no exista en esa cuenta y región (por ejemplo una
+    variante de tamaño o `-caps` que no hayas publicado). Si luego un
+    servicio pide ese nombre (`Sandbox.create(size=...)` lo resuelve por
+    sufijo), correría el código del builder con el rol de ejecución de ese
+    servicio. Publica con `rayito image publish`, en cada región que uses,
+    todas las variantes que tus servicios puedan pedir.
 
 ## Cuándo usarlo
 

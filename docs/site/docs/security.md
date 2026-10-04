@@ -146,6 +146,44 @@ metas en ella nada que no pondrías en una etiqueta.
 
 Detalle en `SECURITY.md` T19.
 
+## Eventos y webhooks (T22)
+
+Con `events=`/`LifecycleEvents`, `rayd` emite eventos firmados por stdout y
+tres Lambdas de tu cuenta los verifican, guardan y entregan a tus webhooks.
+
+- **Sólo el MAC autentica.** El forwarder deriva la clave del sandbox que
+  nombra el *log stream* y verifica el MAC antes de leer el contenido. El
+  nombre del stream no prueba identidad: quien tenga el execution role
+  (legible desde la imagen por defecto, T1) o el rol de build puede escribir
+  en el stream de otro sandbox, pero sin su clave no pasa el MAC.
+- **Sólo lo que emite `rayd`, y reciente.** Tipos estrictos, el mismo
+  `sandbox_id` que el stream, campos con la forma de `rayd` y un
+  `occurred_at_ms` de menos de 24 h: una línea repetida días después no
+  vuelve a entregarse.
+- **Una línea o un webhook malos no bloquean a los demás.** La línea mala
+  se cuenta y se descarta; un webhook con URL rota o lento falla solo. Lo
+  que no se pudo escribir o entregar tras los reintentos queda en las
+  colas SQS de la pila.
+- **Firma sin marca de tiempo** (la de E2B, byte a byte): en el receptor,
+  deduplica por `event_id` y usa un secreto aleatorio de 32 bytes o más.
+- **Secretos**: los de firma de webhooks (`rayito/webhooks/`) nunca llegan
+  a un sandbox (`RayitoSecretsReader` los niega y el SDK los rechaza en
+  `secrets=`). Las URLs de webhook se guardan en claro en tu tabla.
+- **Mínimo privilegio**: cada Lambda escribe sólo sus filas y sólo en sus
+  propios log groups; la política del operador sólo escribe filas de
+  webhooks.
+
+Detalle en `SECURITY.md` T22.
+
+## Quién publica imágenes
+
+`infra/iam.yaml` separa `SandboxLauncherPolicy` (lanzar y manejar sandboxes)
+de `ImagePublisherPolicy` (publicar imágenes); `CallerPolicy` es la unión de
+las dos. Al rol de un servicio en producción vincúlale sólo la del
+lanzador: si lo comprometen, no puede publicar una versión con puerta
+trasera de la imagen que usarán todos tus sandboxes. Ver
+[IAM](operacion/iam.md).
+
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del

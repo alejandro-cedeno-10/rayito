@@ -5,7 +5,7 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 
 | Plantilla | Qué crea | Cuándo |
 |---|---|---|
-| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`) y la managed policy `CallerPolicy` del publicador (S3 de transferencias con `TransferBucket`) | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
+| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`; siempre un `Deny` sobre `rayito/*` del bucket de artefactos) y tres managed policies del llamante: `SandboxLauncherPolicy` (sólo lanzar sandboxes: la del rol de un servicio en producción), `ImagePublisherPolicy` (sólo publicar imágenes) y `CallerPolicy` (las dos juntas, para una máquina de desarrollo); S3 de transferencias con `TransferBucket` | Siempre, antes de publicar la primera imagen. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
@@ -137,6 +137,15 @@ parámetro `GitHubRef` y una segunda condición `StringLike` sobre
 (`AWS_API_NOTES.md` §10) y, sólo si se pasa `ExecutionRoleArn`,
 `iam:PassRole` sobre ese rol. Nada de imágenes, S3, cuotas ni etiquetas: el
 workflow nunca publica una imagen.
+
+> **Una cuenta sólo para e2e.** Los permisos de MicroVM se conceden por
+> **imagen**: con `TestImageArns=<arn de rayito-base>`, cualquier ejecución
+> del environment `e2e` puede acuñar tokens de acceso para **todos** los
+> sandboxes de `rayito-base` de la cuenta y terminarlos, también los de
+> producción. Despliega este rol en una cuenta (o al menos una región)
+> dedicada a las pruebas, o publica imágenes de test con nombre propio (por
+> ejemplo `rayito-e2e-base`) y pasa sólo esas en `TestImageArns`. Nunca lo
+> despliegues con las imágenes que usan tus servicios.
 
 ### Desplegar
 
@@ -365,7 +374,7 @@ los borras). Acciones y parámetros: `AWS_API_NOTES.md` §19.
 
 | Salida | Política | Concede |
 |---|---|---|
-| `ReaderPolicyArn` | `RayitoSecretsReader` | `secretsmanager:GetSecretValue` y `DescribeSecret` sobre `arn:aws:secretsmanager:<región>:<cuenta>:secret:<SecretPrefix>*`; con `KmsKeyArn`, `kms:Decrypt` sobre esa clave sólo vía Secrets Manager (`kms:ViaService`) |
+| `ReaderPolicyArn` | `RayitoSecretsReader` | `secretsmanager:GetSecretValue` y `DescribeSecret` sobre `arn:aws:secretsmanager:<región>:<cuenta>:secret:<SecretPrefix>*`, con un `Deny` de `GetSecretValue` sobre `secret:rayito/webhooks/*` (los secretos de firma de webhooks nunca llegan a un sandbox); con `KmsKeyArn`, `kms:Decrypt` sobre esa clave sólo vía Secrets Manager (`kms:ViaService`) |
 | `AdminPolicyArn` | `RayitoSecretsAdmin` | lo del lector + `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DeleteSecret` sobre el mismo ARN y `ListSecrets` sobre `*` (la acción no admite otro recurso); con `KmsKeyArn`, `kms:Decrypt` y `kms:GenerateDataKey` vía Secrets Manager |
 
 Se adjuntan a las credenciales del **llamante** del SDK (la máquina o el
@@ -390,7 +399,8 @@ aws cloudformation describe-stacks --stack-name rayito-secrets-access \
 
 Parámetros: `SecretPrefix` (`rayito/` por defecto; debe coincidir con
 `SecretStore(prefix=)`/`secret_prefix=`; nunca vacío, porque un prefijo vacío
-concedería todos los secretos de la cuenta y la región) y `KmsKeyArn`
+concedería todos los secretos de la cuenta y la región, y siempre terminado
+en `/`, porque `rayito` concedería también `rayito-prod-db`) y `KmsKeyArn`
 (vacío por defecto: la clave gestionada por AWS `aws/secretsmanager` no
 necesita permisos KMS aparte). `CAPABILITY_IAM` es obligatorio porque la plantilla
 crea políticas IAM; no hace falta `CAPABILITY_NAMED_IAM`: las políticas no
@@ -483,13 +493,14 @@ Nunca se despliega sola ni el SDK la crea. Acciones y parámetros:
 |---|---|
 | `EventsTableName` | `AWS::DynamoDB::Table` on-demand, streams (`NEW_IMAGE`), GSI `gsi1` para listar por todos los sandboxes |
 | `StackKeySecretArn` | `AWS::SecretsManager::Secret`: la clave HMAC del stack; el SDK la lee para derivar `k_sbx` por sandbox, el forwarder la lee para verificar |
-| `OperatorPolicyArn` | `EventsOperatorPolicy`, para las credenciales del **llamante**: `dynamodb:PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice `gsi1` (`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), `cloudformation:DescribeStacks` sobre esta pila (resolver sus salidas) y `secretsmanager:GetSecretValue` sólo sobre el secreto del stack |
+| `OperatorPolicyArn` | `EventsOperatorPolicy`, para las credenciales del **llamante**: `dynamodb:PutItem`/`DeleteItem` sólo sobre filas `WEBHOOK` (`dynamodb:LeadingKeys`) y `dynamodb:Query` sobre la tabla y su índice `gsi1` (`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), `cloudformation:DescribeStacks` sobre esta pila (resolver sus salidas) y `secretsmanager:GetSecretValue` sólo sobre el secreto del stack |
 | `ReconcilerFunctionArn` | El Lambda reconciliador (`rate(<ReconcilerIntervalMinutes> minutes)`, 5 por defecto, mínimo 2) |
 | `DelivererFailuresQueueUrl` | Cola SQS: los registros del stream que agotan sus reintentos; vacía en condiciones normales |
+| `ForwarderFailuresQueueUrl` | Cola SQS (destino `OnFailure` de la invocación asíncrona del forwarder): los lotes de log cuya escritura en la tabla siguió fallando tras los reintentos de Lambda; vacía en condiciones normales. Una línea mala nunca hace fallar el lote: se cuenta y se descarta |
 
 Tres funciones Lambda (forwarder, deliverer, reconciliador; Python 3.12,
 `infra/lambdas/events_webhooks/`), una suscripción de CloudWatch Logs sobre
-`LogGroupName` (parámetro), una cola SQS de fallos y una regla de
+`LogGroupName` (parámetro), dos colas SQS de fallos y una regla de
 EventBridge Scheduler. `scripts/gen_stack_assets.py` inyecta
 `docs/aws-api/service-2.json` en el zip bajo
 `models/lambda-microvms/<apiVersion>/` y el reconciliador construye su

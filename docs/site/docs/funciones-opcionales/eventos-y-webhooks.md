@@ -21,8 +21,8 @@ tus webhooks con la firma de E2B.
       opciones 0.6. `deploy()` crea en tu cuenta
       (`infra/events-webhooks.yaml`) un secreto HMAC, una tabla DynamoDB
       on-demand con streams, tres Lambdas, una suscripción de CloudWatch
-      Logs, una cola SQS para las entregas que agotan sus reintentos y una
-      regla de EventBridge Scheduler. `register_webhook`/`list_webhooks`/
+      Logs, dos colas SQS (las invocaciones del forwarder y las entregas que
+      agotan sus reintentos) y una regla de EventBridge Scheduler. `register_webhook`/`list_webhooks`/
       `delete_webhook`/`get_events` llaman directamente a DynamoDB; el
       forwarder, el deliverer y el reconciliador hacen el resto dentro de tu
       cuenta.
@@ -34,13 +34,14 @@ tus webhooks con la firma de E2B.
       ~$0,0000002 c/u).
     - **IAM** (credenciales de quien llama al SDK, no el rol del sandbox):
       la política `EventsOperatorPolicy` que la pila emite como salida:
-      `dynamodb:PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice
-      `gsi1`, `cloudformation:DescribeStacks` sobre la pila y
+      `dynamodb:PutItem`/`DeleteItem` sólo sobre las filas de webhooks,
+      `dynamodb:Query` sobre la tabla y su índice `gsi1`,
+      `cloudformation:DescribeStacks` sobre la pila y
       `secretsmanager:GetSecretValue` sobre el secreto del stack.
     - **Cómo apagarla**: deja de pasar `events=`; `destroy()` borra el
       secreto (force-delete: cualquier webhook registrado deja de poder
-      verificarse), la tabla, las tres Lambdas, la suscripción, la cola y el
-      scheduler. Desvincula antes `EventsOperatorPolicy` de los usuarios y
+      verificarse), la tabla, las tres Lambdas, la suscripción, las colas y
+      el scheduler. Desvincula antes `EventsOperatorPolicy` de los usuarios y
       roles a los que la vinculaste: si no, CloudFormation no puede borrarla
       y la pila queda en `DELETE_FAILED`. Los secretos de cada webhook
       (`rayito/webhooks/...`), el log group de la imagen y los log groups
@@ -160,12 +161,19 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
    deriva el SDK: `HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)`.
    `rayd` nunca ve `stack_key`.
 2. Una suscripción de CloudWatch Logs reenvía cada línea a un forwarder
-   Lambda, que re-deriva `k_sbx`, comprueba que el log stream de origen
-   (`YYYY/MM/DD[<versión>]<microvmId>`) termina en el `sandbox_id` del
-   evento, verifica el MAC (tiempo constante) y escribe el evento de forma
-   idempotente en DynamoDB (TTL 7 días). Cada invocación deja una línea JSON
-   en su log con cuántas líneas aceptó y rechazó y por qué
-   (`mac_invalid`, `sandbox_mismatch`, `malformed_line`). Medido: la línea
+   Lambda, que toma el `sandbox_id` del log stream de origen
+   (`YYYY/MM/DD[<versión>]<microvmId>`), re-deriva con él `k_sbx` y verifica
+   el MAC (tiempo constante) **antes** de leer el contenido. Después exige
+   que el evento sea de ese mismo sandbox, que tenga la forma exacta que
+   emite `rayd` y que no tenga más de 24 h (ni más de 5 min en el futuro), y
+   lo escribe de forma idempotente en DynamoDB (TTL 7 días). Una línea
+   rechazada nunca hace fallar el lote: se cuenta y se descarta. Cada
+   invocación deja una línea JSON en su log con cuántas líneas aceptó y
+   rechazó y por qué (`mac_invalid`, `sandbox_mismatch`, `malformed_line`,
+   `stale_event`, `internal_error`) y cuántas escrituras fallaron
+   (`failed_writes`); si alguna falla, la invocación falla tras escribir el
+   resto y, agotados los reintentos de Lambda, el lote queda en la cola
+   `ForwarderFailuresQueueUrl` de la pila. Medido: la línea
    `paused` llega a CloudWatch antes de que la VM se congele, y un evento
    tarda de 0,3 a 4 s en llegar a la tabla (10–14 s el primero, con el
    forwarder en frío).
@@ -174,8 +182,13 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
    SSRF y hasta 3 intentos (sólo ante 5xx o error de red; un 4xx es la
    respuesta del receptor). Cada entrega se marca `attempting` antes de
    intentarla y `delivered`/`failed` al terminar: sólo `delivered` se salta
-   si el stream la reentrega, así que un fallo no pierde la entrega. Lo que
-   agota los reintentos del stream acaba en la cola SQS de la pila.
+   si el stream la reentrega, así que un fallo no pierde la entrega. Cada
+   webhook se entrega aislado: uno con la URL rota (`invalid_url`) o que
+   falla de forma inesperada (`internal_error`) no impide entregar a los
+   demás, y el plazo de cada intento (10 s) cubre la resolución DNS y la
+   respuesta completa, así que un receptor que contesta byte a byte no lo
+   alarga. Lo que agota los reintentos del stream acaba en la cola
+   `DelivererFailuresQueueUrl` de la pila.
 4. Un reconciliador (cada `reconciler_interval_minutes`) compara
    `ListMicrovms` con los sandboxes que la tabla aún considera abiertos y
    sintetiza `killed{reason: "unknown"}`, con la generación y la imagen de
@@ -193,8 +206,8 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
 | `stack_name` | `stackName` | `"rayito-events-webhooks"` | nombre de la pila |
 | `region` | `region` | la de la sesión | región de la pila |
 | `session` | `credentials` | la sesión por defecto | credenciales de AWS |
-| `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=, tags=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes, tags })` | 5 minutos (mínimo 2); sin etiquetas | despliega la pila; `tags` se propagan a sus recursos |
-| `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
+| `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=, tags=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes, tags })` | 5 minutos (mínimo 2); sin etiquetas | despliega la pila; `tags` se propagan a sus recursos. El código de las Lambdas se sube a `rayito/stacks/events-webhooks/<sha256>.zip` del bucket, que debe ser de tu cuenta (`ExpectedBucketOwner`); si ya hay un objeto en esa clave, el SDK compara su contenido y lo sobrescribe si no es el suyo |
+| `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `url` es una URL `https://` que el deliverer pueda alcanzar (host DNS válido o IP, puerto 1–65535); `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
 | `get_events(sandbox_id=, types=, limit=, order=)` | `getEvents({ sandboxId, types, limit, order })` | `limit=100` (1–100), `order="desc"` | lee directamente de tu tabla DynamoDB; filtra `types` en DynamoDB y pagina hasta reunir `limit` |
 
 ## Errores y solución de problemas
@@ -202,7 +215,7 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
 | Python | TypeScript | Cuándo | Qué hacer |
 |---|---|---|---|
 | `WebhookException` | `WebhookError` | una llamada a DynamoDB o Secrets Manager falló (`aws_code`/`awsCode` trae sólo el código de AWS, nunca ARNs ni la cuenta), o la pila no está desplegada | revisa los permisos de `EventsOperatorPolicy`; llama a `deploy()` primero |
-| `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` | corrige el argumento antes de reintentar |
+| `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` o que el deliverer no podría alcanzar (puerto fuera de rango, host inválido) | corrige el argumento antes de reintentar |
 | `UnimplementedError` | `UnimplementedError` | `Sandbox.create(events=...)` sobre una imagen anterior a 0.6.0 (el sandbox se termina) | usa una imagen publicada con `rayd` 0.6.0 o posterior |
 | `WebhookException` (desde `create()`) | `WebhookError` | `Sandbox.create(events=...)` sin la pila desplegada, o sin permiso para leer su clave (el sandbox se termina) | despliega la pila o vincula `EventsOperatorPolicy` a quien llama |
 | `StackException` | `StackError` | `deploy`/`destroy` de la pila falló (código `blocked`/`not_found`/`failed`) | ver [Pilas opcionales](pilas-opcionales.md) |
@@ -210,6 +223,24 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
 | `StackException` (`failed`, la pila en `DELETE_FAILED`) | `StackError` | `destroy()` con `EventsOperatorPolicy` aún vinculada a un usuario o rol | desvincula la política y repite `destroy()` |
 | `InvalidArgumentException` desde `run-microvm` ("Logging cannot be enabled without providing executionRoleArn") | `InvalidArgumentError` | `logging="cloudwatch"` sin `execution_role_arn` | pasa un rol de ejecución con permiso de escritura en el log group de la imagen |
 | ningún evento en la tabla | — | el log group de `deploy(log_group_name=)` no es el de la imagen, o el forwarder rechaza las líneas | mira la línea JSON del forwarder (`rejected_by_reason`) en su log |
+
+## Seguridad del receptor
+
+- **Verifica la firma y deduplica por `event_id`.** La firma de E2B
+  (`e2b-signature` = base64 de `sha256(secreto + cuerpo)`) no lleva marca de
+  tiempo: una entrega capturada se puede reenviar más tarde con la misma
+  firma. Guarda los `event_id` ya procesados y descarta los repetidos;
+  `e2b-delivery-id` cambia en cada intento y no sirve para eso.
+- **Usa un secreto largo y aleatorio** (32 bytes o más, por ejemplo
+  `secrets.token_urlsafe(32)` o `randomBytes(32).toString("base64url")`):
+  una sola entrega observada permite probar secretos débiles sin conexión.
+- **Los secretos de firma viven bajo `rayito/webhooks/`** y nunca llegan a
+  un sandbox: `RayitoSecretsReader` los deniega y el SDK rechaza pasarlos
+  por `secrets=`. Un sandbox con ese secreto podría falsificar entregas.
+- **La URL del webhook se guarda en claro** en la tabla (con el cifrado por
+  defecto de DynamoDB) y `list_webhooks()` la devuelve: si tu receptor
+  lleva una credencial en la ruta (Slack, Discord), trátala como un dato
+  que puede leer quien tenga `EventsOperatorPolicy`.
 
 ## Diferencias con E2B
 
