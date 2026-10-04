@@ -1506,7 +1506,23 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   TypeScript, `openspec validate --strict`); **aceptado en AWS real** el
   2026-10-02 (`AWS_API_NOTES.md` §28).
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre
-  CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
+  CloudFront. Distribución + CloudFront Function de enrutado + KeyValueStore
+  y la clase `CustomDomain` (deploy/status/destroy, register/unregister/
+  refresh de rutas) están construidos y probados con fakes; sin componente
+  en `rayd` (la única función de M15 sin uno). La integración con
+  `Sandbox.create(domain=)`/`get_host()`/`expose()` queda como seguimiento
+  no bloqueante (foundations no pre-añadió el `HostResolver`/`expose()`
+  que la arquitectura preveía); `domain=` sigue lanzando
+  `UnimplementedError`, con un mensaje que ya nombra el seguimiento en vez
+  de este mismo cambio. `route()` sí acota una ruta huérfana por sí sola
+  (T25): comprueba `m.x` en cada petición y la trata como inexistente
+  (404) si ya caducó, sin depender sólo de la expiración del JWE. El
+  refresher Lambda opcional de la arquitectura (§7.8, `EnableRefresher`)
+  tampoco se construyó — **DOM-14, pendiente**, mismo motivo que el resto:
+  sin D3 no se puede medir contra AWS real, y `OptionalStacks` no soporta
+  todavía un artefacto condicional. DOM-2/3/5/7/8/14 sin medir: necesitan
+  D3 (dominio y certificado ACM del mantenedor) y la etapa de aceptación
+  AWS.
 
 ---
 

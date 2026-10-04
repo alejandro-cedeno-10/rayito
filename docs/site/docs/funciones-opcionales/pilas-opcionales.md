@@ -36,13 +36,12 @@ CloudFormation.
 | `events-webhooks` | Secreto HMAC, tabla DynamoDB con streams, 3 Lambdas con sus log groups, filtro de suscripción, scheduler, colas SQS de fallos, roles y 4 políticas IAM | ≈ $0,40/mes (el secreto) | [Eventos y webhooks](eventos-y-webhooks.md) |
 | `otlp-export` | 1 política IAM (`cloudwatch:PutMetricData`) | $0 | [Exportación OTLP](exportacion-otlp.md) |
 | `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
+| `custom-domain` (experimental) | Distribución CloudFront, CloudFront Function de enrutado y KeyValueStore | $0 sin tráfico | [Dominio propio](dominio-propio.md) |
 | `efs-volumes` (experimental) | En una VPC existente: sistema de ficheros EFS cifrado, un mount target por subred, 2 grupos de seguridad nuevos, un conector de egress a la VPC, su rol y la política `RayitoEfsVolumeClient` | $0 con el sistema de ficheros vacío | [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) |
 
-`custom-domain` está [en desarrollo](../novedades/index.md#en-desarrollo):
-`rayito stack list` ya lo muestra (con `supported` a `false`) y
-`deploy`/`status`/`destroy` sobre él fallan con un error claro, antes de
-llamar a AWS, hasta que su propia función lo implemente ([Dominio
-propio](dominio-propio.md)).
+`custom-domain` es experimental: la plantilla aún no se ha desplegado
+entera en AWS real (ver [Dominio propio](dominio-propio.md)). Además de
+`rayito stack`, tiene su propia CLI, `rayito domain deploy|status|destroy`.
 
 ## Parámetros de cada componente
 
@@ -59,6 +58,7 @@ Se pasan con `parameters={...}` (TypeScript: `{ parameters: {...} }`) o
 | `events-webhooks` | `LogGroupName` (obligatorio), `ReconcilerIntervalMinutes`; `ArtifactBucket` lo rellena `artifact_bucket=`/`--artifact-bucket` | —, `5` |
 | `otlp-export` | ninguno | — |
 | `templates` | `ArtifactBucketArn`, `BuildRoleArn`, `BaseImageBucketArn` (obligatorios), `ImageLogGroupPrefix`, `ProtectedImageNamePrefix` | —, —, —, `/rayito`, `rayito-base` |
+| `custom-domain` | `PublicDomain`, `CertificateArn` (obligatorios, certificado ACM en us-east-1), `AlternateDomainNames` | —, —, vacío (alias comodín `*.<PublicDomain>`) |
 | `efs-volumes` | `VpcId`, `SubnetIds` (obligatorios, de 1 a 3), `ConnectorName`, `AllowWrite`, `AccessPointArns`, `ReadOnlyAccessPointArns` | —, —, `rayito-efs`, `true`, vacío (cualquier access point del sistema de ficheros), vacío |
 
 `stacks.components()` devuelve este mismo catálogo (con la descripción de

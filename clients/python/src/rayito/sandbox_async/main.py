@@ -614,8 +614,9 @@ class AsyncSandbox:
                 telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             )
 
-        `domain=` sigue siendo un stub (`UnimplementedError` antes de
-        `run-microvm`); `mounts=`, `volumes=`, `size=`, `events=`,
+        `domain=` sigue sin cablear (`UnimplementedError` antes de
+        `run-microvm`; para un dominio propio usa `AsyncCustomDomain`,
+        experimental); `mounts=`, `volumes=`, `size=`, `events=`,
         `telemetry=` y `gateways=` son reales, como en `Sandbox.create`.
 
         `volumes=` (m15-efs-volumes, experimental) monta cada `EfsVolume`

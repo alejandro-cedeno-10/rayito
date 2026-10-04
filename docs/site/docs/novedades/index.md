@@ -1,6 +1,6 @@
 ---
 title: Novedades
-description: Qué trae cada versión de Rayito, cómo actualizar y qué está en desarrollo.
+description: Qué trae cada versión de Rayito, cómo actualizar, qué es experimental y qué está en desarrollo.
 ---
 
 # Novedades
@@ -83,20 +83,30 @@ republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
 función que necesita el `rayd` nuevo falla cerrada con
 `UnimplementedError` y termina el sandbox que acaba de lanzar.
 
+## Disponible como experimental
+
+Funciones que ya puedes usar, apagadas por defecto, pero cuya API puede
+cambiar en una minor. Todavía no tienen versión publicada: llegan en la
+próxima release (ver `[Unreleased]` en el
+[Changelog](../referencia/changelog.md)) o ya están en `main`.
+
+| Función | Cómo se usa | Qué falta |
+|---|---|---|
+| [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) | `volumes=` / `volumes`, sobre la imagen opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`) | aceptado en AWS real; experimental por la imagen opcional y la VPC |
+| [Dominio propio](../funciones-opcionales/dominio-propio.md) | `CustomDomain` (`rayito domain deploy`) y `register()` de cada ruta | sin verificar de punta a punta en AWS real (crear la distribución y servir tráfico); `domain=` en `Sandbox.create()` sin cablear |
+
+Si pruebas una, cuéntanos cómo te fue en un
+[issue de GitHub](https://github.com/alejandro-cedeno-10/rayito/issues/new/choose).
+
 ## En desarrollo
 
-Funciones con un cambio OpenSpec abierto que **todavía no están
-disponibles**. Sus opciones ya existen en la firma de `create()` para que la
-API no cambie cuando lleguen, y hoy lanzan `UnimplementedError` ("todavía no
-disponible") antes de llamar a AWS:
+Partes con un cambio pendiente que **todavía no están disponibles**. Su
+opción ya existe en la firma de `create()` para que la API no cambie cuando
+lleguen, y hoy lanza `UnimplementedError` antes de llamar a AWS:
 
 | Función | Opción | Estado |
 |---|---|---|
-| [Dominio propio](../funciones-opcionales/dominio-propio.md) | `domain=` / `domain` | en desarrollo (`m15-custom-domain`), sin versión comprometida |
-
-Los [volúmenes EFS](../funciones-opcionales/volumenes-efs.md) (`volumes=`)
-ya montan, como función experimental, sobre la imagen opcional
-`rayito-base-caps-efs` (`rayito image publish --with-efs`).
+| Dominio propio integrado en el sandbox | `domain=` / `domain` en `Sandbox.create()`, y `get_host()`/`expose()` devolviendo la URL | sin versión comprometida; mientras tanto, [`CustomDomain`](../funciones-opcionales/dominio-propio.md) |
 
 Mientras tanto: para datos compartidos entre sandboxes,
 [montajes S3](../funciones-opcionales/montajes-s3.md) o

@@ -65,7 +65,8 @@ Reglas de nombres: [Python y TypeScript](index.md#python-y-typescript-como-se-co
 | `events` | `LifecycleEvents` | apagado (0.6) | `events` |
 | `telemetry` | `TelemetryExport` | apagado (0.6) | `telemetry` |
 | `gateways` | `Record<string, SecretGateway>` | apagado (0.6) | `gateways` |
-| `volumes`, `domain` | — | [en desarrollo](../novedades/index.md#en-desarrollo): lanzan `UnimplementedError` | `volumes`, `domain` |
+| `volumes` | `Record<string, EfsVolume>` | apagado (0.6, [experimental](../funciones-opcionales/volumenes-efs.md)) | `volumes` |
+| `domain` | — | [en desarrollo](../novedades/index.md#en-desarrollo): lanza `UnimplementedError`; usa `CustomDomain` | `domain` |
 
 ### Instancia
 
@@ -178,6 +179,7 @@ Apagadas por defecto; cada una carga su *peerDependency* sólo al activarse.
 | `DynamoDbIndex` | `@aws-sdk/client-dynamodb` | [Índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) |
 | `VolumeStore`, `EfsVolume` (experimental) | `@aws-sdk/client-efs` | [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) |
 | `EfsVolumes` (experimental) | `@aws-sdk/client-ec2` (`check`), `@aws-sdk/client-efs` (borrar el sistema de ficheros) | [Volúmenes EFS en tu VPC](../funciones-opcionales/volumenes-efs-vpc.md) |
+| `CustomDomain` (experimental) | `@aws-sdk/client-cloudformation`, `@aws-sdk/client-cloudfront-keyvaluestore` y `@aws-sdk/signature-v4a` | [Dominio propio](../funciones-opcionales/dominio-propio.md) |
 | opción `tracerProvider` | `@opentelemetry/api` (sólo tipos) | [OpenTelemetry](../funciones-opcionales/opentelemetry.md) |
 | `S3Mount` (opción `mounts`) | ninguno: lo monta `rayd` | [Montajes S3](../funciones-opcionales/montajes-s3.md) |
 | opción `size` | ninguno | [Tamaños](../funciones-opcionales/tamanos.md) |

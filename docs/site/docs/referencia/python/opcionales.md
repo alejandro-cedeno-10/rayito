@@ -117,3 +117,14 @@ Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
 ::: rayito.EfsNetworkReport
 
 ::: rayito.NetworkFinding
+
+## Dominio propio (experimental)
+
+Guía: [Dominio propio](../../funciones-opcionales/dominio-propio.md). Sin
+verificar aún de punta a punta en AWS real.
+
+::: rayito.CustomDomain
+
+::: rayito.AsyncCustomDomain
+
+::: rayito.CustomDomainRoute

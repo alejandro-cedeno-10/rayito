@@ -8,6 +8,27 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Dominio propio** (`m15-custom-domain`, ADR-024, **experimental**,
+  apagado por defecto): `CustomDomain`/`AsyncCustomDomain` despliegan una
+  distribución CloudFront, una CloudFront Function de enrutado
+  (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`,
+  `rayito domain deploy|status|destroy`), y `register`/`unregister`/
+  `refresh`/`host_for` gestionan las rutas `{puerto}-{alias}.<tu-dominio>`
+  (hostname HTTPS normal, sin las cabeceras `x-aws-proxy-*`).
+  `register()` exige `traffic_token` salvo `public=True` explícito.
+  `deploy(alternate_domain_names=[...])` (`--alternate-domain-name`)
+  sustituye el alias comodín por hostnames exactos. Nuevo extra
+  `rayito[custom-domain]` (`awscrt`), porque el plano de datos del
+  KeyValueStore firma con SigV4A. Sin instanciar `CustomDomain` no se crea
+  ningún cliente de CloudFront ni de CloudFormation.
+  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`: la
+  integración con `get_host()`/`expose()` llega en un cambio posterior.
+  **Experimental** porque no se ha verificado de punta a punta en AWS real:
+  la Function compila y enruta en el runtime real (`TestFunction`), y la
+  pila crea el KeyValueStore y la Function, pero la cuenta de pruebas
+  deniega `cloudfront:CreateDistribution` por una SCP, así que nunca se ha
+  servido tráfico por una distribución desplegada con esta plantilla
+  (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar en una minor.
 - `rayito image zip --with-efs` y `rayito image publish --with-efs`
   (`m15-efs-volumes`): publican `rayito-base-caps-efs`, la imagen caps con
   `amazon-efs-utils` que necesita `volumes=` (+~198 MB de imagen, snapshot

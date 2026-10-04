@@ -153,7 +153,11 @@ export function planFeatures(
     sections.push(new GatewaySectionFactory(validateGateways(options.gateways)));
   }
   if (options.domain !== undefined) {
-    throw new UnimplementedError("domain", `todavía no disponible (${DOMAIN_CHANGE})`);
+    throw new UnimplementedError(
+      "domain",
+      `${DOMAIN_CHANGE} aún no se cablea a Sandbox.create(): usa CustomDomain ` +
+        "(experimental) directamente",
+    );
   }
   return sections.length === 0 &&
     telemetry === undefined &&

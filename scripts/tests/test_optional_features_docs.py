@@ -38,6 +38,7 @@ FEATURE_PAGES_0_6 = (
     "funciones-opcionales/pasarela-de-secretos.md",
     "funciones-opcionales/templates.md",
     "funciones-opcionales/volumenes-efs.md",
+    "funciones-opcionales/dominio-propio.md",
 )
 
 DOCSTRING_MARKER = "Coste y activación"

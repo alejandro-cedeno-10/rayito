@@ -8,6 +8,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- **Dominio propio** (`m15-custom-domain`, ADR-024, **experimental**,
+  apagado por defecto): la clase `CustomDomain` despliega una distribución
+  CloudFront, una CloudFront Function de enrutado (`cloudfront-js-2.0`) y
+  un KeyValueStore (`infra/custom-domain.yaml`), y `register`/`unregister`/
+  `refresh`/`hostFor` gestionan las rutas `{puerto}-{alias}.<tu-dominio>`
+  (hostname HTTPS normal, sin las cabeceras `x-aws-proxy-*`).
+  `register()` exige `trafficToken` salvo `public: true` explícito.
+  `deploy({ alternateDomainNames })` sustituye el alias comodín por
+  hostnames exactos. Nuevos peers opcionales
+  `@aws-sdk/client-cloudfront-keyvaluestore` y `@aws-sdk/signature-v4a` (el
+  plano de datos del KeyValueStore firma con SigV4A); sin instanciar
+  `CustomDomain` no se importa ninguno. `domain` en `Sandbox.create()` sigue
+  lanzando `UnimplementedError`: la integración con `getHost()`/`expose()`
+  llega en un cambio posterior. **Experimental** porque no se ha verificado
+  de punta a punta en AWS real: la Function compila y enruta en el runtime
+  real (`TestFunction`), y la pila crea el KeyValueStore y la Function, pero
+  la cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP,
+  así que nunca se ha servido tráfico por una distribución desplegada con
+  esta plantilla (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar
+  en una minor.
 - `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
   para `mounts`, `volumes` y `telemetry` (`requireCapsFor`, `CAPS_VARIANTS`,
   `EFS_CAPS_VARIANT`).

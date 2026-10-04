@@ -17,13 +17,20 @@ const MISSING_NESTED_IMPORT_FIXTURE = new URL(
   import.meta.url,
 ).href;
 
-// Peers opcionales de AWS SDK v3 (secretos, M13a; índice de metadatos, M14):
-// ya están en `peerDependencies` (opcionales), pero `src/**/*.ts` no debe
-// importarlos de forma estática nunca: sólo `loadOptionalPeer` los carga, con
+// Peers opcionales de AWS SDK v3 (secretos, M13a; índice de metadatos, M14;
+// dominio propio, m15-custom-domain — el plano de datos de
+// `cloudfront-keyvaluestore` necesita SigV4A, D2 de ese cambio): ya están en
+// `peerDependencies` (opcionales), pero `src/**/*.ts` no debe importarlos de
+// forma estática nunca: sólo `loadOptionalPeer` los carga, con
 // `import()` dinámico, y sólo dentro de la función ya activada por su opción. `@opentelemetry/api`
 // (M13b) ya es una dependencia real, pero sólo como tipo: la comprueba el
 // describe de más abajo, con su propia regla (permite `import type`).
-const LAZY_OPTIONAL_PEERS = ["@aws-sdk/client-secrets-manager", "@aws-sdk/client-dynamodb"];
+const LAZY_OPTIONAL_PEERS = [
+  "@aws-sdk/client-secrets-manager",
+  "@aws-sdk/client-dynamodb",
+  "@aws-sdk/client-cloudfront-keyvaluestore",
+  "@aws-sdk/signature-v4a",
+];
 
 // Peer "instalado" de verdad bajo node_modules (resuelto por especificador
 // desnudo, como `@aws-sdk/client-dynamodb`), cuyo index reexporta un paquete

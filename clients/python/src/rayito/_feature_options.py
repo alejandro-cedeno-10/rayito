@@ -232,7 +232,11 @@ def plan_features(
         # `secrets=` — ver `GatewaySectionFactory`.
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
-        raise UnimplementedError("domain=", f"todavía no disponible ({DOMAIN_CHANGE})")
+        raise UnimplementedError(
+            "domain=",
+            f"{DOMAIN_CHANGE} aún no se cablea a Sandbox.create(): usa rayito.CustomDomain "
+            "(experimental) directamente",
+        )
     return FeaturePlan(
         configure_sections=tuple(sections), telemetry=telemetry, events=events, volumes=volumes
     )

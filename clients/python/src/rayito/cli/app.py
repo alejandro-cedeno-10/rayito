@@ -52,9 +52,7 @@ app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(stack_app, name="stack")
 app.add_typer(events_app, name="events")
 app.add_typer(template_app, name="template")
-# Oculto en `rayito --help` hasta que m15-custom-domain lo implemente
-# (CLAUDE.md regla 3: nada que no funcione se anuncia).
-app.add_typer(domain_app, name="domain", hidden=True)
+app.add_typer(domain_app, name="domain")
 app.command("doctor")(doctor)
 
 

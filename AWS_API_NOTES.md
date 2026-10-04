@@ -524,6 +524,7 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 116 | ¿Funciona `RUN pip install …` sobre `rayito-base`? | `pip_install()` compilaba a `pip install --no-cache-dir` | **Medido 2026-10-02**: no. El build del caso correcto falla en el paso del template con `/bin/sh: line 1: pip: command not found` (exit **127**): al2023-minimal sólo trae `python3 -m pip` (`image/Dockerfile` usa `python3 -m pip install --no-cache-dir --break-system-packages`). `pip_install()`/`pipInstall()` compilan ahora a esa misma orden (`PIP_INSTALL_COMMAND`). Tras el cambio, e2e Python 4 passed (build correcto 190 s, `RUN` fallido 105 s con step/command/exit_code, `ready_cmd` `exit 1` → `ready_server_error` en 214 s) y TypeScript 4 passed (209 s, 105 s, 218 s). |
 | 117 | **TPL-15**: ¿arranca el `start_cmd` horneado por `set_start_cmd()` como proceso gestionado y sobrevive a pause/resume? | `rayd` lee `/etc/rayito/template.json` y lanza `start_cmd` antes del `/ready` del build | **Medido 2026-10-02** (`set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))`; `python` no existe en rayito-base, sólo `python3`): build **228 s**; `Sandbox.create(info.template_id)` en 5,6 s; `commands.list()` muestra `/bin/sh -c 'python3 -m http.server 8000'` con tag **`template_start`** y `curl localhost:8000` → **200**; `pause()` 1,1 s, `resume()` 0,4 s (`resume_generation` 1): el mismo pid sigue listado y `curl` vuelve a dar 200. |
 | 120 | **OT2 + OT7** (m15-rayd-otlp): bytes por lote y por sandbox-hora; CPU del exportador | §6.3: ≈ $0,00014 por sandbox-hora con `interval_s=60` (ASUMIDO) | **Medido 2026-10-02** (imagen caps con el `rayd` de PR #81, `interval_s=15`): cada lote son **7 puntos** (uno por gauge: `exported` sube de 7 en 7, 56 tras ~2 min). El `ExportMetricsServiceRequest` que construye `ProstOtlpEncoder` con un `sandbox_id` y un ARN de imagen reales ocupa **639 bytes** (353 con gzip, lo que viaja). Con `interval_s=60` son ≈ 38 KB por sandbox-hora sin comprimir ≈ **$0,00002/sandbox-hora** a $0,50/GB (cota alta; AWS no publica si factura comprimido o no), unas 7 veces menos que la estimación. Cost Explorer y `AWS/Usage` no exponen bytes de ingesta OTLP dentro de la sesión (Cost Explorer tarda ~24 h; `AWS/Usage` sólo da `CallCount` de `PutMetricData`). CPU de `rayd` en 120 s, mismo tipo de imagen: **0,02 s con el exportador frente a 0,01 s sin él** (`/proc/<pid>/stat`, 100 Hz): ≈ 0,008 % de una vCPU |
+| 121 | **DOM-0** (aceptación de `m15-custom-domain`, 2026-10-02): ¿compila y enruta el `FunctionCode` de `infra/custom-domain.yaml` en el runtime real `cloudfront-js-2.0`? (DOM-2/DOM-3 requieren además D3) | Sólo probado con `node:test` y una `kvsGet` falsa; el comentario de la Function decía "nunca se ha comprobado contra una distribución real" | **Medido 2026-10-02** con `CreateFunction` (etapa `DEVELOPMENT`, sin distribución) + un KeyValueStore asociado + `TestFunction` (gratuito), ambos borrados al terminar: **el código tal como estaba no compilaba** — `SyntaxError: Token "of" not supported in this version` (`for...of` en `readCookie`) y, tras quitarlo, `SyntaxError: Unexpected token "="` (parámetro por defecto `now = Date.now` en `route`); con una distribución real **toda** petición habría fallado en la Function. Arreglado (bucles con índice, `now || Date.now`) y re-medido: token correcto en cabecera → la petición sigue (sin la `x-aws-proxy-auth` falsificada por el viewer, que se borra); sin token o con token erróneo → 403; ruta pública → sigue; `m.x` vencido, ruta inexistente y puerto 8080 → 404; utilización de cómputo 7–14 %. Un evento con el token sólo en `request.cookies` (donde CloudFront entrega las cookies ya parseadas) daba 403 porque la Function sólo leía la cabecera `cookie`: ahora lee primero `request.cookies` (`readEventCookie`) y la cabecera queda de respaldo. `cf.updateRequestOrigin` con un `domainName` que no es un origen declarado no lanza en `TestFunction` (su efecto no aparece en `FunctionOutput`). **Pendiente (D3)**: DOM-2/DOM-3/DOM-5 de extremo a extremo: en la cuenta de aceptación no hay ningún dominio propio del mantenedor (sin zonas de Route 53; los únicos certificados ACM pertenecen a dominios corporativos ajenos al proyecto, que no se usan), así que el e2e de dominio propio se salta, como está previsto |
 | 122 | **EFS-7** ★ (`m15-efs-volumes`, research doc §9): ¿se instala `amazon-efs-utils` (con `efs-proxy`) en `al2023-minimal` ARM64 y cuánto crecen `codeInstallSizeInBytes`/`memorySnapshotSizeInBytes` y el tiempo de build? | Research doc §4.3: paquete de AL2023 o build propio; efs-utils 2.x usa `efs-proxy` en vez de `stunnel` | **Medido 2026-10-02** (dos imágenes desechables del mismo zip, `rayd` de `feat/m15-efs-volumes`, `ALL`, `RAYITO_ALLOW_ROOT=1`, 2048 MiB, `--base-image-version 1`, borradas al terminar): **pasa**. `dnf install amazon-efs-utils` del repositorio de AL2023 instala `amazon-efs-utils-3.1.3-1.amzn2023` y **37 paquetes** (entre ellos `nfs-utils-2.5.4`, `stunnel-5.58`, `openssl`, `python3` 3.9, `systemd` y `dbus`; RPM: efs-utils 24 957 238 B, nfs-utils 4 168 014 B); `mount.efs` en `/usr/sbin`, `efs-proxy` en **`/usr/sbin/efs-proxy`** (24 631 688 B, no en `/usr/bin`), watchdog `/usr/bin/amazon-efs-mount-watchdog` (unidad systemd que nadie arranca: PID 1 es `rayd`). Code install **1 541 214 208** frente a **1 343 635 456** B de la gemela sin efs-utils = **+197 578 752 B**; memoria (dos builds por versión) 919 674 880 / 914 411 520 frente a 919 678 976 / 920 727 552 B: **sin cambio** (ruido de ±13 MB de Q50); disco 33 239 040 frente a 33 210 368 / 34 807 808 B; build **227,4 s** frente a **217,0 s**. **Efecto colateral**: el RPM `python3` (3.9) vuelve a apuntar `/usr/bin/python3` a `python3.9` (la imagen lo enlaza a 3.12; `/usr/local/bin/python3` sigue en 3.12 y gana en el `PATH`): la capa real tiene que instalar efs-utils antes del enlace o rehacerlo, porque la sonda de IMDS de `rayd` usa `/usr/bin/python3` por ruta absoluta (Q48). `efs-utils.conf` trae `region` comentado; la imagen desechable lo fijó (EFS-6 sigue abierta) |
 | 123 | **EFS-2** ★: ¿monta root dentro del contenedor de la app en `rayito-base-caps` (`tmpfs`, y `nfs4` llega a la red en vez de `EPERM`/`ENODEV`)? | Q79: con `ALL` root monta FUSE y `tmpfs`; por defecto `EPERM` | **Medido 2026-10-02** con `measure_efs2` de `scripts/measure/efs_volumes.py` sobre la imagen de Q122 (sin conector, sin rol): **pasa**. `mount -t tmpfs` ok; `mount -t nfs4 -o nfsvers=4.1` a `192.0.2.1` (TEST-NET-1) **agota el `timeout` de 15 s** (exit 124), ni `EPERM` ni `ENODEV`: el kernel deja empezar el montaje. La mitad "imagen por defecto" no se repitió (sin `RAYITO_ALLOW_ROOT` `rayd` rechaza `user="root"` antes del `mount`; el `EPERM` ya está en Q79). De paso, `mount -t efs -o tls,mounttargetip=192.0.2.1` **sin systemd**: `mount.efs` comprueba primero TCP 2049 contra el mount target (3 intentos, ≈ 8 s, "Cannot connect to file system mount target ip address … timeout"), sale con 1 a los ≈ 10 s y no deja `efs-proxy` vivo. Lanzamientos del VM 8–12 s |
 | 124 | **EFS-3** ★ (y con él EFS-4, 5, 8, 9, 11, 12, 13, 15, 16): ¿un conector VPC propio llega a `ACTIVE` y un VM lanzado con él alcanza TCP 2049 del mount target? | Q46: el despliegue necesita una VPC propia o prestada con permiso | **Bloqueada 2026-10-02, sin medir**: en la cuenta de pruebas `ec2:CreateVpc` está **denegado de forma explícita por una SCP de la organización** (`UnauthorizedOperation`), así que `efs_volumes.py run` paró en el primer paso sin crear nada. `DryRun` sí autoriza `CreateSubnet`/`CreateSecurityGroup` en la única VPC existente y `CreateDefaultVpc`, pero esa VPC es compartida y de otro equipo, y saltarse la SCP con una VPC por defecto no es "prestada con permiso": no se usó ninguna. Siguen abiertos todos los ★ que necesitan red (EFS-3, EFS-8, EFS-11, EFS-13). `run` acepta ahora `--vpc-id`/`--subnet-id` para una red prestada con permiso, que nunca crea, registra ni borra. **Desbloqueada 2026-10-04** con una VPC existente prestada con permiso: Q126–Q134 |
@@ -542,6 +543,8 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 137 | **EFS-16** con la política acotada (`AccessPointArns` = dos access points, `ReadOnlyAccessPointArns` = uno de ellos) y con `AllowWrite=false` | Q134: sin acotar; Q133: uid 1000 alcanza el puerto local de `efs-proxy` | **Medido 2026-10-04**: un `mount -t nfs4` directo (como root, `127.0.0.1`, `port=` del `efs-proxy` del volumen de sólo lectura) **monta pero cada escritura da `Read-only file system`**: el `Deny` de `ClientWrite` vale también por el túnel, que es lo que T21 necesitaba; el mismo montaje directo al puerto del volumen de escritura escribe. Un tercer access point del mismo sistema de ficheros, fuera de `AccessPointArns`: `iam_denied`. Con `AllowWrite=false` el volumen de escritura monta y se lee, y escribir da `Read-only file system` (EFS sirve como sólo lectura a un cliente sin `ClientWrite`; no es `EACCES`). Cada redespliegue de la política: `UPDATE_COMPLETE` en 26–29 s |
 | 138 | Ciclo de vida de `efs-proxy` y punto de montaje con enlace simbólico (adaptador `EfsUtilsMounter`, D6/D7) | Q128: `umount` no para `efs-proxy` | **Medido 2026-10-04** (dos volúmenes en un sandbox, `Configure` vacío y luego el mismo): 5 de 5 ciclos desmontar → **0** `efs-proxy` (0,22–0,26 s), montar → **2** (0,53–0,91 s) y los datos siguen; `/home/user/evil` como enlace a `/etc` creado por uid 1000: la sección acaba `invalid_path` en 0,47 s, nada se monta sobre `/etc` y el otro volumen sigue `mounted`. **EFS-13** repetido con el adaptador nuevo (8 MiB sin vaciar y la regla de entrada del grupo de mount targets de la propia pila revocada, restaurada a los 12 s): `pause()` lanza `SandboxNotFoundException` a los 11,9 s y el MicroVM queda `TERMINATED`, igual que Q130 |
 | 139 | **EFS-12** con el adaptador real: ¿una pausa que cruza la caducidad de las credenciales del túnel se recupera sola en `/resume`? | Q129: tras 70 min, `Permission denied` hasta remontar a mano | **Medido 2026-10-04: pasa**, por `create(volumes=...)` en Python y en TypeScript (un sandbox cada uno, a la vez): escribir + `sync`, `pause()` (1,1 s), **4200 s** suspendido, `resume()` (1,0 s). El volumen aparece `remounting`/`credentials_expired` a los 0,1 s y `mounted` a los **1,3 s** (Python) y **0,7 s** (TypeScript): `rayd` remontó sin sonda porque el lease guardado había caducado. Lo escrito antes de la pausa se lee (0,25 s), escribir funciona y queda **1** `efs-proxy` (el del remontaje; el del montaje caducado se paró) |
+| 140 | **DOM-0 bis** (aceptación de `m15-custom-domain` con distribución, 2026-10-04): ¿despliega `infra/custom-domain.yaml` tal cual por `CustomDomain.deploy()`? | Q121 sólo creó la Function con `CreateFunction` y un `Comment` corto; nadie había creado la pila entera | **Medido 2026-10-04** (e2e Python, `alternate_domain_names` con 4 hostnames exactos bajo el comodín de un certificado de prueba, sin DNS): **no**. El `RouteKeyValueStore` se crea en ~10 s, pero `RouterFunction` falla al instante con `InvalidRequest` "The parameter Comment is too big": CloudFront limita a **128 caracteres** el `Comment` de `FunctionConfig`, de `CreateKeyValueStore` y de `DistributionConfig` (<https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_FunctionConfig.html>, consultada 2026-10-04) y el de la plantilla tenía ~380. Además, el `Comment` de la distribución interpolaba `PublicDomain` (hasta 253 caracteres). Arreglo: `Comment` corto en la Function, la distribución nombra la pila (≤ 36 caracteres, `MAX_STACK_NAME_LENGTH`) y `test_every_cloudfront_comment_fits_in_128_characters` comprueba los tres con el peor caso de cada referencia. El rollback borró el KVS; `destroy()` sobre la pila en `ROLLBACK_COMPLETE` tardó 2 s y no dejó nada |
+| 141 | ¿Se puede crear la distribución de `m15-custom-domain` desde un rol de administrador de una cuenta dentro de una organización? | §29: la pila sólo necesita permisos de CloudFront de quien despliega | **Medido 2026-10-04**: depende de la organización. Con Q140 arreglado, KVS y Function se crean, pero `Distribution` falla con `AccessDenied` "... is not authorized to perform: cloudfront:CreateDistribution ... with an explicit deny in a service control policy": una SCP de la organización gana a cualquier política del rol (<https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html>). La pila hace rollback sola (KVS y Function borrados) y `destroy()` la quita en 2 s; el SDK sólo informa `ROLLBACK_COMPLETE`, el motivo está en los eventos de la pila. Igual en Python y TypeScript (las dos e2e, mismo resultado y misma limpieza). DOM-2/3/5/7/8 quedan **SIN MEDIR** hasta correr las e2e en una cuenta que permita `CreateDistribution` |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -1649,8 +1652,132 @@ exactamente las mismas operaciones de AWS que 0.5.x (`RunMicrovm`,
 Manager) y el guest tiene los mismos listeners. Pendiente de SEC-7: SSE de
 una API LLM real (necesita una clave de proveedor; no se midió).
 
-## 29. CloudFront, KeyValueStore (SigV4A) y Functions (`m15-custom-domain`)
+## 29. CloudFront, KeyValueStore y Functions (`m15-custom-domain`, **contrato de parámetros** para el KVS)
 
-Pendiente: `m15-custom-domain` documenta aquí `CreateDistribution`/
-`UpdateKeyValueStore` (SigV4A, `@aws-sdk/signature-v4a`) y el contrato de
-la CloudFront Function de enrutado.
+`CustomDomain` (Python `rayito/_custom_domain/`, TypeScript
+`src/custom-domain/`) no llama directamente a `CreateDistribution`,
+`CreateFunction` ni `CreateKeyValueStore`: la distribución, la Function y
+el KeyValueStore los crea `infra/custom-domain.yaml` a través del
+`OptionalStack` genérico (`OptionalStacks.deploy`, ADR-016, §21 de este
+documento). Lo único que `CustomDomain` llama en tiempo de ejecución es el
+plano de datos del KeyValueStore, para `register()`/`unregister()`/
+`refresh()`.
+
+**Corrección a una "corrección" anterior de este mismo documento:** una
+revisión previa de este cambio había anotado aquí que escribir en un
+KeyValueStore de CloudFront no necesita SigV4A, leyendo sólo
+`metadata.signatureVersion == "v4"` del modelo `cloudfront-keyvaluestore/
+2022-07-26` de botocore 1.43.103. Eso mira el campo equivocado:
+`endpoint-rule-set-1.json` del mismo servicio fija
+`"authSchemes": [{"name": "sigv4a", ...}]` en sus reglas de endpoint, y es
+la resolución de endpoint quien elige el firmante de verdad, no
+`metadata.signatureVersion`. Comprobado sin red con credenciales ficticias
+y un hook `before-send`: `boto3` `describe_key_value_store` firma con
+`AWS4-ECDSA-P256-SHA256` (SigV4A) cuando `awscrt` está instalado, y lanza
+`MissingDependencyException` ("This operation requires an additional
+dependency. Use pip install botocore[crt]") cuando no lo está. El SDK de
+JavaScript v3 falla igual sin un firmante SigV4A. Así que **sí hace falta
+SigV4A**: Python instala `awscrt` con el extra opcional
+`rayito[custom-domain]` (`pyproject.toml`); TypeScript declara
+`@aws-sdk/signature-v4a` como peer opcional además del peer habitual
+`@aws-sdk/client-cloudfront-keyvaluestore`. Sin ninguno de los dos, cada
+llamada falla con un mensaje propio que nombra el paquete que falta, nunca
+con el error crudo de la dependencia.
+
+**Estas son las únicas operaciones y los únicos parámetros de
+`cloudfront-keyvaluestore` que los SDKs pueden usar** (regla dura 1). Los
+nombres de Python están verificados contra el modelo de botocore
+1.43.103; los de JavaScript contra los mismos nombres de comando (sufijo
+`Command`) que expone `@aws-sdk/client-cloudfront-keyvaluestore`.
+Referencia de la API:
+<https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/>
+(consultada 2026-09-30).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `DescribeKeyValueStore` (`describe_key_value_store` / `DescribeKeyValueStoreCommand`) | `KvsARN` | `ETag` | `cloudfront-keyvaluestore:DescribeKeyValueStore` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DescribeKeyValueStore.html> |
+| `PutKey` (`put_key` / `PutKeyCommand`) | `KvsARN`, `Key`, `Value`, `IfMatch` (el `ETag` de la llamada anterior, encadenado) | `ETag` (el nuevo, para la siguiente escritura) | `cloudfront-keyvaluestore:PutKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_PutKey.html> |
+| `DeleteKey` (`delete_key` / `DeleteKeyCommand`) | `KvsARN`, `Key`, `IfMatch` | `ETag` | `cloudfront-keyvaluestore:DeleteKey` | <https://docs.aws.amazon.com/cloudfront-keyvaluestore/latest/APIReference/API_DeleteKey.html> |
+
+Una ruta ocupa dos claves (`DOM-1`, re-derivado de un JWE real de
+`create-microvm-auth-token`: 823 B, por debajo del límite de 1024 B por
+valor de este servicio): `j:<puerto>-<alias>` (el JWE tal cual) y
+`m:<puerto>-<alias>` (JSON compacto `{"e": endpoint, "t": sha256(traffic_token)
+o "", "x": expiración epoch}`). `register()` hace `DescribeKeyValueStore` +
+2 `PutKey` encadenados por `ETag`; `refresh()` sólo reescribe `j:`;
+`unregister()` hace `DescribeKeyValueStore` + hasta 2 `DeleteKey`, y trata
+`ResourceNotFoundException` (clave ya borrada) como éxito — nunca
+`DescribeKeyValueStore` falla así, sólo `PutKey`/`DeleteKey` sobre una
+clave ausente.
+
+Constructor de cliente: Python `LazyClient("cloudfront-keyvaluestore",
+region=…, session=…)` (necesita `awscrt`, extra `rayito[custom-domain]`,
+para firmar SigV4A); TypeScript `loadOptionalSdkClient("@aws-sdk/client-
+cloudfront-keyvaluestore", …)`, que además carga el peer opcional
+`@aws-sdk/signature-v4a` antes de construir el cliente (ambos fallan con un
+mensaje propio, no con el error crudo del SDK, si falta cualquiera de los
+dos paquetes). Ningún cliente se construye hasta el primer
+`register`/`unregister`/`refresh`; construir `CustomDomain()` no llama a
+AWS.
+
+**CloudFront Function** (`infra/functions/custom_domain_router.js`,
+runtime `cloudfront-js-2.0`, asociada en `viewer-request`, único evento
+donde `cf.updateRequestOrigin` está disponible): abre un `kvs = cf.kvs()`
+una vez a nivel de módulo (el almacén asociado en `FunctionConfig.
+KeyValueStoreAssociations` no necesita id explícito), lee
+`j:<label>`/`m:<label>` con `await kvs.get(key, {format: ...})` (lanza si
+la clave no existe, capturado para responder 404), y llama a
+`cf.updateRequestOrigin({domainName: meta.e, customHeaders: {"x-aws-proxy-
+auth": jwe, "x-aws-proxy-port": puerto}})`. `updateRequestOrigin` no exige
+que `domainName` sea un origen ya declarado en la distribución (verificado
+contra la documentación de AWS antes de escribir la plantilla); el origen
+"placeholder" de `infra/custom-domain.yaml` nunca se contacta de verdad.
+DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket) y DOM-5 (latencia de propagación
+del KVS a los edges) quedan **SIN MEDIR** hasta la etapa de aceptación AWS
+con una distribución real (el e2e la automatiza; ver abajo). El primer
+intento (2026-10-04) encontró que el `Comment` de la Function superaba los
+128 caracteres que CloudFront admite en los tres recursos (Q140, arreglado)
+y después chocó con una SCP de la organización de la cuenta de pruebas que
+deniega `cloudfront:CreateDistribution` (Q141): quien despliegue esta pila
+dentro de una organización necesita que ninguna SCP le niegue esa acción. Lo que sí se midió sin
+dominio (Q121, `TestFunction`): el `FunctionCode` no compilaba en
+`cloudfront-js-2.0` (`for...of` y un parámetro por defecto); arreglado y
+re-medido, las decisiones 403/404/origen salen como en los tests de Node.
+
+**Comprobación DOM-2 — `OriginRequestPolicy` no puede forwardear `Host`.**
+`DefaultCacheBehavior` usa la política gestionada `AllViewerExceptHostHeader`
+(`b689b0a8-53d0-40ab-baf2-68738e2966ac`), no `AllViewer`
+(`216adef6-5c7f-47e4-b989-5492eafa07d3`, usada por error en una versión
+anterior de esta plantilla). Razón: si se forwardea `Host`, CloudFront
+comprueba el certificado TLS del origen elegido por `updateRequestOrigin`
+contra ese `Host` (y lo manda como SNI); el certificado del endpoint de AWS
+Lambda MicroVMs nunca coincide con `<puerto>-<alias>.<PublicDomain>`, así
+que toda petición acabaría en 502. `AllViewerExceptHostHeader` forwardea
+todo lo demás que el proxy de AWS Lambda MicroVMs y los upgrades WebSocket
+necesitan, sin ese campo. Pendiente de confirmar contra una distribución
+real en la etapa de aceptación AWS: `aws cloudfront test-function`
+(gratuito) sobre `RouterFunction` es parte de ese plan.
+
+**Parámetro `AlternateDomainNames` de la plantilla** (`CommaDelimitedList`,
+por defecto vacío = alias comodín `*.<PublicDomain>`): lista explícita de
+nombres alternativos de la distribución
+(`DistributionConfig.Aliases`). CloudFront rechaza el mismo nombre
+alternativo en dos distribuciones (`CNAMEAlreadyExists`) y, si dos
+distribuciones solapan (`*.sbx.example.com` en una y
+`8000-x.sbx.example.com` en otra), envía la petición a la del nombre más
+específico
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html>,
+consultada 2026-10-03). Cuota por defecto: 100 nombres por distribución
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html>).
+El certificado debe cubrir cada nombre (un comodín cubre un solo nivel).
+Si ya existe un registro DNS comodín que apunta a OTRA distribución,
+añadir un nombre más específico falla con "incorrectly configured DNS
+record" (CloudFront resuelve el nombre al validarlo;
+<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/troubleshooting-distributions.html>).
+El SDK valida la lista antes de llamar a AWS
+(`validate_alternate_domain_names`) y el e2e la usa para aislar cada
+corrida con nombres aleatorios. Sin DNS, un cliente llega a la
+distribución conectando al `DistributionDomainName` y mandando el
+hostname propio como SNI y como `Host` (`curl --connect-to`): CloudFront
+elige la distribución por el `Host`, y rechaza con 421 (domain fronting) un
+SNI distinto del `Host` cuyo certificado no lo cubra.
