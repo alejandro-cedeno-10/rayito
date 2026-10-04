@@ -20,8 +20,8 @@ use super::ports::{
 };
 use super::progress::Counters;
 use super::{
-    LocationRequest, PersistenceDeps, PersistenceLease, ResolvedLocation, resolve_home_identity,
-    resolve_location,
+    LocationRequest, PersistenceDeps, PersistenceLease, ResolvedLocation, SessionScope,
+    resolve_home_identity, resolve_location,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -52,21 +52,25 @@ pub struct PreparedRestore {
 pub async fn prepare_restore<S, A, R>(
     deps: &PersistenceDeps<S, A, R>,
     request: RestoreRequestInfo,
-    default_user: Option<&str>,
+    scope: SessionScope<'_>,
 ) -> Result<PreparedRestore, PersistenceError>
 where
     S: ObjectStore,
     A: HomeArchiver,
     R: BlockingRunner,
 {
-    let location = resolve_location(&request.location, deps.default_region.as_deref())?;
+    let location = resolve_location(
+        &request.location,
+        deps.default_region.as_deref(),
+        scope.binding,
+    )?;
     let identity = resolve_home_identity(
         request.user.as_deref(),
-        default_user,
+        scope.default_user,
         deps.policy,
         deps.lookup.as_ref(),
     )?;
-    let username = username_of(request.user.as_deref(), default_user);
+    let username = username_of(request.user.as_deref(), scope.default_user);
     let plan = ArchivePlan::new(identity, username, ExcludeList::default());
     let lease = deps.gate.acquire()?;
     deps.store
@@ -208,15 +212,20 @@ mod tests {
         sample_archive, seed_checkpoint,
     };
     use super::*;
-    use crate::persistence::StatusKind;
     use crate::persistence::ports::StoreError;
+    use crate::persistence::{PersistBinding, StatusKind};
 
     #[test]
     fn restore_downloads_unpacks_and_verifies() {
         let store = FakeStore::default();
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         let (archive, sha) = seed_checkpoint(&store, &sample_archive());
-        let prepared = block_on(prepare_restore(&deps, restore_request(), None)).unwrap();
+        let prepared = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap();
         assert_eq!(prepared.manifest.sha256, sha);
         assert_eq!(prepared.manifest.files, 3);
         let (sink, source) = VecChunks::pair();
@@ -241,7 +250,12 @@ mod tests {
     fn missing_manifest_is_not_found_before_started() {
         let store = FakeStore::default();
         let (deps, _) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
-        let error = block_on(prepare_restore(&deps, restore_request(), None)).unwrap_err();
+        let error = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap_err();
         assert_eq!(error, PersistenceError::NotFound);
         assert_eq!(error.status_kind(), StatusKind::NotFound);
         assert!(!deps.gate.is_busy());
@@ -253,7 +267,12 @@ mod tests {
         let (deps, _) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         let (_, _) = seed_checkpoint(&store, &sample_archive());
         store.corrupt_archive();
-        let prepared = block_on(prepare_restore(&deps, restore_request(), None)).unwrap();
+        let prepared = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap();
         let (sink, source) = VecChunks::pair();
         let error = block_on(run_restore(
             &deps,
@@ -273,7 +292,12 @@ mod tests {
         let (deps, _) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         seed_checkpoint(&store, &sample_archive());
         store.remove("rayito/x/home.tar.gz");
-        let prepared = block_on(prepare_restore(&deps, restore_request(), None)).unwrap();
+        let prepared = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap();
         let (sink, source) = VecChunks::pair();
         let error = block_on(run_restore(
             &deps,
@@ -293,7 +317,12 @@ mod tests {
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         seed_checkpoint(&store, &sample_archive());
         archiver.fail_extract(crate::persistence::ArchiveError::DiskFull);
-        let prepared = block_on(prepare_restore(&deps, restore_request(), None)).unwrap();
+        let prepared = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap();
         let (sink, source) = VecChunks::pair();
         let error = block_on(run_restore(
             &deps,
@@ -311,7 +340,12 @@ mod tests {
         let store = FakeStore::default();
         let (deps, _) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         seed_checkpoint(&store, &sample_archive());
-        let prepared = block_on(prepare_restore(&deps, restore_request(), None)).unwrap();
+        let prepared = block_on(prepare_restore(
+            &deps,
+            restore_request(),
+            SessionScope::default(),
+        ))
+        .unwrap();
         store.fail_body_after(1, StoreError::new(StoreErrorKind::Other));
         let (sink, source) = VecChunks::pair();
         let error = block_on(run_restore(
@@ -323,5 +357,27 @@ mod tests {
         ))
         .unwrap_err();
         assert_eq!(error, PersistenceError::Store);
+    }
+
+    #[test]
+    fn a_restore_from_outside_the_bound_scope_is_refused_before_any_read() {
+        let store = FakeStore::default();
+        let (deps, _) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
+        let (_, _) = seed_checkpoint(&store, &sample_archive());
+        let elsewhere = PersistBinding::parse(Some("my-bucket"), Some("tenants/other")).unwrap();
+        let scope = SessionScope {
+            default_user: None,
+            binding: Some(&elsewhere),
+        };
+        let error = block_on(prepare_restore(&deps, restore_request(), scope)).unwrap_err();
+        assert_eq!(error, PersistenceError::OutsideBinding);
+        assert_eq!(error.status_kind(), StatusKind::PermissionDenied);
+        assert!(
+            !store
+                .operations()
+                .iter()
+                .any(|op| op == "get" || op == "probe")
+        );
+        assert!(!deps.gate.is_busy());
     }
 }

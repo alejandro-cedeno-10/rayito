@@ -630,6 +630,44 @@ async fn a_validate_after_run_never_touches_the_default_kernel() {
     );
 }
 
+/// Defence in depth behind the `/validate` handler: the build-only path
+/// that skips the stream gate refuses on its own once `/run` is accepted,
+/// so neither the restart nor the cell reaches the sidecar.
+#[tokio::test]
+async fn the_build_only_execute_path_refuses_after_run() {
+    let harness = harness().await;
+    let restarts_before = harness.requests_of("restart_context").len();
+
+    let refused = harness
+        .manager
+        .execute_unchecked(rayd::code::ExecuteInput {
+            context_id: None,
+            language: None,
+            code: "1".to_owned(),
+            timeout_ms: 1_000,
+            envs: std::collections::BTreeMap::new(),
+        })
+        .await;
+    let outcome = rayd::code::run_validation(&harness.manager).await;
+
+    assert!(matches!(
+        refused,
+        Err(rayd_core::code::CodeError::NotAcceptingStreams {
+            phase: rayd_core::lifecycle::HookPhase::Running
+        })
+    ));
+    assert!(matches!(
+        outcome,
+        rayd_core::code::ValidationOutcome::Failed { .. }
+    ));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(harness.requests_of("execute").is_empty());
+    assert_eq!(
+        harness.requests_of("restart_context").len(),
+        restarts_before
+    );
+}
+
 #[tokio::test]
 async fn run_rotates_the_default_kernel_with_the_payload_envs() {
     let harness = harness_with(Options {

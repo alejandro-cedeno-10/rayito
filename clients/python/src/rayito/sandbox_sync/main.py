@@ -970,6 +970,7 @@ class Sandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network_enforce=launch.enforce,
+            persist=persist,
         )
         with instrumentation.span(
             "rayito.sandbox.create",

@@ -231,16 +231,30 @@ def test_metadata_is_readable_from_inside_the_vm() -> None:
     )
 
 
-def test_prefix_is_not_a_tenant_boundary() -> None:
+def test_prefix_is_a_tenant_boundary_only_when_bound() -> None:
+    """C-07: `create(persist=)` liga el sandbox a su bucket y a su base en el
+    `runHookPayload` y `rayd` rechaza lo de fuera; un sandbox sin `persist=`
+    no liga nada. Ningún texto puede volver a llamar pendiente al ligado ni
+    decir que `rayd` nunca comprueba el destino."""
     row = threat_row("T15")
     assert_says(
         "SECURITY.md T15",
         row,
         (
-            "no separa inquilinos",
+            "liga el sandbox en el `runHookPayload`",
+            "`PERMISSION_DENIED`",
+            "un `prefix` por inquilino",
+            "un `name` por inquilino no",
+            "Sin ese bloque",
             "no liga el `S3Location` al sandbox",
-            "un execution role y un prefijo por inquilino",
-            "queda pendiente",
+        ),
+    )
+    assert_silent(
+        "SECURITY.md T15",
+        row,
+        (
+            "ligar el destino al sandbox en el `runHookPayload` queda pendiente",
+            "el prefijo **no separa inquilinos**",
         ),
     )
 
@@ -249,9 +263,19 @@ def test_prefix_is_not_a_tenant_boundary() -> None:
         "docs/site/docs/persistence.md «S3Prefix»",
         page,
         (
+            "El prefijo separa inquilinos cuando el sandbox lo liga",
+            '`PersistenceException(code="permission_denied")`',
+            "`prefix` por inquilino",
+            "un `name` por inquilino no los separa",
+            "Un sandbox creado **sin** `persist=`",
+        ),
+    )
+    assert_silent(
+        "docs/site/docs/persistence.md «S3Prefix»",
+        page,
+        (
             "El prefijo no separa inquilinos",
             "no comprueba que el destino sea el del sandbox que lo pide",
-            "un execution role y un prefijo por inquilino",
         ),
     )
 
@@ -259,7 +283,12 @@ def test_prefix_is_not_a_tenant_boundary() -> None:
     assert_says(
         "docs/site/docs/security.md «Persistencia en S3 (T15)»",
         summary,
-        ("no separa inquilinos", "no liga el destino al sandbox que lo pide"),
+        ("`persist=` liga", "`prefix` por inquilino", "creado sin `persist=` no liga nada"),
+    )
+    assert_silent(
+        "docs/site/docs/security.md «Persistencia en S3 (T15)»",
+        summary,
+        ("no liga el destino al sandbox que lo pide",),
     )
 
 
@@ -402,7 +431,12 @@ def test_c10_and_c12_are_closed_in_the_security_audit() -> None:
     assert_says(
         "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
         still_open,
-        ("**C-07**", "**C-06** queda aceptado con razón escrita"),
+        ("**C-06** queda aceptado con razón escrita", "Del ligado de C-07 queda una decisión"),
+    )
+    assert_silent(
+        "docs/SECURITY_AUDIT.md «Lo que sigue abierto»",
+        still_open,
+        ("el binding del `S3Location` al sandbox (**C-07**)",),
     )
 
 

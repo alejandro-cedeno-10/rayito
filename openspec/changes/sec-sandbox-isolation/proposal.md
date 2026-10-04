@@ -23,7 +23,30 @@ to another sandbox:
   and the documented guarantee ("puede usarlo; no puede leerlo") did not
   say so.
 
+A follow-up sweep confirmed two more (both low):
+
+- **RAYITO-ISO-2** (C-01/C-02 code fix): `CodeManager::execute_unchecked`
+  and `run_validation` skip the stream gate and relied on the `/validate`
+  handler alone to never run after `/run`.
+- **RAYITO-ISO-4** (C-07): `resolve_location()` validated only the syntax of
+  a `Checkpoint`/`Restore` location, so whoever held one sandbox's access
+  token could read or overwrite another sandbox's persisted `HOME` under the
+  same prefix; the audit deferred binding the location to the sandbox in
+  the `runHookPayload`.
+
 ## What Changes
+
+- **Build gate** (`SandboxSession::build_gate`, `CodeManager::build_gate`):
+  `execute_unchecked` and `run_validation` refuse without reaching the
+  sidecar unless the phase is `Booting` or `Ready` and no `/run` was
+  accepted.
+- **Persistence scope** (`rayd_core::persistence::PersistBinding`, the
+  payload's `persist` block, `resolve_location(request, region, binding)`,
+  `SessionScope`): `create(persist=)` sends the bucket and the base prefix;
+  `rayd` stores them at the accepted `/run` and answers `PERMISSION_DENIED`
+  (`OutsideBinding`) to any location outside them before touching S3.
+  Python `build_run_hook_payload(persist=)` and TypeScript
+  `buildRunHookPayload({ persist })` keep parity; no AWS call is added.
 
 - **Build hooks after `/run`** (`rayd`): `validate_hook_decision` takes
   `run_claimed` and answers `ValidateDecision::AfterRun` once `/run` is
@@ -63,6 +86,11 @@ to another sandbox:
 
 ### Modified Capabilities
 
+- `filesystem-persistence`: new requirement, `Checkpoint`/`Restore` stay in
+  the scope the accepted `/run` bound.
+- `sdk-persistence`: `create(persist=)` sends the `persist` block; the docs
+  requirement on the prefix as a tenant boundary changes.
+
 - `hook-defense`: the origin requirement now allows a peer-uid check; the
   audit covers build hooks after `/run`; a new requirement for refusing
   `/terminate` and `/validate` from a sandbox uid.
@@ -72,8 +100,9 @@ to another sandbox:
 
 ## Impact
 
-`rayd` only (`rayd-core` and `rayd`): no proto, SDK, CLI or infra change,
-no new dependency and no cost. A new `rayd` ships in the next image; a
+`rayd-core`, `rayd` and both SDKs' payload builders: no proto, CLI or
+infra change, no new dependency and no cost. A sandbox created with
+`persist=` can no longer checkpoint to or restore from another base. A new `rayd` ships in the next image; a
 sandbox on an older image keeps the old behaviour. Not verified on real AWS
 in this change: the uid that owns the platform's hook connections (inferred
 from the agent sockets measured in Q48), and the forged-hook e2e

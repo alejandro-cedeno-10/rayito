@@ -25,6 +25,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   reiniciar el contexto `default` del kernel ni ejecutar la celda de
   validación, y tanto él como un `/ready` tardío quedan en `hook_audit` como
   anomalía. Las llamadas del build, antes del `/run`, no cambian.
+  Además, el camino de ejecución propio del build (el que se salta el
+  `stream_gate`) se niega por sí solo fuera de la fase de build, aunque se
+  llegue a él sin pasar por el hook.
+- **`Checkpoint` y `Restore` quedan dentro del ámbito que liga el `/run`**
+  (C-07): si el `runHookPayload` trae el bloque `persist` (bucket y base del
+  prefijo, lo manda el SDK desde `create(persist=)`), `rayd` responde
+  `PERMISSION_DENIED`, antes de tocar S3, a cualquier destino de otro bucket
+  o fuera de esa base. Un prefijo por inquilino separa así inquilinos que
+  comparten execution role. Sin el bloque nada cambia.
 - **La pasarela de secretos no devuelve la credencial en las cabeceras de la
   respuesta**: se eliminan las cabeceras de la respuesta del `upstream` que
   llevan el nombre de una cabecera inyectada o contienen un valor vaultado.

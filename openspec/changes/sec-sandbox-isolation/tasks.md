@@ -37,12 +37,39 @@
 - [x] 4.5 `scripts/tests/test_security_docs.py` updated and extended.
 - [x] 4.6 `crates/rayd/CHANGELOG.md` `[Unreleased]` → Security.
 
-## 5. Verification
+## 5. Build gate (RAYITO-ISO-2)
 
-- [x] 5.1 Rust gates in the Linux VM (fmt, clippy `-D warnings`,
+- [x] 5.1 Reproduce: `tests/m4_code.rs::the_build_only_execute_path_refuses_after_run`
+  fails on the previous commit (the cell reaches the sidecar after `/run`).
+- [x] 5.2 `SandboxSession::build_gate` (one lock) with
+  `session::tests::the_build_gate_closes_with_the_accepted_run`.
+- [x] 5.3 `CodeManager::build_gate`, `execute_unchecked` gated,
+  `start_execution` shared with `execute`; `run_validation` checks first.
+
+## 6. Persistence scope (RAYITO-ISO-4, C-07)
+
+- [x] 6.1 Reproduce: `grpc::persistence::tests::a_bound_sandbox_reaches_only_the_homes_under_its_scope`
+  (another base, a sibling prefix and another bucket all resolved before).
+- [x] 6.2 `persistence::binding::PersistBinding` and `BindingRejection`
+  with unit tests; `PersistenceError::OutsideBinding` → `PermissionDenied`.
+- [x] 6.3 `resolve_location(request, region, binding)` and `SessionScope`
+  for `prepare_checkpoint`/`prepare_restore`; flow tests show no store call.
+- [x] 6.4 `run_payload` `persist` block and `SandboxSession::persist_binding`.
+- [x] 6.5 SDKs: Python `build_run_hook_payload(persist=)` +
+  `build_launch_plan(persist=)` (sync and async create), TypeScript
+  `buildRunHookPayload({ persist })` + `buildLaunchPlan`; unit tests in both.
+- [x] 6.6 Docs: `SECURITY.md` T15, `persistence.md`, `security.md`,
+  `ARCHITECTURE.md` (`/run`, `FilesystemService`, ADR-009),
+  `docs/SECURITY_AUDIT.md` §9, `test_security_docs.py`, the three CHANGELOGs.
+
+## 7. Verification
+
+- [x] 7.1 Rust gates in the Linux VM (fmt, clippy `-D warnings`,
   `cargo test --workspace --locked`).
-- [x] 5.2 `scripts/tests`, docs `mkdocs --strict`, OpenSpec `validate --all --strict`.
-- [ ] 5.3 Real AWS (follow-up, not in this change): rebuild the image, run
+- [x] 7.2 `scripts/tests`, docs `mkdocs --strict`, OpenSpec `validate --all --strict`.
+- [ ] 7.3 Real AWS (follow-up, not in this change): rebuild the image, run
   `tests/e2e/test_m6_hardening.py`, and measure the uid owning the
   platform's hook connections; forge `/terminate` and `/validate` from
-  `commands.run` and expect `peer_refused`.
+  `commands.run` and expect `peer_refused`; and a `Checkpoint` from a
+  sandbox created with `persist=` towards another base answers
+  `permission_denied` on the real image.
