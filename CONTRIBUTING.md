@@ -281,6 +281,22 @@ T="$(mktemp -d)" && uv venv -q --python 3.12 "$T" && \
 `make infra-lint` añade `aws cloudformation validate-template` sobre las
 mismas plantillas (necesita credenciales de AWS; la llamada es gratuita).
 
+### Pruebas punta a punta en local (Docker + Floci)
+
+Sin cuenta de AWS ni credenciales, el entorno de `dev/local` corre los SDK
+contra un `rayd` real (la imagen de producto en un contenedor) y contra
+[Floci](https://github.com/floci-io/floci), un emulador de AWS:
+
+```bash
+make local-up      # floci, runner y guest; compila rayd dentro de Docker
+make local-e2e     # tests `local` de Python y TypeScript
+make local-down
+```
+
+Qué cubre, qué no frente a AWS real y cómo está encerrado el emulador:
+[Probar en local](docs/site/docs/guias/probar-en-local.md). No sustituye al
+e2e contra AWS que cierra un hito o una release (`CLAUDE.md`, regla 4).
+
 ### Plantilla IAM y e2e contra tu cuenta de AWS
 
 Las plantillas de CloudFormation viven en `infra/` (`infra/README.md`). El

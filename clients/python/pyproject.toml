@@ -89,8 +89,9 @@ markers = [
     "e2e: corre contra AWS real (requiere RAYITO_E2E=1 y RAYITO_TEMPLATE); excluido por defecto",
     "bench: benchmarks nightly, excluidos por defecto",
     "slow: e2e de más de una hora (RAYITO_E2E_SLOW=1), excluidos por defecto",
+    "local: e2e contra el guest y Floci de dev/local (make local-e2e); excluido por defecto",
 ]
-addopts = "-m 'not e2e and not bench and not slow'"
+addopts = "-m 'not e2e and not bench and not slow and not local'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

@@ -1,0 +1,10 @@
+# Solo dev/local/rayd/Dockerfile construye con la raíz del repositorio como
+# contexto (image/Dockerfile usa su propio zip o dev/local/.guest-context): se
+# envía únicamente lo que necesita `cargo build -p rayd`.
+*
+!rust-toolchain.toml
+!Cargo.toml
+!Cargo.lock
+!proto/
+!crates/
+**/target/
