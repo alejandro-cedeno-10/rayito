@@ -7,6 +7,7 @@
 ## Checklist
 
 - [ ] Cambio OpenSpec enlazado (`openspec/changes/<nombre>/`) y `tasks.md` marcado
+- [ ] Tests nuevos o actualizados que cubren el cambio (`CONTRIBUTING.md` §5), o el motivo de que no los haya
 - [ ] `buf breaking` limpio, o el cambio incompatible del `.proto` justificado aquí
 - [ ] Gates ejecutados en local (`CONTRIBUTING.md` §3) e indicado el sistema: Linux / WSL2 / VM Linux en macOS / Windows
 - [ ] e2e contra AWS ejecutado (imagen y coste aproximado anotados) o "sin cambio de runtime"

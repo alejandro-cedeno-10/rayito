@@ -4,5 +4,8 @@ contact_links:
     url: https://github.com/alejandro-cedeno-10/rayito/security/advisories/new
     about: Repórtala en privado (SECURITY.md). Nunca en un issue público ni pegando tokens, JWE o runHookPayload.
   - name: Documentación
-    url: https://github.com/alejandro-cedeno-10/rayito/tree/main/docs/site/docs
+    url: https://alejandro-cedeno-10.github.io/rayito/
     about: Conceptos, referencia de API, límites, compatibilidad con E2B y modelo de costes.
+  - name: Ayuda y preguntas
+    url: https://github.com/alejandro-cedeno-10/rayito/blob/main/SUPPORT.md
+    about: Dónde pedir ayuda (documentación, rayito doctor, issues). Questions in English are welcome.

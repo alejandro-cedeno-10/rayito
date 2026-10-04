@@ -292,3 +292,13 @@ Variables del e2e: `RAYITO_E2E=1` y `RAYITO_TEMPLATE` (obligatorias),
 `AWS_PROFILE`/`AWS_REGION` (cadena por defecto del SDK) y
 `RAYITO_EXECUTION_ROLE_ARN` (activa `logging: "cloudwatch"`). Cada sandbox del
 e2e cuesta ≈ $0.03; la suite usa dos y termina todo lo que crea.
+
+## Licencia y marcas
+
+[Apache-2.0](https://github.com/alejandro-cedeno-10/rayito/blob/main/LICENSE);
+las atribuciones de terceros están en el fichero `NOTICE` incluido en el
+paquete. E2B es una marca de su titular: Rayito es un proyecto independiente,
+no afiliado, patrocinado ni respaldado por E2B, y usa el nombre sólo para
+describir la compatibilidad de API del shim. Contribuir:
+[`CONTRIBUTING.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md);
+seguridad: [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).
