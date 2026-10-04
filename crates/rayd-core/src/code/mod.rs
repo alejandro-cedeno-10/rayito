@@ -11,6 +11,7 @@ pub mod error;
 pub mod execution;
 pub mod executions;
 pub mod hooks;
+pub mod kernel_process;
 pub mod language;
 pub mod ports;
 pub mod protocol;
@@ -36,6 +37,9 @@ pub use hooks::{
     ProbeOutcome, SidecarConfig, VALIDATE_CELL, ValidateDecision, ValidationOutcome,
     ValidationState, probe_outcome, restart_after_resume, run_rotation_request, sidecar_spawn_spec,
     validate_hook_decision,
+};
+pub use kernel_process::{
+    KernelPidRejection, KernelProcess, KernelProcesses, LOWEST_KERNEL_PID, ProcessFacts,
 };
 pub use language::{AvailableLanguages, ExecuteTarget, Language};
 pub use ports::{

@@ -16,7 +16,5 @@ pub use executions::{ExecuteReceiver, ExecuteSink, ExecutionRecorder, InterruptH
 pub use manager::{
     CodeManager, CodeSettings, ExecuteInput, platform_code_manager, sidecar_identity,
 };
-pub use supervisor::{
-    ExecutionHandle, KernelSignaller, OpTimeouts, SidecarSupervisor, SupervisorSettings,
-};
+pub use supervisor::{ExecutionHandle, OpTimeouts, SidecarSupervisor, SupervisorSettings};
 pub use validate::{VALIDATE_TIMEOUT, run_validation};

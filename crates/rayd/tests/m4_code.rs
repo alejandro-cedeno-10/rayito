@@ -24,9 +24,7 @@ use http::{Request, StatusCode};
 use rayd::adapters::{
     OsRandomSource, PlatformMetricsProbe, TokioSidecarLauncher, detect_spawn_platform,
 };
-use rayd::code::{
-    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
-};
+use rayd::code::{CodeManager, CodeSettings, OpTimeouts, SidecarSupervisor, sidecar_identity};
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{Services, StreamSettings};
 use rayd::hooks::{HookReply, hook_path};
@@ -35,7 +33,8 @@ use rayd::process::{ManagerSettings, platform_manager, shared_registry};
 use rayd::pty::{PtySettings, platform_pty_manager};
 use rayd_core::clock::SystemClock;
 use rayd_core::code::{
-    ContextRegistry, ExecutionLimits, KernelSidecar, SidecarConfig, sidecar_spawn_spec,
+    ContextRegistry, ExecutionLimits, KernelPidRejection, KernelProcess, KernelProcesses,
+    KernelSidecar, ProcessFacts, SidecarConfig, sidecar_spawn_spec,
 };
 use rayd_core::filesystem::DenyList;
 use rayd_core::lifecycle::Hook;
@@ -255,8 +254,34 @@ fn code_settings(options: &Options, config: &SidecarConfig) -> CodeSettings {
     }
 }
 
-/// A launcher for this host and a kernel killer that only records pids:
-/// the fake's pids are made up and must never be signalled.
+/// Vouches for every pid the fake sidecar reports and records the groups
+/// the supervisor would signal: the fake's pids are made up, so they must
+/// never reach the real table or `killpg`.
+struct RecordingKernels(Arc<Mutex<Vec<u32>>>);
+
+impl KernelProcesses for RecordingKernels {
+    fn admit(&self, pid: u32, sidecar_pid: u32) -> Result<KernelProcess, KernelPidRejection> {
+        let facts = |ppid, pgrp| ProcessFacts {
+            ppid,
+            pgrp,
+            start_ticks: 1,
+            uid: 1000,
+        };
+        KernelProcess::admit(
+            pid,
+            sidecar_pid,
+            Some(facts(sidecar_pid, pid)),
+            Some(facts(1, sidecar_pid)),
+        )
+    }
+
+    fn signal(&self, kernel: &KernelProcess, _signal: i32) -> bool {
+        self.0.lock().unwrap().push(kernel.pid());
+        true
+    }
+}
+
+/// A launcher for this host and a kernel table that only records pids.
 fn code_manager(
     session: &Arc<SandboxSession>,
     platform: &rayd::adapters::SpawnPlatform,
@@ -272,16 +297,13 @@ fn code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let recorder = killed.clone();
-    let kernel_killer: KernelSignaller =
-        Arc::new(move |pid, _signal| recorder.lock().unwrap().push(pid));
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
         session.clone(),
         registry.clone(),
         settings.supervisor_settings(),
-        kernel_killer,
+        Arc::new(RecordingKernels(killed.clone())),
     );
     CodeManager::new(
         session.clone(),
