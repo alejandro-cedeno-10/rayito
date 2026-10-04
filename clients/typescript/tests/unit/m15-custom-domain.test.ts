@@ -201,7 +201,7 @@ describe("custom-domain/service", () => {
     const stacks = new FakeStackProvisioner();
     const domain = new CustomDomain({ publicDomain: PUBLIC_DOMAIN, provisioner: stacks });
     await domain.deploy({ certificateArn: CERTIFICATE_ARN });
-    expect(stacks.parameters.get(`rayito-${STACK_COMPONENT}`)).toEqual({
+    expect(stacks.sentParameters).toEqual({
       PublicDomain: PUBLIC_DOMAIN,
       CertificateArn: CERTIFICATE_ARN,
     });
@@ -214,9 +214,9 @@ describe("custom-domain/service", () => {
       certificateArn: CERTIFICATE_ARN,
       alternateDomainNames: [domain.hostFor("e2e-a", 8000), domain.hostFor("e2e-b", 8000)],
     });
-    expect(
-      stacks.parameters.get(`rayito-${STACK_COMPONENT}`)?.[ALTERNATE_DOMAIN_NAMES_PARAMETER],
-    ).toBe("8000-e2e-a.sbx.example.com,8000-e2e-b.sbx.example.com");
+    expect(stacks.sentParameters[ALTERNATE_DOMAIN_NAMES_PARAMETER]).toBe(
+      "8000-e2e-a.sbx.example.com,8000-e2e-b.sbx.example.com",
+    );
   });
 
   test("deploy rejects alternate names outside publicDomain before AWS", async () => {

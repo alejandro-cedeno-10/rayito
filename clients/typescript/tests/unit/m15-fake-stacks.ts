@@ -20,9 +20,6 @@ export class FakeStackProvisioner implements StackProvisioner {
   /** Cada `timeoutMs` que `wait()` recibió, en orden; espejo de
    * `fake_stacks.FakeStackProvisioner.wait_timeouts`. */
   readonly waitTimeoutsMs: number[] = [];
-  /** Los `parameters` del último `create`/`update` de cada pila; espejo de
-   * `fake_stacks.FakeStackProvisioner.parameters`. */
-  readonly parameters = new Map<string, Readonly<Record<string, string>>>();
 
   async describe(stackName: string): Promise<StackStatus | undefined> {
     this.calls.push(["describe", stackName]);
@@ -37,7 +34,6 @@ export class FakeStackProvisioner implements StackProvisioner {
     },
   ): Promise<void> {
     this.calls.push(["create", options.stackName]);
-    this.parameters.set(options.stackName, { ...options.parameters });
     this.sentParameters = { ...options.parameters };
     this.sentKeepPrevious = [];
     this.stacks.set(options.stackName, {
@@ -57,7 +53,6 @@ export class FakeStackProvisioner implements StackProvisioner {
     },
   ): Promise<UpdateOutcome> {
     this.calls.push(["update", options.stackName]);
-    this.parameters.set(options.stackName, { ...options.parameters });
     const keepPrevious = options.keepPrevious ?? [];
     this.sentParameters = { ...options.parameters };
     this.sentKeepPrevious = keepPrevious;

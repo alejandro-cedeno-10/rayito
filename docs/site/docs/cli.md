@@ -366,7 +366,7 @@ rayito domain status | destroy [--stack-name N] [--yes]
 
 [Dominio propio](funciones-opcionales/dominio-propio.md) (**experimental**,
 sin verificar aún de punta a punta en AWS real): una fachada de
-`rayito stack {deploy,status,destroy} custom-domain` con los nombres de
+`rayito stack deploy custom-domain` (y `status`/`destroy`) con los nombres de
 `CustomDomain`. `deploy` valida `--public-domain` y cada
 `--alternate-domain-name` antes de llamar a AWS, pide confirmación salvo
 `--yes` e imprime a qué apuntar el `CNAME`. El certificado ACM tiene que

@@ -43,14 +43,6 @@ def test_list_makes_no_provisioner_call(
     assert fake_provisioner.calls == []
 
 
-def test_deploying_an_unsupported_component_fails_before_any_call(
-    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
-) -> None:
-    result = runner.invoke(app, ["stack", "deploy", "custom-domain", "--yes"], obj=clients)
-    assert result.exit_code != 0
-    assert fake_provisioner.calls == []
-
-
 def test_redeploy_prints_only_the_parameters_that_change(
     runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
 ) -> None:

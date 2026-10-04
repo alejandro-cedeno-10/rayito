@@ -125,7 +125,7 @@ def test_deploy_passes_alternate_domain_names_and_prints_the_dns_target(
         obj=clients,
     )
     assert result.exit_code == 0, result.output
-    assert fake_provisioner.parameters["rayito-custom-domain"]["AlternateDomainNames"] == (
+    assert fake_provisioner.sent_parameters["AlternateDomainNames"] == (
         "8000-a.sbx.example.com,8000-b.sbx.example.com"
     )
     assert (
@@ -156,7 +156,7 @@ def test_deploy_without_alternate_names_prints_the_wildcard_dns_target(
         obj=clients,
     )
     assert result.exit_code == 0, result.output
-    assert "AlternateDomainNames" not in fake_provisioner.parameters["rayito-custom-domain"]
+    assert "AlternateDomainNames" not in fake_provisioner.sent_parameters
     assert f"*.{PUBLIC_DOMAIN} a {DISTRIBUTION_DOMAIN_NAME}" in result.output
 
 

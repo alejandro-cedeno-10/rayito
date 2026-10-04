@@ -113,7 +113,7 @@ def test_deploy_passes_public_domain_and_certificate_and_keeps_the_wildcard() ->
     domain.deploy(certificate_arn=CERTIFICATE_ARN)
     # Sin `alternate_domain_names`, ni siquiera se manda el parámetro: el
     # valor por defecto de la plantilla ("") deja el comodín.
-    assert stacks.parameters["rayito-custom-domain"] == {
+    assert stacks.sent_parameters == {
         "PublicDomain": PUBLIC_DOMAIN,
         "CertificateArn": CERTIFICATE_ARN,
     }
@@ -124,7 +124,7 @@ def test_deploy_passes_explicit_alternate_domain_names_comma_joined() -> None:
     domain = CustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks)
     names = [domain.host_for("e2e-a", 8000), domain.host_for("e2e-b", 8000)]
     domain.deploy(certificate_arn=CERTIFICATE_ARN, alternate_domain_names=names)
-    assert stacks.parameters["rayito-custom-domain"][ALTERNATE_DOMAIN_NAMES_PARAMETER] == (
+    assert stacks.sent_parameters[ALTERNATE_DOMAIN_NAMES_PARAMETER] == (
         "8000-e2e-a.sbx.example.com,8000-e2e-b.sbx.example.com"
     )
 
@@ -145,9 +145,7 @@ async def test_async_deploy_forwards_alternate_domain_names() -> None:
     await domain.deploy(
         certificate_arn=CERTIFICATE_ARN, alternate_domain_names=["*.sbx.example.com"]
     )
-    assert stacks.parameters["rayito-custom-domain"][ALTERNATE_DOMAIN_NAMES_PARAMETER] == (
-        "*.sbx.example.com"
-    )
+    assert stacks.sent_parameters[ALTERNATE_DOMAIN_NAMES_PARAMETER] == ("*.sbx.example.com")
 
 
 def test_deploy_and_destroy_default_to_the_custom_domain_wait_timeout() -> None:

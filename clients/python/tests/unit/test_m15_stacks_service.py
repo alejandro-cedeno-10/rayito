@@ -5,6 +5,8 @@ plantilla lanza antes de tocar el provisioner, create/update/blocked siguen
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from rayito._stacks._model import StackComponent, StackStatus
@@ -25,12 +27,19 @@ def test_components_lists_the_full_catalog_with_no_provisioner_call() -> None:
     assert fake.calls == []
 
 
+def _unsupported_stub() -> StackComponent:
+    """Every catalog component has a template now (custom-domain was the
+    last stub), so the `supported=False` path is exercised with a copy."""
+    component = component_by_name("metadata-index")
+    assert component is not None
+    return replace(component, name="stub-component", supported=False)
+
+
 def test_deploying_an_unsupported_component_raises_before_touching_the_provisioner() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
-    # `custom-domain` is the last stub (`supported=False`) on this branch.
-    with pytest.raises(UnimplementedError, match="custom-domain"):
-        stacks.deploy("custom-domain")
+    with pytest.raises(UnimplementedError, match="stub-component"):
+        stacks.deploy(_unsupported_stub())
     assert fake.calls == []
 
 
@@ -38,8 +47,12 @@ def test_destroying_an_unsupported_component_also_raises_first() -> None:
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
     with pytest.raises(UnimplementedError):
-        stacks.destroy("custom-domain")
+        stacks.destroy(_unsupported_stub())
     assert fake.calls == []
+
+
+def test_every_catalog_component_has_a_template() -> None:
+    assert all(component.supported for component in COMPONENTS)
 
 
 def test_an_unknown_component_name_is_invalid_argument() -> None:

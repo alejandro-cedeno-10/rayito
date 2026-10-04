@@ -219,3 +219,23 @@
       `specs/custom-domain/spec.md`, `docs-delta.md`).
 - [x] 8.2 `npx -y @fission-ai/openspec@1.10.0 validate --strict` clean.
       Not archived.
+
+## 9. Ship as experimental
+
+- [x] 9.1 Merge `origin/main` (FeatureSet planning and hashed cfn-lint
+      kept; `AWS_API_NOTES.md` Q121 was left free by main, Q140/Q141 are
+      the next free rows after main's Q139).
+- [x] 9.2 Maintainer decision: merge as **experimental** without the
+      end-to-end AWS run, because the test account's SCP denies
+      `cloudfront:CreateDistribution` (Q141). Verified on real AWS: the
+      Function in `cloudfront-js-2.0` (Q121) and the KVS + Function of the
+      stack (Q140). Not verified: the distribution and DOM-2/3/5/7/8.
+- [x] 9.3 Marked experimental in the feature page (admonition with what
+      was and was not verified and how to report issues), nav, docstrings
+      and TSDoc, both CHANGELOGs, `e2b-parity.md` rows 15/110,
+      Novedades ("Disponible como experimental"), `optional-features.md`,
+      the stacks catalog, the CLI reference and `SECURITY.md` T25;
+      `rayito domain` is no longer hidden.
+- [ ] 9.4 Run the e2e (`RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`) in an
+      account that allows `CreateDistribution`, then drop the experimental
+      label and archive this change.
