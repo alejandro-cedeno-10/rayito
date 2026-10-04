@@ -21,7 +21,7 @@ import { Template } from "../../src/templates/dsl.js";
 import { FakeBuildClients, makeBaseZip } from "./m15-fake-build-clients.js";
 
 const SESSION_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLESESSIONTOKENVALUE0123456789";
-const ACCESS_KEY_ID = "ASIAEXAMPLEKEYID0123";
+const ACCESS_KEY_ID = "ASIAFAKEKEYIDEXAMPLE";
 const AUTHORIZATION = `AWS4-HMAC-SHA256 Credential=${ACCESS_KEY_ID}/20261004/us-east-1/lambda/aws4_request`;
 const INVALID_SIGNATURE_MESSAGE =
   "The request signature we calculated does not match the signature you provided." +

@@ -20,7 +20,7 @@ from rayito.cli._console import client_error_message, translated_failures
 from rayito.exceptions import BuildException, StackException
 
 SESSION_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLESESSIONTOKENVALUE0123456789"
-ACCESS_KEY_ID = "ASIAEXAMPLEKEYID0123"
+ACCESS_KEY_ID = "ASIAFAKEKEYIDEXAMPLE"
 INVALID_SIGNATURE_MESSAGE = (
     "The request signature we calculated does not match the signature you provided."
     "\n\nThe Canonical String for this request should have been\n"
