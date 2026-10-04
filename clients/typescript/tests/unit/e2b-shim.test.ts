@@ -233,11 +233,14 @@ describe("unimplemented members", () => {
       ["getMcpUrl", () => sandbox.getMcpUrl()],
       ["listSnapshots", () => Sandbox.listSnapshots()],
       ["getSignature", () => getSignature({ path: "/f", operation: "read" })],
-      ["Template", () => Template.build({}, { alias: "a" })],
-      ["Template", () => Template.exists("a")],
+      // m15-templates: Template ya construye de verdad; sólo el etiquetado
+      // (sin equivalente en create/update-microvm-image) sigue sin implementar.
+      ["Template.aliasExists", () => new Template().aliasExists()],
+      ["Template.assignTags", () => new Template().assignTags()],
+      ["Template.removeTags", () => new Template().removeTags()],
+      ["Template.getTags", () => new Template().getTags()],
       ["Volume", () => Volume.create("v")],
       ["iam", () => Secret.iamToken({ audience: "sts.amazonaws.com" })],
-      ["Template", () => client.Template],
       ["Volume", () => client.Volume],
     ];
     for (const [feature, member] of syncMembers) {

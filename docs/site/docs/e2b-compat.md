@@ -92,7 +92,8 @@ Lo que cambia fuera del código:
     | Code interpreter | `Execution`, `Result`, `Logs`, `OutputMessage`, `ExecutionError`, `Context`, `MIMEType`, `RunCodeLanguage` y los charts `ChartType`, `ScaleType`, `Chart`, `Chart2D`, `PointData`, `LineChart`, `ScatterChart`, `BarChart`, `BarData`, `PieChart`, `PieData`, `BoxAndWhiskerChart`, `BoxAndWhiskerData`, `SuperChart` |
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `AsyncSecret`, `SecretInfo`, `SecretPaginator`, `AsyncSecretPaginator` |
     | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException`, `SecretException`, `SecretNotFoundException` |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `AsyncTemplate`, `Volume`, `AsyncVolume`, `get_signature` |
+    | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template`, `AsyncTemplate` construyen de verdad; `alias_exists`/`assign_tags`/`remove_tags`/`get_tags` siguen sin equivalente |
+    | Sin primitiva (importan, pero toda llamada lanza) | `Volume`, `AsyncVolume`, `get_signature` |
     | Sólo Rayito | `UnimplementedError`, `RayitoCompatWarning` |
 
 === "TypeScript"
@@ -113,7 +114,8 @@ Lo que cambia fuera del código:
     | Code interpreter | `Execution`, `Result`; tipos `Context`, `Logs`, `OutputMessage`, `ExecutionError` |
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `SecretPaginator`; tipos `SecretInfo`, `SecretCreateOpts`, `SecretUpdateOpts`, `SecretGetInfoOpts`, `SecretExistsOpts`, `SecretDestroyOpts`, `SecretListOpts`, `SecretConnectionOpts` |
     | Errores (las clases nativas de `rayito`: `instanceof` vale entre los dos) | `SandboxError`, `TimeoutError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `InvalidArgumentError`, `AuthenticationError`, `RateLimitError`, `CommandExitError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`), `FileUploadError`, `GitAuthError`, `GitUpstreamError`, `TemplateError`, `BuildError`, `UnimplementedError`, `SecretError`, `SecretNotFoundError` |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Template`, `Volume`, `getSignature` |
+    | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template` construye de verdad; `aliasExists`/`assignTags`/`removeTags`/`getTags` siguen sin equivalente |
+    | Sin primitiva (importan, pero toda llamada lanza) | `Volume`, `getSignature` |
 
     `rayito/e2b` es una entrada del mismo paquete npm `rayito` (ESM y
     CommonJS): no hay que instalar nada más.
@@ -147,7 +149,7 @@ nada se aproxima en silencio.
 | `sbx.kill()`, `Sandbox.kill(id)`, `sbx.is_running(request_timeout=)`, `sbx.sandbox_id`, `sbx.sandbox_domain` | igual |
 | `sbx.pause()` / `beta_pause()` → `bool`, `Sandbox.connect(id)` sobre un sandbox pausado | `suspend-microvm` y `resume-microvm` |
 | `Sandbox.list(query=SandboxQuery(metadata=...))` sobre sandboxes `RUNNING` | filtro en cliente, O(n) ([coste](#el-coste-de-listquerysandboxquerymetadata)) |
-| Las excepciones de `e2b.exceptions` (`TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `CommandExitException`, `GitAuthException`, ...) | las mismas clases nativas bajo esos nombres; `NotEnoughSpaceException` es `DiskFullException` y se lanza con el disco lleno; `ServiceBusyException` se lanza ante `InsufficientCapacityException`; `TemplateException` y `BuildException` existen pero nunca se lanzan |
+| Las excepciones de `e2b.exceptions` (`TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `CommandExitException`, `GitAuthException`, ...) | las mismas clases nativas bajo esos nombres; `NotEnoughSpaceException` es `DiskFullException` y se lanza con el disco lleno; `ServiceBusyException` se lanza ante `InsufficientCapacityException`; desde 0.6.0, `TemplateException` y `BuildException` se lanzan de verdad desde `Template.build()` ([Templates](funciones-opcionales/templates.md)) |
 
 ## Se mapea, con una nota
 
@@ -183,7 +185,7 @@ nada se aproxima en silencio.
 | `logger=` | los logs del SDK de ese sandbox van al `logging.Logger` dado (TS: un `Logger` con `debug`/`info`/`warn`/`error`), distinto del `logging=` nativo, que es CloudWatch |
 | JS `sbx.getHost(port)` | síncrono, devuelve el hostname como E2B; las cabeceras del proxy que toda petición necesita salen de `await sbx.getHostHeaders(port)` |
 | JS `signal` (`AbortSignal`) en `ConnectionOpts` | cancela las llamadas del plano de control y los RPC en curso; rechaza con `signal.reason` |
-| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Secret`/`.AsyncSecret` (TS: `.Secret`) usan esa `region` y esa `session` contra Secrets Manager; `.Template` y `.Volume` lanzan |
+| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Secret`/`.AsyncSecret` (TS: `.Secret`) usan esa `region` y esa `session` contra Secrets Manager; desde 0.6.0 `.Template`/`.AsyncTemplate` son la clase real; `.Volume` lanza |
 | Kwargs nativos (`region`, `session`, `execution_role_arn`, `allowed_ports`, `ingress`, `logging`, `control_plane`, `transport`, ...) | se pasan tal cual; `idle`, `egress` y `pool` no se aceptan (`TypeError`) |
 
 ## Lanza `UnimplementedError`
@@ -208,9 +210,12 @@ rechazada. Las claves y los motivos de esta tabla son los de
 | `volume_mounts`, `Volume` (y `AsyncVolume`) sin `volume_store=`/`volumeStore` | `volumeMounts`, `Volume` | sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen; incluso configurado, volumes=/volume_mounts sigue en UnimplementedError hasta que la campaña de medición EFS-1..EFS-20 (AWS_API_NOTES.md §22, m15-efs-volumes) decida un adaptador de montaje real; usa persist= (S3) o upload_url/download_url mientras tanto |
 | `volume.content`: `read_file`/`write_file`/`make_dir`/`list_files`/`remove`/`update_metadata` de un `Volume` | `volume.content`: `readFile`/`writeFile`/`makeDir`/`list`/`remove`/`updateMetadata` | no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y monta el volumen, o usa upload_url/download_url sobre persist= |
 | `get_signature` | `getSignature` | una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3 |
-| `Template` (y `AsyncTemplate`) | `Template` | SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un Dockerfile y rayito image publish |
+| `Template.alias_exists`/`assign_tags`/`remove_tags`/`get_tags` (y en `AsyncTemplate`) | `Template.aliasExists`/`assignTags`/`removeTags`/`getTags` | create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de AWS mientras tanto |
 
-`E2B(...).Template` y `.Volume` lanzan lo mismo; `Secret.iam_token`
+Desde 0.6.0, `Template`/`AsyncTemplate` (y `E2B(...).Template`/
+`.AsyncTemplate`) construyen imágenes de verdad: ver
+[Templates](funciones-opcionales/templates.md). `E2B(...).Volume` lanza lo
+mismo que `Volume`; `Secret.iam_token`
 (TS: `Secret.iamToken`) lanza el de `iam`. Los casos
 siguientes dependen de la imagen o de la configuración y llevan su propio
 motivo (texto de Python; TypeScript usa el mismo motivo con los nombres de la

@@ -37,7 +37,7 @@ _CLIENT_TOKEN_LENGTH = 64
 ACCESS_POINT_ALREADY_EXISTS: Final = "AccessPointAlreadyExists"
 
 #: `DescribeAccessPoints(FileSystemId=...)` es eventualmente consistente
-#: (AWS_API_NOTES.md §16 Q99, medido 2026-10-02 en tres ciclos
+#: (AWS_API_NOTES.md §16 Q125, medido 2026-10-02 en tres ciclos
 #: crear/borrar): un access point recién creado tardó hasta 11 s en
 #: aparecer en el listado y uno recién borrado siguió listado como
 #: `available` hasta 8 s. `create()` de un nombre que ya existe sólo puede
@@ -45,7 +45,7 @@ ACCESS_POINT_ALREADY_EXISTS: Final = "AccessPointAlreadyExists"
 #: este presupuesto (casi 3 veces el peor caso medido) antes de rendirse.
 LIST_VISIBILITY_BUDGET_SECONDS: Final = 30.0
 #: Pausa entre dos `DescribeAccessPoints` de ese reintento: el listado se
-#: puso al día en saltos de 1-10 s (Q99), así que sondear más rápido sólo
+#: puso al día en saltos de 1-10 s (Q125), así que sondear más rápido sólo
 #: gastaría llamadas.
 LIST_VISIBILITY_POLL_SECONDS: Final = 1.0
 

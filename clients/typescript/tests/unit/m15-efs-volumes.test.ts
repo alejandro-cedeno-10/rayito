@@ -29,7 +29,7 @@ class FakeEfsApi implements EfsApi {
     DescribedAccessPoint & { name: string; clientToken: string }
   >();
   readonly calls: string[] = [];
-  /** Simula el listado eventualmente consistente de EFS (Q99): los access
+  /** Simula el listado eventualmente consistente de EFS (Q125): los access
    * points de `unlisted` existen pero `describeAccessPoints` aún no los
    * devuelve, y los de `stale` ya se borraron pero sí los devuelve. */
   readonly unlisted = new Set<string>();
@@ -129,7 +129,7 @@ describe("VolumeStore", () => {
     expect(fake.calls).toEqual(["createAccessPoint", "describeAccessPoints"]);
   });
 
-  test("create waits for an existing access point to be listed (Q99)", async () => {
+  test("create waits for an existing access point to be listed (Q125)", async () => {
     const fake = new FakeEfsApi();
     let now = 0;
     const sleeps: number[] = [];
@@ -170,7 +170,7 @@ describe("VolumeStore", () => {
     expect(now).toBeGreaterThanOrEqual(LIST_VISIBILITY_BUDGET_MS);
   });
 
-  test("destroy of a stale listed access point returns false (Q99)", async () => {
+  test("destroy of a stale listed access point returns false (Q125)", async () => {
     const fake = new FakeEfsApi();
     const store = new VolumeStore({ fileSystemId: FILE_SYSTEM_ID, client: fake });
     const volume = await store.create("datos-agente-7");

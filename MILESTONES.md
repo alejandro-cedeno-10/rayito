@@ -1376,13 +1376,13 @@ aplicación fijo, participantes de `/suspend`/`/ready`), el convenio
 nueve componentes, `metadata-index` y `secrets-access` migrados), el
 reaper de zombies huérfanos de PID 1 (`rayd_core::orphans`, Q80), el
 broker de credenciales IMDS compartido (`rayd::adapters::credential_broker`)
-y la fila de compatibilidad 0.6. Zombie reaping se entrega como dominio y
-adaptador completos y probados (`ChildRegistry`, `OrphanReaper`) sin
-activarse todavía en `main.rs`: el registro de PIDs en
-`process_spawner`/`pty_backend`/`sidecar_process` queda como seguimiento
-no bloqueante (ver el informe de cierre de `m15-foundations`), porque
-activarlo sin ese registro arriesgaría robarle a tokio el estado de
-salida de sus propios hijos. Un cambio OpenSpec (`v06-foundations`).
+y la fila de compatibilidad 0.6. Un cambio OpenSpec (`v06-foundations`).
+El reaper de huérfanos se entregó dormido y se activó después en su propio
+cambio (`rayd-orphan-reaper`): todo hijo de `rayd` se lanza por un único
+`ChildRegistry` por proceso que lo registra (pid y hora de arranque) bajo un
+candado que la pasada de recogida toma en exclusiva, y `main.rs` recoge en
+cada `SIGCHLD` y cada 5 s sólo los zombis reasignados que no son suyos, sin
+robarle nunca a tokio el estado de salida de sus propios hijos.
 
 **Criterio de aceptación: sin ninguna de las siete opciones 0.6 =
 comportamiento de 0.5.x.** La traza de oro (`fixtures/zero_cost_0_5_trace.json`,
@@ -1390,10 +1390,38 @@ ambos SDKs) fija la secuencia exacta de operaciones boto3/AWS SDK v3 y de
 métodos gRPC de `create → commands.run → files.write → pause → resume →
 commands.run → kill → list`; ningún test de la suite existente cambia.
 
+### s3-mounts (`m15-s3-mounts`, ADR-017)
+
+`mounts=` monta uno o más buckets S3 en el guest vía `mount-s3`/FUSE, sólo
+sobre `rayito-base-caps`. Dominio puro (`rayd_core::s3_mount`), puertos
+`FuseDevice`/`FuseDaemon`, adaptadores Linux (`libc::mount(2)` directo,
+`mount-s3` lanzado como el usuario dedicado `rayito-mount` uid 990 con el
+entorno reconstruido desde cero — nunca una credencial en argv ni en
+entorno, SEC-3; la ruta de montaje se resuelve sin seguir enlaces
+simbólicos) y un slot real en `FeatureSet` (`supported()` exige
+`CAP_SYS_ADMIN`, así que sólo `rayito-base-caps` anuncia
+`Health.features.s3_mounts`). uid 990 queda fuera del rango que el
+blackhole de IMDS de M6 cubre, así que `mount-s3` resuelve las
+credenciales del execution role por su propio acceso a IMDS, sin que
+`rayd` las toque. El bucket debe estar en el allowlist de imagen
+`RAYITO_ALLOWED_MOUNT_BUCKETS` (vacío o ausente deniega todo). IAM:
+`infra/s3-mounts.yaml` (`RayitoS3MountAccess`, componente `OptionalStack`
+`s3-mounts`). Sin API en el shim de E2B (fila 111 de `e2b-parity.md`,
+divergente). `Sandbox.create(mounts=)`/`create({ mounts })` y
+`sbx.mounts`/`sbx.mounts()` ya están cableados de punta a punta
+(`_feature_options.plan_features`/`feature-options.ts`,
+`create()`/`_open()` ejecutando `configure_sections` tras `Health` y
+esperando a que cada montaje esté montado). Depende de `rayito image
+publish --env` (`m15-sizes-catalog`) para fijar el allowlist de imagen.
+**Validado localmente** (unit tests Rust/Python/TypeScript, `cargo
+clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
+`openspec validate --strict`); **aceptado en AWS real** el 2026-10-02
+(S3M-1..S3M-4 y las comprobaciones manuales, `AWS_API_NOTES.md`
+Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
+`microdnf` y añadió `--allow-other` al daemon).
+
 ### Funciones (pendientes de su propio cambio OpenSpec)
 
-- **s3-mounts** (`m15-s3-mounts`): montaje S3 vía `mount-s3`/FUSE en
-  `rayito-base-caps`.
 - **efs-volumes** (`m15-efs-volumes`, ADR-018, experimental): dominio y
   puerto (`rayd_core::volume`, `VolumeMounter`), `VolumeStore` (CRUD real de
   access points EFS), `Sandbox.create(volumes=)` (valida y siempre lanza
@@ -1401,14 +1429,72 @@ commands.run → kill → list`; ningún test de la suite existente cambia.
   construidos; el montaje real en el guest (`rayd`'s único adaptador hoy es
   `UnavailableEfsMounter`) queda pendiente de la campaña de medición
   EFS-1..EFS-20.
-- **sizes-catalog** (`m15-sizes-catalog`): imágenes `<variant>[-<size>]`.
-- **events-webhooks** (`m15-events-webhooks`): eventos de ciclo de vida
-  firmados y webhooks compatibles con E2B.
-- **rayd-otlp** (`m15-rayd-otlp`): exportación OTLP/HTTP de métricas a
-  CloudWatch.
-- **templates** (`m15-templates`): DSL de templates declarativos.
-- **secrets-gateway** (`m15-secrets-gateway`): pasarela de credenciales en
-  loopback.
+- **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
+  real el 2026-10-02**, Q118/Q119): catálogo cerrado de cinco tamaños
+  (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de
+  `ConfigureSandbox`; imágenes `<variant>[-<size>]` (`rayito image publish
+  --sizes`, en oleadas de hasta 10 builds simultáneos, horneando
+  `RAYITO_BASELINE_MEMORY_MIB`); `ConventionCatalog` confirma
+  `minimumMemoryInMiB` con una única llamada cacheada a
+  `GetMicrovmImageVersion` (`SandboxInfo.baselineMemoryMib`/`baselineCpu`,
+  vCPU medido exactamente para los cinco tamaños, RES-2/Q88); guardarraíles
+  IAM opcional `sizes-guard` (`RayitoRunAllowedSizes`, Q90). Sin `size=`
+  (su valor por defecto), cero llamadas nuevas.
+- **events-webhooks** (`m15-events-webhooks`): `rayd` emite `created`/
+  `paused`/`resumed`/`killed` por stdout, firmados HMAC con una clave que
+  deriva el SDK (nunca `rayd`); un forwarder Lambda verifica y guarda en
+  DynamoDB (TTL 7 días), un deliverer entrega a webhooks firmados al
+  estilo E2B (con guardián SSRF), un reconciler (cada
+  `ReconcilerIntervalMinutes`, 5 por defecto) sintetiza `killed` para
+  sandboxes que `ListMicrovms` ya no reporta. ADR-020.
+  `create(events=...)` manda `k_sbx` en el mismo `ConfigureSandbox` que
+  el resto de opciones 0.6, tras `run-microvm` (`LifecycleEventsSectionFactory`).
+- **rayd-otlp** (`m15-rayd-otlp`, ADR-021): `rayd` exporta 7 gauges de CPU,
+  memoria y disco a CloudWatch cada `interval_s` (15-300 s) por OTLP/HTTP,
+  firmado con SigV4 sobre el execution role (`OtlpAuth.execution_role()`,
+  exige `rayito-base-caps`) o con un token al portador empujado por
+  `ConfigureSandbox` (`OtlpAuth.bearer(...)`, experimental, funciona en
+  `rayito-base`). Cola acotada con backoff y jitter por sandbox
+  (`rayd_core::telemetry::Batcher`), participante de `/suspend` con un
+  vaciado de hasta 2 s. Firmante SigV4 propio (HMAC-SHA256 sobre `sha2`,
+  sin crate nuevo, verificado contra RFC 4231) y un subconjunto vendido y
+  mínimo de los tipos de OpenTelemetry (Apache-2.0) para no acoplar
+  `rayd-core` a `opentelemetry-proto`. La propagación W3C `traceparent` del
+  lado del SDK tiene su seam y su implementación, pero queda sin conectar
+  al canal gRPC real (seguimiento razonado y no bloqueante; ver el diseño
+  del cambio). La
+  política IAM mínima de CloudWatch no se puede acotar por namespace
+  (investigado, OT9): documentado en T23. Sin AWS real todavía: la
+  aceptación (bytes facturados, overhead de CPU, comportamiento en
+  `/suspend`/`/resume`) es la etapa serializada posterior.
+- **templates** (`m15-templates`): DSL de templates declarativos
+  (`Template`/`AsyncTemplate`, igual al `Template` de E2B v2), compilado
+  enteramente en el cliente: Dockerfile + zip deterministas compuestos
+  sobre una imagen `rayito-base` ya publicada, subidos a S3 por hash y
+  construidos con `create`/`update-microvm-image`; un build fallido se
+  explica releyendo el grupo de logs de BuildKit (TPL-1/Q83) o el
+  `stateReason` de un `ready_cmd` con 4xx/5xx (TPL-5/Q85), nunca
+  repitiendo nada. Sin caché de capas, sólo ARM64, sólo `from_base_image()`
+  compone de verdad. El lado del agente (`rayd` leyendo
+  `/etc/rayito/template.json` y arrancando/sondeando el `start_cmd`) queda
+  como seguimiento no bloqueante; el dominio puro nuevo (`rayd_core::template`)
+  sí compila, pasa `cargo test --workspace` y clippy pedantic, verificado
+  por la CI de la PR (el disco de 58 GB de la VM Lima compartida estuvo en
+  0 bytes libres durante buena parte de la sesión por los
+  `CARGO_TARGET_DIR` acumulados de las ocho ramas en paralelo).
+- **secrets-gateway** (`m15-secrets-gateway`, ADR-023): pasarela de
+  credenciales en loopback — un listener `axum` por ruta declarada
+  (`gateways=`/`gateways`), allowlist de método/ruta y límite de tasa
+  (cubo de tokens entero y determinista) antes de reenviar, cabeceras
+  vaultadas inyectadas y las del guest con el mismo nombre eliminadas
+  primero (T24), `upstream` sólo `https://host` resuelto a través de un
+  cliente compartido que nunca alcanza loopback/link-local/IMDS
+  (`FilteringResolver`), ambos cuerpos en flujo (SSE y subidas troceadas
+  pasan sin cambios). Reutiliza `infra/secrets-access.yaml` sin plantilla
+  propia: el valor lo resuelve siempre el SDK con `SecretCache`, nunca
+  `rayd`. Implementado y probado localmente (231 tests Rust, unit Python y
+  TypeScript, `openspec validate --strict`); PR abierto, pendiente de la
+  aceptación serializada contra AWS real del hito.
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre
   CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
 

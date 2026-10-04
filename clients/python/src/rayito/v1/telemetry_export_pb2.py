@@ -24,15 +24,21 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n rayito/v1/telemetry_export.proto\x12\trayito.v1\"\x17\n\x15TelemetryExportConfig\"\x17\n\x15TelemetryExportStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n rayito/v1/telemetry_export.proto\x12\trayito.v1\"\x9e\x03\n\x15TelemetryExportConfig\x12\x1d\n\ninterval_s\x18\x01 \x01(\rR\tintervalS\x12!\n\x0cservice_name\x18\x02 \x01(\tR\x0bserviceName\x12\x39\n\x05names\x18\x03 \x01(\x0e\x32#.rayito.v1.TelemetryExportNameStyleR\x05names\x12\x1b\n\timage_arn\x18\x06 \x01(\tR\x08imageArn\x12#\n\rimage_version\x18\x07 \x01(\tR\x0cimageVersion\x12(\n\x10image_memory_mib\x18\x08 \x01(\rR\x0eimageMemoryMib\x12T\n\x0e\x65xecution_role\x18\x04 \x01(\x0b\x32+.rayito.v1.TelemetryExportExecutionRoleAuthH\x00R\rexecutionRole\x12>\n\x06\x62\x65\x61rer\x18\x05 \x01(\x0b\x32$.rayito.v1.TelemetryExportBearerAuthH\x00R\x06\x62\x65\x61rerB\x06\n\x04\x61uth\"\"\n TelemetryExportExecutionRoleAuth\"1\n\x19TelemetryExportBearerAuth\x12\x14\n\x05token\x18\x01 \x01(\tR\x05token\"w\n\x15TelemetryExportStatus\x12\x1a\n\x08\x65xported\x18\x01 \x01(\x04R\x08\x65xported\x12\x18\n\x07\x64ropped\x18\x02 \x01(\x04R\x07\x64ropped\x12(\n\x10last_error_class\x18\x03 \x01(\tR\x0elastErrorClass*\x94\x01\n\x18TelemetryExportNameStyle\x12+\n\'TELEMETRY_EXPORT_NAME_STYLE_UNSPECIFIED\x10\x00\x12&\n\"TELEMETRY_EXPORT_NAME_STYLE_RAYITO\x10\x01\x12#\n\x1fTELEMETRY_EXPORT_NAME_STYLE_E2B\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.telemetry_export_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_TELEMETRYEXPORTCONFIG']._serialized_start=47
-  _globals['_TELEMETRYEXPORTCONFIG']._serialized_end=70
-  _globals['_TELEMETRYEXPORTSTATUS']._serialized_start=72
-  _globals['_TELEMETRYEXPORTSTATUS']._serialized_end=95
+  _globals['_TELEMETRYEXPORTNAMESTYLE']._serialized_start=673
+  _globals['_TELEMETRYEXPORTNAMESTYLE']._serialized_end=821
+  _globals['_TELEMETRYEXPORTCONFIG']._serialized_start=48
+  _globals['_TELEMETRYEXPORTCONFIG']._serialized_end=462
+  _globals['_TELEMETRYEXPORTEXECUTIONROLEAUTH']._serialized_start=464
+  _globals['_TELEMETRYEXPORTEXECUTIONROLEAUTH']._serialized_end=498
+  _globals['_TELEMETRYEXPORTBEARERAUTH']._serialized_start=500
+  _globals['_TELEMETRYEXPORTBEARERAUTH']._serialized_end=549
+  _globals['_TELEMETRYEXPORTSTATUS']._serialized_start=551
+  _globals['_TELEMETRYEXPORTSTATUS']._serialized_end=670
 # @@protoc_insertion_point(module_scope)

@@ -20,6 +20,9 @@ from rayito._charts import (
 )
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
+from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
+from rayito._lifecycle_events._service import LifecycleEvents
+from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
 from rayito._listing_base import ListOrder
 from rayito._models import (
     ALL_TRAFFIC,
@@ -65,7 +68,10 @@ from rayito._models import (
 )
 from rayito._pool_backends import InMemoryPoolBackend, JsonFilePoolBackend, PoolBackend
 from rayito._pool_base import PoolConfig, PoolSlotInfo, PoolStats
+from rayito._s3_mounts import MountStatus, S3Mount
+from rayito._secret_gateway import GatewayHandle, GatewayStatus, SecretGateway
 from rayito._secrets import SecretCache, SecretInfo, SecretPage, SecretRef, SecretStore
+from rayito._sizing import SizeRequest
 from rayito._stacks._model import (
     CostStatement,
     StackArtifact,
@@ -75,6 +81,28 @@ from rayito._stacks._model import (
 )
 from rayito._stacks._service import OptionalStacks
 from rayito._stacks._service_async import AsyncOptionalStacks
+from rayito._telemetry_export import OtlpAuth, TelemetryExport, TelemetryHealth
+from rayito._templates import (
+    AsyncTemplate,
+    BaseImageRef,
+    BuildHandle,
+    BuildInfo,
+    BuildStatus,
+    CopyStep,
+    EnvStep,
+    ReadyCommand,
+    ReadyPoll,
+    RunStep,
+    StartSpec,
+    Template,
+    TemplateSpec,
+    UserStep,
+    WorkdirStep,
+    wait_for_file,
+    wait_for_port,
+    wait_for_process,
+    wait_for_url,
+)
 from rayito._transport import TransportSettings
 from rayito._version import __version__
 from rayito._volumes import AsyncVolumeStore, EfsVolume, VolumeStatus, VolumeStore
@@ -137,20 +165,26 @@ __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
     "AsyncGit",
+    "AsyncLifecycleEvents",
     "AsyncOptionalStacks",
     "AsyncPtyHandle",
     "AsyncSandbox",
     "AsyncSandboxListPaginator",
     "AsyncSandboxPool",
+    "AsyncTemplate",
     "AsyncUploadTicket",
     "AsyncVolumeStore",
     "AsyncWatchHandle",
     "AuthenticationException",
     "BarChart",
     "BarData",
+    "BaseImageRef",
     "BoxAndWhiskerChart",
     "BoxAndWhiskerData",
     "BuildException",
+    "BuildHandle",
+    "BuildInfo",
+    "BuildStatus",
     "CapacityException",
     "Chart",
     "ChartType",
@@ -161,6 +195,7 @@ __all__ = [
     "CommandExitException",
     "CommandHandle",
     "CommandResult",
+    "CopyStep",
     "CostStatement",
     "CustomDomainException",
     "DiskFullException",
@@ -170,6 +205,8 @@ __all__ = [
     "EgressEnforcement",
     "EgressProxy",
     "EntryInfo",
+    "EnvStep",
+    "EventRecord",
     "Execution",
     "ExecutionError",
     "FileNotFoundException",
@@ -178,6 +215,8 @@ __all__ = [
     "FilesystemEvent",
     "FilesystemEventType",
     "GatewayException",
+    "GatewayHandle",
+    "GatewayStatus",
     "Git",
     "GitAuthException",
     "GitBranches",
@@ -192,18 +231,21 @@ __all__ = [
     "InvalidArgumentException",
     "JsonFilePoolBackend",
     "LaunchOptions",
+    "LifecycleEvents",
     "LifecycleUnsupportedException",
     "LineChart",
     "ListOrder",
     "Logs",
     "MicrovmListPage",
     "MountException",
+    "MountStatus",
     "NetworkOptions",
     "NetworkPolicy",
     "NetworkSelectorContext",
     "NetworkState",
     "NotFoundException",
     "OptionalStacks",
+    "OtlpAuth",
     "OutputMessage",
     "PersistenceException",
     "PieChart",
@@ -220,9 +262,13 @@ __all__ = [
     "QuotaExceededException",
     "RateLimitException",
     "RayitoCompatWarning",
+    "ReadyCommand",
+    "ReadyPoll",
     "RestoreProgress",
     "RestoreResult",
     "Result",
+    "RunStep",
+    "S3Mount",
     "S3Prefix",
     "S3Staging",
     "Sandbox",
@@ -243,24 +289,32 @@ __all__ = [
     "ScatterChart",
     "SecretCache",
     "SecretException",
+    "SecretGateway",
     "SecretInfo",
     "SecretNotFoundException",
     "SecretPage",
     "SecretRef",
     "SecretStore",
+    "SizeRequest",
     "StackArtifact",
     "StackComponent",
     "StackException",
     "StackParameter",
     "StackStatus",
+    "StartSpec",
     "SuperChart",
+    "TelemetryExport",
+    "TelemetryHealth",
+    "Template",
     "TemplateException",
+    "TemplateSpec",
     "TimeoutException",
     "TransferException",
     "TransferStatus",
     "TransportSettings",
     "UnimplementedError",
     "UploadTicket",
+    "UserStep",
     "VolumeException",
     "VolumeNotFoundException",
     "VolumePathNotFoundException",
@@ -268,6 +322,12 @@ __all__ = [
     "VolumeStore",
     "WatchHandle",
     "WebhookException",
+    "WebhookInfo",
+    "WorkdirStep",
     "WriteEntry",
     "__version__",
+    "wait_for_file",
+    "wait_for_port",
+    "wait_for_process",
+    "wait_for_url",
 ]

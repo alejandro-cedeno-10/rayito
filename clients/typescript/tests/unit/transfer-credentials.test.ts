@@ -46,6 +46,7 @@ const notImplementedPlane: ControlPlane = {
   suspendMicrovm: notImplemented,
   resumeMicrovm: notImplemented,
   createAuthToken: notImplemented,
+  getMicrovmImageVersion: notImplemented,
 };
 
 const fakes: FakeS3[] = [];

@@ -221,7 +221,7 @@ def test_run_never_prints_a_real_resource_id(
     assert "arn:aws" not in out
 
 
-#: A network the caller borrowed with its owner's permission (Q98: an SCP
+#: A network the caller borrowed with its owner's permission (Q124: an SCP
 #: can deny `ec2:CreateVpc`); `run` must never create, record or delete it.
 BORROWED = [
     "--vpc-id",

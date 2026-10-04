@@ -36,6 +36,8 @@ export {
 } from "./charts.js";
 export {
   AuthenticationError,
+  BuildError,
+  type BuildErrorOptions,
   CapacityError,
   CommandExitError,
   CustomDomainError,
@@ -67,6 +69,7 @@ export {
   SecretNotFoundError,
   StackError,
   type StackErrorOptions,
+  TemplateError,
   TimeoutError,
   TransferError,
   type TransferErrorOptions,
@@ -83,6 +86,12 @@ export {
   type WriteFailurePolicy,
 } from "./index/dynamodb.js";
 export type { IndexRecord } from "./index/record.js";
+export type { EventKind, EventRecord, KillReason, WebhookInfo } from "./lifecycle-events/domain.js";
+export {
+  type DeployWebhooksOptions,
+  LifecycleEvents,
+  type LifecycleEventsOptions,
+} from "./lifecycle-events/service.js";
 export type { Logger } from "./logger.js";
 export {
   ALL_TRAFFIC,
@@ -137,6 +146,7 @@ export {
   type SandboxPoolOptions,
   type TakeOptions,
 } from "./pool/pool.js";
+export { type MountStatus, S3Mount, type S3MountOptions } from "./s3-mounts/domain.js";
 export {
   CodeClient,
   type ContextLike,
@@ -243,6 +253,13 @@ export {
   type UploadUrlOptions,
   type WaitOptions,
 } from "./sandbox/transfer.js";
+export {
+  type AllowRule,
+  GatewayStatus,
+  SecretGateway,
+  type SecretGatewayOptions,
+} from "./secret-gateway/domain.js";
+export { GatewayHandle } from "./secret-gateway/section.js";
 export { SecretCache, type SecretCacheOptions } from "./secrets/cache.js";
 export type { SecretOptions, SecretsInput } from "./secrets/inject.js";
 export { type SecretLike, SecretRef, type SecretRefOptions } from "./secrets/names.js";
@@ -253,6 +270,12 @@ export {
   type SecretStoreOptions,
   type SecretsManagerApi,
 } from "./secrets/store.js";
+export type {
+  ResolvedSize,
+  SizeInput,
+  SizeName,
+  SizeRequest,
+} from "./sizing/sizing.js";
 export type {
   CostStatement,
   DeployAction,
@@ -269,6 +292,44 @@ export {
   OptionalStacks,
   type OptionalStacksOptions,
 } from "./stacks/service.js";
+export {
+  DEFAULT_INTERVAL_S,
+  DEFAULT_SERVICE_NAME,
+  MAX_INTERVAL_S,
+  MIN_INTERVAL_S,
+  type NameStyleOption,
+  OtlpAuth,
+  TelemetryExport,
+  type TelemetryExportOptions,
+  type TelemetryHealth,
+} from "./telemetry-export/domain.js";
+export type {
+  BuildClients,
+  BuildHandle,
+  BuildInfo,
+  BuildOptions,
+  BuildState,
+  BuildStatus,
+} from "./templates/build.js";
+export { Template } from "./templates/dsl.js";
+export type {
+  BaseImageRef,
+  CopyStep,
+  EnvStep,
+  ReadyPoll,
+  RunStep,
+  StartSpec,
+  TemplateSpec,
+  UserStep,
+  WireStep,
+} from "./templates/instructions.js";
+export {
+  ReadyCommand,
+  waitForFile,
+  waitForPort,
+  waitForProcess,
+  waitForUrl,
+} from "./templates/ready-cmds.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";
 export {

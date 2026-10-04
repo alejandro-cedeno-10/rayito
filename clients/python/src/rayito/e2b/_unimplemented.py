@@ -11,7 +11,7 @@ pasan su motivo explícito.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, Final, NoReturn
 
@@ -40,6 +40,16 @@ VOLUME_REASON: Final = (
 VOLUME_CONTENT_REASON: Final = (
     "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y "
     "monta el volumen, o usa upload_url/download_url sobre persist="
+)
+#: m15-templates: `Template`/`AsyncTemplate` ya construyen de verdad
+#: (`e2b/_template.py`, sobre `rayito.Template`); sólo el etiquetado de
+#: E2B (`assign_tags`/`remove_tags`/`get_tags`/`alias_exists`) sigue sin
+#: equivalente, porque `create`/`update-microvm-image` no expone un
+#: `Tags` por versión, sólo por imagen.
+TEMPLATE_TAGS_REASON: Final = (
+    "create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con "
+    "lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de "
+    "AWS mientras tanto"
 )
 
 UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
@@ -81,24 +91,11 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "
             "firman en S3"
         ),
-        "Template": (
-            "SPEC.md §4 deja fuera los templates declarativos; construye la imagen con un "
-            "Dockerfile y rayito image publish"
-        ),
+        "Template.alias_exists": TEMPLATE_TAGS_REASON,
+        "Template.assign_tags": TEMPLATE_TAGS_REASON,
+        "Template.remove_tags": TEMPLATE_TAGS_REASON,
+        "Template.get_tags": TEMPLATE_TAGS_REASON,
     }
-)
-
-TEMPLATE_METHODS: Final = (
-    "build",
-    "build_in_background",
-    "get_build_status",
-    "exists",
-    "alias_exists",
-    "assign_tags",
-    "remove_tags",
-    "get_tags",
-    "to_json",
-    "to_dockerfile",
 )
 
 
@@ -130,27 +127,6 @@ class UnimplementedMember:
         return raiser(self._feature)
 
 
-def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> type[Any]:
-    """Una clase de E2B (`Template`/`AsyncTemplate`) cuyo constructor y cuyos
-    classmethods públicos lanzan `unimplemented(feature)`: nunca
-    `AttributeError`. `Volume`/`AsyncVolume` usan su propio patrón en
-    `e2b/_volume.py`, porque a diferencia de `Template` sí llegan a tener
-    una implementación real (configurando `E2B(volume_store=...)`)."""
-
-    def refuse_instance(cls: type, *args: Any, **kwargs: Any) -> NoReturn:
-        raise unimplemented(feature)
-
-    namespace: dict[str, Any] = {
-        "__doc__": f"`{name}` de E2B: sin equivalente en Rayito ({feature}).",
-        "__module__": "rayito.e2b",
-        "__new__": refuse_instance,
-    }
-    namespace.update({method: UnimplementedMember(feature) for method in methods})
-    return type(name, (), namespace)
-
-
-Template: type[Any] = unimplemented_resource("Template", "Template", TEMPLATE_METHODS)
-AsyncTemplate: type[Any] = unimplemented_resource("AsyncTemplate", "Template", TEMPLATE_METHODS)
 # Volume/AsyncVolume live in e2b/_volume.py (m15-efs-volumes): real CRUD once
 # E2B(volume_store=...) configures one, UnimplementedError("Volume") otherwise.
 

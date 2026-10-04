@@ -313,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_shipped_slot_follows_the_unavailable_mounter() {
-        let slot = build(&FeatureContext);
+        let slot = build(&FeatureContext::default());
         assert!(!slot.supported());
         let outcome = slot.apply(config(&["/mnt/data"])).await;
         assert_eq!(outcome.code, SectionCode::Unsupported);

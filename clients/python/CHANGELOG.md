@@ -6,6 +6,22 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
+  (`m15-reincarnate-configure-replay`, sync y async): hasta ahora sólo
+  reenviaba `gateways=` y un sucesor perdía `mounts=`, `events=` y
+  `telemetry=`. `create()` guarda sus opciones 0.6 en
+  `LaunchOptions.features` (`relaunch_features`: todas menos `size`, que ya
+  va en el ARN de la imagen) y `reincarnate()` las reenvía campo a campo
+  (`feature_kwargs`) al `create()` del sucesor, que las aplica por el mismo
+  camino en su único `Configure`: `events=` deriva `k_sbx` del nuevo
+  `sandbox_id`, `mounts=` espera otra vez a `mounted` y `telemetry=` usa la
+  imagen y la memoria del sucesor. `LaunchOptions.gateways` pasa a
+  `LaunchOptions.features.gateways` (atributo interno).
+
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - **Convenio `OptionalStack` y `ConfigureSandbox`** (`v06-foundations`,
@@ -17,41 +33,188 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   siete opciones 0.6 de `Sandbox.create()` (`mounts`, `volumes`, `size`,
   `events`, `telemetry`, `gateways`, `domain`) existen ya en la firma y
   lanzan `UnimplementedError` nombrando el cambio que las trae mientras
-  sigan siendo un stub, antes de `run-microvm`. Fila de compatibilidad
-  "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna opción nueva,
-  el comportamiento es byte a byte el de 0.5.x (traza de oro en
+  sigan siendo un stub, antes de `run-microvm`; en cuanto una deja de
+  serlo (`mounts=`, ver más abajo), `create()`/`take()` ejecutan sus
+  `configure_sections` justo tras el primer `Health` (`_configure_base`:
+  `require_capabilities`, `build_configure_request`,
+  `check_configure_response`), dentro del mismo camino que ya termina el
+  sandbox ante cualquier fallo anterior a `agent_ready`. Fila de
+  compatibilidad "0.6" en `rayito.cli._compat.COMPATIBILITY`. Sin ninguna
+  opción nueva, el comportamiento es byte a byte el de 0.5.x (traza de oro en
   `tests/unit/fixtures/zero_cost_0_5_trace.json`).
 <!-- m15-s3-mounts -->
-- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
-  por defecto): `VolumeStore`/`AsyncVolumeStore` (CRUD real de access
-  points EFS: `CreateAccessPoint`/`DescribeAccessPoints`/
-  `DeleteAccessPoint`, sin cliente `efs` hasta el primer uso) y
-  `Sandbox.create(volumes=)`, que valida la petición (tipos, rutas,
-  variante `caps`) antes de cualquier llamada a AWS y siempre lanza
-  `UnimplementedError` hasta que la campaña de medición EFS-1..EFS-20
-  decida un adaptador de montaje real (`docs/research/2026-10-efs-persistence.md`).
-  `EfsVolume`, `VolumeStatus` y las excepciones `VolumeException`/
-  `VolumeNotFoundException`/`VolumePathNotFoundException`. El shim de E2B
-  (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
-  `E2B(volume_store=...)` (`volume_id` es el nombre del volumen, el mismo
-  que reciben `connect`/`get_info`/`destroy`); sus operaciones de contenido
-  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
-  `volume_mounts=` valida sin llamar a AWS y siempre lanza
-  `UnimplementedError`. Componente
-  `rayito stack {deploy,status,destroy} efs-volumes`
-  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, mount
-  targets, grupo de seguridad NFS y conector de egress dedicado).
-  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
-  (medido en AWS real, `AWS_API_NOTES.md` §16 Q99: hasta 11 s en listar un
-  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
-  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
-  point que el listado aún mostraba pero ya no existe devuelve `False`.
+- **`mounts=` (`m15-s3-mounts`, ADR-017, experimental, apagado por
+  defecto)**: `Sandbox.create(mounts=)`/`AsyncSandbox.create(mounts=)`
+  monta uno o más buckets S3 (`S3Mount(bucket=, prefix=, read_only=True,
+  allow_overwrite=False, allow_delete=False)`, exportado desde `rayito`)
+  en el guest con `mount-s3`/FUSE, sólo sobre `rayito-base-caps`
+  (`require_caps_for` lo exige antes de `run-microvm` cuando la imagen se
+  nombra directamente; sobre un ARN opaco la decisión se difiere a
+  `Health.features` tras `/run`, que termina el sandbox si falta la
+  capacidad). `create()` no vuelve hasta que cada montaje está montado:
+  sondea `ConfigureStatus` (como mucho 15 s) y, si uno falla o no se
+  asienta, termina el sandbox y lanza `MountException`. `sbx.mounts`
+  (propiedad) da el estado en vivo de cada montaje (`"pending"`/`"mounted"`/`"failed"`, `ConfigureStatus` en cada
+  lectura); una sección rechazada o un montaje fallido lanza
+  `MountException` con un `code` cerrado (`network`, `iam_denied`,
+  `not_found`, `not_allowed`, `invalid_path`, `helper_missing`,
+  `timeout`). `rayd` lanza `mount-s3` como el usuario dedicado
+  `rayito-mount` (uid 990) con credenciales resueltas por su propio
+  acceso a IMDS, nunca en argv ni en entorno; un daemon caído se
+  relanza solo, con backoff. Política IAM `RayitoS3MountAccess` del
+  componente `OptionalStack` `s3-mounts` (`infra/s3-mounts.yaml`,
+  desplegable con `rayito stack deploy s3-mounts --param
+  BucketName=... --param Prefixes=...`, pide `CAPABILITY_IAM`), acotada
+  al bucket y a sus prefijos (hasta 4) también para leer, escribir y
+  borrar objetos. El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS`
+  de la imagen (`rayito image publish --env`, de `m15-sizes-catalog`).
+<!-- m15-efs-volumes -->
 <!-- m15-sizes-catalog -->
+- **Catálogo de tamaños, aceptación en AWS real** (`m15-sizes-catalog`):
+  `rayito image publish --env`/`--sizes` vuelve a reutilizar una versión
+  ya construida con la misma configuración: `list-microvm-image-versions`
+  no devuelve `environmentVariables` (Q118), así que antes toda imagen con
+  variables (cada imagen con sufijo de tamaño) se reconstruía en cada
+  publicación; ahora se confirman con `GetMicrovmImageVersion` (gratuita),
+  sólo cuando la publicación lleva variables. `rayito image sizes` acepta
+  `--image-name`, como `publish`, para listar una familia publicada con
+  nombre propio.
+- **Catálogo de tamaños** (`m15-sizes-catalog`, ADR-019, opcional y
+  apagado por defecto): `Sandbox.create(size="4gb")`/`SizeRequest(memory_mib=...)`
+  resuelve, enteramente en cliente y sin ningún RPC, al primer tamaño del
+  catálogo cerrado (512mb/1gb/2gb/4gb/8gb, Q87) que cubra lo pedido
+  (redondea siempre hacia arriba, avisa con `RayitoCompatWarning` si no
+  encaja exacto) y antepone el sufijo de imagen (`rayito-base-4gb`) antes
+  de resolver el ARN; `size=` con un template dado por ARN, o por encima
+  del máximo publicado, es `InvalidArgumentException` antes de cualquier
+  llamada a AWS. `rayito image publish --sizes 512mb,4gb` publica, desde
+  el mismo artefacto, una imagen adicional por tamaño (en oleadas de hasta
+  10 construcciones simultáneas), horneando `RAYITO_BASELINE_MEMORY_MIB`
+  en la imagen (nunca un interruptor de activación); `--env KEY=VALUE`
+  añade cualquier otra variable de imagen. `get_info()` confirma, con una
+  única llamada cacheada a `GetMicrovmImageVersion` por versión de imagen,
+  `SandboxInfo.baseline_memory_mib` y `baseline_cpu` (vCPU medido
+  exactamente para los cinco tamaños del catálogo); `cpu_count`/`memory_mb`
+  siguen siendo lo que el guest reporta de verdad. El shim `rayito.e2b`
+  reporta ese mismo baseline en `SandboxInfo.cpu_count`/`memory_mb` cuando
+  `size=` se usó (como E2B reporta lo declarado por el template), la vista
+  real del guest si no. `rayito image sizes [--variant]` lista, por
+  tamaño del catálogo cerrado, qué imagen ya se publicó (`list-microvm-
+  images`) y si comparte artefacto con el baseline (`sameArtifact`, una
+  `GetMicrovmImageVersion` sin cuota propia por imagen ya publicada, nunca
+  lanza ningún sandbox). Guardarraíles de coste opcional
+  `rayito stack deploy sizes-guard` (`RayitoRunAllowedSizes`: un Deny de
+  `lambda:RunMicrovm` fuera de los ARN de imagen permitidos, efectivo
+  aunque la identidad ya tenga el `microvm-image:*` de la `CallerPolicy`
+  estándar). Sin `size=`, el comportamiento sigue siendo exactamente el de
+  0.5.x.
 <!-- m15-events-webhooks -->
+- **`LifecycleEvents`/`AsyncLifecycleEvents`** (`m15-events-webhooks`,
+  opcional y apagado por defecto): despliega `infra/events-webhooks.yaml`
+  (`deploy`/`status`/`destroy`, componente `events-webhooks` de
+  `OptionalStacks`), registra webhooks compatibles con E2B
+  (`register_webhook`/`list_webhooks`/`delete_webhook`) y lee el historial
+  (`get_events`, 1–100 filas, filtrado por tipo en DynamoDB). CLI
+  `rayito events deploy|status|destroy|list` y `rayito events webhook
+  add|list|remove`, con el mismo bloque de coste y confirmación que
+  `rayito stack`. Los errores de AWS llegan como `WebhookException` con sólo
+  el código (`aws_code`). `events=` en `Sandbox.create()`/
+  `AsyncSandbox.create()` valida el tipo y que `logging` llegue a CloudWatch
+  antes de lanzar y, tras `run-microvm`, manda la clave del sandbox
+  (`k_sbx`, derivada de la clave del stack y el `sandbox_id`; un
+  `GetSecretValue` por instancia de `LifecycleEvents`) en el mismo
+  `ConfigureSandbox` que `mounts=`/`gateways=`/`telemetry=`
+  (`LifecycleEventsSectionFactory`, ADR-020); sin la pila desplegada, sin
+  `lifecycle_events` en el agente o con la sección rechazada, termina el
+  sandbox (salvo `keep_on_failure`). Sin `events=`, ni un cliente
+  DynamoDB/Secrets Manager nuevo ni una llamada `ConfigureSandbox`. `rayito events deploy --tag K=V` (repetible) para
+  cuentas cuya organización exige etiquetas al crear recursos. Aceptado en
+  AWS real (`AWS_API_NOTES.md` Q105–Q108): el forwarder exige que el log
+  stream termine en `]<sandbox_id>` (formato medido) y el forwarder y el
+  reconciliador dejan una línea JSON por invocación con lo que aceptaron,
+  rechazaron (por motivo) o sintetizaron.
 <!-- m15-rayd-otlp -->
+- **`telemetry=`: exportación OTLP de `rayd` a CloudWatch** (`m15-rayd-otlp`,
+  ADR-021, opcional y apagado por defecto): `TelemetryExport`/`OtlpAuth`
+  nuevos (`OtlpAuth.execution_role()`, exige `rayito-base-caps`;
+  `OtlpAuth.bearer(secret_name=...)`, experimental, funciona en
+  `rayito-base`; el nombre se resuelve bajo `rayito/` por la misma
+  `SecretCache` que `secrets=`). Se envía como una sección de
+  `ConfigureSandbox` tras `/run`; una imagen cuyo `rayd` no exporta termina
+  el sandbox (salvo `keep_on_failure=True`) y lanza `UnimplementedError`.
+  Con `tracer_provider=`, cada RPC del handle lleva además el `traceparent`
+  del span de esa misma llamada hacia `rayd` (lo calcula un interceptor
+  del canal en el hilo o la tarea que llama, no el `AuthMetadataPlugin`,
+  que grpc ejecuta en un hilo suyo sin el contexto OpenTelemetry del
+  llamante); sin él, ninguna cabecera nueva. El token de
+  `OtlpAuth.bearer(...)` es una API key de CloudWatch Metrics.
+  `sbx.get_telemetry_status()` (síncrono y `AsyncSandbox`) lee
+  `ConfigureStatus`, como una llamada explícita aparte de `get_health()`.
+  Sin `telemetry=`, ningún comportamiento cambia frente a 0.5.x (traza de
+  oro sin tocar).
 <!-- m15-templates -->
+- **Templates declarativos** (`m15-templates`, ADR-022, opcional y apagado
+  por defecto): `Template`/`AsyncTemplate` compilan un DSL (igual al
+  `Template` de E2B v2) a un Dockerfile y un zip deterministas sobre una
+  imagen `rayito-base`/`rayito-base-caps` ya publicada;
+  `Template.build()`/`build_in_background()`/`get_build_status()`/
+  `exists()` suben el artefacto por hash de contenido y llaman a
+  `create`/`update-microvm-image`, reutilizando una versión idéntica en
+  vez de reconstruir. Un build fallido se explica con `BuildException`
+  (`step`/`command`/`exit_code`/`log_tail` del log de BuildKit, o
+  `reason="ready_client_error"|"ready_server_error"` si falló el
+  `ready_cmd`), sin repetir nada. `from_image`/`from_template`/
+  `from_dockerfile`/`from_gcp_registry`/`apt_install` lanzan
+  `UnimplementedError` (documentados en ADR-022). El shim
+  `rayito.e2b.Template`/`AsyncTemplate` ya construye de verdad, con la
+  firma de E2B (`alias`, `skip_cache`, `memory_mb` redondeado con
+  `RayitoCompatWarning`, `cpu_count` con aviso) y `E2B(bucket=...)`;
+  `TemplateException`/`BuildException` del shim pasan a ser las clases
+  nativas. `set_start_cmd()` necesita una imagen base con `rayd` 0.6. La
+  imagen compuesta hereda la configuración de la base
+  (`additionalOsCapabilities` incluida); `skip_cache()` equivale a
+  `force=True`; la cuota de builds de AWS llega como
+  `reason="build_quota"`. El núcleo de build de imágenes pasa a
+  `rayito._images`, compartido con `rayito image publish` (sin cambio de
+  comportamiento). Sin llamar a `Template.build()`, el SDK no crea ningún
+  cliente nuevo. `infra/templates.yaml` (`rayito stack deploy templates`):
+  sólo la política IAM `RayitoTemplateBuilder`, $0 en reposo, que no puede
+    sobrescribir las imágenes base publicadas. Aceptación en AWS real: `pip_install()` compila
+  a `python3 -m pip install --no-cache-dir --break-system-packages`
+  (rayito-base no tiene `pip` en el `PATH`); la versión gestionada que se
+  hereda se envía como `1`, no como el eco `1.0` que `create-microvm-image`
+  rechaza; la política concede `CreateMicrovmImage` sobre `*` (AWS no la
+  autoriza por ARN) y `lambda:PassNetworkConnector` sobre los conectores
+  gestionados, y su `Deny` cubre `UpdateMicrovmImage` sobre las bases
+  (`AWS_API_NOTES.md` Q114-Q116).
 <!-- m15-secrets-gateway -->
+- **`gateways=` — pasarela de secretos en loopback** (`m15-secrets-gateway`,
+  M15, ADR-023, opcional y apagado por defecto): `Sandbox.create(gateways=
+  {"nombre": SecretGateway(upstream=..., headers=..., allow=..., ...)})`
+  abre, dentro del agente, un listener de loopback por ruta que reenvía
+  sólo lo que su `allow` cubre, dentro de su límite de peticiones por
+  minuto, inyectando cada cabecera vaultada (resuelta de Secrets Manager
+  con la misma `SecretCache` que `secrets=`, nunca antes de `Configure`) y
+  eliminando primero cualquier cabecera del mismo nombre que el sandbox
+  intente poner. `sbx.gateways["nombre"].url` da la URL de loopback;
+  `refresh()`/`arefresh()` rotan el secreto sin recrear el sandbox (releen
+  Secrets Manager aunque la `SecretCache` no haya vencido, conservan el
+  puerto y lanzan si `rayd` rechaza la sección). También
+  `SandboxPool.take(gateways=)`/`AsyncSandboxPool.take(gateways=)`.
+  Cualquier fallo al configurarla tras `run-microvm` (imagen anterior a
+  0.6.0, flag ausente, secreto que falta, sección rechazada) termina el VM
+  salvo `keep_on_failure`. Sin `gateways=`, ningún cliente `secretsmanager`
+  nuevo se construye y no se manda ningún `ConfigureSandbox`.
 <!-- m15-custom-domain -->
+
+### Fixed
+
+- `rayito stack deploy events-webhooks --artifact-bucket B` (y
+  `OptionalStacks.deploy("events-webhooks", artifact_bucket=B)`) ya no exige
+  repetir `--param ArtifactBucket=B`: `StackArtifact.bucket_parameter_key`
+  pasa a la plantilla el mismo bucket al que se sube el código, y un valor
+  distinto es `InvalidArgumentException` antes de subir nada (aceptación 0.6
+  en AWS real).
 
 ## [0.5.1] - 2026-10-01
 

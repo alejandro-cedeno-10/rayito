@@ -24,8 +24,10 @@
 //! by every feature that needs the execution role inside the guest
 //! (`credentials`), and the mount-path shape every mounting feature
 //! re-validates before touching the guest filesystem (`mount_path`). Each
-//! feature's own domain (`volume`, `s3_mount`, …) lives in its own module,
-//! added by that feature.
+//! feature's own domain lives in its own module, added by that feature:
+//! `s3_mount` (`m15-s3-mounts`) is the first one, `volume`
+//! (`m15-efs-volumes`, ADR-018) the EFS one, `telemetry` (m15-rayd-otlp,
+//! ADR-021) is rayd's own OTLP/HTTP metrics exporter.
 
 pub mod auth;
 pub mod capabilities;
@@ -38,6 +40,7 @@ pub mod filesystem;
 pub mod health;
 pub mod hooks;
 pub mod lifecycle;
+pub mod lifecycle_events;
 pub mod metrics;
 pub mod metrics_history;
 pub mod mount_path;
@@ -48,9 +51,13 @@ pub mod process;
 pub mod pty;
 pub mod root_egress;
 pub mod run_payload;
+pub mod s3_mount;
 pub mod sandbox_timeout;
+pub mod secret_gateway;
 pub mod session;
 pub mod suspend_sync;
+pub mod telemetry;
+pub mod template;
 pub mod transfer;
 pub mod volume;
 pub mod wire_tokens;

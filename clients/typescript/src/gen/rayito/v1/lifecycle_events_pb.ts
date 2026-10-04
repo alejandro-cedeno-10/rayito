@@ -10,19 +10,44 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file rayito/v1/lifecycle_events.proto.
  */
 export const file_rayito_v1_lifecycle_events: GenFile = /*@__PURE__*/
-  fileDesc("CiByYXlpdG8vdjEvbGlmZWN5Y2xlX2V2ZW50cy5wcm90bxIJcmF5aXRvLnYxIhcKFUxpZmVjeWNsZUV2ZW50c0NvbmZpZyIXChVMaWZlY3ljbGVFdmVudHNTdGF0dXNiBnByb3RvMw");
+  fileDesc("CiByYXlpdG8vdjEvbGlmZWN5Y2xlX2V2ZW50cy5wcm90bxIJcmF5aXRvLnYxImoKFUxpZmVjeWNsZUV2ZW50c0NvbmZpZxITCgtzYW5kYm94X2tleRgBIAEoDBISCgpzYW5kYm94X2lkGAIgASgJEhEKCWltYWdlX2FybhgDIAEoCRIVCg1pbWFnZV92ZXJzaW9uGAQgASgJIlMKFUxpZmVjeWNsZUV2ZW50c1N0YXR1cxIPCgdlbWl0dGVkGAEgASgEEg8KB2Ryb3BwZWQYAiABKAQSGAoQbGFzdF9lcnJvcl9jbGFzcxgDIAEoCWIGcHJvdG8z");
 
 /**
- * Owned by m15-events-webhooks. Foundations only creates these two empty
- * stub messages (so `configure.proto` has a stable field to point at); the
- * feature that implements events-webhooks owns every field number inside
- * this file from here on. Message names stay prefixed
- * (`LifecycleEvent*`) so they never collide with another feature's
- * messages inside `rayito.v1`.
+ * Owned by m15-events-webhooks. The section is the complete desired state:
+ * an empty `LifecycleEventsConfig{}` (every field at its zero value) clears
+ * it, same as any other `ConfigureRequest` section (`configure.proto`).
+ *
+ * `sandbox_key` is `k_sbx`, already derived by the SDK as
+ * `HMAC-SHA256(stack_key, "rayito.events.v1|" + sandbox_id)` — the
+ * stack-wide HMAC secret never reaches the guest, so a compromised sandbox
+ * only ever reveals its own key. `sandbox_id`, `image_arn` and
+ * `image_version` are carried here (rather than read back out of `rayd`'s
+ * own session) so the event schema never depends on how the agent happens
+ * to learn its own identity; the SDK already knows all three at
+ * `Sandbox.create` time.
  *
  * @generated from message rayito.v1.LifecycleEventsConfig
  */
 export type LifecycleEventsConfig = Message<"rayito.v1.LifecycleEventsConfig"> & {
+  /**
+   * @generated from field: bytes sandbox_key = 1;
+   */
+  sandboxKey: Uint8Array;
+
+  /**
+   * @generated from field: string sandbox_id = 2;
+   */
+  sandboxId: string;
+
+  /**
+   * @generated from field: string image_arn = 3;
+   */
+  imageArn: string;
+
+  /**
+   * @generated from field: string image_version = 4;
+   */
+  imageVersion: string;
 };
 
 /**
@@ -33,9 +58,27 @@ export const LifecycleEventsConfigSchema: GenMessage<LifecycleEventsConfig> = /*
   messageDesc(file_rayito_v1_lifecycle_events, 0);
 
 /**
+ * Counters only — never the key, never an event body. `last_error_class` is
+ * one of the lowercase snake strings this file documents at the sink
+ * (`"queue_full"`); empty when nothing has failed.
+ *
  * @generated from message rayito.v1.LifecycleEventsStatus
  */
 export type LifecycleEventsStatus = Message<"rayito.v1.LifecycleEventsStatus"> & {
+  /**
+   * @generated from field: uint64 emitted = 1;
+   */
+  emitted: bigint;
+
+  /**
+   * @generated from field: uint64 dropped = 2;
+   */
+  dropped: bigint;
+
+  /**
+   * @generated from field: string last_error_class = 3;
+   */
+  lastErrorClass: string;
 };
 
 /**

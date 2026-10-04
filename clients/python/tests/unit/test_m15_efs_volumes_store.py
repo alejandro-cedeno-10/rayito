@@ -55,7 +55,7 @@ def test_create_is_idempotent_even_though_a_repeated_client_token_raises() -> No
 
 
 class FakeClock:
-    """Reloj y espera falsos para el reintento de `create` (Q99)."""
+    """Reloj y espera falsos para el reintento de `create` (Q125)."""
 
     def __init__(self) -> None:
         self.now = 0.0
@@ -77,7 +77,7 @@ def lagging_store(api: FakeEfsApi, clock: FakeClock) -> VolumeStore:
 
 
 def test_create_waits_for_an_existing_access_point_to_be_listed() -> None:
-    """Q99: right after `CreateAccessPoint`, `DescribeAccessPoints` may not
+    """Q125: right after `CreateAccessPoint`, `DescribeAccessPoints` may not
     list the access point yet; a repeated `create()` (token already spent)
     keeps polling `get` instead of failing with `VolumeNotFoundException`."""
     api = FakeEfsApi()
@@ -110,7 +110,7 @@ def test_create_gives_up_once_the_listing_budget_is_spent() -> None:
 
 
 def test_destroy_of_a_stale_listed_access_point_returns_false() -> None:
-    """Q99: a just-deleted access point stays listed for a few seconds;
+    """Q125: a just-deleted access point stays listed for a few seconds;
     destroying it again is `False`, never `VolumeNotFoundException`."""
     api = FakeEfsApi()
     store = store_with(api)

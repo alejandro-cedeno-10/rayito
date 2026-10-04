@@ -17,6 +17,7 @@ import {
   SandboxError,
   TimeoutError,
 } from "../errors.js";
+import type { FeatureOptions } from "../feature-options.js";
 import { type StreamError, UserSchema } from "../gen/rayito/v1/common_pb.js";
 import {
   type CheckpointEvent,
@@ -36,6 +37,7 @@ import {
   S3_BUCKET_NAME_MIN,
 } from "../limits.js";
 import type { IdlePolicyInput, NetworkPolicyInput } from "../models.js";
+import type { ResolvedSize } from "../sizing/sizing.js";
 import {
   asConnectError,
   isProxyForbidden,
@@ -223,6 +225,9 @@ export interface RestoreResult {
   readonly durationMs: number;
 }
 
+/** Las opciones 0.6 de `create()` que `reincarnate()` reenvía (todas menos `size`). */
+export type RelaunchedFeatures = Omit<FeatureOptions, "size">;
+
 /** Lo que `create()` recibió, para que `reincarnate()` lance el siguiente igual. */
 export interface LaunchOptions {
   readonly template: string;
@@ -246,6 +251,19 @@ export interface LaunchOptions {
   readonly keepOnFailure: boolean | undefined;
   /** La política de egress ya resuelta (con `allowInternetAccess: false` incorporado). */
   readonly network: NetworkPolicyInput | undefined;
+  /**
+   * Las opciones 0.6 que `create()` convierte en secciones de su único
+   * `Configure` (`mounts`, `events`, `telemetry`, `gateways`), ya pasadas
+   * por `relaunchFeatures`: `reincarnate()` las reenvía a `create()`, que
+   * vuelve a planearlas y resolverlas por el mismo camino (`planFeatures` →
+   * `plannedSections` → `#applyConfigureSections`) con los hechos del
+   * sucesor — `k_sbx` derivada de su `sandboxId`, los montajes esperados
+   * hasta `mounted`, la telemetría con su imagen y su memoria, cada cabecera
+   * de `gateways` leída otra vez. Sólo referencias, nunca un valor resuelto.
+   */
+  readonly features: RelaunchedFeatures;
+  /** m15-sizes-catalog: el tamaño ya resuelto, o `undefined` sin `size`. */
+  readonly size: ResolvedSize | undefined;
 }
 
 export type CheckpointProgressCallback = (progress: CheckpointProgress) => void;
@@ -404,6 +422,20 @@ export function requireNamedPersist(persist: S3Prefix): S3Prefix {
 /** Regla 3 de D10: sólo un `name` dado por el caller puede tener un checkpoint. */
 export function shouldAutoRestore(persist: S3Prefix): boolean {
   return persist.name !== undefined;
+}
+
+/**
+ * Las opciones de `create()` que reproducen el lanzamiento original,
+ * incluidas las opciones 0.6 (`launch.features`): el sucesor vuelve a mandar
+ * en su único `Configure` todas las secciones que mandó el original,
+ * resueltas otra vez con sus propios hechos. `size` va siempre
+ * `undefined`: el tamaño ya está dentro de `launch.template` (ver
+ * `relaunchFeatures`); el `size` resuelto de `LaunchOptions` sólo sirve para
+ * `getInfo()`.
+ */
+export function relaunchCreateOptions(launch: LaunchOptions) {
+  const { features, ...launchFields } = launch;
+  return { ...launchFields, ...features, size: undefined };
 }
 
 export function reincarnateRequiresCreateError(): InvalidArgumentError {

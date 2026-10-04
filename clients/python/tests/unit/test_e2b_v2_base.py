@@ -117,16 +117,19 @@ def test_the_table_covers_d14() -> None:
         "Volume",
         "volume.content",
         "get_signature",
-        "Template",
+        # m15-templates: Template ya construye de verdad; sólo el
+        # etiquetado (sin equivalente en create/update-microvm-image)
+        # sigue sin implementar.
+        "Template.alias_exists",
+        "Template.assign_tags",
+        "Template.remove_tags",
+        "Template.get_tags",
     }
     with pytest.raises(KeyError):
         unimplemented("no-such-feature")
 
 
 RESOURCE_CALLS = [
-    (Template, "build", "Template"),
-    (Template, "to_dockerfile", "Template"),
-    (AsyncTemplate, "build_in_background", "Template"),
     (Volume, "create", "Volume"),
     (AsyncVolume, "get_info", "Volume"),
 ]
@@ -141,6 +144,29 @@ def test_resources_raise_unimplemented_never_attribute_error(
     assert excinfo.value.feature == feature
     with pytest.raises(UnimplementedError):
         resource()
+
+
+# m15-templates: Template/AsyncTemplate build for real now (construction
+# never raises); only the four tag methods still raise UnimplementedError,
+# regardless of arguments, never AttributeError.
+TEMPLATE_TAG_CALLS = [
+    (Template, "alias_exists"),
+    (Template, "assign_tags"),
+    (Template, "remove_tags"),
+    (Template, "get_tags"),
+    (AsyncTemplate, "alias_exists"),
+    (AsyncTemplate, "assign_tags"),
+    (AsyncTemplate, "remove_tags"),
+    (AsyncTemplate, "get_tags"),
+]
+
+
+@pytest.mark.parametrize(("resource", "method"), TEMPLATE_TAG_CALLS)
+def test_template_tag_methods_raise_unimplemented(resource: Any, method: str) -> None:
+    instance = resource()
+    with pytest.raises(UnimplementedError) as excinfo:
+        getattr(instance, method)("x", alias="y")
+    assert excinfo.value.feature == f"Template.{method}"
 
 
 def test_get_signature_raises() -> None:

@@ -25,7 +25,7 @@ def client_error(code: str, message: str, operation: str) -> ClientError:
 class FakeEfsApi:
     access_points: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
-    #: Simula el listado eventualmente consistente de EFS (Q99): los
+    #: Simula el listado eventualmente consistente de EFS (Q125): los
     #: access points de `unlisted` existen pero `describe_access_points` aún
     #: no los devuelve, y los de `stale` ya se borraron pero sí los devuelve.
     unlisted: set[str] = field(default_factory=set)

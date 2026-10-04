@@ -1,3 +1,15 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+# rayd-orphan-reaper: every child goes through
+# `rayd::adapters::ChildRegistry::spawn`, or PID 1's orphan reaper could take
+# its exit status before its own `wait` does.
+disallowed-methods = [
+  { path = "std::process::Command::spawn", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+  { path = "std::process::Command::status", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+  { path = "std::process::Command::output", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+  { path = "tokio::process::Command::spawn", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+  { path = "tokio::process::Command::status", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+  { path = "tokio::process::Command::output", reason = "spawn through rayd::adapters::ChildRegistry::spawn" },
+]

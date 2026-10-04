@@ -54,7 +54,11 @@ class SandboxInfo:
     `None` cuando no se leyó del agente; `end_at` es el plazo lógico vigente
     (`None` en los items de `list()`); `cpu_count`, `memory_mb` y
     `envd_version` (la versión de `rayd`) son `None` si no se leyeron del
-    agente; `lifecycle` es `{"on_timeout", "auto_resume"}` o `None` sin plazo
+    agente. `cpu_count`/`memory_mb` (m15-sizes-catalog): si `create(size=...)`
+    se usó, el baseline declarado de la imagen (`rayito.e2b._compat.
+    shim_cpu_memory`), como E2B reporta lo declarado por el template; si no,
+    la vista real del guest vía `Health`, igual que antes de `size=`
+    (0.5.x). `lifecycle` es `{"on_timeout", "auto_resume"}` o `None` sin plazo
     gestionado; `network` es `{"allow_out", "deny_out"}` o `None` si no se
     leyó ninguna política; `allow_internet_access` es `False` sólo cuando la
     política leída lo deniega todo; `volume_mounts` siempre está vacío.

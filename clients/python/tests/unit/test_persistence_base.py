@@ -6,6 +6,7 @@ import grpc
 import pytest
 
 from rayito import IdlePolicy, LaunchOptions, S3Prefix
+from rayito._feature_options import FeatureOptions, relaunch_features
 from rayito._persistence_base import (
     INTERRUPTED_MESSAGE,
     UNIMPLEMENTED_MESSAGE,
@@ -150,7 +151,37 @@ def test_launch_kwargs_reproduce_create() -> None:
     assert kwargs["template"] == "arn"
     assert kwargs["execution_role_arn"] == "arn:aws:iam::1:role/x"
     assert kwargs["control_plane"] == "plane"
+    assert "gateways" not in kwargs  # sin `features`: ninguna opción 0.6 que reenviar
     assert "persist" not in kwargs and "pool" not in kwargs
+
+
+def test_launch_kwargs_carry_gateways_into_reincarnate() -> None:
+    """`reincarnate()` relanza con las mismas `gateways=` que el `create()`
+    original (cada cabecera se resuelve otra vez en el sucesor)."""
+    gateways = {"anthropic": object()}
+    options = LaunchOptions(
+        template="arn",
+        template_version=None,
+        timeout=1800,
+        idle=None,
+        envs=None,
+        metadata=None,
+        cpu_time_limit=None,
+        execution_role_arn=None,
+        allowed_ports=None,
+        ingress=None,
+        egress=None,
+        logging="disabled",
+        access_token=None,
+        ready_timeout=90.0,
+        request_timeout=60.0,
+        reconnect_timeout=60.0,
+        keep_on_failure=False,
+        control_plane="plane",
+        transport="transport",
+        features=relaunch_features(FeatureOptions(gateways=gateways)),
+    )
+    assert launch_kwargs(options)["gateways"] == gateways
 
 
 def test_launch_options_repr_redacts_token_and_envs() -> None:

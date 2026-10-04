@@ -486,6 +486,20 @@ def lifecycle_dict(info: NativeSandboxInfo) -> dict[str, Any] | None:
     return {"on_timeout": lifecycle.on_timeout or "kill", "auto_resume": lifecycle.auto_resume}
 
 
+def shim_cpu_memory(info: NativeSandboxInfo) -> tuple[int | None, int | None]:
+    """`cpu_count`/`memory_mb` del `SandboxInfo` de E2B (m15-sizes-catalog):
+    E2B no distingue "lo declarado al construir el template" de "lo que el
+    guest reporta en vivo" (Rayito sí, en `baseline_cpu`/`baseline_memory_mib`
+    vs. `cpu_count`/`memory_mb` nativos, Q88) — el shim sólo tiene un par de
+    campos, así que cuando `size=` se usó (el tamaño declarado se conoce)
+    reporta ese baseline, igual que E2B reporta lo declarado por el template;
+    sin `size=` sigue siendo el comportamiento de 0.5.x: la vista real del
+    guest vía `Health`."""
+    if info.size is not None:
+        return info.baseline_cpu, info.baseline_memory_mib
+    return info.cpu_count, info.memory_mb
+
+
 def info_from_native(
     info: NativeSandboxInfo | SandboxListItem,
     *,
@@ -494,7 +508,8 @@ def info_from_native(
 ) -> SandboxInfo:
     """El `SandboxInfo` 2.x de E2B (D10). `network` es el `NetworkState` que
     el shim leyó (`network_read`); sin él `network` y
-    `allow_internet_access` son `None`."""
+    `allow_internet_access` son `None`. `cpu_count`/`memory_mb`: ver
+    `shim_cpu_memory`."""
     state = sandbox_state_from_aws(info.state, sandbox_id=info.sandbox_id)
     metadata = None if info.metadata is None else dict(info.metadata)
     if isinstance(info, SandboxListItem):
@@ -512,6 +527,7 @@ def info_from_native(
             envd_version=None,
             raw_state=info.state,
         )
+    cpu_count, memory_mb = shim_cpu_memory(info)
     return SandboxInfo(
         sandbox_id=info.sandbox_id,
         sandbox_domain=info.endpoint,
@@ -521,8 +537,8 @@ def info_from_native(
         started_at=info.started_at,
         end_at=info.expires_at,
         state=state,
-        cpu_count=info.cpu_count,
-        memory_mb=info.memory_mb,
+        cpu_count=cpu_count,
+        memory_mb=memory_mb,
         envd_version=info.agent_version,
         allow_internet_access=internet_access_from(
             network, network_read=network_read, egress=info.egress

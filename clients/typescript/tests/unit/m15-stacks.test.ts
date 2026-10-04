@@ -12,6 +12,7 @@ import {
   type StackComponent,
   stackTags,
 } from "../../src/stacks/model.js";
+import { loadTemplate } from "../../src/stacks/packaging.js";
 import { COMPONENTS, componentByName } from "../../src/stacks/registry.js";
 import { OptionalStacks } from "../../src/stacks/service.js";
 import { VERSION } from "../../src/version.js";
@@ -60,7 +61,8 @@ describe("stacks/service: OptionalStacks", () => {
   test("deploying an unsupported component raises before touching the provisioner", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.deploy("s3-mounts")).rejects.toThrow(UnimplementedError);
+    // `custom-domain` is the last stub (`supported: false`) on this branch.
+    await expect(stacks.deploy("custom-domain")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 
@@ -128,16 +130,68 @@ describe("stacks/service: OptionalStacks", () => {
   });
 
   test("destroying an unsupported component also raises first", async () => {
-    // sizes-guard, not efs-volumes: m15-efs-volumes made that component
-    // real (infra/efs-volumes.yaml), so it is supported: true now.
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.destroy("sizes-guard")).rejects.toThrow(UnimplementedError);
+    await expect(stacks.destroy("custom-domain")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 
   test("componentByName is undefined for an unknown name", () => {
     expect(componentByName("not-a-component")).toBeUndefined();
     expect(componentByName("metadata-index")).toBeDefined();
+  });
+});
+
+/** Prefijo de tipo de todo recurso IAM de CloudFormation; una plantilla que
+ * crea uno exige `CAPABILITY_IAM` (o `CAPABILITY_NAMED_IAM`) en
+ * `CreateStack`/`UpdateStack`, o falla con `InsufficientCapabilitiesException`. */
+const IAM_RESOURCE_TYPE_PREFIX = "AWS::IAM::";
+
+describe("stacks/packaging", () => {
+  const supported = COMPONENTS.filter((entry) => entry.supported !== false);
+
+  test.each(supported.map((entry) => [entry.name, entry] as const))(
+    "%s: packaged, and declares a capability if it creates IAM resources",
+    async (_name, entry) => {
+      const template = await loadTemplate(entry);
+      if (template.includes(IAM_RESOURCE_TYPE_PREFIX)) {
+        expect(entry.capabilities ?? []).not.toHaveLength(0);
+      }
+    },
+  );
+});
+
+class RecordingProvisioner extends FakeStackProvisioner {
+  createdParameters: Readonly<Record<string, string>> | undefined;
+
+  override async create(
+    component: Parameters<FakeStackProvisioner["create"]>[0],
+    options: { readonly stackName: string; readonly parameters?: Readonly<Record<string, string>> },
+  ): Promise<void> {
+    this.createdParameters = { ...(options.parameters ?? {}) };
+    await super.create(component, options);
+  }
+}
+
+describe("OptionalStacks artifact bucket parameter", () => {
+  test("events-webhooks gets ArtifactBucket from artifactBucket (0.6 AWS acceptance)", async () => {
+    const provisioner = new RecordingProvisioner();
+    await new OptionalStacks({ provisioner }).deploy("events-webhooks", {
+      parameters: { LogGroupName: "/rayito/x" },
+      artifactBucket: "bucket-a",
+    });
+    expect(provisioner.createdParameters?.ArtifactBucket).toBe("bucket-a");
+    expect(provisioner.createdParameters?.ArtifactS3Key).toBeTruthy();
+  });
+
+  test("a conflicting ArtifactBucket is rejected before any upload", async () => {
+    const provisioner = new FakeStackProvisioner();
+    await expect(
+      new OptionalStacks({ provisioner }).deploy("events-webhooks", {
+        parameters: { LogGroupName: "/rayito/x", ArtifactBucket: "bucket-b" },
+        artifactBucket: "bucket-a",
+      }),
+    ).rejects.toThrow(/ArtifactBucket/);
+    expect(provisioner.calls).toEqual([]);
   });
 });

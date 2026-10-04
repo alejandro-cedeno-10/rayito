@@ -1,6 +1,6 @@
 {
   "name": "rayito",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta.",
   "license": "Apache-2.0",
   "repository": {
@@ -73,6 +73,7 @@
   },
   "peerDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
@@ -80,6 +81,9 @@
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-cloudformation": {
+      "optional": true
+    },
+    "@aws-sdk/client-cloudwatch-logs": {
       "optional": true
     },
     "@aws-sdk/client-dynamodb": {
@@ -97,6 +101,7 @@
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",

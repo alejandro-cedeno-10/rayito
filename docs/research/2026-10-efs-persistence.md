@@ -490,12 +490,12 @@ para y se reescribe este documento.
 | # | Pregunta | Cómo | Coste |
 |---|---|---|---|
 | EFS-1 ✅ | ¿`nfs4` (y `nfs`) en `/proc/filesystems` del guest, en `rayito-base` y en `rayito-base-caps`? ¿`fuse`? | **Respondida** (campaña M15 conjunta con VOL-1 de `docs/research/2026-10-e2b-out-of-scope.md`, "Resultados de la primera campaña de mediciones"): `fuse`, `fuseblk`, `fusectl`, `nfs` y `nfs4` están los cinco en `/proc/filesystems` en **ambas** imágenes. `rayito-base` no tiene `/dev/fuse` y root pierde `CAP_SYS_ADMIN` (`EPERM` incluso en un `tmpfs`); `rayito-base-caps` sí monta. El criterio de parada pasa: la opción A sigue viva, sólo en `rayito-base-caps` | $0 (ya medida, sin coste adicional) |
-| EFS-2 ★ ✅ | ¿`mount -t nfs4` como root funciona dentro del contenedor de la app en caps? ¿`EPERM` en la imagen por defecto? | **Respondida 2026-10-02** (`AWS_API_NOTES.md` §16 Q97): en caps `tmpfs` monta y `nfs4` a TEST-NET agota el timeout (ni `EPERM` ni `ENODEV`); el `EPERM` por defecto ya estaba en Q79. Pasa | < $0,01 |
-| EFS-3 ★ ⛔ | **Bloqueada 2026-10-02** (Q98): una SCP de la organización deniega `ec2:CreateVpc` en la cuenta de pruebas; hace falta una VPC prestada con permiso (`efs_volumes.py run --vpc-id/--subnet-id`). (Q46 pendiente) ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC propia; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
+| EFS-2 ★ ✅ | ¿`mount -t nfs4` como root funciona dentro del contenedor de la app en caps? ¿`EPERM` en la imagen por defecto? | **Respondida 2026-10-02** (`AWS_API_NOTES.md` §16 Q123): en caps `tmpfs` monta y `nfs4` a TEST-NET agota el timeout (ni `EPERM` ni `ENODEV`); el `EPERM` por defecto ya estaba en Q79. Pasa | < $0,01 |
+| EFS-3 ★ ⛔ | **Bloqueada 2026-10-02** (Q124): una SCP de la organización deniega `ec2:CreateVpc` en la cuenta de pruebas; hace falta una VPC prestada con permiso (`efs_volumes.py run --vpc-id/--subnet-id`). (Q46 pendiente) ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC propia; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
 | EFS-4 | ¿Se acepta `egressNetworkConnectors=[INTERNET_EGRESS, <conector VPC>]`? ¿Cómo se enruta (CIDR de la VPC por la VPC y el resto por internet, o sólo uno)? ¿`ValidationException`? | tres lanzamientos: sólo VPC, sólo internet, ambos; `curl https://example.com` y `nc` al mount target | < $0,02 |
 | EFS-5 | ¿Resuelve el guest `<fs-id>.efs.<región>.amazonaws.com` con el conector? ¿Qué resolvedor contesta? | `getent hosts` como root y como uid 1000 | < $0,01 |
 | EFS-6 | ¿`efs-utils` obtiene las credenciales del rol del IMDSv2 del MicroVM (rol `execution_role`) como root, y necesita región/AZ del IMDS (`placement/*`)? | `mount -t efs -o tls,iam` con log de efs-utils en `debug` | incluido en EFS-8 |
-| EFS-7 ★ ✅ | ¿Se instala `amazon-efs-utils` en `al2023-minimal` ARM64 (paquete de AL2023 o build), con `efs-proxy`? Delta de `codeInstallSizeInBytes` y `memorySnapshotSizeInBytes`, tiempo de build | **Respondida 2026-10-02** (Q96): paquete de AL2023 `amazon-efs-utils-3.1.3` (37 paquetes, `efs-proxy` en `/usr/sbin`); code install +197,6 MB, memoria sin cambio, build +10 s; el RPM `python3` 3.9 repunta `/usr/bin/python3` (la capa real debe rehacer el enlace). Pasa | 1 build ≈ $0,04 + storage de snapshot mínimo 1 semana (~2 GB × $0,08 × 0,25) ≈ $0,04 |
+| EFS-7 ★ ✅ | ¿Se instala `amazon-efs-utils` en `al2023-minimal` ARM64 (paquete de AL2023 o build), con `efs-proxy`? Delta de `codeInstallSizeInBytes` y `memorySnapshotSizeInBytes`, tiempo de build | **Respondida 2026-10-02** (Q122): paquete de AL2023 `amazon-efs-utils-3.1.3` (37 paquetes, `efs-proxy` en `/usr/sbin`); code install +197,6 MB, memoria sin cambio, build +10 s; el RPM `python3` 3.9 repunta `/usr/bin/python3` (la capa real debe rehacer el enlace). Pasa | 1 build ≈ $0,04 + storage de snapshot mínimo 1 semana (~2 GB × $0,08 × 0,25) ≈ $0,04 |
 | EFS-8 ★ | ¿`mount -t efs -o tls,iam,accesspoint=…,mounttargetip=…` funciona sin `systemd`? ¿Quién arranca `efs-proxy` y el watchdog? Latencia de montaje p50/p95 (20 muestras); mensajes con SG cerrado, IAM denegado, AP inexistente | script como root en un VM caps con rol | 20 lanzamientos ≈ $0,03 + 10 min de VM ≈ $0,02 |
 | EFS-9 | Rendimiento desde el VM: `dd` 1 GB escritura y lectura secuencial, 10 000 ficheros de 4 KB, `git clone` de un repo mediano, latencia 4K aleatoria (`fio` si instala) frente a disco local | VM caps 2 GB | EFS: 2 GB escritos ($0,12) + 3 GB leídos ($0,09) + VM 15 min ($0,03) ≈ $0,25 |
 | EFS-10 | uid 1000 en el volumen: propietario 1000:1000 forzado por el AP, `chmod`, `rename`, `ESTALE` con muchos renames; ¿uid 1000 puede conectar al puerto local de `efs-proxy`? ¿Lo corta la regla `prohibit`? | pruebas como uid 1000 | < $0,02 |
@@ -511,13 +511,13 @@ para y se reescribe este documento.
 | EFS-20 | Escala del conector: IPs de subnet consumidas por VM, 20 VMs simultáneos con conector en una subnet /28 | 20 lanzamientos | ≈ $0,05 |
 
 **Resultados de la aceptación del 2026-10-02** (`AWS_API_NOTES.md` §16
-Q96–Q99): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
+Q122–Q125): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
 (EFS-8, EFS-11, EFS-13) quedan **bloqueados** porque una SCP de la
 organización deniega `ec2:CreateVpc` en la cuenta de pruebas (no se usó la
 VPC compartida de otro equipo ni una VPC por defecto para saltarse la
 SCP). Ningún criterio de parada falló: la opción A sigue viva, pendiente de
 una VPC prestada con permiso. De paso, el e2e del CRUD encontró que
-`DescribeAccessPoints` es eventualmente consistente (Q99), corregido en
+`DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
 `VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de
 imagen, cuatro VMs cortos, un sistema de ficheros vacío).
 

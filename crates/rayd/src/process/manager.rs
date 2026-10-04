@@ -138,6 +138,26 @@ impl<S: Spawner> ProcessManager<S> {
         input: SpawnInput,
     ) -> Result<(Pid, SubscriberStream), ProcessError> {
         self.session.accepts_new_streams()?;
+        self.start_ungated(input).await
+    }
+
+    /// `start` without the stream gate, for the one process `rayd` launches
+    /// on its own before any `/run`: a template's `start_cmd`
+    /// (`features::template_start`, ADR-022), which must already be running
+    /// when the build-time `/ready` lets AWS take the snapshot (research
+    /// §3.5), the same way the kernel sidecar is. No client RPC reaches
+    /// this: every gRPC handler goes through `start`.
+    pub async fn start_at_boot(
+        self: &Arc<Self>,
+        input: SpawnInput,
+    ) -> Result<(Pid, SubscriberStream), ProcessError> {
+        self.start_ungated(input).await
+    }
+
+    async fn start_ungated(
+        self: &Arc<Self>,
+        input: SpawnInput,
+    ) -> Result<(Pid, SubscriberStream), ProcessError> {
         let defaults = self.session.spawn_defaults();
         let spec = plan_spawn(
             &input,

@@ -5,7 +5,7 @@ members = ["crates/rayito-proto", "crates/rayd-core", "crates/rayd"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.98"
-version = "0.5.1"
+version = "0.6.0"
 license = "Apache-2.0"
 repository = "https://github.com/alejandro-cedeno-10/rayito"
 homepage = "https://github.com/alejandro-cedeno-10/rayito"
@@ -47,6 +47,9 @@ sha2 = "=0.11.0"
 subtle = { version = "=2.6.1", default-features = false }
 zeroize = { version = "=1.9.0", features = ["derive"] }
 base64 = "=0.23.1"
+# Event-line MAC (m15-events-webhooks, ADR-020): `k_sbx` is already derived
+# by the SDK, so `rayd-core` only needs the HMAC primitive, not a KDF.
+hmac = "=0.13.0"
 tempfile = "=3.27.0"
 notify = { version = "=8.2.0", default-features = false }
 mimalloc = "=0.1.52"
@@ -55,6 +58,18 @@ getrandom = "=0.4.3"
 # `sso` and `credentials-process` stay out; the trust store is the OS bundle.
 aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 aws-sdk-s3 = { version = "=1.149.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+# m15-rayd-otlp (ADR-021) rule for direct dependencies: only crates
+# `aws-config`/`aws-sdk-s3`/`hyper` already pull in transitively, pinned to
+# the exact version `Cargo.lock` already resolves, so none of these adds a
+# crate to the dependency tree. `aws-credential-types`: the `Credentials`
+# `aws-sigv4` signs with, and `CredentialsError` for
+# `adapters::credential_broker`'s IMDS-404 classification. `aws-sigv4`: the
+# SigV4 signer `aws-sdk-s3` itself uses, so `cloudwatch_otlp_sink` never
+# hand-rolls HMAC/SigV4. `httpdate`: parses the `Date` header the sink
+# measures clock skew from.
+aws-credential-types = { version = "=1.3.0", default-features = false }
+aws-sigv4 = { version = "=1.6.0", default-features = false, features = ["sign-http", "http1"] }
+httpdate = "=1.0.3"
 tar = "=0.4.46"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 # Presigned S3 transfers (ADR-010): an HTTP/1.1 client over the TLS stack

@@ -42,9 +42,11 @@ from rayito._limits import (
     TRANSFER_SINGLE_PUT_MAX_BYTES,
     TRANSFER_THRESHOLD_MIN_BYTES,
 )
+from rayito._sizing import ResolvedSize
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
+    from rayito._feature_options import FeatureOptions
     from rayito._index import DynamoDbIndex
 
 REDACTED: Final = "<redacted>"
@@ -134,6 +136,13 @@ class SandboxInfo:
     devuelve `Health` (`None` si no se leyó del agente o no se conoce):
     `cpu_count` son las CPUs que `rayd` puede usar y `memory_mb` el
     `MemTotal` del guest en MiB, no el `minimumMemoryInMiB` de la imagen.
+    `size`, `baseline_memory_mib` y `baseline_cpu` sólo se rellenan cuando
+    `create(size=...)` se usó (m15-sizes-catalog): `size` es el sufijo
+    resuelto (`"4gb"`), `baseline_memory_mib` el `minimumMemoryInMiB`
+    publicado de la imagen lanzada y `baseline_cpu` los vCPU del guest para
+    ese `minimumMemoryInMiB` (RES-2/Q88, `_sizing.MIB_PER_VCPU_Q88`, medido
+    exactamente para los cinco tamaños del catálogo). El guest real puede
+    ver hasta 4x `baseline_memory_mib` en `memory_mb` (también Q88).
     """
 
     sandbox_id: str
@@ -154,6 +163,9 @@ class SandboxInfo:
     agent_version: str | None = None
     cpu_count: int | None = None
     memory_mb: int | None = None
+    size: str | None = None
+    baseline_memory_mib: int | None = None
+    baseline_cpu: int | None = None
 
     @property
     def endpoint_url(self) -> str:
@@ -901,6 +913,19 @@ class LaunchOptions:
     on_timeout: TimeoutActionName | None = None
     network: NetworkPolicy | None = None
     index: DynamoDbIndex | None = None
+    # Las opciones 0.6 que `create()` convierte en secciones de su único
+    # `ConfigureSandbox` (`mounts=`, `events=`, `telemetry=`, `gateways=`),
+    # ya pasadas por `relaunch_features`: `reincarnate()` las reenvía a
+    # `create()`, que vuelve a planearlas y resolverlas por el mismo camino
+    # (`plan_features` → `planned_sections` → `_apply_configure_sections`)
+    # con los hechos del sucesor — `k_sbx` derivada de su `sandbox_id`, los
+    # montajes esperados hasta `mounted`, la telemetría con su imagen y su
+    # memoria, cada cabecera de `gateways=` leída otra vez. Sólo guarda
+    # referencias (nombres de secreto, objetos de configuración), nunca un
+    # valor resuelto, así que no hace falta redactarlo en `__repr__`.
+    # `None` sólo en un `LaunchOptions` construido a mano sin opciones 0.6.
+    features: FeatureOptions | None = None
+    size: ResolvedSize | None = None
 
     def __repr__(self) -> str:
         token = None if self.access_token is None else REDACTED
@@ -910,6 +935,16 @@ class LaunchOptions:
             f"template_version={self.template_version!r}, timeout={self.timeout!r}, "
             f"access_token={token!r}, envs=<{env_count} keys>)"
         )
+
+
+@dataclass(frozen=True)
+class ImageVersionInfo:
+    """Lo que `ControlPlane.get_microvm_image_version` necesita de
+    `GetMicrovmImageVersion`: sólo `minimum_memory_mib`
+    (`resources[0].minimumMemoryInMiB`, §4 de `AWS_API_NOTES.md`), que es lo
+    único que `_size_catalog.ConventionCatalog` (sizes-catalog, M15) lee."""
+
+    minimum_memory_mib: int
 
 
 # ------------------------------------------------------------------ transfers

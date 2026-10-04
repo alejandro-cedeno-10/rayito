@@ -2,13 +2,15 @@
 //! the guest filesystem (`s3_mount` today; `efs_volumes` reuses it in its
 //! own change). Mirrors the SDK-side rule (`_mount_path.py` /
 //! `mount-path.ts`) so a non-SDK or buggy `ConfigureSandbox` caller cannot
-//! reach `rayd`'s own `mount(2)`/`create_dir_all` with a path the SDK
+//! reach `rayd`'s own `mount(2)`/`mkdirat` with a path the SDK
 //! would have already rejected — `rayd` never trusts the client to have
 //! run that check itself (the whole point of re-validating here, §9.2).
 //!
 //! Pure string checks only: `rayd` never touches the guest filesystem to
 //! decide whether a path is *allowed* (only `FuseDevice::attach`'s own
-//! `create_dir_all` touches it, afterwards).
+//! symlink-refusing walk touches it, afterwards: a lexically valid path
+//! can still be a symlink planted by uid 1000, which this module cannot
+//! see and `rayd::adapters::fuse_device` rejects).
 
 /// A sandbox has at most this many mount points between `mounts=` and
 /// `volumes=` combined — mirrors the SDK's own `_mount_path.MAX_MOUNTS`.

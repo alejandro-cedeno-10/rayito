@@ -88,6 +88,7 @@ from rayito.e2b._secret import (
     SecretPaginator,
 )
 from rayito.e2b._sync import Sandbox
+from rayito.e2b._template import AsyncTemplate, Template
 from rayito.e2b._types import (
     MIMEType,
     OutputHandler,
@@ -98,8 +99,6 @@ from rayito.e2b._types import (
     Username,
 )
 from rayito.e2b._unimplemented import (
-    AsyncTemplate,
-    Template,
     get_signature,
 )
 from rayito.e2b._volume import AsyncVolume, Volume

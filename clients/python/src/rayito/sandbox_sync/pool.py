@@ -31,13 +31,14 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Final, Self
+from typing import TYPE_CHECKING, Final, Self
 
 import boto3
 
 from rayito._aws import ControlPlane, LaunchRequest, PortSpec, control_plane_session
+from rayito._feature_options import FeatureOptions, plan_features
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
-from rayito._models import MicrovmListPage, SandboxInfo, SandboxListItem
+from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._payload import generate_access_token
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
 from rayito._pool_base import (
@@ -69,6 +70,9 @@ from rayito._secrets import SecretCache, SecretRef, bind_secrets, shared_secret_
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException, SandboxStateException
 from rayito.sandbox_sync.main import Sandbox, resolve_control_plane
+
+if TYPE_CHECKING:
+    from rayito._secret_gateway import SecretGateway
 
 logger = logging.getLogger("rayito.pool")
 
@@ -152,6 +156,9 @@ class LaunchObserver:
 
     def create_auth_token(self, sandbox_id: str, ports: Sequence[PortSpec]) -> str:
         return self._plane.create_auth_token(sandbox_id, ports)
+
+    def get_microvm_image_version(self, image_arn: str, image_version: str) -> ImageVersionInfo:
+        return self._plane.get_microvm_image_version(image_arn, image_version)
 
 
 class SandboxPool:
@@ -281,6 +288,7 @@ class SandboxPool:
         reconnect_timeout: float = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
         secrets: Mapping[str, str | SecretRef] | None = None,
         secret_cache: SecretCache | None = None,
+        gateways: Mapping[str, SecretGateway] | None = None,
     ) -> Sandbox:
         """La plaza `ready` más vieja con al menos `min_remaining_seconds` de
         vida, reanudada y abierta con su token; sin plaza (tras esperar hasta
@@ -299,7 +307,29 @@ class SandboxPool:
         Ejemplo:
             sbx = pool.take(secrets={"OPENAI_API_KEY": "openai"})
             sbx.commands.run("python agent.py")
+
+        `gateways={"nombre": SecretGateway(...)}` abre la pasarela de
+        secretos (ADR-023) en el sandbox que sale del pool, igual que
+        `Sandbox.create(gateways=)`: las plazas calientes nunca la llevan.
+        Recursos y llamadas AWS: `secretsmanager:GetSecretValue` una vez por
+            secreto inyectado y TTL de `SecretCache` (y uno por secreto en
+            cada `sbx.gateways.refresh()`); ningún recurso nuevo.
+        Coste aproximado: el mismo $0,05 por 10 000 llamadas de arriba.
+        IAM: `secretsmanager:GetSecretValue` en las credenciales del llamante.
+        Cómo apagarla: `gateways=None` (por defecto); sin él, `take()` no
+            hace ni un `ConfigureSandbox`. Exige una imagen 0.6.0 o
+            posterior: con una anterior, `take()` termina la plaza tomada y
+            lanza `UnimplementedError`.
+        Ejemplo:
+            sbx = pool.take(gateways={"anthropic": SecretGateway(
+                upstream="https://api.anthropic.com",
+                headers={"x-api-key": "anthropic"},
+                allow=[("POST", "/v1/messages")],
+            )})
         """
+        # Pura (ninguna llamada a AWS): una forma inválida falla antes de
+        # reclamar ninguna plaza.
+        feature_plan = plan_features(FeatureOptions(gateways=gateways))
         binding = warm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = self._claim_ready_slot(wait)
         sandbox = (
@@ -311,6 +341,11 @@ class SandboxPool:
             sandbox = self._fallback(ready_timeout, request_timeout, reconnect_timeout)
         if binding is not None:
             sandbox._secrets = binding
+        # Las plazas del pool se lanzan siempre con `keep_on_failure=False`:
+        # una sección que no se aplica termina la plaza ya tomada.
+        sandbox._apply_configure_sections(
+            feature_plan.configure_sections, timeout=request_timeout, terminate_on_failure=True
+        )
         return sandbox
 
     def _default_secret_cache(self) -> SecretCache:

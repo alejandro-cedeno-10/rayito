@@ -71,7 +71,7 @@ class VolumeStore:
         self._region = region
         self._session = session
         self._client = LazyClient("efs", region=region, session=session)
-        # Reloj y espera del reintento de `create` (Q99): sólo los tests los
+        # Reloj y espera del reintento de `create` (Q125): sólo los tests los
         # sustituyen, como en `SecretStore`.
         self._sleep: Callable[[float], None] = time.sleep
         self._clock: Callable[[], float] = time.monotonic
@@ -100,7 +100,7 @@ class VolumeStore:
         responde `AccessPointAlreadyExists`, que esta función atrapa para
         devolver `get(name)` en su lugar, reintentado durante
         `LIST_VISIBILITY_BUDGET_SECONDS` porque el listado de EFS tarda en
-        mostrar un access point recién creado (Q99)."""
+        mostrar un access point recién creado (Q125)."""
         validate_volume_name(name)
         params = create_access_point_params(self._file_system_id, name)
         try:
@@ -130,7 +130,7 @@ class VolumeStore:
         """Todos los access points del sistema de ficheros con la etiqueta
         de volumen de Rayito, paginando `DescribeAccessPoints` hasta
         agotar `NextToken`. Eventualmente consistente, como el propio
-        `DescribeAccessPoints` (Q99): un volumen recién creado puede tardar
+        `DescribeAccessPoints` (Q125): un volumen recién creado puede tardar
         unos segundos en aparecer y uno recién borrado seguir apareciendo
         (también en `get`)."""
         volumes: list[EfsVolume] = []
@@ -161,7 +161,7 @@ class VolumeStore:
         try:
             self._call("delete_access_point", AccessPointId=volume.access_point_id)
         except VolumeNotFoundException:
-            # El listado aún mostraba un access point ya borrado (Q99).
+            # El listado aún mostraba un access point ya borrado (Q125).
             return False
         return True
 

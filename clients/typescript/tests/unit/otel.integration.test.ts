@@ -13,9 +13,12 @@ import {
   type Context,
   type ContextManager,
   context as contextApi,
+  propagation,
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
+  type TextMapPropagator,
+  trace,
 } from "@opentelemetry/api";
 import {
   BasicTracerProvider,
@@ -213,5 +216,84 @@ describe("un span padre del llamante", () => {
         expect(span.parentSpanId).toBe(parentSpanId);
       }
     });
+  });
+});
+
+/**
+ * The minimal W3C trace-context propagator this file needs (the real one
+ * lives in `@opentelemetry/core`, which the user's SDK registers; rayito
+ * never does): `traceparent` from the active span, nothing else.
+ */
+const W3C_TRACE_CONTEXT: TextMapPropagator = {
+  inject(activeContext, carrier, setter) {
+    const spanContext = trace.getSpanContext(activeContext);
+    if (spanContext === undefined) {
+      return;
+    }
+    const flags = spanContext.traceFlags.toString(16).padStart(2, "0");
+    setter.set(carrier, "traceparent", `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`);
+  },
+  extract: (activeContext) => activeContext,
+  fields: () => ["traceparent"],
+};
+
+describe("traceparent toward rayd (m15-rayd-otlp)", () => {
+  beforeEach(() => {
+    propagation.setGlobalPropagator(W3C_TRACE_CONTEXT);
+  });
+
+  afterEach(() => {
+    propagation.disable();
+  });
+
+  test("with tracerProvider every handle RPC carries the active span's traceparent", async () => {
+    const { sandbox, rayd, close } = await createTestSandbox({
+      create: { tracerProvider: provider },
+    });
+    try {
+      await sandbox.commands.run("echo hola");
+      const [headers] = rayd.process.startHeaders;
+      expect(headers?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+      expect(headers?.baggage).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  test("each Start carries the span of the very commands.run that sent it", async () => {
+    // Acceptance on AWS (2026-10-02) found the Python SDK sending one fixed
+    // traceparent on every RPC; this pins the same contract here.
+    const { sandbox, rayd, close } = await createTestSandbox({
+      create: { tracerProvider: provider },
+    });
+    try {
+      await sandbox.commands.run("echo uno");
+      await sandbox.commands.run("echo dos");
+      const runSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === "rayito.commands.run")
+        .map((span) => `${span.spanContext().traceId}-${span.spanContext().spanId}`);
+      const sent = rayd.process.startHeaders.map((headers) =>
+        (headers.traceparent ?? "").split("-").slice(1, 3).join("-"),
+      );
+      expect(runSpans).toHaveLength(2);
+      expect(sent).toEqual(runSpans);
+    } finally {
+      await close();
+    }
+  });
+
+  test("without tracerProvider no RPC carries one, even with a global propagator", async () => {
+    const { sandbox, rayd, close } = await createTestSandbox();
+    try {
+      await sandbox.commands.run("echo hola");
+      for (const headers of rayd.process.startHeaders) {
+        expect(headers.traceparent).toBeUndefined();
+        expect(headers.tracestate).toBeUndefined();
+      }
+      expect(rayd.process.startHeaders.length).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
   });
 });

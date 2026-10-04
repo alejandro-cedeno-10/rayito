@@ -50,6 +50,7 @@ from rayito.e2b._compat import (
     normalized_language_or_unimplemented,
     pty_size_to_native,
     sandbox_state_from_aws,
+    shim_cpu_memory,
     states_for,
     unimplemented_language,
 )
@@ -429,6 +430,39 @@ def test_info_from_native_reads_guest_facts_and_the_logical_deadline() -> None:
     assert info.lifecycle == {"on_timeout": "pause", "auto_resume": True}
     unmanaged = dataclasses.replace(lifecycle, phase="unmanaged", deadline=None, cap=None)
     assert info_from_native(dataclasses.replace(native, lifecycle=unmanaged)).lifecycle is None
+
+
+def test_shim_cpu_memory_is_the_guest_view_without_size() -> None:
+    native = dataclasses.replace(native_info(), cpu_count=2, memory_mb=1987)
+    assert shim_cpu_memory(native) == (2, 1987)
+
+
+def test_shim_cpu_memory_is_the_baseline_when_size_was_used() -> None:
+    """m15-sizes-catalog: con `size=`, el shim reporta el baseline
+    declarado (como E2B reporta lo declarado por el template), no el pico
+    real que ve el guest (Q88: hasta 4x el baseline)."""
+    native = dataclasses.replace(
+        native_info(),
+        cpu_count=8,
+        memory_mb=16052,
+        size="4gb",
+        baseline_memory_mib=4096,
+        baseline_cpu=8,
+    )
+    assert shim_cpu_memory(native) == (8, 4096)
+
+
+def test_info_from_native_reports_the_baseline_when_size_was_used() -> None:
+    native = dataclasses.replace(
+        native_info(),
+        cpu_count=8,
+        memory_mb=16052,
+        size="4gb",
+        baseline_memory_mib=4096,
+        baseline_cpu=8,
+    )
+    info = info_from_native(native)
+    assert (info.cpu_count, info.memory_mb) == (8, 4096)
 
 
 def network_state(allow: tuple[str, ...], deny: tuple[str, ...]) -> NetworkState:

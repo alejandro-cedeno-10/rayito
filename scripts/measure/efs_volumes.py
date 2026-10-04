@@ -22,7 +22,7 @@ Subcommands:
 `rayito:run-id=<ID>`, discovered by that tag before ever creating a new
 one) — or, with `--vpc-id`/`--subnet-id`, uses a network borrowed with its
 owner's permission that it never creates, records or deletes (an
-organization SCP can deny `ec2:CreateVpc`: AWS_API_NOTES.md §16 Q98) —
+organization SCP can deny `ec2:CreateVpc`: AWS_API_NOTES.md §16 Q124) —
 then deploys the already-reviewed `efs-volumes` `OptionalStack`
 (`infra/efs-volumes.yaml`) into them through `rayito.OptionalStacks` —
 this script never re-implements the file system, mount target, connector,

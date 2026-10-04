@@ -21,6 +21,11 @@ import { Sandbox } from "./sandbox.js";
 
 export {
   AuthenticationError,
+  // m15-templates: el shim ya construye de verdad (./template.js), así que
+  // BuildError/TemplateError pasan a ser las clases nativas (mismo patrón
+  // que NotEnoughSpaceError/FileUploadError), no los stand-ins que nunca se
+  // lanzaban de `./errors.js` (retirado).
+  BuildError,
   CapacityError as ServiceBusyError,
   CommandExitError,
   DiskFullError as NotEnoughSpaceError,
@@ -35,6 +40,7 @@ export {
   SandboxNotFoundError,
   SecretError,
   SecretNotFoundError,
+  TemplateError,
   TimeoutError,
   UnimplementedError,
 } from "../errors.js";
@@ -64,7 +70,6 @@ export type {
 } from "../sandbox/git-args.js";
 export { E2B, type E2BClientOpts } from "./client.js";
 export { ConnectionConfig, type ConnectionOpts, type Username } from "./connection.js";
-export { BuildError, TemplateError } from "./errors.js";
 export {
   DEFAULT_WATCH_TIMEOUT_MS,
   Filesystem,
@@ -78,7 +83,7 @@ export {
   type PtyOutputCallback,
   type PtySize,
 } from "./pty.js";
-export { getSignature, Template } from "./resources.js";
+export { getSignature } from "./resources.js";
 export { Sandbox, type SandboxInstanceConnectOpts, SandboxPaginator } from "./sandbox.js";
 export {
   Secret,
@@ -92,6 +97,7 @@ export {
   SecretPaginator,
   type SecretUpdateOpts,
 } from "./secret.js";
+export { Template } from "./template.js";
 export type {
   SandboxConnectOpts,
   SandboxInfo,

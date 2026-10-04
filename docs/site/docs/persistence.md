@@ -180,8 +180,25 @@ de readiness (salvo `keep_on_failure`).
 `checkpoint_files()` → `Sandbox.create(**mismas opciones de lanzamiento,
 persist=sbx.persist)` (que restaura) → `kill()` del sandbox viejo, y devuelve el
 nuevo. El nuevo tiene 8 h frescas, otro `sandbox_id`, otro access token
-(salvo que el original fuera explícito) y los mismos `metadata`. Si el
-`create()` falla, el sandbox viejo sigue vivo y la excepción lleva una nota con
+(salvo que el original fuera explícito) y los mismos `metadata`.
+
+Las opciones 0.6 que acaban en `ConfigureSandbox` también se reaplican:
+`mounts=`, `events=`, `telemetry=` y `gateways=` vuelven al único
+`Configure` del sucesor por el mismo camino que en `create()`, resueltas
+con los hechos del sandbox nuevo:
+
+| Opción | Qué hace el sucesor |
+|---|---|
+| `mounts=` | vuelve a montar cada bucket y `reincarnate()` no devuelve hasta que todos están `mounted` |
+| `events=` | deriva una clave `k_sbx` nueva del nuevo `sandbox_id` (nunca reutiliza la del original) |
+| `telemetry=` | resuelve otra vez el ARN y la versión de la imagen y la memoria del guest |
+| `gateways=` | vuelve a leer cada cabecera de Secrets Manager; nunca reenvía un valor ya leído |
+
+`size=` no se repite: el tamaño ya va en el ARN de la imagen que se relanza.
+Si alguna sección falla en el sucesor, se termina (salvo `keep_on_failure`)
+y el sandbox viejo sigue vivo, como cualquier otro fallo de `create()`.
+
+Si el `create()` falla, el sandbox viejo sigue vivo y la excepción lleva una nota con
 la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
 `create(persist=)`: un handle de `connect()` no conoce el lanzamiento.
 `set_timeout()` (nativo y en `rayito.e2b`) mueve el plazo lógico
