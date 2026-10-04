@@ -234,6 +234,110 @@ except BuildException as exc:
     print(exc.step, exc.command, exc.exit_code)  # 1 'RUN pip install ...' 1
 ```
 
+## Build en segundo plano y logs
+
+`Template.build()` espera a que el build termine (como mucho `timeout`, 30
+minutos por defecto). Para no bloquear, `build_in_background()`
+(TypeScript: `buildInBackground()`) devuelve en cuanto AWS acepta el build
+un `BuildHandle`, que `get_build_status()` consulta cuando quieras, también
+desde otro proceso:
+
+=== "Python"
+
+    ```python
+    import time
+
+    from rayito import Template
+
+    t = Template().from_base_image().pip_install(["pandas==2.2.3"])
+    handle = Template.build_in_background(t, "mi-template", bucket="mi-bucket-de-artefactos")
+    status = Template.get_build_status(handle)
+    while status.state == "IN_PROGRESS":
+        time.sleep(15)
+        status = Template.get_build_status(handle)
+    if status.info is not None:
+        print(status.info.template_id)  # SUCCESSFUL
+    else:
+        print(status.error_message)  # FAILED
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { setTimeout as sleep } from "node:timers/promises";
+    import { Template } from "rayito";
+
+    const t = new Template().fromBaseImage().pipInstall(["pandas==2.2.3"]);
+    const handle = await Template.buildInBackground(t, "mi-template", {
+      bucket: "mi-bucket-de-artefactos",
+    });
+    let status = await Template.getBuildStatus(handle);
+    while (status.state === "IN_PROGRESS") {
+      await sleep(15_000);
+      status = await Template.getBuildStatus(handle);
+    }
+    console.log(status.info?.templateId ?? status.errorMessage);
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito template status mi-template            # la versión más reciente
+    rayito template status mi-template --version 3
+    rayito template logs mi-template --limit 200
+    ```
+
+El log de BuildKit llega **al terminar** el build, nunca en vivo (el grupo
+de logs de la imagen lo recibe de golpe, Q83). Para recibirlo línea a línea
+desde `Template.build()`, pasa `on_build_logs` (TypeScript:
+`onBuildLogs`); sin él, el SDK no lee el grupo de logs salvo para explicar
+un fallo:
+
+=== "Python"
+
+    ```python
+    from rayito import Template
+
+    t = Template().from_base_image().pip_install(["pandas==2.2.3"])
+    Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos", on_build_logs=print)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    const t = new Template().fromBaseImage().pipInstall(["pandas==2.2.3"]);
+    await Template.build(t, "mi-template", {
+      bucket: "mi-bucket-de-artefactos",
+      onBuildLogs: (line) => console.log(line),
+    });
+    ```
+
+En TypeScript, `onBuildLogs` y la explicación de un build fallido leen el
+log con el peer opcional `@aws-sdk/client-cloudwatch-logs`
+(`pnpm add @aws-sdk/client-cloudwatch-logs`); sin él instalado, el build
+funciona igual, pero `onBuildLogs` no recibe ninguna línea y
+`BuildError` llega sin `step`/`command`/`logTail`.
+
+## Del `Template` de E2B a Rayito
+
+El shim (`rayito.e2b` / `rayito/e2b`) acepta la firma de build de E2B y la
+traduce a la nativa; el DSL es la misma clase en los dos.
+
+| E2B | Rayito nativo | Nota |
+|---|---|---|
+| `Template().from_image("python:3.12")`, `from_template`, `from_dockerfile`, `from_gcp_registry` | `Template().from_base_image("rayito-base")` | sólo se compone sobre una imagen `rayito-*` publicada; esos cuatro orígenes lanzan `UnimplementedError` |
+| `copy`, `run_cmd`, `pip_install`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True` |
+| `set_workdir(path)` | `workdir(path)` | — |
+| `apt_install([...])` | `run_cmd("dnf install -y ...")` | `rayito-base` es Amazon Linux 2023; `apt_install` lanza `UnimplementedError` |
+| `set_start_cmd(cmd, wait_for_port(8000))` | igual, también `wait_for_url`/`wait_for_process`/`wait_for_file` | necesita una imagen base con `rayd` 0.6 |
+| `Template.build(t, alias="x", cpu_count=, memory_mb=, skip_cache=, on_build_logs=)` | `Template.build(t, "x", bucket=, memory_mb=, force=, on_build_logs=)` | el shim pide `bucket` en la llamada o en `E2B(bucket=...)`; `memory_mb` se redondea al tamaño siguiente y `cpu_count` se ignora, los dos con `RayitoCompatWarning` |
+| `Template.build_in_background(...)` + `Template.get_build_status(...)` | igual, con un `BuildHandle` | — |
+| `Template.exists(name)` | igual | — |
+| `alias_exists`, `assign_tags`, `remove_tags`, `get_tags` | — | lanzan `UnimplementedError`: Lambda MicroVMs etiqueta la imagen entera, no una versión |
+| `TemplateException`, `BuildException` | las mismas clases | `BuildException` trae `reason`, `step`, `command`, `exit_code` y `log_tail` |
+
 ## Referencia
 
 - [`rayito.Template`/`rayito.AsyncTemplate`](../referencia/python/opcionales.md#templates-declarativos)

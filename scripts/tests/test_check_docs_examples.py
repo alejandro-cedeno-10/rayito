@@ -158,3 +158,78 @@ def test_the_real_site_typescript_examples_typecheck() -> None:
     report = checker.collect()
     assert checker.check_typescript(report) == 0
     assert report.problems == []
+
+
+CLI_TREE = checker.CliNode(
+    frozenset({"--json", "--region"}),
+    {
+        "stack": checker.CliNode(
+            frozenset(),
+            {
+                "deploy": checker.CliNode(frozenset({"--param", "--yes"})),
+                "status": checker.CliNode(frozenset({"--stack-name"})),
+                "destroy": checker.CliNode(frozenset({"--yes"})),
+            },
+        ),
+        "sandbox": checker.CliNode(
+            frozenset(), {"exec": checker.CliNode(frozenset({"--cwd", "-c"}))}
+        ),
+    },
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rayito stack deploy s3-mounts --param BucketName=b --yes",
+        "rayito --json stack status s3-mounts",
+        "rayito stack deploy <componente> [--param K=V]... [--yes]",
+        "rayito stack status | destroy [--yes]",
+        "rayito stack deploy/status/destroy",
+        "rayito sandbox exec microvm-1 -c /tmp -- ls --all",
+        "AWS_REGION=us-east-1 rayito stack deploy x && rayito stack destroy x --yes",
+        "rayito stack <componente>",
+        "rayito doctor: 9 OK",
+        "echo rayito",
+    ],
+)
+def test_cli_accepts_real_commands_and_synopses(command: str) -> None:
+    assert checker.cli_problems(command, CLI_TREE) == []
+
+
+@pytest.mark.parametrize(
+    ("command", "fragment"),
+    [
+        ("rayito stack deploy x --params A=1", "--params"),
+        ("rayito stack deploy x --json", "--json"),
+        ("rayito stack apply x", "'apply'"),
+        ("rayito stack deploy/apply", "'apply'"),
+        ("rayito stacks list", "'stacks'"),
+    ],
+)
+def test_cli_rejects_unknown_subcommands_and_options(command: str, fragment: str) -> None:
+    problems = checker.cli_problems(command, CLI_TREE)
+    assert len(problems) == 1 and fragment in problems[0]
+
+
+def test_cli_checks_shell_blocks_and_inline_code(tmp_path: Path) -> None:
+    write_page(
+        tmp_path,
+        "p.md",
+        "Usa `rayito stack apply x`.\n\n```bash\nrayito stack deploy x \\\n  --nope 1\n```\n",
+    )
+    report = checker.collect(tmp_path)
+    assert checker.check_cli(report, tmp_path, CLI_TREE) == 0
+    assert report.problems == [
+        "p.md:4: cli: `rayito stack deploy` no tiene la opción --nope",
+        "p.md:1: cli: `rayito stack` no tiene el subcomando 'apply'",
+    ]
+
+
+def test_the_real_site_cli_commands_exist() -> None:
+    if checker.load_cli_tree() is None:
+        pytest.skip("la CLI de rayito no está instalada")
+    report = checker.collect()
+    assert checker.check_cli(report) == 0
+    assert report.problems == []
+    assert report.checked["cli"] >= 100

@@ -366,7 +366,7 @@ que `rayito image publish`; las antiguas se borran con `rayito image prune --ima
 ## `rayito doctor`
 
 ```bash
-rayito doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch] [--json]
+rayito [--json] doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch]
 ```
 
 Diez comprobaciones, en orden, cada una con `OK`, `WARN`, `FAIL` o `SKIP`.

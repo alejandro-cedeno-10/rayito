@@ -17,15 +17,18 @@
  * de aceptación a mano (necesita una `rayito-base` publicada con el `rayd`
  * de esta versión, que lee `/etc/rayito/template.json`).
  *
- * Nombres de imagen con un sufijo aleatorio por corrida; nada se borra aquí
- * (fuera de alcance de un agente de función): la limpieza de versiones de
- * imagen es responsabilidad de la etapa de aceptación serializada.
+ * Nombres de imagen con un sufijo aleatorio por corrida. El `afterEach`
+ * borra la imagen que construyó cada test (pase o falle), con sus
+ * versiones (`image-cleanup.ts`); lo que no pueda borrar hace fallar el
+ * test con el nombre, para borrarlo a mano. Necesita
+ * `lambda:DeleteMicrovmImage` en la identidad de la aceptación.
  */
 
 import { randomBytes } from "node:crypto";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { BuildError, type BuildOptions, InvalidArgumentError, Template } from "../../src/index.js";
 import { e2eEnabled, useE2E } from "./helpers.js";
+import { BuiltImages } from "./image-cleanup.js";
 
 const BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET";
 /** Build (~115 s, Q85) + el plazo por defecto de un `readyCmd` crudo (60 s)
@@ -52,13 +55,31 @@ function runName(label: string): string {
 
 describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
   const e2e = useE2E();
+  let images: BuiltImages | undefined;
+
+  /** Las imágenes del test en curso; se crean al primer uso porque el
+   * plano de control de `useE2E()` sólo existe tras su `beforeAll`. */
+  function builtImages(): BuiltImages {
+    images ??= new BuiltImages({
+      client: e2e.controlPlane.client,
+      resolveArn: (name) => e2e.controlPlane.resolveTemplateArn(name),
+    });
+    return images;
+  }
+
+  afterEach(async () => {
+    const failures = (await images?.deleteAll()) ?? [];
+    if (failures.length > 0) {
+      throw new Error(`imágenes de test sin borrar (bórralas a mano): ${failures.join("; ")}`);
+    }
+  });
 
   test("a successful build produces a launchable image", async () => {
     const t = new Template()
       .fromBaseImage(e2e.settings.template)
       .pipInstall(["pandas"])
       .setEnvs({ RAYITO_M15_TEMPLATES_E2E: "1" });
-    const name = runName("ok");
+    const name = builtImages().track(runName("ok"));
     const info = await Template.build(t, name, {
       bucket: bucket(),
       ...regionOption(e2e.settings.region),
@@ -72,7 +93,7 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     const t = new Template()
       .fromBaseImage(e2e.settings.template)
       .pipInstall(["this-package-does-not-exist-rayito-m15-e2e"]);
-    const name = runName("fail-run");
+    const name = builtImages().track(runName("fail-run"));
     await expect(
       Template.build(t, name, { bucket: bucket(), ...regionOption(e2e.settings.region) }),
     ).rejects.toMatchObject({
@@ -86,7 +107,7 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     const t = new Template()
       .fromBaseImage(e2e.settings.template)
       .setStartCmd("sleep 3600", "exit 1");
-    const name = runName("fail-ready");
+    const name = builtImages().track(runName("fail-ready"));
     const error = await Template.build(t, name, {
       bucket: bucket(),
       timeoutMs: READY_FAIL_BUDGET_MS,

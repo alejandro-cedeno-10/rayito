@@ -494,3 +494,22 @@ def test_t24_qualifies_the_gateway_guarantee() -> None:
         flatten(site_doc("security")),
         ("Pasarela de secretos (T24)", "Hooks de ciclo de vida forjados desde dentro de la VM (T2)"),
     )
+
+
+EXACT_RAYD_IDENTITY = (
+    "--certificate-identity "
+    '"https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml'
+    '@refs/tags/rayd-v${RAYD_VERSION}"'
+)
+
+
+def test_cosign_recipes_bind_the_installed_version() -> None:
+    """A regexp that ends at ``rayd-v`` accepts a bundle signed by any rayd
+    tag: a downgrade to an older signed asset, or one re-signed under another
+    tag, would verify. The recipes name the exact identity of the version
+    being installed."""
+    for relative in ("docs/site/docs/verify.md", "README.md"):
+        text = read(relative)
+        assert "certificate-identity-regexp" not in text, relative
+        assert EXACT_RAYD_IDENTITY in text, relative
+        assert "RAYD_VERSION=" in text, relative

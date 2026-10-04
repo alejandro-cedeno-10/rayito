@@ -15,6 +15,12 @@ comprueba sin AWS ni red:
   por bloque con `export {}` (módulo ESM con top-level await) y `tsc -p`.
 - **JSON** y **YAML**: `json.loads` / `yaml.safe_load` (YAML sólo si PyYAML
   está instalado).
+- **CLI** (`--cli`): cada orden `rayito ...` de un bloque de shell (`bash`,
+  `sh`, `shell`, `console`) y de un fragmento de código en línea del texto
+  (`` `rayito stack deploy ...` ``) usa subcomandos y opciones que existen en
+  la CLI instalada (el árbol de `typer` de `rayito.cli.app`). Las sinopsis
+  (`[--param K=V]...`, `<componente>`, `status | destroy`) se aceptan: sólo
+  se comprueban los subcomandos y las opciones `--x`/`-x`.
 - **Estilo** (`--style`): las pestañas usan una etiqueta del conjunto
   cerrado (`Python`, `Python (async)`, `TypeScript`, `CLI`, `Shim E2B`), y
   un bloque Python o TypeScript que crea un sandbox lo libera (`with`,
@@ -32,6 +38,7 @@ comprueba con el contenido del fichero incluido.
     python scripts/check_docs_examples.py                    # Python (compile) + JSON/YAML + estilo
     python scripts/check_docs_examples.py --ruff --mypy      # además ruff y mypy
     python scripts/check_docs_examples.py --typescript       # sólo TypeScript (tsc)
+    python scripts/check_docs_examples.py --cli              # además, las órdenes `rayito ...`
     python scripts/check_docs_examples.py --list             # inventario por lenguaje
 
 Sale con 1 si algún bloque falla, imprimiendo `página:línea [pestaña]` y el
@@ -44,6 +51,7 @@ import argparse
 import importlib.util
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -66,6 +74,11 @@ LANGUAGES = {
     "json": "json",
     "yaml": "yaml",
     "yml": "yaml",
+    "bash": "shell",
+    "sh": "shell",
+    "shell": "shell",
+    "console": "shell",
+    "zsh": "shell",
 }
 
 TAB_LABELS = frozenset({"Python", "Python (async)", "TypeScript", "CLI", "Shim E2B"})
@@ -277,6 +290,170 @@ def check_style(report: Report, docs_dir: Path = DOCS_DIR) -> None:
                 block.where,
                 "crea un sandbox y no lo libera (usa `with`, `await using` o `kill()`)",
             )
+
+
+CLI_PROGRAM = "rayito"
+#: Separadores de órdenes en una línea de shell; `|` también separa las
+#: alternativas de una sinopsis (`status | destroy`, `desc|asc`).
+SHELL_SEPARATORS = re.compile(r"&&|\|\||;|\|")
+INLINE_CLI = re.compile(r"`(?P<command>rayito [^`]+)`")
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+#: Lo que envuelve un argumento en una sinopsis: `[--x V]...`, `(a|b)`.
+SYNOPSIS_PUNCTUATION = "[]()"
+HELP_OPTIONS = frozenset({"--help"})
+#: Tras `--`, todo es la orden que se pasa (`rayito sandbox exec ID -- ls -la`).
+END_OF_OPTIONS = "--"
+#: `rayito template build/status/logs`: alternativas de un mismo nivel.
+SUBCOMMAND_ALTERNATIVES = "/"
+
+
+@dataclass(frozen=True)
+class CliNode:
+    """Un nodo del árbol de la CLI: sus opciones y, si es un grupo, sus
+    subcomandos."""
+
+    options: frozenset[str]
+    children: dict[str, CliNode] = field(default_factory=dict)
+
+
+def load_cli_tree() -> CliNode | None:
+    """El árbol de `rayito.cli.app` (typer), o `None` si la CLI no está
+    instalada (`rayito[cli]`, o el grupo `dev` de `clients/python`)."""
+    try:
+        import typer.main
+        from rayito.cli.app import app
+    except ImportError:
+        return None
+
+    def node(command: object) -> CliNode:
+        options = {
+            option
+            for param in getattr(command, "params", [])
+            for option in [*getattr(param, "opts", []), *getattr(param, "secondary_opts", [])]
+            if option.startswith("-")
+        }
+        children = {
+            name: node(sub) for name, sub in (getattr(command, "commands", None) or {}).items()
+        }
+        return CliNode(frozenset(options), children)
+
+    return node(typer.main.get_command(app))
+
+
+def _cli_tokens(segment: str) -> list[str]:
+    try:
+        tokens = shlex.split(segment, comments=True)
+    except ValueError:
+        tokens = segment.split()
+    while tokens and ENV_ASSIGNMENT.match(tokens[0]):
+        tokens.pop(0)
+    cleaned = []
+    for token in tokens:
+        token = token.strip(SYNOPSIS_PUNCTUATION).removesuffix("...").strip(SYNOPSIS_PUNCTUATION)
+        if token:
+            cleaned.append(token)
+    return cleaned
+
+
+def cli_problems(command_line: str, tree: CliNode) -> list[str]:
+    """Los subcomandos y opciones de `command_line` que la CLI no tiene. Una
+    palabra que acaba en `:` (`rayito doctor: 9 OK`) es salida, no una orden,
+    y un `<marcador>` en lugar de un subcomando corta la comprobación."""
+    problems = []
+    for segment in SHELL_SEPARATORS.split(command_line):
+        tokens = _cli_tokens(segment)
+        if not tokens or tokens[0] != CLI_PROGRAM:
+            continue
+        node, path = tree, [CLI_PROGRAM]
+        for token in tokens[1:]:
+            if token == END_OF_OPTIONS:
+                break
+            if token.startswith("-") and token != "-":
+                option = token.split("=", 1)[0]
+                if option not in node.options | HELP_OPTIONS:
+                    problems.append(f"`{' '.join(path)}` no tiene la opción {option}")
+                continue
+            if not node.children:
+                continue
+            if token.endswith(":") or token.startswith("<"):
+                break
+            if token in node.children:
+                node = node.children[token]
+                path.append(token)
+                continue
+            alternatives = token.split(SUBCOMMAND_ALTERNATIVES)
+            missing = [name for name in alternatives if name not in node.children]
+            for name in missing:
+                problems.append(f"`{' '.join(path)}` no tiene el subcomando {name!r}")
+            break
+    return problems
+
+
+def _shell_lines(code: str) -> list[tuple[int, str]]:
+    """Las líneas lógicas (con las continuaciones `\\` unidas) y su número
+    de línea (1-based) dentro del bloque."""
+    lines: list[tuple[int, str]] = []
+    pending: list[str] = []
+    start = 1
+    for number, raw in enumerate(code.splitlines(), start=1):
+        line = raw.strip().removeprefix("$ ")
+        if not pending:
+            start = number
+        if line.endswith("\\"):
+            pending.append(line[:-1])
+            continue
+        pending.append(line)
+        lines.append((start, " ".join(pending)))
+        pending = []
+    if pending:
+        lines.append((start, " ".join(pending)))
+    return lines
+
+
+def _prose_lines(text: str) -> list[tuple[int, str]]:
+    """Las líneas de `text` fuera de los bloques vallados."""
+    fence: str | None = None
+    lines = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = FENCE.match(line)
+        if match:
+            marker = match.group("fence")
+            if fence is None:
+                fence = marker
+            elif line.strip().startswith(fence[0] * len(fence)) and not match.group("info"):
+                fence = None
+            continue
+        if fence is None:
+            lines.append((number, line))
+    return lines
+
+
+def check_cli(report: Report, docs_dir: Path = DOCS_DIR, tree: CliNode | None = None) -> int:
+    tree = tree or load_cli_tree()
+    if tree is None:
+        print(
+            "check_docs_examples: falta la CLI de rayito (uv run --group dev ...)",
+            file=sys.stderr,
+        )
+        return 2
+    for block in report.blocks:
+        if block.language != "shell":
+            continue
+        if block.noqa:
+            report.skipped["cli"] += 1
+            continue
+        for line, command in _shell_lines(block.code):
+            for problem in cli_problems(command, tree):
+                report.fail(block.at(line), f"cli: {problem}")
+        report.checked["cli"] += 1
+    for path in sorted(docs_dir.rglob("*.md")):
+        page = path.relative_to(docs_dir).as_posix()
+        for number, line in _prose_lines(path.read_text(encoding="utf-8")):
+            for match in INLINE_CLI.finditer(line):
+                for problem in cli_problems(match.group("command"), tree):
+                    report.fail(f"{page}:{number}", f"cli: {problem}")
+                report.checked["cli"] += 1
+    return 0
 
 
 def check_python_syntax(report: Report) -> list[Block]:
@@ -502,6 +679,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-style", action="store_true", help="sin las reglas de estilo"
     )
+    parser.add_argument(
+        "--cli", action="store_true", help="órdenes `rayito ...` contra la CLI"
+    )
     parser.add_argument("--list", action="store_true", help="inventario por lenguaje")
     args = parser.parse_args(argv)
 
@@ -522,6 +702,8 @@ def main(argv: list[str] | None = None) -> int:
         status = check_python_tools(
             report, python_blocks, ruff=args.ruff, mypy=args.mypy
         )
+        if not status and args.cli:
+            status = check_cli(report, args.docs)
     if status:
         return status
     for problem in report.problems:

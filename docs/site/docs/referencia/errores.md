@@ -110,14 +110,20 @@ excepción: llega en `execution.error`.
 | `CapacityException` | `CapacityError` | plano de control | AWS sin capacidad momentánea | reintenta con backoff |
 | `UnimplementedError` | `UnimplementedError` | `UNIMPLEMENTED`; el SDK | la función no existe en esta imagen (actualízala) o en la plataforma (`fork`, snapshots…) | lee `feature`, `reason` y `doc` |
 | `LifecycleUnsupportedException` | `LifecycleUnsupportedError` | el SDK | plazo del servidor contra una imagen anterior a 0.3.0 | publica una imagen de la release actual |
+| `MountException` | `MountError` | el agente (`code`) | un montaje de `mounts=` falló o no se asentó en 15 s: `network`, `iam_denied`, `not_found`, `not_allowed`, `invalid_path`, `helper_missing`, `timeout` (el sandbox se terminó) | ver [Montajes S3](../funciones-opcionales/montajes-s3.md) |
+| `WebhookException` | `WebhookError` | DynamoDB, Secrets Manager (`aws_code`) | `LifecycleEvents` no pudo leer o escribir en su pila, o `create(events=)` sin la pila desplegada | revisa `EventsOperatorPolicy`; ver [Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md#errores-y-solucion-de-problemas) |
+| `StackException` | `StackError` | CloudFormation (`code`) | `OptionalStacks.deploy/status/destroy` falló: `blocked` (pila en `ROLLBACK_COMPLETE`), `not_found`, `in_progress`, `failed` | ver [Pilas opcionales](../funciones-opcionales/pilas-opcionales.md#como-se-comporta) |
+| `BuildException` | `BuildError` | el build de la imagen (`reason`) | `Template.build()` falló: un paso del Dockerfile (`step`, `command`, `exit_code`, `log_tail`), el `ready_cmd`, la cuota de builds o el plazo | ver [Templates](../funciones-opcionales/templates.md#errores) |
+| `TemplateException` | `TemplateError` | el SDK | nombre de template inválido (1-64 `[A-Za-z0-9_-]`, sin `:tag`) | corrige el nombre; la imagen base inválida es `BuildException` con `reason="base_image_*"` |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
 
 ## Errores del shim de E2B
 
 `rayito.e2b` exporta los nombres de `e2b.exceptions` apuntando a las mismas
 clases: `NotEnoughSpaceException` es `DiskFullException`,
-`ServiceBusyException` es `CapacityException`, y `TemplateException` y
-`BuildException` existen pero nunca se lanzan. Detalle:
+`ServiceBusyException` es `CapacityException`, y desde 0.6.0
+`TemplateException` y `BuildException` se lanzan de verdad desde
+`Template.build()`. Detalle:
 [Diferencias con E2B](../e2b-compat.md#funciona-sin-cambios).
 
 ## Ver también
