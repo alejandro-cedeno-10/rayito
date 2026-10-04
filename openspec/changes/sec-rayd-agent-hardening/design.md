@@ -83,8 +83,8 @@ absolute form and that tunnels on 80 and 443 share the shared-IP residual.
 
 ### D5. `/run` origin by socket owner (RAYD-08)
 
-The listener is served with `into_make_service_with_connect_info::<HookPeer>()`
-(both ends of the connection). The `/run` handler asks `SocketOwners` for
+The listener records both ends of every connection (`HookPeer`) as the
+request's `ConnectInfo` (D6's `hooks::serve` inserts it per connection). The `/run` handler asks `SocketOwners` for
 the uid owning the caller's socket (the `/proc/net/tcp{,6}` row whose local
 end is the peer and whose remote end is the listener; `rayd` is root and
 shares the netns) on the blocking pool, and
@@ -105,6 +105,82 @@ as before, so a failed lookup never blocks the genuine `/run`.
   991-994). The acceptance run checks `hook_audit`/`sandbox_origin` never
   appears on a genuine create.
 
+### D6. One connection cap for both listeners (second pass)
+
+A second review pass found that neither listener bounded its connections:
+tonic's `concurrency_limit` is per connection, `axum::serve` accepts
+without limit and builds hyper without a timer (so the 30 s head timeout
+never fires), and tonic retries a failed `accept` with `continue`. Sandbox
+processes reach both ports on loopback, and `rayd` cannot raise its 1024
+descriptors.
+
+- `adapters::CappedListener<A: Accept>` holds a `Semaphore`; `accept`
+  first takes an owned permit, then accepts, and the `CappedStream` carries
+  the permit until it is dropped: the proxy's pattern (`network::proxy`),
+  moved to the listener side. Acquiring before `accept` (instead of
+  accepting and refusing) keeps an over-cap connection in the kernel
+  backlog without a descriptor. `into_incoming()` is the `Stream` tonic
+  serves; it never yields an error, so tonic's `continue` is never reached.
+- `AcceptFailure::classify` (in `rayd-core`, by `ErrorKind`): reset,
+  aborted, refused, interrupted and would-block retry at once; everything
+  else (`EMFILE`, `ENFILE`, `ENOBUFS` have no kind of their own) waits
+  `ACCEPT_BACKOFF`, logged once per streak.
+- Hooks: `hooks::serve` replaces `axum::serve` with a small loop over
+  `CappedListener` and `hyper::server::conn::http1` with `TokioTimer`,
+  `header_read_timeout(HOOKS_HEADER_READ_TIMEOUT)` and `keep_alive(false)`,
+  graceful shutdown per connection on cancel. Closing after each response
+  is what makes the head deadline safe: hyper starts it whenever it waits
+  for a head, including on an idle kept-alive connection, and a deadline
+  there could race a platform request on a reused socket. The router and
+  the handlers do not change; the peer is inserted as `ConnectInfo`.
+- Sizes: 256 gRPC (the SDK opens ≤ 2 channels per `Sandbox`), 32 hooks
+  (one hook at a time from the platform), so with the proxy's 2 × 128 the
+  listeners stay under 3/4 of 1024 (a unit test). Head deadline 10 s, the
+  shortest declared hook timeout. Backoff 100 ms.
+- Residual, documented in T7: a sandbox process can fill its own VM's
+  slots (the same boundary as a fork bomb; a forged `/terminate` already
+  ends the VM), and a body trickled after a complete head keeps its slot.
+  gRPC has no handshake deadline; its cap bounds the descriptors.
+
+### D7. Kernel pids are admitted against the process table (second pass)
+
+The sidecar is a uid-1000 process and other uid-1000 processes can open its
+`/proc/<pid>/fd/1` (no Yama), so a forged `ready` or reply line could name
+any pid for `rayd`'s root `killpg`. A start-time check alone would not
+help: the attacker names a live pid.
+
+- `rayd_core::code::kernel_process`: `KernelProcess::admit(pid,
+  sidecar_pid, kernel_facts, sidecar_facts)` requires pid ≥ 2, the kernel's
+  `ppid == sidecar_pid`, `pgrp == pid` (kernels start with
+  `start_new_session`) and `uid ==` the sidecar's real uid (read from the
+  table, so the dev loop, where the sidecar shares `rayd`'s uid, still
+  works). `may_signal(now)` allows the signal when the same process is
+  there (start ticks, uid, still leader) or when no process has the pid
+  (Linux does not reuse a pid while its group exists, so the number names
+  the kernel's leftover group or nothing); a recycled pid is never
+  signalled.
+- Port `KernelProcesses { admit, signal }`, adapter `ProcfsProcessTable`
+  (the orphan reaper's `/proc` table: `stat` fields 4, 5, 22 and the real
+  uid from `status`, with `stat` read again after `status` so a pid recycled
+  between the reads never mixes two processes). It replaces the
+  `KernelSignaller` closure; every registration site (`ready`, rotation,
+  create, restart, restart after resume) goes through
+  `SidecarSupervisor::admit_kernel`, and `ContextEntry.kernel` stores the
+  value object instead of a bare `u32`.
+- `signal_process_group` refuses 0, 1 and `rayd`'s own pgid whatever the
+  caller (`may_signal_group`).
+- The integration tests' fake sidecar reports made-up pids, so their
+  harness uses a recording `KernelProcesses` (m4) or the real table, which
+  rejects them (m5, common).
+
+### D8. The identity gate has a ceiling (second pass)
+
+`MAX_UNPRIVILEGED_ID = 65_535` next to the floor; `is_unprivileged` checks
+both ids against `MIN..=MAX`. `SANDBOX_UID_RANGE` stays the `&str` the `ip`
+commands and the probe compare against; tests pin it to the two constants
+(`process::identity`, `hook_origin`, whose `SANDBOX_UID_LAST` now is
+`MAX_UNPRIVILEGED_ID`).
+
 ## Out of scope
 
 - `WatchDir` installs its inotify watch by path after validating the root
@@ -112,4 +188,7 @@ as before, so a failed lookup never blocks the genuine `/run`.
 - The home archiver of persistence walks by path inside the home without
   following symlinks or crossing filesystems.
 - Per-uid authentication of `/suspend`, `/resume`, `/terminate`,
-  `/validate` (C-01).
+  `/validate` (C-01, restated as the highest-impact standing gap by the
+  second review pass; no new action).
+- A handshake deadline on the gRPC listener and a body-read deadline on
+  the hooks listener.

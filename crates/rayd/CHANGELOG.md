@@ -45,6 +45,27 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   egress** (RAYD-06): sólo cubre la forma absoluta `http://`; un túnel
   `CONNECT`/SOCKS5 a un nombre permitido en el 80 comparte el riesgo
   residual de IPs compartidas que ya tenía el 443 (`SECURITY.md` T17).
+- **Los puertos de `rayd` tienen un tope de conexiones**: el gRPC (8080)
+  atiende como mucho 256 conexiones a la vez y los hooks (9000) 32; las
+  demás esperan en el backlog del kernel sin ocupar un descriptor, así que
+  un proceso del sandbox ya no puede agotar los 1024 descriptores de
+  `rayd` abriendo conexiones ociosas. Los hooks cortan una cabecera que no
+  llega en 10 s y cierran la conexión tras cada respuesta, y un `accept`
+  que falla por falta de descriptores espera 100 ms en vez de reintentar
+  en bucle (`SECURITY.md` T7). Pendiente de aceptación en AWS real.
+- **`rayd` comprueba los pids de kernel que le reporta el sidecar antes de
+  señalarlos**: un proceso del sandbox puede escribir en la tubería del
+  protocolo del sidecar, así que `rayd` (root) sólo registra un kernel que
+  `/proc` confirma como hijo del sidecar en curso, líder de su grupo y del
+  mismo usuario, lo fija por su hora de arranque y lo vuelve a comprobar
+  antes de cada `killpg`, que nunca va a los grupos 0 y 1 ni al suyo
+  propio. Un pid que no pasa se descarta (`kernel_pid_rejected`)
+  (`SECURITY.md` T12).
+- **La puerta de identidad tiene techo**: un proceso, PTY, operación de
+  ficheros o kernel sólo corre con uid y gid entre 1000 y 65535, el mismo
+  rango que cubren el bloqueo de IMDS y las reglas de egress y DNS; una
+  cuenta por encima de 65535 en una imagen propia se rechaza como cuenta
+  con privilegios (`SECURITY.md` T1).
 - **Los assets firmados de `rayd` se construyen sin credenciales y no se
   pueden reemplazar desde la release.** `release.yml` parte el job `rayd` en
   `rayd-build` (sólo lectura), `rayd-sign` (token OIDC, sin checkout ni

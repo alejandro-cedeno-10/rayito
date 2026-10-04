@@ -271,9 +271,19 @@ Rust, binario estático `aarch64-unknown-linux-musl`. Dos listeners:
 | Puerto | Protocolo | Quién lo usa | Qué sirve |
 |---|---|---|---|
 | `:8080` | gRPC h2c (`tonic`) | el SDK, a través del proxy de AWS | los siete servicios del `.proto` |
-| `:9000` | HTTP/1.1 (`axum`) | sólo Lambda (hooks de ciclo de vida) | `POST /aws/lambda-microvms/runtime/v1/<hook>` |
+| `:9000` | HTTP/1.1 (router `axum` sobre hyper) | sólo Lambda (hooks de ciclo de vida) | `POST /aws/lambda-microvms/runtime/v1/<hook>` |
 
 El puerto 9000 **nunca entra en `allowedPorts` de ningún token** (ADR-006).
+
+Los dos listeners escuchan en `0.0.0.0` dentro del netns del sandbox y `rayd`
+no puede subir su `RLIMIT_NOFILE` de 1024 (`AWS_API_NOTES.md` §9), así que
+ambos pasan por el mismo tope de conexiones (`adapters::CappedListener`,
+`rayd_core::listeners`): 256 conexiones a la vez en `:8080` y 32 en `:9000`;
+una conexión de más espera en el backlog del kernel hasta que otra se cierre,
+y un `accept` sin descriptores espera 100 ms antes de reintentar. Los hooks
+se sirven con hyper directamente (`hooks::serve`) en vez de `axum::serve`,
+para poder fijar un plazo de 10 s a la cabecera de cada petición y cerrar la
+conexión tras su única respuesta (`SECURITY.md` T7).
 
 ### Servicios
 
@@ -587,7 +597,9 @@ Puertos (traits) que el dominio necesita del mundo exterior:
 - `grpc/`: un módulo por servicio; convierte tipos de `rayito-proto` ↔ dominio,
   añade el interceptor de `x-access-token` y los `KeepAlive`.
 - `hooks/`: router `axum` con las seis rutas; sólo parsea HTTP y delega en
-  `rayd-core::hooks`.
+  `rayd-core::hooks`. `hooks::serve` es su listener: hyper HTTP/1.1 con el
+  tope de conexiones compartido con el gRPC, un plazo para la cabecera y
+  una petición por conexión.
 - `lifecycle/`: `SuspendSignal` (`watch` de la generación de suspend + contador
   de streams abiertos), `SuspendableStream` (envuelve cada server-stream y
   emite su forma de cierre al `broadcast`), `running_sleep` (dormir en el
@@ -739,6 +751,16 @@ vacía el registro de contextos y reporta `kernel_ready=false` hasta que el
 contexto por defecto vuelve a estar idle; tres timeouts consecutivos de op lo
 matan (salvo cuando el lector está bloqueado en un cliente atascado, ver
 backpressure).
+
+Los `kernel_pid` que reporta el sidecar (`ready` y las respuestas de
+crear, reiniciar o rotar un kernel) no son de fiar: cualquier proceso uid
+1000 puede escribir en su tubería de stdout (`SECURITY.md` T12). `rayd` sólo
+registra un pid que `/proc` confirma como hijo directo del sidecar en curso,
+líder de su propio grupo y del mismo uid que el sidecar (`KernelProcesses`,
+`rayd_core::code::kernel_process`; adaptador `ProcfsProcessTable`), lo fija
+por su hora de arranque y lo vuelve a comprobar antes de cada `killpg`; un
+pid que no pasa se descarta con `kernel_pid_rejected` y su grupo no se
+señala nunca.
 
 - Un `ipykernel` por contexto, arrancado con `jupyter_client.AsyncKernelManager(
   kernel_name="rayito", transport="ipc", ip="/run/rayito/k/<context_id>/k")`
@@ -1259,8 +1281,9 @@ sobre un puerto que declara la imagen. Servirlos en el puerto gRPC exigiría
 `accept_http1` + mezcla de rutas en tonic y expondría los hooks a cualquiera
 con un JWE del puerto 8080.
 
-**Decisión.** `rayd` sirve los hooks en un listener `axum` HTTP/1.1 en
-`0.0.0.0:9000`, separado del gRPC h2c en `:8080`. El SDK nunca acuña tokens con
+**Decisión.** `rayd` sirve los hooks en un listener HTTP/1.1 (router
+`axum`, servido con hyper por `hooks::serve`) en `0.0.0.0:9000`, separado
+del gRPC h2c en `:8080`. El SDK nunca acuña tokens con
 `allPorts` por defecto ni incluye 9000 en `allowedPorts`.
 
 **Consecuencia.** Si M0 (fila "hooks alcanzables vía proxy" de la tabla de resultados medida en el spike de M0, historial de git) demuestra que un token `allPorts` alcanza el 9000

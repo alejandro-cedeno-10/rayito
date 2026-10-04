@@ -21,6 +21,18 @@ the default configuration, but each weakens a stated guarantee:
 - **RAYD-08 (low)**: with templates, `start_cmd` runs before the platform's
   `/run`, which is accepted once per boot, so it could claim `/run` first.
 
+A second review pass confirmed three more (and restated C-01 as info):
+
+- **Listeners (low)**: neither the gRPC nor the hooks listener capped its
+  connections, the hooks server never applied a request-head timeout, and
+  tonic retried a failed `accept` without pause, so sandbox processes could
+  hold `rayd`'s 1024 descriptors and keep the platform's hooks out.
+- **Kernel pids (low)**: `rayd` killed process groups by pids the sidecar
+  reported, and sandbox processes can write into the sidecar's pipe, so a
+  forged line could make root signal any group (its own included).
+- **Identity ceiling (low)**: the identity gate had no upper bound while the
+  IMDS and egress `uidrange` rules stop at 65535.
+
 ## What Changes
 
 - Filesystem adapter: every operation but `realpath` walks the parent of
@@ -51,7 +63,18 @@ the default configuration, but each weakens a stated guarantee:
   and refuses a `/run` from a sandbox uid (1000-65535) without claiming the
   boot's `/run` (`RunOutcome::SandboxOrigin`, 200 `sandbox_origin`, one
   more `hook_anomalies`).
-- Docs: `SECURITY.md` T2, T6, T11, T17, `ARCHITECTURE.md` (hook origin,
+- Listeners: `adapters::CappedListener` (semaphore permit per connection,
+  backoff on resource failures) in front of both listeners; the hooks
+  listener is served by `hooks::serve` (hyper HTTP/1.1 with a 10 s head
+  deadline and one request per connection) instead of `axum::serve`.
+  Bounds in `rayd_core::listeners`.
+- Kernel pids: port `KernelProcesses` (admit a reported pid against the
+  process table, signal only while the pid still names that kernel),
+  adapter `ProcfsProcessTable`; `ContextEntry.kernel` holds a
+  `KernelProcess`; `signal_process_group` refuses groups 0, 1 and its own.
+- Identity: `MAX_UNPRIVILEGED_ID` (65535) bounds uid and gid in
+  `authorize_identity`.
+- Docs: `SECURITY.md` T1, T2, T6, T7, T11, T12, T17, `ARCHITECTURE.md` (hook origin,
   ADR-006, ADR-022, ADR-023), the site's security, network, gateway, S3
   mounts and templates pages, and the three component changelogs.
 
@@ -60,9 +83,14 @@ the default configuration, but each weakens a stated guarantee:
 - Rust: `rayd-core` (`filesystem`, `secret_gateway::route`,
   `network::policy`, new `hook_origin`, `session`), `rayd` (adapters
   `std_filesystem`, `fuse_device`, `mount_s3`, `process_spawner`, new
-  `dir_walk`, `exec_posture`, `proc_net_sockets`; `hooks`; `main`). Workspace
-  `nix` gains the `dir` feature (same crate, no new dependency).
+  `dir_walk`, `exec_posture`, `proc_net_sockets`, `capped_listener`,
+  `procfs_process_table`, `sidecar_process`; `hooks` with `hooks::serve`;
+  `code` supervisor and manager; `main`), `rayd-core` (`listeners`,
+  `code::kernel_process`, `process::identity`). Workspace `nix` gains the
+  `dir` feature and `hyper` the `server` feature (same crates, no new
+  dependency, `Cargo.lock` unchanged).
 - SDKs: Python and TypeScript `SecretGateway` validate `allow` paths;
   generated TS comments follow the proto comment change.
 - Runtime behaviour changes need real-AWS acceptance before archiving
-  (filesystem RPCs, gateway, S3 probe, `/run` origin).
+  (filesystem RPCs, gateway, S3 probe, `/run` origin, the hooks listener
+  closing each connection after its response, kernel kill on sidecar exit).

@@ -38,14 +38,43 @@
 - [x] 5.2 `HookPeer` connect info, `ProcNetSocketOwners`, `/run` wiring,
   integration test over a real connection.
 
-## 6. Docs and verification
+## 6. Listeners (second pass)
 
-- [x] 6.1 `SECURITY.md` T2/T6/T11/T17, `ARCHITECTURE.md`, site pages,
-  changelogs.
-- [x] 6.2 Gates: Rust (VM), Python, TypeScript, docs, OpenSpec.
-- [ ] 6.3 Real-AWS acceptance (`rayito-base` and `rayito-base-caps` with
+- [x] 6.1 Tests: N+1 idle hook connections, the last waits and `/terminate`
+  is served once one closes; a half-sent head loses its slot at the
+  deadline; one response per connection; `EMFILE` backs off instead of
+  spinning (paused clock); the incoming stream keeps the cap and `nodelay`.
+- [x] 6.2 `rayd_core::listeners`, `adapters::CappedListener`,
+  `hooks::serve`; `main` serves both listeners through the cap.
+
+## 7. Kernel pids (second pass)
+
+- [x] 7.1 Tests: forged `ready` pids 0, 1, a root non-child and a missing
+  pid are never signalled; a recycled pid is never signalled; only a
+  kernel of the running sidecar is admitted; the live `/proc` table admits
+  a real group-leader child and rejects the rest; `killpg` refuses 0, 1
+  and its own group.
+- [x] 7.2 `KernelProcess`/`KernelProcesses`, `ProcfsProcessTable` adapter,
+  `SidecarSupervisor::admit_kernel` at every registration site,
+  `ContextEntry.kernel`, `may_signal_group`.
+
+## 8. Identity ceiling (second pass)
+
+- [x] 8.1 Test: uid or gid 65536 refused with `PrivilegedAccount`, 65535
+  accepted; the range string equals the constants.
+- [x] 8.2 `MAX_UNPRIVILEGED_ID`; `SANDBOX_UID_LAST` derives from it.
+
+## 9. Docs and verification
+
+- [x] 9.1 `SECURITY.md` T1/T2/T6/T7/T11/T12/T17, `ARCHITECTURE.md`, site
+  pages, changelogs.
+- [ ] 9.2 Gates: Rust (VM), Python, TypeScript, docs, OpenSpec.
+- [ ] 9.3 Real-AWS acceptance (`rayito-base` and `rayito-base-caps` with
   this `rayd`): `create()` succeeds and no `sandbox_origin` appears in the
   `/run` log line; filesystem e2e (`m3`, transfer) green; a template with a
   `start_cmd` that posts `/run` at boot still gets the operator's token;
   an S3 mount reaches `mounted`; a gateway route forwards an allowed
-  request and refuses `..;`.
+  request and refuses `..;`; every hook of a create/pause/resume/kill cycle
+  answers through the new listener (no connection reset at the platform);
+  killing the sidecar kills its kernels (`kernels_killed` ≥ 1, no
+  `kernel_pid_rejected` on a genuine boot).
