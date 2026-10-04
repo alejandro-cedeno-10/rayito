@@ -33,7 +33,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `OptionalStacks`, porque CloudFront tarda bastante más en deshabilitar y
   borrar una distribución; `refresh()` ya no deshace una escritura previa
   si la segunda falla (sólo `register()` lo hace, al tratarse de claves
-  nuevas). DOM-2/3/5/7/8/14 pendientes de la aceptación contra AWS real.
+  nuevas). `deploy(alternate_domain_names=[...])` (y `rayito domain deploy
+  --alternate-domain-name`, repetible) sustituye el alias comodín por
+  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a AWS:
+  sirve si otra distribución ya tiene `*.<dominio>`. `rayito domain deploy`
+  imprime a qué apuntar el `CNAME`. El e2e toma el dominio y el certificado
+  sólo de `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos,
+  usa una pila y unos hostnames aleatorios por corrida y llega a la
+  distribución sin DNS (SNI y `Host` propios contra su `*.cloudfront.net`).
+  DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real; DOM-14 (el
+  refresher Lambda) no se construyó.
 
 ### Fixed
 

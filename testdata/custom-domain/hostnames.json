@@ -1,5 +1,5 @@
 {
-  "_comment": "Casos compartidos entre Python (test_m15_custom_domain_domain.py) y TypeScript (m15-custom-domain.test.ts) para route_host()/routeHost(): alias, puerto y dominio público válidos o no, y el hostname esperado cuando lo son.",
+  "_comment": "Casos compartidos entre Python (test_m15_custom_domain_domain.py) y TypeScript (m15-custom-domain.test.ts) para route_host()/routeHost(): alias, puerto y dominio público válidos o no, y el hostname esperado cuando lo son; y nombres alternativos explícitos de la distribución (validate_alternate_domain_names()/validateAlternateDomainNames()).",
   "valid": [
     {
       "alias": "ws-7",
@@ -28,5 +28,24 @@
   ],
   "invalidAlias": ["", "WS-7", "ws_7", "ws 7", "-ws7", "ws7-", "a/b"],
   "invalidPort": [0, -1, 65536, 8080, 9000],
-  "invalidPublicDomain": ["", "-sbx.example.com", "sbx..example.com", "sbx.example.com-"]
+  "invalidPublicDomain": ["", "-sbx.example.com", "sbx..example.com", "sbx.example.com-"],
+  "alternateDomainNames": {
+    "publicDomain": "sbx.example.com",
+    "valid": [
+      ["8000-ws-7.sbx.example.com"],
+      ["*.sbx.example.com"],
+      ["8000-a.sbx.example.com", "3000-b.sbx.example.com"]
+    ],
+    "invalid": [
+      [],
+      ["sbx.example.com"],
+      ["a.b.sbx.example.com"],
+      ["8000-ws-7.example.com"],
+      ["8000-WS-7.sbx.example.com"],
+      ["8000-ws-7.sbx.example.com", "8000-ws-7.sbx.example.com"],
+      ["*.*.sbx.example.com"],
+      ["8000-ws-7.sbx.example.com.evil"],
+      ["a,b.sbx.example.com"]
+    ]
+  }
 }

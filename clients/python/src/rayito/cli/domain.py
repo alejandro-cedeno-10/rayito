@@ -19,8 +19,10 @@ from typing import Annotated
 
 import typer
 
+from rayito._custom_domain._domain import WILDCARD_LABEL
 from rayito._custom_domain._service import (
     CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
+    DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY,
     STACK_COMPONENT,
     CustomDomain,
 )
@@ -56,6 +58,16 @@ def deploy_command(
     public_domain: Annotated[str, typer.Option("--public-domain")],
     certificate_arn: Annotated[str, typer.Option("--certificate-arn")],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
+    alternate_domain_names: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--alternate-domain-name",
+            help=(
+                "Nombre alternativo explícito (repetible) en lugar del comodín "
+                "*.<public-domain>; p. ej. 8000-<alias>.<public-domain>."
+            ),
+        ),
+    ] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
     domain = _domain(ctx, public_domain, stack_name)
@@ -70,11 +82,17 @@ def deploy_command(
         echo(f"  Cómo apagarla: rayito domain destroy ({component.cost.removal})")
     if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
         raise typer.Exit(1)
-    status = domain.deploy(certificate_arn=certificate_arn)
+    status = domain.deploy(
+        certificate_arn=certificate_arn, alternate_domain_names=alternate_domain_names or None
+    )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})
         return
     echo(f"{STACK_COMPONENT}: {status.state}")
+    target = status.outputs.get(DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY)
+    if target:
+        names = alternate_domain_names or [f"{WILDCARD_LABEL}.{domain.public_domain}"]
+        echo(f"  DNS: apunta un CNAME/alias de {', '.join(names)} a {target}")
 
 
 @domain_app.command("status")

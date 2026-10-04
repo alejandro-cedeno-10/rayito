@@ -29,7 +29,15 @@ versionado [SemVer](https://semver.org/lang/es/).
   `destroy()` usan un timeout propio (`CUSTOM_DOMAIN_WAIT_TIMEOUT_MS`,
   30 min) en vez del genérico de `OptionalStacks`; `refresh()` ya no
   deshace una escritura previa si la segunda falla (sólo `register()` lo
-  hace). DOM-2/3/5/7/8/14 pendientes de la aceptación contra AWS real.
+  hace). `deploy({ alternateDomainNames })` sustituye el alias comodín por
+  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a
+  AWS; las líneas de coste del componente `custom-domain` son ya las mismas
+  que en Python. El e2e toma el dominio y el certificado sólo de
+  `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos, usa una
+  pila y unos hostnames aleatorios por corrida, llega a la distribución sin
+  DNS y da a sus hooks el timeout propio de CloudFront en vez del genérico
+  de 300 s. DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real;
+  DOM-14 (el refresher Lambda) no se construyó.
 
 ### Fixed
 

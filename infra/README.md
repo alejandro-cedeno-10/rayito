@@ -487,6 +487,7 @@ hacen falta). Acciones y parámetros del plano de datos del KeyValueStore:
 | `DistributionId` / `DistributionDomainName` | `AWS::CloudFront::Distribution`: alias `*.<PublicDomain>`, certificado `CertificateArn` (debe estar en `us-east-1`), un origen "placeholder" que la Function reemplaza en cada petición |
 | `RouterFunction` | `AWS::CloudFront::Function` (`cloudfront-js-2.0`, asociada en `viewer-request`): lee la ruta del KeyValueStore por hostname y llama a `cf.updateRequestOrigin` |
 | `KvsArn` | `AWS::CloudFront::KeyValueStore`: dos claves por ruta (`j:<etiqueta>` el JWE, `m:<etiqueta>` metadatos), que escriben `CustomDomain.register()`/`unregister()`/`refresh()`, nunca la Function |
+| Parámetro `AlternateDomainNames` | Opcional (`CommaDelimitedList`, vacío por defecto): hostnames exactos `<etiqueta>.<PublicDomain>` en lugar del alias comodín, p. ej. si otra distribución ya tiene `*.<PublicDomain>` (`CustomDomain.deploy(alternate_domain_names=...)`, `rayito domain deploy --alternate-domain-name`) |
 
 **Coste**: $0 en reposo (CloudFront sin tráfico no factura; el KeyValueStore
 tampoco). Con uso (us-east-1; cifras de lista de CloudFront Functions/
@@ -513,8 +514,8 @@ aws cloudformation describe-stacks --stack-name rayito-custom-domain \
 
 Sin `--capabilities`: la plantilla no crea ningún recurso IAM. El
 certificado ACM debe estar en `us-east-1` (requisito de CloudFront) y
-cubrir `*.<PublicDomain>`; tras desplegar, apunta un `CNAME`/`ALIAS` de
-`*.<PublicDomain>` al `DistributionDomainName`.
+cubrir `*.<PublicDomain>` (o cada `AlternateDomainNames`); tras desplegar,
+apunta un `CNAME`/`ALIAS` de esos nombres al `DistributionDomainName`.
 
 ### Borrar (apagarlo)
 

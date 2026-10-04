@@ -50,22 +50,42 @@
 - [x] 3.4 e2e `clients/python/tests/e2e/test_m15_custom_domain.py` /
       `clients/typescript/tests/e2e/custom-domain.e2e.test.ts` (TypeScript's
       e2e suite only picks up `*.e2e.test.ts`, `vitest.config.ts`): deploy
-      the stack, register a token route, DOM-2 (HTTP/1.1), DOM-3 (WebSocket
-      upgrade, a minimal stdlib-only echo client+server, no new
-      dependency), 403 without the token, 404 after `unregister()`, destroy
-      the stack and confirm `status()` first — each skips as a whole unless
-      the environment brings a public domain, an ACM certificate ARN *and*
-      an acceptance run tag (`rayito:acceptance-run`), on top of the usual
-      `RAYITO_E2E`/`RAYITO_TEMPLATE`. **Written, not run from this branch:
-      D3 blocks executing these tests, not writing them (a PR #74 review
-      finding) — gate for archive remains D3 + the AWS acceptance stage.**
+      the stack, register token routes, DOM-2 (HTTP/1.1), DOM-5 (KVS
+      put -> visible and delete -> 404 at the edge, printed), DOM-7 partial
+      (`refresh()` keeps a live route serving), DOM-3 (WebSocket upgrade, a
+      minimal stdlib-only echo client+server, no new dependency), DOM-8
+      (a paused `auto_resume` sandbox answers through the domain), 403
+      without the token, 404 after `unregister()` and after the route's
+      TTL, destroy the stack and confirm `status()` returns nothing. The
+      test environment comes ONLY from `RAYITO_E2E_DOMAIN` (a domain whose
+      wildcard the certificate covers) and `RAYITO_E2E_CERT_ARN`, plus an
+      optional `RAYITO_ACCEPTANCE_RUN_TAG`; without the first two the module
+      skips before any fixture (no AWS call). Each run uses a random id: its
+      own stack `rayito-cd-e2e-<id>` and, instead of the wildcard, only its
+      routes' exact hostnames (`alternate_domain_names`), so it never
+      collides with an existing CloudFront alias. No DNS record is needed:
+      the client connects to the distribution's `*.cloudfront.net` sending
+      the custom hostname as SNI and `Host` (`curl --connect-to`). The
+      teardown unregisters every route and destroys the stack even when
+      `deploy()` failed half-way. TypeScript hooks get their own timeout
+      (`CUSTOM_DOMAIN_WAIT_TIMEOUT_MS` + 60 s): the generic `hookTimeout`
+      (300 s) is shorter than a CloudFront create/delete.
+- [x] 3.4b `deploy(alternate_domain_names=)` / `deploy({alternateDomainNames})`
+      and `rayito domain deploy --alternate-domain-name` (repeatable):
+      replace the default `*.<public_domain>` alias with explicit
+      `<label>.<public_domain>` names (template parameter
+      `AlternateDomainNames`, `CommaDelimitedList`, default empty = the
+      wildcard), validated before AWS against the shared
+      `testdata/custom-domain/hostnames.json` cases (one DNS label, inside
+      `public_domain`, no duplicates, at most 100 — CloudFront's default
+      quota). `rayito domain deploy` now prints the `CNAME` target.
 - [x] 3.5 AWS acceptance, part without D3 (2026-10-02, Q121): the
       deployed `FunctionCode` did not compile on `cloudfront-js-2.0`
       (`for...of`, default parameter); fixed, cookie read from
       `request.cookies` first, and re-measured with `TestFunction`
       (403/404/origin as in the Node tests). Off-by-default re-checked on
       real AWS: a plain sandbox only calls `lambda-microvms` (+ `sts`).
-      DOM-2/3/5 end to end still need D3.
+      DOM-2/3/5 end to end still need a real distribution (3.4).
 
 ## 4. Stack `infra/custom-domain.yaml`
 
@@ -166,7 +186,8 @@
 - [x] 7.4 `CHANGELOG.md` anchor in both `clients/python/CHANGELOG.md` and
       `clients/typescript/CHANGELOG.md` (no rayd component, so no
       `crates/rayd/CHANGELOG.md` entry).
-- [x] 7.5 `docs/RELEASE_NOTES_0.6.0.md` section.
+- [x] 7.5 0.6.0 shipped without this change, so its entry lives under
+      `[Unreleased]` in both CHANGELOGs, not in `RELEASE_NOTES_0.6.0.md`.
 - [x] 7.6 `docs/site/docs/funciones-opcionales/dominio-propio.md`: real
       "Coste y activación" box, Python + TypeScript examples of the
       standalone `CustomDomain` usage, marked experimental with the exact
@@ -176,9 +197,9 @@
       `e2b-parity.md` (#15, #16, #110), `optional-features.md`, `cost.md`
       and `security.md` (T25), for `m15-docs-integration` to apply —this
       change does not touch those shared files itself.
-- [ ] 7.8 `docs/site` `mkdocs build --strict` run locally as a smoke check
-      (not part of this change's own gate; `m15-docs-integration` owns
-      `mkdocs.yml` nav and the final site build).
+- [x] 7.8 `docs/site` `mkdocs build --strict` run locally as a smoke check
+      (clean; the page now explains what the feature does, how to activate
+      and remove it, explicit names and testing without DNS).
 
 ## 8. OpenSpec
 

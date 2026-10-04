@@ -8,8 +8,7 @@ El refresher Lambda opcional que describe la arquitectura de M15 (§7.8,
 `EnableRefresher`) queda como seguimiento no bloqueante: necesitaría
 empaquetar y subir un artefacto en cada `deploy()` (el mecanismo genérico
 de `OptionalStacks` no soporta un artefacto condicional) sólo para una
-Lambda que, sin D3 (dominio y certificado del mantenedor), tampoco se
-puede probar contra AWS real en este cambio. Mientras tanto,
+Lambda que tampoco se ha probado contra AWS real en este cambio. Mientras tanto,
 `CustomDomain.refresh()` cubre el mismo caso desde el lado del SDK: el
 llamante lo invoca antes de que caduque el JWE de una ruta (DOM-7)."""
 
@@ -26,13 +25,20 @@ COMPONENT: StackComponent = StackComponent(
     parameters=(
         StackParameter(
             "PublicDomain",
-            "Dominio del mantenedor (D3); el alias de la distribución es *.<PublicDomain>.",
+            "Tu dominio; el alias de la distribución es *.<PublicDomain> salvo "
+            "AlternateDomainNames.",
             required=True,
         ),
         StackParameter(
             "CertificateArn",
-            "ARN de un certificado ACM en us-east-1 que cubra *.<PublicDomain> (D3).",
+            "ARN de un certificado ACM en us-east-1 que cubra los nombres de la distribución "
+            "(*.<PublicDomain> por defecto).",
             required=True,
+        ),
+        StackParameter(
+            "AlternateDomainNames",
+            "Opcional: nombres explícitos <etiqueta>.<PublicDomain>, separados por comas, en "
+            "lugar del comodín (p. ej. si otra distribución ya tiene *.<PublicDomain>).",
         ),
     ),
     cost=CostStatement(

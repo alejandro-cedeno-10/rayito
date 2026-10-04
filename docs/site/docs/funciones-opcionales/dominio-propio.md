@@ -1,55 +1,60 @@
 # Dominio propio
 
-Una distribución CloudFront **en tu cuenta** con un alias comodín
-(`*.tu-dominio.com`) y una CloudFront Function que enruta cada petición al
-sandbox correcto leyendo un `KeyValueStore`, para exponer un puerto como un
-hostname público normal — sin las cabeceras `x-aws-proxy-auth`/
-`x-aws-proxy-port` que `get_host()` exige en 0.5.x.
+## Qué hace
 
-!!! warning "Experimental (0.6): construida pero sin cablear a Sandbox todavía"
-    `CustomDomain` (deploy/status/destroy de la pila, y
-    `register`/`unregister`/`refresh` de rutas) está implementada y
-    probada. Lo que **no** existe todavía es la integración con
-    `Sandbox.create(domain=...)`/`get_host()`/`expose()`: ese kwarg sigue
-    lanzando `UnimplementedError` (seguimiento no bloqueante, ver
-    `ARCHITECTURE.md` ADR-024 en el repositorio). Hoy se usa `CustomDomain`
-    directamente, pasándole el `endpoint` del sandbox y un JWE que tú
-    mismo acuñas. Además, DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket), DOM-5
-    (latencia de propagación del KeyValueStore), DOM-7 (mantener la ruta
-    viva más allá de la caducidad del JWE), DOM-8 (auto-resume por el
-    dominio) y DOM-14 (el refresher Lambda opcional, tampoco construido
-    todavía) siguen sin medirse contra una distribución real: hace falta
-    un dominio y un certificado ACM que sólo el mantenedor puede aportar.
-    Lo que sí se comprobó contra CloudFront real, sin distribución
-    (`TestFunction`, Q121 de `AWS_API_NOTES.md`): la Function de enrutado
-    compila en `cloudfront-js-2.0` y responde 403/404 o pasa la petición
-    al sandbox como se espera.
+Sin esta función, un puerto del sandbox sólo es alcanzable mandando las
+cabeceras `x-aws-proxy-auth`/`x-aws-proxy-port` que devuelve `get_host()`:
+un navegador, un webhook o un `<iframe>` no pueden. Con dominio propio, cada
+puerto tiene una URL HTTPS normal bajo **tu** dominio:
+
+```text
+https://<puerto>-<sandbox_id>.<tu dominio>     p. ej. https://8000-3f2a….sbx.example.com
+```
+
+que se abre desde un navegador sin cabecera del proxy. Por debajo hay una
+distribución CloudFront **en tu cuenta** con una CloudFront Function que, en
+cada petición, busca la ruta del hostname en un `KeyValueStore`, comprueba el
+token de tráfico y reenvía al sandbox poniendo ella misma las cabeceras del
+proxy de AWS.
+
+!!! warning "Experimental (0.6): `CustomDomain` sí, `Sandbox.create(domain=)` todavía no"
+    `CustomDomain` (desplegar/borrar la pila y `register`/`unregister`/
+    `refresh` de rutas) está implementada y probada. Lo que **no** existe
+    todavía es que `Sandbox.create(domain=...)`/`get_host()` devuelvan esa
+    URL solos: `domain=` sigue lanzando `UnimplementedError` (seguimiento
+    no bloqueante, ADR-024 de `ARCHITECTURE.md`). Hoy registras la ruta tú
+    mismo y `route.host` es exactamente el hostname de arriba (ver el
+    ejemplo). La Function de enrutado ya se comprobó contra el runtime real
+    de CloudFront (`TestFunction`, Q121 de `AWS_API_NOTES.md`); el recorrido
+    completo por una distribución (DOM-2/3/5/7/8) queda para la aceptación
+    contra AWS real, que el e2e del repositorio automatiza.
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin instanciar `CustomDomain` el SDK no
       construye ningún cliente `cloudformation` ni `cloudfront-keyvaluestore`.
-    - **Activa**: `CustomDomain(public_domain="sbx.tu-dominio.com").deploy(certificate_arn=...)`.
+    - **Activa**: `CustomDomain(public_domain="sbx.example.com").deploy(certificate_arn=...)`
+      o `rayito domain deploy`.
     - **Recursos y llamadas AWS**: una distribución CloudFront, su
       CloudFront Function de enrutado y un KeyValueStore
-      (`infra/custom-domain.yaml`, `rayito domain deploy`). En uso,
+      (`infra/custom-domain.yaml`). En uso,
       `register()`/`unregister()`/`refresh()` llaman a
       `DescribeKeyValueStore`/`PutKey`/`DeleteKey`.
     - **Coste aproximado** (us-east-1,
       [precios de CloudFront](https://aws.amazon.com/cloudfront/pricing/);
       cifras de lista de CloudFront Functions/KeyValueStore desde su
-      lanzamiento, por reconfirmar en la etapa de aceptación AWS):
+      lanzamiento, por reconfirmar en la aceptación AWS): $0 en reposo;
       ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida; la CloudFront
       Function, ~$0,10 por 1 000 000 de invocaciones (una por petición); el
-      KeyValueStore no cobra en reposo, ~$0,50 por 1 000 000 de lecturas
-      (las que hace la Function) y ~$5 por 1 000 000 de llamadas de gestión
-      (`PutKey`/`DeleteKey` de `register`/`unregister`/`refresh`).
+      KeyValueStore, ~$0,50 por 1 000 000 de lecturas (las de la Function) y
+      ~$5 por 1 000 000 de llamadas de gestión (`PutKey`/`DeleteKey`).
     - **IAM** (credenciales de quien llama al SDK): `cloudformation:*Stack*`
       para `deploy`/`status`/`destroy`;
       `cloudfront-keyvaluestore:DescribeKeyValueStore/PutKey/DeleteKey`
       sobre el KVS de la pila.
-    - **Cómo apagarla**: no llames a `deploy()`; `destroy()` borra la
+    - **Cómo apagarla**: `destroy()` o `rayito domain destroy` borra la
       distribución (tarda ~15 min en deshabilitarse primero), la Function y
-      el KeyValueStore — ninguna ruta sobrevive, son efímeras.
+      el KeyValueStore — ninguna ruta sobrevive, son efímeras. Borra también
+      el `CNAME` que creaste en tu DNS.
 
 ## Cuándo usarlo
 
@@ -57,26 +62,62 @@ hostname público normal — sin las cabeceras `x-aws-proxy-auth`/
   que el cliente tenga que añadir cabeceras: un navegador, un webhook, un
   `<iframe>`.
 - **Cuándo no**: un cliente programático que ya sabe mandar
-  `x-aws-proxy-auth`/`x-aws-proxy-port` — `get_host()` en 0.5.x ya resuelve
-  eso sin desplegar nada.
+  `x-aws-proxy-auth`/`x-aws-proxy-port` — `get_host()` ya lo resuelve sin
+  desplegar nada; para desarrollo local, `rayito sandbox proxy`.
 
-## Desplegar la pila
+## Activarlo
+
+Necesitas tres cosas:
+
+1. **Un dominio** bajo el que vivirán las URLs, p. ej. `sbx.example.com`.
+2. **Un certificado ACM en `us-east-1`** (requisito de CloudFront, sin
+   importar en qué región corran tus sandboxes) que cubra
+   `*.sbx.example.com`.
+3. **Un registro DNS**: tras desplegar, un `CNAME` (o alias, en Route 53)
+   de `*.sbx.example.com` al `DistributionDomainName` que imprime el
+   despliegue (`dxxxxxxxxxxxx.cloudfront.net`).
+
+=== "CLI"
+
+    ```bash
+    rayito domain deploy --public-domain sbx.example.com \
+      --certificate-arn arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
+    # ... DNS: apunta un CNAME/alias de *.sbx.example.com a dxxxxxxxxxxxx.cloudfront.net
+    rayito domain status
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import CustomDomain
+
+    domain = CustomDomain(public_domain="sbx.example.com")  # no llama a AWS
+    status = domain.deploy(certificate_arn="arn:aws:acm:us-east-1:<cuenta>:certificate/<id>")
+    print(status.outputs["DistributionDomainName"])  # destino del CNAME
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { CustomDomain } from "rayito";
+
+    const domain = new CustomDomain({ publicDomain: "sbx.example.com" }); // no llama a AWS
+    const status = await domain.deploy({
+      certificateArn: "arn:aws:acm:us-east-1:<cuenta>:certificate/<id>",
+    });
+    console.log(status.outputs.DistributionDomainName); // destino del CNAME
+    ```
+
+Sin el SDK, la misma plantilla con CloudFormation:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/custom-domain.yaml
 aws cloudformation deploy --stack-name rayito-custom-domain \
   --template-file custom-domain.yaml \
-  --parameter-overrides PublicDomain=sbx.tu-dominio.com CertificateArn=arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
+  --parameter-overrides PublicDomain=sbx.example.com CertificateArn=arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
 ```
 
-(Si clonaste el repositorio, la plantilla ya está en
-`infra/custom-domain.yaml`; `rayito domain deploy` hace lo mismo sin salir
-del SDK.) El certificado ACM **debe** estar en `us-east-1` (requisito de
-CloudFront, sin importar en qué región despliegues tus sandboxes), y debe
-cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
-`*.sbx.tu-dominio.com` al `DistributionDomainName` que imprime el deploy.
-
-## Ejemplo rápido (uso directo, sin `Sandbox.create(domain=)`)
+## Exponer un puerto
 
 === "Python"
 
@@ -85,38 +126,34 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 
     from rayito import CustomDomain, Sandbox
 
-    domain = CustomDomain(public_domain="sbx.tu-dominio.com")  # (1)!
-    domain.deploy(certificate_arn="arn:aws:acm:us-east-1:<cuenta>:certificate/<id>")
+    domain = CustomDomain(public_domain="sbx.example.com")
+    domain.status()  # lee el KvsArn de la pila ya desplegada
 
     with Sandbox.create("rayito-base", allowed_ports=[8000]) as sbx:
-        jwe = sbx.get_host(8000).headers["x-aws-proxy-auth"]  # (2)!
-        traffic_token = secrets.token_urlsafe(32)  # (3)!
+        jwe = sbx.get_host(8000).headers["x-aws-proxy-auth"]  # (1)!
+        traffic_token = secrets.token_urlsafe(32)  # (2)!
         route = domain.register(
             sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe,
             traffic_token=traffic_token, ttl_seconds=2400,
         )
-        print(route.host)  # (4)!
-        # ... antes de que caduque, con un JWE recién acuñado (5):
+        print(f"https://{route.host}")  # (3)!
+        # ... antes de que caduque, con un JWE recién acuñado (4):
         fresh_jwe = sbx.get_host(8000).headers["x-aws-proxy-auth"]
         domain.refresh(route, jwe=fresh_jwe, ttl_seconds=2400)
         domain.unregister(sbx.sandbox_id, 8000)
     ```
 
-    1. Construirlo no llama a AWS.
-    2. El JWE que ya emite `get_host()`; es el mismo que valida el proxy de
-       AWS Lambda MicroVMs.
-    3. Guárdalo: hay que mandarlo en la cabecera `e2b-traffic-access-token`
-       (o la cookie `rayito_tt`) de cada petición al `route.host`. Sin él,
-       `register()` rechaza la llamada — una ruta sólo es pública con
-       `public=True` explícito, nunca por omisión.
-    4. `"8000-<sandbox_id>.sbx.tu-dominio.com"`.
-    5. `refresh()` necesita un JWE nuevo, no el mismo que `register()` ya
-       usó: `get_host()` lo vuelve a acuñar bajo demanda (o reutiliza el que
-       el `TokenRefresher` interno del transporte ya renovó pasados
-       `TOKEN_REFRESH_AFTER_MINUTES`). Volver a pasar el `jwe` original sólo
-       extiende `m.x` (el TTL de la ruta) sin renovar el token que de
-       verdad comprueba el proxy: en cuanto ese JWE original caduque, la
-       ruta empieza a fallar aunque acabes de "refrescarla".
+    1. El JWE que ya emite `get_host()`; es el mismo que valida el proxy de
+       AWS Lambda MicroVMs. La Function lo añade por ti en cada petición.
+    2. Quien abra la URL lo manda en la cabecera `e2b-traffic-access-token`
+       o en la cookie `rayito_tt` (lo práctico en un navegador: tu
+       aplicación la fija para `.sbx.example.com`). Sin token, `register()`
+       rechaza la llamada — una ruta sólo es pública con `public=True`
+       explícito, nunca por omisión.
+    3. `https://8000-<sandbox_id>.sbx.example.com`.
+    4. `refresh()` necesita un JWE nuevo: `get_host()` lo vuelve a acuñar
+       bajo demanda. Volver a pasar el original sólo alarga el TTL de la
+       ruta, no el token que comprueba el proxy de AWS.
 
 === "Python (async)"
 
@@ -128,8 +165,8 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 
 
     async def main() -> None:
-        domain = AsyncCustomDomain(public_domain="sbx.tu-dominio.com")
-        await domain.deploy(certificate_arn="arn:aws:acm:us-east-1:<cuenta>:certificate/<id>")
+        domain = AsyncCustomDomain(public_domain="sbx.example.com")
+        await domain.status()
 
         async with await AsyncSandbox.create("rayito-base", allowed_ports=[8000]) as sbx:
             jwe = (await sbx.get_host(8000)).headers["x-aws-proxy-auth"]
@@ -137,7 +174,7 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
                 sbx.sandbox_id, 8000, endpoint=sbx.endpoint, jwe=jwe,
                 traffic_token=secrets.token_urlsafe(32), ttl_seconds=2400,
             )
-            print(route.host)
+            print(f"https://{route.host}")
             await domain.unregister(sbx.sandbox_id, 8000)
 
 
@@ -150,8 +187,8 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
     import { randomBytes } from "node:crypto";
     import { CustomDomain, Sandbox } from "rayito";
 
-    const domain = new CustomDomain({ publicDomain: "sbx.tu-dominio.com" });
-    await domain.deploy({ certificateArn: "arn:aws:acm:us-east-1:<cuenta>:certificate/<id>" });
+    const domain = new CustomDomain({ publicDomain: "sbx.example.com" });
+    await domain.status(); // lee el KvsArn de la pila ya desplegada
 
     const sbx = await Sandbox.create({ template: "rayito-base", allowedPorts: [8000] });
     try {
@@ -163,12 +200,102 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
         trafficToken,
         ttlSeconds: 2400,
       });
-      console.log(route.host);
+      console.log(`https://${route.host}`);
       await domain.unregister(sbx.sandboxId, 8000);
     } finally {
       await sbx.kill();
     }
     ```
+
+## Quitarlo
+
+=== "CLI"
+
+    ```bash
+    rayito domain destroy
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import CustomDomain
+
+    CustomDomain(public_domain="sbx.example.com").destroy()  # espera hasta 30 min
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { CustomDomain } from "rayito";
+
+    await new CustomDomain({ publicDomain: "sbx.example.com" }).destroy(); // espera hasta 30 min
+    ```
+
+Después borra el `CNAME` de tu DNS. El certificado ACM es tuyo y no se toca.
+
+## Nombres explícitos en vez del comodín
+
+Por defecto la distribución lleva el alias `*.<tu dominio>`. CloudFront no
+admite el mismo alias en dos distribuciones, así que si otra distribución
+ya tiene ese comodín, el despliegue falla. Puedes pasar una lista de
+hostnames exactos (cada uno `<etiqueta>.<tu dominio>`, normalmente
+`host_for(alias, puerto)`): ante un solape CloudFront elige el nombre más
+específico, así que conviven con el comodín ajeno. Sólo las rutas cuyos
+hostnames estén en la lista llegan a esta distribución; el coste no cambia.
+Una excepción: si tu DNS ya tiene un registro comodín que apunta a la otra
+distribución, CloudFront rechaza el nombre más específico hasta que crees
+para él un registro propio que apunte a esta.
+
+=== "CLI"
+
+    ```bash
+    rayito domain deploy --public-domain sbx.example.com \
+      --certificate-arn arn:aws:acm:us-east-1:<cuenta>:certificate/<id> \
+      --alternate-domain-name 8000-demo.sbx.example.com
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import CustomDomain
+
+    domain = CustomDomain(public_domain="sbx.example.com")
+    domain.deploy(
+        certificate_arn="arn:aws:acm:us-east-1:<cuenta>:certificate/<id>",
+        alternate_domain_names=[domain.host_for("demo", 8000)],  # 8000-demo.sbx.example.com
+    )
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { CustomDomain } from "rayito";
+
+    const domain = new CustomDomain({ publicDomain: "sbx.example.com" });
+    await domain.deploy({
+      certificateArn: "arn:aws:acm:us-east-1:<cuenta>:certificate/<id>",
+      alternateDomainNames: [domain.hostFor("demo", 8000)], // 8000-demo.sbx.example.com
+    });
+    ```
+
+## Probar sin tocar el DNS
+
+Antes de crear el `CNAME` puedes comprobar la distribución conectando
+directamente a su `*.cloudfront.net` y mandando tu hostname como SNI y como
+`Host` (CloudFront elige la distribución por el `Host`):
+
+```bash
+curl --connect-to 8000-<sandbox_id>.sbx.example.com:443:dxxxxxxxxxxxx.cloudfront.net:443 \
+  -H "e2b-traffic-access-token: <token>" https://8000-<sandbox_id>.sbx.example.com/
+```
+
+Así funciona también el e2e del repositorio
+(`tests/e2e/test_m15_custom_domain.py`, `custom-domain.e2e.test.ts`): toma
+el dominio y el certificado sólo de `RAYITO_E2E_DOMAIN` (un dominio cuyo
+comodín cubre el certificado) y `RAYITO_E2E_CERT_ARN`, despliega una pila
+propia por corrida (`rayito-cd-e2e-<id>`) con nombres explícitos aleatorios
+para no chocar con ningún alias existente, no crea ningún registro DNS y lo
+borra todo al terminar. Sin esas variables se salta.
 
 ## Cómo funciona
 
@@ -177,10 +304,10 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 2. Cada petición pasa primero por la CloudFront Function
    (`infra/functions/custom_domain_router.js`), que borra cualquier
    cabecera `x-aws-proxy-*` que el viewer haya mandado, lee la ruta del
-   `KeyValueStore` por el hostname (`{puerto}-{alias}`), comprueba el
-   `traffic_token` si la ruta no es pública, y llama a
-   `cf.updateRequestOrigin()` con el `endpoint` real del sandbox y las
-   cabeceras del proxy que hacen falta.
+   `KeyValueStore` por la primera etiqueta del hostname
+   (`{puerto}-{alias}`), comprueba el token de tráfico si la ruta no es
+   pública, y llama a `cf.updateRequestOrigin()` con el `endpoint` real del
+   sandbox y las cabeceras del proxy que hacen falta.
 3. Una ruta sin entrada en el `KeyValueStore`, o cuyo `ttl_seconds` ya
    pasó, recibe 404 directo de la Function: nunca llega al origen
    placeholder, y desde fuera no se distingue de una ruta que nunca
@@ -189,16 +316,15 @@ cubrir `*.sbx.tu-dominio.com`. Tras desplegar, apunta un `CNAME`/`ALIAS` de
 ## Limitaciones conocidas
 
 - Sin `Sandbox.create(domain=)`/`expose()`/`get_host()` cableados, hay que
-  acuñar el JWE y registrar la ruta a mano (como en el ejemplo).
-- `register()` exige `traffic_token` salvo que pases `public=True` a
-  propósito — nunca hay una ruta pública por omisión. El `traffic_token`
-  sólo se guarda como su hash sha256 — no hay forma de recuperarlo después
-  de perderlo; genera uno nuevo y vuelve a registrar la ruta.
+  registrar la ruta a mano (como en el ejemplo).
+- El token de tráfico sólo se guarda como su hash sha256: si lo pierdes,
+  genera uno nuevo y vuelve a registrar la ruta.
 - Una ruta no se borra sola cuando el sandbox muere: llama a
   `unregister()` tú mismo. Sin eso, la ruta se acota sola por dos lados
-  independientes: `ttl_seconds` de `register()`/`refresh()` (`m.x`, que la
-  propia CloudFront Function comprueba — una ruta caducada da 404, igual
-  que una que nunca existió) y la caducidad del JWE en sí, del lado del
+  independientes: `ttl_seconds` de `register()`/`refresh()` (que la propia
+  Function comprueba — 404) y la caducidad del JWE en sí, del lado del
   proxy de AWS (401/403), lo primero que llegue.
+- No hay refresher automático (DOM-14): llama a `refresh()` antes de que
+  caduque el JWE si la ruta debe vivir más.
 - Los puertos `8080` y `9000` (puerto de hooks y reservado) no se pueden
   exponer, igual que en el resto del SDK.

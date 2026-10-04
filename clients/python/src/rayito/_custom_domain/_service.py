@@ -24,7 +24,7 @@ sandbox.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
@@ -32,6 +32,7 @@ from typing import Final
 import boto3
 
 from rayito._custom_domain._domain import (
+    CFN_LIST_SEPARATOR,
     RouteMetadata,
     check_kvs_value_size,
     kvs_json_key,
@@ -39,6 +40,7 @@ from rayito._custom_domain._domain import (
     route_host,
     route_label,
     traffic_token_digest,
+    validate_alternate_domain_names,
     validate_public_domain,
 )
 from rayito._custom_domain._kvs import (
@@ -55,6 +57,15 @@ from rayito.exceptions import CustomDomainException, InvalidArgumentException
 #: (`infra/custom-domain.yaml`, `_stacks/components/custom_domain.py`).
 STACK_COMPONENT: Final = "custom-domain"
 
+#: El parámetro `CommaDelimitedList` de `infra/custom-domain.yaml` con los
+#: nombres alternativos explícitos; vacío (su valor por defecto) deja el
+#: comodín `*.<PublicDomain>`.
+ALTERNATE_DOMAIN_NAMES_PARAMETER: Final = "AlternateDomainNames"
+
+#: La salida `DistributionDomainName` de la plantilla (`*.cloudfront.net`):
+#: el destino del `CNAME`/alias de DNS de tu dominio.
+DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY: Final = "DistributionDomainName"
+
 #: La salida `KvsArn` de la plantilla (`infra/custom-domain.yaml`), leída
 #: tras `deploy()`/`status()` para no pedírsela al llamante aparte.
 KVS_ARN_OUTPUT_KEY: Final = "KvsArn"
@@ -62,7 +73,7 @@ KVS_ARN_OUTPUT_KEY: Final = "KvsArn"
 #: Reintentos acotados de "describe + put(s) encadenados" cuando AWS
 #: rechaza el `ETag` por una carrera con otro escritor de la misma ruta
 #: (`register`/`refresh` concurrentes). No verificado contra una
-#: distribución real (D3): la lista de códigos de abajo es defensiva, no
+#: distribución real: la lista de códigos de abajo es defensiva, no
 #: una lista cerrada como el resto de `AWS_API_NOTES.md` §29.
 MAX_ETAG_CONFLICT_RETRIES: Final = 3
 
@@ -71,7 +82,7 @@ MAX_ETAG_CONFLICT_RETRIES: Final = 3
 #: lo que produce el fake de test (`FakeKeyValueStoreWriter`);
 #: `PreconditionFailedException` se añade defensivamente por si el servicio
 #: real usa ese nombre para un `IfMatch` que no coincide (sin confirmar
-#: contra una distribución real, D3).
+#: contra una distribución real).
 _ETAG_CONFLICT_AWS_CODES: Final = ("ConflictException", "PreconditionFailedException")
 
 #: Prefijo del recurso de `infra/custom-domain.yaml` con el nombre más largo
@@ -214,20 +225,31 @@ class CustomDomain:
         self,
         *,
         certificate_arn: str,
+        alternate_domain_names: Sequence[str] | None = None,
         tags: dict[str, str] | None = None,
         wait: bool = True,
         wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
     ) -> StackStatus:
         """Despliega (o actualiza) `infra/custom-domain.yaml`. `certificate_arn`
-        debe estar en `us-east-1` (requisito de CloudFront, D3: lo aporta
-        el mantenedor)."""
+        debe estar en `us-east-1` (requisito de CloudFront) y cubrir los
+        nombres de la distribución: `*.<public_domain>` por defecto.
+
+        `alternate_domain_names` sustituye ese comodín por una lista
+        explícita (`_domain.validate_alternate_domain_names`; normalmente
+        `host_for(alias, port)` de rutas conocidas), p. ej. si otra
+        distribución ya tiene `*.<public_domain>`. Las rutas cuyo host no
+        esté en la lista no llegan a esta distribución. No cambia el coste.
+        Tras desplegar, apunta un `CNAME`/alias de DNS de cada nombre al
+        `DistributionDomainName` de la salida."""
+        parameters = {"PublicDomain": self.public_domain, "CertificateArn": certificate_arn}
+        if alternate_domain_names is not None:
+            parameters[ALTERNATE_DOMAIN_NAMES_PARAMETER] = CFN_LIST_SEPARATOR.join(
+                validate_alternate_domain_names(alternate_domain_names, self.public_domain)
+            )
         status = self._stacks.deploy(
             STACK_COMPONENT,
             stack_name=self._stack_name,
-            parameters={
-                "PublicDomain": self.public_domain,
-                "CertificateArn": certificate_arn,
-            },
+            parameters=parameters,
             tags=tags,
             wait=wait,
             wait_timeout=wait_timeout,

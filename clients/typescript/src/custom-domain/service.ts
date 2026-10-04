@@ -19,6 +19,7 @@ import type { StackStatus } from "../stacks/model.js";
 import type { StackProvisioner } from "../stacks/port.js";
 import { OptionalStacks } from "../stacks/service.js";
 import {
+  CFN_LIST_SEPARATOR,
   checkKvsValueSize,
   encodeRouteMetadata,
   kvsJsonKey,
@@ -26,6 +27,7 @@ import {
   routeHost,
   routeLabel,
   trafficTokenDigest,
+  validateAlternateDomainNames,
   validatePublicDomain,
 } from "./domain.js";
 import { CloudFrontKvsWriter, type KeyValueStoreWriter, RESOURCE_NOT_FOUND_CODE } from "./kvs.js";
@@ -35,6 +37,13 @@ type Credentials = AwsClientSettings["credentials"];
 /** Nombre fijo del componente `OptionalStack` que despliega esta función. */
 export const STACK_COMPONENT = "custom-domain";
 const KVS_ARN_OUTPUT_KEY = "KvsArn";
+/** El parámetro `CommaDelimitedList` de `infra/custom-domain.yaml` con los
+ * nombres alternativos explícitos; espejo de
+ * `_service.ALTERNATE_DOMAIN_NAMES_PARAMETER`. */
+export const ALTERNATE_DOMAIN_NAMES_PARAMETER = "AlternateDomainNames";
+/** La salida `*.cloudfront.net` de la plantilla, destino del `CNAME`/alias
+ * de DNS; espejo de `_service.DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY`. */
+export const DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY = "DistributionDomainName";
 
 /** Reintentos acotados de "describe + puts encadenados" ante una carrera de
  * `ETag` con otro escritor de la misma ruta; espejo de
@@ -43,7 +52,7 @@ const MAX_ETAG_CONFLICT_RETRIES = 3;
 
 /** Códigos que `#writeRoute` trata como "el `ETag` ya no es el vigente,
  * reintenta desde `describe()`"; espejo de `_service._ETAG_CONFLICT_AWS_CODES`
- * (defensivo, sin confirmar contra una distribución real, D3). */
+ * (defensivo, sin confirmar contra una distribución real). */
 const ETAG_CONFLICT_AWS_CODES = ["ConflictException", "PreconditionFailedException"];
 
 /** `deploy()`/`destroy()` esperan a que CloudFormation termine; el valor por
@@ -87,6 +96,12 @@ export interface CustomDomainOptions {
 
 export interface DeployCustomDomainOptions {
   readonly certificateArn: string;
+  /** Sustituye el comodín `*.<publicDomain>` por una lista explícita
+   * (`validateAlternateDomainNames`; normalmente `hostFor(alias, port)` de
+   * rutas conocidas), p. ej. si otra distribución ya tiene
+   * `*.<publicDomain>`. Las rutas cuyo host no esté en la lista no llegan a
+   * esta distribución. No cambia el coste. */
+  readonly alternateDomainNames?: readonly string[] | undefined;
   readonly tags?: Readonly<Record<string, string>>;
   readonly wait?: boolean;
   readonly waitTimeoutMs?: number;
@@ -217,7 +232,18 @@ export class CustomDomain {
   async deploy(options: DeployCustomDomainOptions): Promise<StackStatus> {
     const status = await this.#stacks.deploy(STACK_COMPONENT, {
       ...this.#stackNameOption(),
-      parameters: { PublicDomain: this.publicDomain, CertificateArn: options.certificateArn },
+      parameters: {
+        PublicDomain: this.publicDomain,
+        CertificateArn: options.certificateArn,
+        ...(options.alternateDomainNames !== undefined
+          ? {
+              [ALTERNATE_DOMAIN_NAMES_PARAMETER]: validateAlternateDomainNames(
+                options.alternateDomainNames,
+                this.publicDomain,
+              ).join(CFN_LIST_SEPARATOR),
+            }
+          : {}),
+      },
       ...(options.tags !== undefined ? { tags: options.tags } : {}),
       ...(options.wait !== undefined ? { wait: options.wait } : {}),
       waitTimeoutMs: options.waitTimeoutMs ?? CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,

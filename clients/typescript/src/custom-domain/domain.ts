@@ -34,6 +34,63 @@ export function validatePublicDomain(value: string): string {
   return value;
 }
 
+/** La etiqueta comodín del alias por defecto de la distribución
+ * (`*.<PublicDomain>`, `infra/custom-domain.yaml`). Espejo de
+ * `_domain.WILDCARD_LABEL`. */
+export const WILDCARD_LABEL = "*";
+
+/** Cuota por defecto de nombres alternativos (CNAMEs) por distribución
+ * CloudFront (100,
+ * https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html).
+ * Espejo de `_domain.MAX_ALTERNATE_DOMAIN_NAMES`. */
+export const MAX_ALTERNATE_DOMAIN_NAMES = 100;
+
+/** Separador de un parámetro `CommaDelimitedList` de CloudFormation
+ * (`AlternateDomainNames`). Espejo de `_domain.CFN_LIST_SEPARATOR`. */
+export const CFN_LIST_SEPARATOR = ",";
+
+/**
+ * Los nombres alternativos explícitos de la distribución, en lugar del
+ * comodín por defecto `*.<publicDomain>`. Cada uno es `*.<publicDomain>` o
+ * `<etiqueta>.<publicDomain>` con UNA sola etiqueta DNS delante (en
+ * minúsculas): la Function enruta por la primera etiqueta del host. Lo
+ * normal es pasar `hostFor(alias, port)` de rutas ya conocidas: sirve
+ * cuando otra distribución ya tiene `*.<publicDomain>` o para una prueba
+ * aislada. Espejo de `_domain.validate_alternate_domain_names`.
+ */
+export function validateAlternateDomainNames(
+  names: readonly string[],
+  publicDomain: string,
+): readonly string[] {
+  validatePublicDomain(publicDomain);
+  if (names.length === 0) {
+    throw new InvalidArgumentError(
+      "alternateDomainNames debe ser una lista no vacía de hostnames (omítelo para " +
+        `usar el comodín ${WILDCARD_LABEL}.${publicDomain})`,
+    );
+  }
+  if (names.length > MAX_ALTERNATE_DOMAIN_NAMES) {
+    throw new InvalidArgumentError(
+      `demasiados nombres alternativos (${names.length}): CloudFront admite ` +
+        `${MAX_ALTERNATE_DOMAIN_NAMES} por distribución`,
+    );
+  }
+  const suffix = `.${publicDomain}`;
+  for (const name of names) {
+    const label = name.endsWith(suffix) ? name.slice(0, -suffix.length) : undefined;
+    if (label === undefined || !(label === WILDCARD_LABEL || DNS_LABEL_RE.test(label))) {
+      throw new InvalidArgumentError(
+        `nombre alternativo inválido: ${JSON.stringify(name)} (debe ser <etiqueta>${suffix} o ` +
+          `${WILDCARD_LABEL}${suffix})`,
+      );
+    }
+  }
+  if (new Set(names).size !== names.length) {
+    throw new InvalidArgumentError(`nombres alternativos repetidos: ${JSON.stringify(names)}`);
+  }
+  return [...names];
+}
+
 export function validateAlias(value: string): string {
   if (!ALIAS_RE.test(value)) {
     throw new InvalidArgumentError(`alias de ruta inválido: ${JSON.stringify(value)}`);

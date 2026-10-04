@@ -1498,8 +1498,8 @@ que `domainName` sea un origen ya declarado en la distribución (verificado
 contra la documentación de AWS antes de escribir la plantilla); el origen
 "placeholder" de `infra/custom-domain.yaml` nunca se contacta de verdad.
 DOM-2 (HTTP/1.1 real), DOM-3 (WebSocket) y DOM-5 (latencia de propagación
-del KVS a los edges) quedan **SIN MEDIR** hasta D3 (dominio y certificado
-ACM del mantenedor) y la etapa de aceptación AWS. Lo que sí se midió sin
+del KVS a los edges) quedan **SIN MEDIR** hasta la etapa de aceptación AWS
+con una distribución real (el e2e la automatiza; ver abajo). Lo que sí se midió sin
 dominio (Q121, `TestFunction`): el `FunctionCode` no compilaba en
 `cloudfront-js-2.0` (`for...of` y un parámetro por defecto); arreglado y
 re-medido, las decisiones 403/404/origen salen como en los tests de Node.
@@ -1515,5 +1515,29 @@ Lambda MicroVMs nunca coincide con `<puerto>-<alias>.<PublicDomain>`, así
 que toda petición acabaría en 502. `AllViewerExceptHostHeader` forwardea
 todo lo demás que el proxy de AWS Lambda MicroVMs y los upgrades WebSocket
 necesitan, sin ese campo. Pendiente de confirmar contra una distribución
-real en la etapa de aceptación AWS (D3): `aws cloudfront test-function`
+real en la etapa de aceptación AWS: `aws cloudfront test-function`
 (gratuito) sobre `RouterFunction` es parte de ese plan.
+
+**Parámetro `AlternateDomainNames` de la plantilla** (`CommaDelimitedList`,
+por defecto vacío = alias comodín `*.<PublicDomain>`): lista explícita de
+nombres alternativos de la distribución
+(`DistributionConfig.Aliases`). CloudFront rechaza el mismo nombre
+alternativo en dos distribuciones (`CNAMEAlreadyExists`) y, si dos
+distribuciones solapan (`*.sbx.example.com` en una y
+`8000-x.sbx.example.com` en otra), envía la petición a la del nombre más
+específico
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html>,
+consultada 2026-10-03). Cuota por defecto: 100 nombres por distribución
+(<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html>).
+El certificado debe cubrir cada nombre (un comodín cubre un solo nivel).
+Si ya existe un registro DNS comodín que apunta a OTRA distribución,
+añadir un nombre más específico falla con "incorrectly configured DNS
+record" (CloudFront resuelve el nombre al validarlo;
+<https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/troubleshooting-distributions.html>).
+El SDK valida la lista antes de llamar a AWS
+(`validate_alternate_domain_names`) y el e2e la usa para aislar cada
+corrida con nombres aleatorios. Sin DNS, un cliente llega a la
+distribución conectando al `DistributionDomainName` y mandando el
+hostname propio como SNI y como `Host` (`curl --connect-to`): CloudFront
+elige la distribución por el `Host`, y rechaza con 421 (domain fronting) un
+SNI distinto del `Host` cuyo certificado no lo cubra.

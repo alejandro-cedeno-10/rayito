@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -62,6 +63,55 @@ def validate_public_domain(value: str) -> str:
     if not value or any(not _DNS_LABEL_RE.match(label) for label in labels):
         raise InvalidArgumentException(f"public_domain inválido: {value!r}")
     return value
+
+
+#: La etiqueta comodín del alias por defecto de la distribución
+#: (`*.<PublicDomain>`, `infra/custom-domain.yaml`).
+WILDCARD_LABEL: Final = "*"
+
+#: Cuota por defecto de nombres alternativos (CNAMEs) por distribución
+#: CloudFront ("Alternate domain names (CNAMEs) per distribution", 100,
+#: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html).
+MAX_ALTERNATE_DOMAIN_NAMES: Final = 100
+
+#: Separador de un parámetro `CommaDelimitedList` de CloudFormation
+#: (`AlternateDomainNames` de `infra/custom-domain.yaml`).
+CFN_LIST_SEPARATOR: Final = ","
+
+
+def validate_alternate_domain_names(names: Sequence[str], public_domain: str) -> tuple[str, ...]:
+    """Los nombres alternativos explícitos de la distribución, en lugar del
+    comodín por defecto `*.<public_domain>`. Cada uno es `*.<public_domain>`
+    o `<etiqueta>.<public_domain>` con UNA sola etiqueta DNS delante (en
+    minúsculas): la Function enruta por la primera etiqueta del host
+    (`routeLabel` de `custom_domain_router.js`), así que un nombre más
+    profundo o fuera de `public_domain` nunca llegaría a una ruta. Lo
+    normal es pasar `host_for(alias, port)` de rutas que ya conoces: sirve
+    cuando otra distribución ya tiene `*.<public_domain>` (CloudFront no
+    admite el mismo nombre alternativo en dos distribuciones; ante un
+    solape gana el más específico) o para una prueba aislada."""
+    validate_public_domain(public_domain)
+    if isinstance(names, str) or not names:
+        raise InvalidArgumentException(
+            "alternate_domain_names debe ser una lista no vacía de hostnames (omítelo para "
+            f"usar el comodín {WILDCARD_LABEL}.{public_domain})"
+        )
+    if len(names) > MAX_ALTERNATE_DOMAIN_NAMES:
+        raise InvalidArgumentException(
+            f"demasiados nombres alternativos ({len(names)}): CloudFront admite "
+            f"{MAX_ALTERNATE_DOMAIN_NAMES} por distribución"
+        )
+    suffix = f"{_DOMAIN_LABEL_SEPARATOR}{public_domain}"
+    for name in names:
+        label = name[: -len(suffix)] if name.endswith(suffix) else None
+        if label is None or not (label == WILDCARD_LABEL or _DNS_LABEL_RE.match(label)):
+            raise InvalidArgumentException(
+                f"nombre alternativo inválido: {name!r} (debe ser <etiqueta>{suffix} o "
+                f"{WILDCARD_LABEL}{suffix})"
+            )
+    if len(set(names)) != len(names):
+        raise InvalidArgumentException(f"nombres alternativos repetidos: {list(names)!r}")
+    return tuple(names)
 
 
 def validate_alias(value: str) -> str:

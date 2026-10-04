@@ -51,6 +51,24 @@
 - **WHEN** `deploy()` runs against a fake stack already in `ROLLBACK_COMPLETE`
 - **THEN** `StackException`/`StackError` is raised naming the stack, and no `KeyValueStoreWriter` call is made
 
+### Requirement: deploy can replace the wildcard alias with explicit, validated names
+`CustomDomain.deploy(certificate_arn=..., alternate_domain_names=[...])` (Python sync and async, TypeScript `alternateDomainNames`) SHALL pass the names, comma-joined, as the template's `AlternateDomainNames` parameter, which replaces the distribution's default `*.<PublicDomain>` alias. Without the argument the parameter SHALL NOT be sent (the template default keeps the wildcard). Before any AWS call it SHALL reject, with `InvalidArgumentException`/`InvalidArgumentError`: an empty list (or a bare string in Python), more than 100 names (CloudFront's default per-distribution quota), a duplicate, and any name that is not `*.<public_domain>` or a single lowercase DNS label followed by `.<public_domain>`.
+
+#### Scenario: shared fixture in both SDKs
+- **WHEN** every `alternateDomainNames.valid` and `alternateDomainNames.invalid` case in `testdata/custom-domain/hostnames.json` is validated against its `publicDomain`
+- **THEN** the valid lists are returned unchanged and the invalid ones raise, in both the Python and TypeScript test suites
+
+#### Scenario: names outside the domain never reach CloudFormation
+- **WHEN** `deploy(certificate_arn=..., alternate_domain_names=["8000-a.other.example"])` runs against a fake `StackProvisioner` for `public_domain="sbx.example.com"`
+- **THEN** `InvalidArgumentException`/`InvalidArgumentError` is raised and the fake records no call
+
+### Requirement: the AWS acceptance e2e takes its environment only from variables and is isolated per run
+The custom-domain e2e (Python and TypeScript) SHALL read the domain and certificate only from `RAYITO_E2E_DOMAIN` and `RAYITO_E2E_CERT_ARN` and SHALL skip, without any AWS call, when either is missing. Each run SHALL deploy its own stack with a random id and only its own routes' exact hostnames as alternate names, SHALL reach the distribution without DNS by connecting to its `DistributionDomainName` while sending the custom hostname as TLS SNI and `Host`, and SHALL destroy the stack in teardown even when `deploy()` failed.
+
+#### Scenario: missing variables skip cleanly
+- **WHEN** the e2e runs with `RAYITO_E2E=1` but without `RAYITO_E2E_DOMAIN` or `RAYITO_E2E_CERT_ARN`
+- **THEN** every test in the module is skipped and no fixture (including the AWS pre-flight) is set up
+
 ### Requirement: register/unregister write and remove both KeyValueStore keys with a chained ETag
 `CustomDomain.register(alias, port, endpoint=, jwe=, traffic_token=None, public=False, ttl_seconds=)` SHALL validate, before any KVS call: `ttl_seconds > 0`; the encoded metadata size; and that `traffic_token` is given unless `public=True` (a route is never public by omission, SEC-T25), raising `InvalidArgumentException`/`InvalidArgumentError` otherwise. It SHALL then call `DescribeKeyValueStore` once and `PutKey` twice (`j:<label>` with the JWE, `m:<label>` with `{endpoint, sha256(traffic_token) or "", expires_at}`), chaining each call's returned `ETag` into the next. `traffic_token`, when given, SHALL be stored only as its sha256 hex digest, never in clear text. If the second `PutKey` fails, the first SHALL be deleted best-effort before the error propagates, so a route never ends up with a live `j:` and no `m:`. The whole describe-then-write sequence SHALL be retried, up to a bounded number of times, when a write is rejected for an `ETag` conflict with another writer of the same route. `unregister(alias, port)` SHALL call `DescribeKeyValueStore` once and `DeleteKey` on both keys, and SHALL be idempotent: a `ResourceNotFoundException` (surfaced as `aws_code`/`awsCode` on the raised exception) from a missing key SHALL NOT propagate.
 

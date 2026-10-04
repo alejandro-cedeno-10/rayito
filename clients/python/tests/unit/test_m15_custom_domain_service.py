@@ -14,6 +14,7 @@ import pytest
 
 from rayito._custom_domain._domain import MAX_KVS_VALUE_BYTES
 from rayito._custom_domain._service import (
+    ALTERNATE_DOMAIN_NAMES_PARAMETER,
     CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
     MAX_STACK_NAME_LENGTH,
     CustomDomain,
@@ -28,6 +29,7 @@ from .fake_stacks import FakeStackProvisioner
 
 PUBLIC_DOMAIN = "sbx.example.com"
 KVS_ARN = "arn:aws:cloudfront::111122223333:key-value-store/abc123"
+CERTIFICATE_ARN = "arn:aws:acm:us-east-1:111122223333:certificate/abc"
 
 
 def _deployed_domain(
@@ -103,6 +105,49 @@ def test_deploy_delegates_to_optional_stacks_with_the_right_parameters() -> None
     status = domain.deploy(certificate_arn="arn:aws:acm:us-east-1:111122223333:certificate/abc")
     assert status.state == "CREATE_COMPLETE"
     assert [call[0] for call in stacks.calls] == ["describe", "create", "wait", "describe"]
+
+
+def test_deploy_passes_public_domain_and_certificate_and_keeps_the_wildcard() -> None:
+    stacks = FakeStackProvisioner()
+    domain = CustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks)
+    domain.deploy(certificate_arn=CERTIFICATE_ARN)
+    # Sin `alternate_domain_names`, ni siquiera se manda el parámetro: el
+    # valor por defecto de la plantilla ("") deja el comodín.
+    assert stacks.parameters["rayito-custom-domain"] == {
+        "PublicDomain": PUBLIC_DOMAIN,
+        "CertificateArn": CERTIFICATE_ARN,
+    }
+
+
+def test_deploy_passes_explicit_alternate_domain_names_comma_joined() -> None:
+    stacks = FakeStackProvisioner()
+    domain = CustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks)
+    names = [domain.host_for("e2e-a", 8000), domain.host_for("e2e-b", 8000)]
+    domain.deploy(certificate_arn=CERTIFICATE_ARN, alternate_domain_names=names)
+    assert stacks.parameters["rayito-custom-domain"][ALTERNATE_DOMAIN_NAMES_PARAMETER] == (
+        "8000-e2e-a.sbx.example.com,8000-e2e-b.sbx.example.com"
+    )
+
+
+def test_deploy_rejects_alternate_domain_names_outside_the_public_domain_before_aws() -> None:
+    stacks = FakeStackProvisioner()
+    domain = CustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks)
+    with pytest.raises(InvalidArgumentException, match="nombre alternativo"):
+        domain.deploy(
+            certificate_arn=CERTIFICATE_ARN, alternate_domain_names=["8000-a.other.example"]
+        )
+    assert stacks.calls == []
+
+
+async def test_async_deploy_forwards_alternate_domain_names() -> None:
+    stacks = FakeStackProvisioner()
+    domain = AsyncCustomDomain(public_domain=PUBLIC_DOMAIN, provisioner=stacks)
+    await domain.deploy(
+        certificate_arn=CERTIFICATE_ARN, alternate_domain_names=["*.sbx.example.com"]
+    )
+    assert stacks.parameters["rayito-custom-domain"][ALTERNATE_DOMAIN_NAMES_PARAMETER] == (
+        "*.sbx.example.com"
+    )
 
 
 def test_deploy_and_destroy_default_to_the_custom_domain_wait_timeout() -> None:

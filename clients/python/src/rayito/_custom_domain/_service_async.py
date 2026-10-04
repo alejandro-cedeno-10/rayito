@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import boto3
 
@@ -57,6 +57,7 @@ class AsyncCustomDomain:
         self,
         *,
         certificate_arn: str,
+        alternate_domain_names: Sequence[str] | None = None,
         tags: dict[str, str] | None = None,
         wait: bool = True,
         wait_timeout: float = CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS,
@@ -64,6 +65,7 @@ class AsyncCustomDomain:
         return await asyncio.to_thread(
             self._inner.deploy,
             certificate_arn=certificate_arn,
+            alternate_domain_names=alternate_domain_names,
             tags=tags,
             wait=wait,
             wait_timeout=wait_timeout,

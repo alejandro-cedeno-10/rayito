@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from rayito._custom_domain._domain import (
+    MAX_ALTERNATE_DOMAIN_NAMES,
     MAX_KVS_VALUE_BYTES,
     RouteMetadata,
     check_kvs_value_size,
@@ -19,6 +20,7 @@ from rayito._custom_domain._domain import (
     route_label,
     traffic_token_digest,
     validate_alias,
+    validate_alternate_domain_names,
     validate_public_domain,
     validate_route_port,
 )
@@ -51,6 +53,33 @@ def test_invalid_ports_are_rejected(port: int) -> None:
 def test_invalid_public_domains_are_rejected(public_domain: str) -> None:
     with pytest.raises(InvalidArgumentException):
         validate_public_domain(public_domain)
+
+
+ALTERNATE = TESTDATA["alternateDomainNames"]
+
+
+@pytest.mark.parametrize("names", ALTERNATE["valid"], ids=repr)
+def test_valid_alternate_domain_names_match_the_shared_fixture(names: list[str]) -> None:
+    assert validate_alternate_domain_names(names, ALTERNATE["publicDomain"]) == tuple(names)
+
+
+@pytest.mark.parametrize("names", ALTERNATE["invalid"], ids=repr)
+def test_invalid_alternate_domain_names_are_rejected(names: list[str]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        validate_alternate_domain_names(names, ALTERNATE["publicDomain"])
+
+
+def test_a_bare_string_is_not_a_list_of_alternate_domain_names() -> None:
+    # Un `str` también es una `Sequence[str]`: sin esta guarda, cada letra
+    # se validaría como un hostname.
+    with pytest.raises(InvalidArgumentException):
+        validate_alternate_domain_names("8000-ws-7.sbx.example.com", "sbx.example.com")
+
+
+def test_more_alternate_domain_names_than_cloudfront_allows_are_rejected() -> None:
+    names = [f"{index}-a.sbx.example.com" for index in range(1, MAX_ALTERNATE_DOMAIN_NAMES + 2)]
+    with pytest.raises(InvalidArgumentException, match="demasiados"):
+        validate_alternate_domain_names(names, "sbx.example.com")
 
 
 def test_route_label_is_port_dash_alias() -> None:

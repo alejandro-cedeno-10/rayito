@@ -14,15 +14,18 @@ import {
   encodeRouteMetadata,
   kvsJsonKey,
   kvsMetaKey,
+  MAX_ALTERNATE_DOMAIN_NAMES,
   MAX_KVS_VALUE_BYTES,
   routeHost,
   routeLabel,
   trafficTokenDigest,
   validateAlias,
+  validateAlternateDomainNames,
   validatePublicDomain,
   validateRoutePort,
 } from "../../src/custom-domain/domain.js";
 import {
+  ALTERNATE_DOMAIN_NAMES_PARAMETER,
   CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
   CustomDomain,
   type CustomDomainRoute,
@@ -44,6 +47,7 @@ const TESTDATA = JSON.parse(
   invalidAlias: string[];
   invalidPort: number[];
   invalidPublicDomain: string[];
+  alternateDomainNames: { publicDomain: string; valid: string[][]; invalid: string[][] };
 };
 
 const PUBLIC_DOMAIN = "sbx.example.com";
@@ -83,6 +87,29 @@ describe("custom-domain/domain", () => {
 
   test.each(TESTDATA.invalidPublicDomain)("invalid publicDomain %j is rejected", (domain) => {
     expect(() => validatePublicDomain(domain)).toThrow(InvalidArgumentError);
+  });
+
+  test.each(TESTDATA.alternateDomainNames.valid)("valid alternate names %j", (...names) => {
+    expect(validateAlternateDomainNames(names, TESTDATA.alternateDomainNames.publicDomain)).toEqual(
+      names,
+    );
+  });
+
+  test.each(TESTDATA.alternateDomainNames.invalid.map((names) => [names]))(
+    "invalid alternate names %j are rejected",
+    (names) => {
+      expect(() =>
+        validateAlternateDomainNames(names, TESTDATA.alternateDomainNames.publicDomain),
+      ).toThrow(InvalidArgumentError);
+    },
+  );
+
+  test("more alternate names than CloudFront allows are rejected", () => {
+    const names = Array.from(
+      { length: MAX_ALTERNATE_DOMAIN_NAMES + 1 },
+      (_, index) => `${index + 1}-a.sbx.example.com`,
+    );
+    expect(() => validateAlternateDomainNames(names, "sbx.example.com")).toThrow(/demasiados/);
   });
 
   test("routeLabel is port-dash-alias", () => {
@@ -168,6 +195,40 @@ describe("custom-domain/service", () => {
     const status = await domain.deploy({ certificateArn: CERTIFICATE_ARN });
     expect(status.state).toBe("CREATE_COMPLETE");
     expect(stacks.calls.map((c) => c[0])).toEqual(["describe", "create", "wait", "describe"]);
+  });
+
+  test("deploy keeps the wildcard: no AlternateDomainNames parameter by default", async () => {
+    const stacks = new FakeStackProvisioner();
+    const domain = new CustomDomain({ publicDomain: PUBLIC_DOMAIN, provisioner: stacks });
+    await domain.deploy({ certificateArn: CERTIFICATE_ARN });
+    expect(stacks.parameters.get(`rayito-${STACK_COMPONENT}`)).toEqual({
+      PublicDomain: PUBLIC_DOMAIN,
+      CertificateArn: CERTIFICATE_ARN,
+    });
+  });
+
+  test("deploy passes explicit alternate names comma-joined", async () => {
+    const stacks = new FakeStackProvisioner();
+    const domain = new CustomDomain({ publicDomain: PUBLIC_DOMAIN, provisioner: stacks });
+    await domain.deploy({
+      certificateArn: CERTIFICATE_ARN,
+      alternateDomainNames: [domain.hostFor("e2e-a", 8000), domain.hostFor("e2e-b", 8000)],
+    });
+    expect(
+      stacks.parameters.get(`rayito-${STACK_COMPONENT}`)?.[ALTERNATE_DOMAIN_NAMES_PARAMETER],
+    ).toBe("8000-e2e-a.sbx.example.com,8000-e2e-b.sbx.example.com");
+  });
+
+  test("deploy rejects alternate names outside publicDomain before AWS", async () => {
+    const stacks = new FakeStackProvisioner();
+    const domain = new CustomDomain({ publicDomain: PUBLIC_DOMAIN, provisioner: stacks });
+    await expect(
+      domain.deploy({
+        certificateArn: CERTIFICATE_ARN,
+        alternateDomainNames: ["8000-a.other.example"],
+      }),
+    ).rejects.toThrow(/nombre alternativo/);
+    expect(stacks.calls).toEqual([]);
   });
 
   test("deploy and destroy default to the custom-domain wait timeout", async () => {
