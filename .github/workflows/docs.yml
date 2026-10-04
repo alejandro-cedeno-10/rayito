@@ -22,6 +22,13 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  # uv nunca vuelve a resolver un uv.lock que ya no casa con su pyproject.toml
+  # (sec-supply-chain-followups, SC-A05): sin esto `uv run` re-bloquea en
+  # silencio e instala versiones que ni Dependabot ni los hashes del lock
+  # vieron.
+  UV_LOCKED: "1"
+
 jobs:
   build:
     name: build docs site (mkdocs --strict)
@@ -33,7 +40,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # Sin caché (sec-supply-chain-followups, SC-A02): la clave de uv del
+      # ámbito de `main` es la misma que escriben los jobs de ci.yml, y lo que
+      # construye este job es el sitio que publica `deploy` sin revisor.
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
       - name: Build the docs site strictly

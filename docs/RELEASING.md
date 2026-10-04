@@ -16,7 +16,7 @@ obsolescencia y soporte que siguen las releases está en
 |---|---|---|---|
 | `clients/python` (paquete `rayito`) | PyPI | `python-v<versión>` | `.github/workflows/release.yml` con Trusted Publishing (jobs `python-build` + `python-publish`) |
 | `clients/typescript` (paquete `rayito`) | npm | `typescript-v<versión>` | la primera vez el mantenedor a mano (§3); después los jobs `typescript-build` + `typescript-publish` de `.github/workflows/release.yml` (npm trusted publishing) |
-| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | los jobs `rayd-build` (compila, sin credenciales), `rayd-sign` (cosign keyless, sin checkout) y `rayd-upload` (environment `release`, sin checkout, sin `--clobber`) de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
+| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | los jobs `rayd-build` (compila, sin credenciales), `rayd-sign` (environment `release`, cosign keyless, sin checkout) y `rayd-upload` (environment `release`, sin checkout, sin `--clobber`) de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
 | imagen `rayito-base` | tu cuenta de AWS | ninguno | `make image-publish` (`rayito image publish`, `scripts/publish_image.py` como shim); la versión de imagen es un número de build opaco de AWS, anotado en `MILESTONES.md` |
 
 Regla de paridad: **el tag debe ser igual a la versión del manifiesto**
@@ -46,8 +46,16 @@ nadie edita un manifiesto a mano.
 otros workflows. Dos caminos, los dos soportados:
 
 - Guardar un PAT fine-grained (permisos `contents: write` y `pull-requests:
-  write`, sólo este repositorio) como secreto `RELEASE_PLEASE_TOKEN`:
-  release-please lo usa y los tags disparan `release.yml` solos.
+  write`, sólo este repositorio, con caducidad corta) como secreto
+  `RELEASE_PLEASE_TOKEN`: release-please lo usa y los tags disparan
+  `release.yml` solos. Ojo con su alcance: con `main` sin aprobaciones
+  obligatorias, ese token puede abrir y fusionar un PR en cuanto pasen los
+  checks, crear tags `rayd-v*` y reemplazar assets de releases ya publicadas
+  (las releases inmutables están apagadas), y lo fusionado en `main` llega a
+  GitHub Pages sin revisor. Lo único que no puede es aprobar los
+  environments `pypi`, `npm` y `release`, así que no publica ni firma nada.
+  Rótalo al caducar y en cuanto sospeches de él (Settings → Developer
+  settings → Fine-grained tokens), y ver "Ajustes pendientes" abajo.
 - Sin el secreto, lanzar `release.yml` a mano por cada tag: Actions →
   release → Run workflow → **Use workflow from: el tag** → `tag` = el mismo
   tag → `dry_run` = false. El job `resolve` se niega a publicar si el run
@@ -62,9 +70,13 @@ publica código que no pasó por la revisión y los checks de `main`. Los tags
 de release-please siempre apuntan al merge del PR de release, así que el
 flujo normal no lo nota.
 
-**Subida de `rayd` con aprobación.** `rayd-upload` corre en el environment
-`release` (required reviewer, política de tags `rayd-v*`): la release espera
-a que el mantenedor apruebe el despliegue, como `pypi` y `npm`. Nunca
+**Firma y subida de `rayd` con aprobación.** `rayd-sign` y `rayd-upload`
+corren en el environment `release` (required reviewer, política de tags
+`rayd-v*`): la release espera a que el mantenedor apruebe el despliegue, como
+`pypi` y `npm`, y lo aprueba **antes de firmar**, porque sin esa aprobación
+GitHub no entrega el token OIDC con el que Sigstore emite el certificado de
+`release.yml@refs/tags/rayd-v<versión>` (sec-supply-chain-followups,
+SC-A01). Son dos aprobaciones por release de `rayd` (firma y subida). Nunca
 reemplaza un asset: si la release ya tiene uno con el mismo nombre, falla
 antes de subir nada. Si una subida se cortó a medias, borra a mano los assets
 parciales de esa release (`gh release delete-asset <tag> <asset>`) y vuelve a
@@ -72,21 +84,42 @@ lanzar el job.
 
 **Ensayo.** `Run workflow` con `dry_run` = true (por defecto) desde cualquier
 rama cuyos manifiestos ya lleven la versión del `tag` (la rama del PR de
-release, por ejemplo): construye, comprueba, firma (`rayd`) y sube los
-artefactos al run sin publicar nada. Para `python` y `typescript` (M10, C-10)
+release, por ejemplo): construye, comprueba y sube los artefactos sin firmar
+al run, sin firmar ni publicar nada. Para `python` y `typescript` (M10, C-10)
 esto se ve en dos jobs: `python-build`/`typescript-build` corren siempre y
 suben su artefacto, y `python-publish`/`typescript-publish` (los únicos con
 el token OIDC) se marcan **skipped** por su propio `if:` — ningún job de
 publish llega a ejecutarse en un ensayo, así que tampoco descarga ni verifica
-nada. `rayd` corre `rayd-build` y `rayd-sign` (firma con la identidad del ref
-del ensayo) y salta `rayd-upload`.
+nada. `rayd` corre sólo `rayd-build`: `rayd-sign` y `rayd-upload` se
+saltan, así que un ensayo nunca obtiene un certificado de Sigstore (antes
+firmaba con la identidad del ref del ensayo, y un ensayo lanzado desde un
+tag `rayd-v*` firmaba con la identidad exacta que verifican los usuarios).
 
 **Sin cachés.** Ningún job de `release.yml` restaura una caché de Actions: un
 run de tag restaura las del ámbito de `main`, que cualquier job de `main`
 puede escribir. zig y `cargo-deny` llegan por las acciones locales
 `.github/actions/zig` y `.github/actions/cargo-deny` (sha256 fijado), las
 herramientas de cargo se compilan en cada release (unos minutos más) y twine
-sale de `.github/release/requirements-twine.txt` con `--require-hashes`.
+sale de `.github/release/requirements-twine.txt` con `--require-hashes`. uv
+llega por `.github/actions/setup-uv` (versión y sha256 fijados, la misma
+acción en todos los workflows) y `UV_LOCKED=1` impide que re-bloquee un
+`uv.lock` desfasado.
+
+**`dist/` exacto.** `python-build` y `python-publish` comprueban que `dist/`
+contiene exactamente la wheel y el sdist de la versión del tag, los dos en
+`SHA256SUMS`: `sha256sum -c` no ve un fichero que no esté listado, y
+`gh-action-pypi-publish` sube todo lo que haya en el directorio
+(SC-A04).
+
+**La imagen de `gh-action-pypi-publish`.** La acción va fijada por SHA, pero
+ejecuta twine en un contenedor de `ghcr.io/pypa/gh-action-pypi-publish`
+direccionado por etiqueta, no por digest, dentro del job que tiene el token
+OIDC de PyPI. Es una dependencia de confianza aceptada del Trusted Publishing
+(quien controle ese espacio de GHCR podría volver a subir la etiqueta), igual
+que confiar en el propio PyPI (SC-A11). Si dejara de aceptarse, la
+alternativa es `uv publish --trusted-publishing always` con el uv fijado y
+las attestations PEP 740 generadas con `pypi-attestations` desde requisitos
+con hash.
 
 **Sin reconfigurar nada al partir build y publish.** El *Trusted Publisher*
 de PyPI y de npm liga el token OIDC al fichero de workflow
@@ -97,6 +130,33 @@ nada en pypi.org ni en npmjs.com.
 
 **Verificación** de lo publicado: `docs/site/docs/verify.md` (cosign,
 `cargo audit bin`, attestations de PyPI, `npm view … dist.attestations`).
+
+### Ajustes pendientes del repositorio
+
+Ajustes que el workflow no puede imponer desde el árbol y que siguen
+pendientes (sec-supply-chain-followups); cada uno es una decisión del
+mantenedor:
+
+1. **Creación de tags.** El ruleset `release-tags` prohíbe mover y borrar
+   tags de release, pero no crearlos. Una regla `creation` para
+   `refs/tags/{python,typescript,rayd}-v*`, en un ruleset aparte cuyo único
+   bypass sea quien crea los tags (para no abrir `update`/`deletion` a
+   nadie), cierra el tag creado fuera de release-please. Con el PAT del
+   mantenedor como creador de tags, ese bypass también lo tendría un PAT
+   filtrado; el control fino llega con la App del punto 2.
+2. **App en vez de PAT.** Sustituir `RELEASE_PLEASE_TOKEN` por
+   `actions/create-github-app-token` con una GitHub App limitada a
+   `contents` y `pull-requests` de este repositorio. Mientras tanto, mover
+   el secreto a un environment `release-please` limitado a `main`.
+3. **Releases inmutables.** Encenderlas (release-please en borrador,
+   publicar tras `rayd-upload`) para que ningún token pueda reemplazar un
+   asset publicado.
+4. **Actions.** `allowed_actions=selected` con las acciones actuales y
+   `sha_pinning_required`, y `egress-policy: block` con la lista explícita
+   de endpoints en los jobs con credenciales (hoy `harden-runner` sólo
+   audita). Quitar el bypass de administradores de `pypi`, `npm` y
+   `release` es casi simbólico con un único mantenedor, que ya es el
+   revisor.
 
 ## 2. PyPI (`rayito`, Python)
 
@@ -114,9 +174,7 @@ Una sola vez, antes del primer tag:
 En cada release:
 
 ```bash
-cd clients/python && uv build
-python scripts/check_wheel.py clients/python/dist/*.whl   # desde la raíz
-uvx twine==7.0.0 check clients/python/dist/*
+make wheel   # uv build + check_wheel.py + twine check (twine desde requisitos con --hash)
 git tag python-v<versión> && git push origin python-v<versión>
 ```
 

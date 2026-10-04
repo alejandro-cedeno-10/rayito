@@ -77,14 +77,28 @@ la tabla "Cadena de suministro"):
   exacta que instalas (`release.yml@refs/tags/rayd-v<versión>`), así que un
   asset antiguo o firmado bajo otro tag no la pasa.
 - El job que compila no tiene ninguna credencial: firmar (token OIDC) y subir
-  a la release (`contents: write`, con la aprobación del mantenedor) son jobs
-  aparte que no hacen checkout ni ejecutan herramientas de build, y comprueban
-  con `sha256sum -c` lo que produjo el build. Ningún job de la release
-  restaura una caché de Actions, zig y `cargo-deny` se descargan contra un
-  sha256 fijado, un asset publicado no se reemplaza nunca, y publicar exige
-  que el commit del tag esté en `main`.
+  a la release (`contents: write`) son jobs aparte que no hacen checkout ni
+  ejecutan herramientas de build, y comprueban con `sha256sum -c` lo que
+  produjo el build. Los dos esperan la aprobación del mantenedor (environment
+  `release`): sin ella no hay token OIDC ni certificado de Sigstore, y un
+  ensayo no firma nada. Ningún job de la release, del sitio de documentación
+  ni del e2e restaura una caché de Actions; zig, `cargo-deny` y uv se
+  descargan contra un sha256 fijado; el workflow nunca reemplaza un asset
+  publicado, y publicar exige que el commit del tag esté en `main`.
+- Un token del repositorio con `contents: write` sí podría reemplazar un
+  asset de una release (las releases inmutables siguen apagadas): por eso la
+  receta de [Configurar AWS](primeros-pasos/configurar-aws.md) comprueba la
+  firma y `SHA256SUMS` **antes** de `rayito image publish`, que no verifica
+  nada por sí mismo.
+- Las herramientas de CI con dependencias (twine, pip-audit, cfn-lint) se
+  instalan desde requisitos con `--hash`, nunca con `uvx`, y `uv` nunca
+  re-bloquea un `uv.lock` desfasado (`UV_LOCKED=1`).
 - Dependabot espera 7 días (14 para un major) antes de proponer una versión
   recién publicada; las actualizaciones de seguridad no esperan.
+- El constructor del artefacto de imagen (`rayito image zip`,
+  `make image-publish`) rechaza cualquier enlace simbólico en `image/` y en
+  `kernel-sidecar/`: un enlace metería en la imagen el contenido de un
+  fichero de la máquina que construye.
 
 ## Persistencia en S3 (T15)
 

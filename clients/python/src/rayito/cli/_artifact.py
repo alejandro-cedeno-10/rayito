@@ -69,16 +69,40 @@ def is_excluded(relative: Path) -> bool:
     return any(part in EXCLUDED_DIRECTORIES for part in relative.parts[:-1])
 
 
+def is_excluded_directory(path: Path) -> bool:
+    """An excluded directory itself (``.venv`` linked elsewhere is common),
+    not only what lies under it: it never ships, so it is never refused."""
+    return path.name in EXCLUDED_DIRECTORIES and (path.is_symlink() or path.is_dir())
+
+
+def refuse_symlink(root: Path, path: Path) -> None:
+    """A symlink would ship its target's bytes, which can live anywhere on
+    the builder's machine (a credentials file in the home directory), into
+    every sandbox image, readable by uid 1000 after the Dockerfile's
+    ``chmod -R a+rX``. Neither the image tree nor the sidecar has one, so
+    the walk refuses it instead of following it."""
+    if path.is_symlink():
+        raise SystemExit(
+            f"{root}/{path.relative_to(root).as_posix()} is a symlink: "
+            "the image artifact ships regular files only"
+        )
+
+
 def shipped_files(root: Path) -> list[Path]:
     """Files under ``root`` that the zip ships: the exclusion list is checked
     before the filesystem is touched, so an unreadable entry inside an
     excluded directory (a Linux venv symlink seen from Windows) never
-    aborts the walk."""
-    return [
-        path
-        for path in sorted(root.rglob("*"))
-        if not is_excluded(path.relative_to(root)) and path.is_file()
-    ]
+    aborts the walk. Any other symlink, to a file or to a directory, stops
+    the walk (``refuse_symlink``); ``rglob`` does not descend into a linked
+    directory, so the link itself is where it is caught."""
+    files: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if is_excluded(path.relative_to(root)) or is_excluded_directory(path):
+            continue
+        refuse_symlink(root, path)
+        if path.is_file():
+            files.append(path)
+    return files
 
 
 def image_files(image_dir: Path) -> list[Path]:

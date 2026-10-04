@@ -17,9 +17,11 @@ name: e2e (AWS)
 # además `maximumDurationInSeconds` ≤ 1800.
 #
 # Credenciales: sólo por OIDC con `aws-actions/configure-aws-credentials`
-# sobre el rol de `infra/ci-oidc-role.yaml` (trust exacto a
-# `repo:alejandro-cedeno-10/rayito:environment:e2e`; sólo las acciones de MicroVM sobre
-# el ARN de la imagen de test). Sin `RAYITO_EXECUTION_ROLE_ARN`: los tests
+# sobre el rol de `infra/ci-oidc-role.yaml` (trust `StringEquals` al `sub`
+# exacto `<GitHubSubjectPrefix>:environment:e2e`, con el prefijo de sujeto
+# inmutable que devuelve la API de GitHub; sólo las acciones de MicroVM sobre
+# el ARN de la imagen de test). Ningún job restaura una caché de Actions
+# (sec-supply-chain-followups, SC-A02). Sin `RAYITO_EXECUTION_ROLE_ARN`: los tests
 # que lo necesitan se saltan solos y no hay logs de runtime en CI.
 #
 # Pasos manuales, una sola vez (infra/README.md):
@@ -65,6 +67,11 @@ permissions:
   contents: read
 
 env:
+  # uv nunca vuelve a resolver un uv.lock que ya no casa con su pyproject.toml
+  # (sec-supply-chain-followups, SC-A05): sin esto `uv run` re-bloquea en
+  # silencio e instala versiones que ni Dependabot ni los hashes del lock
+  # vieron.
+  UV_LOCKED: "1"
   RAYITO_E2E: "1"
   RAYITO_TEMPLATE: ${{ vars.RAYITO_E2E_TEMPLATE_ARN }}
   RAYITO_TEMPLATE_VERSION: ${{ inputs.template_version }}
@@ -100,7 +107,7 @@ jobs:
             --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text | wc -w)
           echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE"
           test "$live" -le 10 || { echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE (> 10)"; exit 1; }
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
       - name: pytest tests/e2e -m e2e
@@ -160,8 +167,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:e2e
       - name: sweeper (terminate every remaining MicroVM of the template)

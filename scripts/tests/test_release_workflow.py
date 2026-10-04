@@ -10,6 +10,10 @@ pins:
   ``permissions.id-token: write``, and only ``rayd-upload`` holds
   ``contents: write`` (M10 C-10 for Python/TypeScript; ``sec-supply-chain-ci``
   splits ``rayd`` the same way);
+- every job holding ``id-token: write`` declares an ``environment`` and runs
+  only behind the publish gate, so no Fulcio certificate or registry token
+  is issued for the release identity before the reviewer approves (a dry
+  run stops at the build jobs; ``sec-supply-chain-followups``, SC-A01);
 - no job holding a credential checks out the repository or runs third-party
   build tooling (``pnpm``, ``uv``, ``uvx``, ``pip``, ``npm install``,
   ``npm ci``, ``cargo``, ``make``), and each verifies a ``sha256sum -c`` of
@@ -23,7 +27,12 @@ pins:
   ``~/.cargo/bin`` that a cache could have planted;
 - ``python-build`` hashes ``dist/`` right after ``uv build``, before any
   third-party check, re-checks the hash at the end, installs twine only from
-  hash-pinned requirements, and pins uv by version and checksum;
+  hash-pinned requirements, and gets uv from ``./.github/actions/setup-uv``
+  (version and checksum pinned there);
+- ``python-build`` and ``python-publish`` refuse a ``dist/`` that holds
+  anything but the wheel and sdist of the tag's version, all listed in
+  ``SHA256SUMS``: ``sha256sum -c`` ignores unlisted files, and the publish
+  action uploads every distribution in the directory (SC-A04);
 - ``rayd-upload`` runs in the ``release`` environment, never replaces an
   asset (no ``--clobber``) and publishing needs the tagged commit on
   ``main``;
@@ -61,6 +70,7 @@ GITHUB_WORKSPACE_PREFIX = "${{ github.workspace }}/"
 SHA256_CHECK = "sha256sum -c"
 CACHE_ACTIONS = ("actions/cache", "Swatinem/rust-cache", "mlugg/setup-zig")
 SETUP_UV = "astral-sh/setup-uv"
+LOCAL_SETUP_UV = "./.github/actions/setup-uv"
 SETUP_NODE = "actions/setup-node"
 PNPM_SETUP = "pnpm/action-setup"
 LOCAL_ZIG_ACTION = "./.github/actions/zig"
@@ -73,6 +83,12 @@ EXACT_IDENTITY = (
     '/.github/workflows/release.yml@${GITHUB_REF}"'
 )
 HASHED_TWINE = "--require-hashes"
+ENVIRONMENT_KEY = "environment"
+EXPECTED_WHEEL = "rayito-%s-py3-none-any.whl"
+EXPECTED_SDIST = "rayito-%s.tar.gz"
+DIST_LISTING = "find dist -mindepth 1 -maxdepth 1"
+SUMS_LISTING = "SHA256SUMS"
+UPLOAD_ACTION = "actions/upload-artifact"
 TWINE_REQUIREMENTS = ".github/release/requirements-twine.txt"
 
 
@@ -126,6 +142,59 @@ def test_only_the_publish_jobs_and_rayd_sign_hold_id_token_write() -> None:
     assert holders == ID_TOKEN_WRITE_JOBS
 
 
+def test_every_id_token_job_waits_for_an_environment_and_the_publish_gate() -> None:
+    """A dry run (``publish=false``) from a ``rayd-v*`` tag signed with the
+    exact identity users verify, and nothing asked a reviewer first: the
+    environment's approval has to come before the OIDC token exists."""
+    jobs = load_jobs()
+
+    for name, job in jobs.items():
+        if job_permissions(job).get("id-token") != "write":
+            continue
+        assert job.get(ENVIRONMENT_KEY), name
+        assert PUBLISH_GATE in (job.get("if") or ""), name
+
+
+def test_rayd_sign_runs_in_the_release_environment() -> None:
+    job = load_jobs()["rayd-sign"]
+
+    assert job.get(ENVIRONMENT_KEY) == RELEASE_ENVIRONMENT
+
+
+def dist_fileset_index(steps: list[dict[str, Any]]) -> int:
+    return next(
+        i
+        for i, step in enumerate(steps)
+        if DIST_LISTING in step.get("run", "")
+        and EXPECTED_WHEEL in step["run"]
+        and EXPECTED_SDIST in step["run"]
+        and SUMS_LISTING in step["run"]
+    )
+
+
+def test_python_dist_holds_exactly_the_wheel_and_sdist_of_the_tag() -> None:
+    jobs = load_jobs()
+    build_steps = jobs["python-build"]["steps"]
+    publish_steps = jobs["python-publish"]["steps"]
+
+    build_check = dist_fileset_index(build_steps)
+    upload = next(
+        i
+        for i, step in enumerate(build_steps)
+        if step.get("uses", "").startswith(UPLOAD_ACTION)
+    )
+    publish_check = dist_fileset_index(publish_steps)
+    publish = next(
+        i
+        for i, step in enumerate(publish_steps)
+        if step.get("uses", "").startswith(PYPI_PUBLISH_ACTION)
+    )
+
+    assert build_check < upload
+    assert last_index(publish_steps, SHA256_CHECK) < publish_check < publish
+    assert "VERSION" in (jobs["python-publish"].get("env") or {})
+
+
 def test_only_rayd_upload_holds_contents_write() -> None:
     jobs = load_jobs()
 
@@ -172,6 +241,8 @@ def test_no_release_job_restores_a_cache() -> None:
             assert not uses.startswith(CACHE_ACTIONS), f"{name}: {uses}"
         for step in steps_using(job, SETUP_UV):
             assert is_off(step.get("with", {}).get("enable-cache")), name
+        for step in steps_using(job, LOCAL_SETUP_UV):
+            assert is_off((step.get("with") or {}).get("enable-cache", False)), name
         for step in steps_using(job, SETUP_NODE):
             options = step.get("with", {})
             assert "cache" not in options, name
@@ -223,15 +294,13 @@ def test_python_build_installs_twine_only_from_hashed_requirements() -> None:
     assert (REPO_ROOT / TWINE_REQUIREMENTS).is_file()
 
 
-def test_setup_uv_pins_its_version_and_checksum() -> None:
+def test_uv_comes_only_from_the_pinned_local_action() -> None:
+    """Version and checksum live once, in ``.github/actions/setup-uv``
+    (``test_workflow_hardening.py`` pins its contents)."""
     jobs = load_jobs()
-    setups = [step for job in jobs.values() for step in steps_using(job, SETUP_UV)]
 
-    assert setups
-    for step in setups:
-        options = step.get("with", {})
-        assert options.get("version"), step
-        assert options.get("checksum"), step
+    assert not any(steps_using(job, SETUP_UV) for job in jobs.values())
+    assert steps_using(jobs["python-build"], LOCAL_SETUP_UV)
 
 
 def test_rayd_upload_is_gated_and_never_replaces_an_asset() -> None:
