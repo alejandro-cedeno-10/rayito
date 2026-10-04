@@ -41,6 +41,14 @@ SBOM          := crates/rayd/rayd.cdx.json
 BASE_IMAGE_VERSION ?= 1
 BENCH_ARGS    ?=
 BENCH_OUT     ?= docs/benchmarks/raw
+# Herramientas de Python con dependencias (cfn-lint, twine): se instalan desde
+# su fichero de requisitos con --hash en un venv temporal que se borra al
+# acabar, nunca con `uvx`, que resolvería su grafo transitivo al vuelo en cada
+# ejecución (scripts/check_pins.py, puerta 2; sec-supply-chain-followups,
+# SC-A03). Uso: $(call hashed-tool,<herramienta>,<venv>).
+TOOL_REQUIREMENTS := .github/release
+TOOL_PYTHON   := 3.12
+hashed-tool = uv venv -q --python $(TOOL_PYTHON) $(2) && uv pip install -q --python $(2) --require-hashes --no-deps --only-binary :all: -r $(TOOL_REQUIREMENTS)/requirements-$(1).txt
 
 # Regenera los clientes Python/TypeScript desde proto/ (Rust se regenera solo en
 # cargo build vía crates/rayito-proto/build.rs, sin protoc).
@@ -203,7 +211,8 @@ image-prune:
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
 # transferencias, las políticas opcionales de secretos de M13a y la tabla
 # opcional del índice de metadatos de M14):
-# validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
+# validate-template (servidor, gratis) + cfn-lint (desde
+# .github/release/requirements-cfn-lint.txt, con --hash). cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).
 infra-lint:
@@ -213,8 +222,10 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(EVENTS_WEBHOOKS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EVENTS_WEBHOOKS_TEMPLATE)"
-	uvx cfn-lint==1.56.3 --version
-	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
+	tools="$$(mktemp -d)" && trap 'rm -rf "$$tools"' EXIT && \
+	  $(call hashed-tool,cfn-lint,"$$tools") && \
+	  "$$tools/bin/cfn-lint" --version && \
+	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.
@@ -270,7 +281,9 @@ dev-run:
 wheel:
 	cd $(PYTHON_CLIENT) && uv build
 	python scripts/check_wheel.py $(PYTHON_CLIENT)/dist/*.whl
-	uvx twine==7.0.0 check $(PYTHON_CLIENT)/dist/*
+	tools="$$(mktemp -d)" && trap 'rm -rf "$$tools"' EXIT && \
+	  $(call hashed-tool,twine,"$$tools") && \
+	  "$$tools/bin/twine" check $(PYTHON_CLIENT)/dist/*
 
 # Sitio de documentación (mkdocs-material + mkdocstrings) construido en modo
 # estricto desde el entorno del cliente Python, sin deploy.
