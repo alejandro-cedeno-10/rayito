@@ -323,6 +323,22 @@ marcada `failed` y no se vuelve a enviar sola, pero el evento sigue en
 `get_events()` durante 7 días: un receptor que estuvo caído puede ponerse al
 día leyéndolos.
 
+### Repeticiones, secretos y URLs
+
+- **La firma no lleva marca de tiempo**: una entrega capturada se puede
+  reenviar más tarde con la misma firma válida. Por eso hay que deduplicar
+  por `event_id` (arriba); guarda los ya procesados al menos una semana.
+- **Usa un secreto largo y aleatorio** (32 bytes o más, por ejemplo
+  `secrets.token_urlsafe(32)` o `randomBytes(32).toString("base64url")`):
+  una sola entrega observada permite probar secretos débiles sin conexión.
+- **Los secretos de firma viven bajo `rayito/webhooks/`** y nunca llegan a
+  un sandbox: `RayitoSecretsReader` los deniega y el SDK rechaza pasarlos
+  por `secrets=`. Un sandbox con ese secreto podría falsificar entregas.
+- **La URL del webhook se guarda en claro** en la tabla (con el cifrado por
+  defecto de DynamoDB) y `list_webhooks()` la devuelve: si tu receptor
+  lleva una credencial en la ruta (Slack, Discord), trátala como un dato
+  que puede leer quien tenga `EventsOperatorPolicy`.
+
 ## Opciones de `LifecycleEvents`
 
 | Python | TypeScript | Por defecto | Qué hace |
@@ -347,24 +363,6 @@ día leyéndolos.
 | `StackException` (`failed`, la pila en `DELETE_FAILED`) | `StackError` | `destroy()` con `EventsOperatorPolicy` aún vinculada a un usuario o rol | desvincula la política y repite `destroy()` |
 | `InvalidArgumentException` desde `run-microvm` ("Logging cannot be enabled without providing executionRoleArn") | `InvalidArgumentError` | `logging="cloudwatch"` sin `execution_role_arn` | pasa un rol de ejecución con permiso de escritura en el log group de la imagen |
 | ningún evento en la tabla | — | el log group de `deploy(log_group_name=)` no es el de la imagen, o el forwarder rechaza las líneas | mira la línea JSON del forwarder (`rejected_by_reason`) en su log |
-
-## Seguridad del receptor
-
-- **Verifica la firma y deduplica por `event_id`.** La firma de E2B
-  (`e2b-signature` = base64 de `sha256(secreto + cuerpo)`) no lleva marca de
-  tiempo: una entrega capturada se puede reenviar más tarde con la misma
-  firma. Guarda los `event_id` ya procesados y descarta los repetidos;
-  `e2b-delivery-id` cambia en cada intento y no sirve para eso.
-- **Usa un secreto largo y aleatorio** (32 bytes o más, por ejemplo
-  `secrets.token_urlsafe(32)` o `randomBytes(32).toString("base64url")`):
-  una sola entrega observada permite probar secretos débiles sin conexión.
-- **Los secretos de firma viven bajo `rayito/webhooks/`** y nunca llegan a
-  un sandbox: `RayitoSecretsReader` los deniega y el SDK rechaza pasarlos
-  por `secrets=`. Un sandbox con ese secreto podría falsificar entregas.
-- **La URL del webhook se guarda en claro** en la tabla (con el cifrado por
-  defecto de DynamoDB) y `list_webhooks()` la devuelve: si tu receptor
-  lleva una credencial en la ruta (Slack, Discord), trátala como un dato
-  que puede leer quien tenga `EventsOperatorPolicy`.
 
 ## Diferencias con E2B
 

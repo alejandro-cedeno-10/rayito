@@ -92,8 +92,8 @@ Reproduce el pipeline de `make image-publish`:
 es un error de uso (2). La biblioteca no trae ningún bucket por defecto: el
 bucket es de la cuenta que publica.
 
-Permisos S3 del principal que publica (la `CallerPolicy` de
-`infra/iam.yaml` los concede tal cual): `s3:PutObject` y `s3:GetObject`
+Permisos S3 del principal que publica (la `ImagePublisherPolicy` o la
+`CallerPolicy` de `infra/iam.yaml` los conceden tal cual): `s3:PutObject` y `s3:GetObject`
 sobre `arn:aws:s3:::<bucket>/rayito/*` y `s3:ListBucket` sobre
 `arn:aws:s3:::<bucket>`. `s3:ListBucket` es lo que hace que el `head-object`
 de un artefacto nuevo responda `404` en vez de `403` (sin él la CLI sube el
@@ -301,8 +301,8 @@ curl http://127.0.0.1:8000/
   marcha); sin recursos nuevos. Ctrl-C para el refresher y cierra el
   listener.
 - IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el
-  MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`; nada nuevo que
-  desplegar para usar el proxy).
+  MicroVM (ya en la `SandboxLauncherPolicy` y en la `CallerPolicy` de
+  `infra/iam.yaml`; nada nuevo que desplegar para usar el proxy).
 
 ## `rayito stack`
 
@@ -324,7 +324,9 @@ CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
   Sobre una pila que ya existe, los parámetros que no repites conservan su
   valor actual; los valores por defecto sólo se aplican al crearla.
   `--artifact-bucket` es obligatorio para un componente con código Lambda
-  (`events-webhooks`): ahí se sube el código, por su hash.
+  (`events-webhooks`): ahí se sube el código, en
+  `rayito/stacks/<componente>/<sha256>.zip`, sólo si el bucket es de tu
+  cuenta y comparando el contenido de un objeto que ya exista.
 - `status` es un `DescribeStacks`: estado y salidas de la pila.
 - `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
 - Un componente todavía sin plantilla (`efs-volumes`, `custom-domain`)

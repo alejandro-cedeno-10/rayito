@@ -169,8 +169,13 @@ dice qué se conserva.
   (TypeScript: `StackError`) sin llamar a `UpdateStack`. Bórrala con
   `destroy()` y vuelve a desplegarla.
 - **Código Lambda**: un componente con código (`events-webhooks`) lo sube
-  a `artifact_bucket=`/`--artifact-bucket` con su hash como clave, así un
-  redespliegue con el mismo SDK no vuelve a subirlo.
+  a `rayito/stacks/<componente>/<sha256>.zip` de
+  `artifact_bucket=`/`--artifact-bucket`, que debe ser de tu cuenta (cada
+  llamada lleva `ExpectedBucketOwner`). Si la clave ya existe, el SDK
+  compara el contenido: igual, no vuelve a subirlo; distinto (un objeto
+  manipulado), lo sobrescribe y avisa. Necesita `s3:GetObject` y
+  `s3:PutObject` sobre `rayito/*` del bucket (los de `CallerPolicy` o
+  `ImagePublisherPolicy`).
 - **TypeScript**: `OptionalStacks` carga el peer opcional
   `@aws-sdk/client-cloudformation` en la primera llamada a AWS
   (`pnpm add @aws-sdk/client-cloudformation`).
