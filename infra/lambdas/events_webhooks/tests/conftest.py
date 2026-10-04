@@ -33,10 +33,11 @@ class _Client:
 
 class FakeTable:
     """Minimal in-memory stand-in for `boto3.resource("dynamodb").Table(...)`
-    — just enough of `put_item`/`scan`/`query` for `DynamoDbStore`
-    (single-table design: `pk`/`sk`, no real indexes). Conditional writes
-    and the scan filter are evaluated for exactly the named expressions
-    `adapters.dynamodb` declares; any other expression is a test bug."""
+    — just enough of `put_item`/`get_item`/`query` for `DynamoDbStore`
+    (single-table design: `pk`/`sk`, plus the sparse `open` index).
+    Conditional writes are evaluated for exactly the named expressions
+    `adapters.dynamodb` declares; any other expression, and any scan, is a
+    test bug."""
 
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], dict[str, Any]] = {}
@@ -57,20 +58,26 @@ class FakeTable:
             raise _ConditionalCheckFailedException()
         self.items[key] = dict(Item)
 
-    def scan(self, **kwargs: Any) -> dict[str, Any]:
-        from adapters import dynamodb as adapter
-
-        assert kwargs["FilterExpression"] == adapter.OPEN_STATE_FILTER
-        values = kwargs["ExpressionAttributeValues"]
-        items = [
-            item
-            for (pk, _sk), item in self.items.items()
-            if pk.startswith(values[":prefix"]) and item.get("last_kind") != values[":killed"]
-        ]
-        return {"Items": items}
+    def get_item(self, *, Key: dict[str, str], ConsistentRead: bool = False) -> dict[str, Any]:
+        assert ConsistentRead, "a read-modify-write must read its own latest write"
+        item = self.items.get((Key["pk"], Key["sk"]))
+        return {} if item is None else {"Item": dict(item)}
 
     def query(self, **kwargs: Any) -> dict[str, Any]:
-        wanted_pk = kwargs["ExpressionAttributeValues"][":pk"]
+        from domain import schema
+
+        values = kwargs["ExpressionAttributeValues"]
+        if kwargs.get("IndexName") == schema.OPEN_INDEX_NAME:
+            assert kwargs["KeyConditionExpression"] == f"{schema.OPEN_INDEX_ATTRIBUTE} = :open"
+            wanted = values[":open"]
+            items = [
+                item
+                for item in self.items.values()
+                if item.get(schema.OPEN_INDEX_ATTRIBUTE) == wanted
+            ]
+            return {"Items": items}
+        assert "IndexName" not in kwargs, f"index not modelled by FakeTable: {kwargs}"
+        wanted_pk = values[":pk"]
         items = [item for (pk, _sk), item in self.items.items() if pk == wanted_pk]
         return {"Items": items}
 
@@ -86,13 +93,8 @@ def _condition_holds(
         return False
     if expression == adapter.IF_NOT_DELIVERED:
         return bool(existing.get("delivery_status") != values[":delivered"])
-    if expression == adapter.IF_OPEN:
-        return bool(existing.get("last_kind") != values[":killed"])
-    if expression == adapter.IF_OPEN_AND_NOT_NEWER:
-        return bool(
-            existing.get("last_kind") != values[":killed"]
-            and existing["last_seen_ms"] <= values[":seen"]
-        )
+    if expression == adapter.IF_REVISION_UNCHANGED:
+        return "revision" not in existing or bool(existing["revision"] == values[":revision"])
     raise AssertionError(f"condition not modelled by FakeTable: {expression}")
 
 

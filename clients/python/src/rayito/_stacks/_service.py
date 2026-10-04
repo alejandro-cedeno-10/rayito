@@ -161,7 +161,7 @@ class OptionalStacks:
         values = dict(plan.parameters.values)
         if resolved.artifacts and artifact_bucket:
             data = load_artifact(resolved)
-            key = artifact_key(data)
+            key = artifact_key(resolved, data)
             self._provisioner.put_artifact(artifact_bucket, key, data)
             for artifact in resolved.artifacts:
                 values[artifact.parameter_key] = key

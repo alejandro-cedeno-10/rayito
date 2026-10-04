@@ -18,12 +18,14 @@ from rayito._lifecycle_events._domain import (
     DEFAULT_GET_EVENTS_LIMIT,
     DEFAULT_RECONCILER_INTERVAL_MINUTES,
     DEFAULT_STACK_NAME,
+    INVALID_WEBHOOK_URL,
     EventRecord,
     WebhookInfo,
+    is_deliverable_webhook_url,
 )
 from rayito._lifecycle_events._keys import derive_sandbox_key
 from rayito._lifecycle_events._section import LifecycleEventsSection
-from rayito._secrets import DEFAULT_SECRET_PREFIX, resolve_secret_id
+from rayito._secrets import WEBHOOK_SECRET_PREFIX, resolve_secret_id
 from rayito._stacks._model import StackComponent, StackStatus
 from rayito._stacks._registry import component_by_name
 from rayito._stacks._service import OptionalStacks
@@ -31,13 +33,6 @@ from rayito.exceptions import InvalidArgumentException, WebhookException
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-#: `register_webhook(secret_name=...)` resolves under this prefix, matching
-#: the deliverer's own IAM statement (`infra/events-webhooks.yaml`'s
-#: `ReadWebhookSecrets` resource pattern) — the webhook's signing secret
-#: must already exist (create it with `SecretStore(prefix="rayito/webhooks/")`);
-#: this facade only records which one to use, it never creates a secret.
-WEBHOOK_SECRET_PREFIX: Final = f"{DEFAULT_SECRET_PREFIX}webhooks/"
 
 _COMPONENT: StackComponent = component_by_name("events-webhooks")  # type: ignore[assignment]
 
@@ -98,21 +93,24 @@ class LifecycleEvents:
         Activa: una llamada explícita a este método (o `rayito events deploy`).
         Recursos y llamadas AWS: un secreto de Secrets Manager (la clave
             HMAC del stack), una tabla DynamoDB on-demand con streams, tres
-            funciones Lambda, una suscripción de CloudWatch Logs, una cola
-            SQS de fallos del deliverer y una regla de EventBridge Scheduler
-            (`rate(reconciler_interval_minutes)`, mínimo 2).
+            funciones Lambda con un log group cada una, una suscripción de
+            CloudWatch Logs, dos colas SQS de fallos, una regla de
+            EventBridge Scheduler (`rate(reconciler_interval_minutes)`,
+            mínimo 2) y cuatro políticas IAM gestionadas.
         Coste aproximado: $0,40/mes el secreto; DynamoDB, Lambda y SQS son
             on-demand/por uso ($0 en reposo); el Scheduler invoca el
             reconciliador cada `reconciler_interval_minutes` minutos
             (~$0,0000002 por invocación, us-east-1, 2026-09-30).
-        IAM: la política `EventsOperatorPolicy` que la pila emite (adjúntala
-            a quien llame a `events=`/`register_webhook`/`list_webhooks`/
-            `delete_webhook`/`get_events`): `PutItem`/`Query`/`DeleteItem`
-            sobre la tabla y su índice, `DescribeStacks` sobre la pila y
-            `GetSecretValue` sobre la clave del stack.
+        IAM: la pila emite una política por tarea; adjunta a cada identidad
+            sólo la suya: `EventsLauncherPolicy` (`events=`: lee la clave
+            del stack), `EventsReaderPolicy` (`get_events`: sólo filas de
+            eventos) y `EventsWebhookAdminPolicy` (`register_webhook`/
+            `list_webhooks`/`delete_webhook`: sólo filas `WEBHOOK`). Todas
+            incluyen `DescribeStacks` sobre la pila. `EventsOperatorPolicy`
+            (la unión de las tres) queda obsoleta.
         Cómo apagarla: `destroy()` (fuerza el borrado del secreto: cualquier
             webhook registrado deja de poder verificarse); desvincula antes
-            `EventsOperatorPolicy` de quien la tenga, o la pila acaba en
+            esas políticas de quien las tenga, o la pila acaba en
             `DELETE_FAILED` (AWS_API_NOTES.md Q108).
         Ejemplo:
             ev = LifecycleEvents()
@@ -139,19 +137,21 @@ class LifecycleEvents:
     def destroy(self, *, wait: bool = True) -> None:
         """Borra la pila entera: el secreto del stack (force-delete), la
         tabla con todos sus eventos y webhooks, las tres Lambdas, la
-        suscripción, la cola de fallos y el scheduler. No toca los secretos
+        suscripción, las colas de fallos y el scheduler. No toca los secretos
         de cada webhook (`rayito/webhooks/...`, de `SecretStore`) ni el log
-        group de la imagen, que esta pila nunca creó. Si `EventsOperatorPolicy`
-        sigue vinculada a algún usuario o rol, CloudFormation no puede
-        borrarla y la pila termina en `DELETE_FAILED` (`StackException`):
-        desvincúlala y repite (AWS_API_NOTES.md Q108)."""
+        group de la imagen, que esta pila nunca creó. Si alguna de sus
+        políticas (`EventsLauncherPolicy`, `EventsReaderPolicy`,
+        `EventsWebhookAdminPolicy` o `EventsOperatorPolicy`) sigue vinculada a
+        algún usuario o rol, CloudFormation no puede borrarla y la pila
+        termina en `DELETE_FAILED` (`StackException`): desvincúlala y repite
+        (AWS_API_NOTES.md Q108)."""
         self._stacks.destroy(_COMPONENT, stack_name=self._stack_name, wait=wait)
 
     # -- Webhooks ----------------------------------------------------------
 
     def register_webhook(self, url: str, *, secret_name: str, types: Sequence[str]) -> WebhookInfo:
-        if not url.startswith("https://"):
-            raise InvalidArgumentException("register_webhook: url debe ser https://")
+        if not isinstance(url, str) or not is_deliverable_webhook_url(url):
+            raise InvalidArgumentException(f"register_webhook: {INVALID_WEBHOOK_URL}")
         validated_types = _validate_types(types)
         if not validated_types:
             raise InvalidArgumentException("register_webhook: types no puede estar vacío")

@@ -44,3 +44,16 @@ def test_event_type_and_execution_id() -> None:
     assert record.type == "sandbox.lifecycle.killed"
     assert record.sandbox_execution_id == "sbx-1#3"
     assert event_type("created") == "sandbox.lifecycle.created"
+
+
+URL_VECTORS = REPO_ROOT / "testdata" / "lifecycle-events" / "webhook-url-vectors.json"
+
+
+def test_webhook_url_check_matches_the_shared_vectors() -> None:
+    from rayito._lifecycle_events._domain import is_deliverable_webhook_url
+
+    data = json.loads(URL_VECTORS.read_text(encoding="utf-8"))
+    for url in data["accepted"]:
+        assert is_deliverable_webhook_url(url), url
+    for url in data["rejected"]:
+        assert not is_deliverable_webhook_url(url), url

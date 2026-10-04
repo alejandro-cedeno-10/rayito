@@ -91,8 +91,13 @@ def test_only_two_managed_policies_and_no_secret_is_created() -> None:
         assert resource["Type"] == "AWS::IAM::ManagedPolicy"
 
 
+WEBHOOK_DENY_SID = "NeverWebhookSigningSecrets"
+
+
 def test_every_action_is_on_the_allow_list_and_every_statement_allows() -> None:
     for policy, statement in all_statements():
+        if statement.get("Sid") == WEBHOOK_DENY_SID:
+            continue
         assert statement["Effect"] == "Allow", policy
         assert actions_of(statement) <= ALLOWED_ACTIONS, (policy, statement["Sid"])
         assert not any("*" in action for action in actions_of(statement)), statement[
@@ -102,7 +107,11 @@ def test_every_action_is_on_the_allow_list_and_every_statement_allows() -> None:
 
 def test_reader_and_admin_grant_exactly_their_sets() -> None:
     reader = set().union(
-        *(actions_of(s) for p, s in all_statements() if p == "RayitoSecretsReader")
+        *(
+            actions_of(s)
+            for p, s in all_statements()
+            if p == "RayitoSecretsReader" and s["Effect"] == "Allow"
+        )
     )
     admin = set().union(
         *(actions_of(s) for p, s in all_statements() if p == "RayitoSecretsAdmin")
@@ -119,7 +128,7 @@ def test_no_star_resource_except_list_secrets() -> None:
                 policy,
                 statement,
             )
-        elif actions_of(statement) & ADMIN_ACTIONS:
+        elif actions_of(statement) & ADMIN_ACTIONS and statement["Effect"] == "Allow":
             assert resource == {"Fn::Sub": PREFIX_ARN}, (policy, statement["Sid"])
 
 
@@ -142,7 +151,34 @@ def test_the_prefix_parameter_can_never_be_empty() -> None:
     prefix = template()["Parameters"]["SecretPrefix"]
     assert prefix["Default"] == "rayito/"
     assert prefix["MinLength"] == 1
-    assert prefix["AllowedPattern"] == "^[A-Za-z0-9/_+=.@-]+$"
+    assert prefix["AllowedPattern"] == "^[A-Za-z0-9/_+=.@-]*/$"
     assert template()["Conditions"]["HasKmsKey"] == {
         "Fn::Not": [{"Fn::Equals": [{"Ref": "KmsKeyArn"}, ""]}]
     }
+
+
+def test_the_reader_can_never_read_a_webhook_signing_secret() -> None:
+    # `secrets=` puts values into an untrusted sandbox: a webhook signing
+    # secret there lets the sandbox forge signed deliveries.
+    from rayito._secrets import WEBHOOK_SECRET_PREFIX
+
+    reader = [s for p, s in all_statements() if p == "RayitoSecretsReader"]
+    (deny,) = [s for s in reader if s.get("Sid") == WEBHOOK_DENY_SID]
+    assert deny["Effect"] == "Deny"
+    assert actions_of(deny) == {"secretsmanager:GetSecretValue"}
+    assert deny["Resource"] == {
+        "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}"
+        f":secret:{WEBHOOK_SECRET_PREFIX}*"
+    }
+    admin = [s for p, s in all_statements() if p == "RayitoSecretsAdmin"]
+    assert all(s["Effect"] == "Allow" for s in admin), "admin creates and rotates them"
+
+
+def test_the_prefix_pattern_requires_a_trailing_slash() -> None:
+    import re
+
+    pattern = re.compile(template()["Parameters"]["SecretPrefix"]["AllowedPattern"])
+    assert pattern.fullmatch("rayito/")
+    assert pattern.fullmatch("team/app/")
+    for refused in ("rayito", "rayito-", "", "rayito/*"):
+        assert not pattern.fullmatch(refused), refused

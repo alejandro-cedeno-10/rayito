@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { type LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { InvalidArgumentError, WebhookError } from "../errors.js";
-import { DEFAULT_SECRET_PREFIX, resolveSecretId } from "../secrets/names.js";
+import { resolveSecretId, WEBHOOK_SECRET_PREFIX } from "../secrets/names.js";
 import type { StackComponent, StackStatus } from "../stacks/model.js";
 import { componentByName } from "../stacks/registry.js";
 import { OptionalStacks } from "../stacks/service.js";
@@ -20,6 +20,8 @@ import {
   DEFAULT_RECONCILER_INTERVAL_MINUTES,
   DEFAULT_STACK_NAME,
   type EventRecord,
+  INVALID_WEBHOOK_URL,
+  isDeliverableWebhookUrl,
   type WebhookInfo,
 } from "./domain.js";
 import {
@@ -38,7 +40,7 @@ import {
   type LifecycleEventsSectionSource,
 } from "./section.js";
 
-export const WEBHOOK_SECRET_PREFIX = `${DEFAULT_SECRET_PREFIX}webhooks/`;
+export { WEBHOOK_SECRET_PREFIX };
 
 const COMPONENT: StackComponent = componentByName("events-webhooks") as StackComponent;
 const EVENT_TYPE_PATTERN = /^sandbox\.lifecycle\.(created|paused|resumed|killed)$/;
@@ -129,14 +131,17 @@ interface SecretsManagerModule {
  *   escritos (WRU) más las lecturas de `getEvents`; el reconciliador
  *   factura una invocación cada `reconcilerIntervalMinutes` (5 por
  *   defecto, mínimo 2, ~$0,0000002 c/u). us-east-1, consultado 2026-09-30.
- * IAM: `EventsOperatorPolicy` (salida de la pila), en las credenciales del
- *   llamante: `PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice,
- *   `cloudformation:DescribeStacks` sobre la pila y
- *   `secretsmanager:GetSecretValue` sobre la clave del stack.
+ * IAM: la pila emite una política por tarea; adjunta a cada identidad sólo
+ *   la suya: `EventsLauncherPolicy` (`events`: lee la clave del stack),
+ *   `EventsReaderPolicy` (`getEvents`: sólo filas de eventos) y
+ *   `EventsWebhookAdminPolicy` (`registerWebhook`/`listWebhooks`/
+ *   `deleteWebhook`: sólo filas `WEBHOOK`). Todas incluyen
+ *   `cloudformation:DescribeStacks` sobre la pila. `EventsOperatorPolicy`
+ *   (la unión de las tres) queda obsoleta.
  * Cómo apagarla: no pases `events`; `destroy()` borra el secreto
  *   (force-delete: cualquier webhook registrado deja de poder verificarse),
  *   la tabla, las tres Lambdas, la suscripción y el scheduler (desvincula
- *   antes `EventsOperatorPolicy`, o la pila acaba en `DELETE_FAILED`).
+ *   antes sus políticas, o la pila acaba en `DELETE_FAILED`).
  * Ejemplo:
  *   const ev = new LifecycleEvents();
  *   await ev.deploy({ artifactBucket: "mi-bucket", logGroupName: "/rayito/rayito-base" });
@@ -196,8 +201,10 @@ export class LifecycleEvents implements LifecycleEventsSectionSource {
    * todos sus eventos y webhooks, las tres Lambdas, la suscripción, la cola
    * de fallos y el scheduler. No toca los secretos de cada webhook
    * (`rayito/webhooks/...`, de `SecretStore`) ni el log group de la imagen,
-   * que esta pila nunca creó. Si `EventsOperatorPolicy` sigue vinculada a
-   * algún usuario o rol, CloudFormation no puede borrarla y la pila termina
+   * que esta pila nunca creó. Si alguna de sus políticas
+   * (`EventsLauncherPolicy`, `EventsReaderPolicy`, `EventsWebhookAdminPolicy`
+   * o `EventsOperatorPolicy`) sigue vinculada a algún usuario o rol,
+   * CloudFormation no puede borrarla y la pila termina
    * en `DELETE_FAILED` (`StackError`): desvincúlala y repite
    * (`AWS_API_NOTES.md` Q108).
    */
@@ -212,8 +219,8 @@ export class LifecycleEvents implements LifecycleEventsSectionSource {
     url: string,
     options: { secretName: string; types: readonly string[] },
   ): Promise<WebhookInfo> {
-    if (!url.startsWith("https://")) {
-      throw new InvalidArgumentError("registerWebhook: url debe ser https://");
+    if (typeof url !== "string" || !isDeliverableWebhookUrl(url)) {
+      throw new InvalidArgumentError(`registerWebhook: ${INVALID_WEBHOOK_URL}`);
     }
     const types = validateTypes(options.types);
     if (types === undefined || types.length === 0) {

@@ -173,6 +173,24 @@ describe("LifecycleEvents", () => {
     ).rejects.toThrow(InvalidArgumentError);
   });
 
+  for (const url of [
+    "https://h:99999/",
+    "https://h:abc/",
+    "https://[::1/",
+    `https://${"a".repeat(64)}.example/`,
+  ]) {
+    it(`rejects ${url.slice(0, 24)}: the deliverer could never reach it`, async () => {
+      const ev = eventsClient(new FakeTable());
+      const failure = ev.registerWebhook(url, {
+        secretName: "x",
+        types: ["sandbox.lifecycle.killed"],
+      });
+      await expect(failure).rejects.toThrow(InvalidArgumentError);
+      await expect(failure).rejects.not.toThrow(url);
+      expect(await ev.listWebhooks()).toEqual([]);
+    });
+  }
+
   it("rejects an unknown event type", async () => {
     const ev = eventsClient(new FakeTable());
     await expect(

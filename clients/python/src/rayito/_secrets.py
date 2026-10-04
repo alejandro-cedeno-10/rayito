@@ -89,6 +89,20 @@ from rayito.exceptions import (
 )
 
 DEFAULT_SECRET_PREFIX: Final = "rayito/"
+#: Donde viven los secretos de firma de los webhooks (`LifecycleEvents.
+#: register_webhook`, `infra/events-webhooks.yaml`: el deliverer sólo lee
+#: `secret:rayito/webhooks/*`). Dentro del prefijo por defecto, pero nunca
+#: se entregan a un sandbox: `SecretStore.read_value` (el camino de
+#: `secrets=` y `SecretCache`) los rechaza, igual que el `Deny` de
+#: `RayitoSecretsReader` (`infra/secrets-access.yaml`).
+WEBHOOK_SECRET_PREFIX: Final = f"{DEFAULT_SECRET_PREFIX}webhooks/"
+#: Separador del nombre dentro de un ARN de Secrets Manager
+#: (`arn:<partición>:secretsmanager:<región>:<cuenta>:secret:<nombre>-<sufijo>`).
+SECRET_ARN_NAME_MARKER: Final = ":secret:"
+WEBHOOK_SECRET_REFUSED: Final = (
+    "los secretos de firma de webhooks (rayito/webhooks/) no se leen con secrets= ni "
+    "SecretCache: un sandbox que los tuviera podría falsificar entregas firmadas"
+)
 DEFAULT_TTL_SECONDS: Final = 300
 MAX_TTL_SECONDS: Final = 86_400
 VERSION_TOKEN_PREFIX: Final = "rayito-secret-version-"
@@ -283,6 +297,15 @@ def resolve_secret_id(name: str, prefix: str) -> str:
             "dígitos y /_+=.@-"
         )
     return secret_id
+
+
+def refuse_webhook_signing_secret(secret_id: str) -> None:
+    """`InvalidArgumentException` si `secret_id` (nombre resuelto o ARN)
+    está bajo `WEBHOOK_SECRET_PREFIX`. El mensaje nunca repite el nombre."""
+    _arn_head, marker, arn_name = secret_id.partition(SECRET_ARN_NAME_MARKER)
+    name = arn_name if secret_id.startswith("arn:") and marker else secret_id
+    if name.startswith(WEBHOOK_SECRET_PREFIX):
+        raise InvalidArgumentException(WEBHOOK_SECRET_REFUSED)
 
 
 def display_name(aws_name: str, prefix: str) -> str:
@@ -593,8 +616,11 @@ class SecretStore:
 
     def read_value(self, ref: SecretRef) -> str:
         """`GetSecretValue` de una referencia; lo usa `SecretCache` (y sólo
-        ella: nadie más debería leer valores sin caché)."""
-        params: dict[str, Any] = {"SecretId": resolve_secret_id(ref.name, self._prefix)}
+        ella: nadie más debería leer valores sin caché). Nunca lee un secreto
+        de firma de webhook (`refuse_webhook_signing_secret`)."""
+        secret_id = resolve_secret_id(ref.name, self._prefix)
+        refuse_webhook_signing_secret(secret_id)
+        params: dict[str, Any] = {"SecretId": secret_id}
         if ref.version_id is not None:
             params["VersionId"] = ref.version_id
         elif ref.version_stage is not None:

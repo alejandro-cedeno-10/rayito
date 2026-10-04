@@ -1018,10 +1018,27 @@ session=…)` (mismo `client_config()` que el resto del SDK: reintentos
 cliente se construye hasta el primer `deploy`/`status`/`destroy`
 (ADR-014); construir `OptionalStacks()` no llama a AWS.
 
-`putArtifact` (sólo para un componente con código Lambda; ninguno de los
-dos de M15 foundations lo necesita) usa el mismo patrón que el resto del
-SDK para S3: `HeadObject` (clave = sha256 del contenido) antes de
-`PutObject`, así subir el mismo artefacto dos veces es un no-op.
+`putArtifact` (sólo para un componente con código Lambda: hoy
+`events-webhooks`) sube el zip a `rayito/stacks/<componente>/<sha256>.zip`,
+dentro del espacio de nombres `rayito/` que ya protegen las plantillas de
+IAM (sólo el publicador escribe; el execution role tiene un `Deny`), nunca a
+la raíz del bucket. **No se fía de que la clave exista** (la clave es
+pública: el sha256 del zip que viaja con el SDK). Verificado sin red el
+2026-10-04, con `Stubber` contra botocore 1.43.103 y con `satisfies`
+contra los tipos de `@aws-sdk/client-s3` 3.1140.0:
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | IAM |
+|---|---|---|---|
+| `GetCallerIdentity` (`get_caller_identity` / `GetCallerIdentityCommand`) | — | `Account` | ninguna (siempre permitida) |
+| `GetObject` (`get_object` / `GetObjectCommand`) | `Bucket`, `Key`, `ExpectedBucketOwner` (la cuenta del llamante) | `Body` (se calcula su sha256); `NoSuchKey`/404 = no existe; `AccessDenied` (también un bucket de otra cuenta) = error | `s3:GetObject` sobre la clave (y `s3:ListBucket` para el 404) |
+| `PutObject` (`put_object` / `PutObjectCommand`) | `Bucket`, `Key`, `ExpectedBucketOwner`, `Body`, `ChecksumSHA256` (base64 del sha256) | — | `s3:PutObject` sobre la clave |
+
+Si el objeto existe con el mismo sha256 no se vuelve a subir; si falta o su
+contenido no coincide (sólo puede ser un objeto manipulado o corrupto), se
+sobrescribe y el SDK avisa por su logger. Queda una ventana entre el
+`PutObject` y la lectura de CloudFormation que sólo cierra comprobar el
+`CodeSha256` de cada función tras el despliegue (pendiente: necesita
+`lambda:GetFunction` y un cliente de Lambda en TypeScript).
 
 ## 22. EFS (`m15-efs-volumes`, ADR-018, experimental, **contrato de parámetros**)
 
@@ -1362,10 +1379,28 @@ ya usa), destino el *forwarder* Lambda, `FilterPattern` literal `"rayito.event.v
 recibe el handler es `{"awslogs": {"data": "<base64(gzip(json))>"}}`
 (`CloudWatchLogsDecodedData`: `logGroup`, `logStream`, `logEvents[].message`).
 El *log stream* de runtime de un MicroVM se llama
-`YYYY/MM/DD[<imageVersion>]<microvmId>` (Q106): el forwarder exige que
-`logStream` termine en `]<sandbox_id>` del evento firmado, para que una VM
-no pueda reivindicar el `sandbox_id` de otra aunque calculase un MAC válido
-para sí misma (medido en Q107). La línea `paused` llega a CloudWatch antes
+`YYYY/MM/DD[<imageVersion>]<microvmId>` (Q106): el forwarder toma el
+`sandbox_id` de lo que hay tras el último `]`, deriva con él `k_sbx` y
+verifica el MAC **antes** de parsear el JSON; después exige que el
+`sandbox_id` del evento firmado sea ese mismo, para que una VM no pueda
+reivindicar el de otra aunque calculase un MAC válido para sí misma
+(medido en Q107). El nombre del stream no es una prueba de identidad:
+cualquiera con el execution role o el rol de build puede crear en
+`/rayito/*` un stream que termine en `]<otro id>`; sólo el MAC autentica.
+Tras el MAC, el evento debe tener la forma exacta del cable (tipos JSON
+estrictos, enteros en `[0, 2^64)`, textos de hasta 512 caracteres), lo que
+emite `rayd` (`event_id` de 32 hex, `kill_reason` sólo en `killed` y sólo
+`request`, `image_arn` de `microvm-image`) y un `occurred_at_ms` entre 24 h
+antes y 5 min después del reloj del forwarder (`REASON_STALE`): una línea
+repetida cuando su fila de deduplicación ya caducó (7 días) se rechaza.
+CloudWatch Logs invoca el forwarder **de forma asíncrona**: una línea mala
+nunca hace fallar la invocación (se cuenta); sólo una escritura en la tabla
+que falla la hace fallar, después de procesar el resto del lote, y tras los
+2 reintentos de Lambda el lote va a la cola SQS `ForwarderFailuresQueue`
+(`AWS::Lambda::EventInvokeConfig`, `DestinationConfig.OnFailure`,
+`MaximumRetryAttempts: 2`, `Qualifier: $LATEST`; forma validada con
+`cfn-lint` 1.56.3, sin medir en AWS real; `sqs:SendMessage` en el rol del
+forwarder). La línea `paused` llega a CloudWatch antes
 del checkpoint (Q106). El valor de retorno del handler no queda en ningún
 log (lo descarta CloudWatch Logs), así que el forwarder imprime una línea
 JSON por invocación con `forwarded`, `rejected` y `rejected_by_reason`
@@ -1383,7 +1418,8 @@ zip de Lambda y el SDK son artefactos desplegables distintos): `PutItem`
 condicional (forwarder: evento idempotente, `attribute_not_exists(pk)`; la
 fila `STATE#<sandbox_id>` sólo avanza — `last_kind <> killed AND
 last_seen_ms <= :seen` — y `killed` queda como lápida con TTL; deliverer:
-`delivery_status` de cada entrega, reclamable salvo `delivered`), `Query`
+`delivery_status` de cada entrega, `DELIVERY#<sandbox_id>#<event_id>`,
+reclamable salvo `delivered`), `Query`
 (deliverer: webhooks por tipo; SDK: `get_events` por sandbox o por el GSI
 `gsi1` para todos, con `FilterExpression` sobre `kind` y paginación por
 `LastEvaluatedKey`; `list_webhooks`), `DeleteItem` (SDK: `delete_webhook`),
@@ -1419,9 +1455,49 @@ sola vez al crearse), y la plantilla fija además `AWS_DATA_PATH`.
 §10) — el campo `microvmId` de cada `items[]` es el `sandbox_id` del resto
 del SDK; un `state` `TERMINATING`/`TERMINATED` cuenta como no vivo.
 
-**IAM del llamante** (`EventsOperatorPolicy`): `dynamodb:PutItem`/`Query`/
-`DeleteItem` sobre la tabla y `…/index/gsi1`, `cloudformation:DescribeStacks`
-sobre la pila y `secretsmanager:GetSecretValue` sobre el secreto del stack.
+**IAM del llamante**, una política por tarea: `EventsLauncherPolicy`
+(`events=`: `secretsmanager:GetSecretValue` sobre el secreto del stack),
+`EventsReaderPolicy` (`get_events`: `dynamodb:Query` sobre la tabla con
+`dynamodb:LeadingKeys` `EVENT#*` y sobre `…/index/gsi1` sin condición, en
+dos sentencias con recursos distintos, así que la consulta al índice nunca
+depende de cómo evalúe IAM `LeadingKeys` sobre un GSI) y
+`EventsWebhookAdminPolicy` (`PutItem`/`DeleteItem`/`Query` con
+`LeadingKeys` `WEBHOOK`); las tres con `cloudformation:DescribeStacks` sobre
+la pila. `EventsOperatorPolicy` es su unión, obsoleta.
+
+**Mínimo privilegio por fila** (sin medir en AWS real: pendiente de la
+aceptación de `sec/infra-iam-lambdas`): cada `PutItem`/`DeleteItem` y el
+`Query` del deliverer llevan `ForAllValues:StringLike`/`StringEquals` sobre
+`dynamodb:LeadingKeys` (el valor de la clave de partición de la petición):
+forwarder y reconciliador `EVENT#*`/`STATE#*`, deliverer `DELIVERY#*` (y
+`Query` sobre `WEBHOOK`), administración de webhooks `WEBHOOK`. La admisión
+(forwarder y reconciliador) lee la fila con `GetItem` acotado a `STATE#*`.
+El `Query` del reconciliador sobre `…/index/open` y el del lector sobre
+`gsi1` no se acotan por clave (cada índice sólo contiene un tipo de fila).
+Cada Lambda escribe sólo en su propio log group, creado por la pila
+(`AWS::Logs::LogGroup` + `LoggingConfig.LogGroup` en la función; la
+`Arn` de `Fn::GetAtt` de un log group ya termina en `:*` y cubre sus
+streams; doc de AWS `AWS::Lambda::Function LoggingConfig`, consultada
+2026-10-04), y el rol del Scheduler exige `aws:SourceAccount`. La misma
+condición en el trust de los roles de las Lambdas queda pendiente de medir.
+
+**Admisión y GSI disperso** (sin medir en AWS real: misma aceptación): la
+fila `STATE#` lleva `revision` y cada escritura es un `PutItem` con
+`attribute_not_exists(revision) OR revision = :revision` tras un `GetItem`
+con `ConsistentRead`. Mientras el sandbox está abierto la fila lleva
+`open_pk = "OPEN"`, la clave de partición del GSI `open` (rango `pk`,
+proyección `ALL`); la lápida `killed` la quita. Añadir un GSI a una tabla
+existente es una actualización de CloudFormation sin reemplazo (un GSI por
+actualización); el índice se rellena con las filas que ya tienen
+`open_pk`, así que un sandbox abierto antes de actualizar entra con su
+siguiente evento.
+
+**Filtro del deliverer** (sin medir en AWS real): `FilterCriteria` del
+`AWS::Lambda::EventSourceMapping` con el patrón
+`{"eventName": ["INSERT"], "dynamodb": {"NewImage": {"pk": {"S": [{"prefix": "EVENT#"}]}}}}`
+(filtrado de eventos de Lambda para DynamoDB Streams, doc de AWS "Using
+event filtering with a DynamoDB event source", consultada 2026-10-04): los
+registros que no casan no invocan la función.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 

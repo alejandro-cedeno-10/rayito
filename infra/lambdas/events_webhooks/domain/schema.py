@@ -12,18 +12,24 @@ Item shapes, by `pk` prefix:
   one lifecycle event. ``gsi1pk="EVENT"`` / ``gsi1sk`` = the same sort key,
   so ``get_events(sandbox_id=None)`` scans one sparse index instead of
   every sandbox's partition. TTL (``expires_at``) is 7 days out.
-- ``STATE#<sandbox_id>`` / ``STATE``: the sandbox's last known event
+- ``STATE#<sandbox_id>`` / ``STATE``: the sandbox's last admitted event
   (`last_kind`, `last_seen_ms`, `generation`, `image_arn`,
-  `image_version`), for the reconciler's "which sandboxes have no `killed`
-  yet" scan. Only ever moved forward in time (a conditional write on
-  `last_seen_ms`); a `killed` row stays as a tombstone, so a late line can
-  never reopen the sandbox, and expires with the events (`expires_at`).
+  `image_version`, `last_event_id`), its rate bucket (`rate_tat_ms`) and an
+  optimistic-concurrency `revision` (`domain/admission.py`). While the
+  sandbox is open the row carries ``open_pk="OPEN"``, the key of the sparse
+  ``open`` index the reconciler queries instead of scanning the table; the
+  `killed` tombstone drops it, stays so a late line can never reopen the
+  sandbox, and expires with the events (`expires_at`).
 - ``WEBHOOK`` / ``<webhook_id>``: one registered webhook.
-- ``DELIVERY#<event_id>`` / ``<webhook_id>``: a delivery's status
+- ``DELIVERY#<sandbox_id>#<event_id>`` / ``<webhook_id>``: a delivery's status
   (`delivery_status`: `attempting`, `delivered` or `failed`). DynamoDB
   Streams is at-least-once, so only `delivered` makes the deliverer skip a
   pair; anything else is attempted again. A short TTL (1 day) is enough —
   redelivery of a 7-day-old event was never going to be retried anyway.
+  Keyed by the sandbox as well as the event: an `event_id` is only unique
+  within one sandbox's own lines (a sandbox holding its `k_sbx` chooses
+  its ids), so a dedupe row of one sandbox can never mark another
+  sandbox's delivery as done.
 """
 
 from __future__ import annotations
@@ -35,6 +41,12 @@ DELIVERY_DEDUPE_TTL_SECONDS: Final = 24 * 3600
 
 GSI1_NAME: Final = "gsi1"
 GSI1_PARTITION_VALUE: Final = "EVENT"
+
+#: The sparse index of open sandboxes: only a `STATE#` row whose last
+#: event is not `killed` carries `OPEN_INDEX_ATTRIBUTE`.
+OPEN_INDEX_NAME: Final = "open"
+OPEN_INDEX_ATTRIBUTE: Final = "open_pk"
+OPEN_PARTITION_VALUE: Final = "OPEN"
 
 EVENT_PK_PREFIX: Final = "EVENT#"
 STATE_PK_PREFIX: Final = "STATE#"
@@ -63,5 +75,5 @@ def state_pk(sandbox_id: str) -> str:
     return f"{STATE_PK_PREFIX}{sandbox_id}"
 
 
-def delivery_pk(event_id: str) -> str:
-    return f"{DELIVERY_PK_PREFIX}{event_id}"
+def delivery_pk(sandbox_id: str, event_id: str) -> str:
+    return f"{DELIVERY_PK_PREFIX}{sandbox_id}#{event_id}"

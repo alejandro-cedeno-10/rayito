@@ -73,7 +73,7 @@ def test_a_deny_statement_blocks_run_microvm_outside_the_listed_arns() -> None:
     same identity: IAM only denies what an explicit Deny names. A Deny with
     `NotResource` is what makes this policy effective regardless of what
     else the identity can already do."""
-    denies = [s for s in statements() if s["Effect"] == "Deny"]
+    denies = [s for s in statements() if GUARDED_ACTION in actions_of(s) and s["Effect"] == "Deny"]
     assert len(denies) == 1
     (deny,) = denies
     assert actions_of(deny) == {GUARDED_ACTION}
@@ -84,9 +84,13 @@ def test_a_deny_statement_blocks_run_microvm_outside_the_listed_arns() -> None:
 def test_both_statements_act_on_exactly_the_same_action() -> None:
     """A Deny that doesn't cover every action the Allow grants would leave
     an ungated one; an Allow that grants more than the Deny denies would
-    reintroduce the same gap this guard exists to close."""
-    actions = {action for statement in statements() for action in actions_of(statement)}
+    reintroduce the same gap this guard exists to close. (The image
+    publishing Deny is separate and grants nothing.)"""
+    run_statements = [s for s in statements() if s.get("Sid") != "DenyImagePublishing"]
+    actions = {action for statement in run_statements for action in actions_of(statement)}
     assert actions == {GUARDED_ACTION}
+    allows = {a for s in statements() if s["Effect"] == "Allow" for a in actions_of(s)}
+    assert allows == {GUARDED_ACTION}
 
 
 def test_image_arns_is_the_only_parameter_and_has_no_default() -> None:
@@ -95,3 +99,19 @@ def test_image_arns_is_the_only_parameter_and_has_no_default() -> None:
     assert name == "ImageArns"
     assert parameter["Type"] == "CommaDelimitedList"
     assert "Default" not in parameter
+
+
+def test_a_guarded_identity_cannot_rebuild_an_allowed_image_at_another_size() -> None:
+    """Size is a property of each image version (AWS_API_NOTES.md §24):
+    an identity that can also update an allowed image (the standard
+    CallerPolicy can) would otherwise publish a larger version under an
+    allowed name and launch it inside the list."""
+    (deny,) = [s for s in statements() if s.get("Sid") == "DenyImagePublishing"]
+    assert deny["Effect"] == "Deny"
+    assert actions_of(deny) == {
+        "lambda:CreateMicrovmImage",
+        "lambda:UpdateMicrovmImage",
+        "lambda:UpdateMicrovmImageVersion",
+        "lambda:DeleteMicrovmImageVersion",
+    }
+    assert deny["Resource"] == "*"

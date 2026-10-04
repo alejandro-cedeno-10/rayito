@@ -10,12 +10,18 @@ are to be performed" cuando no hay cambios), `DescribeStacks` (`StackName`
 "does not exist" si no hay pila), `DeleteStack` (idempotente: no falla sobre
 una pila que no existe) y `DescribeStackEvents` (no usado todavía: `wait`
 sondea `DescribeStacks`, más simple y suficiente para pilas sin recursos
-anidados). El cliente `s3` de `put_artifact` sólo hace `HeadObject` +
-`PutObject`, igual que el resto del SDK.
+anidados). `put_artifact` nunca se fía de que exista un objeto con la clave
+esperada: con `ExpectedBucketOwner` (la cuenta de `sts:GetCallerIdentity`)
+hace `GetObject` y compara el sha256 del contenido, y sólo si coincide no
+vuelve a subirlo; si falta o no coincide, `PutObject` con `ChecksumSHA256`
+(AWS_API_NOTES.md §21).
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import logging
 import time
 from collections.abc import Callable
 from typing import Any, Final, Protocol
@@ -33,7 +39,9 @@ from rayito.exceptions import StackException
 VALIDATION_ERROR: Final = "ValidationError"
 NOT_EXISTS_MARKER: Final = "does not exist"
 NO_UPDATES_MARKER: Final = "No updates are to be performed"
-HEAD_NOT_FOUND_CODE: Final = "404"
+#: `GetObject` sobre una clave que no existe (con `s3:ListBucket`; sin él,
+#: S3 responde `AccessDenied` y el despliegue falla, como antes).
+MISSING_OBJECT_CODES: Final = frozenset({"NoSuchKey", "404"})
 #: Entre sondeos de `wait`: una pila sin recursos anidados (nuestros
 #: componentes) suele terminar en segundos; medio segundo no satura
 #: `DescribeStacks` y no hace esperar de más.
@@ -52,6 +60,8 @@ TERMINAL_FAILURE_STATES: Final = frozenset(
         "DELETE_FAILED",
     }
 )
+
+_LOGGER = logging.getLogger("rayito.stacks")
 
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
@@ -99,6 +109,7 @@ class CloudFormationProvisioner:
             "cloudformation", region=region, session=session
         )
         self._s3: _ClientSource = LazyClient("s3", region=region, session=session)
+        self._sts: _ClientSource = LazyClient("sts", region=region, session=session)
         self._clock = clock
         self._sleep = sleep
         self._poll_interval = poll_interval
@@ -205,15 +216,44 @@ class CloudFormationProvisioner:
             self._sleep(self._poll_interval)
 
     def put_artifact(self, bucket: str, key: str, data: bytes) -> None:
+        """Sube `data` salvo que el objeto ya tenga exactamente ese
+        contenido. Cada llamada a S3 lleva `ExpectedBucketOwner`: un bucket
+        de otra cuenta (un nombre ocupado por un tercero) falla en vez de
+        recibir o servir el código de las Lambdas."""
         client = self._s3.get()
-        try:
-            client.head_object(Bucket=bucket, Key=key)
+        located = {"Bucket": bucket, "Key": key, "ExpectedBucketOwner": self._account_id()}
+        digest = hashlib.sha256(data).digest()
+        stored = self._stored_digest(client, located)
+        if stored == digest:
             return
-        except ClientError as exc:
-            if _aws_code(exc) != HEAD_NOT_FOUND_CODE:
-                raise _wrap(exc) from sanitize_aws_error(exc)
+        if stored is not None:
+            _LOGGER.warning(
+                "el artefacto del componente ya subido no coincide con el del SDK: se sobrescribe"
+            )
         try:
-            client.put_object(Bucket=bucket, Key=key, Body=data)
+            client.put_object(
+                **located, Body=data, ChecksumSHA256=base64.b64encode(digest).decode("ascii")
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise _wrap(exc) from sanitize_aws_error(exc)
+
+    def _stored_digest(self, client: Any, located: dict[str, str]) -> bytes | None:
+        """sha256 del objeto ya subido, o `None` si no existe. La clave es el
+        sha256 del contenido: uno distinto sólo puede ser un objeto
+        manipulado o corrupto, y `put_artifact` lo sobrescribe."""
+        try:
+            stored = client.get_object(**located)["Body"].read()
+        except ClientError as exc:
+            if _aws_code(exc) in MISSING_OBJECT_CODES:
+                return None
+            raise _wrap(exc) from sanitize_aws_error(exc)
+        except BotoCoreError as exc:
+            raise _wrap(exc) from sanitize_aws_error(exc)
+        return hashlib.sha256(stored).digest()
+
+    def _account_id(self) -> str:
+        try:
+            return str(self._sts.get().get_caller_identity()["Account"])
         except (BotoCoreError, ClientError) as exc:
             raise _wrap(exc) from sanitize_aws_error(exc)
 

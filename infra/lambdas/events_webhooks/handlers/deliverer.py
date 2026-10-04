@@ -5,7 +5,14 @@ E2B-style, with the retry policy of `domain/delivery.py`.
 Never loses a delivery: each `(event_id, webhook_id)` pair is claimed
 (`attempting`) before the first attempt and finished as `delivered` or
 `failed` after the last one; only `delivered` makes a later invocation skip
-it (DynamoDB Streams is at-least-once). Every attempt and backoff is fitted
+it (DynamoDB Streams is at-least-once). One webhook never blocks the others:
+a URL the sender cannot even parse is a permanent failure of that webhook
+(`invalid_url`, not retried), and anything unexpected while delivering to
+one webhook is logged under `internal_error` and the next webhook is tried,
+so a bad endpoint never fails the stream batch for everyone. A 401/403
+makes the deliverer re-read the webhook's secret once past its cache (the
+receiver may have just rotated it) and, if it changed, sign again with the
+new one. Every attempt and backoff is fitted
 into the invocation's remaining time (`context.get_remaining_time_in_millis`);
 when it runs out, the pair in flight is finished as `failed` and the handler
 reports that record as its first `batchItemFailures` entry, so the stream
@@ -28,7 +35,13 @@ from adapters.http_client import HttpsOnlySender, SsrfBlocked
 from adapters.secrets import SecretsManagerReader
 from botocore.exceptions import BotoCoreError, ClientError
 from domain import schema
-from domain.delivery import MAX_ATTEMPTS, backoff_seconds, is_delivered, is_retryable
+from domain.delivery import (
+    MAX_ATTEMPTS,
+    backoff_seconds,
+    is_auth_rejection,
+    is_delivered,
+    is_retryable,
+)
 from domain.event import LifecycleEvent
 from domain.signature import sign_delivery
 from ports import EventStore, HttpSender, SecretReader, Webhook, WebhookStore
@@ -48,6 +61,10 @@ SAFETY_MARGIN_SECONDS: Final = 2.0
 #: An attempt given less time than this would only time out: stop instead.
 MIN_ATTEMPT_SECONDS: Final = 1.0
 _MILLIS_PER_SECOND: Final = 1000
+#: Closed `delivery_failure_reason` values added for one bad webhook that
+#: must not block the others (the rest are the literal reasons below).
+FAILURE_INVALID_URL: Final = "invalid_url"
+FAILURE_INTERNAL_ERROR: Final = "internal_error"
 
 _store: DynamoDbStore | None = None
 _secrets: SecretsManagerReader | None = None
@@ -125,22 +142,33 @@ def _deliver_record(
     lifecycle_event = _event_from_stream_image(image)
     payload = _webhook_payload(lifecycle_event)
     for webhook in webhooks.webhooks_for_type(lifecycle_event.e2b_type):
-        if not events.claim_delivery(lifecycle_event.event_id, webhook.webhook_id):
+        if not events.claim_delivery(lifecycle_event, webhook.webhook_id):
             counts["skipped"] += 1
             continue
         delivered = False
         try:
-            delivered = _deliver(webhook, payload, secrets, budget)
+            delivered = _deliver_isolated(webhook, payload, secrets, budget)
         finally:
-            events.finish_delivery(
-                lifecycle_event.event_id, webhook.webhook_id, delivered=delivered
-            )
+            events.finish_delivery(lifecycle_event, webhook.webhook_id, delivered=delivered)
         counts["delivered" if delivered else "failed"] += 1
 
 
-def _deliver(
+def _deliver_isolated(
     webhook: Webhook, payload: bytes, secrets: SecretReader, budget: _TimeBudget
 ) -> bool:
+    """`_deliver` for one webhook, where nothing but the invocation's own
+    time budget escapes: running out of time must stop the batch (the
+    record is retried from there), anything else only fails this webhook."""
+    try:
+        return _deliver(webhook, payload, secrets, budget)
+    except _TimeBudgetExhausted:
+        raise
+    except Exception:
+        _log_failure(webhook.webhook_id, FAILURE_INTERNAL_ERROR)
+        return False
+
+
+def _deliver(webhook: Webhook, payload: bytes, secrets: SecretReader, budget: _TimeBudget) -> bool:
     try:
         secret = secrets.read(webhook.secret_name)
     except (ClientError, BotoCoreError):
@@ -148,8 +176,14 @@ def _deliver(
         # record still get tried.
         _log_failure(webhook.webhook_id, "secret_unavailable")
         return False
+    secret_refreshed = False
     for attempt in range(MAX_ATTEMPTS):
-        signed = sign_delivery(webhook_id=webhook.webhook_id, secret=secret, payload=payload)
+        signed = sign_delivery(
+            webhook_id=webhook.webhook_id,
+            secret=secret,
+            payload=payload,
+            timestamp=int(time.time()),
+        )
         try:
             status = _sender.post(
                 webhook.url, signed.headers, signed.body, timeout=budget.attempt_timeout()
@@ -157,10 +191,21 @@ def _deliver(
         except SsrfBlocked:
             _log_failure(webhook.webhook_id, "ssrf_blocked")
             return False  # never retryable: the URL itself is the problem
+        except ValueError:
+            # `UnicodeError` included: a port out of range, an unparsable
+            # host or a label IDNA cannot encode. Never retryable either.
+            _log_failure(webhook.webhook_id, FAILURE_INVALID_URL)
+            return False
         except (OSError, http.client.HTTPException):
             status = None  # transport failure: retryable
         if status is not None and is_delivered(status):
             return True
+        if status is not None and is_auth_rejection(status) and not secret_refreshed:
+            secret_refreshed = True
+            fresh = _reread_secret(webhook.secret_name, secrets)
+            if fresh is not None and fresh != secret:
+                secret = fresh
+                continue
         if status is not None and not is_retryable(status):
             _log_failure(webhook.webhook_id, f"rejected_{status}")
             return False
@@ -168,6 +213,17 @@ def _deliver(
             budget.sleep(backoff_seconds(attempt))
     _log_failure(webhook.webhook_id, "attempts_exhausted")
     return False
+
+
+def _reread_secret(secret_name: str, secrets: SecretReader) -> bytes | None:
+    """The webhook's secret read again past the cache: a receiver that
+    answers 401/403 may have just rotated it. `None` when it cannot be
+    read (the 401/403 then stands)."""
+    secrets.invalidate(secret_name)
+    try:
+        return secrets.read(secret_name)
+    except (ClientError, BotoCoreError):
+        return None
 
 
 def _event_from_stream_image(image: dict[str, Any]) -> LifecycleEvent:

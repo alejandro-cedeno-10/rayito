@@ -87,7 +87,14 @@ KMS (`kms_key_id=`) añade el coste de KMS y los permisos `kms:Decrypt` /
 `destroy` usa `DescribeSecret` y `DeleteSecret`, las dos incluidas). Con
 `KmsKeyArn`, añade `kms:Decrypt` (y `kms:GenerateDataKey` en la de
 administrador) sólo a través de Secrets Manager (`kms:ViaService`).
-Para desplegarla:
+`RayitoSecretsReader` además **niega** `GetSecretValue` sobre
+`rayito/webhooks/*`: ahí viven los secretos de firma de los
+[webhooks](funciones-opcionales/eventos-y-webhooks.md), y un sandbox que
+recibiera uno por `secrets=` podría falsificar entregas firmadas. El SDK
+también se niega a leerlos por `secrets=`/`SecretCache`
+(`InvalidArgumentException`) aunque tu política lo permitiera.
+`SecretPrefix` debe terminar en `/`: `rayito` (sin barra) concedería
+también secretos ajenos como `rayito-prod-db`. Para desplegarla:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/secrets-access.yaml
@@ -291,7 +298,7 @@ Reglas:
 | `SecretNotFoundException` (también `NotFoundException`) | `SecretNotFoundError` | el secreto no existe o está programado para borrarse |
 | `SecretException` (un `SandboxException`) | `SecretError` (un `SandboxError`) | permiso IAM que falta (nombra la acción), ya existe, choque de versión, límite de versiones, secreto binario |
 | `RateLimitException` | `RateLimitError` | `ThrottlingException` tras los reintentos del SDK de AWS |
-| `InvalidArgumentException` | `InvalidArgumentError` | nombre, valor (≤ 64 KiB), `metadata`, TTL o variable inválidos; conflicto `envs`/`secrets` |
+| `InvalidArgumentException` | `InvalidArgumentError` | nombre, valor (≤ 64 KiB), `metadata`, TTL o variable inválidos; conflicto `envs`/`secrets`; un secreto de firma de webhook (`rayito/webhooks/...`) en `secrets=` o `SecretCache` |
 
 Ningún error contiene el valor ni el nombre del secreto; el mensaje de AWS
 tampoco se propaga (puede nombrar el secreto): sólo su código. Tampoco los

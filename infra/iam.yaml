@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Rayito IAM: build role, execution role (logs only) and a least-privilege
-  managed policy for the SDK caller. Action names come from
+  Rayito IAM: build role, execution role (logs only) and least-privilege
+  managed policies for the SDK caller: SandboxLauncherPolicy for a service
+  that only creates and drives sandboxes, ImagePublisherPolicy for whoever
+  publishes images, and CallerPolicy (their union, kept for existing
+  setups). Action names come from
   https://docs.aws.amazon.com/lambda/latest/dg/microvms-security.html and the
   aws-samples templates; see AWS_API_NOTES.md section 10.
 
@@ -128,6 +131,18 @@ Resources:
                   - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupPrefix}/*
                   - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda-microvms/*
                   - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/microvms/*
+        # Always present, whatever else the role is given later (an
+        # s3-mounts stack on the artifact bucket, a policy attached by hand):
+        # the published image artifacts are never reachable from a sandbox.
+        - PolicyName: never-image-artifacts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: NeverTheImageArtifacts
+                Effect: Deny
+                Action: s3:*
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactBucket}/rayito/*
         - !If
           - HasPersistenceBucket
           - PolicyName: persistence
@@ -148,18 +163,169 @@ Resources:
                   Condition:
                     StringLike:
                       s3:prefix: !Sub ${PersistencePrefix}/*
-                - Sid: NeverTheImageArtifacts
-                  Effect: Deny
-                  Action: s3:*
-                  Resource:
-                    - !Sub arn:aws:s3:::${ArtifactBucket}/rayito/*
           - !Ref AWS::NoValue
 
+  # Runtime verbs only: what a service that creates, connects to, pauses,
+  # resumes, lists and kills sandboxes needs, and nothing that can change
+  # an image or its artifacts. Attach this one (not CallerPolicy) to a
+  # production service role: a compromised launcher can then not publish a
+  # backdoored image version that every future sandbox would run.
+  SandboxLauncherPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub rayito-m0-launcher-${AWS::Region}
+      Description: >-
+        Rayito sandbox launcher: run, get, suspend, resume, terminate and
+        mint auth tokens for microVMs of this account's images, read image
+        metadata, pass the execution role and the network connectors, and
+        the transfer bucket statements. No image write, no build role, no
+        artifact upload.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListEverything
+            Effect: Allow
+            Action:
+              - lambda:ListMicrovms
+              - lambda:ListMicrovmImages
+              - lambda:ListManagedMicrovmImages
+              - lambda:ListManagedMicrovmImageVersions
+            Resource: "*"
+          - Sid: RunAndDriveMicrovms
+            Effect: Allow
+            Action:
+              - lambda:RunMicrovm
+              - lambda:GetMicrovm
+              - lambda:SuspendMicrovm
+              - lambda:ResumeMicrovm
+              - lambda:TerminateMicrovm
+              - lambda:CreateMicrovmAuthToken
+              - lambda:GetMicrovmImage
+              - lambda:GetMicrovmImageVersion
+              - lambda:ListMicrovmImageVersions
+              - lambda:ListTags
+            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:*
+          - Sid: PassExecutionRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt ExecutionRole.Arn
+          - Sid: PassManagedConnectors
+            Effect: Allow
+            Action: lambda:PassNetworkConnector
+            Resource: !Sub arn:aws:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:*
+          - !If
+            - HasOwnConnectors
+            - Sid: PassOwnConnectors
+              Effect: Allow
+              Action: lambda:PassNetworkConnector
+              Resource: !Ref NetworkConnectorArns
+            - !Ref AWS::NoValue
+          - !If
+            - HasTransferBucket
+            - Sid: TransferObjects
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+                - s3:AbortMultipartUpload
+              Resource: !Sub arn:aws:s3:::${TransferBucket}/${TransferPrefix}/*
+            - !Ref AWS::NoValue
+          - !If
+            - HasTransferBucket
+            - Sid: TransferMissingKeyIs404
+              Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub arn:aws:s3:::${TransferBucket}
+              Condition:
+                StringLike:
+                  s3:prefix: !Sub ${TransferPrefix}/*
+            - !Ref AWS::NoValue
+          - Sid: ReadQuotas
+            Effect: Allow
+            Action: servicequotas:ListServiceQuotas
+            Resource: "*"
+
+  # Image verbs only (rayito image publish / prune): create and update
+  # images and versions, pass the build role and upload the artifacts. A
+  # maintainer's or a release pipeline's identity, never a sandbox
+  # launcher's.
+  ImagePublisherPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub rayito-m0-publisher-${AWS::Region}
+      Description: >-
+        Rayito image publisher: create, update and prune images of this
+        account, pass the build role and upload artifacts under rayito/ of
+        the artifact bucket. It cannot run or drive a sandbox.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListEverything
+            Effect: Allow
+            Action:
+              - lambda:ListMicrovms
+              - lambda:ListMicrovmImages
+              - lambda:ListManagedMicrovmImages
+              - lambda:ListManagedMicrovmImageVersions
+            Resource: "*"
+          - Sid: PublishImages
+            Effect: Allow
+            Action:
+              - lambda:CreateMicrovmImage
+              - lambda:UpdateMicrovmImage
+              - lambda:GetMicrovmImage
+              - lambda:ListMicrovmImageVersions
+              - lambda:GetMicrovmImageVersion
+              - lambda:UpdateMicrovmImageVersion
+              - lambda:DeleteMicrovmImageVersion
+              - lambda:ListMicrovmImageBuilds
+              - lambda:GetMicrovmImageBuild
+              - lambda:TagResource
+              - lambda:ListTags
+            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:*
+          - Sid: PassBuildRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt BuildRole.Arn
+          - Sid: PassManagedConnectors
+            Effect: Allow
+            Action: lambda:PassNetworkConnector
+            Resource: !Sub arn:aws:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:*
+          - !If
+            - HasOwnConnectors
+            - Sid: PassOwnConnectors
+              Effect: Allow
+              Action: lambda:PassNetworkConnector
+              Resource: !Ref NetworkConnectorArns
+            - !Ref AWS::NoValue
+          - Sid: UploadArtifacts
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource: !Sub arn:aws:s3:::${ArtifactBucket}/rayito/*
+          - Sid: ProbeArtifactBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub arn:aws:s3:::${ArtifactBucket}
+          - Sid: ReadQuotas
+            Effect: Allow
+            Action: servicequotas:ListServiceQuotas
+            Resource: "*"
+
+  # The union of SandboxLauncherPolicy and ImagePublisherPolicy, unchanged
+  # for setups that already attach it (scripts/tests/test_iam_template.py
+  # pins that it is exactly that union). For a developer machine or a
+  # maintainer; a production service role gets SandboxLauncherPolicy.
   CallerPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub rayito-m0-caller-${AWS::Region}
-      Description: Least privilege for the machine that runs run_m0.sh / the Rayito SDK.
+      Description: >-
+        Rayito caller (publisher and launcher together, kept for existing
+        setups): prefer SandboxLauncherPolicy for a service that only
+        creates sandboxes, ImagePublisherPolicy for image publishing.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -255,4 +421,11 @@ Outputs:
   ExecutionRoleArn:
     Value: !GetAtt ExecutionRole.Arn
   CallerPolicyArn:
+    Description: Publisher and launcher together (developer machine, maintainer).
     Value: !Ref CallerPolicy
+  SandboxLauncherPolicyArn:
+    Description: Attach to a production service role that only creates and drives sandboxes.
+    Value: !Ref SandboxLauncherPolicy
+  ImagePublisherPolicyArn:
+    Description: Attach to whoever publishes or prunes images (rayito image publish / prune).
+    Value: !Ref ImagePublisherPolicy

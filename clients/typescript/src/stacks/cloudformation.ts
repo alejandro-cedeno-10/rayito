@@ -3,8 +3,10 @@
  * Espejo de `rayito._stacks._cloudformation`. Parámetros y formas
  * verificados contra `AWS_API_NOTES.md` §21: `CreateStack`, `UpdateStack`
  * (con `UsePreviousValue` para los parámetros que se conservan),
- * `DescribeStacks` (incluidos sus `Parameters`), `DeleteStack`. El cliente de `putArtifact` sólo hace
- * `HeadObject` + `PutObject`, igual que el resto del SDK.
+ * `DescribeStacks` (incluidos sus `Parameters`), `DeleteStack`. `putArtifact` nunca se fía de que
+ * exista un objeto con la clave esperada: con `ExpectedBucketOwner` (la cuenta de
+ * `sts:GetCallerIdentity`) hace `GetObject` y compara el sha256 del contenido; sólo si coincide no
+ * lo vuelve a subir, y si falta o no coincide, `PutObject` con `ChecksumSHA256`.
  *
  * `@aws-sdk/client-cloudformation` y `@aws-sdk/client-s3` son peers
  * opcionales (`loadOptionalSdkClient`): construir un `CloudFormationProvisioner`
@@ -12,19 +14,26 @@
  * hace.
  */
 
+import { createHash } from "node:crypto";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { awsCode, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { StackError } from "../errors.js";
+import type { Logger } from "../logger.js";
 import type { StackComponent, StackStatus } from "./model.js";
 import type { DeployTarget, StackProvisioner, UpdateOutcome } from "./port.js";
 
 const CLOUDFORMATION_PEER = "@aws-sdk/client-cloudformation";
 const S3_PEER = "@aws-sdk/client-s3";
+const STS_MODULE = "@aws-sdk/client-sts";
 const VALIDATION_ERROR = "ValidationError";
 const NOT_EXISTS_MARKER = "does not exist";
 const NO_UPDATES_MARKER = "No updates are to be performed";
-const HEAD_NOT_FOUND_CODE = "NotFound";
+/**
+ * `GetObject` sobre una clave que no existe (con `s3:ListBucket`; sin él, S3
+ * responde `AccessDenied` y el despliegue falla, como antes).
+ */
+const MISSING_OBJECT_CODES = new Set(["NoSuchKey", "NotFound"]);
 const DEFAULT_POLL_INTERVAL_MS = 500;
 
 const TERMINAL_SUCCESS_STATES = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE"]);
@@ -71,9 +80,21 @@ interface CloudFormationApi {
   deleteStack(input: { StackName: string }): Promise<unknown>;
 }
 
-interface S3Api {
-  headObject(input: { Bucket: string; Key: string }): Promise<unknown>;
-  putObject(input: { Bucket: string; Key: string; Body: Uint8Array }): Promise<unknown>;
+interface LocatedObject {
+  Bucket: string;
+  Key: string;
+  ExpectedBucketOwner: string;
+}
+
+export interface S3Api {
+  getObject(
+    input: LocatedObject,
+  ): Promise<{ Body?: { transformToByteArray(): Promise<Uint8Array> } | undefined }>;
+  putObject(input: LocatedObject & { Body: Uint8Array; ChecksumSHA256: string }): Promise<unknown>;
+}
+
+export interface StsApi {
+  getCallerIdentity(): Promise<{ Account?: string | undefined }>;
 }
 
 interface CloudFormationModule {
@@ -88,8 +109,13 @@ interface CloudFormationModule {
 
 interface S3Module {
   readonly S3Client: new (config: object) => { send(command: unknown): Promise<unknown> };
-  readonly HeadObjectCommand: new (input: object) => unknown;
+  readonly GetObjectCommand: new (input: object) => unknown;
   readonly PutObjectCommand: new (input: object) => unknown;
+}
+
+interface StsModule {
+  readonly STSClient: new (config: object) => { send(command: unknown): Promise<unknown> };
+  readonly GetCallerIdentityCommand: new (input: object) => unknown;
 }
 
 async function cloudformationApi(
@@ -120,9 +146,24 @@ async function s3Api(region: string, credentials: Credentials): Promise<S3Api> {
     credentials,
   );
   return {
-    headObject: (input) => send(new sdk.HeadObjectCommand(input)),
+    getObject: (input) => send(new sdk.GetObjectCommand(input)),
     putObject: (input) => send(new sdk.PutObjectCommand(input)),
   };
+}
+
+async function stsApi(region: string, credentials: Credentials): Promise<StsApi> {
+  const { sdk, send } = await loadOptionalSdkClient<StsModule>(
+    STS_MODULE,
+    "OptionalStacks artifact upload (rayito stack / OptionalStacks)",
+    (module) => module.STSClient,
+    region,
+    credentials,
+  );
+  return { getCallerIdentity: () => send(new sdk.GetCallerIdentityCommand({})) };
+}
+
+function sha256(data: Uint8Array): Buffer {
+  return createHash("sha256").update(data).digest();
 }
 
 /**
@@ -154,6 +195,9 @@ export interface CloudFormationProvisionerOptions {
   /** Clientes ya construidos, para tests. */
   readonly cloudformationClient?: CloudFormationApi;
   readonly s3Client?: S3Api;
+  readonly stsClient?: StsApi;
+  /** Recibe el aviso de un artefacto ya subido con otro contenido (en silencio por defecto). */
+  readonly logger?: Logger | undefined;
 }
 
 export class CloudFormationProvisioner implements StackProvisioner {
@@ -162,6 +206,8 @@ export class CloudFormationProvisioner implements StackProvisioner {
   readonly #pollIntervalMs: number;
   #cloudformation: CloudFormationApi | undefined;
   #s3: S3Api | undefined;
+  #sts: StsApi | undefined;
+  readonly #logger: Logger | undefined;
 
   constructor(options: CloudFormationProvisionerOptions = {}) {
     this.#region = options.region;
@@ -169,36 +215,37 @@ export class CloudFormationProvisioner implements StackProvisioner {
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.#cloudformation = options.cloudformationClient;
     this.#s3 = options.s3Client;
+    this.#sts = options.stsClient;
+    this.#logger = options.logger;
   }
 
   async #cfn(): Promise<CloudFormationApi> {
     if (this.#cloudformation === undefined) {
-      const region = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
-      if (!region) {
-        throw new StackError(
-          "falta la región de OptionalStacks: pasa `region` o define AWS_REGION",
-          {
-            code: "failed",
-          },
-        );
-      }
-      this.#cloudformation = await cloudformationApi(region, this.#credentials);
+      this.#cloudformation = await cloudformationApi(this.#requireRegion(), this.#credentials);
     }
     return this.#cloudformation;
   }
 
+  async #identity(): Promise<StsApi> {
+    if (this.#sts === undefined) {
+      this.#sts = await stsApi(this.#requireRegion(), this.#credentials);
+    }
+    return this.#sts;
+  }
+
+  #requireRegion(): string {
+    const region = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+    if (!region) {
+      throw new StackError("falta la región de OptionalStacks: pasa `region` o define AWS_REGION", {
+        code: "failed",
+      });
+    }
+    return region;
+  }
+
   async #bucket(): Promise<S3Api> {
     if (this.#s3 === undefined) {
-      const region = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
-      if (!region) {
-        throw new StackError(
-          "falta la región de OptionalStacks: pasa `region` o define AWS_REGION",
-          {
-            code: "failed",
-          },
-        );
-      }
-      this.#s3 = await s3Api(region, this.#credentials);
+      this.#s3 = await s3Api(this.#requireRegion(), this.#credentials);
     }
     return this.#s3;
   }
@@ -331,26 +378,68 @@ export class CloudFormationProvisioner implements StackProvisioner {
     }
   }
 
+  /**
+   * Sube `data` salvo que el objeto ya tenga exactamente ese contenido. Cada
+   * llamada a S3 lleva `ExpectedBucketOwner`: un bucket de otra cuenta falla
+   * en vez de recibir o servir el código de las Lambdas.
+   */
   async putArtifact(bucket: string, key: string, data: Uint8Array): Promise<void> {
     const api = await this.#bucket();
-    try {
-      await api.headObject({ Bucket: bucket, Key: key });
+    const located: LocatedObject = {
+      Bucket: bucket,
+      Key: key,
+      ExpectedBucketOwner: await this.#accountId(),
+    };
+    const digest = sha256(data);
+    const stored = await storedDigest(api, located);
+    if (stored?.equals(digest)) {
       return;
-    } catch (error) {
-      if (awsCode(error) !== HEAD_NOT_FOUND_CODE) {
-        throw wrap(error);
-      }
+    }
+    if (stored !== undefined) {
+      this.#logger?.warn?.(
+        "el artefacto del componente ya subido no coincide con el del SDK: se sobrescribe",
+      );
     }
     try {
-      await api.putObject({ Bucket: bucket, Key: key, Body: data });
+      await api.putObject({ ...located, Body: data, ChecksumSHA256: digest.toString("base64") });
     } catch (error) {
       throw wrap(error);
     }
   }
 
+  async #accountId(): Promise<string> {
+    let account: string | undefined;
+    try {
+      account = (await (await this.#identity()).getCallerIdentity()).Account;
+    } catch (error) {
+      throw wrap(error);
+    }
+    if (account === undefined) {
+      throw new StackError("GetCallerIdentity no devolvió Account", { code: "failed" });
+    }
+    return account;
+  }
+
   async failureReason(stackName: string): Promise<string | undefined> {
     const status = await this.describe(stackName);
     return status?.reasonCode;
+  }
+}
+
+/**
+ * sha256 del objeto ya subido, o `undefined` si no existe. La clave es el
+ * sha256 del contenido: uno distinto sólo puede ser un objeto manipulado o
+ * corrupto, y `putArtifact` lo sobrescribe.
+ */
+async function storedDigest(api: S3Api, located: LocatedObject): Promise<Buffer | undefined> {
+  try {
+    const response = await api.getObject(located);
+    return sha256((await response.Body?.transformToByteArray()) ?? new Uint8Array());
+  } catch (error) {
+    if (MISSING_OBJECT_CODES.has(awsCode(error) ?? "")) {
+      return undefined;
+    }
+    throw wrap(error);
   }
 }
 

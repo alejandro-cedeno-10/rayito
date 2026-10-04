@@ -240,3 +240,32 @@ def test_shared_caches_are_capped_and_swept() -> None:
     live = secrets_module.shared_secret_caches()
     assert len(live) == secrets_module.MAX_SHARED_CACHES
     assert all(cache is not kept for cache in live)
+
+
+WEBHOOK_SIGNING_SECRET_IDS = (
+    "webhooks/prod",
+    SecretRef("webhooks/prod"),
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:rayito/webhooks/prod-AbCdEf",
+)
+
+
+@pytest.mark.parametrize("secret", WEBHOOK_SIGNING_SECRET_IDS)
+def test_a_webhook_signing_secret_is_never_read_for_a_sandbox(
+    api: FakeSecretsManager, secret: str | SecretRef
+) -> None:
+    # `secrets=` injects into an untrusted sandbox: with a webhook's signing
+    # secret it could forge signed deliveries to the receiver.
+    api.put("rayito/webhooks/prod", SENTINEL_VALUE)
+    cache, _clock = cache_over(api)
+    with pytest.raises(InvalidArgumentException) as raised:
+        cache.get(secret)
+    assert api.count("GetSecretValue") == 0
+    assert "prod" not in str(raised.value)
+
+
+def test_a_secret_merely_named_like_webhooks_elsewhere_is_still_read(
+    api: FakeSecretsManager,
+) -> None:
+    api.put("rayito/team/webhooks/prod", SENTINEL_VALUE)
+    cache, _clock = cache_over(api)
+    assert cache.get("team/webhooks/prod") == SENTINEL_VALUE
