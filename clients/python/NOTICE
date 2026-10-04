@@ -9,8 +9,9 @@ This product includes software developed by third parties:
   source, the sdist checksum and the single import-path change.
 - Git argument builders, porcelain parsers and failure snippets in
   `clients/python/src/rayito/_git_base.py` and
-  `clients/typescript/src/sandbox/git-args.ts` are adapted from the E2B SDK
-  (github.com/e2b-dev/E2B, Apache License 2.0).
+  `clients/typescript/src/sandbox/git-args.ts` are adapted, with changes,
+  from the E2B SDK (github.com/e2b-dev/E2B, Apache License 2.0),
+  Copyright 2023 FoundryLabs, Inc.
 - `crates/rayito-proto/vendor/opentelemetry/` is a minimal, hand-authored
   subset of the message shapes and field numbers defined by the
   OpenTelemetry Protocol (github.com/open-telemetry/opentelemetry-proto,

@@ -3,9 +3,10 @@
 Pasos manuales para publicar cada componente. **Este documento no reserva
 nombres ni publica nada**: el cambio `m7-oss-hygiene` deja el repositorio
 listo para publicar y describe quién hace cada paso y cómo; la primera
-publicación es una decisión del mantenedor (`GOVERNANCE.md`). Hasta que
-exista la primera release, las insignias de PyPI y npm del `README.md`
-muestran "not found": es el comportamiento esperado, no un fallo.
+publicación es una decisión del mantenedor (`GOVERNANCE.md`). La política
+de versionado, obsolescencia y soporte que siguen las releases está en
+[`docs/site/docs/limits.md`](site/docs/limits.md#versionado-y-soporte)
+("Versionado y soporte").
 
 ## 1. Qué se publica y con qué tag
 
@@ -200,3 +201,12 @@ cargo publish --dry-run -p rayito-proto
    (`tests/unit/cli/test_compat.py` falla si divergen). La versión de imagen
    no entra en la tabla: es el contador de builds de cada imagen en cada
    cuenta.
+8. Notas de la release: la nota curada es el bloque del changelog de cada
+   componente (la GitHub Release lleva además la lista de commits que
+   genera release-please). Una vulnerabilidad conocida públicamente que
+   la release corrige va en `### Security` con su identificador (CVE o
+   GHSA); un cambio incompatible, en `Changed` o `Removed`, y lo que pasa a
+   obsoleto, en `Deprecated`
+   ([política](site/docs/limits.md#versionado-y-soporte)). Si la release
+   abre una línea `MAJOR.MINOR` nueva, actualizar la tabla "Versiones
+   soportadas" de `SECURITY.md` en el mismo PR.

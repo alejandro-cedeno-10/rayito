@@ -560,6 +560,14 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.2.0...HEAD
-[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.1.0...rayd-v0.2.0
-[0.1.0]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/rayd-v0.1.0
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.0...HEAD
+[0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.1...rayd-v0.6.0
+[0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.0...rayd-v0.5.1
+[0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.4.0...rayd-v0.5.0
+[0.4.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.3.3...rayd-v0.4.0
+[0.3.3]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.3.2...rayd-v0.3.3
+[0.3.2]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.3.1...rayd-v0.3.2
+[0.3.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.3.0...rayd-v0.3.1
+[0.3.0]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/rayd-v0.3.0
+[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/RELEASE_NOTES_0.2.0.md
+[0.1.0]: https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/RELEASE_NOTES_0.1.0.md
