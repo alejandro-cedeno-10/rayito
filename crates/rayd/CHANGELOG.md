@@ -25,6 +25,24 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   `cosign verify-blob --certificate-identity
   "…/release.yml@refs/tags/rayd-v${RAYD_VERSION}"` en vez de una regexp que
   aceptaba la firma de cualquier tag `rayd-v*` (`docs/site/docs/verify.md`).
+- **Firmar `rayd` espera la aprobación del mantenedor.** `rayd-sign` corre en
+  el environment `release` y sólo cuando el run publica: sin aprobación no
+  hay token OIDC ni certificado de Sigstore con la identidad
+  `release.yml@refs/tags/rayd-v<versión>`, y un ensayo (`dry_run`) ya no
+  firma. Antes, un ensayo lanzado desde un tag `rayd-v*` firmaba con la
+  identidad exacta que verifican los usuarios sin pasar por ningún revisor.
+  `verify.md` dice ahora qué prueba la firma y qué no.
+- **La receta recomendada de `rayito-image.zip` verifica antes de
+  publicar**: descarga `SHA256SUMS`, comprueba el bundle con
+  `cosign verify-blob` y la suma, y sólo después llama a
+  `rayito image publish` (`docs/site/docs/primeros-pasos/configurar-aws.md`).
+  Ya no es un paso opcional: un asset de una release se podría reemplazar
+  con un token del repositorio.
+- **CI sin cachés donde hay credenciales y con herramientas fijadas**: los
+  jobs del sitio de documentación y del e2e ya no restauran cachés de
+  Actions; uv se instala fijado por versión y sha256 en todos los workflows
+  y nunca re-bloquea un `uv.lock` desfasado; pip-audit y cfn-lint salen de
+  requisitos con `--hash` en vez de `uvx`.
 
 ## [0.6.1] - 2026-10-04
 

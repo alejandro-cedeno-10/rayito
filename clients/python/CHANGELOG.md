@@ -14,6 +14,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   publicado es lo que produjo `uv build`. twine y su grafo se instalan desde
   requisitos con `--hash` (`.github/release/requirements-twine.txt`), uv va
   fijado por versión y checksum, y la caché de uv está apagada en la release.
+- **La release comprueba que `dist/` es exactamente la wheel y el sdist del
+  tag** antes de subirlo y antes de publicarlo: `sha256sum -c` no detecta un
+  fichero que no esté en `SHA256SUMS`, y la acción de publicación sube todo
+  lo que haya en el directorio.
+- **`rayito image zip` y `make image-publish` rechazan enlaces simbólicos**
+  en el árbol de la imagen y en el sidecar (salvo dentro de los directorios
+  que nunca viajan, como `.venv`): un enlace metía en todas las imágenes el
+  contenido de un fichero de la máquina que construye, legible por el
+  usuario del sandbox.
 
 ## [0.6.1] - 2026-10-04
 

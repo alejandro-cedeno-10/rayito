@@ -79,8 +79,9 @@ uv run --isolated --python 3.11 pytest tests/unit
 uv run --isolated --python 3.13 pytest tests/unit
 ```
 
-Paquete: `uv build && python3 ../../scripts/check_wheel.py dist/*.whl` y
-`uvx twine==7.0.0 check dist/*`.
+Paquete: `make wheel` desde la raíz (`uv build`, `check_wheel.py` y
+`twine check`, con twine instalado desde
+`.github/release/requirements-twine.txt` con `--hash`; nunca `uvx twine`).
 
 ## TypeScript
 
@@ -113,7 +114,7 @@ python3 scripts/gen_stack_assets.py --check
 python3 scripts/check_license.py
 uvx ruff==0.16.7 check scripts
 actionlint                       # si tocaste .github/workflows
-uvx cfn-lint==1.56.3 infra/*.yaml  # si tocaste infra/
+make infra-lint                  # si tocaste infra/ (cfn-lint con --hash)
 ```
 
 Los scripts de la raíz necesitan Python ≥ 3.11 (usan `tomllib`). Si el

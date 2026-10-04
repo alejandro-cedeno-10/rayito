@@ -219,8 +219,16 @@ cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
 ```bash
 (cd clients/python && uv build)
 python3 scripts/check_wheel.py clients/python/dist/*.whl
-uvx twine==7.0.0 check clients/python/dist/*
+T="$(mktemp -d)" && uv venv -q --python 3.12 "$T" && \
+  uv pip install --python "$T" --require-hashes --no-deps --only-binary :all: \
+  -r .github/release/requirements-twine.txt && "$T/bin/twine" check clients/python/dist/*
 ```
+
+twine, cfn-lint y pip-audit nunca corren con `uvx`: `==` fija la
+herramienta pero no su grafo, que se resolvería al vuelo en cada ejecución.
+Se instalan desde `.github/release/requirements-*.txt` (cada pin con
+`--hash`), y `scripts/check_pins.py` sólo admite `uvx` para herramientas sin
+dependencias (`ruff`).
 
 Kernel sidecar:
 
@@ -265,7 +273,9 @@ Gates locales que CI no ejecuta:
 
 ```bash
 openspec validate --all --strict --no-interactive
-uvx cfn-lint==1.56.3 infra/*.yaml
+T="$(mktemp -d)" && uv venv -q --python 3.12 "$T" && \
+  uv pip install --python "$T" --require-hashes --no-deps --only-binary :all: \
+  -r .github/release/requirements-cfn-lint.txt && "$T/bin/cfn-lint" infra/*.yaml
 ```
 
 `make infra-lint` añade `aws cloudformation validate-template` sobre las
