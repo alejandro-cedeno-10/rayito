@@ -9,16 +9,18 @@ vivos.
 !!! warning "Experimental: el montaje todavía no funciona"
     El dominio, el puerto `VolumeMounter` y el CRUD de volúmenes
     (`VolumeStore`) son reales y están probados. Pero `rayd` sólo trae
-    `UnavailableEfsMounter` hasta que la campaña de medición EFS-1..EFS-20
-    se ejecute contra AWS real. Ya respondieron que sí EFS-1 (NFSv4.1 en el
-    kernel del guest), EFS-2 (root monta dentro del contenedor de la app en
-    `rayito-base-caps`) y EFS-7 (`amazon-efs-utils` se instala en la imagen);
-    quedan los criterios de parada EFS-3, EFS-8, EFS-11 y EFS-13 (un
-    conector VPC propio que llegue al mount target, `efs-utils` con TLS +
-    IAM + access point sin `systemd`, suspend/resume y `/suspend` con el
-    mount target inalcanzable), que necesitan una VPC. Hasta entonces, `Sandbox.create(volumes=...)` siempre
-    lanza `UnimplementedError`, incluso con una petición perfectamente
-    válida. Ver
+    `UnavailableEfsMounter`: el adaptador que monta de verdad todavía no
+    existe. La campaña de medición contra AWS real ya pasó todos sus
+    criterios de parada (EFS-2, 3, 7, 8, 11 y 13, el 2026-10-04): un
+    conector VPC propio llega al mount target y `efs-utils` monta con TLS +
+    IAM + access point sin `systemd` y sobrevive a pausas de 10 min. También
+    dejó tareas para ese adaptador: parar `efs-proxy` al desmontar, vaciar
+    las escrituras antes de suspender (con el mount target inalcanzable y
+    datos pendientes, AWS termina el MicroVM), remontar al reanudar tras una
+    pausa larga (tras 70 min el volumen daba `Permission denied`) y que un sandbox con volumen
+    tiene un único conector de egress (sin `INTERNET_EGRESS`). Hasta
+    entonces, `Sandbox.create(volumes=...)` siempre lanza
+    `UnimplementedError`, incluso con una petición perfectamente válida. Ver
     [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md)
     para el estudio completo.
 

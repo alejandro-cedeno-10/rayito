@@ -491,22 +491,22 @@ para y se reescribe este documento.
 |---|---|---|---|
 | EFS-1 ✅ | ¿`nfs4` (y `nfs`) en `/proc/filesystems` del guest, en `rayito-base` y en `rayito-base-caps`? ¿`fuse`? | **Respondida** (campaña M15 conjunta con VOL-1 de `docs/research/2026-10-e2b-out-of-scope.md`, "Resultados de la primera campaña de mediciones"): `fuse`, `fuseblk`, `fusectl`, `nfs` y `nfs4` están los cinco en `/proc/filesystems` en **ambas** imágenes. `rayito-base` no tiene `/dev/fuse` y root pierde `CAP_SYS_ADMIN` (`EPERM` incluso en un `tmpfs`); `rayito-base-caps` sí monta. El criterio de parada pasa: la opción A sigue viva, sólo en `rayito-base-caps` | $0 (ya medida, sin coste adicional) |
 | EFS-2 ★ ✅ | ¿`mount -t nfs4` como root funciona dentro del contenedor de la app en caps? ¿`EPERM` en la imagen por defecto? | **Respondida 2026-10-02** (`AWS_API_NOTES.md` §16 Q123): en caps `tmpfs` monta y `nfs4` a TEST-NET agota el timeout (ni `EPERM` ni `ENODEV`); el `EPERM` por defecto ya estaba en Q79. Pasa | < $0,01 |
-| EFS-3 ★ ⛔ | **Bloqueada 2026-10-02** (Q124): una SCP de la organización deniega `ec2:CreateVpc` en la cuenta de pruebas; hace falta una VPC prestada con permiso (`efs_volumes.py run --vpc-id/--subnet-id`). (Q46 pendiente) ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC propia; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
-| EFS-4 | ¿Se acepta `egressNetworkConnectors=[INTERNET_EGRESS, <conector VPC>]`? ¿Cómo se enruta (CIDR de la VPC por la VPC y el resto por internet, o sólo uno)? ¿`ValidationException`? | tres lanzamientos: sólo VPC, sólo internet, ambos; `curl https://example.com` y `nc` al mount target | < $0,02 |
-| EFS-5 | ¿Resuelve el guest `<fs-id>.efs.<región>.amazonaws.com` con el conector? ¿Qué resolvedor contesta? | `getent hosts` como root y como uid 1000 | < $0,01 |
-| EFS-6 | ¿`efs-utils` obtiene las credenciales del rol del IMDSv2 del MicroVM (rol `execution_role`) como root, y necesita región/AZ del IMDS (`placement/*`)? | `mount -t efs -o tls,iam` con log de efs-utils en `debug` | incluido en EFS-8 |
+| EFS-3 ★ ✅ | **Respondida 2026-10-04** (`AWS_API_NOTES.md` §16 Q126–Q127, VPC existente prestada con permiso): pasa; conector `ACTIVE`, TCP 2049 en 133–466 ms. Cierra Q46. ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC propia; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
+| EFS-4 ✅ | **Respondida 2026-10-04** (Q131): **no**, sólo un conector de egress por VM. ¿Se acepta `egressNetworkConnectors=[INTERNET_EGRESS, <conector VPC>]`? ¿Cómo se enruta (CIDR de la VPC por la VPC y el resto por internet, o sólo uno)? ¿`ValidationException`? | tres lanzamientos: sólo VPC, sólo internet, ambos; `curl https://example.com` y `nc` al mount target | < $0,02 |
+| EFS-5 ✅ | **Respondida 2026-10-04** (Q131): sí, como root y uid 1000. ¿Resuelve el guest `<fs-id>.efs.<región>.amazonaws.com` con el conector? ¿Qué resolvedor contesta? | `getent hosts` como root y como uid 1000 | < $0,01 |
+| EFS-6 ✅ | **Respondida 2026-10-04** (Q128): sí, sin `placement/*`. ¿`efs-utils` obtiene las credenciales del rol del IMDSv2 del MicroVM (rol `execution_role`) como root, y necesita región/AZ del IMDS (`placement/*`)? | `mount -t efs -o tls,iam` con log de efs-utils en `debug` | incluido en EFS-8 |
 | EFS-7 ★ ✅ | ¿Se instala `amazon-efs-utils` en `al2023-minimal` ARM64 (paquete de AL2023 o build), con `efs-proxy`? Delta de `codeInstallSizeInBytes` y `memorySnapshotSizeInBytes`, tiempo de build | **Respondida 2026-10-02** (Q122): paquete de AL2023 `amazon-efs-utils-3.1.3` (37 paquetes, `efs-proxy` en `/usr/sbin`); code install +197,6 MB, memoria sin cambio, build +10 s; el RPM `python3` 3.9 repunta `/usr/bin/python3` (la capa real debe rehacer el enlace). Pasa | 1 build ≈ $0,04 + storage de snapshot mínimo 1 semana (~2 GB × $0,08 × 0,25) ≈ $0,04 |
-| EFS-8 ★ | ¿`mount -t efs -o tls,iam,accesspoint=…,mounttargetip=…` funciona sin `systemd`? ¿Quién arranca `efs-proxy` y el watchdog? Latencia de montaje p50/p95 (20 muestras); mensajes con SG cerrado, IAM denegado, AP inexistente | script como root en un VM caps con rol | 20 lanzamientos ≈ $0,03 + 10 min de VM ≈ $0,02 |
-| EFS-9 | Rendimiento desde el VM: `dd` 1 GB escritura y lectura secuencial, 10 000 ficheros de 4 KB, `git clone` de un repo mediano, latencia 4K aleatoria (`fio` si instala) frente a disco local | VM caps 2 GB | EFS: 2 GB escritos ($0,12) + 3 GB leídos ($0,09) + VM 15 min ($0,03) ≈ $0,25 |
-| EFS-10 | uid 1000 en el volumen: propietario 1000:1000 forzado por el AP, `chmod`, `rename`, `ESTALE` con muchos renames; ¿uid 1000 puede conectar al puerto local de `efs-proxy`? ¿Lo corta la regla `prohibit`? | pruebas como uid 1000 | < $0,02 |
-| EFS-11 ★ | Suspend/resume con montaje activo: pausas de 60 s, 10 min y 60 min; tiempo al primer `stat` correcto tras resume; escribir por un fd abierto antes de la pausa; `flock` mantenido; estado de `efs-proxy` | 3 ciclos por duración con el SDK | 3 × 3 × $0,005 + snapshots guardados ≈ 1 h ($0,0001/GB-h) + VM ≈ $0,10 |
-| EFS-12 | Pausa > 55 min (caducidad de credenciales): ¿reautentica el túnel? ¿rota IMDS las credenciales? (cierra también Q1) | una pausa de 70 min (dentro del tope de 8 h) | ≈ $0,02 |
-| EFS-13 ★ | `/suspend` con el mount target inalcanzable (revocar la regla del SG a mitad de sesión): ¿cuelga `sync(2)`? ¿qué hace la plataforma si `/suspend` agota el plazo (terminar como con un 500)? Repetir con `syncfs` acotado | dos VMs, SG modificado en caliente | < $0,03 |
+| EFS-8 ★ ✅ | **Respondida 2026-10-04** (Q128): pasa, p50 313 ms, p95 589 ms; `umount` no para `efs-proxy`. ¿`mount -t efs -o tls,iam,accesspoint=…,mounttargetip=…` funciona sin `systemd`? ¿Quién arranca `efs-proxy` y el watchdog? Latencia de montaje p50/p95 (20 muestras); mensajes con SG cerrado, IAM denegado, AP inexistente | script como root en un VM caps con rol | 20 lanzamientos ≈ $0,03 + 10 min de VM ≈ $0,02 |
+| EFS-9 ✅ | **Respondida 2026-10-04** (Q132). Rendimiento desde el VM: `dd` 1 GB escritura y lectura secuencial, 10 000 ficheros de 4 KB, `git clone` de un repo mediano, latencia 4K aleatoria (`fio` si instala) frente a disco local | VM caps 2 GB | EFS: 2 GB escritos ($0,12) + 3 GB leídos ($0,09) + VM 15 min ($0,03) ≈ $0,25 |
+| EFS-10 ✅ | **Respondida 2026-10-04** (Q133): uid 1000 alcanza el puerto local de `efs-proxy`. uid 1000 en el volumen: propietario 1000:1000 forzado por el AP, `chmod`, `rename`, `ESTALE` con muchos renames; ¿uid 1000 puede conectar al puerto local de `efs-proxy`? ¿Lo corta la regla `prohibit`? | pruebas como uid 1000 | < $0,02 |
+| EFS-11 ★ ✅ | **Respondida 2026-10-04** (Q129): pasa con 60 s y 10 min (la de 60 min es EFS-12). Suspend/resume con montaje activo: pausas de 60 s, 10 min y 60 min; tiempo al primer `stat` correcto tras resume; escribir por un fd abierto antes de la pausa; `flock` mantenido; estado de `efs-proxy` | 3 ciclos por duración con el SDK | 3 × 3 × $0,005 + snapshots guardados ≈ 1 h ($0,0001/GB-h) + VM ≈ $0,10 |
+| EFS-12 ❌ | **Medida 2026-10-04** (Q129): **falla**, tras 70 min suspendido el volumen da `Permission denied`; hay que remontar en `/resume`. Pausa > 55 min (caducidad de credenciales): ¿reautentica el túnel? ¿rota IMDS las credenciales? (cierra también Q1) | una pausa de 70 min (dentro del tope de 8 h) | ≈ $0,02 |
+| EFS-13 ★ ✅ | **Respondida 2026-10-04** (Q130): no cuelga; con escrituras pendientes la plataforma termina el VM. `/suspend` con el mount target inalcanzable (revocar la regla del SG a mitad de sesión): ¿cuelga `sync(2)`? ¿qué hace la plataforma si `/suspend` agota el plazo (terminar como con un 500)? Repetir con `syncfs` acotado | dos VMs, SG modificado en caliente | < $0,03 |
 | EFS-14 | ¿Cuánto crece el snapshot de suspend tras leer 1 GB del volumen (caché de páginas)? | `snapshotBuild` no aplica; Cost Explorer (`Snapshot-Write-GB`) del día | ≈ $0,01 |
-| EFS-15 | Dos sandboxes sobre el mismo AP: visibilidad de una escritura en el otro (close-to-open), latencia | dos VMs | < $0,03 |
-| EFS-16 | Política del sistema de ficheros: montaje sin AP, sin TLS, con rol sin `ClientWrite` (¿`EROFS`/`EACCES` al escribir?), con el AP de otro "inquilino" | 4 montajes con 2 roles | < $0,02 |
+| EFS-15 ✅ | **Respondida 2026-10-04** (Q133): ≈ 0,12 s. Dos sandboxes sobre el mismo AP: visibilidad de una escritura en el otro (close-to-open), latencia | dos VMs | < $0,03 |
+| EFS-16 ✅ | **Respondida 2026-10-04** (Q134). Política del sistema de ficheros: montaje sin AP, sin TLS, con rol sin `ClientWrite` (¿`EROFS`/`EACCES` al escribir?), con el AP de otro "inquilino" | 4 montajes con 2 roles | < $0,02 |
 | EFS-17 | Cold start con el conector VPC frente a `INTERNET_EGRESS` (`agent_ready` p50 de 10); `take()` del pool de suspendidos lanzado con conector | SDK | 20 lanzamientos ≈ $0,03 |
-| EFS-18 | ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
+| EFS-18 | En parte (Q127, Q133): el VM alcanza mount targets de las dos AZs; no se midió en qué AZ sale. ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
 | EFS-19 | (opción B) El mismo flujo con S3 Files | sólo si A funciona y hay demanda | ≈ $0,10 |
 | EFS-20 | Escala del conector: IPs de subnet consumidas por VM, 20 VMs simultáneos con conector en una subnet /28 | 20 lanzamientos | ≈ $0,05 |
 
@@ -520,6 +520,36 @@ una VPC prestada con permiso. De paso, el e2e del CRUD encontró que
 `DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
 `VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de
 imagen, cuatro VMs cortos, un sistema de ficheros vacío).
+
+**Resultados de la aceptación del 2026-10-04** (`AWS_API_NOTES.md` §16
+Q126–Q134), sobre una VPC existente de la cuenta de pruebas, usada con
+permiso del mantenedor y pasada sólo por variables de entorno: **todos los
+criterios de parada pasan** (EFS-3, EFS-8, EFS-11 y EFS-13; EFS-2 y EFS-7 ya
+pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
+(§4.3, §4.7, §12):
+
+- **Un solo conector de egress por VM** (EFS-4): un sandbox con volumen no
+  tiene internet salvo que se lo dé la VPC (NAT y un conector cuyo grupo lo
+  permita). R2 queda resuelto en contra: `INTERNET_EGRESS` y el conector de
+  la VPC no se combinan.
+- **`efs-proxy` sobrevive a `umount`** (EFS-8): sin el watchdog de systemd
+  queda un proceso por montaje; `rayd` tiene que pararlo al desmontar.
+- **Escrituras pendientes + mount target inalcanzable = VM perdido**
+  (EFS-13): `/suspend` de `rayd` respeta su plazo, pero la plataforma
+  termina el MicroVM. El adaptador tiene que vaciar antes de suspender y la
+  doc avisar de la pérdida.
+- **uid 1000 alcanza el puerto local de `efs-proxy`** (EFS-10): un volumen
+  de sólo lectura necesita además el rol sin `ClientWrite` o el puerto
+  cerrado a uid ≥ 1000 (T21).
+- **Una pausa que cruza la caducidad de las credenciales rompe el volumen**
+  (EFS-12, no es de parada): tras 70 min, `Permission denied` hasta
+  remontar. El adaptador tiene que remontar o renovar el túnel en `/resume`.
+- Rendimiento (EFS-9): 128 MB/s escribiendo y 585 MB/s leyendo en
+  secuencial, ≈ 17 ms por fichero pequeño: bueno para datos grandes, lento
+  para árboles de muchos ficheros.
+
+Coste de esta aceptación ≈ $0,50 (una imagen desechable, ≈ 25 VMs cortos
+y uno suspendido 70 min, 1 GiB escrito y leído, tres pilas de vida corta).
 
 **Total estimado de la campaña: ≈ $1–2 de uso AWS** (más el NAT gateway sólo
 si EFS-4 obliga a probar internet por la VPC: ≈ $0,10 por 2 h). La VPC tiene

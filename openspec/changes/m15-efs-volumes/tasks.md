@@ -202,6 +202,34 @@ itself; re-run `cleanup` until it exits 0 anyway).
       their zips and log groups, one file system); before/after inventory
       identical.
 
+### 7.7 Acceptance run 2026-10-04 (results in `AWS_API_NOTES.md` §16 Q126–Q134)
+
+An existing VPC of the test account, used with the maintainer's permission
+and passed only through `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS` (two
+private subnets in two AZs, default route to a transit gateway, no NAT).
+
+- [x] Python e2e `test_m15_efs_volumes_vpc.py`: 2 passed after two test
+      fixes (EC2 returns route-table associations in any order; a security
+      group created meanwhile by another deploy in the same VPC is not a
+      change; `DeleteFileSystem` is asynchronous). TypeScript check e2e:
+      1 passed. `check()`'s egress note now also counts non-NAT default
+      routes (both SDKs).
+- [x] Step 2 EFS-7: throwaway caps image with `amazon-efs-utils`, built in
+      227 s.
+- [x] Step 3 `run --efs11-pauses 60,600`: EFS-2, EFS-3, EFS-8, EFS-11 and
+      EFS-13 (★) pass (Q127–Q130). EFS-13 detail: no hang, but with
+      unflushed writes and the mount target unreachable the platform
+      terminates the MicroVM after `rayd`'s 5 s sync deadline.
+- [x] Step 4: EFS-4 (only one egress connector per VM), EFS-5, EFS-6,
+      EFS-9, EFS-10 (uid 1000 reaches the local `efs-proxy` port), EFS-15,
+      EFS-16 (unscoped policy) measured; **EFS-12 fails** (70-min pause:
+      `Permission denied` until a remount). Not measured: EFS-16 with
+      `AccessPointArns`/`AllowWrite=false`, EFS-14, 17, 19, 20.
+- [ ] Step 6 cleanup (`efs_volumes.py cleanup --run-id <id>`, the throwaway
+      image, its zip and log group) and the before/after inventory diff:
+      blocked by the expired SSO session; resources are tagged with the run
+      id and listed in the acceptance report.
+
 ## 9. Existing VPC quick setup (`EfsVolumes`, design D5)
 
 - [x] 9.1 Merge `origin/main` (FeatureSet/single Configure path kept;
@@ -227,8 +255,10 @@ itself; re-run `cleanup` until it exits 0 anyway).
       T21 delta extended (docs-delta.md).
 - [x] 9.7 Measurement script: no throwaway VPC; network only from
       args/env; `EfsVolumes` for check/deploy/destroy/delete.
-- [ ] 9.8 AWS acceptance (next serialized stage, cap $3): e2e on an
-      existing VPC, then §7.5 steps 3–6.
+- [ ] 9.8 AWS acceptance (serialized stage, cap $3): e2e on an existing
+      VPC, then §7.5 steps 3–6. Measured 2026-10-04 (§7.7); cleanup and the
+      inventory diff are still pending (the SSO session expired first).
+
 
 ## 8. OpenSpec
 

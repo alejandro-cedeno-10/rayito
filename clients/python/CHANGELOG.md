@@ -30,7 +30,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   conector de egress dedicado, sólo dentro de una VPC que ya existe).
   `EfsVolumes`/`AsyncEfsVolumes`: `check(vpc_id=, subnet_ids=)` comprueba
   la VPC sin crear nada (sólo `ec2:Describe*`: AZs distintas, IPs libres,
-  DNS, NAT; también `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`),
+  DNS y ruta por defecto de cada subred, a un NAT o a otra puerta como un
+  transit gateway; también `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`),
   `deploy()` se niega si algún hallazgo es `FAIL`, `volume_store()` da un
   `VolumeStore` sobre la pila, y `destroy(delete_file_system=True)`/
   `delete_file_system(id)` borran el sistema de ficheros conservado (sólo

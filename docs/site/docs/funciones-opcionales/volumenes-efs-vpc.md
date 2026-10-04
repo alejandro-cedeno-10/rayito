@@ -10,8 +10,10 @@ borra todos cuando se lo pides.
 !!! warning "Experimental"
     El sistema de ficheros, los grupos de seguridad, el conector y el CRUD
     de volúmenes (`VolumeStore`) son reales. El montaje dentro del sandbox
-    (`Sandbox.create(volumes=...)`) sigue en `UnimplementedError` hasta la
-    campaña de medición EFS-1..EFS-20 (ver [Volúmenes EFS](volumenes-efs.md)).
+    (`Sandbox.create(volumes=...)`) sigue en `UnimplementedError` hasta que
+    exista el adaptador de montaje real; la campaña de medición ya pasó sus
+    criterios de parada (ver [Medido en AWS real](#medido-en-aws-real) y
+    [Volúmenes EFS](volumenes-efs.md)).
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin una llamada explícita a
@@ -234,15 +236,35 @@ foto de todos ellos antes y después.
 ## Salida a internet
 
 El conector de esta pila **sólo** deja salir NFS (2049) hacia los mount
-targets: no da salida a internet. Si un sandbox necesita internet a la vez:
+targets: no da salida a internet. Y un MicroVM admite **un único conector
+de egress**: pedir a la vez `INTERNET_EGRESS` y el conector de la VPC es un
+error de validación de AWS (medido el 2026-10-04, `AWS_API_NOTES.md` §16
+Q131). Si un sandbox con volumen necesita internet:
 
-- la plataforma la da con su conector `INTERNET_EGRESS`; si combinarlo con
-  el conector de la VPC funciona es la pregunta EFS-4, aún sin medir;
-- si quieres que salga **por tu VPC**, depende del NAT de tu VPC (el
-  `check()` cuenta cuántas de tus subredes tienen ruta por defecto a un
-  NAT) y de un conector propio que lo permita
+- tiene que salir **por tu VPC**: depende de la ruta por defecto de tus
+  subredes (el `check()` cuenta cuántas van a un NAT y cuántas a otra
+  puerta, como un transit gateway) y de un conector propio cuyo grupo de
+  seguridad lo permita
   ([`infra/egress-connector.yaml`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/egress-connector.yaml));
-  esta pila no crea ninguno.
+  esta pila no crea ninguno;
+- con el conector de esta pila el sandbox sí resuelve nombres DNS (los de
+  EFS y los públicos), pero no conecta con nada fuera de los mount targets.
+
+## Medido en AWS real
+
+La aceptación del 2026-10-04 (`AWS_API_NOTES.md` §16 Q126–Q134) desplegó
+esta pila en una VPC existente y comprobó con una imagen de prueba (caps,
+con `amazon-efs-utils`) lo que el montaje dentro del sandbox necesitará:
+
+| Qué | Resultado |
+|---|---|
+| `deploy()` / `destroy(delete_file_system=True)` | ≈ 5 min; la VPC queda idéntica tras `destroy(delete_file_system=True)` |
+| Conector hasta el mount target | `ACTIVE`; TCP 2049 en 0,1–0,5 s |
+| `mount -t efs -o tls,iam,accesspoint` sin systemd | 20 de 20; p50 313 ms, p95 589 ms |
+| Pausa y reanudación con el volumen montado | datos intactos tras 60 s y 10 min; primera lectura ≤ 0,2 s; **tras 70 min (credenciales caducadas), `Permission denied` hasta remontar** |
+| Pausa con el mount target inalcanzable | sin escrituras pendientes, pausa y reanuda; **con escrituras pendientes, AWS termina el MicroVM** y se pierden |
+| Rendimiento | 128 MB/s escribiendo y 585 MB/s leyendo en secuencial; ≈ 17 ms por fichero pequeño |
+| Política del sistema de ficheros | sin access point, sin TLS o sin IAM: denegado |
 
 ## 3. Bórralo
 

@@ -29,7 +29,9 @@ versionado [SemVer](https://semver.org/lang/es/).
   target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y
   conector de egress dedicado, sólo dentro de una VPC que ya existe).
   `EfsVolumes`: `check({ vpcId, subnetIds })` comprueba la VPC sin crear
-  nada (sólo `Describe*` de EC2 con el peer opcional `@aws-sdk/client-ec2`),
+  nada (sólo `Describe*` de EC2 con el peer opcional `@aws-sdk/client-ec2`;
+  cuenta las subredes con ruta por defecto a un NAT y a otra puerta, como un
+  transit gateway),
   `deploy()` se niega si algún hallazgo es `FAIL`, `volumeStore()` da un
   `VolumeStore` sobre la pila, y `destroy({ deleteFileSystem: true })`/
   `deleteFileSystem(id)` borran el sistema de ficheros conservado (sólo uno
