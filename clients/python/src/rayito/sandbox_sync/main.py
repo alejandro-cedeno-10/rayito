@@ -882,6 +882,7 @@ class Sandbox:
             feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
+            egress=egress,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(

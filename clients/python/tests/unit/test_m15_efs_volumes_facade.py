@@ -135,6 +135,7 @@ def test_deploy_checks_first_and_sends_exactly_the_template_parameters() -> None
         "SubnetIds": f"{SUBNET_A},{SUBNET_B}",
         "AllowWrite": "true",
         "AccessPointArns": "",
+        "ReadOnlyAccessPointArns": "",
         "ConnectorName": "rayito-efs",
     }
 
@@ -151,6 +152,27 @@ def test_deploy_read_only_and_scoped_to_access_points() -> None:
     assert provisioner.parameters["AllowWrite"] == "false"
     assert provisioner.parameters["AccessPointArns"] == ACCESS_POINT_ARN
     assert provisioner.parameters["ConnectorName"] == "team-efs"
+
+
+def test_deploy_denies_client_write_on_read_only_access_points() -> None:
+    """Q133: `ro` alone never stops a write through efs-proxy's tunnel, so a
+    read-only volume is enforced by the policy (explicit Deny on
+    ClientWrite) even when the stack allows writes."""
+    volumes, provisioner, _, _ = facade()
+    volumes.deploy(
+        vpc_id=VPC_ID,
+        subnet_ids=[SUBNET_A],
+        read_only_access_point_arns=[ACCESS_POINT_ARN],
+    )
+    assert provisioner.parameters["AllowWrite"] == "true"
+    assert provisioner.parameters["ReadOnlyAccessPointArns"] == ACCESS_POINT_ARN
+
+
+def test_deploy_rejects_a_bad_read_only_access_point_arn_naming_its_option() -> None:
+    volumes, provisioner, _, ec2 = facade()
+    with pytest.raises(InvalidArgumentException, match="read_only_access_point_arns"):
+        volumes.deploy(vpc_id=VPC_ID, subnet_ids=[SUBNET_A], read_only_access_point_arns=["fsap-1"])
+    assert ec2.calls == [] and provisioner.calls == []
 
 
 def test_deploy_refuses_a_vpc_that_fails_the_check_and_creates_nothing() -> None:

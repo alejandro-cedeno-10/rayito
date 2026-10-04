@@ -551,6 +551,17 @@ pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
 Coste de esta aceptación ≈ $0,50 (una imagen desechable, ≈ 25 VMs cortos
 y uno suspendido 70 min, 1 GiB escrito y leído, tres pilas de vida corta).
 
+**Respuesta del adaptador real** (`m15-efs-volumes` §10, sin AWS; la
+revisión de EFS-12 y EFS-16 en AWS queda pendiente): `rayd` trae
+`EfsUtilsMounter` (activo sólo con `amazon-efs-utils` en la imagen), que
+termina el `efs-proxy` de cada volumen al desmontar (EFS-8), remonta en
+`/resume` cuando la pausa cruzó la caducidad de las credenciales o la sonda
+falla (EFS-12), vacía cada volumen con plazo en `/suspend` y documenta la
+pérdida (EFS-13), y monta sin seguir enlaces simbólicos. El sólo lectura se
+impone en IAM (`ReadOnlyAccessPointArns`, `Deny` de `ClientWrite`) porque
+el guest no puede filtrar por usuario (EFS-10, Q48), y los SDK rechazan
+`volumes=` sin exactamente un conector propio (EFS-4).
+
 **Total estimado de la campaña: ≈ $1–2 de uso AWS** (más el NAT gateway sólo
 si EFS-4 obliga a probar internet por la VPC: ≈ $0,10 por 2 h). La VPC tiene
 que ser **propia o prestada con permiso** (la puerta de despliegue de Q46

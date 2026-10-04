@@ -93,6 +93,15 @@ for the serialized AWS acceptance stage.
   and an optional `AccessPointArns` scope. The measurement script takes the
   VPC only from args/env (`RAYITO_E2E_VPC_ID`, `RAYITO_E2E_SUBNET_IDS`).
 
+- **Hardening from the 2026-10-04 acceptance** (design D6–D10, tasks §10):
+  `rayd` gets the real `EfsUtilsMounter` (still gated by detection, so no
+  published image changes behaviour): it stops each volume's `efs-proxy`
+  on unmount, remounts at `/resume` after a pause past the credentials'
+  expiry, flushes each volume within `/suspend`'s budget and mounts without
+  following symlinks; read-only is enforced in IAM
+  (`ReadOnlyAccessPointArns`); the SDKs reject `volumes=` without exactly
+  one own egress connector.
+
 ## Impact
 
 - Affected specs: new capability `efs-volumes` (this change); no existing
@@ -109,6 +118,8 @@ for the serialized AWS acceptance stage.
   client, no `ConfigureSandbox` call, and the existing zero-cost golden
   tests stay byte-for-byte unchanged (no 0.6 option touches this feature's
   code path).
-- No AWS touched by this change: the measurement campaign and the full
-  mounting implementation are a separate, future change once EFS-2, EFS-3
-  and EFS-8 clear.
+- The measurement campaign ran as this change's serialized AWS stage
+  (tasks §7.6/§7.7); the hardening in §10 touched no AWS and leaves an AWS
+  re-check of EFS-12 and scoped EFS-16 (tasks 10.8). The image layer with
+  `amazon-efs-utils` and the `create()` wiring of the section are the next
+  step.

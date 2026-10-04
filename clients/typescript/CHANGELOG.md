@@ -13,10 +13,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   `CreateAccessPointCommand`/`DescribeAccessPointsCommand`/
   `DeleteAccessPointCommand`, con `@aws-sdk/client-efs` como peer opcional
   cargado sólo en el primer uso) y `Sandbox.create({ volumes })`, que
-  valida la petición (tipos, rutas, variante `caps`) antes de cualquier
-  llamada a AWS y siempre lanza `UnimplementedError` hasta que la campaña
-  de medición EFS-1..EFS-20 decida un adaptador de montaje real
-  (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
+  valida la petición (tipos, rutas, variante `caps` y un único conector
+  propio en `egress`: sin él, con `INTERNET_EGRESS` o con dos conectores es
+  `InvalidArgumentError`, porque un MicroVM sólo admite un conector de
+  egress, `AWS_API_NOTES.md` §16 Q131) antes de cualquier llamada a AWS y
+  siempre lanza `UnimplementedError` mientras ninguna imagen publicada
+  traiga `amazon-efs-utils` (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
   y los errores `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
   El shim de E2B (`Volume`) hace CRUD real sobre
   `new E2B({ volumeStore })` (`volumeId` es el nombre del volumen, el mismo
@@ -35,7 +37,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   `deploy()` se niega si algún hallazgo es `FAIL`, `volumeStore()` da un
   `VolumeStore` sobre la pila, y `destroy({ deleteFileSystem: true })`/
   `deleteFileSystem(id)` borran el sistema de ficheros conservado (sólo uno
-  con la etiqueta `rayito=efs-volumes`).
+  con la etiqueta `rayito=efs-volumes`). `deploy({ readOnlyAccessPointArns })`
+  (`ReadOnlyAccessPointArns`) le deniega `ClientWrite` a los access points de
+  sólo lectura: la opción `ro` del montaje no basta, porque el usuario del
+  sandbox alcanza el puerto local de `efs-proxy` (Q133). El hallazgo
+  `internet-egress` de `check()` explica que un sandbox con volumen sólo
+  tiene internet por la VPC.
   `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
   (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
   access point nuevo y 8 s en dejar de listar uno borrado): `create` de un

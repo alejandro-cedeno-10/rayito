@@ -29,8 +29,8 @@ pub enum VolumeError {
     /// file system.
     #[error("sistema de ficheros no permitido por la imagen")]
     NotAllowed,
-    /// This agent build has no working `VolumeMounter`
-    /// (`UnavailableEfsMounter`, ahead of the measurement campaign).
+    /// This agent has no working `VolumeMounter`: the image lacks
+    /// `amazon-efs-utils` or `CAP_SYS_ADMIN` (`EfsUtilsMounter::support`).
     #[error("volúmenes EFS no soportados en este build")]
     Unsupported,
 }

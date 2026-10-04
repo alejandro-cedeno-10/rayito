@@ -28,7 +28,7 @@ esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Final
 
@@ -154,7 +154,11 @@ def planned_sections(plan: FeaturePlan, facts: LaunchFacts) -> tuple[PlannedSect
 
 
 def plan_features(
-    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+    options: FeatureOptions,
+    *,
+    image_variant: str | None = None,
+    logging: object = None,
+    egress: Sequence[str] | None = None,
 ) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
@@ -178,10 +182,7 @@ def plan_features(
         if section is not None:
             sections.append(section)
     if options.volumes is not None:
-        # m15-efs-volumes: validación real (rutas, tipos, variante caps)
-        # antes de la UnimplementedError del adaptador ausente; ver
-        # rayito._volumes._section.require_volume_support.
-        require_volume_support(options.volumes, image_variant=image_variant)
+        require_volume_support(options.volumes, image_variant=image_variant, egress=egress)
     # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
     # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
     # es qué imagen lanzar), así que `create()` la resuelve por su cuenta

@@ -64,9 +64,10 @@ def validate_access_point_id(value: str) -> str:
 
 
 #: Mirrors `rayd_core::volume::MountState`; sólo `"mounted"` deja usar el
-#: volumen. Ningún build 0.6 de `rayd` reporta otra cosa que no sea ausente
-#: (`UnavailableEfsMounter`), así que hoy ningún `VolumeStatus` real existe
-#: todavía: el tipo está aquí para cuando `ConfigureStatus` sí lo rellene.
+#: volumen. `rayd` sólo lo rellena en una imagen con `amazon-efs-utils` y
+#: `create()` aún no manda la sección, así que hoy ningún `VolumeStatus`
+#: real llega al SDK: el tipo está aquí para cuando `ConfigureStatus` lo
+#: rellene.
 MountState = Literal[
     "requested", "mounting", "mounted", "degraded", "remounting", "unmounted", "failed"
 ]

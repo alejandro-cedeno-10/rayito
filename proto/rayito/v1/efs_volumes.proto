@@ -2,12 +2,12 @@ syntax = "proto3";
 
 package rayito.v1;
 
-// Owned by m15-efs-volumes (ADR-018, experimental). `rayd` ships only
-// `UnavailableEfsMounter` today (ahead of the EFS-1..EFS-20 measurement
-// campaign, docs/research/2026-10-efs-persistence.md): the
-// `efs_volumes` section of `ConfigureRequest` always answers
-// `SECTION_CODE_UNSUPPORTED`, whatever `EfsVolumesConfig` it carries. The
-// messages are complete now so a future adapter needs no wire change.
+// Owned by m15-efs-volumes (ADR-018, experimental). `rayd` mounts through
+// `EfsUtilsMounter` (`mount -t efs`, amazon-efs-utils) only on an image
+// that installs amazon-efs-utils and runs with CAP_SYS_ADMIN; on every
+// other image (every image Rayito publishes today) the `efs_volumes`
+// section of `ConfigureRequest` answers `SECTION_CODE_UNSUPPORTED`,
+// whatever `EfsVolumesConfig` it carries.
 message EfsVolumesConfig {
   // A present (even empty) section replaces the sandbox's whole desired
   // set of volumes (`configure.proto` semantics); at most 4
@@ -26,8 +26,7 @@ message EfsVolumeMount {
   bool read_only = 4;
   // Dotted-quad; empty lets the adapter resolve it itself (research doc
   // R3, EFS-5: avoids depending on the guest resolving the VPC's private
-  // DNS zone for the mount target). Always empty today — no SDK calls
-  // `DescribeMountTargets` yet; that lands with the first real mounter.
+  // DNS zone for the mount target). The SDKs do not fill it yet.
   string mount_target_ip = 5;
 }
 
@@ -45,7 +44,14 @@ message EfsVolumeStatus {
 
 // Mirrors `rayd_core::volume::MountState`. `last_error_class` values for
 // `FAILED`: `network`, `iam_denied`, `not_found`, `tls`, `helper_missing`,
-// `timeout` (research doc §4.3 `EfsUtilsMounter`, §8 "Modos de fallo").
+// `timeout`, `invalid_path` (research doc §4.3, §8 "Modos de fallo").
+// For `DEGRADED`/`REMOUNTING` (`rayd_core::volume::resume::DegradeReason`):
+// `credentials_expired` (a pause crossed the expiry of the credentials the
+// TLS tunnel was signed with; the volume is remounted at `/resume`),
+// `flush_timeout` (the bounded `/suspend` flush did not finish: writes not
+// flushed may be lost), `stale`, `unreachable`, `gone` (the `/resume`
+// probe), or one of the `FAILED` classes above when the remount itself
+// failed.
 enum EfsVolumeState {
   EFS_VOLUME_STATE_UNSPECIFIED = 0;
   EFS_VOLUME_STATE_REQUESTED = 1;

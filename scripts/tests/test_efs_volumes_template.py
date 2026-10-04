@@ -208,19 +208,62 @@ def test_file_system_is_encrypted_and_its_policy_requires_tls_and_an_access_poin
     }
 
 
-def test_client_policy_is_scoped_to_this_file_system_and_its_access_points() -> None:
-    statement = resources()["EfsVolumeClientPolicy"]["Properties"]["PolicyDocument"][
+def client_statements() -> dict[str, Any]:
+    """`RayitoEfsVolumeClient`'s statements by `Sid`; the optional deny is
+    wrapped in `Fn::If [HasReadOnlyAccessPoints, <statement>, NoValue]`."""
+    statements = resources()["EfsVolumeClientPolicy"]["Properties"]["PolicyDocument"][
         "Statement"
-    ][0]
+    ]
+    by_sid: dict[str, Any] = {}
+    for statement in statements:
+        if "Fn::If" in statement:
+            condition, present, absent = statement["Fn::If"]
+            assert condition == "HasReadOnlyAccessPoints"
+            assert absent == {"Ref": "AWS::NoValue"}
+            statement = present
+        by_sid[statement["Sid"]] = statement
+    return by_sid
+
+
+def test_client_policy_is_scoped_to_this_file_system_and_its_access_points() -> None:
+    statement = client_statements()["MountAccessPoints"]
+    assert statement["Effect"] == "Allow"
     assert statement["Resource"] == {"Fn::GetAtt": "FileSystem.Arn"}
     scope_given, any_of_account = statement["Condition"]["Fn::If"][1:]
     assert statement["Condition"]["Fn::If"][0] == "ScopeToAccessPoints"
-    assert scope_given == {
-        "ArnEquals": {"elasticfilesystem:AccessPointArn": {"Ref": "AccessPointArns"}}
-    }
+    scoped = scope_given["ArnEquals"]["elasticfilesystem:AccessPointArn"]
+    assert {"Ref": "AccessPointArns"} in referenced_refs(scoped)
+    assert {"Ref": "ReadOnlyAccessPointArns"} in referenced_refs(scoped)
     pattern = any_of_account["ArnLike"]["elasticfilesystem:AccessPointArn"]["Fn::Sub"]
     assert pattern.endswith(":access-point/fsap-*")
     assert "${AWS::AccountId}" in pattern
+
+
+def referenced_refs(node: Any) -> list[Any]:
+    """Every `{"Ref": ...}` inside `node`."""
+    if isinstance(node, dict):
+        if set(node) == {"Ref"}:
+            return [node]
+        return [ref for value in node.values() for ref in referenced_refs(value)]
+    if isinstance(node, list):
+        return [ref for value in node for ref in referenced_refs(value)]
+    return []
+
+
+def test_read_only_access_points_are_denied_client_write_whatever_allow_write_says() -> None:
+    """Q133: uid 1000 can reach efs-proxy's local port and speak NFS through
+    the already-authenticated tunnel, so `ro` alone never stops a write; the
+    explicit Deny wins over the Allow even with `AllowWrite=true`."""
+    deny = client_statements()["DenyWriteOnReadOnlyAccessPoints"]
+    assert deny["Effect"] == "Deny"
+    assert deny["Action"] == "elasticfilesystem:ClientWrite"
+    assert deny["Resource"] == {"Fn::GetAtt": "FileSystem.Arn"}
+    assert deny["Condition"] == {
+        "ArnEquals": {"elasticfilesystem:AccessPointArn": {"Ref": "ReadOnlyAccessPointArns"}}
+    }
+    parameter = template()["Parameters"]["ReadOnlyAccessPointArns"]
+    assert parameter["Type"] == "CommaDelimitedList"
+    assert parameter["Default"] == ""
 
 
 def test_connector_security_group_can_reach_the_mount_targets_on_nfs() -> None:
@@ -253,7 +296,7 @@ def test_efs_volume_client_policy_never_grants_root_access_and_needs_no_name() -
     policy = resources()["EfsVolumeClientPolicy"]
     assert policy["Type"] == "AWS::IAM::ManagedPolicy"
     assert "ManagedPolicyName" not in policy["Properties"]
-    statement = policy["Properties"]["PolicyDocument"]["Statement"][0]
+    statement = client_statements()["MountAccessPoints"]
     actions = {
         action
         for action in statement["Action"]

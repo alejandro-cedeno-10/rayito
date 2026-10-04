@@ -43,9 +43,9 @@ export interface VolumeStoreOptions {
  * Activa: `new VolumeStore({...})`; construirlo no llama a AWS ni carga
  *   `@aws-sdk/client-efs` (peer opcional): el cliente se crea en la primera
  *   llamada a un método. Experimental: el CRUD es real, pero
- *   `Sandbox.create({volumes})` sigue en `UnimplementedError` hasta que la
- *   campaña de medición EFS-1..EFS-20 decida un adaptador de montaje real
- *   (`docs/research/2026-10-efs-persistence.md`).
+ *   `Sandbox.create({volumes})` sigue en `UnimplementedError` (ninguna imagen
+ *   publicada trae `amazon-efs-utils` todavía,
+ *   `docs/research/2026-10-efs-persistence.md`).
  * Recursos y llamadas AWS: ningún recurso nuevo (el sistema de ficheros lo
  *   crea `infra/efs-volumes.yaml`, por separado); `create` =
  *   `CreateAccessPointCommand`, `get`/`list` = `DescribeAccessPointsCommand`,

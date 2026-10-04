@@ -8,9 +8,8 @@ Description: >-
   the mount-target and client security groups, the file-system policy (TLS,
   IAM, access point and mount target required) and least-privilege IAM.
   Only creates new resources: never modifies the VPC, its subnets, route
-  tables, NACLs or any existing security group. Nothing mounts inside a
-  sandbox yet (rayd ships UnavailableEfsMounter until EFS-1..EFS-20,
-  docs/research/2026-10-efs-persistence.md). The file system is always
+  tables, NACLs or any existing security group. rayd mounts it only on an
+  image with amazon-efs-utils (experimental, ADR-018). The file system is always
   retained on stack deletion; EfsVolumes.destroy(delete_file_system=True)
   removes it explicitly. See AWS_API_NOTES.md section 22.
 
@@ -50,6 +49,17 @@ Parameters:
       access point of this account and Region on this file system only.
       Set: it allows exactly these access points; redeploy with the new
       list when you add a volume.
+  ReadOnlyAccessPointArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      Optional access point ARNs that must stay read-only even when
+      AllowWrite is "true": RayitoEfsVolumeClient allows ClientMount on
+      them and explicitly denies elasticfilesystem:ClientWrite. This is
+      what makes a read-only volume read-only: a sandbox user can reach
+      efs-proxy's local port and speak NFS through the tunnel with the
+      role's own permissions, so the ro mount option alone does not stop
+      writes (AWS_API_NOTES.md section 16, Q133).
 
 Conditions:
   # \`SubnetIds\` is a list; CloudFormation has no length function, so the
@@ -65,6 +75,7 @@ Conditions:
       - ""
   GrantClientWrite: !Equals [!Ref AllowWrite, "true"]
   ScopeToAccessPoints: !Not [!Equals [!Join ["", !Ref AccessPointArns], ""]]
+  HasReadOnlyAccessPoints: !Not [!Equals [!Join ["", !Ref ReadOnlyAccessPointArns], ""]]
 
 Resources:
   # Egress from the connector's ENIs: only NFS (2049) to the mount-target
@@ -244,10 +255,12 @@ Resources:
   # with a valid access point, because the file-system policy above never
   # grants anything by itself. Resource: this file system only. Condition:
   # the access point named (elasticfilesystem:AccessPointArn, the key the
-  # deny statements use) is exactly one of AccessPointArns when given, or
-  # any access point of this account and Region otherwise (VolumeStore
-  # creates them after this stack exists). Never
-  # elasticfilesystem:ClientRootAccess.
+  # deny statements use) is exactly one of AccessPointArns or
+  # ReadOnlyAccessPointArns when AccessPointArns is given, or any access
+  # point of this account and Region otherwise (VolumeStore creates them
+  # after this stack exists). ReadOnlyAccessPointArns get an explicit Deny
+  # on ClientWrite, which wins over the Allow whatever AllowWrite says.
+  # Never elasticfilesystem:ClientRootAccess.
   EfsVolumeClientPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -258,12 +271,13 @@ Resources:
       Description: >-
         Attach to the execution role that mounts volumes= on this file
         system: elasticfilesystem:ClientMount (plus ClientWrite unless
-        AllowWrite=false) on an access point of FileSystemId, never
-        ClientRootAccess.
+        AllowWrite=false, and never on ReadOnlyAccessPointArns) on an access
+        point of FileSystemId, never ClientRootAccess.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Effect: Allow
+          - Sid: MountAccessPoints
+            Effect: Allow
             Action:
               - elasticfilesystem:ClientMount
               - !If [GrantClientWrite, elasticfilesystem:ClientWrite, !Ref AWS::NoValue]
@@ -271,9 +285,27 @@ Resources:
             Condition: !If
               - ScopeToAccessPoints
               - ArnEquals:
-                  elasticfilesystem:AccessPointArn: !Ref AccessPointArns
+                  elasticfilesystem:AccessPointArn: !Split
+                    - ","
+                    - !Join
+                      - ","
+                      - - !Join [",", !Ref AccessPointArns]
+                        - !If
+                          - HasReadOnlyAccessPoints
+                          - !Join [",", !Ref ReadOnlyAccessPointArns]
+                          - !Select [0, !Ref AccessPointArns]
               - ArnLike:
                   elasticfilesystem:AccessPointArn: !Sub "arn:\${AWS::Partition}:elasticfilesystem:\${AWS::Region}:\${AWS::AccountId}:access-point/fsap-*"
+          - !If
+            - HasReadOnlyAccessPoints
+            - Sid: DenyWriteOnReadOnlyAccessPoints
+              Effect: Deny
+              Action: elasticfilesystem:ClientWrite
+              Resource: !GetAtt FileSystem.Arn
+              Condition:
+                ArnEquals:
+                  elasticfilesystem:AccessPointArn: !Ref ReadOnlyAccessPointArns
+            - !Ref AWS::NoValue
 
   Connector:
     Type: AWS::Lambda::NetworkConnector
@@ -310,7 +342,8 @@ Outputs:
   CallerPolicyArn:
     Description: >-
       Attach to infra/iam.yaml's execution role so it can
-      ClientMount/ClientWrite an access point of this file system
+      ClientMount/ClientWrite an access point of this file system (never
+      ClientWrite on ReadOnlyAccessPointArns)
       (RayitoEfsVolumeClient; see CallerPolicyStatement for the separate
       lambda:PassNetworkConnector statement).
     Value: !Ref EfsVolumeClientPolicy

@@ -825,6 +825,7 @@ export class Sandbox implements AsyncDisposable {
       featureOptions,
       resolveImageVariant(options.template),
       options.logging,
+      options.egress,
     );
     const plane = resolveControlPlane(options);
     const secrets = await warm(binding, () =>

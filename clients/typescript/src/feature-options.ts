@@ -92,7 +92,9 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({
  * (con `OtlpAuth.executionRole()`) lo usan para exigir la variante caps antes
  * de lanzar (`requireCapsFor`, una comprobación puramente sobre el nombre
  * de la imagen). `logging` es el `logging` de `create()`: `events` exige
- * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
+ * que mande los logs a CloudWatch. `egress` es el `egress` de `create()` tal
+ * cual: `volumes` exige exactamente un conector propio (un MicroVM sólo
+ * admite uno, `AWS_API_NOTES.md` §16 Q131). No hace ninguna llamada a AWS ni
  * construye ningún cliente.
  *
  * `events` se valida aquí (tipo y `logging`) y viaja en
@@ -105,6 +107,7 @@ export function planFeatures(
   options: FeatureOptions,
   imageVariant?: string,
   logging?: unknown,
+  egress?: readonly string[],
 ): FeaturePlan {
   const sections: PlannedSection[] = [];
   if (options.mounts !== undefined) {
@@ -115,9 +118,7 @@ export function planFeatures(
     }
   }
   if (options.volumes !== undefined) {
-    // m15-efs-volumes: validación real (rutas, tipos, variante caps) antes
-    // de la UnimplementedError del adaptador ausente.
-    requireVolumeSupport(options.volumes, imageVariant);
+    requireVolumeSupport(options.volumes, imageVariant, egress);
   }
   // `size` (m15-sizes-catalog) ya no es un stub: no produce ninguna
   // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste

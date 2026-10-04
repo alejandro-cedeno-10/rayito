@@ -111,11 +111,15 @@ export function validateSubnetIds(values: unknown): readonly string[] {
   return subnetIds;
 }
 
-export function validateAccessPointArns(values: readonly string[]): readonly string[] {
+/** `values` como ARNs de access point; `field` es la opción que el error nombra. */
+export function validateAccessPointArns(
+  values: readonly string[],
+  field = "accessPointArns",
+): readonly string[] {
   for (const arn of values) {
     if (typeof arn !== "string" || !ACCESS_POINT_ARN_PATTERN.test(arn)) {
       throw new InvalidArgumentError(
-        "accessPointArns: cada valor es el ARN de un access point de EFS " +
+        `${field}: cada valor es el ARN de un access point de EFS ` +
           "(arn:aws:elasticfilesystem:<región>:<cuenta>:access-point/fsap-…)",
       );
     }
@@ -244,10 +248,12 @@ function egressFinding(
     level: "OK",
     code: "internet-egress",
     message:
-      "el conector de esta pila sólo deja salir NFS (2049) hacia los mount targets; la " +
-      "salida a internet de un sandbox que use la VPC depende de la ruta por defecto de " +
-      `tus subredes (${withNat} de ${subnetIds.length} a un NAT, ${withOther} a otra ` +
-      "puerta como un transit gateway) y de un conector que la permita (ninguno de " +
+      "un MicroVM admite un solo conector de egress, así que un sandbox con volumen no " +
+      "puede usar además INTERNET_EGRESS (AWS_API_NOTES.md §16 Q131); el conector de esta " +
+      "pila sólo deja salir NFS (2049) hacia los mount targets. Internet para ese sandbox " +
+      "sólo puede salir por tu VPC: depende de la ruta por defecto de tus subredes " +
+      `(${withNat} de ${subnetIds.length} a un NAT, ${withOther} a otra puerta como un ` +
+      "transit gateway) y de un conector cuyo grupo de seguridad la permita (ninguno de " +
       "esta pila)",
   };
 }

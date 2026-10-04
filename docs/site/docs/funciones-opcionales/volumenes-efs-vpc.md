@@ -8,12 +8,35 @@ sin tocar nada, despliega sólo recursos **nuevos** dentro de ella y los
 borra todos cuando se lo pides.
 
 !!! warning "Experimental"
-    El sistema de ficheros, los grupos de seguridad, el conector y el CRUD
-    de volúmenes (`VolumeStore`) son reales. El montaje dentro del sandbox
-    (`Sandbox.create(volumes=...)`) sigue en `UnimplementedError` hasta que
-    exista el adaptador de montaje real; la campaña de medición ya pasó sus
-    criterios de parada (ver [Medido en AWS real](#medido-en-aws-real) y
-    [Volúmenes EFS](volumenes-efs.md)).
+    El sistema de ficheros, los grupos de seguridad, el conector, el CRUD de
+    volúmenes (`VolumeStore`) y el adaptador de montaje de `rayd` son
+    reales. `Sandbox.create(volumes=...)` sigue en `UnimplementedError`
+    porque ninguna imagen publicada trae todavía `amazon-efs-utils` (ver
+    [Volúmenes EFS](volumenes-efs.md) y [Medido en AWS real](#medido-en-aws-real)).
+    Lo que sí puedes hacer hoy: comprobar tu VPC, desplegar la pila, crear y
+    borrar volúmenes, y dejar listo el execution role.
+
+## En cinco minutos
+
+Necesitas credenciales de AWS con permiso para CloudFormation y EC2 en la
+cuenta, el id de una VPC existente y de una a tres subredes privadas suyas,
+cada una en una AZ distinta. Con eso:
+
+1. **Comprueba** la VPC sin crear nada (`check()` o `rayito doctor
+   --efs-vpc-id ... --efs-subnet-ids ...`): sección [1](#1-comprueba-la-vpc-sin-crear-nada).
+2. **Despliega** la pila (`deploy()` o `rayito stack deploy efs-volumes
+   --param VpcId=... --param SubnetIds=...`): unos 5 minutos, sección
+   [2](#2-despliega).
+3. **Adjunta** la salida `CallerPolicyArn` al execution role con el que
+   lanzarás los sandboxes, y guarda `ConnectorArn`.
+4. **Crea** un volumen con `efs.volume_store().create("nombre")`.
+5. Cuando la imagen con `amazon-efs-utils` exista, lanza con
+   `egress=[ConnectorArn]` (sólo ese conector: un sandbox con volumen no usa
+   `INTERNET_EGRESS`, ver [Salida a internet](#salida-a-internet)) y
+   `volumes={...}`.
+
+Para quitarlo todo: `destroy(delete_file_system=True)`, sección
+[3](#3-borralo).
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin una llamada explícita a
@@ -47,8 +70,9 @@ borra todos cuando se lo pides.
       `DescribeAccessPoints`/`DeleteAccessPoint`/`DeleteFileSystem`. El
       execution role del sandbox sólo recibe la política de la salida
       `CallerPolicyArn`: `ClientMount` (y `ClientWrite` salvo
-      `allow_write=False`) sobre **este** sistema de ficheros y sus access
-      points, nunca `ClientRootAccess`.
+      `allow_write=False` y salvo en `read_only_access_point_arns`) sobre
+      **este** sistema de ficheros y sus access points, nunca
+      `ClientRootAccess`.
     - **Cómo apagarla**: `destroy()` borra la pila (conector, grupos,
       mount targets, rol y política) y **conserva** el sistema de ficheros
       con sus datos; `destroy(delete_file_system=True)` borra además sus
@@ -193,12 +217,18 @@ Opciones de `deploy()`:
   points exactos; vacío (por defecto), a cualquier access point de la
   cuenta y región sobre **este** sistema de ficheros. Redespliega con la
   lista nueva cuando añadas un volumen.
+- `read_only_access_point_arns` / `readOnlyAccessPointArns`: esos access
+  points se quedan en sólo lectura aunque el resto admita escritura (la
+  política les deniega `ClientWrite`). Es lo que hace de sólo lectura un
+  volumen: la opción `ro` del montaje no basta, ver
+  [Sólo lectura de verdad](volumenes-efs.md#solo-lectura-de-verdad). Por
+  CLI: `--param ReadOnlyAccessPointArns=arn:...,arn:...`.
 - `connector_name` / `connectorName`: nombre del conector, único en la
   cuenta y región (por defecto `rayito-efs`).
 
 Adjunta la salida `CallerPolicyArn` al execution role que montará los
-volúmenes, y pasa `ConnectorArn` en `egress=[...]` cuando el montaje
-exista.
+volúmenes, y pasa `ConnectorArn` como **único** conector en `egress=[...]`
+cuando el montaje exista.
 
 ### Shim E2B
 
@@ -222,7 +252,7 @@ vol = client.Volume.create("datos-agente-7")
 | Grupo de seguridad cliente | usado por el conector; su única salida es TCP 2049 hacia el grupo de mount targets |
 | `AWS::Lambda::NetworkConnector` | salida a la VPC para MicroVMs, en tus subredes, con el grupo cliente |
 | Rol de operador del conector | sólo las acciones `ec2:*NetworkInterface*` que el conector necesita |
-| Política `RayitoEfsVolumeClient` | `ClientMount`/`ClientWrite` sobre este sistema de ficheros y sus access points, nunca `ClientRootAccess` |
+| Política `RayitoEfsVolumeClient` | `ClientMount`/`ClientWrite` sobre este sistema de ficheros y sus access points, `Deny` explícito de `ClientWrite` sobre `ReadOnlyAccessPointArns`, nunca `ClientRootAccess` |
 
 CloudFormation propaga las etiquetas de la pila
 (`rayito:component=efs-volumes`, `rayito:managed-by`,
@@ -239,7 +269,11 @@ El conector de esta pila **sólo** deja salir NFS (2049) hacia los mount
 targets: no da salida a internet. Y un MicroVM admite **un único conector
 de egress**: pedir a la vez `INTERNET_EGRESS` y el conector de la VPC es un
 error de validación de AWS (medido el 2026-10-04, `AWS_API_NOTES.md` §16
-Q131). Si un sandbox con volumen necesita internet:
+Q131). El SDK lo rechaza antes de lanzar nada: `Sandbox.create(volumes=...)`
+sin `egress=`, con `INTERNET_EGRESS` o con dos conectores es
+`InvalidArgumentException`/`InvalidArgumentError`, y el hallazgo
+`internet-egress` de `check()` lo recuerda. Si un sandbox con volumen
+necesita internet:
 
 - tiene que salir **por tu VPC**: depende de la ruta por defecto de tus
   subredes (el `check()` cuenta cuántas van a un NAT y cuántas a otra
@@ -265,6 +299,8 @@ con `amazon-efs-utils`) lo que el montaje dentro del sandbox necesitará:
 | Pausa con el mount target inalcanzable | sin escrituras pendientes, pausa y reanuda; **con escrituras pendientes, AWS termina el MicroVM** y se pierden |
 | Rendimiento | 128 MB/s escribiendo y 585 MB/s leyendo en secuencial; ≈ 17 ms por fichero pequeño |
 | Política del sistema de ficheros | sin access point, sin TLS o sin IAM: denegado |
+| `efs-proxy` tras `umount` | sigue vivo (uno por montaje); `rayd` lo termina al desmontar |
+| uid 1000 y el puerto local de `efs-proxy` | puede conectarse: el sólo lectura lo impone la política (`read_only_access_point_arns`), no `ro` |
 
 ## 3. Bórralo
 

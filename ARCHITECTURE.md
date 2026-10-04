@@ -1964,8 +1964,7 @@ this is documented as experimental, never silently approximated (project
 rule: no undocumented divergence). Access to a volume is isolated by
 execution role, not by sandbox (same limitation as S3 persistence's T15):
 any sandbox with that role's credentials can mount any access point the
-role is scoped to. Threat T21 (NFS volumes) covers the mount path once a
-real adapter exists.
+role is scoped to. Threat T21 (`SECURITY.md`) covers the mount path.
 
 **Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
 organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
@@ -1980,6 +1979,47 @@ explicitly, only when it carries the template's literal
 `rayito=efs-volumes` tag. The connector's only egress is NFS to the mount
 targets: internet through the VPC would depend on the VPC's own NAT and a
 connector that allows it (EFS-4 measures combining with `INTERNET_EGRESS`).
+
+**Adenda 2026-10-04: adaptador real tras la aceptación (Q126–Q134).** Every
+stop criterion passed, so `UnavailableEfsMounter` is replaced by
+`EfsUtilsMounter` (`mount -t efs -o tls,iam,accesspoint[,mounttargetip][,ro]`
+as root), still gated by support detection (`CAP_SYS_ADMIN`, `nfs4`,
+`mount`, `/usr/sbin/mount.efs`, `/usr/sbin/efs-proxy`): no published image
+installs `amazon-efs-utils` yet, so shipped images keep answering
+`UNSUPPORTED` and the SDK keeps `volumes=` in `UnimplementedError` until
+an image layer and the `create()` wiring land. What the measurements
+changed:
+
+- *`efs-proxy` outlives `umount`* (Q128). The adapter serializes mounts,
+  attributes the root `efs-proxy` processes that appear during the helper
+  run (pid + start time, `rayd_core::volume::proxy`) and stops them on
+  unmount and `/terminate`. The helper goes through `ChildRegistry`;
+  the proxy is re-parented to PID 1 and its zombie is left to the orphan
+  reaper (rayd never `waitpid`s it).
+- *Symlinked mountpoints*. The helper mounts on a root-only staging
+  directory and the result is bind-mounted through the `O_NOFOLLOW` walk
+  `mounts=` already uses (`adapters::mountpoint`, now shared).
+- *A pause past the credentials' expiry breaks the volume* (Q129). Each
+  mount records the execution-role lease expiry; `/resume` remounts when it
+  has passed (or is inside `REFRESH_MARGIN`), otherwise probes with a
+  bounded `stat` child and remounts on failure. Remounts are tasks: the
+  hook waits 1.5 s at most and `ConfigureStatus` reports `REMOUNTING` →
+  `MOUNTED`/`DEGRADED`, like an S3 mount relaunch.
+- *Unflushed writes + unreachable mount target lose the VM* (Q130). The
+  slot is a `/suspend` participant: one bounded `syncfs` per volume inside
+  its `SuspendShares` allocation, `DEGRADED`/`flush_timeout` when it does
+  not finish. The loss itself has no guest-side mitigation and is
+  documented.
+- *uid 1000 reaches `efs-proxy`'s loopback port* (Q133) and the guest
+  kernel has no `owner` match (Q48), so read-only is enforced in IAM:
+  `ReadOnlyAccessPointArns` adds an explicit `Deny` on `ClientWrite`. A
+  guest-side `ip rule … dport <port> prohibit` ahead of `local` (the M10
+  DNS-guard mechanism) is a measured-later hardening, not a control we
+  rely on (T21).
+- *One egress connector per MicroVM* (Q131). The SDKs reject `volumes=`
+  without exactly one own connector in `egress=` (never `INTERNET_EGRESS`)
+  before `run-microvm`; internet for such a sandbox must come through the
+  customer's VPC (NAT or transit gateway plus a connector that allows it).
 
 ## ADR-019 — sizes-catalog (M15, 0.6)
 

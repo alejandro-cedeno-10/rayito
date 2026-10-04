@@ -73,8 +73,10 @@ class EfsVolumes:
         `rayito stack deploy efs-volumes --param VpcId=... --param
         SubnetIds=...`). `check()` es de sólo lectura y no crea nada.
         Experimental: el CRUD de volúmenes es real, pero
-        `Sandbox.create(volumes=...)` sigue en `UnimplementedError` hasta la
-        campaña EFS-1..EFS-20.
+        `Sandbox.create(volumes=...)` sigue en `UnimplementedError` (ninguna
+        imagen publicada trae `amazon-efs-utils` todavía). Un sandbox con
+        volumen usa este conector como único `egress=` y no puede usar
+        además `INTERNET_EGRESS`.
     Recursos y llamadas AWS: `check()` = `ec2:DescribeVpcs`,
         `DescribeVpcAttribute`, `DescribeSubnets`, `DescribeRouteTables`.
         `deploy()` crea, sólo dentro de la VPC dada y etiquetado: un sistema
@@ -95,7 +97,8 @@ class EfsVolumes:
         `DescribeAccessPoints`/`DeleteAccessPoint`/`DeleteFileSystem`; el
         execution role del MicroVM, la política `CallerPolicyArn` de la
         salida (`ClientMount`/`ClientWrite` sólo sobre este sistema de
-        ficheros y sus access points).
+        ficheros y sus access points; nunca `ClientWrite` sobre
+        `read_only_access_point_arns`).
     Cómo apagarla: `destroy()` borra la pila (conector, grupos, mount
         targets, rol y política) y conserva el sistema de ficheros con sus
         datos; `destroy(delete_file_system=True)` borra además sus access
@@ -160,6 +163,7 @@ class EfsVolumes:
         subnet_ids: Sequence[str] | str,
         allow_write: bool = True,
         access_point_arns: Sequence[str] = (),
+        read_only_access_point_arns: Sequence[str] = (),
         connector_name: str | None = None,
         tags: dict[str, str] | None = None,
         wait: bool = True,
@@ -168,9 +172,17 @@ class EfsVolumes:
         (o actualiza) la pila en la VPC dada. `access_point_arns` acota la
         política `RayitoEfsVolumeClient` a esos access points; vacío, a
         cualquier access point de la cuenta y región sobre este sistema de
-        ficheros. `allow_write=False` sólo concede `ClientMount`. Ver el
-        bloque "Coste y activación" de la clase."""
+        ficheros. `allow_write=False` sólo concede `ClientMount`.
+        `read_only_access_point_arns` deja esos access points en sólo
+        lectura aunque `allow_write` sea `True` (la política les deniega
+        `ClientWrite`): es lo que hace de sólo lectura un volumen, porque la
+        opción `ro` del montaje no impide escribir por el túnel de
+        `efs-proxy` (`AWS_API_NOTES.md` §16 Q133). Ver el bloque "Coste y
+        activación" de la clase."""
         arns = validate_access_point_arns(access_point_arns)
+        read_only_arns = validate_access_point_arns(
+            read_only_access_point_arns, field="read_only_access_point_arns"
+        )
         report = self.check(vpc_id=vpc_id, subnet_ids=subnet_ids)
         if not report.ok:
             reasons = "; ".join(finding.message for finding in report.failures)
@@ -182,6 +194,7 @@ class EfsVolumes:
             "SubnetIds": ",".join(report.subnet_ids),
             "AllowWrite": _flag(allow_write),
             "AccessPointArns": ",".join(arns),
+            "ReadOnlyAccessPointArns": ",".join(read_only_arns),
         }
         if connector_name is not None:
             parameters["ConnectorName"] = connector_name

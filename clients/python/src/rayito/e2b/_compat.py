@@ -20,7 +20,15 @@ from rayito._limits import (
     TERMINAL_STATES,
 )
 from rayito._metrics_base import HISTORY_UNIMPLEMENTED_REASON, is_history_unavailable
-from rayito._models import ALL_TRAFFIC, IdlePolicy, NetworkOptions, NetworkState, SandboxListItem
+from rayito._models import (
+    ALL_TRAFFIC,
+    INTERNET_EGRESS_CONNECTOR,
+    IdlePolicy,
+    NetworkOptions,
+    NetworkState,
+    SandboxListItem,
+    has_internet_connector,
+)
 from rayito._models import PtySize as NativePtySize
 from rayito._models import SandboxInfo as NativeSandboxInfo
 from rayito._models import SandboxMetrics as NativeSandboxMetrics
@@ -52,8 +60,7 @@ E2B_DEFAULT_TIMEOUT_SECONDS: Final = 300
 E2B_DEFAULT_MAX_LIFETIME_SECONDS: Final = 3600
 E2B_PAUSE_IDLE_SECONDS: Final = 300
 SHIM_DEFAULT_INGRESS: Final[tuple[str, ...]] = ("ALL_INGRESS",)
-INTERNET_EGRESS: Final = "INTERNET_EGRESS"
-INTERNET_EGRESS_CONNECTORS: Final[tuple[str, ...]] = (INTERNET_EGRESS,)
+INTERNET_EGRESS_CONNECTORS: Final[tuple[str, ...]] = (INTERNET_EGRESS_CONNECTOR,)
 
 E2B_STATE_FILTERS: Final[dict[SandboxState, tuple[str, ...]]] = {
     SandboxState.RUNNING: ("PENDING", "RUNNING"),
@@ -456,10 +463,6 @@ def sandbox_state_from_aws(state: str, *, sandbox_id: str) -> SandboxState:
     if state in SUSPENDED_STATES:
         return SandboxState.PAUSED
     return SandboxState.RUNNING
-
-
-def has_internet_connector(egress: Sequence[str]) -> bool:
-    return any(connector.rsplit(":", 1)[-1] == INTERNET_EGRESS for connector in egress)
 
 
 def network_dict(network: NetworkState) -> dict[str, list[str]]:

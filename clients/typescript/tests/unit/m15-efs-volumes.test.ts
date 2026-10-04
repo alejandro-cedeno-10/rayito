@@ -14,7 +14,7 @@ import {
   LIST_VISIBILITY_BUDGET_MS,
   LIST_VISIBILITY_POLL_MS,
 } from "../../src/volumes/efs.js";
-import { requireVolumeSupport } from "../../src/volumes/section.js";
+import { requireVolumeSupport, VPC_GUIDE } from "../../src/volumes/section.js";
 import { VolumeStore } from "../../src/volumes/store.js";
 
 function awsError(name: string): Error {
@@ -239,6 +239,8 @@ describe("VolumeStore", () => {
 const VALID_VOLUME = {
   "/mnt/v": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abcd" }),
 };
+// Marcador de documentación (cuenta ficticia).
+const CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs";
 
 describe("requireVolumeSupport", () => {
   test("an empty object is invalid", () => {
@@ -261,8 +263,44 @@ describe("requireVolumeSupport", () => {
     expect(() => requireVolumeSupport(VALID_VOLUME, "base")).toThrow(UnimplementedError);
   });
 
-  test("a well-formed request still raises UnimplementedError (experimental, pending EFS-1..EFS-20)", () => {
-    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps")).toThrow(UnimplementedError);
-    expect(() => requireVolumeSupport(VALID_VOLUME, undefined)).toThrow(UnimplementedError);
+  test("a well-formed request with its connector still raises UnimplementedError (experimental)", () => {
+    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR])).toThrow(
+      /amazon-efs-utils/,
+    );
+    expect(() => requireVolumeSupport(VALID_VOLUME, undefined, [CONNECTOR])).toThrow(
+      UnimplementedError,
+    );
+  });
+
+  test.each([
+    ["omitted", undefined],
+    ["empty", []],
+  ] as const)(
+    "a volume without its connector (%s) is rejected naming the alternative",
+    (_, egress) => {
+      expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", egress)).toThrow(
+        InvalidArgumentError,
+      );
+      expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", egress)).toThrow(VPC_GUIDE);
+    },
+  );
+
+  test.each([
+    "INTERNET_EGRESS",
+    "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
+  ])("a volume combined with %s is rejected before launch (Q131)", (internet) => {
+    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR, internet])).toThrow(
+      /INTERNET_EGRESS.*NAT.*transit gateway/,
+    );
+  });
+
+  test("a volume with two own connectors is rejected", () => {
+    expect(() =>
+      requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR, `${CONNECTOR}-b`]),
+    ).toThrow(/un solo conector/);
+  });
+
+  test("the caps check comes before the connector check", () => {
+    expect(() => requireVolumeSupport(VALID_VOLUME, "base", undefined)).toThrow(UnimplementedError);
   });
 });

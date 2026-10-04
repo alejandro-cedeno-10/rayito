@@ -1074,12 +1074,49 @@ cuenta: el SDK siempre manda uno de los dos. `CreateAccessPoint` exige
 se reexpone al llamante; sólo la clase (`VolumeException`/
 `VolumeNotFoundException`), igual que `secretsmanager` en §19.
 
-Dentro del guest, `efs-utils` (no un API de AWS: opciones del *mount
-helper*) sigue pendiente de las mediciones EFS-5/EFS-8:
-`mount -t efs -o tls,iam,accesspoint=<fsap>,mounttargetip=<ip>,noresvport[,ro]
-<fs-id>: <ruta>`. Esas opciones se fijan en este mismo §22 una vez
-EFS-8 responda; hasta entonces `rayd` no monta nada
-(`UnavailableEfsMounter`).
+**Dentro del guest** (`rayd::adapters::efs_mount::EfsUtilsMounter`; no es
+un API de AWS sino el *mount helper* de `amazon-efs-utils` 3.1.3, Q122), lo
+medido el 2026-10-04 (Q128–Q133) y lo que `rayd` hace con ello:
+
+- **Invocación** (Q128, 20 de 20 sin `systemd`, p50 313 ms, p95 589 ms):
+  `mount -t efs -o tls,iam,accesspoint=<fsap>,mounttargetip=<ip>
+  <fs-id>:/ <dir>`, como root, con el entorno reconstruido (`PATH`):
+  `efs-utils` lee la región de su `efs-utils.conf` y las credenciales del
+  execution role de IMDSv2 (EFS-6). `rayd` añade `ro` para un volumen de
+  sólo lectura y omite `mounttargetip=` si la petición no trae IP (el
+  nombre `<fs-id>.efs.<región>.amazonaws.com` resuelve desde el guest,
+  Q131); **ninguna de las dos variantes está medida todavía**. `rayd` monta
+  sobre `/run/rayito/efs-staging` y después hace un *bind mount* sobre la
+  ruta pedida, abierta sin seguir enlaces (el helper resolvería la ruta y
+  uid 1000 controla las de `/home/user`); el *bind* tampoco está medido.
+- **`efs-proxy`** (Q128): uno por montaje, en `/usr/sbin/efs-proxy`,
+  re-emparentado con PID 1 y vivo tras `umount`. `rayd` atribuye a cada
+  montaje los proxies de root de ese binario que aparecen durante el
+  helper (montajes serializados) y los termina al desmontar (`SIGTERM`,
+  `SIGKILL` a los 400 ms).
+- **Credenciales** (Q129, EFS-12): tras una pausa que cruza su
+  `Expiration`, el túnel reconecta con las caducadas y el volumen responde
+  `Permission denied` aunque IMDS ya sirva otras. `rayd` guarda la
+  `Expiration` del lease del rol al montar y remonta en `/resume` si ya
+  pasó (o falta menos de `REFRESH_MARGIN`); si no la conoce, prueba el
+  volumen con un `stat` acotado. Que el remontaje lo arregle está por
+  medir.
+- **`/suspend`** (Q130, EFS-13): con escrituras pendientes y el mount
+  target inalcanzable, el vaciado no termina y la plataforma termina el
+  MicroVM (`stateReason` "Internal service error."). `rayd` hace un
+  `syncfs` acotado por volumen dentro de su parte del `SuspendBudget` y
+  marca el volumen `degraded`/`flush_timeout`; la pérdida no tiene
+  mitigación en el guest.
+- **Sólo lectura** (Q133, EFS-10): uid 1000 puede conectar al puerto local
+  de `efs-proxy`, así que `ro` no impide escribir. `infra/efs-volumes.yaml`
+  acepta `ReadOnlyAccessPointArns`: `RayitoEfsVolumeClient` añade un `Deny`
+  de `elasticfilesystem:ClientWrite` con `ArnEquals` sobre
+  `elasticfilesystem:AccessPointArn` (la misma clave de condición de los
+  `Deny` de la política del sistema de ficheros). Sin medir todavía (Q134
+  quedó sin `AccessPointArns` acotado ni `AllowWrite=false`).
+- **Red** (Q131, EFS-4): un solo conector de egress por MicroVM. Los SDK
+  rechazan `volumes=` sin `egress=`, con `INTERNET_EGRESS` o con más de un
+  conector antes de `run-microvm`.
 
 ## 23. Mountpoint y S3 (`m15-s3-mounts`)
 

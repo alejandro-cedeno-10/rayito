@@ -13,8 +13,9 @@ pub enum MountState {
     Mounting,
     /// `stat` on the mount point succeeds.
     Mounted,
-    /// Was `Mounted`; the last probe found it `Stale` or `Hung`
-    /// (research doc §4.3 `/resume`).
+    /// Was `Mounted`; a probe found it `Stale`/`Hung`/`Gone`, its
+    /// `/suspend` flush timed out, or the credentials of its tunnel expired
+    /// during a pause (`super::resume::DegradeReason` says which).
     Degraded,
     /// Recovering a `Degraded` mount: `umount -l` followed by a fresh
     /// mount attempt.
@@ -32,6 +33,13 @@ pub enum MountTransition {
     MountSucceeded,
     MountFailed,
     ProbeFoundDegraded,
+    /// A probe of a `Degraded` volume came back healthy (a flush that
+    /// timed out while the mount target was briefly unreachable).
+    ProbeFoundHealthy,
+    /// `/suspend`'s bounded flush left the volume with unwritten pages.
+    FlushTimedOut,
+    /// `/resume` found the tunnel's credentials expired.
+    CredentialsExpired,
     RemountStarted,
     RemountSucceeded,
     RemountFailed,
@@ -46,14 +54,18 @@ impl MountState {
     pub fn apply(self, transition: MountTransition) -> Option<Self> {
         use MountState::{Degraded, Failed, Mounted, Mounting, Remounting, Requested, Unmounted};
         use MountTransition::{
-            MountFailed, MountStarted, MountSucceeded, ProbeFoundDegraded, RemountFailed,
-            RemountStarted, RemountSucceeded, Unmounted as UnmountedEvent,
+            CredentialsExpired, FlushTimedOut, MountFailed, MountStarted, MountSucceeded,
+            ProbeFoundDegraded, ProbeFoundHealthy, RemountFailed, RemountStarted, RemountSucceeded,
+            Unmounted as UnmountedEvent,
         };
         match (self, transition) {
             (Requested, MountStarted) => Some(Mounting),
-            (Mounting, MountSucceeded) | (Remounting, RemountSucceeded) => Some(Mounted),
+            (Mounting, MountSucceeded)
+            | (Remounting, RemountSucceeded)
+            | (Degraded, ProbeFoundHealthy) => Some(Mounted),
             (Mounting, MountFailed) => Some(Failed),
-            (Mounted, ProbeFoundDegraded) | (Remounting, RemountFailed) => Some(Degraded),
+            (Mounted | Degraded, ProbeFoundDegraded | FlushTimedOut | CredentialsExpired)
+            | (Remounting, RemountFailed) => Some(Degraded),
             (Degraded, RemountStarted) => Some(Remounting),
             (Mounted | Degraded | Remounting | Failed, UnmountedEvent) => Some(Unmounted),
             _unreachable_from_this_state => None,
@@ -66,8 +78,9 @@ mod tests {
     use super::*;
     use MountState::{Degraded, Failed, Mounted, Mounting, Remounting, Requested, Unmounted};
     use MountTransition::{
-        MountFailed, MountStarted, MountSucceeded, ProbeFoundDegraded, RemountFailed,
-        RemountStarted, RemountSucceeded, Unmounted as UnmountedEvent,
+        CredentialsExpired, FlushTimedOut, MountFailed, MountStarted, MountSucceeded,
+        ProbeFoundDegraded, ProbeFoundHealthy, RemountFailed, RemountStarted, RemountSucceeded,
+        Unmounted as UnmountedEvent,
     };
 
     #[test]
@@ -88,6 +101,26 @@ mod tests {
     #[test]
     fn a_degraded_probe_moves_mounted_to_degraded() {
         assert_eq!(Mounted.apply(ProbeFoundDegraded), Some(Degraded));
+    }
+
+    #[test]
+    fn a_timed_out_flush_or_expired_credentials_degrade_a_mounted_volume() {
+        assert_eq!(Mounted.apply(FlushTimedOut), Some(Degraded));
+        assert_eq!(Mounted.apply(CredentialsExpired), Some(Degraded));
+        assert_eq!(Degraded.apply(FlushTimedOut), Some(Degraded));
+        assert_eq!(Degraded.apply(ProbeFoundDegraded), Some(Degraded));
+    }
+
+    #[test]
+    fn a_healthy_probe_restores_a_degraded_volume() {
+        assert_eq!(Degraded.apply(ProbeFoundHealthy), Some(Mounted));
+        assert_eq!(Mounted.apply(ProbeFoundHealthy), None);
+    }
+
+    #[test]
+    fn a_volume_being_remounted_is_not_degraded_again() {
+        assert_eq!(Remounting.apply(FlushTimedOut), None);
+        assert_eq!(Remounting.apply(CredentialsExpired), None);
     }
 
     #[test]
@@ -122,6 +155,9 @@ mod tests {
             MountSucceeded,
             MountFailed,
             ProbeFoundDegraded,
+            ProbeFoundHealthy,
+            FlushTimedOut,
+            CredentialsExpired,
             RemountStarted,
             RemountSucceeded,
             RemountFailed,

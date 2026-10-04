@@ -53,8 +53,8 @@ export function validateAccessPointId(value: string): string {
   return value;
 }
 
-/** Mirrors `rayd_core::volume::MountState`; ningún build 0.6 de `rayd`
- * reporta otra cosa que no sea ausente (`UnavailableEfsMounter`). */
+/** Mirrors `rayd_core::volume::MountState`; `rayd` sólo lo rellena en una
+ * imagen con `amazon-efs-utils` y `create()` aún no manda la sección. */
 export type MountState =
   | "requested"
   | "mounting"

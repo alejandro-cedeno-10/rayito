@@ -158,12 +158,16 @@ def validate_subnet_ids(values: object) -> tuple[str, ...]:
     return subnet_ids
 
 
-def validate_access_point_arns(values: Sequence[str]) -> tuple[str, ...]:
+def validate_access_point_arns(
+    values: Sequence[str], *, field: str = "access_point_arns"
+) -> tuple[str, ...]:
+    """`values` como tupla de ARNs de access point; `field` es la opción
+    que el mensaje de error nombra."""
     arns = tuple(values)
     for arn in arns:
         if not isinstance(arn, str) or not ACCESS_POINT_ARN_PATTERN.match(arn):
             raise InvalidArgumentException(
-                "access_point_arns: cada valor es el ARN de un access point de EFS "
+                f"{field}: cada valor es el ARN de un access point de EFS "
                 "(arn:aws:elasticfilesystem:<región>:<cuenta>:access-point/fsap-…)"
             )
     return arns
@@ -273,10 +277,12 @@ def _egress_finding(subnet_ids: Sequence[str], tables: Sequence[RouteTableFacts]
     return NetworkFinding(
         "OK",
         "internet-egress",
-        "el conector de esta pila sólo deja salir NFS (2049) hacia los mount targets; la "
-        "salida a internet de un sandbox que use la VPC depende de la ruta por defecto de "
-        f"tus subredes ({with_nat} de {len(subnet_ids)} a un NAT, {with_other} a otra "
-        "puerta como un transit gateway) y de un conector que la permita (ninguno de "
+        "un MicroVM admite un solo conector de egress, así que un sandbox con volumen no "
+        "puede usar además INTERNET_EGRESS (AWS_API_NOTES.md §16 Q131); el conector de esta "
+        "pila sólo deja salir NFS (2049) hacia los mount targets. Internet para ese sandbox "
+        "sólo puede salir por tu VPC: depende de la ruta por defecto de tus subredes "
+        f"({with_nat} de {len(subnet_ids)} a un NAT, {with_other} a otra puerta como un "
+        "transit gateway) y de un conector cuyo grupo de seguridad la permita (ninguno de "
         "esta pila)",
     )
 

@@ -12,16 +12,24 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Added
 
-- **Dominio y puerto de volúmenes EFS** (`m15-efs-volumes`, ADR-018,
-  experimental): `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/
-  `MountState`/`VolumeError`, puro) y el puerto `VolumeMounter`. El único
-  adaptador de este cambio es `UnavailableEfsMounter`
-  (`support()` siempre `Unsupported`): `features::efs_volumes` lo usa
-  detrás del puerto, así que `Health.features.efs_volumes` es su
-  `support()` (`false`) y la sección `efs_volumes` responde `UNSUPPORTED`,
-  pendiente de la campaña de medición EFS-1..EFS-20
-  (`docs/research/2026-10-efs-persistence.md`). `proto/rayito/v1/efs_volumes.proto`
-  gana sus mensajes reales (`EfsVolumesConfig`/`EfsVolumesStatus`).
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, experimental):
+  `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/`MountState`/`VolumeError`,
+  la atribución de `efs-proxy` y la decisión de `/resume`, todo puro) y el
+  adaptador real `EfsUtilsMounter` (`mount -t efs -o tls,iam,accesspoint`,
+  medido en AWS real, `AWS_API_NOTES.md` §16 Q128), activo sólo en una
+  imagen con `amazon-efs-utils` y `CAP_SYS_ADMIN` (en las demás
+  `Health.features.efs_volumes` es `false` y la sección responde
+  `UNSUPPORTED`). Monta sobre un directorio de root y enlaza el resultado a
+  la ruta pedida sin seguir enlaces simbólicos (recorrido compartido con
+  `mounts=`, `adapters::mountpoint`); termina el `efs-proxy` de cada volumen
+  al desmontar y en `/terminate` (`umount` no lo para, Q128); en `/resume`
+  remonta el volumen cuya pausa cruzó la caducidad de las credenciales del
+  túnel o cuya sonda falla (en segundo plano si no cabe en el presupuesto,
+  con el estado en `ConfigureStatus`; Q129); en `/suspend` vacía cada
+  volumen con plazo y lo marca `degraded`/`flush_timeout` si no termina
+  (Q130). `proto/rayito/v1/efs_volumes.proto` documenta las clases nuevas
+  (`invalid_path`, `credentials_expired`, `flush_timeout`, `stale`,
+  `unreachable`, `gone`).
 
 ### Fixed
 

@@ -7,11 +7,10 @@ vía mount target) y el `NetworkConnector` propio; nunca modifica la VPC, sus
 subredes, rutas, NACLs ni grupos existentes. `EfsVolumes` (`_volumes`) es su
 fachada: comprueba la VPC antes (`check`) y borra el sistema de ficheros
 conservado si se le pide (`destroy(delete_file_system=True)`). Desplegar esta pila
-no activa el montaje dentro del sandbox: `rayd` sólo tiene
-`UnavailableEfsMounter` hasta que la campaña de medición EFS-1..EFS-20
-(`docs/research/2026-10-efs-persistence.md`) decida un adaptador real;
-`VolumeStore` (CRUD de access points) sí es real y no depende de esta pila
-para `create`/`get`/`list`/`destroy`, sólo para el montaje posterior.
+no activa el montaje dentro del sandbox: `rayd` sólo monta en una imagen con
+`amazon-efs-utils` y `Sandbox.create(volumes=...)` sigue en
+`UnimplementedError` (experimental); `VolumeStore` (CRUD de access points) sí
+es real y no depende de esta pila para `create`/`get`/`list`/`destroy`.
 """
 
 from __future__ import annotations
@@ -23,8 +22,8 @@ COMPONENT: StackComponent = StackComponent(
     description=(
         "Sistema de ficheros EFS cifrado (Elastic Throughput) en una VPC existente: un "
         "mount target por subred, grupos de seguridad NFS nuevos y un "
-        "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: el montaje "
-        "en el guest está pendiente de EFS-1..EFS-20)."
+        "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: "
+        "Sandbox.create(volumes=...) aún no monta)."
     ),
     parameters=(
         StackParameter(
@@ -55,6 +54,13 @@ COMPONENT: StackComponent = StackComponent(
             "ARNs de access points separados por comas: acotan RayitoEfsVolumeClient a "
             "ellos; vacío = cualquier access point de la cuenta y región sobre este "
             "sistema de ficheros.",
+            default="",
+        ),
+        StackParameter(
+            "ReadOnlyAccessPointArns",
+            "ARNs de access points separados por comas que se quedan en sólo lectura "
+            "aunque AllowWrite sea 'true': RayitoEfsVolumeClient les deniega ClientWrite. "
+            "Es lo que hace de sólo lectura un volumen: la opción ro del montaje no basta.",
             default="",
         ),
     ),

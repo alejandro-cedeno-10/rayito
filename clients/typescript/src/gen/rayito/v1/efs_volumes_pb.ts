@@ -13,12 +13,12 @@ export const file_rayito_v1_efs_volumes: GenFile = /*@__PURE__*/
   fileDesc("ChtyYXlpdG8vdjEvZWZzX3ZvbHVtZXMucHJvdG8SCXJheWl0by52MSI9ChBFZnNWb2x1bWVzQ29uZmlnEikKBm1vdW50cxgBIAMoCzIZLnJheWl0by52MS5FZnNWb2x1bWVNb3VudCKBAQoORWZzVm9sdW1lTW91bnQSEgoKbW91bnRfcGF0aBgBIAEoCRIWCg5maWxlX3N5c3RlbV9pZBgCIAEoCRIXCg9hY2Nlc3NfcG9pbnRfaWQYAyABKAkSEQoJcmVhZF9vbmx5GAQgASgIEhcKD21vdW50X3RhcmdldF9pcBgFIAEoCSI/ChBFZnNWb2x1bWVzU3RhdHVzEisKB3ZvbHVtZXMYASADKAsyGi5yYXlpdG8udjEuRWZzVm9sdW1lU3RhdHVzImkKD0Vmc1ZvbHVtZVN0YXR1cxISCgptb3VudF9wYXRoGAEgASgJEigKBXN0YXRlGAIgASgOMhkucmF5aXRvLnYxLkVmc1ZvbHVtZVN0YXRlEhgKEGxhc3RfZXJyb3JfY2xhc3MYAyABKAkqjAIKDkVmc1ZvbHVtZVN0YXRlEiAKHEVGU19WT0xVTUVfU1RBVEVfVU5TUEVDSUZJRUQQABIeChpFRlNfVk9MVU1FX1NUQVRFX1JFUVVFU1RFRBABEh0KGUVGU19WT0xVTUVfU1RBVEVfTU9VTlRJTkcQAhIcChhFRlNfVk9MVU1FX1NUQVRFX01PVU5URUQQAxIdChlFRlNfVk9MVU1FX1NUQVRFX0RFR1JBREVEEAQSHwobRUZTX1ZPTFVNRV9TVEFURV9SRU1PVU5USU5HEAUSHgoaRUZTX1ZPTFVNRV9TVEFURV9VTk1PVU5URUQQBhIbChdFRlNfVk9MVU1FX1NUQVRFX0ZBSUxFRBAHYgZwcm90bzM");
 
 /**
- * Owned by m15-efs-volumes (ADR-018, experimental). `rayd` ships only
- * `UnavailableEfsMounter` today (ahead of the EFS-1..EFS-20 measurement
- * campaign, docs/research/2026-10-efs-persistence.md): the
- * `efs_volumes` section of `ConfigureRequest` always answers
- * `SECTION_CODE_UNSUPPORTED`, whatever `EfsVolumesConfig` it carries. The
- * messages are complete now so a future adapter needs no wire change.
+ * Owned by m15-efs-volumes (ADR-018, experimental). `rayd` mounts through
+ * `EfsUtilsMounter` (`mount -t efs`, amazon-efs-utils) only on an image
+ * that installs amazon-efs-utils and runs with CAP_SYS_ADMIN; on every
+ * other image (every image Rayito publishes today) the `efs_volumes`
+ * section of `ConfigureRequest` answers `SECTION_CODE_UNSUPPORTED`,
+ * whatever `EfsVolumesConfig` it carries.
  *
  * @generated from message rayito.v1.EfsVolumesConfig
  */
@@ -72,10 +72,9 @@ export type EfsVolumeMount = Message<"rayito.v1.EfsVolumeMount"> & {
   readOnly: boolean;
 
   /**
-   * Dotted-quad; empty lets the adapter resolve it itself. Set by the SDK
-   * from `DescribeMountTargets` to avoid depending on the guest resolving
-   * the VPC's private DNS zone for the mount target (research doc R3,
-   * EFS-5).
+   * Dotted-quad; empty lets the adapter resolve it itself (research doc
+   * R3, EFS-5: avoids depending on the guest resolving the VPC's private
+   * DNS zone for the mount target). The SDKs do not fill it yet.
    *
    * @generated from field: string mount_target_ip = 5;
    */
@@ -139,7 +138,14 @@ export const EfsVolumeStatusSchema: GenMessage<EfsVolumeStatus> = /*@__PURE__*/
 /**
  * Mirrors `rayd_core::volume::MountState`. `last_error_class` values for
  * `FAILED`: `network`, `iam_denied`, `not_found`, `tls`, `helper_missing`,
- * `timeout` (research doc §4.3 `EfsUtilsMounter`, §8 "Modos de fallo").
+ * `timeout`, `invalid_path` (research doc §4.3, §8 "Modos de fallo").
+ * For `DEGRADED`/`REMOUNTING` (`rayd_core::volume::resume::DegradeReason`):
+ * `credentials_expired` (a pause crossed the expiry of the credentials the
+ * TLS tunnel was signed with; the volume is remounted at `/resume`),
+ * `flush_timeout` (the bounded `/suspend` flush did not finish: writes not
+ * flushed may be lost), `stale`, `unreachable`, `gone` (the `/resume`
+ * probe), or one of the `FAILED` classes above when the remount itself
+ * failed.
  *
  * @generated from enum rayito.v1.EfsVolumeState
  */

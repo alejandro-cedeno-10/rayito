@@ -10,8 +10,9 @@
 //! `/etc/rayito/template.json`, the shell runner behind a template's
 //! `ready_cmd` (ADR-022, `features::template_start`), the process-wide
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
-//! (`rayd-orphan-reaper`), and the EFS volume mounter (ADR-018,
-//! `UnavailableEfsMounter` ahead of the measurement campaign).
+//! (`rayd-orphan-reaper`), the symlink-proof mountpoint walk both mount
+//! features share, and the EFS volume mounter over `amazon-efs-utils`
+//! (ADR-018).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -28,6 +29,7 @@ pub mod fuse_device;
 pub mod imds_block;
 pub mod ip_command;
 pub mod mount_s3;
+pub mod mountpoint;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
@@ -46,7 +48,9 @@ pub mod stdout_event_sink;
 pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
-pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
+pub use capabilities::{
+    GuestCapabilities, binary_on_path, detect_guest_capabilities, kernel_supports_filesystem,
+};
 pub use child_registry::{ChildRegistry, SpawnChild};
 pub use cloudwatch_otlp_sink::{
     CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,
@@ -54,7 +58,7 @@ pub use cloudwatch_otlp_sink::{
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
-pub use efs_mount::UnavailableEfsMounter;
+pub use efs_mount::{EfsHost, EfsUtilsMounter, LeaseSource, LinuxEfsHost, detect_efs_supported};
 pub use fs_identity::FsIdentityGuard;
 pub use fs_template_spec::{FsTemplateSpecSource, TemplateSpecSource};
 pub use fuse_device::LinuxFuseDevice;

@@ -19,9 +19,9 @@ const MCP_REASON =
   "(AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp";
 const VOLUME_REASON =
   "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen; incluso " +
-  "configurado, volumes=/volume_mounts sigue en UnimplementedError hasta que la campaña de " +
-  "medición EFS-1..EFS-20 (AWS_API_NOTES.md §22, m15-efs-volumes) decida un adaptador de " +
-  "montaje real; usa persist= (S3) o upload_url/download_url mientras tanto";
+  "configurado, volumes=/volume_mounts sigue en UnimplementedError (experimental: ninguna " +
+  "imagen publicada trae amazon-efs-utils, AWS_API_NOTES.md §22, m15-efs-volumes); usa " +
+  "persist= (S3) o upload_url/download_url mientras tanto";
 const VOLUME_CONTENT_REASON =
   "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y " +
   "monta el volumen, o usa upload_url/download_url sobre persist=";

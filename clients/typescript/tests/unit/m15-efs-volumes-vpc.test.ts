@@ -321,8 +321,28 @@ describe("EfsVolumes.deploy / volumeStore / destroy", () => {
       SubnetIds: `${SUBNET_A},${SUBNET_B}`,
       AllowWrite: "true",
       AccessPointArns: "",
+      ReadOnlyAccessPointArns: "",
       ConnectorName: "rayito-efs",
     });
+  });
+
+  test("deploy denies ClientWrite on read-only access points even when writes are allowed", async () => {
+    const { volumes, provisioner } = facade();
+    await volumes.deploy({
+      vpcId: VPC_ID,
+      subnetIds: [SUBNET_A],
+      readOnlyAccessPointArns: [ACCESS_POINT_ARN],
+    });
+    expect(provisioner.parameters.AllowWrite).toBe("true");
+    expect(provisioner.parameters.ReadOnlyAccessPointArns).toBe(ACCESS_POINT_ARN);
+  });
+
+  test("deploy rejects a bad read-only access point ARN naming its option", async () => {
+    const { volumes, provisioner, ec2 } = facade();
+    await expect(
+      volumes.deploy({ vpcId: VPC_ID, subnetIds: [SUBNET_A], readOnlyAccessPointArns: ["fsap-1"] }),
+    ).rejects.toThrow(/readOnlyAccessPointArns/);
+    expect([provisioner.calls, ec2.calls]).toEqual([[], []]);
   });
 
   test("deploy read-only and scoped to access points", async () => {

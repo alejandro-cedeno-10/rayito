@@ -36,9 +36,9 @@ class VolumeStore:
     -------------------
     Activa: `VolumeStore(...)`; construirlo no llama a AWS (el cliente boto3
         `efs` se crea en el primer método). Experimental: el CRUD es real, pero
-        `Sandbox.create(volumes=...)` sigue en `UnimplementedError` hasta que la
-        campaña de medición EFS-1..EFS-20 decida un adaptador de montaje real
-        (`docs/research/2026-10-efs-persistence.md`).
+        `Sandbox.create(volumes=...)` sigue en `UnimplementedError` (ninguna
+        imagen publicada trae `amazon-efs-utils` todavía,
+        `docs/research/2026-10-efs-persistence.md`).
     Recursos y llamadas AWS: ningún recurso nuevo (el sistema de ficheros lo
         crea `infra/efs-volumes.yaml`, por separado); `create` = `CreateAccessPoint`,
         `get`/`list` = `DescribeAccessPoints`, `destroy` = `DeleteAccessPoint`.

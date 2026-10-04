@@ -88,3 +88,31 @@ def test_pool_with_size_is_invalid_argument_even_though_size_is_implemented() ->
     pool = SandboxPool.__new__(SandboxPool)
     with pytest.raises(InvalidArgumentException, match="size"):
         Sandbox.create(pool=pool, size="4gb")
+
+
+#: Marcador de documentación (cuenta ficticia).
+_CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs"
+
+
+@pytest.mark.parametrize("egress", [None, ["INTERNET_EGRESS"], [_CONNECTOR, "INTERNET_EGRESS"]])
+def test_sync_create_rejects_volumes_without_a_single_own_connector(
+    egress: list[str] | None,
+) -> None:
+    """`create()` hands its `egress=` to the `volumes=` gate: a MicroVM takes
+    one egress connector (Q131), so a volume never runs with
+    INTERNET_EGRESS, and this fails before any control plane is resolved."""
+    with pytest.raises(InvalidArgumentException, match="NAT"):
+        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=egress)
+
+
+@pytest.mark.asyncio
+async def test_async_create_rejects_volumes_with_internet_egress() -> None:
+    with pytest.raises(InvalidArgumentException, match="INTERNET_EGRESS"):
+        await AsyncSandbox.create(
+            "rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR, "INTERNET_EGRESS"]
+        )
+
+
+def test_sync_create_with_volumes_and_its_connector_is_still_unimplemented() -> None:
+    with pytest.raises(UnimplementedError, match="amazon-efs-utils"):
+        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR])

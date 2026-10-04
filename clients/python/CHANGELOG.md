@@ -13,9 +13,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   points EFS: `CreateAccessPoint`/`DescribeAccessPoints`/
   `DeleteAccessPoint`, sin cliente `efs` hasta el primer uso) y
   `Sandbox.create(volumes=)`, que valida la petición (tipos, rutas,
-  variante `caps`) antes de cualquier llamada a AWS y siempre lanza
-  `UnimplementedError` hasta que la campaña de medición EFS-1..EFS-20
-  decida un adaptador de montaje real (`docs/research/2026-10-efs-persistence.md`).
+  variante `caps` y un único conector propio en `egress=`: sin él, con
+  `INTERNET_EGRESS` o con dos conectores es `InvalidArgumentException`,
+  porque un MicroVM sólo admite un conector de egress, `AWS_API_NOTES.md`
+  §16 Q131) antes de cualquier llamada a AWS y siempre lanza
+  `UnimplementedError` mientras ninguna imagen publicada traiga
+  `amazon-efs-utils` (`docs/research/2026-10-efs-persistence.md`).
   `EfsVolume`, `VolumeStatus` y las excepciones `VolumeException`/
   `VolumeNotFoundException`/`VolumePathNotFoundException`. El shim de E2B
   (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
@@ -36,7 +39,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `VolumeStore` sobre la pila, y `destroy(delete_file_system=True)`/
   `delete_file_system(id)` borran el sistema de ficheros conservado (sólo
   uno con la etiqueta `rayito=efs-volumes`). `AccessPointArns` acota la
-  política del execution role a access points exactos.
+  política del execution role a access points exactos y
+  `deploy(read_only_access_point_arns=...)` (`ReadOnlyAccessPointArns`) le
+  deniega `ClientWrite` a los de sólo lectura: la opción `ro` del montaje no
+  basta, porque el usuario del sandbox alcanza el puerto local de
+  `efs-proxy` (Q133). El hallazgo `internet-egress` de `check()` explica que
+  un sandbox con volumen sólo tiene internet por la VPC.
   `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
   (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
   access point nuevo y 8 s en dejar de listar uno borrado): `create` de un

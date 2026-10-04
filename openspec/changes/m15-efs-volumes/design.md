@@ -127,3 +127,86 @@ denies `ec2:CreateVpc`, Q124), so the quick path is an existing VPC:
   access points. Generic `rayito stack destroy` keeps it, documented.
 - **Measurement script**: the throwaway-VPC path is gone; the VPC comes only
   from args/env, is never recorded, and `cleanup` has no network stage.
+
+### D6. A real `EfsUtilsMounter`, still gated by detection
+
+Every stop criterion passed on 2026-10-04 (Q127–Q130), so the adapter the
+port was built for replaces `UnavailableEfsMounter` (which would otherwise
+be dead code). `support()` is `Supported` only with `CAP_SYS_ADMIN`, `nfs4`
+in `/proc/filesystems`, `mount` on `PATH` and both `/usr/sbin/mount.efs` and
+`/usr/sbin/efs-proxy` (Q122): no image Rayito publishes installs
+`amazon-efs-utils`, so shipped images keep answering `UNSUPPORTED` and the
+slot does not join the hooks (`participant()` is `None` while
+unsupported). The SDK keeps `volumes=` in `UnimplementedError`; the image
+layer and the `create()` wiring (sending the section, `DescribeMountTargets`
+for `mount_target_ip`) are the next step, not this change.
+
+The helper mounts on `/run/rayito/efs-staging` (root-only: `/run/rayito`
+is created by `rayd` and is on `FilesystemService`'s deny list) and the
+result is bind-mounted onto the requested path through the `O_NOFOLLOW`
+walk `mounts=` uses — `mount(8)` would resolve a path argument that uid 1000
+can swap for a symlink under `/home/user`. The walk moves out of
+`fuse_device` into `adapters::mountpoint` (one implementation, two users).
+
+### D7. `efs-proxy` is attributed, not spawned
+
+`efs-proxy`'s command line and configuration are `efs-utils` internals that
+`AWS_API_NOTES.md` does not document, so `rayd` keeps `mount.efs` as the
+only thing that starts it. Mounts are serialized; the root processes whose
+`/proc/<pid>/exe` is `/usr/sbin/efs-proxy` that appear between the snapshot
+before the helper and the one after it are that mount's, pinned by pid and
+start time (`rayd_core::volume::proxy`). Unmount sends `SIGTERM`, waits 400
+ms, sends `SIGKILL` and waits 200 ms more (inside the 1 s `/terminate`
+participant cap). The helper (`mount`, `mount.efs`) is spawned through
+`ChildRegistry`, so the orphan reaper never takes its status; the proxy is
+re-parented to PID 1 and `rayd` never `waitpid`s it, so its zombie is the
+orphan reaper's by design and no status is ever contested.
+
+### D8. `/resume` remounts on an expired lease, probes otherwise
+
+Each mount records the execution-role lease expiry from the shared
+`ImdsCredentialBroker` (the same IMDS set `efs-utils` read a moment
+earlier, or an older one that expires no later). `/resume` remounts at once
+when the lease has passed or is inside `REFRESH_MARGIN` (a probe would only
+spend budget on a reconnection known to fail), otherwise probes with a
+bounded `stat` child (800 ms) and remounts on failure. Remounts are tasks;
+`on_resume` waits 1.5 s (inside the 2 s participant cap) and a slower one
+keeps going, reported as `REMOUNTING` → `MOUNTED`/`DEGRADED` by
+`ConfigureStatus`. Remounts and `Configure` share one async lock and each
+entry carries the generation of the `Configure` that created it, so a
+remount never writes into an entry a later `Configure` replaced. A
+guest-side credential refresh of the running tunnel was rejected: it would
+need `efs-utils` internals (the watchdog's certificate renewal) that are
+neither documented nor measured.
+
+### D9. `/suspend` flushes per volume; the loss is documented, not hidden
+
+The slot asks for the whole sync deadline (`SuspendShares` caps it, and the
+flushes run concurrently with the per-filesystem `syncfs`, so the hook never
+waits longer) and runs one `syncfs` per volume on a throwaway thread
+(`bounded_sync::spawn_syncfs_thread`), skipping a volume whose previous
+flush never returned. A volume that does not finish becomes
+`DEGRADED`/`flush_timeout` and is probed at `/resume`. With the mount
+target unreachable the platform still terminates the VM (Q130); nothing in
+the guest can prevent that, so the docs say it plainly.
+
+### D10. Read-only in IAM; one egress connector enforced by the SDKs
+
+uid 1000 reaches `efs-proxy`'s loopback port (Q133) and the guest kernel has
+no `owner` match (Q48), so `ro` cannot be the control. The template gains
+`ReadOnlyAccessPointArns`: an explicit `Deny` of
+`elasticfilesystem:ClientWrite` conditioned on
+`elasticfilesystem:AccessPointArn` (the key the file-system policy already
+uses), which wins over `AllowWrite=true`. A guest-side `ip rule … dport
+<port> prohibit` ahead of `local` (the M10 DNS-guard mechanism) was left out:
+it must be coordinated with `NetworkManager`'s own guard and measured on AWS
+first; T21 records it as pending hardening.
+
+A MicroVM accepts one egress connector (Q131). `plan_features`/
+`planFeatures` gain an optional `egress` argument (D2 anticipated the first
+feature that needed it would add it) and `volumes=` requires exactly one
+own connector, never `INTERNET_EGRESS`, before `run-microvm`; the error
+names the alternative (internet through the customer's VPC NAT or transit
+gateway and a connector that allows it). The shim always launches with
+`INTERNET_EGRESS`, so its `volume_mounts` says so in its
+`UnimplementedError`.

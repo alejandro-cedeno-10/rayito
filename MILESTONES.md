@@ -1426,12 +1426,18 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   puerto (`rayd_core::volume`, `VolumeMounter`), `VolumeStore` (CRUD real de
   access points EFS), `Sandbox.create(volumes=)` (valida y siempre lanza
   `UnimplementedError`), `infra/efs-volumes.yaml` y el shim `Volume`
-  construidos; el montaje real en el guest (`rayd`'s único adaptador hoy es
-  `UnavailableEfsMounter`) queda pendiente de la campaña de medición
-  EFS-1..EFS-20. Puesta en marcha en una VPC existente: `EfsVolumes`
-  (`check` de sólo lectura, también en `rayito doctor --efs-vpc-id`;
-  `deploy` que se niega con un `FAIL`; `destroy(delete_file_system=True)`),
-  pendiente de la aceptación en AWS real (cap $3).
+  construidos. La campaña EFS-1..EFS-20 pasó sus criterios de parada el
+  2026-10-04 (Q126–Q134) y `rayd` trae el adaptador real
+  (`EfsUtilsMounter`: para el `efs-proxy` de cada volumen, remonta tras una
+  pausa que cruza la caducidad de las credenciales, vacía con plazo en
+  `/suspend`), activo sólo en una imagen con `amazon-efs-utils`; sólo
+  lectura impuesto en IAM (`ReadOnlyAccessPointArns`) y `volumes=` sólo con
+  un conector propio (nunca `INTERNET_EGRESS`). Puesta en marcha en una VPC
+  existente: `EfsVolumes` (`check` de sólo lectura, también en `rayito
+  doctor --efs-vpc-id`; `deploy` que se niega con un `FAIL`;
+  `destroy(delete_file_system=True)`). Pendiente: la capa de imagen, el
+  cableado de `create()` y la revisión en AWS de EFS-12 (remontaje) y
+  EFS-16 (sólo lectura acotado).
 - **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
   real el 2026-10-02**, Q118/Q119): catálogo cerrado de cinco tamaños
   (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de

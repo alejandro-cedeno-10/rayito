@@ -5,9 +5,9 @@
  * un mount target por subred, los grupos de seguridad NFS (nuevos) y un
  * `AWS::Lambda::NetworkConnector` dedicado; nunca modifica la VPC, sus
  * subredes, rutas, NACLs ni grupos existentes. `EfsVolumes`
- * (`volumes/efs-volumes.ts`) es su fachada. Desplegar
- * esta pila no activa el montaje: `rayd` sólo tiene `UnavailableEfsMounter`
- * hasta que la campaña de medición EFS-1..EFS-20 decida un adaptador real.
+ * (`volumes/efs-volumes.ts`) es su fachada. Desplegar esta pila no activa el
+ * montaje: `rayd` sólo monta en una imagen con `amazon-efs-utils` y
+ * `Sandbox.create({ volumes })` sigue en `UnimplementedError` (experimental).
  */
 
 import type { StackComponent } from "../model.js";
@@ -17,8 +17,8 @@ export const COMPONENT: StackComponent = {
   description:
     "Sistema de ficheros EFS cifrado (Elastic Throughput) en una VPC existente: un " +
     "mount target por subred, grupos de seguridad NFS nuevos y un " +
-    "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: el montaje " +
-    "en el guest está pendiente de EFS-1..EFS-20).",
+    "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: " +
+    "Sandbox.create(volumes=...) aún no monta).",
   parameters: [
     {
       name: "VpcId",
@@ -52,6 +52,14 @@ export const COMPONENT: StackComponent = {
         "ARNs de access points separados por comas: acotan RayitoEfsVolumeClient a " +
         "ellos; vacío = cualquier access point de la cuenta y región sobre este " +
         "sistema de ficheros.",
+      default: "",
+    },
+    {
+      name: "ReadOnlyAccessPointArns",
+      description:
+        "ARNs de access points separados por comas que se quedan en sólo lectura " +
+        "aunque AllowWrite sea 'true': RayitoEfsVolumeClient les deniega ClientWrite. " +
+        "Es lo que hace de sólo lectura un volumen: la opción ro del montaje no basta.",
       default: "",
     },
   ],

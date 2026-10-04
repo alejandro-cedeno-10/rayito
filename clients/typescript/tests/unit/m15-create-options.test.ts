@@ -29,6 +29,9 @@ const NAMED_TEMPLATE = "rayito-base";
 const VALID_VOLUME = {
   "/mnt/v": new EfsVolume({ fileSystemId: "fs-0123abcd", accessPointId: "fsap-0123abcd" }),
 };
+// Marcador de documentación (cuenta ficticia): el conector propio que
+// `volumes` exige como único `egress` (Q131).
+const CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs";
 
 describe("Sandbox.create: 0.6 options", () => {
   // `telemetry` (m15-rayd-otlp) is the first real function: it validates
@@ -36,15 +39,28 @@ describe("Sandbox.create: 0.6 options", () => {
   // the dedicated `telemetry` tests below), so it is not part of this
   // generic "still a stub" table.
   test.each([
-    ["volumes", VALID_VOLUME],
+    ["volumes", VALID_VOLUME, { egress: [CONNECTOR] }],
     // `events` left this stub list in m15-events-webhooks (now
     // `InvalidArgumentError` without `logging: "cloudwatch"`, still before
     // any control plane) — see `m15-events-webhooks-feature-options.test.ts`.
-    ["domain", {}],
-  ] as const)("rejects option %s before resolving a control plane", async (option, value) => {
-    await expect(Sandbox.create({ template: TEMPLATE, [option]: value })).rejects.toThrow(
-      UnimplementedError,
-    );
+    ["domain", {}, {}],
+  ] as const)(
+    "rejects option %s before resolving a control plane",
+    async (option, value, extra) => {
+      await expect(
+        Sandbox.create({ template: TEMPLATE, ...extra, [option]: value }),
+      ).rejects.toThrow(UnimplementedError);
+    },
+  );
+
+  test.each([
+    ["no egress", undefined],
+    ["INTERNET_EGRESS alone", ["INTERNET_EGRESS"]],
+    ["INTERNET_EGRESS plus the connector", [CONNECTOR, "INTERNET_EGRESS"]],
+  ] as const)("rejects volumes with %s before resolving a control plane", async (_, egress) => {
+    await expect(
+      Sandbox.create({ template: TEMPLATE, volumes: VALID_VOLUME, egress }),
+    ).rejects.toThrow(/NAT/);
   });
 
   test("rejects a telemetry value needing caps on a known non-caps image", async () => {

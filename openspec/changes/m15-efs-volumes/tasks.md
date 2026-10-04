@@ -260,6 +260,53 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       inventory diff are still pending (the SSO session expired first).
 
 
+## 10. Hardening from the 2026-10-04 acceptance (design D6–D10, no AWS)
+
+- [x] 10.1 `rayd_core::volume`: `proxy` (attribute the `efs-proxy` a mount
+      started by pid + start time; liveness), `resume` (`plan_resume`,
+      `after_probe`, closed `DegradeReason` strings), `MountReceipt`
+      (credentials expiry), `FlushOutcome`, `MountFailureClass::InvalidPath`,
+      new `MountTransition`s (`FlushTimedOut`, `CredentialsExpired`,
+      `ProbeFoundHealthy`).
+- [x] 10.2 `adapters::mountpoint`: the symlink-proof walk, `/proc/self/fd`
+      targets, bind mount, detach and the bounded `stat` probe, extracted from
+      `fuse_device` and shared by both mount features; `bounded_sync::
+      spawn_syncfs_thread` shared by `BoundedFlush` and the EFS flush;
+      `capabilities::{binary_on_path, kernel_supports_filesystem}`.
+- [x] 10.3 `adapters::efs_mount::EfsUtilsMounter` replaces
+      `UnavailableEfsMounter`: helper through `ChildRegistry` on a root-only
+      staging dir, bind onto the requested path, proxies stopped on unmount
+      (SIGTERM, SIGKILL after a grace), lease expiry from
+      `ImdsCredentialBroker`, bounded per-volume `syncfs`; support only with
+      `CAP_SYS_ADMIN`, `nfs4`, `mount`, `mount.efs` and `efs-proxy`.
+      Tests with a fake host, plus a real-process stop test in the Lima VM.
+- [x] 10.4 `features::efs_volumes`: lifecycle participant (`/suspend` flush
+      with `DEGRADED`/`flush_timeout`, `/resume` remount or probe with a
+      1.5 s wait and background completion reported by `ConfigureStatus`,
+      `/terminate` unmount), generations so a remount never resurrects a
+      dropped volume, `root_egress_class = Efs`.
+- [x] 10.5 `infra/efs-volumes.yaml`: `ReadOnlyAccessPointArns` (explicit
+      `Deny` of `ClientWrite`); both SDK components and
+      `EfsVolumes.deploy(read_only_access_point_arns=)`/
+      `readOnlyAccessPointArns`; template tests.
+- [x] 10.6 SDKs: `volumes=` requires exactly one own connector in
+      `egress=` (never `INTERNET_EGRESS`) before launch, naming the VPC
+      alternative; `plan_features`/`planFeatures` take `egress`;
+      `has_internet_connector`/`hasInternetConnector` move to the models;
+      the shim's `volume_mounts` explains the single-connector limit;
+      `check()`'s `internet-egress` message says the same.
+- [x] 10.7 Docs: both EFS pages (five-minute setup, internet and volumes,
+      what `rayd` does with each volume, data-loss warning, real read-only),
+      `SECURITY.md` T21, `AWS_API_NOTES.md` §22, ADR-018 addendum, research
+      doc §9, `MILESTONES.md`, three CHANGELOGs, `docs-delta.md`.
+- [ ] 10.8 AWS re-check (serialized stage, ≤ $2): EFS-12 (a remount after
+      a pause past the credentials' expiry restores reads, through `rayd`'s
+      own `/resume`), EFS-16 scoped (`AccessPointArns` + 
+      `ReadOnlyAccessPointArns`/`AllowWrite=false`: writes through the
+      mount and through the loopback tunnel denied), the adapter's own mount
+      path (bind from staging, `ro`, no `mounttargetip`) and proxy cleanup
+      after `umount`.
+
 ## 8. OpenSpec
 
 - [x] 8.1 `proposal.md`, `design.md`, `tasks.md` (this file),

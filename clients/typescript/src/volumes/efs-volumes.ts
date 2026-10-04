@@ -61,6 +61,13 @@ export interface EfsVolumesDeployOptions {
   readonly subnetIds: readonly string[] | string;
   readonly allowWrite?: boolean;
   readonly accessPointArns?: readonly string[];
+  /**
+   * Access points que se quedan en sólo lectura aunque `allowWrite` sea
+   * `true`: la política les deniega `ClientWrite`. Es lo que hace de sólo
+   * lectura un volumen; la opción `ro` del montaje no basta
+   * (`AWS_API_NOTES.md` §16 Q133).
+   */
+  readonly readOnlyAccessPointArns?: readonly string[];
   readonly connectorName?: string;
   readonly tags?: Readonly<Record<string, string>>;
   readonly wait?: boolean;
@@ -78,7 +85,9 @@ class FileSystemGone extends Error {}
  *   `rayito stack deploy efs-volumes --param VpcId=... --param SubnetIds=...`).
  *   `check()` es de sólo lectura y no crea nada. Experimental: el CRUD de
  *   volúmenes es real, pero `Sandbox.create({ volumes })` sigue en
- *   `UnimplementedError` hasta la campaña EFS-1..EFS-20.
+ *   `UnimplementedError` (ninguna imagen publicada trae `amazon-efs-utils`
+ *   todavía). Un sandbox con volumen usa este conector como único `egress`
+ *   y no puede usar además `INTERNET_EGRESS`.
  * Recursos y llamadas AWS: `check()` = `DescribeVpcs`, `DescribeVpcAttribute`,
  *   `DescribeSubnets`, `DescribeRouteTables` (peer `@aws-sdk/client-ec2`).
  *   `deploy()` crea, sólo dentro de la VPC dada y etiquetado: un sistema de
@@ -162,11 +171,16 @@ export class EfsVolumes {
   /**
    * Corre `check()` y, sólo si ningún hallazgo es `FAIL`, despliega (o
    * actualiza) la pila. `accessPointArns` acota `RayitoEfsVolumeClient` a
-   * esos access points; `allowWrite: false` sólo concede `ClientMount`. Ver
-   * "Coste y activación" de la clase.
+   * esos access points; `allowWrite: false` sólo concede `ClientMount`;
+   * `readOnlyAccessPointArns` les deniega `ClientWrite` a esos access points
+   * aunque `allowWrite` sea `true`. Ver "Coste y activación" de la clase.
    */
   async deploy(options: EfsVolumesDeployOptions): Promise<StackStatus> {
     const arns = validateAccessPointArns(options.accessPointArns ?? []);
+    const readOnlyArns = validateAccessPointArns(
+      options.readOnlyAccessPointArns ?? [],
+      "readOnlyAccessPointArns",
+    );
     const report = await this.check({ vpcId: options.vpcId, subnetIds: options.subnetIds });
     if (!report.ok) {
       const reasons = report.findings
@@ -182,6 +196,7 @@ export class EfsVolumes {
       SubnetIds: report.subnetIds.join(","),
       AllowWrite: options.allowWrite === false ? "false" : "true",
       AccessPointArns: arns.join(","),
+      ReadOnlyAccessPointArns: readOnlyArns.join(","),
     };
     if (options.connectorName !== undefined) {
       parameters.ConnectorName = options.connectorName;
