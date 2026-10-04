@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from rayito._limits import RUN_HOOK_PAYLOAD_MAX_CHARS
+from rayito._limits import ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS
 from rayito._payload import (
     access_token_sha256,
     build_run_hook_payload,
@@ -16,7 +16,7 @@ from rayito._payload import (
 )
 from rayito.exceptions import InvalidArgumentException
 
-TOKEN = encode_access_token(b"token")
+TOKEN = encode_access_token(b"unit-test-access-token-32-bytes!")
 
 
 def test_generated_token_is_urlsafe_and_unique() -> None:
@@ -128,3 +128,21 @@ def test_network_block_travels_only_when_enforcing() -> None:
     assert "network" not in json.loads(
         build_run_hook_payload(access_token=TOKEN, network_enforce=False)
     )
+
+
+def test_a_caller_token_shorter_than_the_minimum_is_rejected_without_echoing_it() -> None:
+    """Un token elegido a mano y corto (p. ej. en `RAYITO_ACCESS_TOKEN`, que
+    protege todos los sandboxes del proceso) es adivinable: hace falta al
+    menos `ACCESS_TOKEN_MIN_BYTES` bytes."""
+    short = encode_access_token(b"x" * (ACCESS_TOKEN_MIN_BYTES - 1))
+    with pytest.raises(InvalidArgumentException, match="demasiado corto") as excinfo:
+        validate_access_token(short)
+    assert short not in str(excinfo.value)
+    assert str(ACCESS_TOKEN_MIN_BYTES) in str(excinfo.value)
+    with pytest.raises(InvalidArgumentException, match="demasiado corto"):
+        access_token_sha256(encode_access_token(b"A"))
+
+
+def test_a_token_at_the_minimum_is_accepted() -> None:
+    token = encode_access_token(b"x" * ACCESS_TOKEN_MIN_BYTES)
+    assert validate_access_token(token) == token

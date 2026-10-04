@@ -19,7 +19,7 @@ import secrets
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
-from rayito._limits import RUN_HOOK_PAYLOAD_MAX_CHARS
+from rayito._limits import ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
@@ -43,7 +43,11 @@ def encode_access_token(secret: bytes) -> str:
 
 def decode_access_token(access_token: str) -> bytes:
     """Los bytes que `rayd` hashea. Falla si el token no es base64url canónico
-    (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`."""
+    (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`,
+    o si decodifica a menos de `ACCESS_TOKEN_MIN_BYTES` bytes: un secreto
+    elegido a mano y corto (en `access_token=`, `RAYITO_ACCESS_TOKEN` o
+    `--token-file`) se adivinaría por fuerza bruta o desde `token_sha256`.
+    El mensaje nunca repite el token."""
     stripped = access_token.rstrip("=")
     padded = stripped + "=" * (-len(stripped) % 4)
     try:
@@ -52,6 +56,11 @@ def decode_access_token(access_token: str) -> bytes:
         raise InvalidArgumentException("access_token no es base64url") from exc
     if not secret or encode_access_token(secret) != stripped:
         raise InvalidArgumentException("access_token no es base64url")
+    if len(secret) < ACCESS_TOKEN_MIN_BYTES:
+        raise InvalidArgumentException(
+            f"access_token demasiado corto: mínimo {ACCESS_TOKEN_MIN_BYTES} bytes aleatorios "
+            f"(los generados tienen {ACCESS_TOKEN_BYTES})"
+        )
     return secret
 
 

@@ -129,6 +129,14 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "guestMemoryMultiplier",
         "reservedPorts",
     ),
+    (
+        # Client-side hardening, not AWS properties: the shortest access
+        # token the SDKs accept from a caller (128 bits; generated ones are
+        # 32 bytes) and the most command output each stream keeps in memory
+        # (the tail; older output is dropped and reported as truncated).
+        "accessTokenMinBytes",
+        "commandOutputMaxBytes",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.
