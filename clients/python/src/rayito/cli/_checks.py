@@ -22,8 +22,11 @@ from rayito._images import read_gate
 from rayito._limits import DEFAULT_PORT, SUPPORTED_REGIONS, TOKEN_TTL_MINUTES
 from rayito._models import SandboxHealth, SandboxInfo, SandboxListItem
 from rayito._sandbox_base import METADATA_PROBE_TIMEOUT_SECONDS, health_from_proto
+from rayito._stacks.components.efs_volumes import COMPONENT as EFS_VOLUMES_COMPONENT
 from rayito._transport import TransportSettings
 from rayito._version import __version__
+from rayito._volumes._network import inspect_network
+from rayito._volumes._vpc import Ec2NetworkInspector
 from rayito.cli._compat import COMPATIBILITY, Assessment, assess
 from rayito.cli._console import client_error_code, client_error_message, iso_utc
 from rayito.cli._publish import (
@@ -150,6 +153,10 @@ class DoctorContext:
     target_sandbox: SandboxInfo | None = None
     minted_token: str | None = None
     health: SandboxHealth | None = None
+    #: `--efs-vpc-id`/`--efs-subnet-ids`: la comprobación previa de
+    #: `EfsVolumes` (sólo lectura), únicamente cuando se piden.
+    efs_vpc_id: str | None = None
+    efs_subnet_ids: str | None = None
     transport: TransportSettings = field(default_factory=TransportSettings)
     probe_timeout: float = METADATA_PROBE_TIMEOUT_SECONDS
 
@@ -676,6 +683,48 @@ def check_compatibility(clients: Clients, ctx: DoctorContext) -> CheckResult:
         details,
     )
 
+
+def check_efs_network(clients: Clients, ctx: DoctorContext) -> CheckResult:
+    """La comprobación previa de `EfsVolumes.check()` sobre la VPC y las
+    subredes de `--efs-vpc-id`/`--efs-subnet-ids`: sólo `ec2:Describe*`,
+    nunca crea nada. Informa de lo que `rayito stack deploy efs-volumes`
+    crearía y de su coste."""
+    report = inspect_network(
+        Ec2NetworkInspector(lambda: clients.client("ec2")),
+        ctx.efs_vpc_id or "",
+        ctx.efs_subnet_ids or "",
+        cost=EFS_VOLUMES_COMPONENT.cost,
+    )
+    worst = [f.message for f in report.findings if f.level == report.status != "OK"]
+    plan = (
+        f"crearía {', '.join(report.cost.creates)}; en reposo {report.cost.idle_monthly}"
+        if report.ok
+        else "no crearía nada hasta corregir lo anterior"
+    )
+    summary = "; ".join(
+        worst
+        or [
+            f"VPC apta para efs-volumes: {len(report.subnet_ids)} subred(es) en "
+            f"{len(report.availability_zones)} AZ(s)"
+        ]
+    )
+    return CheckResult(
+        "efs-network",
+        report.status,
+        f"{summary}; {plan}",
+        {
+            "availability_zones": list(report.availability_zones),
+            "findings": [dataclasses.asdict(finding) for finding in report.findings],
+            "creates": list(report.cost.creates),
+            "idle_monthly": report.cost.idle_monthly,
+            "per_use": list(report.cost.per_use),
+            "removal": report.cost.removal,
+        },
+    )
+
+
+#: Fuera de `CHECKS`: sólo corre con `--efs-vpc-id` (y sus subredes).
+EFS_NETWORK_CHECK = CheckSpec("efs-network", check_efs_network, "ec2:DescribeVpcs")
 
 CHECKS: tuple[CheckSpec, ...] = (
     CheckSpec("credentials", check_credentials, "sts:GetCallerIdentity"),

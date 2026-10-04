@@ -26,6 +26,12 @@ RAYITO_IMAGE_PATTERN: Final = re.compile(
     r"^rayito-(?P<variant>[a-z]+(?:-[a-z]+)*?)(?:-\d+[a-z]+)?$"
 )
 CAPS_VARIANT: Final = "base-caps"
+#: `rayito image publish --with-efs` (m15-efs-volumes): la imagen caps con la
+#: capa de `amazon-efs-utils` (`rayito-base-caps-efs`); concede lo mismo que
+#: la caps y además deja montar `volumes=`.
+EFS_CAPS_VARIANT: Final = f"{CAPS_VARIANT}-efs"
+#: Las variantes que conceden el capability mask de ADR-012.
+CAPS_VARIANTS: Final = frozenset({CAPS_VARIANT, EFS_CAPS_VARIANT})
 
 
 def resolve_image_variant(template: str | None) -> str | None:
@@ -40,12 +46,13 @@ def resolve_image_variant(template: str | None) -> str | None:
 
 
 def require_caps_for(feature: str, image_variant: str | None) -> None:
-    """Lanza `UnimplementedError` si `image_variant` se conoce y no es la
-    variante caps; no hace nada (ni cuando es la caps, ni cuando es `None`,
-    es decir desconocida) para no bloquear un lanzamiento que el agente
-    podría aún aceptar.
+    """Lanza `UnimplementedError` si `image_variant` se conoce y no es una
+    variante caps (`CAPS_VARIANTS`: la caps o la caps con `amazon-efs-utils`);
+    no hace nada (ni cuando lo es, ni cuando es `None`, es decir
+    desconocida) para no bloquear un lanzamiento que el agente podría aún
+    aceptar.
     """
-    if image_variant is None or image_variant == CAPS_VARIANT:
+    if image_variant is None or image_variant in CAPS_VARIANTS:
         return
     raise UnimplementedError(
         feature,

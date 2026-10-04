@@ -47,6 +47,7 @@ from rayito._configure_base import (
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
+    configure_timeout_s,
     require_capabilities,
     require_configure_support,
     resolve_sections,
@@ -58,6 +59,7 @@ from rayito._feature_options import (
     LaunchFacts,
     plan_features,
     planned_sections,
+    prepare_features,
     relaunch_features,
 )
 from rayito._index import DynamoDbIndex, validate_index
@@ -227,6 +229,8 @@ from rayito._transport import (
     rpc_status,
     translate_rpc_error,
 )
+from rayito._volumes import VolumeStatus
+from rayito._volumes._section import from_proto_status as volumes_from_proto_status
 from rayito.exceptions import (
     InvalidArgumentException,
     NotFoundException,
@@ -709,12 +713,12 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         De las siete opciones 0.6 (M15), sólo `volumes=` y `domain=` siguen
-         siendo stubs (m15-efs-volumes, m15-custom-domain): ponerlas a algo
+         De las siete opciones 0.6 (M15), sólo `domain=` sigue siendo un
+         stub (m15-custom-domain): ponerla a algo
          distinto de `None` lanza `UnimplementedError` nombrando ese cambio,
          antes de `run-microvm` (`_feature_options.plan_features`) y sin
-         ninguna llamada a AWS. `mounts=`, `size=`, `events=`, `telemetry=`
-         y `gateways=` ya son reales: cada una lleva su bloque "Coste y
+         ninguna llamada a AWS. `mounts=`, `volumes=`, `size=`, `events=`,
+         `telemetry=` y `gateways=` ya son reales: cada una lleva su bloque "Coste y
          activación" aquí debajo o en su clase (`SecretGateway`). Con todas
          en `None` (su valor por defecto) el comportamiento es exactamente
          el de 0.5.x.
@@ -750,6 +754,47 @@ class Sandbox:
              sbx = Sandbox.create("rayito-base-caps", execution_role_arn=role_arn,
                                   mounts={"/mnt/data": S3Mount(bucket="mi-bucket")})
              sbx.commands.run("ls /mnt/data")
+
+         `volumes=` (m15-efs-volumes, experimental) monta cada `EfsVolume`
+         en su ruta (bajo `/mnt/` o `/home/user/`, como mucho 4) con
+         `amazon-efs-utils` (TLS + IAM), en el mismo `ConfigureSandbox` que
+         el resto de secciones y antes de que `create()` vuelva. Exige
+         `execution_role_arn=`, exactamente un conector propio en `egress=`
+         (un MicroVM sólo admite uno, así que el sandbox no tiene
+         `INTERNET_EGRESS`) y una imagen con `amazon-efs-utils`
+         (`rayito-base-caps-efs`); si un volumen no monta, termina el
+         sandbox (salvo `keep_on_failure`) y lanza `VolumeMountException`, y
+         sobre otra imagen `UnimplementedError`. `sbx.volumes` da el estado
+         en vivo y `reincarnate()` los vuelve a montar en el sucesor.
+
+         Coste y activación
+         -------------------
+         Activa: `volumes={"/mnt/datos": vol}` en `create()`, con
+             `execution_role_arn=`, `egress=[<ConnectorArn>]` y la imagen
+             opcional `rayito-base-caps-efs` (`rayito image publish
+             --with-efs --os-capabilities ALL`).
+         Recursos y llamadas AWS: ningún recurso nuevo por `create()`; si un
+             `EfsVolume` no trae `mount_target_ip`, una `DescribeMountTargets`
+             por sistema de ficheros y `create()`, con las credenciales del
+             llamante. El sistema de ficheros, sus mount targets y el
+             conector los crea la pila `efs-volumes` (`EfsVolumes.deploy()`),
+             aparte; el tráfico NFS va con el execution role.
+         Coste aproximado: $0 propio de Rayito; pagas el almacenamiento y el
+             rendimiento normales de EFS (Elastic) de lo que leas y escribas,
+             y la imagen con `amazon-efs-utils` ocupa ≈ 198 MB más de código
+             instalado (us-east-1, consultado 2026-10-04,
+             https://aws.amazon.com/efs/pricing/).
+         IAM: el llamante, `elasticfilesystem:DescribeMountTargets` (sólo sin
+             `mount_target_ip`); el execution role, la política
+             `CallerPolicyArn` de la pila `efs-volumes` (`ClientMount`, y
+             `ClientWrite` salvo sólo lectura).
+         Cómo apagarla: no pases `volumes=` (por defecto `None`);
+             `EfsVolumes.destroy()` quita la pila.
+         Ejemplo:
+             vol = VolumeStore(file_system_id=fs_id).create("datos-agente-7")
+             sbx = Sandbox.create("rayito-base-caps-efs", execution_role_arn=role_arn,
+                                  egress=[connector_arn], volumes={"/mnt/datos": vol})
+             sbx.commands.run("ls /mnt/datos")
 
          `size=` (m15-sizes-catalog) elige, en el cliente y sin ninguna
          llamada a AWS, la imagen de ese tamaño del catálogo cerrado
@@ -944,6 +989,8 @@ class Sandbox:
             feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
+            egress=egress,
+            execution_role_arn=execution_role_arn,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
@@ -952,6 +999,9 @@ class Sandbox:
         )
         template_name = sized_template_name(resolve_template(template), resolved_size)
         image_arn = plane.resolve_template_arn(template_name)
+        feature_plan = prepare_features(
+            feature_plan, region=plane.region, session=session or control_plane_session(plane)
+        )
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -1815,6 +1865,16 @@ class Sandbox:
         response = call_configure_status(self._configure, timeout=self._request_timeout)
         return from_proto_status(response.s3_mounts)
 
+    @property
+    def volumes(self) -> dict[str, VolumeStatus]:
+        """Estado en vivo de cada `volumes=` (`m15-efs-volumes`): una
+        `ConfigureStatus` por lectura, nunca cacheada — tras un `resume()`
+        un volumen puede pasar por `"remounting"`/`"degraded"`. Vacío si
+        `create()` no recibió `volumes=`.
+        """
+        response = call_configure_status(self._configure, timeout=self._request_timeout)
+        return volumes_from_proto_status(response.efs_volumes)
+
     def upload_url(
         self,
         path: str,
@@ -2418,7 +2478,9 @@ class Sandbox:
         asienten (`_wait_settled`): nunca vuelve con un montaje todavía sin
         montar. Lo comparten `create()`/`take()` y `_reapply_section`."""
         request = build_configure_request(sections)
-        response = call_configure(self._configure, request, timeout=timeout)
+        response = call_configure(
+            self._configure, request, timeout=configure_timeout_s(sections, timeout)
+        )
         self._wait_settled(check_configure_response(response, sections), timeout=timeout)
 
     def _section_secret_cache(self) -> SecretCache:

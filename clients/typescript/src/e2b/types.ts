@@ -73,7 +73,16 @@ export interface SandboxOpts extends ConnectionOpts {
   readonly mcp?: unknown;
   readonly network?: SandboxNetworkOpts | undefined;
   readonly iam?: unknown;
-  readonly volumeMounts?: unknown;
+  /**
+   * `{ruta: Volume | nombre}` (m15-efs-volumes, experimental): se monta con
+   * el `volumes` nativo, resolviendo cada nombre contra el `volumeStore` de
+   * `new E2B({ volumeStore, volumeConnectorArn })` — sin store,
+   * `UnimplementedError("Volume")`; sin `volumeConnectorArn` o con
+   * `allowInternetAccess: true`, `InvalidArgumentError` (un MicroVM sólo
+   * admite un conector de egress). Necesita además `executionRoleArn` y la
+   * imagen `rayito-base-caps-efs`.
+   */
+  readonly volumeMounts?: Readonly<Record<string, unknown>> | undefined;
   readonly lifecycle?: SandboxLifecycle | undefined;
   /** El tope de la plataforma; por defecto `max(3 600 000, min(timeoutMs + 60 000, 28 800 000))`. */
   readonly maxLifetimeMs?: number | undefined;

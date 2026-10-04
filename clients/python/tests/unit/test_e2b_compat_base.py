@@ -330,15 +330,25 @@ def test_network_update_splits_the_internet_flag() -> None:
         map_network_update({"mask_request_host": "x"})
 
 
-@pytest.mark.parametrize(
-    ("kwarg", "feature"), [("mcp", "mcp"), ("iam", "iam"), ("volume_mounts", "volume_mounts")]
-)
+@pytest.mark.parametrize(("kwarg", "feature"), [("mcp", "mcp"), ("iam", "iam")])
 def test_resource_kwargs_are_unimplemented_before_mapping(kwarg: str, feature: str) -> None:
     kwargs: dict[str, Any] = {kwarg: {"x": {}}, "lifecycle": {"on_timeout": "freeze"}}
     with pytest.raises(UnimplementedError) as excinfo:
         map_create_kwargs(**kwargs)
     assert excinfo.value.feature == feature
     assert excinfo.value.reason == UNIMPLEMENTED_REASONS[feature]
+
+
+def test_volume_mounts_is_gated_after_mcp_and_iam_without_any_io() -> None:
+    """`volume_mounts=` goes through the shim's I/O-free volume gate right
+    after the `mcp`/`iam` rejections (`rayito.e2b._volume`): `mcp` still
+    wins, and without a bound store it is `UnimplementedError("Volume")`."""
+    with pytest.raises(UnimplementedError) as excinfo:
+        map_create_kwargs(mcp={"x": {}}, volume_mounts={"/mnt/v": "datos"})
+    assert excinfo.value.feature == "mcp"
+    with pytest.raises(UnimplementedError) as excinfo:
+        map_create_kwargs(volume_mounts={"/mnt/v": "datos"})
+    assert excinfo.value.feature == "Volume"
 
 
 @pytest.mark.parametrize(

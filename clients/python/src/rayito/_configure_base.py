@@ -247,6 +247,25 @@ class CapabilityGate(Protocol):
     def require_support(self, features: AgentFeatures) -> None: ...
 
 
+@runtime_checkable
+class SlowApplySection(ConfigureSection, Protocol):
+    """Un `ConfigureSection` que `rayd` aplica dentro de la propia llamada
+    `Configure` y puede tardar más que el `request_timeout` de `create()`
+    (hoy `volumes=`: monta cada volumen antes de responder). Su
+    `apply_timeout_s` alarga el plazo de esa llamada, nunca lo acorta."""
+
+    @property
+    def apply_timeout_s(self) -> float: ...
+
+
+def configure_timeout_s(sections: Sequence[ConfigureSection], timeout: float) -> float:
+    """El plazo de la llamada `Configure` que lleva `sections`: `timeout`, o
+    el mayor `apply_timeout_s` de las que son `SlowApplySection` si es
+    mayor."""
+    slow = (entry.apply_timeout_s for entry in sections if isinstance(entry, SlowApplySection))
+    return max([timeout, *slow])
+
+
 def require_capabilities(sections: Sequence[ConfigureSection], features: AgentFeatures) -> None:
     """Puerta de capacidad previa al envío: la primera sección cuyo propio
     `required_flag` esté en `False` en `features` lanza `UnimplementedError`

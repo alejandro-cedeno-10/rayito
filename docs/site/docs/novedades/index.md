@@ -92,8 +92,11 @@ disponible") antes de llamar a AWS:
 
 | Función | Opción | Estado |
 |---|---|---|
-| [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) | `volumes=` / `volumes` | en desarrollo (`m15-efs-volumes`), sin versión comprometida |
 | [Dominio propio](../funciones-opcionales/dominio-propio.md) | `domain=` / `domain` | en desarrollo (`m15-custom-domain`), sin versión comprometida |
+
+Los [volúmenes EFS](../funciones-opcionales/volumenes-efs.md) (`volumes=`)
+ya montan, como función experimental, sobre la imagen opcional
+`rayito-base-caps-efs` (`rayito image publish --with-efs`).
 
 Mientras tanto: para datos compartidos entre sandboxes,
 [montajes S3](../funciones-opcionales/montajes-s3.md) o

@@ -21,12 +21,14 @@
 //! M15 (Rayito 0.6) adds the shared domain of the optional features:
 //! which zombies PID 1 may reap (`orphans`), the `ConfigureSandbox`
 //! contract (`configure`) and the capability flags `Health` reports
-//! (`features`, `root_egress`), and the credential-lease freshness rule
-//! shared by every feature that needs the execution role inside the guest
-//! (`credentials`). Each feature's own domain lives in its own module,
-//! added by that feature: `s3_mount` (`m15-s3-mounts`) is the first one,
-//! `telemetry` (m15-rayd-otlp, ADR-021) is rayd's own OTLP/HTTP metrics
-//! exporter.
+//! (`features`, `root_egress`), the credential-lease freshness rule shared
+//! by every feature that needs the execution role inside the guest
+//! (`credentials`), and the mount-path shape every mounting feature
+//! re-validates before touching the guest filesystem (`mount_path`). Each
+//! feature's own domain lives in its own module, added by that feature:
+//! `s3_mount` (`m15-s3-mounts`) is the first one, `volume`
+//! (`m15-efs-volumes`, ADR-018) the EFS one, `telemetry` (m15-rayd-otlp,
+//! ADR-021) is rayd's own OTLP/HTTP metrics exporter.
 //!
 //! The domain is safe Rust by construction: every `unsafe` block (FFI to
 //! `libc`/`nix`, file descriptors, `fork`) belongs to an adapter in the
@@ -65,4 +67,5 @@ pub mod suspend_sync;
 pub mod telemetry;
 pub mod template;
 pub mod transfer;
+pub mod volume;
 pub mod wire_tokens;

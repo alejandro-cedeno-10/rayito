@@ -79,7 +79,7 @@ Fuente: `docs/aws-api/model_summary.md` (RunMicrovm), `docs/aws-api/cli/run-micr
 | `logging` | `{"disabled":{}}` \| `{"cloudWatch":{"logGroup","logStream"}}` | |
 | `runHookPayload` | string 0–4096 (modelo), `sensitive: true` | entregado en el body del hook `/run` |
 | `maximumDurationInSeconds` | int 1–28800 | running **+ suspended** desde `startedAt` |
-| `ingressNetworkConnectors` / `egressNetworkConnectors` | listas de ARN (máx 10) | `ALL_INGRESS`, `NO_INGRESS`, `SHELL_INGRESS`, `INTERNET_EGRESS` gestionados por AWS: `arn:aws:lambda:<region>:aws:network-connector:aws-network-connector:<NAME>`; además `HTTP_INGRESS`, el ingress gestionado por defecto que `get-microvm` devuelve sin pedirlo (**medido 2026-09-22**, Q60) |
+| `ingressNetworkConnectors` / `egressNetworkConnectors` | listas de ARN (máx 10 en el modelo; **medido 2026-10-04**, Q131: `egressNetworkConnectors` con dos ARNs, `INTERNET_EGRESS` y un conector VPC propio, es `ValidationException` "Only one egress network connector can be provided") | `ALL_INGRESS`, `NO_INGRESS`, `SHELL_INGRESS`, `INTERNET_EGRESS` gestionados por AWS: `arn:aws:lambda:<region>:aws:network-connector:aws-network-connector:<NAME>`; además `HTTP_INGRESS`, el ingress gestionado por defecto que `get-microvm` devuelve sin pedirlo (**medido 2026-09-22**, Q60) |
 | `clientToken` | string 1–128, `idempotencyToken` | botocore genera uuid4 si se omite |
 
 **Output `RunMicrovmResponse`**: `microvmId`*, `state`* (`PENDING` al volver), `endpoint`* (hostname **sin esquema**, **medido 2026-09-15**: `<uuid>.lambda-microvm.us-east-1.on.aws`), `imageArn`*, `imageVersion`* (`1.0`, `2.0`, …), `executionRoleArn`, `idlePolicy`, `maximumDurationInSeconds`*, `startedAt`*, `terminatedAt`, `stateReason`, `ingressNetworkConnectors`, `egressNetworkConnectors`.
@@ -524,6 +524,24 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 116 | ¿Funciona `RUN pip install …` sobre `rayito-base`? | `pip_install()` compilaba a `pip install --no-cache-dir` | **Medido 2026-10-02**: no. El build del caso correcto falla en el paso del template con `/bin/sh: line 1: pip: command not found` (exit **127**): al2023-minimal sólo trae `python3 -m pip` (`image/Dockerfile` usa `python3 -m pip install --no-cache-dir --break-system-packages`). `pip_install()`/`pipInstall()` compilan ahora a esa misma orden (`PIP_INSTALL_COMMAND`). Tras el cambio, e2e Python 4 passed (build correcto 190 s, `RUN` fallido 105 s con step/command/exit_code, `ready_cmd` `exit 1` → `ready_server_error` en 214 s) y TypeScript 4 passed (209 s, 105 s, 218 s). |
 | 117 | **TPL-15**: ¿arranca el `start_cmd` horneado por `set_start_cmd()` como proceso gestionado y sobrevive a pause/resume? | `rayd` lee `/etc/rayito/template.json` y lanza `start_cmd` antes del `/ready` del build | **Medido 2026-10-02** (`set_start_cmd("python3 -m http.server 8000", wait_for_port(8000))`; `python` no existe en rayito-base, sólo `python3`): build **228 s**; `Sandbox.create(info.template_id)` en 5,6 s; `commands.list()` muestra `/bin/sh -c 'python3 -m http.server 8000'` con tag **`template_start`** y `curl localhost:8000` → **200**; `pause()` 1,1 s, `resume()` 0,4 s (`resume_generation` 1): el mismo pid sigue listado y `curl` vuelve a dar 200. |
 | 120 | **OT2 + OT7** (m15-rayd-otlp): bytes por lote y por sandbox-hora; CPU del exportador | §6.3: ≈ $0,00014 por sandbox-hora con `interval_s=60` (ASUMIDO) | **Medido 2026-10-02** (imagen caps con el `rayd` de PR #81, `interval_s=15`): cada lote son **7 puntos** (uno por gauge: `exported` sube de 7 en 7, 56 tras ~2 min). El `ExportMetricsServiceRequest` que construye `ProstOtlpEncoder` con un `sandbox_id` y un ARN de imagen reales ocupa **639 bytes** (353 con gzip, lo que viaja). Con `interval_s=60` son ≈ 38 KB por sandbox-hora sin comprimir ≈ **$0,00002/sandbox-hora** a $0,50/GB (cota alta; AWS no publica si factura comprimido o no), unas 7 veces menos que la estimación. Cost Explorer y `AWS/Usage` no exponen bytes de ingesta OTLP dentro de la sesión (Cost Explorer tarda ~24 h; `AWS/Usage` sólo da `CallCount` de `PutMetricData`). CPU de `rayd` en 120 s, mismo tipo de imagen: **0,02 s con el exportador frente a 0,01 s sin él** (`/proc/<pid>/stat`, 100 Hz): ≈ 0,008 % de una vCPU |
+| 122 | **EFS-7** ★ (`m15-efs-volumes`, research doc §9): ¿se instala `amazon-efs-utils` (con `efs-proxy`) en `al2023-minimal` ARM64 y cuánto crecen `codeInstallSizeInBytes`/`memorySnapshotSizeInBytes` y el tiempo de build? | Research doc §4.3: paquete de AL2023 o build propio; efs-utils 2.x usa `efs-proxy` en vez de `stunnel` | **Medido 2026-10-02** (dos imágenes desechables del mismo zip, `rayd` de `feat/m15-efs-volumes`, `ALL`, `RAYITO_ALLOW_ROOT=1`, 2048 MiB, `--base-image-version 1`, borradas al terminar): **pasa**. `dnf install amazon-efs-utils` del repositorio de AL2023 instala `amazon-efs-utils-3.1.3-1.amzn2023` y **37 paquetes** (entre ellos `nfs-utils-2.5.4`, `stunnel-5.58`, `openssl`, `python3` 3.9, `systemd` y `dbus`; RPM: efs-utils 24 957 238 B, nfs-utils 4 168 014 B); `mount.efs` en `/usr/sbin`, `efs-proxy` en **`/usr/sbin/efs-proxy`** (24 631 688 B, no en `/usr/bin`), watchdog `/usr/bin/amazon-efs-mount-watchdog` (unidad systemd que nadie arranca: PID 1 es `rayd`). Code install **1 541 214 208** frente a **1 343 635 456** B de la gemela sin efs-utils = **+197 578 752 B**; memoria (dos builds por versión) 919 674 880 / 914 411 520 frente a 919 678 976 / 920 727 552 B: **sin cambio** (ruido de ±13 MB de Q50); disco 33 239 040 frente a 33 210 368 / 34 807 808 B; build **227,4 s** frente a **217,0 s**. **Efecto colateral**: el RPM `python3` (3.9) vuelve a apuntar `/usr/bin/python3` a `python3.9` (la imagen lo enlaza a 3.12; `/usr/local/bin/python3` sigue en 3.12 y gana en el `PATH`): la capa real tiene que instalar efs-utils antes del enlace o rehacerlo, porque la sonda de IMDS de `rayd` usa `/usr/bin/python3` por ruta absoluta (Q48). `efs-utils.conf` trae `region` comentado; la imagen desechable lo fijó (EFS-6 sigue abierta) |
+| 123 | **EFS-2** ★: ¿monta root dentro del contenedor de la app en `rayito-base-caps` (`tmpfs`, y `nfs4` llega a la red en vez de `EPERM`/`ENODEV`)? | Q79: con `ALL` root monta FUSE y `tmpfs`; por defecto `EPERM` | **Medido 2026-10-02** con `measure_efs2` de `scripts/measure/efs_volumes.py` sobre la imagen de Q122 (sin conector, sin rol): **pasa**. `mount -t tmpfs` ok; `mount -t nfs4 -o nfsvers=4.1` a `192.0.2.1` (TEST-NET-1) **agota el `timeout` de 15 s** (exit 124), ni `EPERM` ni `ENODEV`: el kernel deja empezar el montaje. La mitad "imagen por defecto" no se repitió (sin `RAYITO_ALLOW_ROOT` `rayd` rechaza `user="root"` antes del `mount`; el `EPERM` ya está en Q79). De paso, `mount -t efs -o tls,mounttargetip=192.0.2.1` **sin systemd**: `mount.efs` comprueba primero TCP 2049 contra el mount target (3 intentos, ≈ 8 s, "Cannot connect to file system mount target ip address … timeout"), sale con 1 a los ≈ 10 s y no deja `efs-proxy` vivo. Lanzamientos del VM 8–12 s |
+| 124 | **EFS-3** ★ (y con él EFS-4, 5, 8, 9, 11, 12, 13, 15, 16): ¿un conector VPC propio llega a `ACTIVE` y un VM lanzado con él alcanza TCP 2049 del mount target? | Q46: el despliegue necesita una VPC propia o prestada con permiso | **Bloqueada 2026-10-02, sin medir**: en la cuenta de pruebas `ec2:CreateVpc` está **denegado de forma explícita por una SCP de la organización** (`UnauthorizedOperation`), así que `efs_volumes.py run` paró en el primer paso sin crear nada. `DryRun` sí autoriza `CreateSubnet`/`CreateSecurityGroup` en la única VPC existente y `CreateDefaultVpc`, pero esa VPC es compartida y de otro equipo, y saltarse la SCP con una VPC por defecto no es "prestada con permiso": no se usó ninguna. Siguen abiertos todos los ★ que necesitan red (EFS-3, EFS-8, EFS-11, EFS-13). `run` acepta ahora `--vpc-id`/`--subnet-id` para una red prestada con permiso, que nunca crea, registra ni borra. **Desbloqueada 2026-10-04** con una VPC existente prestada con permiso: Q126–Q134 |
+| 125 | `DescribeAccessPoints(FileSystemId=…)` (`VolumeStore.list`/`get`): ¿es consistente justo después de `CreateAccessPoint`/`DeleteAccessPoint`? | §22: nada documentado | **Medido 2026-10-02** (sistema de ficheros vacío desechable, tres ciclos crear → sondear cada 0,2 s → borrar → sondear): **eventualmente consistente**. Un access point nuevo apareció en el listado a los **0,7 (aún `creating`) / 11,0 / 6,6 s**, aunque `DescribeAccessPoints(AccessPointId=…)` ya lo daba `available` a los 1,3–1,7 s; tras `DeleteAccessPoint`, el listado lo siguió mostrando como `available` (primero con sus etiquetas, luego sin ellas) **3,2 / 4,8 / 8,3 s**, mientras por id ya era `AccessPointNotFound` a los 1,4–1,7 s; un segundo `DeleteAccessPoint` da `AccessPointNotFound`. Efecto medido en el e2e de los SDK: `get` justo después de `create` dio `VolumeNotFoundException` (Python async) y `get`/`destroy` justo después de `destroy` vieron el volumen borrado (Python y TypeScript). Corregido en ambos SDK: `create` de un nombre existente reintenta `get` hasta 30 s y `destroy` devuelve `False` ante `AccessPointNotFound` |
+| 126 | `EfsVolumes` en una VPC existente (`m15-efs-volumes` §9, design D5): ¿despliega y borra sin tocar la VPC? | Q124: la cuenta no puede crear VPCs; `run` acepta una red prestada | **Medido 2026-10-04** sobre una VPC existente de la cuenta de pruebas, usada con permiso del mantenedor (dos subredes privadas en dos AZs, sin NAT, con ruta por defecto a un transit gateway; sólo por `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`): `check()` `OK` sólo con lecturas EC2; `deploy()` `CREATE_COMPLETE` en **289–297 s** con el conector `ACTIVE`; CloudFormation **sí** copia las etiquetas de la pila al sistema de ficheros; `VolumeStore` desde `volume_store()` crea y borra; `destroy(delete_file_system=True)` deja la pila en `DELETE_COMPLETE` y el sistema de ficheros pasa por `deleting` **≈ 2,3 s** antes de `FileSystemNotFound` (`DeleteFileSystem` es asíncrono); rutas, NACLs y grupos existentes idénticos antes y después (e2e `test_m15_efs_volumes_vpc.py`, 2 passed). Dos hallazgos del e2e, corregidos: `DescribeRouteTables` devolvió las mismas asociaciones **en otro orden** entre dos llamadas (la foto compara ahora conjuntos), y el aviso `internet-egress` de `check()` sólo contaba rutas a un NAT (cuenta ahora también un transit gateway u otra puerta). Ninguna SCP de etiquetas bloqueó el despliegue (a diferencia de Q108) |
+| 127 | **EFS-3** ★ (y Q46): ¿el conector VPC propio llega a `ACTIVE` y un VM lanzado con él alcanza TCP 2049 del mount target? | Q124: bloqueada sin VPC | **Medido 2026-10-04: pasa**. El `AWS::Lambda::NetworkConnector` de `infra/efs-volumes.yaml` queda `ACTIVE` al terminar el despliegue; un VM de la imagen caps con `egress=[ConnectorArn]` arranca en 6–8 s y abre TCP 2049 del mount target en **133–466 ms** (`efs_volumes.py run`, dos ejecuciones). Cierra también Q46: un conector de egress propio se despliega y se mide con una VPC prestada con permiso |
+| 128 | **EFS-8** ★ + **EFS-6**: ¿`mount -t efs -o tls,iam,accesspoint,mounttargetip` sin `systemd`, con credenciales del IMDS del MicroVM? | Q123: `mount.efs` sin red sale con 1 a los ≈ 10 s | **Medido 2026-10-04: pasa**. 20 montajes seguidos como root, sin `systemd` (PID 1 es `rayd`): todos `0`, **p50 313 ms, p95 589 ms**; `efs-utils` firma con las credenciales del rol `execution_role` del IMDSv2 del MicroVM y la región de `efs-utils.conf` (EFS-6: no hace falta `placement/*`). **Hallazgo para el adaptador real**: cada montaje arranca su propio `efs-proxy` y **`umount` no lo para** (1, 2, 3 procesos tras 1, 2, 3 ciclos montar/desmontar; 20 tras 20); el watchdog `amazon-efs-mount-watchdog` lanzado a mano 40 s no los limpió. `rayd` tendrá que terminar el `efs-proxy` de cada volumen al desmontar |
+| 129 | **EFS-11** ★ + **EFS-12**: suspend/resume con el volumen montado (60 s, 10 min, > 55 min) | Q81: IMDS sirve credenciales nuevas tras un resume que cruza la `Expiration`; §15: las conexiones salientes mueren en resume | **Medido 2026-10-04: pasa**. 3 ciclos de 60 s y 3 de 600 s (escribir + `sync`, `pause()`, esperar, `resume()`, leer): datos intactos en todos y **primera lectura correcta ≤ 0,2 s** tras `resume()`. **EFS-12 falla**: tras **70 min** suspendido (cruzando la `Expiration` de las credenciales del rol; tras el resume IMDS ya servía unas nuevas), `resume()` tarda 1,6 s y `efs-proxy` sigue vivo, pero **cada lectura da `Permission denied` durante los 180 s sondeados y escribir falla**. Lo más probable es que el túnel reautentique con las credenciales del montaje, ya caducadas (el watchdog de `efs-utils` que las renovaría no corre sin `systemd`). El adaptador real tiene que remontar (o renovar las credenciales del túnel) en `/resume` cuando la pausa cruza la caducidad; queda por medir que un remontaje lo arregle |
+| 130 | **EFS-13** ★: `/suspend` con el mount target inalcanzable (sólo se revoca la regla de entrada del grupo de mount targets de la propia pila, siempre restaurada) | Research doc §4.7: `sync(2)` podría colgar | **Medido 2026-10-04: no cuelga, pero el VM se pierde si hay escrituras pendientes**. Con el montaje ocioso, `pause()` termina en 1,1 s, `resume()` en 2,2 s y, restaurada la regla, el volumen se lee. Con 8 MiB escritos sin vaciar, `rayd` responde `/suspend` a su plazo de vaciado (`suspend sync deadline hit`, `sync_pending=1`, `deadline_ms=5000`) y **la plataforma termina el MicroVM** (`stateReason` "Internal service error.") a los 12–13 s: `pause()` lanza `SandboxNotFoundException` y lo escrito se pierde. El criterio de parada (que `/suspend` no cuelgue y respete su plazo) se cumple; el adaptador real tiene que vaciar antes de suspender y documentar la pérdida |
+| 131 | **EFS-4** + **EFS-5**: ¿internet y VPC a la vez? ¿resuelve el guest el DNS de EFS con el conector? | Research doc R2/R3: desconocido | **Medido 2026-10-04**. EFS-4: **no**: `egressNetworkConnectors=[INTERNET_EGRESS, <conector VPC>]` es `ValidationException` "Only one egress network connector can be provided" (§2); con sólo el conector VPC, TCP 2049 sí y `curl https://example.com` no; con sólo `INTERNET_EGRESS`, al revés. Un sandbox con volumen sólo tiene internet si la VPC se lo da (NAT y un conector cuyo grupo lo permita). EFS-5: **sí**: con sólo el conector VPC, `getent hosts <fs-id>.efs.<región>.amazonaws.com` y el nombre por AZ resuelven como root y como uid 1000 (también un nombre público); `mounttargetip=` sigue siendo lo que usa el montaje |
+| 132 | **EFS-9**: rendimiento desde el VM (caps, 2 GiB) frente al disco local | Docs: ~1 ms lectura, ~2,7 ms escritura (Elastic) | **Medido 2026-10-04** (un access point, mount target en otra o la misma AZ): `dd` 1 GiB escritura con `conv=fsync` **128 MB/s** (local 313 MB/s); lectura secuencial tras `drop_caches` **585 MB/s** (local 5,0 GB/s, caché); 10 000 ficheros de 4 KiB con `cp` **167,8 s** (≈ 17 ms por fichero; local 10,2 s); lectura aleatoria de 4 KiB **p50 4,2 ms, p95 5,1 ms** (local < 0,1 ms). EFS sirve para datos grandes y secuenciales; muchos ficheros pequeños son ≈ 16 veces más lentos que el disco local |
+| 133 | **EFS-10** + **EFS-15**: uid 1000 en el volumen; dos sandboxes sobre el mismo access point | Research doc §4.1 regla 5 | **Medido 2026-10-04**. EFS-10: lo que escribe uid 1000 **y root** queda `1000:1000` (el access point fuerza el usuario POSIX); `chmod` y `rename` funcionan, 500 renombrados seguidos sin `ESTALE`. **Hallazgo de seguridad**: `efs-proxy` escucha en `127.0.0.1:<puerto>` y **uid 1000 puede conectar** a ese puerto (el kernel del guest no tiene el match `owner`, Q48), así que un proceso del usuario puede hablar NFS por el túnel TLS ya autenticado del volumen, con los permisos IAM del rol y no con las opciones del montaje: un volumen montado `ro` no impide escribir por el túnel si el rol tiene `ClientWrite`. El adaptador real tiene que cerrar ese puerto a uid ≥ 1000 o acotar el rol (`allow_write=False`) para los volúmenes de sólo lectura. EFS-15: escrito en un VM y leído en otro (mount targets en dos AZs) **≈ 0,12 s** en 5 de 5 intentos (close-to-open); un `>>` desde cada VM deja ambas líneas |
+| 134 | **EFS-16**: política del sistema de ficheros y de `RayitoEfsVolumeClient` | §22 (contrato) | **Medido 2026-10-04**: sin access point (`tls,iam`) → exit 32; NFS sin TLS ni IAM → `access denied by server`; `efs-utils` con `iam` sin `tls` → exit 1 (el helper exige TLS); TLS sin IAM (anónimo) → exit 32; control `tls,iam,accesspoint` → monta y escribe; otro access point del mismo sistema de ficheros con la política sin acotar → monta (esperado). Sin medir: `AccessPointArns` acotado y `AllowWrite=false` (la sesión SSO de la aceptación caducó antes del redespliegue) |
+| 135 | Imagen opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`, `m15-efs-volumes` design D13): ¿cuánto cuesta frente a su gemela caps sin `amazon-efs-utils`, deja intacto el bloqueo de IMDS y monta sin región horneada? | Q122: +197,6 MB, memoria igual; `/usr/bin/python3` pasa a 3.9 | **Medido 2026-10-04** (dos imágenes desechables del mismo `rayd` y del mismo árbol, que sólo difieren en el marcador del zip; `ALL`, 2048 MiB, `--base-image-version 1`, borradas al terminar): code install **1 639 735 296** frente a **1 445 888 000** B (**+193 847 296 B**); memoria 921 780 224 frente a 915 464 192 B (ruido de Q50); disco 38 043 648 frente a 37 486 592 B; build **248,0** frente a **206,1 s** (Q122 midió +10 s: la diferencia varía entre builds). En la imagen con efs-utils `Health.features.efs_volumes` es `true`, `/usr/bin/python3` es 3.12.13 y `imds_blocked` sigue `true` (uid 1000 no obtiene token de IMDS); en la gemela es `false` y `create(volumes=...)` lanza `UnimplementedError` y termina el MicroVM en 8,0 s. Ningún `efs-utils.conf` lleva región: `rayd` pasa `AWS_REGION` al helper y todos los montajes de Q136–Q139 funcionaron |
+| 136 | `Sandbox.create(volumes=...)` de punta a punta (Python y TypeScript, design D11/D12): ¿monta por el `Configure` único, con la IP de `DescribeMountTargets`, y falla limpio? | Q128: el helper sin systemd; hasta ahora sólo a mano | **Medido 2026-10-04** sobre la pila `efs-volumes` en una VPC existente (variables de entorno): `create()` con un volumen de escritura y otro `read_only` vuelve con ambos `mounted` en **7,9–16,9 s** (lanzamiento incluido, Python y TypeScript), con `Health.features.efs_volumes = true`; uid 1000 escribe en el de escritura (fichero `1000:1000 644`) y en el de sólo lectura recibe `Read-only file system`; `/proc/mounts` muestra `nfs4 vers=4.1 … noresvport,proto=tcp,port=<local>` sobre la ruta pedida y un `efs-proxy` por volumen. Un access point fuera de `AccessPointArns` acaba en `VolumeMountException(code="iam_denied")`/`VolumeMountError` en 10,9/11,0 s y el MicroVM queda terminado. e2e `test_efs_volumes_mount.py` (2 passed) y `efs-volumes-mount.e2e.test.ts` (2 passed), incluido el shim de E2B (`Volume.create` y `volume_mounts` con un `Volume` y con su nombre, sólo por `volume_connector_arn`) |
+| 137 | **EFS-16** con la política acotada (`AccessPointArns` = dos access points, `ReadOnlyAccessPointArns` = uno de ellos) y con `AllowWrite=false` | Q134: sin acotar; Q133: uid 1000 alcanza el puerto local de `efs-proxy` | **Medido 2026-10-04**: un `mount -t nfs4` directo (como root, `127.0.0.1`, `port=` del `efs-proxy` del volumen de sólo lectura) **monta pero cada escritura da `Read-only file system`**: el `Deny` de `ClientWrite` vale también por el túnel, que es lo que T21 necesitaba; el mismo montaje directo al puerto del volumen de escritura escribe. Un tercer access point del mismo sistema de ficheros, fuera de `AccessPointArns`: `iam_denied`. Con `AllowWrite=false` el volumen de escritura monta y se lee, y escribir da `Read-only file system` (EFS sirve como sólo lectura a un cliente sin `ClientWrite`; no es `EACCES`). Cada redespliegue de la política: `UPDATE_COMPLETE` en 26–29 s |
+| 138 | Ciclo de vida de `efs-proxy` y punto de montaje con enlace simbólico (adaptador `EfsUtilsMounter`, D6/D7) | Q128: `umount` no para `efs-proxy` | **Medido 2026-10-04** (dos volúmenes en un sandbox, `Configure` vacío y luego el mismo): 5 de 5 ciclos desmontar → **0** `efs-proxy` (0,22–0,26 s), montar → **2** (0,53–0,91 s) y los datos siguen; `/home/user/evil` como enlace a `/etc` creado por uid 1000: la sección acaba `invalid_path` en 0,47 s, nada se monta sobre `/etc` y el otro volumen sigue `mounted`. **EFS-13** repetido con el adaptador nuevo (8 MiB sin vaciar y la regla de entrada del grupo de mount targets de la propia pila revocada, restaurada a los 12 s): `pause()` lanza `SandboxNotFoundException` a los 11,9 s y el MicroVM queda `TERMINATED`, igual que Q130 |
+| 139 | **EFS-12** con el adaptador real: ¿una pausa que cruza la caducidad de las credenciales del túnel se recupera sola en `/resume`? | Q129: tras 70 min, `Permission denied` hasta remontar a mano | **Medido 2026-10-04: pasa**, por `create(volumes=...)` en Python y en TypeScript (un sandbox cada uno, a la vez): escribir + `sync`, `pause()` (1,1 s), **4200 s** suspendido, `resume()` (1,0 s). El volumen aparece `remounting`/`credentials_expired` a los 0,1 s y `mounted` a los **1,3 s** (Python) y **0,7 s** (TypeScript): `rayd` remontó sin sonda porque el lease guardado había caducado. Lo escrito antes de la pausa se lee (0,25 s), escribir funciona y queda **1** `efs-proxy` (el del remontaje; el del montaje caducado se paró) |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -1002,12 +1020,135 @@ dos de M15 foundations lo necesita) usa el mismo patrón que el resto del
 SDK para S3: `HeadObject` (clave = sha256 del contenido) antes de
 `PutObject`, así subir el mismo artefacto dos veces es un no-op.
 
-## 22. EFS (`m15-efs-volumes`)
+## 22. EFS (`m15-efs-volumes`, ADR-018, experimental, **contrato de parámetros**)
 
-Pendiente: `m15-efs-volumes` documenta aquí `CreateAccessPoint`,
-`DescribeAccessPoints`, `DeleteAccessPoint` (`VolumeStore`) y los
-parámetros de montaje NFS (`mount -t efs -o tls,iam,accesspoint`), tras la
-campaña de medición EFS-1..EFS-20.
+`VolumeStore` (Python `rayito/_volumes/_store.py`, TypeScript
+`src/volumes/store.ts`) llama a AWS EFS **con las credenciales del
+llamante**, nunca con las del execution role (eso es `efs-utils` dentro
+del guest, §4.2 más abajo). **Estas son las únicas operaciones y los
+únicos parámetros que los SDKs pueden usar**: la regla dura 1 vale también
+aquí. Verificado sin red el 2026-10-01, antes de escribir código: los
+nombres de Python contra el modelo `elasticfilesystem/2015-02-01` de
+botocore 1.43.103 (miembros de entrada y de salida de
+`CreateAccessPoint`, `DescribeAccessPoints`, `DeleteAccessPoint`,
+`DescribeMountTargets`); los de JavaScript son los mismos nombres de
+parámetro de la API REST de EFS, que `@aws-sdk/client-efs` expone sin
+cambios de forma. Referencia de la API:
+<https://docs.aws.amazon.com/efs/latest/ug/efs-api-reference.html>
+(consultada 2026-10-01).
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `CreateAccessPoint` (`create_access_point` / `CreateAccessPointCommand`) | `ClientToken` (hash de `FileSystemId`+nombre lógico, idempotente y scoped al sistema de ficheros), `FileSystemId`, `PosixUser={Uid, Gid}` (1000:1000, fijo), `RootDirectory={Path, CreationInfo={OwnerUid, OwnerGid, Permissions}}` (`Path` = `/rayito-volumes/<nombre>`, `CreationInfo` 1000:1000 `0750`), `Tags=[{Key, Value}]` (`rayito:volume=<nombre>`) | `AccessPointId`, `AccessPointArn`, `LifeCycleState` | `elasticfilesystem:CreateAccessPoint` sobre el sistema de ficheros | <https://docs.aws.amazon.com/efs/latest/ug/API_CreateAccessPoint.html> |
+| `DescribeAccessPoints` (`describe_access_points` / `DescribeAccessPointsCommand`) | `AccessPointId` **o** `FileSystemId` (mutuamente excluyentes, nunca ambos), `MaxResults`, `NextToken` | `AccessPoints[].{AccessPointId, AccessPointArn, FileSystemId, RootDirectory.Path, Tags, LifeCycleState}`, `NextToken` | `elasticfilesystem:DescribeAccessPoints` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeAccessPoints.html> |
+| `DeleteAccessPoint` (`delete_access_point` / `DeleteAccessPointCommand`) | `AccessPointId` | — (sin cuerpo; `204`) | `elasticfilesystem:DeleteAccessPoint` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteAccessPoint.html> |
+| `DescribeMountTargets` (`describe_mount_targets` / `DescribeMountTargetsCommand`) | `AccessPointId` **o** `FileSystemId` (uno de los dos; nunca `MountTargetId` desde este SDK) | `MountTargets[].{MountTargetId, SubnetId, LifeCycleState, IpAddress, AvailabilityZoneId}` | `elasticfilesystem:DescribeMountTargets` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html> |
+
+**`EfsVolumes` (pila en una VPC existente, `m15-efs-volumes`)**, también
+con las credenciales del llamante. Verificado sin red el 2026-10-03 contra
+los modelos de botocore 1.43.103 (`ec2/2016-11-15`,
+`elasticfilesystem/2015-02-01`); en JavaScript, los mismos nombres en
+`@aws-sdk/client-ec2`/`@aws-sdk/client-efs`. `check()` sólo lee: ninguna
+operación de abajo crea ni cambia nada de la red del llamante.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `DescribeVpcs` (`describe_vpcs` / `DescribeVpcsCommand`) | `VpcIds=[<vpc>]` (uno) | `Vpcs[].{VpcId, State}`; `InvalidVpcID.NotFound` = no existe | `ec2:DescribeVpcs` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcs.html> |
+| `DescribeVpcAttribute` (`describe_vpc_attribute` / `DescribeVpcAttributeCommand`) | `VpcId`, `Attribute` (`enableDnsSupport` o `enableDnsHostnames`; dos llamadas) | `EnableDnsSupport.Value`, `EnableDnsHostnames.Value` | `ec2:DescribeVpcAttribute` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcAttribute.html> |
+| `DescribeSubnets` (`describe_subnets` / `DescribeSubnetsCommand`) | `Filters=[{Name: "subnet-id", Values: [...]}]` (nunca `SubnetIds`: con un id inexistente falla entera y el filtro devuelve las que existen) | `Subnets[].{SubnetId, VpcId, AvailabilityZone, AvailableIpAddressCount, State}` | `ec2:DescribeSubnets` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSubnets.html> |
+| `DescribeRouteTables` (`describe_route_tables` / `DescribeRouteTablesCommand`) | `Filters=[{Name: "vpc-id", Values: [<vpc>]}]`, `NextToken` | `RouteTables[].{Associations[].{SubnetId, Main}, Routes[].{DestinationCidrBlock, NatGatewayId, GatewayId}}`, `NextToken` | `ec2:DescribeRouteTables` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRouteTables.html> |
+| `DescribeFileSystems` (`describe_file_systems` / `DescribeFileSystemsCommand`) | `FileSystemId` (uno) | `FileSystems[].Tags` (sólo se borra uno con `rayito=efs-volumes`, la etiqueta literal de `infra/efs-volumes.yaml`); `FileSystemNotFound` = ya no existe | `elasticfilesystem:DescribeFileSystems` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeFileSystems.html> |
+| `DescribeMountTargets` (fila de arriba) | `FileSystemId` | `MountTargets` vacío antes de borrar | `elasticfilesystem:DescribeMountTargets` | ídem |
+| `DeleteFileSystem` (`delete_file_system` / `DeleteFileSystemCommand`) | `FileSystemId` | — (sin cuerpo); `FileSystemInUse` mientras quede un mount target | `elasticfilesystem:DeleteFileSystem` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteFileSystem.html> |
+
+`EfsVolumes.delete_file_system` (y `destroy(delete_file_system=True)`)
+sigue siempre este orden: `DescribeFileSystems` (etiqueta), sondear
+`DescribeMountTargets` hasta vacío (como mucho 120 s, cada 5 s: tras
+borrar la pila CloudFormation ya esperó a cada mount target, el sondeo sólo
+cubre el retraso del listado), `DescribeAccessPoints` + `DeleteAccessPoint`
+de cada uno (un `AccessPointNotFound` es el listado atrasado, Q125) y
+`DeleteFileSystem`.
+
+Un `ClientToken` ya usado por un access point que sigue vivo no devuelve
+ese access point: EFS responde `AccessPointAlreadyExists` (409), que
+`VolumeStore.create` atrapa para hacer `DescribeAccessPoints` él mismo
+(`get(name)`) — por eso `create()` sigue siendo idempotente de cara al
+llamante aunque EFS no lo sea a nivel de API.
+
+`DescribeAccessPoints(FileSystemId=…)` es **eventualmente consistente**
+(§16 Q125): un access point nuevo puede tardar hasta ~11 s en aparecer en el
+listado y uno borrado seguir apareciendo ~8 s (por `AccessPointId` la
+respuesta es inmediata). Por eso `VolumeStore.create`, cuando EFS responde
+`AccessPointAlreadyExists`, reintenta `get(name)` hasta
+`LIST_VISIBILITY_BUDGET_SECONDS` (30 s; `LIST_VISIBILITY_BUDGET_MS` en
+TypeScript), y `destroy` trata `AccessPointNotFound` de `DeleteAccessPoint`
+como "ya no existía" (`False`).
+
+`LifeCycleState` es una cadena cerrada (`creating`, `available`,
+`updating`, `deleting`, `deleted`, `error`); `VolumeStore` sólo trata
+`available` como listo para montar. `DescribeAccessPoints` sin
+`AccessPointId` ni `FileSystemId` describiría los access points de toda la
+cuenta: el SDK siempre manda uno de los dos. `CreateAccessPoint` exige
+`ClientToken`, `OwnerUid`/`OwnerGid`/`Permissions` completos dentro de
+`CreationInfo` (los tres o ninguno) y como mucho 4 componentes en `Path`
+(`research doc §4.1 regla 2`/modelo `efs`). Ningún error de EFS (`Error.Message`)
+se reexpone al llamante; sólo la clase (`VolumeException`/
+`VolumeNotFoundException`), igual que `secretsmanager` en §19.
+
+**Dentro del guest** (`rayd::adapters::efs_mount::EfsUtilsMounter`; no es
+un API de AWS sino el *mount helper* de `amazon-efs-utils` 3.1.3, Q122), lo
+medido el 2026-10-04 (Q128–Q133) y lo que `rayd` hace con ello:
+
+- **Invocación** (Q128, 20 de 20 sin `systemd`, p50 313 ms, p95 589 ms):
+  `mount -t efs -o tls,iam,accesspoint=<fsap>,mounttargetip=<ip>
+  <fs-id>:/ <dir>`, como root, con el entorno reconstruido (`PATH` y
+  `AWS_REGION`): `efs-utils` 3.1.3 toma la región de la opción `region`, si
+  no de `AWS_REGION`/`AWS_DEFAULT_REGION`, si no de su `efs-utils.conf` y si
+  no de IMDS (`efs_utils_common/metadata.py:get_target_region` de
+  `aws/efs-utils` v3.1.3, consultado 2026-10-04), así que la imagen no hornea
+  ninguna región; las credenciales del execution role las lee de IMDSv2
+  (EFS-6). La IP la resuelve el SDK antes de lanzar con
+  `DescribeMountTargets(FileSystemId=…)` (la fila de arriba; una llamada por
+  sistema de ficheros y `create()`, el primer mount target `available` por
+  `AvailabilityZoneId`) cuando el `EfsVolume` no la trae. `rayd` añade `ro` para un volumen de
+  sólo lectura y omite `mounttargetip=` si la petición no trae IP (el
+  nombre `<fs-id>.efs.<región>.amazonaws.com` resuelve desde el guest,
+  Q131). `rayd` monta sobre `/run/rayito/efs-staging` y después hace un
+  *bind mount* sobre la ruta pedida, abierta sin seguir enlaces (el helper
+  resolvería la ruta y uid 1000 controla las de `/home/user`). El `ro`, el
+  *bind* y el rechazo de un enlace simbólico (`invalid_path`) están medidos
+  (Q136, Q138); montar sin `mounttargetip=` no, porque los SDK siempre la
+  rellenan.
+- **`efs-proxy`** (Q128): uno por montaje, en `/usr/sbin/efs-proxy`,
+  re-emparentado con PID 1 y vivo tras `umount`. `rayd` atribuye a cada
+  montaje los proxies de root de ese binario que aparecen durante el
+  helper (montajes serializados) y los termina al desmontar (`SIGTERM`,
+  `SIGKILL` a los 400 ms): 5 de 5 ciclos vuelven a 0 procesos (Q138).
+- **Credenciales** (Q129, EFS-12): tras una pausa que cruza su
+  `Expiration`, el túnel reconecta con las caducadas y el volumen responde
+  `Permission denied` aunque IMDS ya sirva otras. `rayd` guarda la
+  `Expiration` del lease del rol al montar y remonta en `/resume` si ya
+  pasó (o falta menos de `REFRESH_MARGIN`); si no la conoce, prueba el
+  volumen con un `stat` acotado. Medido (Q139): tras 4200 s suspendido,
+  el volumen vuelve a `mounted` en 0,7–1,3 s y se lee y escribe.
+- **`/suspend`** (Q130, EFS-13): con escrituras pendientes y el mount
+  target inalcanzable, el vaciado no termina y la plataforma termina el
+  MicroVM (`stateReason` "Internal service error."). `rayd` hace un
+  `syncfs` acotado por volumen dentro de su parte del `SuspendBudget` y
+  marca el volumen `degraded`/`flush_timeout`; la pérdida no tiene
+  mitigación en el guest.
+- **Sólo lectura** (Q133, EFS-10): uid 1000 puede conectar al puerto local
+  de `efs-proxy`, así que `ro` no impide escribir. `infra/efs-volumes.yaml`
+  acepta `ReadOnlyAccessPointArns`: `RayitoEfsVolumeClient` añade un `Deny`
+  de `elasticfilesystem:ClientWrite` con `ArnEquals` sobre
+  `elasticfilesystem:AccessPointArn` (la misma clave de condición de los
+  `Deny` de la política del sistema de ficheros). Medido (Q137): por el
+  túnel, un montaje NFS directo al puerto del volumen de sólo lectura monta
+  pero cada escritura da `Read-only file system`; con `AllowWrite=false`,
+  igual en todos.
+- **Red** (Q131, EFS-4): un solo conector de egress por MicroVM. Los SDK
+  rechazan `volumes=` sin `egress=`, con `INTERNET_EGRESS` o con más de un
+  conector antes de `run-microvm`.
 
 ## 23. Mountpoint y S3 (`m15-s3-mounts`)
 

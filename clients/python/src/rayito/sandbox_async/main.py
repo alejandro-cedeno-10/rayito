@@ -40,6 +40,7 @@ from rayito._configure_base import (
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
+    configure_timeout_s,
     require_capabilities,
     require_configure_support,
     resolve_sections,
@@ -49,6 +50,7 @@ from rayito._configure_base import (
 from rayito._feature_options import (
     FeatureOptions,
     LaunchFacts,
+    aprepare_features,
     plan_features,
     planned_sections,
     relaunch_features,
@@ -222,6 +224,8 @@ from rayito._transport import (
     rpc_status,
     translate_rpc_error,
 )
+from rayito._volumes import VolumeStatus
+from rayito._volumes._section import from_proto_status as volumes_from_proto_status
 from rayito.exceptions import (
     InvalidArgumentException,
     NotFoundException,
@@ -610,9 +614,36 @@ class AsyncSandbox:
                 telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             )
 
-        `volumes=` y `domain=` siguen siendo stubs (`UnimplementedError`
-        antes de `run-microvm`); `mounts=`, `size=`, `events=`, `telemetry=`
-        y `gateways=` son reales, como en `Sandbox.create`.
+        `domain=` sigue siendo un stub (`UnimplementedError` antes de
+        `run-microvm`); `mounts=`, `volumes=`, `size=`, `events=`,
+        `telemetry=` y `gateways=` son reales, como en `Sandbox.create`.
+
+        `volumes=` (m15-efs-volumes, experimental) monta cada `EfsVolume`
+        con `amazon-efs-utils` antes de que `create()` vuelva, igual que
+        `Sandbox.create` (mismas exigencias: `execution_role_arn=`, un solo
+        conector propio en `egress=`, imagen `rayito-base-caps-efs`);
+        `await sbx.volumes()` da el estado en vivo.
+
+        Coste y activación
+        -------------------
+        Activa: `volumes={"/mnt/datos": vol}` en `create()`, con
+            `execution_role_arn=`, `egress=[<ConnectorArn>]` y la imagen
+            opcional `rayito-base-caps-efs`.
+        Recursos y llamadas AWS: ningún recurso nuevo; una
+            `DescribeMountTargets` por sistema de ficheros y `create()` si un
+            `EfsVolume` no trae `mount_target_ip` (credenciales del
+            llamante); la pila `efs-volumes` va aparte.
+        Coste aproximado: $0 propio; almacenamiento y rendimiento de EFS, y
+            ≈ 198 MB más de código instalado en la imagen (us-east-1,
+            consultado 2026-10-04, https://aws.amazon.com/efs/pricing/).
+        IAM: el llamante, `elasticfilesystem:DescribeMountTargets`; el
+            execution role, `CallerPolicyArn` de la pila `efs-volumes`.
+        Cómo apagarla: no pases `volumes=` (por defecto `None`).
+        Ejemplo:
+            sbx = await AsyncSandbox.create(
+                "rayito-base-caps-efs", execution_role_arn=role_arn,
+                egress=[connector_arn], volumes={"/mnt/datos": vol},
+            )
 
         `mounts=` (m15-s3-mounts) monta cada `S3Mount` con `mount-s3`, sólo
         en `rayito-base-caps` y sólo los buckets del allowlist de la imagen.
@@ -762,6 +793,8 @@ class AsyncSandbox:
             feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
+            egress=egress,
+            execution_role_arn=execution_role_arn,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
@@ -770,6 +803,9 @@ class AsyncSandbox:
         )
         template_name = sized_template_name(resolve_template(template), resolved_size)
         image_arn = await asyncio.to_thread(plane.resolve_template_arn, template_name)
+        feature_plan = await aprepare_features(
+            feature_plan, region=plane.region, session=session or control_plane_session(plane)
+        )
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -1522,6 +1558,15 @@ class AsyncSandbox:
         response = await call_configure_status(self._configure, timeout=self._request_timeout)
         return from_proto_status(response.s3_mounts)
 
+    async def volumes(self) -> dict[str, VolumeStatus]:
+        """Estado en vivo de cada `volumes=` (`m15-efs-volumes`): una
+        `ConfigureStatus` por lectura, nunca cacheada — tras un `resume()`
+        un volumen puede pasar por `"remounting"`/`"degraded"`. Vacío si
+        `create()` no recibió `volumes=`.
+        """
+        response = await call_configure_status(self._configure, timeout=self._request_timeout)
+        return volumes_from_proto_status(response.efs_volumes)
+
     async def upload_url(
         self,
         path: str,
@@ -2011,7 +2056,9 @@ class AsyncSandbox:
     ) -> None:
         """Misma semántica que `Sandbox._configure_sections`, en `asyncio`."""
         request = build_configure_request(sections)
-        response = await call_configure(self._configure, request, timeout=timeout)
+        response = await call_configure(
+            self._configure, request, timeout=configure_timeout_s(sections, timeout)
+        )
         await self._wait_settled(check_configure_response(response, sections), timeout=timeout)
 
     def _section_secret_cache(self) -> SecretCache:

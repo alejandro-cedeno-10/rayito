@@ -13,15 +13,29 @@ from __future__ import annotations
 
 import pytest
 
-from rayito import AsyncSandbox, AsyncSandboxPool, OtlpAuth, Sandbox, SandboxPool, TelemetryExport
+from rayito import (
+    AsyncSandbox,
+    AsyncSandboxPool,
+    EfsVolume,
+    OtlpAuth,
+    Sandbox,
+    SandboxPool,
+    TelemetryExport,
+)
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
+
+#: Un valor bien formado: m15-efs-volumes valida la forma de `volumes=`
+#: (tipo, rutas) antes que la variante caps, así que un `object()` ahí no
+#: llegaría a la puerta de caps (lanzaría InvalidArgumentException por el
+#: tipo).
+_VALID_VOLUME = {"/mnt/v": EfsVolume(file_system_id="fs-0123abcd", access_point_id="fsap-0123abcd")}
 
 
 @pytest.mark.parametrize(
     ("option", "value"),
     [
         ("mounts", {"/mnt/d": object()}),
-        ("volumes", {"/mnt/v": object()}),
+        ("volumes", _VALID_VOLUME),
         # `events` validates its type and `logging` first: see
         # `test_m15_events_webhooks_feature_options.py`.
         # `telemetry=` (m15-rayd-otlp) validates for real now; a
@@ -74,3 +88,36 @@ def test_pool_with_size_is_invalid_argument_even_though_size_is_implemented() ->
     pool = SandboxPool.__new__(SandboxPool)
     with pytest.raises(InvalidArgumentException, match="size"):
         Sandbox.create(pool=pool, size="4gb")
+
+
+#: Marcador de documentación (cuenta ficticia).
+_CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs"
+
+
+@pytest.mark.parametrize("egress", [None, ["INTERNET_EGRESS"], [_CONNECTOR, "INTERNET_EGRESS"]])
+def test_sync_create_rejects_volumes_without_a_single_own_connector(
+    egress: list[str] | None,
+) -> None:
+    """`create()` hands its `egress=` to the `volumes=` gate: a MicroVM takes
+    one egress connector (Q131), so a volume never runs with
+    INTERNET_EGRESS, and this fails before any control plane is resolved."""
+    with pytest.raises(InvalidArgumentException, match="NAT"):
+        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=egress)
+
+
+@pytest.mark.asyncio
+async def test_async_create_rejects_volumes_with_internet_egress() -> None:
+    with pytest.raises(InvalidArgumentException, match="INTERNET_EGRESS"):
+        await AsyncSandbox.create(
+            "rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR, "INTERNET_EGRESS"]
+        )
+
+
+def test_sync_create_with_volumes_needs_an_execution_role_before_resolving_a_control_plane() -> (
+    None
+):
+    """`amazon-efs-utils` signs the TLS tunnel with the execution role's
+    IMDS credentials (Q128): without one the mount would end `iam_denied`
+    after paying for the MicroVM."""
+    with pytest.raises(InvalidArgumentException, match="execution_role_arn"):
+        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR])

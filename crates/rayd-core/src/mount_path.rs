@@ -56,7 +56,11 @@ pub fn validate_mount_paths<'a>(paths: &[&'a str]) -> Result<(), (&'a str, Mount
     Ok(())
 }
 
-fn validate_one(path: &str) -> Result<(), MountPathError> {
+/// One path's own shape, with no regard to any other mount in the same
+/// request. Public (additively, `m15-efs-volumes`) so
+/// `volume::spec::MountPath::parse` can validate a single typed path before
+/// a `VolumePlan` exists to check overlap across.
+pub fn validate_one(path: &str) -> Result<(), MountPathError> {
     if !path.starts_with('/') {
         return Err(MountPathError::InvalidShape);
     }
@@ -83,7 +87,10 @@ fn is_canonical(path: &str) -> bool {
         && !path.contains("//")
 }
 
-fn overlaps(first: &str, second: &str) -> bool {
+/// Public (additively, `m15-efs-volumes`) so `volume::spec::MountPath::overlaps`
+/// shares this exact rule for a `VolumePlan`'s already-typed paths.
+#[must_use]
+pub fn overlaps(first: &str, second: &str) -> bool {
     let first_dir = format!("{first}/");
     let second_dir = format!("{second}/");
     first == second || first_dir.starts_with(&second_dir) || second_dir.starts_with(&first_dir)
