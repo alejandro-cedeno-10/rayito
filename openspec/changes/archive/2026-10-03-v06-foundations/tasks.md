@@ -118,7 +118,7 @@
 ## 14. PR
 
 - [x] 14.1 Branch `feat/v06-foundations`, worktree `rayito-wt-v06-foundations`, commits signed (`git commit -s -S`) with the required attribution lines.
-- [ ] 14.2 PR opened against `main`; CI green; merged with a merge commit (`gh pr merge --merge`).
+- [x] 14.2 PR opened against `main`; CI green; merged with a merge commit (`gh pr merge --merge`). (Verified at archive time: merged with a merge commit, all checks green; released in 0.6.0.)
 
 ## 15. Follow-up: one shared `FeatureSet` and bounded participants
 
