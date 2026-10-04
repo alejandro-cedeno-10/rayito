@@ -151,7 +151,7 @@ class DoctorContext:
     resolved_version: str | None = None
     launched: Sandbox | None = None
     target_sandbox: SandboxInfo | None = None
-    minted_token: str | None = None
+    minted_token: str | None = field(default=None, repr=False)
     health: SandboxHealth | None = None
     #: `--efs-vpc-id`/`--efs-subnet-ids`: la comprobación previa de
     #: `EfsVolumes` (sólo lectura), únicamente cuando se piden.

@@ -9,6 +9,7 @@
 
 import { PortSpec, samePortSet } from "../aws/control-plane.js";
 import { errorMessage } from "../errors.js";
+import { defineHidden } from "../hidden.js";
 import { TOKEN_REFRESH_AFTER_MINUTES, TOKEN_REFRESH_RETRY_SECONDS } from "../limits.js";
 import type { Logger } from "../logger.js";
 
@@ -18,14 +19,18 @@ export const TOKEN_REFRESH_RETRY_MS = TOKEN_REFRESH_RETRY_SECONDS * 1000;
 export type WallClock = () => number;
 export type TokenMinter = (ports: readonly PortSpec[]) => Promise<string>;
 
-/** Un JWE de `create-microvm-auth-token` y los puertos que cubre. */
+/**
+ * Un JWE de `create-microvm-auth-token` y los puertos que cubre. `jwe` es no
+ * enumerable (`defineHidden`): `util.inspect`, `console.log` y
+ * `JSON.stringify` no lo muestran, el acceso directo sí.
+ */
 export class ProxyToken {
-  readonly jwe: string;
+  declare readonly jwe: string;
   readonly ports: readonly PortSpec[];
   readonly mintedAt: number;
 
   constructor(jwe: string, ports: readonly PortSpec[], mintedAt: number) {
-    this.jwe = jwe;
+    defineHidden(this, "jwe", jwe);
     this.ports = Object.freeze([...ports]);
     this.mintedAt = mintedAt;
     Object.freeze(this);

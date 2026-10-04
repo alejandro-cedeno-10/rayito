@@ -350,3 +350,14 @@ async def test_async_refresher_refreshes_on_schedule_and_is_idempotent() -> None
     await refresher.stop()
     assert refresher._task is None
     assert task is not None and task.cancelled()
+
+
+def test_proxy_token_repr_never_shows_the_jwe() -> None:
+    """Un traceback con variables locales (Sentry, `--showlocals`) o un
+    `print` de depuración no debe sacar el JWE del proxy."""
+    from rayito._aws import PortSpec as _PortSpec
+    from rayito._transport import ProxyToken as _ProxyToken
+
+    token = _ProxyToken(jwe="JWE-DO-NOT-PRINT", ports=(_PortSpec.single(8080),), minted_at=1.0)
+    assert "JWE-DO-NOT-PRINT" not in repr(token)
+    assert token.jwe == "JWE-DO-NOT-PRINT"

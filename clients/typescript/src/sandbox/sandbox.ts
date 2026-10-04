@@ -860,7 +860,7 @@ export class Sandbox implements AsyncDisposable {
     this.commands = new Commands(core, this.#secrets, () => this.#instrumentation);
     this.files = new Filesystem(core, undefined, () => this.#instrumentation);
     this.pty = new Pty(core, this.commands, this.#secrets);
-    this.git = new Git(this.commands);
+    this.git = new Git(this.commands, core.logger);
     this.#code = new CodeClient(core, this.#secrets, () => this.#instrumentation);
     this.#persistence = new PersistenceClient(core);
   }

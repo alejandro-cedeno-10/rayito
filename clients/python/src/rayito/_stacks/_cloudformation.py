@@ -77,6 +77,10 @@ class _ClientSource(Protocol):
 
 
 def _wrap(exc: BotoCoreError | ClientError) -> StackException:
+    """El `StackException` de un error de botocore; quien lo lanza lo
+    encadena `from sanitize_aws_error(exc)`, nunca `from exc`, para que el
+    `ClientError` crudo (con la cadena canónica de un error de firma en su
+    `Message`) no llegue a ningún traceback."""
     return StackException(str(sanitize_aws_error(exc)), code="failed")
 
 
@@ -116,7 +120,7 @@ class CloudFormationProvisioner:
         except (BotoCoreError, ClientError) as exc:
             if _is_missing_stack(exc):
                 return None
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         stacks = response.get("Stacks") or []
         if not stacks:
             return None
@@ -154,7 +158,7 @@ class CloudFormationProvisioner:
                 Capabilities=list(component.capabilities),
             )
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def update(
         self,
@@ -177,16 +181,16 @@ class CloudFormationProvisioner:
         except ClientError as exc:
             if _is_no_updates(exc):
                 return "no_changes"
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         except BotoCoreError as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         return "changed"
 
     def delete(self, stack_name: str) -> None:
         try:
             self._cloudformation.get().delete_stack(StackName=stack_name)
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def wait(self, stack_name: str, target: DeployTarget, timeout: float) -> None:
         deadline = self._clock() + timeout
@@ -231,7 +235,7 @@ class CloudFormationProvisioner:
                 **located, Body=data, ChecksumSHA256=base64.b64encode(digest).decode("ascii")
             )
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def _stored_digest(self, client: Any, located: dict[str, str]) -> bytes | None:
         """sha256 del objeto ya subido, o `None` si no existe. La clave es el
@@ -242,16 +246,16 @@ class CloudFormationProvisioner:
         except ClientError as exc:
             if _aws_code(exc) in MISSING_OBJECT_CODES:
                 return None
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         except BotoCoreError as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         return hashlib.sha256(stored).digest()
 
     def _account_id(self) -> str:
         try:
             return str(self._sts.get().get_caller_identity()["Account"])
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def failure_reason(self, stack_name: str) -> str | None:
         status = self.describe(stack_name)

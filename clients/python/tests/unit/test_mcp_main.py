@@ -14,12 +14,11 @@ from typing import Any
 import pytest
 
 import rayito.mcp._cli as entrypoint
+from rayito._authority import http_authority, is_wildcard
 from rayito.mcp import McpSettings, build_server
 from rayito.mcp._cli import (
     RunOptions,
-    http_authority,
     is_loopback,
-    is_wildcard,
     main,
     parse_args,
     run,

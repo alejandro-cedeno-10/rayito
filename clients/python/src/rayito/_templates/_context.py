@@ -14,62 +14,113 @@ un `.e2b`/`filesHash` ajeno.
 
 from __future__ import annotations
 
-import fnmatch
+import errno
 import hashlib
+import os
+import warnings
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Final
 
+from rayito._templates._dockerignore import DOCKERIGNORE_FILENAME, DockerIgnore
 from rayito._templates._instructions import CopyStep
 from rayito.exceptions import BuildException
 
-#: Nombre del fichero de exclusión, compatible con `.dockerignore` de Docker
-#: (patrones glob, uno por línea, `#` comenta, `!` niega, sin soporte de
-#: `**` multi-segmento: basta para los casos reales de un contexto de
-#: template).
-DOCKERIGNORE_FILENAME: Final = ".dockerignore"
+__all__ = [
+    "DOCKERIGNORE_FILENAME",
+    "DockerIgnore",
+    "collect_context_files",
+    "files_hash",
+    "sensitive_paths",
+]
+
+CONTEXT_PATH_OUTSIDE: Final = "context_path_outside"
+#: Rutas que casi siempre llevan secretos o historia que no debería acabar
+#: en una imagen (credenciales de `.env`, `.git` con remotos con token,
+#: `.aws`/`.ssh`, claves privadas). Sólo avisan, no excluyen: el
+#: `.dockerignore` del usuario manda. Mismo texto que
+#: `SENSITIVE_PATTERNS` de `templates/context.ts`.
+SENSITIVE_PATTERNS: Final = "**/.env\n**/.env.*\n**/.git\n**/.aws\n**/.ssh\n**/*.pem\n**/*.key\n"
+#: Cuántas rutas sensibles se nombran en el aviso (el resto sólo se cuenta).
+SENSITIVE_SAMPLE_SIZE: Final = 3
+SENSITIVE_CONTEXT_WARNING: Final = (
+    "el contexto de build empaqueta {count} fichero(s) que suelen llevar secretos "
+    "(p. ej. {sample}): exclúyelos en {dockerignore} si no deben acabar en la imagen, "
+    "donde cualquier código del sandbox puede leerlos"
+)
+#: La profundidad hasta `Template.build` cambia entre sync, async y CLI: el
+#: aviso apunta al llamador de `collect_context_files`, que es estable.
+SENSITIVE_WARNING_STACKLEVEL: Final = 3
+_SENSITIVE: Final = DockerIgnore.from_text(SENSITIVE_PATTERNS)
+#: `O_NOFOLLOW` no existe en Windows; ahí basta con `is_symlink()`.
+_OPEN_NO_FOLLOW: Final = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
 
 
-class DockerIgnore:
-    """Patrones de `.dockerignore`: `matches(relpath)` dice si excluir esa
-    ruta relativa (con `/` como separador, igual que Docker)."""
+def sensitive_paths(relpaths: Sequence[str]) -> tuple[str, ...]:
+    """Las rutas de `relpaths` que casan con `SENSITIVE_PATTERNS`."""
+    return tuple(relpath for relpath in relpaths if _SENSITIVE.matches(relpath))
 
-    __slots__ = ("_patterns",)
 
-    def __init__(self, patterns: Sequence[tuple[str, bool]]) -> None:
-        #: `(patrón, es_negación)`, en el orden del fichero: el último que
-        #: haga match gana (semántica de Docker).
-        self._patterns = tuple(patterns)
+def _warn_sensitive(relpaths: Sequence[str]) -> None:
+    found = sensitive_paths(relpaths)
+    if not found:
+        return
+    warnings.warn(
+        SENSITIVE_CONTEXT_WARNING.format(
+            count=len(found),
+            sample=", ".join(found[:SENSITIVE_SAMPLE_SIZE]),
+            dockerignore=DOCKERIGNORE_FILENAME,
+        ),
+        UserWarning,
+        stacklevel=SENSITIVE_WARNING_STACKLEVEL,
+    )
 
-    @classmethod
-    def from_text(cls, text: str) -> DockerIgnore:
-        patterns: list[tuple[str, bool]] = []
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            negated = line.startswith("!")
-            pattern = line[1:] if negated else line
-            patterns.append((pattern.strip("/"), negated))
-        return cls(patterns)
 
-    @classmethod
-    def from_file(cls, path: Path) -> DockerIgnore:
-        if not path.is_file():
-            return cls(())
-        return cls.from_text(path.read_text(encoding="utf-8"))
+def _changed_during_read(root: Path, path: Path) -> BuildException:
+    return BuildException(
+        f"la ruta de contexto {path.relative_to(root).as_posix()!r} cambió o sale del "
+        "contexto de build durante la lectura",
+        reason=CONTEXT_PATH_OUTSIDE,
+    )
 
-    def matches(self, relpath: str) -> bool:
-        excluded = False
-        for pattern, negated in self._patterns:
-            if fnmatch.fnmatch(relpath, pattern) or fnmatch.fnmatch(relpath, f"{pattern}/*"):
-                excluded = not negated
-        return excluded
+
+def _read_contained(root: Path, path: Path) -> bytes:
+    """Lee `path` sin seguir un enlace en el último componente
+    (`O_NOFOLLOW`, que falla con `ELOOP`) y sólo si sigue resolviendo dentro
+    de `root`: defensa en profundidad por si el árbol cambia entre el
+    recorrido y la lectura. Espejo de `readContained` del SDK de
+    TypeScript."""
+    try:
+        path.resolve().relative_to(root)
+    except ValueError as exc:
+        raise _changed_during_read(root, path) from exc
+    try:
+        descriptor = os.open(path, _OPEN_NO_FOLLOW)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise _changed_during_read(root, path) from exc
+        raise
+    with os.fdopen(descriptor, "rb") as handle:
+        return handle.read()
+
+
+def _walk_regular_files(directory: Path) -> Iterator[Path]:
+    """Los ficheros regulares bajo `directory`, sin seguir nunca un enlace
+    simbólico (ni a fichero ni a directorio), como Docker y
+    `listFilesRecursively` del SDK de TypeScript: un `config ->
+    ~/.aws/credentials` dentro del contexto no se lee ni se empaqueta."""
+    for entry in sorted(directory.iterdir()):
+        if entry.is_symlink():
+            continue
+        if entry.is_dir():
+            yield from _walk_regular_files(entry)
+        elif entry.is_file():
+            yield entry
 
 
 def _iter_files(root: Path, source: Path) -> Iterator[Path]:
     if source.is_dir():
-        yield from (path for path in sorted(source.rglob("*")) if path.is_file())
+        yield from _walk_regular_files(source)
     elif source.is_file():
         yield source
     else:
@@ -81,14 +132,19 @@ def _iter_files(root: Path, source: Path) -> Iterator[Path]:
 
 def _ensure_contained(root: Path, source: Path, src: str) -> None:
     """Rechaza un `CopyStep.src` que resuelve fuera de `root` (un `../..`,
-    o un enlace simbólico que escapa): sin esto, `Template.build()` leería
-    y empaquetaría ficheros ajenos al contexto declarado."""
+    o un `src` que es él mismo un enlace simbólico que apunta fuera): sin
+    esto, `Template.build()` leería y empaquetaría ficheros ajenos al
+    contexto declarado. Sólo mira el `src` de primer nivel, ya resuelto (un
+    `src` que es un enlace a un fichero de dentro del contexto se lee, como
+    el `COPY` de Docker); los enlaces que haya dentro de un directorio
+    copiado los omite `_walk_regular_files`, y `_read_contained` vuelve a
+    comprobar la contención de cada fichero antes de leerlo."""
     try:
         source.relative_to(root)
     except ValueError as exc:
         raise BuildException(
             f"la ruta de contexto {src!r} sale del contexto de build ({root})",
-            reason="context_path_outside",
+            reason=CONTEXT_PATH_OUTSIDE,
         ) from exc
 
 
@@ -115,7 +171,8 @@ def collect_context_files(
             relpath = path.relative_to(resolved_root).as_posix()
             if resolved_ignore.matches(relpath):
                 continue
-            seen[relpath] = path.read_bytes()
+            seen[relpath] = _read_contained(resolved_root, path)
+    _warn_sensitive(tuple(seen))
     return tuple(sorted(seen.items()))
 
 

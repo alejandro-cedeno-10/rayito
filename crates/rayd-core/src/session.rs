@@ -18,6 +18,7 @@ use std::time::Duration;
 use crate::auth::{self, AccessTokenGate, AuthError, InstallOutcome};
 use crate::clock::{Clock, ClockReading};
 use crate::health::HealthSnapshot;
+use crate::hook_peer::PeerOrigin;
 use crate::hooks::{AuditEntry, HookAudit, HookCallOutcome};
 use crate::lifecycle::{
     FREEZE_THRESHOLD, Hook, HookPhase, LifecycleError, LifecycleState, RunClaim,
@@ -70,6 +71,10 @@ pub enum RunOutcome {
     AlreadyRan,
     /// `/run` arrived in a phase where it is not legal; nothing changed.
     Illegal(LifecycleError),
+    /// The caller's socket belongs to a sandbox uid (`PeerOrigin::Sandbox`):
+    /// refused without claiming the boot's one `/run`, so the genuine one
+    /// that follows still installs its payload; counted as an anomaly.
+    SandboxOrigin,
 }
 
 pub struct SandboxSession {
@@ -139,7 +144,22 @@ impl SandboxSession {
         self.state().run_claimed()
     }
 
+    /// A `/run` whose caller could not be told apart
+    /// (`PeerOrigin::Unverified`).
     pub fn run(&self, input: RunHookInput<'_>) -> RunOutcome {
+        self.run_from(PeerOrigin::Unverified, input)
+    }
+
+    /// `/run` once per boot, except from a sandbox process: a uid ≥ 1000
+    /// reaching `127.0.0.1:9000` before the platform does (a template's
+    /// `start_cmd` is already running when the genuine `/run` arrives)
+    /// would otherwise install its own token digest and payload and leave
+    /// the genuine `/run` as `AlreadyRan`.
+    pub fn run_from(&self, origin: PeerOrigin, input: RunHookInput<'_>) -> RunOutcome {
+        if origin == PeerOrigin::Sandbox {
+            self.audit().note_anomaly();
+            return RunOutcome::SandboxOrigin;
+        }
         let claim = self.state().run(input.sandbox_id);
         match claim {
             Err(error) => RunOutcome::Illegal(error),
@@ -533,6 +553,57 @@ mod tests {
             sandbox_id: Some("mvm-1"),
             payload: Some(&payload),
         })
+    }
+
+    /// RAYD-08: a sandbox process (a template's `start_cmd`, thawed with
+    /// the snapshot) posts a well-formed `/run` before the platform does.
+    /// It is refused without claiming the boot's `/run`, counted as an
+    /// anomaly, and the genuine `/run` that follows still installs.
+    #[test]
+    fn a_run_from_a_sandbox_uid_never_claims_the_boots_run() {
+        let (_, session) = session();
+        let forged = payload_for(b"attacker");
+        let refused = session.run_from(
+            PeerOrigin::Sandbox,
+            RunHookInput {
+                sandbox_id: Some("mvm-1"),
+                payload: Some(&forged),
+            },
+        );
+        assert_eq!(refused, RunOutcome::SandboxOrigin);
+        assert_eq!(session.hook_anomalies(), 1);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(b"attacker")),
+            Err(AuthError::TokenNotInstalled)
+        );
+        let genuine = payload_for(SECRET);
+        let installed = session.run_from(
+            PeerOrigin::Platform,
+            RunHookInput {
+                sandbox_id: Some("mvm-1"),
+                payload: Some(&genuine),
+            },
+        );
+        assert_eq!(installed, RunOutcome::Installed);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(SECRET)),
+            Ok(())
+        );
+        assert_eq!(
+            session.run_from(
+                PeerOrigin::Sandbox,
+                RunHookInput {
+                    sandbox_id: Some("mvm-1"),
+                    payload: Some(&forged),
+                },
+            ),
+            RunOutcome::SandboxOrigin
+        );
+        assert_eq!(session.hook_anomalies(), 2);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(SECRET)),
+            Ok(())
+        );
     }
 
     #[test]

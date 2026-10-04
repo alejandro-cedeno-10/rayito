@@ -181,7 +181,7 @@ rayito sandbox create [TEMPLATE] [--timeout S] [--metadata K=V]… [--env K=V]�
 rayito sandbox connect ID [--user U] [--cwd D] [--env K=V]… [--token-file F]
 rayito sandbox exec ID [--background] [--cwd D] [--user U] [--env K=V]… [--timeout 0] [--token-file F] -- CMD…
 rayito sandbox metrics ID [--follow] [--interval 5] [--token-file F]
-rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-remote]
+rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-remote] [--allowed-host H]… [--allow-origin O]… [--max-connections 8]
 ```
 
 - `list` omite `TERMINATING` y `TERMINATED` (AWS los sigue listando unos 20
@@ -286,6 +286,7 @@ sandbox, sólo el JWE del proxy.
 ```bash
 rayito sandbox proxy microvm-<id> --port 8000
 # http://127.0.0.1:8000 → microvm-<id>:8000
+#   con cookies aisladas de otras apps locales: http://microvm-<id>.localhost:8000
 curl http://127.0.0.1:8000/
 ```
 
@@ -293,11 +294,25 @@ curl http://127.0.0.1:8000/
   cualquier valor fuera de 1-65535, sin llamar a AWS.
 - `--bind` fuera de `127.0.0.1`/`::1`/`localhost` necesita `--allow-remote`
   (si no, salida de uso): cualquiera que llegue a ese puerto usa el sandbox
-  con el mismo acceso que quien lanzó el proxy.
+  con el mismo acceso que quien lanzó el proxy. `--bind 0.0.0.0`/`::`
+  necesita además `--allowed-host`.
+- `Host` y `Origin`: sólo reenvía si `Host` es `127.0.0.1`, `localhost` o
+  `[::1]` con el puerto local, la dirección de `--bind`, `<id>.localhost` o
+  un `--allowed-host` (si no, `421`), y si el `Origin`, cuando viene, es uno
+  de esos mismos orígenes o un `--allow-origin` (si no, `403`). Así una web
+  abierta en tu navegador no llega al sandbox por DNS rebinding, con un POST
+  entre sitios ni con un `WebSocket` de otro origen
+  ([Proxy local](funciones-opcionales/proxy-local.md#que-peticiones-reenvia)).
+- Como mucho `--max-connections` (8) conexiones reenviadas a la vez; la
+  siguiente recibe `503`.
 - Cabeceras: quita cualquier `x-aws-proxy-*` que traiga el cliente, fija
   `Host` al endpoint del sandbox, añade `X-aws-proxy-auth` (el JWE vigente)
   y `X-aws-proxy-port`, y fuerza `Connection: close` salvo en una petición
-  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sin JWE
+  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sólo reenvía
+  la primera petición de cada conexión, con su cuerpo delimitado por
+  `Content-Length` o `chunked` (`400` si es ambiguo); un upgrade al que el
+  sandbox no responde `101` se reenvía con `Connection: close` y se
+  cierra. Sin JWE
   vigente o sin conexión al sandbox responde `502` y escribe el motivo en
   stderr; la cabecera tiene que llegar en 30 s y la conexión al sandbox
   abrirse en 30 s. Nunca registra el JWE, las cabeceras, los cuerpos

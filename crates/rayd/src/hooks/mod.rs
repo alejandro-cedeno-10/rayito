@@ -8,7 +8,8 @@
 //! `create-microvm-image` and still answers when it expires.
 //!
 //! `HookReply.outcome` values: `changed` / `unchanged` / `illegal`
-//! (phase transitions), `installed` / `tokenless` / `already_ran` (`/run`),
+//! (phase transitions), `installed` / `tokenless` / `already_ran` /
+//! `sandbox_origin` (`/run`),
 //! `kernel_warming` (503) / `ready_escape` (`/ready`), `validating` (503) /
 //! `validated` / `validate_failed` / `validate_skipped` with `--no-sidecar`
 //! or after the accepted `/run` (`/validate`), `terminating`,
@@ -41,24 +42,36 @@
 //! platform's own hook caller runs at is not measured, and a refused
 //! genuine `/suspend` would skip the checklist of a real checkpoint while
 //! the platform freezes the VM anyway.
+//! A `/run` from a sandbox uid is not refused by the guard but by the
+//! session (`SandboxSession::run_from`, 200 `sandbox_origin`): it never
+//! claims the boot's one `/run`, so a sandbox process that reaches the port
+//! before the platform (a template's `start_cmd`, which thaws with the
+//! snapshot) can no longer install its own token. The guard hands the
+//! handler the origin it found (`PeerOrigin` request extension).
+//!
+//! The listener itself (`server::serve`) serves at most
+//! `HOOKS_MAX_CONNECTIONS` connections, drops one whose request head does
+//! not arrive within `HOOKS_HEADER_READ_TIMEOUT` and closes each after its
+//! one response (`rayd_core::listeners`, `SECURITY.md` T7), so sandbox
+//! processes cannot use this port to exhaust `rayd`'s descriptors.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
+use axum::{Extension, Router};
 use rayd_core::code::{
     KernelStatus, ReadyDecision, SidecarState, ValidateDecision, ready_hook_decision,
     validate_hook_decision,
 };
 use rayd_core::hook_peer::{
-    PEER_REFUSED, PeerAction, PeerSocket, PeerSocketTable, classify_peer, peer_action,
+    PEER_REFUSED, PeerAction, PeerOrigin, PeerSocket, PeerSocketTable, classify_peer, peer_action,
 };
 use rayd_core::hooks::{
     HookCallOutcome, QUIESCE_TIMEOUT, RESUME_PROBE_BUDGET, STREAM_CLOSE_GRACE, suspend_actions,
@@ -80,6 +93,10 @@ use crate::lifecycle::{
     LifecycleParticipant, ReadyVerdict, SuspendSignal, TimeoutWatcher, suspend_watchdog,
 };
 use crate::network::NetworkManager;
+
+mod server;
+
+pub use server::{HookServerSettings, serve};
 
 /// `warn!` threshold for the wall-clock drift recorded at `/resume`.
 pub const CLOCK_OFFSET_WARN_MS: i64 = 5_000;
@@ -248,10 +265,11 @@ struct PeerGuardState {
 /// connection before the handler runs (`hook_peer::peer_action`): a
 /// `/terminate` or `/validate` from a sandbox uid answers 200
 /// `peer_refused` without running, audited as an anomaly, and the other
-/// anomalies the check finds are counted in `hook_anomalies`. The listener
-/// must be served with `into_make_service_with_connect_info::<SocketAddr>`
-/// so each request carries its peer address; a request without one is
-/// treated as unverified.
+/// anomalies the check finds are counted in `hook_anomalies`; every call
+/// that proceeds carries the origin found as a `PeerOrigin` extension (the
+/// `/run` handler's `SandboxSession::run_from`). The listener must give each
+/// request its peer address as `ConnectInfo<SocketAddr>` (`serve` does); a
+/// request without one is treated as unverified.
 pub fn guard_peers(router: Router, session: Arc<SandboxSession>, guard: PeerGuard) -> Router {
     router.layer(middleware::from_fn_with_state(
         PeerGuardState { session, guard },
@@ -268,8 +286,9 @@ async fn check_peer(State(state): State<PeerGuardState>, request: Request, next:
         .await
         .ok()
         .map(|ConnectInfo(address)| address);
-    let request = Request::from_parts(parts, body);
     let origin = classify_peer(lookup_peer(&state.guard, peer).await, state.guard.agent_uid);
+    parts.extensions.insert(origin);
+    let request = Request::from_parts(parts, body);
     match peer_action(hook, origin) {
         PeerAction::Refuse => {
             tracing::warn!(hook = %hook, peer_origin = origin.as_str(), outcome = PEER_REFUSED, "hook refused");
@@ -476,16 +495,24 @@ fn validate_skipped(session: &SandboxSession) -> Response {
 /// kernel as ready. The actual restart request, `spawn_run_rotation`,
 /// stays after egress enforcement so the rotated kernel still picks up the
 /// settled proxy env.
-async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
+async fn run(
+    State(state): State<HooksState>,
+    origin: Option<Extension<PeerOrigin>>,
+    body: Bytes,
+) -> Response {
     within_budget(Hook::Run, state.session.clone(), async move {
         let envelope = parse_envelope(&body);
-        let outcome = state.session.run(RunHookInput {
-            sandbox_id: envelope.microvm_id.as_deref(),
-            payload: envelope
-                .run_hook_payload
-                .as_deref()
-                .filter(|payload| !payload.is_empty()),
-        });
+        let origin = origin.map_or(PeerOrigin::Unverified, |Extension(origin)| origin);
+        let outcome = state.session.run_from(
+            origin,
+            RunHookInput {
+                sandbox_id: envelope.microvm_id.as_deref(),
+                payload: envelope
+                    .run_hook_payload
+                    .as_deref()
+                    .filter(|payload| !payload.is_empty()),
+            },
+        );
         if outcome == RunOutcome::Installed {
             state.code.mark_rotation_pending();
             state.timeout.wake();
@@ -977,6 +1004,10 @@ fn run_outcome(outcome: &RunOutcome, payload: Option<&str>) -> String {
         RunOutcome::Illegal(error) => {
             tracing::warn!(hook = %Hook::Run, outcome = "illegal", reason = %error, "run ignored");
             "illegal".to_owned()
+        }
+        RunOutcome::SandboxOrigin => {
+            tracing::warn!(hook = %Hook::Run, outcome = "sandbox_origin", origin = PeerOrigin::Sandbox.as_str(), "run refused: the caller's socket belongs to a sandbox uid");
+            "sandbox_origin".to_owned()
         }
     }
 }
@@ -1714,13 +1745,23 @@ mod tests {
         const PLATFORM_AGENT: u32 = 993;
         const SANDBOX_USER: u32 = 1000;
 
-        /// Answers every lookup with the one socket it was built with, so
-        /// a test decides who "opened" each connection.
-        struct FixedTable(Option<PeerSocket>);
+        /// Answers every lookup with the socket it currently holds, so a
+        /// test decides who "opened" each connection.
+        struct FixedTable(std::sync::Mutex<Option<PeerSocket>>);
+
+        impl FixedTable {
+            fn new(socket: Option<PeerSocket>) -> Self {
+                Self(std::sync::Mutex::new(socket))
+            }
+
+            fn set(&self, socket: Option<PeerSocket>) {
+                *self.0.lock().unwrap() = socket;
+            }
+        }
 
         impl PeerSocketTable for FixedTable {
             fn find(&self, _peer: SocketAddr) -> Option<PeerSocket> {
-                self.0
+                *self.0.lock().unwrap()
             }
         }
 
@@ -1728,6 +1769,7 @@ mod tests {
             session: Arc<SandboxSession>,
             shutdown: CancellationToken,
             router: Router,
+            table: Arc<FixedTable>,
         }
 
         fn guarded(socket: Option<PeerSocket>) -> Guarded {
@@ -1739,8 +1781,9 @@ mod tests {
                 Arc::new(SuspendSignal::new()),
                 shutdown.clone(),
             );
+            let table = Arc::new(FixedTable::new(socket));
             let guard = PeerGuard {
-                peers: Arc::new(FixedTable(socket)),
+                peers: table.clone(),
                 agent_uid: ROOT,
             };
             let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, PEER_PORT));
@@ -1749,6 +1792,7 @@ mod tests {
                 session,
                 shutdown,
                 router,
+                table,
             }
         }
 
@@ -1759,13 +1803,30 @@ mod tests {
             }
         }
 
+        /// The platform's `/run` accepted, then every later connection
+        /// opened by `socket`'s owner.
         async fn after_run(socket: Option<PeerSocket>) -> Guarded {
-            let guarded = guarded(socket);
-            assert_eq!(
-                post(&guarded.router, Hook::Run, run_body()).await.0,
-                StatusCode::OK
-            );
+            let guarded = guarded(Some(owned_by(PLATFORM_AGENT)));
+            let (status, reply) = post(&guarded.router, Hook::Run, run_body()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "installed");
+            guarded.table.set(socket);
             guarded
+        }
+
+        #[tokio::test]
+        async fn a_run_from_a_sandbox_uid_never_claims_the_boot() {
+            let guarded = guarded(Some(owned_by(SANDBOX_USER)));
+
+            let (status, reply) = post(&guarded.router, Hook::Run, run_body()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "sandbox_origin");
+            assert_eq!(guarded.session.phase(), HookPhase::Booting);
+            assert_eq!(guarded.session.hook_anomalies(), 1);
+            guarded.table.set(Some(owned_by(PLATFORM_AGENT)));
+            let (_, genuine) = post(&guarded.router, Hook::Run, run_body()).await;
+            assert_eq!(genuine.outcome, "installed");
         }
 
         #[tokio::test]
@@ -1859,7 +1920,7 @@ mod tests {
                 CancellationToken::new(),
             );
             let guard = PeerGuard {
-                peers: Arc::new(FixedTable(Some(owned_by(SANDBOX_USER)))),
+                peers: Arc::new(FixedTable::new(Some(owned_by(SANDBOX_USER)))),
                 agent_uid: ROOT,
             };
             let router = guard_peers(hooks, session.clone(), guard);

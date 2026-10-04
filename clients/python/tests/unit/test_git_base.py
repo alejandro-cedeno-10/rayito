@@ -9,6 +9,7 @@ import pytest
 
 from rayito._git_base import (
     AUTH_FAILURE_SNIPPETS,
+    CREDENTIAL_ISOLATION_ARGS,
     GIT_ENV,
     MISSING_UPSTREAM_SNIPPETS,
     FailurePolicy,
@@ -27,9 +28,11 @@ from rayito._git_base import (
     git_command,
     git_failure,
     has_upstream_args,
+    has_url_rewrites,
     init_args,
     is_auth_failure,
     is_missing_upstream,
+    isolated_args,
     parse_git_branches,
     parse_git_status,
     parse_remote_url,
@@ -46,6 +49,8 @@ from rayito._git_base import (
     shell_quote,
     status_args,
     strip_credentials,
+    url_rewrite_check_args,
+    url_rewrite_error_message,
     with_credentials,
 )
 from rayito.exceptions import (
@@ -311,7 +316,9 @@ def test_repo_dir_derivation() -> None:
 
 def test_clone_plan_with_credentials_strips_them_afterwards() -> None:
     plan = build_clone_plan("https://h/o/repo.git", None, "dev", 1, "ana", "s3cr3t", False)
+    assert plan.credentialed
     assert plan.args == (
+        *CREDENTIAL_ISOLATION_ARGS,
         "clone",
         "https://ana:s3cr3t@h/o/repo.git",
         "--branch",
@@ -331,8 +338,9 @@ def test_clone_plan_without_credentials_or_when_storing_them() -> None:
     plain = build_clone_plan("https://h/o/r.git", "/dst", None, None, None, None, False)
     assert plain.args == ("clone", "https://h/o/r.git", "/dst")
     assert not plain.should_strip and plain.sanitized_url is None
+    assert not plain.credentialed
     stored = build_clone_plan("https://h/o/r.git", None, None, None, "a", "b", True)
-    assert stored.args == ("clone", "https://a:b@h/o/r.git")
+    assert stored.args == (*CREDENTIAL_ISOLATION_ARGS, "clone", "https://a:b@h/o/r.git")
     assert not stored.should_strip
 
 
@@ -382,3 +390,12 @@ def test_failure_policy_redacts_every_field() -> None:
     assert redacted is not leaked
     assert "s3cr3t" not in f"{redacted} {redacted.stderr} {redacted.stdout} {redacted.error}"
     assert redacted.exit_code == 128
+
+
+def test_url_rewrite_detection_and_message() -> None:
+    assert url_rewrite_check_args() == ["config", "--get-regexp", r"^url\..*\.(push)?insteadof$"]
+    assert has_url_rewrites("url.http://127.0.0.1:9999/.insteadof https://\n")
+    assert not has_url_rewrites("\n")
+    message = url_rewrite_error_message("push")
+    assert message.startswith("git push") and "insteadOf" in message
+    assert isolated_args(["push"]) == (*CREDENTIAL_ISOLATION_ARGS, "push")

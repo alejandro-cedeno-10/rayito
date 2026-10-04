@@ -163,6 +163,83 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
   e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
   cualquier sandbox de las imágenes de `TestImageArns`.
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentException` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
+- **`rayito sandbox proxy` comprueba `Host` y `Origin`**. El proxy añade tu
+  token a todo lo que reenvía, así que una web abierta en tu navegador podía
+  usar el servicio del sandbox (DNS rebinding, un POST entre sitios o un
+  `WebSocket` de otro origen). Ahora sólo reenvía si `Host` es de loopback
+  con el puerto local, la dirección de `--bind`, `<id>.localhost` o un nuevo
+  `--allowed-host` (si no, `421`), y si el `Origin`, cuando viene, es uno de
+  esos orígenes o un nuevo `--allow-origin` (si no, `403`). **Cambio**:
+  `--bind 0.0.0.0`/`::` exige `--allowed-host`, y un cliente que mande otro
+  `Host` (p. ej. un proxy inverso) necesita `--allowed-host`. Como mucho
+  `--max-connections` (8) conexiones a la vez (`503` después). Anuncia
+  también `http://<id>.localhost:<puerto>`, con cookies separadas de tus
+  otras apps locales.
+- **`rayito sandbox proxy` reenvía un solo mensaje por conexión**: la
+  primera petición, con su cuerpo delimitado por `Content-Length` o
+  `chunked`; lo que el cliente mande después por esa conexión ya no llega
+  al upstream sin reescribir, y un upgrade al que el sandbox no responde
+  `101` se reenvía con `Connection: close` y se cierra en vez de quedar como
+  túnel sin filtrar. **Cambio**: una delimitación ambigua
+  (`Transfer-Encoding` junto a `Content-Length`, un `Transfer-Encoding` que
+  no acaba en `chunked`, varios `Content-Length` distintos) es `400`.
+- **`.dockerignore` con la semántica de Docker** en `Template.build`:
+  anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
+  `**/.git` y el resto de los valores de `docker init` excluyen también los
+  de la raíz, que antes acababan en la imagen), un directorio excluido
+  excluye lo de dentro y la última coincidencia gana. **Cambio**: `*` y `?`
+  ya no cruzan `/` (`*.pyc` sólo excluye los de la raíz; usa `**/*.pyc`).
+  Un `UserWarning` (con las rutas, nunca el contenido) avisa si el contexto
+  va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o `*.key`.
+- **`Template.build` no sigue enlaces simbólicos** dentro de un directorio
+  copiado (ni a fichero ni a directorio), como Docker y el SDK de
+  TypeScript (el zip de `rayito image zip`/`publish` los rechaza, ver más
+  abajo): un enlace a un fichero de tu máquina ya no
+  acaba en el artefacto de S3 ni en la imagen. Cada fichero del contexto se
+  vuelve a comprobar dentro del contexto y se abre con `O_NOFOLLOW` justo
+  antes de leerlo.
+- **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
+  restauran siempre la URL sin credenciales (también si vence la orden o la
+  restauración), conservan el error de la operación y avisan por el logger
+  `rayito.git`, sin la URL, si el token puede seguir en `.git/config`. Esas
+  órdenes corren sin hooks ni credential helpers y se niegan
+  (`GitAuthException`) si la configuración de git reescribe URLs
+  (`url.*.insteadOf`). La documentación dice ahora que el token queda al
+  alcance del código del sandbox: usa tokens de vida corta y de un solo
+  repositorio.
+- **Errores de AWS saneados en más caminos**: los stacks opcionales encadenan
+  el resumen saneado y no el `ClientError` crudo; `Template.build` traduce un
+  rechazo de AWS a `BuildException(reason="aws_error")` (antes subía el
+  `ClientError`); el manejador de errores de la CLI, `rayito doctor` y
+  `rayito prune` redactan el mensaje de AWS (un error de firma repite la
+  cadena canónica con el token de sesión).
+- **Salida acotada en memoria**: cada descriptor de un comando o una PTY
+  guarda como mucho 64 MiB (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el
+  final y `CommandResult.truncated`/`CommandExitException.truncated` lo
+  indican. `commands.run`/`connect` aceptan `max_output_bytes` (`0` no
+  guarda nada; los callbacks reciben siempre todo) y `rayito sandbox exec`
+  ya no guarda la salida que imprime.
+- **La CLI neutraliza secuencias de escape**: hacia una terminal, los
+  caracteres de control de logs de CloudWatch, logs de build y mensajes de
+  AWS salen como `\xNN` visibles. `rayito sandbox logs` sólo usa un stream
+  que no es el esperado si tiene exactamente la forma `YYYY/MM/DD[<versión>]<id>`
+  y un día no anterior al arranque, y avisa cuando lo hace.
+- **Access token mínimo**: un token propio (`access_token=`,
+  `RAYITO_ACCESS_TOKEN`, `--token-file`) tiene que decodificar a al menos 16
+  bytes (`ACCESS_TOKEN_MIN_BYTES`). **Cambio**: uno más corto, aceptado
+  antes, ahora es `InvalidArgumentException`. Los generados (32 bytes) no
+  cambian.
+- `ProxyToken` y el contexto de `rayito doctor` ya no muestran el JWE en
+  `repr`.
 - **`Sandbox.create(persist=)` y `AsyncSandbox.create(persist=)` ligan el sandbox a su prefijo de persistencia** (C-07): el
   `runHookPayload` lleva el bucket y la base `prefix` del `S3Prefix` (nunca
   `prefix/name`), y un `rayd` con la corrección rechaza con

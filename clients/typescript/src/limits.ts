@@ -122,3 +122,6 @@ export const GUEST_MEMORY_MULTIPLIER = 4 as const;
 export const RESERVED_PORTS = [8080, 9000] as const;
 
 export const EFS_VOLUMES_MAX_PER_SANDBOX = 4 as const;
+
+export const ACCESS_TOKEN_MIN_BYTES = 16 as const;
+export const COMMAND_OUTPUT_MAX_BYTES = 67108864 as const;

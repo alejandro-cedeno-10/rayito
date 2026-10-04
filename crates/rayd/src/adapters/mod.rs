@@ -12,18 +12,22 @@
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
 //! (`rayd-orphan-reaper`), the symlink-proof mountpoint walk both mount
 //! features share, the EFS volume mounter over `amazon-efs-utils`
-//! (ADR-018), and the `/proc/net/tcp` lookup of who opened a hook
-//! connection (`hook_peer`).
+//! (ADR-018), the `/proc/net/tcp` lookup of who opened a hook
+//! connection (`hook_peer`), and the connection cap of `rayd`'s own
+//! listeners.
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
 pub mod bounded_sync;
 pub mod capabilities;
+pub mod capped_listener;
 pub mod child_registry;
 pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
+pub mod dir_walk;
 pub mod efs_mount;
 pub mod egress_routes;
+pub mod exec_posture;
 pub mod fs_identity;
 pub mod fs_template_spec;
 pub mod fuse_device;
@@ -53,6 +57,7 @@ pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{
     GuestCapabilities, binary_on_path, detect_guest_capabilities, kernel_supports_filesystem,
 };
+pub use capped_listener::{Accept, CappedIncoming, CappedListener, CappedStream};
 pub use child_registry::{ChildRegistry, SpawnChild};
 pub use cloudwatch_otlp_sink::{
     CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,

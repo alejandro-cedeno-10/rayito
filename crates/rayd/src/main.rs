@@ -13,17 +13,14 @@
 //! exits with code 124 (ADR-011).
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
 use aws_sdk_s3::config::SharedCredentialsProvider;
-use axum::Router;
-use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
 use rayd::adapters::{
-    ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
+    CappedListener, ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
     ProcNetPeers, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
     USER_PROBE_PROGRAM, UserConnectProbe, agent_uid, detect_guest_capabilities,
@@ -35,7 +32,7 @@ use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
-use rayd::hooks::{HookServices, PeerGuard};
+use rayd::hooks::{HookServerSettings, HookServices, PeerGuard};
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
     StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
@@ -49,6 +46,7 @@ use rayd::transfer::{TransferManager, TransferSettings};
 use rayd_core::clock::SystemClock;
 use rayd_core::code::SidecarConfig;
 use rayd_core::filesystem::DenyList;
+use rayd_core::listeners::GRPC_MAX_CONNECTIONS;
 use rayd_core::metrics::MetricsProbe;
 use rayd_core::metrics_history::{HISTORY_SAMPLE_INTERVAL, MetricsHistory};
 use rayd_core::process::identity::ALLOW_ROOT_ENV;
@@ -60,7 +58,6 @@ use rayd_core::session::SandboxSession;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::server::TcpIncoming;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -249,12 +246,12 @@ async fn main() -> anyhow::Result<ExitCode> {
         features.clone(),
     )
     .serve_with_incoming_shutdown(
-        TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
+        CappedListener::new(grpc_listener, GRPC_MAX_CONNECTIONS).into_incoming(),
         shutdown.clone().cancelled_owned(),
     );
-    let hooks = axum::serve(
+    let hooks = serve_hooks(
         hooks_listener,
-        guarded_hooks(HookServices {
+        HookServices {
             session,
             code,
             suspend,
@@ -267,16 +264,40 @@ async fn main() -> anyhow::Result<ExitCode> {
             // (`boot_participants`); empty while no slot has one, which
             // keeps every hook exactly as in 0.5.x.
             participants,
-        }),
-    )
-    .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+        },
+        shutdown.clone(),
+    );
 
-    tokio::try_join!(
-        async { grpc.await.context("gRPC listener failed") },
-        async { hooks.await.context("hooks listener failed") },
-    )?;
+    tokio::try_join!(async { grpc.await.context("gRPC listener failed") }, hooks)?;
     tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
     Ok(ExitCode::from(exit_reason.exit_code()))
+}
+
+/// The hooks listener (`rayd::hooks::serve`: capped, with a request-head
+/// deadline), with every call checked against the owner of its connection
+/// over the kernel's socket tables (`guard_peers`, C-01). It never fails;
+/// it ends once `shutdown` is cancelled and its open connections are
+/// answered.
+fn serve_hooks(
+    listener: TcpListener,
+    services: HookServices,
+    shutdown: CancellationToken,
+) -> impl Future<Output = anyhow::Result<()>> {
+    let session = services.session.clone();
+    let guard = PeerGuard {
+        peers: Arc::new(ProcNetPeers),
+        agent_uid: agent_uid(),
+    };
+    let serve = rayd::hooks::serve(
+        listener,
+        rayd::hooks::guard_peers(rayd::hooks::router_with(services), session, guard),
+        HookServerSettings::default(),
+        shutdown,
+    );
+    async move {
+        serve.await;
+        Ok(())
+    }
 }
 
 /// The process's one `FeatureSet` (ADR-015), shared by `ConfigureGrpc`,
@@ -440,19 +461,6 @@ async fn persistence_manager(
         "persistence configured"
     );
     platform_persistence_manager(session.clone(), platform, policy, store, region)
-}
-
-/// The hooks router behind its peer check over the kernel's socket tables
-/// (C-01), served with each connection's peer address so the check can
-/// look it up.
-fn guarded_hooks(services: HookServices) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
-    let session = services.session.clone();
-    let guard = PeerGuard {
-        peers: Arc::new(ProcNetPeers),
-        agent_uid: agent_uid(),
-    };
-    rayd::hooks::guard_peers(rayd::hooks::router_with(services), session, guard)
-        .into_make_service_with_connect_info::<SocketAddr>()
 }
 
 /// Both listeners on `0.0.0.0`, logged once they are bound.

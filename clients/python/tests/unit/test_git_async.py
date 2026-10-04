@@ -15,6 +15,7 @@ from rayito.exceptions import (
     GitAuthException,
     GitUpstreamException,
     InvalidArgumentException,
+    TimeoutException,
 )
 
 from .conftest import (
@@ -32,6 +33,8 @@ from .log_capture import capture_logs
 REMOTE_URL = "https://github.com/o/r.git"
 PASSWORD = "s3cr3t:p@ss"
 ENCODED_PASSWORD = "s3cr3t%3Ap%40ss"
+ISOLATION = "'-c' 'core.hooksPath=/dev/null' '-c' 'credential.helper='"
+REWRITE_CHECK = "'config' '--get-regexp' '^url\\..*\\.(push)?insteadof$'"
 
 
 @pytest.fixture
@@ -115,6 +118,7 @@ async def test_async_invalid_arguments_fail_before_any_rpc(
 async def test_async_push_with_credentials_restores_the_url(
     sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
 ) -> None:
+    fake_rayd.process.reply_when("'--get-regexp'", CannedReply(exit_code=1))
     fake_rayd.process.reply_when("'get-url'", CannedReply(stdout=f"{REMOTE_URL}\n"))
     fake_rayd.process.reply_when("'set-url'", CannedReply())
     fake_rayd.process.reply_when(
@@ -125,10 +129,11 @@ async def test_async_push_with_credentials_restores_the_url(
         await sandbox.git.push("/repo", username="u", password=PASSWORD)
     assert fake_rayd.process.commands() == [
         "'git' '-C' '/repo' 'remote'",
+        f"'git' '-C' '/repo' {REWRITE_CHECK}",
         "'git' '-C' '/repo' 'remote' 'get-url' 'origin'",
         "'git' '-C' '/repo' 'remote' 'set-url' 'origin' "
         f"'https://u:{ENCODED_PASSWORD}@github.com/o/r.git'",
-        "'git' '-C' '/repo' 'push' '--set-upstream' 'origin'",
+        f"'git' '-C' '/repo' {ISOLATION} 'push' '--set-upstream' 'origin'",
         f"'git' '-C' '/repo' 'remote' 'set-url' 'origin' '{REMOTE_URL}'",
     ]
     assert PASSWORD not in f"{excinfo.value} {excinfo.value.stderr}"
@@ -162,3 +167,42 @@ async def test_async_dangerously_authenticate_runs_the_two_commands(
     assert commands[1].endswith("| 'git' 'credential' 'approve'")
     assert "host=github.com" in commands[1]
     assert len(commands) == 2
+
+
+async def test_async_a_restore_that_times_out_keeps_the_push_error_and_warns(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when("'--get-regexp'", CannedReply(exit_code=1))
+    fake_rayd.process.reply_when(f"'set-url' 'origin' '{REMOTE_URL}'", CannedReply(times_out=True))
+    fake_rayd.process.reply_when("'get-url'", CannedReply(stdout=f"{REMOTE_URL}\n"))
+    fake_rayd.process.reply_when("'set-url'", CannedReply())
+    fake_rayd.process.reply_when("'push'", CannedReply(stderr="error: rejected\n", exit_code=128))
+    with capture_logs("rayito") as logs, pytest.raises(CommandExitException) as excinfo:
+        await sandbox.git.push("/repo", remote="origin", username="u", password=PASSWORD)
+    assert excinfo.value.exit_code == 128
+    assert "git push" in logs.text()
+    assert PASSWORD not in logs.text() and ENCODED_PASSWORD not in logs.text()
+
+
+async def test_async_a_clone_that_times_out_still_tries_to_strip_the_origin(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when("'--get-regexp'", CannedReply(exit_code=1))
+    fake_rayd.process.reply_when("'clone'", CannedReply(times_out=True))
+    fake_rayd.process.reply_when("'set-url'", CannedReply())
+    with pytest.raises(TimeoutException):
+        await sandbox.git.clone(REMOTE_URL, "/home/user/r", username="u", password=PASSWORD)
+    assert fake_rayd.process.commands()[-1] == (
+        f"'git' '-C' '/home/user/r' 'remote' 'set-url' 'origin' '{REMOTE_URL}'"
+    )
+
+
+async def test_async_a_url_rewrite_refuses_the_credentials(
+    sandbox: AsyncSandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when(
+        "'--get-regexp'", CannedReply(stdout="url.http://127.0.0.1:9999/.insteadof https://\n")
+    )
+    with pytest.raises(GitAuthException, match="insteadOf"):
+        await sandbox.git.pull("/repo", remote="origin", username="u", password=PASSWORD)
+    assert ENCODED_PASSWORD not in " ".join(fake_rayd.process.commands())

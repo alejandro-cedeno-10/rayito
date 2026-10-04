@@ -8,9 +8,13 @@ import { describe, expect, test } from "vitest";
 import headerNames from "../../../../testdata/secret-gateway/header-names.json" with {
   type: "json",
 };
+import requestPaths from "../../../../testdata/secret-gateway/request-paths.json" with {
+  type: "json",
+};
 import { InvalidArgumentError } from "../../src/errors.js";
 import {
   GatewayStatus,
+  isSafeRequestPath,
   MAX_ALLOW_RULES_PER_ROUTE,
   MAX_HEADERS_PER_ROUTE,
   MAX_RATE_PER_MINUTE,
@@ -65,6 +69,26 @@ describe("SecretGateway", () => {
   test.each(headerNames.duplicates)("shared duplicate pair is rejected: %s / %s", (a, b) => {
     expect(() => gateway({ headers: { [a]: "a", [b]: "b" } })).toThrow(InvalidArgumentError);
   });
+
+  // `testdata/secret-gateway/request-paths.json`: the request paths `rayd`
+  // refuses before its allowlist. As an `allow` path, an unsafe one could
+  // never match a request, so the SDK refuses it before any RPC, like `rayd`
+  // refuses it at `Configure` (`invalid_allow_path`).
+  test.each(requestPaths.unsafe)(
+    "shared unsafe request path is rejected as an allow path: %j",
+    (path) => {
+      expect(isSafeRequestPath(path)).toBe(false);
+      expect(() => gateway({ allow: [["GET", path]] })).toThrow(InvalidArgumentError);
+    },
+  );
+
+  test.each(requestPaths.safe)(
+    "shared safe request path is accepted as an allow path: %j",
+    (path) => {
+      expect(isSafeRequestPath(path)).toBe(true);
+      expect(() => gateway({ allow: [["GET", path]] })).not.toThrow();
+    },
+  );
 
   test("allow must be non-empty, bounded and well-formed", () => {
     expect(() => gateway({ allow: [] })).toThrow(InvalidArgumentError);

@@ -14,6 +14,7 @@ import {
   GitUpstreamError,
   InvalidArgumentError,
   SandboxError,
+  TimeoutError,
 } from "../../src/errors.js";
 import { Git as ExportedGit, GitAuthError as ExportedGitAuthError } from "../../src/index.js";
 import type { CommandResult } from "../../src/models.js";
@@ -22,6 +23,7 @@ import {
   addArgs,
   branchesArgs,
   buildClonePlan,
+  CREDENTIAL_ISOLATION_ARGS,
   checkoutBranchArgs,
   commitArgs,
   createBranchArgs,
@@ -56,6 +58,8 @@ const PASSWORD = "s3cr:t@tok/en";
 const ENCODED_PASSWORD = "s3cr%3At%40tok%2Fen";
 const REPO = "/home/user/repo";
 const ORIGIN_URL = "https://github.com/acme/app.git";
+const ISOLATION = "'-c' 'core.hooksPath=/dev/null' '-c' 'credential.helper='";
+const REWRITE_CHECK = "'config' '--get-regexp' '^url\\..*\\.(push)?insteadof$'";
 
 interface RecordedRun {
   readonly cmd: string;
@@ -92,6 +96,15 @@ function exit128(stderr: string, stdout = ""): CommandExitError {
     exitCode: 128,
     stdout,
     stderr,
+  });
+}
+
+/** `git config --get-regexp` sin coincidencias: sale con 1. */
+function noMatch(): CommandExitError {
+  return new CommandExitError("el comando terminó con código 1", {
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
   });
 }
 
@@ -332,7 +345,12 @@ describe("git-args: credentials, redaction and classification", () => {
 
   test("the clone plan strips credentials into the derived repo, or refuses without a path", () => {
     const plan = buildClonePlan({ url: ORIGIN_URL, username: "bot", password: PASSWORD });
-    expect(plan.args).toEqual(["clone", `https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git`]);
+    expect(plan.credentialed).toBe(true);
+    expect(plan.args).toEqual([
+      ...CREDENTIAL_ISOLATION_ARGS,
+      "clone",
+      `https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git`,
+    ]);
     expect(plan.repoPath).toBe("app");
     expect(plan.sanitizedUrl).toBe(ORIGIN_URL);
     expect(
@@ -415,9 +433,10 @@ describe("Git over commands.run", () => {
       .catch((caught: unknown) => caught);
     expect(runner.commands).toEqual([
       `'git' '-C' '${REPO}' 'remote'`,
+      `'git' '-C' '${REPO}' ${REWRITE_CHECK}`,
       `'git' '-C' '${REPO}' 'remote' 'get-url' 'origin'`,
       `'git' '-C' '${REPO}' 'remote' 'set-url' 'origin' 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git'`,
-      `'git' '-C' '${REPO}' 'push' '--set-upstream' 'origin' 'main'`,
+      `'git' '-C' '${REPO}' ${ISOLATION} 'push' '--set-upstream' 'origin' 'main'`,
       `'git' '-C' '${REPO}' 'remote' 'set-url' 'origin' '${ORIGIN_URL}'`,
     ]);
     expect(error).toBeInstanceOf(CommandExitError);
@@ -439,8 +458,10 @@ describe("Git over commands.run", () => {
       return {};
     });
     await git(runner).push(REPO, { username: "bot", password: PASSWORD });
-    expect(runner.commands[1]).toBe(`'git' '-C' '${REPO}' 'remote' 'get-url' 'fork'`);
-    expect(runner.commands[3]).toBe(`'git' '-C' '${REPO}' 'push' '--set-upstream' 'fork'`);
+    expect(runner.commands[2]).toBe(`'git' '-C' '${REPO}' 'remote' 'get-url' 'fork'`);
+    expect(runner.commands[4]).toBe(
+      `'git' '-C' '${REPO}' ${ISOLATION} 'push' '--set-upstream' 'fork'`,
+    );
   });
 
   test("pull with credentials follows the same order", async () => {
@@ -452,9 +473,10 @@ describe("Git over commands.run", () => {
       password: PASSWORD,
     });
     expect(runner.commands).toEqual([
+      `'git' '-C' '${REPO}' ${REWRITE_CHECK}`,
       `'git' '-C' '${REPO}' 'remote' 'get-url' 'origin'`,
       `'git' '-C' '${REPO}' 'remote' 'set-url' 'origin' 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git'`,
-      `'git' '-C' '${REPO}' 'pull' 'origin' 'main'`,
+      `'git' '-C' '${REPO}' ${ISOLATION} 'pull' 'origin' 'main'`,
       `'git' '-C' '${REPO}' 'remote' 'set-url' 'origin' '${ORIGIN_URL}'`,
     ]);
   });
@@ -511,11 +533,13 @@ describe("Git over commands.run", () => {
   });
 
   test("a failing clone with credentials leaks the password nowhere", async () => {
-    const runner = new RecordingRunner(() =>
-      exit128(
-        `fatal: repository 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git/' not found`,
-        PASSWORD,
-      ),
+    const runner = new RecordingRunner((cmd) =>
+      cmd.includes("'--get-regexp'")
+        ? noMatch()
+        : exit128(
+            `fatal: repository 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git/' not found`,
+            PASSWORD,
+          ),
     );
     const error = await git(runner)
       .clone(ORIGIN_URL, { username: "bot", password: PASSWORD })
@@ -534,9 +558,73 @@ describe("Git over commands.run", () => {
     const runner = new RecordingRunner();
     await git(runner).clone(ORIGIN_URL, { username: "bot", password: PASSWORD });
     expect(runner.commands).toEqual([
-      `'git' 'clone' 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git'`,
+      `'git' ${REWRITE_CHECK}`,
+      `'git' ${ISOLATION} 'clone' 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git'`,
       `'git' '-C' 'app' 'remote' 'set-url' 'origin' '${ORIGIN_URL}'`,
     ]);
+  });
+
+  test("an anonymous clone is neither isolated nor checked", async () => {
+    const runner = new RecordingRunner();
+    await git(runner).clone(ORIGIN_URL, { path: "/w/app" });
+    expect(runner.commands).toEqual([`'git' 'clone' '${ORIGIN_URL}' '/w/app'`]);
+  });
+
+  test("a URL rewrite in the git config refuses the credentials before sending them", async () => {
+    const runner = new RecordingRunner((cmd) =>
+      cmd.includes("'--get-regexp'")
+        ? { stdout: "url.http://127.0.0.1:9999/.insteadof https://\n" }
+        : remoteResponder()(cmd, 0),
+    );
+    await expect(
+      git(runner).clone(ORIGIN_URL, { path: "/w/app", username: "bot", password: PASSWORD }),
+    ).rejects.toThrow(/insteadOf/);
+    await expect(
+      git(runner).push(REPO, { remote: "origin", username: "bot", password: PASSWORD }),
+    ).rejects.toBeInstanceOf(GitAuthError);
+    expect(runner.commands.join(" ")).not.toContain(ENCODED_PASSWORD);
+  });
+
+  test("a restore that times out keeps the push error and warns without the URL", async () => {
+    const warnings: string[] = [];
+    const runner = new RecordingRunner(
+      remoteResponder((cmd) => {
+        if (cmd.endsWith(`'set-url' 'origin' '${ORIGIN_URL}'`)) {
+          return new TimeoutError("el comando superó su timeout");
+        }
+        return cmd.includes("'push'") ? exit128("error: rejected") : undefined;
+      }),
+    );
+    const error = await new Git(runner, { warn: (message) => warnings.push(message) })
+      .push(REPO, { remote: "origin", username: "bot", password: PASSWORD })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CommandExitError);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("git push");
+    expect(warnings[0]).not.toContain(ORIGIN_URL);
+    expect(warnings[0]).not.toContain(ENCODED_PASSWORD);
+  });
+
+  test("a clone that times out still tries to strip the origin", async () => {
+    const runner = new RecordingRunner((cmd) =>
+      cmd.includes("'clone'") ? new TimeoutError("el comando superó su timeout") : {},
+    );
+    await expect(
+      git(runner).clone(ORIGIN_URL, { path: "/w/app", username: "bot", password: PASSWORD }),
+    ).rejects.toBeInstanceOf(TimeoutError);
+    expect(runner.commands.at(-1)).toBe(
+      `'git' '-C' '/w/app' 'remote' 'set-url' 'origin' '${ORIGIN_URL}'`,
+    );
+  });
+
+  test("a clone that exits non-zero does not touch the destination", async () => {
+    const runner = new RecordingRunner((cmd) =>
+      cmd.includes("'clone'") ? exit128("fatal: destination path exists") : {},
+    );
+    await expect(
+      git(runner).clone(ORIGIN_URL, { path: "/w/app", username: "bot", password: PASSWORD }),
+    ).rejects.toBeInstanceOf(CommandExitError);
+    expect(runner.commands.some((cmd) => cmd.includes("'set-url'"))).toBe(false);
   });
 
   test("a password without username is refused before any command", async () => {
@@ -579,11 +667,14 @@ describe("sandbox.git on the native Sandbox", () => {
     await expect(
       sandbox.git.clone(ORIGIN_URL, { path: "/w/app", username: "bot", password: PASSWORD }),
     ).rejects.toBeInstanceOf(CommandExitError);
+    // El fake no tiene `git`: la comprobación de reescrituras de URL (la
+    // primera orden con credenciales) sale con 127 y la clonación ni se
+    // envía, así que el password no llega a viajar.
     const request = rayd.process.startRequests.at(-1);
     expect(request?.process?.cmd).toBe("/bin/bash");
-    expect(request?.process?.args.join(" ")).toContain(
-      `'git' 'clone' 'https://bot:${ENCODED_PASSWORD}@github.com/acme/app.git' '/w/app'`,
-    );
+    expect(request?.process?.args.join(" ")).toContain(`'git' ${REWRITE_CHECK}`);
+    const sent = rayd.process.startRequests.map((start) => start.process?.args.join(" "));
+    expect(sent.join("\n")).not.toContain(ENCODED_PASSWORD);
     expect(request?.process?.envs.GIT_TERMINAL_PROMPT).toBe("0");
     const logged = logger.lines.slice(before);
     expect(JSON.stringify(logged)).not.toContain(PASSWORD);

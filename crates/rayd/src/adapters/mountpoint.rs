@@ -17,28 +17,26 @@
 //! mountpoints).
 
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use rayd_core::process::env::DEFAULT_PATH;
+
 use super::child_registry::ChildRegistry;
+use super::dir_walk::{MissingDir, WalkError, open_dir_beneath};
+use super::exec_posture::ExecPosture;
 
 /// Where every mount-path walk starts; `rayd_core::mount_path` already
 /// guarantees an absolute path under one of its `ALLOWED_ROOTS`.
 pub const FILESYSTEM_ROOT: &str = "/";
 /// `proc(5)`'s per-descriptor magic links.
 const PROC_SELF_FD: &str = "/proc/self/fd";
-/// Each walk step: `O_PATH` (no read permission or filesystem request
-/// needed), `O_DIRECTORY` + `O_NOFOLLOW` (a symlink fails with
-/// `ELOOP`/`ENOTDIR` instead of being followed), `O_CLOEXEC` (never leaks
-/// into a mount daemon or helper).
-const DIR_STEP_FLAGS: libc::c_int =
-    libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
 /// Mode of a mountpoint directory the walk has to create: the same
 /// `0o755` (minus umask) `std::fs::create_dir_all` would use.
-const MOUNTPOINT_DIR_MODE: libc::mode_t = 0o755;
+const MOUNTPOINT_DIR_MODE: u32 = 0o755;
 /// The guest's default user (`image/Dockerfile`'s `user`, uid 1000): the
 /// identity a readiness probe runs as, because proving that *it* can `stat`
 /// the mount is what `mounted` promises the caller.
@@ -46,7 +44,10 @@ pub const GUEST_USER_ID: u32 = 1000;
 pub const GUEST_GROUP_ID: u32 = 1000;
 /// How often `stat_as_guest` polls the probe child for an exit.
 const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(10);
-const STAT_BINARY: &str = "stat";
+/// Absolute, so the probe never resolves a bare name through `rayd`'s own
+/// `PATH`: coreutils' `stat`, present in every Rayito image (AL2023 base,
+/// `image/Dockerfile`).
+const STAT_BINARY: &str = "/usr/bin/stat";
 
 /// Why a mountpoint operation was refused; each feature maps it onto its
 /// own closed error class.
@@ -64,65 +65,30 @@ pub enum MountpointError {
 
 /// Opens `relative` (components separated by `/`, leading `/` ignored)
 /// beneath `root` as an `O_PATH` directory descriptor, one component at a
-/// time, never following a symlink in any of them: a component that is a
-/// symlink (or not a directory) is `InvalidPath`. With `create_missing`, a
-/// missing component is created (`mkdirat`, `MOUNTPOINT_DIR_MODE`) and then
-/// opened the same way, so a racing swap between the two calls is still
-/// caught by the `O_NOFOLLOW` open. Every step is relative to the
-/// descriptor of the previous one, so renaming or replacing an ancestor
-/// after it was opened cannot redirect the rest of the walk.
+/// time, never following a symlink in any of them (`dir_walk`, shared with
+/// the filesystem RPCs): a component that is a symlink (or not a directory)
+/// is `InvalidPath`. With `create_missing`, a missing component is created
+/// (`mkdirat`, `MOUNTPOINT_DIR_MODE`) and then opened the same way, so a
+/// racing swap between the two calls is still caught by the `O_NOFOLLOW`
+/// open. Every step is relative to the descriptor of the previous one, so
+/// renaming or replacing an ancestor after it was opened cannot redirect
+/// the rest of the walk.
 pub fn open_dir_no_symlinks(
     root: &Path,
     relative: &str,
     create_missing: bool,
 ) -> Result<OwnedFd, MountpointError> {
-    let root = c_string(&root.to_string_lossy())?;
-    let mut current = open_at(None, &root)?;
-    for component in relative.split('/').filter(|part| !part.is_empty()) {
-        let name = c_string(component)?;
-        current = match open_at(Some(&current), &name) {
-            Err(MountpointError::NotFound) if create_missing => {
-                make_dir_at(&current, &name)?;
-                open_at(Some(&current), &name)?
-            }
-            other => other?,
-        };
-    }
-    Ok(current)
-}
-
-fn open_at(parent: Option<&OwnedFd>, name: &CString) -> Result<OwnedFd, MountpointError> {
-    let dirfd = parent.map_or(libc::AT_FDCWD, AsRawFd::as_raw_fd);
-    // SAFETY: `name` is a valid, nul-terminated C string kept alive for
-    // the call; `dirfd` is either `AT_FDCWD` or a descriptor `parent`
-    // still owns.
-    let fd = unsafe { libc::openat(dirfd, name.as_ptr(), DIR_STEP_FLAGS) };
-    if fd < 0 {
-        return Err(classify_walk_errno());
-    }
-    // SAFETY: `openat` just returned this descriptor and nothing else owns
-    // it.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
-fn make_dir_at(parent: &OwnedFd, name: &CString) -> Result<(), MountpointError> {
-    // SAFETY: as in `open_at`.
-    let result = unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), MOUNTPOINT_DIR_MODE) };
-    if result == 0 || nix::errno::Errno::last() == nix::errno::Errno::EEXIST {
-        Ok(())
+    let missing = if create_missing {
+        MissingDir::Create(MOUNTPOINT_DIR_MODE)
     } else {
-        Err(classify_walk_errno())
-    }
-}
-
-fn classify_walk_errno() -> MountpointError {
-    match nix::errno::Errno::last() {
-        // `O_NOFOLLOW` on a symlink (`ELOOP`), or `O_DIRECTORY` on one or
-        // on a regular file (`ENOTDIR`): the path no longer names a plain
-        // directory chain, which is exactly what the walk exists to refuse.
-        nix::errno::Errno::ELOOP | nix::errno::Errno::ENOTDIR => MountpointError::InvalidPath,
-        _other => MountpointError::NotFound,
-    }
+        MissingDir::Fail
+    };
+    open_dir_beneath(root, relative, missing).map_err(|error| match error {
+        // The path no longer names a plain directory chain, which is
+        // exactly what the walk exists to refuse.
+        WalkError::Symlink | WalkError::NotADirectory => MountpointError::InvalidPath,
+        WalkError::Io(_errno) => MountpointError::NotFound,
+    })
 }
 
 /// `/proc/self/fd/<n>`, or `/proc/self/fd/<n>/<last>` to name a child of
@@ -214,14 +180,7 @@ pub enum StatProbe {
 /// cannot. Synchronous (it polls); callers run it on the blocking pool.
 #[must_use]
 pub fn stat_as_guest(mount_path: &str, timeout: Duration) -> StatProbe {
-    let mut command = Command::new(STAT_BINARY);
-    command
-        .arg(mount_path)
-        .uid(GUEST_USER_ID)
-        .gid(GUEST_GROUP_ID)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = probe_command(mount_path);
     let Ok(mut child) = ChildRegistry::process().spawn(&mut command) else {
         return StatProbe::Failed;
     };
@@ -242,9 +201,97 @@ pub fn stat_as_guest(mount_path: &str, timeout: Duration) -> StatProbe {
     }
 }
 
+/// The readiness probe: `stat <mount_path>` as the guest user, through
+/// `guest_command`.
+fn probe_command(mount_path: &str) -> Command {
+    let mut command = guest_command(
+        STAT_BINARY,
+        ExecPosture::as_user(GUEST_USER_ID, GUEST_GROUP_ID),
+    );
+    command.arg(mount_path);
+    command
+}
+
+/// A short-lived helper `rayd` runs as the guest user: an environment
+/// rebuilt from scratch holding only `PATH` (nothing of `rayd`'s own
+/// environment — the image ARN, `RAYITO_*`, operator `--env` variables —
+/// may reach a uid-1000 process, whose `/proc/<pid>/environ` any other
+/// uid-1000 process can read while it runs; SEC-3, T18), no stdio, and
+/// `posture` between `fork` and `exec` (identity drop, descriptor seal,
+/// signal reset).
+fn guest_command(program: &str, posture: ExecPosture) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", DEFAULT_PATH)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: `ExecPosture::apply` only issues setgroups/setgid/setuid,
+    // close_range (or fcntl) and sigaction/sigprocmask on values computed
+    // before the fork; it allocates nothing and takes no lock.
+    unsafe {
+        command.pre_exec(move || posture.apply());
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
+    use std::os::fd::FromRawFd;
+
     use super::*;
+
+    /// The probe never inherits `rayd`'s environment: only `PATH` is set,
+    /// on an environment cleared first, and the binary is absolute.
+    #[test]
+    fn the_probe_command_sets_only_path_on_a_cleared_environment() {
+        let command = probe_command("/mnt/data");
+        assert_eq!(command.get_program(), STAT_BINARY);
+        let envs: Vec<_> = command.get_envs().collect();
+        assert_eq!(
+            envs,
+            vec![(
+                std::ffi::OsStr::new("PATH"),
+                Some(std::ffi::OsStr::new(DEFAULT_PATH))
+            )]
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("/mnt/data")]
+        );
+    }
+
+    /// What a guest helper actually sees after `exec`: `PATH` and nothing
+    /// else of the parent's environment, and no descriptor of the parent
+    /// above stdio, even one opened without `O_CLOEXEC` (the `openpty`
+    /// window `process_spawner` seals against).
+    #[test]
+    fn a_guest_helper_sees_only_path_and_no_inherited_descriptor() {
+        let raw = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(raw > 2, "open /dev/null");
+        let inheritable = unsafe { OwnedFd::from_raw_fd(raw) };
+        let script = format!(
+            "env; test -e /proc/self/fd/{} && echo LEAKED_FD",
+            inheritable.as_raw_fd()
+        );
+        let mut command = guest_command("/bin/sh", ExecPosture::keep_identity());
+        command.args(["-c", &script]).stdout(Stdio::piped());
+        let child = ChildRegistry::process().spawn(&mut command).unwrap();
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let names: Vec<&str> = stdout
+            .lines()
+            .filter_map(|line| line.split('=').next())
+            .filter(|name| !SHELL_SET_VARIABLES.contains(name))
+            .collect();
+        assert_eq!(names, vec!["PATH"], "{stdout}");
+        assert!(!stdout.contains("LEAKED_FD"), "{stdout}");
+    }
+
+    /// Variables a POSIX shell sets on its own at startup (`dash`, `bash`
+    /// as `sh`), not inherited from the parent.
+    const SHELL_SET_VARIABLES: [&str; 3] = ["PWD", "SHLVL", "_"];
 
     #[test]
     fn a_path_with_an_interior_nul_is_rejected_before_any_syscall() {

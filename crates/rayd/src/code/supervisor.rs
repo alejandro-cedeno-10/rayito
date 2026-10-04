@@ -19,10 +19,10 @@ use rayd_core::clock::Clock;
 use rayd_core::code::protocol::KernelPidPayload;
 use rayd_core::code::{
     AvailableLanguages, CodeError, ContextEntry, ContextId, ContextRegistry, ContextState,
-    EXECUTE_QUEUE_CAPACITY, KernelSidecar, Language, ReplyError, ReplyPayload,
-    SIDECAR_PROTOCOL_VERSION, SIDECAR_READY_TIMEOUT, STALL_TIMEOUT, SidecarErrorCode, SidecarEvent,
-    SidecarEventSink, SidecarExitSink, SidecarLink, SidecarOp, SidecarRequest, SidecarState,
-    SyntheticError, encode_request, run_rotation_request,
+    EXECUTE_QUEUE_CAPACITY, KernelProcess, KernelProcesses, KernelSidecar, Language, ReplyError,
+    ReplyPayload, SIDECAR_PROTOCOL_VERSION, SIDECAR_READY_TIMEOUT, STALL_TIMEOUT, SidecarErrorCode,
+    SidecarEvent, SidecarEventSink, SidecarExitSink, SidecarLink, SidecarOp, SidecarRequest,
+    SidecarState, SyntheticError, encode_request, run_rotation_request,
 };
 use rayd_core::process::SpawnSpec;
 use rayd_core::process::timeout::SIGKILL;
@@ -100,11 +100,6 @@ impl Default for SupervisorSettings {
     }
 }
 
-/// Sends a signal to a kernel's own process group, by pid: `SIGKILL` for an
-/// orphan, `SIGTERM` then `SIGKILL` when the agent ends; injected so the
-/// supervisor compiles on any host.
-pub type KernelSignaller = Arc<dyn Fn(u32, i32) + Send + Sync>;
-
 type PendingReply = oneshot::Sender<Result<ReplyPayload, CodeError>>;
 
 #[derive(Clone)]
@@ -151,7 +146,10 @@ pub struct SidecarSupervisor {
     dispatch_blocked: AtomicBool,
     restarts: AtomicU64,
     dropped_events: AtomicU64,
-    kernel_signaller: KernelSignaller,
+    /// Checks every kernel pid the sidecar reports and signals kernel
+    /// groups (`SIGKILL` for an orphan, `SIGTERM` then `SIGKILL` when the
+    /// agent ends); injected so the supervisor compiles on any host.
+    kernels: Arc<dyn KernelProcesses>,
     stopping: AtomicBool,
 }
 
@@ -162,7 +160,7 @@ impl SidecarSupervisor {
         session: Arc<SandboxSession>,
         registry: Arc<Mutex<ContextRegistry>>,
         settings: SupervisorSettings,
-        kernel_signaller: KernelSignaller,
+        kernels: Arc<dyn KernelProcesses>,
     ) -> Arc<Self> {
         let clock = session.clock();
         let (state, _) = watch::channel(SidecarState::Starting {
@@ -193,7 +191,7 @@ impl SidecarSupervisor {
             dispatch_blocked: AtomicBool::new(false),
             restarts: AtomicU64::new(0),
             dropped_events: AtomicU64::new(0),
-            kernel_signaller,
+            kernels,
             stopping: AtomicBool::new(false),
         })
     }
@@ -250,10 +248,8 @@ impl SidecarSupervisor {
     /// server). Returns how many kernel groups were signalled.
     pub fn stop_for_exit(&self, signal: i32) -> usize {
         self.stopping.store(true, Ordering::SeqCst);
-        let kernel_pids = lock(&self.registry).kernel_pids();
-        for pid in &kernel_pids {
-            (self.kernel_signaller)(*pid, signal);
-        }
+        let kernels = lock(&self.registry).kernels();
+        let signalled = self.signal_kernels(&kernels, signal);
         if let Some(link) = lock(&self.link).clone() {
             if signal == SIGKILL {
                 link.kill();
@@ -261,7 +257,47 @@ impl SidecarSupervisor {
                 link.terminate();
             }
         }
-        kernel_pids.len()
+        signalled
+    }
+
+    /// The kernel a sidecar reported for `context_id` (`ready`, or the
+    /// `kernel_pid` of a create, restart or rotation reply), once the
+    /// process table confirms it is a kernel of the sidecar running now;
+    /// `None`, with one `kernel_pid_rejected` line, for any other number.
+    /// The sidecar's pipe is reachable by sandbox processes (T12), so the
+    /// number alone never decides which group `rayd` signals.
+    pub fn admit_kernel(
+        &self,
+        context_id: &ContextId,
+        reported: Option<u32>,
+    ) -> Option<KernelProcess> {
+        let reported = reported?;
+        let sidecar = lock(&self.link).as_ref().map(|link| link.pid().0);
+        let verdict = match sidecar {
+            Some(sidecar) => self.kernels.admit(reported, sidecar),
+            None => Err(rayd_core::code::KernelPidRejection::SidecarGone),
+        };
+        match verdict {
+            Ok(kernel) => Some(kernel),
+            Err(rejection) => {
+                tracing::warn!(
+                    context_id = %context_id,
+                    kernel_pid = reported,
+                    reason = rejection.as_str(),
+                    "kernel_pid_rejected"
+                );
+                None
+            }
+        }
+    }
+
+    /// Signals each kernel group whose pid still names that kernel;
+    /// returns how many were signalled.
+    fn signal_kernels(&self, kernels: &[KernelProcess], signal: i32) -> usize {
+        kernels
+            .iter()
+            .filter(|kernel| self.kernels.signal(kernel, signal))
+            .count()
     }
 
     #[must_use]
@@ -543,6 +579,7 @@ impl SidecarSupervisor {
             .map(|language| language.as_str())
             .collect();
         *lock(&self.languages) = available;
+        let kernel = self.admit_kernel(&context_id, *kernel_pid);
         let rotation = lock(&self.rotation_envs);
         {
             let mut registry = lock(&self.registry);
@@ -554,7 +591,7 @@ impl SidecarSupervisor {
                 rotation.clone().unwrap_or_default(),
             );
             entry.state = ContextState::Ready;
-            entry.kernel_pid = *kernel_pid;
+            entry.kernel = kernel;
             let _ = registry.register(entry);
         }
         tracing::info!(
@@ -603,10 +640,14 @@ impl SidecarSupervisor {
             let started = tokio::time::Instant::now();
             let result = supervisor.restart_default(envs).await;
             let restart_ms = millis(started.elapsed());
+            let admitted = result
+                .as_ref()
+                .ok()
+                .and_then(|kernel_pid| supervisor.admit_kernel(&context_id, *kernel_pid));
             let mut registry = lock(&supervisor.registry);
             match result {
                 Ok(kernel_pid) => {
-                    let _ = registry.set_kernel_pid(&context_id, kernel_pid);
+                    let _ = registry.set_kernel(&context_id, admitted);
                     tracing::info!(restart_ms, kernel_pid, "default kernel rotated");
                 }
                 Err(ref error) => {
@@ -658,20 +699,18 @@ impl SidecarSupervisor {
                 execution_count: 0,
             });
         }
-        let kernel_pids = {
+        let kernels = {
             let mut registry = lock(&self.registry);
-            let pids = registry.kernel_pids();
+            let kernels = registry.kernels();
             registry.clear();
-            pids
+            kernels
         };
-        for pid in &kernel_pids {
-            (self.kernel_signaller)(*pid, SIGKILL);
-        }
+        let kernels_killed = self.signal_kernels(&kernels, SIGKILL);
         if self.stopping() {
             tracing::info!(
                 exit_code = code,
                 pending = pending_count(&executions),
-                kernels_killed = kernel_pids.len(),
+                kernels_killed,
                 "sidecar exited for shutdown"
             );
             return;
@@ -680,7 +719,7 @@ impl SidecarSupervisor {
         tracing::warn!(
             exit_code = code,
             pending = pending_count(&executions),
-            kernels_killed = kernel_pids.len(),
+            kernels_killed,
             sidecar_restarts = restarts,
             dropped_events = self.dropped_events.load(Ordering::Relaxed),
             "sidecar exited; contexts cleared"
@@ -748,7 +787,7 @@ impl SidecarSupervisor {
                     );
                 }
                 if let Ok(id) = ContextId::parse(context_id) {
-                    let _ = lock(&self.registry).set_kernel_pid(&id, None);
+                    let _ = lock(&self.registry).set_kernel(&id, None);
                 }
             }
             SidecarEvent::Started { id, .. }
@@ -877,14 +916,19 @@ pub(crate) fn millis(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::time::Duration;
 
-    use rayd_core::code::{CodeError, SidecarEvent, SidecarOp, SidecarState};
+    use rayd_core::code::{
+        CodeError, ContextId, SIDECAR_PROTOCOL_VERSION, SidecarEvent, SidecarOp, SidecarState,
+    };
     use rayd_core::process::timeout::{SIGKILL, SIGTERM};
 
-    use super::super::fake_sidecar::{FAKE_PID, ready_supervisor, ready_supervisor_with};
-    use super::{OpTimeouts, SidecarSupervisor, SupervisorSettings, lock};
+    use super::super::fake_sidecar::{
+        FAKE_PID, FakeKernels, facts, ready_supervisor, ready_supervisor_with,
+        starting_supervisor_with,
+    };
+    use super::{OpTimeouts, SidecarSupervisor, SupervisorSettings};
 
     fn settings() -> SupervisorSettings {
         SupervisorSettings {
@@ -964,18 +1008,13 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn stop_for_exit_signals_kernels_and_the_sidecar_and_never_relaunches() {
-        let signalled = Arc::new(Mutex::new(Vec::new()));
-        let recorder = signalled.clone();
-        let mut fixture = ready_supervisor_with(
-            settings(),
-            Arc::new(move |pid, signal| lock(&recorder).push((pid, signal))),
-        )
-        .await;
+        let kernels = Arc::new(FakeKernels::default());
+        let mut fixture = ready_supervisor_with(settings(), kernels.clone()).await;
         let supervisor = fixture.supervisor.clone();
         assert_eq!(supervisor.stop_for_exit(SIGTERM), 1);
         assert!(fixture.launched.log.terminated());
         assert!(!fixture.launched.log.killed());
-        assert_eq!(*lock(&signalled), vec![(FAKE_PID + 1, SIGTERM)]);
+        assert_eq!(kernels.signalled(), vec![(FAKE_PID + 1, SIGTERM)]);
         assert_eq!(supervisor.stop_for_exit(SIGKILL), 1);
         assert!(fixture.launched.log.killed());
         drop(fixture.launched);
@@ -993,9 +1032,81 @@ mod tests {
         );
         assert!(matches!(supervisor.state(), SidecarState::Exited { .. }));
         assert_eq!(
-            lock(&signalled).last().copied(),
+            kernels.signalled().last().copied(),
             Some((FAKE_PID + 1, SIGKILL))
         );
+    }
+
+    /// A `ready` line forged into the sidecar's pipe (T12) names pid 0
+    /// (`rayd`'s own group), `init`, a root helper that is no child of the
+    /// sidecar, or no process at all: none is recorded, so neither the
+    /// sidecar's death nor the agent's exit signals any group for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_forged_ready_kernel_pid_is_never_signalled() {
+        const ROOT_HELPER: u32 = 900;
+        const NOBODY: u32 = 99_999;
+        for forged in [0, 1, ROOT_HELPER, NOBODY] {
+            let kernels = Arc::new(FakeKernels::default());
+            kernels.set(
+                ROOT_HELPER,
+                Some(rayd_core::code::ProcessFacts {
+                    uid: 0,
+                    ..facts(1, ROOT_HELPER)
+                }),
+            );
+            let (supervisor, mut launched) =
+                starting_supervisor_with(settings(), kernels.clone()).await;
+            launched
+                .emit(SidecarEvent::Ready {
+                    v: SIDECAR_PROTOCOL_VERSION,
+                    default_context_id: "default".to_owned(),
+                    kernel_pid: Some(forged),
+                    warmup_ms: 0,
+                    languages: vec!["python".to_owned()],
+                })
+                .await;
+            let mut state = supervisor.watch_state();
+            let _ = state
+                .wait_for(|state| matches!(state, SidecarState::Ready))
+                .await;
+            assert_eq!(supervisor.stop_for_exit(SIGKILL), 0, "pid {forged}");
+            assert!(kernels.signalled().is_empty(), "pid {forged}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_kernel_pid_recycled_after_admission_is_never_signalled() {
+        let kernels = Arc::new(FakeKernels::default());
+        let fixture = ready_supervisor_with(settings(), kernels.clone()).await;
+        kernels.recycle(FAKE_PID + 1);
+        assert_eq!(fixture.supervisor.stop_for_exit(SIGTERM), 0);
+        assert!(kernels.signalled().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_a_kernel_of_the_running_sidecar_is_admitted() {
+        const CONTEXT_KERNEL: u32 = FAKE_PID + 7;
+        const OTHER_SIDECARS_KERNEL: u32 = FAKE_PID + 8;
+        let kernels = Arc::new(FakeKernels::default());
+        kernels.add_kernel(CONTEXT_KERNEL);
+        kernels.set(
+            OTHER_SIDECARS_KERNEL,
+            Some(facts(FAKE_PID + 100, OTHER_SIDECARS_KERNEL)),
+        );
+        let fixture = ready_supervisor_with(settings(), kernels).await;
+        let context = ContextId::parse("ctx-1").unwrap();
+        let admitted = fixture
+            .supervisor
+            .admit_kernel(&context, Some(CONTEXT_KERNEL))
+            .unwrap();
+        assert_eq!(admitted.pid(), CONTEXT_KERNEL);
+        assert_eq!(
+            fixture
+                .supervisor
+                .admit_kernel(&context, Some(OTHER_SIDECARS_KERNEL)),
+            None
+        );
+        assert_eq!(fixture.supervisor.admit_kernel(&context, None), None);
     }
 
     #[tokio::test(start_paused = true)]

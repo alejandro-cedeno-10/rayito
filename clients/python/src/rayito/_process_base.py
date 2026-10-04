@@ -8,6 +8,7 @@ fallos de stream a resultado o excepción. Sin I/O.
 from __future__ import annotations
 
 import codecs
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,7 +17,7 @@ from typing import Any, Final, Protocol
 import grpc
 import grpc.aio
 
-from rayito._limits import SUSPENDED_STATES, TERMINAL_STATES
+from rayito._limits import COMMAND_OUTPUT_MAX_BYTES, SUSPENDED_STATES, TERMINAL_STATES
 from rayito._models import CommandResult, ProcessInfo, ProcessKindName, SandboxMetrics
 from rayito._payload import validated_envs
 from rayito._transport import (
@@ -159,20 +160,44 @@ def pid_from_start_event(event: process_pb2.ProcessEvent) -> int:
     return int(event.start.pid)
 
 
+def validate_max_output_bytes(value: int) -> int:
+    """`max_output_bytes`: un entero >= 0 (`0` no guarda nada; la salida
+    sólo llega a los callbacks)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise InvalidArgumentException(f"max_output_bytes debe ser un entero >= 0: {value!r}")
+    return value
+
+
 class DecodedStream:
     """Un stream de bytes decodificado incrementalmente a texto (UTF-8 con
-    `errors="replace"`); un carácter partido entre dos chunks se reconstruye."""
+    `errors="replace"`); un carácter partido entre dos chunks se reconstruye.
 
-    def __init__(self, callback: OutputCallback | None) -> None:
+    Guarda como mucho `max_bytes` bytes recibidos (la cola: lo más antiguo se
+    descarta y cuenta en `dropped_bytes`), para que un proceso del sandbox
+    que escupe salida sin fin no agote la memoria del cliente. El callback
+    recibe siempre todo, se guarde o no."""
+
+    def __init__(
+        self, callback: OutputCallback | None, max_bytes: int = COMMAND_OUTPUT_MAX_BYTES
+    ) -> None:
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._callback = callback
-        self._parts: list[str] = []
+        self._max_bytes = max_bytes
+        self._parts: deque[tuple[str, int]] = deque()
+        self._kept_bytes = 0
+        self._pending_bytes = 0
+        self.dropped_bytes = 0
 
     @property
     def text(self) -> str:
-        return "".join(self._parts)
+        return "".join(text for text, _ in self._parts)
+
+    @property
+    def truncated(self) -> bool:
+        return self.dropped_bytes > 0
 
     def feed(self, payload: bytes) -> str | None:
+        self._pending_bytes += len(payload)
         return self._emit(self._decoder.decode(payload))
 
     def flush(self) -> None:
@@ -181,25 +206,50 @@ class DecodedStream:
     def _emit(self, text: str) -> str | None:
         if not text:
             return None
-        self._parts.append(text)
+        size, self._pending_bytes = self._pending_bytes, 0
+        self._parts.append((text, size))
+        self._kept_bytes += size
+        self._trim()
         if self._callback is not None:
             self._callback(text)
         return text
 
+    def _trim(self) -> None:
+        """Descarta por delante hasta volver a `max_bytes`; si el exceso cae
+        dentro de una pieza, se queda con su final."""
+        while self._kept_bytes > self._max_bytes:
+            oldest, size = self._parts.popleft()
+            overflow = self._kept_bytes - self._max_bytes
+            if size <= overflow:
+                self._kept_bytes -= size
+                self.dropped_bytes += size
+                continue
+            tail = oldest.encode("utf-8")[overflow:].decode("utf-8", errors="ignore")
+            self._parts.appendleft((tail, size - overflow))
+            self._kept_bytes -= overflow
+            self.dropped_bytes += overflow
+
 
 class OutputAccumulator:
-    """Salida acumulada de un proceso: un `DecodedStream` por descriptor, el
-    último `seq` visto (para `Connect(from_seq)`) y el cierre en `finish`."""
+    """Salida acumulada de un proceso: un `DecodedStream` por descriptor
+    (cada uno con su tope `max_bytes`), el último `seq` visto (para
+    `Connect(from_seq)`) y el cierre en `finish`."""
 
     def __init__(
         self,
         *,
         on_stdout: OutputCallback | None = None,
         on_stderr: OutputCallback | None = None,
+        max_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> None:
-        self._stdout = DecodedStream(on_stdout)
-        self._stderr = DecodedStream(on_stderr)
+        self._stdout = DecodedStream(on_stdout, max_bytes)
+        self._stderr = DecodedStream(on_stderr, max_bytes)
         self._last_seq = 0
+
+    @property
+    def truncated(self) -> bool:
+        """Si se descartó salida antigua de stdout o de stderr por el tope."""
+        return self._stdout.truncated or self._stderr.truncated
 
     @property
     def last_seq(self) -> int:
@@ -229,10 +279,12 @@ class OutputAccumulator:
     def finish(self, end: process_pb2.EndEvent) -> CommandOutcome:
         self._stdout.flush()
         self._stderr.flush()
-        return outcome_from_end(end, self.stdout, self.stderr)
+        return outcome_from_end(end, self.stdout, self.stderr, truncated=self.truncated)
 
 
-def outcome_from_end(end: process_pb2.EndEvent, stdout: str, stderr: str) -> CommandOutcome:
+def outcome_from_end(
+    end: process_pb2.EndEvent, stdout: str, stderr: str, *, truncated: bool = False
+) -> CommandOutcome:
     """Tabla cerrada de `EndEvent.status`: `exited`/`signaled` con exit 0 →
     `CommandResult`; distinto de cero → `CommandExitException`; `timeout` →
     `TimeoutException`; `output_truncated` → `SandboxException`; `suspending`
@@ -259,13 +311,16 @@ def outcome_from_end(end: process_pb2.EndEvent, stdout: str, stderr: str) -> Com
     if status not in (STATUS_EXITED, STATUS_SIGNALED) and end.HasField("error"):
         return translate_stream_error(str(end.error.code), str(end.error.message))
     if exit_code == 0:
-        return CommandResult(stdout=stdout, stderr=stderr, exit_code=0, error=None)
+        return CommandResult(
+            stdout=stdout, stderr=stderr, exit_code=0, error=None, truncated=truncated
+        )
     return CommandExitException(
         f"el comando terminó con exit_code={exit_code} ({status})",
         exit_code=exit_code,
         stdout=stdout,
         stderr=stderr,
         error=status,
+        truncated=truncated,
     )
 
 
