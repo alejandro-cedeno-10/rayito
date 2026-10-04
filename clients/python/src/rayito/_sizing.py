@@ -12,6 +12,25 @@ calcula el sufijo de imagen (`<variant>-<size>`, por ejemplo
 `rayito-base-4gb`) que `rayito image publish --sizes` publica
 (`cli/_publish.py`) y que `apply_size_suffix` antepone al nombre de
 plantilla de `Sandbox.create(size=...)`.
+
+Coste y activación
+-------------------
+Activa: `Sandbox.create(size="4gb")` (o `SizeRequest(memory_mib=...)`),
+    tras publicar esa imagen con `rayito image publish --sizes 4gb`.
+Recursos y llamadas AWS: ninguno nuevo al lanzar (el tamaño va en el
+    nombre de la imagen); `get_info()` hace como mucho una
+    `GetMicrovmImageVersion` gratuita por versión y proceso; cada tamaño
+    publicado es una imagen más en tu cuenta.
+Coste aproximado: un MicroVM más grande cuesta más por hora, de $0,0315/h
+    (512 MiB) a $0,5044/h (8192 MiB) en baseline (`limits.md`, us-east-1,
+    consultado 2026-09-30); cada tamaño publicado añade storage de snapshot,
+    ≈ $0,04/semana por versión.
+IAM: ninguno adicional; la pila opcional `sizes-guard` niega `RunMicrovm`
+    fuera de las imágenes listadas.
+Cómo apagarla: no pases `size=` (por defecto `None`); las versiones de cada
+    imagen de tamaño se borran con `rayito image prune --image-name ...`.
+Ejemplo:
+    sbx = Sandbox.create(size="4gb")
 """
 
 from __future__ import annotations

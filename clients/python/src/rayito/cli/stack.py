@@ -143,6 +143,7 @@ def status_command(
     component: Annotated[str, typer.Argument()],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
 ) -> None:
+    """Estado y salidas de la pila del componente (sólo DescribeStacks)."""
     stacks = _stacks(ctx)
     _resolve(stacks, component)
     status = stacks.status(component, stack_name=stack_name)
@@ -171,6 +172,7 @@ def deploy_command(
     tag: Annotated[list[str], typer.Option("--tag", help="Etiqueta K=V; repetible.")] = [],  # noqa: B006
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Crea o actualiza la pila; imprime coste y parámetros que cambian."""
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
     if not resolved.supported:
@@ -207,6 +209,7 @@ def destroy_command(
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Borra la pila del componente; dice antes qué se conserva."""
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
     confirm_destroy(ctx, resolved, yes=yes)

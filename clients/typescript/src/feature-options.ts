@@ -115,7 +115,7 @@ export function planFeatures(
     }
   }
   if (options.volumes !== undefined) {
-    throw new UnimplementedError("volumes", `llega en 0.6 (${VOLUMES_CHANGE})`);
+    throw new UnimplementedError("volumes", `todavía no disponible (${VOLUMES_CHANGE})`);
   }
   // `size` (m15-sizes-catalog) ya no es un stub: no produce ninguna
   // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste
@@ -133,7 +133,7 @@ export function planFeatures(
     sections.push(new GatewaySectionFactory(validateGateways(options.gateways)));
   }
   if (options.domain !== undefined) {
-    throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
+    throw new UnimplementedError("domain", `todavía no disponible (${DOMAIN_CHANGE})`);
   }
   return sections.length === 0 && telemetry === undefined && events === undefined
     ? EMPTY_PLAN

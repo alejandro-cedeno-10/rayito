@@ -610,6 +610,50 @@ class AsyncSandbox:
                 telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             )
 
+        `volumes=` y `domain=` siguen siendo stubs (`UnimplementedError`
+        antes de `run-microvm`); `mounts=`, `size=`, `events=`, `telemetry=`
+        y `gateways=` son reales, como en `Sandbox.create`.
+
+        `mounts=` (m15-s3-mounts) monta cada `S3Mount` con `mount-s3`, sólo
+        en `rayito-base-caps` y sólo los buckets del allowlist de la imagen.
+
+        Coste y activación
+        -------------------
+        Activa: `mounts={"/mnt/data": S3Mount(bucket="...")}` en `create()`,
+            con `execution_role_arn=` y el bucket en
+            `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen.
+        Recursos y llamadas AWS: ningún recurso nuevo; las peticiones S3
+            normales de `mount-s3` con el execution role; la política sale de
+            la pila `s3-mounts` (sólo IAM).
+        Coste aproximado: $0 propio; las peticiones y el almacenamiento de
+            S3 del bucket montado (us-east-1, consultado 2026-10-01).
+        IAM: `RayitoS3MountAccess` (`infra/s3-mounts.yaml`) en el execution
+            role.
+        Cómo apagarla: no pases `mounts=` (por defecto `None`); `rayito
+            stack destroy s3-mounts` quita la política.
+        Ejemplo:
+            sbx = await AsyncSandbox.create(
+                "rayito-base-caps", execution_role_arn=role_arn,
+                mounts={"/mnt/data": S3Mount(bucket="mi-bucket")},
+            )
+
+        `size=` (m15-sizes-catalog) elige en el cliente la imagen de ese
+        tamaño (`rayito-base-4gb`), que tiene que estar publicada.
+
+        Coste y activación
+        -------------------
+        Activa: `size="4gb"` (o `SizeRequest(memory_mib=...)`) en
+            `create()`, tras `rayito image publish --sizes 4gb`.
+        Recursos y llamadas AWS: ninguno nuevo al lanzar; cada tamaño
+            publicado es una imagen más en tu cuenta.
+        Coste aproximado: de $0,0315/h (512 MiB) a $0,5044/h (8192 MiB) en
+            baseline (`limits.md`, us-east-1, consultado 2026-09-30), más
+            ≈ $0,04/semana de snapshot por versión de imagen publicada.
+        IAM: ninguno adicional (`sizes-guard` es opcional).
+        Cómo apagarla: no pases `size=` (por defecto `None`).
+        Ejemplo:
+            sbx = await AsyncSandbox.create(size="4gb")
+
         `events=` (m15-events-webhooks, ADR-020) manda a `rayd` la clave de
         este sandbox (`k_sbx`) en el mismo `ConfigureSandbox`, como en
         `Sandbox.create`; acepta `AsyncLifecycleEvents` o `LifecycleEvents`
