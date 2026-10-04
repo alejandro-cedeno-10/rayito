@@ -7,6 +7,11 @@ el resto del programa sigue igual. Qué hay y qué no, fila a fila, está en
 [Paridad con E2B](e2b-parity.md); esta página explica cómo migrar y en qué
 se comporta distinto.
 
+!!! note "Marcas"
+    E2B es una marca de su titular. Rayito es un proyecto independiente, no
+    afiliado, patrocinado ni respaldado por E2B; el nombre se usa sólo para
+    describir con qué SDK es compatible la API de `rayito.e2b` / `rayito/e2b`.
+
 ## Migrar: cambia un import
 
 === "Python"

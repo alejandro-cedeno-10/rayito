@@ -203,6 +203,15 @@ uv run ruff format --check .
 uv run mypy src tests
 ```
 
+El job `python-versions` repite `uv run pytest tests/unit` con el Python
+más antiguo y el más nuevo que declaran los classifiers (3.11 y 3.13; `check`
+cubre el 3.12 del runner). En local, sin tocar `.venv`:
+
+```bash
+cd clients/python && uv run --isolated --python 3.11 pytest tests/unit
+cd clients/python && uv run --isolated --python 3.13 pytest tests/unit
+```
+
 ```bash
 cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
 ```
@@ -308,6 +317,13 @@ y fixtures se usan los marcadores de AWS (`123456789012`,
 
 ## 4. Convenciones
 
+Los agentes de código (y quien quiera la versión corta) tienen estas
+convenciones resumidas como skill del proyecto en
+`.claude/skills/rayito-engineering/SKILL.md`, junto con las órdenes exactas
+de los gates, la checklist de paridad Python/TypeScript/shim E2B y el flujo
+de release y aceptación en AWS. Si una regla cambia aquí, cambia también
+allí.
+
 - **Identificadores siempre en inglés**: ficheros, módulos, clases,
   funciones, variables, constantes, campos, nombres de test. El español va
   sólo en cadenas de cara al usuario, docstrings, comentarios y
@@ -342,10 +358,17 @@ y fixtures se usan los marcadores de AWS (`123456789012`,
   los commits" más abajo).
 - **Commits firmados.** Además del trailer DCO, cada commit va firmado
   criptográficamente (GPG o SSH, opción `-S`) con una clave registrada en tu
-  cuenta de GitHub, para que aparezca como *Verified*. Firmar significa aceptar el Developer Certificate
-  of Origin 1.1, reproducido ahí. Cuando el repositorio sea público, la app
-  DCO de GitHub será un check obligatorio en cada PR (paso manual en
-  `docs/RELEASING.md`).
+  cuenta de GitHub, para que aparezca como *Verified* (el ruleset de `main`
+  exige commits firmados). Son dos cosas distintas: la firma prueba quién
+  hizo el commit; el trailer `Signed-off-by:` es el que acepta el Developer
+  Certificate of Origin 1.1, reproducido más abajo. La comprobación del DCO
+  en cada PR (la app DCO de GitHub como check obligatorio) es un paso
+  manual pendiente en `docs/RELEASING.md` §5.
+- **Tests con cada cambio.** Toda funcionalidad nueva o corrección llega con
+  tests que la cubren en el mismo PR: unitarios en el paquete que cambia
+  (`cargo test`, `pytest tests/unit`, `vitest`) y, si toca el runtime, la
+  aceptación e2e contra AWS real del cambio OpenSpec (regla 4 de §1). Un PR
+  de comportamiento sin tests explica por qué en su descripción.
 - **Sin force-push a `main`.** En tu rama, si hace falta, `--force-with-lease`.
 - **PR**: el título en formato Conventional Commits; la descripción sigue la
   plantilla (`.github/PULL_REQUEST_TEMPLATE.md`): cambio OpenSpec enlazado

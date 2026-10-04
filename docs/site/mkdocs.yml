@@ -7,6 +7,14 @@ repo_url: https://github.com/alejandro-cedeno-10/rayito
 repo_name: alejandro-cedeno-10/rayito
 edit_uri: edit/main/docs/site/docs/
 strict: true
+copyright: >-
+  Copyright 2026 Rayito contributors ·
+  <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/LICENSE">Apache-2.0</a> ·
+  <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md">Contribuir</a> ·
+  <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md">Seguridad</a> ·
+  <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/CODE_OF_CONDUCT.md">Código de conducta</a><br>
+  Proyecto independiente, no afiliado, patrocinado ni respaldado por E2B ni por AWS;
+  sus nombres se usan sólo para describir compatibilidad y plataforma.
 
 # MkDocs 1.6: con `strict`, un enlace o un ancla rota rompe el build.
 validation:

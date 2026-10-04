@@ -19,7 +19,7 @@ from botocore.exceptions import ClientError
 
 from rayito._aws import ControlPlane, PortSpec
 from rayito._images import read_gate
-from rayito._limits import DEFAULT_PORT, SUPPORTED_REGIONS
+from rayito._limits import DEFAULT_PORT, SUPPORTED_REGIONS, TOKEN_TTL_MINUTES
 from rayito._models import SandboxHealth, SandboxInfo, SandboxListItem
 from rayito._sandbox_base import METADATA_PROBE_TIMEOUT_SECONDS, health_from_proto
 from rayito._stacks.components.efs_volumes import COMPONENT as EFS_VOLUMES_COMPONENT
@@ -535,7 +535,12 @@ def launch_sandbox(clients: Clients, ctx: DoctorContext) -> Sandbox:
 
 
 def token_details(sandbox_id: str, source: str) -> dict[str, Any]:
-    return {"sandbox_id": sandbox_id, "port": DEFAULT_PORT, "ttl_minutes": 60, "source": source}
+    return {
+        "sandbox_id": sandbox_id,
+        "port": DEFAULT_PORT,
+        "ttl_minutes": TOKEN_TTL_MINUTES,
+        "source": source,
+    }
 
 
 def check_token(clients: Clients, ctx: DoctorContext) -> CheckResult:

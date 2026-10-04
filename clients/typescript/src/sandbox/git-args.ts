@@ -3,7 +3,8 @@
  * comillas de shell, los argv exactos de E2B, los parsers de `git status
  * --porcelain=1 -b` y de `git branch`, las credenciales en la URL, la
  * redacción de secretos y la clasificación de fallos. Sin I/O: `Git` las
- * compone sobre `commands.run`. Adaptado del SDK de E2B (Apache-2.0).
+ * compone sobre `commands.run`. Adaptado, con cambios, del SDK de E2B
+ * (github.com/e2b-dev/E2B, Apache License 2.0); ver NOTICE.
  */
 
 import { CommandExitError, InvalidArgumentError } from "../errors.js";

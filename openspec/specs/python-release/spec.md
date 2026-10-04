@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m6-e2b-compat. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Package metadata for the first public release
 `clients/python/pyproject.toml` and `rayito._version.__version__` SHALL both read `0.1.0`, and a unit test SHALL assert they match. The project SHALL declare the licence per PEP 639 as `license = "Apache-2.0"` with `license-files = ["LICENSE", "NOTICE"]` and SHALL declare **no** classifier starting with `License ::`; a unit test SHALL assert both. The project SHALL declare the classifiers `Development Status :: 3 - Alpha`, `Intended Audience :: Developers`, `Operating System :: OS Independent`, `Programming Language :: Python :: 3 :: Only`, `3.11`, `3.12`, `3.13`, `Framework :: AsyncIO`, `Topic :: Software Development :: Libraries :: Python Modules`, `Typing :: Typed`; `keywords`; `[project.urls]` with `Homepage`, `Repository`, `Documentation` and `Changelog`; and a `docs` dependency group with `mkdocs-material` and `mkdocstrings[python]`. Runtime dependencies SHALL stay `grpcio`, `protobuf` (floor equal to the `buf` plugin version) and `boto3`.
 
@@ -84,3 +86,9 @@ TBD - created by archiving change m6-e2b-compat. Update Purpose after archive.
 - **WHEN** `python -c "import rayito, sys; raise SystemExit('mcp' in sys.modules)"` runs in the project environment
 - **THEN** it exits 0
 
+### Requirement: The unit suite runs on every declared Python minor
+CI SHALL run `uv run pytest tests/unit` in `clients/python` on every Python minor version the classifiers declare: the `check` job on the runner's interpreter (3.12) and a `python-versions` job, with the same hardening as every other job (harden-runner first, actions pinned to a commit SHA, `persist-credentials: false`), on 3.11 and 3.13 through `astral-sh/setup-uv`'s `python-version`. `CONTRIBUTING.md` SHALL give the local equivalent (`uv run --isolated --python <minor> pytest tests/unit`).
+
+#### Scenario: a 3.12-only construct fails CI
+- **WHEN** a change uses a standard-library API that exists only from Python 3.12
+- **THEN** the `python-versions (3.11)` job fails even though `check` passes
