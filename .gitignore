@@ -41,3 +41,8 @@ node_modules/
 # antiguo puede conservar su salida cruda, que lleva IDs de cuenta, ARNs,
 # endpoints e IDs de MicroVM del entorno donde se corrió: nunca se versiona.
 /spike/
+
+# Entorno local con Docker (make local-up): el contexto del guest se rehace en
+# cada `make local-guest-context` y .cache guarda binarios y sondas locales.
+/dev/local/.guest-context/
+/dev/local/.cache/
