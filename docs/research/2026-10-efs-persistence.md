@@ -500,7 +500,7 @@ para y se reescribe este documento.
 | EFS-9 ✅ | **Respondida 2026-10-04** (Q132). Rendimiento desde el VM: `dd` 1 GB escritura y lectura secuencial, 10 000 ficheros de 4 KB, `git clone` de un repo mediano, latencia 4K aleatoria (`fio` si instala) frente a disco local | VM caps 2 GB | EFS: 2 GB escritos ($0,12) + 3 GB leídos ($0,09) + VM 15 min ($0,03) ≈ $0,25 |
 | EFS-10 ✅ | **Respondida 2026-10-04** (Q133): uid 1000 alcanza el puerto local de `efs-proxy`. uid 1000 en el volumen: propietario 1000:1000 forzado por el AP, `chmod`, `rename`, `ESTALE` con muchos renames; ¿uid 1000 puede conectar al puerto local de `efs-proxy`? ¿Lo corta la regla `prohibit`? | pruebas como uid 1000 | < $0,02 |
 | EFS-11 ★ ✅ | **Respondida 2026-10-04** (Q129): pasa con 60 s y 10 min (la de 60 min es EFS-12). Suspend/resume con montaje activo: pausas de 60 s, 10 min y 60 min; tiempo al primer `stat` correcto tras resume; escribir por un fd abierto antes de la pausa; `flock` mantenido; estado de `efs-proxy` | 3 ciclos por duración con el SDK | 3 × 3 × $0,005 + snapshots guardados ≈ 1 h ($0,0001/GB-h) + VM ≈ $0,10 |
-| EFS-12 ❌ | **Medida 2026-10-04** (Q129): **falla**, tras 70 min suspendido el volumen da `Permission denied`; hay que remontar en `/resume`. Pausa > 55 min (caducidad de credenciales): ¿reautentica el túnel? ¿rota IMDS las credenciales? (cierra también Q1) | una pausa de 70 min (dentro del tope de 8 h) | ≈ $0,02 |
+| EFS-12 ✅ | **Medida 2026-10-04** (Q129): falla sin remontar (tras 70 min, `Permission denied`); **con el adaptador real pasa** (Q139: `rayd` remonta en `/resume`, `mounted` en 0,7–1,3 s). Pausa > 55 min (caducidad de credenciales): ¿reautentica el túnel? ¿rota IMDS las credenciales? (cierra también Q1) | una pausa de 70 min (dentro del tope de 8 h) | ≈ $0,02 |
 | EFS-13 ★ ✅ | **Respondida 2026-10-04** (Q130): no cuelga; con escrituras pendientes la plataforma termina el VM. `/suspend` con el mount target inalcanzable (revocar la regla del SG a mitad de sesión): ¿cuelga `sync(2)`? ¿qué hace la plataforma si `/suspend` agota el plazo (terminar como con un 500)? Repetir con `syncfs` acotado | dos VMs, SG modificado en caliente | < $0,03 |
 | EFS-14 | ¿Cuánto crece el snapshot de suspend tras leer 1 GB del volumen (caché de páginas)? | `snapshotBuild` no aplica; Cost Explorer (`Snapshot-Write-GB`) del día | ≈ $0,01 |
 | EFS-15 ✅ | **Respondida 2026-10-04** (Q133): ≈ 0,12 s. Dos sandboxes sobre el mismo AP: visibilidad de una escritura en el otro (close-to-open), latencia | dos VMs | < $0,03 |
@@ -561,6 +561,15 @@ pérdida (EFS-13), y monta sin seguir enlaces simbólicos. El sólo lectura se
 impone en IAM (`ReadOnlyAccessPointArns`, `Deny` de `ClientWrite`) porque
 el guest no puede filtrar por usuario (EFS-10, Q48), y los SDK rechazan
 `volumes=` sin exactamente un conector propio (EFS-4).
+
+**Re-comprobación del 2026-10-04 por `create(volumes=...)`** (Q135–Q139,
+Python y TypeScript, imagen opcional `rayito-base-caps-efs`): EFS-12 pasa
+(tras 4200 s suspendido, `rayd` remonta en `/resume` y el volumen vuelve a
+`mounted` en 0,7–1,3 s); EFS-16 acotado pasa (por el túnel, el access point
+de sólo lectura no admite escrituras; otro access point da `iam_denied`;
+`AllowWrite=false` deja todo en sólo lectura); `efs-proxy` vuelve a 0 tras
+cada desmontaje (5 ciclos); un punto de montaje con enlace simbólico es
+`invalid_path`; EFS-13 se repite igual que Q130.
 
 **Total estimado de la campaña: ≈ $1–2 de uso AWS** (más el NAT gateway sólo
 si EFS-4 obliga a probar internet por la VPC: ≈ $0,10 por 2 h). La VPC tiene

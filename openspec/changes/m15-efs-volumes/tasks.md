@@ -299,7 +299,7 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       what `rayd` does with each volume, data-loss warning, real read-only),
       `SECURITY.md` T21, `AWS_API_NOTES.md` §22, ADR-018 addendum, research
       doc §9, `MILESTONES.md`, three CHANGELOGs, `docs-delta.md`.
-- [ ] 10.8 AWS re-check (serialized stage, ≤ $2): EFS-12 (a remount after
+- [x] 10.8 AWS re-check (serialized stage, ≤ $2; done through 11.7, Q135–Q139): EFS-12 (a remount after
       a pause past the credentials' expiry restores reads, through `rayd`'s
       own `/resume`), EFS-16 scoped (`AccessPointArns` + 
       `ReadOnlyAccessPointArns`/`AllowWrite=false`: writes through the
@@ -335,6 +335,17 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       `rayito-base-caps-efs` accepted as caps; `rayd` passes `AWS_REGION`
       to the helper.
 - [x] 11.6 Unit tests (both SDKs, shim, CLI, rayd adapter); docs, CHANGELOGs.
-- [ ] 11.7 AWS re-check through the real `create(volumes=)` path (Python and
-      TypeScript), serialized, cap $2.5: tasks 10.8 plus the e2e with
-      `volumes=` and the E2B shim `Volume`.
+- [x] 11.7 AWS re-check through the real `create(volumes=)` path (Python and
+      TypeScript), serialized, cap $2.5 (2026-10-04, Q135–Q139): opt-in image
+      (+193.8 MB code install, `features.efs_volumes` true, IMDS still
+      blocked; the twin caps image answers `UnimplementedError` and the VM is
+      terminated); rw + ro mounted, `EROFS` as uid 1000; 5 unmount/mount
+      cycles back to 0 `efs-proxy`; symlinked mountpoint `invalid_path`;
+      EFS-16 scoped (direct NFS to the read-only volume's proxy port cannot
+      write, other access point `iam_denied`, `AllowWrite=false` read-only);
+      EFS-12 (4200 s pause, remounted and `mounted` in 0.7–1.3 s, reads and
+      writes OK, 1 proxy); EFS-13 repeated (same as Q130, ingress restored);
+      e2e `test_efs_volumes_mount.py` 2 passed, `efs-volumes-mount.e2e.test.ts`
+      2 passed (incl. the E2B shim `Volume`).
+- [ ] 11.8 Teardown (detach the policy, `destroy(delete_file_system=True)`,
+      this run's images, zips and log groups) and before/after inventory diff.

@@ -287,21 +287,24 @@ necesita internet:
 
 ## Medido en AWS real
 
-La aceptación del 2026-10-04 (`AWS_API_NOTES.md` §16 Q126–Q134) desplegó
-esta pila en una VPC existente y comprobó con una imagen de prueba (caps,
-con `amazon-efs-utils`) lo que el montaje dentro del sandbox necesitará:
+Las aceptaciones del 2026-10-04 (`AWS_API_NOTES.md` §16 Q126–Q139)
+desplegaron esta pila en una VPC existente y montaron con la imagen
+`rayito-base-caps-efs`, primero a mano y después por
+`Sandbox.create(volumes=...)` en Python y TypeScript:
 
 | Qué | Resultado |
 |---|---|
 | `deploy()` / `destroy(delete_file_system=True)` | ≈ 5 min; la VPC queda idéntica tras `destroy(delete_file_system=True)` |
 | Conector hasta el mount target | `ACTIVE`; TCP 2049 en 0,1–0,5 s |
 | `mount -t efs -o tls,iam,accesspoint` sin systemd | 20 de 20; p50 313 ms, p95 589 ms |
-| Pausa y reanudación con el volumen montado | datos intactos tras 60 s y 10 min; primera lectura ≤ 0,2 s; **tras 70 min (credenciales caducadas), `Permission denied` hasta remontar** |
+| `create(volumes=...)` | un volumen de escritura y otro de sólo lectura `mounted` en 8–17 s (lanzamiento incluido); uid 1000 escribe en uno y recibe `Read-only file system` en el otro |
+| Pausa y reanudación con el volumen montado | datos intactos tras 60 s y 10 min; primera lectura ≤ 0,2 s; tras 70 min (credenciales caducadas), `rayd` lo remonta solo en `/resume`: `mounted` otra vez en 0,7–1,3 s |
 | Pausa con el mount target inalcanzable | sin escrituras pendientes, pausa y reanuda; **con escrituras pendientes, AWS termina el MicroVM** y se pierden |
 | Rendimiento | 128 MB/s escribiendo y 585 MB/s leyendo en secuencial; ≈ 17 ms por fichero pequeño |
 | Política del sistema de ficheros | sin access point, sin TLS o sin IAM: denegado |
-| `efs-proxy` tras `umount` | sigue vivo (uno por montaje); `rayd` lo termina al desmontar |
-| uid 1000 y el puerto local de `efs-proxy` | puede conectarse: el sólo lectura lo impone la política (`read_only_access_point_arns`), no `ro` |
+| `efs-proxy` tras `umount` | `umount` no lo para; `rayd` lo termina al desmontar: 5 de 5 ciclos vuelven a 0 procesos |
+| uid 1000 y el puerto local de `efs-proxy` | puede conectarse, pero con `read_only_access_point_arns` un montaje NFS directo por ese puerto no puede escribir (`Read-only file system`); un access point fuera de `access_point_arns`: `iam_denied` |
+| Punto de montaje que es un enlace simbólico | `invalid_path`; nada se monta sobre el destino del enlace |
 
 ## 3. Bórralo
 

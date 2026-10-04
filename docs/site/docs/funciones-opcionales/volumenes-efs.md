@@ -267,7 +267,8 @@ tus subredes tienen esa ruta; ver
 ## Lo que hace `rayd` con cada volumen
 
 Esto es lo que el adaptador de montaje hace en una imagen con
-`amazon-efs-utils`, y lo que midió la aceptación del 2026-10-04:
+`amazon-efs-utils`, y lo que midieron las aceptaciones del 2026-10-04
+(`AWS_API_NOTES.md` §16 Q128–Q139):
 
 - **Montaje**: `mount -t efs -o tls,iam,accesspoint=…` con las credenciales
   del execution role (sin `systemd`: p50 313 ms, p95 589 ms), sobre un
@@ -280,7 +281,8 @@ Esto es lo que el adaptador de montaje hace en una imagen con
   igual. Si la pausa **cruza la caducidad de las credenciales** del rol con
   las que se firmó el túnel (≈ 1 h), el volumen respondería
   `Permission denied`: `rayd` lo detecta al reanudar y lo **vuelve a
-  montar** (o, si no sabe cuándo caducan, prueba el volumen con un `stat`
+  montar** (medido tras 70 min: `mounted` otra vez en 0,7–1,3 s,
+  `AWS_API_NOTES.md` §16 Q139) (o, si no sabe cuándo caducan, prueba el volumen con un `stat`
   acotado y lo remonta si falla). Si el remontaje no termina dentro del
   presupuesto del hook `/resume`, sigue en segundo plano y el estado del
   volumen pasa por `remounting` hasta `mounted` (o `degraded` con la causa).

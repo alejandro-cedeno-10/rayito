@@ -537,6 +537,11 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 132 | **EFS-9**: rendimiento desde el VM (caps, 2 GiB) frente al disco local | Docs: ~1 ms lectura, ~2,7 ms escritura (Elastic) | **Medido 2026-10-04** (un access point, mount target en otra o la misma AZ): `dd` 1 GiB escritura con `conv=fsync` **128 MB/s** (local 313 MB/s); lectura secuencial tras `drop_caches` **585 MB/s** (local 5,0 GB/s, caché); 10 000 ficheros de 4 KiB con `cp` **167,8 s** (≈ 17 ms por fichero; local 10,2 s); lectura aleatoria de 4 KiB **p50 4,2 ms, p95 5,1 ms** (local < 0,1 ms). EFS sirve para datos grandes y secuenciales; muchos ficheros pequeños son ≈ 16 veces más lentos que el disco local |
 | 133 | **EFS-10** + **EFS-15**: uid 1000 en el volumen; dos sandboxes sobre el mismo access point | Research doc §4.1 regla 5 | **Medido 2026-10-04**. EFS-10: lo que escribe uid 1000 **y root** queda `1000:1000` (el access point fuerza el usuario POSIX); `chmod` y `rename` funcionan, 500 renombrados seguidos sin `ESTALE`. **Hallazgo de seguridad**: `efs-proxy` escucha en `127.0.0.1:<puerto>` y **uid 1000 puede conectar** a ese puerto (el kernel del guest no tiene el match `owner`, Q48), así que un proceso del usuario puede hablar NFS por el túnel TLS ya autenticado del volumen, con los permisos IAM del rol y no con las opciones del montaje: un volumen montado `ro` no impide escribir por el túnel si el rol tiene `ClientWrite`. El adaptador real tiene que cerrar ese puerto a uid ≥ 1000 o acotar el rol (`allow_write=False`) para los volúmenes de sólo lectura. EFS-15: escrito en un VM y leído en otro (mount targets en dos AZs) **≈ 0,12 s** en 5 de 5 intentos (close-to-open); un `>>` desde cada VM deja ambas líneas |
 | 134 | **EFS-16**: política del sistema de ficheros y de `RayitoEfsVolumeClient` | §22 (contrato) | **Medido 2026-10-04**: sin access point (`tls,iam`) → exit 32; NFS sin TLS ni IAM → `access denied by server`; `efs-utils` con `iam` sin `tls` → exit 1 (el helper exige TLS); TLS sin IAM (anónimo) → exit 32; control `tls,iam,accesspoint` → monta y escribe; otro access point del mismo sistema de ficheros con la política sin acotar → monta (esperado). Sin medir: `AccessPointArns` acotado y `AllowWrite=false` (la sesión SSO de la aceptación caducó antes del redespliegue) |
+| 135 | Imagen opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`, `m15-efs-volumes` design D13): ¿cuánto cuesta frente a su gemela caps sin `amazon-efs-utils`, deja intacto el bloqueo de IMDS y monta sin región horneada? | Q122: +197,6 MB, memoria igual; `/usr/bin/python3` pasa a 3.9 | **Medido 2026-10-04** (dos imágenes desechables del mismo `rayd` y del mismo árbol, que sólo difieren en el marcador del zip; `ALL`, 2048 MiB, `--base-image-version 1`, borradas al terminar): code install **1 639 735 296** frente a **1 445 888 000** B (**+193 847 296 B**); memoria 921 780 224 frente a 915 464 192 B (ruido de Q50); disco 38 043 648 frente a 37 486 592 B; build **248,0** frente a **206,1 s** (Q122 midió +10 s: la diferencia varía entre builds). En la imagen con efs-utils `Health.features.efs_volumes` es `true`, `/usr/bin/python3` es 3.12.13 y `imds_blocked` sigue `true` (uid 1000 no obtiene token de IMDS); en la gemela es `false` y `create(volumes=...)` lanza `UnimplementedError` y termina el MicroVM en 8,0 s. Ningún `efs-utils.conf` lleva región: `rayd` pasa `AWS_REGION` al helper y todos los montajes de Q136–Q139 funcionaron |
+| 136 | `Sandbox.create(volumes=...)` de punta a punta (Python y TypeScript, design D11/D12): ¿monta por el `Configure` único, con la IP de `DescribeMountTargets`, y falla limpio? | Q128: el helper sin systemd; hasta ahora sólo a mano | **Medido 2026-10-04** sobre la pila `efs-volumes` en una VPC existente (variables de entorno): `create()` con un volumen de escritura y otro `read_only` vuelve con ambos `mounted` en **7,9–16,9 s** (lanzamiento incluido, Python y TypeScript), con `Health.features.efs_volumes = true`; uid 1000 escribe en el de escritura (fichero `1000:1000 644`) y en el de sólo lectura recibe `Read-only file system`; `/proc/mounts` muestra `nfs4 vers=4.1 … noresvport,proto=tcp,port=<local>` sobre la ruta pedida y un `efs-proxy` por volumen. Un access point fuera de `AccessPointArns` acaba en `VolumeMountException(code="iam_denied")`/`VolumeMountError` en 10,9/11,0 s y el MicroVM queda terminado. e2e `test_efs_volumes_mount.py` (2 passed) y `efs-volumes-mount.e2e.test.ts` (2 passed), incluido el shim de E2B (`Volume.create` y `volume_mounts` con un `Volume` y con su nombre, sólo por `volume_connector_arn`) |
+| 137 | **EFS-16** con la política acotada (`AccessPointArns` = dos access points, `ReadOnlyAccessPointArns` = uno de ellos) y con `AllowWrite=false` | Q134: sin acotar; Q133: uid 1000 alcanza el puerto local de `efs-proxy` | **Medido 2026-10-04**: un `mount -t nfs4` directo (como root, `127.0.0.1`, `port=` del `efs-proxy` del volumen de sólo lectura) **monta pero cada escritura da `Read-only file system`**: el `Deny` de `ClientWrite` vale también por el túnel, que es lo que T21 necesitaba; el mismo montaje directo al puerto del volumen de escritura escribe. Un tercer access point del mismo sistema de ficheros, fuera de `AccessPointArns`: `iam_denied`. Con `AllowWrite=false` el volumen de escritura monta y se lee, y escribir da `Read-only file system` (EFS sirve como sólo lectura a un cliente sin `ClientWrite`; no es `EACCES`). Cada redespliegue de la política: `UPDATE_COMPLETE` en 26–29 s |
+| 138 | Ciclo de vida de `efs-proxy` y punto de montaje con enlace simbólico (adaptador `EfsUtilsMounter`, D6/D7) | Q128: `umount` no para `efs-proxy` | **Medido 2026-10-04** (dos volúmenes en un sandbox, `Configure` vacío y luego el mismo): 5 de 5 ciclos desmontar → **0** `efs-proxy` (0,22–0,26 s), montar → **2** (0,53–0,91 s) y los datos siguen; `/home/user/evil` como enlace a `/etc` creado por uid 1000: la sección acaba `invalid_path` en 0,47 s, nada se monta sobre `/etc` y el otro volumen sigue `mounted`. **EFS-13** repetido con el adaptador nuevo (8 MiB sin vaciar y la regla de entrada del grupo de mount targets de la propia pila revocada, restaurada a los 12 s): `pause()` lanza `SandboxNotFoundException` a los 11,9 s y el MicroVM queda `TERMINATED`, igual que Q130 |
+| 139 | **EFS-12** con el adaptador real: ¿una pausa que cruza la caducidad de las credenciales del túnel se recupera sola en `/resume`? | Q129: tras 70 min, `Permission denied` hasta remontar a mano | **Medido 2026-10-04: pasa**, por `create(volumes=...)` en Python y en TypeScript (un sandbox cada uno, a la vez): escribir + `sync`, `pause()` (1,1 s), **4200 s** suspendido, `resume()` (1,0 s). El volumen aparece `remounting`/`credentials_expired` a los 0,1 s y `mounted` a los **1,3 s** (Python) y **0,7 s** (TypeScript): `rayd` remontó sin sonda porque el lease guardado había caducado. Lo escrito antes de la pausa se lee (0,25 s), escribir funciona y queda **1** `efs-proxy` (el del remontaje; el del montaje caducado se paró) |
 
 ## 17. S3 desde el MicroVM (`m7-s3-persistence`, **contrato de parámetros**)
 
@@ -1108,22 +1113,24 @@ medido el 2026-10-04 (Q128–Q133) y lo que `rayd` hace con ello:
   `AvailabilityZoneId`) cuando el `EfsVolume` no la trae. `rayd` añade `ro` para un volumen de
   sólo lectura y omite `mounttargetip=` si la petición no trae IP (el
   nombre `<fs-id>.efs.<región>.amazonaws.com` resuelve desde el guest,
-  Q131); **ninguna de las dos variantes está medida todavía**. `rayd` monta
-  sobre `/run/rayito/efs-staging` y después hace un *bind mount* sobre la
-  ruta pedida, abierta sin seguir enlaces (el helper resolvería la ruta y
-  uid 1000 controla las de `/home/user`); el *bind* tampoco está medido.
+  Q131). `rayd` monta sobre `/run/rayito/efs-staging` y después hace un
+  *bind mount* sobre la ruta pedida, abierta sin seguir enlaces (el helper
+  resolvería la ruta y uid 1000 controla las de `/home/user`). El `ro`, el
+  *bind* y el rechazo de un enlace simbólico (`invalid_path`) están medidos
+  (Q136, Q138); montar sin `mounttargetip=` no, porque los SDK siempre la
+  rellenan.
 - **`efs-proxy`** (Q128): uno por montaje, en `/usr/sbin/efs-proxy`,
   re-emparentado con PID 1 y vivo tras `umount`. `rayd` atribuye a cada
   montaje los proxies de root de ese binario que aparecen durante el
   helper (montajes serializados) y los termina al desmontar (`SIGTERM`,
-  `SIGKILL` a los 400 ms).
+  `SIGKILL` a los 400 ms): 5 de 5 ciclos vuelven a 0 procesos (Q138).
 - **Credenciales** (Q129, EFS-12): tras una pausa que cruza su
   `Expiration`, el túnel reconecta con las caducadas y el volumen responde
   `Permission denied` aunque IMDS ya sirva otras. `rayd` guarda la
   `Expiration` del lease del rol al montar y remonta en `/resume` si ya
   pasó (o falta menos de `REFRESH_MARGIN`); si no la conoce, prueba el
-  volumen con un `stat` acotado. Que el remontaje lo arregle está por
-  medir.
+  volumen con un `stat` acotado. Medido (Q139): tras 4200 s suspendido,
+  el volumen vuelve a `mounted` en 0,7–1,3 s y se lee y escribe.
 - **`/suspend`** (Q130, EFS-13): con escrituras pendientes y el mount
   target inalcanzable, el vaciado no termina y la plataforma termina el
   MicroVM (`stateReason` "Internal service error."). `rayd` hace un
@@ -1135,8 +1142,10 @@ medido el 2026-10-04 (Q128–Q133) y lo que `rayd` hace con ello:
   acepta `ReadOnlyAccessPointArns`: `RayitoEfsVolumeClient` añade un `Deny`
   de `elasticfilesystem:ClientWrite` con `ArnEquals` sobre
   `elasticfilesystem:AccessPointArn` (la misma clave de condición de los
-  `Deny` de la política del sistema de ficheros). Sin medir todavía (Q134
-  quedó sin `AccessPointArns` acotado ni `AllowWrite=false`).
+  `Deny` de la política del sistema de ficheros). Medido (Q137): por el
+  túnel, un montaje NFS directo al puerto del volumen de sólo lectura monta
+  pero cada escritura da `Read-only file system`; con `AllowWrite=false`,
+  igual en todos.
 - **Red** (Q131, EFS-4): un solo conector de egress por MicroVM. Los SDK
   rechazan `volumes=` sin `egress=`, con `INTERNET_EGRESS` o con más de un
   conector antes de `run-microvm`.
