@@ -191,17 +191,15 @@ mod tests {
     fn ids_above_the_sandbox_uid_range_are_refused() {
         let strict = UserPolicy::default();
         let above = MAX_UNPRIVILEGED_ID + 1;
-        for identity in [
-            account(above, 1000, &[1000]),
-            account(1000, above, &[1000]),
-            account(above, above, &[above]),
+        for (case, identity) in [
+            ("uid above", account(above, 1000, &[1000])),
+            ("gid above", account(1000, above, &[1000])),
+            ("both above", account(above, above, &[above])),
         ] {
             assert_eq!(
                 strict.authorize_identity(&identity),
                 Err(ProcessError::PrivilegedAccount),
-                "uid {} gid {}",
-                identity.uid,
-                identity.gid
+                "{case}"
             );
         }
         assert_eq!(
