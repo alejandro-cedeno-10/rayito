@@ -42,6 +42,12 @@
 //! cannot tell a forged call from the genuine one right behind it, and a
 //! refused genuine `/suspend` would skip the checklist of a real
 //! checkpoint while the platform freezes the VM anyway.
+//!
+//! The listener itself (`server::serve`) serves at most
+//! `HOOKS_MAX_CONNECTIONS` connections, drops one whose request head does
+//! not arrive within `HOOKS_HEADER_READ_TIMEOUT` and closes each after its
+//! one response (`rayd_core::listeners`, `SECURITY.md` T7), so sandbox
+//! processes cannot use this port to exhaust `rayd`'s descriptors.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -49,11 +55,10 @@ use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::extract::connect_info::{ConnectInfo, Connected};
+use axum::extract::connect_info::ConnectInfo;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
-use axum::serve::IncomingStream;
 use axum::{Extension, Router};
 use rayd_core::code::{
     KernelStatus, ReadyDecision, SidecarState, ValidateDecision, ready_hook_decision,
@@ -67,7 +72,6 @@ use rayd_core::lifecycle::{Hook, LifecycleError, Transition};
 use rayd_core::session::{RunHookInput, RunOutcome, SandboxSession};
 use rayd_core::wire_tokens::TERMINATING;
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use rayd_core::suspend_sync::{FlushReport, ParticipantDemand, SuspendBudget, SuspendShares};
@@ -81,6 +85,10 @@ use crate::lifecycle::{
     LifecycleParticipant, ReadyVerdict, SuspendSignal, TimeoutWatcher, suspend_watchdog,
 };
 use crate::network::NetworkManager;
+
+mod server;
+
+pub use server::{HookServerSettings, serve};
 
 /// `warn!` threshold for the wall-clock drift recorded at `/resume`.
 pub const CLOCK_OFFSET_WARN_MS: i64 = 5_000;
@@ -155,27 +163,14 @@ pub struct HookServices {
     pub socket_owners: Arc<dyn SocketOwners>,
 }
 
-/// Both ends of a hook connection, recorded for each accepted socket when
-/// the router is served with
-/// `into_make_service_with_connect_info::<HookPeer>()`: the caller's
-/// address and the listener's own end, which together name the caller's
-/// socket row in `/proc/net/tcp{,6}`.
+/// Both ends of a hook connection, recorded for each accepted socket by
+/// `server::serve` as the request's `ConnectInfo`: the caller's address
+/// and the listener's own end, which together name the caller's socket
+/// row in `/proc/net/tcp{,6}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HookPeer {
     pub remote: SocketAddr,
     pub local: SocketAddr,
-}
-
-impl Connected<IncomingStream<'_, TcpListener>> for HookPeer {
-    /// A socket whose local address cannot be read keeps the remote one
-    /// there too, which matches no row: the origin is then `Unknown`.
-    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Self {
-        let remote = *stream.remote_addr();
-        Self {
-            remote,
-            local: stream.io().local_addr().unwrap_or(remote),
-        }
-    }
 }
 
 #[derive(Clone)]

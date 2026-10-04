@@ -10,12 +10,14 @@
 //! `/etc/rayito/template.json`, the shell runner behind a template's
 //! `ready_cmd` (ADR-022, `features::template_start`), and the process-wide
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
-//! (`rayd-orphan-reaper`).
+//! (`rayd-orphan-reaper`), and the connection cap of `rayd`'s own
+//! listeners.
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
 pub mod bounded_sync;
 pub mod capabilities;
+pub mod capped_listener;
 pub mod child_registry;
 pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
@@ -48,6 +50,7 @@ pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
 pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
+pub use capped_listener::{Accept, CappedIncoming, CappedListener, CappedStream};
 pub use child_registry::{ChildRegistry, SpawnChild};
 pub use cloudwatch_otlp_sink::{
     CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,

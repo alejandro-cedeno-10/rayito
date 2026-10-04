@@ -1,20 +1,19 @@
 //! `/run` over a real connection, the way `main` serves the hooks
-//! (`into_make_service_with_connect_info::<HookPeer>()`), with a scripted
-//! `SocketOwners` so the test does not depend on which uid runs it: the
-//! RAYD-08 race, where a sandbox process (a template's `start_cmd`, thawed
-//! with the snapshot before the platform's `/run` arrives) posts a
-//! well-formed `/run` first.
+//! (`rayd::hooks::serve`, which records each connection's `HookPeer`),
+//! with a scripted `SocketOwners` so the test does not depend on which uid
+//! runs it: the RAYD-08 race, where a sandbox process (a template's
+//! `start_cmd`, thawed with the snapshot before the platform's `/run`
+//! arrives) posts a well-formed `/run` first.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::HashSet;
-use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use rayd::adapters::{ImdsState, OsRandomSource};
 use rayd::code::CodeManager;
-use rayd::hooks::{HookPeer, HookReply, HookServices, hook_path};
+use rayd::hooks::{HookReply, HookServerSettings, HookServices, hook_path};
 use rayd::lifecycle::{SuspendSignal, TimeoutWatcher};
 use rayd::network::NetworkManager;
 use rayd_core::clock::SystemClock;
@@ -116,14 +115,12 @@ async fn a_run_from_a_sandbox_socket_never_claims_the_boot_and_the_genuine_run_s
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let hooks = listener.local_addr().unwrap();
-    tokio::spawn(
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<HookPeer>(),
-        )
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned())
-        .into_future(),
-    );
+    tokio::spawn(rayd::hooks::serve(
+        listener,
+        router,
+        HookServerSettings::default(),
+        shutdown.clone(),
+    ));
 
     let forged = post_run(hooks, &owners, true, &run_envelope(FORGED_SECRET)).await;
     assert_eq!(forged.outcome, "sandbox_origin");

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use aws_sdk_s3::config::SharedCredentialsProvider;
 use rayd::adapters::{
-    ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
+    CappedListener, ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
     ProcNetSocketOwners, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
     USER_PROBE_PROGRAM, UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
@@ -31,7 +31,7 @@ use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
-use rayd::hooks::{HookPeer, HookServices};
+use rayd::hooks::{HookServerSettings, HookServices};
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
     StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
@@ -45,6 +45,7 @@ use rayd::transfer::{TransferManager, TransferSettings};
 use rayd_core::clock::SystemClock;
 use rayd_core::code::SidecarConfig;
 use rayd_core::filesystem::DenyList;
+use rayd_core::listeners::GRPC_MAX_CONNECTIONS;
 use rayd_core::metrics::MetricsProbe;
 use rayd_core::metrics_history::{HISTORY_SAMPLE_INTERVAL, MetricsHistory};
 use rayd_core::process::identity::ALLOW_ROOT_ENV;
@@ -56,7 +57,6 @@ use rayd_core::session::SandboxSession;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::server::TcpIncoming;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -245,7 +245,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         features.clone(),
     )
     .serve_with_incoming_shutdown(
-        TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
+        CappedListener::new(grpc_listener, GRPC_MAX_CONNECTIONS).into_incoming(),
         shutdown.clone().cancelled_owned(),
     );
     let hooks = serve_hooks(
@@ -268,27 +268,30 @@ async fn main() -> anyhow::Result<ExitCode> {
         shutdown.clone(),
     );
 
-    tokio::try_join!(
-        async { grpc.await.context("gRPC listener failed") },
-        async { hooks.await.context("hooks listener failed") },
-    )?;
+    tokio::try_join!(async { grpc.await.context("gRPC listener failed") }, hooks)?;
     tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
     Ok(ExitCode::from(exit_reason.exit_code()))
 }
 
-/// The hooks listener, recording both ends of every connection
-/// (`HookPeer`) so `/run` can read who owns the caller's socket.
-async fn serve_hooks(
-    listener: tokio::net::TcpListener,
+/// The hooks listener (`rayd::hooks::serve`: capped, with a request-head
+/// deadline), recording both ends of every connection (`HookPeer`) so
+/// `/run` can read who owns the caller's socket. It never fails; it ends
+/// once `shutdown` is cancelled and its open connections are answered.
+fn serve_hooks(
+    listener: TcpListener,
     services: HookServices,
     shutdown: CancellationToken,
-) -> std::io::Result<()> {
-    axum::serve(
+) -> impl Future<Output = anyhow::Result<()>> {
+    let serve = rayd::hooks::serve(
         listener,
-        rayd::hooks::router_with(services).into_make_service_with_connect_info::<HookPeer>(),
-    )
-    .with_graceful_shutdown(shutdown.cancelled_owned())
-    .await
+        rayd::hooks::router_with(services),
+        HookServerSettings::default(),
+        shutdown,
+    );
+    async move {
+        serve.await;
+        Ok(())
+    }
 }
 
 /// The process's one `FeatureSet` (ADR-015), shared by `ConfigureGrpc`,
