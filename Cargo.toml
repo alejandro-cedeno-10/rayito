@@ -78,7 +78,7 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["rust_back
 hyper-util = { version = "=0.1.21", default-features = false, features = ["client-legacy", "http1", "tokio"] }
 hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "native-tokio", "tls12", "aws-lc-rs"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-tokio-rustls = { version = "=0.26.5", default-features = false, features = ["aws_lc_rs", "tls12"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws_lc_rs", "tls12"] }
 # Test-only CA and leaf for the transfer client's unit tests, generated at
 # test time over the same `aws-lc-rs` (no `ring`).
 rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
