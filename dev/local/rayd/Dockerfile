@@ -11,7 +11,7 @@
 # símbolos de una glibc más nueva). Solo arm64: la base no publica otra
 # arquitectura, igual que en AWS (CLAUDE.md, regla 5). Sin sintaxis de
 # BuildKit: construye también con el builder clásico.
-FROM public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3
+FROM public.ecr.aws/lambda/microvms:al2023-minimal@sha256:a2095a5ece1ce7b9c31f561d548da06dc144cabca30f1cfe40823a832a30114f
 
 # aws-lc-sys (rustls) compila C con cmake; ring, con cc.
 RUN dnf install -y --setopt=install_weak_deps=0 \
