@@ -34,6 +34,13 @@ versionado [SemVer](https://semver.org/lang/es/).
   `JSON.stringify` no lo muestran.
 - Tests que fijan que `Template.build()` no sigue enlaces simbólicos dentro
   de un directorio copiado (misma regla que el SDK de Python).
+- **Recortes y troceo de cadenas en tiempo lineal** (CodeQL
+  `js/polynomial-redos`): `git.clone()` con credenciales, `files.download()`
+  sin `filename`, el access token y las líneas de `.dockerignore` de un
+  template usaban expresiones regulares que retrocedían en tiempo
+  cuadrático (50 000 caracteres bloqueaban el bucle de eventos más de un
+  segundo). La semántica no cambia: una URL con un fin de línea tras la
+  autoridad sigue sin reconocerse como http(s).
 
 ## [0.6.1] - 2026-10-04
 

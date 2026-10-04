@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { InvalidArgumentError } from "./errors.js";
 import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
 import { type LifecycleBlock, lifecycleBlockToWire } from "./sandbox/lifecycle.js";
+import { stripTrailing } from "./strings.js";
 
 export const PAYLOAD_VERSION = 1;
 export const DEFAULT_USER = "user";
@@ -21,6 +22,8 @@ export const DEFAULT_WORKDIR = "/home/user";
 export const ACCESS_TOKEN_BYTES = 32;
 export const CPU_TIME_LIMIT_MIN_SECONDS = 1;
 export const CPU_TIME_LIMIT_MAX_SECONDS = 28_800;
+
+const BASE64_PADDING = "=";
 
 const BASE64URL_ALPHABET = /^[A-Za-z0-9_-]+$/;
 
@@ -41,7 +44,7 @@ export function encodeAccessToken(secret: Uint8Array): string {
  * repite el token.
  */
 export function decodeAccessToken(accessToken: string): Uint8Array {
-  const stripped = accessToken.replace(/=+$/, "");
+  const stripped = stripTrailing(accessToken, BASE64_PADDING);
   if (!BASE64URL_ALPHABET.test(stripped)) {
     throw new InvalidArgumentError("accessToken no es base64url");
   }

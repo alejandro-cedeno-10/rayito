@@ -396,3 +396,109 @@ def test_the_real_dockerfile_poly_layer_is_seen_by_the_gate() -> None:
     ]
     assert len(installs) == 2
     assert check_pins.unhashed_pip_installs(dockerfile) == []
+
+
+ACTIONLINT_SHA256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+VERIFIED_STEP = f"""jobs:
+  check:
+    steps:
+      - name: tool (checked against a pinned sha256)
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          mkdir -p "$RUNNER_TEMP/tool"
+          curl -fsSL -o "$RUNNER_TEMP/tool/tool.tgz" \\
+            "https://example.com/tool.tgz"
+          echo "${{TOOL_SHA256}}  $RUNNER_TEMP/tool/tool.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tool/tool.tgz" -C "$RUNNER_TEMP/tool"
+      - run: echo "no download in this step"
+"""
+
+
+def test_a_verified_workflow_download_passes() -> None:
+    assert check_pins.unpinned_workflow_downloads(VERIFIED_STEP) == []
+
+
+def test_unverified_workflow_downloads_are_findings() -> None:
+    text = f"""jobs:
+  deny:
+    steps:
+      - run: curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+      - name: piped into tar
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl --silent -L https://example.com/tool.tgz | tar -xzv -C /usr/bin
+      - name: no pinned sha256
+        run: |
+          curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+          echo "$TOOL_SHA256  /tmp/tool.tgz" | sha256sum -c -
+      - name: floating release
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl -fsSL -o /tmp/t.tgz https://github.com/o/r/releases/latest/download/t.tgz
+          echo "$TOOL_SHA256  /tmp/t.tgz" | sha256sum -c -
+      - run: wget -q https://example.com/install.sh
+"""
+
+    findings = check_pins.unpinned_workflow_downloads(text)
+
+    assert [number for number, _, _ in findings] == [4, 5, 10, 14, 20]
+    assert all(reason == check_pins.DOWNLOAD_REASON for _, _, reason in findings)
+
+
+def test_the_checked_path_must_be_the_one_the_workflow_downloaded() -> None:
+    text = f"""      - env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+          echo "$TOOL_SHA256  /tmp/other.tgz" | sha256sum -c -
+"""
+
+    assert [n for n, _, _ in check_pins.unpinned_workflow_downloads(text)] == [1]
+
+
+def test_commented_curls_in_a_run_block_are_skipped() -> None:
+    text = """      - run: |
+          # curl -fsSL https://example.com/install.sh | sh
+          echo ok
+"""
+
+    assert check_pins.unpinned_workflow_downloads(text) == []
+
+
+def test_composite_actions_get_the_workflow_gates(tmp_path: Path) -> None:
+    action = tmp_path / ".github" / "actions" / "tool" / "action.yml"
+    action.parent.mkdir(parents=True)
+    action.write_text(
+        "runs:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: curl -fsSL https://example.com/x | sh\n"
+        "    - uses: actions/checkout@v7\n",
+        encoding="utf-8",
+    )
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = check_pins.main([], root=tmp_path)
+
+    printed = stdout.getvalue()
+    assert code == 1
+    assert ".github/actions/tool/action.yml:4: " + check_pins.DOWNLOAD_REASON in printed
+    assert ".github/actions/tool/action.yml:6: " + check_pins.ACTION_REASON in printed
+
+
+def test_the_real_workflows_download_only_verified_files() -> None:
+    paths = sorted((REPO_ROOT / ".github").glob("workflows/*.yml")) + sorted(
+        (REPO_ROOT / ".github").glob("actions/*/action.yml")
+    )
+    downloads = 0
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        downloads += sum(
+            1
+            for step in check_pins.workflow_steps(text)
+            if check_pins.is_download(step.text)
+        )
+        assert check_pins.unpinned_workflow_downloads(text) == [], path
+    assert downloads >= 3, "actionlint, zig and cargo-deny are downloaded and checked"

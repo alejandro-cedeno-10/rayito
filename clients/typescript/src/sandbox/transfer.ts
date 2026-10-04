@@ -70,6 +70,7 @@ import type {
   TransferPhaseName,
   TransferStatus,
 } from "../models.js";
+import { stripTrailing } from "../strings.js";
 import { asConnectError, isStreamReset, translateRpcError } from "../transport/errors.js";
 import { ProxyTunnelAgent } from "../transport/proxy-tunnel.js";
 import type { OpenedStream, SandboxCore } from "./core.js";
@@ -87,6 +88,7 @@ export const OUTDATED_IMAGE_REASON = "actualiza la imagen: este rayd no tiene tr
 export const UPLOAD_PART_BYTES = 8 * MIB;
 export const UPLOAD_QUEUE_SIZE = 8;
 const CONTENT_TYPE_HEADER = "Content-Type";
+const PATH_SEPARATOR = "/";
 const STAGING_TOKEN_BYTES = 16;
 const EXPORT_BUDGET_BASE_SECONDS = 900;
 const EXPORT_BUDGET_BYTES_PER_SECOND = 1_000_000;
@@ -385,7 +387,7 @@ export function uploadTicketHeaders(form: boolean): Readonly<Record<string, stri
 
 export function downloadFilename(path: string, filename: unknown): string {
   if (filename === undefined) {
-    return path.replace(/\/+$/, "").split("/").pop() || "download";
+    return stripTrailing(path, PATH_SEPARATOR).split(PATH_SEPARATOR).pop() || "download";
   }
   if (typeof filename !== "string" || filename.length === 0 || filename.includes("\0")) {
     throw new InvalidArgumentError("filename debe ser una cadena no vacía y sin NUL");
