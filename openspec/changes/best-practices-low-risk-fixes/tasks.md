@@ -29,8 +29,8 @@
 - [x] 3.1 `check_hygiene.py` macOS home and temporary-path rule, with
   positive and negative cases (samples built from pieces).
 - [x] 3.2 `python-versions` CI job (3.11, 3.13); `CONTRIBUTING.md` recipe.
-- [x] 3.3 `docs/RELEASING.md` intro; `Documentation`/`homepage`/`bugs`
-  metadata; Python and TypeScript `CHANGELOG.md` entries.
+- [x] 3.3 `docs/RELEASING.md` intro; TypeScript `CHANGELOG.md` entries
+  (the package metadata URLs came with #95).
 - [x] 3.4 Local gates: Rust fmt/clippy/test in the Linux VM; Python unit
   (3.11, 3.13, 3.14) + ruff + mypy; scripts tests; TypeScript
   lint/typecheck/build/test/pack:check; docs; OpenSpec validate.

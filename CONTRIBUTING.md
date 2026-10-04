@@ -351,10 +351,17 @@ y fixtures se usan los marcadores de AWS (`123456789012`,
   los commits" más abajo).
 - **Commits firmados.** Además del trailer DCO, cada commit va firmado
   criptográficamente (GPG o SSH, opción `-S`) con una clave registrada en tu
-  cuenta de GitHub, para que aparezca como *Verified*. Firmar significa aceptar el Developer Certificate
-  of Origin 1.1, reproducido ahí. Cuando el repositorio sea público, la app
-  DCO de GitHub será un check obligatorio en cada PR (paso manual en
-  `docs/RELEASING.md`).
+  cuenta de GitHub, para que aparezca como *Verified* (el ruleset de `main`
+  exige commits firmados). Son dos cosas distintas: la firma prueba quién
+  hizo el commit; el trailer `Signed-off-by:` es el que acepta el Developer
+  Certificate of Origin 1.1, reproducido más abajo. La comprobación del DCO
+  en cada PR (la app DCO de GitHub como check obligatorio) es un paso
+  manual pendiente en `docs/RELEASING.md` §5.
+- **Tests con cada cambio.** Toda funcionalidad nueva o corrección llega con
+  tests que la cubren en el mismo PR: unitarios en el paquete que cambia
+  (`cargo test`, `pytest tests/unit`, `vitest`) y, si toca el runtime, la
+  aceptación e2e contra AWS real del cambio OpenSpec (regla 4 de §1). Un PR
+  de comportamiento sin tests explica por qué en su descripción.
 - **Sin force-push a `main`.** En tu rama, si hace falta, `--force-with-lease`.
 - **PR**: el título en formato Conventional Commits; la descripción sigue la
   plantilla (`.github/PULL_REQUEST_TEMPLATE.md`): cambio OpenSpec enlazado

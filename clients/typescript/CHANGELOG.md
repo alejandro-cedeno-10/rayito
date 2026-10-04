@@ -35,7 +35,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 - **`DynamoDbIndex` enseña su bloque "Coste y activación" en el hover del
   IDE**: vivía en el comentario de módulo, que tsdown descarta; ahora está
   en el TSDoc de la clase y `check-dts-cost-blocks` lo exige.
-- `package.json` declara `homepage` (el sitio de documentación) y `bugs`.
+- **Metadatos del paquete**: `package.json` declara `homepage` (el sitio de
+  documentación) y `bugs`; el README del paquete termina con la licencia, el
+  `NOTICE` incluido y la nota de marcas (proyecto independiente, no afiliado
+  a E2B). El `NOTICE` conserva además el copyright de E2B en la atribución
+  del código git adaptado (Apache-2.0 §4(c)).
 
 ## [0.6.0] - 2026-10-03
 
@@ -715,6 +719,13 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.2.0...HEAD
-[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.0.5...typescript-v0.2.0
-[0.0.5]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/typescript-v0.0.5
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...HEAD
+[0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.1...typescript-v0.6.0
+[0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.0...typescript-v0.5.1
+[0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.4.0...typescript-v0.5.0
+[0.4.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.3.3...typescript-v0.4.0
+[0.3.3]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.3.2...typescript-v0.3.3
+[0.3.2]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.3.1...typescript-v0.3.2
+[0.3.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.3.0...typescript-v0.3.1
+[0.3.0]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/typescript-v0.3.0
+[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/RELEASE_NOTES_0.2.0.md

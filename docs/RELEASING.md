@@ -5,7 +5,10 @@ desde 0.3.0 y cada release sale de `.github/workflows/release.yml` (PyPI
 Trusted Publishing, npm trusted publishing con provenance, assets firmados de
 `rayd`); cada versión es una decisión del mantenedor (`GOVERNANCE.md`). Las
 secciones de configuración inicial (§2 y §3) se conservan para un fork o
-para rehacer la configuración desde cero.
+para rehacer la configuración desde cero. La política de versionado,
+obsolescencia y soporte que siguen las releases está en
+[`docs/site/docs/limits.md`](site/docs/limits.md#versionado-y-soporte)
+("Versionado y soporte").
 
 ## 1. Qué se publica y con qué tag
 
@@ -200,3 +203,12 @@ cargo publish --dry-run -p rayito-proto
    (`tests/unit/cli/test_compat.py` falla si divergen). La versión de imagen
    no entra en la tabla: es el contador de builds de cada imagen en cada
    cuenta.
+8. Notas de la release: la nota curada es el bloque del changelog de cada
+   componente (la GitHub Release lleva además la lista de commits que
+   genera release-please). Una vulnerabilidad conocida públicamente que
+   la release corrige va en `### Security` con su identificador (CVE o
+   GHSA); un cambio incompatible, en `Changed` o `Removed`, y lo que pasa a
+   obsoleto, en `Deprecated`
+   ([política](site/docs/limits.md#versionado-y-soporte)). Si la release
+   abre una línea `MAJOR.MINOR` nueva, actualizar la tabla "Versiones
+   soportadas" de `SECURITY.md` en el mismo PR.

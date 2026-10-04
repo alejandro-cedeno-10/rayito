@@ -39,10 +39,10 @@ safe to fix now. The larger findings stay in the audit as a ranked list.
   `/private/`), the forms a macOS workstation leaks.
 - **Declared Python versions are tested**: a `python-versions` CI job runs
   the unit suite on 3.11 and 3.13 (`check` already covers 3.12).
-- **Docs and metadata**: `docs/RELEASING.md` no longer says nothing is
-  published yet; `CONTRIBUTING.md` lists the new gate; PyPI's
-  `Documentation` URL and npm's new `homepage` point at the published site,
-  and npm gains `bugs`.
+- **Docs**: `docs/RELEASING.md` no longer says nothing is published yet
+  (keeping the versioning-policy link #95 added); `CONTRIBUTING.md` lists
+  the new gate. (The `Documentation`/`homepage`/`bugs` metadata the audit
+  also flagged landed first in #95.)
 
 ## Capabilities
 

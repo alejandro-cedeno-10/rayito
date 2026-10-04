@@ -22,9 +22,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Documentation
 
-- El enlace `Documentation` de PyPI apunta al sitio publicado
-  (`https://alejandro-cedeno-10.github.io/rayito/`) en vez de a las fuentes
-  Markdown del repositorio.
+- **Metadatos del paquete**: la URL `Documentation` apunta al sitio de
+  documentación y se añade `Issues`; el README del paquete termina con la
+  licencia, el `NOTICE` incluido y la nota de marcas (proyecto independiente,
+  no afiliado a E2B). El `NOTICE` conserva además el copyright de E2B en la
+  atribución del código git adaptado (Apache-2.0 §4(c)).
 
 ## [0.6.0] - 2026-10-03
 
@@ -880,6 +882,14 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.2.0...HEAD
-[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.1.0...python-v0.2.0
-[0.1.0]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/python-v0.1.0
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...HEAD
+[0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.1...python-v0.6.0
+[0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.0...python-v0.5.1
+[0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.4.0...python-v0.5.0
+[0.4.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.3.3...python-v0.4.0
+[0.3.3]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.3.2...python-v0.3.3
+[0.3.2]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.3.1...python-v0.3.2
+[0.3.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.3.0...python-v0.3.1
+[0.3.0]: https://github.com/alejandro-cedeno-10/rayito/releases/tag/python-v0.3.0
+[0.2.0]: https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/RELEASE_NOTES_0.2.0.md
+[0.1.0]: https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/RELEASE_NOTES_0.1.0.md

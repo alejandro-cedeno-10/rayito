@@ -39,6 +39,7 @@ Homepage = "https://github.com/alejandro-cedeno-10/rayito"
 Repository = "https://github.com/alejandro-cedeno-10/rayito"
 Documentation = "https://alejandro-cedeno-10.github.io/rayito/"
 Changelog = "https://github.com/alejandro-cedeno-10/rayito/blob/main/clients/python/CHANGELOG.md"
+Issues = "https://github.com/alejandro-cedeno-10/rayito/issues"
 
 [dependency-groups]
 dev = [
