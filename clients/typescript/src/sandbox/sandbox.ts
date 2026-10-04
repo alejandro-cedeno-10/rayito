@@ -558,8 +558,9 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
   /** `SecretGateway` por nombre (m15-secrets-gateway, ADR-023): su bloque
    * "Coste y activación" está en la propia clase `SecretGateway`. */
   readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
-  /** Stub de m15-custom-domain: con algo distinto de `undefined`,
-   * `create()` lanza `UnimplementedError` antes de `run-microvm`. */
+  /** Aún sin cablear: con algo distinto de `undefined`, `create()` lanza
+   * `UnimplementedError` antes de `run-microvm`. Para un dominio propio usa
+   * `CustomDomain` (experimental) y registra la ruta tú mismo. */
   readonly domain?: unknown;
 }
 

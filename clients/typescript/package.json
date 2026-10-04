@@ -53,8 +53,9 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --project unit --passWithNoTests",
+    "test": "vitest run --project unit --passWithNoTests && pnpm run test:infra-functions",
     "test:e2e": "vitest run --project e2e --no-file-parallelism",
+    "test:infra-functions": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"../../infra/functions/tests/cloudfront-runtime-shim.mjs\", pathToFileURL(\"./\"));' --test ../../infra/functions/tests/custom_domain_router.test.mjs",
     "lint": "biome check .",
     "pack:check": "node scripts/pack-check.mjs && node scripts/check-dts-cost-blocks.mjs",
     "format": "biome format --write .",
@@ -82,15 +83,20 @@
   },
   "peerDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
+    "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1138.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-ec2": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
+    "@aws-sdk/signature-v4a": "^3.1138.0",
     "@opentelemetry/api": "^1.9.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-cloudformation": {
+      "optional": true
+    },
+    "@aws-sdk/client-cloudfront-keyvaluestore": {
       "optional": true
     },
     "@aws-sdk/client-cloudwatch-logs": {
@@ -108,17 +114,22 @@
     "@aws-sdk/client-secrets-manager": {
       "optional": true
     },
+    "@aws-sdk/signature-v4a": {
+      "optional": true
+    },
     "@opentelemetry/api": {
       "optional": true
     }
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.1138.0",
+    "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1138.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-ec2": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
+    "@aws-sdk/signature-v4a": "^3.1138.0",
     "@biomejs/biome": "^2.5.14",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/sdk-trace-base": "^2.11.0",

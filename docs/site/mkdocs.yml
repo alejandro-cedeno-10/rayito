@@ -177,7 +177,7 @@ nav:
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
       - Proxy local: funciones-opcionales/proxy-local.md
       - En desarrollo:
-          - Dominio propio: funciones-opcionales/dominio-propio.md
+          - Dominio propio (experimental): funciones-opcionales/dominio-propio.md
   - Migrar desde E2B:
       - migrar-desde-e2b/index.md
       - Diferencias: e2b-compat.md

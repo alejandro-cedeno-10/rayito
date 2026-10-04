@@ -1,0 +1,1 @@
+[{ "name": "class CustomDomain", "pattern": "^(export )?declare class CustomDomain\\b" }]

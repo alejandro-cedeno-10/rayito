@@ -25,6 +25,12 @@ function component(name = "widget"): StackComponent {
   return { name, description: "x", cost: COST };
 }
 
+/** Every catalog component has a template now (custom-domain was the last
+ * stub), so the `supported: false` path is exercised with a fake one. */
+function unsupportedStub(): StackComponent {
+  return { ...component("stub-component"), supported: false };
+}
+
 describe("stacks/model", () => {
   test("default stack name is prefixed", () => {
     expect(defaultStackName(component("metadata-index"))).toBe("rayito-metadata-index");
@@ -62,9 +68,12 @@ describe("stacks/service: OptionalStacks", () => {
   test("deploying an unsupported component raises before touching the provisioner", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    // `custom-domain` is the last stub (`supported: false`) on this branch.
-    await expect(stacks.deploy("custom-domain")).rejects.toThrow(UnimplementedError);
+    await expect(stacks.deploy(unsupportedStub())).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
+  });
+
+  test("every catalog component has a template", () => {
+    expect(COMPONENTS.every((entry) => entry.supported !== false)).toBe(true);
   });
 
   test("an unknown component name is invalid argument", async () => {
@@ -133,7 +142,7 @@ describe("stacks/service: OptionalStacks", () => {
   test("destroying an unsupported component also raises first", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.destroy("custom-domain")).rejects.toThrow(UnimplementedError);
+    await expect(stacks.destroy(unsupportedStub())).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 

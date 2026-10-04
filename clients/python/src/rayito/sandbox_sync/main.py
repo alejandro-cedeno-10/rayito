@@ -713,10 +713,10 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         De las siete opciones 0.6 (M15), sólo `domain=` sigue siendo un
-         stub (m15-custom-domain): ponerla a algo
-         distinto de `None` lanza `UnimplementedError` nombrando ese cambio,
-         antes de `run-microvm` (`_feature_options.plan_features`) y sin
+         De las siete opciones 0.6 (M15), sólo `domain=` sigue sin cablear
+         (para un dominio propio usa `CustomDomain`, experimental): ponerla
+         a algo distinto de `None` lanza `UnimplementedError` nombrando
+         `m15-custom-domain`, antes de `run-microvm` (`_feature_options.plan_features`) y sin
          ninguna llamada a AWS. `mounts=`, `volumes=`, `size=`, `events=`,
          `telemetry=` y `gateways=` ya son reales: cada una lleva su bloque "Coste y
          activación" aquí debajo o en su clase (`SecretGateway`). Con todas

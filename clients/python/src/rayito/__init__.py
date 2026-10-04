@@ -18,6 +18,7 @@ from rayito._charts import (
     ScatterChart,
     SuperChart,
 )
+from rayito._custom_domain import AsyncCustomDomain, CustomDomain, CustomDomainRoute
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
 from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
@@ -174,6 +175,7 @@ from rayito.sandbox_sync.pty import PtyHandle
 __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
+    "AsyncCustomDomain",
     "AsyncEfsVolumes",
     "AsyncGit",
     "AsyncLifecycleEvents",
@@ -208,7 +210,9 @@ __all__ = [
     "CommandResult",
     "CopyStep",
     "CostStatement",
+    "CustomDomain",
     "CustomDomainException",
+    "CustomDomainRoute",
     "DiskFullException",
     "DownloadLink",
     "DynamoDbIndex",

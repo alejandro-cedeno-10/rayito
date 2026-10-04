@@ -9,6 +9,7 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
+| `custom-domain.yaml` | Opcional (M15, experimental, $0 en reposo): distribución CloudFront con alias comodín + CloudFront Function de enrutado + KeyValueStore; sin Lambda ni IAM propio | Sólo si usas `CustomDomain` para exponer sandboxes en tu propio dominio ([Dominio propio](#dominio-propio-infracustom-domainyaml-m15)); `Sandbox.create(domain=)` sigue sin cablear, ver `ARCHITECTURE.md` ADR-024 |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
 | `events-webhooks.yaml` | Opcional (M15, m15-events-webhooks): secreto HMAC del stack, tabla DynamoDB, tres Lambdas (forwarder/deliverer/reconciliador), suscripción de CloudWatch Logs y regla de EventBridge Scheduler | Sólo si usas `events=LifecycleEvents(...)` / `LifecycleEvents` para eventos de ciclo de vida firmados y webhooks ([Eventos y webhooks](#eventos-y-webhooks-infraevents-webhooksyaml-m15)) |
 
@@ -498,6 +499,69 @@ Estado: validada con `cfn-lint` 1.56.3 y
 la tabla, `PAY_PER_REQUEST`, TTL en `expires_at`, cada política con su única
 acción sobre el ARN de la tabla, ningún `Resource: "*"`); `make infra-lint`
 la incluye (`validate-template` + `cfn-lint`).
+
+## Dominio propio (`infra/custom-domain.yaml`, M15, experimental)
+
+Plantilla **opcional**: sólo hace falta si expones sandboxes en tu propio
+dominio con `CustomDomain` (Python sync/async, TypeScript;
+[Dominio propio](../docs/site/docs/funciones-opcionales/dominio-propio.md)).
+Nunca se despliega sola ni el SDK la crea. Crea **una distribución
+CloudFront, una CloudFront Function y un KeyValueStore**, nada más (ni
+Lambda, ni rol IAM propio — `CAPABILITY_IAM`/`CAPABILITY_NAMED_IAM` no
+hacen falta). Acciones y parámetros del plano de datos del KeyValueStore:
+`AWS_API_NOTES.md` §29.
+
+| Recurso / salida | Qué es |
+|---|---|
+| `DistributionId` / `DistributionDomainName` | `AWS::CloudFront::Distribution`: alias `*.<PublicDomain>`, certificado `CertificateArn` (debe estar en `us-east-1`), un origen "placeholder" que la Function reemplaza en cada petición |
+| `RouterFunction` | `AWS::CloudFront::Function` (`cloudfront-js-2.0`, asociada en `viewer-request`): lee la ruta del KeyValueStore por hostname y llama a `cf.updateRequestOrigin` |
+| `KvsArn` | `AWS::CloudFront::KeyValueStore`: dos claves por ruta (`j:<etiqueta>` el JWE, `m:<etiqueta>` metadatos), que escriben `CustomDomain.register()`/`unregister()`/`refresh()`, nunca la Function |
+| Parámetro `AlternateDomainNames` | Opcional (`CommaDelimitedList`, vacío por defecto): hostnames exactos `<etiqueta>.<PublicDomain>` en lugar del alias comodín, p. ej. si otra distribución ya tiene `*.<PublicDomain>` (`CustomDomain.deploy(alternate_domain_names=...)`, `rayito domain deploy --alternate-domain-name`) |
+
+**Coste**: $0 en reposo (CloudFront sin tráfico no factura; el KeyValueStore
+tampoco). Con uso (us-east-1; cifras de lista de CloudFront Functions/
+KeyValueStore desde su lanzamiento, por reconfirmar en la etapa de
+aceptación AWS): ~$0,085/GB + $0,0075/10 000 peticiones HTTPS de salida
+(CloudFront); ~$0,10 por 1 000 000 de invocaciones de la Function (una por
+petición); KeyValueStore ~$0,50 por 1 000 000 de lecturas (las de la
+Function) y ~$5 por 1 000 000 de llamadas de gestión (`PutKey`/`DeleteKey`
+de `register`/`unregister`/`refresh`) — tres líneas, no una cifra
+combinada.
+
+### Desplegar
+
+```bash
+aws cloudformation deploy \
+  --stack-name rayito-custom-domain \
+  --template-file infra/custom-domain.yaml \
+  --parameter-overrides PublicDomain=sbx.example.com \
+    CertificateArn=arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
+
+aws cloudformation describe-stacks --stack-name rayito-custom-domain \
+  --query "Stacks[0].Outputs" --output table
+```
+
+Sin `--capabilities`: la plantilla no crea ningún recurso IAM. El
+certificado ACM debe estar en `us-east-1` (requisito de CloudFront) y
+cubrir `*.<PublicDomain>` (o cada `AlternateDomainNames`); tras desplegar,
+apunta un `CNAME`/`ALIAS` de esos nombres al `DistributionDomainName`.
+
+### Borrar (apagarlo)
+
+```bash
+aws cloudformation delete-stack --stack-name rayito-custom-domain
+```
+
+Borra la distribución (tarda ~15 min en deshabilitarse primero), la
+Function y el KeyValueStore; ninguna ruta sobrevive, son efímeras.
+
+Estado: validada con `cfn-lint` 1.56.3 (el único recurso de datos es el
+código de la Function, mantenido en sincronía con
+`infra/functions/custom_domain_router.js` por
+`scripts/tests/test_custom_domain_function_sync.py`); `make infra-lint` la
+incluye (`validate-template` + `cfn-lint`). `Sandbox.create(domain=)` sigue
+sin cablear a esta pila (`ARCHITECTURE.md` ADR-024); úsala hoy
+instanciando `CustomDomain` directamente.
 
 ## Eventos y webhooks (`infra/events-webhooks.yaml`, M15)
 

@@ -356,8 +356,21 @@ CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
   cuenta y comparando el contenido de un objeto que ya exista.
 - `status` es un `DescribeStacks`: estado y salidas de la pila.
 - `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
-- Un componente todavía sin plantilla (`custom-domain`) falla con un error
-  claro antes de llamar a AWS.
+
+## `rayito domain`
+
+```bash
+rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--stack-name N] [--yes]
+rayito domain status | destroy [--stack-name N] [--yes]
+```
+
+[Dominio propio](funciones-opcionales/dominio-propio.md) (**experimental**,
+sin verificar aún de punta a punta en AWS real): una fachada de
+`rayito stack deploy custom-domain` (y `status`/`destroy`) con los nombres de
+`CustomDomain`. `deploy` valida `--public-domain` y cada
+`--alternate-domain-name` antes de llamar a AWS, pide confirmación salvo
+`--yes` e imprime a qué apuntar el `CNAME`. El certificado ACM tiene que
+estar en `us-east-1`.
 
 ## `rayito events`
 
