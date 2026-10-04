@@ -42,7 +42,7 @@ sandbox como el usuario del sandbox. `rayito-base` trae `git-core` desde 0.3.0
             await sbx.files.write(f"{repo}/NOTAS.md", "hola\n")
             await sbx.git.add(repo)
             await sbx.git.commit(repo, "notas", author_name="Agente", author_email="agente@example.com")
-            # token de vida corta y ámbito mínimo; sólo existe mientras dura el push
+            # token de vida corta y de un solo repo: el código del sandbox puede verlo
             await sbx.git.push(repo, username="x-access-token", password=os.environ["GIT_TOKEN"])
             print((await sbx.git.status(repo)).ahead)
 
@@ -79,18 +79,36 @@ Métodos (los mismos en `Git` y `AsyncGit`; en TypeScript en camelCase):
 
 ## Credenciales
 
+!!! warning "Trata el token como revelado al código del sandbox"
+    Un `username`/`password` que pasas a `clone`, `push` o `pull` está al
+    alcance de cualquier código que ya haya corrido en ese sandbox con el
+    mismo usuario: puede haber dejado preparado su `~/.bash_profile` (las
+    órdenes corren con un shell de login), su configuración de git o un
+    proceso que mire `/proc`. Usa sólo tokens de vida corta, de un solo
+    repositorio y con el mínimo permiso (por ejemplo, un token de
+    instalación de una GitHub App), nunca un token personal de larga
+    duración en un sandbox que ejecuta código no confiable. Es la misma
+    regla que para los [secretos inyectados](secrets.md).
+
 - **`clone`, `push` y `pull` con `username`/`password`**: la URL con
-  credenciales sólo existe mientras dura la orden. Tras un `clone` el SDK
-  deja el remoto `origin` con la URL sin credenciales (salvo
+  credenciales está en `.git/config` mientras dura la orden. Tras un `clone`
+  el SDK deja el remoto `origin` con la URL sin credenciales (salvo
   `dangerously_store_credentials=True`); en `push`/`pull` cambia la URL del
-  remoto, ejecuta la orden y la restaura siempre, también si falló. Un
-  `password` sin `username` lanza `InvalidArgumentException` antes de ejecutar
-  nada.
+  remoto, ejecuta la orden y la restaura siempre, también si la orden falla
+  o vence. Si la restauración no se puede hacer (el sandbox se pausa, se
+  corta el stream), el logger `rayito.git` (en TypeScript, el `logger` del
+  sandbox) avisa sin la URL de que el token puede seguir en `.git/config`,
+  y viajaría en un snapshot o en `persist=`. Un `password` sin `username`
+  lanza `InvalidArgumentException` antes de ejecutar nada.
+- **Endurecimiento**: con credenciales, la orden de git corre sin hooks
+  (`-c core.hooksPath=/dev/null`) y sin credential helpers
+  (`-c credential.helper=`, para que un helper configurado no guarde el
+  token en disco), y antes de enviar nada el SDK comprueba que la
+  configuración de git no reescribe URLs (`url.*.insteadOf`); si lo hace,
+  lanza `GitAuthException` sin haber enviado las credenciales.
 - **Las credenciales viajan en la orden** (`StartRequest.cmd`) hasta `rayd`,
   que nunca registra órdenes; el SDK tampoco las registra y las redacta
   (`***`) de `stdout`, `stderr` y del mensaje de un `CommandExitException`.
-  Mientras la orden corre, un proceso del propio sandbox podría verlas en
-  `/proc`.
 - **`dangerously_authenticate(username, password, host="github.com")`**
   guarda las credenciales con `git credential approve` en
   `~/.git-credentials` del usuario del sandbox: **quedan visibles para el
@@ -102,6 +120,7 @@ Métodos (los mismos en `Git` y `AsyncGit`; en TypeScript en camelCase):
 | Situación | Python | TypeScript |
 |---|---|---|
 | el remoto pide credenciales | `GitAuthException` (nunca incluye la URL) | `GitAuthError` |
+| la configuración de git reescribe URLs (`url.*.insteadOf`) y la llamada lleva credenciales | `GitAuthException`, sin enviarlas | `GitAuthError` |
 | `push`/`pull` sin rama de seguimiento | `GitUpstreamException` con la orden que falta | `GitUpstreamError` |
 | cualquier otro fallo de git | `CommandExitException` (salida redactada si había credenciales) | `CommandExitError` |
 | argumentos inválidos | `InvalidArgumentException`, antes de ejecutar nada | `InvalidArgumentError` |

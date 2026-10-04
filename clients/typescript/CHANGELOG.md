@@ -6,6 +6,35 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Security
+
+- **`Template.build()`**: un rechazo de AWS distinto de la cuota es ahora
+  `BuildError({ reason: "aws_error" })` con el resumen saneado como mensaje y
+  `cause`, y el adaptador sanea cada llamada al SDK de AWS (el error crudo de
+  smithy lleva `$response`, la petición firmada; un error de firma lleva la
+  cadena canónica con el token de sesión). El `name` del error se conserva.
+  `StackError` usa también el resumen saneado como `cause`.
+- **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
+  corren sin hooks ni credential helpers, se niegan (`GitAuthError`) si la
+  configuración de git reescribe URLs (`url.*.insteadOf`), y un `clone` que
+  falla sin exit de git intenta igualmente quitar las credenciales de
+  `origin`; si una restauración falla, el `logger` del sandbox avisa sin la
+  URL. La documentación dice ahora que el token queda al alcance del código
+  del sandbox.
+- **Salida acotada en memoria**: cada descriptor de un comando o una PTY
+  guarda como mucho 64 MiB (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el
+  final y `CommandResult.truncated`/`CommandExitError.truncated` lo indican.
+  `commands.run`/`connect` aceptan `maxOutputBytes` (`0` no guarda nada; los
+  callbacks reciben siempre todo).
+- **Access token mínimo**: un token propio (`accessToken`,
+  `RAYITO_ACCESS_TOKEN`) tiene que decodificar a al menos 16 bytes
+  (`ACCESS_TOKEN_MIN_BYTES`). **Cambio**: uno más corto, aceptado antes,
+  ahora es `InvalidArgumentError`. Los generados (32 bytes) no cambian.
+- `ProxyToken.jwe` ya no es enumerable: `console.log`/`util.inspect` y
+  `JSON.stringify` no lo muestran.
+- Tests que fijan que `Template.build()` no sigue enlaces simbólicos dentro
+  de un directorio copiado (misma regla que el SDK de Python).
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

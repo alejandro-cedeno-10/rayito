@@ -110,8 +110,14 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
 
 `copy("app/", "/srv/app/")` lee `app/` relativo a `context_dir=`/
 `contextDir` (por defecto, el directorio actual) y respeta su
-`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un enlace
-simbólico hacia fuera) da `BuildException(reason="context_path_outside")`.
+`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un `src`
+que es un enlace simbólico hacia fuera) da
+`BuildException(reason="context_path_outside")`. Dentro de un directorio
+copiado, los enlaces simbólicos (a fichero o a directorio) **nunca se
+siguen**, igual que en Docker y en los dos SDKs: un `config ->
+~/.aws/credentials` dentro de `app/` no acaba en el artefacto que se sube a
+S3 ni en la imagen, donde el código del sandbox lo podría leer. Si
+necesitas ese contenido, cópialo como fichero real dentro del contexto.
 Los ficheros van bajo `__rayito_context/` dentro del zip: nunca sustituyen
 el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
 
@@ -122,12 +128,13 @@ el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
 | `None` + `step`/`command`/`exit_code`/`log_tail` | un `RUN` del Dockerfile compuesto salió con error |
 | `ready_client_error` / `ready_server_error` | el proceso detrás de `/ready` respondió 4xx/5xx durante el build (Q85) |
 | `build_quota` | ya hay 10 builds en marcha en este proceso, o AWS rechazó el undécimo de la cuenta (Q83) |
+| `aws_error` | AWS rechazó el build por otro motivo; el mensaje y la causa llevan sólo el código y el mensaje saneados (sin la cadena canónica de un error de firma) |
 | `build_timeout` | el build no terminó en `timeout`; sigue en AWS y `get_build_status()` lo consulta |
 | `context_path_missing` / `context_path_outside` | un `copy()` nombra algo que no existe, o fuera del contexto |
 | `base_image_not_s3` / `base_image_missing_artifact` / `base_image_missing_entrypoint` | la imagen base no es una imagen `rayito-*` publicada con `rayito image publish` |
 
 Los mensajes nombran el template que pasaste, nunca un ARN ni el texto
-libre de AWS.
+libre de AWS sin sanear.
 
 ## Ejemplo rápido
 

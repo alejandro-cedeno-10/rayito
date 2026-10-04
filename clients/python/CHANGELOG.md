@@ -6,6 +6,58 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Security
+
+- **`rayito sandbox proxy` comprueba `Host` y `Origin`**. El proxy añade tu
+  token a todo lo que reenvía, así que una web abierta en tu navegador podía
+  usar el servicio del sandbox (DNS rebinding, un POST entre sitios o un
+  `WebSocket` de otro origen). Ahora sólo reenvía si `Host` es de loopback
+  con el puerto local, la dirección de `--bind`, `<id>.localhost` o un nuevo
+  `--allowed-host` (si no, `421`), y si el `Origin`, cuando viene, es uno de
+  esos orígenes o un nuevo `--allow-origin` (si no, `403`). **Cambio**:
+  `--bind 0.0.0.0`/`::` exige `--allowed-host`, y un cliente que mande otro
+  `Host` (p. ej. un proxy inverso) necesita `--allowed-host`. Como mucho
+  `--max-connections` (8) conexiones a la vez (`503` después). Anuncia
+  también `http://<id>.localhost:<puerto>`, con cookies separadas de tus
+  otras apps locales.
+- **`Template.build` y `rayito image publish` no siguen enlaces simbólicos**
+  dentro de un directorio copiado (ni a fichero ni a directorio), como
+  Docker y el SDK de TypeScript: un enlace a un fichero de tu máquina ya no
+  acaba en el artefacto de S3 ni en la imagen.
+- **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
+  restauran siempre la URL sin credenciales (también si vence la orden o la
+  restauración), conservan el error de la operación y avisan por el logger
+  `rayito.git`, sin la URL, si el token puede seguir en `.git/config`. Esas
+  órdenes corren sin hooks ni credential helpers y se niegan
+  (`GitAuthException`) si la configuración de git reescribe URLs
+  (`url.*.insteadOf`). La documentación dice ahora que el token queda al
+  alcance del código del sandbox: usa tokens de vida corta y de un solo
+  repositorio.
+- **Errores de AWS saneados en más caminos**: los stacks opcionales encadenan
+  el resumen saneado y no el `ClientError` crudo; `Template.build` traduce un
+  rechazo de AWS a `BuildException(reason="aws_error")` (antes subía el
+  `ClientError`); el manejador de errores de la CLI, `rayito doctor` y
+  `rayito prune` redactan el mensaje de AWS (un error de firma repite la
+  cadena canónica con el token de sesión).
+- **Salida acotada en memoria**: cada descriptor de un comando o una PTY
+  guarda como mucho 64 MiB (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el
+  final y `CommandResult.truncated`/`CommandExitException.truncated` lo
+  indican. `commands.run`/`connect` aceptan `max_output_bytes` (`0` no
+  guarda nada; los callbacks reciben siempre todo) y `rayito sandbox exec`
+  ya no guarda la salida que imprime.
+- **La CLI neutraliza secuencias de escape**: hacia una terminal, los
+  caracteres de control de logs de CloudWatch, logs de build y mensajes de
+  AWS salen como `\xNN` visibles. `rayito sandbox logs` sólo usa un stream
+  que no es el esperado si tiene exactamente la forma `YYYY/MM/DD[<versión>]<id>`
+  y un día no anterior al arranque, y avisa cuando lo hace.
+- **Access token mínimo**: un token propio (`access_token=`,
+  `RAYITO_ACCESS_TOKEN`, `--token-file`) tiene que decodificar a al menos 16
+  bytes (`ACCESS_TOKEN_MIN_BYTES`). **Cambio**: uno más corto, aceptado
+  antes, ahora es `InvalidArgumentException`. Los generados (32 bytes) no
+  cambian.
+- `ProxyToken` y el contexto de `rayito doctor` ya no muestran el JWE en
+  `repr`.
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed
