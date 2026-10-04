@@ -177,6 +177,33 @@ function isCapabilityGate(section: ConfigureSection): section is ConfigureSectio
 }
 
 /**
+ * Un `ConfigureSection` que `rayd` aplica dentro de la propia llamada a
+ * `Configure` y puede tardar más que el `requestTimeoutMs` por defecto (hoy
+ * `volumes`: `rayd` monta cada volumen antes de responder, hasta 15 s por
+ * volumen). `applyTimeoutMs` es el plazo mínimo de esa llamada
+ * (`configureTimeoutMs`). Espejo de `SlowApplySection` de Python.
+ */
+export interface SlowApplySection extends ConfigureSection {
+  readonly applyTimeoutMs: number;
+}
+
+export function isSlowApplySection(section: ConfigureSection): section is SlowApplySection {
+  return typeof (section as Partial<SlowApplySection>).applyTimeoutMs === "number";
+}
+
+/** El plazo de la llamada a `Configure` con `sections`: `timeoutMs` o, si es
+ * mayor, el `applyTimeoutMs` de la `SlowApplySection` más lenta. Espejo de
+ * `configure_timeout_s` de Python. */
+export function configureTimeoutMs(
+  sections: readonly ConfigureSection[],
+  timeoutMs: number,
+): number {
+  return sections
+    .filter(isSlowApplySection)
+    .reduce((longest, entry) => Math.max(longest, entry.applyTimeoutMs), timeoutMs);
+}
+
+/**
  * Lo que `PostApplySection.afterApply` recibe una vez su `Configure` se
  * aplicó: el `ConfigureStatus` de ese momento y cómo volver a mandar esa
  * misma sección más tarde (`fill` otra vez, `Configure`,

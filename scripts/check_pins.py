@@ -35,8 +35,9 @@ clavada), sin red y sólo con la biblioteca estándar:
    puerta es léxica: no sigue variables de shell (`-o "$F"` sólo casa con una
    comprobación que nombre `$F` igual) ni interpreta subshells.
 4. **dnf**: en esos mismos `Dockerfile`, cada paquete de
-   `PINNED_DNF_PACKAGES` (hoy `git-core`) que nombre un `dnf install` tiene
-   que llevar `-<versión>-<release>` (`git-core-2.50.1-1.amzn2023.0.1`), así
+   `PINNED_DNF_PACKAGES` (hoy `git-core` y `amazon-efs-utils`) que nombre un
+   `dnf install` tiene que llevar `-<versión>-<release>`
+   (`git-core-2.50.1-1.amzn2023.0.1`), así
    subirlo es un diff revisable y una versión de imagen nueva. Los demás
    paquetes de la línea siguen sin clavar: la línea base de M1 (SECURITY.md
    T10). El hallazgo cuenta desde la primera línea de la instrucción y cita el
@@ -132,10 +133,15 @@ SHA256_CHECK = "sha256sum -c"
 FLOATING_RELEASE = re.compile(r"/releases/latest\b|/latest/download/")
 LINE_CONTINUATION = "\\"
 DNF_REASON = "el paquete dnf no lleva -<versión>-<release>"
-PINNED_DNF_PACKAGES = frozenset({"git-core"})
+PINNED_DNF_PACKAGES = frozenset({"git-core", "amazon-efs-utils"})
 DNF = "dnf"
 DNF_INSTALL = "install"
 DOCKERFILE_RUN = "RUN"
+#: Palabras de shell que pueden ir delante de una orden dentro de una capa
+#: condicional (`RUN if ...; then dnf install ...; fi`, la capa de
+#: `amazon-efs-utils` de `image/Dockerfile`): se quitan antes de mirar si la
+#: orden es `dnf`.
+SHELL_COMPOUND_KEYWORDS = frozenset({"then", "else", "do"})
 SHELL_SEPARATORS = re.compile(r"&&|\|\||[;|]")
 VERSION_START = re.compile(r"-(?=\d)")
 PIP = "pip"
@@ -420,12 +426,15 @@ def unpinned_workflow_downloads(text: str) -> list[Finding]:
 def dnf_install_packages(instruction: str) -> list[str]:
     """Los paquetes que nombran los `dnf install` de una instrucción: cada
     orden de shell (cortada en `&&`, `||`, `;` y `|`) cuya primera palabra,
-    quitado `RUN`, es `dnf` y que lleva `install`. Las opciones (`-y`,
-    `--setopt=...`) no son paquetes."""
+    quitados `RUN` y un `then`/`else`/`do` de una capa condicional, es `dnf`
+    y que lleva `install`. Las opciones (`-y`, `--setopt=...`) no son
+    paquetes."""
     packages: list[str] = []
     for command in SHELL_SEPARATORS.split(instruction):
         words = split_words(command)
         if words[:1] == [DOCKERFILE_RUN]:
+            words = words[1:]
+        if words[:1] and words[0] in SHELL_COMPOUND_KEYWORDS:
             words = words[1:]
         if words[:1] != [DNF] or DNF_INSTALL not in words:
             continue

@@ -9,15 +9,17 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, NoReturn, TypeVar, Unpack
+from typing import Any, TypeVar, Unpack
 
 from rayito._index import DynamoDbIndex, validate_index
+from rayito._volumes import VolumeStore
 from rayito.e2b._async import AsyncSandbox
 from rayito.e2b._connection import ApiParams, ignored_param_warnings, split_api_params
 from rayito.e2b._secret import AsyncSecret, Secret
 from rayito.e2b._sync import Sandbox
 from rayito.e2b._template import AsyncTemplate, Template
 from rayito.e2b._unimplemented import unimplemented
+from rayito.e2b._volume import AsyncVolume, Volume, require_sync_store
 from rayito.e2b.exceptions import RayitoCompatWarning
 
 BoundClass = TypeVar("BoundClass", bound=type)
@@ -53,8 +55,13 @@ class E2B:
     `client.Template`/`client.AsyncTemplate` (m15-templates) usan su
     `region`, su `session` y `bucket=` (extensión de Rayito: el bucket de
     artefactos de `Template.build`, `None` por defecto; sin él cada
-    `build` debe pasar `bucket=`). `Volume`/`AsyncVolume` siguen siendo
-    `UnimplementedError`."""
+    `build` debe pasar `bucket=`). `client.Volume`/`client.AsyncVolume`
+    (m15-efs-volumes, experimental) sólo funcionan con
+    `volume_store=VolumeStore(...)` — sin él, `UnimplementedError`; y
+    `Sandbox.create(volume_mounts=...)` necesita además
+    `volume_connector_arn=` (el `ConnectorArn` de la pila efs-volumes), que
+    sustituye a `INTERNET_EGRESS` como único conector de egress de ese
+    sandbox."""
 
     def __init__(
         self,
@@ -64,6 +71,8 @@ class E2B:
         control_plane: Any | None = None,
         index: DynamoDbIndex | None = None,
         bucket: str | None = None,
+        volume_store: VolumeStore | None = None,
+        volume_connector_arn: str | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -77,9 +86,16 @@ class E2B:
         params = {"region": region, "session": session, "control_plane": control_plane, **applied}
         bound = {key: value for key, value in params.items() if value is not None}
         chosen_index = validate_index(index)
-        self.Sandbox: type[Sandbox] = bind_class(Sandbox, bound, _bound_index=chosen_index)
+        volume_store = require_sync_store(volume_store)
+        volume_binding = {
+            "_bound_volume_store": volume_store,
+            "_bound_volume_connector_arn": volume_connector_arn,
+        }
+        self.Sandbox: type[Sandbox] = bind_class(
+            Sandbox, bound, _bound_index=chosen_index, **volume_binding
+        )
         self.AsyncSandbox: type[AsyncSandbox] = bind_class(
-            AsyncSandbox, bound, _bound_index=chosen_index
+            AsyncSandbox, bound, _bound_index=chosen_index, **volume_binding
         )
         secret_bound: dict[str, Any] = {
             key: bound[key] for key in ("region", "session") if key in bound
@@ -89,11 +105,18 @@ class E2B:
         template_bound = {**secret_bound, **({"bucket": bucket} if bucket is not None else {})}
         self.Template: type[Template] = bind_class(Template, template_bound)
         self.AsyncTemplate: type[AsyncTemplate] = bind_class(AsyncTemplate, template_bound)
+        self._volume_store = volume_store
 
     @property
-    def Volume(self) -> NoReturn:
-        raise unimplemented("Volume")
+    def Volume(self) -> type[Volume]:
+        """`UnimplementedError("Volume")` sin `volume_store=` en el
+        constructor; si no, una subclase de `Volume` ligada a él."""
+        if self._volume_store is None:
+            raise unimplemented("Volume")
+        return bind_class(Volume, {}, _bound_store=self._volume_store)
 
     @property
-    def AsyncVolume(self) -> NoReturn:
-        raise unimplemented("Volume")
+    def AsyncVolume(self) -> type[AsyncVolume]:
+        if self._volume_store is None:
+            raise unimplemented("Volume")
+        return bind_class(AsyncVolume, {}, _bound_store=self._volume_store)

@@ -177,6 +177,105 @@ def test_default_names_follow_the_variant() -> None:
         _publish.default_image_name("caps")
 
 
+def test_with_efs_names_the_caps_efs_image_and_needs_all_and_full() -> None:
+    assert _publish.default_image_name("full", with_efs=True) == "rayito-base-caps-efs"
+    assert _publish.default_image_name("full", with_efs=True) == _publish.EFS_IMAGE_NAME
+    with pytest.raises(ValueError, match="--variant full"):
+        _publish.default_image_name("poly", with_efs=True)
+    with pytest.raises(ValueError, match="CAP_SYS_ADMIN"):
+        _publish.require_efs_combination("full", None)
+    _publish.require_efs_combination("full", "ALL")
+
+
+def test_an_efs_artifact_publishes_only_with_with_efs(
+    image_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    efs = tmp_path / "efs.zip"
+    _artifact.write_zip(image_dir, efs, with_efs=True)
+    with pytest.raises(SystemExit) as refused:
+        _publish.require_matching_variant(settings(artifact=efs))
+    assert refused.value.code == 1
+    assert "--with-efs" in capsys.readouterr().err
+    _publish.require_matching_variant(settings(artifact=efs, with_efs=True, os_capabilities="ALL"))
+
+
+def test_with_efs_refuses_an_artifact_without_the_marker(
+    image_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plain = tmp_path / "plain.zip"
+    _artifact.write_zip(image_dir, plain)
+    with pytest.raises(SystemExit):
+        _publish.require_matching_variant(
+            settings(artifact=plain, with_efs=True, os_capabilities="ALL")
+        )
+    assert "image_zip.py --with-efs" in capsys.readouterr().err
+
+
+def test_with_efs_settings_without_all_are_refused(
+    image_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    efs = tmp_path / "efs.zip"
+    _artifact.write_zip(image_dir, efs, with_efs=True)
+    with pytest.raises(SystemExit):
+        _publish.require_matching_variant(settings(artifact=efs, with_efs=True))
+    assert "CAP_SYS_ADMIN" in capsys.readouterr().err
+
+
+def test_publish_with_efs_without_os_capabilities_stops_before_any_call(
+    runner: CliRunner, clients: Clients, image_dir: Path, tmp_path: Path
+) -> None:
+    path = tmp_path / "efs.zip"
+    _artifact.write_zip(image_dir, path, with_efs=True)
+    result = runner.invoke(
+        app,
+        [
+            "image",
+            "publish",
+            "--artifact",
+            str(path),
+            "--with-efs",
+            "--base-image-version",
+            "1",
+            "--bucket",
+            "b",
+            "--build-role-arn",
+            BUILD_ROLE,
+        ],
+        obj=clients,
+    )
+    assert result.exit_code == 2
+    assert "--with-efs" in result.stderr
+
+
+def test_publish_without_with_efs_refuses_an_efs_artifact_before_any_call(
+    runner: CliRunner, clients: Clients, image_dir: Path, tmp_path: Path
+) -> None:
+    path = tmp_path / "efs.zip"
+    _artifact.write_zip(image_dir, path, with_efs=True)
+    result = runner.invoke(
+        app,
+        [
+            "image",
+            "publish",
+            "--artifact",
+            str(path),
+            "--os-capabilities",
+            "ALL",
+            "--image-name",
+            "rayito-base-caps",
+            "--base-image-version",
+            "1",
+            "--bucket",
+            "b",
+            "--build-role-arn",
+            BUILD_ROLE,
+        ],
+        obj=clients,
+    )
+    assert result.exit_code == 1
+    assert "amazon-efs-utils marker" in result.stderr
+
+
 MISMATCHES = [
     ("full", "slim"),
     ("full", "poly"),

@@ -15,7 +15,9 @@ import {
 import { PORT_MAX, PORT_MIN, SUSPENDED_STATES, TERMINAL_STATES } from "../limits.js";
 import {
   ALL_TRAFFIC,
+  hasInternetConnector,
   type IdlePolicyInput,
+  INTERNET_EGRESS_CONNECTOR,
   type SandboxInfo as NativeSandboxInfo,
   type SandboxMetrics as NativeSandboxMetrics,
   type NetworkPolicyInput,
@@ -57,8 +59,7 @@ export const HTTPS_PORTS_REASON =
 /** La `idle` de la plataforma en modo `pause`, como `IdlePolicy(max_idle_seconds=300)` en Python. */
 export const PAUSE_MAX_IDLE_SECONDS = 300;
 export const SHIM_DEFAULT_INGRESS: readonly string[] = Object.freeze(["ALL_INGRESS"]);
-const INTERNET_EGRESS = "INTERNET_EGRESS";
-export const SHIM_EGRESS: readonly string[] = Object.freeze([INTERNET_EGRESS]);
+export const SHIM_EGRESS: readonly string[] = Object.freeze([INTERNET_EGRESS_CONNECTOR]);
 
 export const AVAILABLE_KERNELS_REASON =
   "kernels disponibles: python en toda imagen; bash, javascript y typescript en la " +
@@ -453,9 +454,9 @@ function rejectUnsupportedCreateOpts(opts: SandboxOpts): void {
   if (opts.iam !== undefined) {
     throw unimplemented("iam");
   }
-  if (opts.volumeMounts !== undefined) {
-    throw unimplemented("volumeMounts");
-  }
+  // `volumeMounts` is gated right after this, by `Sandbox.createFor`
+  // (`planVolumeMounts`), which holds the client's `volumeStore` and
+  // `volumeConnectorArn`.
 }
 
 function lifecycleIdle(lifecycle: ShimLifecycle): IdlePolicyInput | null {
@@ -582,10 +583,6 @@ export function stateFromNative(state: string, sandboxId: string): SandboxState 
 
 function isNativeInfo(info: NativeSandboxInfo | SandboxListItem): info is NativeSandboxInfo {
   return "endpoint" in info;
-}
-
-function hasInternetConnector(egress: readonly string[]): boolean {
-  return egress.some((connector) => connector.split(":").at(-1) === INTERNET_EGRESS);
 }
 
 /**

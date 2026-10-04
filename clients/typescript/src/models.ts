@@ -396,6 +396,18 @@ export interface ProcessInfo {
 export const ALL_TRAFFIC = "0.0.0.0/0";
 
 /**
+ * El conector de egress gestionado que da internet al MicroVM
+ * (`AWS_API_NOTES.md` §2, `MANAGED_NETWORK_CONNECTORS`); un `egress`
+ * omitido o vacío lo hereda de la imagen (§16 Q60).
+ */
+export const INTERNET_EGRESS_CONNECTOR = "INTERNET_EGRESS";
+
+/** Si `egress` (nombres gestionados o ARNs) incluye `INTERNET_EGRESS`. */
+export function hasInternetConnector(egress: readonly string[]): boolean {
+  return egress.some((connector) => connector.split(":").at(-1) === INTERNET_EGRESS_CONNECTOR);
+}
+
+/**
  * Lo que recibe un selector función de `allowOut`/`denyOut`, con los nombres
  * de E2B (`ctx.allTraffic`, `ctx.rules`). `rules` siempre está vacío: Rayito
  * no tiene `network.rules`.

@@ -11,7 +11,7 @@ pasan su motivo explícito.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, Final, NoReturn
 
@@ -32,8 +32,14 @@ MCP_REASON: Final = (
     "servidor rayito-mcp"
 )
 VOLUME_REASON: Final = (
-    "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o "
-    "upload_url/download_url"
+    "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen: pasa "
+    "E2B(volume_store=VolumeStore(...)) (y volume_connector_arn= para volume_mounts, sobre la "
+    "imagen opcional con amazon-efs-utils, AWS_API_NOTES.md §22; m15-efs-volumes, "
+    "experimental), o usa persist= (S3) o upload_url/download_url"
+)
+VOLUME_CONTENT_REASON: Final = (
+    "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y "
+    "monta el volumen, o usa upload_url/download_url sobre persist="
 )
 #: m15-templates: `Template`/`AsyncTemplate` ya construyen de verdad
 #: (`e2b/_template.py`, sobre `rayito.Template`); sólo el etiquetado de
@@ -78,8 +84,8 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
         "mcp": MCP_REASON,
         "get_mcp_url": MCP_REASON,
         "get_mcp_token": MCP_REASON,
-        "volume_mounts": VOLUME_REASON,
         "Volume": VOLUME_REASON,
+        "volume.content": VOLUME_CONTENT_REASON,
         "get_signature": (
             "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el "
             "subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que "
@@ -91,8 +97,6 @@ UNIMPLEMENTED_REASONS: Final[Mapping[str, str]] = MappingProxyType(
         "Template.get_tags": TEMPLATE_TAGS_REASON,
     }
 )
-
-VOLUME_METHODS: Final = ("create", "connect", "destroy", "list", "get_info")
 
 
 def unimplemented(feature: str, reason: str | None = None) -> UnimplementedError:
@@ -123,25 +127,8 @@ class UnimplementedMember:
         return raiser(self._feature)
 
 
-def unimplemented_resource(name: str, feature: str, methods: Sequence[str]) -> type[Any]:
-    """Una clase de E2B (`Template`, `Volume` y sus `Async*`) cuyo
-    constructor y cuyos classmethods públicos lanzan `unimplemented(feature)`:
-    nunca `AttributeError`."""
-
-    def refuse_instance(cls: type, *args: Any, **kwargs: Any) -> NoReturn:
-        raise unimplemented(feature)
-
-    namespace: dict[str, Any] = {
-        "__doc__": f"`{name}` de E2B: sin equivalente en Rayito ({feature}).",
-        "__module__": "rayito.e2b",
-        "__new__": refuse_instance,
-    }
-    namespace.update({method: UnimplementedMember(feature) for method in methods})
-    return type(name, (), namespace)
-
-
-Volume: type[Any] = unimplemented_resource("Volume", "Volume", VOLUME_METHODS)
-AsyncVolume: type[Any] = unimplemented_resource("AsyncVolume", "Volume", VOLUME_METHODS)
+# Volume/AsyncVolume live in e2b/_volume.py (m15-efs-volumes): real CRUD once
+# E2B(volume_store=...) configures one, UnimplementedError("Volume") otherwise.
 
 
 def get_signature(*args: Any, **kwargs: Any) -> NoReturn:

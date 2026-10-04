@@ -8,6 +8,8 @@ use rayd_core::capabilities::{CapSet, Capability};
 
 pub const PROC_SELF_STATUS: &str = "/proc/self/status";
 pub const CGROUP2_CONTROLLERS: &str = "/sys/fs/cgroup/cgroup.controllers";
+/// The filesystem types this kernel can mount (`proc(5)`).
+pub const PROC_FILESYSTEMS: &str = "/proc/filesystems";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GuestCapabilities {
@@ -35,6 +37,31 @@ impl GuestCapabilities {
     pub fn sys_ptrace(&self) -> bool {
         self.caps.has(Capability::SysPtrace)
     }
+}
+
+/// Whether an executable file called `name` exists in a directory of
+/// `PATH`: an image-level fact (a binary the image ships) read once at
+/// startup by the mount features' support checks.
+#[must_use]
+pub fn binary_on_path(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+}
+
+/// Whether this kernel lists `fs_type` in `/proc/filesystems` (`nfs4` for
+/// EFS: compiled into the guest kernel, `AWS_API_NOTES.md` §16 Q79).
+#[must_use]
+pub fn kernel_supports_filesystem(fs_type: &str) -> bool {
+    std::fs::read_to_string(PROC_FILESYSTEMS)
+        .is_ok_and(|listing| filesystems_listing_has(&listing, fs_type))
+}
+
+/// `/proc/filesystems` lines are `[nodev]\t<type>`: the type is the last
+/// whitespace-separated field.
+fn filesystems_listing_has(listing: &str, fs_type: &str) -> bool {
+    listing
+        .lines()
+        .any(|line| line.split_whitespace().last() == Some(fs_type))
 }
 
 /// Never fails: a guest whose status file cannot be read is reported as
@@ -71,6 +98,22 @@ fn cgroup2_root_readable() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_on_path_finds_a_binary_known_to_exist_in_tests() {
+        // `sh` exists on every Unix CI runner and in the Lima VM alike.
+        assert!(binary_on_path("sh"));
+        assert!(!binary_on_path("not-a-real-rayito-binary"));
+    }
+
+    #[test]
+    fn the_filesystems_listing_matches_the_type_column_exactly() {
+        let listing = "nodev\tsysfs\n\text4\nnodev\tnfs4\nnodev\tnfs\n";
+        assert!(filesystems_listing_has(listing, "nfs4"));
+        assert!(filesystems_listing_has(listing, "ext4"));
+        assert!(!filesystems_listing_has(listing, "nfs41"));
+        assert!(!filesystems_listing_has(listing, "efs"));
+    }
 
     #[test]
     fn detection_never_panics_and_flags_follow_the_mask() {

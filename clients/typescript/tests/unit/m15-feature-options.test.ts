@@ -34,8 +34,10 @@ describe("feature-options", () => {
     expect(() => planFeatures({ mounts }, "base")).toThrow(UnimplementedError);
   });
 
+  // `volumes` ya no es un stub genérico (m15-efs-volumes reemplazó su rama
+  // con `planVolumes`, que exige un `EfsVolume` real y valida rutas
+  // antes de llegar a `UnimplementedError`): ver m15-efs-volumes.test.ts.
   test.each([
-    ["volumes", { "/mnt/v": {} }, "volumes", "m15-efs-volumes"],
     // `events` validates its type and `logging` first: see
     // `m15-events-webhooks-feature-options.test.ts`.
     ["domain", {}, "domain", "m15-custom-domain"],

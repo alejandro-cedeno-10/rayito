@@ -23,7 +23,8 @@
 # el kernel bash instalado por una capa condicional que sólo corre con el
 # marcador kernels_variant del zip; M9 suma en esa misma capa el binario de
 # Deno fijado por sha256 para los kernels javascript y typescript. Un solo
-# Dockerfile, cuatro nombres de imagen (rayito-base, -slim, -caps, -poly).
+# Dockerfile, cinco nombres de imagen (rayito-base, -slim, -caps, -poly y,
+# con m15-efs-volumes, -caps-efs).
 #
 # rayd corre como root (uid 0 con capabilities capadas) porque debe hacer
 # setuid al usuario `user` (uid 1000) en cada proceso, en el sidecar y en
@@ -221,6 +222,37 @@ RUN su user -c "MPLCONFIGDIR=/home/user/.cache/matplotlib python3 -c 'import mat
     && python3 -m ipykernel --version \
     && test -f /opt/rayito/sidecar/jupyter/kernels/rayito/kernel.json \
     && test -f /opt/rayito/sidecar/ipython/ipython_kernel_config.py
+
+# Variante con amazon-efs-utils (m15-efs-volumes, `make image-publish-caps-efs`
+# → rayito-base-caps-efs, siempre con additionalOsCapabilities ALL): igual que
+# la capa poly, sólo corre con el marcador kernel-sidecar/efs_variant, que
+# únicamente escribe `scripts/image_zip.py --with-efs` (o `rayito image zip
+# --with-efs`); en rayito-base, -slim, -caps y -poly es un no-op y su imagen no
+# cambia. Instala el mount helper `mount.efs` y `efs-proxy` (/usr/sbin) del
+# repositorio de AL2023, clavado por NEVRA (scripts/check_pins.py), con lo que
+# `rayd` monta `volumes=` (`adapters::efs_mount::EfsUtilsMounter`). `rayd` sólo
+# anuncia Health.features.efs_volumes con CAP_SYS_ADMIN, `nfs4` en el kernel,
+# `mount`, `mount.efs` y `efs-proxy` a la vez: en cualquier otra imagen sigue
+# en `false` y `volumes=` termina el sandbox con UnimplementedError.
+# Coste medido (AWS_API_NOTES.md §16 Q122, AL2023 ARM64): 37 paquetes
+# (nfs-utils, stunnel, openssl, python3 3.9, systemd y dbus incluidos; nadie
+# arranca systemd ni el watchdog: PID 1 es rayd), +197 578 752 B de
+# codeInstallSizeInBytes (almacenamiento de la imagen), el snapshot de memoria
+# no cambia y la build tarda ≈ 10 s más. El RPM de python3 3.9 vuelve a apuntar
+# /usr/bin/python3 a python3.9: la sonda de IMDS de rayd lanza /usr/bin/python3
+# por ruta absoluta (Q48) y el sidecar ya instaló sus pines para 3.12, así que
+# la capa rehace el enlace a python3.12 y la build falla si no queda en 3.12.
+# La región no se fija aquí: rayd pasa AWS_REGION al helper en cada montaje.
+# Subir efs-utils es una versión de imagen nueva: cambiar la NEVRA, republicar
+# rayito-base-caps-efs y repetir el e2e de m15-efs-volumes.
+RUN if [ "$(cat /opt/rayito/sidecar/efs_variant 2>/dev/null)" = "efs" ]; then \
+      dnf install -y --setopt=install_weak_deps=0 amazon-efs-utils-3.1.3-1.amzn2023 \
+      && dnf clean all \
+      && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+      && /usr/bin/python3 -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version" \
+      && test -x /usr/sbin/mount.efs \
+      && test -x /usr/sbin/efs-proxy; \
+    fi
 
 COPY rayd /usr/local/bin/rayd
 RUN chmod 0755 /usr/local/bin/rayd
