@@ -317,6 +317,13 @@ y fixtures se usan los marcadores de AWS (`123456789012`,
 
 ## 4. Convenciones
 
+Los agentes de código (y quien quiera la versión corta) tienen estas
+convenciones resumidas como skill del proyecto en
+`.claude/skills/rayito-engineering/SKILL.md`, junto con las órdenes exactas
+de los gates, la checklist de paridad Python/TypeScript/shim E2B y el flujo
+de release y aceptación en AWS. Si una regla cambia aquí, cambia también
+allí.
+
 - **Identificadores siempre en inglés**: ficheros, módulos, clases,
   funciones, variables, constantes, campos, nombres de test. El español va
   sólo en cadenas de cara al usuario, docstrings, comentarios y

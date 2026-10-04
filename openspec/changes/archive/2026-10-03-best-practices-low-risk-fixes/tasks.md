@@ -34,4 +34,4 @@
 - [x] 3.4 Local gates: Rust fmt/clippy/test in the Linux VM; Python unit
   (3.11, 3.13, 3.14) + ruff + mypy; scripts tests; TypeScript
   lint/typecheck/build/test/pack:check; docs; OpenSpec validate.
-- [ ] 3.5 CI green on the PR; no AWS run (no runtime change).
+- [x] 3.5 CI green on the PR (#96); no AWS run (no runtime change).

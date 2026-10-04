@@ -471,7 +471,7 @@ Errors:
 ### Requirement: The rayito/e2b subpath entry point
 The npm package `rayito` SHALL publish a second entry point, `rayito/e2b`, as follows:
 
-- **`package.json`:** `exports["./e2b"]` = `{ "types": "./dist/e2b.d.mts", "import": "./dist/e2b.mjs", "require": { "types": "./dist/e2b.d.cts", "default": "./dist/e2b.cjs" } }`.
+- **`package.json`:** `exports["./e2b"]` = `{ "import": { "types": "./dist/e2b.d.mts", "default": "./dist/e2b.mjs" }, "require": { "types": "./dist/e2b.d.cts", "default": "./dist/e2b.cjs" } }` (no `types` sibling of `import`/`require`).
 - **Build:** `tsdown.config.ts` SHALL build it from `src/e2b/index.ts` next to the main entry.
 - **Tarball check:** `scripts/pack-check.mjs` SHALL require `package/dist/e2b.mjs`, `package/dist/e2b.cjs`, `package/dist/e2b.d.mts` and `package/dist/e2b.d.cts` in the tarball.
 - **Contract:** the entry SHALL mirror E2B's JS SDK 2.51 so that replacing `from "e2b"` or `from "@e2b/code-interpreter"` with `from "rayito/e2b"` is the only source change an E2B JS program needs.
@@ -621,3 +621,14 @@ The e2e `tests/e2e/m9-e2b.e2e.test.ts` SHALL build the package and then run, wit
 #### Scenario: JS corpus on AWS
 - **WHEN** the e2e runs with `RAYITO_E2E=1`, `RAYITO_TEMPLATE` pointing at the M9 image and `RAYITO_ACCESS_TOKEN` set
 - **THEN** every program exits 0; the aborted `runCode("import time; time.sleep(60)")` rejects within 10 s with the abort reason; a following `runCode("1+1")` on the same sandbox answers `2`; and the output prints the per-program wall time
+
+### Requirement: Each exports condition carries the declarations of its own module format
+Every object entry of `exports` in `clients/typescript/package.json` (`"."` and `"./e2b"`) SHALL contain exactly the conditions `import` and `require`, each an object with `types` and `default`: `import.types` ending in `.d.mts` and `import.default` in `.mjs`, `require.types` ending in `.d.cts` and `require.default` in `.cjs`, with no `types` condition beside them (TypeScript matches conditions in object order and assumes the declaration file describes the format of the runtime file it pairs with). The top-level `types` field SHALL point at `./dist/index.d.cts`, the declarations of `main`, and `exports` SHALL also map `"./package.json"` to itself. `scripts/pack-check.mjs` SHALL fail, naming the subpath and the field, when an entry breaks this shape.
+
+#### Scenario: CommonJS consumers get CommonJS declarations
+- **WHEN** `@arethetypeswrong/cli --pack .` runs over the built package
+- **THEN** `"rayito"` and `"rayito/e2b"` resolve to `.d.cts` under `node16` from CommonJS, to `.d.mts` under `node16` from ESM, and under `bundler`, with no "Masquerading as ESM" problem
+
+#### Scenario: the pack check rejects a sibling types condition
+- **WHEN** `pnpm pack:check` runs with an entry shaped `{ "types": …, "import": …, "require": { … } }`
+- **THEN** it exits non-zero naming the subpath, the extra `types` condition and the `import` fields that do not end in `.d.mts`/`.mjs`
