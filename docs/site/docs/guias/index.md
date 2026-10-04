@@ -47,6 +47,12 @@ diferencias con E2B.
 | [Servidor MCP](../mcp.md) | un sandbox para Claude Code, Claude Desktop, Cursor o VS Code |
 | [LangChain y Vercel AI](langchain-y-vercel-ai.md) | Rayito como herramienta de un agente |
 
+## Desarrollar y probar
+
+| Guía | Para qué |
+|---|---|
+| [Probar en local (Docker + Floci)](probar-en-local.md) | correr los SDK contra un `rayd` real y un AWS emulado, sin cuenta ni coste |
+
 Las funciones que tienen coste propio en AWS (secretos, índice de metadatos)
 o que son sólo de la CLI (proxy local) están en
 [Funciones opcionales](../optional-features.md).

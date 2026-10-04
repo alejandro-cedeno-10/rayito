@@ -1,0 +1,56 @@
+name: local-e2e
+
+# El subconjunto `local` de los e2e de Python y TypeScript contra el entorno
+# Docker + Floci de dev/local (docs/site/docs/guias/probar-en-local.md):
+# `make local-up` construye `rayd` dentro de Docker, la imagen de producto
+# como guest y el runner, y `make local-e2e` corre los tests. Sin AWS ni
+# credenciales ni secretos del repositorio: no hay `id-token` ni `environment`.
+# Corre en arm64 porque la base de la imagen de producto solo existe para
+# arm64. En los PR solo cuando cambia algo del entorno local (el arranque en
+# frío compila `rayd`), además de cada noche y a mano.
+
+on:
+  pull_request:
+    paths:
+      - "dev/local/**"
+      - "clients/python/tests/local/**"
+      - "clients/typescript/tests/local/**"
+      - "clients/typescript/vitest.config.ts"
+      - "image/Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/local-e2e.yml"
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-e2e:
+    name: local e2e (Docker + Floci, ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: docker and compose versions
+        run: docker version --format '{{.Server.Version}}' && docker compose version
+      - name: make local-up (rayd built inside Docker, 4 cargo jobs)
+        run: make local-up LOCAL_CARGO_JOBS=4
+      - name: make local-e2e
+        run: make local-e2e
+      - name: compose logs (sin contenido de usuario; solo ids, estados y códigos)
+        if: failure()
+        run: docker compose -f dev/local/compose.yaml logs --no-color --tail 400
+      - name: make local-down
+        if: always()
+        run: make local-down

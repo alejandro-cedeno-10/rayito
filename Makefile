@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr docs-examples
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -264,6 +264,48 @@ dev-run:
 	mkdir -p /tmp/rayito-k
 	cargo run -p rayd -- --sidecar-root $(SIDECAR) --socket-root /tmp/rayito-k \
 	  --sidecar-cmd "$(SIDECAR_PYTHON) -m rayito_kernel_sidecar"
+
+# Entorno local con Docker + Floci (docs/site/docs/guias/probar-en-local.md):
+# sin AWS ni credenciales. `local-guest-context` deja en LOCAL_GUEST_CONTEXT
+# el Dockerfile de producto, el sidecar y un `rayd`: el de LOCAL_RAYD_BIN si
+# se pasa (p. ej. `LOCAL_RAYD_BIN=$(RAYD_BIN)` tras `make build`) o, si no,
+# uno compilado dentro de Docker con dev/local/rayd/Dockerfile (arm64).
+LOCAL_DIR     := dev/local
+LOCAL_COMPOSE := docker compose -f $(LOCAL_DIR)/compose.yaml
+LOCAL_GUEST_CONTEXT := $(LOCAL_DIR)/.guest-context
+LOCAL_RAYD_IMAGE := rayito-local-rayd:dev
+LOCAL_RAYD_BIN ?=
+# Jobs de cargo dentro de dev/local/rayd/Dockerfile (~1 GiB por job al enlazar).
+LOCAL_CARGO_JOBS ?= 2
+LOCAL_E2E_ARGS ?=
+
+local-guest-context:
+	rm -rf $(LOCAL_GUEST_CONTEXT) && mkdir -p $(LOCAL_GUEST_CONTEXT)
+	@if [ -n "$(LOCAL_RAYD_BIN)" ]; then \
+	  echo "local-guest-context: rayd de $(LOCAL_RAYD_BIN)"; \
+	  cp "$(LOCAL_RAYD_BIN)" $(LOCAL_GUEST_CONTEXT)/rayd; \
+	else \
+	  docker build -f $(LOCAL_DIR)/rayd/Dockerfile --build-arg CARGO_JOBS=$(LOCAL_CARGO_JOBS) -t $(LOCAL_RAYD_IMAGE) . && \
+	  id=$$(docker create $(LOCAL_RAYD_IMAGE)) && \
+	  docker cp "$$id:/rayd" $(LOCAL_GUEST_CONTEXT)/rayd; status=$$?; \
+	  docker rm "$$id" >/dev/null; exit $$status; \
+	fi
+	python3 scripts/copy_sidecar.py $(SIDECAR) $(LOCAL_GUEST_CONTEXT)/kernel-sidecar
+	cp image/Dockerfile $(LOCAL_GUEST_CONTEXT)/Dockerfile
+
+# El punto de montaje de node_modules tiene que existir en el árbol, que el
+# runner monta en sólo lectura. `--wait` espera al healthcheck de Floci.
+local-up: local-guest-context
+	mkdir -p $(TS_CLIENT)/node_modules
+	$(LOCAL_COMPOSE) up -d --build --wait
+	$(LOCAL_COMPOSE) exec -T runner bash $(LOCAL_DIR)/bootstrap.sh
+
+# El subconjunto `local` de los e2e de los dos SDK contra el guest y Floci.
+local-e2e:
+	$(LOCAL_COMPOSE) exec -T runner bash $(LOCAL_DIR)/run-e2e.sh $(LOCAL_E2E_ARGS)
+
+local-down:
+	$(LOCAL_COMPOSE) down --volumes --remove-orphans
 
 # Wheel + sdist del SDK Python con las comprobaciones de release.yml
 # (contenido de la wheel y `twine check`); no publica nada.

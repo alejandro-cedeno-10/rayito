@@ -12,8 +12,9 @@ clavada), sin red y sólo con la biblioteca estándar:
    que nombrar su herramienta con `==` (`uvx twine==7.0.0 check ...`, también
    en la forma `uvx --from paquete==1.2.3 orden`), porque resuelven y ejecutan
    código de terceros dentro de trabajos que llevan credenciales de publicación.
-3. **Descargas**: en `image/Dockerfile` (y en todo fichero llamado
-   `Dockerfile` que se le pase) cada instrucción con `curl` tiene que asignar
+3. **Descargas**: en `image/Dockerfile`, en los del entorno local
+   (`dev/local/*/Dockerfile`) y en todo fichero llamado `Dockerfile` que se
+   le pase, cada instrucción con `curl` tiene que asignar
    un `<NOMBRE>_SHA256=` de 64 hex en minúsculas y no nombrar una release
    flotante (`/releases/latest`, `/latest/download/`); además cada `curl` de
    la instrucción tiene que escribir a un fichero con `-o`/`--output` (nunca
@@ -77,6 +78,7 @@ DEFAULT_PATHS = (
     ".github/workflows/*.yaml",
     "Makefile",
     "image/Dockerfile",
+    "dev/local/*/Dockerfile",
     "kernel-sidecar/requirements*.txt",
 )
 ACTION_REASON = "la acción no está clavada a un SHA de 40 hex"

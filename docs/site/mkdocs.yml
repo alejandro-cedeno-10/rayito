@@ -156,6 +156,8 @@ nav:
       - Agentes:
           - Servidor MCP: mcp.md
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
+      - Desarrollar:
+          - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:
       - Resumen y coste: optional-features.md
       - Secretos: secrets.md

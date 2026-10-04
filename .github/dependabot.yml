@@ -75,3 +75,28 @@ updates:
       docker:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+  # Entorno local (dev/local, docs/site/docs/guias/probar-en-local.md): las
+  # bases del runner y del compilador de rayd, y la imagen de Floci del
+  # compose. Un bump de Floci se revisa contra sus notas de release y sus
+  # avisos de seguridad (docs/research/2026-10-local-testing.md) antes de
+  # fusionarlo.
+  - package-ecosystem: docker
+    directories:
+      - /dev/local/runner
+      - /dev/local/rayd
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-local:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker-compose
+    directory: /dev/local
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"
