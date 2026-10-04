@@ -32,8 +32,10 @@ node_modules/
 /site/
 
 # Notas de trabajo del asistente y bitácoras de aceptación: son internas y no
-# aportan nada al que clona el repositorio.
-/.claude/
+# aportan nada al que clona el repositorio. Las skills del proyecto
+# (`.claude/skills/`) sí se versionan: son las convenciones de ingeniería.
+/.claude/*
+!/.claude/skills/
 
 # El spike de M0 ya no está en el árbol (historial de git), pero un clon
 # antiguo puede conservar su salida cruda, que lleva IDs de cuenta, ARNs,
