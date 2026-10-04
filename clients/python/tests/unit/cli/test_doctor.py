@@ -751,3 +751,8 @@ def test_run_check_translates_every_status_kind() -> None:
         assert status in _checks.CheckStatus.__args__  # type: ignore[attr-defined]
     denied = _checks.denied(_checks.CHECKS[2], "no")
     assert denied.status == "SKIP" and denied.details["error"] == "AccessDeniedException"
+
+
+def test_doctor_context_repr_never_shows_the_minted_token() -> None:
+    context = _checks.DoctorContext(minted_token="JWE-DO-NOT-PRINT")
+    assert "JWE-DO-NOT-PRINT" not in repr(context)

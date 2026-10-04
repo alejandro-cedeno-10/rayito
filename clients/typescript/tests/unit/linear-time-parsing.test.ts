@@ -13,6 +13,7 @@
 
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "../../src/errors.js";
+import { ACCESS_TOKEN_MIN_BYTES } from "../../src/limits.js";
 import { decodeAccessToken, encodeAccessToken } from "../../src/payload.js";
 import {
   deriveRepoDirFromUrl,
@@ -56,7 +57,7 @@ describe("linear-time trimming and splitting (CodeQL js/polynomial-redos)", () =
     expect(
       elapsedMs(() => expect(() => decodeAccessToken(token)).toThrow(InvalidArgumentError)),
     ).toBeLessThan(LINEAR_BUDGET_MS);
-    const secret = new Uint8Array([1, 2, 3, 4, 5]);
+    const secret = new Uint8Array(ACCESS_TOKEN_MIN_BYTES + 1).fill(7);
     expect(decodeAccessToken(`${encodeAccessToken(secret)}==`)).toEqual(secret);
   });
 

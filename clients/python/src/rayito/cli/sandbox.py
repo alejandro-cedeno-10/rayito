@@ -22,6 +22,7 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
+from rayito._authority import is_wildcard
 from rayito._index import DynamoDbIndex
 from rayito._limits import MICROVM_STATES, TERMINAL_STATES
 from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
@@ -30,10 +31,12 @@ from rayito.cli import _proxy
 from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
 from rayito.cli._logs import (
     DEFAULT_EVENT_LIMIT,
+    FALLBACK_WARNING,
     LogsNotFound,
     default_log_group,
     epoch_ms,
     event_timestamp,
+    expected_stream_name,
     find_streams,
     iter_events,
     parse_since,
@@ -312,6 +315,9 @@ def logs_command(
     except LogsNotFound as exc:
         echo(f"rayito: {exc}", err=True)
         raise typer.Exit(1) from exc
+    expected = expected_stream_name(info)
+    if streams != [expected]:
+        echo(FALLBACK_WARNING.format(expected=expected, streams=", ".join(streams)), err=True)
     events = collect_events(clients, group, streams, start_time_ms, limit)
     if json_mode(ctx):
         emit_json(events)
@@ -519,8 +525,34 @@ def proxy_command(
     ] = _proxy.DEFAULT_BIND,
     allow_remote: Annotated[
         bool,
-        typer.Option("--allow-remote", help="Permite --bind fuera de 127.0.0.1/::1/localhost."),
+        typer.Option(
+            _proxy.ALLOW_REMOTE_OPTION, help="Permite --bind fuera de 127.0.0.1/::1/localhost."
+        ),
     ] = False,
+    allowed_host: Annotated[
+        list[str] | None,
+        typer.Option(
+            _proxy.ALLOWED_HOST_OPTION,
+            help=(
+                "Host (o host:puerto) que se acepta además de los de loopback; repetible. "
+                "Obligatorio con --bind 0.0.0.0/::."
+            ),
+        ),
+    ] = None,
+    allow_origin: Annotated[
+        list[str] | None,
+        typer.Option(
+            _proxy.ALLOW_ORIGIN_OPTION,
+            help="Origen http(s)://host[:puerto] que se acepta en Origin; repetible.",
+        ),
+    ] = None,
+    max_connections: Annotated[
+        int,
+        typer.Option(
+            _proxy.MAX_CONNECTIONS_OPTION,
+            help="Conexiones reenviadas a la vez; la siguiente recibe 503.",
+        ),
+    ] = _proxy.DEFAULT_MAX_CONNECTIONS,
 ) -> None:
     """Expone un puerto del guest en `http://<bind>:<local-port>` sin coste
     de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos;
@@ -528,10 +560,18 @@ def proxy_command(
     `infra/iam.yaml`). Un sandbox `SUSPENDED` con auto-resume se despierta
     con la primera petición (eso sí factura cómputo, más la lectura de
     snapshot del resume). Ctrl-C para el refresher del JWE y cierra el
-    listener."""
+    listener.
+
+    Sólo reenvía peticiones cuyo `Host` sea de loopback (o `--bind`, o
+    `--allowed-host`) y cuyo `Origin`, si lo trae, sea uno de esos mismos
+    orígenes (o `--allow-origin`): una web abierta en el navegador del
+    operador no llega al guest por DNS rebinding ni con un POST o un
+    WebSocket entre orígenes."""
     if not _proxy.is_loopback_bind(bind):
         if not allow_remote:
             usage_failure(_proxy.BIND_NEEDS_ALLOW_REMOTE_MESSAGE)
+        if is_wildcard(bind) and not allowed_host:
+            usage_failure(_proxy.WILDCARD_NEEDS_ALLOWED_HOST_MESSAGE)
         echo(
             f"rayito: aviso: --bind {bind} no es loopback; "
             "cualquiera que llegue a este puerto usa el sandbox mientras el proxy esté vivo",
@@ -545,6 +585,9 @@ def proxy_command(
         local_port=port if local_port is None else local_port,
         bind=bind,
         on_ready=echo,
+        allowed_hosts=allowed_host or (),
+        allowed_origins=allow_origin or (),
+        max_connections=max_connections,
     )
 
 
@@ -612,6 +655,7 @@ def run_remote_command(
             timeout=timeout,
             on_stdout=stream_writer(sys.stdout),
             on_stderr=stream_writer(sys.stderr),
+            max_output_bytes=STREAM_ONLY_OUTPUT_BYTES,
         )
     except CommandExitException as exc:
         return exc.exit_code
@@ -619,6 +663,12 @@ def run_remote_command(
         echo(COMMAND_TIMEOUT_MESSAGE, err=True)
         return EXIT_TIMEOUT
     return 0
+
+
+#: `rayito sandbox exec` ya escribe cada chunk en la terminal según llega: no
+#: guarda nada en memoria, así que un comando que no para de escribir (o sin
+#: plazo, `--timeout 0`) no hace crecer el proceso de la CLI.
+STREAM_ONLY_OUTPUT_BYTES = 0
 
 
 def stream_writer(stream: Any) -> Any:

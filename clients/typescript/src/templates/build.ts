@@ -27,6 +27,7 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { clientConfig } from "../aws/control-plane.js";
 import { awsCode, loadOptionalSdkClient, type OptionalSdkClient } from "../aws/optional-client.js";
+import { sanitizeAwsError } from "../aws/sanitize.js";
 import { BuildError, InvalidArgumentError, NotFoundError, TemplateError } from "../errors.js";
 import {
   accountImageArn,
@@ -135,6 +136,21 @@ function loadS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
   return s3Module;
 }
 
+/**
+ * Una llamada del SDK de AWS cuyo error sube como su resumen saneado
+ * (`sanitizeAwsError`): el error crudo de smithy lleva `$response` con la
+ * petición firmada y, en un error de firma, la cadena canónica (con el token
+ * de sesión) en el `message`. El `name` se conserva, así que `awsCode` sigue
+ * distinguiendo `ResourceNotFoundException`, la cuota de builds, etc.
+ */
+async function sanitizedCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw sanitizeAwsError(error, { includeMessage: true });
+  }
+}
+
 class AwsBuildClients implements BuildClients {
   readonly region: string;
   readonly #credentials: BuildOptions["credentials"];
@@ -159,7 +175,7 @@ class AwsBuildClients implements BuildClients {
 
   async accountId(): Promise<string> {
     if (this.#accountId === undefined) {
-      const response = await this.#sts.send(new GetCallerIdentityCommand({}));
+      const response = await sanitizedCall(() => this.#sts.send(new GetCallerIdentityCommand({})));
       this.#accountId = response.Account ?? "";
     }
     return this.#accountId;
@@ -175,7 +191,7 @@ class AwsBuildClients implements BuildClients {
       if (awsCode(error) === "ResourceNotFoundException") {
         return undefined;
       }
-      throw error;
+      throw sanitizeAwsError(error, { includeMessage: true });
     }
   }
 
@@ -192,21 +208,23 @@ class AwsBuildClients implements BuildClients {
       if (awsCode(error) === "ResourceNotFoundException") {
         return undefined;
       }
-      throw error;
+      throw sanitizeAwsError(error, { includeMessage: true });
     }
   }
 
   async listMicrovmImageVersions(arn: string): Promise<Array<Record<string, unknown>>> {
-    const items: Array<Record<string, unknown>> = [];
-    for await (const page of paginateListMicrovmImageVersions(
-      { client: this.#microvms },
-      { imageIdentifier: arn },
-    )) {
-      for (const item of page.items ?? []) {
-        items.push(item as unknown as Record<string, unknown>);
+    return sanitizedCall(async () => {
+      const items: Array<Record<string, unknown>> = [];
+      for await (const page of paginateListMicrovmImageVersions(
+        { client: this.#microvms },
+        { imageIdentifier: arn },
+      )) {
+        for (const item of page.items ?? []) {
+          items.push(item as unknown as Record<string, unknown>);
+        }
       }
-    }
-    return items;
+      return items;
+    });
   }
 
   async getObject(bucket: string, key: string): Promise<Uint8Array | undefined> {
@@ -219,7 +237,7 @@ class AwsBuildClients implements BuildClients {
       if (awsCode(error) === "NoSuchKey") {
         return undefined;
       }
-      throw error;
+      throw sanitizeAwsError(error, { includeMessage: true });
     }
   }
 
@@ -233,21 +251,25 @@ class AwsBuildClients implements BuildClients {
       if (code !== undefined && MISSING_OBJECT_CODES.has(code)) {
         return false;
       }
-      throw error;
+      throw sanitizeAwsError(error, { includeMessage: true });
     }
   }
 
   async putObject(bucket: string, key: string, body: Uint8Array): Promise<void> {
     const [sdk, s3] = await Promise.all([loadS3Module(), this.#getS3()]);
-    await s3.send(new sdk.PutObjectCommand({ Bucket: bucket, Key: key, Body: body }));
+    await sanitizedCall(() =>
+      s3.send(new sdk.PutObjectCommand({ Bucket: bucket, Key: key, Body: body })),
+    );
   }
 
   async createMicrovmImage(
     name: string,
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }> {
-    const response = await this.#microvms.send(
-      new CreateMicrovmImageCommand({ name, ...request } as CreateMicrovmImageCommandInput),
+    const response = await sanitizedCall(() =>
+      this.#microvms.send(
+        new CreateMicrovmImageCommand({ name, ...request } as CreateMicrovmImageCommandInput),
+      ),
     );
     return { imageArn: response.imageArn ?? "", imageVersion: response.imageVersion ?? "" };
   }
@@ -256,11 +278,13 @@ class AwsBuildClients implements BuildClients {
     arn: string,
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }> {
-    const response = await this.#microvms.send(
-      new UpdateMicrovmImageCommand({
-        imageIdentifier: arn,
-        ...request,
-      } as UpdateMicrovmImageCommandInput),
+    const response = await sanitizedCall(() =>
+      this.#microvms.send(
+        new UpdateMicrovmImageCommand({
+          imageIdentifier: arn,
+          ...request,
+        } as UpdateMicrovmImageCommandInput),
+      ),
     );
     return { imageArn: response.imageArn ?? arn, imageVersion: response.imageVersion ?? "" };
   }
@@ -302,12 +326,14 @@ class AwsBuildClients implements BuildClients {
     if (streamName === undefined) {
       return [];
     }
-    const events = await client.send<{ events?: Array<{ message?: string }> }>(
-      new sdk.GetLogEventsCommand({
-        logGroupName: logGroup,
-        logStreamName: streamName,
-        limit: BUILD_LOG_LINES,
-      }),
+    const events = await sanitizedCall(() =>
+      client.send<{ events?: Array<{ message?: string }> }>(
+        new sdk.GetLogEventsCommand({
+          logGroupName: logGroup,
+          logStreamName: streamName,
+          limit: BUILD_LOG_LINES,
+        }),
+      ),
     );
     return (events.events ?? []).map((event) => event.message ?? "");
   }
@@ -427,7 +453,11 @@ function desiredConfiguration(options: {
   };
 }
 
-/** La cuota de 10 builds simultáneos (Q83) llega como `BuildError({reason: "build_quota"})`. */
+/**
+ * La cuota de 10 builds simultáneos (Q83) llega como `BuildError({reason:
+ * "build_quota"})`; cualquier otro rechazo de AWS, como `BuildError({reason:
+ * "aws_error"})` con el resumen saneado como mensaje y `cause`.
+ */
 async function submitBuild(
   clients: BuildClients,
   name: string,
@@ -447,7 +477,11 @@ async function submitBuild(
         { reason: "build_quota" },
       );
     }
-    throw error;
+    const summary = sanitizeAwsError(error, { includeMessage: true });
+    throw new BuildError(
+      `AWS rechazó el build del template ${JSON.stringify(name)}: ${summary.name}: ${summary.message}`,
+      { reason: "aws_error", cause: summary },
+    );
   }
 }
 

@@ -14,6 +14,7 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import boto3
 import pytest
@@ -308,14 +309,23 @@ async def _start_proxy(
     head_timeout: float = _proxy.HEAD_READ_TIMEOUT_SECONDS,
     connect_timeout: float = _proxy.UPSTREAM_CONNECT_TIMEOUT_SECONDS,
 ) -> tuple[asyncio.Task[None], int]:
+    """Los clientes de estos tests mandan `Host: localhost` sin puerto, que el
+    proxy sólo admite como `--allowed-host` (sin puerto explícito)."""
+    listener = _proxy.bind_listener_socket("127.0.0.1", 0)
+    local_port = int(listener.getsockname()[1])
     spec = _proxy.ProxySpec(
         sandbox_id=SANDBOX_ID,
         port=port,
         endpoint="ignored.example.on.aws",
         bind="127.0.0.1",
-        local_port=0,
+        local_port=local_port,
+        access=_proxy.build_access(
+            bind="127.0.0.1",
+            local_port=local_port,
+            sandbox_id=SANDBOX_ID,
+            allowed_hosts=["localhost"],
+        ),
     )
-    listener = _proxy.bind_listener_socket(spec.bind, spec.local_port)
     ready = asyncio.Event()
     box: dict[str, int] = {}
 
@@ -535,7 +545,12 @@ async def test_run_until_stopped_reraises_a_server_failure_instead_of_hanging(
 
     monkeypatch.setattr(_proxy, "serve_proxy", failing_serve_proxy)
     spec = _proxy.ProxySpec(
-        sandbox_id=SANDBOX_ID, port=8080, endpoint="e", bind="127.0.0.1", local_port=0
+        sandbox_id=SANDBOX_ID,
+        port=8080,
+        endpoint="e",
+        bind="127.0.0.1",
+        local_port=0,
+        access=_proxy.build_access(bind="127.0.0.1", local_port=0, sandbox_id=SANDBOX_ID),
     )
     stop_event = threading.Event()
 
@@ -736,3 +751,413 @@ def test_proxy_command_reports_a_busy_local_port_cleanly(runner: CliRunner) -> N
     assert f"--local-port {busy_port}" in result.stderr
     assert "Traceback" not in result.output
     assert not isinstance(result.exception, OSError)
+
+
+# --------------------------------------------------------------------------
+# `Host`/`Origin` y tope de conexiones: una web cualquiera (DNS rebinding,
+# POST entre sitios, WebSocket entre orígenes) no llega al guest con el JWE
+# del operador. Se prueba `handle_connection` directamente, con un conector
+# falso que registra si se llegó a abrir el upstream.
+# --------------------------------------------------------------------------
+
+LOCAL_PORT = 8080
+ENDPOINT = "abc.lambda-microvm.us-east-1.on.aws"
+
+
+class _RecordingWriter:
+    """Lo mínimo de `asyncio.StreamWriter` que usa `handle_connection`."""
+
+    def __init__(self) -> None:
+        self.buffer = bytearray()
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.buffer += data
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+    def can_write_eof(self) -> bool:
+        return True
+
+    def write_eof(self) -> None:
+        return None
+
+
+DEFAULT_UPSTREAM_RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+#: Lo que tarda el upstream en memoria en cerrar tras responder: deja que el
+#: proxy termine de mandarle el cuerpo de la petición antes.
+UPSTREAM_EOF_DELAY_SECONDS = 0.05
+
+
+@dataclass
+class _FakeConnector:
+    """Un upstream en memoria: guarda lo que recibe (`upstream_writer`) y
+    responde `response`; cierra tras `eof_delay` segundos."""
+
+    calls: int = 0
+    upstream_writer: _RecordingWriter | None = None
+    response: bytes = DEFAULT_UPSTREAM_RESPONSE
+    eof_delay: float = 0.0
+
+    async def __call__(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        self.calls += 1
+        reader = asyncio.StreamReader()
+        reader.feed_data(self.response)
+        if self.eof_delay:
+            asyncio.get_running_loop().call_later(self.eof_delay, reader.feed_eof)
+        else:
+            reader.feed_eof()
+        self.upstream_writer = _RecordingWriter()
+        return reader, cast(asyncio.StreamWriter, self.upstream_writer)
+
+    @property
+    def received(self) -> bytes:
+        assert self.upstream_writer is not None
+        return bytes(self.upstream_writer.buffer)
+
+
+def _access(
+    *,
+    bind: str = "127.0.0.1",
+    allowed_hosts: Sequence[str] = (),
+    allowed_origins: Sequence[str] = (),
+) -> _proxy.ProxyAccess:
+    return _proxy.build_access(
+        bind=bind,
+        local_port=LOCAL_PORT,
+        sandbox_id=SANDBOX_ID,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
+async def _drive(
+    raw: bytes,
+    *,
+    access: _proxy.ProxyAccess | None = None,
+    slots: asyncio.Semaphore | None = None,
+    connector: _FakeConnector | None = None,
+) -> tuple[bytes, _FakeConnector]:
+    reader = asyncio.StreamReader()
+    reader.feed_data(raw)
+    reader.feed_eof()
+    writer = _RecordingWriter()
+    connector = connector if connector is not None else _FakeConnector()
+    await _proxy.handle_connection(
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        endpoint=ENDPOINT,
+        port=8080,
+        jwe_provider=lambda: "JWE-OPERATOR",
+        connector=connector,
+        access=access if access is not None else _access(),
+        slots=slots if slots is not None else asyncio.Semaphore(1),
+    )
+    return bytes(writer.buffer), connector
+
+
+@pytest.mark.parametrize(
+    "host",
+    [f"127.0.0.1:{LOCAL_PORT}", f"localhost:{LOCAL_PORT}", f"[::1]:{LOCAL_PORT}", "LocalHost:8080"],
+)
+async def test_loopback_hosts_reach_the_upstream(host: str) -> None:
+    response, connector = await _drive(f"GET / HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+    assert connector.calls == 1
+    assert response.endswith(b"ok")
+
+
+async def test_a_foreign_host_is_421_and_never_reaches_the_upstream() -> None:
+    """DNS rebinding: `attacker.example` resuelve a 127.0.0.1 y el navegador
+    manda su propio nombre en `Host`."""
+    response, connector = await _drive(b"GET / HTTP/1.1\r\nHost: attacker.example:8080\r\n\r\n")
+    assert response == _proxy.MISDIRECTED_REQUEST_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_missing_host_is_421() -> None:
+    response, connector = await _drive(b"GET / HTTP/1.1\r\nAccept: */*\r\n\r\n")
+    assert response == _proxy.MISDIRECTED_REQUEST_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_loopback_host_on_another_port_is_421() -> None:
+    response, connector = await _drive(b"GET / HTTP/1.1\r\nHost: 127.0.0.1:9999\r\n\r\n")
+    assert response == _proxy.MISDIRECTED_REQUEST_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_foreign_origin_on_a_plain_post_is_403() -> None:
+    """Un POST "simple" entre sitios (CSRF a ciegas): `Host` es el bueno
+    porque el navegador conecta a 127.0.0.1, pero `Origin` delata la web."""
+    response, connector = await _drive(
+        b"POST /api/run HTTP/1.1\r\n"
+        b"Host: 127.0.0.1:8080\r\n"
+        b"Origin: http://attacker.example\r\n"
+        b"Content-Length: 0\r\n\r\n"
+    )
+    assert response == _proxy.FORBIDDEN_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_foreign_origin_on_a_websocket_upgrade_is_403() -> None:
+    response, connector = await _drive(
+        b"GET /ws HTTP/1.1\r\n"
+        b"Host: 127.0.0.1:8080\r\n"
+        b"Connection: Upgrade\r\n"
+        b"Upgrade: websocket\r\n"
+        b"Origin: http://attacker.example:8080\r\n\r\n"
+    )
+    assert response == _proxy.FORBIDDEN_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_an_opaque_null_origin_is_403() -> None:
+    response, connector = await _drive(
+        b"POST / HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: null\r\n\r\n"
+    )
+    assert response == _proxy.FORBIDDEN_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_same_origin_request_passes() -> None:
+    response, connector = await _drive(
+        b"POST / HTTP/1.1\r\nHost: localhost:8080\r\nOrigin: http://localhost:8080\r\n\r\n"
+    )
+    assert connector.calls == 1
+    assert response.endswith(b"ok")
+
+
+async def test_allow_origin_admits_an_explicit_origin() -> None:
+    access = _access(allowed_origins=["https://notebook.example.com/"])
+    response, connector = await _drive(
+        b"GET / HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: https://notebook.example.com\r\n\r\n",
+        access=access,
+    )
+    assert connector.calls == 1
+    assert response.endswith(b"ok")
+
+
+async def test_allowed_host_admits_the_name_with_and_without_the_listener_port() -> None:
+    access = _access(bind="0.0.0.0", allowed_hosts=["devbox.example.com"])
+    for host in ("devbox.example.com:8080", "devbox.example.com"):
+        response, connector = await _drive(
+            f"GET / HTTP/1.1\r\nHost: {host}\r\n\r\n".encode(), access=access
+        )
+        assert connector.calls == 1, host
+        assert response.endswith(b"ok")
+
+
+async def test_the_sandbox_localhost_name_is_admitted_on_a_loopback_bind() -> None:
+    """`<id>.localhost` resuelve a loopback en los navegadores y tiene su
+    propio tarro de cookies, separado del de `127.0.0.1`/`localhost`."""
+    response, connector = await _drive(
+        f"GET / HTTP/1.1\r\nHost: {SANDBOX_ID}.localhost:8080\r\n\r\n".encode()
+    )
+    assert connector.calls == 1
+    assert response.endswith(b"ok")
+
+
+async def test_a_full_connection_budget_is_503() -> None:
+    slots = asyncio.Semaphore(1)
+    await slots.acquire()
+    response, connector = await _drive(
+        b"GET / HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n", slots=slots
+    )
+    assert response == _proxy.SERVICE_UNAVAILABLE_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_the_slot_is_released_after_the_connection_ends() -> None:
+    slots = asyncio.Semaphore(1)
+    await _drive(b"GET / HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n", slots=slots)
+    assert not slots.locked()
+
+
+def test_a_wildcard_bind_admits_no_host_by_itself() -> None:
+    access = _access(bind="0.0.0.0")
+    assert not access.admits_host("0.0.0.0:8080")
+
+
+def test_a_concrete_bind_address_is_admitted() -> None:
+    access = _access(bind="192.168.1.5")
+    assert access.admits_host("192.168.1.5:8080")
+    assert not access.admits_host(f"{SANDBOX_ID}.localhost:8080")
+
+
+@pytest.mark.parametrize(
+    "value", ["", "http://devbox.example.com", "devbox.example.com/x", "user@devbox", "a:b:c:"]
+)
+def test_invalid_allowed_host_values_are_rejected(value: str) -> None:
+    with pytest.raises(InvalidArgumentException):
+        _access(allowed_hosts=[value])
+
+
+@pytest.mark.parametrize("value", ["", "devbox.example.com", "ftp://x", "null"])
+def test_invalid_allow_origin_values_are_rejected(value: str) -> None:
+    with pytest.raises(InvalidArgumentException):
+        _access(allowed_origins=[value])
+
+
+def test_wildcard_bind_without_allowed_host_is_a_usage_error(
+    runner: CliRunner, clients: Clients
+) -> None:
+    result = runner.invoke(
+        app,
+        ["sandbox", "proxy", SANDBOX_ID, "--port", "8080", "--bind", "0.0.0.0", "--allow-remote"],
+        obj=clients,
+    )
+    assert result.exit_code == EXIT_USAGE, result.stderr
+    assert "--allowed-host" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# Un solo mensaje por conexión: nada después de la primera petición llega
+# al upstream sin reescribir (pipelining, upgrade rechazado)
+# --------------------------------------------------------------------------
+
+LOCAL_HOST = f"localhost:{LOCAL_PORT}"
+UPGRADE_REQUEST = (
+    f"GET /ws HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+).encode()
+SMUGGLED_REQUEST = b"POST /terminate HTTP/1.1\r\nHost: x\r\nX-aws-proxy-port: 9000\r\n\r\n"
+
+
+def _rewritten(raw_head: bytes) -> bytes:
+    return _proxy.rewrite_head(
+        _proxy.parse_http_head(raw_head), endpoint=ENDPOINT, jwe="JWE-OPERATOR", port=8080
+    )
+
+
+async def test_an_upgrade_refused_with_200_never_tunnels_a_second_request() -> None:
+    """El guest responde `200` keep-alive a un `Upgrade`: la respuesta llega
+    al cliente con `Connection: close` y la segunda petición (con un
+    `X-aws-proxy-port: 9000` propio) nunca llega al upstream."""
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nno"
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+    assert b"9000" not in connector.received
+    assert response == b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
+
+
+async def test_an_upgrade_refused_with_a_chunked_body_forwards_only_that_body() -> None:
+    body = b"3\r\nnop\r\n0\r\n\r\n"
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 426 Upgrade Required\r\nTransfer-Encoding: chunked\r\n\r\n"
+        + body
+        + b"HTTP/1.1 200 OK\r\n\r\n",
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+    assert response == (
+        b"HTTP/1.1 426 Upgrade Required\r\nTransfer-Encoding: chunked\r\n"
+        b"Connection: close\r\n\r\n" + body
+    )
+
+
+async def test_an_upgrade_accepted_with_101_tunnels_both_ways() -> None:
+    switching = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+    connector = _FakeConnector(response=switching + b"server-frame")
+
+    response, _ = await _drive(UPGRADE_REQUEST + b"client-frame", connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST) + b"client-frame"
+    assert response == switching + b"server-frame"
+
+
+async def test_informational_responses_before_101_pass_through() -> None:
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 Switching Protocols\r\n\r\nok"
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST, connector=connector)
+
+    assert response == b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 Switching Protocols\r\n\r\nok"
+
+
+@pytest.mark.parametrize(
+    "upstream_response", [b"garbage\r\n\r\n", b"HTTP/1.1 200 OK\r\nBad Header\r\n\r\n", b""]
+)
+async def test_an_invalid_or_missing_upgrade_response_is_502(upstream_response: bytes) -> None:
+    connector = _FakeConnector(response=upstream_response)
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert response == _proxy.BAD_GATEWAY_RESPONSE
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+
+
+async def test_a_pipelined_request_after_a_content_length_body_never_reaches_the_upstream() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nContent-Length: 5\r\n\r\n".encode()
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    response, _ = await _drive(first + b"hello" + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first) + b"hello"
+    assert response == DEFAULT_UPSTREAM_RESPONSE
+
+
+async def test_a_pipelined_request_after_a_chunked_body_never_reaches_the_upstream() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nTransfer-Encoding: chunked\r\n\r\n"
+    body = b"5;ext=1\r\nhello\r\n0\r\nX-Trailer: t\r\n\r\n"
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(first.encode() + body + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first.encode()) + body
+
+
+async def test_a_request_without_a_body_forwards_only_its_head() -> None:
+    first = f"GET /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\n\r\n".encode()
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(first + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first)
+
+
+@pytest.mark.parametrize(
+    "framing",
+    [
+        "Transfer-Encoding: chunked\r\nContent-Length: 5",
+        "Transfer-Encoding: gzip",
+        "Transfer-Encoding: chunked, gzip",
+        "Content-Length: 5\r\nContent-Length: 6",
+        "Content-Length: 5, 6",
+        "Content-Length: -1",
+        "Content-Length: abc",
+    ],
+)
+async def test_an_ambiguous_body_framing_is_400_and_never_reaches_the_upstream(
+    framing: str,
+) -> None:
+    raw = f"POST / HTTP/1.1\r\nHost: {LOCAL_HOST}\r\n{framing}\r\n\r\nhello".encode()
+
+    response, connector = await _drive(raw)
+
+    assert response == _proxy.BAD_REQUEST_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_malformed_chunk_stops_forwarding() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nTransfer-Encoding: chunked\r\n\r\n"
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(
+        first.encode() + b"zz\r\nhello\r\n0\r\n\r\n" + SMUGGLED_REQUEST, connector=connector
+    )
+
+    assert b"hello" not in connector.received
+    assert b"9000" not in connector.received

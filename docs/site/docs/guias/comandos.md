@@ -263,7 +263,47 @@ con `output_truncated`.
 | `timeout` | `timeoutMs` | 60 s / 60 000 ms | límite en el servidor; `None` / `0` sin límite |
 | `request_timeout` | `requestTimeoutMs` | 60 s | plazo de cada llamada al agente |
 | `secrets` | `secrets` | — | [secretos](../secrets.md) como variables de entorno (opcional, con coste) |
+| `max_output_bytes` | `maxOutputBytes` | 64 MiB | tope de la salida guardada por descriptor; ver [Salida guardada](#salida-guardada) |
 | — | `signal` | — | `AbortSignal` que cancela la llamada |
+
+### Salida guardada
+
+El SDK guarda en memoria la salida de cada comando (la de `result.stdout`
+y la del handle) hasta `max_output_bytes`/`maxOutputBytes` por descriptor:
+64 MiB por defecto (`COMMAND_OUTPUT_MAX_BYTES`). Si un proceso escribe más,
+se queda con el final, descarta lo más antiguo y marca el resultado con
+`truncated` (también `CommandExitException`/`CommandExitError`). Los
+callbacks reciben siempre todo. Con `0` no guarda nada: útil cuando ya
+consumes la salida por callbacks. Así un comando del sandbox que escribe sin
+parar no agota la memoria de tu proceso; las PTY usan el mismo tope.
+
+=== "Python"
+
+    ```python
+    from rayito import Sandbox
+
+    with Sandbox.create() as sbx:
+        result = sbx.commands.run(
+            "cat build.log", on_stdout=print, max_output_bytes=1024 * 1024
+        )
+        if result.truncated:
+            print("sólo el último MiB está en result.stdout")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    await using sbx = await Sandbox.create();
+    const result = await sbx.commands.run("cat build.log", {
+      onStdout: (text) => process.stdout.write(text),
+      maxOutputBytes: 1024 * 1024,
+    });
+    if (result.truncated) {
+      console.log("sólo el último MiB está en result.stdout");
+    }
+    ```
 
 Los demás métodos: `commands.list()`, `commands.kill(pid)`,
 `commands.send_stdin(pid, data)`, `commands.close_stdin(pid)` y

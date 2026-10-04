@@ -34,6 +34,7 @@ import {
   type StartRequest,
   StartRequestSchema,
 } from "../gen/rayito/v1/process_pb.js";
+import { COMMAND_OUTPUT_MAX_BYTES } from "../limits.js";
 import type { CommandResult, OutputChunk, ProcessInfo, SandboxMetrics } from "../models.js";
 import { type Instrumentation, NOOP } from "../otel.js";
 import { validatedEnvs } from "../payload.js";
@@ -84,6 +85,13 @@ export interface CommandOptions extends RequestOptions {
   readonly timeoutMs?: number | undefined;
   readonly tag?: string | undefined;
   /**
+   * Tope de la salida guardada por descriptor (la del resultado y la del
+   * handle), en bytes: `COMMAND_OUTPUT_MAX_BYTES` (64 MiB) por defecto. Lo
+   * más antiguo se descarta y `truncated` lo indica; `0` no guarda nada.
+   * `onStdout`/`onStderr` reciben siempre todo.
+   */
+  readonly maxOutputBytes?: number | undefined;
+  /**
    * Secretos de Secrets Manager como variables de entorno de este comando
    * (más los del handle; la llamada gana en una clave repetida y una clave que
    * también esté en `envs` es `InvalidArgumentError`).
@@ -108,6 +116,8 @@ export interface ConnectOptions extends RequestOptions {
   readonly onStderr?: OutputCallback | undefined;
   /** Deadline del stream en ms (`undefined`/`0` = sin deadline). */
   readonly timeoutMs?: number | undefined;
+  /** Tope de la salida guardada, como en `CommandOptions.maxOutputBytes`. */
+  readonly maxOutputBytes?: number | undefined;
 }
 
 // ------------------------------------------------------------------ requests
@@ -228,21 +238,49 @@ export function pidFromStartEvent(event: ProcessEvent | undefined): number {
 
 // -------------------------------------------------------------------- output
 
-/** Un stream de bytes decodificado incrementalmente a texto (UTF-8 con reemplazo). */
+/** `maxOutputBytes`: un entero >= 0 (`0` no guarda nada; la salida sólo llega a los callbacks). */
+export function validateMaxOutputBytes(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new InvalidArgumentError(`maxOutputBytes debe ser un entero >= 0: ${String(value)}`);
+  }
+  return value;
+}
+
+/**
+ * Un stream de bytes decodificado incrementalmente a texto (UTF-8 con
+ * reemplazo). Guarda como mucho `maxBytes` bytes recibidos (la cola: lo más
+ * antiguo se descarta y cuenta en `droppedBytes`), para que un proceso del
+ * sandbox que escribe sin parar no agote la memoria del cliente. El callback
+ * recibe siempre todo. Espejo de `DecodedStream` de `_process_base.py`.
+ */
 export class DecodedStream {
   readonly #decoder = new TextDecoder("utf-8", { fatal: false });
   readonly #callback: OutputCallback | undefined;
-  readonly #parts: string[] = [];
+  readonly #maxBytes: number;
+  #parts: Array<{ text: string; size: number }> = [];
+  #keptBytes = 0;
+  #pendingBytes = 0;
+  #droppedBytes = 0;
 
-  constructor(callback: OutputCallback | undefined) {
+  constructor(callback: OutputCallback | undefined, maxBytes: number = COMMAND_OUTPUT_MAX_BYTES) {
     this.#callback = callback;
+    this.#maxBytes = maxBytes;
   }
 
   get text(): string {
-    return this.#parts.join("");
+    return this.#parts.map((part) => part.text).join("");
+  }
+
+  get droppedBytes(): number {
+    return this.#droppedBytes;
+  }
+
+  get truncated(): boolean {
+    return this.#droppedBytes > 0;
   }
 
   feed(payload: Uint8Array): string | undefined {
+    this.#pendingBytes += payload.length;
     return this.#emit(this.#decoder.decode(payload, { stream: true }));
   }
 
@@ -254,9 +292,41 @@ export class DecodedStream {
     if (text.length === 0) {
       return undefined;
     }
-    this.#parts.push(text);
+    const size = this.#pendingBytes;
+    this.#pendingBytes = 0;
+    this.#parts.push({ text, size });
+    this.#keptBytes += size;
+    this.#trim();
     this.#callback?.(text);
     return text;
+  }
+
+  /** Descarta por delante hasta volver a `maxBytes`; si el exceso cae dentro de una pieza, se queda con su final. */
+  #trim(): void {
+    let dropFrom = 0;
+    while (this.#keptBytes > this.#maxBytes) {
+      const oldest = this.#parts[dropFrom];
+      if (oldest === undefined) {
+        break;
+      }
+      const overflow = this.#keptBytes - this.#maxBytes;
+      if (oldest.size <= overflow) {
+        this.#keptBytes -= oldest.size;
+        this.#droppedBytes += oldest.size;
+        dropFrom += 1;
+        continue;
+      }
+      const tail = Buffer.from(oldest.text, "utf8").subarray(overflow);
+      this.#parts[dropFrom] = {
+        text: new TextDecoder().decode(tail).replace(/^\uFFFD+/, ""),
+        size: oldest.size - overflow,
+      };
+      this.#keptBytes -= overflow;
+      this.#droppedBytes += overflow;
+    }
+    if (dropFrom > 0) {
+      this.#parts = this.#parts.slice(dropFrom);
+    }
   }
 }
 
@@ -270,10 +340,20 @@ export class OutputAccumulator {
   #lastSeq = 0;
 
   constructor(
-    options: { onStdout?: OutputCallback | undefined; onStderr?: OutputCallback | undefined } = {},
+    options: {
+      onStdout?: OutputCallback | undefined;
+      onStderr?: OutputCallback | undefined;
+      maxBytes?: number | undefined;
+    } = {},
   ) {
-    this.#stdout = new DecodedStream(options.onStdout);
-    this.#stderr = new DecodedStream(options.onStderr);
+    const maxBytes = options.maxBytes ?? COMMAND_OUTPUT_MAX_BYTES;
+    this.#stdout = new DecodedStream(options.onStdout, maxBytes);
+    this.#stderr = new DecodedStream(options.onStderr, maxBytes);
+  }
+
+  /** Si se descartó salida antigua de stdout o de stderr por el tope. */
+  get truncated(): boolean {
+    return this.#stdout.truncated || this.#stderr.truncated;
   }
 
   get lastSeq(): number {
@@ -307,7 +387,7 @@ export class OutputAccumulator {
   finish(end: EndEvent): CommandOutcome {
     this.#stdout.flush();
     this.#stderr.flush();
-    return outcomeFromEnd(end, this.stdout, this.stderr);
+    return outcomeFromEnd(end, this.stdout, this.stderr, this.truncated);
   }
 }
 
@@ -319,7 +399,12 @@ export class OutputAccumulator {
  * ADR-011) → `TimeoutError`, terminal. Un status desconocido con `error` sigue
  * la tabla de `StreamError.code`.
  */
-export function outcomeFromEnd(end: EndEvent, stdout: string, stderr: string): CommandOutcome {
+export function outcomeFromEnd(
+  end: EndEvent,
+  stdout: string,
+  stderr: string,
+  truncated = false,
+): CommandOutcome {
   const status = end.status;
   const exitCode = end.exitCode;
   const detail = endErrorMessage(end);
@@ -345,13 +430,20 @@ export function outcomeFromEnd(end: EndEvent, stdout: string, stderr: string): C
     return translateStreamError(end.error.code, end.error.message);
   }
   if (exitCode === 0) {
-    return Object.freeze({ stdout, stderr, exitCode: 0, error: undefined });
+    return Object.freeze({
+      stdout,
+      stderr,
+      exitCode: 0,
+      error: undefined,
+      ...(truncated ? { truncated: true as const } : {}),
+    });
   }
   return new CommandExitError(`el comando terminó con exitCode=${exitCode} (${status})`, {
     exitCode,
     stdout,
     stderr,
     error: status,
+    truncated,
   });
 }
 
@@ -580,6 +672,9 @@ export class Commands {
    * cuanto `run` devuelve el handle, no cuando el proceso termina.
    */
   async run(cmd: string, options: CommandOptions = {}): Promise<CommandResult | CommandHandle> {
+    const maxOutputBytes = validateMaxOutputBytes(
+      options.maxOutputBytes ?? COMMAND_OUTPUT_MAX_BYTES,
+    );
     const envs = await this.#secrets.apply(options.envs, options.secrets);
     const request = buildStartRequest(cmd, { ...options, envs });
     const deadline = streamDeadlineMs(options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
@@ -598,6 +693,7 @@ export class Commands {
             requestTimeoutMs: options.requestTimeoutMs,
             foreground: !background,
             signal: options.signal,
+            maxOutputBytes,
           },
         );
         if (background) {
@@ -630,6 +726,7 @@ export class Commands {
       requestTimeoutMs: options.requestTimeoutMs,
       foreground: false,
       signal: options.signal,
+      maxOutputBytes: validateMaxOutputBytes(options.maxOutputBytes ?? COMMAND_OUTPUT_MAX_BYTES),
     });
   }
 
@@ -725,6 +822,7 @@ export class Commands {
       readonly requestTimeoutMs: number | undefined;
       readonly foreground: boolean;
       readonly signal?: AbortSignal | undefined;
+      readonly maxOutputBytes?: number | undefined;
     },
   ): Promise<CommandHandle> {
     const opened = await this.core.openStream(start, {
@@ -735,6 +833,7 @@ export class Commands {
     const accumulator = new OutputAccumulator({
       onStdout: options.onStdout,
       onStderr: options.onStderr,
+      maxBytes: options.maxOutputBytes,
     });
     const adapter = new ProcessEvents();
     const progress = new CommandProgress<ProcessEvent>(

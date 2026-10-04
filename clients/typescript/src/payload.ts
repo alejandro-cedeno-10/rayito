@@ -12,7 +12,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { InvalidArgumentError } from "./errors.js";
-import { RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
+import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
 import { type LifecycleBlock, lifecycleBlockToWire } from "./sandbox/lifecycle.js";
 import type { S3Prefix } from "./sandbox/persistence.js";
 import { stripTrailing } from "./strings.js";
@@ -38,7 +38,11 @@ export function encodeAccessToken(secret: Uint8Array): string {
 
 /**
  * Los bytes que `rayd` hashea. Falla si el token no es base64url canónico
- * (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`.
+ * (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`,
+ * o si decodifica a menos de `ACCESS_TOKEN_MIN_BYTES` bytes: un secreto
+ * elegido a mano y corto (en `accessToken` o `RAYITO_ACCESS_TOKEN`) se
+ * adivinaría por fuerza bruta o desde `token_sha256`. El mensaje nunca
+ * repite el token.
  */
 export function decodeAccessToken(accessToken: string): Uint8Array {
   const stripped = stripTrailing(accessToken, BASE64_PADDING);
@@ -48,6 +52,12 @@ export function decodeAccessToken(accessToken: string): Uint8Array {
   const secret = Buffer.from(stripped, "base64url");
   if (secret.length === 0 || encodeAccessToken(secret) !== stripped) {
     throw new InvalidArgumentError("accessToken no es base64url");
+  }
+  if (secret.length < ACCESS_TOKEN_MIN_BYTES) {
+    throw new InvalidArgumentError(
+      `accessToken demasiado corto: mínimo ${ACCESS_TOKEN_MIN_BYTES} bytes aleatorios ` +
+        `(los generados tienen ${ACCESS_TOKEN_BYTES})`,
+    );
   }
   return new Uint8Array(secret);
 }

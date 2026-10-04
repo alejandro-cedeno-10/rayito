@@ -14,8 +14,11 @@ hooks, snapshot).
 | Robo del JWE del proxy | Todo RPC salvo `Health` exige además `x-access-token`; TTL 60 min; el SDK nunca loguea cabeceras |
 | El sha256 del secreto viaja en `runHookPayload` (CloudTrail) | Sólo el hash sale del cliente; `rayd` compara en tiempo constante y nunca escribe el body de `/run` |
 | Escalada a root dentro del guest | Procesos, PTYs y kernels como uid 1000; otra cuenta sólo si su uid y gid están entre 1000 y 65535 (el rango que cubren el bloqueo de IMDS y las reglas de red) y no está en el grupo 0; root sólo con `user="root"` **y** `RAYITO_ALLOW_ROOT=1` en la imagen |
-| Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels; los puertos de `rayd` (8080 y 9000) atienden un número máximo de conexiones a la vez y los hooks cortan una cabecera que no termina de llegar, así que conexiones ociosas no agotan sus descriptores (T7) |
+| Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels; en el cliente, la salida guardada de un comando o una PTY está acotada a 64 MiB por descriptor (`max_output_bytes`/`maxOutputBytes`, `truncated` lo indica); los puertos de `rayd` (8080 y 9000) atienden un número máximo de conexiones a la vez y los hooks cortan una cabecera que no termina de llegar, así que conexiones ociosas no agotan sus descriptores (T7) |
 | Pids falsos en el protocolo del sidecar (T12) | `rayd` sólo registra y señala el kernel que `/proc` confirma como hijo del sidecar, líder de su grupo y de su mismo uid, fijado por su hora de arranque; nunca señala el grupo 0, el 1 ni el suyo propio |
+| Credenciales de git en el sandbox | `clone`/`push`/`pull` con `username`/`password` corren sin hooks ni credential helpers, se niegan si la configuración de git reescribe URLs y siempre intentan quitar el token de `.git/config` al acabar; **riesgo residual**: el código del sandbox con el mismo usuario puede capturarlo igualmente: trátalo como revelado y usa tokens de vida corta y de un solo repositorio ([Git](git.md#credenciales)) |
+| Contenido de terceros o secretos en un build de template | los enlaces simbólicos dentro de un directorio copiado nunca se siguen (como Docker), así que un enlace a un fichero de tu máquina no acaba en el artefacto ni en la imagen; `.dockerignore` sigue la semántica de Docker (`**/.env` excluye también el `.env` de la raíz) y el SDK avisa si va a empaquetar `.env`, `.git/`, `.aws/`, `.ssh/` o claves `*.pem`/`*.key`, que cualquier código del sandbox podría leer ([Templates](funciones-opcionales/templates.md#contexto-de-build)) |
+| Logs de CloudWatch o de build con secuencias de escape | la CLI muestra los caracteres de control como `\xNN` visibles cuando escribe en una terminal; con un execution role, el código de un sandbox puede escribir en cualquier stream de `/rayito/*`, así que los logs de runtime no prueban integridad |
 | `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, sin `..`; cada ruta se abre componente a componente con `O_NOFOLLOW` y se actúa sobre el descriptor, así que un componente que el código del sandbox cambie por un enlace entre la comprobación y el uso se rechaza en vez de seguirse, y un directorio en `proc`, `sysfs` o `devpts` se rechaza llegue por donde llegue (T11) |
 | Pasarela de secretos como *confused deputy* | la ruta de cada petición pasa una lista de permitidos (RFC 3986 sin `;`, decodificada una sola vez, sin segmentos `.`/`..`) antes de la allowlist, así que un upstream que normalice `..;` o decodifique dos veces no la saca de `allow` ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)) |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
@@ -181,7 +184,10 @@ Detalle en `SECURITY.md` T19.
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
-proxy, `envs`, `metadata`, el body de los hooks; tampoco URLs
+proxy, `envs`, `metadata`, el body de los hooks, ni el mensaje crudo de un
+error de AWS (un error de firma lleva la cadena canónica con el token de
+sesión: el SDK, los stacks, `Template.build` y la CLI sólo muestran su
+resumen saneado); tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
 credenciales de git, ni el JWE, las cabeceras, los cuerpos ni las rutas de
@@ -200,9 +206,30 @@ tocar AWS. El listener se enlaza a `127.0.0.1` por defecto; `--bind` fuera
 de loopback exige `--allow-remote` y avisa por stderr. Quita cualquier
 cabecera `x-aws-proxy-*` que traiga el cliente antes de reenviar la
 petición, así que un cliente local no puede suplantar la autenticación del
-proxy de AWS. Riesgo residual, sin mitigación nueva ni número de amenaza
-propio (`SECURITY.md` T2/T3): mientras el proxy está en marcha, cualquier
-proceso que alcance el puerto local reenviado —de la máquina del operador,
-o de otra si se usó `--allow-remote`— tiene el mismo acceso al sandbox que
-el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
+proxy de AWS.
+
+**Webs abiertas en el navegador del operador**: como el proxy añade el JWE a
+todo lo que reenvía y el guest sólo ve `Host: <endpoint>`, una web
+cualquiera podía usar el servicio del sandbox por DNS rebinding, con un POST
+entre sitios o con un `WebSocket` de otro origen (con Jupyter, code-server o
+una terminal web, eso es ejecutar código en el sandbox). Desde 0.6.x el
+proxy sólo reenvía peticiones cuyo `Host` es de loopback con el puerto
+local, la dirección de `--bind`, `<id>.localhost` o un `--allowed-host`
+(si no, `421`) y cuyo `Origin`, si lo trae, es uno de esos orígenes o un
+`--allow-origin` (si no, `403`); como mucho `--max-connections` (8)
+conexiones a la vez (`503` después). Por cada conexión sólo reenvía **un
+mensaje**: la primera petición reescrita, con su cuerpo delimitado por
+`Content-Length` o `chunked` (una delimitación ambigua es `400`); nada de lo
+que el cliente mande después llega al upstream, y un upgrade que el guest
+no acepta con `101` se responde con `Connection: close` y se cierra, en vez
+de quedar como túnel sin filtrar. **Cookies**: no se separan por puerto,
+así que lo que el sandbox sirve en `http://127.0.0.1:<puerto>` recibe las
+cookies de tus otras apps locales y comparte "sitio" con ellas; ábrelo en
+`http://<id>.localhost:<puerto>` (tarro propio, la CLI lo anuncia) o en un
+perfil de navegador dedicado ([Proxy local](funciones-opcionales/proxy-local.md#navegador-y-cookies)).
+
+Riesgo residual (`SECURITY.md` T2/T3): mientras el proxy está en marcha,
+cualquier proceso que alcance el puerto local reenviado —de la máquina del
+operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
+sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).

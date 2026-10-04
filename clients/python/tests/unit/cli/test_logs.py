@@ -210,3 +210,63 @@ def test_logs_command_json_and_absence(
     assert json.loads(result.stdout) == [
         {"timestamp": "1970-01-01T00:00:00.001Z", "message": "x", "stream": EXACT}
     ]
+
+
+def test_fallback_scan_ignores_streams_that_only_end_like_the_sandbox(
+    stubbed_clients: Stubs, info: Any
+) -> None:
+    """Con un rol de ejecución, código de cualquier sandbox puede crear
+    streams en `/rayito/*`: el recorrido de respaldo sólo acepta el formato
+    exacto `YYYY/MM/DD[<versión>]<id>`, con la versión del sandbox y un día
+    no anterior a su arranque."""
+    stubbed_clients.logs.add_response(
+        "describe_log_streams",
+        {"logStreams": []},
+        {"logGroupName": GROUP, "logStreamNamePrefix": EXACT},
+    )
+    stubbed_clients.logs.add_response(
+        "describe_log_streams",
+        {
+            "logStreams": [
+                stream("forged]microvm-x"),
+                stream("2026/09/16[9.9]microvm-x"),
+                stream("2026/09/14[1.0]microvm-x"),
+                stream("2026/09/16[1.0]evil]microvm-x"),
+                stream(LATER),
+            ]
+        },
+        SCAN_PARAMS,
+    )
+    assert _logs.find_streams(stubbed_clients.clients["logs"], GROUP, info) == [LATER]
+
+
+def test_sandbox_logs_warns_when_it_falls_back(
+    runner: CliRunner, clients: Clients, stubbed_clients: Stubs, fake_plane: FakeControlPlane
+) -> None:
+    fake_plane.infos["microvm-x"] = sandbox_info("microvm-x")
+    stubbed_clients.logs.add_response(
+        "describe_log_streams",
+        {"logStreams": []},
+        {"logGroupName": GROUP, "logStreamNamePrefix": EXACT},
+    )
+    stubbed_clients.logs.add_response(
+        "describe_log_streams", {"logStreams": [stream(LATER)]}, SCAN_PARAMS
+    )
+    stubbed_clients.logs.add_response(
+        "get_log_events",
+        {"events": [], "nextForwardToken": "f"},
+        {"logGroupName": GROUP, "logStreamName": LATER, "startFromHead": True},
+    )
+    stubbed_clients.logs.add_response(
+        "get_log_events",
+        {"events": [], "nextForwardToken": "f"},
+        {
+            "logGroupName": GROUP,
+            "logStreamName": LATER,
+            "startFromHead": True,
+            "nextToken": "f",
+        },
+    )
+    result = runner.invoke(app, ["sandbox", "logs", "microvm-x"], obj=clients)
+    assert result.exit_code == 0, result.stderr
+    assert "aviso" in result.stderr and LATER in result.stderr

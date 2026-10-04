@@ -6,7 +6,11 @@ con `logging="cloudwatch"` y el que publica la imagen); el stream se llama
 `YYYY/MM/DD[<imageVersion>]<microvmId>` (`AWS_API_NOTES.md` §14, medido).
 Si el nombre exacto no existe (un stream creado otro día UTC, `Q55`), se
 recorren como mucho 10 páginas de 50 streams ordenados por último evento
-buscando los que terminan en `]<microvmId>`.
+buscando los que tienen exactamente la forma `YYYY/MM/DD[<imageVersion>]
+<microvmId>` con la versión del sandbox y un día no anterior a su arranque.
+No basta con que terminen en `]<microvmId>`: el rol de ejecución puede crear
+streams en cualquier grupo `/rayito/*`, así que código de otro sandbox
+podría fabricar uno con ese sufijo. La CLI avisa cuando usa este respaldo.
 """
 
 from __future__ import annotations
@@ -24,6 +28,12 @@ from rayito._sandbox_base import LOG_GROUP_PREFIX
 STREAM_PAGE_SIZE = 50
 MAX_SCAN_PAGES = 10
 DEFAULT_EVENT_LIMIT = 1000
+#: El día UTC con el que empieza el nombre de un stream (`AWS_API_NOTES.md` §14).
+STREAM_DAY_FORMAT = "%Y/%m/%d"
+FALLBACK_WARNING = (
+    "rayito: aviso: no existe el stream esperado {expected}; se muestran {streams}, "
+    "encontrados por nombre (el rol de ejecución puede escribir en cualquier stream de /rayito/*)"
+)
 NOT_FOUND = "ResourceNotFoundException"
 RELATIVE_SINCE = re.compile(r"^(\d+)([smhd])$")
 RELATIVE_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -46,7 +56,7 @@ def default_log_group(template_arn: str) -> str:
 
 
 def expected_stream_name(info: SandboxInfo) -> str:
-    day = info.started_at.astimezone(UTC).strftime("%Y/%m/%d")
+    day = info.started_at.astimezone(UTC).strftime(STREAM_DAY_FORMAT)
     return f"{day}[{info.template_version}]{info.sandbox_id}"
 
 
@@ -59,8 +69,23 @@ def exact_stream(logs: Any, group: str, candidate: str) -> str | None:
     return candidate if candidate in stream_names(response) else None
 
 
-def scan_streams(logs: Any, group: str, sandbox_id: str) -> list[str]:
-    suffix = f"]{sandbox_id}"
+def _fallback_stream_pattern(info: SandboxInfo) -> re.Pattern[str]:
+    return re.compile(
+        rf"^(\d{{4}}/\d{{2}}/\d{{2}})\[{re.escape(info.template_version)}\]"
+        rf"{re.escape(info.sandbox_id)}$"
+    )
+
+
+def is_fallback_stream(name: str, info: SandboxInfo) -> bool:
+    """`YYYY/MM/DD[<versión>]<id>` exacto, con un día no anterior al del
+    arranque del sandbox (UTC)."""
+    match = _fallback_stream_pattern(info).match(name)
+    if match is None:
+        return False
+    return match.group(1) >= info.started_at.astimezone(UTC).strftime(STREAM_DAY_FORMAT)
+
+
+def scan_streams(logs: Any, group: str, info: SandboxInfo) -> list[str]:
     found: list[str] = []
     token: str | None = None
     for _ in range(MAX_SCAN_PAGES):
@@ -73,7 +98,7 @@ def scan_streams(logs: Any, group: str, sandbox_id: str) -> list[str]:
         if token is not None:
             params["nextToken"] = token
         page = logs.describe_log_streams(**params)
-        found.extend(name for name in stream_names(page) if name.endswith(suffix))
+        found.extend(name for name in stream_names(page) if is_fallback_stream(name, info))
         token = page.get("nextToken")
         if not token:
             break
@@ -88,7 +113,7 @@ def find_streams(logs: Any, group: str, info: SandboxInfo) -> list[str]:
         exact = exact_stream(logs, group, expected_stream_name(info))
         if exact is not None:
             return [exact]
-        found = scan_streams(logs, group, info.sandbox_id)
+        found = scan_streams(logs, group, info)
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") == NOT_FOUND:
             raise LogsNotFound(group) from exc

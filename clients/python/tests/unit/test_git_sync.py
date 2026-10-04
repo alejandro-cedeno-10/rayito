@@ -14,6 +14,7 @@ from rayito.exceptions import (
     GitAuthException,
     GitUpstreamException,
     InvalidArgumentException,
+    TimeoutException,
 )
 
 from .conftest import (
@@ -59,7 +60,17 @@ def sandbox(control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint) -> Iter
         created.kill()
 
 
+ISOLATION = "'-c' 'core.hooksPath=/dev/null' '-c' 'credential.helper='"
+REWRITE_CHECK = "'config' '--get-regexp' '^url\\..*\\.(push)?insteadof$'"
+RESTORE = f"'git' '-C' '/repo' 'remote' 'set-url' 'origin' '{REMOTE_URL}'"
+
+
+def no_url_rewrites(fake_rayd: RaydEndpoint) -> None:
+    fake_rayd.process.reply_when("'--get-regexp'", CannedReply(exit_code=1))
+
+
 def reply_with_a_remote(fake_rayd: RaydEndpoint, push: CannedReply) -> None:
+    no_url_rewrites(fake_rayd)
     fake_rayd.process.reply_when("'get-url'", CannedReply(stdout=f"{REMOTE_URL}\n"))
     fake_rayd.process.reply_when("'set-url'", CannedReply())
     fake_rayd.process.reply_when("'push'", push)
@@ -132,10 +143,11 @@ def test_push_with_credentials_restores_the_url_even_when_it_fails(
         sandbox.git.push("/repo", username="u", password=PASSWORD)
     assert fake_rayd.process.commands() == [
         "'git' '-C' '/repo' 'remote'",
+        f"'git' '-C' '/repo' {REWRITE_CHECK}",
         "'git' '-C' '/repo' 'remote' 'get-url' 'origin'",
         f"'git' '-C' '/repo' 'remote' 'set-url' 'origin' 'https://u:{ENCODED_PASSWORD}@github.com/o/r.git'",
-        "'git' '-C' '/repo' 'push' '--set-upstream' 'origin'",
-        f"'git' '-C' '/repo' 'remote' 'set-url' 'origin' '{REMOTE_URL}'",
+        f"'git' '-C' '/repo' {ISOLATION} 'push' '--set-upstream' 'origin'",
+        RESTORE,
     ]
     assert excinfo.value.exit_code == 128
 
@@ -147,8 +159,8 @@ def test_pull_with_credentials_uses_the_resolved_remote(
     result = sandbox.git.pull("/repo", branch="main", username="u", password=PASSWORD)
     assert result.stdout == "Already up to date.\n"
     commands = fake_rayd.process.commands()
-    assert commands[3] == "'git' '-C' '/repo' 'pull' 'origin' 'main'"
-    assert commands[-1] == f"'git' '-C' '/repo' 'remote' 'set-url' 'origin' '{REMOTE_URL}'"
+    assert commands[4] == f"'git' '-C' '/repo' {ISOLATION} 'pull' 'origin' 'main'"
+    assert commands[-1] == RESTORE
 
 
 def test_auth_and_upstream_failures_are_classified(
@@ -192,6 +204,7 @@ def test_pull_without_upstream_fails_before_pulling(
 def test_failed_credentialed_clone_never_leaks_the_password(
     sandbox: Sandbox, fake_rayd: RaydEndpoint
 ) -> None:
+    no_url_rewrites(fake_rayd)
     fake_rayd.process.reply_when(
         "'clone'",
         CannedReply(
@@ -214,6 +227,7 @@ def test_failed_credentialed_clone_never_leaks_the_password(
 def test_credentialed_clone_auth_failure_hides_the_chain(
     sandbox: Sandbox, fake_rayd: RaydEndpoint
 ) -> None:
+    no_url_rewrites(fake_rayd)
     fake_rayd.process.reply_when(
         "'clone'", CannedReply(stderr=f"fatal: Authentication failed {PASSWORD}\n", exit_code=128)
     )
@@ -225,12 +239,105 @@ def test_credentialed_clone_auth_failure_hides_the_chain(
 def test_successful_credentialed_clone_strips_the_origin(
     sandbox: Sandbox, fake_rayd: RaydEndpoint
 ) -> None:
+    no_url_rewrites(fake_rayd)
     fake_rayd.process.reply_when("'git'", CannedReply())
     sandbox.git.clone(REMOTE_URL, username="u", password=PASSWORD, depth=1)
     assert fake_rayd.process.commands() == [
-        f"'git' 'clone' 'https://u:{ENCODED_PASSWORD}@github.com/o/r.git' '--depth' '1'",
+        f"'git' {REWRITE_CHECK}",
+        f"'git' {ISOLATION} 'clone' 'https://u:{ENCODED_PASSWORD}@github.com/o/r.git' "
+        "'--depth' '1'",
         f"'git' '-C' 'r' 'remote' 'set-url' 'origin' '{REMOTE_URL}'",
     ]
+
+
+def test_an_anonymous_clone_is_not_isolated_nor_checked(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when("'git'", CannedReply())
+    sandbox.git.clone(REMOTE_URL, "/home/user/r")
+    assert fake_rayd.process.commands() == [f"'git' 'clone' '{REMOTE_URL}' '/home/user/r'"]
+
+
+def test_a_url_rewrite_in_the_git_config_refuses_the_credentials(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    """Código del sandbox con `url."http://127.0.0.1:9999/".insteadOf
+    https://` en `~/.gitconfig` recibiría la URL con el token en su propio
+    listener: con una reescritura así no se envía nada."""
+    fake_rayd.process.reply_when(
+        "'--get-regexp'", CannedReply(stdout="url.http://127.0.0.1:9999/.insteadof https://\n")
+    )
+    fake_rayd.process.reply_when("'git'", CannedReply())
+    with pytest.raises(GitAuthException, match="insteadOf"):
+        sandbox.git.clone(REMOTE_URL, "/home/user/r", username="u", password=PASSWORD)
+    with pytest.raises(GitAuthException, match="insteadOf"):
+        sandbox.git.push("/repo", remote="origin", username="u", password=PASSWORD)
+    sent = " ".join(fake_rayd.process.commands())
+    assert ENCODED_PASSWORD not in sent and PASSWORD not in sent
+
+
+def test_a_restore_that_times_out_keeps_the_push_error_and_warns(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    """Antes, sólo se suprimía `CommandExitException` al restaurar: un
+    timeout ocultaba el error del push y no avisaba de que el token podía
+    seguir en `.git/config`."""
+    fake_rayd.process.reply_when(f"'set-url' 'origin' '{REMOTE_URL}'", CannedReply(times_out=True))
+    reply_with_a_remote(fake_rayd, CannedReply(stderr="error: rejected\n", exit_code=128))
+    with capture_logs("rayito") as logs, pytest.raises(CommandExitException) as excinfo:
+        sandbox.git.push("/repo", username="u", password=PASSWORD)
+    assert excinfo.value.exit_code == 128
+    assert fake_rayd.process.commands()[-1] == RESTORE
+    assert "git push" in logs.text() and ".git/config" in logs.text()
+    assert PASSWORD not in logs.text() and ENCODED_PASSWORD not in logs.text()
+    assert REMOTE_URL not in logs.text() and "/repo" not in logs.text()
+
+
+def test_a_restore_that_times_out_after_a_successful_pull_raises_and_warns(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    fake_rayd.process.reply_when(f"'set-url' 'origin' '{REMOTE_URL}'", CannedReply(times_out=True))
+    reply_with_a_remote(fake_rayd, CannedReply(stdout="ok\n"))
+    with capture_logs("rayito") as logs, pytest.raises(TimeoutException):
+        sandbox.git.pull("/repo", remote="origin", username="u", password=PASSWORD)
+    assert "git pull" in logs.text()
+
+
+def test_a_credentialed_set_url_that_times_out_is_still_restored(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    """El `set-url` con credenciales puede haberse aplicado aunque la orden
+    venza: también entonces se intenta devolver la URL original."""
+    fake_rayd.process.reply_when("'set-url' 'origin' 'https://u:", CannedReply(times_out=True))
+    reply_with_a_remote(fake_rayd, CannedReply())
+    with pytest.raises(TimeoutException):
+        sandbox.git.push("/repo", remote="origin", username="u", password=PASSWORD)
+    assert fake_rayd.process.commands()[-1] == RESTORE
+
+
+def test_a_clone_that_times_out_still_tries_to_strip_the_origin(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    no_url_rewrites(fake_rayd)
+    fake_rayd.process.reply_when("'clone'", CannedReply(times_out=True))
+    fake_rayd.process.reply_when("'set-url'", CannedReply())
+    with pytest.raises(TimeoutException):
+        sandbox.git.clone(REMOTE_URL, "/home/user/r", username="u", password=PASSWORD)
+    assert fake_rayd.process.commands()[-1] == (
+        f"'git' '-C' '/home/user/r' 'remote' 'set-url' 'origin' '{REMOTE_URL}'"
+    )
+
+
+def test_a_clone_that_exits_non_zero_does_not_touch_the_destination(
+    sandbox: Sandbox, fake_rayd: RaydEndpoint
+) -> None:
+    """Con un exit distinto de cero git ya borró lo que creó (o el destino
+    existía de antes y no es suyo): no se toca."""
+    no_url_rewrites(fake_rayd)
+    fake_rayd.process.reply_when("'clone'", CannedReply(stderr="fatal: exists\n", exit_code=128))
+    with pytest.raises(CommandExitException):
+        sandbox.git.clone(REMOTE_URL, "/home/user/r", username="u", password=PASSWORD)
+    assert not any("'set-url'" in command for command in fake_rayd.process.commands())
 
 
 def test_dangerously_authenticate_runs_the_two_commands(
