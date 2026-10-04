@@ -3,7 +3,7 @@
  * `test_m15_templates_context.py`.
  */
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -87,5 +87,31 @@ describe("templates/context", () => {
     await expect(
       collectContextFiles(join(dir, "context"), [copy("../secret.txt", "/srv/secret.txt")]),
     ).rejects.toMatchObject({ reason: "context_path_outside" });
+  });
+
+  test("collectContextFiles skips file and directory symlinks that point outside", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rayito-templates-"));
+    await mkdir(join(dir, "outside", "dir"), { recursive: true });
+    await writeFile(join(dir, "outside", "secret"), "AWS_SECRET=shh\n");
+    await writeFile(join(dir, "outside", "dir", "inner"), "INNER\n");
+    await mkdir(join(dir, "ctx", "app"), { recursive: true });
+    await writeFile(join(dir, "ctx", "app", "main.py"), "print(1)\n");
+    await symlink(join(dir, "outside", "secret"), join(dir, "ctx", "app", "config"));
+    await symlink(join(dir, "outside", "dir"), join(dir, "ctx", "app", "linked"), "dir");
+
+    const entries = await collectContextFiles(join(dir, "ctx"), [copy("app", "/app")]);
+
+    expect(entries.map(([path]) => path)).toEqual(["app/main.py"]);
+  });
+
+  test("collectContextFiles skips symlinks inside the context too (same rule as Python)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rayito-templates-"));
+    await mkdir(join(dir, "app"));
+    await writeFile(join(dir, "app", "real.txt"), "real");
+    await symlink(join(dir, "app", "real.txt"), join(dir, "app", "alias.txt"));
+
+    const entries = await collectContextFiles(dir, [copy("app", "/app")]);
+
+    expect(entries.map(([path]) => path)).toEqual(["app/real.txt"]);
   });
 });

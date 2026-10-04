@@ -207,3 +207,19 @@ def test_artifact_module_is_stdlib_only() -> None:
             assert node.level == 0, "sin imports relativos"
             assert node.module is not None
             assert node.module.split(".")[0] in sys.stdlib_module_names, node.module
+
+
+def test_image_zip_skips_symlinks_that_point_outside(image_dir: Path, tmp_path: Path) -> None:
+    """`rayito image publish` / `scripts/image_zip.py`: un enlace dentro del
+    directorio de la imagen nunca se sigue (ni a un fichero ni a un
+    directorio de fuera)."""
+    outside = tmp_path / "outside"
+    (outside / "dir").mkdir(parents=True)
+    (outside / "secret").write_text("SECRET\n", encoding="utf-8")
+    (outside / "dir" / "inner").write_text("INNER\n", encoding="utf-8")
+    (image_dir / "kernel-sidecar" / "config").symlink_to(outside / "secret")
+    (image_dir / "linked").symlink_to(outside / "dir", target_is_directory=True)
+
+    out = tmp_path / "full.zip"
+    assert _artifact.write_zip(image_dir, out) == 3
+    assert names(out) == ["Dockerfile", "kernel-sidecar/ipython/startup/0004_warmup.py", "rayd"]

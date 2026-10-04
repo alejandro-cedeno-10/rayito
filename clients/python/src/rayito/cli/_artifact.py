@@ -59,16 +59,27 @@ def is_excluded(relative: Path) -> bool:
     return any(part in EXCLUDED_DIRECTORIES for part in relative.parts[:-1])
 
 
+def _walk(root: Path, directory: Path) -> list[Path]:
+    files: list[Path] = []
+    for entry in sorted(directory.iterdir()):
+        if entry.is_symlink():
+            continue
+        if entry.is_dir():
+            if entry.name not in EXCLUDED_DIRECTORIES:
+                files.extend(_walk(root, entry))
+        elif not is_excluded(entry.relative_to(root)) and entry.is_file():
+            files.append(entry)
+    return files
+
+
 def shipped_files(root: Path) -> list[Path]:
-    """Files under ``root`` that the zip ships: the exclusion list is checked
-    before the filesystem is touched, so an unreadable entry inside an
-    excluded directory (a Linux venv symlink seen from Windows) never
-    aborts the walk."""
-    return [
-        path
-        for path in sorted(root.rglob("*"))
-        if not is_excluded(path.relative_to(root)) and path.is_file()
-    ]
+    """Files under ``root`` that the zip ships, in path order. Excluded
+    directories are pruned before anything inside them is touched, so an
+    unreadable entry there (a Linux venv symlink seen from Windows) never
+    aborts the walk. Symbolic links are never followed, to a file or to a
+    directory, as Docker does with its build context: a link to a secret
+    outside the image directory never reaches the artifact or the image."""
+    return sorted(_walk(root, root))
 
 
 def image_files(image_dir: Path) -> list[Path]:

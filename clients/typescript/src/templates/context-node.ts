@@ -15,9 +15,10 @@ import type { CopyStep } from "./instructions.js";
  * enlace simbólico que escapa, o una ruta absoluta ajena): sin esto,
  * `collectContextFiles` leería ficheros fuera del contexto declarado y los
  * guardaría con un nombre de entrada de zip estilo `../..` (zip-slip) en el
- * artefacto subido. Espejo de `rayito._templates._context._ensure_contained`,
- * salvo que aquí ambas rutas pasan por `realpath` primero, así que un
- * enlace simbólico que apunte fuera también se rechaza.
+ * artefacto subido. Espejo de `rayito._templates._context._ensure_contained`:
+ * sólo mira el `src` de primer nivel (que pasa por `realpath`, así que un
+ * `src` que es un enlace que apunta fuera también se rechaza); los enlaces
+ * de dentro de un directorio copiado los omite `listFilesRecursively`.
  */
 function ensureContained(root: string, resolvedSource: string, src: string): void {
   const relpath = relative(root, resolvedSource);
@@ -31,6 +32,12 @@ function ensureContained(root: string, resolvedSource: string, src: string): voi
   }
 }
 
+/**
+ * Los ficheros regulares bajo `root`. Un `Dirent` de enlace simbólico no es
+ * ni `isFile()` ni `isDirectory()`, así que nunca se sigue un enlace (ni a
+ * fichero ni a directorio), como Docker y `_walk_regular_files` del SDK de
+ * Python: un `config -> ~/.aws/credentials` dentro del contexto no se lee.
+ */
 async function listFilesRecursively(root: string): Promise<string[]> {
   const { readdir } = await import("node:fs/promises");
   const entries = await readdir(root, { withFileTypes: true });

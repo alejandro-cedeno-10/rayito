@@ -67,9 +67,23 @@ class DockerIgnore:
         return excluded
 
 
+def _walk_regular_files(directory: Path) -> Iterator[Path]:
+    """Los ficheros regulares bajo `directory`, sin seguir nunca un enlace
+    simbólico (ni a fichero ni a directorio), como Docker y
+    `listFilesRecursively` del SDK de TypeScript: un `config ->
+    ~/.aws/credentials` dentro del contexto no se lee ni se empaqueta."""
+    for entry in sorted(directory.iterdir()):
+        if entry.is_symlink():
+            continue
+        if entry.is_dir():
+            yield from _walk_regular_files(entry)
+        elif entry.is_file():
+            yield entry
+
+
 def _iter_files(root: Path, source: Path) -> Iterator[Path]:
     if source.is_dir():
-        yield from (path for path in sorted(source.rglob("*")) if path.is_file())
+        yield from _walk_regular_files(source)
     elif source.is_file():
         yield source
     else:
@@ -81,8 +95,10 @@ def _iter_files(root: Path, source: Path) -> Iterator[Path]:
 
 def _ensure_contained(root: Path, source: Path, src: str) -> None:
     """Rechaza un `CopyStep.src` que resuelve fuera de `root` (un `../..`,
-    o un enlace simbólico que escapa): sin esto, `Template.build()` leería
-    y empaquetaría ficheros ajenos al contexto declarado."""
+    o un `src` que es él mismo un enlace simbólico que escapa): sin esto,
+    `Template.build()` leería y empaquetaría ficheros ajenos al contexto
+    declarado. Sólo mira el `src` de primer nivel; los enlaces que haya
+    dentro de un directorio copiado los omite `_walk_regular_files`."""
     try:
         source.relative_to(root)
     except ValueError as exc:

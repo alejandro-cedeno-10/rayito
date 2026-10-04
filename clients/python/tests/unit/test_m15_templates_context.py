@@ -76,3 +76,42 @@ def test_files_hash_is_order_independent_and_content_sensitive() -> None:
     c = [("x.py", b"1"), ("y.py", b"3")]
     assert files_hash(a) == files_hash(b)
     assert files_hash(a) != files_hash(c)
+
+
+def _context_with_escaping_links(tmp_path: Path) -> Path:
+    """`ctx/app/` con un fichero normal, un enlace a un fichero de fuera del
+    contexto y un enlace a un directorio de fuera."""
+    outside = tmp_path / "outside"
+    (outside / "dir").mkdir(parents=True)
+    (outside / "secret").write_text("AWS_SECRET=shh\n")
+    (outside / "dir" / "inner").write_text("INNER\n")
+    app = tmp_path / "ctx" / "app"
+    app.mkdir(parents=True)
+    (app / "main.py").write_text("print(1)\n")
+    (app / "config").symlink_to(outside / "secret")
+    (app / "linked").symlink_to(outside / "dir", target_is_directory=True)
+    return tmp_path / "ctx"
+
+
+def test_collect_context_files_skips_symlinks_that_point_outside(tmp_path: Path) -> None:
+    """Como Docker y el SDK de TypeScript: un enlace simbólico dentro de un
+    directorio copiado nunca se sigue, así que un `config -> ~/.aws/...` no
+    acaba en el artefacto ni en la imagen."""
+    ctx = _context_with_escaping_links(tmp_path)
+
+    entries = collect_context_files(ctx, [CopyStep("app", "/app")])
+
+    assert entries == (("app/main.py", b"print(1)\n"),)
+
+
+def test_collect_context_files_skips_symlinks_inside_the_context_too(tmp_path: Path) -> None:
+    """Una sola regla para Python y TypeScript: los enlaces de dentro de un
+    directorio copiado se omiten aunque apunten dentro del contexto."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "real.txt").write_text("real")
+    (app / "alias.txt").symlink_to(app / "real.txt")
+
+    entries = collect_context_files(tmp_path, [CopyStep("app", "/app")])
+
+    assert entries == (("app/real.txt", b"real"),)
