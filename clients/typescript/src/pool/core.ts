@@ -8,11 +8,10 @@
 
 import { InvalidArgumentError } from "../errors.js";
 import { defineHidden } from "../hidden.js";
-import { type IdlePolicy, type SandboxInfo, sandboxInfo } from "../models.js";
+import { type IdlePolicy, REDACTED, type SandboxInfo, sandboxInfo } from "../models.js";
 import { ReadinessPoll } from "../sandbox/readiness.js";
 
 export const POOL_SCHEMA = "rayito.pool/1";
-export const REDACTED = "<redacted>";
 
 export type SlotState = "warming" | "ready";
 export type ReconcileAction = "keep" | "repark" | "check" | "drop";

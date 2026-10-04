@@ -96,6 +96,30 @@ jobs:
           python3 scripts/check_wheel.py clients/python/dist/*.whl
           uvx twine==7.0.0 check clients/python/dist/*
 
+  python-versions:
+    # `check` runs the Python client on the runner's 3.12; this job runs the
+    # unit suite on the oldest and newest Python the classifiers declare, so
+    # every declared version is tested (best-practices audit 2026-10).
+    name: python client unit tests (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Python client unit tests on a declared version
+        run: cd clients/python && uv run pytest tests/unit
+
   typescript:
     name: typescript client (lint, typecheck, build, unit)
     runs-on: ubuntu-24.04

@@ -1,11 +1,11 @@
 # Publicar Rayito
 
-Pasos manuales para publicar cada componente. **Este documento no reserva
-nombres ni publica nada**: el cambio `m7-oss-hygiene` deja el repositorio
-listo para publicar y describe quién hace cada paso y cómo; la primera
-publicación es una decisión del mantenedor (`GOVERNANCE.md`). Hasta que
-exista la primera release, las insignias de PyPI y npm del `README.md`
-muestran "not found": es el comportamiento esperado, no un fallo.
+Pasos para publicar cada componente. `rayito` está publicado en PyPI y npm
+desde 0.3.0 y cada release sale de `.github/workflows/release.yml` (PyPI
+Trusted Publishing, npm trusted publishing con provenance, assets firmados de
+`rayd`); cada versión es una decisión del mantenedor (`GOVERNANCE.md`). Las
+secciones de configuración inicial (§2 y §3) se conservan para un fork o
+para rehacer la configuración desde cero.
 
 ## 1. Qué se publica y con qué tag
 

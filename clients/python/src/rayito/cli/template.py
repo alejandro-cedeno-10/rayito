@@ -18,7 +18,8 @@ from typing import Annotated
 
 import typer
 
-from rayito._templates._build import read_recent_logs, status_by_name
+from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS, DEFAULT_MEMORY_MIB
+from rayito._templates._build import BUILD_LOG_LINES, read_recent_logs, status_by_name
 from rayito._templates._dsl import Template
 from rayito.cli._console import echo, emit_json, fail
 from rayito.cli._session import clients_of, json_mode
@@ -45,13 +46,13 @@ def build_command(
     spec: Annotated[Path, typer.Argument(help="Fichero .py con una variable `template`.")],
     name: Annotated[str, typer.Option("--name", help="Nombre de la imagen a crear/actualizar.")],
     bucket: Annotated[str, typer.Option("--bucket", help="Bucket S3 del artefacto de build.")],
-    memory_mb: Annotated[int, typer.Option("--memory-mb")] = 2048,
+    memory_mb: Annotated[int, typer.Option("--memory-mb")] = DEFAULT_MEMORY_MIB,
     force: Annotated[
         bool, typer.Option("--force", help="Reconstruye aunque nada cambiara.")
     ] = False,
     timeout: Annotated[
         float, typer.Option("--timeout", help="Segundos de espera del build.")
-    ] = 1800.0,
+    ] = DEFAULT_BUILD_TIMEOUT_SECONDS,
 ) -> None:
     clients = clients_of(ctx)
     emit_json_mode = json_mode(ctx)
@@ -110,7 +111,9 @@ def status_command(
 def logs_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="Nombre de la imagen del template.")],
-    limit: Annotated[int, typer.Option("--limit", help="Máximo de líneas a leer.")] = 500,
+    limit: Annotated[
+        int, typer.Option("--limit", help="Máximo de líneas a leer.")
+    ] = BUILD_LOG_LINES,
 ) -> None:
     clients = clients_of(ctx)
     lines = read_recent_logs(name, region=clients.region, session=clients.session, limit=limit)

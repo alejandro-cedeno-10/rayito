@@ -37,7 +37,7 @@ rayito-mcp = "rayito.mcp.__main__:main"
 [project.urls]
 Homepage = "https://github.com/alejandro-cedeno-10/rayito"
 Repository = "https://github.com/alejandro-cedeno-10/rayito"
-Documentation = "https://github.com/alejandro-cedeno-10/rayito/tree/main/docs/site/docs"
+Documentation = "https://alejandro-cedeno-10.github.io/rayito/"
 Changelog = "https://github.com/alejandro-cedeno-10/rayito/blob/main/clients/python/CHANGELOG.md"
 
 [dependency-groups]

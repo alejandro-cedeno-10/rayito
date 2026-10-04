@@ -20,6 +20,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   imagen y la memoria del sucesor. `LaunchOptions.gateways` pasa a
   `LaunchOptions.features.gateways` (atributo interno).
 
+### Documentation
+
+- El enlace `Documentation` de PyPI apunta al sitio publicado
+  (`https://alejandro-cedeno-10.github.io/rayito/`) en vez de a las fuentes
+  Markdown del repositorio.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added
