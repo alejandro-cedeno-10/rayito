@@ -213,7 +213,7 @@ describe("un span padre del llamante", () => {
       const rayitoSpans = exporter.getFinishedSpans().filter((s) => s.name.startsWith("rayito."));
       expect(rayitoSpans).toHaveLength(3);
       for (const span of rayitoSpans) {
-        expect(span.parentSpanId).toBe(parentSpanId);
+        expect(span.parentSpanContext?.spanId).toBe(parentSpanId);
       }
     });
   });

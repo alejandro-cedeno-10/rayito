@@ -10,9 +10,10 @@
  * lista cerrada de campos, y el texto pasa por `redactAwsText`.
  */
 
+import { REDACTED } from "../models.js";
+
 const METADATA_KEY = "$metadata";
 const FAULT_KEY = "$fault";
-const REDACTED = "<redacted>";
 const MAX_MESSAGE_CHARS = 2048;
 
 /** Lo que queda de `$metadata`: sin cabeceras, sin cuerpo, sin credenciales. */

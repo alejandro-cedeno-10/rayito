@@ -10,41 +10,8 @@
  * `create()` escribe una fila inmutable por sandbox y `list()`/`paginate()`
  * la unen con `list-microvms`: filtran también `SUSPENDED` sin sondear nada.
  *
- * Coste y activación
- * -------------------
- * Activa: `index: new DynamoDbIndex({ tableName: "rayito-sandboxes" })` (en
- *   Python, `index=DynamoDbIndex("rayito-sandboxes")`) en
- *   `Sandbox.create()`, `Sandbox.list()`, `Sandbox.paginate()`, `PoolConfig`
- *   y el shim `rayito/e2b` (`Sandbox.list({ query, index })`, `new E2B({ index })`).
- *   Construirlo no llama a AWS ni carga `@aws-sdk/client-dynamodb` (peer
- *   opcional): el cliente se crea en su primer uso. Sin la opción no se carga
- *   el peer ni se hace ninguna llamada a DynamoDB (el camino de 0.4.0). Sin
- *   región o sin el peer, `create()` lanza `InvalidArgumentError` antes de
- *   `run-microvm`: un error de configuración nunca lanza un MicroVM.
- * Recursos y llamadas AWS: ninguno se crea desde el SDK (la tabla la
- *   despliegas tú con `infra/metadata-index.yaml`). `PutItemCommand` una vez
- *   por sandbox creado (condicional `attribute_not_exists(pk)`);
- *   `BatchGetItemCommand` una vez por página de `list-microvms` (≤ 100
- *   claves, eventualmente consistente) al listar con `metadata` e `index`.
- *   Nunca `DeleteItem`: el TTL (`expires_at`) borra las filas gratis.
- * Coste aproximado: DynamoDB on-demand (us-east-1, consultado 2026-09-30,
- *   https://aws.amazon.com/dynamodb/pricing/on-demand/): $0,625 por millón
- *   de WRU (~1 WRU por `create` ≈ $0,000000625) + $0,125 por millón de RRU
- *   (0,5 RRU por ítem leído) + $0,25/GB-mes. 10 000 sandboxes/mes < $0,10.
- *   Tabla vacía: $0.
- * IAM: escritor (`create`, relleno del pool): `dynamodb:PutItem`; lector
- *   (`list`/`paginate`): `dynamodb:BatchGetItem`; ambos sobre el ARN de la
- *   tabla (políticas `RayitoIndexWriter`/`RayitoIndexReader`), en las
- *   credenciales del LLAMANTE.
- * Cómo apagarla: no pases `index` (o pásalo `undefined`, el valor por
- *   defecto); para dejar de pagar el almacenamiento, borra el stack.
- * Ejemplo:
- *   const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
- *   const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
- *   await sbx.pause();
- *   for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
- *     console.log(item.sandboxId, item.state, item.metadata);
- *   }
+ * El bloque "Coste y activación" vive en el TSDoc de la clase: tsdown descarta
+ * este comentario de módulo y el hover del IDE sólo enseña el de la clase.
  */
 
 import type { AwsClientSettings } from "../aws/control-plane.js";
@@ -187,7 +154,45 @@ export function chunks(ids: readonly string[], size = BATCH_GET_MAX_KEYS): strin
   return parts;
 }
 
-/** Ver el bloque "Coste y activación" del módulo. Reutilizable; los errores nunca repiten el mensaje de AWS. */
+/**
+ * Reutilizable; los errores nunca repiten el mensaje de AWS.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: `index: new DynamoDbIndex({ tableName: "rayito-sandboxes" })` (en
+ *   Python, `index=DynamoDbIndex("rayito-sandboxes")`) en
+ *   `Sandbox.create()`, `Sandbox.list()`, `Sandbox.paginate()`, `PoolConfig`
+ *   y el shim `rayito/e2b` (`Sandbox.list({ query, index })`, `new E2B({ index })`).
+ *   Construirlo no llama a AWS ni carga `@aws-sdk/client-dynamodb` (peer
+ *   opcional): el cliente se crea en su primer uso. Sin la opción no se carga
+ *   el peer ni se hace ninguna llamada a DynamoDB (el camino de 0.4.0). Sin
+ *   región o sin el peer, `create()` lanza `InvalidArgumentError` antes de
+ *   `run-microvm`: un error de configuración nunca lanza un MicroVM.
+ * Recursos y llamadas AWS: ninguno se crea desde el SDK (la tabla la
+ *   despliegas tú con `infra/metadata-index.yaml`). `PutItemCommand` una vez
+ *   por sandbox creado (condicional `attribute_not_exists(pk)`);
+ *   `BatchGetItemCommand` una vez por página de `list-microvms` (≤ 100
+ *   claves, eventualmente consistente) al listar con `metadata` e `index`.
+ *   Nunca `DeleteItem`: el TTL (`expires_at`) borra las filas gratis.
+ * Coste aproximado: DynamoDB on-demand (us-east-1, consultado 2026-09-30,
+ *   https://aws.amazon.com/dynamodb/pricing/on-demand/): $0,625 por millón
+ *   de WRU (~1 WRU por `create` ≈ $0,000000625) + $0,125 por millón de RRU
+ *   (0,5 RRU por ítem leído) + $0,25/GB-mes. 10 000 sandboxes/mes < $0,10.
+ *   Tabla vacía: $0.
+ * IAM: escritor (`create`, relleno del pool): `dynamodb:PutItem`; lector
+ *   (`list`/`paginate`): `dynamodb:BatchGetItem`; ambos sobre el ARN de la
+ *   tabla (políticas `RayitoIndexWriter`/`RayitoIndexReader`), en las
+ *   credenciales del LLAMANTE.
+ * Cómo apagarla: no pases `index` (o pásalo `undefined`, el valor por
+ *   defecto); para dejar de pagar el almacenamiento, borra el stack.
+ * Ejemplo:
+ *   const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+ *   const sbx = await Sandbox.create({ metadata: { user: "42" }, index });
+ *   await sbx.pause();
+ *   for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+ *     console.log(item.sandboxId, item.state, item.metadata);
+ *   }
+ */
 export class DynamoDbIndex {
   readonly tableName: string;
   readonly onWriteFailure: WriteFailurePolicy;

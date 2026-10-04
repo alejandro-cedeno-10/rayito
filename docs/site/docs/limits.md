@@ -110,6 +110,37 @@ párrafo anterior, eso **no es sólo una cuestión de rendimiento: ese exceso
 se paga** a los vCPU/GB consumidos por encima del baseline, no sólo corre
 más rápido gratis.
 
+## Versionado y soporte
+
+Rayito sigue [SemVer 2.0.0](https://semver.org/lang/es/) y publica tres
+componentes con la misma serie `MAJOR.MINOR`: el SDK de Python y el de
+TypeScript (`rayito` en PyPI y npm) y el agente `rayd` (asset firmado de la
+GitHub Release `rayd-v*` y binario dentro de la imagen). Cada uno tiene su
+changelog en formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
+([Changelog](referencia/changelog.md)).
+
+- **Qué es la API pública**: lo que exportan `rayito` y `rayito.e2b`
+  (Python), `rayito` y `rayito/e2b` (TypeScript) sin guion bajo inicial, la
+  CLI `rayito`, las herramientas de `rayito-mcp` y el contrato
+  `proto/rayito/v1/`. Los módulos `_privados`, los tipos generados y los
+  scripts del repositorio no lo son.
+- **Mientras sea 0.x** (hoy, `Development Status :: 3 - Alpha`): una subida
+  de MINOR puede romper compatibilidad y lo dice: commit `feat!:` o
+  `BREAKING CHANGE:` y entrada en `Changed` o `Removed` del changelog. Un
+  PATCH nunca rompe la API pública. Desde 1.0.0, sólo un MAJOR rompe.
+- **Obsolescencia**: antes de retirar algo de la API pública se marca como
+  obsoleto (`DeprecationWarning` en Python, `@deprecated` en TypeScript) y se
+  anota en `Deprecated` del changelog al menos una MINOR antes de quitarlo.
+  Las excepciones son que AWS retire la capacidad de la plataforma que lo
+  sostiene o que lo exija una corrección de seguridad; las dos se explican
+  en las notas de la release.
+- **Soporte**: sólo la última línea `MAJOR.MINOR` recibe correcciones, de
+  seguridad incluidas (`SECURITY.md`, "Versiones soportadas"). El SDK y la
+  imagen deben ser de la misma serie: la tabla de abajo fija el `rayd`
+  mínimo de cada SDK y `rayito doctor` la comprueba.
+- **Las versiones de imagen no son versiones de Rayito**: `rayito-base` N.0
+  es un contador de builds que asigna AWS en cada cuenta (ver abajo).
+
 ## Compatibilidad SDK ↔ rayd ↔ imagen
 
 Los SDKs (Python y TypeScript) y `rayd` avanzan `MAJOR.MINOR` en lockstep

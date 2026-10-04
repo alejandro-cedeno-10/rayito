@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 import boto3
 from botocore.config import Config
@@ -200,6 +200,11 @@ class TokenBucket:
 
 
 DEFAULT_TOTAL_MAX_ATTEMPTS = 5
+#: Segundos para abrir la conexión con el plano de control y segundos de
+#: espera de cada respuesta (botocore `Config`); paridad con
+#: `CONNECTION_TIMEOUT_MS`/`REQUEST_TIMEOUT_MS` de `src/aws/control-plane.ts`.
+CONNECT_TIMEOUT_SECONDS: Final = 5
+READ_TIMEOUT_SECONDS: Final = 60
 
 
 @dataclass(frozen=True)
@@ -224,8 +229,8 @@ def client_config(settings: ClientSettings | None = None) -> Config:
     proxies = None if resolved.proxy is None else {"http": resolved.proxy, "https": resolved.proxy}
     return Config(
         retries={"mode": "standard", "total_max_attempts": attempts},
-        connect_timeout=5,
-        read_timeout=60,
+        connect_timeout=CONNECT_TIMEOUT_SECONDS,
+        read_timeout=READ_TIMEOUT_SECONDS,
         user_agent_extra=user_agent,
         proxies=proxies,
     )

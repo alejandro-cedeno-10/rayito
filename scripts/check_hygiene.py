@@ -28,8 +28,9 @@ pasen) línea a línea y falla con estas reglas:
 6. **Red**: `vpc-`, `subnet-`, `sg-` y `eni-` con 8 o 17 hex, salvo el
    marcador `0123456789abcdef0`.
 7. **Ruta local**: `<unidad>:\\` o `<unidad>:/` seguido de `Users`, `tools` o
-   `Projects`, y las mismas carpetas en la forma de Git Bash
-   (`/<unidad>/Users/…`).
+   `Projects`, las mismas carpetas en la forma de Git Bash
+   (`/<unidad>/Users/…`), el home de macOS (`/Users/<usuario>`) y sus
+   temporales (`tmp` y `var` bajo `/private/`).
 8. **Access key de AWS**: `AKIA`/`ASIA` y 16 mayúsculas o dígitos, salvo las
    que acaban en `EXAMPLE` (la de la documentación de AWS).
 
@@ -168,6 +169,11 @@ RULES: tuple[Rule, ...] = (
     Rule(
         LOCAL_PATH_REASON,
         re.compile(r"(?<![\w.-])/[A-Za-z]/(?:Users|tools|Projects)\b"),
+        never,
+    ),
+    Rule(
+        LOCAL_PATH_REASON,
+        re.compile(r"(?<![\w.-])/(?:Users/[A-Za-z0-9._-]+|private/(?:tmp|var)/)"),
         never,
     ),
     Rule(ACCESS_KEY_REASON, re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), example_key),

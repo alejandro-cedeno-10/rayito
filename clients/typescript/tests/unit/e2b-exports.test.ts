@@ -107,8 +107,7 @@ describe("rayito/e2b exports", () => {
       sideEffects: boolean;
     };
     expect(manifest.exports["./e2b"]).toEqual({
-      types: "./dist/e2b.d.mts",
-      import: "./dist/e2b.mjs",
+      import: { types: "./dist/e2b.d.mts", default: "./dist/e2b.mjs" },
       require: { types: "./dist/e2b.d.cts", default: "./dist/e2b.cjs" },
     });
     expect(manifest.sideEffects).toBe(false);

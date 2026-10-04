@@ -436,3 +436,13 @@ uv run mypy src tests
 uv build && python ../../scripts/check_wheel.py dist/*.whl && uvx twine==7.0.0 check dist/*
 RAYITO_E2E=1 RAYITO_TEMPLATE=<arn-o-nombre> uv run pytest tests/e2e -m e2e -v -s
 ```
+
+## Licencia y marcas
+
+[Apache-2.0](https://github.com/alejandro-cedeno-10/rayito/blob/main/LICENSE);
+las atribuciones de terceros están en el fichero `NOTICE` incluido en el
+paquete. E2B es una marca de su titular: Rayito es un proyecto independiente,
+no afiliado, patrocinado ni respaldado por E2B, y usa el nombre sólo para
+describir la compatibilidad de API del shim. Contribuir:
+[`CONTRIBUTING.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md);
+seguridad: [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).

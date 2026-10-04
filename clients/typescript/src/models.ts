@@ -22,6 +22,9 @@ import {
   warnIfRounded,
 } from "./sizing/sizing.js";
 
+/** Lo que `toString()`, `toJSON()` y los errores enseñan en lugar de un token o una firma (paridad con `REDACTED` de `rayito/_models.py`). */
+export const REDACTED = "<redacted>";
+
 export const PROXY_AUTH_HEADER = "x-aws-proxy-auth";
 export const PROXY_PORT_HEADER = "x-aws-proxy-port";
 
