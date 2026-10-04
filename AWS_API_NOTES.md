@@ -959,8 +959,8 @@ forma. Referencia de la API:
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
 | `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
-| `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack` | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html> |
-| `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
+| `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack`, y además `Parameters=[{ParameterKey, UsePreviousValue: true}]` (sin `ParameterValue`) para cada parámetro que se conserva | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html>, <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Parameter.html> |
+| `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}, Parameters[].{ParameterKey, ParameterValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
 | `DeleteStack` (`delete_stack` / `DeleteStackCommand`) | `StackName` | — (idempotente: no falla sobre una pila que no existe) | `cloudformation:DeleteStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html> |
 
 `DescribeStackEvents` queda documentada (`StackName` → `StackEvents[].{
@@ -972,6 +972,22 @@ puede adoptarla para diagnósticos más finos sin cambiar el puerto
 
 `CAPABILITY_AUTO_EXPAND` **nunca se usa**: ningún componente de este
 catálogo usa macros ni transforms de SAM.
+
+**Redesplegar no pisa la configuración** (verificado sin red el
+2026-10-04 contra el mismo modelo de botocore 1.43.103: el shape
+`Parameter` tiene `ParameterKey`, `ParameterValue`, `UsePreviousValue` y
+`ResolvedValue`, y `DescribeStacks` devuelve `Stacks[].Parameters`). Los
+valores por defecto del catálogo sólo se aplican en `CreateStack`. En
+`UpdateStack`, cada parámetro del catálogo que el llamante no pasa y que
+la pila ya tiene (según `Stacks[0].Parameters`) se manda como
+`{ParameterKey, UsePreviousValue: true}`, así que conserva su valor
+actual; uno que la pila todavía no tiene (una versión de plantilla que lo
+añade) recibe su valor por defecto. Sin esto, redesplegar `s3-mounts` sin
+repetir `Prefixes` volvía a `'*'` (todo el bucket), `metadata-index` sin
+`TableName` reemplazaba la tabla (y la borraba, por su
+`UpdateReplacePolicy: Delete`) y `secrets-access` sin `KmsKeyArn` quitaba
+`kms:Decrypt`. CloudFormation ya enmascara en `DescribeStacks` el valor de
+un parámetro `NoEcho`.
 
 `Parameters`/`Tags` siempre se mandan ordenados por clave (determinismo de
 los tests, nunca un requisito de la API). `Tags` siempre incluye las tres

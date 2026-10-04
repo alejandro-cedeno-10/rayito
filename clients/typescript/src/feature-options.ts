@@ -136,7 +136,7 @@ export function planFeatures(
     sections.push(new GatewaySectionFactory(validateGateways(options.gateways)));
   }
   if (options.domain !== undefined) {
-    throw new UnimplementedError("domain", `llega en 0.6 (${DOMAIN_CHANGE})`);
+    throw new UnimplementedError("domain", `todavía no disponible (${DOMAIN_CHANGE})`);
   }
   return sections.length === 0 && telemetry === undefined && events === undefined
     ? EMPTY_PLAN

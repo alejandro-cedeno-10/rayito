@@ -10,8 +10,14 @@
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { InvalidArgumentError, StackError, UnimplementedError } from "../errors.js";
 import { CloudFormationProvisioner } from "./cloudformation.js";
-import type { StackComponent, StackStatus } from "./model.js";
-import { planDeploy, stackTags } from "./model.js";
+import type { ParameterChange, ParameterPlan, StackComponent, StackStatus } from "./model.js";
+import {
+  parameterChanges,
+  planDeploy,
+  planParameters,
+  rejectUnknownParameters,
+  stackTags,
+} from "./model.js";
 import { loadArtifact, loadTemplate } from "./packaging.js";
 import type { StackProvisioner } from "./port.js";
 import { COMPONENTS, componentByName } from "./registry.js";
@@ -36,6 +42,12 @@ export interface DeployOptions {
   readonly wait?: boolean;
   readonly waitTimeoutMs?: number;
 }
+
+/** Los argumentos de `deploy()` que deciden los parámetros. */
+export type ParameterChangesOptions = Pick<
+  DeployOptions,
+  "stackName" | "parameters" | "artifactBucket"
+>;
 
 export interface DestroyOptions {
   readonly stackName?: string;
@@ -66,35 +78,6 @@ function requireSupported(component: StackComponent): void {
       `${component.name} todavía no tiene plantilla: ${component.description}`,
     );
   }
-}
-
-function resolvedParameters(
-  component: StackComponent,
-  given: Readonly<Record<string, string>>,
-): Record<string, string> {
-  const known = new Set((component.parameters ?? []).map((parameter) => parameter.name));
-  const unknown = Object.keys(given).filter((key) => !known.has(key));
-  if (unknown.length > 0) {
-    throw new InvalidArgumentError(
-      `parámetros desconocidos para ${component.name}: ${unknown.sort().join(", ")}`,
-    );
-  }
-  const resolved: Record<string, string> = {};
-  for (const parameter of component.parameters ?? []) {
-    if (parameter.default !== undefined) {
-      resolved[parameter.name] = parameter.default;
-    }
-  }
-  Object.assign(resolved, given);
-  const missing = (component.parameters ?? [])
-    .filter((parameter) => parameter.required === true && resolved[parameter.name] === undefined)
-    .map((parameter) => parameter.name);
-  if (missing.length > 0) {
-    throw new InvalidArgumentError(
-      `faltan parámetros obligatorios para ${component.name}: ${missing.sort().join(", ")}`,
-    );
-  }
-  return resolved;
 }
 
 /**
@@ -128,6 +111,24 @@ function withArtifactBucket(
   return resolved;
 }
 
+function requireArtifactBucket(
+  component: StackComponent,
+  artifactBucket: string | undefined,
+): void {
+  if ((component.artifacts?.length ?? 0) > 0 && !artifactBucket) {
+    throw new InvalidArgumentError(
+      `${component.name} necesita artifactBucket: sube el código Lambda del componente`,
+    );
+  }
+}
+
+interface Plan {
+  readonly component: StackComponent;
+  readonly stackName: string;
+  readonly current: StackStatus | undefined;
+  readonly parameters: ParameterPlan;
+}
+
 export class OptionalStacks {
   readonly #provisioner: StackProvisioner;
 
@@ -151,24 +152,35 @@ export class OptionalStacks {
     return this.#provisioner.describe(name);
   }
 
+  /**
+   * Qué parámetros cambiaría `deploy()` con estos mismos argumentos, sin
+   * desplegar nada (sólo un `DescribeStacks`). Los que no se pasan y la pila
+   * ya tiene no aparecen: `deploy()` los conserva. Espejo de
+   * `OptionalStacks.parameter_changes`.
+   */
+  async parameterChanges(
+    component: string | StackComponent,
+    options: ParameterChangesOptions = {},
+  ): Promise<ParameterChange[]> {
+    const plan = await this.#plan(component, options);
+    return parameterChanges(plan.parameters, plan.current);
+  }
+
+  /**
+   * Crea la pila o, si ya existe, la actualiza. Al crear, los parámetros no
+   * pasados toman su valor por defecto del catálogo; al actualizar, los no
+   * pasados conservan el valor con el que la pila está desplegada
+   * (`UsePreviousValue`), así redesplegar sin repetir cada parámetro no
+   * deshace la configuración anterior.
+   */
   async deploy(
     component: string | StackComponent,
     options: DeployOptions = {},
   ): Promise<StackStatus> {
-    const resolved = resolveComponent(component);
-    requireSupported(resolved);
-    const name = options.stackName ?? `rayito-${resolved.name}`;
-    const hasArtifacts = (resolved.artifacts?.length ?? 0) > 0;
-    if (hasArtifacts && !options.artifactBucket) {
-      throw new InvalidArgumentError(
-        `${resolved.name} necesita artifactBucket: sube el código Lambda del componente`,
-      );
-    }
-    const parameters = resolvedParameters(
-      resolved,
-      withArtifactBucket(resolved, options.parameters ?? {}, options.artifactBucket),
-    );
-    if (hasArtifacts && options.artifactBucket) {
+    const plan = await this.#plan(component, options);
+    const { component: resolved, stackName: name } = plan;
+    const parameters: Record<string, string> = { ...plan.parameters.values };
+    if ((resolved.artifacts?.length ?? 0) > 0 && options.artifactBucket) {
       const data = await loadArtifact(resolved);
       const key = await artifactKey(data);
       await this.#provisioner.putArtifact(options.artifactBucket, key, data);
@@ -178,16 +190,16 @@ export class OptionalStacks {
     }
     const templateBody = await loadTemplate(resolved);
     const tags = stackTags(resolved, options.tags ?? {});
-    const plan = planDeploy(await this.#provisioner.describe(name));
-    if (plan.action === "blocked") {
-      throw new StackError(plan.reason ?? `deploy de ${JSON.stringify(name)} bloqueado`, {
-        code: "blocked",
-      });
-    }
-    if (plan.action === "create") {
+    if (planDeploy(plan.current).action === "create") {
       await this.#provisioner.create(resolved, { stackName: name, templateBody, parameters, tags });
     } else {
-      await this.#provisioner.update(resolved, { stackName: name, templateBody, parameters, tags });
+      await this.#provisioner.update(resolved, {
+        stackName: name,
+        templateBody,
+        parameters,
+        tags,
+        keepPrevious: plan.parameters.keepPrevious,
+      });
     }
     if (options.wait !== false) {
       await this.#provisioner.wait(
@@ -203,6 +215,31 @@ export class OptionalStacks {
       });
     }
     return status;
+  }
+
+  /** Lo común a `deploy()` y `parameterChanges()`: valida todo lo que no
+   * necesita AWS antes de la única llamada (`DescribeStacks`) y decide los
+   * parámetros según exista o no la pila. */
+  async #plan(component: string | StackComponent, options: ParameterChangesOptions): Promise<Plan> {
+    const resolved = resolveComponent(component);
+    requireSupported(resolved);
+    const name = options.stackName ?? `rayito-${resolved.name}`;
+    requireArtifactBucket(resolved, options.artifactBucket);
+    const given = withArtifactBucket(resolved, options.parameters ?? {}, options.artifactBucket);
+    rejectUnknownParameters(resolved, given);
+    const current = await this.#provisioner.describe(name);
+    const deployPlan = planDeploy(current);
+    if (deployPlan.action === "blocked") {
+      throw new StackError(deployPlan.reason ?? `deploy de ${JSON.stringify(name)} bloqueado`, {
+        code: "blocked",
+      });
+    }
+    return {
+      component: resolved,
+      stackName: name,
+      current,
+      parameters: planParameters(resolved, given, current),
+    };
   }
 
   async destroy(component: string | StackComponent, options: DestroyOptions = {}): Promise<void> {

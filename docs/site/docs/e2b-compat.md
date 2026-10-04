@@ -239,8 +239,8 @@ feature en camelCase, salvo las diferencias que se listan tras la tabla):
 | el historial de métricas por la forma de clase, sin access token ni `RAYITO_ACCESS_TOKEN` | `Sandbox.get_metrics(sandbox_id)` | rayd exige el access token del sandbox (x-access-token): pásalo con access_token= o define RAYITO_ACCESS_TOKEN |
 | el historial de métricas con rango (`start`/`end`) o por la forma de clase, contra una imagen anterior a 0.3.0 | `get_metrics(start=, end=)` / `Sandbox.get_metrics(sandbox_id)` (TS: `getMetrics({ start, end })` / `Sandbox.getMetrics(sandboxId)`) | la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior |
 | cualquier `create()` contra una imagen anterior a 0.3.0 (el VM se termina antes de lanzar) | `lifecycle` | la imagen no impone el timeout del servidor: publica una imagen 0.3.0 o posterior |
-| `cpu`/`memory` por sandbox | — | no son parámetros de `create()`: el tamaño es propiedad de la imagen (`rayito image publish --memory-mib`), igual que `Template.build(cpu_count=, memory_mb=)` en E2B ([Límites](limits.md#tamano-cpuram)) |
-| la CLI de templates/snapshots/fork de E2B | — | no existen: fuera del alcance (`SPEC.md` §4) |
+| `cpu`/`memory` por sandbox | — | no son parámetros de `create()`: el tamaño es propiedad de la imagen, igual que `Template.build(cpu_count=, memory_mb=)` en E2B; el SDK nativo elige entre imágenes ya publicadas con `size=` ([Tamaños](funciones-opcionales/tamanos.md), [Límites](limits.md#tamano-cpuram)) |
+| la CLI de snapshots/fork de E2B | — | no existen: fuera del alcance (`SPEC.md` §4); la de templates es `rayito template` ([CLI](cli.md#rayito-template)) |
 
 El SDK nativo sigue la misma regla: `get_metrics_history()` (TS
 `getMetricsHistory()`), en instancia y en la forma de clase, contra un `rayd`

@@ -101,10 +101,10 @@ class RecordingProvisioner extends FakeStackProvisioner {
 
   override async create(
     component: StackComponent,
-    options: { readonly stackName: string; readonly parameters?: Readonly<Record<string, string>> },
+    options: { readonly stackName: string; readonly parameters: Readonly<Record<string, string>> },
   ): Promise<void> {
     await super.create(component, options);
-    this.parameters = { ...(options.parameters ?? {}) };
+    this.parameters = { ...options.parameters };
     this.stacks.set(options.stackName, {
       name: options.stackName,
       state: "CREATE_COMPLETE",

@@ -46,9 +46,32 @@ def test_list_makes_no_provisioner_call(
 def test_deploying_an_unsupported_component_fails_before_any_call(
     runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
 ) -> None:
-    result = runner.invoke(app, ["stack", "deploy", "s3-mounts", "--yes"], obj=clients)
+    result = runner.invoke(app, ["stack", "deploy", "custom-domain", "--yes"], obj=clients)
     assert result.exit_code != 0
     assert fake_provisioner.calls == []
+
+
+def test_redeploy_prints_only_the_parameters_that_change(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    first = runner.invoke(
+        app,
+        ["stack", "deploy", "s3-mounts", "--param", "BucketName=b", "--param", "Prefixes=t/*"],
+        input="y\n",
+        obj=clients,
+    )
+    assert first.exit_code == 0, first.output
+    assert "Prefixes: '(sin valor)' -> 't/*'" in first.output
+    second = runner.invoke(
+        app,
+        ["stack", "deploy", "s3-mounts", "--param", "ReadOnly=false"],
+        input="y\n",
+        obj=clients,
+    )
+    assert second.exit_code == 0, second.output
+    assert "ReadOnly: 'true' -> 'false'" in second.output
+    assert "Prefixes" not in second.output.split("Parámetros que cambian")[1]
+    assert fake_provisioner.stacks["rayito-s3-mounts"].parameters["Prefixes"] == "t/*"
 
 
 def test_deploy_without_yes_asks_for_confirmation_and_aborts_on_no(
@@ -57,7 +80,8 @@ def test_deploy_without_yes_asks_for_confirmation_and_aborts_on_no(
     result = runner.invoke(app, ["stack", "deploy", "metadata-index"], input="n\n", obj=clients)
     assert result.exit_code != 0
     assert "Coste y activación" in result.output
-    assert fake_provisioner.calls == []
+    # Only the read that shows which parameters would change; nothing deployed.
+    assert [call[0] for call in fake_provisioner.calls] == ["describe"]
 
 
 def test_deploy_with_yes_creates_the_stack(
@@ -95,9 +119,13 @@ def test_status_of_an_undeployed_component_is_none(
     assert json.loads(result.output) is None
 
 
-def test_domain_stub_subapp_prints_pending_help(runner: CliRunner) -> None:
+def test_domain_stub_subapp_is_hidden_from_the_top_level_help(runner: CliRunner) -> None:
     # m15-events-webhooks and m15-templates implement their own `events` and
-    # `template` sub-apps for real; `domain` is the one pending stub left.
+    # `template` sub-apps for real; `domain` is the one pending stub left, and
+    # stays out of `rayito --help` until m15-custom-domain ships it.
+    top = runner.invoke(app, ["--help"])
+    assert top.exit_code == 0, top.output
+    assert "domain" not in top.output
     result = runner.invoke(app, ["domain", "--help"])
     assert result.exit_code == 0, result.output
     assert "m15-custom-domain" in result.output

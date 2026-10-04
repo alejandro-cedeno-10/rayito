@@ -6,11 +6,11 @@ dice qué se conserva; `list` no hace ninguna llamada a AWS.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Final
 
 import typer
 
-from rayito._stacks._model import StackComponent
+from rayito._stacks._model import ParameterChange, StackComponent
 from rayito._stacks._service import OptionalStacks
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._session import clients_of, json_mode
@@ -58,12 +58,41 @@ def _print_cost(component: StackComponent) -> None:
         echo(f"  Fuente: {component.cost.source}")
 
 
-def confirm_deploy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
-    """§4.6: imprime el `CostStatement` y pide confirmación salvo `--yes` o
-    `--json`. Compartido por `rayito stack deploy` y los atajos por función
-    (`rayito events deploy`), para que ambos lean igual."""
+#: Lo que se imprime en lugar del valor de un parámetro `NoEcho`.
+HIDDEN_VALUE: Final = "(oculto)"
+#: Cómo se imprime "la pila todavía no tiene este parámetro".
+ABSENT_VALUE: Final = "(sin valor)"
+
+
+def _print_changes(component: StackComponent, changes: tuple[ParameterChange, ...]) -> None:
+    hidden = {parameter.name for parameter in component.parameters if parameter.no_echo}
+    if not changes:
+        echo("  Parámetros: sin cambios (los no pasados conservan su valor actual)")
+        return
+    echo("  Parámetros que cambian (los no pasados conservan su valor actual):")
+    for change in changes:
+        before = ABSENT_VALUE if change.before is None else change.before
+        after = change.after
+        if change.name in hidden:
+            before, after = HIDDEN_VALUE, HIDDEN_VALUE
+        echo(f"    {change.name}: {before!r} -> {after!r}")
+
+
+def confirm_deploy(
+    ctx: typer.Context,
+    component: StackComponent,
+    *,
+    yes: bool,
+    changes: tuple[ParameterChange, ...] | None = None,
+) -> None:
+    """§4.6: imprime el `CostStatement` (y, si se pasan, los parámetros que
+    cambian: `OptionalStacks.parameter_changes`) y pide confirmación salvo
+    `--yes` o `--json`. Compartido por `rayito stack deploy` y los atajos por
+    función (`rayito events deploy`), para que ambos lean igual."""
     if not json_mode(ctx):
         _print_cost(component)
+        if changes is not None:
+            _print_changes(component, changes)
     if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
         raise typer.Exit(1)
 
@@ -114,6 +143,7 @@ def status_command(
     component: Annotated[str, typer.Argument()],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
 ) -> None:
+    """Estado y salidas de la pila del componente (sólo DescribeStacks)."""
     stacks = _stacks(ctx)
     _resolve(stacks, component)
     status = stacks.status(component, stack_name=stack_name)
@@ -142,17 +172,27 @@ def deploy_command(
     tag: Annotated[list[str], typer.Option("--tag", help="Etiqueta K=V; repetible.")] = [],  # noqa: B006
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Crea o actualiza la pila; imprime coste y parámetros que cambian."""
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
     if not resolved.supported:
         if not json_mode(ctx):
             _print_cost(resolved)
         raise UnimplementedError(f"rayito stack deploy {component}", resolved.description)
-    confirm_deploy(ctx, resolved, yes=yes)
+    parameters = parse_pairs(param, option="--param")
+    changes = None
+    if not json_mode(ctx):
+        changes = stacks.parameter_changes(
+            component,
+            stack_name=stack_name,
+            parameters=parameters,
+            artifact_bucket=artifact_bucket,
+        )
+    confirm_deploy(ctx, resolved, yes=yes, changes=changes)
     status = stacks.deploy(
         component,
         stack_name=stack_name,
-        parameters=parse_pairs(param, option="--param"),
+        parameters=parameters,
         artifact_bucket=artifact_bucket,
         tags=parse_pairs(tag, option="--tag"),
     )
@@ -169,6 +209,7 @@ def destroy_command(
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Borra la pila del componente; dice antes qué se conserva."""
     stacks = _stacks(ctx)
     resolved = _resolve(stacks, component)
     confirm_destroy(ctx, resolved, yes=yes)

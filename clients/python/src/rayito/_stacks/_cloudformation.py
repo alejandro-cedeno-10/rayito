@@ -2,10 +2,11 @@
 
 Parámetros y formas verificados offline contra botocore 1.43.103
 (`AWS_API_NOTES.md` §21): `CreateStack` (`StackName`, `TemplateBody`,
-`Parameters` [{ParameterKey, ParameterValue}], `Tags` [{Key, Value}],
+`Parameters` [{ParameterKey, ParameterValue}] o, sólo en
+`UpdateStack`, [{ParameterKey, UsePreviousValue}], `Tags` [{Key, Value}],
 `Capabilities`), `UpdateStack` (igual, más el `ValidationError` "No updates
 are to be performed" cuando no hay cambios), `DescribeStacks` (`StackName`
--> `Stacks[0].{StackStatus, StackStatusReason, Outputs}`, o `ValidationError`
+-> `Stacks[0].{StackStatus, StackStatusReason, Outputs, Parameters}`, o `ValidationError`
 "does not exist" si no hay pila), `DeleteStack` (idempotente: no falla sobre
 una pila que no existe) y `DescribeStackEvents` (no usado todavía: `wait`
 sondea `DescribeStacks`, más simple y suficiente para pilas sin recursos
@@ -112,11 +113,16 @@ class CloudFormationProvisioner:
         outputs = {
             output["OutputKey"]: output["OutputValue"] for output in stack.get("Outputs") or []
         }
+        parameters = {
+            parameter["ParameterKey"]: parameter.get("ParameterValue", "")
+            for parameter in stack.get("Parameters") or []
+        }
         return StackStatus(
             name=stack_name,
             state=stack.get("StackStatus"),
             outputs=outputs,
             reason_code=stack.get("StackStatusReason"),
+            parameters=parameters,
         )
 
     def create(
@@ -147,12 +153,13 @@ class CloudFormationProvisioner:
         template_body: str,
         parameters: dict[str, str],
         tags: dict[str, str],
+        keep_previous: tuple[str, ...] = (),
     ) -> UpdateOutcome:
         try:
             self._cloudformation.get().update_stack(
                 StackName=stack_name,
                 TemplateBody=template_body,
-                Parameters=_proto_parameters(parameters),
+                Parameters=_proto_parameters(parameters, keep_previous),
                 Tags=_proto_tags(tags),
                 Capabilities=list(component.capabilities),
             )
@@ -211,10 +218,15 @@ class CloudFormationProvisioner:
         return None if status is None else status.reason_code
 
 
-def _proto_parameters(parameters: dict[str, str]) -> list[dict[str, str]]:
-    return [
-        {"ParameterKey": key, "ParameterValue": value} for key, value in sorted(parameters.items())
-    ]
+def _proto_parameters(
+    parameters: dict[str, str], keep_previous: tuple[str, ...] = ()
+) -> list[dict[str, str | bool]]:
+    entries: dict[str, dict[str, str | bool]] = {
+        key: {"ParameterKey": key, "ParameterValue": value} for key, value in parameters.items()
+    }
+    for key in keep_previous:
+        entries[key] = {"ParameterKey": key, "UsePreviousValue": True}
+    return [entries[key] for key in sorted(entries)]
 
 
 def _proto_tags(tags: dict[str, str]) -> list[dict[str, str]]:

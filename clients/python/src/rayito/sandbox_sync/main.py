@@ -709,14 +709,76 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         `mounts=`, `volumes=`, `size=`, `events=`, `gateways=` y `domain=`
-         son seis de las siete opciones 0.6 (M15); cada una llega en su
-         propio cambio OpenSpec y, mientras siga siendo un stub, ponerla a
-         algo distinto de `None` lanza `UnimplementedError` nombrando ese
-         cambio, antes de `run-microvm` (`_feature_options.plan_features`).
-         Ninguna hace ninguna llamada a AWS ni construye ningún cliente por
-         sí sola; con las seis en `None` (su valor por defecto) el
-         comportamiento es exactamente el de 0.5.x.
+         De las siete opciones 0.6 (M15), sólo `volumes=` y `domain=` siguen
+         siendo stubs (m15-efs-volumes, m15-custom-domain): ponerlas a algo
+         distinto de `None` lanza `UnimplementedError` nombrando ese cambio,
+         antes de `run-microvm` (`_feature_options.plan_features`) y sin
+         ninguna llamada a AWS. `mounts=`, `size=`, `events=`, `telemetry=`
+         y `gateways=` ya son reales: cada una lleva su bloque "Coste y
+         activación" aquí debajo o en su clase (`SecretGateway`). Con todas
+         en `None` (su valor por defecto) el comportamiento es exactamente
+         el de 0.5.x.
+
+         `mounts=` (m15-s3-mounts) monta cada `S3Mount` en su ruta (bajo
+         `/mnt/` o `/home/user/`, como mucho 4) con `mount-s3`, en el mismo
+         `ConfigureSandbox` que el resto de secciones; sólo en
+         `rayito-base-caps` (o una variante por tamaño) y sólo los buckets
+         del allowlist de la imagen. Si un montaje falla, termina el sandbox
+         (salvo `keep_on_failure`) y relanza el error; `sbx.mounts` da el
+         estado en vivo.
+
+         Coste y activación
+         -------------------
+         Activa: `mounts={"/mnt/data": S3Mount(bucket="...")}` en `create()`,
+             con `execution_role_arn=` y una imagen `rayito-base-caps` cuyo
+             `RAYITO_ALLOWED_MOUNT_BUCKETS` incluya el bucket.
+         Recursos y llamadas AWS: ningún recurso nuevo; `mount-s3` hace las
+             peticiones S3 normales (`GetObject`/`ListObjectsV2`, y
+             `PutObject`/`DeleteObject` con `read_only=False`) con el
+             execution role. La política sale de la pila `s3-mounts`
+             (`rayito stack deploy s3-mounts`, sólo IAM).
+         Coste aproximado: $0 propio de Rayito; pagas las peticiones y el
+             almacenamiento normales de S3 del bucket montado (us-east-1,
+             consultado 2026-10-01); la pila `s3-mounts` es $0 (sólo IAM).
+         IAM: `RayitoS3MountAccess` (`infra/s3-mounts.yaml`) en el execution
+             role, acotada a un bucket y a sus prefijos.
+         Cómo apagarla: no pases `mounts=` (por defecto `None`); `rayito
+             stack destroy s3-mounts` quita la política (no borra objetos).
+         Ejemplo:
+             from rayito import S3Mount
+
+             sbx = Sandbox.create("rayito-base-caps", execution_role_arn=role_arn,
+                                  mounts={"/mnt/data": S3Mount(bucket="mi-bucket")})
+             sbx.commands.run("ls /mnt/data")
+
+         `size=` (m15-sizes-catalog) elige, en el cliente y sin ninguna
+         llamada a AWS, la imagen de ese tamaño del catálogo cerrado
+         (512mb/1gb/2gb/4gb/8gb; `SizeRequest(memory_mib=...)` redondea
+         hacia arriba): `rayito-base` con `size="4gb"` lanza
+         `rayito-base-4gb`, que tiene que estar publicada. No cambia la
+         memoria de ninguna imagen ni de un sandbox en marcha; ver
+         `rayito._sizing`.
+
+         Coste y activación
+         -------------------
+         Activa: `size="4gb"` (o `size=SizeRequest(memory_mib=...)`) en
+             `create()`, tras `rayito image publish --sizes 4gb`.
+         Recursos y llamadas AWS: ninguno nuevo al lanzar (el tamaño va en
+             el nombre de la imagen); `get_info()` hace como mucho una
+             `GetMicrovmImageVersion` gratuita por versión de imagen y
+             proceso. Cada tamaño publicado es una imagen más en tu cuenta.
+         Coste aproximado: un MicroVM más grande cuesta más por hora, de
+             $0,0315/h (512 MiB) a $0,5044/h (8192 MiB) en baseline
+             (`limits.md`, us-east-1, consultado 2026-09-30); cada tamaño
+             publicado añade storage de snapshot, ≈ $0,04/semana por versión.
+         IAM: ninguno adicional; la pila opcional `sizes-guard` niega
+             `RunMicrovm` fuera de las imágenes que listes.
+         Cómo apagarla: no pases `size=` (por defecto `None`); las versiones
+             de cada imagen de tamaño se borran con `rayito image prune
+             --image-name rayito-base-4gb`.
+         Ejemplo:
+             sbx = Sandbox.create(size="4gb")
+             sbx.get_info()  # size="4gb", baseline_memory_mib=4096
 
          `events=` (m15-events-webhooks, ADR-020) ya es real: un
          `LifecycleEvents`/`AsyncLifecycleEvents` (con su pila

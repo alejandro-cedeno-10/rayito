@@ -51,8 +51,28 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
   point que el listado aún mostraba pero ya no existe devuelve `False`.
 
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
+- **Redesplegar una pila opcional ya no deshace su configuración**
+  (`OptionalStacks.deploy()`/`AsyncOptionalStacks.deploy()` y
+  `rayito stack deploy`): los valores por defecto del catálogo sólo se
+  aplican al crear la pila; al actualizarla, cada parámetro que no vuelves a
+  pasar y la pila ya tiene se manda con `UsePreviousValue`. Antes, por
+  ejemplo, redesplegar `s3-mounts` sin repetir `Prefixes` volvía a `'*'`
+  (todo el bucket), `metadata-index` sin `TableName` reemplazaba (y borraba)
+  la tabla y `secrets-access` sin `KmsKeyArn` quitaba `kms:Decrypt`. Nuevo
+  `parameter_changes()` para ver qué cambiaría sin desplegar; `rayito stack
+  deploy` lo imprime antes de pedir confirmación.
+- **Guardián SSRF de los webhooks** (pila `events-webhooks`): una dirección
+  IPv6 que encapsula una IPv4 (`::ffff:100.64.0.1`, de un registro AAAA) se
+  clasifica como esa IPv4, así que el rango CGNAT queda bloqueado también
+  por esa vía. Se regenera el zip de la Lambda que el SDK sube.
+- `volumes=`/`domain=` lanzan `UnimplementedError` con "todavía no
+  disponible" en vez de "llega en 0.6"; `rayito domain` (pendiente) ya no
+  aparece en `rayito --help`; `rayito template build|status|logs`,
+  `rayito stack` y `rayito events` tienen texto de ayuda.
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
   (`m15-reincarnate-configure-replay`, sync y async): hasta ahora sólo
   reenviaba `gateways=` y un sucesor perdía `mounts=`, `events=` y
@@ -67,6 +87,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Documentation
 
+- Bloques "Coste y activación" completos para `mounts`/`S3Mount` y
+  `size`/el catálogo de tamaños, y filas de las seis funciones 0.6 en la
+  tabla de funciones opcionales; la referencia de la CLI, la paridad con
+  E2B, la guía de migración, `limits.md` y las notas de 0.6.0 ya no
+  describen como pendientes funciones publicadas en 0.6.0.
 - **Metadatos del paquete**: la URL `Documentation` apunta al sitio de
   documentación y se añade `Issues`; el README del paquete termina con la
   licencia, el `NOTICE` incluido y la nota de marcas (proyecto independiente,
@@ -927,7 +952,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...python-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.1...python-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.0...python-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.4.0...python-v0.5.0

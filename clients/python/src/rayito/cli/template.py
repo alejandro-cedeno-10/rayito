@@ -54,6 +54,12 @@ def build_command(
         float, typer.Option("--timeout", help="Segundos de espera del build.")
     ] = DEFAULT_BUILD_TIMEOUT_SECONDS,
 ) -> None:
+    """Construye la imagen del `template` definido en SPEC con Template.build.
+
+    Sube el contexto a BUCKET (bajo rayito/templates/) y crea o actualiza la
+    imagen NAME; cada versión nueva cuesta almacenamiento de snapshot, igual
+    que `rayito image publish`. Las versiones se borran con `rayito image`.
+    """
     clients = clients_of(ctx)
     emit_json_mode = json_mode(ctx)
     template = _load_template(spec)
@@ -87,6 +93,7 @@ def status_command(
         typer.Option("--version", help="Versión a consultar; por defecto la más reciente."),
     ] = None,
 ) -> None:
+    """Estado del build de una versión de la imagen NAME (sólo lectura)."""
     clients = clients_of(ctx)
     status = status_by_name(name, version, region=clients.region, session=clients.session)
     if json_mode(ctx):
@@ -115,6 +122,7 @@ def logs_command(
         int, typer.Option("--limit", help="Máximo de líneas a leer.")
     ] = BUILD_LOG_LINES,
 ) -> None:
+    """Últimas líneas del log de build de la imagen NAME (sólo lectura)."""
     clients = clients_of(ctx)
     lines = read_recent_logs(name, region=clients.region, session=clients.session, limit=limit)
     if json_mode(ctx):

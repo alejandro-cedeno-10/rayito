@@ -280,6 +280,8 @@ export type {
   CostStatement,
   DeployAction,
   DeployPlan,
+  ParameterChange,
+  ParameterPlan,
   StackArtifact,
   StackComponent,
   StackParameter,
@@ -291,6 +293,7 @@ export {
   type DestroyOptions,
   OptionalStacks,
   type OptionalStacksOptions,
+  type ParameterChangesOptions,
 } from "./stacks/service.js";
 export {
   DEFAULT_INTERVAL_S,
@@ -322,6 +325,7 @@ export type {
   TemplateSpec,
   UserStep,
   WireStep,
+  WorkdirStep,
 } from "./templates/instructions.js";
 export {
   ReadyCommand,

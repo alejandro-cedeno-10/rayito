@@ -31,6 +31,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   (`invalid_path`, `credentials_expired`, `flush_timeout`, `stale`,
   `unreachable`, `gone`).
 
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
 - **`rayd` (PID 1) recoge los zombis huérfanos** (`rayd-orphan-reaper`,
@@ -581,7 +583,8 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.0...rayd-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.1...rayd-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.0...rayd-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.4.0...rayd-v0.5.0

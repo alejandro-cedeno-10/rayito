@@ -27,17 +27,34 @@ CloudFormation.
 
 ## Componentes de hoy
 
-| Componente | Qué crea | Para qué |
-|---|---|---|
-| `metadata-index` | Tabla DynamoDB + 2 políticas IAM | [Índice de metadatos](indice-de-metadatos.md) |
-| `secrets-access` | 2 políticas IAM | [Secretos](../secrets.md) |
+| Componente | Qué crea | Coste en reposo | Para qué |
+|---|---|---|---|
+| `metadata-index` | Tabla DynamoDB + 2 políticas IAM (lector/escritor) | $0 (on-demand, tabla vacía) | [Índice de metadatos](indice-de-metadatos.md) |
+| `secrets-access` | 2 políticas IAM sobre un prefijo de Secrets Manager | $0 | [Secretos](../secrets.md) |
+| `s3-mounts` | 1 política IAM sobre un bucket (y sus prefijos) | $0 | [Montajes S3](montajes-s3.md) |
+| `sizes-guard` | 1 política IAM que niega `RunMicrovm` fuera de las imágenes listadas | $0 | [Tamaños](tamanos.md) |
+| `events-webhooks` | Secreto HMAC, tabla DynamoDB con streams, 3 Lambdas, filtro de suscripción, scheduler, cola SQS de fallos, roles IAM | ≈ $0,40/mes (el secreto) | [Eventos y webhooks](eventos-y-webhooks.md) |
+| `otlp-export` | 1 política IAM (`cloudwatch:PutMetricData`) | $0 | [Exportación OTLP](exportacion-otlp.md) |
+| `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
+| `efs-volumes` (experimental) | En una VPC existente: sistema de ficheros EFS cifrado, un mount target por subred, 2 grupos de seguridad nuevos, un conector de egress a la VPC, su rol y la política `RayitoEfsVolumeClient` | $0 con el sistema de ficheros vacío | [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) |
 
-Los otros siete (`s3-mounts`, `efs-volumes`, `sizes-guard`,
-`events-webhooks`, `otlp-export`, `templates`, `custom-domain`) están
-reservados para las funciones 0.6 de esta misma página de navegación;
-`rayito stack list` ya los muestra, marcados como pendientes, y
-`deploy`/`status`/`destroy` sobre ellos fallan con un error claro hasta que
-su propia función los implemente.
+Sólo `custom-domain` sigue pendiente: `rayito stack list` ya lo muestra
+(con `supported` a `false`) y `deploy`/`status`/`destroy` sobre él fallan
+con un error claro hasta que su propia función lo implemente ([Dominio
+propio](dominio-propio.md)).
+
+## Redesplegar no deshace la configuración
+
+`deploy` sobre una pila que ya existe la actualiza. Los parámetros que no
+vuelves a pasar **conservan el valor con el que está desplegada**
+(CloudFormation `UsePreviousValue`); los valores por defecto del catálogo
+sólo se aplican al crearla, o a un parámetro nuevo que la pila todavía no
+tenga. Así, redesplegar `s3-mounts` sin repetir `--param Prefixes=...` no
+vuelve a abrir todo el bucket, ni redesplegar `metadata-index` sin
+`TableName` reemplaza la tabla. `rayito stack deploy` imprime qué
+parámetros cambian antes de pedir confirmación, y
+`OptionalStacks().parameter_changes(...)` (TypeScript:
+`parameterChanges(...)`) devuelve lo mismo sin desplegar nada.
 
 ## CLI
 
@@ -49,7 +66,8 @@ rayito stack destroy metadata-index
 ```
 
 `deploy` imprime siempre el bloque "Coste y activación" del componente y
-pide confirmación salvo `--yes`; `destroy` dice qué se conserva.
+los parámetros que cambian, y pide confirmación salvo `--yes`; `destroy`
+dice qué se conserva.
 
 ## Python y TypeScript
 
