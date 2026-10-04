@@ -46,7 +46,7 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   `503` beyond), a wildcard `--bind` requires `--allowed-host`, and the
   announcement offers `http://<id>.localhost:<port>` (separate cookie jar).
   `http_authority`/`is_wildcard` move to a shared stdlib-only module.
-- Python build context and image zip never follow symlinks inside a copied
+- The Python build context never follows symlinks inside a copied
   directory (TypeScript gains tests pinning the same rule); each context
   file is re-checked and opened with `O_NOFOLLOW` before reading.
 - `.dockerignore` follows Docker's semantics in both SDKs (shared vectors);

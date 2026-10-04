@@ -2,7 +2,8 @@
 old denylist grep missed (``@1.2.3``, ``@latest``, ``@release-v2`` and a
 truncated ``@ab12cd34``) are findings, a full SHA with or without its version
 comment and a local ``./`` action are not, every ``uvx`` without ``==`` is a
-finding in both the bare and the ``--from`` form, every ``curl`` of a
+finding in both the bare and the ``--from`` form (and so is a pinned ``uvx``
+of a tool that pulls a dependency graph), every ``curl`` of a
 ``Dockerfile`` needs a pinned ``<NAME>_SHA256=`` checked by ``sha256sum -c``
 and no floating release, a ``dnf install`` of a package in
 ``PINNED_DNF_PACKAGES`` needs ``-<version>-<release>``, a ``pip install -r``
@@ -92,15 +93,31 @@ def test_uvx_without_a_version_is_a_finding() -> None:
     assert all(reason == check_pins.UVX_REASON for _, _, reason in findings)
 
 
-def test_pinned_uvx_invocations_pass() -> None:
-    text = """        run: uvx pip-audit==2.10.1 -r req.txt --no-deps --strict
-\tuvx twine==7.0.0 check dist/*
-\tuvx ruff==0.16.7 format --check .
-\tuvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(IAM_TEMPLATE)
-          uvx --from pkg==1.0 tool
-# uvx twine check dist/*"""
+def test_pinned_uvx_of_a_dependency_free_tool_passes() -> None:
+    text = """\tuvx ruff==0.16.7 format --check .
+          uvx ruff==0.16.7 check scripts
+          uvx --from ruff==0.16.7 ruff check .
+# uvx twine check dist/*
+# uvx pip-audit==2.10.1 -r req.txt"""
 
     assert check_pins.unpinned_uvx(text) == []
+
+
+def test_pinned_uvx_of_a_tool_with_dependencies_is_a_finding() -> None:
+    """``==`` pins the tool, not its transitive graph: every run resolves
+    the newest release of each dependency, with no hash and no cooldown.
+    Only a tool without dependencies (``ruff``) may run through ``uvx``;
+    the rest install from a hash-pinned requirements file."""
+    text = """        run: uvx pip-audit==2.10.1 -r req.txt --no-deps --strict
+\tuvx twine==7.0.0 check dist/*
+\tuvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(IAM_TEMPLATE)
+          uvx --from pkg==1.0 tool
+          uvx --from "rayito[mcp]==0.6.1" rayito-mcp"""
+
+    findings = check_pins.unpinned_uvx(text)
+
+    assert [number for number, _, _ in findings] == [1, 2, 3, 4, 5]
+    assert all(reason == check_pins.UVX_GRAPH_REASON for _, _, reason in findings)
 
 
 def test_unverified_downloads_are_findings() -> None:

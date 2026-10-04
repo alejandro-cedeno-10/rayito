@@ -100,9 +100,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   ya no cruzan `/` (`*.pyc` sólo excluye los de la raíz; usa `**/*.pyc`).
   Un `UserWarning` (con las rutas, nunca el contenido) avisa si el contexto
   va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o `*.key`.
-- **`Template.build` y `rayito image publish` no siguen enlaces simbólicos**
-  dentro de un directorio copiado (ni a fichero ni a directorio), como
-  Docker y el SDK de TypeScript: un enlace a un fichero de tu máquina ya no
+- **`Template.build` no sigue enlaces simbólicos** dentro de un directorio
+  copiado (ni a fichero ni a directorio), como Docker y el SDK de
+  TypeScript (el zip de `rayito image zip`/`publish` los rechaza, ver más
+  abajo): un enlace a un fichero de tu máquina ya no
   acaba en el artefacto de S3 ni en la imagen. Cada fichero del contexto se
   vuelve a comprobar dentro del contexto y se abre con `O_NOFOLLOW` justo
   antes de leerlo.
@@ -145,6 +146,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   publicado es lo que produjo `uv build`. twine y su grafo se instalan desde
   requisitos con `--hash` (`.github/release/requirements-twine.txt`), uv va
   fijado por versión y checksum, y la caché de uv está apagada en la release.
+- **La release comprueba que `dist/` es exactamente la wheel y el sdist del
+  tag** antes de subirlo y antes de publicarlo: `sha256sum -c` no detecta un
+  fichero que no esté en `SHA256SUMS`, y la acción de publicación sube todo
+  lo que haya en el directorio.
+- **`rayito image zip` y `make image-publish` rechazan enlaces simbólicos**
+  en el árbol de la imagen y en el sidecar (salvo dentro de los directorios
+  que nunca viajan, como `.venv`): un enlace metía en todas las imágenes el
+  contenido de un fichero de la máquina que construye, legible por el
+  usuario del sandbox.
 
 ## [0.6.1] - 2026-10-04
 

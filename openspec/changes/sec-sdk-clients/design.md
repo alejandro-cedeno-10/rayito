@@ -31,7 +31,8 @@ surface (the proxy and the terminal sanitizer are CLI-only, so Python-only).
 - **D5 Cookies.** `Cookie` is forwarded unchanged (stripping it breaks the
   guest app's own sessions). The isolated `<id>.localhost` URL is announced
   and documented; no `--strip-cookies` option.
-- **D6 Symlinks.** One rule in both SDKs and the image zip: a symlink found
+- **D6 Symlinks.** One rule in both SDKs (the image zip refuses links
+  instead, per `sec-supply-chain-followups`): a symlink found
   inside a copied directory is skipped (file or directory), as Docker and
   `listFilesRecursively` do. A top-level `CopyStep.src` that is itself a
   symlink is still resolved and containment-checked.

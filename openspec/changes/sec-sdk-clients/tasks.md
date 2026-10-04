@@ -6,8 +6,8 @@
 
 ## 2. Templates (TPL-SYMLINK-01)
 
-- [x] 2.1 Python tests (file and directory symlink, image zip) and TS tests
-- [x] 2.2 `_walk_regular_files` and `_artifact.shipped_files` skip symlinks
+- [x] 2.1 Python tests (file and directory symlink) and TS tests
+- [x] 2.2 `_walk_regular_files` skips symlinks (the image zip refuses them, from main)
 
 ## 3. Git (GIT-CREDS-01)
 

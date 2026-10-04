@@ -7,6 +7,10 @@
 # lo exige en cada entrada.
 # `kernel-sidecar` lo vigila sólo el ecosistema `uv`: `pip` sobre el mismo
 # directorio abría cada PR por duplicado sobre `requirements.txt`.
+# `pip` sobre `/.github/release` vigila los requisitos con hash de las
+# herramientas (twine, pip-audit, cfn-lint), y `github-actions` lee también
+# las acciones compuestas de `.github/actions/*`, que fijan acciones de
+# terceros (sec-supply-chain-followups, SC-A06 y SC-A12).
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -70,8 +74,22 @@ updates:
       npm:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: /.github/release
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-release-tools:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

@@ -209,20 +209,44 @@ def test_artifact_module_is_stdlib_only() -> None:
             assert node.module.split(".")[0] in sys.stdlib_module_names, node.module
 
 
-def test_image_zip_skips_symlinks_that_point_outside(image_dir: Path, tmp_path: Path) -> None:
-    """`rayito image publish` / `scripts/image_zip.py`: un enlace dentro del
-    directorio de la imagen nunca se sigue (ni a un fichero ni a un
-    directorio de fuera)."""
-    outside = tmp_path / "outside"
-    (outside / "dir").mkdir(parents=True)
-    (outside / "secret").write_text("SECRET\n", encoding="utf-8")
-    (outside / "dir" / "inner").write_text("INNER\n", encoding="utf-8")
-    (image_dir / "kernel-sidecar" / "config").symlink_to(outside / "secret")
-    (image_dir / "linked").symlink_to(outside / "dir", target_is_directory=True)
+def test_a_symlink_in_the_image_tree_is_refused(image_dir: Path, tmp_path: Path) -> None:
+    """A link would ship its target's bytes (a file of the builder's home)
+    into every sandbox image: the walk refuses it before reading anything."""
+    secret = tmp_path / "outside.txt"
+    secret.write_text("not for the image\n", encoding="utf-8")
+    (image_dir / "kernel-sidecar" / "leak.txt").symlink_to(secret)
 
-    out = tmp_path / "full.zip"
-    assert _artifact.write_zip(image_dir, out) == 3
-    assert names(out) == ["Dockerfile", "kernel-sidecar/ipython/startup/0004_warmup.py", "rayd"]
+    with pytest.raises(SystemExit, match="symlink"):
+        _artifact.write_zip(image_dir, tmp_path / "out.zip")
+
+
+def test_a_symlinked_directory_in_the_sidecar_is_refused(sidecar_dir: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "credentials").write_text("x\n", encoding="utf-8")
+    (sidecar_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy")
+    assert not (tmp_path / "copy" / "linked" / "credentials").exists()
+
+
+def test_a_symlink_inside_an_excluded_directory_is_ignored(
+    sidecar_dir: Path, tmp_path: Path
+) -> None:
+    """Virtualenvs are full of interpreter links and never ship."""
+    (sidecar_dir / ".venv" / "python").symlink_to(sidecar_dir / "sidecar.py")
+
+    assert _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy") == 3
+
+
+def test_a_linked_virtualenv_is_skipped_not_refused(sidecar_dir: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "venvs" / "sidecar"
+    elsewhere.mkdir(parents=True)
+    (sidecar_dir / ".venv").rename(tmp_path / "old-venv")
+    (sidecar_dir / ".venv").symlink_to(elsewhere, target_is_directory=True)
+
+    assert _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy") == 3
 
 
 def test_with_efs_adds_only_the_efs_marker(image_dir: Path, tmp_path: Path) -> None:
