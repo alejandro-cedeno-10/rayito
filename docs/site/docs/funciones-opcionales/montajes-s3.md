@@ -73,10 +73,9 @@ rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   --env RAYITO_ALLOWED_MOUNT_BUCKETS=mi-bucket,otro-bucket
 ```
 
-!!! warning "Depende de `rayito image publish --env`"
-    La opción `--env` llega con el catálogo de tamaños (`m15-sizes-catalog`).
-    Hasta entonces, añade `ENV RAYITO_ALLOWED_MOUNT_BUCKETS=...` a un
-    `Dockerfile` propio sobre `rayito-base-caps`.
+Si construyes la imagen con un `Dockerfile` propio sobre
+`rayito-base-caps`, `ENV RAYITO_ALLOWED_MOUNT_BUCKETS=...` hace lo mismo.
+Cambiar el allowlist es publicar una versión nueva de la imagen.
 
 ## Desplegar la política IAM
 
@@ -150,8 +149,8 @@ con el motivo en `code` (`iam_denied`, `not_found`, `not_allowed`,
 
 `mounts` también acepta un `Map` en TypeScript.
 
-`sbx.mounts` (TypeScript: `await sbx.mounts()`) lee el estado en vivo en
-cada llamada: si el daemon de un montaje muere más tarde, `rayd` lo
+`sbx.mounts` (una propiedad en `Sandbox`; `await sbx.mounts()` en
+`AsyncSandbox` y en TypeScript) lee el estado en vivo en cada llamada: si el daemon de un montaje muere más tarde, `rayd` lo
 relanza solo y, mientras tanto, ese montaje aparece como `"pending"` o
 `"failed"`.
 

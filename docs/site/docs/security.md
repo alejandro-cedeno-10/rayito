@@ -73,7 +73,18 @@ la tabla "Cadena de suministro"):
 - `rayd` se compila con `cargo auditable` (grafo de crates embebido) y lleva
   un SBOM CycloneDX; los assets de cada release van firmados keyless con
   cosign, y PyPI y npm publican por OIDC con attestations. Cómo comprobarlo:
-  [Verificar una release](verify.md).
+  [Verificar una release](verify.md). La receta liga la firma a la versión
+  exacta que instalas (`release.yml@refs/tags/rayd-v<versión>`), así que un
+  asset antiguo o firmado bajo otro tag no la pasa.
+- El job que compila no tiene ninguna credencial: firmar (token OIDC) y subir
+  a la release (`contents: write`, con la aprobación del mantenedor) son jobs
+  aparte que no hacen checkout ni ejecutan herramientas de build, y comprueban
+  con `sha256sum -c` lo que produjo el build. Ningún job de la release
+  restaura una caché de Actions, zig y `cargo-deny` se descargan contra un
+  sha256 fijado, un asset publicado no se reemplaza nunca, y publicar exige
+  que el commit del tag esté en `main`.
+- Dependabot espera 7 días (14 para un major) antes de proponer una versión
+  recién publicada; las actualizaciones de seguridad no esperan.
 
 ## Persistencia en S3 (T15)
 
