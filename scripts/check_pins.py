@@ -19,8 +19,9 @@ clavada), sin red y sólo con la biblioteca estándar:
    herramientas sin dependencias de `DEPENDENCY_FREE_UVX_TOOLS` (hoy `ruff`,
    un binario sin dependencias de Python); las demás se instalan desde un
    fichero de requisitos con `--hash` (`.github/release/requirements-*.txt`).
-3. **Descargas**: en `image/Dockerfile` (y en todo fichero llamado
-   `Dockerfile` que se le pase) cada instrucción con `curl` tiene que asignar
+3. **Descargas**: en `image/Dockerfile`, en los del entorno local
+   (`dev/local/*/Dockerfile`) y en todo fichero llamado `Dockerfile` que se
+   le pase, cada instrucción con `curl` tiene que asignar
    un `<NOMBRE>_SHA256=` de 64 hex en minúsculas y no nombrar una release
    flotante (`/releases/latest`, `/latest/download/`); además cada `curl` de
    la instrucción tiene que escribir a un fichero con `-o`/`--output` (nunca
@@ -101,6 +102,7 @@ DEFAULT_PATHS = (
     ".github/release/requirements*.txt",
     "Makefile",
     "image/Dockerfile",
+    "dev/local/*/Dockerfile",
     "kernel-sidecar/requirements*.txt",
 )
 ACTION_REASON = "la acción no está clavada a un SHA de 40 hex"
