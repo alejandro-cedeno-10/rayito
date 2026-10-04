@@ -20,7 +20,7 @@ use super::ports::{
 use super::progress::Counters;
 use super::{
     ARCHIVE_CONTENT_TYPE, LocationRequest, MANIFEST_CONTENT_TYPE, PersistenceDeps,
-    PersistenceLease, ResolvedLocation, resolve_home_identity, resolve_location,
+    PersistenceLease, ResolvedLocation, SessionScope, resolve_home_identity, resolve_location,
 };
 
 /// The request as the gRPC layer hands it over: plain data.
@@ -66,22 +66,26 @@ pub struct ManifestMeta {
 pub async fn prepare_checkpoint<S, A, R>(
     deps: &PersistenceDeps<S, A, R>,
     request: CheckpointRequestInfo,
-    default_user: Option<&str>,
+    scope: SessionScope<'_>,
 ) -> Result<PreparedCheckpoint, PersistenceError>
 where
     S: ObjectStore,
     A: HomeArchiver + 'static,
     R: BlockingRunner,
 {
-    let location = resolve_location(&request.location, deps.default_region.as_deref())?;
+    let location = resolve_location(
+        &request.location,
+        deps.default_region.as_deref(),
+        scope.binding,
+    )?;
     let excludes = ExcludeList::parse(&request.exclude)?;
     let identity = resolve_home_identity(
         request.user.as_deref(),
-        default_user,
+        scope.default_user,
         deps.policy,
         deps.lookup.as_ref(),
     )?;
-    let username = username_of(request.user.as_deref(), default_user);
+    let username = username_of(request.user.as_deref(), scope.default_user);
     let plan = ArchivePlan::new(identity, username.clone(), excludes);
     let lease = deps.gate.acquire()?;
     deps.store
@@ -233,15 +237,20 @@ mod tests {
         sample_archive,
     };
     use super::*;
-    use crate::persistence::StoreErrorKind;
     use crate::persistence::ports::StoreError;
+    use crate::persistence::{PersistBinding, StatusKind, StoreErrorKind};
 
     #[test]
     fn checkpoint_uploads_the_archive_then_the_manifest() {
         let store = FakeStore::default();
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         archiver.set_home(sample_archive());
-        let prepared = block_on(prepare_checkpoint(&deps, request(&["skipme"]), None)).unwrap();
+        let prepared = block_on(prepare_checkpoint(
+            &deps,
+            request(&["skipme"]),
+            SessionScope::default(),
+        ))
+        .unwrap();
         assert_eq!(prepared.started_files, 3);
         assert_eq!(prepared.started_bytes, 31);
         assert!(deps.gate.is_busy());
@@ -281,7 +290,12 @@ mod tests {
         store.fail_multipart(StoreError::new(StoreErrorKind::AccessDenied));
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         archiver.set_home(sample_archive());
-        let prepared = block_on(prepare_checkpoint(&deps, request(&[]), None)).unwrap();
+        let prepared = block_on(prepare_checkpoint(
+            &deps,
+            request(&[]),
+            SessionScope::default(),
+        ))
+        .unwrap();
         let (sink, parts) = VecParts::pair();
         let error = block_on(run_checkpoint(
             &deps,
@@ -304,7 +318,12 @@ mod tests {
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         archiver.set_home(sample_archive());
         archiver.fail_archive(super::super::ArchiveError::Cancelled);
-        let prepared = block_on(prepare_checkpoint(&deps, request(&[]), None)).unwrap();
+        let prepared = block_on(prepare_checkpoint(
+            &deps,
+            request(&[]),
+            SessionScope::default(),
+        ))
+        .unwrap();
         let (sink, parts) = VecParts::pair();
         let error = block_on(run_checkpoint(
             &deps,
@@ -325,15 +344,30 @@ mod tests {
         let store = FakeStore::default();
         let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
         archiver.set_home(sample_archive());
-        let first = block_on(prepare_checkpoint(&deps, request(&[]), None)).unwrap();
+        let first = block_on(prepare_checkpoint(
+            &deps,
+            request(&[]),
+            SessionScope::default(),
+        ))
+        .unwrap();
         assert_eq!(
-            block_on(prepare_checkpoint(&deps, request(&[]), None)).unwrap_err(),
+            block_on(prepare_checkpoint(
+                &deps,
+                request(&[]),
+                SessionScope::default()
+            ))
+            .unwrap_err(),
             PersistenceError::Busy
         );
         drop(first);
         store.fail_credentials(StoreError::new(StoreErrorKind::NoCredentials));
         assert_eq!(
-            block_on(prepare_checkpoint(&deps, request(&[]), None)).unwrap_err(),
+            block_on(prepare_checkpoint(
+                &deps,
+                request(&[]),
+                SessionScope::default()
+            ))
+            .unwrap_err(),
             PersistenceError::NoCredentials
         );
         assert!(!deps.gate.is_busy(), "a refused probe releases the lease");
@@ -354,22 +388,46 @@ mod tests {
         let mut bad = request(&[]);
         bad.location.bucket = "Bad".to_owned();
         assert!(matches!(
-            block_on(prepare_checkpoint(&deps, bad, None)).unwrap_err(),
+            block_on(prepare_checkpoint(&deps, bad, SessionScope::default())).unwrap_err(),
             PersistenceError::InvalidBucket(_)
         ));
         let mut root = request(&[]);
         root.user = Some("root".to_owned());
         assert_eq!(
-            block_on(prepare_checkpoint(&deps, root, None)).unwrap_err(),
+            block_on(prepare_checkpoint(&deps, root, SessionScope::default())).unwrap_err(),
             PersistenceError::RootNotAllowed
         );
         let mut excludes = request(&[]);
         excludes.exclude = vec!["../x".to_owned()];
         assert!(matches!(
-            block_on(prepare_checkpoint(&deps, excludes, None)).unwrap_err(),
+            block_on(prepare_checkpoint(&deps, excludes, SessionScope::default())).unwrap_err(),
             PersistenceError::InvalidExclude(_)
         ));
         assert!(store.operations().is_empty());
         assert!(!deps.gate.is_busy());
+    }
+
+    #[test]
+    fn a_location_outside_the_bound_scope_never_reaches_the_store() {
+        let store = FakeStore::default();
+        let (deps, archiver) = deps_with(store.clone(), FakeArchiver::default(), ThreadRunner);
+        archiver.set_home(sample_archive());
+        let elsewhere = PersistBinding::parse(Some("my-bucket"), Some("tenants/other")).unwrap();
+        let scope = SessionScope {
+            default_user: None,
+            binding: Some(&elsewhere),
+        };
+        let error = block_on(prepare_checkpoint(&deps, request(&[]), scope)).unwrap_err();
+        assert_eq!(error, PersistenceError::OutsideBinding);
+        assert_eq!(error.status_kind(), StatusKind::PermissionDenied);
+        assert!(store.operations().is_empty());
+        assert!(!deps.gate.is_busy());
+
+        let own = PersistBinding::parse(Some("my-bucket"), Some("rayito")).unwrap();
+        let scope = SessionScope {
+            default_user: None,
+            binding: Some(&own),
+        };
+        assert!(block_on(prepare_checkpoint(&deps, request(&[]), scope)).is_ok());
     }
 }

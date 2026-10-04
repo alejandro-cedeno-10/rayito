@@ -27,7 +27,7 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::response::Response;
 use http::{HeaderName, HeaderValue, StatusCode};
-use rayd_core::secret_gateway::header_template::must_drop;
+use rayd_core::secret_gateway::header_template::{must_drop, must_drop_from_response};
 use rayd_core::secret_gateway::{
     Decision, GatewayErrorClass, GatewayRoute, GatewaySpec, TokenBucket,
 };
@@ -362,7 +362,7 @@ async fn forward(State(state): State<SwappableState>, request: Request) -> Respo
         return empty_response(BUILD_FAILED_STATUS);
     };
     match state.client.send(outbound).await {
-        Ok(response) => into_axum_response(response),
+        Ok(response) => into_axum_response(&state.route, response),
         Err(ForwardError::Unreachable) => {
             state.record_error(GatewayErrorClass::UpstreamUnreachable.as_str());
             empty_response(deny_status(GatewayErrorClass::UpstreamUnreachable))
@@ -408,12 +408,30 @@ fn build_outbound(
     builder.body(request.into_body()).ok()
 }
 
-fn into_axum_response(response: http::Response<hyper::body::Incoming>) -> Response {
+/// The upstream's status and body reach the sandbox unchanged (streamed);
+/// its headers lose whatever could hand the vaulted credential back
+/// (`redact_response_headers`).
+fn into_axum_response(
+    route: &GatewayRoute,
+    response: http::Response<hyper::body::Incoming>,
+) -> Response {
     let (mut parts, incoming) = response.into_parts();
-    for name in rayd_core::secret_gateway::header_template::HOP_BY_HOP_HEADERS {
-        parts.headers.remove(name);
-    }
+    redact_response_headers(route, &mut parts.headers);
     Response::from_parts(parts, Body::new(incoming))
+}
+
+/// Drops every response header `must_drop_from_response` names: the
+/// hop-by-hop ones, the route's injected names and any header whose value
+/// carries a vaulted value. A name is dropped with all its values.
+fn redact_response_headers(route: &GatewayRoute, headers: &mut http::HeaderMap) {
+    let leaking: Vec<HeaderName> = headers
+        .iter()
+        .filter(|(name, value)| must_drop_from_response(route, name.as_str(), value.as_bytes()))
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in leaking {
+        headers.remove(name);
+    }
 }
 
 #[cfg(test)]
@@ -446,6 +464,31 @@ mod tests {
 
     fn runtime() -> GatewayRuntime {
         GatewayRuntime::new(Arc::new(GatewayUpstream::new().unwrap()))
+    }
+
+    const VAULTED: &str = "sk-test-0123456789abcdef";
+
+    /// An upstream that echoes the request's credential back in its
+    /// response headers, by name and under another one: neither reaches
+    /// the sandbox, the rest of the response does.
+    #[test]
+    fn response_headers_never_hand_the_vaulted_value_back() {
+        let route = spec("anthropic", VAULTED).routes()[0].clone();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static(VAULTED));
+        headers.insert(
+            "x-debug-request-headers",
+            HeaderValue::from_str(&format!("x-api-key={VAULTED}")).unwrap(),
+        );
+        headers.insert("connection", HeaderValue::from_static("keep-alive"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert("request-id", HeaderValue::from_static("req_0123"));
+
+        redact_response_headers(&route, &mut headers);
+
+        let mut left: Vec<&str> = headers.keys().map(HeaderName::as_str).collect();
+        left.sort_unstable();
+        assert_eq!(left, ["content-type", "request-id"]);
     }
 
     /// Bound for every read in these tests: no response here ever waits on

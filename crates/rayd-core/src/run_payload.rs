@@ -11,6 +11,13 @@
 //! answered; absent means `false`, anything but a JSON bool is an error,
 //! and unknown keys inside `network` are ignored.
 //!
+//! `persist` (`{"bucket":"...","key_prefix":"..."}`, C-07) binds the
+//! sandbox's `Checkpoint`/`Restore` to that bucket and that base prefix:
+//! the SDK sends it from `create(persist=)`, both keys are required and
+//! follow the same D2 rules as a request's location, and unknown keys
+//! inside it are ignored. Absent, no scope is bound (the behaviour of an
+//! agent or an SDK that predates it).
+//!
 //! `metadata` (client labels echoed by `Health`), `limits` (per-process
 //! `RLIMIT_CPU` for the sandbox's processes and PTYs) and `lifecycle` (the
 //! logical deadline of ADR-011) are optional; `v` stays 1 because an agent
@@ -30,6 +37,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::auth::{AuthError, TokenDigest};
+use crate::persistence::{BindingRejection, PersistBinding};
 use crate::sandbox_timeout::{
     LifecycleSpec, MAX_LIFETIME_SECONDS, MIN_CAP_SECONDS, MIN_TIMEOUT_SECONDS, TimeoutAction,
     TimeoutPolicy,
@@ -67,6 +75,9 @@ pub enum RunPayloadError {
     InvalidLifecycle(&'static str),
     #[error("el campo `network.enforce` del payload no es un booleano")]
     InvalidNetwork,
+    /// Names the violated rule, never the bucket or the prefix.
+    #[error("el campo `persist` del payload no es válido: {0}")]
+    InvalidPersist(BindingRejection),
 }
 
 /// Sandbox-wide defaults carried by the payload, consumed from M2 on when
@@ -91,6 +102,8 @@ pub struct RunPayload {
     /// `network.enforce`: install deny-all before answering `/run`
     /// (ADR-012). The payload never carries rules or credentials.
     pub network_enforce: bool,
+    /// The persistence scope `/run` binds (C-07); `None` binds nothing.
+    pub persist: Option<PersistBinding>,
 }
 
 #[derive(Deserialize)]
@@ -106,6 +119,14 @@ struct RunPayloadWire {
     limits: Option<LimitsWire>,
     lifecycle: Option<LifecycleWire>,
     network: Option<NetworkWire>,
+    persist: Option<PersistWire>,
+}
+
+/// Unknown keys are ignored, like every other block of the payload.
+#[derive(Deserialize)]
+struct PersistWire {
+    bucket: Option<String>,
+    key_prefix: Option<String>,
 }
 
 /// `enforce` is read as any JSON value so a wrong type is this field's
@@ -207,6 +228,7 @@ pub fn parse_run_payload(raw: &str) -> Result<RunPayload, RunPayloadError> {
     let cpu_seconds = validated_cpu_seconds(wire.limits)?;
     let lifecycle = validated_lifecycle(wire.lifecycle)?;
     let network_enforce = validated_network_enforce(wire.network)?;
+    let persist = validated_persist(wire.persist)?;
     Ok(RunPayload {
         token_digest,
         defaults: RunDefaults {
@@ -218,7 +240,19 @@ pub fn parse_run_payload(raw: &str) -> Result<RunPayload, RunPayloadError> {
         metadata: wire.metadata,
         lifecycle,
         network_enforce,
+        persist,
     })
+}
+
+fn validated_persist(
+    persist: Option<PersistWire>,
+) -> Result<Option<PersistBinding>, RunPayloadError> {
+    persist
+        .map(|persist| {
+            PersistBinding::parse(persist.bucket.as_deref(), persist.key_prefix.as_deref())
+                .map_err(RunPayloadError::InvalidPersist)
+        })
+        .transpose()
 }
 
 fn validated_network_enforce(network: Option<NetworkWire>) -> Result<bool, RunPayloadError> {
@@ -258,6 +292,30 @@ mod tests {
             assert_eq!(enforce(bad), Err(RunPayloadError::InvalidNetwork), "{bad}");
         }
         assert!(!RunPayloadError::InvalidNetwork.to_string().contains("yes"));
+    }
+
+    #[test]
+    fn persist_is_an_optional_validated_scope() {
+        let persist = |fields: &str| parse_run_payload(&payload(fields)).map(|p| p.persist);
+        assert_eq!(persist(""), Ok(None));
+        assert_eq!(
+            persist(
+                ",\"persist\":{\"bucket\":\"amzn-s3-demo-bucket\",\"key_prefix\":\"tenants/acme\",\"future\":1}"
+            ),
+            Ok(Some(
+                PersistBinding::parse(Some("amzn-s3-demo-bucket"), Some("tenants/acme")).unwrap()
+            ))
+        );
+        assert_eq!(
+            persist(",\"persist\":{\"key_prefix\":\"tenants/acme\"}"),
+            Err(RunPayloadError::InvalidPersist(
+                BindingRejection::MissingBucket
+            ))
+        );
+        let refused = persist(",\"persist\":{\"bucket\":\"Secret-Bucket\",\"key_prefix\":\"a\"}")
+            .unwrap_err();
+        assert!(matches!(refused, RunPayloadError::InvalidPersist(_)));
+        assert!(!refused.to_string().contains("Secret"));
     }
 
     #[test]

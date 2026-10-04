@@ -163,6 +163,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
   e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
   cualquier sandbox de las imágenes de `TestImageArns`.
+- **`Sandbox.create(persist=)` y `AsyncSandbox.create(persist=)` ligan el sandbox a su prefijo de persistencia** (C-07): el
+  `runHookPayload` lleva el bucket y la base `prefix` del `S3Prefix` (nunca
+  `prefix/name`), y un `rayd` con la corrección rechaza con
+  `permission_denied` cualquier checkpoint o restore fuera de esa base. Con
+  un `prefix` por inquilino, el token de un sandbox ya no alcanza el `HOME`
+  persistido de otro aunque compartan execution role. Cambia un uso: un
+  restore o checkpoint explícito hacia otra base desde un sandbox creado con
+  `persist=` ahora falla con `permission_denied`. No añade llamadas a AWS.
 - **La wheel y el sdist se hashean justo después de `uv build`**, antes de
   que `check_wheel.py` o twine ejecuten nada, y se vuelven a comprobar al
   final del job: el `sha256sum -c` del job que publica ahora prueba que lo

@@ -154,6 +154,14 @@ versionado [SemVer](https://semver.org/lang/es/).
 - `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
   e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
   cualquier sandbox de las imágenes de `TestImageArns`.
+- **`Sandbox.create({ persist })` ligan el sandbox a su prefijo de persistencia** (C-07): el
+  `runHookPayload` lleva el bucket y la base `prefix` del `S3Prefix` (nunca
+  `prefix/name`), y un `rayd` con la corrección rechaza con
+  `permission_denied` cualquier checkpoint o restore fuera de esa base. Con
+  un `prefix` por inquilino, el token de un sandbox ya no alcanza el `HOME`
+  persistido de otro aunque compartan execution role. Cambia un uso: un
+  restore o checkpoint explícito hacia otra base desde un sandbox creado con
+  `persist=` ahora falla con `permission_denied`. No añade llamadas a AWS.
 - **Recortes y troceo de cadenas en tiempo lineal** (CodeQL
   `js/polynomial-redos`): `git.clone()` con credenciales, `files.download()`
   sin `filename`, el access token y las líneas de `.dockerignore` de un
