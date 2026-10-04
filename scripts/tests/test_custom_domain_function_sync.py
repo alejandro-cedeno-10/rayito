@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from rayito._custom_domain._service import MAX_STACK_NAME_LENGTH
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO_ROOT / "infra" / "custom-domain.yaml"
@@ -178,10 +179,15 @@ def test_distribution_has_no_lambda_or_iam_resources() -> None:
 #: primera pila real murió en `RouterFunction` con "The parameter Comment is
 #: too big" (Q140 de AWS_API_NOTES.md); ni cfn-lint ni los tests lo veían.
 CLOUDFRONT_COMMENT_MAX_LENGTH = 128
-#: El peor caso de cada referencia que un `Comment` pueda interpolar:
-#: `MAX_STACK_NAME_LENGTH` (36, `_custom_domain/_service.py`) y un nombre
-#: DNS completo (253, RFC 1035 §2.3.4 con la representación en texto).
-_WORST_CASE_SUBSTITUTIONS = {"AWS::StackName": "s" * 36, "PublicDomain": "d" * 253}
+#: Un nombre DNS completo en su representación de texto (RFC 1035 §2.3.4:
+#: 255 octetos en el formato de cable, 253 caracteres escrito con puntos).
+MAX_DNS_NAME_LENGTH = 253
+#: El peor caso de cada referencia que un `Comment` pueda interpolar: el
+#: nombre de pila más largo que acepta `CustomDomain` y un dominio completo.
+_WORST_CASE_SUBSTITUTIONS = {
+    "AWS::StackName": "s" * MAX_STACK_NAME_LENGTH,
+    "PublicDomain": "d" * MAX_DNS_NAME_LENGTH,
+}
 
 
 def _worst_case_comment(value: Any) -> str:
