@@ -23,6 +23,9 @@
 
 ## 4. Acceptance
 
-- [ ] 4.1 Real AWS: a sandbox created with `mounts=`/`telemetry=`/`events=`
+- [x] 4.1 Real AWS: a sandbox created with `mounts=`/`telemetry=`/`events=`
   and reincarnated gets all three sections re-applied (events key
-  re-derived for the new id).
+  re-derived for the new id). (Verified in the 0.6.1 acceptance on
+  2026-10-03: one `Configure` per life with the same three sections, a
+  different events key for the new id, the successor's mount reads the old
+  file and its telemetry exports.)

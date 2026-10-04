@@ -1541,6 +1541,39 @@ reaplicación completa de `ConfigureSandbox` en `reincarnate()` van en
 
 ---
 
+## 0.6.1 — Correcciones de 0.6 (2026-10-04)
+
+Tres cambios OpenSpec (`rayd-orphan-reaper`,
+`m15-reincarnate-configure-replay`,
+`optional-stacks-redeploy-keeps-parameters`), archivados tras la
+aceptación contra AWS real y la publicación de 0.6.1:
+
+- **Reaper de huérfanos de PID 1 activo**: `rayd` recoge los zombis
+  reasignados (los que deja `mount-s3` en modo daemon) sin robarle a tokio
+  el estado de salida de sus propios hijos.
+- **`reincarnate()` reaplica todo `ConfigureSandbox`**: el sucesor recibe
+  otra vez `mounts=`, `telemetry=`, `events=` y `gateways=`, con la clave de
+  eventos derivada para el nuevo id.
+- **Redesplegar una pila opcional conserva sus parámetros**: los valores por
+  defecto sólo se aplican al crear; al actualizar, lo que no se pasa se
+  queda como estaba (`UsePreviousValue`) y `rayito stack deploy` muestra qué
+  cambia antes de confirmar.
+- Guardián SSRF de los webhooks: una IPv6 que mapea una IPv4 se clasifica
+  como esa IPv4.
+
+**Aceptación (2026-10-03/04, cuenta de pruebas, us-east-1):** cero
+`<defunct>` tras un montaje S3, tras salir un daemon de doble fork y tras
+40 comandos concurrentes, todos con su código de salida; `reincarnate()`
+con montaje, telemetría y eventos reaplica las tres secciones en un único
+`Configure` y el sucesor lee el fichero de la vida anterior; un redespliegue
+de `metadata-index` y de `events-webhooks` conserva todos sus parámetros y
+actualiza el código de las Lambdas; sin opciones 0.6, ninguna llamada AWS
+fuera de `lambda-microvms`. La suite e2e completa (Python y TypeScript)
+pasó, con los pocos fallos de la primera pasada en verde al repetirlos
+aislados. Limpieza: sólo se borró lo creado por la prueba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
