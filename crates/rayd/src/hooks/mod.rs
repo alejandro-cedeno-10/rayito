@@ -1745,13 +1745,23 @@ mod tests {
         const PLATFORM_AGENT: u32 = 993;
         const SANDBOX_USER: u32 = 1000;
 
-        /// Answers every lookup with the one socket it was built with, so
-        /// a test decides who "opened" each connection.
-        struct FixedTable(Option<PeerSocket>);
+        /// Answers every lookup with the socket it currently holds, so a
+        /// test decides who "opened" each connection.
+        struct FixedTable(std::sync::Mutex<Option<PeerSocket>>);
+
+        impl FixedTable {
+            fn new(socket: Option<PeerSocket>) -> Self {
+                Self(std::sync::Mutex::new(socket))
+            }
+
+            fn set(&self, socket: Option<PeerSocket>) {
+                *self.0.lock().unwrap() = socket;
+            }
+        }
 
         impl PeerSocketTable for FixedTable {
             fn find(&self, _peer: SocketAddr) -> Option<PeerSocket> {
-                self.0
+                *self.0.lock().unwrap()
             }
         }
 
@@ -1759,6 +1769,7 @@ mod tests {
             session: Arc<SandboxSession>,
             shutdown: CancellationToken,
             router: Router,
+            table: Arc<FixedTable>,
         }
 
         fn guarded(socket: Option<PeerSocket>) -> Guarded {
@@ -1770,8 +1781,9 @@ mod tests {
                 Arc::new(SuspendSignal::new()),
                 shutdown.clone(),
             );
+            let table = Arc::new(FixedTable::new(socket));
             let guard = PeerGuard {
-                peers: Arc::new(FixedTable(socket)),
+                peers: table.clone(),
                 agent_uid: ROOT,
             };
             let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, PEER_PORT));
@@ -1780,6 +1792,7 @@ mod tests {
                 session,
                 shutdown,
                 router,
+                table,
             }
         }
 
@@ -1790,13 +1803,30 @@ mod tests {
             }
         }
 
+        /// The platform's `/run` accepted, then every later connection
+        /// opened by `socket`'s owner.
         async fn after_run(socket: Option<PeerSocket>) -> Guarded {
-            let guarded = guarded(socket);
-            assert_eq!(
-                post(&guarded.router, Hook::Run, run_body()).await.0,
-                StatusCode::OK
-            );
+            let guarded = guarded(Some(owned_by(PLATFORM_AGENT)));
+            let (status, reply) = post(&guarded.router, Hook::Run, run_body()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "installed");
+            guarded.table.set(socket);
             guarded
+        }
+
+        #[tokio::test]
+        async fn a_run_from_a_sandbox_uid_never_claims_the_boot() {
+            let guarded = guarded(Some(owned_by(SANDBOX_USER)));
+
+            let (status, reply) = post(&guarded.router, Hook::Run, run_body()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "sandbox_origin");
+            assert_eq!(guarded.session.phase(), HookPhase::Booting);
+            assert_eq!(guarded.session.hook_anomalies(), 1);
+            guarded.table.set(Some(owned_by(PLATFORM_AGENT)));
+            let (_, genuine) = post(&guarded.router, Hook::Run, run_body()).await;
+            assert_eq!(genuine.outcome, "installed");
         }
 
         #[tokio::test]
@@ -1890,7 +1920,7 @@ mod tests {
                 CancellationToken::new(),
             );
             let guard = PeerGuard {
-                peers: Arc::new(FixedTable(Some(owned_by(SANDBOX_USER)))),
+                peers: Arc::new(FixedTable::new(Some(owned_by(SANDBOX_USER)))),
                 agent_uid: ROOT,
             };
             let router = guard_peers(hooks, session.clone(), guard);
