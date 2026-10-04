@@ -94,7 +94,12 @@ jobs:
         run: |
           (cd clients/python && uv build)
           python3 scripts/check_wheel.py clients/python/dist/*.whl
-          uvx twine==7.0.0 check clients/python/dist/*
+      - name: twine check from the hash-pinned requirements release.yml installs
+        run: |
+          uv venv "$RUNNER_TEMP/twine"
+          uv pip install --python "$RUNNER_TEMP/twine" --require-hashes --no-deps --only-binary :all: \
+            -r .github/release/requirements-twine.txt
+          "$RUNNER_TEMP/twine/bin/twine" check clients/python/dist/*
 
   python-versions:
     # `check` runs the Python client on the runner's 3.12; this job runs the
@@ -186,11 +191,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: ./.github/actions/cargo-deny
       - name: advisories, bans, licenses, sources (deny.toml)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          rust-version: "1.98"
+        run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
   audit:
     name: dependency audit
@@ -282,9 +287,7 @@ jobs:
       - name: Toolchain from rust-toolchain.toml
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: 0.16.0
+      - uses: ./.github/actions/zig
       - run: cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.6 cargo-cyclonedx@0.5.9
       - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0, same --remap-path-prefix rustflags as `make build`'s REMAP_CONFIG)
         run: |

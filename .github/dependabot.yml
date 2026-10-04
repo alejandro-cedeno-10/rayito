@@ -1,5 +1,10 @@
 # Actualizaciones semanales agrupadas por ecosistema (minor + patch en un solo
 # PR; los majors abren el suyo porque el árbol de Cargo va fijado con `=`).
+# `cooldown` (sec-supply-chain-ci, SC-07): una versión no se propone hasta 7
+# días después de publicarse (14 para un major), la ventana en la que se
+# detectan y retiran los releases secuestrados; las actualizaciones de
+# seguridad se saltan el cooldown. `scripts/tests/test_dependabot_cooldown.py`
+# lo exige en cada entrada.
 # `kernel-sidecar` lo vigila sólo el ecosistema `uv`: `pip` sobre el mismo
 # directorio abría cada PR por duplicado sobre `requirements.txt`.
 version: 2
@@ -9,6 +14,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -20,6 +28,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -31,6 +42,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -42,6 +56,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     # `@types/node` sigue al Node mínimo soportado (`engines`: >= 20); sus
@@ -58,6 +75,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -69,6 +88,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(deps)"
     groups:
