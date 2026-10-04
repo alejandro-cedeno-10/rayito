@@ -47,6 +47,7 @@ mod tests {
             ProcNetSocketOwners.owner_uid(peer, local),
             Some(nix::unistd::getuid().as_raw())
         );
-        assert_eq!(ProcNetSocketOwners.owner_uid(local, peer), None);
+        let elsewhere: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        assert_eq!(ProcNetSocketOwners.owner_uid(peer, elsewhere), None);
     }
 }
