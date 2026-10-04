@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -9,6 +9,7 @@ RAYD_BIN      := $(BUILD_TARGET_DIR)/$(TARGET)/release/rayd
 IMAGE_ZIP     := image/rayito-image.zip
 IMAGE_ZIP_SLIM := image/rayito-image-slim.zip
 IMAGE_ZIP_POLY := image/rayito-image-poly.zip
+IMAGE_ZIP_EFS := image/rayito-image-efs.zip
 PYTHON_CLIENT := clients/python
 TS_CLIENT     := clients/typescript
 SIDECAR       := kernel-sidecar
@@ -30,6 +31,7 @@ IAM_TEMPLATE  := infra/iam.yaml
 SECRETS_TEMPLATE := infra/secrets-access.yaml
 METADATA_INDEX_TEMPLATE := infra/metadata-index.yaml
 EVENTS_WEBHOOKS_TEMPLATE := infra/events-webhooks.yaml
+EFS_VOLUMES_TEMPLATE := infra/efs-volumes.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
@@ -193,6 +195,19 @@ image-publish-poly: require-bucket image-zip-poly
 image-publish-caps: require-bucket image-zip
 	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
 
+# Variante caps con amazon-efs-utils (m15-efs-volumes, `volumes=`): mismo
+# Dockerfile, marcador `efs_variant` sólo dentro del zip (`--with-efs`); la capa
+# condicional instala efs-utils (+~198 MB de imagen, snapshot igual, Q122) y
+# rehace el enlace de /usr/bin/python3. Imagen aparte `rayito-base-caps-efs`,
+# siempre con additionalOsCapabilities ALL; las demás imágenes no cambian.
+image-zip-efs: build
+	cp $(RAYD_BIN) image/rayd
+	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
+	python scripts/image_zip.py image $(IMAGE_ZIP_EFS) --with-efs
+
+image-publish-caps-efs: require-bucket image-zip-efs
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+
 # Borra versiones antiguas de rayito-base de una en una (espera a que la
 # imagen salga de UPDATING/DELETING entre borrados). Primero `--dry-run`.
 # Equivale a `rayito image prune ...` (scripts/image_prune.py es un shim).
@@ -202,7 +217,7 @@ image-prune:
 # Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e, el
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
 # transferencias, las políticas opcionales de secretos de M13a y la tabla
-# opcional del índice de metadatos de M14):
+# opcional del índice de metadatos de M14, y los volúmenes EFS de M15):
 # validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).
@@ -213,8 +228,9 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(EVENTS_WEBHOOKS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EVENTS_WEBHOOKS_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(EFS_VOLUMES_TEMPLATE) >/dev/null && echo "validate-template ok: $(EFS_VOLUMES_TEMPLATE)"
 	uvx cfn-lint==1.56.3 --version
-	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
+	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

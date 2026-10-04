@@ -1,0 +1,4 @@
+[
+  { "name": "class VolumeStore", "pattern": "^(export )?declare class VolumeStore\\b" },
+  { "name": "class EfsVolumes", "pattern": "^(export )?declare class EfsVolumes\\b" }
+]

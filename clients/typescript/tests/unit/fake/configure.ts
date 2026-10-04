@@ -1,7 +1,8 @@
 /**
  * `ConfigureService` como lo implementa `rayd`: una respuesta guionada por
  * `nextResults` (por defecto, cada sección presente se aplica) y el estado
- * que `configureStatus` devuelve (`secretGatewayStatus`, `s3MountsStatuses`). Exige
+ * que `configureStatus` devuelve (`secretGatewayStatus`, `s3MountsStatuses`,
+ * `efsVolumesStatus`). Exige
  * `x-access-token`, como el resto de los servicios autenticados.
  */
 
@@ -18,6 +19,7 @@ import {
   type SectionResult,
   SectionResultSchema,
 } from "../../../src/gen/rayito/v1/configure_pb.js";
+import type { EfsVolumesStatus } from "../../../src/gen/rayito/v1/efs_volumes_pb.js";
 import type { S3MountsStatus } from "../../../src/gen/rayito/v1/s3_mounts_pb.js";
 import type { SecretGatewayStatus } from "../../../src/gen/rayito/v1/secret_gateway_pb.js";
 import { assertProxyHeaders, type HeaderMap, headerMap, requireAccessToken } from "./common.js";
@@ -34,6 +36,9 @@ export class FakeConfigureService {
   /** Lo que cada `configureStatus` informa de `mounts`, en orden; el último
    * se repite. Vacío (por defecto): sin `s3Mounts` en la respuesta. */
   s3MountsStatuses: S3MountsStatus[] = [];
+  /** Lo que `configureStatus` informa de `volumes`; `undefined` (por
+   * defecto): sin `efsVolumes` en la respuesta. */
+  efsVolumesStatus: EfsVolumesStatus | undefined;
 
   constructor(tokenSha256: string) {
     this.tokenSha256 = tokenSha256;
@@ -70,6 +75,7 @@ export class FakeConfigureService {
         ? {}
         : { secretGateway: this.secretGatewayStatus }),
       ...(s3Mounts === undefined ? {} : { s3Mounts }),
+      ...(this.efsVolumesStatus === undefined ? {} : { efsVolumes: this.efsVolumesStatus }),
     });
   }
 }

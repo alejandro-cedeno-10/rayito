@@ -2,26 +2,35 @@
 // @generated from file rayito/v1/efs_volumes.proto (package rayito.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file rayito/v1/efs_volumes.proto.
  */
 export const file_rayito_v1_efs_volumes: GenFile = /*@__PURE__*/
-  fileDesc("ChtyYXlpdG8vdjEvZWZzX3ZvbHVtZXMucHJvdG8SCXJheWl0by52MSISChBFZnNWb2x1bWVzQ29uZmlnIhIKEEVmc1ZvbHVtZXNTdGF0dXNiBnByb3RvMw");
+  fileDesc("ChtyYXlpdG8vdjEvZWZzX3ZvbHVtZXMucHJvdG8SCXJheWl0by52MSI9ChBFZnNWb2x1bWVzQ29uZmlnEikKBm1vdW50cxgBIAMoCzIZLnJheWl0by52MS5FZnNWb2x1bWVNb3VudCKBAQoORWZzVm9sdW1lTW91bnQSEgoKbW91bnRfcGF0aBgBIAEoCRIWCg5maWxlX3N5c3RlbV9pZBgCIAEoCRIXCg9hY2Nlc3NfcG9pbnRfaWQYAyABKAkSEQoJcmVhZF9vbmx5GAQgASgIEhcKD21vdW50X3RhcmdldF9pcBgFIAEoCSI/ChBFZnNWb2x1bWVzU3RhdHVzEisKB3ZvbHVtZXMYASADKAsyGi5yYXlpdG8udjEuRWZzVm9sdW1lU3RhdHVzImkKD0Vmc1ZvbHVtZVN0YXR1cxISCgptb3VudF9wYXRoGAEgASgJEigKBXN0YXRlGAIgASgOMhkucmF5aXRvLnYxLkVmc1ZvbHVtZVN0YXRlEhgKEGxhc3RfZXJyb3JfY2xhc3MYAyABKAkqjAIKDkVmc1ZvbHVtZVN0YXRlEiAKHEVGU19WT0xVTUVfU1RBVEVfVU5TUEVDSUZJRUQQABIeChpFRlNfVk9MVU1FX1NUQVRFX1JFUVVFU1RFRBABEh0KGUVGU19WT0xVTUVfU1RBVEVfTU9VTlRJTkcQAhIcChhFRlNfVk9MVU1FX1NUQVRFX01PVU5URUQQAxIdChlFRlNfVk9MVU1FX1NUQVRFX0RFR1JBREVEEAQSHwobRUZTX1ZPTFVNRV9TVEFURV9SRU1PVU5USU5HEAUSHgoaRUZTX1ZPTFVNRV9TVEFURV9VTk1PVU5URUQQBhIbChdFRlNfVk9MVU1FX1NUQVRFX0ZBSUxFRBAHYgZwcm90bzM");
 
 /**
- * Owned by m15-efs-volumes. Foundations only creates these two empty stub
- * messages (so `configure.proto` has a stable field to point at); the
- * feature that implements efs-volumes owns every field number inside this
- * file from here on. Message names stay prefixed (`EfsVolume*`) so they
- * never collide with another feature's messages inside `rayito.v1`.
+ * Owned by m15-efs-volumes (ADR-018, experimental). `rayd` mounts through
+ * `EfsUtilsMounter` (`mount -t efs`, amazon-efs-utils) only on an image
+ * that installs amazon-efs-utils and runs with CAP_SYS_ADMIN; on every
+ * other image (every image Rayito publishes today) the `efs_volumes`
+ * section of `ConfigureRequest` answers `SECTION_CODE_UNSUPPORTED`,
+ * whatever `EfsVolumesConfig` it carries.
  *
  * @generated from message rayito.v1.EfsVolumesConfig
  */
 export type EfsVolumesConfig = Message<"rayito.v1.EfsVolumesConfig"> & {
+  /**
+   * A present (even empty) section replaces the sandbox's whole desired
+   * set of volumes (`configure.proto` semantics); at most 4
+   * (research doc §5 "Volúmenes por sandbox").
+   *
+   * @generated from field: repeated rayito.v1.EfsVolumeMount mounts = 1;
+   */
+  mounts: EfsVolumeMount[];
 };
 
 /**
@@ -32,9 +41,61 @@ export const EfsVolumesConfigSchema: GenMessage<EfsVolumesConfig> = /*@__PURE__*
   messageDesc(file_rayito_v1_efs_volumes, 0);
 
 /**
+ * @generated from message rayito.v1.EfsVolumeMount
+ */
+export type EfsVolumeMount = Message<"rayito.v1.EfsVolumeMount"> & {
+  /**
+   * Absolute, canonical, under `/mnt/` or `/home/user/`
+   * (`rayito._mount_path`/`mount-path.ts`).
+   *
+   * @generated from field: string mount_path = 1;
+   */
+  mountPath: string;
+
+  /**
+   * `fs-[0-9a-f]{8,40}`.
+   *
+   * @generated from field: string file_system_id = 2;
+   */
+  fileSystemId: string;
+
+  /**
+   * `fsap-[0-9a-f]{8,40}`.
+   *
+   * @generated from field: string access_point_id = 3;
+   */
+  accessPointId: string;
+
+  /**
+   * @generated from field: bool read_only = 4;
+   */
+  readOnly: boolean;
+
+  /**
+   * Dotted-quad; empty lets the adapter resolve it itself (research doc
+   * R3, EFS-5: avoids depending on the guest resolving the VPC's private
+   * DNS zone for the mount target). The SDKs do not fill it yet.
+   *
+   * @generated from field: string mount_target_ip = 5;
+   */
+  mountTargetIp: string;
+};
+
+/**
+ * Describes the message rayito.v1.EfsVolumeMount.
+ * Use `create(EfsVolumeMountSchema)` to create a new message.
+ */
+export const EfsVolumeMountSchema: GenMessage<EfsVolumeMount> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_efs_volumes, 1);
+
+/**
  * @generated from message rayito.v1.EfsVolumesStatus
  */
 export type EfsVolumesStatus = Message<"rayito.v1.EfsVolumesStatus"> & {
+  /**
+   * @generated from field: repeated rayito.v1.EfsVolumeStatus volumes = 1;
+   */
+  volumes: EfsVolumeStatus[];
 };
 
 /**
@@ -42,5 +103,97 @@ export type EfsVolumesStatus = Message<"rayito.v1.EfsVolumesStatus"> & {
  * Use `create(EfsVolumesStatusSchema)` to create a new message.
  */
 export const EfsVolumesStatusSchema: GenMessage<EfsVolumesStatus> = /*@__PURE__*/
-  messageDesc(file_rayito_v1_efs_volumes, 1);
+  messageDesc(file_rayito_v1_efs_volumes, 2);
+
+/**
+ * @generated from message rayito.v1.EfsVolumeStatus
+ */
+export type EfsVolumeStatus = Message<"rayito.v1.EfsVolumeStatus"> & {
+  /**
+   * @generated from field: string mount_path = 1;
+   */
+  mountPath: string;
+
+  /**
+   * @generated from field: rayito.v1.EfsVolumeState state = 2;
+   */
+  state: EfsVolumeState;
+
+  /**
+   * Lowercase snake string this file documents below; never an AWS
+   * message, a file-system id, an access-point id or a path.
+   *
+   * @generated from field: string last_error_class = 3;
+   */
+  lastErrorClass: string;
+};
+
+/**
+ * Describes the message rayito.v1.EfsVolumeStatus.
+ * Use `create(EfsVolumeStatusSchema)` to create a new message.
+ */
+export const EfsVolumeStatusSchema: GenMessage<EfsVolumeStatus> = /*@__PURE__*/
+  messageDesc(file_rayito_v1_efs_volumes, 3);
+
+/**
+ * Mirrors `rayd_core::volume::MountState`. `last_error_class` values for
+ * `FAILED`: `network`, `iam_denied`, `not_found`, `tls`, `helper_missing`,
+ * `timeout`, `invalid_path` (research doc §4.3, §8 "Modos de fallo").
+ * For `DEGRADED`/`REMOUNTING` (`rayd_core::volume::resume::DegradeReason`):
+ * `credentials_expired` (a pause crossed the expiry of the credentials the
+ * TLS tunnel was signed with; the volume is remounted at `/resume`),
+ * `flush_timeout` (the bounded `/suspend` flush did not finish: writes not
+ * flushed may be lost), `stale`, `unreachable`, `gone` (the `/resume`
+ * probe), or one of the `FAILED` classes above when the remount itself
+ * failed.
+ *
+ * @generated from enum rayito.v1.EfsVolumeState
+ */
+export enum EfsVolumeState {
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_REQUESTED = 1;
+   */
+  REQUESTED = 1,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_MOUNTING = 2;
+   */
+  MOUNTING = 2,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_MOUNTED = 3;
+   */
+  MOUNTED = 3,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_DEGRADED = 4;
+   */
+  DEGRADED = 4,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_REMOUNTING = 5;
+   */
+  REMOUNTING = 5,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_UNMOUNTED = 6;
+   */
+  UNMOUNTED = 6,
+
+  /**
+   * @generated from enum value: EFS_VOLUME_STATE_FAILED = 7;
+   */
+  FAILED = 7,
+}
+
+/**
+ * Describes the enum rayito.v1.EfsVolumeState.
+ */
+export const EfsVolumeStateSchema: GenEnum<EfsVolumeState> = /*@__PURE__*/
+  enumDesc(file_rayito_v1_efs_volumes, 0);
 

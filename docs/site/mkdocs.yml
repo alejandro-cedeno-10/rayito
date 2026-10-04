@@ -165,6 +165,8 @@ nav:
           - Montajes S3: funciones-opcionales/montajes-s3.md
           - Tamaños: funciones-opcionales/tamanos.md
           - Pasarela de secretos: funciones-opcionales/pasarela-de-secretos.md
+          - Volúmenes EFS (experimental): funciones-opcionales/volumenes-efs.md
+          - Volúmenes EFS en tu VPC (experimental): funciones-opcionales/volumenes-efs-vpc.md
           - Secretos: secrets.md
       - Imágenes:
           - Templates declarativos: funciones-opcionales/templates.md
@@ -175,7 +177,6 @@ nav:
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
       - Proxy local: funciones-opcionales/proxy-local.md
       - En desarrollo:
-          - Volúmenes EFS: funciones-opcionales/volumenes-efs.md
           - Dominio propio: funciones-opcionales/dominio-propio.md
   - Migrar desde E2B:
       - migrar-desde-e2b/index.md

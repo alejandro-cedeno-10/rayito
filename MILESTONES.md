@@ -1422,8 +1422,23 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
 
 ### Funciones (cada una en su propio cambio OpenSpec)
 
-- **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
-  pendiente de la campaña de medición EFS-1..EFS-20.
+- **efs-volumes** (`m15-efs-volumes`, ADR-018, experimental): dominio y
+  puerto (`rayd_core::volume`, `VolumeMounter`), `VolumeStore` (CRUD real de
+  access points EFS), `Sandbox.create(volumes=)` (monta por el `Configure`
+  único sobre la imagen opcional `rayito-base-caps-efs`, `rayito image
+  publish --with-efs`), `infra/efs-volumes.yaml` y el shim `Volume`
+  (`volume_mounts` con `volume_connector_arn`) construidos. La campaña EFS-1..EFS-20 pasó sus criterios de parada el
+  2026-10-04 (Q126–Q134) y `rayd` trae el adaptador real
+  (`EfsUtilsMounter`: para el `efs-proxy` de cada volumen, remonta tras una
+  pausa que cruza la caducidad de las credenciales, vacía con plazo en
+  `/suspend`), activo sólo en una imagen con `amazon-efs-utils`; sólo
+  lectura impuesto en IAM (`ReadOnlyAccessPointArns`) y `volumes=` sólo con
+  un conector propio (nunca `INTERNET_EGRESS`). Puesta en marcha en una VPC
+  existente: `EfsVolumes` (`check` de sólo lectura, también en `rayito
+  doctor --efs-vpc-id`; `deploy` que se niega con un `FAIL`;
+  `destroy(delete_file_system=True)`). Re-comprobado en AWS real por
+  `create(volumes=...)` en Python y TypeScript el 2026-10-04 (Q135–Q139):
+  EFS-12 (remontaje tras 70 min) y EFS-16 acotado pasan.
 - **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
   real el 2026-10-02**, Q118/Q119): catálogo cerrado de cinco tamaños
   (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de

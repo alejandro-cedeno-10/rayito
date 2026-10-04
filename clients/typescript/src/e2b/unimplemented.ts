@@ -18,7 +18,13 @@ const MCP_REASON =
   "cada petición al endpoint necesita además un JWE en cabecera con TTL de 60 min como máximo " +
   "(AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp";
 const VOLUME_REASON =
-  "SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o upload_url/download_url";
+  "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen: pasa " +
+  "E2B(volume_store=VolumeStore(...)) (y volume_connector_arn= para volume_mounts, sobre la " +
+  "imagen opcional con amazon-efs-utils, AWS_API_NOTES.md §22; m15-efs-volumes, experimental), " +
+  "o usa persist= (S3) o upload_url/download_url";
+const VOLUME_CONTENT_REASON =
+  "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y " +
+  "monta el volumen, o usa upload_url/download_url sobre persist=";
 // m15-templates: create/update-microvm-image no expone un Tags por versión (sólo por imagen,
 // con lambda:TagResource aparte), así que el etiquetado de E2B no tiene análogo todavía.
 const TEMPLATE_TAGS_REASON =
@@ -50,8 +56,8 @@ export const UNIMPLEMENTED_REASONS: Readonly<Record<string, string>> = Object.fr
   mcp: MCP_REASON,
   getMcpUrl: MCP_REASON,
   getMcpToken: MCP_REASON,
-  volumeMounts: VOLUME_REASON,
   Volume: VOLUME_REASON,
+  "volume.content": VOLUME_CONTENT_REASON,
   getSignature:
     "una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo " +
     "WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3",
