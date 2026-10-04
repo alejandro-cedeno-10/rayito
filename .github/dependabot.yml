@@ -102,16 +102,31 @@ updates:
   # avisos de seguridad (docs/research/2026-10-local-testing.md) antes de
   # fusionarlo.
   - package-ecosystem: docker
-    directories:
-      - /dev/local/runner
-      - /dev/local/rayd
+    directory: /dev/local/runner
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
-      docker-local:
+      docker-local-runner:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directory: /dev/local/rayd
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-local-rayd:
         patterns: ["*"]
         update-types: ["minor", "patch"]
   - package-ecosystem: docker-compose
@@ -119,5 +134,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
