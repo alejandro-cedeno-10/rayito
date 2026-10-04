@@ -1,0 +1,4 @@
+[
+  { "name": "class TelemetryExport", "pattern": "^(export )?declare class TelemetryExport\\b" },
+  { "name": "opción telemetry", "pattern": "^\\s*readonly telemetry\\?: unknown\\b" }
+]

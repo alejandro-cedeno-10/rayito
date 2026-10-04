@@ -95,14 +95,29 @@ def test_status_of_an_undeployed_component_is_none(
     assert json.loads(result.output) is None
 
 
-def test_events_template_stub_subapps_print_pending_help(runner: CliRunner) -> None:
-    # `domain` ya no es un stub (m15-custom-domain la implementó); ver
-    # `test_m15_domain_cli.py`. `events`/`template` siguen pendientes de su
-    # propio cambio OpenSpec.
-    for name, slug in (
-        ("events", "m15-events-webhooks"),
-        ("template", "m15-templates"),
-    ):
-        result = runner.invoke(app, [name, "--help"])
-        assert result.exit_code == 0, result.output
-        assert slug in result.output
+def test_domain_subapp_left_the_pending_stub_in_m15_custom_domain(runner: CliRunner) -> None:
+    # `domain` is no longer a stub (m15-custom-domain); see
+    # `test_m15_domain_cli.py` for its real subcommands. With events and
+    # template already real, no pending stub sub-app is left.
+    result = runner.invoke(app, ["domain", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "m15-custom-domain" not in result.output
+    assert "deploy" in result.output
+
+
+def test_template_subapp_is_implemented_for_real(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["template", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "build" in result.output
+    assert "status" in result.output
+    assert "logs" in result.output
+    assert "Pendiente" not in result.output
+
+
+def test_events_subapp_left_the_pending_stub_in_m15_events_webhooks(runner: CliRunner) -> None:
+    # `events` is no longer a stub (m15-events-webhooks); see
+    # `test_m15_events_webhooks_cli.py` for its real subcommands.
+    result = runner.invoke(app, ["events", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "m15-events-webhooks" not in result.output
+    assert "webhook" in result.output

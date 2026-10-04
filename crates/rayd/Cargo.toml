@@ -14,6 +14,10 @@ path = "src/main.rs"
 [dependencies]
 rayito-proto = { workspace = true }
 rayd-core = { workspace = true }
+# m15-rayd-otlp (ADR-021): `adapters::otlp_codec` serializes the vendored
+# OTLP types `rayito-proto` already builds with `prost`; already a workspace
+# dependency (`rayito-proto`'s own `Cargo.toml`), not a new crate.
+prost = { workspace = true }
 tonic = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
@@ -36,6 +40,9 @@ mimalloc = { workspace = true }
 getrandom = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-sigv4 = { workspace = true }
+httpdate = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 sha2 = { workspace = true }

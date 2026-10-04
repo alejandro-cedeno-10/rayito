@@ -29,7 +29,11 @@
 //! `disk_reserve`, `disk_full`, `free_bytes`, `deferred`,
 //! `advisory_op_timeout`, and for the logical deadline (ADR-011)
 //! `sandbox_timeout` and `timeout_forced_exit` (messages), `on_timeout`,
-//! `extensions`, `overrun_ms`, `action`, `mode` and `lifecycle_phase`. Request bodies,
+//! `extensions`, `overrun_ms`, `action`, `mode` and `lifecycle_phase`, and for
+//! request correlation (m15-rayd-otlp's W3C `traceparent`, ADR-021,
+//! `grpc::request_context`) the `rpc` span's `trace_id`/`span_id` fields,
+//! present only on a call that actually carried a valid `traceparent`.
+//! Request bodies,
 //! payloads, tokens, digests, commands, the shell's arguments,
 //! environments, working directories, tags, stdin bytes, output bytes,
 //! terminal bytes (input or output), paths, entry names, symlink targets,

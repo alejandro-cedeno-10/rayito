@@ -23,19 +23,85 @@ Pendiente, tras la campaña de medición EFS-1..EFS-20.
 
 ## Tamaños (`m15-sizes-catalog`)
 
-Pendiente.
+Catálogo cerrado de cinco tamaños (512mb/1gb/2gb/4gb/8gb, Q87), apagado
+por defecto: `Sandbox.create(size="4gb")`/`Sandbox.create({ size: "4gb" })`
+resuelve en cliente, sin ningún RPC, redondeando siempre hacia arriba y
+avisando si no encaja exacto. `rayito image publish --sizes 512mb,4gb`
+publica, desde el mismo artefacto, una imagen adicional por tamaño.
+`get_info()`/`getInfo()` confirma el tamaño real con una única llamada
+cacheada a `GetMicrovmImageVersion` (`baseline_memory_mib`/`baselineMemoryMib`,
+`baseline_cpu`/`baselineCpu`, medido exactamente para los cinco tamaños).
+Guardarraíles de coste opcional `rayito stack deploy sizes-guard`.
+Pendiente: aceptación en AWS real (SZ-1 y siguientes, MILESTONES.md).
 
 ## Eventos y webhooks (`m15-events-webhooks`)
 
-Pendiente.
+`rayd` emite `created`/`paused`/`resumed`/`killed` firmados por HMAC en su
+propio stdout, sólo cuando `ConfigureSandbox` trae una clave por sandbox
+(derivada y empujada por el SDK; `rayd` nunca ve el secreto del stack). Una
+pila opcional (`infra/events-webhooks.yaml`) los verifica, guarda en
+DynamoDB (TTL 7 días) y entrega a tus webhooks con firma compatible con
+E2B, con un guardián SSRF y sin perder entregas (reclamo `attempting` →
+`delivered`/`failed`, reintento sólo ante 5xx, presupuesto de tiempo por
+invocación). Un reconciliador (cada `ReconcilerIntervalMinutes`, 5 por
+defecto) sintetiza `killed{unknown}` para sandboxes que `ListMicrovms` ya no
+reporta. Nuevo: `LifecycleEvents`/`AsyncLifecycleEvents` (`deploy`/`status`/
+`destroy`, `register_webhook`/`list_webhooks`/`delete_webhook`/
+`get_events`), CLI `rayito events`. Apagado por defecto.
+
+**Pendiente de la aceptación contra AWS real:** CP-4/CP-5 (si `/terminate`
+llega siempre y si las líneas de `/suspend` alcanzan CloudWatch a tiempo),
+el supuesto del forwarder sobre el nombre del *log stream*, y el flujo de
+extremo a extremo (entrega firmada, línea forjada descartada, `killed`
+sintetizado). Ver `AWS_API_NOTES.md` §25 y `ADR-020`.
+
+**`Sandbox.create(events=...)`:** valida la opción (un `LifecycleEvents` y
+`logging` con CloudWatch) antes de lanzar y, tras `run-microvm`, manda la
+clave del sandbox (`k_sbx`, derivada de la clave del stack y el
+`sandbox_id`) en el mismo `ConfigureSandbox` que `mounts=`/`gateways=`/
+`telemetry=`; si la pila no está desplegada o la imagen no lo soporta,
+termina el sandbox. Ver `ADR-020`.
 
 ## Exportación OTLP (`m15-rayd-otlp`)
 
-Pendiente.
+`rayd` exporta 7 métricas de CPU, memoria y disco a CloudWatch por
+OTLP/HTTP cada `interval_s` (15-300 s), firmadas con SigV4 sobre el
+execution role (`OtlpAuth.execution_role()`, exige `rayito-base-caps`) o
+con un token al portador (`OtlpAuth.bearer(...)`, experimental, funciona en
+`rayito-base`). Opt-in: `telemetry=`/`telemetry` en `Sandbox.create()`.
+`sbx.get_telemetry_status()`/`sbx.getTelemetryStatus()` consulta exportadas,
+descartadas y el último error. Con `tracer_provider=`/`tracerProvider`,
+cada RPC del handle lleva además W3C `traceparent` hasta `rayd`, que lo
+registra como `trace_id`/`span_id`. Números `OT*` reales y mediciones de coste/overhead
+pendientes de la etapa de aceptación contra AWS real.
 
 ## Templates (`m15-templates`)
 
-Pendiente.
+`Template`/`AsyncTemplate`: un DSL fluido, igual al `Template` de E2B v2,
+que compila a un Dockerfile y un zip deterministas sobre una imagen
+`rayito-base`/`rayito-base-caps` ya publicada y los sube con
+`create`/`update-microvm-image`. Build pipeline completo en los dos SDKs
+(composición, subida por hash, reuso de versión idéntica, explicación de
+fallos desde el log de BuildKit o el `stateReason` del `ready_cmd`,
+guardia de 10 builds concurrentes que cubre toda la espera, cuota de AWS
+como `build_quota`), sobre un núcleo de build compartido con `rayito image
+publish`. La imagen compuesta hereda la configuración de la base
+(`rayito-base-caps` sigue siendo caps). `set_start_cmd()`/`setStartCmd()`:
+`rayd` 0.6 lee `/etc/rayito/template.json`, lanza `start_cmd` como proceso
+gestionado y gatea `/ready` con `ready_cmd`. Shim de E2B
+`Template`/`AsyncTemplate` ya construye de verdad, con la firma de E2B; `BuildException`/`TemplateException`
+(Python) y `BuildError`/`TemplateError` (TypeScript) del shim pasan a ser
+las clases nativas. `infra/templates.yaml` (`RayitoTemplateBuilder`, sólo
+IAM, $0 en reposo). Divergencias: sin caché de capas, sólo ARM64, sólo
+`from_base_image()`, sin streaming en vivo de los pasos, sin etiquetado
+por versión.
+
+**Pendiente de la aceptación serializada contra AWS real** (plan y tope de
+coste en `openspec/changes/m15-templates/proposal.md` y en el plan de
+aceptación del agente): un build real de principio a fin, uno que falle en
+un paso del Dockerfile, uno con un `ready_cmd` que falle, y la supervivencia
+del `start_cmd` a un ciclo de suspend/resume (necesita una imagen
+`rayito-base` publicada con el `rayd` de esta versión).
 
 ## Pasarela de secretos (`m15-secrets-gateway`)
 
@@ -43,23 +109,4 @@ Pendiente.
 
 ## Dominio propio (`m15-custom-domain`)
 
-`CustomDomain` (Python sync/async, TypeScript) despliega una distribución
-CloudFront con alias comodín, una CloudFront Function de enrutado y un
-KeyValueStore (`infra/custom-domain.yaml`, `rayito domain
-deploy|status|destroy`), y gestiona las rutas `{puerto}-{alias}.<tu
-dominio>` con `register()`/`unregister()`/`refresh()`. Experimental y
-apagado por defecto: construirlo no llama a AWS, y sólo `deploy()`,
-`register()`, etc. lo hacen.
-
-`Sandbox.create(domain=)`/`get_host()`/`expose()` **no** están cableados
-todavía a `CustomDomain` en esta release: `domain=` sigue lanzando
-`UnimplementedError`, con un mensaje que nombra ese seguimiento en vez de
-este cambio (seguimiento no bloqueante, ver `ARCHITECTURE.md` ADR-024). El
-refresher Lambda opcional que la arquitectura de M15 describe tampoco se
-construyó (**DOM-14, pendiente**): `CustomDomain.refresh()` cubre el mismo
-caso desde el SDK mientras tanto. DOM-2 (HTTP/1.1 por
-`cf.updateRequestOrigin`), DOM-3 (WebSocket), DOM-5 (latencia de
-propagación del KeyValueStore), DOM-7 (keep-alive tras caducar el JWE),
-DOM-8 (auto-resume por el dominio) y DOM-14 están pendientes de D3 (dominio
-y certificado ACM del mantenedor) y de la etapa de aceptación contra AWS
-real.
+Pendiente de D3 (dominio y certificado ACM del mantenedor).

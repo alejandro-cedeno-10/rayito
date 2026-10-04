@@ -79,7 +79,7 @@ def test_function_code_matches_the_stripped_source_file() -> None:
 
 
 #: Sintaxis que `cloudfront-js-2.0` rechaza al compilar y Node acepta
-#: (medido con `TestFunction`, Q96 de AWS_API_NOTES.md): `for...of` y los
+#: (medido con `TestFunction`, Q121 de AWS_API_NOTES.md): `for...of` y los
 #: parámetros por defecto. Los tests de Node nunca lo detectarían.
 _UNSUPPORTED_RUNTIME_SYNTAX = {
     "for...of": re.compile(r"\bfor\s*\([^)]*\bof\b"),

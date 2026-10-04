@@ -37,7 +37,7 @@
 // `infra/functions/tests/*.test.mjs` las importe con Node directamente.
 //
 // `cloudfront-js-2.0` no es ES moderno completo: rechaza al compilar
-// `for...of` y los parámetros por defecto (medido con `TestFunction`, Q96 de
+// `for...of` y los parámetros por defecto (medido con `TestFunction`, Q121 de
 // AWS_API_NOTES.md), y Node los acepta, así que los tests de Node no lo
 // detectan. Aquí sólo bucles con índice y valores por defecto explícitos.
 
@@ -90,7 +90,7 @@ export function stripUpstreamProxyHeaders(headers) {
 /** La cookie `name` del objeto `event.request.cookies` de CloudFront
  * Functions (`{nombre: {value}}`), o `null`. CloudFront entrega ahí las
  * cookies ya parseadas; con un evento de `TestFunction` que sólo trae
- * `cookies`, leer la cabecera `cookie` daba 403 (Q96). */
+ * `cookies`, leer la cabecera `cookie` daba 403 (Q121). */
 export function readEventCookie(cookies, name) {
   const entry = cookies && cookies[name];
   return entry && entry.value ? entry.value : null;
@@ -176,7 +176,7 @@ export function trafficTokenAccepted(headers, metadataTokenHash, cookies) {
  */
 export async function route(request, kvsGet, now) {
   // Sin parámetro por defecto (`now = Date.now`): `cloudfront-js-2.0` lo
-  // rechaza al compilar (`SyntaxError: Unexpected token "="`, Q96).
+  // rechaza al compilar (`SyntaxError: Unexpected token "="`, Q121).
   const clock = now || Date.now;
   stripUpstreamProxyHeaders(request.headers);
   const label = routeLabel(request.headers.host.value);

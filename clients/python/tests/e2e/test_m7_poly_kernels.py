@@ -10,7 +10,10 @@ la banda de D5 sin crear ningún MicroVM. Desde M9 la banda de code install
 frente a 17.0 es de 70 MB (medido 56 285 288 B en `rayito-base` 22.0): git-core
 (`m9-e2b-v2-surface` D16, Q76, ≈ 38 MB) y el crecimiento de `rayd` desde
 17.0 que `RAYITO_RAYD_BYTES_DELTA`, medido ahora frente a la versión
-anterior, ya no descuenta.
+anterior, ya no descuenta. Desde 0.6 la capa de `mount-s3` + `fuse`
+(`m15-s3-mounts`, AWS_API_NOTES.md Q100) añade `MOUNT_S3_LAYER_BYTES` de code
+install a toda variante; se descuenta igual que `rayd`, así la banda sigue
+vigilando lo demás.
 """
 
 from __future__ import annotations
@@ -32,6 +35,12 @@ POLY_IMAGE = "rayito-base-poly"
 BASELINE_17_0 = (928_100_352, 1_305_825_280, 37_998_592)
 MEMORY_BAND_BYTES = 20 * 1_000_000
 CODE_BAND_BYTES = 70 * 1_000_000
+#: Code install de la capa `mount-s3` 1.24.0 + `fuse`/`fuse-libs`
+#: (`m15-s3-mounts`), medido en la aceptación 0.6 (2026-10-03): `rayito-base`
+#: con la capa (1 445 888 000 B) menos 0.5.1 sin ella (1 343 635 456 B) menos el
+#: crecimiento de `rayd` entre ambas (1 184 272 B). Es más que los 72,7 MB
+#: instalados del RPM: el code install va por bloques, como Deno (Q77).
+MOUNT_S3_LAYER_BYTES = 101_068_272
 BASH_TIMEOUT_SECONDS = 2
 
 
@@ -123,11 +132,12 @@ def test_snapshot_sizes() -> None:
         pytest.skip(f"exporta {BASE_SIZES_VAR} y {POLY_SIZES_VAR} (memoria,code,disco en bytes)")
     rayd_delta = int(os.environ.get(RAYD_DELTA_VAR, "0").replace("_", ""))
     memory_delta = base[0] - BASELINE_17_0[0]
-    code_delta = base[1] - BASELINE_17_0[1] - rayd_delta
+    code_delta = base[1] - BASELINE_17_0[1] - rayd_delta - MOUNT_S3_LAYER_BYTES
     report("rayito-base memory/code/disk", base)
     report("rayito-base-poly memory/code/disk", poly)
     report("rayito-base memory delta vs 17.0 (bytes)", memory_delta)
     report("rayd binary delta vs 17.0 (bytes, subtracted)", rayd_delta)
+    report("mount-s3 layer (bytes, subtracted)", MOUNT_S3_LAYER_BYTES)
     report("rayito-base code install delta vs 17.0 net of rayd (bytes)", code_delta)
     report("poly minus base code install (bytes)", poly[1] - base[1])
     assert abs(memory_delta) <= MEMORY_BAND_BYTES

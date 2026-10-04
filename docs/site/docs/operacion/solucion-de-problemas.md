@@ -119,6 +119,15 @@ procesos largos, `timeout=None` (TypeScript: `timeoutMs: 0`) o
 **`execution.error.name == "ExecutionTimeout"`.** La celda superó su
 `timeout` (300 s por defecto): súbelo.
 
+**Procesos `<defunct>` en `ps` tras lanzar un demonio.** Con `rayd` 0.6.0 o
+anterior, un proceso que se demoniza (doble `fork`, `nohup … &` dentro de
+un subshell, `mount-s3` sin `--foreground`) quedaba como zombi colgado de
+`rayd`, que es el PID 1 del sandbox. Desde la primera `rayd` posterior a
+0.6.0 los recoge en cuanto terminan sin tocar el código de salida de tus
+comandos; con una imagen anterior, republícala sobre la `rayd` nueva. Los
+zombis no consumen CPU ni memoria, sólo una entrada en la tabla de
+procesos.
+
 ## Red
 
 **`UnimplementedError` al pasar `network=` o `allow_internet_access=False`.**

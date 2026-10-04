@@ -1,58 +1,11 @@
 /**
- * `Template`, `Volume` y `getSignature` de E2B: cada estático que
- * E2B define lanza `UnimplementedError` con su motivo (nunca un
- * `TypeError` por método inexistente). Lanzan en el acto, también los que en
- * E2B son asíncronos: un `await Template.build()` lo recibe igual.
+ * `Volume` y `getSignature` de E2B: cada estático que E2B define lanza
+ * `UnimplementedError` con su motivo (nunca un `TypeError` por método
+ * inexistente). `Template` vive en `./template.js` (m15-templates: ya
+ * construye de verdad).
  */
 
 import { unimplemented } from "./unimplemented.js";
-
-/** Plantillas declarativas de E2B: fuera de alcance (SPEC.md §4). */
-export class Template {
-  private constructor() {
-    throw unimplemented("Template");
-  }
-
-  static build(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static buildInBackground(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static getBuildStatus(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static exists(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static aliasExists(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static assignTags(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static removeTags(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static getTags(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static toJSON(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-
-  static toDockerfile(..._args: unknown[]): never {
-    throw unimplemented("Template");
-  }
-}
 
 /** Volúmenes compartidos de E2B: fuera de alcance (SPEC.md §4). */
 export class Volume {

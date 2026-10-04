@@ -270,6 +270,16 @@ def transfer_staging() -> S3Staging:
     return S3Staging(bucket) if prefix is None else S3Staging(bucket, prefix=prefix)
 
 
+def delete_staged_objects(staging: S3Staging, sandbox_id: str, region: str) -> None:
+    """Borra lo que `download_url` dejó bajo `<prefix>/<sandbox_id>/`: el
+    teardown nunca deja objetos del test en el bucket (la aceptación 0.6
+    encontró uno de este test)."""
+    s3 = boto3.client("s3", region_name=region)
+    scope = f"{staging.prefix}/{sandbox_id}/"
+    for item in s3.list_objects_v2(Bucket=staging.bucket, Prefix=scope).get("Contents", []):
+        s3.delete_object(Bucket=staging.bucket, Key=item["Key"])
+
+
 @contextlib.contextmanager
 def launched(
     e2e_settings: E2ESettings,
@@ -454,12 +464,15 @@ def test_root_traffic_is_never_filtered(
         allow_internet_access=False,
         transfer=staging,
     ) as sbx:
-        sbx.files.write("/home/user/export.bin", payload)
-        link = sbx.files.download_url("/home/user/export.bin")
-        with urllib.request.urlopen(str(link), timeout=HTTP_TIMEOUT_SECONDS) as response:
-            fetched = response.read()
-        assert hashlib.sha256(fetched).hexdigest() == hashlib.sha256(payload).hexdigest()
-        assert sbx.get_health().egress_enforcement is EgressEnforcement.GUEST_ROUTES
+        try:
+            sbx.files.write("/home/user/export.bin", payload)
+            link = sbx.files.download_url("/home/user/export.bin")
+            with urllib.request.urlopen(str(link), timeout=HTTP_TIMEOUT_SECONDS) as response:
+                fetched = response.read()
+            assert hashlib.sha256(fetched).hexdigest() == hashlib.sha256(payload).hexdigest()
+            assert sbx.get_health().egress_enforcement is EgressEnforcement.GUEST_ROUTES
+        finally:
+            delete_staged_objects(staging, sbx.sandbox_id, control_plane.region)
 
 
 class RecordingControlPlane:

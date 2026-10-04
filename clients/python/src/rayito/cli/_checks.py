@@ -18,6 +18,7 @@ from typing import Any, Literal
 from botocore.exceptions import ClientError
 
 from rayito._aws import ControlPlane, PortSpec
+from rayito._images import read_gate
 from rayito._limits import DEFAULT_PORT, SUPPORTED_REGIONS
 from rayito._models import SandboxHealth, SandboxInfo, SandboxListItem
 from rayito._sandbox_base import METADATA_PROBE_TIMEOUT_SECONDS, health_from_proto
@@ -30,7 +31,6 @@ from rayito.cli._publish import (
     S3_KEY_PREFIX,
     base_image_arn,
     latest_build,
-    read_gate,
 )
 from rayito.cli._session import Clients
 from rayito.exceptions import AuthenticationException, SandboxNotFoundException

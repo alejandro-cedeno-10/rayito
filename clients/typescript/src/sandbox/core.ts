@@ -17,6 +17,7 @@ import {
 } from "@connectrpc/connect";
 import { abortReasonOr, raceAbort } from "../abort.js";
 import type { ControlPlane } from "../aws/control-plane.js";
+import { type AgentFeatures, agentFeaturesFromHealth } from "../configure/base.js";
 import {
   AuthenticationError,
   errorMessage,
@@ -24,6 +25,7 @@ import {
   SandboxNotFoundError,
 } from "../errors.js";
 import { CodeService } from "../gen/rayito/v1/code_pb.js";
+import { ConfigureService } from "../gen/rayito/v1/configure_pb.js";
 import { FilesystemService } from "../gen/rayito/v1/filesystem_pb.js";
 import {
   HealthRequestSchema,
@@ -45,7 +47,7 @@ import {
   isStreamReset,
   translateRpcError,
 } from "../transport/errors.js";
-import { proxyAuthInterceptor } from "../transport/headers.js";
+import { type CallMetadataProvider, proxyAuthInterceptor } from "../transport/headers.js";
 import type { TokenRefresher } from "../transport/tokens.js";
 import {
   type OpenedTransport,
@@ -259,6 +261,10 @@ export class SandboxCore {
   transfer: ResolvedS3Staging | undefined;
   /** Configuración extra de los clientes S3 del SDK: sólo la fijan los tests, hacia un S3 falso local. */
   s3ClientOverrides: S3ClientOverrides | undefined;
+  /** Las cabeceras por llamada de cada RPC de este handle (`traceparent` con
+   * `tracerProvider`, m15-rayd-otlp); vacío por defecto. Lo fija
+   * `Sandbox.#useInstrumentation`. */
+  callMetadataProviders: readonly CallMetadataProvider[] = [];
 
   readonly unaryTransport: Transport;
   readonly #unarySession: OpenedTransport;
@@ -273,7 +279,12 @@ export class SandboxCore {
     readonly code: Client<typeof CodeService>;
     readonly pty: Client<typeof PtyService>;
     readonly lifecycle: Client<typeof LifecycleService>;
+    readonly configure: Client<typeof ConfigureService>;
   };
+  /** `undefined` en un agente anterior a 0.6.0 (campo `features` ausente de
+   * `Health`); `requireConfigureSupport` es quien exige que no lo sea antes
+   * de mandar cualquier sección 0.6. */
+  agentFeatures: AgentFeatures | undefined;
 
   readonly #liveStreams = new Set<AbortController>();
   readonly #watches = new Set<Abortable>();
@@ -305,7 +316,9 @@ export class SandboxCore {
       code: this.clientFor(CodeService, false),
       pty: this.clientFor(PtyService, false),
       lifecycle: this.clientFor(LifecycleService, false),
+      configure: this.clientFor(ConfigureService, false),
     };
+    this.agentFeatures = undefined;
   }
 
   get sandboxId(): string {
@@ -333,6 +346,7 @@ export class SandboxCore {
       port: DEFAULT_PORT,
       accessToken: this.accessToken,
       extraHeaders: this.transportSettings.extraHeaders,
+      callMetadata: () => this.callMetadataProviders,
     });
   }
 
@@ -733,6 +747,7 @@ export class SandboxCore {
     this.recordLifecycle(lifecycleFromProto(response.lifecycle));
     this.guestFacts = guestFactsFromHealth(response);
     this.metadata = metadataFromHealth(response);
+    this.agentFeatures = agentFeaturesFromHealth(response);
     const generation = Number(response.resumeGeneration);
     if (generation === this.resumeGeneration) {
       return;

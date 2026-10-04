@@ -139,11 +139,12 @@ def unimplemented_triggers(sandbox: Sandbox) -> dict[str, Callable[[], object]]:
         "get_mcp_token": lambda: sandbox.get_mcp_token(),
         "volume_mounts": lambda: Sandbox.create(volume_mounts={"/data": "vol"}),
         "get_signature": lambda: get_signature("/home/user/a", "write"),
-        "Template.build": lambda: Template.build("tpl", alias="x"),
+        # m15-templates: Template ya construye de verdad; sólo el
+        # etiquetado (sin equivalente en create/update-microvm-image)
+        # sigue sin implementar.
+        "Template.assign_tags": lambda: Template().assign_tags(),
         "Volume.create": lambda: Volume.create("vol"),
         "Secret.iam_token": lambda: Secret.iam_token(audience="a", token_type="JWT-SVID"),
-        "E2B().Template": lambda: E2B().Template,
-        "E2B().AsyncTemplate": lambda: E2B().AsyncTemplate,
         "E2B().Volume": lambda: E2B().Volume,
         "E2B().AsyncVolume": lambda: E2B().AsyncVolume,
     }

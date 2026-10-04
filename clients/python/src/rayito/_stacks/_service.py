@@ -71,6 +71,29 @@ def _resolved_parameters(component: StackComponent, given: dict[str, str]) -> di
     return resolved
 
 
+def _with_artifact_bucket(
+    component: StackComponent, given: dict[str, str], artifact_bucket: str | None
+) -> dict[str, str]:
+    """`given` más, para cada artefacto con `bucket_parameter_key`, ese
+    parámetro con `artifact_bucket` (el bucket al que `deploy()` sube el
+    código). Uno ya pasado con otro valor es `InvalidArgumentException`: la
+    plantilla apuntaría a un bucket donde el código no está."""
+    resolved = dict(given)
+    if not artifact_bucket:
+        return resolved
+    for artifact in component.artifacts:
+        key = artifact.bucket_parameter_key
+        if key is None:
+            continue
+        if resolved.get(key, artifact_bucket) != artifact_bucket:
+            raise InvalidArgumentException(
+                f"{component.name}: el parámetro {key} debe ser el mismo bucket que "
+                "artifact_bucket= (es donde se sube el código); omítelo"
+            )
+        resolved[key] = artifact_bucket
+    return resolved
+
+
 class OptionalStacks:
     """Construirlo no hace ninguna llamada a AWS."""
 
@@ -110,13 +133,14 @@ class OptionalStacks:
         resolved = _resolve_component(component)
         _require_supported(resolved)
         name = stack_name or resolved.default_stack_name
-        resolved_parameters = _resolved_parameters(resolved, dict(parameters or {}))
-        if resolved.artifacts:
-            if not artifact_bucket:
-                raise InvalidArgumentException(
-                    f"{resolved.name} necesita artifact_bucket=: sube el código Lambda del "
-                    "componente"
-                )
+        if resolved.artifacts and not artifact_bucket:
+            raise InvalidArgumentException(
+                f"{resolved.name} necesita artifact_bucket=: sube el código Lambda del componente"
+            )
+        resolved_parameters = _resolved_parameters(
+            resolved, _with_artifact_bucket(resolved, dict(parameters or {}), artifact_bucket)
+        )
+        if resolved.artifacts and artifact_bucket:
             data = load_artifact(resolved)
             key = artifact_key(data)
             self._provisioner.put_artifact(artifact_bucket, key, data)

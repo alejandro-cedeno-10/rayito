@@ -59,7 +59,7 @@
       `RAYITO_E2E`/`RAYITO_TEMPLATE`. **Written, not run from this branch:
       D3 blocks executing these tests, not writing them (a PR #74 review
       finding) — gate for archive remains D3 + the AWS acceptance stage.**
-- [x] 3.5 AWS acceptance, part without D3 (2026-10-02, Q96): the
+- [x] 3.5 AWS acceptance, part without D3 (2026-10-02, Q121): the
       deployed `FunctionCode` did not compile on `cloudfront-js-2.0`
       (`for...of`, default parameter); fixed, cookie read from
       `request.cookies` first, and re-measured with `TestFunction`

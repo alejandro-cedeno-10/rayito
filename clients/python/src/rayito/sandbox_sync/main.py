@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import builtins
 import dataclasses
+import functools
 import logging
 import threading
 import time
@@ -36,7 +37,29 @@ from rayito._code_base import (
     ResultCallback,
     StdoutCallback,
 )
-from rayito._feature_options import FeatureOptions, plan_features
+from rayito._configure_base import (
+    CONFIGURE_SETTLE_POLL_S,
+    AgentFeatures,
+    ConfigureSection,
+    PlannedSection,
+    PostApplySection,
+    SectionApplied,
+    agent_features_from_health,
+    build_configure_request,
+    check_configure_response,
+    require_capabilities,
+    require_configure_support,
+    resolve_sections,
+    settle_timeout_s,
+    still_pending,
+)
+from rayito._feature_options import (
+    FeatureOptions,
+    LaunchFacts,
+    plan_features,
+    planned_sections,
+    relaunch_features,
+)
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._lifecycle_base import (
     TimeoutRequest,
@@ -122,6 +145,7 @@ from rayito._process_base import (
     stream_failure_exception,
 )
 from rayito._role_policy import resolve_image_variant
+from rayito._s3_mounts import MountStatus, from_proto_status
 from rayito._sandbox_base import (
     CLOCK_OFFSET_WARN_MS,
     DEFAULT_IDLE_POLICY,
@@ -152,19 +176,24 @@ from rayito._sandbox_base import (
     metadata_probe_failure,
     needs_explicit_resume,
     not_ready_error,
+    plan_size,
     ready_guest_facts,
     reconnect_failure,
     require_access_token,
     resolve_template,
     sandbox_logger,
+    sized_template_name,
     terminal_state_error,
     terminate_quietly,
     terminated_during_boot_error,
     validate_host_port,
     validate_sandbox_id,
     with_guest_facts,
+    with_size_facts,
     write_index_record,
 )
+from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
     SecretCache,
@@ -176,6 +205,10 @@ from rayito._secrets import (
     shared_secret_cache,
     warm,
 )
+from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+from rayito._sizing import SizeRequest
+from rayito._telemetry_export import TelemetryHealth
+from rayito._telemetry_export._propagation import call_metadata_providers
 from rayito._transfer_base import (
     expires_in_from_signature_expiration,
     resolve_staging,
@@ -205,6 +238,7 @@ from rayito.exceptions import (
 )
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
+from rayito.sandbox_sync.configure import CONFIGURE_FEATURE, call_configure, call_configure_status
 from rayito.sandbox_sync.filesystem import Filesystem
 from rayito.sandbox_sync.git import Git
 from rayito.sandbox_sync.lifecycle import DeadlineTrigger, set_timeout_once
@@ -214,6 +248,8 @@ from rayito.sandbox_sync.pty import Pty
 from rayito.sandbox_sync.transfer import Transfers
 from rayito.v1 import (
     code_pb2_grpc,
+    configure_pb2,
+    configure_pb2_grpc,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -439,11 +475,18 @@ class Sandbox:
         self._channel = transport.open_channel(info.endpoint, self._plugin)
         self._stream_channel: grpc.Channel | None = None
         self._health = health_pb2_grpc.HealthServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
+        self._agent_features: AgentFeatures | None = None
+        # Lo que `PostApplySection.after_apply` devolvió, por `section`
+        # (`_apply_configure_sections`); cada propiedad pública de una
+        # función 0.6 (`gateways`, ...) lee su entrada de aquí.
+        self._section_handles: dict[str, object] = {}
         self._process = process_pb2_grpc.ProcessServiceStub(self._channel)
         self._files = filesystem_pb2_grpc.FilesystemServiceStub(self._channel)
         self._code = code_pb2_grpc.CodeServiceStub(self._channel)
         self._pty_stub = pty_pb2_grpc.PtyServiceStub(self._channel)
         self._network_stub = network_pb2_grpc.NetworkServiceStub(self._channel)
+        self._configure = configure_pb2_grpc.ConfigureServiceStub(self._channel)
         self._readiness_health: SandboxHealth | None = None
         self._lifecycle_stub = lifecycle_pb2_grpc.LifecycleServiceStub(self._channel)
         self._lifecycle: SandboxLifecycle | None = None
@@ -517,7 +560,7 @@ class Sandbox:
         tracer_provider: TracerProviderLike | None = None,
         mounts: Mapping[str, Any] | None = None,
         volumes: Mapping[str, Any] | None = None,
-        size: Any | None = None,
+        size: str | SizeRequest | None = None,
         events: Any | None = None,
         telemetry: Any | None = None,
         gateways: Mapping[str, Any] | None = None,
@@ -666,14 +709,94 @@ class Sandbox:
              sbx.commands.run("echo hola")  # span "rayito.commands.run"
              sbx.kill()
 
-         `mounts=`, `volumes=`, `size=`, `events=`, `telemetry=`, `gateways=`
-         y `domain=` son las siete opciones 0.6 (M15); cada una llega en su
+         `mounts=`, `volumes=`, `size=`, `events=`, `gateways=` y `domain=`
+         son seis de las siete opciones 0.6 (M15); cada una llega en su
          propio cambio OpenSpec y, mientras siga siendo un stub, ponerla a
          algo distinto de `None` lanza `UnimplementedError` nombrando ese
          cambio, antes de `run-microvm` (`_feature_options.plan_features`).
          Ninguna hace ninguna llamada a AWS ni construye ningún cliente por
-         sí sola; con las siete en `None` (su valor por defecto) el
+         sí sola; con las seis en `None` (su valor por defecto) el
          comportamiento es exactamente el de 0.5.x.
+
+         `events=` (m15-events-webhooks, ADR-020) ya es real: un
+         `LifecycleEvents`/`AsyncLifecycleEvents` (con su pila
+         `events-webhooks` ya desplegada) hace que el SDK derive la clave
+         de este sandbox (`k_sbx`, de la clave del stack y el `sandbox_id`)
+         y la mande a `rayd` en el mismo `ConfigureSandbox` que el resto de
+         secciones, justo después de que el agente esté listo; desde ahí
+         `rayd` emite `created`/`paused`/`resumed`/`killed` firmados. Exige
+         un `logging=` que llegue a CloudWatch (`InvalidArgumentException`
+         antes de lanzar si no). Si la pila no está desplegada, la clave no
+         se puede leer o la imagen es anterior a 0.6.0, termina el sandbox
+         (salvo `keep_on_failure`) y relanza el error.
+
+         Coste y activación
+         -------------------
+         Activa: `events=LifecycleEvents(...)` en `create()`, tras
+             `LifecycleEvents().deploy(...)` (o `rayito events deploy`).
+         Recursos y llamadas AWS: un `secretsmanager:GetSecretValue` de la
+             clave del stack por instancia de `LifecycleEvents` (más un
+             `cloudformation:DescribeStacks` si no se desplegó con esa
+             misma instancia); la pila hace el resto (forwarder,
+             deliverer, reconciliador).
+         Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto
+             por uso; ver `LifecycleEvents.deploy`); la opción en sí, una
+             lectura de Secrets Manager ($0,05 por 10 000).
+         IAM: `EventsOperatorPolicy` (salida de la pila) en las
+             credenciales del llamante; el execution role necesita escribir
+             en el log group de la imagen (`logging="cloudwatch"`).
+         Cómo apagarla: no pases `events=` (por defecto `None`);
+             `LifecycleEvents().destroy()` borra la pila.
+         Ejemplo:
+             from rayito import LifecycleEvents
+
+             events = LifecycleEvents()
+             sbx = Sandbox.create(execution_role_arn=role_arn,
+                                  logging="cloudwatch", events=events)
+             events.get_events(sandbox_id=sbx.sandbox_id)  # created, ...
+
+         `telemetry=` (m15-rayd-otlp, ADR-021) es la séptima y ya es real:
+         un `TelemetryExport` hace que `rayd` exporte 7 gauges de CPU,
+         memoria y disco a CloudWatch cada `interval_s` (15-300 s, 60 por
+         defecto), firmados con `OtlpAuth.execution_role()` (SigV4 sobre el
+         execution role, exige `rayito-base-caps`) o con
+         `OtlpAuth.bearer(secret_name=...)` (experimental: una API key de
+         CloudWatch Metrics, funciona en `rayito-base`). Se envía como una
+         sección de `ConfigureSandbox` justo después de que el agente esté
+         listo; una imagen anterior a 0.6.0, o una 0.6.0 sin el exportador
+         todavía implementado, termina el sandbox (salvo `keep_on_failure`)
+         y lanza `UnimplementedError`.
+
+         Coste y activación
+         -------------------
+         Activa: `telemetry=TelemetryExport(...)` en `create()`.
+         Recursos y llamadas AWS: ninguno propio más allá de lo que tú
+             adjuntes: con `OtlpAuth.execution_role()` necesitas la política
+             `RayitoOtlpExport` (`infra/otlp-export.yaml`,
+             `rayito stack deploy otlp-export`) en el execution role;
+             con `OtlpAuth.bearer(...)` no hace falta ninguna política nueva
+             en el execution role, pero sí el permiso para leer el secreto.
+             `rayd` hace un `PutMetricData` por lote exportado (uno por
+             `interval_s`, agrupando las 7 gauges).
+         Coste aproximado: $0 por la opción en sí; CloudWatch factura la
+             ingesta OTLP a $0,50/GB: ≈ $0,00002 por sandbox-hora con
+             `interval_s=60` (639 bytes por lote, `AWS_API_NOTES.md` Q120).
+         IAM: `cloudwatch:PutMetricData` sobre el dataset OTLP por defecto
+             de la cuenta (no se puede acotar por namespace, research OT9);
+             con `OtlpAuth.bearer(...)`, en su lugar el permiso de lectura
+             del secreto que guarda el token.
+         Cómo apagarla: no pases `telemetry=` (por defecto `None`); borra la
+             pila `otlp-export` si ya no la usa ningún sandbox.
+         Ejemplo:
+             from rayito import OtlpAuth, TelemetryExport
+
+             sbx = Sandbox.create(
+                 "rayito-base-caps",
+                 execution_role_arn=role_arn,
+                 telemetry=TelemetryExport(interval_s=60, service_name="agente",
+                                           auth=OtlpAuth.execution_role()),
+             )
+             sbx.get_telemetry_status()  # TelemetryHealth(exported, dropped, last_error_class)
         """
         instrumentation = instrumentation_for(tracer_provider)
         binding = bind_secrets(secrets, secret_cache)
@@ -738,28 +861,35 @@ class Sandbox:
             )
             taken._bind_transfer(staging, pool.session)
             taken._bind_logger(logger)
-            taken._instrumentation = instrumentation
+            taken._use_instrumentation(instrumentation)
             return taken
         if validated_index is not None:
             validated_index.prepare()  # sin llamadas a AWS: falla antes de lanzar nada
-        plan_features(
-            FeatureOptions(
-                mounts=mounts,
-                volumes=volumes,
-                size=size,
-                events=events,
-                telemetry=telemetry,
-                gateways=gateways,
-                domain=domain,
-            ),
+        # m15-sizes-catalog: `plan_size` (`_sandbox_base`, compartida con
+        # `sandbox_async`) resuelve `size=` aquí, no en `plan_features`:
+        # no es una sección de `ConfigureSandbox`, es qué imagen lanzar.
+        resolved_size = plan_size(size, stacklevel=4)
+        feature_options = FeatureOptions(
+            mounts=mounts,
+            volumes=volumes,
+            size=size,
+            events=events,
+            telemetry=telemetry,
+            gateways=gateways,
+            domain=domain,
+        )
+        feature_plan = plan_features(
+            feature_options,
             image_variant=resolve_image_variant(template),
+            logging=logging,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = warm(
             binding,
             lambda: shared_secret_cache(plane.region, session or control_plane_session(plane)),
         )
-        image_arn = plane.resolve_template_arn(resolve_template(template))
+        template_name = sized_template_name(resolve_template(template), resolved_size)
+        image_arn = plane.resolve_template_arn(template_name)
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -810,11 +940,28 @@ class Sandbox:
                 require_lifecycle=plan.lifecycle_requested,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
             if launch.enforce:
                 sandbox._apply_initial_network(launch)
+            sandbox._apply_configure_sections(
+                planned_sections(
+                    feature_plan,
+                    LaunchFacts(
+                        sandbox_id=info.sandbox_id,
+                        image_arn=info.template,
+                        image_version=info.template_version,
+                        guest_memory_bytes=(
+                            None
+                            if sandbox._readiness_health is None
+                            else sandbox._readiness_health.memory_total_bytes
+                        ),
+                    ),
+                ),
+                timeout=request_timeout,
+                terminate_on_failure=not keep_on_failure,
+            )
         sandbox._launch_options = LaunchOptions(
             template=image_arn,
             template_version=template_version,
@@ -839,6 +986,8 @@ class Sandbox:
             on_timeout=on_timeout,
             network=launch.stored_policy,
             index=validated_index,
+            features=relaunch_features(feature_options),
+            size=resolved_size,
         )
         if persist is not None:
             sandbox._bind_and_restore(
@@ -886,7 +1035,7 @@ class Sandbox:
             sbx.commands.run("python agent.py")   # 0 llamadas: ya en caché
         """
         if tracer_provider is not None:
-            self._instrumentation = instrumentation_for(tracer_provider)
+            self._use_instrumentation(instrumentation_for(tracer_provider))
         self._rebind_secrets(secrets, secret_cache)
         with self._instrumentation.span(
             "rayito.sandbox.connect",
@@ -995,7 +1144,7 @@ class Sandbox:
                 terminate_on_failure=False,
                 logger=logger,
             )
-            sandbox._instrumentation = instrumentation
+            sandbox._use_instrumentation(instrumentation)
             sandbox._persist = bound
             sandbox._bind_transfer(staging, session)
             sandbox._secrets = binding
@@ -1259,6 +1408,15 @@ class Sandbox:
         no hubo (primera vida de ese `name`) o si el sandbox no persiste."""
         return self._last_restore
 
+    @property
+    def gateways(self) -> GatewayHandle:
+        """`{nombre: GatewayStatus}` de `create(gateways=)`: vacío (y su
+        `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
+        `"http://127.0.0.1:<puerto>"`, el host al que apuntar
+        `ANTHROPIC_BASE_URL` y similares dentro del sandbox."""
+        handle = self._section_handles.get(GATEWAY_SECTION)
+        return handle if isinstance(handle, GatewayHandle) else EMPTY_GATEWAYS
+
     # --------------------------------------------------------------- lifecycle
 
     @class_method_variant("_class_kill")
@@ -1312,12 +1470,33 @@ class Sandbox:
         `Health` sin RPC extra (quedan fijos en `/run`), y nunca se sondea
         un sandbox que no está `RUNNING` (la sonda lo despertaría). Los
         hechos del guest sólo van en el valor devuelto: `sbx.info` los deja
-        en `None`."""
+        en `None`. `size`/`baseline_memory_mib`/`baseline_cpu` sólo
+        aparecen cuando `create(size=...)` se usó (m15-sizes-catalog): esa
+        única llamada a `GetMicrovmImageVersion` se cachea por versión de
+        imagen (`_size_catalog.DEFAULT_SIZE_CATALOG`), así que repetir
+        `get_info()` no repite la llamada a AWS. Esto vive en
+        `self._launch_options` (relleno sólo por `create()`/`take()`):
+        `Sandbox.connect(id).get_info()` deja `size`/`baseline_memory_mib`/
+        `baseline_cpu` en `None` aunque la imagen tenga el sufijo de un
+        tamaño, porque el handle de `connect()` nunca pasó por `create()`
+        en este proceso (no hay un `requested_size` que confirmar). No se
+        deriva del sufijo del nombre de la imagen a propósito: un nombre
+        que termine en `-4gb` por convención propia del operador, no por
+        `--sizes`, confirmaría un tamaño que nadie pidió."""
         info = self._control_plane.get_microvm(self.sandbox_id)
         if deadline_may_have_moved(info.state, self._lifecycle):
             self._refresh_health()
         self._info = dataclasses.replace(info, metadata=self.metadata, lifecycle=self._lifecycle)
-        return with_guest_facts(self._info, self._guest)
+        result = with_guest_facts(self._info, self._guest)
+        requested_size = None if self._launch_options is None else self._launch_options.size
+        if requested_size is not None:
+            confirmed_mib = DEFAULT_SIZE_CATALOG.minimum_memory_mib(
+                self._control_plane, result.template, result.template_version
+            )
+            result = with_size_facts(
+                result, size_name=requested_size.name, baseline_memory_mib=confirmed_mib
+            )
+        return result
 
     @classmethod
     def _class_get_info(
@@ -1532,6 +1711,46 @@ class Sandbox:
         )
         self._record_health(response)
         return health_from_proto(response)
+
+    def get_telemetry_status(self, *, request_timeout: float | None = None) -> TelemetryHealth:
+        """`ConfigureService.ConfigureStatus` → `TelemetryExportStatus`
+        (m15-rayd-otlp). Siempre `TelemetryHealth()` (todo ceros) si nunca
+        pasaste `telemetry=` a `create()`/`connect()`, o si la imagen no
+        soporta la función: nunca lanza por eso. Llamada explícita, no parte
+        de `get_health()`, para que el camino sin `telemetry=` nunca pague
+        esta llamada extra.
+        """
+        timeout = self._resolve_request_timeout(request_timeout)
+        response = call_configure_status(self._configure, timeout=timeout)
+        status = response.telemetry_export
+        return TelemetryHealth(
+            exported=status.exported,
+            dropped=status.dropped,
+            last_error_class=status.last_error_class or None,
+        )
+
+    def _wait_settled(self, pending: tuple[ConfigureSection, ...], *, timeout: float) -> None:
+        """Sondea `ConfigureStatus` cada `CONFIGURE_SETTLE_POLL_S` hasta que
+        ninguna sección de `pending` siga pendiente; agotado el mayor
+        `settle_timeout_s`, la última lectura es `final` y cada sección que
+        siga sin asentarse lanza su propia excepción de timeout."""
+        deadline = time.monotonic() + settle_timeout_s(pending)
+        while pending:
+            final = time.monotonic() >= deadline
+            status = call_configure_status(self._configure, timeout=timeout)
+            pending = still_pending(status, pending, final=final)
+            if pending:
+                time.sleep(CONFIGURE_SETTLE_POLL_S)
+
+    @property
+    def mounts(self) -> dict[str, MountStatus]:
+        """Estado en vivo de cada `mounts=` (`m15-s3-mounts`): una
+        `ConfigureStatus` por lectura, nunca cacheada — un montaje puede
+        pasar de `"pending"` a `"mounted"`/`"failed"` entre dos lecturas de
+        esta propiedad. Vacío si `create()`/`take()` no recibió `mounts=`.
+        """
+        response = call_configure_status(self._configure, timeout=self._request_timeout)
+        return from_proto_status(response.s3_mounts)
 
     def upload_url(
         self,
@@ -1889,8 +2108,16 @@ class Sandbox:
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
         y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
-        su propia fila en el mismo índice); las variables del kernel, los procesos y las
-        PTY no sobreviven, sólo los ficheros del `HOME`. Si el
+        su propia fila en el mismo índice) y las mismas opciones 0.6 que
+        acaban en `ConfigureSandbox` (`mounts=`, `events=`, `telemetry=`,
+        `gateways=`): el sucesor las vuelve a planear y aplicar en su único
+        `Configure` por el mismo camino que `create()`, con sus propios
+        hechos — `events=` deriva `k_sbx` del nuevo `sandbox_id`, `mounts=`
+        espera otra vez a `mounted`, `telemetry=` usa la imagen y la memoria
+        del sucesor y cada cabecera de `gateways=` se resuelve otra vez,
+        nunca reenviando un valor ya leído; las
+        variables del kernel, los procesos y las PTY no sobreviven, sólo los
+        ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota
         con la `uri` del checkpoint ya completo. Sólo sobre un sandbox de
         `create(persist=)`: un handle de `connect()` no conoce el lanzamiento."""
@@ -2049,10 +2276,107 @@ class Sandbox:
         módulo del sub-cliente si no."""
         return fallback if self._custom_logger is None else self._custom_logger
 
+    def _use_instrumentation(self, instrumentation: Instrumentation) -> None:
+        """Fija la `Instrumentation` del handle e instala (o retira) en su
+        `ProxyAuthPlugin` la propagación `traceparent` hacia `rayd` que
+        corresponde (`call_metadata_providers`): sólo con `tracer_provider=`.
+        Es el único sitio que asigna `_instrumentation` tras construir el
+        handle, para que los spans y la cabecera nunca se desincronicen."""
+        self._instrumentation = instrumentation
+        self._plugin.providers = call_metadata_providers(instrumentation)
+
     def _default_secret_cache(self) -> SecretCache:
         """La caché compartida del proceso para la región y la sesión de
         este handle; sólo se crea si alguna llamada usa `secrets=`."""
         return shared_secret_cache(self._control_plane.region, self._session)
+
+    def _apply_configure_sections(
+        self,
+        planned: Sequence[PlannedSection],
+        *,
+        timeout: float,
+        terminate_on_failure: bool,
+    ) -> None:
+        """Único punto de `create()`/`take()` que llama a `ConfigureSandbox`:
+        agrupa en una sola llamada las secciones 0.6 que `plan_features`
+        dejó en `FeaturePlan.configure_sections` (`mounts=`, `gateways=`;
+        una función futura añade su propia entrada ahí, nunca toca este
+        método).
+
+        Igual que `_apply_initial_network`/`_bind_and_restore`: un fallo en
+        cualquier punto (imagen anterior a 0.6.0, flag no soportado, un
+        secreto que falta al resolver una cabecera, una sección
+        `INVALID`/`FAILED`, un montaje que no se asienta) cierra el cliente
+        y, salvo `keep_on_failure`, termina el VM antes de relanzar — el
+        caller nunca recibe un handle de un sandbox cuya configuración
+        pedida no se aplicó, así que nunca pierde la única vía para
+        apagarlo.
+        """
+        if not planned:
+            return
+        try:
+            self._send_configure_sections(planned, timeout=timeout)
+        except BaseException:
+            self.close()
+            if terminate_on_failure:
+                terminate_quietly(self._control_plane, self.sandbox_id, self._logger)
+            raise
+
+    def _send_configure_sections(
+        self, planned: Sequence[PlannedSection], *, timeout: float
+    ) -> None:
+        """La parte sin compuerta de `_apply_configure_sections`: resuelve
+        cada entrada con la `SecretCache` del handle (`resolve_sections`,
+        sólo si alguna la necesita), exige su flag en `Health.features`
+        (`require_capabilities`) antes de construir el `ConfigureRequest`,
+        lo aplica (`_configure_sections`) y, si alguna sección es una
+        `PostApplySection`, pide `ConfigureStatus` una vez y guarda lo que
+        devuelva su `after_apply` en `_section_handles`."""
+        features = require_configure_support(self._agent_features, CONFIGURE_FEATURE)
+        sections = resolve_sections(planned, self._section_secret_cache)
+        require_capabilities(sections, features)
+        self._configure_sections(sections, timeout=timeout)
+        post_apply = [section for section in sections if isinstance(section, PostApplySection)]
+        if not post_apply:
+            return
+        status = call_configure_status(self._configure, timeout=timeout)
+        for section in post_apply:
+            self._section_handles[section.section] = section.after_apply(
+                SectionApplied(
+                    status=status,
+                    reapply=functools.partial(self._reapply_section, section, timeout=timeout),
+                )
+            )
+
+    def _configure_sections(self, sections: Sequence[ConfigureSection], *, timeout: float) -> None:
+        """Una `Configure` con `sections`, cada `SectionResult` traducido a la
+        excepción de su propia sección (`check_configure_response`) y, para
+        las que el agente dejó en `PENDING`, la espera acotada a que se
+        asienten (`_wait_settled`): nunca vuelve con un montaje todavía sin
+        montar. Lo comparten `create()`/`take()` y `_reapply_section`."""
+        request = build_configure_request(sections)
+        response = call_configure(self._configure, request, timeout=timeout)
+        self._wait_settled(check_configure_response(response, sections), timeout=timeout)
+
+    def _section_secret_cache(self) -> SecretCache:
+        """La `SecretCache` con la que se resuelve cada `SectionFactory`: la
+        de `secrets=` si el handle la tiene, la compartida del proceso si
+        no (la misma regla que `secrets=`, nunca una caché aparte)."""
+        if self._secrets is not None and self._secrets.cache is not None:
+            return self._secrets.cache
+        return self._default_secret_cache()
+
+    def _reapply_section(
+        self, section: ConfigureSection, *, timeout: float
+    ) -> configure_pb2.ConfigureStatusResponse:
+        """El `SectionApplied.reapply` de cada `PostApplySection` (p. ej.
+        `sbx.gateways.refresh()`): vuelve a mandar sólo esa sección por el
+        mismo camino que `create()` (`_configure_sections`) — una sección
+        `INVALID` (un valor rotado con CR/LF) o `FAILED` (`listen_failed`)
+        lanza aquí, nunca devuelve un estado vacío o a medio aplicar en
+        silencio. Sólo si se aplicó pide el `ConfigureStatus` nuevo."""
+        self._configure_sections((section,), timeout=timeout)
+        return call_configure_status(self._configure, timeout=timeout)
 
     def _rebind_secrets(
         self,
@@ -2322,6 +2646,10 @@ class Sandbox:
         kernel reiniciado o de un desfase de reloj mayor que 5 s."""
         self._metadata = metadata_from_health(response)
         self._guest = guest_facts_from_health(response)
+        # M15: `None` en un agente anterior a 0.6.0 (campo `features`
+        # ausente); `_apply_configure_sections` es quien exige que no lo sea
+        # antes de mandar cualquier sección 0.6.
+        self._agent_features = agent_features_from_health(response)
         if self._ready_uptime_ms is None:
             self._ready_uptime_ms = int(response.uptime_ms)
         self._warn_hardening(response)

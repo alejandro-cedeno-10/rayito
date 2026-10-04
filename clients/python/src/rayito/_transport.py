@@ -12,13 +12,14 @@ pausa vuelva a intentar en segundos, no en los 120 s por defecto.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import grpc
 import grpc.aio
@@ -136,13 +137,32 @@ class TokenStore:
 MetadataPairs = tuple[tuple[str, str], ...]
 
 
+class CallMetadataProvider(Protocol):
+    """Seam para añadir cabeceras calculadas en el momento de cada llamada
+    (a diferencia de `extra_metadata`/`extra`, fijas para la vida del
+    canal). Vacío por defecto: `rayito._telemetry_export._propagation`'s
+    `TraceparentProvider` (m15-rayd-otlp, research Q92) es la primera
+    implementación real -- un `traceparent` distinto por RPC, porque cada
+    llamada ocurre dentro de un span distinto de
+    `rayito._otel.Instrumentation`.
+    """
+
+    def metadata(self) -> MetadataPairs: ...
+
+
 class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
     """Añade las cuatro cabeceras del proxy a cada RPC (unarios y streams).
 
     `access_token=None` omite `x-access-token`: sólo tiene sentido para
     `HealthService.Health`, el único RPC anónimo. `extra` son cabeceras del
     usuario ya validadas (`headers=` del shim de E2B) y van siempre después
-    de las reservadas, así que nunca las sustituyen.
+    de las reservadas, así que nunca las sustituyen. `providers` es un
+    atributo público y mutable para que algo que se sabe después de
+    construir el plugin (como la instrumentación OTel de `create()`, fijada
+    tras `_open()`) pueda activarlo sin reabrir el canal; no lo evalúa este
+    plugin sino los interceptores del canal (`_CallMetadataInterceptor`),
+    porque grpc llama al plugin desde un hilo suyo, donde el contexto
+    OpenTelemetry del llamante no está activo.
     """
 
     def __init__(
@@ -152,11 +172,13 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
         port: int = DEFAULT_PORT,
         access_token: str | None,
         extra: MetadataPairs = (),
+        providers: tuple[CallMetadataProvider, ...] = (),
     ) -> None:
         self._store = store
         self._port = port
         self._access_token = access_token
         self._extra = extra
+        self.providers = providers
 
     def __call__(
         self,
@@ -178,6 +200,131 @@ class ProxyAuthPlugin(grpc.AuthMetadataPlugin):
             metadata.append((ACCESS_TOKEN_KEY, self._access_token))
         metadata.extend(self._extra)
         callback(tuple(metadata), None)
+
+
+def provider_metadata(plugin: ProxyAuthPlugin) -> MetadataPairs:
+    """Las cabeceras de `plugin.providers`, evaluadas ahora, en el hilo (o la
+    tarea) que hace la llamada."""
+    return tuple(pair for provider in plugin.providers for pair in provider.metadata())
+
+
+class _ClientCallDetails(
+    collections.namedtuple(
+        "_ClientCallDetails",
+        ("method", "timeout", "metadata", "credentials", "wait_for_ready", "compression"),
+    ),
+    grpc.ClientCallDetails,
+):
+    """`grpc.ClientCallDetails` con la metadata ampliada (los de grpc son
+    inmutables)."""
+
+
+if TYPE_CHECKING:
+    _UnaryUnary = grpc.UnaryUnaryClientInterceptor[Any, Any]
+    _UnaryStream = grpc.UnaryStreamClientInterceptor[Any, Any]
+    _StreamUnary = grpc.StreamUnaryClientInterceptor[Any, Any]
+    _StreamStream = grpc.StreamStreamClientInterceptor[Any, Any]
+    _AioUnaryUnaryBase = grpc.aio.UnaryUnaryClientInterceptor[Any, Any]
+    _AioUnaryStreamBase = grpc.aio.UnaryStreamClientInterceptor[Any, Any]
+    _AioStreamUnaryBase = grpc.aio.StreamUnaryClientInterceptor[Any, Any]
+    _AioStreamStreamBase = grpc.aio.StreamStreamClientInterceptor[Any, Any]
+else:
+    _UnaryUnary = grpc.UnaryUnaryClientInterceptor
+    _UnaryStream = grpc.UnaryStreamClientInterceptor
+    _StreamUnary = grpc.StreamUnaryClientInterceptor
+    _StreamStream = grpc.StreamStreamClientInterceptor
+    _AioUnaryUnaryBase = grpc.aio.UnaryUnaryClientInterceptor
+    _AioUnaryStreamBase = grpc.aio.UnaryStreamClientInterceptor
+    _AioStreamUnaryBase = grpc.aio.StreamUnaryClientInterceptor
+    _AioStreamStreamBase = grpc.aio.StreamStreamClientInterceptor
+
+
+class _CallMetadataInterceptor(_UnaryUnary, _UnaryStream, _StreamUnary, _StreamStream):
+    """Añade `provider_metadata(plugin)` a cada RPC del canal síncrono. Corre
+    en el hilo del llamante (a diferencia del `AuthMetadataPlugin`), así que
+    un `traceparent` nombra el span de esa misma llamada (aceptación en AWS
+    de m15-rayd-otlp). Sin providers deja la llamada tal cual: las cabeceras
+    son exactamente las de 0.5.x."""
+
+    def __init__(self, plugin: ProxyAuthPlugin) -> None:
+        self._plugin = plugin
+
+    def _details(self, details: grpc.ClientCallDetails) -> grpc.ClientCallDetails:
+        extra = provider_metadata(self._plugin)
+        if not extra:
+            return details
+        return _ClientCallDetails(
+            details.method,
+            details.timeout,
+            (*(details.metadata or ()), *extra),
+            details.credentials,
+            details.wait_for_ready,
+            getattr(details, "compression", None),
+        )
+
+    def intercept_unary_unary(self, continuation: Any, details: Any, request: Any) -> Any:
+        return continuation(self._details(details), request)
+
+    def intercept_unary_stream(self, continuation: Any, details: Any, request: Any) -> Any:
+        return continuation(self._details(details), request)
+
+    def intercept_stream_unary(self, continuation: Any, details: Any, requests: Any) -> Any:
+        return continuation(self._details(details), requests)
+
+    def intercept_stream_stream(self, continuation: Any, details: Any, requests: Any) -> Any:
+        return continuation(self._details(details), requests)
+
+
+class _AioCallMetadata:
+    """Lo común de los cuatro interceptores asíncronos: grpc.aio clasifica
+    cada interceptor por un único tipo, así que hace falta uno por clase de
+    RPC. Corren en la tarea del llamante."""
+
+    def __init__(self, plugin: ProxyAuthPlugin) -> None:
+        self._plugin = plugin
+
+    def _details(self, details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
+        extra = provider_metadata(self._plugin)
+        if not extra:
+            return details
+        return grpc.aio.ClientCallDetails(
+            details.method,
+            details.timeout,
+            grpc.aio.Metadata(*(details.metadata or ()), *extra),
+            details.credentials,
+            details.wait_for_ready,
+        )
+
+
+class _AioUnaryUnary(_AioCallMetadata, _AioUnaryUnaryBase):
+    async def intercept_unary_unary(self, continuation: Any, details: Any, request: Any) -> Any:
+        return await continuation(self._details(details), request)
+
+
+class _AioUnaryStream(_AioCallMetadata, _AioUnaryStreamBase):
+    async def intercept_unary_stream(self, continuation: Any, details: Any, request: Any) -> Any:
+        return await continuation(self._details(details), request)
+
+
+class _AioStreamUnary(_AioCallMetadata, _AioStreamUnaryBase):
+    async def intercept_stream_unary(self, continuation: Any, details: Any, requests: Any) -> Any:
+        return await continuation(self._details(details), requests)
+
+
+class _AioStreamStream(_AioCallMetadata, _AioStreamStreamBase):
+    async def intercept_stream_stream(self, continuation: Any, details: Any, requests: Any) -> Any:
+        return await continuation(self._details(details), requests)
+
+
+def _aio_interceptors(plugin: ProxyAuthPlugin) -> list[Any]:
+    """`list[Any]`: grpc-stubs declara `grpc.aio.ClientInterceptor` como un
+    marcador sin tipar (`_PartialStubMustCastOrIgnore`)."""
+    return [
+        _AioUnaryUnary(plugin),
+        _AioUnaryStream(plugin),
+        _AioStreamUnary(plugin),
+        _AioStreamStream(plugin),
+    ]
 
 
 @dataclass(frozen=True)
@@ -215,13 +362,17 @@ class TransportSettings:
         return [*self.options, *proxy]
 
     def open_channel(self, host: str, plugin: ProxyAuthPlugin) -> grpc.Channel:
-        return grpc.secure_channel(
+        channel = grpc.secure_channel(
             self.target(host), self.credentials(plugin), options=self.channel_options()
         )
+        return grpc.intercept_channel(channel, _CallMetadataInterceptor(plugin))
 
     def open_aio_channel(self, host: str, plugin: ProxyAuthPlugin) -> grpc.aio.Channel:
         return grpc.aio.secure_channel(
-            self.target(host), self.credentials(plugin), options=self.channel_options()
+            self.target(host),
+            self.credentials(plugin),
+            options=self.channel_options(),
+            interceptors=_aio_interceptors(plugin),
         )
 
 

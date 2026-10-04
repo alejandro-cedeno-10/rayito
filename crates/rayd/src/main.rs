@@ -5,7 +5,8 @@
 //! shared output budget, the code manager with its kernel sidecar, the
 //! persistence manager over the S3 store (execution role by `IMDSv2`) and
 //! the tar archiver, the presigned-transfer manager over its credential-free
-//! HTTPS client (ADR-010), the suspend broadcast, the metrics probe and the 5 s
+//! HTTPS client (ADR-010), the suspend broadcast, PID 1's orphan reaper
+//! (`rayd-orphan-reaper`), the metrics probe and the 5 s
 //! metrics sampler with its history ring and the logical deadline's watcher
 //! thread to the gRPC and hooks listeners on `0.0.0.0`, and stops both on
 //! SIGTERM, Ctrl-C, the `/terminate` hook or a kill-mode deadline, which
@@ -17,20 +18,24 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
+use aws_sdk_s3::config::SharedCredentialsProvider;
 use rayd::adapters::{
-    CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock, ImdsState, OsRandomSource,
-    PlatformMetricsProbe, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
-    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform, inherited_nofile_limits,
-    install_imds_block, prepare_socket_root,
+    ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
+    ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
+    PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
+    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
+    imds_execution_role_provider, inherited_nofile_limits, install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
+use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
 use rayd::hooks::HookServices;
 use rayd::lifecycle::{
-    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, Reaper, StreamCloser,
-    SuspendSignal, TimeoutWatcher, spawn_metrics_sampler, spawn_reaper, spawn_timeout_watcher,
+    DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
+    StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
+    spawn_reaper, spawn_timeout_watcher,
 };
 use rayd::network::NetworkManager;
 use rayd::persistence::platform_persistence_manager;
@@ -144,6 +149,19 @@ fn split_command(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(str::to_owned).collect()
 }
 
+/// The process's `FeatureSet` participants, each already past its
+/// `on_boot`, which runs before the hooks server answers anything: the
+/// build-time `/ready` must already see a template's `start_cmd` running
+/// (`template_start`, ADR-022). Every other slot's `on_boot` is the
+/// trait's no-op.
+async fn boot_participants(features: &FeatureSet) -> Vec<Arc<dyn LifecycleParticipant>> {
+    let participants = features.participants();
+    for participant in &participants {
+        participant.on_boot().await;
+    }
+    participants
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<ExitCode> {
     let args = parse_args(std::env::args().skip(1))?;
@@ -174,7 +192,11 @@ async fn main() -> anyhow::Result<ExitCode> {
         PtySettings::default(),
     );
     tracing::info!(pty_devices = ptys.pty_devices(), "pty backend configured");
-    let persistence = persistence_manager(&session, &platform, policy, &args).await;
+    // One execution-role provider for the whole process: persistence and
+    // the 0.6 features share its IMDS cache and refresh cycle (ADR-021).
+    let execution_role = imds_execution_role_provider();
+    let persistence =
+        persistence_manager(&session, &platform, policy, &args, execution_role.clone()).await;
     let processes = platform_manager(
         session.clone(),
         platform,
@@ -184,6 +206,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let reapers: Vec<Arc<dyn Reaper>> = vec![processes.clone(), code.clone()];
     let _reaper = spawn_reaper(DEFAULT_REAPER_INTERVAL, reapers);
+    let _orphan_reaper = spawn_orphan_reaper();
     let metrics: Arc<dyn MetricsProbe> = Arc::new(PlatformMetricsProbe::default());
     let metrics_history = Arc::new(MetricsHistory::default());
     let _sampler = spawn_metrics_sampler(
@@ -196,10 +219,13 @@ async fn main() -> anyhow::Result<ExitCode> {
     let transfers = transfer_services(&session, &files, &suspend);
     let (exit_reason, timeout) = deadline(&session, &shutdown, &suspend, &processes, &code)?;
 
+    let features = build_feature_set(&session, &metrics_history, execution_role, &processes);
+
     let (grpc_listener, hooks_listener) = bind_listeners(&args).await?;
 
     let user_probe = user_connect_probe(processes.clone());
-    let grpc = rayd::grpc::router_with_transfers(
+    let participants = boot_participants(&features).await;
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes,
@@ -216,6 +242,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         },
         StreamSettings::default(),
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
@@ -232,10 +259,10 @@ async fn main() -> anyhow::Result<ExitCode> {
             user_probe: Some(user_probe),
             timeout,
             network,
-            // M15 foundations: no feature slot returns a participant yet
-            // (`features::build` is all `Unsupported`), so `/suspend` and
-            // `/ready` behave exactly as in 0.5.x.
-            participants: Vec::new(),
+            // Every slot's participant, each already past its `on_boot`
+            // (`boot_participants`); empty while no slot has one, which
+            // keeps every hook exactly as in 0.5.x.
+            participants,
         }),
     )
     .with_graceful_shutdown(shutdown.clone().cancelled_owned());
@@ -246,6 +273,37 @@ async fn main() -> anyhow::Result<ExitCode> {
     )?;
     tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
     Ok(ExitCode::from(exit_reason.exit_code()))
+}
+
+/// The process's one `FeatureSet` (ADR-015), shared by `ConfigureGrpc`,
+/// `HealthGrpc` and the hooks' lifecycle participants, so a `Configure`d
+/// section, a `Health` call and a `/suspend` flush all agree on what is
+/// actually running. `execution_role` is the same provider instance
+/// persistence's `S3ObjectStore` uses (one IMDS cache, ADR-021);
+/// `processes` lets `template_start` launch a template's `start_cmd`
+/// (ADR-022). `telemetry_export` degrades to `Unsupported` when
+/// `AWS_REGION` is unset.
+fn build_feature_set(
+    session: &Arc<SandboxSession>,
+    metrics_history: &Arc<MetricsHistory>,
+    execution_role: SharedCredentialsProvider,
+    processes: &Arc<PlatformProcessManager>,
+) -> Arc<FeatureSet> {
+    Arc::new(rayd::features::build(&FeatureContext {
+        processes: Some(processes.clone()),
+        session: session.clone(),
+        credentials: Arc::new(ImdsCredentialBroker::sharing(execution_role)),
+        pushed: Arc::new(PushedCredentials::new()),
+        history: metrics_history.clone(),
+        region: platform_region(),
+    }))
+}
+
+/// `AWS_REGION` as the platform set it; `None` when unset or empty.
+fn platform_region() -> Option<String> {
+    std::env::var(REGION_ENV)
+        .ok()
+        .filter(|region| !region.is_empty())
 }
 
 /// The code manager over the kernel sidecar (none with `--no-sidecar`),
@@ -366,11 +424,12 @@ async fn persistence_manager(
     platform: &SpawnPlatform,
     policy: UserPolicy,
     args: &Args,
+    execution_role: SharedCredentialsProvider,
 ) -> Arc<rayd::persistence::PlatformPersistenceManager> {
-    let region = std::env::var(REGION_ENV)
-        .ok()
-        .filter(|region| !region.is_empty());
-    let store = Arc::new(S3ObjectStore::new(args.persistence_credentials, region.clone()).await);
+    let region = platform_region();
+    let store = Arc::new(
+        S3ObjectStore::new(args.persistence_credentials, region.clone(), execution_role).await,
+    );
     tracing::info!(
         credentials = args.persistence_credentials.as_str(),
         region_known = region.is_some(),
@@ -493,6 +552,22 @@ fn log_spawn_platform(platform: &SpawnPlatform) {
             "rayd is not root: processes run as its own user and limits are clamped"
         ),
     }
+}
+
+/// PID 1's orphan reaper (`rayd-orphan-reaper`, Q80) over the process-wide
+/// `ChildRegistry` every launcher spawns through: on each `SIGCHLD` and on
+/// the shared 5 s sweep it reaps the zombies re-parented to `rayd` that it
+/// did not spawn itself. `None` when `rayd` is not where orphans re-parent
+/// (not PID 1 and not a child subreaper: a developer's shell).
+fn spawn_orphan_reaper() -> Option<tokio::task::JoinHandle<()>> {
+    let reaper = OrphanReaper::new(ChildRegistry::process());
+    tracing::info!(
+        orphan_reaper = reaper.is_active(),
+        "orphan reaping configured"
+    );
+    reaper
+        .is_active()
+        .then(|| spawn_child_reaper(DEFAULT_REAPER_INTERVAL, Arc::new(reaper)))
 }
 
 fn spawn_stop_signal_handler(shutdown: CancellationToken) {

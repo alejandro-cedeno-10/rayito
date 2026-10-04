@@ -1,36 +1,62 @@
 //! Credential adapters for the 0.6 optional features (M15 foundations,
-//! ADR-015/016 context): one `ImdsCredentialsProvider` instance (the same
-//! type `adapters::s3_store` already builds for ADR-009 persistence) meant
-//! to be shared by every feature that needs the execution role inside the
-//! guest (s3-mounts, efs-volumes, rayd-otlp with role auth), plus
-//! `PushedCredentials`, the in-memory holder for values the SDK delivers
-//! through `ConfigureSandbox` instead of IMDS (secret-gateway's vaulted
-//! header values). Neither type is wired into a real feature yet — each
-//! feature's own adapter will take an `Arc<ImdsCredentialBroker>` once it
-//! exists.
+//! ADR-015/016 context): `ImdsCredentialBroker`, shared by every feature
+//! that needs the execution role inside the guest (s3-mounts, efs-volumes,
+//! rayd-otlp with role auth), plus `PushedCredentials`, the in-memory
+//! holder for values the SDK delivers through `ConfigureSandbox` instead of
+//! IMDS (secret-gateway's vaulted header values).
 //!
-//! `S3ObjectStore` still builds its own `ImdsCredentialsProvider` instance
-//! (ADR-009, unchanged by this change): collapsing the two into one shared
-//! instance is a follow-up for whichever feature first needs role
-//! credentials, tracked as an open question in
-//! `openspec/changes/v06-foundations/design.md`, not done speculatively
-//! here.
+//! `main` builds one broker over the process-wide
+//! `s3_store::imds_execution_role_provider()` and hands that same provider
+//! to `S3ObjectStore` (ADR-009 persistence) too (m15-rayd-otlp, ADR-021):
+//! one IMDS-backed provider instance, one IMDS cache, one refresh cycle.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
-use aws_config::imds::credentials::ImdsCredentialsProvider;
-use aws_sdk_s3::config::ProvideCredentials;
+use aws_sdk_s3::config::{ProvideCredentials, SharedCredentialsProvider};
 use rayd_core::credentials::{CredentialKind, CredentialLease, CredentialProvider};
 use zeroize::Zeroizing;
 
-use super::s3_store::EXECUTION_ROLE_PROFILE;
+use super::s3_store::imds_execution_role_provider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialBrokerError {
+    /// IMDS answered the fixed `EXECUTION_ROLE_PROFILE` name with HTTP 404:
+    /// no execution role is attached to this guest at all (ADR-012: only
+    /// `rayito-base-caps`/derived images get one). Permanent for the life
+    /// of this boot, never worth retrying.
+    #[error("imds reports no execution role for this guest")]
+    RoleNotAttached,
+    /// Any other failure (timeout, 5xx, no route to IMDS): a broker
+    /// hiccup, not evidence the image lacks a role.
     #[error("imds credentials unavailable")]
     Unavailable,
+}
+
+/// Classifies a failed `provide_credentials()` call by walking its
+/// `source()` chain for the wording `aws-config` 1.12.0's
+/// `ImdsError::ErrorResponse`'s own `Display` impl uses
+/// (`imds/client/error.rs`: `"error response from IMDS (code: {status})"`).
+/// `ImdsCredentialsProvider::profile()` (used by `ImdsCredentialBroker`)
+/// skips the profile-discovery call that crate makes its own 404 check
+/// against, and its error types are crate-private, so this reads the
+/// rendered text instead of downcasting; falling back to `Unavailable`
+/// when the wording ever changes upstream is the fail-safe side (a classic
+/// 404 instead becomes a retryable "broker hiccup", never the other way
+/// round).
+fn classify(
+    source: &aws_credential_types::provider::error::CredentialsError,
+) -> CredentialBrokerError {
+    const NOT_FOUND_MARKER: &str = "code: 404";
+    let mut cursor: Option<&(dyn std::error::Error + 'static)> = Some(source);
+    while let Some(error) = cursor {
+        if error.to_string().contains(NOT_FOUND_MARKER) {
+            return CredentialBrokerError::RoleNotAttached;
+        }
+        cursor = error.source();
+    }
+    CredentialBrokerError::Unavailable
 }
 
 /// The execution-role credentials themselves, held only here: the secret
@@ -45,7 +71,7 @@ pub struct GuestCredentials {
 /// One IMDS-backed provider, cached behind `rayd_core::credentials`'
 /// refresh-margin rule so a feature's hot path never calls IMDS directly.
 pub struct ImdsCredentialBroker {
-    provider: ImdsCredentialsProvider,
+    provider: SharedCredentialsProvider,
     live: Mutex<Option<GuestCredentials>>,
 }
 
@@ -56,12 +82,19 @@ impl Default for ImdsCredentialBroker {
 }
 
 impl ImdsCredentialBroker {
+    /// A broker over its own, fresh execution-role provider: for tests and
+    /// for `FeatureContext::default()`. `main` uses `sharing` instead.
     #[must_use]
     pub fn new() -> Self {
+        Self::sharing(imds_execution_role_provider())
+    }
+
+    /// A broker over `provider`, the process-wide
+    /// `imds_execution_role_provider()` `main` also gives `S3ObjectStore`.
+    #[must_use]
+    pub fn sharing(provider: SharedCredentialsProvider) -> Self {
         Self {
-            provider: ImdsCredentialsProvider::builder()
-                .profile(EXECUTION_ROLE_PROFILE)
-                .build(),
+            provider,
             live: Mutex::new(None),
         }
     }
@@ -86,7 +119,7 @@ impl ImdsCredentialBroker {
             .provider
             .provide_credentials()
             .await
-            .map_err(|_source| CredentialBrokerError::Unavailable)?;
+            .map_err(|source| classify(&source))?;
         let credentials = GuestCredentials {
             access_key_id: fetched.access_key_id().to_owned(),
             secret_access_key: Zeroizing::new(fetched.secret_access_key().to_owned()),
@@ -104,6 +137,22 @@ impl ImdsCredentialBroker {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<GuestCredentials>> {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A broker whose `ensure()` returns `credentials` straight from the
+    /// cache, never touching IMDS: for other adapters' unit tests (e.g.
+    /// `cloudwatch_otlp_sink`'s) that need a real `ExecutionRole` lease to
+    /// exercise `SigV4` signing, consistent with this crate's convention
+    /// that no unit test below the acceptance stage touches a real
+    /// network (`adapters::s3_store`'s own IMDS path is likewise untested
+    /// here). Only ever compiled for `cargo test`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn seeded_for_test(credentials: GuestCredentials) -> Self {
+        Self {
+            provider: imds_execution_role_provider(),
+            live: Mutex::new(Some(credentials)),
+        }
     }
 }
 
@@ -159,7 +208,40 @@ impl PushedCredentials {
 
 #[cfg(test)]
 mod tests {
+    use aws_credential_types::provider::error::CredentialsError;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct Wrapped(&'static str);
+
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for Wrapped {}
+
+    #[test]
+    fn classify_recognizes_the_imds_404_wording_anywhere_in_the_source_chain() {
+        // The exact shape `aws-config` 1.12.0's `ImdsError::ErrorResponse`
+        // renders (`imds/client/error.rs`): "error response from IMDS
+        // (code: 404). <raw response Debug>".
+        let source = CredentialsError::provider_error(Wrapped(
+            "error response from IMDS (code: 404). HttpResponse { .. }",
+        ));
+        assert_eq!(classify(&source), CredentialBrokerError::RoleNotAttached);
+    }
+
+    #[test]
+    fn classify_treats_every_other_failure_as_a_generic_unavailable_broker() {
+        let timeout = CredentialsError::provider_error(Wrapped("dispatch failure: timed out"));
+        assert_eq!(classify(&timeout), CredentialBrokerError::Unavailable);
+        let server_error =
+            CredentialsError::provider_error(Wrapped("error response from IMDS (code: 500)."));
+        assert_eq!(classify(&server_error), CredentialBrokerError::Unavailable);
+    }
 
     #[test]
     fn pushed_credentials_round_trip_by_name() {

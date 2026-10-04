@@ -111,7 +111,7 @@ test("readEventCookie lee el objeto `cookies` ya parseado de CloudFront", () => 
   assert.equal(readEventCookie(undefined, "rayito_tt"), null);
 });
 
-test("trafficTokenAccepted: cookie del objeto `cookies` del evento (Q96)", () => {
+test("trafficTokenAccepted: cookie del objeto `cookies` del evento (Q121)", () => {
   const token = "token-en-cookies";
   const cookies = { rayito_tt: { value: token } };
   assert.equal(trafficTokenAccepted({}, sha256Hex(token), cookies), true);

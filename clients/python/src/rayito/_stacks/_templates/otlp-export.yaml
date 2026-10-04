@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito m15-rayd-otlp (optional): one least-privilege IAM managed policy
+  (RayitoOtlpExport) granting the execution role `cloudwatch:PutMetricData`
+  on the account's default OTLP metrics dataset, for `telemetry=
+  TelemetryExport(auth=OtlpAuth.executionRole())`. It creates no other
+  resource ($0: IAM only). Research confirmed (OT1/OT9,
+  docs/research/2026-10-e2b-out-of-scope.md §6.8) that CloudWatch's OTLP
+  metrics endpoint cannot be scoped by namespace: the only resource this
+  action can be restricted to is the account's single default dataset, so
+  an execution role with this policy can export arbitrary metric names —
+  not a namespace this policy controls (see the feature's "Coste y
+  activación" docstring and T23 in SECURITY.md for the mitigation:
+  `OtlpAuth.bearer(...)` on `rayito-base`, or caps isolation). Attach it
+  only to execution roles that use `telemetry=`; delete the stack to
+  remove it.
+
+Resources:
+  RayitoOtlpExport:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Rayito OTLP export: PutMetricData on the account's default OTLP
+        dataset, for rayd's CloudWatch OTLP exporter (telemetry=).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PutOtlpMetricsOnTheDefaultDataset
+            Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+            Resource: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:dataset/default"
+
+Outputs:
+  PolicyArn:
+    Description: Attach to the execution role of sandboxes that use telemetry= with OtlpAuth.executionRole().
+    Value: !Ref RayitoOtlpExport

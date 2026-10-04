@@ -2,11 +2,66 @@ syntax = "proto3";
 
 package rayito.v1;
 
-// Owned by m15-s3-mounts. Foundations only creates these two empty stub
-// messages (so `configure.proto` has a stable field to point at); the
-// feature that implements s3-mounts owns every field number inside this
-// file from here on. Message names stay prefixed (`S3Mount*`) so they
-// never collide with another feature's messages inside `rayito.v1`.
-message S3MountsConfig {}
+// Owned by m15-s3-mounts: montajes de buckets S3 vía `mount-s3`/FUSE, sólo
+// sobre `rayito-base-caps` (o una variante derivada por tamaño). Una
+// `S3MountsConfig` presente sustituye el conjunto de montajes anterior
+// entero (vacía los desmonta todos); el bucket y el prefijo no son
+// secretos (como cualquier otro metadato), así que viajan en claro — las
+// credenciales nunca pasan por aquí: el daemon `mount-s3` las obtiene de
+// IMDS, en su propio proceso, como uid 990 (ADR-017).
+message S3MountsConfig {
+  // Montajes deseados, en el orden en que `rayd` los aplica. Repetir una
+  // misma `mount_path` dentro de la misma petición dos veces dejaría el
+  // resultado del montaje indeterminado, así que se rechaza con
+  // `SECTION_CODE_INVALID` antes de montar nada.
+  repeated S3Mount mounts = 1;
+}
 
-message S3MountsStatus {}
+message S3Mount {
+  // Ruta absoluta y canónica del punto de montaje en el guest (validada
+  // por el SDK con la misma regla que `volumes=`, `_mount_path.py` /
+  // `mount-path.ts`: bajo `/mnt/` o `/home/user/`, sin solapar con otro
+  // montaje o volumen).
+  string mount_path = 1;
+  string bucket = 2;
+  // Prefijo de objeto bajo el que `mount-s3` expone el bucket; cadena
+  // vacía monta el bucket entero.
+  string prefix = 3;
+  // El valor seguro es `true` (principio de mínimo privilegio), pero
+  // proto3 pone a `false` el default de cable de todo `bool`: un cliente
+  // que omita este campo pide un montaje de lectura-escritura, no de sólo
+  // lectura. Por eso ningún SDK deja que `S3Mount` construya su propio
+  // `S3MountsConfig` sin fijarlo explícitamente — `to_proto()`/`toProto()`
+  // siempre mandan el valor real de `S3Mount.read_only`/`S3Mount.readOnly`
+  // (que sí tiene `true` como valor por defecto del lado del SDK) — así
+  // que esta ambigüedad del cable nunca llega a importar en la práctica,
+  // pero un cliente que no sea el SDK debe fijar este campo explícitamente
+  // para obtener sólo lectura.
+  bool read_only = 4;
+  // Sólo tienen efecto con `read_only = false`; `mount-s3` los traduce a
+  // sus propias banderas `--allow-overwrite`/`--allow-delete`.
+  bool allow_overwrite = 5;
+  bool allow_delete = 6;
+}
+
+message S3MountsStatus {
+  repeated S3MountState mounts = 1;
+}
+
+message S3MountState {
+  string mount_path = 1;
+  S3MountPhase phase = 2;
+  // Cadena snake_case cerrada (nunca el mensaje de AWS, un host o un
+  // identificador de cuenta): `network`, `iam_denied`, `not_found`,
+  // `not_allowed`, `helper_missing` o `timeout`. Vacía salvo en
+  // `S3_MOUNT_PHASE_FAILED`.
+  string error_class = 3;
+}
+
+enum S3MountPhase {
+  S3_MOUNT_PHASE_UNSPECIFIED = 0;
+  // Aceptado, montaje FUSE y daemon `mount-s3` todavía asentándose.
+  S3_MOUNT_PHASE_PENDING = 1;
+  S3_MOUNT_PHASE_MOUNTED = 2;
+  S3_MOUNT_PHASE_FAILED = 3;
+}

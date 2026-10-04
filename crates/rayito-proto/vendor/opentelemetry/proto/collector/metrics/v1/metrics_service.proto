@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package opentelemetry.proto.collector.metrics.v1;
+
+import "opentelemetry/proto/metrics/v1/metrics.proto";
+
+// m15-rayd-otlp (ADR-021): minimal subset of upstream
+// `collector/metrics/v1/metrics_service.proto` (Apache-2.0, see /NOTICE and
+// `common/v1/common.proto`'s header comment). No `service` block: `rayd` POSTs
+// the serialized `ExportMetricsServiceRequest` itself
+// (`adapters::cloudwatch_otlp_sink`), it never opens a gRPC channel to OTLP.
+
+message ExportMetricsServiceRequest {
+  repeated opentelemetry.proto.metrics.v1.ResourceMetrics resource_metrics = 1;
+}

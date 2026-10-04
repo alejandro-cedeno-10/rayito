@@ -1,0 +1,1 @@
+[{ "name": "class Template", "pattern": "^(export )?declare class Template\\b" }]

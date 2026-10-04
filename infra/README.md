@@ -11,6 +11,7 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
 | `custom-domain.yaml` | Opcional (M15, experimental, $0 en reposo): distribución CloudFront con alias comodín + CloudFront Function de enrutado + KeyValueStore; sin Lambda ni IAM propio | Sólo si usas `CustomDomain` para exponer sandboxes en tu propio dominio ([Dominio propio](#dominio-propio-infracustom-domainyaml-m15)); `Sandbox.create(domain=)` sigue sin cablear, ver `ARCHITECTURE.md` ADR-024 |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
+| `events-webhooks.yaml` | Opcional (M15, m15-events-webhooks): secreto HMAC del stack, tabla DynamoDB, tres Lambdas (forwarder/deliverer/reconciliador), suscripción de CloudWatch Logs y regla de EventBridge Scheduler | Sólo si usas `events=LifecycleEvents(...)` / `LifecycleEvents` para eventos de ciclo de vida firmados y webhooks ([Eventos y webhooks](#eventos-y-webhooks-infraevents-webhooksyaml-m15)) |
 
 ## Egress allowlist (`egress-connector.yaml`)
 
@@ -503,7 +504,7 @@ combinada.
 aws cloudformation deploy \
   --stack-name rayito-custom-domain \
   --template-file infra/custom-domain.yaml \
-  --parameter-overrides PublicDomain=sbx.tu-dominio.com \
+  --parameter-overrides PublicDomain=sbx.example.com \
     CertificateArn=arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
 
 aws cloudformation describe-stacks --stack-name rayito-custom-domain \
@@ -531,3 +532,71 @@ código de la Function, mantenido en sincronía con
 incluye (`validate-template` + `cfn-lint`). `Sandbox.create(domain=)` sigue
 sin cablear a esta pila (`ARCHITECTURE.md` ADR-024); úsala hoy
 instanciando `CustomDomain` directamente.
+
+## Eventos y webhooks (`infra/events-webhooks.yaml`, M15)
+
+Plantilla **opcional**: sólo hace falta si usas `events=LifecycleEvents(...)`
+(Python) / `events: new LifecycleEvents(...)` (TypeScript) para recibir
+eventos de ciclo de vida firmados y entregarlos a tus webhooks
+([Eventos de ciclo de vida y webhooks](../docs/site/docs/funciones-opcionales/eventos-y-webhooks.md)).
+Nunca se despliega sola ni el SDK la crea. Acciones y parámetros:
+`AWS_API_NOTES.md` §25.
+
+| Recurso / salida | Qué es |
+|---|---|
+| `EventsTableName` | `AWS::DynamoDB::Table` on-demand, streams (`NEW_IMAGE`), GSI `gsi1` para listar por todos los sandboxes |
+| `StackKeySecretArn` | `AWS::SecretsManager::Secret`: la clave HMAC del stack; el SDK la lee para derivar `k_sbx` por sandbox, el forwarder la lee para verificar |
+| `OperatorPolicyArn` | `EventsOperatorPolicy`, para las credenciales del **llamante**: `dynamodb:PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice `gsi1` (`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), `cloudformation:DescribeStacks` sobre esta pila (resolver sus salidas) y `secretsmanager:GetSecretValue` sólo sobre el secreto del stack |
+| `ReconcilerFunctionArn` | El Lambda reconciliador (`rate(<ReconcilerIntervalMinutes> minutes)`, 5 por defecto, mínimo 2) |
+| `DelivererFailuresQueueUrl` | Cola SQS: los registros del stream que agotan sus reintentos; vacía en condiciones normales |
+
+Tres funciones Lambda (forwarder, deliverer, reconciliador; Python 3.12,
+`infra/lambdas/events_webhooks/`), una suscripción de CloudWatch Logs sobre
+`LogGroupName` (parámetro), una cola SQS de fallos y una regla de
+EventBridge Scheduler. `scripts/gen_stack_assets.py` inyecta
+`docs/aws-api/service-2.json` en el zip bajo
+`models/lambda-microvms/<apiVersion>/` y el reconciliador construye su
+cliente desde una sesión botocore apuntada ahí (la plantilla también fija
+`AWS_DATA_PATH`), para poder llamar a `ListMicrovms` (acción IAM
+`lambda:ListMicrovms`) desde un runtime de Lambda que no conoce ese
+servicio (decisión 8 de la arquitectura M15).
+
+**Coste**: ~$0,40/mes el secreto; DynamoDB, Lambda y SQS son on-demand/por
+uso ($0 en reposo); ~$1,25 por millón de eventos escritos (WRU) más
+las lecturas de `get_events`; el reconciliador factura una invocación cada
+`ReconcilerIntervalMinutes` (5 por defecto, ~$0,0000002 c/u). us-east-1,
+consultado 2026-09-30.
+
+### Desplegar
+
+```bash
+aws cloudformation deploy \
+  --stack-name rayito-events-webhooks \
+  --template-file infra/events-webhooks.yaml \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+      LogGroupName=/rayito/rayito-base \
+      ArtifactBucket=mi-bucket \
+      ArtifactS3Key=<sha256 del zip, lo resuelve OptionalStacks.deploy()>
+```
+
+`OptionalStacks.deploy("events-webhooks", artifact_bucket=...)` / `rayito
+events deploy` / `rayito stack deploy events-webhooks --artifact-bucket ...
+--param LogGroupName=...` hacen esto por ti: suben el zip, calculan
+`ArtifactS3Key`, pasan el mismo bucket como `ArtifactBucket` y despliegan. `CAPABILITY_IAM` es obligatorio (la plantilla crea varios roles
+IAM).
+
+### Borrar (apagarlo)
+
+```bash
+aws cloudformation delete-stack --stack-name rayito-events-webhooks
+```
+
+Borra el secreto (force-delete: cualquier webhook ya registrado deja de
+poder verificarse), la tabla, las tres Lambdas, la suscripción, la cola y
+el scheduler. Conserva los secretos de cada webhook (`rayito/webhooks/...`)
+y el log group de la imagen, que esta pila no creó. Deja de pasar `events=`
+en el SDK.
+
+Estado: `make infra-lint` la incluye (`validate-template` + `cfn-lint`
+1.56.3).

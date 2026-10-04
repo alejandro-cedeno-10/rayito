@@ -73,6 +73,22 @@ use crate::network::NetworkManager;
 /// `warn!` threshold for the wall-clock drift recorded at `/resume`.
 pub const CLOCK_OFFSET_WARN_MS: i64 = 5_000;
 
+/// Cap on each participant's `on_resume` (ADR-015). `/resume` has no
+/// `SuspendShares` of its own to divide, and its participants run
+/// concurrently with the kernel probe (`RESUME_PROBE_BUDGET`, 12 s), so a
+/// hung participant must give up well inside that probe rather than ever
+/// reach `budget(Hook::Resume)` (24 s). A participant's own work at
+/// `/resume` is bookkeeping (a counter, one queued log line): 2 s is
+/// generous for that.
+pub const PARTICIPANT_RESUME_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Cap on each participant's `on_terminate` (ADR-015): an eighth of
+/// `budget(Hook::Terminate)` (8 s, 80 % of the 10 s declared timeout), so
+/// even a participant that hangs leaves `/terminate` almost all of its
+/// budget to answer 200 and start `schedule_shutdown`. A participant that
+/// must flush something before the process exits does it inside this.
+pub const PARTICIPANT_TERMINATE_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub const HOOK_PATH_PREFIX: &str = "/aws/lambda-microvms/runtime/v1";
 
 /// Timeouts declared in the image's `hooks` configuration
@@ -247,9 +263,18 @@ struct RunEnvelope {
 async fn ready(State(state): State<HooksState>) -> Response {
     let sidecar_state = state.code.sidecar_state();
     let decision = ready_hook_decision(&sidecar_state, state.code.boot_elapsed());
-    if matches!(decision, ReadyDecision::Ok) && !participants_ready(&state.participants) {
-        tracing::info!(hook = %Hook::Ready, outcome = "participant_not_ready", "ready deferred");
-        return retry_later(Hook::Ready, "participant_not_ready", &state.session);
+    if matches!(decision, ReadyDecision::Ok) {
+        match participants_verdict(&state.participants) {
+            ReadyVerdict::Ok => {}
+            ReadyVerdict::Retry => {
+                tracing::info!(hook = %Hook::Ready, outcome = "participant_not_ready", "ready deferred");
+                return retry_later(Hook::Ready, "participant_not_ready", &state.session);
+            }
+            ReadyVerdict::Fail => {
+                tracing::error!(hook = %Hook::Ready, outcome = "participant_failed", "ready refused");
+                return refuse(Hook::Ready, "participant_failed", &state.session);
+            }
+        }
     }
     match decision {
         ReadyDecision::Retry => {
@@ -340,6 +365,7 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
             state.network.on_run().await;
             state.code.spawn_run_rotation(defaults.envs);
             spawn_imds_verification(&state);
+            spawn_participants_on_run(&state.participants);
         }
         if matches!(outcome, RunOutcome::AlreadyRan | RunOutcome::Illegal(_)) {
             audit(
@@ -364,6 +390,10 @@ async fn suspend(State(state): State<HooksState>) -> Response {
     within_budget_extras(Hook::Suspend, state.session.clone(), async move {
         let started = Instant::now();
         let transition = state.session.suspend();
+        // A repeated `/suspend` (already `Suspending`) is accepted but
+        // changes nothing; running the participants again would repeat
+        // their side effects (a second `paused` event, a second flush).
+        let changed = transition.as_ref().is_ok_and(Transition::changed);
         let close_streams = transition
             .as_ref()
             .is_ok_and(|transition| suspend_actions(transition).close_streams);
@@ -382,10 +412,14 @@ async fn suspend(State(state): State<HooksState>) -> Response {
         if transition.is_ok() {
             state.code.quiesce(QUIESCE_TIMEOUT).await;
         }
-        let (flushed, participants_run) = tokio::join!(
-            state.flush.flush(),
-            run_participants(&state.participants, state.flush.budget())
-        );
+        let participants = async {
+            if changed {
+                run_participants_on_suspend(&state.participants, state.flush.budget()).await
+            } else {
+                0
+            }
+        };
+        let (flushed, participants_run) = tokio::join!(state.flush.flush(), participants);
         log_flush(&flushed, state.flush.budget());
         if close_streams {
             spawn_suspend_watchdog(&state.session);
@@ -411,14 +445,34 @@ async fn suspend(State(state): State<HooksState>) -> Response {
     .await
 }
 
+/// Fires every participant's `on_run` in the background, same as
+/// `state.network.on_run()` and `spawn_imds_verification` above it: the 200
+/// for `/run` goes out first. With no participant configured (every build
+/// before `template_start`, and every build with no `template.json`) this
+/// spawns nothing and changes nothing about `/run`'s 0.5.x behaviour.
+fn spawn_participants_on_run(participants: &[Arc<dyn LifecycleParticipant>]) {
+    for participant in participants {
+        let participant = Arc::clone(participant);
+        tokio::spawn(async move { participant.on_run().await });
+    }
+}
+
 /// `/ready` only ever downgrades its own decision: `Ok` from every
-/// participant leaves the existing verdict untouched, and any `Retry` or
-/// `Fail` keeps answering 503 rather than declare the sandbox ready while a
-/// feature says it should not be.
-fn participants_ready(participants: &[Arc<dyn LifecycleParticipant>]) -> bool {
-    participants
+/// participant leaves the existing verdict untouched; otherwise the worst
+/// verdict wins (`Fail` over `Retry`), so a definitive failure is never
+/// hidden behind another participant that is still warming up.
+fn participants_verdict(participants: &[Arc<dyn LifecycleParticipant>]) -> ReadyVerdict {
+    let verdicts: Vec<ReadyVerdict> = participants
         .iter()
-        .all(|participant| participant.ready_gate() == ReadyVerdict::Ok)
+        .map(|participant| participant.ready_gate())
+        .collect();
+    if verdicts.contains(&ReadyVerdict::Fail) {
+        ReadyVerdict::Fail
+    } else if verdicts.contains(&ReadyVerdict::Retry) {
+        ReadyVerdict::Retry
+    } else {
+        ReadyVerdict::Ok
+    }
 }
 
 /// Runs every participant's `on_suspend` concurrently with the
@@ -428,30 +482,86 @@ fn participants_ready(participants: &[Arc<dyn LifecycleParticipant>]) -> bool {
 /// `suspend recorded` log line; with no participant configured this
 /// resolves immediately and changes nothing about `/suspend`'s 0.5.x
 /// behaviour.
-async fn run_participants(
+async fn run_participants_on_suspend(
     participants: &[Arc<dyn LifecycleParticipant>],
     budget: SuspendBudget,
 ) -> usize {
-    if participants.is_empty() {
-        return 0;
-    }
     let demands: Vec<ParticipantDemand> = participants.iter().map(|p| p.demand()).collect();
     let shares = SuspendShares::allocate(budget, &demands);
+    run_concurrently(
+        Hook::Suspend,
+        participants,
+        |participant| shares.share_for(participant.demand().name),
+        |participant, share| async move {
+            participant.on_suspend(share).await;
+        },
+    )
+    .await
+}
+
+/// `/resume`'s participants, each capped at `PARTICIPANT_RESUME_TIMEOUT`.
+async fn run_participants_on_resume(participants: &[Arc<dyn LifecycleParticipant>]) -> usize {
+    run_concurrently(
+        Hook::Resume,
+        participants,
+        |_| PARTICIPANT_RESUME_TIMEOUT,
+        |participant, _| async move { participant.on_resume().await },
+    )
+    .await
+}
+
+/// `/terminate`'s participants, each capped at
+/// `PARTICIPANT_TERMINATE_TIMEOUT`, before `schedule_shutdown` starts
+/// winding the process down — a participant that flushes something needs
+/// stdout and the runtime still alive.
+async fn run_participants_on_terminate(participants: &[Arc<dyn LifecycleParticipant>]) -> usize {
+    run_concurrently(
+        Hook::Terminate,
+        participants,
+        |_| PARTICIPANT_TERMINATE_TIMEOUT,
+        |participant, _| async move { participant.on_terminate().await },
+    )
+    .await
+}
+
+/// The one loop behind every hook's participants: each call runs on its
+/// own task under its own `timeout_for(participant)`, so one hung
+/// participant neither delays the others nor holds the hook past that
+/// cap. A participant cut off by its cap is logged with its name (never
+/// anything it was handling). Returns how many ran; with no participant
+/// this resolves immediately.
+async fn run_concurrently<T, C, F>(
+    hook: Hook,
+    participants: &[Arc<dyn LifecycleParticipant>],
+    timeout_for: T,
+    call: C,
+) -> usize
+where
+    T: Fn(&dyn LifecycleParticipant) -> Duration,
+    C: Fn(Arc<dyn LifecycleParticipant>, Duration) -> F,
+    F: Future<Output = ()> + Send + 'static,
+{
     let mut joins = tokio::task::JoinSet::new();
-    // `cloned()` is not redundant here: each spawned task needs an owned,
-    // `'static` `Arc`, not a borrow of this function's `participants` slice.
-    #[allow(clippy::unnecessary_to_owned)]
-    for participant in participants.iter().cloned() {
-        let share = shares.share_for(participant.demand().name);
+    for participant in participants {
+        let timeout = timeout_for(participant.as_ref());
+        let name = participant.demand().name;
+        let work = call(Arc::clone(participant), timeout);
         joins.spawn(async move {
-            let _ = tokio::time::timeout(share, participant.on_suspend(share)).await;
+            if tokio::time::timeout(timeout, work).await.is_err() {
+                tracing::warn!(
+                    hook = %hook,
+                    participant = name,
+                    timeout_ms = millis(timeout),
+                    "participant exceeded its timeout"
+                );
+            }
         });
     }
-    let mut completed = 0;
+    let mut ran = 0;
     while joins.join_next().await.is_some() {
-        completed += 1;
+        ran += 1;
     }
-    completed
+    ran
 }
 
 fn spawn_suspend_watchdog(session: &Arc<SandboxSession>) {
@@ -581,8 +691,13 @@ async fn resume(State(state): State<HooksState>) -> Response {
         resume_deadline(&state);
         state.network.on_resume().await;
         let probe_started = Instant::now();
-        let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
-        let probe_ms = millis(probe_started.elapsed());
+        let ((probe, probe_ms), participants_run) = tokio::join!(
+            async {
+                let probe = state.code.probe_after_resume(RESUME_PROBE_BUDGET).await;
+                (probe, millis(probe_started.elapsed()))
+            },
+            run_participants_on_resume(&state.participants)
+        );
         let kernel_state_lost = state.code.kernel_state_lost();
         state.code.spawn_resume_reseed();
         spawn_imds_recheck(&state);
@@ -596,6 +711,7 @@ async fn resume(State(state): State<HooksState>) -> Response {
             kernels_alive = probe.alive.len(),
             kernels_lost = probe.lost.len(),
             kernel_state_lost,
+            participants_run,
             lifecycle_phase = health.lifecycle.phase.as_str(),
             "resume recorded"
         );
@@ -628,13 +744,21 @@ fn resume_deadline(state: &HooksState) {
 
 async fn terminate(State(state): State<HooksState>) -> Response {
     within_budget(Hook::Terminate, state.session.clone(), async move {
-        log_transition(state.session.terminate());
+        let transition = state.session.terminate();
+        // `terminate()` is accepted from every phase, so a repeated
+        // `/terminate` shows only as `changed() == false`: the participants
+        // already ran for the first one.
+        let changed = transition.changed();
+        log_transition(transition);
         audit(
             &state.session,
             Hook::Terminate,
             TERMINATING,
             HookCallOutcome::Nominal,
         );
+        if changed {
+            run_participants_on_terminate(&state.participants).await;
+        }
         schedule_shutdown(state.shutdown.clone());
         TERMINATING.to_owned()
     })
@@ -671,6 +795,15 @@ where
 
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// 500: AWS fails the build on the first one (Q85) instead of retrying.
+fn refuse(hook: Hook, outcome: &str, session: &SandboxSession) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(HookReply::new(hook, outcome, session)),
+    )
+        .into_response()
 }
 
 fn retry_later(hook: Hook, outcome: &str, session: &SandboxSession) -> Response {
@@ -858,6 +991,87 @@ mod tests {
         );
     }
 
+    /// `/ready` combines every participant's `ready_gate`: the worst
+    /// verdict wins.
+    mod ready_verdicts {
+        use axum::body::Body;
+        use axum::http::Request;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::suspend_sync::{ParticipantDemand, ParticipantReport};
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::adapters::OsRandomSource;
+
+        struct FixedVerdict(ReadyVerdict);
+
+        #[tonic::async_trait]
+        impl LifecycleParticipant for FixedVerdict {
+            fn demand(&self) -> ParticipantDemand {
+                ParticipantDemand {
+                    name: "fixed",
+                    max: Duration::ZERO,
+                }
+            }
+
+            async fn on_suspend(&self, _share: Duration) -> ParticipantReport {
+                ParticipantReport {
+                    completed: true,
+                    timed_out: false,
+                }
+            }
+
+            fn ready_gate(&self) -> ReadyVerdict {
+                self.0
+            }
+        }
+
+        async fn ready_status(verdicts: &[ReadyVerdict]) -> StatusCode {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let router = router_with(HookServices {
+                session: session.clone(),
+                code: CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                suspend: Arc::new(SuspendSignal::new()),
+                shutdown: CancellationToken::new(),
+                imds: Arc::new(ImdsState::default()),
+                user_probe: None,
+                timeout: TimeoutWatcher::detached(),
+                network: NetworkManager::unavailable(session),
+                participants: verdicts
+                    .iter()
+                    .map(|verdict| {
+                        Arc::new(FixedVerdict(*verdict)) as Arc<dyn LifecycleParticipant>
+                    })
+                    .collect(),
+            });
+            let request = Request::post(hook_path(Hook::Ready))
+                .body(Body::empty())
+                .unwrap();
+            router.oneshot(request).await.unwrap().status()
+        }
+
+        #[tokio::test]
+        async fn no_participant_leaves_ready_as_it_was() {
+            assert_eq!(ready_status(&[]).await, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn a_retrying_participant_holds_ready_at_503() {
+            assert_eq!(
+                ready_status(&[ReadyVerdict::Ok, ReadyVerdict::Retry]).await,
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+
+        #[tokio::test]
+        async fn a_failed_participant_answers_500_even_next_to_a_retrying_one() {
+            assert_eq!(
+                ready_status(&[ReadyVerdict::Retry, ReadyVerdict::Fail]).await,
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
     mod egress {
         use axum::body::Body;
         use axum::http::Request;
@@ -1014,21 +1228,25 @@ mod tests {
         }
     }
 
-    mod suspend_flush {
+    /// The hooks router over fakes, shared by the modules below that drive
+    /// `/run` then the runtime hooks through real HTTP requests.
+    mod fixture {
         use axum::body::Body;
         use axum::http::Request;
         use http_body_util::BodyExt;
         use rayd_core::clock::SystemClock;
-        use rayd_core::suspend_sync::SUSPEND_SYNC_DEADLINE;
         use tower::ServiceExt;
 
         use super::*;
         use crate::adapters::OsRandomSource;
-        use crate::adapters::bounded_sync::fake::{Behaviour, FakeFilesystemSync};
+        use crate::adapters::bounded_sync::fake::FakeFilesystemSync;
 
         const DIGEST_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-        fn hooks(fake: Arc<FakeFilesystemSync>) -> Router {
+        pub(super) fn hooks(
+            fake: Arc<FakeFilesystemSync>,
+            participants: Vec<Arc<dyn LifecycleParticipant>>,
+        ) -> Router {
             let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
             let services = HookServices {
                 session: session.clone(),
@@ -1039,13 +1257,17 @@ mod tests {
                 user_probe: None,
                 timeout: TimeoutWatcher::detached(),
                 network: NetworkManager::unavailable(session),
-                participants: Vec::new(),
+                participants,
             };
             let flush = BoundedFlush::new(fake, SuspendBudget::for_hook(budget(Hook::Suspend)));
             router_with_flush(services, flush)
         }
 
-        async fn post(router: &Router, hook: Hook, body: String) -> (StatusCode, HookReply) {
+        pub(super) async fn post(
+            router: &Router,
+            hook: Hook,
+            body: String,
+        ) -> (StatusCode, HookReply) {
             let request = Request::post(hook_path(hook))
                 .header("content-type", "application/json")
                 .body(Body::from(body))
@@ -1056,9 +1278,21 @@ mod tests {
             (status, serde_json::from_slice(&bytes).unwrap())
         }
 
-        fn run_body() -> String {
+        pub(super) fn run_body() -> String {
             let payload = format!("{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\"}}");
             serde_json::json!({"microvmId": "mvm-1", "runHookPayload": payload}).to_string()
+        }
+    }
+
+    mod suspend_flush {
+        use rayd_core::suspend_sync::SUSPEND_SYNC_DEADLINE;
+
+        use super::fixture::{post, run_body};
+        use super::*;
+        use crate::adapters::bounded_sync::fake::{Behaviour, FakeFilesystemSync};
+
+        fn hooks(fake: Arc<FakeFilesystemSync>) -> Router {
+            super::fixture::hooks(fake, Vec::new())
         }
 
         /// A filesystem whose `syncfs` never returns (a hung hard NFS or
@@ -1092,6 +1326,178 @@ mod tests {
                 fake.calls() <= 1,
                 "the hung filesystem gets no second thread"
             );
+        }
+    }
+
+    /// `run_concurrently` and the three hooks that drive it: participants
+    /// run once per accepted transition, each under its own cap.
+    mod participants {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use rayd_core::suspend_sync::ParticipantReport;
+
+        use super::fixture::{hooks, post, run_body};
+        use super::*;
+        use crate::adapters::bounded_sync::fake::FakeFilesystemSync;
+
+        /// Counts every call; `hang` makes `on_resume`/`on_terminate`
+        /// never return, standing in for a participant stuck on I/O.
+        #[derive(Default)]
+        struct Counting {
+            hang: bool,
+            suspends: AtomicUsize,
+            resumes: AtomicUsize,
+            terminates: AtomicUsize,
+        }
+
+        impl Counting {
+            fn hanging() -> Self {
+                Self {
+                    hang: true,
+                    ..Self::default()
+                }
+            }
+
+            async fn maybe_hang(&self) {
+                if self.hang {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+
+        #[tonic::async_trait]
+        impl LifecycleParticipant for Counting {
+            fn demand(&self) -> ParticipantDemand {
+                ParticipantDemand {
+                    name: "counting",
+                    max: Duration::from_millis(50),
+                }
+            }
+
+            async fn on_suspend(&self, _share: Duration) -> ParticipantReport {
+                self.suspends.fetch_add(1, Ordering::Relaxed);
+                ParticipantReport {
+                    completed: true,
+                    timed_out: false,
+                }
+            }
+
+            async fn on_resume(&self) {
+                self.resumes.fetch_add(1, Ordering::Relaxed);
+                self.maybe_hang().await;
+            }
+
+            async fn on_terminate(&self) {
+                self.terminates.fetch_add(1, Ordering::Relaxed);
+                self.maybe_hang().await;
+            }
+        }
+
+        fn router_over(participants: Vec<Arc<Counting>>) -> Router {
+            let participants = participants
+                .into_iter()
+                .map(|p| p as Arc<dyn LifecycleParticipant>)
+                .collect();
+            hooks(Arc::new(FakeFilesystemSync::new(&[])), participants)
+        }
+
+        #[tokio::test]
+        async fn a_repeated_suspend_runs_the_participants_only_once() {
+            let counting = Arc::new(Counting::default());
+            let router = router_over(vec![counting.clone()]);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            assert_eq!(
+                post(&router, Hook::Suspend, String::new()).await.1.outcome,
+                "changed"
+            );
+            assert_eq!(
+                post(&router, Hook::Suspend, String::new()).await.1.outcome,
+                "unchanged"
+            );
+
+            assert_eq!(counting.suspends.load(Ordering::Relaxed), 1);
+        }
+
+        #[tokio::test]
+        async fn resume_runs_the_participants_once_per_accepted_resume() {
+            let counting = Arc::new(Counting::default());
+            let router = router_over(vec![counting.clone()]);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+            post(&router, Hook::Suspend, String::new()).await;
+
+            assert_eq!(
+                post(&router, Hook::Resume, String::new()).await.1.outcome,
+                "changed"
+            );
+            assert_eq!(
+                post(&router, Hook::Resume, String::new()).await.1.outcome,
+                "unchanged"
+            );
+
+            assert_eq!(counting.resumes.load(Ordering::Relaxed), 1);
+        }
+
+        #[tokio::test]
+        async fn a_repeated_terminate_runs_the_participants_only_once() {
+            let counting = Arc::new(Counting::default());
+            let router = router_over(vec![counting.clone()]);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            assert_eq!(
+                post(&router, Hook::Terminate, String::new()).await.0,
+                StatusCode::OK
+            );
+            assert_eq!(
+                post(&router, Hook::Terminate, String::new()).await.0,
+                StatusCode::OK
+            );
+
+            assert_eq!(counting.terminates.load(Ordering::Relaxed), 1);
+        }
+
+        /// A participant whose `on_resume` never returns costs `/resume`
+        /// its own cap and nothing more, and never keeps a well-behaved
+        /// participant from running.
+        #[tokio::test(start_paused = true)]
+        async fn a_hung_resume_participant_is_cut_at_its_cap() {
+            let hung = Arc::new(Counting::hanging());
+            let healthy = Arc::new(Counting::default());
+            let router = router_over(vec![hung.clone(), healthy.clone()]);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+            post(&router, Hook::Suspend, String::new()).await;
+
+            let started = tokio::time::Instant::now();
+            let (status, reply) = post(&router, Hook::Resume, String::new()).await;
+            let elapsed = started.elapsed();
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "changed");
+            assert!(elapsed >= PARTICIPANT_RESUME_TIMEOUT, "{elapsed:?}");
+            assert!(elapsed < budget(Hook::Resume), "{elapsed:?}");
+            assert_eq!(healthy.resumes.load(Ordering::Relaxed), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_hung_terminate_participant_is_cut_at_its_cap() {
+            let hung = Arc::new(Counting::hanging());
+            let router = router_over(vec![hung]);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            let started = tokio::time::Instant::now();
+            let (status, reply) = post(&router, Hook::Terminate, String::new()).await;
+            let elapsed = started.elapsed();
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, TERMINATING);
+            assert!(elapsed >= PARTICIPANT_TERMINATE_TIMEOUT, "{elapsed:?}");
+            assert!(elapsed < budget(Hook::Terminate), "{elapsed:?}");
+        }
+
+        #[test]
+        fn each_participant_cap_fits_well_inside_its_hook_budget() {
+            assert!(PARTICIPANT_RESUME_TIMEOUT < RESUME_PROBE_BUDGET);
+            assert!(PARTICIPANT_TERMINATE_TIMEOUT * 4 <= budget(Hook::Terminate));
         }
     }
 }

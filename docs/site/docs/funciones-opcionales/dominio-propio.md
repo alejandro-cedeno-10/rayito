@@ -21,7 +21,7 @@ hostname público normal — sin las cabeceras `x-aws-proxy-auth`/
     todavía) siguen sin medirse contra una distribución real: hace falta
     un dominio y un certificado ACM que sólo el mantenedor puede aportar.
     Lo que sí se comprobó contra CloudFront real, sin distribución
-    (`TestFunction`, Q96 de `AWS_API_NOTES.md`): la Function de enrutado
+    (`TestFunction`, Q121 de `AWS_API_NOTES.md`): la Function de enrutado
     compila en `cloudfront-js-2.0` y responde 403/404 o pasa la petición
     al sandbox como se espera.
 

@@ -400,7 +400,13 @@ pub async fn harness_with(options: Options) -> Harness {
         forced_exits.clone(),
     );
     let network = rayd::network::NetworkManager::unavailable(session.clone());
-    let grpc = rayd::grpc::router_with_transfers(
+    // One `FeatureSet` per harness, shared by the gRPC router and the hooks
+    // exactly as `main` shares it: a test's `Configure` is what its own
+    // `/suspend`/`/resume`/`/terminate` act on, and never another test's.
+    let features = Arc::new(rayd::features::build(
+        &rayd::features::FeatureContext::default(),
+    ));
+    let grpc = rayd::grpc::router_with_features(
         Services {
             session: session.clone(),
             processes: processes.clone(),
@@ -421,6 +427,7 @@ pub async fn harness_with(options: Options) -> Harness {
             execute_keepalive_interval: KEEPALIVE,
         },
         transfers,
+        features.clone(),
     )
     .serve_with_incoming_shutdown(
         TcpIncoming::from(listener),
@@ -441,7 +448,7 @@ pub async fn harness_with(options: Options) -> Harness {
         user_probe: options.user_probe,
         timeout,
         network,
-        participants: Vec::new(),
+        participants: features.participants(),
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),

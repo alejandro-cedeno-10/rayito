@@ -15,6 +15,7 @@ import {
   type OutputChunk,
   Sandbox,
   SandboxNotFoundError,
+  type TelemetryExport,
 } from "../../src/index.js";
 
 export const E2E_FLAG_VAR = "RAYITO_E2E";
@@ -246,7 +247,11 @@ export function useE2E(templateVar: string = TEMPLATE_VAR): E2EContext {
 /** `create()` con los parámetros de todo sandbox de test; el tiempo medido es `run-microvm -> kernel_ready`. */
 export async function createTestSandbox(
   context: E2EContext,
-  options: { readonly timeoutMs?: number; readonly idle?: IdlePolicyInput | null } = {},
+  options: {
+    readonly timeoutMs?: number;
+    readonly idle?: IdlePolicyInput | null;
+    readonly telemetry?: TelemetryExport;
+  } = {},
 ): Promise<Sandbox> {
   const timeoutMs = options.timeoutMs ?? TEST_SANDBOX_TIMEOUT_MS;
   if (timeoutMs > MAX_TEST_SANDBOX_TIMEOUT_MS) {
@@ -261,6 +266,7 @@ export async function createTestSandbox(
     ingress: ["ALL_INGRESS"],
     logging: context.settings.logging,
     controlPlane: context.controlPlane,
+    ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
   });
   const elapsed = seconds(started);
   context.created.push(sandbox);

@@ -24,15 +24,27 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1erayito/v1/secret_gateway.proto\x12\trayito.v1\"\x15\n\x13SecretGatewayConfig\"\x15\n\x13SecretGatewayStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1erayito/v1/secret_gateway.proto\x12\trayito.v1\"L\n\x13SecretGatewayConfig\x12\x35\n\x06routes\x18\x01 \x03(\x0b\x32\x1d.rayito.v1.SecretGatewayRouteR\x06routes\"\xa7\x02\n\x12SecretGatewayRoute\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n\x08upstream\x18\x02 \x01(\tR\x08upstream\x12\x44\n\x07headers\x18\x03 \x03(\x0b\x32*.rayito.v1.SecretGatewayRoute.HeadersEntryR\x07headers\x12\x37\n\x05\x61llow\x18\x04 \x03(\x0b\x32!.rayito.v1.SecretGatewayAllowRuleR\x05\x61llow\x12&\n\x0frate_per_minute\x18\x05 \x01(\rR\rratePerMinute\x1a:\n\x0cHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"D\n\x16SecretGatewayAllowRule\x12\x16\n\x06method\x18\x01 \x01(\tR\x06method\x12\x12\n\x04path\x18\x02 \x01(\tR\x04path\"R\n\x13SecretGatewayStatus\x12;\n\x06routes\x18\x01 \x03(\x0b\x32#.rayito.v1.SecretGatewayRouteStatusR\x06routes\"\xa6\x01\n\x18SecretGatewayRouteStatus\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n\x04port\x18\x02 \x01(\rR\x04port\x12\x38\n\x05state\x18\x03 \x01(\x0e\x32\".rayito.v1.SecretGatewayRouteStateR\x05state\x12(\n\x10last_error_class\x18\x04 \x01(\tR\x0elastErrorClass*\x96\x01\n\x17SecretGatewayRouteState\x12*\n&SECRET_GATEWAY_ROUTE_STATE_UNSPECIFIED\x10\x00\x12(\n$SECRET_GATEWAY_ROUTE_STATE_LISTENING\x10\x01\x12%\n!SECRET_GATEWAY_ROUTE_STATE_FAILED\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rayito.v1.secret_gateway_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_SECRETGATEWAYROUTE_HEADERSENTRY']._loaded_options = None
+  _globals['_SECRETGATEWAYROUTE_HEADERSENTRY']._serialized_options = b'8\001'
+  _globals['_SECRETGATEWAYROUTESTATE']._serialized_start=745
+  _globals['_SECRETGATEWAYROUTESTATE']._serialized_end=895
   _globals['_SECRETGATEWAYCONFIG']._serialized_start=45
-  _globals['_SECRETGATEWAYCONFIG']._serialized_end=66
-  _globals['_SECRETGATEWAYSTATUS']._serialized_start=68
-  _globals['_SECRETGATEWAYSTATUS']._serialized_end=89
+  _globals['_SECRETGATEWAYCONFIG']._serialized_end=121
+  _globals['_SECRETGATEWAYROUTE']._serialized_start=124
+  _globals['_SECRETGATEWAYROUTE']._serialized_end=419
+  _globals['_SECRETGATEWAYROUTE_HEADERSENTRY']._serialized_start=361
+  _globals['_SECRETGATEWAYROUTE_HEADERSENTRY']._serialized_end=419
+  _globals['_SECRETGATEWAYALLOWRULE']._serialized_start=421
+  _globals['_SECRETGATEWAYALLOWRULE']._serialized_end=489
+  _globals['_SECRETGATEWAYSTATUS']._serialized_start=491
+  _globals['_SECRETGATEWAYSTATUS']._serialized_end=573
+  _globals['_SECRETGATEWAYROUTESTATUS']._serialized_start=576
+  _globals['_SECRETGATEWAYROUTESTATUS']._serialized_end=742
 # @@protoc_insertion_point(module_scope)
