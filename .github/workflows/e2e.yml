@@ -24,7 +24,12 @@ name: e2e (AWS)
 #
 # Pasos manuales, una sola vez (infra/README.md):
 #   1. Desplegar `infra/ci-oidc-role.yaml` con `TestImageArns=<arn de rayito-base>`.
-#   2. Crear el environment `e2e` en GitHub con required reviewers.
+#   2. Crear el environment `e2e` en GitHub con required reviewers y
+#      deployment branches limitadas a `main` (el `sub` que confía el rol no
+#      lleva rama: infra/README.md).
+#
+# Sin `RAYITO_E2E_ROLE_ARN` los dos jobs se saltan (`if:`): no hay rol que
+# asumir y el nightly sólo fallaría (sec-supply-chain-ci, SC-08).
 #   3. Variables del repositorio: RAYITO_E2E_ROLE_ARN (output `RoleArn` de la
 #      pila), RAYITO_E2E_TEMPLATE_ARN (siempre un ARN, nunca un nombre: la
 #      política del rol compara ARNs), RAYITO_E2E_REGION (opcional, us-east-1).
@@ -67,7 +72,7 @@ env:
 jobs:
   python:
     name: python e2e (pytest -m e2e)
-    if: github.event_name == 'schedule' || inputs.suite == 'python' || inputs.suite == 'both'
+    if: vars.RAYITO_E2E_ROLE_ARN != '' && (github.event_name == 'schedule' || inputs.suite == 'python' || inputs.suite == 'both')
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     environment: e2e
@@ -118,7 +123,7 @@ jobs:
   typescript:
     name: typescript e2e (pnpm test:e2e)
     needs: python
-    if: ${{ !cancelled() && needs.python.result != 'failure' && github.event_name == 'workflow_dispatch' && (inputs.suite == 'typescript' || inputs.suite == 'both') }}
+    if: ${{ !cancelled() && vars.RAYITO_E2E_ROLE_ARN != '' && needs.python.result != 'failure' && github.event_name == 'workflow_dispatch' && (inputs.suite == 'typescript' || inputs.suite == 'both') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: e2e

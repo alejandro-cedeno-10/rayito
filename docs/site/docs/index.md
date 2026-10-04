@@ -16,6 +16,15 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
+!!! tip "Nuevo en 0.6"
+    Monta buckets S3 como carpetas, elige el tamaño del sandbox con
+    `size="4gb"`, recibe eventos de ciclo de vida en tus webhooks, exporta
+    métricas por OTLP, construye imágenes con el DSL `Template` de E2B y deja
+    que el código del sandbox use una API key sin poder leerla. Todo
+    apagado por defecto.
+    [Novedades de 0.6.0](novedades/0.6.0.md) ·
+    [0.6.1](novedades/0.6.1.md)
+
 ## Empieza en tres pasos
 
 **1. Instala el SDK** (Python ≥ 3.11 o Node ≥ 20).
@@ -120,6 +129,23 @@ código y reconexión en Python, Python async y TypeScript.
 
     [:octicons-arrow-right-24: Referencia](referencia/index.md)
 
+-   :material-toggle-switch-outline:{ .lg .middle } **Funciones opcionales**
+
+    ---
+
+    Montajes S3, tamaños, eventos y webhooks, OTLP, templates, pasarela de
+    secretos: qué activa cada una, qué cuesta y cómo apagarla.
+
+    [:octicons-arrow-right-24: Resumen y coste](optional-features.md)
+
+-   :material-new-box:{ .lg .middle } **Novedades**
+
+    ---
+
+    Qué trae cada versión, cómo actualizar y qué está en desarrollo.
+
+    [:octicons-arrow-right-24: Novedades](novedades/index.md)
+
 -   :material-cash:{ .lg .middle } **Costes**
 
     ---
@@ -152,9 +178,11 @@ código y reconexión en Python, Python async y TypeScript.
   plataforma no puede hacer lanza `UnimplementedError`: nada se aproxima en
   silencio.
 - **Nunca cobra por sorpresa.** Las funciones opcionales que gastan dinero
-  de AWS además del propio sandbox (secretos, índice de metadatos) están
-  apagadas por defecto y sólo se activan con una opción explícita del SDK
-  ([Funciones opcionales](optional-features.md)). La otra vía con coste
+  de AWS además del propio sandbox (secretos, índice de metadatos, eventos
+  y webhooks, exportación OTLP, templates…) están apagadas por defecto y
+  sólo se activan con una opción explícita del SDK; su infraestructura la
+  despliegas tú con `rayito stack deploy`, que imprime el coste antes de
+  pedir confirmación ([Funciones opcionales](optional-features.md)). La otra vía con coste
   propio, el bucket de transferencias por S3, también la eliges tú
   (`transfer=` o `RAYITO_TRANSFER_BUCKET`; ver [Ficheros y S3](files.md)).
 
@@ -182,6 +210,13 @@ código y reconexión en Python, Python async y TypeScript.
 | `secrets=`, `SecretStore` (opcional) | secretos de AWS Secrets Manager como variables de entorno | [Secretos](secrets.md) |
 | `index=DynamoDbIndex(...)` (opcional) | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
 | `tracer_provider=` (opcional) | spans OpenTelemetry del lado del SDK | [OpenTelemetry](funciones-opcionales/opentelemetry.md) |
+| `mounts=`, `S3Mount` (opcional, 0.6) | un bucket S3 como carpeta del sandbox | [Montajes S3](funciones-opcionales/montajes-s3.md) |
+| `size=` (opcional, 0.6) | sandboxes de 512 MiB a 8 GiB desde imágenes por tamaño | [Tamaños](funciones-opcionales/tamanos.md) |
+| `events=`, `LifecycleEvents` (opcional, 0.6) | eventos de ciclo de vida y webhooks con la firma de E2B | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
+| `telemetry=`, `TelemetryExport` (opcional, 0.6) | métricas del sandbox por OTLP a CloudWatch | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md) |
+| `Template.build()` (opcional, 0.6) | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
+| `gateways=`, `SecretGateway` (opcional, 0.6) | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
+| `OptionalStacks`, `rayito stack` (0.6) | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
 
 Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
 `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.

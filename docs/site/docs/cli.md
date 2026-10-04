@@ -378,8 +378,8 @@ que `rayito image publish`; las antiguas se borran con `rayito image prune --ima
 ## `rayito doctor`
 
 ```bash
-rayito doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch] [--json]
-              [--efs-vpc-id V --efs-subnet-ids S1,S2]
+rayito [--json] doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch]
+                       [--efs-vpc-id V --efs-subnet-ids S1,S2]
 ```
 
 Diez comprobaciones, en orden, cada una con `OK`, `WARN`, `FAIL` o `SKIP`.

@@ -2229,7 +2229,7 @@ reordenar cuándo se construye el canal de autenticación frente a cuándo se
 conoce la instrumentación OTel en varios puntos de un fichero compartido
 entre las siete funciones 0.6 (`sandbox_sync/main.py` y su espejo). Es un
 seguimiento razonado y no bloqueante, registrado en
-`openspec/changes/m15-rayd-otlp/design.md`.
+`openspec/changes/archive/2026-10-03-m15-rayd-otlp/design.md`.
 
 **Consecuencias.** Sin `telemetry=`/`telemetry`, `rayd` no abre ninguna
 conexión nueva y el SDK no envía ninguna sección de `ConfigureSandbox`

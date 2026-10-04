@@ -16,7 +16,7 @@ obsolescencia y soporte que siguen las releases está en
 |---|---|---|---|
 | `clients/python` (paquete `rayito`) | PyPI | `python-v<versión>` | `.github/workflows/release.yml` con Trusted Publishing (jobs `python-build` + `python-publish`) |
 | `clients/typescript` (paquete `rayito`) | npm | `typescript-v<versión>` | la primera vez el mantenedor a mano (§3); después los jobs `typescript-build` + `typescript-publish` de `.github/workflows/release.yml` (npm trusted publishing) |
-| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | el job `rayd` de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
+| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | los jobs `rayd-build` (compila, sin credenciales), `rayd-sign` (cosign keyless, sin checkout) y `rayd-upload` (environment `release`, sin checkout, sin `--clobber`) de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
 | imagen `rayito-base` | tu cuenta de AWS | ninguno | `make image-publish` (`rayito image publish`, `scripts/publish_image.py` como shim); la versión de imagen es un número de build opaco de AWS, anotado en `MILESTONES.md` |
 
 Regla de paridad: **el tag debe ser igual a la versión del manifiesto**
@@ -52,7 +52,23 @@ otros workflows. Dos caminos, los dos soportados:
   release → Run workflow → **Use workflow from: el tag** → `tag` = el mismo
   tag → `dry_run` = false. El job `resolve` se niega a publicar si el run
   no arranca desde el propio tag (la identidad del certificado de cosign
-  lleva el ref del run y la receta de verificación exige `refs/tags/rayd-v`).
+  lleva el ref del run y la receta de verificación exige
+  `refs/tags/rayd-v<versión>` exacto).
+
+**El commit del tag tiene que estar en `main`.** Al publicar, `resolve`
+comprueba `git merge-base --is-ancestor "$GITHUB_SHA" origin/main` y falla si
+no: un tag empujado sobre otra rama (con un PAT filtrado, por ejemplo) no
+publica código que no pasó por la revisión y los checks de `main`. Los tags
+de release-please siempre apuntan al merge del PR de release, así que el
+flujo normal no lo nota.
+
+**Subida de `rayd` con aprobación.** `rayd-upload` corre en el environment
+`release` (required reviewer, política de tags `rayd-v*`): la release espera
+a que el mantenedor apruebe el despliegue, como `pypi` y `npm`. Nunca
+reemplaza un asset: si la release ya tiene uno con el mismo nombre, falla
+antes de subir nada. Si una subida se cortó a medias, borra a mano los assets
+parciales de esa release (`gh release delete-asset <tag> <asset>`) y vuelve a
+lanzar el job.
 
 **Ensayo.** `Run workflow` con `dry_run` = true (por defecto) desde cualquier
 rama cuyos manifiestos ya lleven la versión del `tag` (la rama del PR de
@@ -62,7 +78,15 @@ esto se ve en dos jobs: `python-build`/`typescript-build` corren siempre y
 suben su artefacto, y `python-publish`/`typescript-publish` (los únicos con
 el token OIDC) se marcan **skipped** por su propio `if:` — ningún job de
 publish llega a ejecutarse en un ensayo, así que tampoco descarga ni verifica
-nada.
+nada. `rayd` corre `rayd-build` y `rayd-sign` (firma con la identidad del ref
+del ensayo) y salta `rayd-upload`.
+
+**Sin cachés.** Ningún job de `release.yml` restaura una caché de Actions: un
+run de tag restaura las del ámbito de `main`, que cualquier job de `main`
+puede escribir. zig y `cargo-deny` llegan por las acciones locales
+`.github/actions/zig` y `.github/actions/cargo-deny` (sha256 fijado), las
+herramientas de cargo se compilan en cada release (unos minutos más) y twine
+sale de `.github/release/requirements-twine.txt` con `--require-hashes`.
 
 **Sin reconfigurar nada al partir build y publish.** El *Trusted Publisher*
 de PyPI y de npm liga el token OIDC al fichero de workflow
@@ -159,9 +183,13 @@ cargo publish --dry-run -p rayito-proto
   aarch64-unknown-linux-musl`, `docs site …`, `cargo-deny`, `dependency
   audit`, `test on aarch64 (ubuntu-24.04-arm)`) y DCO obligatorios, sin
   force-push.
-- Crear los environments `pypi`, `npm` y `e2e`, los tres con required
-  reviewers (`e2e` es el del workflow `e2e.yml`; su rol OIDC, variables y
-  presupuesto están en `infra/README.md`).
+- Crear los environments `pypi`, `npm`, `release` y `e2e`, los cuatro con
+  required reviewers. `pypi`, `npm` y `release` limitan sus despliegues a los
+  tags `python-v*`, `typescript-v*` y `rayd-v*`; `e2e` (el del workflow
+  `e2e.yml`; su rol OIDC, variables y presupuesto están en `infra/README.md`)
+  a la rama `main`, porque el `sub` en el que confía el rol no lleva rama.
+- Ruleset de tags (`refs/tags/python-v*`, `typescript-v*`, `rayd-v*`) que
+  impide moverlos y borrarlos: un tag de release publicado no se reescribe.
 - Secretos del repositorio: **ninguno obligatorio** (PyPI, npm y AWS van
   por OIDC). Opcional: `RELEASE_PLEASE_TOKEN` (PAT fine-grained) para que
   los tags de release-please disparen `release.yml` sin intervención (§1).
@@ -175,14 +203,38 @@ cargo publish --dry-run -p rayito-proto
 
 1. Preparar el PR de release-please con `make release-pr`
    (`scripts/prepare_release_pr.py`; `RELEASE_PR_ARGS=--dry-run` para ver
-   el diff sin subir nada). Pone la versión en `Cargo.lock` (rayd,
-   rayd-core, rayito-proto) y en `clients/python/uv.lock`, convierte el
-   `## [Unreleased]` escrito a mano durante el ciclo en `## [x.y.z] - fecha`
-   (descartando las notas que genera release-please) y rehace el PR como un
-   único commit firmado: el ruleset de `main` exige firmas y los commits
-   que crea release-please por la API no lo están. Revisar después que las
-   versiones de `pyproject.toml`, `src/rayito/_version.py`, `package.json`,
-   `src/version.ts`, `Cargo.toml` y `Cargo.lock` son idénticas.
+   el diff sin subir nada). El commit se construye **desde el árbol de
+   `origin/main`**, nunca desde el de la rama de release-please: esa rama
+   puede haberse cortado antes de los últimos merges y copiar su árbol los
+   revierte en silencio (le pasó a 0.5.1). De release-please sólo se toma el
+   número de versión de su `.release-please-manifest.json`; los ficheros que
+   lo llevan se derivan de `release-please-config.json` (el manifiesto, el
+   fichero propio de cada `release-type` —`pyproject.toml`,
+   `package.json`— y los `extra-files`: `src/rayito/_version.py`,
+   `src/version.ts`, `Cargo.toml` y las entradas de rayd, rayd-core y
+   rayito-proto en `Cargo.lock`). Además regenera `clients/python/uv.lock`,
+   convierte el `## [Unreleased]` escrito a mano durante el ciclo en
+   `## [x.y.z] - fecha` (descartando las notas que genera release-please),
+   pone al día los enlaces de comparación del pie de cada CHANGELOG
+   (`[Unreleased]: …/compare/<tag x.y.z>...HEAD` y
+   `[x.y.z]: …/compare/<tag anterior>...<tag x.y.z>`) y rehace el PR como un
+   único commit firmado: el ruleset de `main` exige firmas y los commits que
+   crea release-please por la API no lo están.
+   - **Guarda**: antes de commitear, `git diff --name-only origin/main` debe
+     quedar dentro de manifiesto, ficheros de versión, lockfiles y
+     CHANGELOG; también aborta si release-please movió un fichero que la
+     configuración no explica, o si un fichero de versión que `main` no
+     tocó desde la base de release-please no queda idéntico al de su rama
+     (contraste de los actualizadores con los de release-please). En todos
+     los casos sale con código 2 sin commitear ni subir nada.
+   - **Trailers**: `RELEASE_PR_ARGS='--trailer "Co-Authored-By: …"'`
+     (repetible) o la variable `RELEASE_PR_TRAILERS` (uno por línea) los
+     añade al mensaje, antes del `Signed-off-by`, sin `--amend` posterior.
+   - La rama `release-please--branches--main` no puede estar abierta en otro
+     worktree: el script la recrea en el actual.
+   Revisar después que las versiones de `pyproject.toml`,
+   `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
+   y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
    `python scripts/check_license.py`, `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please

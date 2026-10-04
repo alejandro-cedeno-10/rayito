@@ -1,7 +1,7 @@
 """m15-templates contra AWS real (`RAYITO_E2E=1`, `RAYITO_TEMPLATE` y
 `RAYITO_E2E_TEMPLATE_BUCKET` con un bucket S3 ya existente para el
 artefacto de build). Cubre los pasos 1-3 del plan de aceptación de
-`openspec/changes/m15-templates/proposal.md`:
+`openspec/changes/archive/2026-10-03-m15-templates/proposal.md`:
 
 1. un build correcto (`pip_install` + `copy` + `set_start_cmd`), esperando
    `BuildInfo` y que la imagen quede lanzable.
@@ -18,25 +18,29 @@ esta versión, que lee `/etc/rayito/template.json`).
 
 Cada build crea como mucho una versión de imagen nueva (`force=True` nunca
 se usa dos veces sobre el mismo nombre): tope de coste de la función en
-`openspec/changes/m15-templates/proposal.md` (≈ $0,80, templates es la más
+`openspec/changes/archive/2026-10-03-m15-templates/proposal.md` (≈ $0,80, templates es la más
 cara de las ocho). Los nombres de imagen llevan un sufijo aleatorio por
-corrida para no chocar entre corridas concurrentes; nada se borra aquí
-(fuera de alcance de un agente de función, ver AWS_API_NOTES.md y el plan
-de aceptación): la limpieza de versiones de imagen es responsabilidad de
-la etapa de aceptación serializada.
+corrida para no chocar entre corridas concurrentes. El fixture
+`built_images` borra al terminar cada test (pase o falle) la imagen que
+construyó, con sus versiones (`image_cleanup.py`); lo que no pueda borrar
+hace fallar el test con el nombre, para borrarlo a mano. Necesita
+`lambda:DeleteMicrovmImage` en la identidad de la aceptación.
 """
 
 from __future__ import annotations
 
 import os
 import secrets as stdlib_secrets
+from collections.abc import Iterator
 
 import pytest
 
 from rayito import BuildException, Template
+from rayito._aws import LambdaMicrovmsControlPlane
 from rayito.exceptions import InvalidArgumentException
 
 from .conftest import E2ESettings
+from .image_cleanup import BuiltImages
 
 pytestmark = pytest.mark.e2e
 
@@ -58,14 +62,30 @@ def _run_name(label: str) -> str:
     return f"rayito-m15-templates-e2e-{label}-{stdlib_secrets.token_hex(4)}"
 
 
-def test_a_successful_build_produces_a_launchable_image(e2e_settings: E2ESettings) -> None:
+@pytest.fixture
+def built_images(control_plane: LambdaMicrovmsControlPlane) -> Iterator[BuiltImages]:
+    """Las imágenes que construye el test; se borran al terminar, también
+    si el test falla, y lo que no se pudo borrar hace fallar el teardown."""
+    session = control_plane.session
+    assert session is not None, "control_plane se construye con from_session()"
+    microvms = session.client("lambda-microvms", region_name=control_plane.region)
+    images = BuiltImages(microvms, resolve_arn=control_plane.resolve_template_arn)
+    yield images
+    failures = images.delete_all()
+    if failures:
+        pytest.fail("imágenes de test sin borrar (bórralas a mano): " + "; ".join(failures))
+
+
+def test_a_successful_build_produces_a_launchable_image(
+    e2e_settings: E2ESettings, built_images: BuiltImages
+) -> None:
     t = (
         Template()
         .from_base_image(e2e_settings.template)
         .pip_install(["pandas"])
         .set_envs({"RAYITO_M15_TEMPLATES_E2E": "1"})
     )
-    name = _run_name("ok")
+    name = built_images.track(_run_name("ok"))
     logs: list[str] = []
     info = Template.build(
         t,
@@ -79,13 +99,15 @@ def test_a_successful_build_produces_a_launchable_image(e2e_settings: E2ESetting
     assert Template.exists(name, region=e2e_settings.region) is True
 
 
-def test_a_failing_run_step_surfaces_step_command_and_exit_code(e2e_settings: E2ESettings) -> None:
+def test_a_failing_run_step_surfaces_step_command_and_exit_code(
+    e2e_settings: E2ESettings, built_images: BuiltImages
+) -> None:
     t = (
         Template()
         .from_base_image(e2e_settings.template)
         .pip_install(["this-package-does-not-exist-rayito-m15-e2e"])
     )
-    name = _run_name("fail-run")
+    name = built_images.track(_run_name("fail-run"))
     with pytest.raises(BuildException) as excinfo:
         Template.build(t, name, bucket=_bucket(), region=e2e_settings.region)
     assert excinfo.value.step is not None
@@ -93,9 +115,11 @@ def test_a_failing_run_step_surfaces_step_command_and_exit_code(e2e_settings: E2
     assert excinfo.value.exit_code not in (None, 0)
 
 
-def test_a_ready_cmd_that_never_succeeds_fails_the_build(e2e_settings: E2ESettings) -> None:
+def test_a_ready_cmd_that_never_succeeds_fails_the_build(
+    e2e_settings: E2ESettings, built_images: BuiltImages
+) -> None:
     t = Template().from_base_image(e2e_settings.template).set_start_cmd("sleep 3600", "exit 1")
-    name = _run_name("fail-ready")
+    name = built_images.track(_run_name("fail-ready"))
     with pytest.raises(BuildException) as excinfo:
         Template.build(
             t, name, bucket=_bucket(), timeout=READY_FAIL_BUDGET_SECONDS, region=e2e_settings.region

@@ -61,6 +61,16 @@ versionado [SemVer](https://semver.org/lang/es/).
   nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
   point que el listado aún mostraba pero ya no existe devuelve `false`.
 
+### Security
+
+- **Recortes y troceo de cadenas en tiempo lineal** (CodeQL
+  `js/polynomial-redos`): `git.clone()` con credenciales, `files.download()`
+  sin `filename`, el access token y las líneas de `.dockerignore` de un
+  template usaban expresiones regulares que retrocedían en tiempo
+  cuadrático (50 000 caracteres bloqueaban el bucle de eventos más de un
+  segundo). La semántica no cambia: una URL con un fin de línea tras la
+  autoridad sigue sin reconocerse como http(s).
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

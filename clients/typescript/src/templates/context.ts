@@ -10,9 +10,11 @@
  */
 
 import { createHash } from "node:crypto";
+import { stripLeading, stripTrailing } from "../strings.js";
 import type { CopyStep } from "./instructions.js";
 
 export const DOCKERIGNORE_FILENAME = ".dockerignore";
+const PATTERN_SEPARATOR = "/";
 
 export class DockerIgnore {
   readonly #patterns: ReadonlyArray<readonly [pattern: string, negated: boolean]>;
@@ -29,7 +31,8 @@ export class DockerIgnore {
         continue;
       }
       const negated = line.startsWith("!");
-      const pattern = (negated ? line.slice(1) : line).trim().replace(/^\/+|\/+$/g, "");
+      const body = (negated ? line.slice(1) : line).trim();
+      const pattern = stripTrailing(stripLeading(body, PATTERN_SEPARATOR), PATTERN_SEPARATOR);
       patterns.push([pattern, negated]);
     }
     return new DockerIgnore(patterns);

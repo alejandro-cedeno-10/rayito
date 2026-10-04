@@ -30,6 +30,20 @@ Cada nombre lleva a la guía completa de la función; debajo hay un
 2026-09-30; las cifras exactas, con enlace a la página de precios de AWS,
 están en [Funciones con coste AWS](#funciones-con-coste-aws).
 
+!!! info "La infraestructura la despliegas tú: `rayito stack`"
+    Las funciones que necesitan algo en tu cuenta (una tabla, unas
+    políticas IAM, unas Lambdas) lo traen como componente de
+    [`rayito stack`](funciones-opcionales/pilas-opcionales.md):
+    `rayito stack deploy <componente>` imprime el bloque "Coste y
+    activación" y pide confirmación, `rayito stack status` dice qué hay
+    desplegado y `rayito stack destroy` lo borra. Desde 0.6.1, redesplegar
+    conserva los parámetros que no repites. En el SDK, `OptionalStacks`.
+
+!!! note "En desarrollo"
+    Volúmenes EFS (`volumes=`) y dominio propio (`domain=`) todavía **no
+    están disponibles**: sus opciones lanzan `UnimplementedError` sin llamar
+    a AWS. Estado: [Novedades](novedades/index.md#en-desarrollo).
+
 !!! warning "El índice de metadatos aún no está aceptado en AWS real"
     Los secretos se aceptaron contra AWS real con la release 0.5.0, y las
     trazas OpenTelemetry no llaman a AWS, así que sus tests con un

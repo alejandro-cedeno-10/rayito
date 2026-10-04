@@ -1,5 +1,5 @@
 """Aceptación de `rayito sandbox proxy` contra AWS real
-(`openspec/changes/m12-sizes-proxy`).
+(`openspec/changes/archive/2026-10-01-m12-sizes-proxy`).
 
 Arranca `python3 -m http.server` dentro de un sandbox real, lanza
 `_proxy.run_proxy` (la misma función que usa el comando de la CLI, con un

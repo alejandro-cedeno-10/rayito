@@ -27,6 +27,16 @@ mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
 | `run_code(language="javascript")` o `"typescript"` ([Kernels](kernels.md)) | no: `UNIMPLEMENTED` | no | sí (0.3.0) |
 | Política de egress: `network=`, `allow_internet_access=False`, `update_network()` ([Red saliente](network.md)) | no: el SDK termina el VM y lanza `UnimplementedError` | sí (0.3.0) | no: igual que `rayito-base` |
 | IMDS bloqueado para uid 1000–65535 (`get_health().imds_blocked`) | no | sí | no |
+| `mounts=` ([Montajes S3](funciones-opcionales/montajes-s3.md)) | no: `UnimplementedError` | sí (0.6.0), con el bucket en `RAYITO_ALLOWED_MOUNT_BUCKETS` | no: igual que `rayito-base` |
+| `events=` ([Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md)), `gateways=` ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)) | sí (0.6.0) | sí (0.6.0) | sí (0.6.0) |
+| `telemetry=` ([Exportación OTLP](funciones-opcionales/exportacion-otlp.md)) | sí (0.6.0) con `OtlpAuth.bearer(...)` | sí (0.6.0), también con `OtlpAuth.execution_role()` | sí (0.6.0) con `OtlpAuth.bearer(...)` |
+| `Template.set_start_cmd()` ([Templates](funciones-opcionales/templates.md)) como imagen base | sí (0.6.0) | sí (0.6.0) | sí (0.6.0) |
+| Recogida de zombis huérfanos ([Novedades de 0.6.1](novedades/0.6.1.md#rayd-recoge-los-procesos-zombi)) | sí (0.6.1) | sí (0.6.1) | sí (0.6.1) |
+
+`size=` ([Tamaños](funciones-opcionales/tamanos.md)) no es una función de
+la imagen sino una imagen más por tamaño: `rayito image publish --sizes`
+publica `rayito-base-4gb` (o `rayito-base-caps-4gb`) desde el mismo
+artefacto que la variante.
 
 "sí (0.3.0)" significa que hace falta una imagen con `rayd` 0.3.0 o
 posterior (`agent_version`); contra una anterior, cada feature falla cerrado con

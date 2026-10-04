@@ -551,3 +551,51 @@ The e2e SHALL print the per-program wall time.
 #### Scenario: class variants apply everything without warning
 - **WHEN** the unit test calls `Sandbox.kill(sbx.sandbox_id, retries=3, proxy="http://h:1", access_token=t)`
 - **THEN** it emits no `RayitoCompatWarning` and the fake control plane received the retried, proxied call
+
+### Requirement: e2b-parity.md rows 82 and 110 reflect the M12 alternatives without overstating scope
+`docs/site/docs/e2b-parity.md` row 82 (`cpu_count`/`memory_mb` por sandbox) SHALL read status "divergente" with a note naming the per-image alternative (`rayito image publish --memory-mib`, choosing the resulting image as the template), that `Template.build(cpu_count=, memory_mb=)` still raises `UnimplementedError`, that `SandboxInfo.cpu_count`/`memory_mb` report the guest's view (measured `Q68`) rather than the contracted baseline, and a link to `limits.md#tamano-cpuram`.
+
+Row 110 (dominio propio vía proxy inverso) SHALL keep status "fuera por SPEC" as long as ADR-014 (owned by the sibling `m11-optin-adr` change) does not permit a hosted ingress; its note SHALL point to `rayito sandbox proxy <id> --port N` as the local-development alternative and SHALL state that a public domain remains an optional, not-included add-on for the customer's own account.
+
+The status-count table (`implementado`/`divergente`/`fuera por SPEC`/`imposible en la plataforma`) SHALL be recomputed to match (18 divergente, 12 fuera por SPEC), and `docs/site/docs/e2b-compat.md`'s cpu/memory footnote row SHALL carry the same per-image alternative, separated from the unrelated "CLI de templates/snapshots/fork" row it used to share. `scripts/tests/test_m9_docs.py::test_the_parity_page_has_every_ledger_row` SHALL stay green (113 rows, numbered 1..113, every status one of the four valid ones).
+
+#### Scenario: row 82 names the per-image alternative and stays truthful about Template.build
+- **WHEN** a reader opens `e2b-parity.md` row 82
+- **THEN** its status is "divergente", its note names `--memory-mib` and `Q68`, and it does not claim `Template.build(cpu_count=, memory_mb=)` works
+
+#### Scenario: row 110 points at the local proxy without claiming a hosted domain
+- **WHEN** a reader opens `e2b-parity.md` row 110
+- **THEN** its note names `rayito sandbox proxy` and states that a public domain is a not-included, optional add-on, and its status is unchanged ("fuera por SPEC") unless ADR-014 says otherwise
+
+#### Scenario: the ledger test still passes
+- **WHEN** `scripts/tests/test_m9_docs.py::test_the_parity_page_has_every_ledger_row` runs after this change
+- **THEN** it passes: rows numbered 1..113 and every status one of the four valid prefixes
+
+### Requirement: The E2B Secret shim implements E2B 2.51.0 over SecretStore
+`rayito.e2b` SHALL export `Secret`, `AsyncSecret`, `SecretInfo`, `SecretPaginator`, `AsyncSecretPaginator`, `SecretException` and `SecretNotFoundException` (TS `rayito/e2b`: `Secret`, `SecretPaginator`, type `SecretInfo`, `SecretError`, `SecretNotFoundError`) with the names, parameters, arity and results of `e2b` 2.51.0 (`e2b/secret/`, PyPI and npm), implemented over `SecretStore`. Names SHALL be validated like E2B's API (1–128 `[A-Za-z0-9_-]`, lowercased, `sec_` reserved) before any AWS call; `secret_id` SHALL be the Secrets Manager ARN; `fill(name)` SHALL return the literal `${e2b.secrets.<name>}` without calling AWS and no SDK path SHALL resolve placeholders inside `envs`; `iam_token` SHALL keep raising `UnimplementedError` with the `iam` reason; E2B connection kwargs SHALL warn with `RayitoCompatWarning` and be ignored; `E2B(...).Secret`/`.AsyncSecret` SHALL be bound to the client's region and session. Every divergence SHALL be written in `docs/site/docs/e2b-compat.md`.
+
+#### Scenario: every E2B method exists with E2B's signature
+- **WHEN** the shim's `Secret`/`AsyncSecret` members are compared to the signature table copied from `e2b` 2.51.0
+- **THEN** every method exists with the same parameter names and kinds (TS: the same `Function.length`), and `SecretInfo` has the same fields
+
+#### Scenario: fill makes no call and nothing resolves it
+- **WHEN** `Secret.fill("openai-key")` is called
+- **THEN** it returns `${e2b.secrets.openai-key}` and no Secrets Manager call is made
+
+### Requirement: The parity ledger reflects the secrets shim without overstating it
+`docs/site/docs/e2b-parity.md` row 56 SHALL say `.Secret` works; row 80 SHALL read "divergente" naming the ARN `secret_id`, the 2048-character metadata cap, the missing 100-secret cap and that `fill()` is not resolved; row 90 SHALL read "divergente" because `SecretException` extends `SandboxException` and the `Volume*Exception` half has no API; the "qué hacer" footer and the status counts SHALL be updated so `scripts/tests/test_m9_docs.py` stays green (113 rows, valid statuses).
+
+#### Scenario: the ledger test still passes
+- **WHEN** `scripts/tests/test_m9_docs.py::test_the_parity_page_has_every_ledger_row` runs
+- **THEN** it passes and the status table reads 72 implementado, 20 divergente, 10 fuera por SPEC, 11 imposible
+
+### Requirement: SandboxQuery.metadata over PAUSED works with the index extension
+The E2B shim's `Sandbox.list`/`AsyncSandbox.list` (TS `Sandbox.list`) SHALL accept the Rayito extension `index=` (TS `index`), also bound by `E2B(index=...)` (TS `new E2B({ index })`) and used only by `list`. With it, `SandboxQuery(metadata=..., state=[PAUSED])` SHALL map to the native indexed listing with E2B's state mapping (`PAUSED` = `SUSPENDING|SUSPENDED`, `RUNNING` = `PENDING|RUNNING`) and SHALL make no probe. Without it, the same `UnimplementedError` as before SHALL be raised, whose reason names `index=DynamoDbIndex(...)` and `optional-features.md`. `docs/site/docs/e2b-parity.md` row 40 SHALL read "divergente" saying the table is optional, only sandboxes created with the index appear, state comes from `list-microvms` and without the index it stays `UnimplementedError`; the status counts SHALL read 72 implementado, 21 divergente, 9 fuera por SPEC, 11 imposible.
+
+#### Scenario: paused query with the index
+- **WHEN** `Sandbox.list(query=SandboxQuery(metadata={"user": "42"}, state=[SandboxState.PAUSED]), index=idx).next_items()` runs over two paused and one running indexed sandboxes
+- **THEN** it returns the two paused ones with state `paused` and the control plane records no `GetMicrovm` or `CreateMicrovmAuthToken`
+
+#### Scenario: without the index the reason names the option
+- **WHEN** the same query runs without `index=`
+- **THEN** `UnimplementedError` is raised and its message contains `index=DynamoDbIndex` and `optional-features`

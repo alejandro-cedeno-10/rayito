@@ -294,10 +294,11 @@ docs:
 	cd $(PYTHON_CLIENT) && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
 
 # Ejemplos del sitio: Python (compile + ruff F821 + mypy contra rayito), JSON,
-# YAML y reglas de estilo; después TypeScript con tsc contra clients/typescript
+# YAML, reglas de estilo y las órdenes `rayito ...` contra la CLI; después
+# TypeScript con tsc contra clients/typescript
 # (necesita `pnpm install` allí). Sin AWS.
 docs-examples:
-	cd $(PYTHON_CLIENT) && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy
+	cd $(PYTHON_CLIENT) && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy --cli
 	python3 scripts/check_docs_examples.py --typescript
 
 clean:

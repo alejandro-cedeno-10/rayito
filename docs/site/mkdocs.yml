@@ -158,24 +158,32 @@ nav:
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
   - Funciones opcionales:
       - Resumen y coste: optional-features.md
-      - Secretos: secrets.md
-      - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
-      - OpenTelemetry: funciones-opcionales/opentelemetry.md
-      - Proxy local: funciones-opcionales/proxy-local.md
       - Pilas opcionales (rayito stack): funciones-opcionales/pilas-opcionales.md
-      - Montajes S3 (0.6): funciones-opcionales/montajes-s3.md
-      - Volúmenes EFS (experimental): funciones-opcionales/volumenes-efs.md
-      - Volúmenes EFS en tu VPC (experimental): funciones-opcionales/volumenes-efs-vpc.md
-      - Tamaños (0.6): funciones-opcionales/tamanos.md
-      - Eventos y webhooks (0.6): funciones-opcionales/eventos-y-webhooks.md
-      - Exportación OTLP (0.6): funciones-opcionales/exportacion-otlp.md
-      - Templates (0.6): funciones-opcionales/templates.md
-      - Pasarela de secretos (0.6): funciones-opcionales/pasarela-de-secretos.md
-      - Dominio propio (pendiente): funciones-opcionales/dominio-propio.md
+      - En el sandbox:
+          - Montajes S3: funciones-opcionales/montajes-s3.md
+          - Tamaños: funciones-opcionales/tamanos.md
+          - Pasarela de secretos: funciones-opcionales/pasarela-de-secretos.md
+          - Volúmenes EFS (experimental): funciones-opcionales/volumenes-efs.md
+          - Volúmenes EFS en tu VPC (experimental): funciones-opcionales/volumenes-efs-vpc.md
+          - Secretos: secrets.md
+      - Imágenes:
+          - Templates declarativos: funciones-opcionales/templates.md
+      - Observar:
+          - Eventos y webhooks: funciones-opcionales/eventos-y-webhooks.md
+          - Exportación OTLP: funciones-opcionales/exportacion-otlp.md
+          - OpenTelemetry (SDK): funciones-opcionales/opentelemetry.md
+          - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
+      - Proxy local: funciones-opcionales/proxy-local.md
+      - En desarrollo:
+          - Dominio propio: funciones-opcionales/dominio-propio.md
   - Migrar desde E2B:
       - migrar-desde-e2b/index.md
       - Diferencias: e2b-compat.md
       - Paridad: e2b-parity.md
+  - Novedades:
+      - novedades/index.md
+      - "0.6.1": novedades/0.6.1.md
+      - "0.6.0": novedades/0.6.0.md
   - Referencia:
       - referencia/index.md
       - Python:

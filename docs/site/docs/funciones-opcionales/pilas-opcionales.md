@@ -38,10 +38,31 @@ CloudFormation.
 | `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
 | `efs-volumes` (experimental) | En una VPC existente: sistema de ficheros EFS cifrado, un mount target por subred, 2 grupos de seguridad nuevos, un conector de egress a la VPC, su rol y la política `RayitoEfsVolumeClient` | $0 con el sistema de ficheros vacío | [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) |
 
-Sólo `custom-domain` sigue pendiente: `rayito stack list` ya lo muestra
-(con `supported` a `false`) y `deploy`/`status`/`destroy` sobre él fallan
-con un error claro hasta que su propia función lo implemente ([Dominio
+`custom-domain` está [en desarrollo](../novedades/index.md#en-desarrollo):
+`rayito stack list` ya lo muestra (con `supported` a `false`) y
+`deploy`/`status`/`destroy` sobre él fallan con un error claro, antes de
+llamar a AWS, hasta que su propia función lo implemente ([Dominio
 propio](dominio-propio.md)).
+
+## Parámetros de cada componente
+
+Se pasan con `parameters={...}` (TypeScript: `{ parameters: {...} }`) o
+`--param K=V`. Un parámetro que el componente no declara es
+`InvalidArgumentException` antes de llamar a AWS.
+
+| Componente | Parámetro | Por defecto al crear |
+|---|---|---|
+| `metadata-index` | `TableName`, `PointInTimeRecovery`, `DeletionProtection` | `rayito-sandboxes`, `false`, `false` |
+| `secrets-access` | `SecretPrefix`, `KmsKeyArn` | `rayito/`, vacío (sin `kms:Decrypt`) |
+| `s3-mounts` | `BucketName` (obligatorio), `Prefixes`, `ReadOnly` | —, `*` (todo el bucket), `true` |
+| `sizes-guard` | `ImageArns` (obligatorio) | — |
+| `events-webhooks` | `LogGroupName` (obligatorio), `ReconcilerIntervalMinutes`; `ArtifactBucket` lo rellena `artifact_bucket=`/`--artifact-bucket` | —, `5` |
+| `otlp-export` | ninguno | — |
+| `templates` | `ArtifactBucketArn`, `BuildRoleArn`, `BaseImageBucketArn` (obligatorios), `ImageLogGroupPrefix`, `ProtectedImageNamePrefix` | —, —, —, `/rayito`, `rayito-base` |
+| `efs-volumes` | `VpcId`, `SubnetIds` (obligatorios, de 1 a 3), `ConnectorName`, `AllowWrite`, `AccessPointArns`, `ReadOnlyAccessPointArns` | —, —, `rayito-efs`, `true`, vacío (cualquier access point del sistema de ficheros), vacío |
+
+`stacks.components()` devuelve este mismo catálogo (con la descripción de
+cada parámetro y el coste) sin llamar a AWS.
 
 ## Redesplegar no deshace la configuración
 
@@ -54,7 +75,38 @@ vuelve a abrir todo el bucket, ni redesplegar `metadata-index` sin
 `TableName` reemplaza la tabla. `rayito stack deploy` imprime qué
 parámetros cambian antes de pedir confirmación, y
 `OptionalStacks().parameter_changes(...)` (TypeScript:
-`parameterChanges(...)`) devuelve lo mismo sin desplegar nada.
+`parameterChanges(...)`) devuelve lo mismo sin desplegar nada (sólo un
+`DescribeStacks`). <small>Desde 0.6.1; en 0.6.0, redesplegar sin repetir un
+parámetro lo devolvía a su valor por defecto.</small>
+
+=== "Python"
+
+    ```python
+    from rayito import OptionalStacks
+
+    stacks = OptionalStacks(region="us-east-1")
+    current = stacks.status("s3-mounts")
+    if current is not None:
+        print(current.state, current.parameters)  # {"BucketName": "...", "Prefixes": "runs/*", ...}
+    for change in stacks.parameter_changes("s3-mounts", parameters={"ReadOnly": "false"}):
+        print(f"{change.name}: {change.before} -> {change.after}")
+    stacks.deploy("s3-mounts", parameters={"ReadOnly": "false"})  # Prefixes se conserva
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { OptionalStacks } from "rayito";
+
+    const stacks = new OptionalStacks({ region: "us-east-1" });
+    const current = await stacks.status("s3-mounts");
+    console.log(current?.state, current?.parameters);
+    const changes = await stacks.parameterChanges("s3-mounts", {
+      parameters: { ReadOnly: "false" },
+    });
+    for (const change of changes) console.log(`${change.name}: ${change.before} -> ${change.after}`);
+    await stacks.deploy("s3-mounts", { parameters: { ReadOnly: "false" } });
+    ```
 
 ## CLI
 
@@ -101,3 +153,27 @@ dice qué se conserva.
     console.log(status.state, status.outputs);
     await stacks.destroy("metadata-index");
     ```
+
+## Cómo se comporta
+
+- **Nombre de la pila**: `rayito-<componente>` (`rayito-s3-mounts`), salvo
+  `stack_name=`/`stackName`/`--stack-name`. Con nombres distintos puedes
+  desplegar el mismo componente varias veces, por ejemplo una pila
+  `s3-mounts` por bucket.
+- **Espera**: `deploy()` y `destroy()` esperan a que la pila se asiente
+  (como mucho 600 s, `wait_timeout=`/`waitTimeoutMs`); con `wait=False`
+  devuelven en cuanto CloudFormation acepta la petición.
+- **Etiquetas**: cada pila lleva `rayito:component`, `rayito:managed-by` y
+  `rayito:sdk-version`, más las que pases en `tags=`/`--tag K=V` (para
+  organizaciones que exigen etiquetas al crear recursos). Las tres fijas
+  siempre ganan.
+- **Una pila fallida** (`ROLLBACK_COMPLETE`) no se puede actualizar:
+  `deploy()` lanza `StackException(code="blocked")`
+  (TypeScript: `StackError`) sin llamar a `UpdateStack`. Bórrala con
+  `destroy()` y vuelve a desplegarla.
+- **Código Lambda**: un componente con código (`events-webhooks`) lo sube
+  a `artifact_bucket=`/`--artifact-bucket` con su hash como clave, así un
+  redespliegue con el mismo SDK no vuelve a subirlo.
+- **TypeScript**: `OptionalStacks` carga el peer opcional
+  `@aws-sdk/client-cloudformation` en la primera llamada a AWS
+  (`pnpm add @aws-sdk/client-cloudformation`).
