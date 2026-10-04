@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
+from rayito._authority import http_authority, is_wildcard
 from rayito.mcp._lease import SandboxLease
 from rayito.mcp._server import build_server
 from rayito.mcp._settings import McpSettings
@@ -95,16 +96,6 @@ def parse_args(argv: Sequence[str]) -> RunOptions:
     )
 
 
-def http_authority(host: str, port: int) -> str:
-    """`Host` y `Origin` tal y como los escribe un cliente: un literal IPv6
-    va entre corchetes, que es la forma que compara el middleware de `mcp`."""
-    try:
-        bracketed = ipaddress.ip_address(host).version == 6
-    except ValueError:
-        bracketed = False
-    return f"[{host}]:{port}" if bracketed else f"{host}:{port}"
-
-
 def transport_security(options: RunOptions) -> TransportSecuritySettings:
     """Siempre explícito: `mcp` sólo auto-activa la protección anti-rebinding
     para tres cadenas de host exactas, así que `--host 127.0.0.2` servía sin
@@ -116,15 +107,6 @@ def transport_security(options: RunOptions) -> TransportSecuritySettings:
         allowed_hosts=[authority],
         allowed_origins=[f"http://{authority}"],
     )
-
-
-def is_wildcard(host: str) -> bool:
-    """`0.0.0.0` y `::` ligan todas las interfaces: son una interfaz válida y
-    una autoridad imposible."""
-    try:
-        return ipaddress.ip_address(host).is_unspecified
-    except ValueError:
-        return False
 
 
 def is_loopback(host: str) -> bool:
