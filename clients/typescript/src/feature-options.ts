@@ -30,8 +30,8 @@ import { GatewaySectionFactory } from "./secret-gateway/section.js";
 import type { TelemetryExport } from "./telemetry-export/domain.js";
 import { planTelemetry } from "./telemetry-export/domain.js";
 import { type TelemetryLaunchFacts, TelemetrySectionFactory } from "./telemetry-export/section.js";
+import { requireVolumeSupport } from "./volumes/section.js";
 
-export const VOLUMES_CHANGE = "m15-efs-volumes";
 export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
 export const GATEWAYS_CHANGE = "m15-secrets-gateway";
@@ -88,8 +88,8 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({
 /**
  * Punto único por el que `create()` pasa las siete opciones 0.6.
  * `imageVariant` (de `resolveImageVariant`) es la variante de imagen,
- * cuando el nombre ya permite decidirla; `mounts` y `telemetry` (con
- * `OtlpAuth.executionRole()`) lo usan para exigir la variante caps antes
+ * cuando el nombre ya permite decidirla; `mounts`, `volumes` y `telemetry`
+ * (con `OtlpAuth.executionRole()`) lo usan para exigir la variante caps antes
  * de lanzar (`requireCapsFor`, una comprobación puramente sobre el nombre
  * de la imagen). `logging` es el `logging` de `create()`: `events` exige
  * que mande los logs a CloudWatch. No hace ninguna llamada a AWS ni
@@ -115,7 +115,9 @@ export function planFeatures(
     }
   }
   if (options.volumes !== undefined) {
-    throw new UnimplementedError("volumes", `llega en 0.6 (${VOLUMES_CHANGE})`);
+    // m15-efs-volumes: validación real (rutas, tipos, variante caps) antes
+    // de la UnimplementedError del adaptador ausente.
+    requireVolumeSupport(options.volumes, imageVariant);
   }
   // `size` (m15-sizes-catalog) ya no es un stub: no produce ninguna
   // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste

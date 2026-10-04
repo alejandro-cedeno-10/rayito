@@ -6,6 +6,42 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
+  por defecto): `VolumeStore` (CRUD real de access points EFS:
+  `CreateAccessPointCommand`/`DescribeAccessPointsCommand`/
+  `DeleteAccessPointCommand`, con `@aws-sdk/client-efs` como peer opcional
+  cargado sólo en el primer uso) y `Sandbox.create({ volumes })`, que
+  valida la petición (tipos, rutas, variante `caps`) antes de cualquier
+  llamada a AWS y siempre lanza `UnimplementedError` hasta que la campaña
+  de medición EFS-1..EFS-20 decida un adaptador de montaje real
+  (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
+  y los errores `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
+  El shim de E2B (`Volume`) hace CRUD real sobre
+  `new E2B({ volumeStore })` (`volumeId` es el nombre del volumen, el mismo
+  que reciben `connect`/`getInfo`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `volumeMounts` valida sin llamar a AWS y siempre lanza
+  `UnimplementedError`. Componente
+  `rayito stack {deploy,status,destroy} efs-volumes`
+  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
+  target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y
+  conector de egress dedicado, sólo dentro de una VPC que ya existe).
+  `EfsVolumes`: `check({ vpcId, subnetIds })` comprueba la VPC sin crear
+  nada (sólo `Describe*` de EC2 con el peer opcional `@aws-sdk/client-ec2`;
+  cuenta las subredes con ruta por defecto a un NAT y a otra puerta, como un
+  transit gateway),
+  `deploy()` se niega si algún hallazgo es `FAIL`, `volumeStore()` da un
+  `VolumeStore` sobre la pila, y `destroy({ deleteFileSystem: true })`/
+  `deleteFileSystem(id)` borran el sistema de ficheros conservado (sólo uno
+  con la etiqueta `rayito=efs-volumes`).
+  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
+  (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
+  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
+  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
+  point que el listado aún mostraba pero ya no existe devuelve `false`.
+
 ### Fixed
 
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**

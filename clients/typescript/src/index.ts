@@ -332,3 +332,21 @@ export {
 } from "./templates/ready-cmds.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";
+export {
+  EfsVolume,
+  type EfsVolumeOptions,
+  type MountState,
+  type VolumeStatus,
+} from "./volumes/domain.js";
+export {
+  EfsVolumes,
+  type EfsVolumesDeployOptions,
+  type EfsVolumesOptions,
+} from "./volumes/efs-volumes.js";
+export type {
+  EfsNetworkReport,
+  FindingLevel,
+  NetworkFinding,
+  NetworkInspector,
+} from "./volumes/network.js";
+export { VolumeStore, type VolumeStoreOptions } from "./volumes/store.js";

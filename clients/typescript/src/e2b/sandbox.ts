@@ -21,6 +21,7 @@ import { probeSandboxInfo } from "../sandbox/info-probe.js";
 import { validateHostPort } from "../sandbox/launch.js";
 import type { SandboxListPaginator } from "../sandbox/paginator.js";
 import { Sandbox as NativeSandbox } from "../sandbox/sandbox.js";
+import type { VolumeStore } from "../volumes/store.js";
 import {
   emitCompatWarning,
   emitIgnoredWarnings,
@@ -58,6 +59,7 @@ import type {
   SandboxUrlOpts,
 } from "./types.js";
 import { rejectUnimplemented, unimplemented } from "./unimplemented.js";
+import { requireVolumeMountSupport } from "./volume.js";
 
 export { LIFECYCLE_IMAGE_REASON } from "./compat.js";
 
@@ -228,11 +230,18 @@ export class Sandbox implements AsyncDisposable {
 
   // ------------------------------------------------- static implementations
 
+  /**
+   * `volumeStore` es el de `new E2B({ volumeStore })` (sólo ligado al
+   * cliente, como `E2B(volume_store=)` en Python): `volumeMounts` pasa por su
+   * puerta sin I/O justo después de los rechazos de `mapCreateOptions`
+   * (`mcp`/`iam`), antes de cualquier llamada a AWS.
+   */
   protected static async createFor(
     cls: typeof Sandbox,
     bound: ConnectionOpts,
     templateOrOpts: string | SandboxOpts | undefined,
     opts: SandboxOpts | undefined,
+    volumeStore?: VolumeStore,
   ): Promise<Sandbox> {
     const template = typeof templateOrOpts === "string" ? templateOrOpts : undefined;
     const call = typeof templateOrOpts === "string" ? (opts ?? {}) : (templateOrOpts ?? {});
@@ -241,6 +250,9 @@ export class Sandbox implements AsyncDisposable {
       template ?? merged,
       template === undefined ? undefined : merged,
     );
+    if (merged.volumeMounts !== undefined) {
+      requireVolumeMountSupport(merged.volumeMounts, volumeStore, mapping.native.template);
+    }
     const config = new ConnectionConfig(merged);
     emitIgnoredWarnings(mapping.ignored);
     try {
@@ -619,14 +631,14 @@ export class Sandbox implements AsyncDisposable {
  * `opts` con los de la llamada (gana la llamada salvo `undefined`) y las
  * instancias guardan el enlace para sus propias llamadas.
  */
-export function bindSandbox(opts: ConnectionOpts): typeof Sandbox {
+export function bindSandbox(opts: ConnectionOpts, volumeStore?: VolumeStore): typeof Sandbox {
   const bound: ConnectionOpts = Object.freeze({ ...opts });
   return class BoundSandbox extends Sandbox {
     static override create(
       templateOrOpts?: string | SandboxOpts,
       createOpts?: SandboxOpts,
     ): Promise<Sandbox> {
-      return Sandbox.createFor(BoundSandbox, bound, templateOrOpts, createOpts);
+      return Sandbox.createFor(BoundSandbox, bound, templateOrOpts, createOpts, volumeStore);
     }
 
     static override connect(sandboxId: string, connectOpts: SandboxConnectOpts = {}) {

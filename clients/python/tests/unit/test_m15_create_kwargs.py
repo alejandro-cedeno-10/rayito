@@ -13,15 +13,29 @@ from __future__ import annotations
 
 import pytest
 
-from rayito import AsyncSandbox, AsyncSandboxPool, OtlpAuth, Sandbox, SandboxPool, TelemetryExport
+from rayito import (
+    AsyncSandbox,
+    AsyncSandboxPool,
+    EfsVolume,
+    OtlpAuth,
+    Sandbox,
+    SandboxPool,
+    TelemetryExport,
+)
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
+
+#: Un valor bien formado: m15-efs-volumes valida la forma de `volumes=`
+#: (tipo, rutas) antes de llegar a `UnimplementedError`, así que un
+#: `object()` ahí ya no llegaría tan lejos (lanzaría InvalidArgumentException
+#: por el tipo, no por ser un stub).
+_VALID_VOLUME = {"/mnt/v": EfsVolume(file_system_id="fs-0123abcd", access_point_id="fsap-0123abcd")}
 
 
 @pytest.mark.parametrize(
     ("option", "value"),
     [
         ("mounts", {"/mnt/d": object()}),
-        ("volumes", {"/mnt/v": object()}),
+        ("volumes", _VALID_VOLUME),
         # `events` validates its type and `logging` first: see
         # `test_m15_events_webhooks_feature_options.py`.
         # `telemetry=` (m15-rayd-otlp) validates for real now; a

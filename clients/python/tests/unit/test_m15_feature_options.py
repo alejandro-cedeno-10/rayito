@@ -9,7 +9,11 @@ y queda en `FeaturePlan.telemetry`; `size=` tampoco es ya un stub
 se prueba en `test_m15_sizes_catalog_domain.py` y
 `test_m15_sizes_catalog_create.py`, no aquí. Las otras, puestas a algo
 distinto de `None`, siguen lanzando `UnimplementedError` nombrando su propio
-cambio OpenSpec, antes de construir ningún `FeaturePlan`."""
+cambio OpenSpec, antes de construir ningún `FeaturePlan`.
+`volumes=` ya no es un stub genérico (m15-efs-volumes reemplazó su rama con
+`require_volume_support`, que exige un `EfsVolume` real y valida rutas antes
+de llegar a `UnimplementedError`): su propio comportamiento se cubre en
+`test_m15_efs_volumes_section.py`, no en el parametrize de abajo."""
 
 from __future__ import annotations
 
@@ -57,7 +61,6 @@ def test_mounts_with_an_unknown_image_variant_is_not_rejected_here() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "option_name", "change_slug"),
     [
-        ("volumes", {"/mnt/v": object()}, "volumes=", "m15-efs-volumes"),
         # `events` validates its type and `logging` first: see
         # `test_m15_events_webhooks_feature_options.py`.
         ("domain", object(), "domain=", "m15-custom-domain"),

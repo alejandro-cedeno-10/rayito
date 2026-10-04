@@ -17,12 +17,18 @@ import type { SandboxPool } from "../../src/pool/pool.js";
 import { S3Mount } from "../../src/s3-mounts/domain.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { OtlpAuth, TelemetryExport } from "../../src/telemetry-export/domain.js";
+import { EfsVolume } from "../../src/volumes/domain.js";
 
 const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base";
 // Not an ARN, so `resolveImageVariant` resolves it (unlike `TEMPLATE`
 // above): needed for the `telemetry` + `executionRole` case below, which
 // relies on the caps check actually running before any control plane call.
 const NAMED_TEMPLATE = "rayito-base";
+// m15-efs-volumes valida la forma de `volumes` (tipo, rutas) antes de
+// UnimplementedError, así que `{}` ya no llegaría tan lejos.
+const VALID_VOLUME = {
+  "/mnt/v": new EfsVolume({ fileSystemId: "fs-0123abcd", accessPointId: "fsap-0123abcd" }),
+};
 
 describe("Sandbox.create: 0.6 options", () => {
   // `telemetry` (m15-rayd-otlp) is the first real function: it validates
@@ -30,7 +36,7 @@ describe("Sandbox.create: 0.6 options", () => {
   // the dedicated `telemetry` tests below), so it is not part of this
   // generic "still a stub" table.
   test.each([
-    ["volumes", { "/mnt/v": {} }],
+    ["volumes", VALID_VOLUME],
     // `events` left this stub list in m15-events-webhooks (now
     // `InvalidArgumentError` without `logging: "cloudwatch"`, still before
     // any control plane) — see `m15-events-webhooks-feature-options.test.ts`.

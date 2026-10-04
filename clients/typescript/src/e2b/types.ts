@@ -73,7 +73,13 @@ export interface SandboxOpts extends ConnectionOpts {
   readonly mcp?: unknown;
   readonly network?: SandboxNetworkOpts | undefined;
   readonly iam?: unknown;
-  readonly volumeMounts?: unknown;
+  /**
+   * `{ruta: Volume | nombre}` (m15-efs-volumes, experimental): pasa por la
+   * puerta sin I/O de `volumes` con el `volumeStore` de
+   * `new E2B({ volumeStore })` — sin él, `UnimplementedError("Volume")`; con
+   * él, hoy siempre `UnimplementedError` hasta que exista el montaje.
+   */
+  readonly volumeMounts?: Readonly<Record<string, unknown>> | undefined;
   readonly lifecycle?: SandboxLifecycle | undefined;
   /** El tope de la plataforma; por defecto `max(3 600 000, min(timeoutMs + 60 000, 28 800 000))`. */
   readonly maxLifetimeMs?: number | undefined;

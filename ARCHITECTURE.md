@@ -1925,8 +1925,61 @@ atiende a su propio uid y uid 1000 recibe `EACCES` (Q101).
 
 ## ADR-018 — efs-volumes (M15, 0.6, experimental)
 
-Pendiente: lo completa `m15-efs-volumes`, tras la campaña de medición
-EFS-1..EFS-20 (`docs/research/2026-10-efs-persistence.md`).
+**Contexto.** E2B's beta `Volume` gives several sandboxes a live-shared
+POSIX directory; Rayito only has `persist=` (an S3 checkpoint/restore copy
+that never shares data between two running sandboxes). The feasibility
+study (`docs/research/2026-10-efs-persistence.md`) found the design viable
+*conditioned on* an AWS measurement campaign (EFS-1..EFS-20) that decides
+three stop criteria before any real mounting code is written: NFSv4.1
+compiled into the guest kernel (EFS-1, already answered: it is), a
+Rayito-owned VPC connector that reaches an EFS mount target (EFS-3), and
+`efs-utils` mounting with TLS+IAM+access-point and no `systemd` (EFS-8).
+
+**Decisión.** Split the feature in two. This change ships everything that
+does not depend on the campaign's answer: the pure domain and port
+(`rayd_core::volume`, `VolumeMounter`), `rayd`'s only adapter
+(`UnavailableEfsMounter`, always `Unsupported`; `features::efs_volumes`
+holds it behind the port, so `Health.features.efs_volumes` is its
+`support()` and the section answers `UNSUPPORTED` until a real mounter
+lands), a real `VolumeStore` CRUD over EFS access points (caller's
+credentials, never the execution role), the `Sandbox.create(volumes=)`
+surface that validates eagerly (shape, mount path, `base-caps` variant)
+and always raises `UnimplementedError` naming the pending campaign, the
+`efs-volumes` `OptionalStack` component (`infra/efs-volumes.yaml`: file
+system, mount targets, the two NFS security groups, a dedicated egress
+connector), and the E2B shim's `Volume`/`AsyncVolume` (real CRUD once
+`E2B(volume_store=...)` configures one; content operations stay
+`UnimplementedError`, since there is still no data plane outside a
+MicroVM). A real `VolumeMounter` adapter — `rayd` actually running
+`mount -t efs -o tls,iam,accesspoint=...` as root, the watchdog, the
+`/suspend`/`/resume` handling — waits for the measurement campaign's own
+change, once EFS-2/EFS-3/EFS-8 clear it.
+
+**Consecuencias.** `volumes=`/`VolumeStore` are off by default: no
+`EfsVolume` constructed and no `VolumeStore` method called means no `efs`
+client and no `ConfigureSandbox` call, so the zero-cost golden trace is
+unaffected. `VolumeStore`'s CRUD is real and useful today (an operator can
+pre-provision volumes) even though mounting one into a sandbox is not;
+this is documented as experimental, never silently approximated (project
+rule: no undocumented divergence). Access to a volume is isolated by
+execution role, not by sandbox (same limitation as S3 persistence's T15):
+any sandbox with that role's credentials can mount any access point the
+role is scoped to. Threat T21 (NFS volumes) covers the mount path once a
+real adapter exists.
+
+**Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
+organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
+stack deploys into an existing one: `SubnetIds` (1–3, one mount target per
+AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
+rules on existing security groups. `EfsVolumes.check()` is a pure
+evaluation over read-only `ec2:Describe*` facts (a `NetworkInspector` port,
+also behind `rayito doctor --efs-vpc-id`), and `deploy()` refuses on any
+`FAIL`. The file system stays `DeletionPolicy: Retain`;
+`destroy(delete_file_system=True)`/`delete_file_system(id)` delete it
+explicitly, only when it carries the template's literal
+`rayito=efs-volumes` tag. The connector's only egress is NFS to the mount
+targets: internet through the VPC would depend on the VPC's own NAT and a
+connector that allows it (EFS-4 measures combining with `INTERNET_EGRESS`).
 
 ## ADR-019 — sizes-catalog (M15, 0.6)
 

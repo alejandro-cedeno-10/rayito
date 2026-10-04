@@ -40,13 +40,13 @@ from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
 from rayito._telemetry_export import TelemetrySectionFactory
 from rayito._telemetry_export import plan as plan_telemetry
+from rayito._volumes._section import require_volume_support
 from rayito.exceptions import UnimplementedError
 
 if TYPE_CHECKING:
     from rayito._lifecycle_events._service import LifecycleEvents
     from rayito._telemetry_export import TelemetryExport
 
-VOLUMES_CHANGE: Final = "m15-efs-volumes"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
@@ -158,10 +158,10 @@ def plan_features(
 ) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
-    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` y
-    `telemetry=` (con `OtlpAuth.execution_role()`) lo usan para exigir la
-    variante caps antes de lanzar (`require_caps_for`, una comprobación
-    puramente sobre el nombre de la imagen). `logging` es el `logging=` de
+    variante de imagen, cuando el nombre ya permite decidirla; `mounts=`,
+    `volumes=` y `telemetry=` (con `OtlpAuth.execution_role()`) lo usan
+    para exigir la variante caps antes de lanzar (`require_caps_for`, una
+    comprobación puramente sobre el nombre de la imagen). `logging` es el `logging=` de
     `create()`: `events=` exige que mande los logs a CloudWatch. No hace
     ninguna llamada a AWS ni construye ningún cliente.
 
@@ -178,7 +178,10 @@ def plan_features(
         if section is not None:
             sections.append(section)
     if options.volumes is not None:
-        raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
+        # m15-efs-volumes: validación real (rutas, tipos, variante caps)
+        # antes de la UnimplementedError del adaptador ausente; ver
+        # rayito._volumes._section.require_volume_support.
+        require_volume_support(options.volumes, image_variant=image_variant)
     # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
     # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
     # es qué imagen lanzar), así que `create()` la resuelve por su cuenta

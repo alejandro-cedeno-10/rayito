@@ -108,6 +108,9 @@ E2B_V2_NAMES = [
     "Template",
     "Username",
     "Volume",
+    "VolumeException",
+    "VolumeNotFoundException",
+    "VolumePathNotFoundException",
     "get_signature",
 ]
 
@@ -134,6 +137,9 @@ E2B_EXCEPTION_NAMES = [
     "ServiceBusyException",
     "SecretException",
     "SecretNotFoundException",
+    "VolumeException",
+    "VolumeNotFoundException",
+    "VolumePathNotFoundException",
 ]
 
 

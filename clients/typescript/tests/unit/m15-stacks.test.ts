@@ -61,9 +61,8 @@ describe("stacks/service: OptionalStacks", () => {
   test("deploying an unsupported component raises before touching the provisioner", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    // `s3-mounts` is real since `m15-s3-mounts`; `efs-volumes` is still a
-    // stub (`supported: false`) and makes the same point.
-    await expect(stacks.deploy("efs-volumes")).rejects.toThrow(UnimplementedError);
+    // `custom-domain` is the last stub (`supported: false`) on this branch.
+    await expect(stacks.deploy("custom-domain")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 
@@ -133,7 +132,7 @@ describe("stacks/service: OptionalStacks", () => {
   test("destroying an unsupported component also raises first", async () => {
     const fake = new FakeStackProvisioner();
     const stacks = new OptionalStacks({ provisioner: fake });
-    await expect(stacks.destroy("efs-volumes")).rejects.toThrow(UnimplementedError);
+    await expect(stacks.destroy("custom-domain")).rejects.toThrow(UnimplementedError);
     expect(fake.calls).toEqual([]);
   });
 

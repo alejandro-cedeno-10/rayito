@@ -8,9 +8,10 @@
 //! credential-free HTTPS client of presigned transfers (ADR-010), the
 //! bounded per-filesystem `syncfs` of `/suspend`, the boot-time reader of
 //! `/etc/rayito/template.json`, the shell runner behind a template's
-//! `ready_cmd` (ADR-022, `features::template_start`), and the process-wide
+//! `ready_cmd` (ADR-022, `features::template_start`), the process-wide
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
-//! (`rayd-orphan-reaper`).
+//! (`rayd-orphan-reaper`), and the EFS volume mounter (ADR-018,
+//! `UnavailableEfsMounter` ahead of the measurement campaign).
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -19,6 +20,7 @@ pub mod capabilities;
 pub mod child_registry;
 pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
+pub mod efs_mount;
 pub mod egress_routes;
 pub mod fs_identity;
 pub mod fs_template_spec;
@@ -52,6 +54,7 @@ pub use cloudwatch_otlp_sink::{
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
+pub use efs_mount::UnavailableEfsMounter;
 pub use fs_identity::FsIdentityGuard;
 pub use fs_template_spec::{FsTemplateSpecSource, TemplateSpecSource};
 pub use fuse_device::LinuxFuseDevice;

@@ -66,3 +66,19 @@ Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
 ::: rayito.OtlpAuth
 
 ::: rayito.TelemetryHealth
+
+## Volúmenes EFS (experimental)
+
+::: rayito.VolumeStore
+
+::: rayito.EfsVolume
+
+::: rayito.VolumeStatus
+
+::: rayito.EfsVolumes
+
+::: rayito.AsyncEfsVolumes
+
+::: rayito.EfsNetworkReport
+
+::: rayito.NetworkFinding
