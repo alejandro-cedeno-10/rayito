@@ -334,5 +334,5 @@ jobs:
           python-version: "3.12"
       - name: Build the docs site strictly (no deploy)
         run: cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
-      - name: Docs examples compile, name-check and typecheck against rayito (no AWS)
-        run: cd clients/python && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy
+      - name: Docs examples compile, name-check and typecheck against rayito; CLI commands exist (no AWS)
+        run: cd clients/python && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy --cli

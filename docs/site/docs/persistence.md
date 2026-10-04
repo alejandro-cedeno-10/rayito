@@ -182,7 +182,9 @@ persist=sbx.persist)` (que restaura) → `kill()` del sandbox viejo, y devuelve 
 nuevo. El nuevo tiene 8 h frescas, otro `sandbox_id`, otro access token
 (salvo que el original fuera explícito) y los mismos `metadata`.
 
-Las opciones 0.6 que acaban en `ConfigureSandbox` también se reaplican:
+Las opciones 0.6 que acaban en `ConfigureSandbox` también se reaplican
+(<small>desde 0.6.1; en 0.6.0 sólo `gateways=`, ver
+[Novedades de 0.6.1](novedades/0.6.1.md#reincarnate-reaplica-todas-las-opciones-06)</small>):
 `mounts=`, `events=`, `telemetry=` y `gateways=` vuelven al único
 `Configure` del sucesor por el mismo camino que en `create()`, resueltas
 con los hechos del sandbox nuevo:
