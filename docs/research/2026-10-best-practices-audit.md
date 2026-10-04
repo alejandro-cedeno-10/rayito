@@ -6,14 +6,18 @@ librerías y SDKs open source en Python, TypeScript y Rust. Se ha leído código
 no solo documentación. Los arreglos de bajo riesgo están en
 [#96](https://github.com/alejandro-cedeno-10/rayito/pull/96) (cambio OpenSpec
 `best-practices-low-risk-fixes`) y las convenciones del proyecto quedan como
-skill en `.claude/skills/rayito-engineering/`.
+skill en `.claude/skills/rayito-engineering/`. Complementa a
+[`2026-10-oss-standards-audit.md`](2026-10-oss-standards-audit.md) (#95:
+licencias, cumplimiento de terceros, archivos de comunidad, insignia de
+OpenSSF y política de versiones), que se hizo en paralelo sobre el mismo
+commit. Los hallazgos que coinciden se señalan abajo y no se repiten.
 
 **Resultado:** el repositorio está por encima de la media de los SDKs open
 source en tipado, cadena de suministro, higiene de secretos y paridad entre
 lenguajes. Hay **un hallazgo alto**: el mapa `exports` del paquete npm servía
-tipos ESM a los consumidores CommonJS (arreglado en #96). Hay **diez medios**,
-de los que tres están arreglados en #96; los demás son decisiones de política
-para antes de 1.0. Lo que sobra está en lo especulativo: API pública creada
+tipos ESM a los consumidores CommonJS (arreglado en #96). Hay **diez medios**:
+cuatro están arreglados en #96 y uno en #95; los demás son decisiones de
+política para antes de 1.0. Lo que sobra está en lo especulativo: API pública creada
 antes que sus funciones, y el peso de la documentación interna.
 
 ## Fuentes
@@ -69,13 +73,13 @@ decisión o un cambio más grande. Referencias a `main` en 4dc0ee0.
 | BP-01 | Alta | `clients/typescript/package.json:19-37` | `exports` con `types` hermano de `import`/`require`. TypeScript lo elige antes que ambos y un consumidor CommonJS con `node16`/`nodenext` recibía `.d.mts` para un `.cjs`: arethetypeswrong lo marca como "👺 Masquerading as ESM" en las dos entradas | #96 |
 | BP-02 | Media | `clients/typescript/package.json:105` | La dev dependency `@opentelemetry/sdk-trace-base` ^1.27 arrastra `@opentelemetry/core` 1.30.1, afectado por GHSA-8988-4f7v-96qf: es la única vulnerabilidad de Scorecard. `pnpm audit --prod` no la ve porque es de dev | #96 |
 | BP-03 | Media | `scripts/check_hygiene.py:162-172` | La regla de rutas locales cubría Windows y Git Bash, pero no el home de macOS ni sus temporales, que es justo la plataforma del mantenedor | #96 |
-| BP-04 | Media | `.github/workflows/ci.yml` (job `check`), `clients/python/pyproject.toml:20-22` | Los classifiers declaran 3.11–3.13, pero CI solo probaba la 3.12 del runner. En local la suite pasa entera en 3.11, 3.13 y 3.14 | #96 (falta declarar 3.14) |
+| BP-04 | Media | `.github/workflows/ci.yml` (job `check`), `clients/python/pyproject.toml:20-22` | Los classifiers declaran 3.11–3.13, pero CI solo probaba la 3.12 del runner. En local la suite pasa entera en 3.11, 3.13 y 3.14. Coincide con el punto 5 de §8 de la auditoría de #95 | #96 (falta declarar 3.14) |
 | BP-05 | Media | `clients/typescript/package.json:12-14,106`, `ci.yml:117,201`, `src/index.ts:11`, `src/e2b/index.ts:18` | `engines` `>=20` cuando Node 20 ya no tiene soporte (2026-04-30), y CI solo prueba Node 22. El polyfill de `Symbol.asyncDispose` para Node 20.0–20.3 no funciona: en ESM los imports se evalúan antes que el cuerpo, así que las clases de `dist/dsl-*.mjs` se definen antes que el polyfill (verificado en el bundle), y además choca con `"sideEffects": false` | Pendiente (subir el mínimo a 22 en una minor y quitar el polyfill) |
-| BP-06 | Media | — | No hay una política escrita de estabilidad y obsolescencia: qué es API pública, qué puede romper una minor en 0.x, cómo se avisa (`warnings.deprecated` de PEP 702, `@deprecated` en TSDoc) y cuánto dura el soporte de cada versión de Python/Node y de cada imagen | Pendiente |
+| BP-06 | Media | `docs/site/docs/limits.md` ("Versionado y soporte") | No había una política escrita de estabilidad y obsolescencia. #95 la añadió: API pública, qué puede romper una minor en 0.x, obsolescencia de al menos una minor y soporte de la última línea. Falta la ventana de soporte de las versiones de Python y Node | #95 (falta la ventana de Python/Node) |
 | BP-07 | Media | — | La paridad Python/TypeScript solo la garantiza la revisión. Ningún test compara `__all__` con las exportaciones de `src/index.ts` (con una tabla de excepciones explícita) | Pendiente |
 | BP-08 | Media | `clients/python/src/rayito/exceptions.py:306-322,369,379`, `clients/typescript/src/errors.ts:337-343,410,420`, `sandbox_sync/main.py:562,567`, `_feature_options.py:181,204` | API pública especulativa. `Volume*`, `CustomDomain*` y `Gateway*` son públicas y nada las lanza. `create(volumes=, domain=)` tipados `Any` lanzan `UnimplementedError` con el texto "llega en 0.6", que en 0.6.0 ya es falso. Contradice la regla 3 de `CLAUDE.md` | Pendiente (lo resuelven las ramas de EFS y dominio, o se retira antes de 1.0) |
-| BP-09 | Media | `.github/workflows/release.yml` (job `rayd`) | Los assets de `rayd` van firmados con cosign y traen SBOM, pero no tienen provenance SLSA: Scorecard da 8 en Signed-Releases por eso. PyPI (PEP 740) y npm sí la tienen | Pendiente (`actions/attest-build-provenance` en el job `rayd`) |
-| BP-10 | Media | `crates/rayd-core/src/{filesystem/path.rs,secret_gateway/route.rs}`, `crates/rayd/src/adapters/tar_archiver.rs` | Sin fuzzing ni pruebas por propiedades en los parsers que deciden la seguridad (normalizar rutas, allowlist de la pasarela, tar), que solo tienen ejemplos. Scorecard da 0 en Fuzzing | Pendiente (`cargo-fuzz` o `proptest` en `rayd-core`) |
+| BP-09 | Media | `.github/workflows/release.yml` (job `rayd`) | Los assets de `rayd` van firmados con cosign y traen SBOM, pero no tienen provenance SLSA: Scorecard da 8 en Signed-Releases por eso. PyPI (PEP 740) y npm sí la tienen. Coincide con el punto 4 de §8 de la auditoría de #95 | Pendiente (`actions/attest-build-provenance` en el job `rayd`) |
+| BP-10 | Media | `crates/rayd-core/src/{filesystem/path.rs,secret_gateway/route.rs}`, `crates/rayd/src/adapters/tar_archiver.rs` | Sin fuzzing ni pruebas por propiedades en los parsers que deciden la seguridad (normalizar rutas, allowlist de la pasarela, tar), que solo tienen ejemplos. Scorecard da 0 en Fuzzing. Coincide con el punto 8 de §8 de la auditoría de #95 | Pendiente (`cargo-fuzz` o `proptest` en `rayd-core`) |
 | BP-11 | Media | `clients/typescript/src/index/dynamodb.ts:13-49,190` | El bloque "Coste y activación" de `DynamoDbIndex` estaba en el comentario de módulo, que tsdown descarta, así que no salía en el hover. La clase tampoco estaba en el registro de `check-dts-cost-blocks` | #96 |
 | BP-12 | Baja | `clients/python/src/rayito/__init__.py` | No hay `NullHandler` en `rayito`. Los avisos de seguridad (`IMDS_OPEN_WARNING`, `SHARED_ACCESS_TOKEN_WARNING`, `_sandbox_base.py:158`) llegan al usuario por el `lastResort` de `logging`. Decidir: `NullHandler` + `warnings.warn` para lo accionable, como recomienda el HOWTO | Pendiente |
 | BP-13 | Baja | `clients/python/src/rayito/sandbox_{sync,async}/*.py`, `src/sandbox/*.ts` | Los nombres de span y atributo de OpenTelemetry son literales repetidos (`"rayito.sandbox.id"` aparece 19 veces en Python y 10 en TypeScript; `"rayito.files.operation"`, 19 y 10) en vez de constantes junto a la allowlist de `_otel.py`/`otel.ts`. Lo mismo con los nombres de logger (`"rayito.files"` 3 veces) | Pendiente |
@@ -87,7 +91,7 @@ decisión o un cambio más grande. Referencias a `main` en 4dc0ee0.
 | BP-19 | Baja | `clients/python/tests/unit/test_m15_*.py`, `clients/typescript/tests/unit/m15-*.test.ts` | Tests nombrados por hito en vez de por función. El hito no dice qué cubre el test | Pendiente (solo para tests nuevos; renombrar no compensa) |
 | BP-20 | Baja | `clients/python/src/rayito/__init__.py` | `import rayito` carga `boto3` y `grpc` (≈ 0,15–0,2 s). Es aceptable para un SDK de AWS; PEP 562 (`__getattr__` perezoso) solo merece la pena si la CLI necesita arrancar más rápido | Pendiente (opcional) |
 | BP-21 | Baja | Ajustes del repositorio | La rama `main` no exige aprobaciones ni revisión de CODEOWNERS (Scorecard: Code-Review 0, Branch-Protection 4). Los patrones no-provider de secret scanning están apagados | Pendiente (decisión de gobernanza) |
-| BP-22 | Baja | `clients/python/pyproject.toml:40`, `clients/typescript/package.json` | `Documentation` apuntaba a las fuentes Markdown y no al sitio publicado; npm no tenía `homepage` ni `bugs` | #96 |
+| BP-22 | Baja | `clients/python/pyproject.toml:40`, `clients/typescript/package.json` | `Documentation` apuntaba a las fuentes Markdown y no al sitio publicado; npm no tenía `homepage` ni `bugs` | #95 (#96 traía lo mismo y se quedó con lo de `main`) |
 | BP-23 | Baja | `docs/RELEASING.md:3-8` | Decía que nada estaba publicado (desde 0.3.0 sí lo está) | #96 |
 | BP-24 | Baja | `clients/typescript/src/e2b/types.ts:126`, `src/e2b/client.ts:28` | Las opciones `index` del shim remiten al bloque de coste de `DynamoDbIndex` en vez de llevar el suyo | Pendiente |
 | BP-25 | Baja | `scripts/` | Los scripts de la raíz pasan `ruff check`, pero no `ruff format`: 7 ficheros se reformatearían y no hay configuración propia | Pendiente |
@@ -156,8 +160,8 @@ del repo. **No se instaló nada** (ni global ni en el proyecto).
 
 ## Arreglos aplicados (#96)
 
-BP-01, BP-02, BP-03, BP-04 (sin declarar 3.14), BP-11, BP-14, BP-15, BP-16,
-BP-22 y BP-23, con el cambio OpenSpec `best-practices-low-risk-fixes`
+BP-01, BP-02, BP-03, BP-04 (sin declarar 3.14), BP-11, BP-14, BP-15, BP-16
+y BP-23, con el cambio OpenSpec `best-practices-low-risk-fixes`
 (deltas en `typescript-sdk`, `ci-hardening` y `python-release`). Ninguno
 cambia el comportamiento en tiempo de ejecución de Python ni de `rayd`. En
 TypeScript solo cambia qué declaraciones recibe un consumidor CommonJS. Se
@@ -177,11 +181,11 @@ publican en la próxima release (0.6.1).
    normalice (`Exception` → `Error`, snake → camel) y falle ante una
    diferencia que no esté en una tabla de excepciones versionada. Esfuerzo
    medio.
-4. **BP-06, política de versiones**: una página `operacion/versiones.md`
-   que defina la API pública, lo que puede romper una minor en 0.x, el aviso
-   de obsolescencia durante al menos una minor (`warnings.deprecated` /
-   `@deprecated`) y la ventana de soporte de Python, Node y las imágenes.
-   Esfuerzo bajo, pero es una decisión del mantenedor.
+4. **BP-06, completar la política**: añadir a "Versionado y soporte"
+   (`limits.md`) la ventana de soporte de Python y Node (por ejemplo, las
+   versiones con soporte upstream en la fecha de cada minor) y qué hace el
+   SDK cuando una versión sale de esa ventana. Esfuerzo bajo, pero es una
+   decisión del mantenedor.
 5. **BP-08, API especulativa**: que las ramas de EFS y dominio sustituyan
    los stubs. Lo que no llegue antes de 1.0 se retira. Mientras tanto,
    cambiar "llega en 0.6" por un texto sin versión cuando se toquen esas

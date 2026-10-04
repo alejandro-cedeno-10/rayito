@@ -187,6 +187,11 @@ Las órdenes exactas están en [reference/gates.md](reference/gates.md).
   paquete tocado (a mano, en `## [Unreleased]`).
 - Se fusiona solo con merge commit (`gh pr merge --merge`), nunca squash ni
   rebase, nunca push a `main`, y solo con CI en verde.
+- Los cambios en la API pública siguen "Versionado y soporte"
+  (`docs/site/docs/limits.md`). En 0.x una minor puede romper, pero lo dice
+  (`feat!:` y entrada en `Changed`/`Removed`). Antes de retirar algo, se marca
+  obsoleto (`DeprecationWarning` / `@deprecated` y `Deprecated` en el
+  CHANGELOG) al menos una minor antes.
 
 ## Documentación
 
