@@ -1183,6 +1183,9 @@ local. Cuentas de tests del árbol corregido: **Rust 388**, **Python 1082**,
 | C-09 | `SECURITY.md:85`: `CallerPolicy` es la política del **publicador**, con `infra/ci-oidc-role.yaml` como forma mínima de runtime; `lambda:DeleteMicrovmImage` fuera de `infra/iam.yaml` (`ImagesAndMicrovms`, `:150-168`), que ningún camino de código usaba | `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy`; `scripts/tests/test_iam_template.py::test_caller_policy_never_deletes_a_whole_image` |
 | C-10 | `.github/workflows/release.yml:121` (`python-build`, sin `environment` ni `id-token`) y `:171` (`python-publish`, con el token OIDC pero sin checkout, verificando `sha256sum -c` antes de publicar); `:201`/`:250` el mismo split para `typescript-build`/`typescript-publish`; `clients/typescript/.npmrc` (`ignore-scripts=true`) | `scripts/tests/test_release_workflow.py` (los `id-token: write` son exactamente `{python-publish, typescript-publish, rayd}`, ningún job de publish hace checkout ni corre `pnpm`/`uv`/`npm install`) |
 | C-12 | `image/Dockerfile:106-107` (capa principal) y `:144-145` (capa `poly`): `--require-hashes --no-deps --only-binary=:all:`; `kernel-sidecar/requirements.txt` y `requirements-poly.txt` regenerados con `uv pip compile --generate-hashes` sin cambiar ninguna versión; gate 5 de `scripts/check_pins.py` | `scripts/tests/test_check_pins.py` (pip install sin las tres banderas es un hallazgo, un pin sin `--hash=` es un hallazgo, y `test_the_sidecar_requirements_are_hash_pinned`); las versiones no cambiaron (diff `nombre==versión` hecho a mano antes del commit, no fijado por ningún test) |
+| C-01 (código) | `crates/rayd-core/src/hook_peer.rs` (`find_in_proc_net`, `classify_peer`, `peer_action`) y `crates/rayd/src/hooks/mod.rs` (`guard_peers`), con el adaptador `crates/rayd/src/adapters/proc_net_peers.rs` y el listener servido con `into_make_service_with_connect_info` en `crates/rayd/src/main.rs` (`sec-sandbox-isolation`): un `/terminate` o un `/validate` cuya conexión pertenece a un uid 1000-65535 responde 200 `peer_refused` sin hacer nada; un `/suspend`/`/resume` de un uid del sandbox se acepta y cuenta como anomalía; un `/terminate` que la búsqueda no puede atribuir se acepta y cuenta. Pendiente de medir en AWS real el uid con el que la plataforma envía los hooks | `rayd_core`: `hook_peer::tests` (IPv4, IPv4-mapeada en `tcp6`, socket cerrándose, `only_terminate_and_validate_are_ever_refused`); `rayd`: `hooks::tests::peer_guard`, `adapters::proc_net_peers::tests::finds_this_process_s_own_client_socket` |
+| C-02 (código) | `crates/rayd-core/src/code/hooks.rs` (`validate_hook_decision(state, run_claimed)` → `ValidateDecision::AfterRun`) y el handler `validate` de `crates/rayd/src/hooks/mod.rs`: tras el `/run` aceptado, 200 `validate_skipped` sin `restart_context` ni `execute_unchecked`. `execute_unchecked` se queda: sólo lo alcanza un `/validate` anterior al `/run`, cuando todavía no hay ningún stream de cliente | `rayd_core`: `code::hooks::tests::a_validate_after_the_accepted_run_never_starts_the_cell`; `rayd`: `hooks::tests::build_hooks_after_run`, `tests/m4_code.rs::a_validate_after_run_never_touches_the_default_kernel` |
+| C-03 (código) | Los handlers `ready` y `validate` de `crates/rayd/src/hooks/mod.rs` llaman a `audit()` con `HookCallOutcome::Anomalous` cuando llegan tras el `/run` aceptado; antes del `/run` `HookAudit::record` no registra nada, así que las llamadas legítimas del build siguen sin contar | `rayd`: `hooks::tests::build_hooks_after_run::a_ready_after_run_changes_nothing_and_is_audited`, `::a_validate_after_run_is_skipped_and_audited`, `::build_hooks_before_run_are_never_counted` |
 
 Cada test de la tercera columna se escribió para **fallar sin su corrección**:
 los de `scripts/tests/test_security_docs.py` comprueban a la vez que el texto
@@ -1192,11 +1195,8 @@ corregido está y que la frase retirada no ha vuelto, y los de
 
 ### Lo que sigue abierto
 
-De las filas de §8: el binding del `S3Location` al sandbox (**C-07**), la
-autenticación por uid del par en
-`/terminate` y `/validate` (**C-01**), la guarda por fase de `/validate`
-(**C-02**), las dos llamadas a `audit()` de **C-03**, el opt-out del servidor
-MCP de **C-08**, el split runtime/publicador y el recurso acotado de **C-09**,
+De las filas de §8: el binding del `S3Location` al sandbox (**C-07**), el
+opt-out del servidor MCP de **C-08**, el split runtime/publicador y el recurso acotado de **C-09**,
 el chequeo de digest y el versionado del bucket de **H-01**, y las dos reglas
 `uidrange` y el e2e de **C-05**. **C-06** queda aceptado con razón escrita.
 
@@ -1204,7 +1204,11 @@ Fuera de las filas: el gemelo TypeScript del aviso de C-08
 (`clients/typescript/src/sandbox/launch.ts`, que exige pasar el `Logger` por
 `LaunchPlanInput`) y la medición del `/etc/passwd` de
 `public.ecr.aws/lambda/microvms:al2023-minimal` (§10.6), de la que depende la
-mitad de C-05 y que hoy es inferencia por analogía.
+mitad de C-05 y que hoy es inferencia por analogía, y la medición en AWS real
+del uid que posee la conexión de cada hook de la plataforma (la comprobación
+del uid del par de C-01 lo infiere de los sockets del agente medidos en Q48):
+de ella depende que esa comprobación pueda rechazar también un `/suspend` o un
+`/resume` forjado en vez de sólo contarlo.
 
 ## 10. Qué falta para un audit completo
 

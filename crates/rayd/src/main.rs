@@ -13,25 +13,29 @@
 //! exits with code 124 (ADR-011).
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
 use aws_sdk_s3::config::SharedCredentialsProvider;
+use axum::Router;
+use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
 use rayd::adapters::{
     ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
-    PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
-    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
-    imds_execution_role_provider, inherited_nofile_limits, install_imds_block, prepare_socket_root,
+    ProcNetPeers, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
+    USER_PROBE_PROGRAM, UserConnectProbe, agent_uid, detect_guest_capabilities,
+    detect_spawn_platform, imds_execution_role_provider, inherited_nofile_limits,
+    install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
 use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
-use rayd::hooks::HookServices;
+use rayd::hooks::{HookServices, PeerGuard};
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
     StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
@@ -250,7 +254,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let hooks = axum::serve(
         hooks_listener,
-        rayd::hooks::router_with(HookServices {
+        guarded_hooks(HookServices {
             session,
             code,
             suspend,
@@ -436,6 +440,19 @@ async fn persistence_manager(
         "persistence configured"
     );
     platform_persistence_manager(session.clone(), platform, policy, store, region)
+}
+
+/// The hooks router behind its peer check over the kernel's socket tables
+/// (C-01), served with each connection's peer address so the check can
+/// look it up.
+fn guarded_hooks(services: HookServices) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+    let session = services.session.clone();
+    let guard = PeerGuard {
+        peers: Arc::new(ProcNetPeers),
+        agent_uid: agent_uid(),
+    };
+    rayd::hooks::guard_peers(rayd::hooks::router_with(services), session, guard)
+        .into_make_service_with_connect_info::<SocketAddr>()
 }
 
 /// Both listeners on `0.0.0.0`, logged once they are bound.

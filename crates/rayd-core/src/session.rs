@@ -130,6 +130,12 @@ impl SandboxSession {
         self.state().validate()
     }
 
+    /// Whether this boot already accepted its one `/run`.
+    #[must_use]
+    pub fn run_claimed(&self) -> bool {
+        self.state().run_claimed()
+    }
+
     pub fn run(&self, input: RunHookInput<'_>) -> RunOutcome {
         let claim = self.state().run(input.sandbox_id);
         match claim {
@@ -174,6 +180,12 @@ impl SandboxSession {
     /// and returns the entry to log, `None` before that.
     pub fn audit_hook(&self, hook: Hook, outcome: HookCallOutcome) -> Option<AuditEntry> {
         self.audit().record(hook, outcome)
+    }
+
+    /// Counts one anomaly about a hook call whose handler audits it on its
+    /// own (`HookAudit::note_anomaly_after_run`); `false` before `/run`.
+    pub fn note_hook_anomaly(&self) -> bool {
+        self.audit().note_anomaly_after_run()
     }
 
     /// Anomalous hook calls plus stale-suspend recoveries this boot.

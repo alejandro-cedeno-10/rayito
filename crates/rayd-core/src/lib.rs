@@ -10,7 +10,8 @@
 //! (`persistence`), the guest egress policy and its local proxy
 //! (`network`, ADR-012), how files move through presigned S3 URLs without
 //! a credential in the VM (`transfer`, ADR-010), and what the guest's
-//! capability mask allows (`capabilities`), and which filesystems a
+//! capability mask allows (`capabilities`), who opened a hook connection
+//! and what that changes for the hook (`hook_peer`), and which filesystems a
 //! `/suspend` syncs inside what deadline (`suspend_sync`). The tokens the SDKs parse in
 //! the agent's messages, which are otherwise Spanish, live in
 //! `wire_tokens`. No
@@ -42,6 +43,7 @@ pub mod credentials;
 pub mod features;
 pub mod filesystem;
 pub mod health;
+pub mod hook_peer;
 pub mod hooks;
 pub mod lifecycle;
 pub mod lifecycle_events;

@@ -10,6 +10,28 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- **Los hooks de ciclo de vida comprueban quién abrió la conexión**
+  (`sec-sandbox-isolation`, C-01): `rayd` busca el extremo cliente de cada
+  conexión al puerto de hooks en las tablas de sockets del kernel. Un
+  `/terminate` o un `/validate` que llega desde un proceso del sandbox
+  (uid 1000-65535) responde 200 `peer_refused` sin hacer nada y cuenta en
+  `hook_anomalies`; un `/suspend` o un `/resume` desde el sandbox se sigue
+  aceptando pero también cuenta. Ningún hook responde nunca un no-2xx por
+  esta comprobación.
+- **`/validate` y `/ready` ya no actúan tras el `/run`** (C-02, C-03): un
+  `/validate` posterior al `/run` responde 200 `validate_skipped` sin
+  reiniciar el contexto `default` del kernel ni ejecutar la celda de
+  validación, y tanto él como un `/ready` tardío quedan en `hook_audit` como
+  anomalía. Las llamadas del build, antes del `/run`, no cambian.
+- **La pasarela de secretos no devuelve la credencial en las cabeceras de la
+  respuesta**: se eliminan las cabeceras de la respuesta del `upstream` que
+  llevan el nombre de una cabecera inyectada o contienen un valor vaultado.
+  El cuerpo sigue llegando sin cambios, así que la documentación (T24 y la
+  página de la pasarela) avisa de no permitir endpoints que reflejen las
+  cabeceras de la petición.
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

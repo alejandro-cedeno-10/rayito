@@ -597,6 +597,39 @@ async fn validate_answers_503_until_the_cell_finished() {
     assert_eq!(restart[0]["context_id"], "default");
 }
 
+/// A launched sandbox's validation state is always `Idle` (the build's
+/// `/validate` ran on a throwaway VM), so a `/validate` forged from
+/// inside it after `/run` must not restart the operator's default kernel
+/// nor run the validation cell.
+#[tokio::test]
+async fn a_validate_after_run_never_touches_the_default_kernel() {
+    let harness = harness_with(Options {
+        run: false,
+        ..Options::default()
+    })
+    .await;
+    harness.wait_kernel_ready(Duration::from_secs(10)).await;
+    harness.post(Hook::Ready, None).await;
+    let (_, reply) = harness.post(Hook::Run, Some(run_envelope())).await;
+    assert_eq!(reply.outcome, "installed");
+    harness
+        .wait_for_request("restart_context", Duration::from_secs(5))
+        .await;
+    harness.wait_kernel_ready(Duration::from_secs(10)).await;
+
+    let (status, reply) = harness.post(Hook::Validate, None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply.outcome, "validate_skipped");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(harness.requests_of("execute").is_empty());
+    assert_eq!(
+        harness.requests_of("restart_context").len(),
+        1,
+        "only /run's rotation"
+    );
+}
+
 #[tokio::test]
 async fn run_rotates_the_default_kernel_with_the_payload_envs() {
     let harness = harness_with(Options {

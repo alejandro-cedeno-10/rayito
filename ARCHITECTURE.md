@@ -310,11 +310,11 @@ o no se invoca. Tabla completa, JSON de configuración y roles: `AWS_API_NOTES.m
 | Hook | Fase | Rol | Timeout | Body | Contrato de `rayd` |
 |---|---|---|---|---|---|
 | `/ready` | build | build role | 1–3600 s | ninguno | 200 sólo cuando el sidecar tiene el contexto por defecto **idle tras el warm-up**; hasta entonces **503 inmediato** (`kernel_warming`, nunca retener la petición). Válvula de escape: a los 300 s devuelve 200 y lo loguea como error (`ready_escape`). Medido: `warmup_ms` 9,3–9,7 s en la VM de build, 200 tras dos 503 |
-| `/validate` | build, en una VM nueva desde el snapshot | build role | 1–3600 s | ninguno | reinicia el kernel por defecto (el mismo `restart_context` que hará `/run`) y ejecuta una celda real con pandas + matplotlib; responde 503 (`validating`) hasta terminar y 200 (`validated`/`validate_failed`), para que Lambda prefetchee esas páginas. Sin el reinicio aquí la rotación en `/run` costaba 45 s (`AWS_API_NOTES.md` §16 Q35); con él, 2–4 s |
+| `/validate` | build, en una VM nueva desde el snapshot | build role | 1–3600 s | ninguno | reinicia el kernel por defecto (el mismo `restart_context` que hará `/run`) y ejecuta una celda real con pandas + matplotlib; responde 503 (`validating`) hasta terminar y 200 (`validated`/`validate_failed`), para que Lambda prefetchee esas páginas. Tras el primer `/run`, o si la conexión pertenece a un uid del sandbox, no hace nada (200 `validate_skipped` / `peer_refused`) y se audita como anomalía. Sin el reinicio aquí la rotación en `/run` costaba 45 s (`AWS_API_NOTES.md` §16 Q35); con él, 2–4 s |
 | `/run` | arranque desde el snapshot; **el tráfico externo sólo llega tras el 200** | execution role | 1–60 s | `{"microvmId": "...", "runHookPayload": "..."}` | parsea el envelope, instala `sandbox_id`, el hash del token, `metadata` y `limits.cpu_seconds` (M6), responde 200; se acepta **una vez por arranque** (los siguientes devuelven 200 `already_ran`, se auditan como anomalía y no tocan nada). Tras el 200: rotación del kernel y, si el bloqueo de IMDS está instalado, la verificación `imds_probe` (≤ 10 s). Si falla o expira, el MicroVM pasa a `TERMINATING` sin haber estado `RUNNING` (`stateReason`). M9: si el payload trae el bloque `lifecycle` instala el plazo lógico (ADR-011) y despierta a su vigilante; si trae `network.enforce` y hay `CAP_NET_ADMIN`, **antes** del 200 arranca el proxy local e instala y verifica el deny-all de egress en 1,5 s (ADR-012); en cualquier caso responde 200, y mientras ese deny-all no se asienta `Health` dice `agent_ready=false` (medido: `Health` llega durante `/run`, `AWS_API_NOTES.md` §16 fila 66); la tarea lo asienta al terminar de cualquier modo, también si entra en pánico, y cada `ip` que lanza muere a los 5 s, así que un `ip` colgado no deja `Health` sin listo para siempre |
 | `/suspend` | antes del checkpoint | execution role | 1–60 s | ninguno | checklist de la sección "Suspend / resume" (M9: también recoloca en espera las transferencias en curso; sigue respondiendo **siempre** 200); desde M6 se audita (`hook_audit`; los repetidos son `unchanged` y no cuentan; ninguna transición se rechaza) y arma el watchdog de suspensión estancada (20 s sin salto de `CLOCK_MONOTONIC` ⇒ `stale_suspend_recovered`: puerta reabierta, sin nueva generación, +1 anomalía) |
 | `/resume` | tras restaurar; la VM sigue `SUSPENDED` hasta el 200 | execution role | 1–60 s | ninguno | ídem; el reseed es advisory (el sidecar responde en el acto `reseeded`/`deferred`/`failed`, su timeout nunca cuenta para el kill switch) y se recomprueba la ruta de IMDS (`imds_rule_missing` si desapareció). M9: llama a `timeout_resumed` con el veredicto del vigilante del plazo (sólo un salto de `CLOCK_MONOTONIC` ≥ 2 s abre la gracia de 30 s o aplica la regla de auto-resume; una sola gracia por plazo y nunca más allá del tope), re-verifica la política de egress en ≤ 3 s y despierta los sondeos de las importaciones armadas |
-| `/terminate` | antes de liberar recursos | execution role | 1–60 s | ninguno | ACK 200; nada que persistir |
+| `/terminate` | antes de liberar recursos | execution role | 1–60 s | ninguno | ACK 200; nada que persistir. Si la conexión pertenece a un uid del sandbox, 200 `peer_refused` sin hacer nada (`sec-sandbox-isolation`) |
 
 **Origen de los hooks (M6, `SECURITY.md` T2).** No es validable: hooks y
 tráfico del proxy llegan ambos desde `127.0.0.1` por HTTP/1.1, el proxy
@@ -327,14 +327,21 @@ recuperaciones del watchdog); el SDK avisa una vez por generación. Ese
 control acota el origen externo. No acota el de dentro de la VM: `rayd`
 escucha en `0.0.0.0:9000` en el netns del sandbox, así que un proceso uid
 1000 alcanza los hooks por loopback; `/terminate` (irreversible: `rayd` es el
-`CMD` de la imagen) y `/validate` (reinicia el contexto `default`) son los dos
-que faltaban en T2, y `/ready` y `/validate` son hooks de build que nunca
-llegan a `audit()`, así que un `/validate` forjado no deja línea `hook_audit`
-ni sube `hook_anomalies`. Autenticar `/terminate` y `/validate` por el uid del
-par queda pendiente. Ninguna transición se
-rechaza ni se limita: `rayd` no distingue un hook forjado del genuino que
-llega justo detrás, y rechazar el genuino dejaría un checkpoint real sin
-preparar (revisión de M6; `SECURITY.md` T2).
+`CMD` de la imagen) y `/validate` (reiniciaría el contexto `default`) son los
+dos más dañinos. Contra ese origen, `rayd` comprueba el uid del par
+(`sec-sandbox-isolation`, C-01, `rayd_core::hook_peer`): busca el extremo
+cliente de cada conexión en `/proc/net/tcp` y `/proc/net/tcp6`, y un
+`/terminate` o un `/validate` de un uid del sandbox (1000-65535) responde
+200 `peer_refused` sin hacer nada; un `/suspend` o un `/resume` de un uid del
+sandbox se acepta pero cuenta como anomalía, y un `/terminate` que la
+búsqueda no puede atribuir se acepta y cuenta como anomalía. Además, `/ready`
+y `/validate` son hooks de build: tras el primer `/run` no tienen llamante
+legítimo, así que no hacen nada (`illegal` / `validate_skipped`, sin
+reiniciar ningún kernel) y se auditan como anomalía. Ninguna transición de
+`/suspend` o `/resume` se rechaza ni se limita: `rayd` no distingue un hook
+forjado por la plataforma del genuino que llega justo detrás, el uid con el
+que la plataforma envía los hooks no está medido, y rechazar el genuino
+dejaría un checkpoint real sin preparar (revisión de M6; `SECURITY.md` T2).
 
 Implementar `/suspend` y `/terminate` **idempotentes por precaución** (AWS puede
 reintentarlos); que los reintente de verdad es una medida de M0 (Q10).
@@ -1264,9 +1271,12 @@ Esa mitigación acota el origen **externo** y sólo ése: el listener es
 `0.0.0.0:9000` en el mismo netns que los procesos del sandbox, así que
 cualquier proceso uid 1000 de dentro de la VM alcanza las seis rutas por
 loopback sin token alguno —`/terminate` se lleva la VM y `/validate` reinicia
-el contexto `default` del kernel—, y la auditoría cubre sólo los hooks de
-runtime (`/ready` y `/validate` nunca pasan por `audit()`). Autenticar
-`/terminate` y `/validate` por el uid del par queda pendiente.
+el contexto `default` del kernel—. Por eso `rayd` comprueba además el uid
+del par (`sec-sandbox-isolation`, C-01): un `/terminate` o un `/validate`
+cuya conexión pertenece a un uid del sandbox responde 200 `peer_refused` sin
+hacer nada, y un `/ready` o un `/validate` tras el primer `/run` no hace nada
+y se audita como anomalía. La auditoría `hook_audit` cubre los hooks de
+runtime y, tras el `/run`, también esos dos hooks de build.
 
 ---
 
@@ -2236,8 +2246,13 @@ determinista) antes de tocar la red: una petición fuera de la allowlist o
 por encima del límite nunca llega al upstream. Lo que sí llega tiene las
 cabeceras que el guest pudo haber puesto para esos mismos nombres
 eliminadas primero (`header_template::must_drop`) y las vaultadas
-inyectadas después, así que el código del sandbox no puede ni suplantar ni
-leer de vuelta su propio secreto. El valor en sí vive sólo en memoria de
+inyectadas después, así que el código del sandbox no puede suplantar su
+propio secreto. La respuesta vuelve con su estado y su cuerpo intactos;
+de sus cabeceras se eliminan las que llevan un nombre inyectado o un valor
+vaultado (`header_template::must_drop_from_response`), pero el cuerpo no se
+inspecciona: un `upstream` permitido que refleje las cabeceras de la
+petición entrega el secreto, y por eso `allow` nunca debe listar un
+endpoint así (T24). El valor en sí vive sólo en memoria de
 `rayd` (`SecretValue`, `Zeroizing`, sin `Debug`/`Display`/`serde`),
 expuesto una única vez, al construir la cabecera saliente. El upstream se
 alcanza por el cliente HTTPS compartido (`GatewayUpstream`, raíz de

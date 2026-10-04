@@ -136,10 +136,21 @@ pub enum ValidateDecision {
     Retry,
     /// Finished: 200 with the outcome.
     Done(ValidationOutcome),
+    /// This boot already accepted its `/run`: 200 without touching the
+    /// kernel, audited as an anomaly. `/validate` is a build hook that
+    /// runs on a throwaway VM, so every launched sandbox is still `Idle`
+    /// and a call at runtime can only be forged from inside the VM;
+    /// honouring it would restart the operator's `default` context.
+    AfterRun,
 }
 
+/// `run_claimed` wins over the validation state: once `/run` is accepted
+/// nothing may start the cell, whatever state it is in.
 #[must_use]
-pub fn validate_hook_decision(state: &ValidationState) -> ValidateDecision {
+pub fn validate_hook_decision(state: &ValidationState, run_claimed: bool) -> ValidateDecision {
+    if run_claimed {
+        return ValidateDecision::AfterRun;
+    }
     match state {
         ValidationState::Idle => ValidateDecision::Start,
         ValidationState::Running => ValidateDecision::Retry,
@@ -364,15 +375,15 @@ mod tests {
     #[test]
     fn validate_decisions_follow_the_state() {
         assert_eq!(
-            validate_hook_decision(&ValidationState::Idle),
+            validate_hook_decision(&ValidationState::Idle, false),
             ValidateDecision::Start
         );
         assert_eq!(
-            validate_hook_decision(&ValidationState::Running),
+            validate_hook_decision(&ValidationState::Running, false),
             ValidateDecision::Retry
         );
         assert_eq!(
-            validate_hook_decision(&ValidationState::Done(ValidationOutcome::Validated)),
+            validate_hook_decision(&ValidationState::Done(ValidationOutcome::Validated), false),
             ValidateDecision::Done(ValidationOutcome::Validated)
         );
         let failed = ValidationOutcome::Failed {
@@ -380,5 +391,19 @@ mod tests {
         };
         assert_eq!(failed.as_str(), "validate_failed");
         assert_eq!(ValidationOutcome::Validated.as_str(), "validated");
+    }
+
+    #[test]
+    fn a_validate_after_the_accepted_run_never_starts_the_cell() {
+        for state in [
+            ValidationState::Idle,
+            ValidationState::Running,
+            ValidationState::Done(ValidationOutcome::Validated),
+        ] {
+            assert_eq!(
+                validate_hook_decision(&state, true),
+                ValidateDecision::AfterRun
+            );
+        }
     }
 }

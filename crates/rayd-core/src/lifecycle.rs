@@ -175,6 +175,13 @@ impl LifecycleState {
         self.sandbox_id.as_deref()
     }
 
+    /// Whether this boot already accepted its one `/run`: from then on the
+    /// build-time hooks (`/ready`, `/validate`) have no legitimate caller.
+    #[must_use]
+    pub fn run_claimed(&self) -> bool {
+        self.run_claimed
+    }
+
     #[must_use]
     pub fn suspend_generation(&self) -> u64 {
         self.suspend_generation
@@ -384,6 +391,16 @@ mod tests {
         let mut state = running();
         assert!(!state.validate().changed());
         assert_eq!(state.phase(), HookPhase::Running);
+    }
+
+    #[test]
+    fn run_claimed_flips_only_with_the_accepted_run() {
+        let mut state = LifecycleState::new();
+        assert!(!state.run_claimed());
+        state.ready().unwrap();
+        state.validate();
+        assert!(!state.run_claimed());
+        assert!(running().run_claimed());
     }
 
     #[test]
