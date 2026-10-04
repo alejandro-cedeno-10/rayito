@@ -5,6 +5,11 @@ npm o `@e2b/code-interpreter`), puedes moverlo a tu cuenta de AWS cambiando
 **una línea de import**. `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
 implementan la misma API sobre Lambda MicroVMs.
 
+!!! note "Marcas"
+    E2B es una marca de su titular. Rayito es un proyecto independiente, no
+    afiliado, patrocinado ni respaldado por E2B; el nombre se usa sólo para
+    describir con qué SDK es compatible la API de `rayito.e2b` / `rayito/e2b`.
+
 ## En cinco pasos
 
 ### 1. Prepara tu cuenta de AWS

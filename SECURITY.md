@@ -17,14 +17,19 @@
   `rayito-base-caps`), región, y una reproducción mínima (código o comandos,
   sin datos del cliente). Si hay impacto en la cuenta de AWS (credenciales,
   cuota, factura), decirlo en la primera línea.
-- **Versiones soportadas**: sólo la última release publicada de cada
-  componente recibe correcciones.
+- **Versiones soportadas**: sólo la última línea `MAJOR.MINOR` publicada
+  recibe correcciones, de seguridad incluidas; mientras el proyecto esté en
+  0.x no hay ramas de mantenimiento de líneas anteriores. Los tres
+  componentes avanzan `MAJOR.MINOR` en lockstep y la corrección sale como
+  un patch de esa línea (política completa en
+  [Versionado y soporte](docs/site/docs/limits.md#versionado-y-soporte)).
 
   | Componente | Dónde se publica | Versión con soporte |
   |---|---|---|
-  | SDK Python `rayito` | PyPI | 0.2.0 |
-  | SDK TypeScript `rayito` | npm | 0.2.0 (aún no publicada; salta desde 0.0.5 por el lockstep `MAJOR.MINOR`) |
-  | imagen `rayito-base` con su `rayd` | tu cuenta de AWS (`make image-publish` desde el árbol etiquetado) | `rayd` 0.2.0, es decir, la imagen construida de `rayd-v0.2.0` (`rayito doctor` lo comprueba con la tabla de `docs/site/docs/limits.md`: el SDK 0.2 exige `agent_version` ≥ 0.2.0) |
+  | SDK Python `rayito` | PyPI | 0.6.x |
+  | SDK TypeScript `rayito` | npm | 0.6.x |
+  | imagen `rayito-base` con su `rayd` | GitHub Release `rayd-v*` (`rayito-image.zip` firmado) y tu cuenta de AWS (`rayito image publish`) | `rayd` 0.6.x, es decir, una imagen construida desde un tag `rayd-v0.6.*` (`rayito doctor` lo comprueba con la [tabla de compatibilidad](docs/site/docs/limits.md#compatibilidad-sdk--rayd--imagen): el SDK 0.6 exige `agent_version` ≥ 0.6.0) |
+  | anteriores a 0.6 | — | sin soporte: actualiza a la última línea |
 
 - **Plazos**: acuse de recibo en **7 días**; corrección o mitigación
   publicada dentro de **90 días** desde el informe; divulgación coordinada a
@@ -174,7 +179,7 @@ las demás plantillas de `infra/`.
 |---|---|
 | Imagen base | `public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3` (manifest list; el manifest `linux/arm64` que se descarga es `sha256:63831a97f9e498f7693c6f42951fe5d935947e6ae25a11fcab1fe0f5ae60b2a7`, registrado 2026-09-16); `--base-image-version` obligatoria en cada publish (`BASE_IMAGE_VERSION ?= 1`, Q52); vigilar `DEPRECATED → EXPIRING → EXPIRED`. Refrescar el digest cuando AWS mueva el tag: PR de Dependabot (`docker`), `docker buildx imagetools inspect public.ecr.aws/lambda/microvms:al2023-minimal` o, sin Docker, token de `https://public.ecr.aws/token/?scope=repository:lambda/microvms:pull` + `HEAD /v2/lambda/microvms/manifests/al2023-minimal` leyendo `Docker-Content-Digest` (receta en el propio `Dockerfile`); un bump de digest es una versión de imagen nueva, publicada y aceptada con el e2e como cualquier otra |
 | Paquetes del sistema | `dnf install` con lista explícita y `install_weak_deps=0` |
-| Python del sidecar | `requirements.txt` con `==` (ipykernel 6.31.0, jupyter_client 8.10.0, ipython 9.15.0, pyzmq 27.2.0, matplotlib 3.10.9, pandas 2.2.3, numpy 2.3.5); wheels `cp312 manylinux2014_aarch64` |
+| Python del sidecar | `kernel-sidecar/requirements.txt` (y `requirements-poly.txt`) con `==` y `--hash` en cada paquete, instalados con `--require-hashes --only-binary=:all:` (ipykernel, jupyter_client, ipython, pyzmq, matplotlib, pandas, numpy…; la versión vigente de cada uno es la de ese fichero, que mueve Dependabot); wheels `cp312 manylinux2014_aarch64` |
 | Rust | `rust-toolchain.toml` 1.98.1, `Cargo.lock` versionado, `cargo install --locked cargo-zigbuild@0.23.4`, `zig` 0.16.0, lints `unwrap_used`/`expect_used = deny` |
 | Codegen | plugins `buf` pinneados por tag; `tonic-prost-build` 0.14.6 y `protox` 0.9.1 en `Cargo.lock`; `buf breaking FILE` contra `main` |
 | SDK Python | `uv.lock`, `protobuf` con suelo igual al plugin, publicación en PyPI por Trusted Publishing |

@@ -3,6 +3,10 @@
   "version": "0.6.0",
   "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta.",
   "license": "Apache-2.0",
+  "homepage": "https://alejandro-cedeno-10.github.io/rayito/",
+  "bugs": {
+    "url": "https://github.com/alejandro-cedeno-10/rayito/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alejandro-cedeno-10/rayito.git",

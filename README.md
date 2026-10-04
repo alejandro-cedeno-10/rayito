@@ -93,8 +93,10 @@ tu proceso (Python / TypeScript)                AWS, tu cuenta
 Detalle de procesos, usuarios y transportes en `ARCHITECTURE.md` ("Qué corre
 dónde"); comparación con E2B, Daytona y Modal en `docs/site/docs/concepts.md`.
 
-**Estado: M0–M7 aceptados contra AWS real (M7 el 2026-09-17; release 0.2.0,
-`docs/RELEASE_NOTES_0.2.0.md`).** `rayd` 0.2.0 sirve
+**Estado: alfa (serie 0.x, ver [Licencia, estado y soporte](#licencia-estado-y-soporte)).**
+Lo que sigue describe el hito M7 (release 0.2.0, aceptado contra AWS real el
+2026-09-17, `docs/RELEASE_NOTES_0.2.0.md`); lo posterior está en los
+changelogs. `rayd` 0.2.0 sirve
 `Health`, `ProcessService`, `FilesystemService` (con `Checkpoint`/`Restore`
 a S3), `CodeService` (con `Reattach` y `language`) y `PtyService`, y los
 hooks `/suspend`/`/resume` reales; los SDKs Python y TypeScript (`rayito`
@@ -318,7 +320,9 @@ matplotlib sube de 0,14 a 0,79 s.
 | `infra/` | Plantillas de CloudFormation: IAM de build, ejecución y cliente (`iam.yaml`), conector de egress, rol OIDC del e2e ([`infra/README.md`](infra/README.md)) |
 | `CLAUDE.md` | Reglas para trabajar con Claude Code |
 | `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2, macOS (VM Linux) y Windows, e2e en tu cuenta, convenciones, DCO y commits firmados |
-| `SECURITY.md` | Cómo reportar una vulnerabilidad y el modelo de amenazas |
+| `SECURITY.md` | Cómo reportar una vulnerabilidad, versiones soportadas y el modelo de amenazas |
+| `SUPPORT.md` | Dónde pedir ayuda (documentación, `rayito doctor`, issues) |
+| `CODE_OF_CONDUCT.md` | Contributor Covenant 3.0 |
 | `GOVERNANCE.md` | Quién decide y cómo (ADRs, cambios OpenSpec, mantenedores) |
 | `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, atribuciones de terceros y los changelogs por componente |
 | `docs/RELEASING.md` | Pasos manuales de publicación (PyPI, npm, GitHub Release, tags) |
@@ -346,7 +350,7 @@ Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
    `rayito-image.zip` firmado de la release:
 
    ```bash
-   RAYD_VERSION=0.5.0   # la misma versión que tu SDK instalado
+   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
    curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION/rayito-image.zip"
    rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket <tu-bucket>
    ```
@@ -383,3 +387,36 @@ docs/site/               documentación de usuario (mkdocs)
 docs/aws-api/            volcado crudo de la API de Lambda MicroVMs
 openspec/                specs y changes archivados de cada hito
 ```
+
+## Licencia, estado y soporte
+
+- **Estado**: alfa (`Development Status :: 3 - Alpha`). Serie 0.x con
+  [SemVer](https://semver.org/lang/es/): una MINOR puede romper
+  compatibilidad y lo anuncia en el changelog; un PATCH nunca. Política de
+  versionado, obsolescencia y soporte en
+  [Versionado y soporte](docs/site/docs/limits.md#versionado-y-soporte).
+- **Licencia**: [Apache-2.0](LICENSE). Las atribuciones de terceros (código
+  vendorizado o adaptado) están en [`NOTICE`](NOTICE), que viaja con el
+  wheel de PyPI y el paquete de npm.
+- **Contribuir**: [`CONTRIBUTING.md`](CONTRIBUTING.md) (flujo OpenSpec,
+  gates, DCO y commits firmados) y [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+- **Ayuda y seguridad**: [`SUPPORT.md`](SUPPORT.md); las vulnerabilidades se
+  reportan en privado según [`SECURITY.md`](SECURITY.md).
+- **Marcas**: E2B es una marca de su titular. Rayito es un proyecto
+  independiente, **no afiliado, patrocinado ni respaldado por E2B**; el
+  nombre se usa sólo para describir la compatibilidad de API de
+  `rayito.e2b` / `rayito/e2b`. AWS, Lambda y las demás marcas citadas
+  pertenecen a sus titulares.
+
+## In English
+
+Rayito is an open-source (Apache-2.0) sandbox SDK for AI agents: Python
+(`pip install rayito`) and TypeScript (`npm i rayito`) clients that run
+hardware-isolated sandboxes on AWS Lambda MicroVMs in your own AWS account,
+with no server or API key of ours in between. The in-VM agent `rayd` (Rust)
+ships as a signed GitHub Release asset. `rayito.e2b` / `rayito/e2b` offer an
+import-level drop-in for the E2B 2.x SDK; Rayito is an independent project,
+not affiliated with or endorsed by E2B. The documentation and code comments
+are in Spanish, but issues, pull requests and security reports in English
+are welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md),
+[`SUPPORT.md`](SUPPORT.md) and [`SECURITY.md`](SECURITY.md).
