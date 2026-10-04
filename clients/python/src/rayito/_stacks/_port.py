@@ -35,9 +35,12 @@ class StackProvisioner(Protocol):
         template_body: str,
         parameters: dict[str, str],
         tags: dict[str, str],
+        keep_previous: tuple[str, ...] = (),
     ) -> UpdateOutcome:
         """`"no_changes"` cuando CloudFormation responde el `ValidationError`
-        "No updates are to be performed" (no es un fallo)."""
+        "No updates are to be performed" (no es un fallo). `keep_previous`
+        son los parámetros que se mandan con `UsePreviousValue=True`
+        (`ParameterPlan.keep_previous`)."""
         ...
 
     def delete(self, stack_name: str) -> None:

@@ -31,12 +31,14 @@ def test_sizes_guard_declares_image_arns_as_required() -> None:
     assert parameter.default is None
 
 
-def test_deploy_without_image_arns_is_rejected_before_any_call() -> None:
+def test_deploy_without_image_arns_is_rejected_before_creating_anything() -> None:
+    # Only the read that tells create (defaults apply) from update (the
+    # deployed value is kept); nothing is created.
     fake = FakeStackProvisioner()
     stacks = OptionalStacks(provisioner=fake)
     with pytest.raises(InvalidArgumentException, match="ImageArns"):
         stacks.deploy("sizes-guard")
-    assert fake.calls == []
+    assert [call[0] for call in fake.calls] == ["describe"]
 
 
 def test_deploy_with_image_arns_creates_the_stack() -> None:

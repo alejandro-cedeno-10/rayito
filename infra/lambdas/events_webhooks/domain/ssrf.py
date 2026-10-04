@@ -28,7 +28,11 @@ IMDS_ADDRESS: Final = ipaddress.ip_address("169.254.169.254")
 def is_blocked(address: IpAddress) -> bool:
     """`True` for any address class a webhook upstream must never reach:
     loopback, private, link-local (which includes IMDS), multicast,
-    reserved/unspecified, or CGNAT."""
+    reserved/unspecified, or CGNAT. An IPv4-mapped IPv6 address
+    (`::ffff:a.b.c.d`, e.g. from an AAAA record) is classified as the IPv4
+    address it carries, so both paths agree on the same destination."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
     if address.is_loopback or address.is_private or address.is_link_local:
         return True
     if address.is_multicast or address.is_reserved or address.is_unspecified:

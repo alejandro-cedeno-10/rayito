@@ -88,13 +88,14 @@ emulan.
 Se rechazan en review si aparecen antes de M6:
 
 - Desktop / GUI / streaming de escritorio (el `e2b-desktop` equivalente).
-- Templates declarativos con CLI propia (`rayito template build`). En M1–M5 la
-  imagen se construye con un Dockerfile a mano y `create-microvm-image`. M7
-  (`m7-cli`) entrega una CLI **operativa** (`rayito image|sandbox|doctor`)
-  sobre el flujo Dockerfile existente; los templates declarativos
-  (`rayito.toml`) siguen fuera. M9 añade `rayito sandbox
-  create/connect/exec/metrics`, también operativos; `auth`, `template`,
-  `snapshots` y `fork` de la CLI de E2B siguen fuera.
+- ~~Templates declarativos con CLI propia (`rayito template build`)~~:
+  entregados en 0.6.0 (`m15-templates`, ADR-014): `Template.build()` /
+  `rayito template build|status|logs`, compuestos en el cliente sobre una
+  imagen `rayito-base` publicada, sin plano de control propio. En M1–M5 la
+  imagen se construía con un Dockerfile a mano y `create-microvm-image`; M7
+  (`m7-cli`) entregó la CLI **operativa** (`rayito image|sandbox|doctor`) y
+  M9 `rayito sandbox create/connect/exec/metrics`. `rayito.toml`, y `auth`,
+  `snapshots` y `fork` de la CLI de E2B, siguen fuera.
 - Soporte multi-cloud. AWS-only por diseño (ADR-003).
 - Kernels que no sean Python en `rayito-base`. `bash` llega en M7
   (`m7-poly-kernels`) como variante `rayito-base-poly` con arranque perezoso;
@@ -121,11 +122,14 @@ Se rechazan en review si aparecen antes de M6:
   secreto. Sin almacén del lado cliente **obligatorio**; índice DynamoDB
   opcional en la cuenta del cliente (ADR-014, M14), apagado por defecto y sin
   cambiar `list-microvms` como fuente de verdad del estado.
-- **Tamaño por sandbox** (`cpu=`/`memory=`): el tamaño es propiedad de la imagen
-  (`resources[0].minimumMemoryInMiB`) tanto en Rayito como, de hecho, en E2B.
-  Un template = un tamaño, como en E2B (tamaño por build de template, por
-  ejemplo `base-2gb`, `base-4gb`); ver [`limits.md`](docs/site/docs/limits.md).
-  No hay, ni se promete, un resolvedor de tamaño por sandbox.
+- ~~**Tamaño por sandbox** (`cpu=`/`memory=`)~~: entregado en 0.6.0
+  (`m15-sizes-catalog`, ADR-014) como `Sandbox.create(size=)` sobre un
+  catálogo de cinco tamaños: resuelve a la imagen de ese tamaño publicada
+  con `rayito image publish --sizes`. El tamaño sigue siendo propiedad de la
+  imagen (`resources[0].minimumMemoryInMiB`), como en E2B (un template = un
+  tamaño); `size=` sólo elige entre imágenes ya publicadas. Ver
+  [`limits.md`](docs/site/docs/limits.md) y
+  [`tamanos.md`](docs/site/docs/funciones-opcionales/tamanos.md).
 - ~~Persistencia de filesystem entre sesiones (S3/EFS)~~ (era candidata a M6):
   entregada en M7 (`m7-s3-persistence`, ADR-009): checkpoint/restore de
   `/home/user` en S3 desde `rayd` (`Sandbox.create(persist=)`,

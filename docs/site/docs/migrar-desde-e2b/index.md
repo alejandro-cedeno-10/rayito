@@ -99,7 +99,7 @@ El resto del programa no cambia:
 |---|---|
 | `E2B_API_KEY` | credenciales de AWS: `AWS_PROFILE` y `AWS_REGION` (o el rol de la máquina). `api_key=` se acepta y se ignora con un aviso |
 | el template por defecto (`code-interpreter-v1`) | `RAYITO_TEMPLATE=rayito-base` (o `template=` / `Sandbox.create("rayito-base")`) |
-| `template="mi-template"` construido con `Template.build` | una imagen tuya publicada con `rayito image publish` |
+| `template="mi-template"` construido con `Template.build` | el mismo `Template.build` (desde 0.6.0, compuesto sobre `rayito-base` con `from_base_image`; [Templates](../funciones-opcionales/templates.md)) o una imagen tuya publicada con `rayito image publish` |
 | `upload_url` / `download_url` | un bucket tuyo: `RAYITO_TRANSFER_BUCKET=amzn-s3-demo-bucket` ([Ficheros y S3](../files.md)) |
 | `allow_internet_access=False`, `network=` | la imagen `rayito-base-caps` ([Red saliente](../network.md)) |
 | `run_code(language="js" / "ts" / "bash")` | la imagen `rayito-base-poly` ([Lenguajes y kernels](../kernels.md)) |
@@ -121,7 +121,7 @@ python -W always::UserWarning -m pytest
 - [ ] `RAYITO_TEMPLATE` apunta a una imagen de la release actual (el shim
       exige una imagen 0.3.0 o posterior).
 - [ ] Ninguna llamada usa algo de [No soportado](../e2b-compat.md#lanza-unimplementederror)
-      (`fork`, snapshots, `Volume`, `Template.build`, `mcp=`, `iam=`…).
+      (`fork`, snapshots, `Volume`, `mcp=`, `iam=`…).
 - [ ] Si guardas el `sandbox_id` para reconectar, guarda también el access
       token: `sbx.native.access_token` (TypeScript: `sbx.native.accessToken`).
       E2B no lo necesita; Rayito sí, porque no hay API key.
@@ -141,7 +141,7 @@ notan:
 | Dónde corre | la nube de E2B | tu cuenta de AWS, en tu factura |
 | Autenticación | `E2B_API_KEY` | credenciales de AWS + un access token por sandbox |
 | Vida máxima | 24 h en Pro; pausados sin límite | 8 h desde el arranque, contando el tiempo pausado |
-| CPU y memoria | por template | por imagen: publica una imagen por tamaño |
+| CPU y memoria | por template | por imagen: `Template.build(memory_mb=)` o `rayito image publish --sizes` y, en el SDK nativo, `size=` ([Tamaños](../funciones-opcionales/tamanos.md)) |
 | `get_host(port)` | URL pública | hostname + cabeceras del proxy de AWS en cada petición |
 | `upload_url` | `POST` multipart, el fichero aparece al momento | `PUT` a S3, aterriza en ≈ 1 s (o `ticket.wait()`); de un solo uso |
 | Red saliente con reglas | fuera del VM | dentro del guest, en `rayito-base-caps` |
@@ -151,11 +151,20 @@ Fila a fila (113 funciones): [Paridad](../e2b-parity.md).
 
 ## Qué no existe
 
-`fork`, snapshots y `pause(keep_memory=False)`; `Volume` y montajes;
-`Template.build`; `mcp=`; `iam=`; `network.rules` y la resolución de
-`Secret.fill()`; webhooks; kernels R y Java. Todos lanzan
-`UnimplementedError` con el motivo. Qué usar en su lugar:
+`fork`, snapshots y `pause(keep_memory=False)`; `Volume` (volúmenes EFS);
+`mcp=`; `iam=`; `network.rules` y la resolución de `Secret.fill()`;
+kernels R y Java. Todos lanzan `UnimplementedError` con el motivo. Qué usar
+en su lugar:
 [Qué hacer con lo que no está](../e2b-parity.md#que-hacer-con-lo-que-no-esta).
+
+Desde 0.6.0 sí existen, como funciones opcionales en tu cuenta (apagadas
+por defecto): `Template.build`
+([Templates](../funciones-opcionales/templates.md)), montajes de buckets
+S3 con `mounts=` ([Montajes S3](../funciones-opcionales/montajes-s3.md)),
+eventos de ciclo de vida y webhooks con la firma de E2B con `events=`
+([Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md)) y
+exportación de métricas del sandbox por OTLP con `telemetry=`
+([Exportación OTLP](../funciones-opcionales/exportacion-otlp.md)).
 
 ## Cuándo pasar al SDK nativo
 

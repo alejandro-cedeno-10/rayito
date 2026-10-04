@@ -20,9 +20,20 @@ BLOCKED_ADDRESSES = [
     "0.0.0.0",  # unspecified
     "::1",  # IPv6 loopback
     "fe80::1",  # IPv6 link-local
+    "::ffff:100.64.0.1",  # CGNAT, IPv4-mapped (an AAAA answer)
+    "::ffff:127.0.0.1",  # loopback, IPv4-mapped
+    "::ffff:169.254.169.254",  # IMDS, IPv4-mapped
+    "::ffff:10.0.0.5",  # private, IPv4-mapped
 ]
 
-ALLOWED_ADDRESSES = ["8.8.8.8", "1.1.1.1", "93.184.216.34", "100.63.255.255", "100.128.0.0"]
+ALLOWED_ADDRESSES = [
+    "8.8.8.8",
+    "1.1.1.1",
+    "93.184.216.34",
+    "100.63.255.255",
+    "100.128.0.0",
+    "::ffff:8.8.8.8",  # public, IPv4-mapped: same verdict as 8.8.8.8
+]
 
 
 def test_every_blocked_address_is_classified_as_blocked() -> None:

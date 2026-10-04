@@ -178,7 +178,7 @@ def plan_features(
         if section is not None:
             sections.append(section)
     if options.volumes is not None:
-        raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
+        raise UnimplementedError("volumes=", f"todavía no disponible ({VOLUMES_CHANGE})")
     # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
     # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
     # es qué imagen lanzar), así que `create()` la resuelve por su cuenta
@@ -201,5 +201,5 @@ def plan_features(
         # `secrets=` — ver `GatewaySectionFactory`.
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
-        raise UnimplementedError("domain=", f"llega en 0.6 ({DOMAIN_CHANGE})")
+        raise UnimplementedError("domain=", f"todavía no disponible ({DOMAIN_CHANGE})")
     return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry, events=events)

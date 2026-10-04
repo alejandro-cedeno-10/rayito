@@ -3,8 +3,10 @@
 `rayito` es la herramienta de línea de comandos del SDK: publica y lista la
 imagen, borra versiones antiguas, lista, inspecciona y mata sandboxes, lee
 sus logs de CloudWatch y diagnostica una cuenta antes del primer
-`Sandbox.create()`. Es una CLI **operativa** sobre el flujo Dockerfile que ya
-existe: no hay templates declarativos ni `rayito.toml`.
+`Sandbox.create()`. Desde 0.6 también despliega las pilas opcionales
+(`rayito stack`, `rayito events`) y construye templates declarativos
+(`rayito template`). No hay `rayito.toml`: la configuración son opciones y
+variables de entorno.
 
 ## Instalación
 
@@ -302,6 +304,65 @@ curl http://127.0.0.1:8000/
   MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`; nada nuevo que
   desplegar para usar el proxy).
 
+## `rayito stack`
+
+```bash
+rayito stack list
+rayito stack status <componente> [--stack-name N]
+rayito stack deploy <componente> [--param K=V]... [--artifact-bucket B] [--tag K=V]... [--stack-name N] [--yes]
+rayito stack destroy <componente> [--stack-name N] [--yes]
+```
+
+El convenio [`OptionalStack`](funciones-opcionales/pilas-opcionales.md):
+cada función opcional con infraestructura propia es una pila de
+CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
+
+- `list` imprime el catálogo (nombre, si está implementado y coste en
+  reposo) **sin llamar a AWS**.
+- `deploy` imprime el bloque "Coste y activación" del componente y los
+  parámetros que cambian, y pide confirmación salvo `--yes` (o `--json`).
+  Sobre una pila que ya existe, los parámetros que no repites conservan su
+  valor actual; los valores por defecto sólo se aplican al crearla.
+  `--artifact-bucket` es obligatorio para un componente con código Lambda
+  (`events-webhooks`): ahí se sube el código, por su hash.
+- `status` es un `DescribeStacks`: estado y salidas de la pila.
+- `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
+- Un componente todavía sin plantilla (`efs-volumes`, `custom-domain`)
+  falla con un error claro antes de llamar a AWS.
+
+## `rayito events`
+
+```bash
+rayito events deploy --artifact-bucket B --log-group-name G [--reconciler-interval-minutes M] [--tag K=V]... [--yes]
+rayito events status | destroy [--yes]
+rayito events list [--sandbox-id ID] [--type T]... [--limit N] [--order desc|asc]
+rayito events webhook add <url> --secret-name S --type T [--type T]...
+rayito events webhook list
+rayito events webhook remove <webhook-id>
+```
+
+Atajo de `rayito stack deploy events-webhooks` más la gestión de webhooks y
+la consulta de eventos ([Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md)).
+Todos aceptan `--stack-name` (por defecto `rayito-events-webhooks`).
+`deploy` imprime el coste (≈ $0,40/mes en reposo, el secreto HMAC) y pide
+confirmación como `rayito stack deploy`.
+
+## `rayito template`
+
+```bash
+rayito template build <spec.py> --name N --bucket B [--memory-mb M] [--force] [--timeout S]
+rayito template status <name> [--version V]
+rayito template logs <name> [--limit N]
+```
+
+Construye un [template declarativo](funciones-opcionales/templates.md):
+`build` ejecuta `spec.py` (que debe definir una variable de módulo
+`template` con un `rayito.Template`), sube el contexto a `--bucket` bajo
+`rayito/templates/` y crea o actualiza la imagen `--name`, imprimiendo el
+log del build. Cada versión nueva cuesta almacenamiento de snapshot, igual
+que `rayito image publish`; las antiguas se borran con `rayito image prune --image-name <name>`. `status` y
+`logs` sólo leen: sin `--version`, la versión más reciente.
+
 ## `rayito doctor`
 
 ```bash
@@ -382,13 +443,11 @@ imprimen el comando `uv run --project clients/python …` y salen con 2.
 
 ## Lo que la CLI no hace
 
-- Templates declarativos (`rayito.toml`, `rayito template build`): la imagen
-  se construye desde `image/Dockerfile` con `create-microvm-image`, como
-  siempre (`SPEC.md` §4).
+- `rayito.toml` ni ningún fichero de configuración propio.
 - Construir la imagen más allá del zip: el Dockerfile lo construye AWS.
 - `sandbox logs --follow`: para eso están los SDKs y el
   [servidor MCP](mcp.md).
-- `auth`, `template`, `snapshots` y `fork` de la CLI de E2B: no tienen
+- `auth`, `snapshots` y `fork` de la CLI de E2B: no tienen
   primitiva o quedan fuera por `SPEC.md` §4 ([Compatibilidad con E2B](e2b-compat.md)).
 - Envolver las herramientas de desarrollo (`bench_cold_start.py`,
   `hooks-sim.py`, `gen_limits.py`, `check_*.py`).

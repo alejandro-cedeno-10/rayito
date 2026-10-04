@@ -227,3 +227,126 @@ def test_a_component_with_artifacts_still_needs_artifact_bucket() -> None:
         OptionalStacks(provisioner=FakeStackProvisioner()).deploy(
             "events-webhooks", parameters={"LogGroupName": "/rayito/x"}
         )
+
+
+# ------------------------------- redeploy keeps the settings already deployed
+
+
+def _redeploy(
+    component: str, first: dict[str, str], second: dict[str, str]
+) -> FakeStackProvisioner:
+    """Deploys `component` with `first`, then again with only `second`."""
+    fake = FakeStackProvisioner()
+    stacks = OptionalStacks(provisioner=fake)
+    stacks.deploy(component, parameters=first)
+    stacks.deploy(component, parameters=second)
+    return fake
+
+
+def test_redeploying_s3_mounts_keeps_prefixes_and_read_only() -> None:
+    """Redeploying with only `BucketName` must not widen the policy back to
+    `Prefixes='*'` nor turn `ReadOnly` back on."""
+    fake = _redeploy(
+        "s3-mounts",
+        {"BucketName": "b", "Prefixes": "team7/*", "ReadOnly": "false"},
+        {"BucketName": "b"},
+    )
+    assert fake.sent_parameters == {"BucketName": "b"}
+    assert fake.sent_keep_previous == ("Prefixes", "ReadOnly")
+    deployed = fake.stacks["rayito-s3-mounts"].parameters
+    assert deployed["Prefixes"] == "team7/*"
+    assert deployed["ReadOnly"] == "false"
+
+
+def test_redeploying_s3_mounts_without_the_required_bucket_keeps_it() -> None:
+    fake = _redeploy("s3-mounts", {"BucketName": "b"}, {"Prefixes": "a/*"})
+    assert fake.sent_keep_previous == ("BucketName", "ReadOnly")
+    assert fake.stacks["rayito-s3-mounts"].parameters["BucketName"] == "b"
+
+
+def test_redeploying_metadata_index_keeps_table_name_and_protection() -> None:
+    """`TableName` forces a replacement (`UpdateReplacePolicy: Delete`): going
+    back to the default would delete the old table and its rows."""
+    fake = _redeploy(
+        "metadata-index",
+        {"TableName": "my-table", "DeletionProtection": "true", "PointInTimeRecovery": "true"},
+        {},
+    )
+    assert fake.sent_parameters == {}
+    assert fake.sent_keep_previous == ("DeletionProtection", "PointInTimeRecovery", "TableName")
+    assert fake.stacks["rayito-metadata-index"].parameters == {
+        "TableName": "my-table",
+        "DeletionProtection": "true",
+        "PointInTimeRecovery": "true",
+    }
+
+
+def test_redeploying_secrets_access_keeps_the_kms_key() -> None:
+    fake = _redeploy("secrets-access", {"KmsKeyArn": "arn:aws:kms:example"}, {})
+    assert "KmsKeyArn" in fake.sent_keep_previous
+    assert fake.stacks["rayito-secrets-access"].parameters["KmsKeyArn"] == "arn:aws:kms:example"
+
+
+def test_a_parameter_passed_again_on_update_is_sent_with_its_value() -> None:
+    fake = _redeploy("secrets-access", {"KmsKeyArn": "arn:aws:kms:example"}, {"KmsKeyArn": ""})
+    assert fake.sent_parameters == {"KmsKeyArn": ""}
+    assert fake.sent_keep_previous == ("SecretPrefix",)
+
+
+def test_a_parameter_the_existing_stack_lacks_gets_its_default_on_update() -> None:
+    """A template version that adds a parameter: the old stack does not have
+    it, so `UsePreviousValue` would fail; it gets the catalog default."""
+    fake = FakeStackProvisioner(
+        stacks={
+            "rayito-metadata-index": StackStatus(
+                name="rayito-metadata-index",
+                state="CREATE_COMPLETE",
+                parameters={"TableName": "my-table"},
+            )
+        }
+    )
+    OptionalStacks(provisioner=fake).deploy("metadata-index")
+    assert fake.sent_keep_previous == ("TableName",)
+    assert fake.sent_parameters == {"DeletionProtection": "false", "PointInTimeRecovery": "false"}
+
+
+def test_create_still_fills_the_catalog_defaults() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("s3-mounts", parameters={"BucketName": "b"})
+    assert fake.sent_parameters == {"BucketName": "b", "Prefixes": "*", "ReadOnly": "true"}
+    assert fake.sent_keep_previous == ()
+
+
+def test_create_without_a_required_parameter_is_rejected_before_creating() -> None:
+    fake = FakeStackProvisioner()
+    with pytest.raises(InvalidArgumentException, match="BucketName"):
+        OptionalStacks(provisioner=fake).deploy("s3-mounts")
+    assert [call[0] for call in fake.calls] == ["describe"]
+
+
+def test_parameter_changes_lists_only_what_deploy_would_change() -> None:
+    fake = FakeStackProvisioner()
+    stacks = OptionalStacks(provisioner=fake)
+    stacks.deploy("s3-mounts", parameters={"BucketName": "b", "Prefixes": "team7/*"})
+    changes = stacks.parameter_changes("s3-mounts", parameters={"ReadOnly": "false"})
+    assert [(c.name, c.before, c.after) for c in changes] == [("ReadOnly", "true", "false")]
+    assert fake.calls[-1][0] == "describe"
+
+
+def test_parameter_changes_on_a_missing_stack_lists_every_value_as_new() -> None:
+    changes = OptionalStacks(provisioner=FakeStackProvisioner()).parameter_changes(
+        "s3-mounts", parameters={"BucketName": "b"}
+    )
+    assert {c.name: (c.before, c.after) for c in changes} == {
+        "BucketName": (None, "b"),
+        "Prefixes": (None, "*"),
+        "ReadOnly": (None, "true"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_parameter_changes_mirrors_the_sync_one() -> None:
+    changes = await AsyncOptionalStacks(provisioner=FakeStackProvisioner()).parameter_changes(
+        "secrets-access"
+    )
+    assert {c.name for c in changes} == {"SecretPrefix", "KmsKeyArn"}
