@@ -35,15 +35,30 @@ const RUNTIME_OPENTELEMETRY_IMPORT = new RegExp(
 );
 
 /**
+ * Extensión de los tipos y del JavaScript de cada condición del mapa
+ * `exports`. TypeScript toma la primera condición que casa y da por hecho que
+ * el `.d.*` que encuentra describe el formato del fichero en tiempo de
+ * ejecución (TypeScript Handbook, "Modules reference", `exports`): un `types`
+ * hermano de `import`/`require` casaría antes que ambos y serviría tipos ESM a
+ * un consumidor CommonJS ("Masquerading as ESM" de arethetypeswrong).
+ */
+const CONDITION_EXTENSIONS = {
+  import: { types: ".d.mts", default: ".mjs" },
+  require: { types: ".d.cts", default: ".cjs" },
+};
+
+/**
  * Verifica que `pnpm pack` produce un tarball con los ficheros publicables
  * (build, tipos, README, `LICENSE` y `NOTICE`). `pnpm pack --dry-run` no existe
  * en pnpm 9, así que se empaqueta de verdad en `.pack/` y se lista con `tar`.
  * Rutas relativas: GNU tar toma `D:\...` por un host remoto. Además (M13b)
  * comprueba que ningún `.mjs`/`.cjs` de `dist/` (incluidos los chunks
- * compartidos) importa `@opentelemetry/api` en tiempo de ejecución.
+ * compartidos) importa `@opentelemetry/api` en tiempo de ejecución, y que cada
+ * entrada de `exports` declara sus tipos dentro de `import` y de `require`.
  */
 function main() {
   assertNoRuntimeOpenTelemetryImport();
+  assertTypesMatchEachCondition();
   rmSync(PACK_DIR, { recursive: true, force: true });
   mkdirSync(PACK_DIR);
   try {
@@ -69,6 +84,33 @@ function assertNoRuntimeOpenTelemetryImport() {
       `dist/ importa @opentelemetry/api en tiempo de ejecución (debería ser sólo \`import type\`, borrado en el build): ${offenders.join(", ")}`,
     );
   }
+}
+
+/**
+ * Cada subruta de `exports` que no es un fichero suelto lleva exactamente las
+ * condiciones `import` y `require`, cada una con `types` y `default` de la
+ * extensión de su formato (`CONDITION_EXTENSIONS`) y ningún `types` hermano.
+ */
+function assertTypesMatchEachCondition() {
+  const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf-8"));
+  const problems = Object.entries(manifest.exports)
+    .filter(([, target]) => typeof target === "object")
+    .flatMap(([subpath, target]) => conditionProblems(subpath, target));
+  if (problems.length > 0) {
+    throw new Error(`exports de package.json mal formado: ${problems.join("; ")}`);
+  }
+}
+
+function conditionProblems(subpath, target) {
+  const expected = Object.keys(CONDITION_EXTENSIONS);
+  const unexpected = Object.keys(target).filter((condition) => !expected.includes(condition));
+  const keyProblems = unexpected.map((condition) => `${subpath}: condición "${condition}" sobra`);
+  const fileProblems = expected.flatMap((condition) =>
+    Object.entries(CONDITION_EXTENSIONS[condition])
+      .filter(([field, extension]) => !String(target[condition]?.[field]).endsWith(extension))
+      .map(([field, extension]) => `${subpath}: ${condition}.${field} debe acabar en ${extension}`),
+  );
+  return [...keyProblems, ...fileProblems];
 }
 
 function packedEntries() {

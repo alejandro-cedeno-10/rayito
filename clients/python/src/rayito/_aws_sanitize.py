@@ -17,7 +17,8 @@ from __future__ import annotations
 import re
 from typing import Any, Final
 
-REDACTED: Final = "<redacted>"
+from rayito._models import REDACTED
+
 MAX_MESSAGE_CHARS: Final = 2048
 
 _TEXT_RULES: Final[tuple[tuple[re.Pattern[str], str], ...]] = (

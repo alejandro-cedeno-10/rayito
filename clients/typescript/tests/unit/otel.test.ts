@@ -87,7 +87,7 @@ describe("instrumentationFor", () => {
     expect(span?.name).toBe("rayito.sandbox.create");
     expect(span?.kind).toBe(SpanKind.CLIENT);
     expect(span?.attributes["rayito.sandbox.id"]).toBe("sbx-1");
-    expect(span?.instrumentationLibrary.name).toBe("rayito");
+    expect(span?.instrumentationScope.name).toBe("rayito");
   });
 
   test("los atributos del span son un subconjunto de la lista permitida", () => {

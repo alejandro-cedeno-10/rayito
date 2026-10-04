@@ -26,6 +26,12 @@
 //! added by that feature: `s3_mount` (`m15-s3-mounts`) is the first one,
 //! `telemetry` (m15-rayd-otlp, ADR-021) is rayd's own OTLP/HTTP metrics
 //! exporter.
+//!
+//! The domain is safe Rust by construction: every `unsafe` block (FFI to
+//! `libc`/`nix`, file descriptors, `fork`) belongs to an adapter in the
+//! `rayd` crate, so `forbid(unsafe_code)` keeps it from creeping in here.
+
+#![forbid(unsafe_code)]
 
 pub mod auth;
 pub mod capabilities;
