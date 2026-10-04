@@ -252,20 +252,32 @@ def _route_table_of(subnet_id: str, tables: Sequence[RouteTableFacts]) -> RouteT
     return explicit or next((table for table in tables if table.main), None)
 
 
-def _egress_finding(subnet_ids: Sequence[str], tables: Sequence[RouteTableFacts]) -> NetworkFinding:
-    with_nat = sum(
+def _default_route_count(
+    subnet_ids: Sequence[str], tables: Sequence[RouteTableFacts], target: DefaultRouteTarget
+) -> int:
+    return sum(
         1
         for subnet_id in subnet_ids
         if (table := _route_table_of(subnet_id, tables)) is not None
-        and table.default_route == "nat"
+        and table.default_route == target
     )
+
+
+def _egress_finding(subnet_ids: Sequence[str], tables: Sequence[RouteTableFacts]) -> NetworkFinding:
+    # "other" cuenta también: una ruta por defecto a un transit gateway, un
+    # peering o un appliance (medido en la aceptación del 2026-10-04: las
+    # subredes privadas de la VPC salían por un transit gateway, no por un
+    # NAT, y el mensaje sólo decía "0 con NAT").
+    with_nat = _default_route_count(subnet_ids, tables, "nat")
+    with_other = _default_route_count(subnet_ids, tables, "other")
     return NetworkFinding(
         "OK",
         "internet-egress",
         "el conector de esta pila sólo deja salir NFS (2049) hacia los mount targets; la "
-        "salida a internet de un sandbox que use la VPC depende del NAT de tu VPC "
-        f"({with_nat} de {len(subnet_ids)} subredes con ruta por defecto a un NAT) y de "
-        "un conector que la permita (ninguno de esta pila)",
+        "salida a internet de un sandbox que use la VPC depende de la ruta por defecto de "
+        f"tus subredes ({with_nat} de {len(subnet_ids)} a un NAT, {with_other} a otra "
+        "puerta como un transit gateway) y de un conector que la permita (ninguno de "
+        "esta pila)",
     )
 
 

@@ -17,7 +17,9 @@ targets durante unos minutos (~$0) más el conector (sin cargo listado).
 
 from __future__ import annotations
 
+import json
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -36,6 +38,12 @@ VPC_ID_VAR = "RAYITO_E2E_VPC_ID"
 SUBNET_IDS_VAR = "RAYITO_E2E_SUBNET_IDS"
 NFS_PORT = 2049
 E2E_TAG_KEY = "rayito:e2e"
+#: `DeleteFileSystem` es asíncrono: el sistema de ficheros sigue en
+#: `DescribeFileSystems` con `LifeCycleState=deleting` unos segundos antes de
+#: dar `FileSystemNotFound` (medido 2026-10-04, AWS_API_NOTES.md §16 Q126).
+FILE_SYSTEM_GONE_BUDGET_SECONDS = 120.0
+FILE_SYSTEM_GONE_POLL_SECONDS = 2.0
+DELETING_STATES = {"deleting", "deleted"}
 
 
 def report(label: str, value: object) -> None:
@@ -53,23 +61,41 @@ requires_network = pytest.mark.skipif(
 )
 
 
-def network_snapshot(ec2: Any, vpc_id: str, *, excluding: set[str]) -> dict[str, Any]:
+def _canonical(items: Any) -> tuple[str, ...]:
+    """Una lista de la API EC2 sin depender de su orden: EC2 no garantiza el
+    orden de `Routes`, `Associations`, `Entries` ni `IpPermissions` entre dos
+    llamadas (medido: dos `DescribeRouteTables` seguidas devolvieron las
+    mismas asociaciones en otro orden), así que se compara como conjunto."""
+    return tuple(sorted(json.dumps(item, sort_keys=True, default=str) for item in items or []))
+
+
+def network_snapshot(ec2: Any, vpc_id: str, *, groups_in: set[str] | None = None) -> dict[str, Any]:
     """Lo que la pila no debe tocar nunca: las tablas de rutas, las NACLs
-    y los grupos de seguridad que ya existían en la VPC (los dos de la
-    pila, en `excluding`, se dejan fuera)."""
+    y los grupos de seguridad de la VPC. Con `groups_in`, sólo esos grupos
+    (los que ya existían antes del despliegue): un grupo creado entretanto
+    por la pila, o por otro despliegue en la misma VPC, no cuenta como
+    cambio."""
     vpc_filter = [{"Name": "vpc-id", "Values": [vpc_id]}]
     tables = ec2.describe_route_tables(Filters=vpc_filter)["RouteTables"]
     acls = ec2.describe_network_acls(Filters=vpc_filter)["NetworkAcls"]
     groups = ec2.describe_security_groups(Filters=vpc_filter)["SecurityGroups"]
     return {
         "routes": sorted(
-            (t["RouteTableId"], repr(t.get("Routes")), repr(t.get("Associations"))) for t in tables
+            (t["RouteTableId"], _canonical(t.get("Routes")), _canonical(t.get("Associations")))
+            for t in tables
         ),
-        "acls": sorted((a["NetworkAclId"], repr(a.get("Entries"))) for a in acls),
+        "acls": sorted(
+            (a["NetworkAclId"], _canonical(a.get("Entries")), _canonical(a.get("Associations")))
+            for a in acls
+        ),
         "groups": sorted(
-            (g["GroupId"], repr(g.get("IpPermissions")), repr(g.get("IpPermissionsEgress")))
+            (
+                g["GroupId"],
+                _canonical(g.get("IpPermissions")),
+                _canonical(g.get("IpPermissionsEgress")),
+            )
             for g in groups
-            if g["GroupId"] not in excluding
+            if groups_in is None or g["GroupId"] in groups_in
         ),
     }
 
@@ -108,7 +134,7 @@ def test_deploy_crud_and_destroy_leave_the_vpc_untouched(
     session = boto3.session.Session(region_name=e2e_settings.region)
     ec2 = session.client("ec2")
     efs = session.client("efs")
-    before = network_snapshot(ec2, vpc_id, excluding=set())
+    before = network_snapshot(ec2, vpc_id)
 
     run_tag = uuid.uuid4().hex[:8]
     status = efs_volumes.deploy(
@@ -120,6 +146,7 @@ def test_deploy_crud_and_destroy_leave_the_vpc_untouched(
     outputs = status.outputs
     own_groups = {outputs["MountTargetSecurityGroupId"], outputs["ClientSecurityGroupId"]}
     report("deploy", f"{status.state}, connector {outputs.get('ConnectorState')}")
+    assert not own_groups & {g[0] for g in before["groups"]}, "la pila reutilizó un grupo existente"
 
     # Mount targets: NFS only, only from the client group.
     (mount_group,) = ec2.describe_security_groups(GroupIds=[outputs["MountTargetSecurityGroupId"]])[
@@ -155,12 +182,24 @@ def test_deploy_crud_and_destroy_leave_the_vpc_untouched(
     assert volume.access_point_id.startswith("fsap-")
     assert store.destroy(volume.name or "") is True
 
-    after = network_snapshot(ec2, vpc_id, excluding=own_groups)
-    before["groups"] = [g for g in before["groups"] if g[0] not in own_groups]
+    after = network_snapshot(ec2, vpc_id, groups_in={g[0] for g in before["groups"]})
     assert after == before, "la VPC del llamante cambió"
     report("vpc untouched", "rutas, NACLs y grupos existentes idénticos")
 
     efs_volumes.destroy(delete_file_system=True)
-    with pytest.raises(ClientError) as gone:
-        efs.describe_file_systems(FileSystemId=file_system_id)
-    assert gone.value.response["Error"]["Code"] == "FileSystemNotFound"
+    report("file system gone after (s)", seconds_until_file_system_gone(efs, file_system_id))
+
+
+def seconds_until_file_system_gone(efs: Any, file_system_id: str) -> float:
+    """Segundos hasta `FileSystemNotFound` tras `DeleteFileSystem`; mientras
+    tanto sólo se admite `deleting`/`deleted` (nunca `available`)."""
+    started = time.monotonic()
+    while True:
+        try:
+            (described,) = efs.describe_file_systems(FileSystemId=file_system_id)["FileSystems"]
+        except ClientError as exc:
+            assert exc.response["Error"]["Code"] == "FileSystemNotFound"
+            return round(time.monotonic() - started, 1)
+        assert described["LifeCycleState"] in DELETING_STATES
+        assert time.monotonic() - started < FILE_SYSTEM_GONE_BUDGET_SECONDS
+        time.sleep(FILE_SYSTEM_GONE_POLL_SECONDS)

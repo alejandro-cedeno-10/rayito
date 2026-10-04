@@ -221,21 +221,34 @@ function routeTableOf(
   return tables.find((table) => table.subnetIds.includes(subnetId)) ?? tables.find((t) => t.main);
 }
 
+function defaultRouteCount(
+  subnetIds: readonly string[],
+  tables: readonly RouteTableFacts[],
+  target: DefaultRouteTarget,
+): number {
+  return subnetIds.filter((subnetId) => routeTableOf(subnetId, tables)?.defaultRoute === target)
+    .length;
+}
+
 function egressFinding(
   subnetIds: readonly string[],
   tables: readonly RouteTableFacts[],
 ): NetworkFinding {
-  const withNat = subnetIds.filter(
-    (subnetId) => routeTableOf(subnetId, tables)?.defaultRoute === "nat",
-  ).length;
+  // "other" cuenta también: una ruta por defecto a un transit gateway, un
+  // peering o un appliance (medido en la aceptación del 2026-10-04: las
+  // subredes privadas de la VPC salían por un transit gateway, no por un NAT,
+  // y el mensaje sólo decía "0 con NAT").
+  const withNat = defaultRouteCount(subnetIds, tables, "nat");
+  const withOther = defaultRouteCount(subnetIds, tables, "other");
   return {
     level: "OK",
     code: "internet-egress",
     message:
       "el conector de esta pila sólo deja salir NFS (2049) hacia los mount targets; la " +
-      "salida a internet de un sandbox que use la VPC depende del NAT de tu VPC " +
-      `(${withNat} de ${subnetIds.length} subredes con ruta por defecto a un NAT) y de ` +
-      "un conector que la permita (ninguno de esta pila)",
+      "salida a internet de un sandbox que use la VPC depende de la ruta por defecto de " +
+      `tus subredes (${withNat} de ${subnetIds.length} a un NAT, ${withOther} a otra ` +
+      "puerta como un transit gateway) y de un conector que la permita (ninguno de " +
+      "esta pila)",
   };
 }
 

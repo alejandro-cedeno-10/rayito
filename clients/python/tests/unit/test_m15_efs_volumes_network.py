@@ -141,6 +141,21 @@ def test_internet_egress_counts_subnets_routed_to_a_nat() -> None:
     assert "NAT" in egress.message
 
 
+def test_internet_egress_also_counts_other_default_routes() -> None:
+    # Medido 2026-10-04: subredes privadas con salida por un transit gateway.
+    api = FakeEc2Api(
+        route_tables=[
+            {
+                "Associations": [{"Main": True}],
+                "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "TransitGatewayId": "tgw-0abc"}],
+            },
+        ]
+    )
+    report = check(api, [SUBNET_A, SUBNET_B])
+    egress = next(f for f in report.findings if f.code == "internet-egress")
+    assert "0 de 2 a un NAT, 2 a otra puerta" in egress.message
+
+
 @pytest.mark.parametrize(
     ("routes", "expected"),
     [

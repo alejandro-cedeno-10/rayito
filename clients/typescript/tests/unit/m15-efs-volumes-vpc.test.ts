@@ -61,7 +61,10 @@ class FakeEc2 implements Ec2Api {
     subnet(SUBNET_B, "us-east-1b"),
     subnet(SUBNET_C, "us-east-1c"),
   ];
-  routeTables = [
+  routeTables: Array<{
+    Associations: Array<{ Main?: boolean; SubnetId?: string }>;
+    Routes: Array<{ DestinationCidrBlock?: string; NatGatewayId?: string; GatewayId?: string }>;
+  }> = [
     {
       Associations: [{ Main: true }],
       Routes: [{ DestinationCidrBlock: "0.0.0.0/0", NatGatewayId: "nat-0abc" }],
@@ -193,6 +196,25 @@ describe("EfsVolumes.check", () => {
     expect(report.cost.creates).toContain("AWS::Lambda::NetworkConnector");
     expect(codes(report.findings)).toEqual({ "internet-egress": "OK" });
     expect(ec2.calls.every((call) => call.startsWith("describe"))).toBe(true);
+  });
+
+  test("counts NAT and other default routes (e.g. a transit gateway)", async () => {
+    // Medido 2026-10-04: subredes privadas con salida por un transit gateway.
+    const ec2 = new FakeEc2();
+    ec2.routeTables = [
+      {
+        Associations: [{ Main: true }],
+        // `TransitGatewayId` no está en el modelo que Rayito lee: una ruta por
+        // defecto sin NAT ni internet gateway es "otra puerta".
+        Routes: [{ DestinationCidrBlock: "0.0.0.0/0" }],
+      },
+    ];
+    const report = await facade({ ec2 }).volumes.check({
+      vpcId: VPC_ID,
+      subnetIds: [SUBNET_A, SUBNET_B],
+    });
+    const egress = report.findings.find((finding) => finding.code === "internet-egress");
+    expect(egress?.message).toContain("0 de 2 a un NAT, 2 a otra puerta");
   });
 
   test("accepts the CLI comma form", async () => {
