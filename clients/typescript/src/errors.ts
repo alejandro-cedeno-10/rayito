@@ -352,9 +352,11 @@ export interface BuildErrorOptions extends SandboxErrorOptions {
 
 /**
  * `Template.build` (m15-templates) falló: `reason` nombra la causa
- * (`build_quota`, `ready_client_error`, `ready_server_error`, o
- * `undefined` con `step`/`command`/`exitCode`/`logTail` cuando falló un
- * paso del Dockerfile compilado).
+ * (`build_quota`, `aws_error` cuando AWS rechazó el build por otro motivo
+ * —el mensaje y `cause` llevan sólo el resumen saneado—,
+ * `ready_client_error`, `ready_server_error`, o `undefined` con
+ * `step`/`command`/`exitCode`/`logTail` cuando falló un paso del Dockerfile
+ * compilado).
  *
  * El shim `rayito/e2b` (`e2b/template.js`) ya construye de verdad: su
  * `BuildError`/`TemplateError` son alias de estas clases nativas (mismo

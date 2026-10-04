@@ -322,8 +322,10 @@ class VolumePathNotFoundException(VolumeException):
 
 class BuildException(SandboxException):
     """`Template.build` (m15-templates) falló: `reason` nombra la causa
-    (`build_quota`, `ready_client_error`, `ready_server_error`, o `None`
-    con `step`/`command`/`exit_code`/`log_tail` cuando falló un paso del
+    (`build_quota`, `aws_error` cuando AWS rechazó el build por otro motivo
+    —el mensaje y `__cause__` llevan sólo el resumen saneado—,
+    `ready_client_error`, `ready_server_error`, o `None` con
+    `step`/`command`/`exit_code`/`log_tail` cuando falló un paso del
     Dockerfile compilado)."""
 
     def __init__(

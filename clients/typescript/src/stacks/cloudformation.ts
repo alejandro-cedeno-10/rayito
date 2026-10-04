@@ -125,9 +125,14 @@ async function s3Api(region: string, credentials: Credentials): Promise<S3Api> {
   };
 }
 
+/**
+ * El `StackError` de un error del SDK, con el resumen saneado como mensaje y
+ * como `cause`: el error crudo de smithy lleva `$response` (la petición
+ * firmada) y, en un error de firma, la cadena canónica en el `message`.
+ */
 function wrap(error: unknown): StackError {
   const summary = sanitizeAwsError(error, { includeMessage: true });
-  return new StackError(`${summary.name}: ${summary.message}`, { code: "failed", cause: error });
+  return new StackError(`${summary.name}: ${summary.message}`, { code: "failed", cause: summary });
 }
 
 function isMissingStack(error: unknown): boolean {

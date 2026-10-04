@@ -19,6 +19,7 @@ from typing import Any, NoReturn
 
 from botocore.exceptions import ClientError
 
+from rayito._aws_sanitize import redact_aws_text
 from rayito.cli._session import UsageError
 from rayito.exceptions import SandboxException, UnimplementedError
 
@@ -110,7 +111,10 @@ def client_error_code(exc: ClientError) -> str:
 
 
 def client_error_message(exc: ClientError) -> str:
-    return str(exc.response.get("Error", {}).get("Message", exc))
+    """El `Message` de AWS pasado por `redact_aws_text`: el de un error de
+    firma repite la cadena canónica, con el token de sesión. Lo usan el
+    manejador de errores de la CLI, `doctor` y `prune`."""
+    return redact_aws_text(str(exc.response.get("Error", {}).get("Message", exc)))
 
 
 @contextmanager
