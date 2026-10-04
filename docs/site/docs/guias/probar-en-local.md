@@ -26,6 +26,11 @@ hito o una release.
   plataforma.
 - **runner**: las toolchains de los dos SDK. Las dependencias se instalan en
   volúmenes, nunca en el `.venv` ni en los `node_modules` de tu máquina.
+  Corre como uid 993, fuera del rango del sandbox (1000-65535) como el agente
+  de la plataforma: `rayd` rechaza el `/run` y el `/terminate` que llegan
+  desde un uid del sandbox. Si levantaste el entorno con una versión anterior
+  y no lo bajaste, corre `make local-down` antes de `make local-up` para que
+  los volúmenes se creen con el dueño nuevo.
 
 Nada publica puertos en tu máquina, ningún contenedor es privilegiado ni
 monta el socket de Docker, y Floci no tiene salida a Internet. El porqué de
@@ -129,5 +134,6 @@ abre el PR), lee sus notas de release y sus
 ## En CI
 
 El workflow `local-e2e` corre `make local-up` y `make local-e2e` en
-`ubuntu-24.04-arm` en los PR que tocan el entorno local, cada noche y a mano
+`ubuntu-24.04-arm` en los PR que tocan el entorno local o `rayd` (`crates/`,
+`proto/`, `Cargo.lock`), cada noche y a mano
 (`workflow_dispatch`). No usa credenciales ni secretos del repositorio.
