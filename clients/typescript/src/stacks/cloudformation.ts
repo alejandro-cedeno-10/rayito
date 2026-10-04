@@ -1,8 +1,9 @@
 /**
  * Adaptador del SDK v3 de `StackProvisioner` (M15 foundations, ADR-016).
  * Espejo de `rayito._stacks._cloudformation`. Parámetros y formas
- * verificados contra `AWS_API_NOTES.md` §21: `CreateStack`, `UpdateStack`,
- * `DescribeStacks`, `DeleteStack`. El cliente de `putArtifact` sólo hace
+ * verificados contra `AWS_API_NOTES.md` §21: `CreateStack`, `UpdateStack`
+ * (con `UsePreviousValue` para los parámetros que se conservan),
+ * `DescribeStacks` (incluidos sus `Parameters`), `DeleteStack`. El cliente de `putArtifact` sólo hace
  * `HeadObject` + `PutObject`, igual que el resto del SDK.
  *
  * `@aws-sdk/client-cloudformation` y `@aws-sdk/client-s3` son peers
@@ -40,12 +41,17 @@ const TERMINAL_FAILURE_STATES = new Set([
 
 type Credentials = AwsClientSettings["credentials"];
 
+type ProtoParameter =
+  | { ParameterKey: string; ParameterValue: string }
+  | { ParameterKey: string; UsePreviousValue: true };
+
 interface CloudFormationApi {
   describeStacks(input: { StackName: string }): Promise<{
     Stacks?: Array<{
       StackStatus?: string;
       StackStatusReason?: string;
       Outputs?: Array<{ OutputKey?: string; OutputValue?: string }>;
+      Parameters?: Array<{ ParameterKey?: string; ParameterValue?: string }>;
     }>;
   }>;
   createStack(input: {
@@ -58,7 +64,7 @@ interface CloudFormationApi {
   updateStack(input: {
     StackName: string;
     TemplateBody: string;
-    Parameters: Array<{ ParameterKey: string; ParameterValue: string }>;
+    Parameters: ProtoParameter[];
     Tags: Array<{ Key: string; Value: string }>;
     Capabilities?: string[] | undefined;
   }): Promise<unknown>;
@@ -213,11 +219,18 @@ export class CloudFormationProvisioner implements StackProvisioner {
         outputs[output.OutputKey] = output.OutputValue;
       }
     }
+    const parameters: Record<string, string> = {};
+    for (const parameter of stack.Parameters ?? []) {
+      if (parameter.ParameterKey !== undefined) {
+        parameters[parameter.ParameterKey] = parameter.ParameterValue ?? "";
+      }
+    }
     return {
       name: stackName,
       state: stack.StackStatus,
       outputs,
       reasonCode: stack.StackStatusReason,
+      parameters,
     };
   }
 
@@ -251,6 +264,7 @@ export class CloudFormationProvisioner implements StackProvisioner {
       readonly templateBody: string;
       readonly parameters: Readonly<Record<string, string>>;
       readonly tags: Readonly<Record<string, string>>;
+      readonly keepPrevious?: readonly string[];
     },
   ): Promise<UpdateOutcome> {
     const api = await this.#cfn();
@@ -258,7 +272,7 @@ export class CloudFormationProvisioner implements StackProvisioner {
       await api.updateStack({
         StackName: options.stackName,
         TemplateBody: options.templateBody,
-        Parameters: protoParameters(options.parameters),
+        Parameters: protoParameters(options.parameters, options.keepPrevious),
         Tags: protoTags(options.tags),
         Capabilities: component.capabilities ? [...component.capabilities] : undefined,
       });
@@ -337,10 +351,25 @@ export class CloudFormationProvisioner implements StackProvisioner {
 
 function protoParameters(
   parameters: Readonly<Record<string, string>>,
-): Array<{ ParameterKey: string; ParameterValue: string }> {
-  return Object.entries(parameters)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue }));
+): Array<{ ParameterKey: string; ParameterValue: string }>;
+function protoParameters(
+  parameters: Readonly<Record<string, string>>,
+  keepPrevious: readonly string[] | undefined,
+): ProtoParameter[];
+function protoParameters(
+  parameters: Readonly<Record<string, string>>,
+  keepPrevious: readonly string[] = [],
+): ProtoParameter[] {
+  const entries = new Map<string, ProtoParameter>(
+    Object.entries(parameters).map(([ParameterKey, ParameterValue]) => [
+      ParameterKey,
+      { ParameterKey, ParameterValue },
+    ]),
+  );
+  for (const ParameterKey of keepPrevious) {
+    entries.set(ParameterKey, { ParameterKey, UsePreviousValue: true });
+  }
+  return [...entries.values()].sort((a, b) => a.ParameterKey.localeCompare(b.ParameterKey));
 }
 
 function protoTags(tags: Readonly<Record<string, string>>): Array<{ Key: string; Value: string }> {

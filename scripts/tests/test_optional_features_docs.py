@@ -28,6 +28,17 @@ FUNCTION_ANCHORS = (
     "otel-sdk",
 )
 
+#: Las funciones 0.6 (M15) enlazan a su propia guía en vez de a un ancla de
+#: esta página; cada una tiene su fila en la tabla de funciones con coste.
+FEATURE_PAGES_0_6 = (
+    "funciones-opcionales/montajes-s3.md",
+    "funciones-opcionales/tamanos.md",
+    "funciones-opcionales/eventos-y-webhooks.md",
+    "funciones-opcionales/exportacion-otlp.md",
+    "funciones-opcionales/pasarela-de-secretos.md",
+    "funciones-opcionales/templates.md",
+)
+
 DOCSTRING_MARKER = "Coste y activación"
 
 REQUIRED_SUBHEADINGS = (
@@ -143,9 +154,15 @@ def test_optional_features_table_header_matches_the_contract() -> None:
 def test_optional_features_table_has_one_row_per_function() -> None:
     page = read(OPTIONAL_FEATURES_PAGE)
     rows = parse_markdown_table(page, EXPECTED_TABLE_HEADER)
-    assert len(rows) == 4, (
-        f"se esperaban 4 filas de funciones con coste, hay {len(rows)}"
+    expected = len(FUNCTION_ANCHORS) + len(FEATURE_PAGES_0_6)
+    assert len(rows) == expected, (
+        f"se esperaban {expected} filas de funciones con coste, hay {len(rows)}"
     )
+    linked = " ".join(row["Función"] for row in rows)
+    for feature_page in FEATURE_PAGES_0_6:
+        assert f"({feature_page})" in linked, (
+            f"{OPTIONAL_FEATURES_PAGE}: ninguna fila de la tabla enlaza a {feature_page}"
+        )
     for anchor in FUNCTION_ANCHORS:
         assert f'id="{anchor}"' in page, (
             f"{OPTIONAL_FEATURES_PAGE}: falta el ancla #{anchor}"

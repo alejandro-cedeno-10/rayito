@@ -30,9 +30,10 @@ pnpm add rayito             # SDK TypeScript (clients/typescript); Node >= 20
 ```python
 from rayito import Sandbox
 
+data = "a,b\n1,2\n"
 with Sandbox.create() as sbx:
-    sbx.files.write("/work/data.csv", data)
-    print(sbx.run_code("import pandas as pd; pd.read_csv('/work/data.csv').head()").text)
+    sbx.files.write("/home/user/data.csv", data)
+    print(sbx.run_code("import pandas as pd; pd.read_csv('/home/user/data.csv').head()").text)
 ```
 
 Para sandboxes en menos de un segundo, un [pool de suspendidos](docs/site/docs/pool.md)

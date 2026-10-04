@@ -6,8 +6,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
+- **Redesplegar una pila opcional ya no deshace su configuración**
+  (`OptionalStacks.deploy()`): los valores por defecto del catálogo sólo se
+  aplican al crear la pila; al actualizarla, cada parámetro que no vuelves a
+  pasar y la pila ya tiene se manda con `UsePreviousValue`. Antes, por
+  ejemplo, redesplegar `s3-mounts` sin repetir `Prefixes` volvía a `'*'`
+  (todo el bucket), `metadata-index` sin `TableName` reemplazaba (y borraba)
+  la tabla y `secrets-access` sin `KmsKeyArn` quitaba `kms:Decrypt`. Nuevo
+  `parameterChanges()` para ver qué cambiaría sin desplegar.
+- **Guardián SSRF de los webhooks** (pila `events-webhooks`): una dirección
+  IPv6 que encapsula una IPv4 (`::ffff:100.64.0.1`) se clasifica como esa
+  IPv4, así que el rango CGNAT queda bloqueado también por esa vía. Se
+  regenera el artefacto de la Lambda que el SDK sube.
+- `volumes`/`domain` lanzan `UnimplementedError` con "todavía no
+  disponible" en vez de "llega en 0.6".
+- Se exporta `WorkdirStep` desde `rayito` (paridad con Python: ya era
+  miembro de la unión `WireStep`).
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
   (`m15-reincarnate-configure-replay`): hasta ahora sólo reenviaba
   `gateways` y un sucesor perdía `mounts`, `events` y `telemetry`.
@@ -32,6 +50,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Documentation
 
+- Bloques "Coste y activación" completos para `mounts`/`S3Mount` y
+  `size`/el catálogo de tamaños, y filas de las seis funciones 0.6 en la
+  tabla de funciones opcionales; la referencia de la CLI, la paridad con
+  E2B, la guía de migración, `limits.md` y las notas de 0.6.0 ya no
+  describen como pendientes funciones publicadas en 0.6.0.
 - **`DynamoDbIndex` enseña su bloque "Coste y activación" en el hover del
   IDE**: vivía en el comentario de módulo, que tsdown descarta; ahora está
   en el TSDoc de la clase y `check-dts-cost-blocks` lo exige.
@@ -719,7 +742,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...typescript-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.1...typescript-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.0...typescript-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.4.0...typescript-v0.5.0

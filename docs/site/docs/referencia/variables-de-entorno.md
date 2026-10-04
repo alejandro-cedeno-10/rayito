@@ -34,6 +34,14 @@ metadatos, OpenTelemetry): esas sólo se activan con una opción del SDK.
 | `RAYITO_BUCKET` | bucket de artefactos de imagen para `rayito image publish` y la comprobación `bucket` de `rayito doctor` (equivale a `--bucket`) |
 | `RAYITO_ACCESS_TOKEN` | token de `sandbox connect`, `exec` y `metrics` si no pasas `--token-file` (gana el fichero) |
 
+`rayito image publish` no lee estas dos, las **imprime** al terminar un
+build lanzable, para que un script las recoja de la última línea:
+
+| Línea impresa | Qué es |
+|---|---|
+| `RAYITO_TEMPLATE=<ARN>` | ARN de la imagen baseline publicada |
+| `RAYITO_TEMPLATE_<SIZE>=<ARN>` (p. ej. `RAYITO_TEMPLATE_4GB`) | con `--sizes`, ARN de cada imagen de tamaño adicional; el SDK no la lee: `size=` resuelve la imagen por nombre ([Tamaños](../funciones-opcionales/tamanos.md)) |
+
 ## Servidor MCP
 
 | Variable | Por defecto | Qué hace |
@@ -52,6 +60,7 @@ Detalle: [Servidor MCP](../mcp.md#variables-de-entorno).
 | Variable | Dónde | Qué hace |
 |---|---|---|
 | `RAYITO_ALLOW_ROOT=1` | en el `Dockerfile` de la imagen, nunca en el SDK | permite `user="root"` en comandos y terminales; por defecto todo corre como uid 1000 |
+| `RAYITO_ALLOWED_MOUNT_BUCKETS` | en la imagen (`rayito image publish --env RAYITO_ALLOWED_MOUNT_BUCKETS=b1,b2`), nunca en el SDK | lista separada por comas de los buckets que `mounts=` puede montar; ausente o vacía, ninguno ([Montajes S3](../funciones-opcionales/montajes-s3.md)) |
 
 ## AWS
 

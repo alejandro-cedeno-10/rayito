@@ -37,11 +37,19 @@ nuevas pueden empezar con valores menores.
 
 El tamaño (memoria y vCPU) **es propiedad de la imagen**
 (`resources[0].minimumMemoryInMiB` en `create-microvm-image`,
-`AWS_API_NOTES.md` §4), no un parámetro de `Sandbox.create()`. Es la misma
-forma que usa E2B: `Sandbox.create()` de E2B tampoco tiene `cpu`/`memoria`;
-el tamaño se fija por **build de template**, con `Template.build(cpu_count=,
-memory_mb=)` (`e2b template create --cpu-count --memory-mb`). Rayito no
-tiene un catálogo de tamaños ni un resolvedor `resources=` en `create()`.
+`AWS_API_NOTES.md` §4). Es la misma forma que usa E2B: el tamaño se fija
+por **build de template**, con `Template.build(cpu_count=, memory_mb=)`
+(`e2b template create --cpu-count --memory-mb`).
+
+Desde 0.6.0, `Sandbox.create(size="4gb")` (TypeScript: `{ size: "4gb" }`)
+elige entre un catálogo cerrado de cinco tamaños (512mb, 1gb, 2gb, 4gb,
+8gb): el SDK lo resuelve en el cliente, sin ninguna llamada a AWS, al
+nombre de la imagen de ese tamaño (`rayito-base-4gb`). Esa imagen tiene que
+estar publicada antes con `rayito image publish --sizes 4gb`; `size=` no
+cambia la memoria de una imagen ni de un sandbox en marcha. Sin `size=` se
+lanza la imagen de siempre. Ver [Tamaños](funciones-opcionales/tamanos.md);
+`Template.build(memory_mb=)` construye además una imagen propia del tamaño
+que quieras ([Templates](funciones-opcionales/templates.md)).
 
 Tabla de la **documentación de AWS** (`AWS_API_NOTES.md` §4; ancho de banda
 del endpoint, entrada + salida), con el coste de la hora en baseline
@@ -162,4 +170,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.3` | `0.3.0` | M9: max_lifetime/on_timeout, set_timeout, get_metrics_history, network= y los kernels Deno exigen el rayd del tag rayd-v0.3.0 |
 | `0.4` | `0.4.0` | 0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente en español exigen el rayd del tag rayd-v0.4.0 |
 | `0.5` | `0.5.0` | 0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales (secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0 |
-| `0.6` | `0.6.0` | 0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, volúmenes, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0 |
+| `0.6` | `0.6.0` | 0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0 |

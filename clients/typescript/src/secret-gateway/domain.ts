@@ -70,7 +70,8 @@ export interface SecretGatewayOptions {
  *
  * Coste y activación
  * -------------------
- * Activa: `gateways: { nombre: new SecretGateway(...) }` en
+ * Activa: `gateways: { nombre: new SecretGateway(...) }` (Python:
+ *     `gateways=`) en
  *     `Sandbox.create()` (o `pool.take({ gateways })`); sin él, `rayd` no
  *     abre ningún listener de loopback y el SDK no hace ninguna llamada a
  *     `ConfigureSandbox` ni a Secrets Manager.
