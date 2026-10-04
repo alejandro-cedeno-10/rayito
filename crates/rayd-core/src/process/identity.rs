@@ -13,6 +13,11 @@ pub const ALLOW_ROOT_ENV: &str = "RAYITO_ALLOW_ROOT";
 /// which the IMDS blackhole of M6 (`uidrange 1000-65535`) does not cover and
 /// which may own files of the root group.
 pub const MIN_UNPRIVILEGED_ID: u32 = 1000;
+/// Ceiling of the same range: the IMDS blackhole and the egress and DNS
+/// rules match `uidrange 1000-65535` (`network::route_plan::
+/// SANDBOX_UID_RANGE`), so an account above it would run with neither and
+/// is refused like a system account.
+pub const MAX_UNPRIVILEGED_ID: u32 = 65_535;
 /// The root group: membership grants read access to `/root` and to every
 /// root-group file, which is what T11 and T15 assume nobody reaches.
 pub const ROOT_GROUP_ID: u32 = 0;
@@ -56,8 +61,8 @@ impl UserPolicy {
 
     /// Second gate after the lookup, and the only one that sees numbers:
     /// `authorize` only ever saw a name, so an alias of uid 0, a system
-    /// account below the floor and a member of the root group all arrive
-    /// here. `RAYITO_ALLOW_ROOT=1` is an image-level opt-in and still
+    /// account below the floor, an account above the ceiling and a member
+    /// of the root group all arrive here. `RAYITO_ALLOW_ROOT=1` is an image-level opt-in and still
     /// bypasses the whole gate, exactly as before.
     pub fn authorize_identity(self, identity: &ProcessIdentity) -> Result<(), ProcessError> {
         if self.allow_root {
@@ -83,9 +88,12 @@ impl UserPolicy {
     }
 }
 
+/// Uid and gid inside the range the network rules cover, and never a
+/// member of the root group.
 fn is_unprivileged(identity: &ProcessIdentity) -> bool {
-    identity.uid >= MIN_UNPRIVILEGED_ID
-        && identity.gid >= MIN_UNPRIVILEGED_ID
+    let sandbox_range = MIN_UNPRIVILEGED_ID..=MAX_UNPRIVILEGED_ID;
+    sandbox_range.contains(&identity.uid)
+        && sandbox_range.contains(&identity.gid)
         && !identity.groups.contains(&ROOT_GROUP_ID)
 }
 
@@ -177,6 +185,31 @@ mod tests {
             assert_eq!(permissive.authorize_identity(identity), Ok(()));
         }
         assert_eq!(permissive.authorize_identity(&account(0, 0, &[0])), Ok(()));
+    }
+
+    #[test]
+    fn ids_above_the_sandbox_uid_range_are_refused() {
+        let strict = UserPolicy::default();
+        let above = MAX_UNPRIVILEGED_ID + 1;
+        for (case, identity) in [
+            ("uid above", account(above, 1000, &[1000])),
+            ("gid above", account(1000, above, &[1000])),
+            ("both above", account(above, above, &[above])),
+        ] {
+            assert_eq!(
+                strict.authorize_identity(&identity),
+                Err(ProcessError::PrivilegedAccount),
+                "{case}"
+            );
+        }
+        assert_eq!(
+            strict.authorize_identity(&identity(MAX_UNPRIVILEGED_ID)),
+            Ok(())
+        );
+        assert_eq!(
+            UserPolicy { allow_root: true }.authorize_identity(&identity(above)),
+            Ok(())
+        );
     }
 
     #[test]

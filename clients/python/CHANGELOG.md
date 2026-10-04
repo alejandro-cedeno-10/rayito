@@ -72,6 +72,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Security
 
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentException` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
 - **`rayito sandbox proxy` comprueba `Host` y `Origin`**. El proxy añade tu
   token a todo lo que reenvía, así que una web abierta en tu navegador podía
   usar el servicio del sandbox (DNS rebinding, un POST entre sitios o un

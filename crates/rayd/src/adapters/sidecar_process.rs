@@ -118,7 +118,9 @@ mod unix {
     use tokio_stream::StreamExt;
     use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
-    use super::{MAX_SIDECAR_LOG_LINE_BYTES, emit_sidecar_log, parse_sidecar_log_line};
+    use super::{
+        MAX_SIDECAR_LOG_LINE_BYTES, emit_sidecar_log, may_signal_group, parse_sidecar_log_line,
+    };
     use crate::adapters::process_spawner::PreExecPlan;
     use crate::adapters::{ChildRegistry, IdentitySwitch, io_error_name};
 
@@ -138,12 +140,17 @@ mod unix {
         signal_process_group(pid, Signal::SIGKILL as i32);
     }
 
-    /// Any signal to a group led by `pid` (a kernel or the sidecar); an
-    /// unknown signal number or a gone group is ignored.
+    /// Any signal to a group led by `pid` (a kernel, the sidecar or
+    /// `mount-s3`); an unknown signal number or a gone group is ignored,
+    /// and a group `may_signal_group` refuses is never signalled.
     pub fn signal_process_group(pid: u32, signal: i32) {
         let (Ok(raw), Ok(signal)) = (i32::try_from(pid), Signal::try_from(signal)) else {
             return;
         };
+        if !may_signal_group(raw, nix::unistd::getpgrp().as_raw()) {
+            tracing::warn!(pgid = pid, "process_group_signal_refused");
+            return;
+        }
         let _ = killpg(nix::unistd::Pid::from_raw(raw), signal);
     }
 
@@ -364,6 +371,14 @@ mod unix {
     }
 }
 
+/// The last guard before `killpg` as root: never `0` (the caller's own
+/// group), `1` (`init`, `rayd` itself in the `MicroVM`) or `rayd`'s own
+/// group, whoever asked for it.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn may_signal_group(pgid: i32, own_pgid: i32) -> bool {
+    pgid > rayd_core::orphans::INIT_PID && pgid != own_pgid
+}
+
 #[cfg(not(unix))]
 mod unsupported {
     use std::path::Path;
@@ -404,6 +419,16 @@ mod unsupported {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_callers_group_init_and_rayds_own_group_are_never_signalled() {
+        let own = 4242;
+        for refused in [-1, 0, 1, own] {
+            assert!(!may_signal_group(refused, own), "pgid {refused}");
+        }
+        assert!(may_signal_group(2, own));
+        assert!(may_signal_group(own + 1, own));
+    }
 
     #[test]
     fn log_lines_keep_only_allowlisted_fields() {

@@ -63,6 +63,15 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Security
 
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentError` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
 - **`.dockerignore` con la semántica de Docker** en `Template.build`:
   anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
   `**/.git` y el resto de los valores de `docker init` excluyen también los

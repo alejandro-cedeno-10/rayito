@@ -32,11 +32,9 @@ use super::execute::{ExecutionSubscriberStream, InFlightGuard};
 use super::executions::{
     ExecuteSink, ExecutionRecorder, InterruptHandle, RecorderParts, SharedExecutions,
 };
-use super::supervisor::{
-    KernelSignaller, OpTimeouts, SidecarSupervisor, SupervisorSettings, lock, millis,
-};
+use super::supervisor::{OpTimeouts, SidecarSupervisor, SupervisorSettings, lock, millis};
 use super::validate::run_validation;
-use crate::adapters::{PlatformSidecarLauncher, SpawnPlatform, signal_process_group};
+use crate::adapters::{PlatformSidecarLauncher, ProcfsProcessTable, SpawnPlatform};
 use crate::lifecycle::Reaper;
 
 #[derive(Debug, Clone)]
@@ -282,8 +280,9 @@ impl CodeManager {
         match reply {
             Ok(payload) => {
                 let pid: KernelPidPayload = payload.decode().map_err(CodeError::SidecarProtocol)?;
+                let kernel = supervisor.admit_kernel(&context_id, pid.kernel_pid);
                 let mut registry = lock(&self.registry);
-                let _ = registry.set_kernel_pid(&context_id, pid.kernel_pid);
+                let _ = registry.set_kernel(&context_id, kernel);
                 let _ = registry.set_state(&context_id, ContextState::Ready);
                 drop(registry);
                 tracing::info!(
@@ -581,8 +580,9 @@ impl CodeManager {
         match reply {
             Ok(payload) => {
                 let pid: KernelPidPayload = payload.decode().map_err(CodeError::SidecarProtocol)?;
-                let _ = registry.set_kernel_pid(&context_id, pid.kernel_pid);
                 drop(registry);
+                let kernel = supervisor.admit_kernel(&context_id, pid.kernel_pid);
+                let _ = lock(&self.registry).set_kernel(&context_id, kernel);
                 tracing::info!(
                     context_id = %context_id,
                     restart_ms = millis(started.elapsed()),
@@ -691,16 +691,18 @@ impl CodeManager {
                     return;
                 };
                 let result = supervisor.call(op).await;
-                let mut registry = lock(&manager.registry);
                 if let Ok(id) = ContextId::parse(&context_id) {
+                    let kernel = result
+                        .as_ref()
+                        .ok()
+                        .and_then(|payload| payload.decode::<KernelPidPayload>().ok())
+                        .map(|pid| supervisor.admit_kernel(&id, pid.kernel_pid));
+                    let mut registry = lock(&manager.registry);
                     let _ = registry.set_state(&id, ContextState::Ready);
-                    if let Ok(payload) = &result
-                        && let Ok(pid) = payload.decode::<KernelPidPayload>()
-                    {
-                        let _ = registry.set_kernel_pid(&id, pid.kernel_pid);
+                    if let Some(kernel) = kernel {
+                        let _ = registry.set_kernel(&id, kernel);
                     }
                 }
-                drop(registry);
                 match result {
                     Ok(_) => tracing::warn!(context_id, "kernel_restarted_after_resume"),
                     Err(error) => {
@@ -846,8 +848,8 @@ impl Reaper for CodeManager {
 
 /// Builds the manager for the host `rayd` runs on: the sidecar identity is
 /// the sandbox's default user through the same lookup and policy as
-/// processes, the launcher is the platform's, kernels are signalled by
-/// process group.
+/// processes, the launcher is the platform's, kernel pids are checked
+/// against `/proc` and kernels signalled by process group.
 pub fn platform_code_manager(
     session: Arc<SandboxSession>,
     platform: &SpawnPlatform,
@@ -863,14 +865,13 @@ pub fn platform_code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(PlatformSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let signaller: KernelSignaller = Arc::new(signal_process_group);
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
         session.clone(),
         registry.clone(),
         settings.supervisor_settings(),
-        signaller,
+        Arc::new(ProcfsProcessTable),
     );
     Ok(CodeManager::new(
         session,

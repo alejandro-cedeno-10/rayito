@@ -36,6 +36,12 @@ pub enum FsIoError {
     CrossDevice,
     #[error("no queda espacio en el dispositivo")]
     NoSpace,
+    /// A component the domain resolved is no longer what it checked: a
+    /// symlink swapped in after `canonicalize` (never followed), or a
+    /// directory on a kernel filesystem (`proc`, `sysfs`, `devpts`) the
+    /// deny list keeps out.
+    #[error("la ruta cambió después de comprobarla")]
+    Redirected,
     #[error("las operaciones de ficheros no se admiten en esta plataforma")]
     Unsupported,
     #[error("{errno}")]
@@ -60,7 +66,14 @@ pub enum WatchError {
 
 /// Every call runs with `id` as the filesystem identity (the adapter sets
 /// it per thread) so the kernel, not the domain, enforces permissions.
-/// Paths are canonical absolute paths produced by the domain.
+/// Paths are canonical absolute paths produced by the domain, checked
+/// against the deny list on that string, so every operation but
+/// `canonicalize` resolves them without following a symlink in any
+/// component but the last (and the last only where the operation says
+/// so): a component that is a symlink, or a directory on a kernel
+/// filesystem, answers `Redirected` instead of being followed. The deny
+/// list then still describes the object the call acts on, even when the
+/// sandbox swaps a component between the check and the use.
 pub trait FileSystem: Send + Sync {
     /// `realpath`: fails with `NotFound` for a missing component and
     /// `NotADirectory` for a component that is a file.

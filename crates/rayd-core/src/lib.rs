@@ -49,6 +49,7 @@ pub mod hook_peer;
 pub mod hooks;
 pub mod lifecycle;
 pub mod lifecycle_events;
+pub mod listeners;
 pub mod metrics;
 pub mod metrics_history;
 pub mod mount_path;

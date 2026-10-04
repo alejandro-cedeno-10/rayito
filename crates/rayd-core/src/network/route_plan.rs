@@ -13,15 +13,18 @@ use super::EGRESS_MAX_ROUTES_PER_FAMILY;
 use super::cidr::{Cidr, Family, subtract};
 use super::error::NetworkError;
 use super::policy::{EgressMode, EgressPolicy};
+use crate::process::identity::{MAX_UNPRIVILEGED_ID, MIN_UNPRIVILEGED_ID};
 
 /// The sandbox user and anything it could become; never root nor the
 /// platform agent's uids 991-994 (Q48). Shared with the IMDS block.
 pub const SANDBOX_UID_RANGE: &str = "1000-65535";
 /// The bounds of `SANDBOX_UID_RANGE` as numbers, for the code that
 /// classifies a uid instead of handing the range to `ip rule` (the hooks'
-/// peer check, `hook_peer`). A unit test pins both spellings together.
-pub const SANDBOX_UID_MIN: u32 = 1000;
-pub const SANDBOX_UID_MAX: u32 = 65_535;
+/// peer check, `hook_peer`): the identity gate's own range
+/// (`process::identity`), so a process can only ever run at a uid these
+/// rules cover. A unit test pins both spellings together.
+pub const SANDBOX_UID_MIN: u32 = MIN_UNPRIVILEGED_ID;
+pub const SANDBOX_UID_MAX: u32 = MAX_UNPRIVILEGED_ID;
 
 /// The IMDS block's routing table and rule priority (`rayd`'s
 /// `imds_block` adapter): the rule must sort before every egress slot, so

@@ -46,13 +46,36 @@ pub const MAX_RATE_PER_MINUTE: u32 = 6_000;
 /// engine in the domain.
 pub const WILDCARD_SUFFIX: &str = "/*";
 
-/// Percent-encoded forms of `.`, `/` and `\` a client could use to smuggle a
-/// dot-segment past a literal `..`/`.` check: `rayd` never decodes the
-/// inbound path before comparing it against an `AllowRule` or forwarding it,
-/// so these must be rejected as raw substrings, case-insensitively (an
-/// upstream or a CDN in front of it routinely normalises `%2e` the same as
-/// `.`). Checked by `path_is_safe`.
-const FORBIDDEN_PATH_SUBSTRINGS: [&str; 3] = ["%2e", "%2f", "%5c"];
+/// `sub-delims` (RFC 3986 §2.2) a request path may carry raw, minus `;`:
+/// Tomcat, Jetty, Spring and several proxies strip a `;`-introduced path
+/// parameter before routing, so `/v1/..;/admin` would reach them as
+/// `/v1/../admin` and a raw compare against an `AllowRule` would no longer
+/// describe where the request lands. Checked by `path_is_safe`.
+const ALLOWED_PATH_SUB_DELIMS: &[u8] = b"!$&'()*+,=";
+
+/// `pchar` extras (RFC 3986 §3.3) besides the unreserved set and
+/// `sub-delims`.
+const ALLOWED_PATH_PCHAR_EXTRAS: &[u8] = b":@";
+
+/// `unreserved` punctuation (RFC 3986 §2.3); letters and digits are the
+/// rest of that set.
+const UNRESERVED_PUNCTUATION: &[u8] = b"-._~";
+
+/// Introduces a percent-encoded byte (RFC 3986 §2.1): two hex digits must
+/// follow.
+const PERCENT: u8 = b'%';
+
+/// Bytes a segment must never hold once it is percent-decoded: a decoded
+/// `/` or `\` changes how an upstream that decodes splits the path, a
+/// decoded `%` is a second encoding layer (`%252e` → `%2e` → `.` behind a
+/// hop that decodes twice) and a decoded `;` is a path parameter again.
+const FORBIDDEN_DECODED_BYTES: &[u8] = b"/\\%;";
+
+/// First byte that is not an ASCII control character.
+const FIRST_PRINTABLE_ASCII: u8 = 0x20;
+
+/// `DEL`, the only ASCII control character above `FIRST_PRINTABLE_ASCII`.
+const ASCII_DELETE: u8 = 0x7f;
 
 /// Why a route, or the gateway spec it belongs to, was rejected before any
 /// listener opened. Mirrors the closed, lowercase-snake `error_class`
@@ -76,6 +99,11 @@ pub enum GatewaySpecError {
     DuplicateHeaderName,
     InvalidUpstreamHost,
     InvalidRouteName,
+    /// An `allow` path no request could ever match, because `path_is_safe`
+    /// refuses every request that would (a `;`, a dot-segment, `//`, an
+    /// encoded `/`, `\` or `%`...): refused at `Configure` time so the
+    /// operator learns about it instead of every request answering 403.
+    InvalidAllowPath,
 }
 
 impl GatewaySpecError {
@@ -101,6 +129,7 @@ impl GatewaySpecError {
             Self::DuplicateHeaderName => "duplicate_header_name",
             Self::InvalidUpstreamHost => "invalid_upstream_host",
             Self::InvalidRouteName => "invalid_route_name",
+            Self::InvalidAllowPath => "invalid_allow_path",
         }
     }
 }
@@ -121,6 +150,9 @@ impl AllowRule {
         }
         if path.is_empty() || !path.starts_with('/') {
             return Err(GatewaySpecError::EmptyPath);
+        }
+        if !path_is_safe(path) {
+            return Err(GatewaySpecError::InvalidAllowPath);
         }
         Ok(Self {
             method: method.to_owned(),
@@ -145,29 +177,83 @@ impl AllowRule {
 }
 
 /// `true` when `path` is safe to match against an `AllowRule` and forward
-/// unchanged: no dot-segment (`.`/`..`, raw or percent-encoded), no
-/// backslash and no empty segment (`//`). `rayd` never decodes or
-/// normalises the inbound path before this check or before forwarding it,
-/// so rejecting an unsafe one here — fail closed, before the allowlist ever
-/// sees it — is what keeps `AllowRule::matches`'s prefix compare a real
+/// unchanged. `rayd` never decodes or normalises the path it forwards, so
+/// this check is what keeps `AllowRule::matches`'s prefix compare a real
 /// boundary (confused-deputy mitigation, T24) instead of a string compare a
-/// request for `/v1/../admin` or `/v1/%2e%2e/admin` can walk around: an
-/// upstream or the CDN in front of it routinely collapses a `..` segment
-/// before routing on it.
+/// request can walk around through an upstream, or a CDN in front of it,
+/// that collapses dot-segments, strips `;` path parameters or decodes more
+/// than once before routing.
+///
+/// An allowlist, not a list of known-bad encodings: the path is absolute,
+/// every raw byte is an RFC 3986 `pchar` byte except `;` (unreserved
+/// characters, `:`, `@`, the other `sub-delims`, or the `%` of a
+/// percent-encoded byte), no segment is empty except the trailing one
+/// (`/v1/x/` is fine, `//` is not), and every segment, percent-decoded
+/// exactly once, is valid UTF-8 (which also refuses overlong forms such as
+/// `%c0%ae`), holds no control byte and none of `FORBIDDEN_DECODED_BYTES`,
+/// and is neither `.` nor `..`.
 #[must_use]
 pub fn path_is_safe(path: &str) -> bool {
-    if path.contains('\\') || path.contains("//") {
+    let Some(relative) = path.strip_prefix('/') else {
+        return false;
+    };
+    if !path.bytes().all(is_allowed_raw_path_byte) {
         return false;
     }
-    let lower = path.to_ascii_lowercase();
-    if FORBIDDEN_PATH_SUBSTRINGS
+    let segments: Vec<&str> = relative.split('/').collect();
+    let last = segments.len().saturating_sub(1);
+    segments
         .iter()
-        .any(|needle| lower.contains(needle))
-    {
-        return false;
+        .enumerate()
+        .all(|(index, segment)| match segment {
+            &"" => index == last,
+            segment => decode_segment_once(segment)
+                .is_some_and(|decoded| decoded != "." && decoded != ".."),
+        })
+}
+
+fn is_allowed_raw_path_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || byte == b'/'
+        || byte == PERCENT
+        || UNRESERVED_PUNCTUATION.contains(&byte)
+        || ALLOWED_PATH_PCHAR_EXTRAS.contains(&byte)
+        || ALLOWED_PATH_SUB_DELIMS.contains(&byte)
+}
+
+/// One segment with every `%XX` replaced by its byte, or `None` for a
+/// malformed escape (`%2`, `%zz`, `%u002e`), a decoded byte the path must
+/// never carry, or a result that is not valid UTF-8.
+fn decode_segment_once(segment: &str) -> Option<String> {
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == PERCENT {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            let value = (high << 4) | low;
+            if is_forbidden_decoded_byte(value) {
+                return None;
+            }
+            decoded.push(value);
+            index += 3;
+        } else {
+            decoded.push(byte);
+            index += 1;
+        }
     }
-    path.split('/')
-        .all(|segment| segment != "." && segment != "..")
+    String::from_utf8(decoded).ok()
+}
+
+fn is_forbidden_decoded_byte(byte: u8) -> bool {
+    byte < FIRST_PRINTABLE_ASCII || byte == ASCII_DELETE || FORBIDDEN_DECODED_BYTES.contains(&byte)
+}
+
+fn hex_value(digit: u8) -> Option<u8> {
+    char::from(digit)
+        .to_digit(16)
+        .and_then(|value| u8::try_from(value).ok())
 }
 
 /// A validated, ready-to-serve route: `GatewaySpec::parse` is the only way
@@ -673,6 +759,60 @@ mod tests {
     fn path_is_safe_accepts_every_shared_safe_vector() {
         for safe_path in vector_strings(REQUEST_PATH_VECTORS, "safe") {
             assert!(path_is_safe(&safe_path), "{safe_path} should be safe");
+        }
+    }
+
+    fn parse_with_allow_path(path: &str) -> Result<GatewaySpec, GatewaySpecError> {
+        GatewaySpec::parse(vec![RawRoute {
+            name: "a".to_owned(),
+            upstream: "https://example.com".to_owned(),
+            headers: vec![header("x-api-key", "k")],
+            allow: vec![("GET".to_owned(), path.to_owned())],
+            rate_per_minute: 60,
+        }])
+    }
+
+    /// The same vectors as an `allow` path: a rule no safe request could
+    /// match is refused at `Configure` time, like the SDKs refuse it.
+    #[test]
+    fn an_allow_path_must_itself_be_a_safe_path() {
+        for unsafe_path in vector_strings(REQUEST_PATH_VECTORS, "unsafe") {
+            let expected = if unsafe_path.starts_with('/') {
+                GatewaySpecError::InvalidAllowPath
+            } else {
+                GatewaySpecError::EmptyPath
+            };
+            assert_eq!(
+                parse_with_allow_path(&unsafe_path).err(),
+                Some(expected),
+                "{unsafe_path:?} should be refused as an allow path"
+            );
+        }
+        for safe_path in vector_strings(REQUEST_PATH_VECTORS, "safe") {
+            assert!(
+                parse_with_allow_path(&safe_path).is_ok(),
+                "{safe_path} should be accepted as an allow path"
+            );
+        }
+        assert_eq!(
+            GatewaySpecError::InvalidAllowPath.as_str(),
+            "invalid_allow_path"
+        );
+    }
+
+    /// The exact bypasses the allowlist closes: a `;` path parameter an
+    /// upstream strips, a second encoding layer a double-decoding hop
+    /// resolves, and an overlong UTF-8 dot.
+    #[test]
+    fn path_parameters_double_encoding_and_overlong_dots_are_unsafe() {
+        for path in [
+            "/v1/..;/admin",
+            "/v1/x;jsessionid=1",
+            "/v1/%252e%252e/admin",
+            "/v1/%c0%ae%c0%ae/admin",
+            "/v1/%u002e",
+        ] {
+            assert!(!path_is_safe(path), "{path} should be unsafe");
         }
     }
 

@@ -48,12 +48,22 @@ impedir](#lo-que-la-pasarela-no-puede-impedir)).
 Por cada ruta de `gateways=`/`gateways`:
 
 1. `rayd` abre un `TcpListener` en `127.0.0.1:<puerto elegido por el SO>`.
-2. Una ruta de petición con un segmento `.` o `..` (tal cual o
-   codificado: `%2e`), un `/` o `\` codificado (`%2f`, `%5c`), una barra
-   invertida o un segmento vacío (`//`) se rechaza con 403 antes de mirar
-   la allowlist: `rayd` nunca normaliza la ruta, así que nunca reenvía una
-   que el `upstream` (o la CDN delante de él) pudiera normalizar a algo
-   fuera de `allow` — `/v1/../admin` no pasa por una regla `/v1/*`.
+2. La ruta de la petición pasa una lista de permitidos antes de mirar
+   la allowlist, o se rechaza con 403: sólo caracteres de ruta de
+   RFC 3986 salvo `;` (letras, dígitos, `-._~`, `:@`, `!$&'()*+,=` y
+   `%XX` bien formados), ningún segmento vacío (`//`) salvo el último, y
+   cada segmento, decodificado una sola vez, debe ser UTF-8 válido, sin
+   bytes de control, sin `/`, `\`, `%` ni `;`, y distinto de `.` y `..`.
+   `rayd` nunca normaliza la ruta, así que nunca reenvía una que el
+   `upstream` (o la CDN delante de él) pudiera llevar fuera de `allow`:
+   ni `/v1/../admin` ni `/v1/%2e%2e/admin`, ni `/v1/..;/admin` (Tomcat,
+   Spring o Jetty quitan el parámetro `;` y ven `..`), ni
+   `/v1/%252e%252e/admin` (un salto que decodifica dos veces ve `..`)
+   pasan por una regla `/v1/*`. `/v1/files/a%20b` sí pasa. Las rutas de
+   `allow` siguen la misma regla: el SDK rechaza una que ninguna
+   petición podría cumplir con `InvalidArgumentException`/
+   `InvalidArgumentError` antes de cualquier llamada, y `rayd` con
+   `invalid_allow_path`.
 3. Una petición entrante se compara contra la allowlist `allow`
    (`(método, ruta)`, exacta o con sufijo `/*`) y el límite
    `rate_per_minute`/`ratePerMinute` (un cubo de tokens; `0` usa el valor

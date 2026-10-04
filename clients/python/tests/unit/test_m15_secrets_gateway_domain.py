@@ -16,6 +16,7 @@ from rayito._secret_gateway._domain import (
     MAX_ROUTES_PER_GATEWAY,
     GatewayStatus,
     SecretGateway,
+    is_safe_request_path,
     validate_gateways,
     validate_route_name,
 )
@@ -86,6 +87,30 @@ def test_every_shared_invalid_header_name_is_rejected(name: str) -> None:
 def test_every_shared_duplicate_header_pair_is_rejected(pair: list[str]) -> None:
     with pytest.raises(InvalidArgumentException):
         gateway(headers={pair[0]: "a", pair[1]: "b"})
+
+
+# `testdata/secret-gateway/request-paths.json`: the request paths `rayd`
+# refuses before its allowlist. As an `allow` path, an unsafe one could
+# never match a request, so the SDK refuses it before any RPC, like `rayd`
+# refuses it at `Configure` (`invalid_allow_path`).
+REQUEST_PATH_VECTORS = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata/secret-gateway/request-paths.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("path", REQUEST_PATH_VECTORS["unsafe"])
+def test_every_shared_unsafe_request_path_is_rejected_as_an_allow_path(path: str) -> None:
+    assert not is_safe_request_path(path)
+    with pytest.raises(InvalidArgumentException):
+        gateway(allow=[("GET", path)])
+
+
+@pytest.mark.parametrize("path", REQUEST_PATH_VECTORS["safe"])
+def test_every_shared_safe_request_path_is_accepted_as_an_allow_path(path: str) -> None:
+    assert is_safe_request_path(path)
+    gateway(allow=[("GET", path)])
 
 
 def test_allow_must_be_non_empty_and_bounded_with_valid_entries() -> None:

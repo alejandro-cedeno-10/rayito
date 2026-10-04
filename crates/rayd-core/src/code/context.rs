@@ -7,6 +7,7 @@ use std::fmt;
 
 use super::MAX_CONTEXTS;
 use super::error::CodeError;
+use super::kernel_process::KernelProcess;
 use super::language::Language;
 use super::ports::RandomSource;
 use crate::process::cwd::{resolve_cwd, validate_cwd};
@@ -101,7 +102,10 @@ pub struct ContextEntry {
     pub info: ContextInfo,
     pub envs: BTreeMap<String, String>,
     pub state: ContextState,
-    pub kernel_pid: Option<u32>,
+    /// The context's kernel once the table vouched for the pid the sidecar
+    /// reported (`kernel_process`); `None` before, after its death or when
+    /// the reported pid was rejected.
+    pub kernel: Option<KernelProcess>,
     pub in_flight: u32,
 }
 
@@ -121,7 +125,7 @@ impl ContextEntry {
             },
             envs,
             state: ContextState::Starting,
-            kernel_pid: None,
+            kernel: None,
             in_flight: 0,
         }
     }
@@ -252,8 +256,12 @@ impl ContextRegistry {
         Ok(())
     }
 
-    pub fn set_kernel_pid(&mut self, id: &ContextId, pid: Option<u32>) -> Result<(), CodeError> {
-        self.entry_mut(id)?.kernel_pid = pid;
+    pub fn set_kernel(
+        &mut self,
+        id: &ContextId,
+        kernel: Option<KernelProcess>,
+    ) -> Result<(), CodeError> {
+        self.entry_mut(id)?.kernel = kernel;
         Ok(())
     }
 
@@ -296,10 +304,10 @@ impl ContextRegistry {
     }
 
     #[must_use]
-    pub fn kernel_pids(&self) -> Vec<u32> {
+    pub fn kernels(&self) -> Vec<KernelProcess> {
         self.entries
             .values()
-            .filter_map(|entry| entry.kernel_pid)
+            .filter_map(|entry| entry.kernel)
             .collect()
     }
 
@@ -327,6 +335,7 @@ impl ContextRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::kernel_process::ProcessFacts;
     use crate::code::ports::RandomError;
 
     struct FixedRandom(u8);
@@ -541,6 +550,17 @@ mod tests {
         );
     }
 
+    /// A kernel of sidecar 1 000 as the table would vouch for it.
+    fn kernel(pid: u32) -> KernelProcess {
+        let facts = |ppid, pgrp| ProcessFacts {
+            ppid,
+            pgrp,
+            start_ticks: 1,
+            uid: 1000,
+        };
+        KernelProcess::admit(pid, 1000, Some(facts(1000, pid)), Some(facts(1, 1000))).unwrap()
+    }
+
     #[test]
     fn state_pid_envs_and_in_flight_are_tracked_and_cleared() {
         let mut registry = ContextRegistry::default();
@@ -549,8 +569,8 @@ mod tests {
         let default = ContextId::default_context();
         let other = ContextId::parse("ctx-1").unwrap();
         registry.set_state(&default, ContextState::Ready).unwrap();
-        registry.set_kernel_pid(&default, Some(42)).unwrap();
-        registry.set_kernel_pid(&other, Some(43)).unwrap();
+        registry.set_kernel(&default, Some(kernel(42))).unwrap();
+        registry.set_kernel(&other, Some(kernel(43))).unwrap();
         registry
             .set_envs(&default, [("A".to_owned(), "1".to_owned())].into())
             .unwrap();
@@ -559,10 +579,10 @@ mod tests {
         registry.end_execution(&default);
         let entry = registry.get(&default).unwrap();
         assert_eq!(entry.state, ContextState::Ready);
-        assert_eq!(entry.kernel_pid, Some(42));
+        assert_eq!(entry.kernel, Some(kernel(42)));
         assert_eq!(entry.in_flight, 1);
         assert_eq!(entry.envs.get("A").map(String::as_str), Some("1"));
-        let mut pids = registry.kernel_pids();
+        let mut pids: Vec<u32> = registry.kernels().iter().map(KernelProcess::pid).collect();
         pids.sort_unstable();
         assert_eq!(pids, vec![42, 43]);
         registry.clear();

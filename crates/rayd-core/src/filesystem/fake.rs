@@ -1,8 +1,12 @@
 //! In-memory `FileSystem` for the host tests: a tree of nodes keyed by
-//! canonical path, symlinks resolved by `canonicalize`, a per-path
+//! canonical path, symlinks resolved by `canonicalize` and never followed
+//! by any other call (a symlink in a component the port does not follow
+//! answers `Redirected`, like the adapter's `O_NOFOLLOW` walk), a per-path
 //! "unreadable" flag that answers `PermissionDenied`, per-file metadata
-//! that a commit replaces as a whole, and temp-file accounting so tests
-//! can assert nothing leaks on error.
+//! that a commit replaces as a whole, temp-file accounting so tests can
+//! assert nothing leaks on error, and a one-shot swap that replaces a
+//! directory with a symlink right after the next `canonicalize`, the race
+//! the sandbox can run between the deny check and the use.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
@@ -66,12 +70,17 @@ impl Node {
 /// Plenty by default: the reserve rule only trips when a test lowers it.
 const DEFAULT_FAKE_FREE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
+/// A directory to replace with a symlink right after the next
+/// `canonicalize`: `(path, target)`.
+type PendingSwap = (String, String);
+
 #[derive(Debug)]
 struct Tree {
     nodes: BTreeMap<String, Node>,
     unreadable: BTreeSet<String>,
     open_temps: usize,
     free_bytes: u64,
+    swap_after_canonicalize: Option<PendingSwap>,
 }
 
 impl Default for Tree {
@@ -81,11 +90,57 @@ impl Default for Tree {
             unreadable: BTreeSet::new(),
             open_temps: 0,
             free_bytes: DEFAULT_FAKE_FREE_BYTES,
+            swap_after_canonicalize: None,
         }
     }
 }
 
 impl Tree {
+    /// The port's contract for every call but `canonicalize`: no component
+    /// of `path` but the last is followed, so a symlink there is
+    /// `Redirected`.
+    fn check_parents(&self, path: &str) -> Result<(), FsIoError> {
+        let (dir, _) = split_canonical(path);
+        self.check_components(dir)
+    }
+
+    /// The same for a path whose every component must be a real directory
+    /// (`read_dir`, the directory of `begin_write`); missing components are
+    /// left to the call itself.
+    fn check_components(&self, path: &str) -> Result<(), FsIoError> {
+        let mut current = "/".to_owned();
+        for component in path.split('/').filter(|c| !c.is_empty()) {
+            current = join_canonical(&current, component);
+            match self.nodes.get(&current) {
+                Some(node) if node.kind == EntryKind::Symlink => {
+                    return Err(FsIoError::Redirected);
+                }
+                Some(_) => {}
+                None => return Ok(()),
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_pending_swap(&mut self) {
+        let Some((path, target)) = self.swap_after_canonicalize.take() else {
+            return;
+        };
+        self.remove_subtree(&path);
+        self.nodes.insert(
+            path,
+            Node {
+                kind: EntryKind::Symlink,
+                bytes: Vec::new(),
+                mode: 0o777,
+                uid: user().uid,
+                gid: user().gid,
+                target: Some(target),
+                metadata: FileMetadata::default(),
+            },
+        );
+    }
+
     fn children_of(&self, dir: &str) -> Vec<(&String, &Node)> {
         let prefix = if dir == "/" {
             "/".to_owned()
@@ -279,6 +334,13 @@ impl FakeFileSystem {
         );
     }
 
+    /// Right after the next `canonicalize` returns, `path` (and everything
+    /// under it) is replaced by a symlink to `target`, as a sandbox process
+    /// racing the deny check would.
+    pub fn swap_for_symlink_after_next_canonicalize(&self, path: &str, target: &str) {
+        self.tree().swap_after_canonicalize = Some((path.to_owned(), target.to_owned()));
+    }
+
     pub fn set_unreadable(&self, path: &str) {
         self.tree().unreadable.insert(path.to_owned());
     }
@@ -355,15 +417,21 @@ impl FakeFileSystem {
 
 impl FileSystem for FakeFileSystem {
     fn canonicalize(&self, _id: &FsIdentity, path: &str) -> Result<String, FsIoError> {
-        self.tree().resolve(path, 0)
+        let mut tree = self.tree();
+        let resolved = tree.resolve(path, 0);
+        tree.apply_pending_swap();
+        resolved
     }
 
     fn lstat(&self, _id: &FsIdentity, path: &str) -> Result<RawEntry, FsIoError> {
-        self.tree().raw_entry(path)
+        let tree = self.tree();
+        tree.check_parents(path)?;
+        tree.raw_entry(path)
     }
 
     fn read_dir(&self, _id: &FsIdentity, path: &str) -> Result<Vec<RawEntry>, FsIoError> {
         let tree = self.tree();
+        tree.check_components(path)?;
         if tree.unreadable.contains(path) {
             return Err(FsIoError::PermissionDenied);
         }
@@ -383,6 +451,7 @@ impl FileSystem for FakeFileSystem {
 
     fn open_read(&self, _id: &FsIdentity, path: &str) -> Result<Box<dyn Read + Send>, FsIoError> {
         let tree = self.tree();
+        tree.check_parents(path)?;
         if tree.unreadable.contains(path) {
             return Err(FsIoError::PermissionDenied);
         }
@@ -408,16 +477,19 @@ impl FileSystem for FakeFileSystem {
     }
 
     fn read_metadata(&self, _id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError> {
-        Ok(self
-            .tree()
+        let tree = self.tree();
+        tree.check_parents(path)?;
+        Ok(tree
             .nodes
             .get(path)
             .map(|node| node.metadata.clone())
             .unwrap_or_default())
     }
 
-    fn free_bytes(&self, _id: &FsIdentity, _canonical_dir: &str) -> Result<u64, FsIoError> {
-        Ok(self.tree().free_bytes)
+    fn free_bytes(&self, _id: &FsIdentity, canonical_dir: &str) -> Result<u64, FsIoError> {
+        let tree = self.tree();
+        tree.check_components(canonical_dir)?;
+        Ok(tree.free_bytes)
     }
 
     fn begin_write(
@@ -427,6 +499,7 @@ impl FileSystem for FakeFileSystem {
         mode: u32,
     ) -> Result<Box<dyn WriteSink>, FsIoError> {
         let mut tree = self.tree();
+        tree.check_components(dir)?;
         if tree.unreadable.contains(dir) {
             return Err(FsIoError::PermissionDenied);
         }
@@ -443,6 +516,7 @@ impl FileSystem for FakeFileSystem {
 
     fn make_dir(&self, id: &FsIdentity, path: &str, mode: u32) -> Result<(), FsIoError> {
         let mut tree = self.tree();
+        tree.check_parents(path)?;
         let (dir, _) = split_canonical(path);
         tree.create_parents(dir, id)?;
         if tree.nodes.contains_key(path) {
@@ -454,6 +528,8 @@ impl FileSystem for FakeFileSystem {
 
     fn rename(&self, _id: &FsIdentity, from: &str, to: &str) -> Result<(), FsIoError> {
         let mut tree = self.tree();
+        tree.check_parents(from)?;
+        tree.check_parents(to)?;
         let source_kind = tree.nodes.get(from).ok_or(FsIoError::NotFound)?.kind;
         let (to_dir, _) = split_canonical(to);
         match tree.nodes.get(to_dir) {
@@ -494,6 +570,7 @@ impl FileSystem for FakeFileSystem {
         recursive: bool,
     ) -> Result<(), FsIoError> {
         let mut tree = self.tree();
+        tree.check_parents(path)?;
         if !tree.nodes.contains_key(path) {
             return Err(FsIoError::NotFound);
         }
