@@ -233,6 +233,20 @@ RUN dnf install -y --setopt=install_weak_deps=0 jq \\
     assert findings == [(1, "git-core", check_pins.DNF_REASON)]
 
 
+def test_a_bare_efs_utils_inside_a_conditional_layer_is_a_dnf_finding() -> None:
+    text = """RUN if [ "$(cat /opt/rayito/sidecar/efs_variant)" = "efs" ]; then \\
+      dnf install -y --setopt=install_weak_deps=0 amazon-efs-utils \\
+      && dnf clean all; \\
+    fi
+RUN if [ -f /x ]; then \\
+      dnf install -y amazon-efs-utils-3.1.3-1.amzn2023 && dnf clean all; \\
+    fi"""
+
+    assert check_pins.unpinned_dnf_packages(text) == [
+        (1, "amazon-efs-utils", check_pins.DNF_REASON)
+    ]
+
+
 def test_a_version_without_release_is_a_dnf_finding() -> None:
     text = """# RUN dnf install -y git-core
 RUN dnf -y install git-core-2.50.1 && dnf clean all

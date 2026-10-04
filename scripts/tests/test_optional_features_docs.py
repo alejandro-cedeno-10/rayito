@@ -37,6 +37,7 @@ FEATURE_PAGES_0_6 = (
     "funciones-opcionales/exportacion-otlp.md",
     "funciones-opcionales/pasarela-de-secretos.md",
     "funciones-opcionales/templates.md",
+    "funciones-opcionales/volumenes-efs.md",
 )
 
 DOCSTRING_MARKER = "Coste y activación"
