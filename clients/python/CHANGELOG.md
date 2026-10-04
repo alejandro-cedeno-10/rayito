@@ -6,6 +6,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Security
+
+- **La wheel y el sdist se hashean justo después de `uv build`**, antes de
+  que `check_wheel.py` o twine ejecuten nada, y se vuelven a comprobar al
+  final del job: el `sha256sum -c` del job que publica ahora prueba que lo
+  publicado es lo que produjo `uv build`. twine y su grafo se instalan desde
+  requisitos con `--hash` (`.github/release/requirements-twine.txt`), uv va
+  fijado por versión y checksum, y la caché de uv está apagada en la release.
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

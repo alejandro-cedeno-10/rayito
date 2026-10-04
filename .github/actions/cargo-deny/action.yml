@@ -1,0 +1,29 @@
+name: cargo-deny (verified)
+description: >-
+  Descarga cargo-deny 0.20.2 de su GitHub Release, lo comprueba contra un
+  sha256 fijado y lo pone en PATH (`cargo deny ...`). Sustituye a
+  EmbarkStudios/cargo-deny-action, una acción Docker que en cada ejecución
+  construía su imagen con un `apk add` sin fijar y un `curl | tar` del binario
+  sin checksum: fijar el SHA de la acción no fijaba lo que ejecutaba
+  (sec-supply-chain-ci, SC-06).
+
+# CARGO_DENY_SHA256 coincide en tres fuentes (2026-10-04): el fichero
+# `.sha256` de la release, el `digest` del asset en la API de GitHub y el
+# sha256 calculado sobre la descarga. Subir de versión: cambiar las dos
+# variables a la vez.
+runs:
+  using: composite
+  steps:
+    - name: cargo-deny checked against a pinned sha256
+      shell: bash
+      env:
+        CARGO_DENY_VERSION: 0.20.2
+        CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+      run: |
+        mkdir -p "$RUNNER_TEMP/cargo-deny"
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/cargo-deny/cargo-deny.tar.gz" \
+          "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/cargo-deny/cargo-deny.tar.gz" | sha256sum -c -
+        tar -xzf "$RUNNER_TEMP/cargo-deny/cargo-deny.tar.gz" -C "$RUNNER_TEMP/cargo-deny" --strip-components=1
+        echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/cargo-deny/cargo-deny" --version
