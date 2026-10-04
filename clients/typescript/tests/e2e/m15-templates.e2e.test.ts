@@ -2,7 +2,7 @@
  * m15-templates contra AWS real (`RAYITO_E2E=1`, `RAYITO_TEMPLATE` y
  * `RAYITO_E2E_TEMPLATE_BUCKET` con un bucket S3 ya existente para el
  * artefacto de build). Cubre los pasos 1-3 del plan de aceptación de
- * `openspec/changes/m15-templates/proposal.md`:
+ * `openspec/changes/archive/2026-10-03-m15-templates/proposal.md`:
  *
  * 1. un build correcto (`pipInstall`), esperando `BuildInfo` y que la
  *    imagen quede lanzable.

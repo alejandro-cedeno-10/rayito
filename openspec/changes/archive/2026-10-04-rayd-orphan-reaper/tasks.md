@@ -33,5 +33,8 @@
   commands keep their exit codes with a 1 ms sweep; a naive reaper (no
   ownership check) fails it.
 - [x] 4.2 Docs: `ARCHITECTURE.md`, `MILESTONES.md`, `crates/rayd/CHANGELOG.md`.
-- [ ] 4.3 Real AWS: an S3 mount leaves no `<defunct>` and command exit
-  codes stay correct (serialized acceptance stage).
+- [x] 4.3 Real AWS: an S3 mount leaves no `<defunct>` and command exit
+  codes stay correct (serialized acceptance stage). (Verified in the 0.6.1
+  acceptance on 2026-10-03: 0 `<defunct>` after a mount, after a
+  double-forked daemon exits and after 40 concurrent commands, none with a
+  wrong exit code; PTY, kernel and background statuses also correct.)

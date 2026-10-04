@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change m6-e2b-compat. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Metadata travels in the run payload and rayd keeps it
 `Sandbox.create(metadata=...)` SHALL serialise the mapping as the optional `"metadata"` key of the version-1 `runHookPayload` (omitted when empty, `sort_keys`, keys non-empty `str`, values `str`) and SHALL fail client-side with `InvalidArgumentException` naming `envs` and `metadata` when the serialised payload exceeds 4096 characters. `rayd` SHALL parse `metadata` as an optional `map<string, string>` of the payload (absent → empty; a non-string value → `MalformedJson`; unknown extra keys still ignored), SHALL keep it in the session from the single accepted `/run` for the life of the MicroVM, and SHALL log at most the number of keys — never a key or a value.
 
@@ -41,7 +43,7 @@ The SDK SHALL expose `sbx.metadata -> dict[str, str]` (the map of the last `Heal
 - **THEN** exactly one `create-microvm-auth-token` call is made, the result has `metadata == {"a": "1"}`, and with the control plane answering `SUSPENDED` no token is minted and `metadata is None`
 
 ### Requirement: list filters by metadata client-side, on running sandboxes only
-`Sandbox.list(metadata=...)` SHALL page `list-microvms` with `states=("RUNNING",)`, then for each item **sequentially** call `get-microvm`, `create-microvm-auth-token` (port 8080) and `Health` (5 s deadline, dedicated channel closed after the call), and SHALL yield the item with `metadata` filled iff `agent_ready` is `True` and every requested key equals the sandbox's value (subset match, exact strings). It SHALL skip items whose state is no longer `RUNNING` at `get-microvm` time, items whose `get-microvm` answers `ResourceNotFoundException`, and items whose `Health` answers `agent_ready=False` (logged at `info` with the sandbox id only); it SHALL raise `SandboxException` naming the sandbox id when a `Health` fails, so the caller never receives a silently incomplete list; it SHALL raise `InvalidArgumentException` when `states` contains anything other than `RUNNING`, because probing a suspended sandbox would wake it. Without `metadata`, `list()` SHALL behave as before with `metadata=None` on every item. The docstring and the docs SHALL state the cost: `n_running × (GetMicrovm + CreateMicrovmAuthToken + Health)` and one idle-window postponement per probed sandbox.
+Without `index=` (the default), `Sandbox.list(metadata=...)` SHALL page `list-microvms` with `states=("RUNNING",)`, then for each item **sequentially** call `get-microvm`, `create-microvm-auth-token` (port 8080) and `Health` (5 s deadline, dedicated channel closed after the call), and SHALL yield the item with `metadata` filled iff `agent_ready` is `True` and every requested key equals the sandbox's value (subset match, exact strings). It SHALL skip items whose state is no longer `RUNNING` at `get-microvm` time, items whose `get-microvm` answers `ResourceNotFoundException`, and items whose `Health` answers `agent_ready=False` (logged at `info` with the sandbox id only); it SHALL raise `SandboxException` naming the sandbox id when a `Health` fails, so the caller never receives a silently incomplete list; it SHALL raise `InvalidArgumentException` when `states` contains anything other than `RUNNING`, because probing a suspended sandbox would wake it. With `index=DynamoDbIndex(...)` the metadata filter SHALL instead follow the `metadata-index` capability (no probes, any non-terminal state). Without `metadata`, `list()` SHALL behave as before with `metadata=None` on every item. The docstring and the docs SHALL state the cost: `n_running × (GetMicrovm + CreateMicrovmAuthToken + Health)` and one idle-window postponement per probed sandbox.
 
 #### Scenario: only the matching running sandbox
 - **WHEN** `list-microvms` returns three `RUNNING` items whose fake agents echo `{"env": "ci", "run": "1"}`, `{"env": "ci", "run": "2"}` and `{}` and the SDK calls `list(metadata={"env": "ci", "run": "2"})`
@@ -56,8 +58,12 @@ The SDK SHALL expose `sbx.metadata -> dict[str, str]` (the map of the last `Heal
 - **THEN** `list()` raises `SandboxException` whose message contains that sandbox id
 
 #### Scenario: suspended states refused
-- **WHEN** the SDK calls `list(metadata={"a": "1"}, states=["SUSPENDED"])`
+- **WHEN** the SDK calls `list(metadata={"a": "1"}, states=["SUSPENDED"])` without `index=`
 - **THEN** it raises `InvalidArgumentException` before any AWS call
+
+#### Scenario: suspended states accepted with the index
+- **WHEN** the SDK calls `list(metadata={"a": "1"}, states=["SUSPENDED"], index=idx)`
+- **THEN** no exception is raised at validation and no `Health` probe is made
 
 #### Scenario: real listing on AWS
 - **WHEN** the e2e creates a sandbox with `metadata={"run": <uuid>}` and calls `Sandbox.list(metadata={"run": <uuid>})` and `Sandbox.list(metadata={"run": "other"})`
@@ -73,4 +79,3 @@ Metadata SHALL be documented as non-secret labels (it travels in `runHookPayload
 #### Scenario: the in-VM reader is documented
 - **WHEN** `scripts/tests/test_security_docs.py::test_metadata_is_readable_from_inside_the_vm` reads the T4 row of `SECURITY.md` and the section "Qué no poner en `envs` ni en `metadata`" of `docs/site/docs/security.md`
 - **THEN** both state that the code running inside the sandbox reads `metadata` through the anonymous `Health` with no credential, and neither presents the readers as IAM principals only
-
