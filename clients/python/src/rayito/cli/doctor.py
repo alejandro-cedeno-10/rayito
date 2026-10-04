@@ -13,6 +13,7 @@ import typer
 from rayito._version import __version__
 from rayito.cli._checks import (
     DEFAULT_TEMPLATE,
+    EFS_NETWORK_CHECK,
     LAUNCH_CHECKS,
     PRE_LAUNCH_CHECKS,
     CheckResult,
@@ -33,9 +34,12 @@ COMPATIBILITY_COLUMNS = ("SDK", "rayd mínimo", "Estado", "Nota")
 
 
 def run_doctor(clients: Clients, context: DoctorContext) -> list[CheckResult]:
-    """Las siete comprobaciones de sólo lectura y, dentro de un `finally`
-    que mata el sandbox de `--launch` pase lo que pase, las tres del agente."""
+    """Las siete comprobaciones de sólo lectura (más `efs-network` con
+    `--efs-vpc-id`, también de sólo lectura) y, dentro de un `finally` que
+    mata el sandbox de `--launch` pase lo que pase, las tres del agente."""
     results = [run_check(spec, clients, context) for spec in PRE_LAUNCH_CHECKS]
+    if context.efs_vpc_id is not None or context.efs_subnet_ids is not None:
+        results.append(run_check(EFS_NETWORK_CHECK, clients, context))
     try:
         results.extend(run_check(spec, clients, context) for spec in LAUNCH_CHECKS)
     finally:
@@ -142,16 +146,36 @@ def doctor(
             ),
         ),
     ] = False,
+    efs_vpc_id: Annotated[
+        str | None,
+        typer.Option(
+            "--efs-vpc-id",
+            help=(
+                "Comprueba (sólo lectura) si esta VPC existente sirve para "
+                "`rayito stack deploy efs-volumes`; con --efs-subnet-ids."
+            ),
+        ),
+    ] = None,
+    efs_subnet_ids: Annotated[
+        str | None,
+        typer.Option(
+            "--efs-subnet-ids",
+            help="De 1 a 3 subredes de --efs-vpc-id, separadas por comas, cada una en otra AZ.",
+        ),
+    ] = None,
 ) -> None:
     """Diagnostica la cuenta: credenciales, imágenes gestionadas, cuotas,
     IAM, bucket, gate de la imagen, MicroVMs vivos, token, agente y
-    compatibilidad SDK ↔ rayd ↔ imagen."""
+    compatibilidad SDK ↔ rayd ↔ imagen; con --efs-vpc-id, además, si esa
+    VPC existente sirve para volúmenes EFS (sin crear nada)."""
     clients = clients_of(ctx)
     context = DoctorContext(
         template=template,
         template_version=template_version,
         bucket=bucket or os.environ.get(BUCKET_ENV_VAR) or None,
         launch=launch,
+        efs_vpc_id=efs_vpc_id,
+        efs_subnet_ids=efs_subnet_ids,
         transport=clients.transport,
     )
     results = run_doctor(clients, context)

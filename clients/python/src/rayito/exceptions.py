@@ -309,6 +309,18 @@ class VolumeException(SandboxException):
     `/run`."""
 
 
+class VolumeMountException(VolumeException):
+    """Un volumen de `volumes=` (m15-efs-volumes) no se montó: `create()`
+    ya terminó el sandbox (salvo `keep_on_failure`). `code` es uno de
+    `network`, `iam_denied`, `not_found`, `tls`, `helper_missing`,
+    `timeout`, `invalid_path` o `unknown` (la clase que reporta `rayd`,
+    nunca el mensaje del helper)."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class VolumeNotFoundException(VolumeException):
     """El `AccessPoint` del volumen no existe (`DescribeAccessPoints` vacío
     o `DeleteAccessPoint` sobre un id que ya no está)."""

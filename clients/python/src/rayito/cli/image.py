@@ -34,6 +34,7 @@ from rayito.cli._publish import (
     default_image_name,
     publish,
     publish_with_sizes,
+    require_efs_combination,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
 
@@ -64,6 +65,22 @@ def validate_variant(variant: str) -> str:
     if variant not in VARIANTS:
         raise typer.BadParameter(f"admitidas: {', '.join(VARIANTS)}", param_hint="--variant")
     return variant
+
+
+#: Ayuda de `--with-efs`, compartida por `zip` y `publish`.
+WITH_EFS_HELP = (
+    "Añade amazon-efs-utils (volumes=, m15-efs-volumes): +~198 MB de imagen; "
+    "publish exige --os-capabilities ALL y publica rayito-base-caps-efs."
+)
+
+
+def validate_efs_combination(with_efs: bool, variant: str, os_capabilities: str | None) -> None:
+    if not with_efs:
+        return
+    try:
+        require_efs_combination(variant, os_capabilities)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--with-efs") from exc
 
 
 def validate_os_capabilities(value: str | None) -> str | None:
@@ -225,6 +242,7 @@ def publish_command(
             ),
         ),
     ] = [],  # noqa: B006
+    with_efs: Annotated[bool, typer.Option("--with-efs", help=WITH_EFS_HELP)] = False,
 ) -> None:
     """Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
     espera al gate de tres estados; reutiliza una versión igual. Con
@@ -237,9 +255,11 @@ def publish_command(
     size_names = validate_sizes(sizes)
     validate_baseline_memory_mib(memory_mib, size_names)
     environment_variables = parse_environment_assignments(env)
+    capabilities = validate_os_capabilities(os_capabilities)
+    validate_efs_combination(with_efs, validate_variant(variant), capabilities)
     settings = PublishSettings(
         artifact=artifact,
-        image_name=image_name or default_image_name(validate_variant(variant)),
+        image_name=image_name or default_image_name(variant, with_efs=with_efs),
         variant=variant,
         bucket=resolve_bucket(bucket),
         stack_name=stack_name,
@@ -248,8 +268,9 @@ def publish_command(
         memory_mib=memory_mib,
         force=force,
         timeout_seconds=timeout_seconds,
-        os_capabilities=validate_os_capabilities(os_capabilities),
+        os_capabilities=capabilities,
         environment_variables=environment_variables,
+        with_efs=with_efs,
     )
     code = (
         publish_with_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
@@ -465,6 +486,7 @@ def zip_command(
             "--sidecar", help="Copia primero este kernel-sidecar a IMAGE_DIR/kernel-sidecar."
         ),
     ] = None,
+    with_efs: Annotated[bool, typer.Option("--with-efs", help=WITH_EFS_HELP)] = False,
 ) -> None:
     """Zip determinista del directorio de la imagen (sin tests, cachés ni locks)."""
     validate_variant(variant)
@@ -472,12 +494,13 @@ def zip_command(
     started = time.monotonic()
     if sidecar is not None:
         copied = copy_sidecar(sidecar, image_dir / SIDECAR_DIRECTORY)
-    count = write_zip(image_dir, destination, variant)
+    count = write_zip(image_dir, destination, variant, with_efs=with_efs)
     summary = {
         "destination": str(destination),
         "files": count,
         "bytes": destination.stat().st_size,
         "variant": variant,
+        "withEfs": with_efs,
         "sha256": artifact_sha256(destination),
         "sidecarFiles": copied,
         "seconds": round(time.monotonic() - started, 2),
@@ -488,6 +511,7 @@ def zip_command(
     if copied is not None:
         echo(f"{image_dir / SIDECAR_DIRECTORY}: {copied} files")
     echo(
-        f"{destination}: {count} files, {summary['bytes']} bytes (variant {variant}) "
+        f"{destination}: {count} files, {summary['bytes']} bytes (variant {variant}"
+        f"{', with efs' if with_efs else ''}) "
         f"sha256={summary['sha256']}"
     )

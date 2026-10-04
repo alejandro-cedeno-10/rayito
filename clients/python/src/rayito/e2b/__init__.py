@@ -99,10 +99,9 @@ from rayito.e2b._types import (
     Username,
 )
 from rayito.e2b._unimplemented import (
-    AsyncVolume,
-    Volume,
     get_signature,
 )
+from rayito.e2b._volume import AsyncVolume, Volume
 from rayito.e2b.exceptions import (
     AuthenticationException,
     BuildException,
@@ -123,6 +122,9 @@ from rayito.e2b.exceptions import (
     TemplateException,
     TimeoutException,
     UnimplementedError,
+    VolumeException,
+    VolumeNotFoundException,
+    VolumePathNotFoundException,
 )
 
 Context = CodeContext
@@ -214,6 +216,9 @@ __all__ = [
     "UploadTicket",
     "Username",
     "Volume",
+    "VolumeException",
+    "VolumeNotFoundException",
+    "VolumePathNotFoundException",
     "WatchHandle",
     "WriteEntry",
     "WriteInfo",

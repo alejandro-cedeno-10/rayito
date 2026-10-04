@@ -9,6 +9,14 @@ import { UnimplementedError } from "./errors.js";
 
 const RAYITO_IMAGE_PATTERN = /^rayito-(?<variant>[a-z]+(?:-[a-z]+)*?)(?:-\d+[a-z]+)?$/;
 export const CAPS_VARIANT = "base-caps";
+/**
+ * `rayito image publish --with-efs` (m15-efs-volumes): la imagen caps con la
+ * capa de `amazon-efs-utils` (`rayito-base-caps-efs`); concede lo mismo que la
+ * caps y además deja montar `volumes`.
+ */
+export const EFS_CAPS_VARIANT = `${CAPS_VARIANT}-efs`;
+/** Las variantes que conceden el capability mask de ADR-012. */
+export const CAPS_VARIANTS: ReadonlySet<string> = new Set([CAPS_VARIANT, EFS_CAPS_VARIANT]);
 
 /**
  * `"rayito-base-caps-4gb"` -> `"base-caps"`; `"rayito-base"` -> `"base"`;
@@ -24,11 +32,12 @@ export function resolveImageVariant(template: string | undefined): string | unde
 }
 
 /**
- * Lanza `UnimplementedError` si `imageVariant` se conoce y no es la variante
- * caps; no hace nada cuando es la caps o cuando es `undefined` (desconocida).
+ * Lanza `UnimplementedError` si `imageVariant` se conoce y no es una variante
+ * caps (`CAPS_VARIANTS`: la caps o la caps con `amazon-efs-utils`); no hace
+ * nada cuando lo es o cuando es `undefined` (desconocida).
  */
 export function requireCapsFor(feature: string, imageVariant: string | undefined): void {
-  if (imageVariant === undefined || imageVariant === CAPS_VARIANT) {
+  if (imageVariant === undefined || CAPS_VARIANTS.has(imageVariant)) {
     return;
   }
   throw new UnimplementedError(

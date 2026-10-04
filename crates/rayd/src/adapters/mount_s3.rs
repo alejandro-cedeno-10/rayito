@@ -29,7 +29,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use super::child_registry::ChildRegistry;
-use super::fuse_device::{GUEST_GROUP_ID, GUEST_USER_ID};
+use super::mountpoint::{GUEST_GROUP_ID, GUEST_USER_ID};
 use super::sidecar_process::signal_process_group;
 
 /// Mountpoint for Amazon S3 1.24.0, installed by `image/Dockerfile` from
@@ -54,7 +54,7 @@ const MOUNT_FD_SLOT: RawFd = 3;
 /// crosses the wire or a log line (`MountErrorClass` is the closed set
 /// that does) — the bytes themselves are discarded the moment
 /// classification is done.
-const STDERR_TAIL_BYTES: usize = 4096;
+pub(crate) const STDERR_TAIL_BYTES: usize = 4096;
 /// One `read` of the stderr pipe while draining it.
 const STDERR_READ_CHUNK_BYTES: usize = 1024;
 
@@ -184,7 +184,7 @@ impl FuseDaemon for TokioMountS3Daemon {
 }
 
 /// Reads `pipe` to EOF, keeping only its last `STDERR_TAIL_BYTES`.
-async fn drain_stderr_tail<R: AsyncRead + Unpin>(pipe: &mut R) -> Vec<u8> {
+pub(crate) async fn drain_stderr_tail<R: AsyncRead + Unpin>(pipe: &mut R) -> Vec<u8> {
     let mut tail = Vec::with_capacity(STDERR_TAIL_BYTES);
     let mut chunk = [0u8; STDERR_READ_CHUNK_BYTES];
     loop {

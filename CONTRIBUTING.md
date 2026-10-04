@@ -301,6 +301,8 @@ export RAYITO_TEMPLATE_CAPS=rayito-base-caps     # IMDS, egress y persistencia
 export RAYITO_TEMPLATE_POLY=rayito-base-poly     # kernels bash/JavaScript/TypeScript
 export RAYITO_PERSIST_BUCKET=<tu-bucket>         # RAYITO_PERSIST_PREFIX: rayito-e2e
 export RAYITO_E2E_TRANSFER_BUCKET=<tu-bucket>    # RAYITO_E2E_TRANSFER_PREFIX: rayito-e2e-transfer
+export RAYITO_E2E_VPC_ID=<tu-vpc>               # efs-volumes: una VPC existente que puedes usar
+export RAYITO_E2E_SUBNET_IDS=<subred-a>,<subred-b> # de 1 a 3 subredes privadas de esa VPC, una por AZ
 make test-e2e
 make test-e2e-typescript
 ```
