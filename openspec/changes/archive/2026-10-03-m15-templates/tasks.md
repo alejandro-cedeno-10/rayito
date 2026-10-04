@@ -223,8 +223,8 @@
 - [x] 10.1 Branch `feat/templates`, worktree
       `~/github.com/alejandro-cedeno-10/rayito-wt-templates`, from
       `origin/main`.
-- [ ] 10.2 Push and open the PR; wait for CI; fix until green.
-- [ ] 10.3 Do not merge (per instructions).
+- [x] 10.2 Push and open the PR; wait for CI; fix until green. (Verified at archive time: all checks green.)
+- [x] 10.3 Do not merge (per instructions). (Merged by the maintainer after the AWS acceptance of §11; released in 0.6.0.)
 
 ## 11. AWS acceptance (serialized stage, 2026-10-02)
 

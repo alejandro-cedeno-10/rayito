@@ -198,10 +198,10 @@ Low severity:
 - [x] 8.1 `proposal.md`, `design.md`, `tasks.md` (this file).
 - [x] 8.2 `specs/s3-mounts/spec.md` (new capability, ADDED requirements only).
 - [x] 8.3 `npx -y @fission-ai/openspec@1.10.0 validate --strict` passes.
-- [ ] 8.4 Not archived (per instructions).
+- [x] 8.4 Not archived (per instructions). (Archived after the AWS acceptance and the 0.6.0 release.)
 
 ## 9. PR
 
 - [x] 9.1 Branch `feat/m15-s3-mounts`, worktree `rayito-wt-s3-mounts`, from `origin/main` (post-foundations).
-- [ ] 9.2 Commits signed (`git commit -s -S`) with the required attribution lines.
-- [ ] 9.3 PR opened against `main`; CI green. **Not merged** (serialized AWS acceptance and merge-order decisions are the maintainer's).
+- [x] 9.2 Commits signed (`git commit -s -S`) with the required attribution lines. (Verified at archive time: every commit of the PR is signature-verified and carries the trailers.)
+- [x] 9.3 PR opened against `main`; CI green. **Not merged** (serialized AWS acceptance and merge-order decisions are the maintainer's). (Merged by the maintainer after the AWS acceptance, all checks green; released in 0.6.0.)
