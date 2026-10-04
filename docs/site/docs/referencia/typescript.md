@@ -60,6 +60,12 @@ Reglas de nombres: [Python y TypeScript](index.md#python-y-typescript-como-se-co
 | `secrets`, `secretCache` | opcional, con coste | apagado | `secrets`, `secret_cache` |
 | `index` | `DynamoDbIndex` (opcional, con coste) | apagado | `index` |
 | `tracerProvider` | `TracerProvider` de OpenTelemetry | apagado | `tracer_provider` |
+| `mounts` | `Record<string, S3Mount>` o `Map` | apagado (0.6) | `mounts` |
+| `size` | `"512mb" \| "1gb" \| "2gb" \| "4gb" \| "8gb"` o `{ memoryMib }` | apagado (0.6) | `size` |
+| `events` | `LifecycleEvents` | apagado (0.6) | `events` |
+| `telemetry` | `TelemetryExport` | apagado (0.6) | `telemetry` |
+| `gateways` | `Record<string, SecretGateway>` | apagado (0.6) | `gateways` |
+| `volumes`, `domain` | — | [en desarrollo](../novedades/index.md#en-desarrollo): lanzan `UnimplementedError` | `volumes`, `domain` |
 
 ### Instancia
 
@@ -76,6 +82,9 @@ Reglas de nombres: [Python y TypeScript](index.md#python-y-typescript-como-se-co
 | `sbx.getMetrics()`, `sbx.getMetricsHistory(opts)` | `get_metrics()`, `get_metrics_history(...)` | [Métricas](../observability.md) |
 | `sbx.updateNetwork(policy)`, `sbx.getNetwork()` | `update_network(...)`, `get_network()` | [Red saliente](../network.md) |
 | `sbx.checkpointFiles()`, `sbx.restoreFiles()`, `sbx.reincarnate()` | `checkpoint_files()`, `restore_files()`, `reincarnate()` | [Persistencia](../persistence.md) |
+| `await sbx.mounts()` | `mounts` (propiedad; `await sbx.mounts()` en `AsyncSandbox`) | `ReadonlyMap<string, MountStatus>` en vivo ([Montajes S3](../funciones-opcionales/montajes-s3.md)) |
+| `sbx.getTelemetryStatus()` | `get_telemetry_status()` | `TelemetryHealth` (`exported`, `dropped`, `lastErrorClass`) ([Exportación OTLP](../funciones-opcionales/exportacion-otlp.md)) |
+| `sbx.gateways.get(name)?.url`, `sbx.gateways.refresh()` | `gateways[name].url`, `gateways.refresh()` | URL de loopback y rotación ([Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md)) |
 | `sbx.commands`, `sbx.files`, `sbx.pty`, `sbx.git` | igual | subclientes (abajo) |
 
 ## Ejecutar código { #ejecutar-codigo }
@@ -168,6 +177,13 @@ Apagadas por defecto; cada una carga su *peerDependency* sólo al activarse.
 | `SecretStore`, `SecretCache`, `SecretRef` | `@aws-sdk/client-secrets-manager` | [Secretos](../secrets.md) |
 | `DynamoDbIndex` | `@aws-sdk/client-dynamodb` | [Índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) |
 | opción `tracerProvider` | `@opentelemetry/api` (sólo tipos) | [OpenTelemetry](../funciones-opcionales/opentelemetry.md) |
+| `S3Mount` (opción `mounts`) | ninguno: lo monta `rayd` | [Montajes S3](../funciones-opcionales/montajes-s3.md) |
+| opción `size` | ninguno | [Tamaños](../funciones-opcionales/tamanos.md) |
+| `LifecycleEvents` (opción `events`) | `@aws-sdk/client-dynamodb`, `@aws-sdk/client-secrets-manager` y `@aws-sdk/client-cloudformation` (localiza la pila) | [Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md) |
+| `TelemetryExport`, `OtlpAuth` (opción `telemetry`) | `@aws-sdk/client-secrets-manager` sólo con `OtlpAuth.bearer(...)` | [Exportación OTLP](../funciones-opcionales/exportacion-otlp.md) |
+| `SecretGateway` (opción `gateways`) | `@aws-sdk/client-secrets-manager` | [Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md) |
+| `Template` (`build`, `buildInBackground`, `getBuildStatus`, `exists`) | `@aws-sdk/client-cloudwatch-logs` sólo para leer el log del build | [Templates](../funciones-opcionales/templates.md) |
+| `OptionalStacks` (`components`, `status`, `parameterChanges`, `deploy`, `destroy`) | `@aws-sdk/client-cloudformation` | [Pilas opcionales](../funciones-opcionales/pilas-opcionales.md) |
 
 ## Errores { #errores }
 

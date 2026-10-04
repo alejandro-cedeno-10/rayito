@@ -33,6 +33,14 @@ AWS Lambda MicroVM (Firecracker, ARM64)
 | SDK TypeScript (`rayito`) | TypeScript / Node ≥ 20 | **fuera**, en el proceso del cliente | tu código |
 | llamadas al plano de control | boto3 / AWS SDK JS v3 dentro del SDK | **fuera**, desde el proceso del cliente hacia la API `lambda-microvms` | el SDK (`create`, `list`, `pause`, `resume`, `kill`, tokens) |
 
+`rayd` es el PID 1 del MicroVM, así que también hereda los procesos que
+quedan huérfanos: un demonio que hace doble `fork` acaba colgado de `rayd`.
+Desde `rayd` 0.6.1, `rayd` recoge esos huérfanos cuando terminan (en cada
+`SIGCHLD` y cada 5 s), sin tocar nunca a sus propios hijos, cuyos códigos de
+salida siguen llegando a `commands`, `pty` y los kernels. Todo hijo propio
+nace por un único registro de procesos que lo anota antes de que la
+recogida pueda verlo.
+
 El sidecar es Python por decisión escrita: el
 kernel es Python de todos modos y `jupyter_client` es el cliente probado del
 protocolo de Jupyter, así que lo que cuesta esfuerzo (formatters, gráficos,

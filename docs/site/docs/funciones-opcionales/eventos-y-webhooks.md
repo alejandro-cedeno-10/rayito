@@ -199,6 +199,130 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
    pasa por `/terminate`, y su evento llega con `kill_reason: "request"`
    (el hook no dice por qué muere la VM).
 
+## Verificar la firma en tu receptor
+
+Cada entrega es un `POST` con un cuerpo JSON y cuatro cabeceras, las mismas
+que usa E2B. Un receptor que ya verifica webhooks de E2B acepta las de
+Rayito sin cambios.
+
+| Cabecera | Valor |
+|---|---|
+| `e2b-webhook-id` | el `webhook_id` que devolvió `register_webhook` |
+| `e2b-delivery-id` | un id aleatorio **por intento**: cambia en cada reintento |
+| `e2b-signature-version` | `v1` |
+| `e2b-signature` | base64 sin `=` final de `sha256(secreto + cuerpo)` |
+
+El secreto es el valor del secreto de Secrets Manager que nombraste en
+`secret_name` (`rayito/webhooks/<nombre>`), tal cual, en UTF-8. La firma es
+la de E2B, **no un HMAC**: un SHA-256 del secreto concatenado con los bytes
+exactos del cuerpo. El cuerpo:
+
+```json
+{
+  "event_id": "0123456789abcdef0123456789abcdef",
+  "sandbox_id": "microvm-00000000-0000-0000-0000-000000000001",
+  "type": "sandbox.lifecycle.killed",
+  "kill_reason": "request",
+  "generation": 0,
+  "occurred_at_ms": 1790000000000,
+  "sandbox_template_id": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+  "sandbox_execution_id": "microvm-00000000-0000-0000-0000-000000000001#0"
+}
+```
+
+`kill_reason` es `null` salvo en `killed` (`request`, `timeout` o
+`unknown`, este último sólo cuando lo sintetiza el reconciliador).
+
+=== "Python"
+
+    ```python
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import os
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    SECRET = os.environ["WEBHOOK_SECRET"].encode()  # el valor de rayito/webhooks/mi-webhook
+
+
+    def firma_valida(secret: bytes, body: bytes, signature: str) -> bool:
+        expected = base64.b64encode(hashlib.sha256(secret + body).digest()).decode().rstrip("=")
+        return hmac.compare_digest(expected, signature)  # (1)!
+
+
+    class Receptor(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers["content-length"]))  # (2)!
+            if not firma_valida(SECRET, body, self.headers.get("e2b-signature", "")):
+                self.send_response(401)
+                self.end_headers()
+                return
+            event = json.loads(body)
+            print(event["type"], event["sandbox_id"], event["event_id"])  # (3)!
+            self.send_response(204)
+            self.end_headers()
+
+
+    HTTPServer(("127.0.0.1", 8000), Receptor).serve_forever()
+    ```
+
+    1. Comparación en tiempo constante: nunca `==`.
+    2. Verifica los bytes tal como llegan, antes de parsear el JSON:
+       re-serializarlo cambia la firma.
+    3. Deduplica por `event_id`, no por `e2b-delivery-id`: cada reintento
+       trae un `e2b-delivery-id` nuevo.
+
+=== "TypeScript"
+
+    Con Node.js, sin dependencias:
+
+    ```ts
+    import { createHash, timingSafeEqual } from "node:crypto";
+    import { createServer } from "node:http";
+
+    const secret = process.env.WEBHOOK_SECRET ?? ""; // el valor de rayito/webhooks/mi-webhook
+
+    function firmaValida(secret: string, body: Buffer, signature: string): boolean {
+      const expected = createHash("sha256").update(secret).update(body).digest("base64").replace(/=+$/, "");
+      const a = Buffer.from(expected);
+      const b = Buffer.from(signature);
+      return a.length === b.length && timingSafeEqual(a, b);
+    }
+
+    createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks); // los bytes exactos, antes de JSON.parse
+        const signature = req.headers["e2b-signature"];
+        if (typeof signature !== "string" || !firmaValida(secret, body, signature)) {
+          res.writeHead(401).end();
+          return;
+        }
+        const event = JSON.parse(body.toString("utf8")) as { type: string; event_id: string };
+        console.log(event.type, event.event_id); // deduplica por event_id
+        res.writeHead(204).end();
+      });
+    }).listen(8000, "127.0.0.1");
+    ```
+
+El deliverer sólo entrega a URLs `https://` y nunca sigue redirecciones:
+pon el receptor detrás de tu terminación TLS (un balanceador, API Gateway o
+una URL de función de Lambda). Cómo trata tu respuesta:
+
+| Respuesta | Qué hace el deliverer |
+|---|---|
+| `2xx` | entregado; no vuelve a intentarlo |
+| `5xx`, error de red o más de 10 s sin respuesta | lo reintenta, hasta 3 intentos con espera de 0,5 s y 1 s |
+| `3xx` o `4xx` (por ejemplo `401` por firma inválida) | definitivo: no reintenta |
+
+Responde rápido y procesa el evento después: el reintento sólo protege ante
+fallos tuyos transitorios. Una entrega que agota sus tres intentos queda
+marcada `failed` y no se vuelve a enviar sola, pero el evento sigue en
+`get_events()` durante 7 días: un receptor que estuvo caído puede ponerse al
+día leyéndolos.
+
 ## Opciones de `LifecycleEvents`
 
 | Python | TypeScript | Por defecto | Qué hace |
@@ -253,8 +377,7 @@ Rayito sin cambios (mismas cabeceras `e2b-*` y el mismo esquema de firma).
 
 ## Ver también
 
-- [Funciones opcionales](../optional-features.md) (la fila y el ancla `#events-webhooks`
-  los añade `m15-docs-integration`)
+- [Funciones opcionales](../optional-features.md)
 - [Pilas opcionales](pilas-opcionales.md)
 - [IAM](../operacion/iam.md)
 - Plantilla: [`infra/events-webhooks.yaml`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/events-webhooks.yaml)
