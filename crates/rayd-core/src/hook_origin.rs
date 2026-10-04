@@ -20,13 +20,13 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use crate::process::identity::MIN_UNPRIVILEGED_ID;
+use crate::process::identity::{MAX_UNPRIVILEGED_ID, MIN_UNPRIVILEGED_ID};
 
 /// First uid of the sandbox range: the image's `user` and every account a
 /// request may run as (`process::identity`).
 pub const SANDBOX_UID_FIRST: u32 = MIN_UNPRIVILEGED_ID;
 /// Last uid of the sandbox range, the end of `SANDBOX_UID_RANGE`.
-pub const SANDBOX_UID_LAST: u32 = 65_535;
+pub const SANDBOX_UID_LAST: u32 = MAX_UNPRIVILEGED_ID;
 
 /// Hex digits of an IPv4 address and of an IPv6 address in
 /// `/proc/net/tcp{,6}` (`%08X` per 32-bit word, `net/ipv4/tcp_ipv4.c`,
