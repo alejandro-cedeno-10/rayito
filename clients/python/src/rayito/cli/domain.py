@@ -1,6 +1,7 @@
 """Stub de `rayito domain` para `m15-custom-domain` (M15 foundations). La
-feature sustituye esto por los comandos reales en su propio cambio; el
-registro en `cli/app.py` no cambia para eso.
+feature sustituye esto por los comandos reales en su propio cambio y quita
+el `hidden=True` de su registro en `cli/app.py`; mientras tanto no aparece
+en `rayito --help`.
 """
 
 from __future__ import annotations

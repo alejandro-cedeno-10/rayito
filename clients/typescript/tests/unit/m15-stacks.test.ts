@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, StackError, UnimplementedError } from "../../src/errors.js";
+import { CloudFormationProvisioner } from "../../src/stacks/cloudformation.js";
 import {
   type CostStatement,
   defaultStackName,
@@ -162,27 +163,15 @@ describe("stacks/packaging", () => {
   );
 });
 
-class RecordingProvisioner extends FakeStackProvisioner {
-  createdParameters: Readonly<Record<string, string>> | undefined;
-
-  override async create(
-    component: Parameters<FakeStackProvisioner["create"]>[0],
-    options: { readonly stackName: string; readonly parameters?: Readonly<Record<string, string>> },
-  ): Promise<void> {
-    this.createdParameters = { ...(options.parameters ?? {}) };
-    await super.create(component, options);
-  }
-}
-
 describe("OptionalStacks artifact bucket parameter", () => {
   test("events-webhooks gets ArtifactBucket from artifactBucket (0.6 AWS acceptance)", async () => {
-    const provisioner = new RecordingProvisioner();
+    const provisioner = new FakeStackProvisioner();
     await new OptionalStacks({ provisioner }).deploy("events-webhooks", {
       parameters: { LogGroupName: "/rayito/x" },
       artifactBucket: "bucket-a",
     });
-    expect(provisioner.createdParameters?.ArtifactBucket).toBe("bucket-a");
-    expect(provisioner.createdParameters?.ArtifactS3Key).toBeTruthy();
+    expect(provisioner.sentParameters.ArtifactBucket).toBe("bucket-a");
+    expect(provisioner.sentParameters.ArtifactS3Key).toBeTruthy();
   });
 
   test("a conflicting ArtifactBucket is rejected before any upload", async () => {
@@ -194,5 +183,160 @@ describe("OptionalStacks artifact bucket parameter", () => {
       }),
     ).rejects.toThrow(/ArtifactBucket/);
     expect(provisioner.calls).toEqual([]);
+  });
+});
+
+// ------------------------------- redeploy keeps the settings already deployed
+
+async function redeploy(
+  name: string,
+  first: Record<string, string>,
+  second: Record<string, string>,
+): Promise<FakeStackProvisioner> {
+  const fake = new FakeStackProvisioner();
+  const stacks = new OptionalStacks({ provisioner: fake });
+  await stacks.deploy(name, { parameters: first });
+  await stacks.deploy(name, { parameters: second });
+  return fake;
+}
+
+describe("OptionalStacks redeploy keeps deployed parameters (UsePreviousValue)", () => {
+  test("s3-mounts keeps Prefixes and ReadOnly (no privilege widening)", async () => {
+    const fake = await redeploy(
+      "s3-mounts",
+      { BucketName: "b", Prefixes: "team7/*", ReadOnly: "false" },
+      { BucketName: "b" },
+    );
+    expect(fake.sentParameters).toEqual({ BucketName: "b" });
+    expect(fake.sentKeepPrevious).toEqual(["Prefixes", "ReadOnly"]);
+    expect(fake.stacks.get("rayito-s3-mounts")?.parameters).toMatchObject({
+      Prefixes: "team7/*",
+      ReadOnly: "false",
+    });
+  });
+
+  test("s3-mounts keeps the required BucketName when not passed again", async () => {
+    const fake = await redeploy("s3-mounts", { BucketName: "b" }, { Prefixes: "a/*" });
+    expect(fake.sentKeepPrevious).toEqual(["BucketName", "ReadOnly"]);
+    expect(fake.stacks.get("rayito-s3-mounts")?.parameters?.BucketName).toBe("b");
+  });
+
+  test("metadata-index keeps TableName and DeletionProtection (no table replacement)", async () => {
+    const fake = await redeploy(
+      "metadata-index",
+      { TableName: "my-table", DeletionProtection: "true", PointInTimeRecovery: "true" },
+      {},
+    );
+    expect(fake.sentParameters).toEqual({});
+    expect(fake.sentKeepPrevious).toEqual([
+      "DeletionProtection",
+      "PointInTimeRecovery",
+      "TableName",
+    ]);
+    expect(fake.stacks.get("rayito-metadata-index")?.parameters).toEqual({
+      TableName: "my-table",
+      DeletionProtection: "true",
+      PointInTimeRecovery: "true",
+    });
+  });
+
+  test("secrets-access keeps KmsKeyArn", async () => {
+    const fake = await redeploy("secrets-access", { KmsKeyArn: "arn:aws:kms:example" }, {});
+    expect(fake.sentKeepPrevious).toContain("KmsKeyArn");
+    expect(fake.stacks.get("rayito-secrets-access")?.parameters?.KmsKeyArn).toBe(
+      "arn:aws:kms:example",
+    );
+  });
+
+  test("a parameter the existing stack lacks gets its default on update", async () => {
+    const fake = new FakeStackProvisioner();
+    fake.stacks.set("rayito-metadata-index", {
+      name: "rayito-metadata-index",
+      state: "CREATE_COMPLETE",
+      outputs: {},
+      parameters: { TableName: "my-table" },
+    });
+    await new OptionalStacks({ provisioner: fake }).deploy("metadata-index");
+    expect(fake.sentKeepPrevious).toEqual(["TableName"]);
+    expect(fake.sentParameters).toEqual({
+      DeletionProtection: "false",
+      PointInTimeRecovery: "false",
+    });
+  });
+
+  test("create still fills the catalog defaults", async () => {
+    const fake = new FakeStackProvisioner();
+    await new OptionalStacks({ provisioner: fake }).deploy("s3-mounts", {
+      parameters: { BucketName: "b" },
+    });
+    expect(fake.sentParameters).toEqual({ BucketName: "b", Prefixes: "*", ReadOnly: "true" });
+    expect(fake.sentKeepPrevious).toEqual([]);
+  });
+
+  test("create without a required parameter is rejected before creating", async () => {
+    const fake = new FakeStackProvisioner();
+    await expect(new OptionalStacks({ provisioner: fake }).deploy("s3-mounts")).rejects.toThrow(
+      /BucketName/,
+    );
+    expect(fake.calls.map((call) => call[0])).toEqual(["describe"]);
+  });
+
+  test("parameterChanges lists only what deploy would change", async () => {
+    const fake = new FakeStackProvisioner();
+    const stacks = new OptionalStacks({ provisioner: fake });
+    await stacks.deploy("s3-mounts", { parameters: { BucketName: "b", Prefixes: "team7/*" } });
+    const changes = await stacks.parameterChanges("s3-mounts", {
+      parameters: { ReadOnly: "false" },
+    });
+    expect(changes).toEqual([{ name: "ReadOnly", before: "true", after: "false" }]);
+  });
+});
+
+describe("CloudFormationProvisioner parameters", () => {
+  test("update sends kept parameters with UsePreviousValue", async () => {
+    const sent: unknown[] = [];
+    const api = {
+      describeStacks: async () => ({
+        Stacks: [
+          {
+            StackStatus: "UPDATE_COMPLETE",
+            Outputs: [],
+            Parameters: [{ ParameterKey: "Prefixes", ParameterValue: "team7/*" }],
+          },
+        ],
+      }),
+      createStack: async () => ({}),
+      updateStack: async (input: unknown) => {
+        sent.push(input);
+        return {};
+      },
+      deleteStack: async () => ({}),
+    };
+    const adapter = new CloudFormationProvisioner({
+      region: "us-east-1",
+      cloudformationClient: api,
+    });
+    await adapter.update(component("s3-mounts"), {
+      stackName: "rayito-s3-mounts",
+      templateBody: "x",
+      parameters: { BucketName: "b" },
+      tags: {},
+      keepPrevious: ["Prefixes", "ReadOnly"],
+    });
+    expect(sent).toEqual([
+      {
+        StackName: "rayito-s3-mounts",
+        TemplateBody: "x",
+        Parameters: [
+          { ParameterKey: "BucketName", ParameterValue: "b" },
+          { ParameterKey: "Prefixes", UsePreviousValue: true },
+          { ParameterKey: "ReadOnly", UsePreviousValue: true },
+        ],
+        Tags: [],
+        Capabilities: undefined,
+      },
+    ]);
+    const status = await adapter.describe("rayito-s3-mounts");
+    expect(status?.parameters).toEqual({ Prefixes: "team7/*" });
   });
 });

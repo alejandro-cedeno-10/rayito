@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal
 
 from rayito._version import __version__
+from rayito.exceptions import InvalidArgumentException
 
 #: Las tres etiquetas fijas de toda pila `OptionalStack`; nunca las
 #: sobreescriben las del llamante (`stack_tags`).
@@ -98,6 +99,10 @@ class StackStatus:
     state: str | None
     outputs: dict[str, str] = field(default_factory=dict)
     reason_code: str | None = None
+    #: `Parameters[].{ParameterKey: ParameterValue}` de `DescribeStacks`: los
+    #: valores con los que la pila está desplegada ahora (CloudFormation ya
+    #: enmascara los `NoEcho`). `plan_parameters` lo usa para no pisarlos.
+    parameters: dict[str, str] = field(default_factory=dict)
 
     @property
     def exists(self) -> bool:
@@ -128,6 +133,75 @@ def plan_deploy(current: StackStatus | None) -> DeployPlan:
             "volver a desplegarla",
         )
     return DeployPlan("update")
+
+
+@dataclass(frozen=True)
+class ParameterChange:
+    """Un parámetro cuyo valor cambiaría con el `deploy()`; `before` es
+    `None` si la pila no existe o todavía no lo tenía."""
+
+    name: str
+    before: str | None
+    after: str
+
+
+@dataclass(frozen=True)
+class ParameterPlan:
+    """Qué parámetros manda `deploy()`: `values` con `ParameterValue` y
+    `keep_previous` con `UsePreviousValue=True` (sólo en `UpdateStack`: los
+    que el llamante no pasó y la pila ya tiene)."""
+
+    values: dict[str, str]
+    keep_previous: tuple[str, ...] = ()
+
+    def changes(self, current: StackStatus | None) -> tuple[ParameterChange, ...]:
+        """Los de `values` que difieren de los actuales; los de
+        `keep_previous` nunca cambian."""
+        before = current.parameters if current is not None else {}
+        return tuple(
+            ParameterChange(name, before.get(name), value)
+            for name, value in sorted(self.values.items())
+            if before.get(name) != value
+        )
+
+
+def reject_unknown_parameters(component: StackComponent, given: dict[str, str]) -> None:
+    known = {parameter.name for parameter in component.parameters}
+    unknown = sorted(set(given) - known)
+    if unknown:
+        raise InvalidArgumentException(f"parámetros desconocidos para {component.name}: {unknown}")
+
+
+def plan_parameters(
+    component: StackComponent, given: dict[str, str], current: StackStatus | None
+) -> ParameterPlan:
+    """Los valores por defecto del catálogo sólo se aplican al crear. Al
+    actualizar una pila existente, un parámetro que el llamante no pasó y la
+    pila ya tiene se conserva (`UsePreviousValue`) en vez de volver a su
+    valor por defecto: redesplegar sin repetir cada `--param` no puede
+    ensanchar una política (`s3-mounts` `Prefixes`), reemplazar una tabla
+    (`metadata-index` `TableName`) ni quitar un permiso (`secrets-access`
+    `KmsKeyArn`). Un parámetro nuevo de la plantilla que la pila aún no
+    tiene recibe su valor por defecto también al actualizar."""
+    reject_unknown_parameters(component, given)
+    previous = current.parameters if current is not None and current.exists else None
+    values = dict(given)
+    keep_previous: list[str] = []
+    missing: list[str] = []
+    for parameter in component.parameters:
+        if parameter.name in given:
+            continue
+        if previous is not None and parameter.name in previous:
+            keep_previous.append(parameter.name)
+        elif parameter.default is not None:
+            values[parameter.name] = parameter.default
+        elif parameter.required:
+            missing.append(parameter.name)
+    if missing:
+        raise InvalidArgumentException(
+            f"faltan parámetros obligatorios para {component.name}: {sorted(missing)}"
+        )
+    return ParameterPlan(values=values, keep_previous=tuple(sorted(keep_previous)))
 
 
 def stack_tags(component: StackComponent, user_tags: dict[str, str]) -> dict[str, str]:

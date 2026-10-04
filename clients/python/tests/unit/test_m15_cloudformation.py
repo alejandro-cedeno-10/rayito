@@ -294,3 +294,55 @@ def test_failure_reason_forwards_the_stacks_own_reason() -> None:
             },
         )
         assert adapter.failure_reason("x") == "boom"
+
+
+def test_update_sends_kept_parameters_with_use_previous_value() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_response(
+            "update_stack",
+            {"StackId": "arn:..."},
+            expected_params={
+                "StackName": "rayito-s3-mounts",
+                "TemplateBody": "x",
+                "Parameters": [
+                    {"ParameterKey": "BucketName", "ParameterValue": "b"},
+                    {"ParameterKey": "Prefixes", "UsePreviousValue": True},
+                    {"ParameterKey": "ReadOnly", "UsePreviousValue": True},
+                ],
+                "Tags": [],
+                "Capabilities": [],
+            },
+        )
+        adapter.update(
+            COMPONENT,
+            stack_name="rayito-s3-mounts",
+            template_body="x",
+            parameters={"BucketName": "b"},
+            tags={},
+            keep_previous=("Prefixes", "ReadOnly"),
+        )
+
+
+def test_describe_maps_the_deployed_parameters() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_response(
+            "describe_stacks",
+            {
+                "Stacks": [
+                    {
+                        "StackName": "rayito-s3-mounts",
+                        "CreationTime": FIXED_TIME,
+                        "StackStatus": "UPDATE_COMPLETE",
+                        "Parameters": [
+                            {"ParameterKey": "Prefixes", "ParameterValue": "team7/*"},
+                        ],
+                    }
+                ]
+            },
+            expected_params={"StackName": "rayito-s3-mounts"},
+        )
+        status = adapter.describe("rayito-s3-mounts")
+    assert status is not None
+    assert status.parameters == {"Prefixes": "team7/*"}

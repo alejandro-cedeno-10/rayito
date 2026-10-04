@@ -11,12 +11,22 @@ cambio; este módulo es lo que esas fachadas envuelven.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, NamedTuple
 
 import boto3
 
 from rayito._stacks._cloudformation import CloudFormationProvisioner
-from rayito._stacks._model import StackComponent, StackStatus, plan_deploy, stack_tags
+from rayito._stacks._model import (
+    DeployPlan,
+    ParameterChange,
+    ParameterPlan,
+    StackComponent,
+    StackStatus,
+    plan_deploy,
+    plan_parameters,
+    reject_unknown_parameters,
+    stack_tags,
+)
 from rayito._stacks._packaging import artifact_key, load_artifact, load_template
 from rayito._stacks._port import StackProvisioner
 from rayito._stacks._registry import COMPONENTS, component_by_name
@@ -48,29 +58,6 @@ def _require_supported(component: StackComponent) -> None:
         )
 
 
-def _resolved_parameters(component: StackComponent, given: dict[str, str]) -> dict[str, str]:
-    known = {parameter.name for parameter in component.parameters}
-    unknown = sorted(set(given) - known)
-    if unknown:
-        raise InvalidArgumentException(f"parámetros desconocidos para {component.name}: {unknown}")
-    resolved = {
-        parameter.name: parameter.default
-        for parameter in component.parameters
-        if parameter.default is not None
-    }
-    resolved.update(given)
-    missing = sorted(
-        parameter.name
-        for parameter in component.parameters
-        if parameter.required and parameter.name not in resolved
-    )
-    if missing:
-        raise InvalidArgumentException(
-            f"faltan parámetros obligatorios para {component.name}: {missing}"
-        )
-    return resolved
-
-
 def _with_artifact_bucket(
     component: StackComponent, given: dict[str, str], artifact_bucket: str | None
 ) -> dict[str, str]:
@@ -92,6 +79,25 @@ def _with_artifact_bucket(
             )
         resolved[key] = artifact_bucket
     return resolved
+
+
+def _require_artifact_bucket(component: StackComponent, artifact_bucket: str | None) -> None:
+    if component.artifacts and not artifact_bucket:
+        raise InvalidArgumentException(
+            f"{component.name} necesita artifact_bucket=: sube el código Lambda del componente"
+        )
+
+
+def _require_deployable(plan: DeployPlan, stack_name: str) -> None:
+    if plan.action == "blocked":
+        raise StackException(plan.reason or f"deploy de {stack_name!r} bloqueado", code="blocked")
+
+
+class _Plan(NamedTuple):
+    component: StackComponent
+    stack_name: str
+    current: StackStatus | None
+    parameters: ParameterPlan
 
 
 class OptionalStacks:
@@ -119,6 +125,21 @@ class OptionalStacks:
         name = stack_name or resolved.default_stack_name
         return self._provisioner.describe(name)
 
+    def parameter_changes(
+        self,
+        component: str | StackComponent,
+        *,
+        stack_name: str | None = None,
+        parameters: dict[str, str] | None = None,
+        artifact_bucket: str | None = None,
+    ) -> tuple[ParameterChange, ...]:
+        """Qué parámetros cambiaría `deploy()` con estos mismos argumentos,
+        sin desplegar nada (sólo un `DescribeStacks`): lo que `rayito stack
+        deploy` imprime antes de pedir confirmación. Los que no se pasan y la
+        pila ya tiene no aparecen: `deploy()` los conserva."""
+        plan = self._plan(component, stack_name, parameters, artifact_bucket)
+        return plan.parameters.changes(plan.current)
+
     def deploy(
         self,
         component: str | StackComponent,
@@ -130,33 +151,28 @@ class OptionalStacks:
         wait: bool = True,
         wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
     ) -> StackStatus:
-        resolved = _resolve_component(component)
-        _require_supported(resolved)
-        name = stack_name or resolved.default_stack_name
-        if resolved.artifacts and not artifact_bucket:
-            raise InvalidArgumentException(
-                f"{resolved.name} necesita artifact_bucket=: sube el código Lambda del componente"
-            )
-        resolved_parameters = _resolved_parameters(
-            resolved, _with_artifact_bucket(resolved, dict(parameters or {}), artifact_bucket)
-        )
+        """Crea la pila o, si ya existe, la actualiza. Al crear, los
+        parámetros no pasados toman su valor por defecto del catálogo; al
+        actualizar, los no pasados conservan el valor con el que la pila está
+        desplegada (`UsePreviousValue`), así redesplegar sin repetir cada
+        parámetro no deshace la configuración anterior."""
+        plan = self._plan(component, stack_name, parameters, artifact_bucket)
+        resolved, name = plan.component, plan.stack_name
+        values = dict(plan.parameters.values)
         if resolved.artifacts and artifact_bucket:
             data = load_artifact(resolved)
             key = artifact_key(data)
             self._provisioner.put_artifact(artifact_bucket, key, data)
             for artifact in resolved.artifacts:
-                resolved_parameters[artifact.parameter_key] = key
+                values[artifact.parameter_key] = key
         template_body = load_template(resolved)
         full_tags = stack_tags(resolved, dict(tags or {}))
-        plan = plan_deploy(self._provisioner.describe(name))
-        if plan.action == "blocked":
-            raise StackException(plan.reason or f"deploy de {name!r} bloqueado", code="blocked")
-        if plan.action == "create":
+        if plan_deploy(plan.current).action == "create":
             self._provisioner.create(
                 resolved,
                 stack_name=name,
                 template_body=template_body,
-                parameters=resolved_parameters,
+                parameters=values,
                 tags=full_tags,
             )
         else:
@@ -164,8 +180,9 @@ class OptionalStacks:
                 resolved,
                 stack_name=name,
                 template_body=template_body,
-                parameters=resolved_parameters,
+                parameters=values,
                 tags=full_tags,
+                keep_previous=plan.parameters.keep_previous,
             )
         if wait:
             self._provisioner.wait(name, "deployed", wait_timeout)
@@ -175,6 +192,26 @@ class OptionalStacks:
                 f"la pila {name!r} desapareció justo tras desplegarla", code="failed"
             )
         return status
+
+    def _plan(
+        self,
+        component: str | StackComponent,
+        stack_name: str | None,
+        parameters: dict[str, str] | None,
+        artifact_bucket: str | None,
+    ) -> _Plan:
+        """Lo común a `deploy()` y `parameter_changes()`: valida todo lo que
+        no necesita AWS antes de la única llamada (`DescribeStacks`), y
+        decide los parámetros según exista o no la pila."""
+        resolved = _resolve_component(component)
+        _require_supported(resolved)
+        name = stack_name or resolved.default_stack_name
+        _require_artifact_bucket(resolved, artifact_bucket)
+        given = _with_artifact_bucket(resolved, dict(parameters or {}), artifact_bucket)
+        reject_unknown_parameters(resolved, given)
+        current = self._provisioner.describe(name)
+        _require_deployable(plan_deploy(current), name)
+        return _Plan(resolved, name, current, plan_parameters(resolved, given, current))
 
     def destroy(
         self,

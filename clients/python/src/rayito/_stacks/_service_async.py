@@ -11,7 +11,7 @@ import asyncio
 
 import boto3
 
-from rayito._stacks._model import StackComponent, StackStatus
+from rayito._stacks._model import ParameterChange, StackComponent, StackStatus
 from rayito._stacks._port import StackProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks
 
@@ -33,6 +33,22 @@ class AsyncOptionalStacks:
         self, component: str | StackComponent, *, stack_name: str | None = None
     ) -> StackStatus | None:
         return await asyncio.to_thread(self._inner.status, component, stack_name=stack_name)
+
+    async def parameter_changes(
+        self,
+        component: str | StackComponent,
+        *,
+        stack_name: str | None = None,
+        parameters: dict[str, str] | None = None,
+        artifact_bucket: str | None = None,
+    ) -> tuple[ParameterChange, ...]:
+        return await asyncio.to_thread(
+            self._inner.parameter_changes,
+            component,
+            stack_name=stack_name,
+            parameters=parameters,
+            artifact_bucket=artifact_bucket,
+        )
 
     async def deploy(
         self,
