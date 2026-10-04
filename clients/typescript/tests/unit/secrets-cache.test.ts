@@ -166,3 +166,28 @@ describe("SecretCache", () => {
     expect(JSON.stringify(cache)).toContain("***");
   });
 });
+
+describe("SecretCache and webhook signing secrets", () => {
+  // `secrets` injects into an untrusted sandbox: with a webhook's signing
+  // secret it could forge signed deliveries to the receiver.
+  for (const secret of [
+    "webhooks/prod",
+    new SecretRef("webhooks/prod"),
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:rayito/webhooks/prod-AbCdEf",
+  ]) {
+    test(`never reads ${String(secret)}`, async () => {
+      const { api, cache } = rig();
+      api.put("rayito/webhooks/prod", SENTINEL_VALUE);
+      const failure = cache.get(secret);
+      await expect(failure).rejects.toThrow(InvalidArgumentError);
+      await expect(failure).rejects.not.toThrow(/prod/);
+      expect(api.count("GetSecretValue")).toBe(0);
+    });
+  }
+
+  test("a secret merely named like webhooks elsewhere is still read", async () => {
+    const { api, cache } = rig();
+    api.put("rayito/team/webhooks/prod", SENTINEL_VALUE);
+    expect(await cache.get("team/webhooks/prod")).toBe(SENTINEL_VALUE);
+  });
+});

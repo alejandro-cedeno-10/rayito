@@ -62,14 +62,29 @@ def test_sandbox_state_never_moves_back_to_an_older_event() -> None:
 
 def test_a_delivery_is_claimed_again_until_it_is_delivered() -> None:
     store = DynamoDbStore(FakeTable())
-    assert store.claim_delivery("evt-1", "wh-1") is True
+    event = _event()
+    assert store.claim_delivery(event, "wh-1") is True
     # A crash between claim and finish leaves `attempting`: claimable again.
-    assert store.claim_delivery("evt-1", "wh-1") is True
-    store.finish_delivery("evt-1", "wh-1", delivered=False)
-    assert store.claim_delivery("evt-1", "wh-1") is True
-    store.finish_delivery("evt-1", "wh-1", delivered=True)
-    assert store.claim_delivery("evt-1", "wh-1") is False
-    assert store.claim_delivery("evt-1", "wh-2") is True
+    assert store.claim_delivery(event, "wh-1") is True
+    store.finish_delivery(event, "wh-1", delivered=False)
+    assert store.claim_delivery(event, "wh-1") is True
+    store.finish_delivery(event, "wh-1", delivered=True)
+    assert store.claim_delivery(event, "wh-1") is False
+    assert store.claim_delivery(event, "wh-2") is True
+
+
+def test_one_sandboxs_delivery_never_marks_another_sandboxs_as_done() -> None:
+    # A sandbox chooses its own event ids: if it reuses another sandbox's
+    # (or one the reconciler will synthesize for it), the dedupe row it
+    # gets marked `delivered` must be its own, never the victim's.
+    table = FakeTable()
+    store = DynamoDbStore(table)
+    attacker = _event(sandbox_id="sbx-attacker", event_id="synthetic-0123")
+    victim = _event(sandbox_id="sbx-victim", event_id="synthetic-0123", kind="killed")
+    assert store.claim_delivery(attacker, "wh-1") is True
+    store.finish_delivery(attacker, "wh-1", delivered=True)
+    assert store.claim_delivery(victim, "wh-1") is True
+    assert ("DELIVERY#sbx-victim#synthetic-0123", "wh-1") in table.items
 
 
 def test_webhooks_for_type_filters_by_subscribed_type() -> None:

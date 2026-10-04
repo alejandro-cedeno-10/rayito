@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { type LazyAwsApi, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { InvalidArgumentError, WebhookError } from "../errors.js";
-import { DEFAULT_SECRET_PREFIX, resolveSecretId } from "../secrets/names.js";
+import { resolveSecretId, WEBHOOK_SECRET_PREFIX } from "../secrets/names.js";
 import type { StackComponent, StackStatus } from "../stacks/model.js";
 import { componentByName } from "../stacks/registry.js";
 import { OptionalStacks } from "../stacks/service.js";
@@ -20,6 +20,8 @@ import {
   DEFAULT_RECONCILER_INTERVAL_MINUTES,
   DEFAULT_STACK_NAME,
   type EventRecord,
+  INVALID_WEBHOOK_URL,
+  isDeliverableWebhookUrl,
   type WebhookInfo,
 } from "./domain.js";
 import {
@@ -38,7 +40,7 @@ import {
   type LifecycleEventsSectionSource,
 } from "./section.js";
 
-export const WEBHOOK_SECRET_PREFIX = `${DEFAULT_SECRET_PREFIX}webhooks/`;
+export { WEBHOOK_SECRET_PREFIX };
 
 const COMPONENT: StackComponent = componentByName("events-webhooks") as StackComponent;
 const EVENT_TYPE_PATTERN = /^sandbox\.lifecycle\.(created|paused|resumed|killed)$/;
@@ -212,8 +214,8 @@ export class LifecycleEvents implements LifecycleEventsSectionSource {
     url: string,
     options: { secretName: string; types: readonly string[] },
   ): Promise<WebhookInfo> {
-    if (!url.startsWith("https://")) {
-      throw new InvalidArgumentError("registerWebhook: url debe ser https://");
+    if (typeof url !== "string" || !isDeliverableWebhookUrl(url)) {
+      throw new InvalidArgumentError(`registerWebhook: ${INVALID_WEBHOOK_URL}`);
     }
     const types = validateTypes(options.types);
     if (types === undefined || types.length === 0) {

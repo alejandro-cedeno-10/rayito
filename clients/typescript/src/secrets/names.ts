@@ -8,6 +8,20 @@
 import { InvalidArgumentError } from "../errors.js";
 
 export const DEFAULT_SECRET_PREFIX = "rayito/";
+/**
+ * Donde viven los secretos de firma de los webhooks (`LifecycleEvents.
+ * registerWebhook`, `infra/events-webhooks.yaml`: el deliverer sólo lee
+ * `secret:rayito/webhooks/*`). Dentro del prefijo por defecto, pero nunca se
+ * entregan a un sandbox: `SecretStore.readValue` (el camino de `secrets` y
+ * `SecretCache`) los rechaza, igual que el `Deny` de `RayitoSecretsReader`
+ * (`infra/secrets-access.yaml`). Espejo de `rayito._secrets`.
+ */
+export const WEBHOOK_SECRET_PREFIX = `${DEFAULT_SECRET_PREFIX}webhooks/`;
+/** Separador del nombre dentro de un ARN de Secrets Manager (`...:secret:<nombre>-<sufijo>`). */
+export const SECRET_ARN_NAME_MARKER = ":secret:";
+export const WEBHOOK_SECRET_REFUSED =
+  "los secretos de firma de webhooks (rayito/webhooks/) no se leen con secrets ni " +
+  "SecretCache: un sandbox que los tuviera podría falsificar entregas firmadas";
 export const DEFAULT_TTL_SECONDS = 300;
 export const MAX_TTL_SECONDS = 86_400;
 export const VERSION_TOKEN_PREFIX = "rayito-secret-version-";
@@ -186,6 +200,18 @@ export function resolveSecretId(name: string, prefix: string): string {
     );
   }
   return secretId;
+}
+
+/** `InvalidArgumentError` si `secretId` (nombre resuelto o ARN) está bajo `WEBHOOK_SECRET_PREFIX`; nunca repite el nombre. */
+export function refuseWebhookSigningSecret(secretId: string): void {
+  const marker = secretId.indexOf(SECRET_ARN_NAME_MARKER);
+  const name =
+    secretId.startsWith("arn:") && marker >= 0
+      ? secretId.slice(marker + SECRET_ARN_NAME_MARKER.length)
+      : secretId;
+  if (name.startsWith(WEBHOOK_SECRET_PREFIX)) {
+    throw new InvalidArgumentError(WEBHOOK_SECRET_REFUSED);
+  }
 }
 
 export function displayName(awsName: string, prefix: string): string {

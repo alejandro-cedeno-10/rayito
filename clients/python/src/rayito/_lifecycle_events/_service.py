@@ -18,12 +18,14 @@ from rayito._lifecycle_events._domain import (
     DEFAULT_GET_EVENTS_LIMIT,
     DEFAULT_RECONCILER_INTERVAL_MINUTES,
     DEFAULT_STACK_NAME,
+    INVALID_WEBHOOK_URL,
     EventRecord,
     WebhookInfo,
+    is_deliverable_webhook_url,
 )
 from rayito._lifecycle_events._keys import derive_sandbox_key
 from rayito._lifecycle_events._section import LifecycleEventsSection
-from rayito._secrets import DEFAULT_SECRET_PREFIX, resolve_secret_id
+from rayito._secrets import WEBHOOK_SECRET_PREFIX, resolve_secret_id
 from rayito._stacks._model import StackComponent, StackStatus
 from rayito._stacks._registry import component_by_name
 from rayito._stacks._service import OptionalStacks
@@ -31,13 +33,6 @@ from rayito.exceptions import InvalidArgumentException, WebhookException
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-#: `register_webhook(secret_name=...)` resolves under this prefix, matching
-#: the deliverer's own IAM statement (`infra/events-webhooks.yaml`'s
-#: `ReadWebhookSecrets` resource pattern) — the webhook's signing secret
-#: must already exist (create it with `SecretStore(prefix="rayito/webhooks/")`);
-#: this facade only records which one to use, it never creates a secret.
-WEBHOOK_SECRET_PREFIX: Final = f"{DEFAULT_SECRET_PREFIX}webhooks/"
 
 _COMPONENT: StackComponent = component_by_name("events-webhooks")  # type: ignore[assignment]
 
@@ -139,7 +134,7 @@ class LifecycleEvents:
     def destroy(self, *, wait: bool = True) -> None:
         """Borra la pila entera: el secreto del stack (force-delete), la
         tabla con todos sus eventos y webhooks, las tres Lambdas, la
-        suscripción, la cola de fallos y el scheduler. No toca los secretos
+        suscripción, las colas de fallos y el scheduler. No toca los secretos
         de cada webhook (`rayito/webhooks/...`, de `SecretStore`) ni el log
         group de la imagen, que esta pila nunca creó. Si `EventsOperatorPolicy`
         sigue vinculada a algún usuario o rol, CloudFormation no puede
@@ -150,8 +145,8 @@ class LifecycleEvents:
     # -- Webhooks ----------------------------------------------------------
 
     def register_webhook(self, url: str, *, secret_name: str, types: Sequence[str]) -> WebhookInfo:
-        if not url.startswith("https://"):
-            raise InvalidArgumentException("register_webhook: url debe ser https://")
+        if not isinstance(url, str) or not is_deliverable_webhook_url(url):
+            raise InvalidArgumentException(f"register_webhook: {INVALID_WEBHOOK_URL}")
         validated_types = _validate_types(types)
         if not validated_types:
             raise InvalidArgumentException("register_webhook: types no puede estar vacío")

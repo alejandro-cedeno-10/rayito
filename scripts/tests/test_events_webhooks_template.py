@@ -91,6 +91,7 @@ def test_each_lambda_role_is_scoped_to_what_it_needs() -> None:
     assert forwarder == {
         "dynamodb:PutItem",
         "secretsmanager:GetSecretValue",
+        "sqs:SendMessage",
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
@@ -179,3 +180,82 @@ def test_no_account_id_or_bucket_name_is_hard_coded() -> None:
     assert "123456789012" not in text
     for digits in ("111111111111", "999999999999"):
         assert digits not in text
+
+
+LAMBDA_ROLES = ("ForwarderRole", "DelivererRole", "ReconcilerRole")
+
+
+def role_statements(role: str) -> list[dict[str, Any]]:
+    return [
+        statement
+        for policy in resources()[role]["Properties"]["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+    ]
+
+
+def leading_keys(statement: dict[str, Any]) -> list[str] | None:
+    """The `dynamodb:LeadingKeys` a statement allows, or `None` if it does
+    not restrict them."""
+    for operator, keys in statement.get("Condition", {}).items():
+        if operator.startswith("ForAllValues:") and "dynamodb:LeadingKeys" in keys:
+            return list(keys["dynamodb:LeadingKeys"])
+    return None
+
+
+def writes(role_or_statements: list[dict[str, Any]], action: str) -> list[dict[str, Any]]:
+    return [s for s in role_or_statements if action in as_list(s["Action"])]
+
+
+def test_the_forwarder_failures_reach_a_queue_instead_of_being_dropped() -> None:
+    # CloudWatch Logs invokes the forwarder asynchronously: without an
+    # OnFailure destination a batch that still fails after the retries is
+    # discarded, genuine lines included.
+    config = resources()["ForwarderEventInvokeConfig"]
+    assert config["Type"] == "AWS::Lambda::EventInvokeConfig"
+    properties = config["Properties"]
+    assert properties["FunctionName"] == {"Ref": "ForwarderFunction"}
+    assert properties["Qualifier"] == "$LATEST"
+    assert properties["DestinationConfig"]["OnFailure"]["Destination"] == {
+        "Fn::GetAtt": "ForwarderFailuresQueue.Arn"
+    }
+    (send,) = writes(role_statements("ForwarderRole"), "sqs:SendMessage")
+    assert send["Resource"] == {"Fn::GetAtt": "ForwarderFailuresQueue.Arn"}
+    assert template()["Outputs"]["ForwarderFailuresQueueUrl"]["Value"] == {
+        "Ref": "ForwarderFailuresQueue"
+    }
+
+
+def test_lambda_roles_write_only_lambdas_own_log_groups() -> None:
+    # Never `logs:*` on the whole account: the sandboxes' `/rayito/*` groups
+    # are where the forwarder reads events from.
+    for role in LAMBDA_ROLES:
+        (statement,) = [s for s in role_statements(role) if s.get("Sid") == "WriteLogs"]
+        resource = statement["Resource"]["Fn::Sub"]
+        assert resource.endswith(":log-group:/aws/lambda/*"), (role, resource)
+
+
+def test_every_table_write_is_limited_to_its_own_row_types() -> None:
+    expected = {
+        ("ForwarderRole", "dynamodb:PutItem"): ["EVENT#*", "STATE#*"],
+        ("DelivererRole", "dynamodb:PutItem"): ["DELIVERY#*"],
+        ("DelivererRole", "dynamodb:Query"): ["WEBHOOK"],
+        ("ReconcilerRole", "dynamodb:PutItem"): ["EVENT#*", "STATE#*"],
+    }
+    for (role, action), keys in expected.items():
+        statements = writes(role_statements(role), action)
+        assert statements, (role, action)
+        for statement in statements:
+            assert leading_keys(statement) == keys, (role, action)
+    operator = resources()["EventsOperatorPolicy"]["Properties"]["PolicyDocument"]["Statement"]
+    for action in ("dynamodb:PutItem", "dynamodb:DeleteItem"):
+        for statement in writes(operator, action):
+            assert leading_keys(statement) == ["WEBHOOK"], action
+
+
+def test_the_scheduler_role_trusts_only_this_account() -> None:
+    (statement,) = resources()["ReconcilerSchedulerRole"]["Properties"][
+        "AssumeRolePolicyDocument"
+    ]["Statement"]
+    assert statement["Condition"] == {
+        "StringEquals": {"aws:SourceAccount": {"Ref": "AWS::AccountId"}}
+    }

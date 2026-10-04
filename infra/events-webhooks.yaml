@@ -5,9 +5,9 @@ Description: >-
   CloudWatch Logs subscription, stored for 7 days and delivered to
   registered webhooks with E2B-compatible signatures. Creates one Secrets
   Manager secret (the stack-wide HMAC key), one on-demand DynamoDB table,
-  three Lambda functions, one CloudWatch Logs subscription filter, one SQS
-  queue (the deliverer's on-failure destination) and one EventBridge
-  Scheduler rule. Deploy it only if you pass `events=` to
+  three Lambda functions, one CloudWatch Logs subscription filter, two SQS
+  queues (the forwarder's and the deliverer's on-failure destinations) and
+  one EventBridge Scheduler rule. Deploy it only if you pass `events=` to
   `Sandbox.create`; delete the stack to remove everything it created
   (the Secrets Manager secret is force-deleted, losing every already
   registered webhook's ability to re-verify old events). Action names and
@@ -31,7 +31,10 @@ Parameters:
   ArtifactS3Key:
     Type: String
     MinLength: 1
-    Description: sha256 of the Lambda zip (filled by `OptionalStacks.deploy`, never set by hand).
+    Description: >-
+      rayito/stacks/<component>/<sha256>.zip, the Lambda zip's key inside the
+      rayito/ namespace the IAM templates protect (filled by
+      `OptionalStacks.deploy`, never set by hand).
   ReconcilerIntervalMinutes:
     Type: Number
     # Default: the SDKs' DEFAULT_RECONCILER_INTERVAL_MINUTES (pinned equal by
@@ -114,18 +117,30 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # dynamodb:LeadingKeys is the partition key value of each
+              # write: the forwarder only ever writes EVENT# and STATE# rows.
               - Sid: WriteEvents
                 Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ["EVENT#*", "STATE#*"]
+              - Sid: SendToFailuresQueue
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ForwarderFailuresQueue.Arn
               - Sid: ReadStackKey
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref StackKeySecret
+              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
+              # a bug in a function can never write lines into an image's log
+              # group, which is what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
 
   DelivererRole:
     Type: AWS::IAM::Role
@@ -149,18 +164,31 @@ Resources:
                   - dynamodb:DescribeStream
                   - dynamodb:ListStreams
                 Resource: !GetAtt EventsTable.StreamArn
-              - Sid: ReadWebhooksAndDedupe
+              - Sid: ReadWebhooks
                 Effect: Allow
-                Action: [dynamodb:Query, dynamodb:PutItem]
+                Action: dynamodb:Query
                 Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys: ["WEBHOOK"]
+              - Sid: WriteDeliveryDedupe
+                Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ["DELIVERY#*"]
               - Sid: ReadWebhookSecrets
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rayito/webhooks/*"
+              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
+              # a bug in a function can never write lines into an image's log
+              # group, which is what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
               - Sid: SendToFailuresQueue
                 Effect: Allow
                 Action: sqs:SendMessage
@@ -180,18 +208,30 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: ReadAndWriteEvents
+              # Scan cannot be narrowed by key (it reads the whole table);
+              # the writes are, to the rows a synthesized event touches.
+              - Sid: ScanOpenSandboxes
                 Effect: Allow
-                Action: [dynamodb:Scan, dynamodb:PutItem]
+                Action: dynamodb:Scan
                 Resource: !GetAtt EventsTable.Arn
+              - Sid: WriteSynthesizedEvents
+                Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ["EVENT#*", "STATE#*"]
               - Sid: ListMicrovms
                 Effect: Allow
                 Action: lambda:ListMicrovms
                 Resource: "*"
+              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
+              # a bug in a function can never write lines into an image's log
+              # group, which is what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
 
   # --- Lambda functions ---------------------------------------------------
   ForwarderFunction:
@@ -209,6 +249,26 @@ Resources:
         Variables:
           EVENTS_TABLE_NAME: !Ref EventsTable
           STACK_KEY_SECRET_ID: !Ref StackKeySecret
+
+  # CloudWatch Logs invokes the forwarder asynchronously: an invocation that
+  # still fails after Lambda's own retries (a table write that kept failing;
+  # a bad line never fails it, `handlers/forwarder.py`) lands here with its
+  # batch instead of being discarded. Same shape and cost as
+  # DelivererFailuresQueue below: no consumer shipped, within the free tier.
+  ForwarderFailuresQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days, SQS's own maximum
+
+  ForwarderEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt ForwarderFailuresQueue.Arn
 
   ForwarderLogPermission:
     Type: AWS::Lambda::Permission
@@ -307,6 +367,9 @@ Resources:
           - Effect: Allow
             Principal: { Service: scheduler.amazonaws.com }
             Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
       Policies:
         - PolicyName: invoke-reconciler
           PolicyDocument:
@@ -346,9 +409,18 @@ Resources:
             Effect: Allow
             Action: secretsmanager:GetSecretValue
             Resource: !Ref StackKeySecret
-          - Sid: ReadWriteWebhooksAndEvents
+          # The SDK only ever writes and deletes WEBHOOK rows: it can never
+          # mark a delivery done or plant an event row.
+          - Sid: WriteWebhooks
             Effect: Allow
-            Action: [dynamodb:PutItem, dynamodb:Query, dynamodb:DeleteItem]
+            Action: [dynamodb:PutItem, dynamodb:DeleteItem]
+            Resource: !GetAtt EventsTable.Arn
+            Condition:
+              ForAllValues:StringEquals:
+                dynamodb:LeadingKeys: ["WEBHOOK"]
+          - Sid: ReadWebhooksAndEvents
+            Effect: Allow
+            Action: dynamodb:Query
             Resource:
               - !GetAtt EventsTable.Arn
               - !Sub "${EventsTable.Arn}/index/gsi1"
@@ -371,3 +443,6 @@ Outputs:
   DelivererFailuresQueueUrl:
     Description: Whole-batch delivery failures (OnFailure destination); empty under normal operation.
     Value: !Ref DelivererFailuresQueue
+  ForwarderFailuresQueueUrl:
+    Description: Forwarder invocations that failed after Lambda's retries (OnFailure destination); empty under normal operation.
+    Value: !Ref ForwarderFailuresQueue

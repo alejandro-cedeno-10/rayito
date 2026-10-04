@@ -273,3 +273,105 @@ def test_execution_role_has_no_transfer_statement() -> None:
         )
         assert statement_with_sid(document, TRANSFER_OBJECTS_SID) is None
         assert "s3:DeleteObject" not in set(actions_under(document))
+
+
+LAUNCHER = "SandboxLauncherPolicy"
+PUBLISHER = "ImagePublisherPolicy"
+#: Lo que cambia una imagen: lo que un lanzador comprometido usaría para
+#: publicar una versión con puerta trasera (los artefactos los cubre la
+#: aserción sobre `${ArtifactBucket}`).
+IMAGE_WRITE_ACTIONS = frozenset(
+    {
+        "lambda:CreateMicrovmImage",
+        "lambda:UpdateMicrovmImage",
+        "lambda:UpdateMicrovmImageVersion",
+        "lambda:DeleteMicrovmImageVersion",
+        "lambda:TagResource",
+    }
+)
+#: Los verbos de runtime que sólo necesita quien crea y maneja sandboxes.
+RUNTIME_ACTIONS = frozenset(
+    {
+        "lambda:RunMicrovm",
+        "lambda:GetMicrovm",
+        "lambda:SuspendMicrovm",
+        "lambda:ResumeMicrovm",
+        "lambda:TerminateMicrovm",
+        "lambda:CreateMicrovmAuthToken",
+    }
+)
+
+
+def policy_statements(name: str) -> list[Any]:
+    return resource(name)["Properties"]["PolicyDocument"]["Statement"]
+
+
+def grants(name: str) -> set[tuple[str, str, str]]:
+    """Cada terna (acción, recurso, condición) que concede una política,
+    con las listas de recursos desplegadas y las ramas de un `Fn::If`
+    incluidas (como `strings_under`), serializadas para poder compararlas."""
+    found: set[tuple[str, str, str]] = set()
+    for statement in policy_statements(name):
+        candidates = (
+            [branch for branch in statement["Fn::If"][1:] if branch != NO_VALUE]
+            if "Fn::If" in statement
+            else [statement]
+        )
+        for candidate in candidates:
+            targets = candidate["Resource"]
+            condition = json.dumps(candidate.get("Condition"), sort_keys=True)
+            for target in targets if isinstance(targets, list) else [targets]:
+                for action in strings_under(candidate["Action"]):
+                    found.add((action, json.dumps(target, sort_keys=True), condition))
+    return found
+
+
+def test_the_launcher_can_never_publish_an_image_or_pass_the_build_role() -> None:
+    actions = set(actions_under(resource(LAUNCHER)))
+    assert not actions & IMAGE_WRITE_ACTIONS, actions & IMAGE_WRITE_ACTIONS
+    assert RUNTIME_ACTIONS <= actions
+    passed = [
+        statement
+        for statement in policy_statements(LAUNCHER)
+        if "iam:PassRole" in set(strings_under(statement.get("Action", [])))
+    ]
+    assert [statement["Resource"] for statement in passed] == [
+        {"Fn::GetAtt": "ExecutionRole.Arn"}
+    ], "el lanzador sólo pasa el execution role, nunca el de build"
+    assert not any(
+        "${ArtifactBucket}" in text for text in strings_under(policy_statements(LAUNCHER))
+    ), "el lanzador no toca el bucket de artefactos"
+
+
+def test_the_publisher_cannot_run_or_drive_a_sandbox() -> None:
+    actions = set(actions_under(resource(PUBLISHER)))
+    assert not actions & RUNTIME_ACTIONS, actions & RUNTIME_ACTIONS
+    assert IMAGE_WRITE_ACTIONS <= actions
+    assert not mentions_a_transfer_parameter(policy_statements(PUBLISHER))
+
+
+def test_caller_policy_is_exactly_the_union_of_launcher_and_publisher() -> None:
+    # CallerPolicy sigue igual para quien ya la tiene vinculada: si se le
+    # añade o quita algo, debe hacerse también en una de las dos.
+    assert grants("CallerPolicy") == grants(LAUNCHER) | grants(PUBLISHER)
+
+
+def test_every_policy_is_exported() -> None:
+    outputs = template()["Outputs"]
+    for name, output in (
+        ("CallerPolicy", "CallerPolicyArn"),
+        (LAUNCHER, "SandboxLauncherPolicyArn"),
+        (PUBLISHER, "ImagePublisherPolicyArn"),
+    ):
+        assert outputs[output]["Value"] == {"Ref": name}
+
+
+def test_the_artifact_deny_exists_even_without_a_persistence_bucket() -> None:
+    # Sin `PersistenceBucket` el rol no recibe S3 de esta plantilla, pero
+    # otra política (un `s3-mounts` sobre el bucket de artefactos) podría
+    # dárselo: el `Deny` no puede depender de esa condición.
+    policies = resource("ExecutionRole")["Properties"]["Policies"]
+    unconditional = [policy for policy in policies if "Fn::If" not in policy]
+    assert any(
+        statement_with_sid(policy, ARTIFACT_DENY_SID) is not None for policy in unconditional
+    ), f"`{ARTIFACT_DENY_SID}` sólo existe con `PersistenceBucket`"

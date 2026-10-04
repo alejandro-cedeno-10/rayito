@@ -18,7 +18,7 @@ import {
   rejectUnknownParameters,
   stackTags,
 } from "./model.js";
-import { loadArtifact, loadTemplate } from "./packaging.js";
+import { artifactKey, loadArtifact, loadTemplate } from "./packaging.js";
 import type { StackProvisioner } from "./port.js";
 import { COMPONENTS, componentByName } from "./registry.js";
 
@@ -182,7 +182,7 @@ export class OptionalStacks {
     const parameters: Record<string, string> = { ...plan.parameters.values };
     if ((resolved.artifacts?.length ?? 0) > 0 && options.artifactBucket) {
       const data = await loadArtifact(resolved);
-      const key = await artifactKey(data);
+      const key = await artifactKey(resolved, data);
       await this.#provisioner.putArtifact(options.artifactBucket, key, data);
       for (const artifact of resolved.artifacts ?? []) {
         parameters[artifact.parameterKey] = key;
@@ -255,9 +255,4 @@ export class OptionalStacks {
       );
     }
   }
-}
-
-async function artifactKey(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

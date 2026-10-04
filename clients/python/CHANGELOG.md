@@ -6,6 +6,63 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Security
+
+- **Eventos de ciclo de vida (`events-webhooks`): una línea maliciosa ya no
+  tira los eventos legítimos de su lote.** El forwarder verifica el MAC con
+  la clave del sandbox que nombra el *log stream* **antes** de leer el
+  contenido, parsea de forma estricta y nunca falla la invocación por una
+  línea: la cuenta (`malformed_line`, `mac_invalid`, `stale_event`,
+  `internal_error`) y sigue. Si falla una escritura en la tabla, el resto
+  del lote se escribe igual y el lote va a la nueva cola
+  `ForwarderFailuresQueue` (destino `OnFailure` de su invocación asíncrona)
+  en vez de perderse. El nombre del stream deja de presentarse como prueba
+  de identidad: sólo el MAC autentica (`SECURITY.md` T22).
+- **Eventos: sólo lo que emite `rayd`, y reciente.** Tras el MAC, el evento
+  debe ser del mismo sandbox que el stream, con un `event_id` de 32 hex
+  (nunca un id del reconciliador), `kill_reason` sólo en `killed` y sólo
+  `request`, un ARN de `microvm-image` y un `occurred_at_ms` de menos de
+  24 h (y no más de 5 min en el futuro): una línea capturada y repetida
+  cuando su fila de deduplicación ya caducó se rechaza. La deduplicación de
+  entregas pasa a `DELIVERY#<sandbox_id>#<event_id>`, así que un sandbox no
+  puede marcar como entregado el evento de otro (las entregas en curso al
+  actualizar la pila pueden repetirse una vez).
+- **Webhooks: uno roto o lento ya no bloquea a los demás.** El deliverer
+  trata una URL que no puede parsear como un fallo permanente de ese
+  webhook (`invalid_url`), aísla cualquier error inesperado a su webhook
+  (`internal_error`) y el plazo de cada intento cubre la resolución DNS y
+  la respuesta entera. `register_webhook` rechaza con
+  `InvalidArgumentException` una URL que el deliverer no podría alcanzar (puerto
+  fuera de 1-65535, host inválido o no codificable en IDNA, espacios o
+  barras invertidas), con el mismo criterio en los dos SDKs.
+- **Código de las pilas opcionales: nunca se fía de un objeto que ya
+  exista.** `OptionalStacks.deploy()` sube el zip a
+  `rayito/stacks/<componente>/<sha256>.zip` (dentro del espacio `rayito/`
+  que protegen las plantillas de IAM, ya no en la raíz del bucket), manda
+  `ExpectedBucketOwner` con la cuenta del llamante y, si el objeto ya
+  existe, compara su contenido antes de reutilizarlo (si no coincide, lo
+  sobrescribe con `ChecksumSHA256` y avisa por el logger).
+- **`infra/iam.yaml`: el lanzador ya no puede publicar imágenes.** Nuevas
+  políticas `SandboxLauncherPolicy` (sólo lanzar y manejar sandboxes: la
+  del rol de un servicio en producción) e `ImagePublisherPolicy` (sólo
+  publicar); `CallerPolicy` sigue igual, como su unión. El `Deny` del
+  execution role sobre los artefactos de imagen existe ya siempre, no sólo
+  con `PersistenceBucket`.
+- **`infra/templates.yaml`: `RayitoTemplateBuilder` sólo lee `rayito/*`**
+  del bucket de artefactos o de la imagen base, nunca el bucket entero
+  (que puede guardar los `HOME` persistidos y las transferencias).
+- **Secretos de firma de webhooks fuera de `secrets=`.**
+  `RayitoSecretsReader` niega `rayito/webhooks/*` y el SDK se niega a leer
+  esos secretos por `secrets=`/`SecretCache` (`InvalidArgumentException`).
+  `SecretPrefix` de `infra/secrets-access.yaml` debe terminar en `/`.
+- **Mínimo privilegio en `events-webhooks`**: cada Lambda escribe sólo sus
+  tipos de fila (`dynamodb:LeadingKeys`) y sólo en los log groups de Lambda,
+  la política del operador sólo escribe filas de webhooks y el rol del
+  Scheduler exige `aws:SourceAccount`.
+- `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
+  e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
+  cualquier sandbox de las imágenes de `TestImageArns`.
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

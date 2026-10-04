@@ -49,15 +49,16 @@ class EventStore(Protocol):
         """Sandboxes whose last recorded event is not `killed`."""
         ...
 
-    def claim_delivery(self, event_id: str, webhook_id: str) -> bool:
-        """Marks the `(event_id, webhook_id)` delivery as being attempted.
+    def claim_delivery(self, event: LifecycleEvent, webhook_id: str) -> bool:
+        """Marks the `(event, webhook_id)` delivery as being attempted —
+        keyed by the event's `sandbox_id` and `event_id` together.
         `False` only when it is already `delivered` (DynamoDB Streams is
         at-least-once); a pair left `attempting` or `failed` by an earlier
         invocation is claimed again, so a crash or a timeout never loses a
         delivery."""
         ...
 
-    def finish_delivery(self, event_id: str, webhook_id: str, *, delivered: bool) -> None:
+    def finish_delivery(self, event: LifecycleEvent, webhook_id: str, *, delivered: bool) -> None:
         """Records the outcome of a claimed delivery."""
         ...
 

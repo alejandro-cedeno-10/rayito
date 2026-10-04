@@ -106,5 +106,30 @@ def test_only_the_aws_managed_network_connectors_can_be_passed() -> None:
 def test_the_base_artifact_read_falls_back_to_the_artifact_bucket() -> None:
     resource = statements()["ReadBaseImageArtifacts"]["Resource"]
     _condition, when_set, when_empty = resource["Fn::If"]
-    assert when_set == {"Fn::Sub": "${BaseImageBucketArn}/*"}
-    assert when_empty == {"Fn::Sub": "${ArtifactBucketArn}/*"}
+    assert when_set == {"Fn::Sub": "${BaseImageBucketArn}/rayito/*"}
+    assert when_empty == {"Fn::Sub": "${ArtifactBucketArn}/rayito/*"}
+
+
+def _s3_resources(value: Any) -> list[str]:
+    """Every `Fn::Sub` string of a statement's `Resource`, through `Fn::If`."""
+    if isinstance(value, list):
+        return [found for item in value for found in _s3_resources(item)]
+    if isinstance(value, dict):
+        if "Fn::Sub" in value:
+            return [value["Fn::Sub"]]
+        if "Fn::If" in value:
+            return [found for branch in value["Fn::If"][1:] for found in _s3_resources(branch)]
+    return [value] if isinstance(value, str) else []
+
+
+def test_no_s3_statement_reaches_beyond_the_rayito_namespace() -> None:
+    # The artifact bucket may also be the persistence and transfer bucket
+    # (infra/iam.yaml supports it): `<bucket>/*` would let the builder read
+    # every sandbox's HOME checkpoint and every staged transfer.
+    for sid, statement in statements().items():
+        actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        if not any(action.startswith("s3:") for action in actions):
+            continue
+        for resource in _s3_resources(statement["Resource"]):
+            assert not resource.endswith("Arn}/*"), (sid, resource)
+            assert "/rayito/" in resource, (sid, resource)

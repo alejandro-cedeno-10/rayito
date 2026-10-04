@@ -3,6 +3,9 @@
 the `KeyError` on `STACK_KEY_SECRET_ID` that failed every batch): claim /
 finish never loses a delivery, only 5xx and transport errors are retried,
 and the invocation's remaining time bounds every attempt and backoff.
+One webhook never blocks the others: a URL the sender cannot parse is a
+permanent failure of that webhook, and any unexpected error is contained to
+the webhook it happened on.
 """
 
 from __future__ import annotations
@@ -112,7 +115,7 @@ def _use(monkeypatch: pytest.MonkeyPatch, sender: _FakeSender, secrets: _FakeSec
 
 
 def _status(table: FakeTable, event_id: str = "evt-1", webhook_id: str = "wh-1") -> str:
-    return str(table.items[(f"DELIVERY#{event_id}", webhook_id)]["delivery_status"])
+    return str(table.items[(f"DELIVERY#sbx-1#{event_id}", webhook_id)]["delivery_status"])
 
 
 def test_delivers_with_only_the_template_environment(
@@ -191,7 +194,7 @@ def test_each_attempt_timeout_is_bounded_by_the_remaining_time(
     _use(monkeypatch, sender, _FakeSecretsClient())
     remaining_ms = 5_000
     deliverer.handler({"Records": [_record()]}, FakeContext(remaining_ms))
-    (_url, timeout), = sender.posts
+    ((_url, timeout),) = sender.posts
     assert timeout == remaining_ms / 1000 - deliverer.SAFETY_MARGIN_SECONDS
 
 
@@ -202,9 +205,7 @@ def test_running_out_of_time_reports_the_unfinished_record_and_keeps_it_retryabl
     # budget mid-retry, so it (not the second) is the batch item failure,
     # and its pair is left `failed`, never `delivered`.
     context = FakeContext(int((deliverer.ATTEMPT_TIMEOUT_SECONDS + 4) * 1000))
-    sender = _FakeSender(
-        500, context=context, seconds_per_post=deliverer.ATTEMPT_TIMEOUT_SECONDS
-    )
+    sender = _FakeSender(500, context=context, seconds_per_post=deliverer.ATTEMPT_TIMEOUT_SECONDS)
     _use(monkeypatch, sender, _FakeSecretsClient())
     event = {"Records": [_record("evt-1", "100"), _record("evt-2", "200")]}
 
@@ -212,4 +213,68 @@ def test_running_out_of_time_reports_the_unfinished_record_and_keeps_it_retryabl
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "100"}]}
     assert _status(table, "evt-1") == "failed"
-    assert ("DELIVERY#evt-2", "wh-1") not in table.items
+    assert ("DELIVERY#sbx-1#evt-2", "wh-1") not in table.items
+
+
+def _two_webhooks(table: FakeTable, first_url: str) -> None:
+    """`wh-0` (iterated first, `first_url`) and `wh-1` (a good URL)."""
+    item = _webhook_item("wh-0")
+    item["url"] = first_url
+    table.put_item(Item=item)
+
+
+class _RealUrlParsingSender(_FakeSender):
+    """Fails exactly like `HttpsOnlySender` on an unparsable URL, then
+    answers like `_FakeSender` for a well-formed one."""
+
+    def post(self, url: str, headers: dict[str, str], body: bytes, *, timeout: float) -> int:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(url)
+        _port = parts.port
+        (parts.hostname or "").encode("idna")
+        return super().post(url, headers, body, timeout=timeout)
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://h:99999/",
+        "https://h:abc/",
+        "https://[::1/",
+        "https://" + "a" * 64 + ".example/",
+    ],
+)
+def test_an_unparsable_webhook_url_fails_only_that_webhook(
+    table: FakeTable, monkeypatch: pytest.MonkeyPatch, bad_url: str
+) -> None:
+    _two_webhooks(table, bad_url)
+    sender = _RealUrlParsingSender(200)
+    _use(monkeypatch, sender, _FakeSecretsClient())
+
+    result = deliverer.handler({"Records": [_record()]}, FakeContext(_PLENTY_OF_TIME_MS))
+
+    assert result == {"batchItemFailures": []}
+    assert _status(table, webhook_id="wh-0") == "failed"
+    assert _status(table, webhook_id="wh-1") == "delivered"
+    assert sum(1 for url, _ in sender.posts if url == bad_url) <= 1, "never retried"
+
+
+def test_an_unexpected_error_on_one_webhook_does_not_fail_the_batch(
+    table: FakeTable, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _two_webhooks(table, "https://example.test/wh-0")
+
+    class _BrokenForOne(_FakeSender):
+        def post(self, url: str, headers: dict[str, str], body: bytes, *, timeout: float) -> int:
+            if url.endswith("/wh-0"):
+                raise RuntimeError("bug")
+            return super().post(url, headers, body, timeout=timeout)
+
+    _use(monkeypatch, _BrokenForOne(200), _FakeSecretsClient())
+    result = deliverer.handler({"Records": [_record()]}, FakeContext(_PLENTY_OF_TIME_MS))
+
+    assert result == {"batchItemFailures": []}
+    assert _status(table, webhook_id="wh-0") == "failed"
+    assert _status(table, webhook_id="wh-1") == "delivered"
+    assert '"delivery_failure_reason": "internal_error"' in capsys.readouterr().out

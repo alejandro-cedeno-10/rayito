@@ -5,7 +5,11 @@ E2B-style, with the retry policy of `domain/delivery.py`.
 Never loses a delivery: each `(event_id, webhook_id)` pair is claimed
 (`attempting`) before the first attempt and finished as `delivered` or
 `failed` after the last one; only `delivered` makes a later invocation skip
-it (DynamoDB Streams is at-least-once). Every attempt and backoff is fitted
+it (DynamoDB Streams is at-least-once). One webhook never blocks the others:
+a URL the sender cannot even parse is a permanent failure of that webhook
+(`invalid_url`, not retried), and anything unexpected while delivering to
+one webhook is logged under `internal_error` and the next webhook is tried,
+so a bad endpoint never fails the stream batch for everyone. Every attempt and backoff is fitted
 into the invocation's remaining time (`context.get_remaining_time_in_millis`);
 when it runs out, the pair in flight is finished as `failed` and the handler
 reports that record as its first `batchItemFailures` entry, so the stream
@@ -48,6 +52,10 @@ SAFETY_MARGIN_SECONDS: Final = 2.0
 #: An attempt given less time than this would only time out: stop instead.
 MIN_ATTEMPT_SECONDS: Final = 1.0
 _MILLIS_PER_SECOND: Final = 1000
+#: Closed `delivery_failure_reason` values added for one bad webhook that
+#: must not block the others (the rest are the literal reasons below).
+FAILURE_INVALID_URL: Final = "invalid_url"
+FAILURE_INTERNAL_ERROR: Final = "internal_error"
 
 _store: DynamoDbStore | None = None
 _secrets: SecretsManagerReader | None = None
@@ -125,22 +133,33 @@ def _deliver_record(
     lifecycle_event = _event_from_stream_image(image)
     payload = _webhook_payload(lifecycle_event)
     for webhook in webhooks.webhooks_for_type(lifecycle_event.e2b_type):
-        if not events.claim_delivery(lifecycle_event.event_id, webhook.webhook_id):
+        if not events.claim_delivery(lifecycle_event, webhook.webhook_id):
             counts["skipped"] += 1
             continue
         delivered = False
         try:
-            delivered = _deliver(webhook, payload, secrets, budget)
+            delivered = _deliver_isolated(webhook, payload, secrets, budget)
         finally:
-            events.finish_delivery(
-                lifecycle_event.event_id, webhook.webhook_id, delivered=delivered
-            )
+            events.finish_delivery(lifecycle_event, webhook.webhook_id, delivered=delivered)
         counts["delivered" if delivered else "failed"] += 1
 
 
-def _deliver(
+def _deliver_isolated(
     webhook: Webhook, payload: bytes, secrets: SecretReader, budget: _TimeBudget
 ) -> bool:
+    """`_deliver` for one webhook, where nothing but the invocation's own
+    time budget escapes: running out of time must stop the batch (the
+    record is retried from there), anything else only fails this webhook."""
+    try:
+        return _deliver(webhook, payload, secrets, budget)
+    except _TimeBudgetExhausted:
+        raise
+    except Exception:
+        _log_failure(webhook.webhook_id, FAILURE_INTERNAL_ERROR)
+        return False
+
+
+def _deliver(webhook: Webhook, payload: bytes, secrets: SecretReader, budget: _TimeBudget) -> bool:
     try:
         secret = secrets.read(webhook.secret_name)
     except (ClientError, BotoCoreError):
@@ -157,6 +176,11 @@ def _deliver(
         except SsrfBlocked:
             _log_failure(webhook.webhook_id, "ssrf_blocked")
             return False  # never retryable: the URL itself is the problem
+        except ValueError:
+            # `UnicodeError` included: a port out of range, an unparsable
+            # host or a label IDNA cannot encode. Never retryable either.
+            _log_failure(webhook.webhook_id, FAILURE_INVALID_URL)
+            return False
         except (OSError, http.client.HTTPException):
             status = None  # transport failure: retryable
         if status is not None and is_delivered(status):

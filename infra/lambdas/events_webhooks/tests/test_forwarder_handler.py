@@ -1,7 +1,11 @@
 """`handlers.forwarder.handler` with fake ports, in exactly the environment
 `ForwarderFunction` declares in `infra/events-webhooks.yaml`: a verified
 line is stored once, and only a newly stored event moves the sandbox's
-state (a duplicate or late line after `killed` never reopens it).
+state (a duplicate or late line after `killed` never reopens it). One bad
+line never costs the batch: a poison line is counted and the genuine lines
+around it are still stored, and a failed table write only fails the
+invocation after every other line was written (so the asynchronous retry
+and its OnFailure queue get it).
 """
 
 from __future__ import annotations
@@ -21,6 +25,13 @@ from handlers import forwarder
 STACK_KEY = b"stack-wide-secret"
 SANDBOX_ID = "sbx-0000000000000001"
 LOG_STREAM = f"2026/10/02[1]{SANDBOX_ID}"
+NOW_MS = 1_790_000_000_000
+IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base"
+
+
+def _event_id(label: str) -> str:
+    """A `rayd`-shaped id (32 lowercase hex), stable per label."""
+    return hashlib.sha256(label.encode()).hexdigest()[:32]
 
 
 class _FakeSecretsClient:
@@ -34,17 +45,20 @@ class _FakeSecretsClient:
 
 def _line(*, event_id: str, kind: str, occurred_at_ms: int) -> str:
     event: dict[str, Any] = {
-        "event_id": event_id,
+        "event_id": _event_id(event_id),
         "sandbox_id": SANDBOX_ID,
         "kind": kind,
         "generation": 0,
-        "occurred_at_ms": occurred_at_ms,
-        "image_arn": "arn:test",
+        "occurred_at_ms": NOW_MS + occurred_at_ms,
+        "image_arn": IMAGE_ARN,
         "image_version": "1",
     }
     if kind == "killed":
         event["kill_reason"] = "request"
-    payload = json.dumps(event).encode("utf-8")
+    return _signed(json.dumps(event).encode("utf-8"))
+
+
+def _signed(payload: bytes) -> str:
     mac = hmac.new(derive_sandbox_key(STACK_KEY, SANDBOX_ID), payload, hashlib.sha256).digest()
     return f"rayito.event.v1 {_b64(payload)} {_b64(mac)}"
 
@@ -70,6 +84,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeTable, _FakeSecretsClien
     table, secrets = FakeTable(), _FakeSecretsClient()
     monkeypatch.setattr(forwarder, "_store", None)
     monkeypatch.setattr(forwarder, "_secrets", None)
+    monkeypatch.setattr(forwarder, "_clock", lambda: NOW_MS / 1000)
     monkeypatch.setattr(forwarder.boto3, "resource", lambda _name: FakeDynamoResource(table))
     monkeypatch.setattr(forwarder.boto3, "client", lambda _name: secrets)
     return table, secrets
@@ -128,7 +143,92 @@ def test_logs_one_summary_line_with_counts_and_reasons_only(
     (line,) = capsys.readouterr().out.splitlines()
     assert json.loads(line) == {
         "forwarded": 1,
+        "failed_writes": 0,
         "rejected": 2,
         "rejected_by_reason": {"mac_invalid": 1, "malformed_line": 1},
     }
     assert SANDBOX_ID not in line
+
+
+def test_a_poison_line_never_drops_the_genuine_lines_around_it(
+    wired: tuple[FakeTable, _FakeSecretsClient],
+) -> None:
+    table, _secrets = wired
+    poison = [
+        f"rayito.event.v1 {_b64(payload)} {_b64(bytes(32))}"
+        for payload in (b"[]", b'"x"', b'{"generation": 1e400}', b"[" * 100_000)
+    ]
+    signed_poison = [_signed(b"[]"), _signed(b"[" * 100_000)]
+    result = forwarder.handler(
+        _subscription_event(
+            _line(event_id="evt-1", kind="created", occurred_at_ms=1),
+            *poison,
+            *signed_poison,
+            _line(event_id="evt-2", kind="paused", occurred_at_ms=2),
+        ),
+        None,
+    )
+    assert result == {"accepted": 2, "rejected": len(poison) + len(signed_poison)}
+    assert table.items[(f"STATE#{SANDBOX_ID}", "STATE")]["last_kind"] == "paused"
+
+
+def test_an_unexpected_error_in_one_decision_costs_only_that_line(
+    wired: tuple[FakeTable, _FakeSecretsClient],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    table, _secrets = wired
+    real_decide = forwarder.decide
+    broken = _line(event_id="evt-1", kind="created", occurred_at_ms=1)
+
+    def flaky_decide(**kwargs: Any) -> Any:
+        if kwargs["message"] == broken:
+            raise RuntimeError("bug")
+        return real_decide(**kwargs)
+
+    monkeypatch.setattr(forwarder, "decide", flaky_decide)
+    result = forwarder.handler(
+        _subscription_event(broken, _line(event_id="evt-2", kind="paused", occurred_at_ms=2)),
+        None,
+    )
+    assert result == {"accepted": 1, "rejected": 1}
+    summary = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert summary["rejected_by_reason"] == {forwarder.REASON_INTERNAL_ERROR: 1}
+    assert table.items[(f"STATE#{SANDBOX_ID}", "STATE")]["last_kind"] == "paused"
+
+
+def test_a_failed_write_fails_the_invocation_only_after_the_other_lines(
+    wired: tuple[FakeTable, _FakeSecretsClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table, _secrets = wired
+    real_put = table.put_item
+    failing_id = _event_id("evt-1")
+
+    def put_item(**kwargs: Any) -> None:
+        if kwargs["Item"].get("event_id") == failing_id:
+            raise RuntimeError("DynamoDB unavailable")
+        real_put(**kwargs)
+
+    monkeypatch.setattr(table, "put_item", put_item)
+    with pytest.raises(forwarder.ForwarderWriteFailed):
+        forwarder.handler(
+            _subscription_event(
+                _line(event_id="evt-1", kind="created", occurred_at_ms=1),
+                _line(event_id="evt-2", kind="paused", occurred_at_ms=2),
+            ),
+            None,
+        )
+    assert table.items[(f"STATE#{SANDBOX_ID}", "STATE")]["last_kind"] == "paused"
+
+
+def test_a_stale_line_is_counted_not_stored(
+    wired: tuple[FakeTable, _FakeSecretsClient],
+) -> None:
+    table, _secrets = wired
+    week_ms = 7 * 24 * 3600 * 1000
+    result = forwarder.handler(
+        _subscription_event(_line(event_id="evt-1", kind="created", occurred_at_ms=-week_ms)),
+        None,
+    )
+    assert result == {"accepted": 0, "rejected": 1}
+    assert table.items == {}

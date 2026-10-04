@@ -1,0 +1,30 @@
+{
+  "_comment": "register_webhook / registerWebhook: the same URLs accepted and rejected by both SDKs (is_deliverable_webhook_url / isDeliverableWebhookUrl) and by the deliverer's own parser.",
+  "accepted": [
+    "https://hooks.example.com/rayito",
+    "https://hooks.example.com:8443/path?x=1",
+    "https://hooks.example.com./trailing-dot",
+    "https://192.0.2.10/hook",
+    "https://[2001:db8::1]/hook",
+    "https://xn--tda.example.com/",
+    "https://ü.example.com/"
+  ],
+  "rejected": [
+    "http://hooks.example.com/",
+    "ftp://hooks.example.com/",
+    "https:///no-host",
+    "https://hooks.example.com:0/",
+    "https://hooks.example.com:99999/",
+    "https://hooks.example.com:abc/",
+    "https://[::1/",
+    "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com/",
+    "https://a..example.com/",
+    "https://exa mple.com/",
+    "not a url",
+    "https:\\\\hooks.example.com/",
+    "https://hooks.example.com\\path",
+    "https://hooks.example.com/a b",
+    "https://hooks.example.com/\tx",
+    " https://hooks.example.com/"
+  ]
+}

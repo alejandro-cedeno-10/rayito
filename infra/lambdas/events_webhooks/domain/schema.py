@@ -19,11 +19,15 @@ Item shapes, by `pk` prefix:
   `last_seen_ms`); a `killed` row stays as a tombstone, so a late line can
   never reopen the sandbox, and expires with the events (`expires_at`).
 - ``WEBHOOK`` / ``<webhook_id>``: one registered webhook.
-- ``DELIVERY#<event_id>`` / ``<webhook_id>``: a delivery's status
+- ``DELIVERY#<sandbox_id>#<event_id>`` / ``<webhook_id>``: a delivery's status
   (`delivery_status`: `attempting`, `delivered` or `failed`). DynamoDB
   Streams is at-least-once, so only `delivered` makes the deliverer skip a
   pair; anything else is attempted again. A short TTL (1 day) is enough —
   redelivery of a 7-day-old event was never going to be retried anyway.
+  Keyed by the sandbox as well as the event: an `event_id` is only unique
+  within one sandbox's own lines (a sandbox holding its `k_sbx` chooses
+  its ids), so a dedupe row of one sandbox can never mark another
+  sandbox's delivery as done.
 """
 
 from __future__ import annotations
@@ -63,5 +67,5 @@ def state_pk(sandbox_id: str) -> str:
     return f"{STATE_PK_PREFIX}{sandbox_id}"
 
 
-def delivery_pk(event_id: str) -> str:
-    return f"{DELIVERY_PK_PREFIX}{event_id}"
+def delivery_pk(sandbox_id: str, event_id: str) -> str:
+    return f"{DELIVERY_PK_PREFIX}{sandbox_id}#{event_id}"

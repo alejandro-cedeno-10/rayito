@@ -41,7 +41,8 @@ Parameters:
       ARN of the bucket that holds the rayito-base codeArtifact zip
       Template.build() reads (fromBaseImage()), when it is not the artifact
       bucket. Empty means the artifact bucket: the read is never granted on
-      any other bucket.
+      any other bucket. Either way only keys under rayito/ are readable
+      (where rayito image publish writes it, rayito/images/).
   ProtectedImageNamePrefix:
     Type: String
     Default: rayito-base
@@ -114,14 +115,20 @@ Resources:
               - s3:GetObject
               - s3:PutObject
             Resource: !Sub "\${ArtifactBucketArn}/rayito/templates/*"
+          # Only the Rayito artifact namespace (rayito/images/* from rayito
+          # image publish, rayito/templates/* from earlier builds), never the
+          # whole bucket: the artifact bucket may also hold the sandboxes'
+          # HOME checkpoints and transfer files (PersistenceBucket and
+          # TransferBucket in infra/iam.yaml can be the same bucket), which
+          # this lower-trust principal must never read.
           - Sid: ReadBaseImageArtifacts
             Effect: Allow
             Action:
               - s3:GetObject
             Resource: !If
               - HasBaseImageBucket
-              - !Sub "\${BaseImageBucketArn}/*"
-              - !Sub "\${ArtifactBucketArn}/*"
+              - !Sub "\${BaseImageBucketArn}/rayito/*"
+              - !Sub "\${ArtifactBucketArn}/rayito/*"
           - Sid: ReadBuildLogsOnFailure
             Effect: Allow
             Action:

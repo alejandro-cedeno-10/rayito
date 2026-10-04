@@ -95,16 +95,16 @@ class DynamoDbStore:
                 return sandboxes
             scan_kwargs["ExclusiveStartKey"] = last_key
 
-    def claim_delivery(self, event_id: str, webhook_id: str) -> bool:
+    def claim_delivery(self, event: LifecycleEvent, webhook_id: str) -> bool:
         return self._put_if(
-            _delivery_item(event_id, webhook_id, schema.DELIVERY_ATTEMPTING),
+            _delivery_item(event, webhook_id, schema.DELIVERY_ATTEMPTING),
             IF_NOT_DELIVERED,
             {":delivered": schema.DELIVERY_DELIVERED},
         )
 
-    def finish_delivery(self, event_id: str, webhook_id: str, *, delivered: bool) -> None:
+    def finish_delivery(self, event: LifecycleEvent, webhook_id: str, *, delivered: bool) -> None:
         status = schema.DELIVERY_DELIVERED if delivered else schema.DELIVERY_FAILED
-        self._table.put_item(Item=_delivery_item(event_id, webhook_id, status))
+        self._table.put_item(Item=_delivery_item(event, webhook_id, status))
 
     def webhooks_for_type(self, event_type: str) -> list[Webhook]:
         items: list[dict[str, Any]] = []
@@ -147,9 +147,9 @@ def _expires_at(ttl_seconds: int) -> int:
     return int(time.time()) + ttl_seconds
 
 
-def _delivery_item(event_id: str, webhook_id: str, status: str) -> dict[str, Any]:
+def _delivery_item(event: LifecycleEvent, webhook_id: str, status: str) -> dict[str, Any]:
     return {
-        "pk": schema.delivery_pk(event_id),
+        "pk": schema.delivery_pk(event.sandbox_id, event.event_id),
         "sk": webhook_id,
         "delivery_status": status,
         "expires_at": _expires_at(schema.DELIVERY_DEDUPE_TTL_SECONDS),

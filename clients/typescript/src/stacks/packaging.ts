@@ -45,6 +45,27 @@ export async function loadTemplate(component: StackComponent): Promise<string> {
   return assetFor(component).TEMPLATE_BODY;
 }
 
+/**
+ * Dentro de `rayito/`, el espacio de nombres que las plantillas de IAM ya
+ * protegen (sólo el publicador escribe ahí, el execution role tiene un
+ * `Deny` explícito y el builder de templates sólo lee); nunca la raíz del
+ * bucket. Espejo de `STACK_ARTIFACT_PREFIX` de `_packaging.py`.
+ */
+export const STACK_ARTIFACT_PREFIX = "rayito/stacks";
+
+/**
+ * La clave S3 determinista de un artefacto,
+ * `rayito/stacks/<componente>/<sha256>.zip`: subir el mismo contenido dos
+ * veces es un no-op (`putArtifact` compara el contenido ya subido antes).
+ */
+export async function artifactKey(component: StackComponent, data: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `${STACK_ARTIFACT_PREFIX}/${component.name}/${hex}.zip`;
+}
+
 export async function loadArtifact(component: StackComponent): Promise<Uint8Array> {
   const base64 = assetFor(component).ARTIFACT_BASE64;
   if (base64 === undefined) {

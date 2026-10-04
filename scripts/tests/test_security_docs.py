@@ -301,11 +301,17 @@ def test_caller_policy_is_the_publisher_policy() -> None:
         "SECURITY.md `CallerPolicy`",
         bullet,
         (
-            "la política del **publicador**",
+            "la unión de las dos",
             "`rayito image publish` / `prune`",
             "**no** la de un servidor de aplicación",
-            "`infra/ci-oidc-role.yaml`",
+            "`SandboxLauncherPolicy`",
         ),
+    )
+    launcher = paragraph(security_md(), "- `SandboxLauncherPolicy`")
+    assert_says(
+        "SECURITY.md `SandboxLauncherPolicy`",
+        launcher,
+        ("la del **servicio que lanza sandboxes**", "**Nunca** crea ni actualiza imágenes"),
     )
     assert_silent(
         "SECURITY.md `CallerPolicy`",
@@ -396,3 +402,23 @@ def test_t18_user_secret_custody_is_in_the_threat_model() -> None:
     site = flatten(site_doc("security"))
     assert "## Custodia de secretos del usuario (T18)" in site_doc("security")
     assert "el código del sandbox puede leer un secreto inyectado" in site
+
+
+def test_t22_says_only_the_mac_authenticates_an_event() -> None:
+    # The log stream name used to be presented as an identity check: any
+    # holder of the execution or build role can create a stream ending in
+    # `]<any id>`, so only the MAC (checked before parsing) authenticates.
+    row = flatten(threat_row("T22"))
+    assert_says(
+        "SECURITY.md T22",
+        row,
+        (
+            "**El MAC es lo único que autentica**",
+            "**no** es una prueba de identidad",
+            "**antes** de parsear nada",
+            "**Frescura**",
+            "**Una línea nunca tira el lote**",
+            "`DELIVERY#<sandbox_id>#<event_id>`",
+        ),
+    )
+    assert_silent("SECURITY.md T22", row, ("**Doble comprobación de identidad**",))

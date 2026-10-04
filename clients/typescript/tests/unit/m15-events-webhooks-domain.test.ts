@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   eventRecordType,
   eventType,
+  isDeliverableWebhookUrl,
   sandboxExecutionId,
 } from "../../src/lifecycle-events/domain.js";
 import { deriveSandboxKey } from "../../src/lifecycle-events/keys.js";
@@ -54,5 +55,20 @@ describe("event helpers", () => {
     expect(eventRecordType(record)).toBe("sandbox.lifecycle.killed");
     expect(sandboxExecutionId(record)).toBe("sbx-1#3");
     expect(eventType("created")).toBe("sandbox.lifecycle.created");
+  });
+});
+
+const URL_VECTORS = JSON.parse(
+  readFileSync(resolve(REPO_ROOT, "testdata/lifecycle-events/webhook-url-vectors.json"), "utf8"),
+) as { accepted: string[]; rejected: string[] };
+
+describe("isDeliverableWebhookUrl", () => {
+  it("matches the shared vectors (same as the Python SDK and the deliverer)", () => {
+    for (const url of URL_VECTORS.accepted) {
+      expect(isDeliverableWebhookUrl(url), url).toBe(true);
+    }
+    for (const url of URL_VECTORS.rejected) {
+      expect(isDeliverableWebhookUrl(url), url).toBe(false);
+    }
   });
 });

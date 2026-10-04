@@ -75,6 +75,21 @@ def test_register_webhook_requires_https() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["https://h:99999/", "https://h:abc/", "https://[::1/", "https://" + "a" * 64 + ".example/"],
+)
+def test_register_webhook_rejects_a_url_the_deliverer_could_never_reach(url: str) -> None:
+    # One such webhook used to make the deliverer raise and fail the whole
+    # stream batch, for every other webhook too.
+    table = FakeTable()
+    ev = _events(table)
+    with pytest.raises(InvalidArgumentException) as raised:
+        ev.register_webhook(url, secret_name="x", types=["sandbox.lifecycle.killed"])
+    assert url not in str(raised.value)
+    assert ev.list_webhooks() == []
+
+
 def test_register_webhook_rejects_unknown_type() -> None:
     ev = _events()
     with pytest.raises(InvalidArgumentException):

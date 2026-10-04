@@ -14,11 +14,12 @@ Parameters:
     Default: rayito/
     MinLength: 1
     MaxLength: 256
-    AllowedPattern: "^[A-Za-z0-9/_+=.@-]+$"
+    AllowedPattern: "^[A-Za-z0-9/_+=.@-]*/$"
     Description: >-
       Secrets Manager name prefix the SDK uses (SecretStore(prefix=), default
-      rayito/). Never empty: an empty prefix would grant every secret in the
-      account and region.
+      rayito/). Never empty, and always ending in "/": an empty prefix would
+      grant every secret in the account and region, and "rayito" (no slash)
+      would also grant unrelated secrets such as rayito-prod-db.
   KmsKeyArn:
     Type: String
     Default: ""
@@ -45,6 +46,17 @@ Resources:
               - secretsmanager:GetSecretValue
               - secretsmanager:DescribeSecret
             Resource: !Sub "arn:\${AWS::Partition}:secretsmanager:\${AWS::Region}:\${AWS::AccountId}:secret:\${SecretPrefix}*"
+          # Webhook signing secrets (events-webhooks, register_webhook) live
+          # under rayito/webhooks/, inside the default prefix: secrets=
+          # injects values into an untrusted sandbox, and a sandbox holding a
+          # signing secret could forge deliveries to the receiver. Only the
+          # deliverer Lambda reads them; the SDK refuses them in secrets=
+          # too. The admin policy keeps them (it creates and rotates them).
+          - Sid: NeverWebhookSigningSecrets
+            Effect: Deny
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource: !Sub "arn:\${AWS::Partition}:secretsmanager:\${AWS::Region}:\${AWS::AccountId}:secret:rayito/webhooks/*"
           - !If
             - HasKmsKey
             - Sid: DecryptThroughSecretsManager

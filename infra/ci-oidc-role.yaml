@@ -19,7 +19,11 @@ Parameters:
     AllowedPattern: "^[A-Za-z0-9_.-]+$"
   TestImageArns:
     Type: CommaDelimitedList
-    Description: "ARNs de las imágenes de test (rayito-base y, opcionalmente, rayito-base-caps)"
+    Description: >-
+      ARNs de las imágenes de test. Los permisos alcanzan a todo MicroVM de
+      esas imágenes: usa una cuenta dedicada a e2e o imágenes de test con
+      nombre propio (p. ej. rayito-e2e-base), nunca las imágenes que corren
+      sandboxes de producción (infra/README.md).
   CreateOidcProvider:
     Type: String
     Default: "true"
