@@ -13,9 +13,10 @@ name: release
 # GITHUB_TOKEN no dispara este workflow: en ese caso se lanza a mano con
 # `workflow_dispatch`, eligiendo el tag en "Use workflow from" y pasando el
 # mismo tag en `tag` con `dry_run: false`. Con `dry_run: true` (por defecto)
-# cada job construye, comprueba, firma (rayd) y sube los artefactos al run,
-# pero no publica nada: sirve para ensayar desde cualquier rama cuyos
-# manifiestos ya lleven la versión del tag (p. ej. la rama del PR de release).
+# sólo corren los jobs de build: construyen, comprueban y suben los
+# artefactos sin firmar al run, y no se firma ni se publica nada. Sirve para
+# ensayar desde cualquier rama cuyos manifiestos ya lleven la versión del tag
+# (p. ej. la rama del PR de release).
 #
 # python y typescript están partidos en build/publish (M10, C-10 + residuo de
 # H-02): el job `*-build` no lleva `environment` ni `id-token: write` y es el
@@ -35,11 +36,19 @@ name: release
 # `rayd-build` (sólo `contents: read`) hace checkout, compila y empaqueta;
 # `rayd-sign` (`id-token: write`, sin checkout) comprueba con `sha256sum -c`
 # lo que produjo el build y sólo ejecuta cosign; `rayd-upload` (`contents:
-# write`, environment `release` con revisor y política de tags `rayd-v*`, sin
-# checkout) vuelve a comprobarlo y sube los assets sin `--clobber`: un asset
-# publicado no se reemplaza nunca desde aquí. Un `build.rs` o una herramienta
-# de build comprometidos ya no ven ni el token OIDC ni un token con permiso
-# de escritura sobre las releases.
+# write`, sin checkout) vuelve a comprobarlo y sube los assets sin
+# `--clobber`: un asset publicado no se reemplaza nunca desde aquí. Un
+# `build.rs` o una herramienta de build comprometidos ya no ven ni el token
+# OIDC ni un token con permiso de escritura sobre las releases.
+#
+# Todo job con `id-token: write` (python-publish, typescript-publish y
+# rayd-sign) declara su environment con revisor y corre sólo con
+# `publish == 'true'` (sec-supply-chain-followups, SC-A01): Fulcio no emite
+# ningún certificado con la identidad `release.yml@refs/tags/rayd-v*` antes
+# de que el mantenedor apruebe el run, y un ensayo nunca firma. La
+# identidad de la firma la fijan el fichero de workflow y el tag, no quién
+# creó el tag: restringir también la creación de tags `rayd-v*` es un ajuste
+# del repositorio (docs/RELEASING.md).
 #
 # Ningún job de este workflow restaura una caché (SC-01): un run de tag
 # restaura las cachés del ámbito de la rama por defecto, que puede escribir
@@ -92,12 +101,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # uv fijado por versión y checksum (sec-supply-chain-ci, SC-04): sin ellos
-  # setup-uv instala la última. Es el sha256 de
-  # uv-x86_64-unknown-linux-gnu.tar.gz de la release 0.12.18, el mismo en su
-  # `.sha256` y en el `digest` del asset (2026-10-04).
-  UV_VERSION: 0.12.18
-  UV_SHA256: 89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16
+  # uv nunca vuelve a resolver un uv.lock desfasado (sec-supply-chain-followups,
+  # SC-A05). La versión y el checksum de uv viven en ./.github/actions/setup-uv.
+  UV_LOCKED: "1"
   RAYD_ASSETS: rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json SHA256SUMS
 
 jobs:
@@ -180,10 +186,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
-          version: ${{ env.UV_VERSION }}
-          checksum: ${{ env.UV_SHA256 }}
           python-version: "3.12"
           enable-cache: false
       - name: Tag matches pyproject version
@@ -214,6 +218,19 @@ jobs:
       - name: dist/ is still what uv build produced
         working-directory: clients/python
         run: sha256sum -c SHA256SUMS
+      # Hidden entries (the `.gitignore` uv build writes) never travel:
+      # upload-artifact skips them and the publish action globs `dist/*`.
+      - name: dist/ holds exactly the wheel and sdist of this version, both in SHA256SUMS (sha256sum -c ignores unlisted files)
+        working-directory: clients/python
+        run: |
+          expected="$(printf 'rayito-%s-py3-none-any.whl\nrayito-%s.tar.gz\n' "$VERSION" "$VERSION" | sort)"
+          actual="$(find dist -mindepth 1 -maxdepth 1 ! -name '.*' -printf '%f\n' | sort)"
+          test "$actual" = "$expected" || {
+            printf 'dist/ must hold exactly the wheel and sdist of %s, found:\n%s\n' "$VERSION" "$actual"; exit 1
+          }
+          test "$(cut -d' ' -f3 SHA256SUMS | sed 's#^dist/##' | sort)" = "$expected" || {
+            echo "SHA256SUMS must list exactly the wheel and sdist of $VERSION"; exit 1
+          }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-dist-${{ needs.resolve.outputs.version }}
@@ -231,6 +248,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -251,6 +270,17 @@ jobs:
       - name: dist/ matches SHA256SUMS
         working-directory: python-dist
         run: sha256sum -c SHA256SUMS
+      - name: dist/ holds exactly the wheel and sdist of this version (the action uploads every file in packages-dir)
+        working-directory: python-dist
+        run: |
+          expected="$(printf 'rayito-%s-py3-none-any.whl\nrayito-%s.tar.gz\n' "$VERSION" "$VERSION" | sort)"
+          actual="$(find dist -mindepth 1 -maxdepth 1 ! -name '.*' -printf '%f\n' | sort)"
+          test "$actual" = "$expected" || {
+            printf 'dist/ must hold exactly the wheel and sdist of %s, found:\n%s\n' "$VERSION" "$actual"; exit 1
+          }
+          test "$(cut -d' ' -f3 SHA256SUMS | sed 's#^dist/##' | sort)" = "$expected" || {
+            echo "SHA256SUMS must list exactly the wheel and sdist of $VERSION"; exit 1
+          }
       - name: Publish to PyPI (OIDC, attestations on by default)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
@@ -418,10 +448,11 @@ jobs:
           if-no-files-found: error
 
   rayd-sign:
-    name: rayd → cosign keyless signatures (no checkout, no build tooling)
+    name: rayd → cosign keyless signatures (environment release; no checkout, no build tooling)
     needs: [resolve, rayd-build]
-    if: needs.resolve.outputs.component == 'rayd'
+    if: needs.resolve.outputs.component == 'rayd' && needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       id-token: write
       contents: read

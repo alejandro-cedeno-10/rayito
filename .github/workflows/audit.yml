@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # uv nunca vuelve a resolver un uv.lock que ya no casa con su pyproject.toml
+  # (sec-supply-chain-followups, SC-A05): sin esto `uv run` re-bloquea en
+  # silencio e instala versiones que ni Dependabot ni los hashes del lock
+  # vieron.
+  UV_LOCKED: "1"
+
 jobs:
   rust:
     name: cargo-deny advisories (fresh database)
@@ -45,21 +52,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
+      - name: pip-audit from hash-pinned requirements (its graph never resolves at run time)
+        run: |
+          uv venv "$RUNNER_TEMP/pip-audit"
+          uv pip install --python "$RUNNER_TEMP/pip-audit" --require-hashes --no-deps --only-binary :all: \
+            -r .github/release/requirements-pip-audit.txt
       - name: pip-audit over the image pins (kernel-sidecar/requirements.txt)
-        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements.txt --no-deps --strict
+        run: |
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r kernel-sidecar/requirements.txt --no-deps --strict
       - name: pip-audit over the poly variant pins (kernel-sidecar/requirements-poly.txt)
-        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps --strict
+        run: |
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r kernel-sidecar/requirements-poly.txt --no-deps --strict
       - name: pip-audit over the SDK runtime graph (uv export of clients/python)
         run: |
           (cd clients/python && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/rayito-client.txt")
-          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
       - name: pip-audit over the sidecar lock (uv export of kernel-sidecar)
         run: |
           (cd kernel-sidecar && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/kernel-sidecar.txt")
-          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+      - name: pip-audit over the hash-pinned tool requirements (.github/release/requirements-*.txt)
+        run: |
+          for requirements in .github/release/requirements-*.txt; do
+            "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$requirements" --no-deps --strict
+          done
 
   node:
     name: pnpm audit (prod moderate, all scopes high)

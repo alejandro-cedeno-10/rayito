@@ -10,9 +10,15 @@ clavada), sin red y sólo con la biblioteca estándar:
    un SHA truncado son hallazgos; sólo se saltan las líneas comentadas y las
    acciones locales (`./...`).
 2. **uvx**: cada invocación de `uvx` en esos workflows y en el `Makefile` tiene
-   que nombrar su herramienta con `==` (`uvx twine==7.0.0 check ...`, también
+   que nombrar su herramienta con `==` (`uvx ruff==0.16.7 check ...`, también
    en la forma `uvx --from paquete==1.2.3 orden`), porque resuelven y ejecutan
    código de terceros dentro de trabajos que llevan credenciales de publicación.
+   Y `==` sólo fija la herramienta, no su grafo: cada run resuelve la última
+   versión de cada dependencia transitiva, sin hash ni cooldown
+   (`sec-supply-chain-followups`, SC-A03). Por eso sólo pasan por `uvx` las
+   herramientas sin dependencias de `DEPENDENCY_FREE_UVX_TOOLS` (hoy `ruff`,
+   un binario sin dependencias de Python); las demás se instalan desde un
+   fichero de requisitos con `--hash` (`.github/release/requirements-*.txt`).
 3. **Descargas**: en `image/Dockerfile`, en los del entorno local
    (`dev/local/*/Dockerfile`) y en todo fichero llamado `Dockerfile` que se
    le pase, cada instrucción con `curl` tiene que asignar
@@ -101,6 +107,12 @@ DEFAULT_PATHS = (
 )
 ACTION_REASON = "la acción no está clavada a un SHA de 40 hex"
 UVX_REASON = "la herramienta de uvx no lleva ==<versión>"
+UVX_GRAPH_REASON = (
+    "uvx resuelve al vuelo el grafo de esta herramienta: instálala desde un "
+    "fichero de requisitos con --hash (.github/release/requirements-*.txt)"
+)
+DEPENDENCY_FREE_UVX_TOOLS = frozenset({"ruff"})
+EXTRAS = re.compile(r"\[.*?\]")
 DOWNLOAD_REASON = "la descarga no está verificada contra un sha256 fijado"
 DOWNLOAD_TOOL = re.compile(r"\bcurl\b")
 UNVERIFIABLE_TOOL = re.compile(r"\bwget\b")
@@ -218,6 +230,12 @@ def uvx_invocations(line: str) -> list[list[str]]:
     return [words[index + 1 :] for index, word in enumerate(words) if word == UVX]
 
 
+def tool_name(specification: str) -> str:
+    """El nombre del paquete de una especificación (`ruff==0.16.7`,
+    `rayito[mcp]==0.6.1`), sin versión ni extras y en minúsculas."""
+    return EXTRAS.sub("", specification.split(VERSION_PIN, 1)[0]).strip().lower()
+
+
 def unpinned_uvx(text: str) -> list[Finding]:
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -225,6 +243,8 @@ def unpinned_uvx(text: str) -> list[Finding]:
             specification = tool_specification(arguments)
             if specification is None or VERSION_PIN not in specification:
                 findings.append((number, line.strip(), UVX_REASON))
+            elif tool_name(specification) not in DEPENDENCY_FREE_UVX_TOOLS:
+                findings.append((number, line.strip(), UVX_GRAPH_REASON))
     return findings
 
 
