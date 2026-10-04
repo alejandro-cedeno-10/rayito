@@ -5,10 +5,14 @@ modelo de botocore 1.43.103 (`CreateStack`, `UpdateStack`, `DescribeStacks`,
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 from datetime import UTC, datetime
 
 import boto3
 import pytest
+from botocore.response import StreamingBody
 from botocore.stub import Stubber
 
 from rayito._stacks._cloudformation import CloudFormationProvisioner
@@ -48,6 +52,13 @@ def provisioner() -> tuple[CloudFormationProvisioner, Stubber, Stubber]:
     provisioner._sleep = clock.sleep
     provisioner._poll_interval = 1.0
     return provisioner, Stubber(cfn_client), Stubber(s3_client)
+
+
+def provisioner_with_sts() -> tuple[CloudFormationProvisioner, Stubber, Stubber, Stubber]:
+    adapter, cfn_stub, s3_stub = provisioner()
+    sts_client = boto3.client("sts", region_name="us-east-1")
+    adapter._sts = _FrozenLazyClient(sts_client)
+    return adapter, cfn_stub, s3_stub, Stubber(sts_client)
 
 
 class _FrozenLazyClient:
@@ -179,26 +190,66 @@ def test_delete_is_a_plain_call() -> None:
         adapter.delete("rayito-metadata-index")
 
 
-def test_put_artifact_skips_the_upload_when_the_object_already_exists() -> None:
-    adapter, _cfn_stub, s3_stub = provisioner()
-    with s3_stub:
-        s3_stub.add_response("head_object", {}, expected_params={"Bucket": "b", "Key": "k"})
-        adapter.put_artifact("b", "k", b"data")
+ACCOUNT = "123456789012"
+DATA = b"data"
+DATA_SHA256_B64 = base64.b64encode(hashlib.sha256(DATA).digest()).decode("ascii")
+LOCATED = {"Bucket": "b", "Key": "k", "ExpectedBucketOwner": ACCOUNT}
 
 
-def test_put_artifact_uploads_when_missing() -> None:
-    adapter, _cfn_stub, s3_stub = provisioner()
-    with s3_stub:
-        s3_stub.add_client_error(
-            "head_object",
-            service_error_code="404",
-            service_message="Not Found",
-            http_status_code=404,
+def _identity(sts_stub: Stubber) -> None:
+    sts_stub.add_response(
+        "get_caller_identity",
+        {"Account": ACCOUNT, "Arn": f"arn:aws:iam::{ACCOUNT}:user/x", "UserId": "x"},
+        expected_params={},
+    )
+
+
+def test_put_artifact_skips_the_upload_only_when_the_content_matches() -> None:
+    adapter, _cfn_stub, s3_stub, sts_stub = provisioner_with_sts()
+    with s3_stub, sts_stub:
+        _identity(sts_stub)
+        s3_stub.add_response(
+            "get_object", {"Body": StreamingBody(io.BytesIO(DATA), len(DATA))}, LOCATED
+        )
+        adapter.put_artifact("b", "k", DATA)
+
+
+def test_put_artifact_overwrites_a_planted_object_under_the_same_key() -> None:
+    # The key is public (the sha256 of the zip that ships with the SDK):
+    # an object that merely exists there is never trusted.
+    adapter, _cfn_stub, s3_stub, sts_stub = provisioner_with_sts()
+    planted = b"not the sdk's code"
+    with s3_stub, sts_stub:
+        _identity(sts_stub)
+        s3_stub.add_response(
+            "get_object", {"Body": StreamingBody(io.BytesIO(planted), len(planted))}, LOCATED
         )
         s3_stub.add_response(
-            "put_object", {}, expected_params={"Bucket": "b", "Key": "k", "Body": b"data"}
+            "put_object", {}, {**LOCATED, "Body": DATA, "ChecksumSHA256": DATA_SHA256_B64}
         )
-        adapter.put_artifact("b", "k", b"data")
+        adapter.put_artifact("b", "k", DATA)
+
+
+def test_put_artifact_uploads_when_missing_with_owner_and_checksum() -> None:
+    adapter, _cfn_stub, s3_stub, sts_stub = provisioner_with_sts()
+    with s3_stub, sts_stub:
+        _identity(sts_stub)
+        s3_stub.add_client_error("get_object", service_error_code="NoSuchKey", http_status_code=404)
+        s3_stub.add_response(
+            "put_object", {}, {**LOCATED, "Body": DATA, "ChecksumSHA256": DATA_SHA256_B64}
+        )
+        adapter.put_artifact("b", "k", DATA)
+
+
+def test_put_artifact_fails_on_a_bucket_of_another_account() -> None:
+    adapter, _cfn_stub, s3_stub, sts_stub = provisioner_with_sts()
+    with s3_stub, sts_stub:
+        _identity(sts_stub)
+        s3_stub.add_client_error(
+            "get_object", service_error_code="AccessDenied", http_status_code=403
+        )
+        with pytest.raises(StackException):
+            adapter.put_artifact("b", "k", DATA)
 
 
 def test_wait_for_deployed_returns_once_the_stack_completes() -> None:

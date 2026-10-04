@@ -849,7 +849,7 @@ class Sandbox:
          Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto
              por uso; ver `LifecycleEvents.deploy`); la opción en sí, una
              lectura de Secrets Manager ($0,05 por 10 000).
-         IAM: `EventsOperatorPolicy` (salida de la pila) en las
+         IAM: `EventsLauncherPolicy` (salida de la pila) en las
              credenciales del llamante; el execution role necesita escribir
              en el log group de la imagen (`logging="cloudwatch"`).
          Cómo apagarla: no pases `events=` (por defecto `None`);

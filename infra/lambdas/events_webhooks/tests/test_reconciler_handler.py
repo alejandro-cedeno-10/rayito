@@ -39,7 +39,7 @@ def _store_with_open_sandbox(
 ) -> tuple[FakeTable, DynamoDbStore]:
     table = FakeTable()
     store = DynamoDbStore(table)
-    store.record_sandbox_state(
+    store.admit(
         LifecycleEvent(
             event_id="evt-r",
             sandbox_id=sandbox_id,
@@ -48,7 +48,8 @@ def _store_with_open_sandbox(
             occurred_at_ms=1,
             image_arn="arn:image",
             image_version="42",
-        )
+        ),
+        1,
     )
     return table, store
 
@@ -98,3 +99,28 @@ def test_the_handler_logs_what_the_run_did(
     assert reconciler.handler({}, None) == {"synthesized": 1}
     assert reconciler.handler({}, None) == {"synthesized": 0}
     assert capsys.readouterr().out.splitlines() == ['{"synthesized": 1}', '{"synthesized": 0}']
+
+
+def test_a_stored_event_whose_tombstone_failed_is_closed_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both runs inside one window: the same synthesized id, one stored event.
+    monkeypatch.setattr(reconciler.time, "time", lambda: 1_790_000_000.0)
+    table, store = _store_with_open_sandbox("sbx-gone")
+    real_admit = store.admit
+    calls: list[int] = []
+
+    def admit_failing_once(event: LifecycleEvent, now_ms: int) -> Any:
+        calls.append(now_ms)
+        if len(calls) == 1:
+            raise RuntimeError("DynamoDB unavailable")
+        return real_admit(event, now_ms)
+
+    store.admit = admit_failing_once  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        reconciler.reconcile(store, _lister())
+    assert [s.sandbox_id for s in store.open_sandboxes()] == ["sbx-gone"]
+    reconciler.reconcile(store, _lister())
+    assert store.open_sandboxes() == []
+    killed = [key for key in table.items if key[0] == "EVENT#sbx-gone"]
+    assert len(killed) == 1

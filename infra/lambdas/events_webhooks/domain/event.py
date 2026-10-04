@@ -27,11 +27,23 @@ E2B_EVENT_TYPE_PREFIX: Final = "sandbox.lifecycle."
 KILL_REASONS: Final = ("request", "timeout", "unknown")
 
 
+#: The wire's integers are `rayd`'s `u64` (`event.rs`): anything outside
+#: `[0, 2**64)` cannot come from `rayd` and is refused before it reaches
+#: DynamoDB (whose Number type would otherwise accept it).
+MAX_WIRE_INT: Final = 2**64 - 1
+
+#: Upper bound of every string field of an event line (`event_id`,
+#: `sandbox_id`, `kind`, `image_arn`, `image_version`, `kill_reason`). A
+#: microVM image ARN is well under this; the cap keeps a MAC-valid line from
+#: growing the DynamoDB item (400 KB limit) or the webhook body without bound.
+MAX_FIELD_CHARS: Final = 512
+
+
 class MalformedEventLine(ValueError):
-    """Raised by `parse_event_line` for anything that is not
-    `rayito.event.v1 <b64url> <b64url>` with both parts valid base64url —
-    the forwarder drops the line and counts it, it never raises past the
-    handler boundary."""
+    """Raised by `parse_event_line` and `LifecycleEvent.from_json_bytes` for
+    anything that is not `rayito.event.v1 <b64url> <b64url>` carrying a JSON
+    object of the exact wire shape — the forwarder drops the line and counts
+    it, it never raises past the handler boundary."""
 
 
 @dataclass(frozen=True)
@@ -57,17 +69,54 @@ class LifecycleEvent:
 
     @classmethod
     def from_json_bytes(cls, payload: bytes) -> LifecycleEvent:
-        data = json.loads(payload)
-        return cls(
-            event_id=data["event_id"],
-            sandbox_id=data["sandbox_id"],
-            kind=data["kind"],
-            generation=int(data["generation"]),
-            occurred_at_ms=int(data["occurred_at_ms"]),
-            image_arn=data["image_arn"],
-            image_version=data["image_version"],
-            kill_reason=data.get("kill_reason"),
+        """Strict parse of the wire JSON: an object whose string fields are
+        strings of at most `MAX_FIELD_CHARS` and whose integer fields are
+        JSON integers in `[0, MAX_WIRE_INT]` (never a float, a bool or a
+        numeric string). Every other shape — a list, a scalar, a missing
+        field, an absurdly deep nesting, an out-of-range number — raises
+        `MalformedEventLine`, never `TypeError`/`OverflowError`/
+        `RecursionError`."""
+        data = _load_object(payload)
+        kill_reason = (
+            None if data.get("kill_reason") is None else _string_field(data, "kill_reason")
         )
+        try:
+            return cls(
+                event_id=_string_field(data, "event_id"),
+                sandbox_id=_string_field(data, "sandbox_id"),
+                kind=_string_field(data, "kind"),
+                generation=_integer_field(data, "generation"),
+                occurred_at_ms=_integer_field(data, "occurred_at_ms"),
+                image_arn=_string_field(data, "image_arn"),
+                image_version=_string_field(data, "image_version"),
+                kill_reason=kill_reason,
+            )
+        except ValueError as error:
+            raise MalformedEventLine("valor fuera del contrato") from error
+
+
+def _load_object(payload: bytes) -> dict[str, object]:
+    try:
+        data = json.loads(payload)
+    except (ValueError, RecursionError) as error:
+        raise MalformedEventLine("JSON inválido") from error
+    if not isinstance(data, dict):
+        raise MalformedEventLine("el evento no es un objeto JSON")
+    return data
+
+
+def _string_field(data: dict[str, object], name: str) -> str:
+    value = data.get(name)
+    if not isinstance(value, str) or len(value) > MAX_FIELD_CHARS:
+        raise MalformedEventLine(f"campo de texto inválido: {name}")
+    return value
+
+
+def _integer_field(data: dict[str, object], name: str) -> int:
+    value = data.get(name)
+    if type(value) is not int or not 0 <= value <= MAX_WIRE_INT:
+        raise MalformedEventLine(f"campo entero inválido: {name}")
+    return value
 
 
 def parse_event_line(line: str) -> tuple[bytes, bytes]:

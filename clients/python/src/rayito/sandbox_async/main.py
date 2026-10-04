@@ -699,7 +699,7 @@ class AsyncSandbox:
             desplegó con ella); la pila hace el resto.
         Coste aproximado: el de la pila (~$0,40/mes el secreto, el resto por
             uso); la opción en sí, una lectura de Secrets Manager.
-        IAM: `EventsOperatorPolicy` en las credenciales del llamante.
+        IAM: `EventsLauncherPolicy` en las credenciales del llamante.
         Cómo apagarla: no pases `events=` (por defecto `None`).
         Ejemplo:
             from rayito import AsyncLifecycleEvents

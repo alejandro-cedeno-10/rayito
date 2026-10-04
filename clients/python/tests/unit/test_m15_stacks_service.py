@@ -210,6 +210,20 @@ def test_events_webhooks_gets_its_bucket_parameter_from_artifact_bucket() -> Non
     )
 
 
+def test_the_lambda_code_key_lives_inside_the_protected_rayito_namespace() -> None:
+    # Never the bucket root, where any other bucket policy could let a third
+    # party plant a zip under the (public, deterministic) sha256 key.
+    provisioner = _RecordingProvisioner()
+    OptionalStacks(provisioner=provisioner).deploy(
+        "events-webhooks", parameters={"LogGroupName": "/rayito/x"}, artifact_bucket="bucket-a"
+    )
+    assert provisioner.created_parameters is not None
+    key = provisioner.created_parameters["ArtifactS3Key"]
+    prefix, component, name = key.rsplit("/", 2)
+    assert (prefix, component) == ("rayito/stacks", "events-webhooks")
+    assert name.endswith(".zip") and len(name) == len("0" * 64 + ".zip")
+
+
 def test_a_conflicting_bucket_parameter_is_rejected_before_any_upload() -> None:
     provisioner = FakeStackProvisioner()
     with pytest.raises(InvalidArgumentException, match="ArtifactBucket"):

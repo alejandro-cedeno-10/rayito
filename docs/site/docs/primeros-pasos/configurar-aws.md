@@ -43,9 +43,11 @@ evita repetir `--bucket` en la CLI.
 ## 3. La pila de IAM
 
 `infra/iam.yaml` crea el rol con el que AWS construye la imagen, el rol de
-ejecución opcional del sandbox y la política mínima para quien usa el SDK
-(`rayito-m0-caller-<región>`). Descarga la plantilla del repositorio y
-despliégala:
+ejecución opcional del sandbox y tres políticas mínimas para quien usa el
+SDK: `SandboxLauncherPolicy` (`rayito-m0-launcher-<región>`, sólo lanzar y
+manejar sandboxes), `ImagePublisherPolicy` (`rayito-m0-publisher-<región>`,
+sólo publicar imágenes) y `CallerPolicy` (`rayito-m0-caller-<región>`, las
+dos juntas). Descarga la plantilla del repositorio y despliégala:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/iam.yaml
@@ -54,18 +56,27 @@ aws cloudformation deploy --stack-name rayito-m0-iam \
   --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito
 ```
 
-Asigna la política del output `CallerPolicyArn` al usuario o rol que va a
-ejecutar el SDK (tu usuario de desarrollo, el rol de tu servicio, el de tu
-CI):
+Asigna a cada identidad sólo lo que hace:
+
+- **Tu usuario de desarrollo** (publica la imagen y prueba sandboxes): la
+  del output `CallerPolicyArn`.
+- **El rol de tu servicio o de tu agente** (sólo crea sandboxes): la del
+  output `SandboxLauncherPolicyArn`. Nunca `CallerPolicy`: un servicio
+  comprometido podría publicar una versión con puerta trasera de la imagen
+  que usarán todos tus sandboxes.
+- **Tu CI o pipeline de release** (publica imágenes): la del output
+  `ImagePublisherPolicyArn` (y la del lanzador si además corre pruebas).
 
 ```bash
-CALLER_POLICY_ARN=$(aws cloudformation describe-stacks --stack-name rayito-m0-iam \
-  --query "Stacks[0].Outputs[?OutputKey=='CallerPolicyArn'].OutputValue" --output text)
+policy_arn() {
+  aws cloudformation describe-stacks --stack-name rayito-m0-iam \
+    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+}
 
-# a un usuario de IAM:
-aws iam attach-user-policy --user-name <tu-usuario> --policy-arn "$CALLER_POLICY_ARN"
-# o a un rol (el de tu servicio o tu CI):
-aws iam attach-role-policy --role-name <tu-rol> --policy-arn "$CALLER_POLICY_ARN"
+# tu usuario de IAM:
+aws iam attach-user-policy --user-name <tu-usuario> --policy-arn "$(policy_arn CallerPolicyArn)"
+# el rol de tu servicio:
+aws iam attach-role-policy --role-name <tu-rol> --policy-arn "$(policy_arn SandboxLauncherPolicyArn)"
 ```
 
 Con IAM Identity Center (SSO) no se asigna a un usuario: añade la política

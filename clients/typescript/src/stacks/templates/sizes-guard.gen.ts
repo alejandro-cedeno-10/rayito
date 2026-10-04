@@ -14,8 +14,9 @@ Description: >-
   being the only input it can see). IAM-only: no billable resource, $0 at
   idle and per use. Action names and parameters: AWS_API_NOTES.md section
   24. Deploy it only if you publish more than the baseline size and want to
-  cap which image ARNs a caller may run; delete the stack to remove the
-  policy (it never deletes an image).
+  cap which image ARNs a caller may run (that caller then cannot publish
+  images either); delete the stack to remove the policy (it never deletes
+  an image).
 
 Parameters:
   ImageArns:
@@ -38,11 +39,17 @@ Resources:
     Properties:
       Description: >-
         Rayito sizes-catalog cost guard: an explicit Deny on
-        lambda:RunMicrovm for every image ARN outside the listed set
+        lambda:RunMicrovm for every image ARN outside the listed set, and on
+        creating, updating or deleting any image or image version,
         overrides any Allow the identity already has (e.g. the standard
-        CallerPolicy's microvm-image:* grant), so a caller with this
-        policy attached cannot launch a size this account did not
-        explicitly publish and allow, regardless of what else it can do.
+        CallerPolicy's microvm-image:* grant). A caller with this policy
+        attached can neither launch an image outside the list nor rebuild
+        an allowed one at a larger size; publishing images stays with a
+        separate identity (ImagePublisherPolicy or RayitoTemplateBuilder).
+        Residual: lambda:RunMicrovm authorizes against the unversioned ARN,
+        so an older, larger version still present under an allowed name
+        can be launched with imageVersion; keep each allowed name at one
+        size.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -56,13 +63,27 @@ Resources:
             Action:
               - lambda:RunMicrovm
             NotResource: !Ref ImageArns
+          # Memory size is a property of each image version
+          # (resources[0].minimumMemoryInMiB, AWS_API_NOTES.md section 24):
+          # without this, an identity that also holds the CallerPolicy could
+          # rebuild an allowed image at 8192 MiB and still launch an allowed
+          # ARN.
+          - Sid: DenyImagePublishing
+            Effect: Deny
+            Action:
+              - lambda:CreateMicrovmImage
+              - lambda:UpdateMicrovmImage
+              - lambda:UpdateMicrovmImageVersion
+              - lambda:DeleteMicrovmImageVersion
+            Resource: "*"
 
 Outputs:
   PolicyArn:
     Description: >-
-      Attach to the identity that creates sandboxes: the Deny statement
-      makes this effective no matter what other lambda:RunMicrovm grant
-      that identity also carries.
+      Attach to the identity that creates sandboxes (never to the one that
+      publishes images): the Deny statements make this effective no matter
+      what other lambda:RunMicrovm or image grant that identity also
+      carries.
     Value: !Ref RayitoRunAllowedSizes
 `;
 // Base64 of the component's Lambda source zip, or undefined when it has none.

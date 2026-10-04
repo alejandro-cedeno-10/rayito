@@ -39,7 +39,7 @@ import pytest
 
 from rayito import LifecycleEvents, SecretStore
 from rayito._lifecycle_events._keys import derive_sandbox_key
-from rayito._lifecycle_events._service import WEBHOOK_SECRET_PREFIX
+from rayito._secrets import WEBHOOK_SECRET_PREFIX
 from rayito.exceptions import SandboxNotFoundException
 
 from .conftest import LocalSettings, create_local_sandbox
@@ -55,6 +55,10 @@ LOG_GROUP: Final = "/aws/lambda-microvms/rayito-local"
 #: El `Timeout` de los Lambdas en `infra/events-webhooks.yaml`.
 LAMBDA_TIMEOUT_MILLIS: Final = 60_000
 RECEIVER_OK: Final = 204
+#: `rayd` mints `event_id` as this many random bytes, hex-encoded
+#: (`features/lifecycle_events.rs::EVENT_ID_BYTES`); the forwarder refuses
+#: any other shape as `malformed_line`.
+RAYD_EVENT_ID_BYTES: Final = 16
 #: `events=` exige logs de CloudWatch y, con ellos, un rol de ejecución;
 #: Floci no lo asume.
 LOCAL_EXECUTION_ROLE_ARN: Final = "arn:aws:iam::000000000000:role/rayito-local-sandbox"
@@ -143,7 +147,7 @@ def signed_event_line(stack_key: bytes, sandbox_id: str, image_arn: str) -> str:
     <mac>`, HMAC-SHA256 con la clave derivada del sandbox)."""
     payload = json.dumps(
         {
-            "event_id": stdlib_secrets.token_hex(8),
+            "event_id": stdlib_secrets.token_hex(RAYD_EVENT_ID_BYTES),
             "sandbox_id": sandbox_id,
             "kind": "killed",
             "generation": 0,

@@ -53,9 +53,11 @@ class StackProvisioner(Protocol):
         ...
 
     def put_artifact(self, bucket: str, key: str, data: bytes) -> None:
-        """Sube `data` a `bucket/key` sólo si no está ya (un `HeadObject`
-        primero): idempotente, para que desplegar dos veces el mismo
-        artefacto no vuelva a subirlo."""
+        """Sube `data` a `bucket/key` salvo que el objeto ya exista con
+        exactamente ese contenido (se compara, nunca basta con que la clave
+        exista): idempotente, para que desplegar dos veces el mismo
+        artefacto no vuelva a subirlo, y sin fiarse de un objeto plantado.
+        Sólo sobre un bucket de la cuenta del llamante."""
         ...
 
     def failure_reason(self, stack_name: str) -> str | None:

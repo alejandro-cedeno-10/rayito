@@ -181,6 +181,86 @@ metas en ella nada que no pondrías en una etiqueta.
 
 Detalle en `SECURITY.md` T19.
 
+## Eventos y webhooks (T22)
+
+Con `events=`/`LifecycleEvents`, `rayd` emite eventos firmados por stdout y
+tres Lambdas de tu cuenta los verifican, guardan y entregan a tus webhooks.
+
+- **Sólo el MAC autentica.** El forwarder deriva la clave del sandbox que
+  nombra el *log stream* y verifica el MAC antes de leer el contenido. El
+  nombre del stream no prueba identidad: quien tenga el execution role
+  (legible desde la imagen por defecto, T1) o el rol de build puede escribir
+  en el stream de otro sandbox, pero sin su clave no pasa el MAC.
+- **Sólo lo que emite `rayd`, y reciente.** Tipos estrictos, el mismo
+  `sandbox_id` que el stream, campos con la forma de `rayd` y un
+  `occurred_at_ms` de menos de 24 h: una línea repetida días después no
+  vuelve a entregarse.
+- **`paused` y `resumed` son orientativos.** El código del sandbox (uid
+  1000, sin root) puede llamar por loopback a los hooks `/suspend` y
+  `/resume` de `rayd` (T2), y `rayd` emite entonces un `paused`/`resumed`
+  con firma válida. El forwarder sólo admite eventos que hagan avanzar el
+  ciclo de vida del sandbox y limita `paused`/`resumed` a 20 seguidos y
+  uno cada 30 s por sandbox; lo demás se cuenta y se descarta. No factures
+  ni limpies recursos sólo por un `paused`.
+- **Un sandbox no degrada a los demás.** El reconciliador consulta un
+  índice con sólo los sandboxes abiertos (nunca la tabla entera) y el
+  deliverer sólo se invoca por eventos nuevos.
+- **Una línea o un webhook malos no bloquean a los demás.** La línea mala
+  se cuenta y se descarta; un webhook con URL rota o lento falla solo. Lo
+  que no se pudo escribir o entregar tras los reintentos queda en las
+  colas SQS de la pila.
+- **Dos firmas.** `e2b-signature` (la de E2B, byte a byte) no lleva marca
+  de tiempo; `rayito-signature` es un HMAC con la hora del intento y el
+  `webhook_id`. En el receptor, verifica `rayito-signature` con una
+  ventana de 5 minutos, deduplica por `(sandbox_id, event_id)` y usa un
+  secreto aleatorio de 32 bytes o más.
+- **Webhooks de toda la pila.** Cada webhook recibe los eventos de todos
+  los sandboxes de sus tipos: no des `register_webhook` a tus clientes.
+- **Secretos**: los de firma de webhooks (`rayito/webhooks/`) nunca llegan
+  a un sandbox (`RayitoSecretsReader` los niega y el SDK los rechaza en
+  `secrets=`). Las URLs de webhook se guardan en claro en tu tabla. Una
+  rotación del secreto de un webhook llega al deliverer en 5 minutos como
+  mucho (antes si tu receptor responde `401`/`403`).
+- **Mínimo privilegio**: cada Lambda escribe sólo sus filas y sólo en su
+  propio log group. Las políticas del llamante van por tarea:
+  `EventsLauncherPolicy` para `events=`, `EventsReaderPolicy` para
+  `get_events` (no ve webhooks ni la clave del stack) y
+  `EventsWebhookAdminPolicy` para los webhooks.
+
+Detalle en `SECURITY.md` T22.
+
+## Quién publica imágenes
+
+`infra/iam.yaml` separa `SandboxLauncherPolicy` (lanzar y manejar sandboxes)
+de `ImagePublisherPolicy` (publicar imágenes); `CallerPolicy` es la unión de
+las dos. Al rol de un servicio en producción vincúlale sólo la del
+lanzador: si lo comprometen, no puede publicar una versión con puerta
+trasera de la imagen que usarán todos tus sandboxes. Ver
+[IAM](operacion/iam.md).
+
+`RayitoTemplateBuilder` (`Template.build()`) también es una política aparte
+y sólo lee `rayito/*` del bucket de artefactos, nunca los checkpoints de
+`HOME` ni las transferencias que compartan bucket (T26). El guardarraíles
+de tamaño opcional (`sizes-guard`, T27) niega lanzar imágenes fuera de su
+lista **y** publicar imágenes, para que nadie con esa política reconstruya
+una imagen permitida a un tamaño mayor; una versión antigua y mayor que
+siga existiendo bajo un nombre permitido sí se puede lanzar, así que
+mantén cada nombre en un solo tamaño. Ver
+[Tamaños](funciones-opcionales/tamanos.md).
+
+## Montajes S3 y telemetría (T20, T23)
+
+- `mounts=` (T20) sólo existe en `rayito-base-caps`: `mount-s3` corre como
+  un usuario propio (uid 990), nunca recibe una credencial por argumento ni
+  por entorno, y sólo monta buckets de `RAYITO_ALLOWED_MOUNT_BUCKETS` en
+  rutas bajo `/mnt/` o `/home/user/`. El nombre del bucket y el prefijo no
+  son secretos: el código del sandbox puede verlos.
+- `telemetry=` con `OtlpAuth.execution_role()` (T23) da al guest las
+  credenciales del execution role para `PutMetricData`, que no se puede
+  acotar por namespace: un sandbox comprometido puede escribir métricas
+  arbitrarias. Si no confías en el código del sandbox, usa
+  `OtlpAuth.bearer(...)`.
+
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del

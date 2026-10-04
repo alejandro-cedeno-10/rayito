@@ -72,6 +72,97 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Security
 
+- **Eventos de ciclo de vida (`events-webhooks`): una línea maliciosa ya no
+  tira los eventos legítimos de su lote.** El forwarder verifica el MAC con
+  la clave del sandbox que nombra el *log stream* **antes** de leer el
+  contenido, parsea de forma estricta y nunca falla la invocación por una
+  línea: la cuenta (`malformed_line`, `mac_invalid`, `stale_event`,
+  `internal_error`) y sigue. Si falla una escritura en la tabla, el resto
+  del lote se escribe igual y el lote va a la nueva cola
+  `ForwarderFailuresQueue` (destino `OnFailure` de su invocación asíncrona)
+  en vez de perderse. El nombre del stream deja de presentarse como prueba
+  de identidad: sólo el MAC autentica (`SECURITY.md` T22).
+- **Eventos: sólo lo que emite `rayd`, y reciente.** Tras el MAC, el evento
+  debe ser del mismo sandbox que el stream, con un `event_id` de 32 hex
+  (nunca un id del reconciliador), `kill_reason` sólo en `killed` y sólo
+  `request`, un ARN de `microvm-image` y un `occurred_at_ms` de menos de
+  24 h (y no más de 5 min en el futuro): una línea capturada y repetida
+  cuando su fila de deduplicación ya caducó se rechaza. La deduplicación de
+  entregas pasa a `DELIVERY#<sandbox_id>#<event_id>`, así que un sandbox no
+  puede marcar como entregado el evento de otro (las entregas en curso al
+  actualizar la pila pueden repetirse una vez).
+- **Webhooks: uno roto o lento ya no bloquea a los demás.** El deliverer
+  trata una URL que no puede parsear como un fallo permanente de ese
+  webhook (`invalid_url`), aísla cualquier error inesperado a su webhook
+  (`internal_error`) y el plazo de cada intento cubre la resolución DNS y
+  la respuesta entera. `register_webhook` rechaza con
+  `InvalidArgumentException` una URL que el deliverer no podría alcanzar (puerto
+  fuera de 1-65535, host inválido o no codificable en IDNA, espacios o
+  barras invertidas), con el mismo criterio en los dos SDKs.
+- **Código de las pilas opcionales: nunca se fía de un objeto que ya
+  exista.** `OptionalStacks.deploy()` sube el zip a
+  `rayito/stacks/<componente>/<sha256>.zip` (dentro del espacio `rayito/`
+  que protegen las plantillas de IAM, ya no en la raíz del bucket), manda
+  `ExpectedBucketOwner` con la cuenta del llamante y, si el objeto ya
+  existe, compara su contenido antes de reutilizarlo (si no coincide, lo
+  sobrescribe con `ChecksumSHA256` y avisa por el logger).
+- **`infra/iam.yaml`: el lanzador ya no puede publicar imágenes.** Nuevas
+  políticas `SandboxLauncherPolicy` (sólo lanzar y manejar sandboxes: la
+  del rol de un servicio en producción) e `ImagePublisherPolicy` (sólo
+  publicar); `CallerPolicy` sigue igual, como su unión. El `Deny` del
+  execution role sobre los artefactos de imagen existe ya siempre, no sólo
+  con `PersistenceBucket`.
+- **`infra/templates.yaml`: `RayitoTemplateBuilder` sólo lee `rayito/*`**
+  del bucket de artefactos o de la imagen base, nunca el bucket entero
+  (que puede guardar los `HOME` persistidos y las transferencias).
+- **Secretos de firma de webhooks fuera de `secrets=`.**
+  `RayitoSecretsReader` niega `rayito/webhooks/*` y el SDK se niega a leer
+  esos secretos por `secrets=`/`SecretCache` (`InvalidArgumentException`).
+  `SecretPrefix` de `infra/secrets-access.yaml` debe terminar en `/`.
+- **Mínimo privilegio en `events-webhooks`**: cada Lambda escribe sólo sus
+  tipos de fila (`dynamodb:LeadingKeys`) y sólo en su propio log group (la
+  pila crea uno por función y lo borra con ella), y el rol del Scheduler
+  exige `aws:SourceAccount`.
+- **Eventos: el código del sandbox ya no puede inundar la pila con
+  `paused`/`resumed`.** Esos dos eventos los emite `rayd` cuando corren sus
+  hooks de suspensión y reanudación, que el código sin privilegios del
+  sandbox puede invocar. El forwarder sólo admite ahora eventos que hagan
+  avanzar el ciclo de vida de su sandbox (nada tras `killed`, ningún
+  `created` repetido, ninguna posición repetida o anterior) y limita
+  `paused`/`resumed` con un cubo por sandbox (20 seguidos, después uno cada
+  30 s); lo rechazado se cuenta como `invalid_transition` o `rate_limited`
+  y nunca se guarda ni se entrega. El reconciliador consulta un índice
+  disperso de sandboxes abiertos en vez de escanear la tabla entera, y el
+  deliverer sólo se invoca por eventos nuevos. `paused`/`resumed` quedan
+  documentados como orientativos (`SECURITY.md` T22). Al actualizar la
+  pila, un sandbox que ya estaba abierto entra en el índice con su
+  siguiente evento.
+- **Webhooks: segunda firma con marca de tiempo.** Cada entrega lleva
+  además `rayito-signature: t=<segundos>,v1=<HMAC-SHA256>` sobre
+  `"<t>.<webhook_id>."` y el cuerpo; la guía de eventos explica cómo
+  verificarla con una ventana de 5 minutos. `e2b-signature` no cambia.
+- **Webhooks: un secreto rotado deja de usarse en 5 minutos.** El deliverer
+  guardaba cada secreto en caché mientras viviera su contenedor; ahora lo
+  relee cada 5 minutos y, si el receptor responde `401`/`403`, lo relee en
+  el acto y reintenta una vez con el nuevo.
+- **Políticas del llamante por tarea en `events-webhooks`.** La pila emite
+  `EventsLauncherPolicy` (`events=`: sólo la clave del stack),
+  `EventsReaderPolicy` (`get_events`: sólo filas de eventos; ya no puede
+  registrar un webhook ni leer la clave del stack) y
+  `EventsWebhookAdminPolicy` (`register_webhook`/listar/borrar: sólo filas `WEBHOOK`).
+  La guía de eventos tiene la tabla de qué llamada necesita cuál y avisa de
+  que los webhooks son de toda la pila.
+- **`sizes-guard`: `RayitoRunAllowedSizes` niega también publicar
+  imágenes.** Sin ello, una identidad con la `CallerPolicy` estándar podía
+  reconstruir una imagen permitida a un tamaño mayor y lanzarla sin salir
+  de la lista. La política ya no dice que valga "sin importar lo demás": una
+  versión antigua y mayor bajo un nombre permitido sigue siendo lanzable con
+  `imageVersion` (`SECURITY.md` T27).
+- **`SECURITY.md`: filas T20, T23, T26 y T27**, que los cambios de M15
+  planearon y nunca se aplicaron (`infra/otlp-export.yaml` ya citaba T23).
+- `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
+  e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
+  cualquier sandbox de las imágenes de `TestImageArns`.
 - **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
   pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
   la misma lista de permitidos que `rayd` aplica a cada petición
@@ -172,6 +263,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   que nunca viajan, como `.venv`): un enlace metía en todas las imágenes el
   contenido de un fichero de la máquina que construye, legible por el
   usuario del sandbox.
+
+### Deprecated
+
+- `EventsOperatorPolicy` (salida `OperatorPolicyArn` de `events-webhooks`):
+  sigue siendo la unión de las tres políticas nuevas durante esta versión.
+  Vincula a cada identidad la suya (`EventsLauncherPolicy`,
+  `EventsReaderPolicy` o `EventsWebhookAdminPolicy`).
 
 ## [0.6.1] - 2026-10-04
 

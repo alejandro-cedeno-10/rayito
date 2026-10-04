@@ -24,6 +24,7 @@ import {
   encodeMetadata,
   LIST_MAX_RESULTS,
   latestVersion,
+  refuseWebhookSigningSecret,
   resolveSecretId,
   type SecretRef,
   validatePrefix,
@@ -479,11 +480,14 @@ export class SecretStore {
 
   /**
    * `GetSecretValue` de una referencia; lo usa `SecretCache` (y sólo ella).
+   * Nunca lee un secreto de firma de webhook (`refuseWebhookSigningSecret`).
    * @internal
    */
   async readValue(ref: SecretRef): Promise<string> {
+    const secretId = resolveSecretId(ref.name, this.#prefix);
+    refuseWebhookSigningSecret(secretId);
     const input = {
-      SecretId: resolveSecretId(ref.name, this.#prefix),
+      SecretId: secretId,
       ...(ref.versionId === undefined ? {} : { VersionId: ref.versionId }),
       ...(ref.versionId === undefined && ref.versionStage !== undefined
         ? { VersionStage: ref.versionStage }
