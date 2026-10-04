@@ -1,0 +1,354 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito M15 efs-volumes (ADR-018, experimental): an encrypted (KMS at rest,
+  AWS managed key), Elastic Throughput EFS file system inside an EXISTING
+  VPC, reachable only from a Lambda Network Connector dedicated to it, plus
+  the mount-target and client security groups, the file-system policy (TLS,
+  IAM, access point and mount target required) and least-privilege IAM.
+  Only creates new resources: never modifies the VPC, its subnets, route
+  tables, NACLs or any existing security group. rayd mounts it only on an
+  image with amazon-efs-utils (experimental, ADR-018). The file system is always
+  retained on stack deletion; EfsVolumes.destroy(delete_file_system=True)
+  removes it explicitly. See AWS_API_NOTES.md section 22.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: >-
+      Existing VPC of the subnets below; both security groups are created
+      here. Never modified.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      One to three existing subnets of VpcId, each in a different AZ (EFS
+      allows one mount target per AZ): one mount target per subnet, and the
+      connector's ENIs. Never modified. Run `EfsVolumes.check()` (or
+      `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`) first.
+  ConnectorName:
+    Type: String
+    Default: rayito-efs
+    AllowedPattern: "^[a-zA-Z0-9_-]{1,64}$"
+    Description: Unique name of the connector within the account and Region.
+  AllowWrite:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      "true" (default): RayitoEfsVolumeClient (below) also grants
+      elasticfilesystem:ClientWrite. "false": read-only, ClientMount only.
+      Never grants elasticfilesystem:ClientRootAccess either way (research
+      doc section 4.1 rule 5, root squash always on).
+  AccessPointArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      Optional access point ARNs (VolumeStore.create() makes them after this
+      stack exists). Empty (default): RayitoEfsVolumeClient allows any
+      access point of this account and Region on this file system only.
+      Set: it allows exactly these access points; redeploy with the new
+      list when you add a volume.
+  ReadOnlyAccessPointArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      Optional access point ARNs that must stay read-only even when
+      AllowWrite is "true": RayitoEfsVolumeClient allows ClientMount on
+      them and explicitly denies elasticfilesystem:ClientWrite. This is
+      what makes a read-only volume read-only: a sandbox user can reach
+      efs-proxy's local port and speak NFS through the tunnel with the
+      role's own permissions, so the ro mount option alone does not stop
+      writes (AWS_API_NOTES.md section 16, Q133).
+
+Conditions:
+  # `SubnetIds` is a list; CloudFormation has no length function, so the
+  # n-th element is read from the list joined with trailing empty
+  # elements: it is "" exactly when the caller passed fewer than n subnets.
+  HasSubnet2: !Not
+    - !Equals
+      - !Select [1, !Split [",", !Join [",", [!Join [",", !Ref SubnetIds], "", ""]]]]
+      - ""
+  HasSubnet3: !Not
+    - !Equals
+      - !Select [2, !Split [",", !Join [",", [!Join [",", !Ref SubnetIds], "", ""]]]]
+      - ""
+  GrantClientWrite: !Equals [!Ref AllowWrite, "true"]
+  ScopeToAccessPoints: !Not [!Equals [!Join ["", !Ref AccessPointArns], ""]]
+  HasReadOnlyAccessPoints: !Not [!Equals [!Join ["", !Ref ReadOnlyAccessPointArns], ""]]
+
+Resources:
+  # Egress from the connector's ENIs: only NFS (2049) to the mount-target
+  # security group (added below as a separate SecurityGroupEgress, to
+  # avoid the circular reference a rule inline here would make with
+  # MountTargetSecurityGroup's own ingress), mirroring
+  # infra/egress-connector.yaml's localhost placeholder rule (EC2's
+  # implicit allow-all egress rule only disappears once at least one
+  # explicit rule exists).
+  ConnectorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Rayito EFS client (connector) egress for ${ConnectorName}
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 127.0.0.1/32
+          Description: placeholder that removes the implicit allow-all egress rule
+      Tags:
+        - Key: rayito
+          Value: efs-volumes-connector
+
+  # Ingress on the mount targets: only NFS (2049), only from the connector's
+  # own security group (never a CIDR: this is the one guest allowed to speak
+  # NFS to this file system, research doc section 4.6).
+  MountTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Rayito EFS mount targets for ${ConnectorName}
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ConnectorSecurityGroup
+          Description: NFS from the Rayito EFS connector only
+      Tags:
+        - Key: rayito
+          Value: efs-volumes-mount-target
+
+  # The connector's one piece of egress (research doc section 4.6): NFS to
+  # the mount targets. A separate resource, never an inline rule on either
+  # security group, so the two never reference each other's logical id at
+  # creation time (a circular reference CloudFormation would reject).
+  ConnectorEgressToMountTargets:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ConnectorSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      DestinationSecurityGroupId: !Ref MountTargetSecurityGroup
+      Description: NFS to the Rayito EFS mount targets only
+
+  # Always `DeletionPolicy: Retain` / `UpdateReplacePolicy: Retain`, as
+  # literals and never behind a parameter: a toggle here would pick between
+  # two logical resources, and OptionalStacks.deploy() re-sends every
+  # parameter's default on UpdateStack, so a plain redeploy could swap the
+  # file system (destroying the data of the deletable one, or orphaning the
+  # retained one). Deleting the data is an explicit, separate step outside
+  # this stack (`aws efs delete-file-system`, see the guide page
+  # funciones-opcionales/volumenes-efs.md, "Quitarlo").
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+      FileSystemTags:
+        - Key: rayito
+          Value: efs-volumes
+      # Three denies (research doc section 4.6): no plaintext NFS, no
+      # client without an access point, and only a request that actually
+      # came in through a mount target (never a VPC endpoint or a
+      # cross-account path). `elasticfilesystem:AccessPointArn` being null
+      # is exactly "no access point named". The policy has no Allow at all:
+      # once a file-system policy exists, an NFS client that does not
+      # authenticate with IAM (`-o iam`) is anonymous and gets only what the
+      # policy grants, i.e. nothing; an IAM principal needs the identity
+      # side Allow of EfsVolumeClientPolicy below.
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyNonTls
+            Effect: Deny
+            Principal: "*"
+            Action: "elasticfilesystem:*"
+            Resource: "*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+          - Sid: DenyWithoutAccessPoint
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+            Resource: "*"
+            Condition:
+              "Null":
+                elasticfilesystem:AccessPointArn: "true"
+          - Sid: DenyWithoutMountTarget
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+            Resource: "*"
+            Condition:
+              Bool:
+                elasticfilesystem:AccessedViaMountTarget: "false"
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [0, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Condition: HasSubnet2
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [1, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+
+  MountTarget3:
+    Type: AWS::EFS::MountTarget
+    Condition: HasSubnet3
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [2, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+
+  # Lambda assumes this role to create, describe and delete the connector's
+  # ENIs; same shape as infra/egress-connector.yaml's OperatorRole.
+  OperatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      Policies:
+        - PolicyName: manage-connector-enis
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+
+  # Identity-side Allow the FileSystemPolicy's deny-only statements require
+  # (research doc section 4.6): without this attached to the MicroVM's
+  # execution role (infra/iam.yaml), ClientMount/ClientWrite are denied even
+  # with a valid access point, because the file-system policy above never
+  # grants anything by itself. Resource: this file system only. Condition:
+  # the access point named (elasticfilesystem:AccessPointArn, the key the
+  # deny statements use) is exactly one of AccessPointArns or
+  # ReadOnlyAccessPointArns when AccessPointArns is given, or any access
+  # point of this account and Region otherwise (VolumeStore creates them
+  # after this stack exists). ReadOnlyAccessPointArns get an explicit Deny
+  # on ClientWrite, which wins over the Allow whatever AllowWrite says.
+  # Never elasticfilesystem:ClientRootAccess.
+  EfsVolumeClientPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      # No `ManagedPolicyName`: CloudFormation names it, so this stays under
+      # `CAPABILITY_IAM` alone (`_stacks/_model.py` forbids
+      # `CAPABILITY_AUTO_EXPAND`, but a *named* IAM resource would need the
+      # stronger `CAPABILITY_NAMED_IAM` for no benefit here).
+      Description: >-
+        Attach to the execution role that mounts volumes= on this file
+        system: elasticfilesystem:ClientMount (plus ClientWrite unless
+        AllowWrite=false, and never on ReadOnlyAccessPointArns) on an access
+        point of FileSystemId, never ClientRootAccess.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: MountAccessPoints
+            Effect: Allow
+            Action:
+              - elasticfilesystem:ClientMount
+              - !If [GrantClientWrite, elasticfilesystem:ClientWrite, !Ref AWS::NoValue]
+            Resource: !GetAtt FileSystem.Arn
+            Condition: !If
+              - ScopeToAccessPoints
+              - ArnEquals:
+                  elasticfilesystem:AccessPointArn: !Split
+                    - ","
+                    - !Join
+                      - ","
+                      - - !Join [",", !Ref AccessPointArns]
+                        - !If
+                          - HasReadOnlyAccessPoints
+                          - !Join [",", !Ref ReadOnlyAccessPointArns]
+                          - !Select [0, !Ref AccessPointArns]
+              - ArnLike:
+                  elasticfilesystem:AccessPointArn: !Sub "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/fsap-*"
+          - !If
+            - HasReadOnlyAccessPoints
+            - Sid: DenyWriteOnReadOnlyAccessPoints
+              Effect: Deny
+              Action: elasticfilesystem:ClientWrite
+              Resource: !GetAtt FileSystem.Arn
+              Condition:
+                ArnEquals:
+                  elasticfilesystem:AccessPointArn: !Ref ReadOnlyAccessPointArns
+            - !Ref AWS::NoValue
+
+  Connector:
+    Type: AWS::Lambda::NetworkConnector
+    Properties:
+      Name: !Ref ConnectorName
+      OperatorRole: !GetAtt OperatorRole.Arn
+      Configuration:
+        VpcEgressConfiguration:
+          AssociatedComputeResourceTypes:
+            - MicroVm
+          NetworkProtocol: IPv4
+          SecurityGroupIds:
+            - !Ref ConnectorSecurityGroup
+          SubnetIds: !Ref SubnetIds
+
+Outputs:
+  FileSystemId:
+    Description: Pass it as VolumeStore(file_system_id=...).
+    Value: !Ref FileSystem
+  FileSystemArn:
+    Value: !GetAtt FileSystem.Arn
+  ConnectorArn:
+    Description: Pass it as Sandbox.create(egress=[ConnectorArn]).
+    Value: !GetAtt Connector.Arn
+  ConnectorState:
+    Value: !GetAtt Connector.State
+  MountTargetSecurityGroupId:
+    Value: !Ref MountTargetSecurityGroup
+  ClientSecurityGroupId:
+    Description: >-
+      The connector's own security group: the only source the mount targets
+      accept NFS (2049) from.
+    Value: !Ref ConnectorSecurityGroup
+  CallerPolicyArn:
+    Description: >-
+      Attach to infra/iam.yaml's execution role so it can
+      ClientMount/ClientWrite an access point of this file system (never
+      ClientWrite on ReadOnlyAccessPointArns)
+      (RayitoEfsVolumeClient; see CallerPolicyStatement for the separate
+      lambda:PassNetworkConnector statement).
+    Value: !Ref EfsVolumeClientPolicy
+  CallerPolicyStatement:
+    Description: >-
+      The lambda:PassNetworkConnector statement the SDK caller needs on top
+      of infra/iam.yaml's execution role to launch a sandbox with
+      egress=[ConnectorArn]; it does not cover ClientMount/ClientWrite
+      (that's CallerPolicyArn, above).
+    Value: !Sub '{"Effect":"Allow","Action":"lambda:PassNetworkConnector","Resource":"${Connector.Arn}"}'

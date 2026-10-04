@@ -130,6 +130,12 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "reservedPorts",
     ),
     (
+        # m15-efs-volumes: the cap `rayd_core::volume::spec::
+        # MAX_VOLUMES_PER_SANDBOX` enforces (research doc §5), checked by
+        # both SDKs before `run-microvm`.
+        "efsVolumesMaxPerSandbox",
+    ),
+    (
         # Client-side hardening, not AWS properties: the shortest access
         # token the SDKs accept from a caller (128 bits; generated ones are
         # 32 bytes) and the most command output each stream keeps in memory

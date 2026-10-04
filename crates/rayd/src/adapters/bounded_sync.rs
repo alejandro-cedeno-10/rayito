@@ -92,17 +92,17 @@ impl BoundedFlush {
         for target in plan.targets {
             let device = target.device;
             lock(&self.in_flight).insert(device);
-            let sync = self.sync.clone();
             let in_flight = self.in_flight.clone();
             let done_tx = done_tx.clone();
-            let spawned = std::thread::Builder::new()
-                .name(SYNC_THREAD_NAME.to_owned())
-                .spawn(move || {
-                    let synced = sync.syncfs(&target.mount_point).is_ok();
+            let spawned = spawn_syncfs_thread(
+                self.sync.clone(),
+                target.mount_point.clone(),
+                move |synced| {
                     lock(&in_flight).remove(&target.device);
                     // The receiver is gone once the hook stopped waiting.
                     let _ = done_tx.send(synced);
-                });
+                },
+            );
             if spawned.is_ok() {
                 launched += 1;
             } else {
@@ -124,6 +124,22 @@ impl BoundedFlush {
         report.pending = launched - finished;
         report
     }
+}
+
+/// Runs `syncfs(mount_point)` on its own throwaway, detached thread (see
+/// the module doc for why never on the blocking pool) and hands whether it
+/// succeeded to `done` once it returns, which may be never. Shared by
+/// `BoundedFlush` and the EFS volumes' own per-volume flush
+/// (`adapters::efs_mount`).
+pub fn spawn_syncfs_thread(
+    sync: Arc<dyn FilesystemSync>,
+    mount_point: String,
+    done: impl FnOnce(bool) + Send + 'static,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name(SYNC_THREAD_NAME.to_owned())
+        .spawn(move || done(sync.syncfs(&mount_point).is_ok()))
+        .map(drop)
 }
 
 fn lock(in_flight: &Mutex<HashSet<DeviceId>>) -> MutexGuard<'_, HashSet<DeviceId>> {

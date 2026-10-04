@@ -55,8 +55,15 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     --bucket <bucket> [--variant full|slim|poly] [--image-name N] \
     [--os-capabilities ALL] [--build-role-arn ARN | --stack-name rayito-m0-iam] \
     [--memory-mib 2048] [--timeout-seconds 1800] [--force] \
-    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]...
+    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]... [--with-efs]
 ```
+
+`--with-efs` publica la imagen con `amazon-efs-utils` que necesita
+`volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)): exige
+un zip hecho con `rayito image zip --with-efs`, `--os-capabilities ALL` (`rayd`
+sólo monta con `CAP_SYS_ADMIN`) y la variante `full`, y su nombre por defecto
+es `rayito-base-caps-efs`. Un zip con el marcador de efs sin `--with-efs`, o
+`--with-efs` con un zip sin él, se rechaza antes de llamar a AWS.
 
 `--sizes` publica, además del baseline (2048 MiB), una imagen con sufijo de
 tamaño por cada nombre listado desde el mismo artefacto; `--env KEY=VALUE`
@@ -69,7 +76,8 @@ Reproduce el pipeline de `make image-publish`:
 
 1. Comprueba, antes de llamar a AWS, que el zip existe y que su marcador de
    variante (`warmup_variant` para `slim`, `kernels_variant` para `poly`)
-   coincide con `--variant`.
+   coincide con `--variant`, y que el marcador `efs_variant` aparece si y
+   sólo si se pasa `--with-efs`.
 2. Sube el zip a `s3://<bucket>/rayito/images/rayd-<12 hex del sha256>.zip`,
    salvo que la clave ya exista (clave por contenido: mismo zip, misma clave).
 3. Toma el build role de `--build-role-arn` o de la salida `BuildRoleArn` del
@@ -149,8 +157,12 @@ API se niegue a borrar. Imprime la tabla del plan y un resumen JSON; sale con
 ### `image zip`
 
 ```bash
-rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar]
+rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar] [--with-efs]
 ```
+
+`--with-efs` añade el marcador `kernel-sidecar/efs_variant`, que activa la
+capa condicional de `amazon-efs-utils` del `Dockerfile` (sin él, ninguna
+imagen cambia). El resumen `--json` lo indica en `withEfs`.
 
 Zip determinista (fechas y modos fijos; sin `__pycache__`, `tests`, `.venv`,
 cachés, `uv.lock` ni otros zips) con el `Dockerfile` en la raíz. Con
@@ -342,8 +354,8 @@ CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
   (`events-webhooks`): ahí se sube el código, por su hash.
 - `status` es un `DescribeStacks`: estado y salidas de la pila.
 - `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
-- Un componente todavía sin plantilla (`efs-volumes`, `custom-domain`)
-  falla con un error claro antes de llamar a AWS.
+- Un componente todavía sin plantilla (`custom-domain`) falla con un error
+  claro antes de llamar a AWS.
 
 ## `rayito events`
 
@@ -382,6 +394,7 @@ que `rayito image publish`; las antiguas se borran con `rayito image prune --ima
 
 ```bash
 rayito [--json] doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch]
+                       [--efs-vpc-id V --efs-subnet-ids S1,S2]
 ```
 
 Diez comprobaciones, en orden, cada una con `OK`, `WARN`, `FAIL` o `SKIP`.
@@ -403,6 +416,16 @@ con 1 sólo si alguna es `FAIL`.
 | 8 | `token` | `create-microvm-auth-token` (puerto 8080) para el sandbox de `--launch` o el `RUNNING` más nuevo | — | `AccessDenied`, `ValidationException` | sin sandbox `RUNNING` (usa `--launch`) | revisa `lambda:CreateMicrovmAuthToken` |
 | 9 | `agent` | un `Health` de `rayd`: `agent_version`, `kernel_ready`, `imds_blocked`, `hook_anomalies` | `kernel_ready=false`, `hook_anomalies>0`, `imds_blocked=false` en una imagen `-caps` | `Health` falla (`UNAVAILABLE`, `UNAUTHENTICATED`, 403 del proxy) | sin token | espera al kernel; revisa quién tiene un token `allPorts`; republica la imagen |
 | 10 | `compatibility` | la tabla SDK ↔ `rayd` de [Límites](limits.md); la versión de imagen (contador de builds por imagen y cuenta) sólo se informa | `rayd` más nuevo que el SDK en `MAJOR.MINOR` | `rayd` por debajo del mínimo del SDK | sin `agent_version` | actualiza el SDK o publica una imagen desde el tag del `rayd` mínimo |
+
+Con `--efs-vpc-id` y `--efs-subnet-ids` (volúmenes EFS en una VPC que ya
+existe) se añade, tras la 7, la comprobación **`efs-network`**: la misma que
+`EfsVolumes.check()`, de sólo lectura (`ec2:DescribeVpcs`,
+`DescribeVpcAttribute`, `DescribeSubnets`, `DescribeRouteTables`). `FAIL`
+si la VPC o una subred no existe, una subred es de otra VPC, dos comparten
+AZ o a una le quedan menos de 2 IPs libres; `WARN` con una sola AZ o sin DNS
+en la VPC. El resumen dice qué crearía `rayito stack deploy efs-volumes` y
+su coste en reposo; no crea nada. Ver
+[Volúmenes EFS en tu VPC](funciones-opcionales/volumenes-efs-vpc.md).
 
 Sin `--launch` el doctor **nunca crea un MicroVM**: las comprobaciones 8–10
 usan el sandbox `RUNNING` más nuevo de la imagen o quedan en `SKIP`. Con
@@ -447,6 +470,8 @@ y son *shims* de la CLI, así que los targets del `Makefile` no cambian:
 | `make` | Script | Equivalente |
 |---|---|---|
 | `make image-zip` | `python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar` y `python scripts/image_zip.py image image/rayito-image.zip` | `rayito image zip image image/rayito-image.zip --sidecar kernel-sidecar` |
+| `make image-zip-efs` | `python scripts/image_zip.py image image/rayito-image-efs.zip --with-efs` | `rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs` |
+| `make image-publish-caps-efs` | `… publish_image.py --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` | `rayito image publish --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` |
 | `make image-publish` (`-slim`, `-poly`, `-caps`) | `uv run --project clients/python python scripts/publish_image.py --artifact … --bucket $(BUCKET) --base-image-version 1` | `rayito image publish --artifact … --bucket … --base-image-version 1` |
 | `make image-prune PRUNE_ARGS="--keep 5 --dry-run"` | `uv run --project clients/python python scripts/image_prune.py --image-name rayito-base --keep 5 --dry-run` | `rayito image prune --keep 5 --dry-run` |
 

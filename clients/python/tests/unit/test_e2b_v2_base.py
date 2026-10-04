@@ -114,8 +114,8 @@ def test_the_table_covers_d14() -> None:
         "mcp",
         "get_mcp_url",
         "get_mcp_token",
-        "volume_mounts",
         "Volume",
+        "volume.content",
         "get_signature",
         # m15-templates: Template ya construye de verdad; sólo el
         # etiquetado (sin equivalente en create/update-microvm-image)

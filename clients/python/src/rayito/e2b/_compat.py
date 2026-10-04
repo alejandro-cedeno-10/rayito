@@ -20,11 +20,20 @@ from rayito._limits import (
     TERMINAL_STATES,
 )
 from rayito._metrics_base import HISTORY_UNIMPLEMENTED_REASON, is_history_unavailable
-from rayito._models import ALL_TRAFFIC, IdlePolicy, NetworkOptions, NetworkState, SandboxListItem
+from rayito._models import (
+    ALL_TRAFFIC,
+    INTERNET_EGRESS_CONNECTOR,
+    IdlePolicy,
+    NetworkOptions,
+    NetworkState,
+    SandboxListItem,
+    has_internet_connector,
+)
 from rayito._models import PtySize as NativePtySize
 from rayito._models import SandboxInfo as NativeSandboxInfo
 from rayito._models import SandboxMetrics as NativeSandboxMetrics
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR, LoggingOption, PortLike
+from rayito._volumes import VolumeStore
 from rayito.e2b._connection import (
     API_PARAM_NAMES,
     ConnectionSettings,
@@ -43,6 +52,7 @@ from rayito.e2b._models import (
     SandboxState,
 )
 from rayito.e2b._unimplemented import unimplemented
+from rayito.e2b._volume import plan_volume_mounts
 from rayito.e2b.exceptions import NotFoundException, UnimplementedError
 from rayito.exceptions import InvalidArgumentException
 
@@ -50,8 +60,7 @@ E2B_DEFAULT_TIMEOUT_SECONDS: Final = 300
 E2B_DEFAULT_MAX_LIFETIME_SECONDS: Final = 3600
 E2B_PAUSE_IDLE_SECONDS: Final = 300
 SHIM_DEFAULT_INGRESS: Final[tuple[str, ...]] = ("ALL_INGRESS",)
-INTERNET_EGRESS: Final = "INTERNET_EGRESS"
-INTERNET_EGRESS_CONNECTORS: Final[tuple[str, ...]] = (INTERNET_EGRESS,)
+INTERNET_EGRESS_CONNECTORS: Final[tuple[str, ...]] = (INTERNET_EGRESS_CONNECTOR,)
 
 E2B_STATE_FILTERS: Final[dict[SandboxState, tuple[str, ...]]] = {
     SandboxState.RUNNING: ("PENDING", "RUNNING"),
@@ -118,6 +127,9 @@ class CreateMapping:
 
     native_kwargs: dict[str, Any]
     warnings: tuple[str, ...]
+    #: `volume_mounts` ya validado y sin resolver (`None` sin él): `_launch`
+    #: lo convierte en el `volumes=` nativo (`resolve_volume_mounts`, I/O).
+    volume_mounts: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -274,13 +286,11 @@ def map_network_update(
     return map_network(policy), allow
 
 
-def reject_resource_kwargs(*, mcp: Any, iam: Any, volume_mounts: Any) -> None:
+def reject_resource_kwargs(*, mcp: Any, iam: Any) -> None:
     if mcp is not None:
         raise unimplemented("mcp")
     if iam is not None:
         raise unimplemented("iam")
-    if volume_mounts is not None:
-        raise unimplemented("volume_mounts")
 
 
 def map_create_kwargs(
@@ -294,7 +304,7 @@ def map_create_kwargs(
     network: Mapping[str, Any] | None = None,
     iam: Any | None = None,
     lifecycle: Mapping[str, Any] | None = None,
-    volume_mounts: Any | None = None,
+    volume_mounts: Mapping[str, Any] | None = None,
     logger: logging.Logger | None = None,
     *,
     max_lifetime: int | None = None,
@@ -312,16 +322,35 @@ def map_create_kwargs(
     keep_on_failure: bool = False,
     control_plane: Any | None = None,
     transport: Any | None = None,
+    volume_store: VolumeStore | None = None,
+    volume_connector_arn: str | None = None,
 ) -> CreateMapping:
-    """La tabla D5 en el orden posicional de E2B 2.x: `mcp`, `iam` y
-    `volume_mounts` son `UnimplementedError` antes de mapear nada; `timeout`
-    (300 s por defecto) es el plazo lógico que impone `rayd`, con
-    `max_lifetime` (por defecto `max(3600, min(timeout + 60, 28800))`) como
+    """La tabla D5 en el orden posicional de E2B 2.x: `mcp` e `iam` son
+    `UnimplementedError` antes de mapear nada; `timeout` (300 s por
+    defecto) es el plazo lógico que impone `rayd`, con `max_lifetime` (por
+    defecto `max(3600, min(timeout + 60, 28800))`) como
     `maximumDurationInSeconds`; `lifecycle` es `on_timeout` más la política
     de idle de la pausa; `allow_internet_access` y `network` son la política
     de egress en el guest sobre el conector `INTERNET_EGRESS`; `ingress` es
-    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa."""
-    reject_resource_kwargs(mcp=mcp, iam=iam, volume_mounts=volume_mounts)
+    `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa.
+    `volume_mounts` pasa, justo después de `mcp`/`iam`, por la puerta sin
+    I/O de `volumes=` (`rayito.e2b._volume.plan_volume_mounts`) con el
+    `volume_store` y el `volume_connector_arn` que `_launch` trae del cliente
+    `E2B(...)`: con volúmenes el sandbox sale sólo por ese conector (un
+    MicroVM admite uno, Q131), nunca por `INTERNET_EGRESS`, y
+    `allow_internet_access` sólo se reenvía si es `False`."""
+    reject_resource_kwargs(mcp=mcp, iam=iam)
+    planned_mounts = (
+        plan_volume_mounts(
+            volume_mounts,
+            store=volume_store,
+            connector_arn=volume_connector_arn,
+            template=template,
+            allow_internet_access=allow_internet_access,
+        )
+        if volume_mounts is not None
+        else None
+    )
     shim_lifecycle = map_lifecycle(lifecycle, auto_pause=auto_pause)
     native_network = map_network(network)
     resolved_timeout = E2B_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
@@ -361,8 +390,13 @@ def map_create_kwargs(
         "transport": transport,
     }
     native.update({name: value for name, value in optional.items() if value is not None})
+    if planned_mounts is not None and volume_connector_arn is not None:
+        native["egress"] = [volume_connector_arn]
+        del native["allow_internet_access"]
+        if allow_internet_access is False:
+            native["allow_internet_access"] = False
     warnings = (SECURE_FALSE_WARNING,) if secure is False else ()
-    return CreateMapping(native_kwargs=native, warnings=warnings)
+    return CreateMapping(native_kwargs=native, warnings=warnings, volume_mounts=planned_mounts)
 
 
 def native_call_kwargs(
@@ -449,10 +483,6 @@ def sandbox_state_from_aws(state: str, *, sandbox_id: str) -> SandboxState:
     if state in SUSPENDED_STATES:
         return SandboxState.PAUSED
     return SandboxState.RUNNING
-
-
-def has_internet_connector(egress: Sequence[str]) -> bool:
-    return any(connector.rsplit(":", 1)[-1] == INTERNET_EGRESS for connector in egress)
 
 
 def network_dict(network: NetworkState) -> dict[str, list[str]]:

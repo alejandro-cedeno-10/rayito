@@ -326,6 +326,16 @@ class ProcessInfo:
 
 ALL_TRAFFIC: Final = "0.0.0.0/0"
 
+#: El conector de egress gestionado que da internet al MicroVM
+#: (`AWS_API_NOTES.md` §2, `_limits.MANAGED_NETWORK_CONNECTORS`); un
+#: `egress=` omitido o vacío lo hereda de la imagen (§16 Q60).
+INTERNET_EGRESS_CONNECTOR: Final = "INTERNET_EGRESS"
+
+
+def has_internet_connector(egress: Sequence[str]) -> bool:
+    """Si `egress` (nombres gestionados o ARNs) incluye `INTERNET_EGRESS`."""
+    return any(connector.rsplit(":", 1)[-1] == INTERNET_EGRESS_CONNECTOR for connector in egress)
+
 
 class EgressEnforcement(StrEnum):
     """Cómo aplica `rayd` la política de egress en el guest, tal

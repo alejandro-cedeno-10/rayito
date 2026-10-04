@@ -18,6 +18,12 @@ pinned Deno binary behind the ``javascript`` and ``typescript`` kernels
 directory, and the variants of one tree differ only by their marker entry
 (and so by their content hash). ``full`` (the default) adds nothing.
 
+``--with-efs`` is orthogonal to the variant: it adds
+``kernel-sidecar/efs_variant`` holding ``efs``, which the conditional
+``amazon-efs-utils`` layer of ``image/Dockerfile`` reads (``m15-efs-volumes``;
+``rayito image publish --with-efs`` publishes it as ``rayito-base-caps-efs``).
+Without the flag no image changes.
+
 ``scripts/image_zip.py`` and ``scripts/copy_sidecar.py`` load this module by
 file path and run ``zip_main`` / ``copy_main``: the CI ``build`` job and
 ``release.yml`` zip the image on a bare ``python3`` without installing the
@@ -47,9 +53,13 @@ SLIM_MARKER_CONTENT = "slim\n"
 POLY_MARKER_CONTENT = "poly\n"
 MARKER_ENTRIES = {"slim": WARMUP_MARKER_ENTRY, "poly": KERNELS_MARKER_ENTRY}
 MARKER_CONTENTS = {"slim": SLIM_MARKER_CONTENT, "poly": POLY_MARKER_CONTENT}
+#: Next to ``kernels_variant`` because the Dockerfile only ``COPY``s
+#: ``kernel-sidecar/`` (and ``rayd``) into the image.
+EFS_MARKER_ENTRY = "kernel-sidecar/efs_variant"
+EFS_MARKER_CONTENT = "efs\n"
 FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 REQUIREMENTS_FILES = ("requirements.txt", "requirements-poly.txt")
-ZIP_USAGE = "image_zip.py IMAGE_DIR DESTINATION [--variant full|slim|poly]"
+ZIP_USAGE = "image_zip.py IMAGE_DIR DESTINATION [--variant full|slim|poly] [--with-efs]"
 COPY_USAGE = "copy_sidecar.py SOURCE DESTINATION"
 
 
@@ -96,17 +106,40 @@ def normalized(info: zipfile.ZipInfo, *, executable: bool) -> zipfile.ZipInfo:
     return info
 
 
-def write_zip(image_dir: Path, destination: Path, variant: str = "full") -> int:
+def synthetic_entries(variant: str, *, with_efs: bool) -> dict[str, str]:
+    """The marker entries (archive name -> content) a zip of ``variant``
+    carries on top of the image directory's files."""
+    entries: dict[str, str] = {}
+    if variant in MARKER_ENTRIES:
+        entries[MARKER_ENTRIES[variant]] = MARKER_CONTENTS[variant]
+    if with_efs:
+        entries[EFS_MARKER_ENTRY] = EFS_MARKER_CONTENT
+    return entries
+
+
+def write_zip(
+    image_dir: Path, destination: Path, variant: str = "full", *, with_efs: bool = False
+) -> int:
     files = image_files(image_dir)
+    markers = synthetic_entries(variant, with_efs=with_efs)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in files:
             info = zipfile.ZipInfo.from_file(path, arcname=path.relative_to(image_dir).as_posix())
             with path.open("rb") as source:
                 archive.writestr(normalized(info, executable=path.name == "rayd"), source.read())
-        if variant in MARKER_ENTRIES:
-            marker = zipfile.ZipInfo(MARKER_ENTRIES[variant])
-            archive.writestr(normalized(marker, executable=False), MARKER_CONTENTS[variant])
-    return len(files) + (1 if variant in MARKER_ENTRIES else 0)
+        for entry, content in markers.items():
+            marker = zipfile.ZipInfo(entry)
+            archive.writestr(normalized(marker, executable=False), content)
+    return len(files) + len(markers)
+
+
+def marker_has_efs(artifact: Path) -> bool:
+    """Whether an artifact zip carries the ``amazon-efs-utils`` marker
+    (``write_zip(..., with_efs=True)``)."""
+    with zipfile.ZipFile(artifact) as archive:
+        if EFS_MARKER_ENTRY not in archive.namelist():
+            return False
+        return archive.read(EFS_MARKER_ENTRY).decode("utf-8") == EFS_MARKER_CONTENT
 
 
 def marker_variant(artifact: Path) -> str:
@@ -171,11 +204,17 @@ def zip_main(argv: list[str]) -> int:
     parser.add_argument("image_dir", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--variant", choices=VARIANTS, default="full")
+    parser.add_argument(
+        "--with-efs",
+        action="store_true",
+        help="Add the amazon-efs-utils marker (m15-efs-volumes, rayito-base-caps-efs).",
+    )
     args = parser.parse_args(argv)
-    count = write_zip(args.image_dir, args.destination, args.variant)
+    count = write_zip(args.image_dir, args.destination, args.variant, with_efs=args.with_efs)
+    efs_note = ", with efs" if args.with_efs else ""
     print(
         f"{args.destination}: {count} files, {args.destination.stat().st_size} bytes "
-        f"(variant {args.variant})"
+        f"(variant {args.variant}{efs_note})"
     )
     return 0
 

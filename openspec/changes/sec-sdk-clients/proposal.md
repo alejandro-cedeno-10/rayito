@@ -69,7 +69,7 @@ a change to `rayd`, the `.proto` or any AWS resource; all are client-side.
   the default cap; `rayito sandbox exec` keeps nothing.
 - `ACCESS_TOKEN_MIN_BYTES` (16, `limits.json`) enforced when decoding a
   caller token; the JWE is hidden from `repr`/`inspect`.
-- `SECURITY.md` (T3, T4, T7, T9, T18, T20, logging hygiene), `security.md`,
+- `SECURITY.md` (T3, T4, T7, T9, T18, T28, logging hygiene), `security.md`,
   `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`,
   `variables-de-entorno.md`, both CHANGELOGs.
 

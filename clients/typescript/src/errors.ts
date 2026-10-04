@@ -347,6 +347,27 @@ export class VolumeError extends SandboxError {}
 /** El `AccessPoint` del volumen no existe. */
 export class VolumeNotFoundError extends VolumeError {}
 
+export interface VolumeMountErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+}
+
+/**
+ * Un volumen de `volumes` (m15-efs-volumes, experimental) no se pudo montar
+ * en el sandbox o no llegó a `mounted` a tiempo: `create()` ya terminó el
+ * MicroVM (salvo `keepOnFailure`). `code` es uno de `network`,
+ * `iam_denied`, `not_found`, `tls`, `helper_missing`, `timeout`,
+ * `invalid_path` o `unknown` (`VOLUME_MOUNT_ERROR_CLASSES`). Espejo de
+ * `VolumeMountException` de Python.
+ */
+export class VolumeMountError extends VolumeError {
+  readonly code: string;
+
+  constructor(message: string, options: VolumeMountErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+  }
+}
+
 /** Una operación de contenido nombra una ruta fuera del volumen montado. */
 export class VolumePathNotFoundError extends VolumeError {}
 

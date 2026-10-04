@@ -75,7 +75,11 @@ impl ConfigureGrpc {
                 Some(self.features.s3_mounts.apply(cfg).await)
             }
             ConfigSection::EfsVolumes => {
-                let cfg = request.efs_volumes?;
+                // `EfsVolumesConfig` carries a `repeated` field (unlike the
+                // other four sections' still-empty stubs), so prost does not
+                // derive `Copy` for it; an explicit clone is the only change
+                // this arm needs.
+                let cfg = request.efs_volumes.clone()?;
                 Some(self.features.efs_volumes.apply(cfg).await)
             }
         }
@@ -207,7 +211,7 @@ mod tests {
         // and makes the same point.
         let service = running_service();
         let request = ConfigureRequest {
-            efs_volumes: Some(EfsVolumesConfig {}),
+            efs_volumes: Some(EfsVolumesConfig::default()),
             ..Default::default()
         };
         let response = service
@@ -263,7 +267,7 @@ mod tests {
         );
         assert_eq!(
             response.efs_volumes,
-            Some(rayito_proto::v1::EfsVolumesStatus {})
+            Some(rayito_proto::v1::EfsVolumesStatus::default())
         );
     }
 

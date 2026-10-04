@@ -223,3 +223,40 @@ def test_image_zip_skips_symlinks_that_point_outside(image_dir: Path, tmp_path: 
     out = tmp_path / "full.zip"
     assert _artifact.write_zip(image_dir, out) == 3
     assert names(out) == ["Dockerfile", "kernel-sidecar/ipython/startup/0004_warmup.py", "rayd"]
+
+
+def test_with_efs_adds_only_the_efs_marker(image_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "efs.zip"
+    assert _artifact.write_zip(image_dir, out, with_efs=True) == 4
+    assert _artifact.EFS_MARKER_ENTRY in names(out)
+    with zipfile.ZipFile(out) as archive:
+        assert archive.read(_artifact.EFS_MARKER_ENTRY) == b"efs\n"
+    assert _artifact.marker_has_efs(out)
+    assert _artifact.marker_variant(out) == "full"
+    plain = tmp_path / "plain.zip"
+    _artifact.write_zip(image_dir, plain)
+    assert not _artifact.marker_has_efs(plain)
+    assert not (image_dir / "kernel-sidecar" / "efs_variant").exists()
+
+
+def test_with_efs_is_orthogonal_to_the_variant(image_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "poly-efs.zip"
+    _artifact.write_zip(image_dir, out, "poly", with_efs=True)
+    assert _artifact.marker_variant(out) == "poly"
+    assert _artifact.marker_has_efs(out)
+
+
+def test_an_efs_marker_with_unexpected_content_does_not_count(tmp_path: Path) -> None:
+    odd = tmp_path / "odd.zip"
+    with zipfile.ZipFile(odd, "w") as archive:
+        archive.writestr(_artifact.EFS_MARKER_ENTRY, "yes\n")
+    assert not _artifact.marker_has_efs(odd)
+
+
+def test_zip_main_with_efs_flag(
+    image_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "cli-efs.zip"
+    assert _artifact.zip_main([str(image_dir), str(out), "--with-efs"]) == 0
+    assert _artifact.marker_has_efs(out)
+    assert "(variant full, with efs)" in capsys.readouterr().out

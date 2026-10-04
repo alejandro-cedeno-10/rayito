@@ -48,6 +48,7 @@ from rayito._sandbox_base import (
     PortLike,
     class_method_variant,
 )
+from rayito._volumes import VolumeStore
 from rayito.e2b._compat import (
     NativeCall,
     class_metrics_unimplemented,
@@ -90,6 +91,7 @@ from rayito.e2b._models import (
     SandboxState,
 )
 from rayito.e2b._unimplemented import UnimplementedMember
+from rayito.e2b._volume import resolve_volume_mounts
 from rayito.e2b.exceptions import RayitoCompatWarning
 from rayito.exceptions import (
     InvalidArgumentException,
@@ -136,6 +138,13 @@ class Sandbox:
 
     _bound_params: ClassVar[Mapping[str, Any]] = EMPTY_PARAMS
     _bound_index: ClassVar[DynamoDbIndex | None] = None
+    #: El `VolumeStore` de `E2B(volume_store=...)`: `_launch` lo pasa a la
+    #: puerta pura de `volume_mounts=` (`map_create_kwargs`) y resuelve con él
+    #: los nombres; `None` fuera de un cliente ligado, igual que `client.Volume`.
+    _bound_volume_store: ClassVar[VolumeStore | None] = None
+    #: El `ConnectorArn` de `E2B(volume_connector_arn=...)`: el único conector
+    #: de egress de un sandbox con `volume_mounts=` (Q131).
+    _bound_volume_connector_arn: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -291,8 +300,18 @@ class Sandbox:
     def _launch(
         cls, create_kwargs: Mapping[str, Any], api_params: Mapping[str, Any]
     ) -> tuple[NativeSandbox, ConnectionConfig]:
-        mapping = map_create_kwargs(**create_kwargs)
-        resolved = cls._native_call(mapping.native_kwargs, api_params, call="create")
+        mapping = map_create_kwargs(
+            **create_kwargs,
+            volume_store=cls._bound_volume_store,
+            volume_connector_arn=cls._bound_volume_connector_arn,
+        )
+        native_kwargs = mapping.native_kwargs
+        if mapping.volume_mounts is not None and cls._bound_volume_store is not None:
+            native_kwargs = {
+                **native_kwargs,
+                "volumes": resolve_volume_mounts(mapping.volume_mounts, cls._bound_volume_store),
+            }
+        resolved = cls._native_call(native_kwargs, api_params, call="create")
         emit_warnings(mapping.warnings)
         try:
             native = NativeSandbox.create(**resolved.kwargs)

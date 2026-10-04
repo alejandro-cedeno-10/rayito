@@ -90,8 +90,8 @@ const D14_TS_KEYS = [
   "mcp",
   "getMcpUrl",
   "getMcpToken",
-  "volumeMounts",
   "Volume",
+  "volume.content",
   "getSignature",
   "Template.aliasExists",
   "Template.assignTags",
@@ -274,11 +274,10 @@ describe("mapCreateOptions", () => {
     expect(error.message).toContain("suspend-microvm");
   });
 
-  test("mcp, iam and volumeMounts are unimplemented whatever their value", () => {
+  test("mcp and iam are unimplemented whatever their value", () => {
     for (const [key, feature] of [
       ["mcp", "mcp"],
       ["iam", "iam"],
-      ["volumeMounts", "volumeMounts"],
     ] as const) {
       for (const value of [{}, [], "x", null]) {
         const error = caught(() => mapCreateOptions({ [key]: value } as SandboxOpts));
@@ -286,6 +285,13 @@ describe("mapCreateOptions", () => {
         expect((error as UnimplementedError).feature).toBe(feature);
       }
     }
+  });
+
+  test("mapCreateOptions never maps volumeMounts to native volumes", () => {
+    // `volumeMounts` is gated by `Sandbox.createFor` after these rejections
+    // (`requireVolumeMountSupport`, no I/O); the pure table never forwards it.
+    const result = mapCreateOptions({ volumeMounts: { "/mnt/v": "datos" } });
+    expect(result.native).not.toHaveProperty("volumes");
   });
 
   test("the ignored options give one warning each, naming the option and never the value", () => {

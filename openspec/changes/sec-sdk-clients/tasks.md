@@ -44,6 +44,6 @@
 
 ## 9. Docs and gates
 
-- [x] 9.1 `SECURITY.md` (T3, T20), `security.md`, `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`, `variables-de-entorno.md`
+- [x] 9.1 `SECURITY.md` (T3, T28), `security.md`, `proxy-local.md`, `cli.md`, `git.md`, `templates.md`, `comandos.md`, `variables-de-entorno.md`
 - [x] 9.2 CHANGELOG `[Unreleased]` → `Security` in both packages
 - [x] 9.3 Python, TypeScript, docs, OpenSpec and root gates
