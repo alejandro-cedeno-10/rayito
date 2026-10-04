@@ -233,7 +233,9 @@ Notas de operación:
 2. Variables del repositorio (Settings → Variables → Repository):
    `RAYITO_E2E_ROLE_ARN` (output `RoleArn`), `RAYITO_E2E_TEMPLATE_ARN` (el
    ARN de `rayito-base`, **siempre un ARN**: la política compara ARNs),
-   `RAYITO_E2E_REGION` (opcional, `us-east-1` por defecto).
+   `RAYITO_E2E_REGION` (opcional, `us-east-1` por defecto). Mientras
+   `RAYITO_E2E_ROLE_ARN` no exista, los jobs de `e2e.yml` se saltan en vez
+   de fallar cada noche.
 3. AWS Budget de $10/mes (Billing → Budgets) filtrado por servicio `AWS
    Lambda` con alerta por correo al 80 %: el nightly cuesta ≈ $0,03 por
    ejecución (≈ $1/mes), así que un exceso señala sandboxes huérfanos.

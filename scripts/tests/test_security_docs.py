@@ -422,3 +422,21 @@ def test_t22_says_only_the_mac_authenticates_an_event() -> None:
         ),
     )
     assert_silent("SECURITY.md T22", row, ("**Doble comprobación de identidad**",))
+
+EXACT_RAYD_IDENTITY = (
+    "--certificate-identity "
+    '"https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml'
+    '@refs/tags/rayd-v${RAYD_VERSION}"'
+)
+
+
+def test_cosign_recipes_bind_the_installed_version() -> None:
+    """A regexp that ends at ``rayd-v`` accepts a bundle signed by any rayd
+    tag: a downgrade to an older signed asset, or one re-signed under another
+    tag, would verify. The recipes name the exact identity of the version
+    being installed."""
+    for relative in ("docs/site/docs/verify.md", "README.md"):
+        text = read(relative)
+        assert "certificate-identity-regexp" not in text, relative
+        assert EXACT_RAYD_IDENTITY in text, relative
+        assert "RAYD_VERSION=" in text, relative
