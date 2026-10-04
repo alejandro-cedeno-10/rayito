@@ -5,8 +5,9 @@ Pure transforms over crafted text (the release-please block is dropped and
 merged, idempotently; compare links in the footer move to the new tag;
 version updaters derived from ``release-please-config.json``; trailers), and
 the whole flow against throwaway git repositories: a release-please branch
-cut before newer merges to ``main`` must not revert them, and the scope
-guard aborts before anything reaches the remote."""
+cut before newer merges to ``main`` must not revert them, the bumps must
+match release-please's own, and the scope guard aborts before anything
+reaches the remote."""
 
 from __future__ import annotations
 
@@ -467,5 +468,26 @@ def test_dry_run_leaves_the_release_uncommitted(repo: Path) -> None:
     before = _remote_release(repo)
     assert prp.main(["--date", DATE, "--dry-run"]) == 0
     assert _run(repo, "rev-parse", "HEAD") == _run(repo, "rev-parse", "origin/main")
+    assert _run(repo, "branch", "--show-current") == prp.RELEASE_BRANCH
     assert f'version = "{NEW}"' in Path("Cargo.toml").read_text(encoding="utf-8")
+    assert _remote_release(repo) == before
+
+
+def test_a_bump_that_disagrees_with_release_please_aborts(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(repo, "switch", "--quiet", "-c", "rp", f"origin/{prp.RELEASE_BRANCH}")
+    _write(
+        repo,
+        {"Cargo.toml": f'[workspace.package]\nversion = "{NEW}"\nedition = "2024"\n'},
+    )
+    _commit(repo, "chore: release main")
+    _run(repo, "push", "--quiet", "--force", "origin", f"HEAD:{prp.RELEASE_BRANCH}")
+    _run(repo, "switch", "--quiet", "main")
+    before = _remote_release(repo)
+
+    assert prp.main(["--date", DATE]) == prp.EXIT_ABORT
+    err = capsys.readouterr().err
+    assert "no coincide" in err
+    assert "Cargo.toml" in err
     assert _remote_release(repo) == before

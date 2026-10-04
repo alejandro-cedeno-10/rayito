@@ -195,8 +195,10 @@ cargo publish --dry-run -p rayito-proto
    - **Guarda**: antes de commitear, `git diff --name-only origin/main` debe
      quedar dentro de manifiesto, ficheros de versión, lockfiles y
      CHANGELOG; también aborta si release-please movió un fichero que la
-     configuración no explica. En ambos casos sale con código 2 sin
-     commitear ni subir nada.
+     configuración no explica, o si un fichero de versión que `main` no
+     tocó desde la base de release-please no queda idéntico al de su rama
+     (contraste de los actualizadores con los de release-please). En todos
+     los casos sale con código 2 sin commitear ni subir nada.
    - **Trailers**: `RELEASE_PR_ARGS='--trailer "Co-Authored-By: …"'`
      (repetible) o la variable `RELEASE_PR_TRAILERS` (uno por línea) los
      añade al mensaje, antes del `Signed-off-by`, sin `--amend` posterior.

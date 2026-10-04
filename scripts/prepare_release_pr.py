@@ -26,7 +26,9 @@ quedan siempre a mano (lo aprendido en 0.3.0, 0.3.1, 0.3.2 y 0.5.1):
    `release-please-config.json` (manifiesto, fichero propio de cada
    `release-type` y `extra-files`). Antes de commitear, una guarda exige que
    `git diff --name-only origin/main` quede dentro de ese conjunto (más
-   lockfiles y CHANGELOG); si no, aborta sin tocar el remoto.
+   lockfiles y CHANGELOG), y cada fichero de versión que `main` no tocó
+   desde la base de release-please debe quedar idéntico al de su rama; si
+   no, aborta sin tocar el remoto.
 
 Uso (desde la raíz del repositorio, con la firma SSH configurada):
 
@@ -421,6 +423,13 @@ def show(ref: str, path: str) -> str:
     return git("show", f"{ref}:{path}", capture=True)
 
 
+def blob(ref: str, path: str) -> str:
+    """Contenido exacto de `path` en `ref` (sin recortar el salto final)."""
+    return subprocess.run(
+        ["git", "show", f"{ref}:{path}"], check=True, text=True, capture_output=True
+    ).stdout
+
+
 def changed_paths(base: str) -> set[str]:
     """Ficheros que difieren de `base` en el árbol de trabajo, más los nuevos
     sin seguimiento."""
@@ -431,9 +440,14 @@ def changed_paths(base: str) -> set[str]:
     return {path for path in (*tracked, *untracked) if path}
 
 
+def release_please_base() -> str:
+    """El commit de `main` del que cuelga la rama de release-please."""
+    return git("merge-base", MAIN_REF, RELEASE_REF, capture=True)
+
+
 def release_please_paths() -> set[str]:
     """Ficheros que release-please cambió respecto a su base."""
-    base = git("merge-base", MAIN_REF, RELEASE_REF, capture=True)
+    base = release_please_base()
     return set(git("diff", "--name-only", base, RELEASE_REF, capture=True).splitlines())
 
 
@@ -473,6 +487,31 @@ def check_release_please_scope(plan: ReleasePlan) -> None:
         raise ReleaseError(
             f"{RELEASE_BRANCH} cambia ficheros que el plan no deriva de {CONFIG}: "
             + ", ".join(unknown)
+        )
+
+
+def check_bumps_match_release_please(plan: ReleasePlan) -> None:
+    """Contraste con lo que hizo release-please: en cada fichero de versión
+    que release-please cambió y que `main` no ha tocado desde su base, el
+    resultado debe ser idéntico al de su rama. Si difiere, un actualizador
+    de aquí no reproduce el suyo y se para antes de subir nada."""
+    base = release_please_base()
+    # Cargo.lock no: el actualizador TOML de release-please no lo mueve (punto 1).
+    candidates = sorted(
+        {MANIFEST, *(entry.path for entry in plan.version_files)} - {CARGO_LOCK}
+    )
+    touched = release_please_paths()
+    disagree = [
+        path
+        for path in candidates
+        if path in touched
+        and blob(base, path) == blob(MAIN_REF, path)
+        and Path(path).read_text(encoding="utf-8") != blob(RELEASE_REF, path)
+    ]
+    if disagree:
+        raise ReleaseError(
+            "el cambio de versión no coincide con el de "
+            f"{RELEASE_BRANCH} en: {', '.join(disagree)}"
         )
 
 
@@ -533,6 +572,7 @@ def prepare(args: argparse.Namespace) -> int:
     plan = release_plan(json.loads(Path(CONFIG).read_text(encoding="utf-8")), Path("."))
     check_release_please_scope(plan)
     apply_release(plan, current, version, args.date)
+    check_bumps_match_release_please(plan)
     paths = check_release_scope(plan)
 
     git("--no-pager", "diff", "--stat")
