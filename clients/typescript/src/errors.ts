@@ -135,13 +135,20 @@ export interface CommandExitErrorOptions {
   readonly stderr?: string | undefined;
   readonly error?: string | undefined;
   readonly grpcCode?: Code | undefined;
+  readonly truncated?: boolean | undefined;
 }
 
+/**
+ * Un comando terminó con exit code distinto de cero. `truncated` es `true`
+ * cuando `stdout` o `stderr` superaron `maxOutputBytes` y sólo conservan su
+ * final.
+ */
 export class CommandExitError extends SandboxError {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
   readonly error: string | undefined;
+  readonly truncated: boolean;
 
   constructor(message: string, options: CommandExitErrorOptions) {
     super(message, { grpcCode: options.grpcCode });
@@ -149,6 +156,7 @@ export class CommandExitError extends SandboxError {
     this.stdout = options.stdout ?? "";
     this.stderr = options.stderr ?? "";
     this.error = options.error;
+    this.truncated = options.truncated ?? false;
   }
 }
 

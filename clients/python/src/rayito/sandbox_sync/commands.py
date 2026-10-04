@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import grpc
 
+from rayito._limits import COMMAND_OUTPUT_MAX_BYTES
 from rayito._models import CommandResult, ProcessInfo
 from rayito._process_base import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -39,6 +40,7 @@ from rayito._process_base import (
     stream_deadline,
     suspending_reason,
     validate_from_seq,
+    validate_max_output_bytes,
     validate_pid,
 )
 from rayito._sandbox_base import GateRetry, ReconnectBudget
@@ -83,6 +85,7 @@ class Commands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult: ...
 
     @overload
@@ -101,6 +104,7 @@ class Commands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandHandle: ...
 
     @overload
@@ -119,6 +123,7 @@ class Commands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult | CommandHandle: ...
 
     def run(
@@ -136,14 +141,19 @@ class Commands:
         request_timeout: float | None = None,
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandResult | CommandHandle:
         """Ejecuta `cmd` con `/bin/bash -l -c` como `user` (uid 1000 por defecto).
 
         `timeout` lo impone el agente sobre el reloj corrido (SIGTERM al
         vencer, SIGKILL 5 s después; una pausa no lo consume) y por defecto
         son 60 s; `None` o `0` lo desactivan. En foreground el resultado
-        llega con la salida completa y un exit distinto de cero es
-        `CommandExitException`; el timeout es `TimeoutException`. En background
+        llega con la salida y un exit distinto de cero es
+        `CommandExitException`; el timeout es `TimeoutException`. La salida
+        guardada (la del resultado y la del handle) está acotada a
+        `max_output_bytes` por descriptor (64 MiB por defecto): lo más
+        antiguo se descarta y `truncated` lo indica; `0` no guarda nada.
+        `on_stdout`/`on_stderr` reciben siempre todo. En background
         devuelve un `CommandHandle` que consume el stream cuando se itera o se
         llama a `wait()`: mientras nadie lo lee, el agente aplica backpressure
         y, tras 30 s con el canal lleno, cierra ese suscriptor con
@@ -174,6 +184,7 @@ class Commands:
         el span se cierra en cuanto `start` devuelve el handle, no cuando el
         proceso termina.
         """
+        validate_max_output_bytes(max_output_bytes)
         envs = self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
             cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
@@ -190,6 +201,7 @@ class Commands:
                 on_stderr=on_stderr,
                 request_timeout=request_timeout,
                 foreground=not background,
+                max_output_bytes=max_output_bytes,
             )
             if background:
                 return handle
@@ -210,13 +222,15 @@ class Commands:
         on_stderr: OutputCallback | None = None,
         timeout: float | None = None,
         request_timeout: float | None = None,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandHandle:
         """Se engancha a un proceso vivo o terminado hace menos de 30 s.
 
         `from_seq=0` entrega sólo salida nueva; `N` reenvía primero lo retenido
         con `seq >= N` (último MiB). Un `seq` ya descartado o un pid
         desconocido es `NotFoundException`. `timeout` es aquí el deadline gRPC
-        del stream (no hay timeout de servidor en `Connect`).
+        del stream (no hay timeout de servidor en `Connect`). `max_output_bytes`
+        acota la salida guardada como en `run`.
         """
         return self._attach(
             self._connect_starter(pid, from_seq, timeout),
@@ -225,6 +239,7 @@ class Commands:
             on_stdout=on_stdout,
             on_stderr=on_stderr,
             request_timeout=request_timeout,
+            max_output_bytes=validate_max_output_bytes(max_output_bytes),
         )
 
     def list(self, *, request_timeout: float | None = None) -> list[ProcessInfo]:
@@ -290,9 +305,12 @@ class Commands:
         on_stderr: OutputCallback | None,
         request_timeout: float | None,
         foreground: bool = False,
+        max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     ) -> CommandHandle:
         call, first = self._sandbox._open_stream(start, service=PROCESS_STUB, stream=stream)
-        accumulator = OutputAccumulator(on_stdout=on_stdout, on_stderr=on_stderr)
+        accumulator = OutputAccumulator(
+            on_stdout=on_stdout, on_stderr=on_stderr, max_bytes=max_output_bytes
+        )
         progress = CommandProgress(pid_from_start_event(first), accumulator)
         return CommandHandle(
             commands=self,

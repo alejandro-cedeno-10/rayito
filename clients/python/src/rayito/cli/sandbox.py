@@ -655,6 +655,7 @@ def run_remote_command(
             timeout=timeout,
             on_stdout=stream_writer(sys.stdout),
             on_stderr=stream_writer(sys.stderr),
+            max_output_bytes=STREAM_ONLY_OUTPUT_BYTES,
         )
     except CommandExitException as exc:
         return exc.exit_code
@@ -662,6 +663,12 @@ def run_remote_command(
         echo(COMMAND_TIMEOUT_MESSAGE, err=True)
         return EXIT_TIMEOUT
     return 0
+
+
+#: `rayito sandbox exec` ya escribe cada chunk en la terminal según llega: no
+#: guarda nada en memoria, así que un comando que no para de escribir (o sin
+#: plazo, `--timeout 0`) no hace crecer el proceso de la CLI.
+STREAM_ONLY_OUTPUT_BYTES = 0
 
 
 def stream_writer(stream: Any) -> Any:

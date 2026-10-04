@@ -91,6 +91,10 @@ class PoolClosedException(SandboxException):
 
 
 class CommandExitException(SandboxException):
+    """Un comando terminó con exit code distinto de cero. `truncated` es
+    `True` cuando `stdout` o `stderr` superaron `max_output_bytes` y sólo
+    conservan su final."""
+
     def __init__(
         self,
         message: str,
@@ -100,12 +104,14 @@ class CommandExitException(SandboxException):
         stderr: str = "",
         error: str | None = None,
         grpc_code: grpc.StatusCode | None = None,
+        truncated: bool = False,
     ) -> None:
         super().__init__(message, grpc_code=grpc_code)
         self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
         self.error = error
+        self.truncated = truncated
 
 
 class PersistenceException(SandboxException):

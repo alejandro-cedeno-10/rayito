@@ -707,6 +707,7 @@ def redacted_exit(exc: CommandExitException, secrets: Sequence[str]) -> CommandE
         stderr=redact(exc.stderr, secrets),
         error=None if exc.error is None else redact(exc.error, secrets),
         grpc_code=exc.grpc_code,
+        truncated=exc.truncated,
     )
 
 

@@ -759,5 +759,6 @@ export function redactedExitError(
     stderr: redact(error.stderr, secrets),
     error: error.error === undefined ? undefined : redact(error.error, secrets),
     grpcCode: error.grpcCode,
+    truncated: error.truncated,
   });
 }

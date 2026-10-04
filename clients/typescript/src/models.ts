@@ -376,6 +376,11 @@ export interface CommandResult {
   readonly stderr: string;
   readonly exitCode: number;
   readonly error: string | undefined;
+  /**
+   * `true` cuando `stdout` o `stderr` superaron `maxOutputBytes` y sólo
+   * conservan su final; ausente si no se descartó nada.
+   */
+  readonly truncated?: true | undefined;
 }
 
 /**
