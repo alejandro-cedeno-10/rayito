@@ -1967,6 +1967,20 @@ any sandbox with that role's credentials can mount any access point the
 role is scoped to. Threat T21 (NFS volumes) covers the mount path once a
 real adapter exists.
 
+**Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
+organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
+stack deploys into an existing one: `SubnetIds` (1–3, one mount target per
+AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
+rules on existing security groups. `EfsVolumes.check()` is a pure
+evaluation over read-only `ec2:Describe*` facts (a `NetworkInspector` port,
+also behind `rayito doctor --efs-vpc-id`), and `deploy()` refuses on any
+`FAIL`. The file system stays `DeletionPolicy: Retain`;
+`destroy(delete_file_system=True)`/`delete_file_system(id)` delete it
+explicitly, only when it carries the template's literal
+`rayito=efs-volumes` tag. The connector's only egress is NFS to the mount
+targets: internet through the VPC would depend on the VPC's own NAT and a
+connector that allows it (EFS-4 measures combining with `INTERNET_EGRESS`).
+
 ## ADR-019 — sizes-catalog (M15, 0.6)
 
 **Contexto.** `create-microvm-image` fija la memoria del guest con

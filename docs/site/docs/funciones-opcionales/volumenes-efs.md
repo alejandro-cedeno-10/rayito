@@ -22,6 +22,11 @@ vivos.
     [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md)
     para el estudio completo.
 
+!!! tip "¿Ya tienes una VPC?"
+    [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) explica cómo comprobarla
+    sin crear nada (`EfsVolumes.check`, `rayito doctor --efs-vpc-id`),
+    desplegar sólo recursos nuevos dentro de ella y borrarlos todos.
+
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin `VolumeStore(...)` ni `volumes=`, Rayito
       no construye ningún cliente `efs` ni hace ninguna llamada a AWS.
@@ -53,9 +58,10 @@ vivos.
       seguridad y el IAM, pero **siempre conserva** el sistema de ficheros
       y sus datos (`DeletionPolicy: Retain`, sin parámetro que lo cambie:
       redesplegar la pila nunca puede borrar ni sustituir los datos). Para
-      borrarlos de verdad, un paso explícito aparte, después del `destroy`:
-      `aws efs delete-file-system --file-system-id <FileSystemId>` (borra
-      antes sus access points con `aws efs delete-access-point`).
+      borrarlos de verdad: `EfsVolumes(...).destroy(delete_file_system=True)`,
+      o `EfsVolumes(...).delete_file_system("fs-…")` después de un
+      `rayito stack destroy` (ver
+      [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md#3-borralo)).
 
 ## Cuándo usarlo (cuando el montaje llegue)
 
@@ -71,7 +77,8 @@ vivos.
 ## `VolumeStore`: CRUD de volúmenes
 
 El CRUD es real hoy, sobre un sistema de ficheros EFS que ya exista
-(desplegado con `rayito stack deploy efs-volumes` o uno propio). Cada
+(desplegado con `EfsVolumes.deploy`/`rayito stack deploy efs-volumes`, ver
+[Volúmenes EFS en tu VPC](volumenes-efs-vpc.md), o uno propio). Cada
 volumen es un *access point* con `RootDirectory.Path =
 /rayito-volumes/<nombre>` y usuario POSIX 1000:1000 forzado.
 
@@ -218,6 +225,7 @@ termina en `UnimplementedError`, igual que `volumes=`.
 
 - [Funciones opcionales](../optional-features.md)
 - [Persistencia (S3)](../persistence.md) — la alternativa que funciona hoy
+- [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) — `EfsVolumes`: comprobar, desplegar y borrar
 - [Pilas opcionales](pilas-opcionales.md) — `rayito stack deploy efs-volumes`
 - Plantilla: [`infra/efs-volumes.yaml`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/efs-volumes.yaml)
 

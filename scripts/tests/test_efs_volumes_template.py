@@ -14,7 +14,11 @@ wrong and that cfn-lint cannot see on its own:
   NFS (2049): without this egress rule, EFS-3 would fail because of this
   template, not the platform.
 - the identity-side Allow (`EfsVolumeClientPolicy`) never grants
-  `elasticfilesystem:ClientRootAccess` and needs no `CAPABILITY_NAMED_IAM`.
+  `elasticfilesystem:ClientRootAccess`, needs no `CAPABILITY_NAMED_IAM` and
+  is scoped to this file system and its access points.
+- it deploys into an EXISTING VPC: it never declares a VPC, subnet, route,
+  route table, NACL or gateway, and every security-group rule it adds hangs
+  off one of its own two security groups (never an existing one).
 """
 
 from __future__ import annotations
@@ -108,12 +112,115 @@ def test_a_redeploy_without_parameters_never_changes_the_file_system() -> None:
     assert "RetainData" not in parameters
 
 
+MOUNT_TARGETS = ("MountTarget1", "MountTarget2", "MountTarget3")
+
+#: Resource types that would create or change the caller's network itself;
+#: this stack only ever adds resources *inside* an existing VPC.
+NETWORK_MUTATING_TYPES = frozenset(
+    {
+        "AWS::EC2::VPC",
+        "AWS::EC2::Subnet",
+        "AWS::EC2::RouteTable",
+        "AWS::EC2::Route",
+        "AWS::EC2::SubnetRouteTableAssociation",
+        "AWS::EC2::NetworkAcl",
+        "AWS::EC2::NetworkAclEntry",
+        "AWS::EC2::SubnetNetworkAclAssociation",
+        "AWS::EC2::InternetGateway",
+        "AWS::EC2::VPCGatewayAttachment",
+        "AWS::EC2::NatGateway",
+        "AWS::EC2::EIP",
+        "AWS::EC2::VPCEndpoint",
+    }
+)
+OWN_SECURITY_GROUPS = ({"Ref": "ConnectorSecurityGroup"}, {"Ref": "MountTargetSecurityGroup"})
+
+
 def test_mount_targets_and_outputs_reference_the_one_file_system() -> None:
-    for mount_target in ("MountTarget1", "MountTarget2", "MountTarget3"):
+    for mount_target in MOUNT_TARGETS:
         assert resources()[mount_target]["Properties"]["FileSystemId"] == {
             "Ref": "FileSystem"
         }
     assert template()["Outputs"]["FileSystemId"]["Value"] == {"Ref": "FileSystem"}
+
+
+def test_subnets_come_from_one_typed_list_parameter() -> None:
+    """`--param SubnetIds=subnet-a,subnet-b` (CLI) or `subnet_ids=[...]`
+    (`EfsVolumes.deploy`): one typed list, so CloudFormation itself rejects
+    an id that is not a subnet of the account before creating anything."""
+    parameters = template()["Parameters"]
+    assert parameters["SubnetIds"]["Type"] == "List<AWS::EC2::Subnet::Id>"
+    assert parameters["VpcId"]["Type"] == "AWS::EC2::VPC::Id"
+    assert not {"SubnetId1", "SubnetId2", "SubnetId3"} & set(parameters)
+    for index, mount_target in enumerate(MOUNT_TARGETS):
+        subnet = resources()[mount_target]["Properties"]["SubnetId"]
+        assert subnet == {"Fn::Select": [index, {"Ref": "SubnetIds"}]}
+    assert "Condition" not in resources()["MountTarget1"]
+    assert resources()["MountTarget2"]["Condition"] == "HasSubnet2"
+    assert resources()["MountTarget3"]["Condition"] == "HasSubnet3"
+    connector = resources()["Connector"]["Properties"]["Configuration"]
+    assert connector["VpcEgressConfiguration"]["SubnetIds"] == {"Ref": "SubnetIds"}
+
+
+def test_the_stack_never_creates_or_changes_the_network_itself() -> None:
+    types = {resource["Type"] for resource in resources().values()}
+    assert not types & NETWORK_MUTATING_TYPES
+
+
+def test_every_security_group_rule_belongs_to_one_of_its_own_groups() -> None:
+    """A standalone ingress/egress rule on an existing group would change
+    the caller's network; only the two groups this stack creates get one."""
+    for resource in resources().values():
+        if resource["Type"] in {
+            "AWS::EC2::SecurityGroupIngress",
+            "AWS::EC2::SecurityGroupEgress",
+        }:
+            assert resource["Properties"]["GroupId"] in OWN_SECURITY_GROUPS
+
+
+def test_mount_targets_accept_nfs_only_from_the_client_security_group() -> None:
+    group = resources()["MountTargetSecurityGroup"]["Properties"]
+    assert group["SecurityGroupIngress"] == [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": NFS_PORT,
+            "ToPort": NFS_PORT,
+            "SourceSecurityGroupId": {"Ref": "ConnectorSecurityGroup"},
+            "Description": "NFS from the Rayito EFS connector only",
+        }
+    ]
+    assert template()["Outputs"]["ClientSecurityGroupId"]["Value"] == {
+        "Ref": "ConnectorSecurityGroup"
+    }
+
+
+def test_file_system_is_encrypted_and_its_policy_requires_tls_and_an_access_point() -> None:
+    properties = file_systems()["FileSystem"]["Properties"]
+    assert properties["Encrypted"] is True
+    statements = {s["Sid"]: s for s in properties["FileSystemPolicy"]["Statement"]}
+    assert all(s["Effect"] == "Deny" for s in statements.values())
+    assert statements["DenyNonTls"]["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
+    assert statements["DenyWithoutAccessPoint"]["Condition"] == {
+        "Null": {"elasticfilesystem:AccessPointArn": "true"}
+    }
+    assert statements["DenyWithoutMountTarget"]["Condition"] == {
+        "Bool": {"elasticfilesystem:AccessedViaMountTarget": "false"}
+    }
+
+
+def test_client_policy_is_scoped_to_this_file_system_and_its_access_points() -> None:
+    statement = resources()["EfsVolumeClientPolicy"]["Properties"]["PolicyDocument"][
+        "Statement"
+    ][0]
+    assert statement["Resource"] == {"Fn::GetAtt": "FileSystem.Arn"}
+    scope_given, any_of_account = statement["Condition"]["Fn::If"][1:]
+    assert statement["Condition"]["Fn::If"][0] == "ScopeToAccessPoints"
+    assert scope_given == {
+        "ArnEquals": {"elasticfilesystem:AccessPointArn": {"Ref": "AccessPointArns"}}
+    }
+    pattern = any_of_account["ArnLike"]["elasticfilesystem:AccessPointArn"]["Fn::Sub"]
+    assert pattern.endswith(":access-point/fsap-*")
+    assert "${AWS::AccountId}" in pattern
 
 
 def test_connector_security_group_can_reach_the_mount_targets_on_nfs() -> None:

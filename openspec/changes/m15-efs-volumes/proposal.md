@@ -84,6 +84,15 @@ for the serialized AWS acceptance stage.
   compiled into the guest kernel, confirmed by the M10 measurement
   campaign).
 
+- **Existing VPC quick setup** (design D5): `EfsVolumes`/`AsyncEfsVolumes`
+  (TS `EfsVolumes`) — `check()` (read-only EC2 preflight, also
+  `rayito doctor --efs-vpc-id/--efs-subnet-ids`), `deploy(vpc_id=,
+  subnet_ids=)` (refuses on a failing check; only new, tagged resources in
+  the VPC), `volume_store()`, `destroy(delete_file_system=)` and the
+  tag-guarded `delete_file_system()`; the template takes `SubnetIds` (1–3)
+  and an optional `AccessPointArns` scope. The measurement script takes the
+  VPC only from args/env (`RAYITO_E2E_VPC_ID`, `RAYITO_E2E_SUBNET_IDS`).
+
 ## Impact
 
 - Affected specs: new capability `efs-volumes` (this change); no existing

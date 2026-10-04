@@ -1014,6 +1014,31 @@ cambios de forma. Referencia de la API:
 | `DeleteAccessPoint` (`delete_access_point` / `DeleteAccessPointCommand`) | `AccessPointId` | — (sin cuerpo; `204`) | `elasticfilesystem:DeleteAccessPoint` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteAccessPoint.html> |
 | `DescribeMountTargets` (`describe_mount_targets` / `DescribeMountTargetsCommand`) | `AccessPointId` **o** `FileSystemId` (uno de los dos; nunca `MountTargetId` desde este SDK) | `MountTargets[].{MountTargetId, SubnetId, LifeCycleState, IpAddress, AvailabilityZoneId}` | `elasticfilesystem:DescribeMountTargets` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html> |
 
+**`EfsVolumes` (pila en una VPC existente, `m15-efs-volumes`)**, también
+con las credenciales del llamante. Verificado sin red el 2026-10-03 contra
+los modelos de botocore 1.43.103 (`ec2/2016-11-15`,
+`elasticfilesystem/2015-02-01`); en JavaScript, los mismos nombres en
+`@aws-sdk/client-ec2`/`@aws-sdk/client-efs`. `check()` sólo lee: ninguna
+operación de abajo crea ni cambia nada de la red del llamante.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `DescribeVpcs` (`describe_vpcs` / `DescribeVpcsCommand`) | `VpcIds=[<vpc>]` (uno) | `Vpcs[].{VpcId, State}`; `InvalidVpcID.NotFound` = no existe | `ec2:DescribeVpcs` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcs.html> |
+| `DescribeVpcAttribute` (`describe_vpc_attribute` / `DescribeVpcAttributeCommand`) | `VpcId`, `Attribute` (`enableDnsSupport` o `enableDnsHostnames`; dos llamadas) | `EnableDnsSupport.Value`, `EnableDnsHostnames.Value` | `ec2:DescribeVpcAttribute` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVpcAttribute.html> |
+| `DescribeSubnets` (`describe_subnets` / `DescribeSubnetsCommand`) | `Filters=[{Name: "subnet-id", Values: [...]}]` (nunca `SubnetIds`: con un id inexistente falla entera y el filtro devuelve las que existen) | `Subnets[].{SubnetId, VpcId, AvailabilityZone, AvailableIpAddressCount, State}` | `ec2:DescribeSubnets` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSubnets.html> |
+| `DescribeRouteTables` (`describe_route_tables` / `DescribeRouteTablesCommand`) | `Filters=[{Name: "vpc-id", Values: [<vpc>]}]`, `NextToken` | `RouteTables[].{Associations[].{SubnetId, Main}, Routes[].{DestinationCidrBlock, NatGatewayId, GatewayId}}`, `NextToken` | `ec2:DescribeRouteTables` | <https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRouteTables.html> |
+| `DescribeFileSystems` (`describe_file_systems` / `DescribeFileSystemsCommand`) | `FileSystemId` (uno) | `FileSystems[].Tags` (sólo se borra uno con `rayito=efs-volumes`, la etiqueta literal de `infra/efs-volumes.yaml`); `FileSystemNotFound` = ya no existe | `elasticfilesystem:DescribeFileSystems` | <https://docs.aws.amazon.com/efs/latest/ug/API_DescribeFileSystems.html> |
+| `DescribeMountTargets` (fila de arriba) | `FileSystemId` | `MountTargets` vacío antes de borrar | `elasticfilesystem:DescribeMountTargets` | ídem |
+| `DeleteFileSystem` (`delete_file_system` / `DeleteFileSystemCommand`) | `FileSystemId` | — (sin cuerpo); `FileSystemInUse` mientras quede un mount target | `elasticfilesystem:DeleteFileSystem` | <https://docs.aws.amazon.com/efs/latest/ug/API_DeleteFileSystem.html> |
+
+`EfsVolumes.delete_file_system` (y `destroy(delete_file_system=True)`)
+sigue siempre este orden: `DescribeFileSystems` (etiqueta), sondear
+`DescribeMountTargets` hasta vacío (como mucho 120 s, cada 5 s: tras
+borrar la pila CloudFormation ya esperó a cada mount target, el sondeo sólo
+cubre el retraso del listado), `DescribeAccessPoints` + `DeleteAccessPoint`
+de cada uno (un `AccessPointNotFound` es el listado atrasado, Q125) y
+`DeleteFileSystem`.
+
 Un `ClientToken` ya usado por un access point que sigue vivo no devuelve
 ese access point: EFS responde `AccessPointAlreadyExists` (409), que
 `VolumeStore.create` atrapa para hacer `DescribeAccessPoints` él mismo

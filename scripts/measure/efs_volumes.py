@@ -2,13 +2,14 @@
 answers EFS-1..EFS-20 (`docs/research/2026-10-efs-persistence.md` §9)
 against real AWS, before any real mounting code is written. Not run by
 this change's own build or test gates — only by the serialized AWS
-acceptance stage, under its own budget (architecture §8: cap $1.50).
+acceptance stage, under its own budget (cap $3, `BUDGET_CAP_USD`).
 
 Subcommands:
 
     plan                     prints what `run` would create and its
                               estimated cost; makes no AWS call
     run --region R --run-id ID --caps-template T --execution-role-arn A
+        [--vpc-id V --subnet-ids S1,S2]
                               idempotent: resolves already-tagged
                               resources before creating anything new,
                               then measures the ★ stop criteria
@@ -18,18 +19,23 @@ Subcommands:
     cleanup --run-id ID      deletes everything tagged with this run,
                               in dependency order; safe to re-run
 
-`run` provisions its own throwaway VPC and one subnet (tagged
-`rayito:run-id=<ID>`, discovered by that tag before ever creating a new
-one) — or, with `--vpc-id`/`--subnet-id`, uses a network borrowed with its
-owner's permission that it never creates, records or deletes (an
-organization SCP can deny `ec2:CreateVpc`: AWS_API_NOTES.md §16 Q124) —
-then deploys the already-reviewed `efs-volumes` `OptionalStack`
-(`infra/efs-volumes.yaml`) into them through `rayito.OptionalStacks` —
-this script never re-implements the file system, mount target, connector,
-security groups or IAM resources that the stack already creates. The
-stack always retains its file system (`DeletionPolicy: Retain`), so this
-script tags it with the run id and `cleanup` deletes it explicitly, after
-the stack, together with its access points.
+`run` deploys into an EXISTING VPC that the caller already has permission
+to use, given only by `--vpc-id`/`--subnet-ids` or the environment
+(`RAYITO_E2E_VPC_ID`, `RAYITO_E2E_SUBNET_IDS`, comma-separated): it never
+creates, modifies, records or deletes that VPC or its subnets (many
+accounts cannot create VPCs at all — an organization SCP can deny
+`ec2:CreateVpc`: AWS_API_NOTES.md §16 Q124). It goes through the public
+`rayito.EfsVolumes` facade: `check()` first (read-only; a `FAIL` stops
+before anything is created), then `deploy()` of the already-reviewed
+`efs-volumes` `OptionalStack` (`infra/efs-volumes.yaml`) — this script
+never re-implements the file system, mount targets, connector, security
+groups or IAM resources that the stack creates, all of them NEW resources
+inside the VPC. The stack always retains its file system
+(`DeletionPolicy: Retain`), so this script tags it with the run id and
+`cleanup` deletes it explicitly after the stack
+(`EfsVolumes.delete_file_system`, together with its access points). The
+only out-of-band change any step makes is EFS-13's, on the stack's OWN
+mount-target security group (revoked and always restored).
 
 It then measures the ★ stop criteria that are automated here (`AUTOMATED`:
 EFS-2, EFS-3, EFS-8, EFS-11, EFS-13), in the research doc's §9 order,
@@ -49,12 +55,13 @@ for a retry, never clears blindly.
 Every resource `run` creates is tagged `rayito:measurement=efs-volumes`,
 `rayito:run-id=<ID>` and `rayito:expires-at=<unix-ms>` (24h from creation,
 a named budget below); `cleanup` only ever touches resources carrying
-`rayito:run-id=<ID>` for this script's own measurement tag, never a
-resource it did not tag itself, and resolves them by that tag rather than
-by an id kept on disk — no AWS-assigned resource id (VPC, subnet, file
-system, ARN, IP...) is ever written to local state or printed by this
-script (`redact` scrubs every summary), only the measurement's own
-non-identifying run id, tag values and resource *kinds*
+`rayito:run-id=<ID>` for this script's own measurement tag (or its own
+stack, by name), never a resource it did not create itself, and resolves
+them by that tag rather than by an id kept on disk — no AWS-assigned
+resource id (VPC, subnet, file system, ARN, IP...) is ever written to
+local state or printed by this script (`redact` scrubs every summary),
+only the measurement's own non-identifying run id, tag values and
+resource *kinds*
 (`AWS_API_NOTES.md` §22 "nunca... un id de recurso real"). Local state is
 never written into the repository: it goes to
 `$XDG_STATE_HOME/rayito-measure/<run-id>.json` (`~/.local/state/...` if
@@ -86,6 +93,11 @@ MEASUREMENT_TAG_KEY: Final = "rayito:measurement"
 MEASUREMENT_TAG_VALUE: Final = "efs-volumes"
 RUN_ID_TAG_KEY: Final = "rayito:run-id"
 EXPIRES_AT_TAG_KEY: Final = "rayito:expires-at"
+#: A run id ends up in the stack name (`rayito-efs-volumes-measure-<id>`,
+#: CloudFormation: letters, digits, hyphens) and in the connector's name
+#: (`AWS::Lambda::NetworkConnector`: at most 64 characters), so it is
+#: lowercase letters, digits and hyphens, short enough for both.
+RUN_ID_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,36}$")
 
 #: The ★ stop-criterion questions (research doc §9): a failure here stops
 #: the whole run and triggers `cleanup` before anything further is spent.
@@ -114,19 +126,21 @@ ALREADY_ANSWERED: Final = {
     "EFS-1": "nfs4 en /proc/filesystems (M10, AWS_API_NOTES.md §16)"
 }
 
-#: `rayito stack deploy efs-volumes`'s own component name (`_stacks/_registry.py`).
-EFS_STACK_COMPONENT: Final = "efs-volumes"
-#: A /24 for the throwaway measurement VPC and a /28 carved from it for the
-#: one subnet `run` needs (a single mount target and the connector's ENIs:
-#: research doc §9 does not require multi-AZ).
-MEASUREMENT_VPC_CIDR: Final = "10.90.0.0/24"
-MEASUREMENT_SUBNET_CIDR: Final = "10.90.0.0/28"
+#: The existing network, when not given by flag (module docstring): never
+#: written to state, never printed, never created or deleted by this script.
+VPC_ID_ENV: Final = "RAYITO_E2E_VPC_ID"
+SUBNET_IDS_ENV: Final = "RAYITO_E2E_SUBNET_IDS"
+#: The acceptance stage's spending cap for this campaign (MicroVMs, the
+#: throwaway caps image, EFS throughput); `plan` refuses to call an
+#: estimate above it acceptable.
+BUDGET_CAP_USD: Final = 3.0
 #: `state.resources` records *kinds*, never an AWS-assigned id (module
 #: docstring). `cleanup` deletes them in this order: the role attachment
-#: first (an attached managed policy blocks the stack's own delete), the
-#: stack before its retained file system (mount targets must be gone
-#: before `DeleteFileSystem`), and the network last.
-CLEANUP_ORDER: Final = ("client-policy", "stack", "file-system", "subnet", "vpc")
+#: first (an attached managed policy blocks the stack's own delete), then
+#: the stack before its retained file system (mount targets must be gone
+#: before `DeleteFileSystem`). There is no network stage: the VPC and its
+#: subnets are the caller's and are never touched.
+CLEANUP_ORDER: Final = ("client-policy", "stack", "file-system")
 #: Name of the one access point the MicroVM steps mount
 #: (`VolumeStore.create` is idempotent by file system + name).
 MEASUREMENT_VOLUME_NAME: Final = "rayito-measure"
@@ -199,11 +213,12 @@ class PlannedResource:
 
 #: What `run` creates, before any AWS call (research doc §9/§6). Kept as
 #: data, not an f-string, so `plan` and `run` share one source of truth.
+#: Nothing here is a VPC, subnet, route or NACL: the network is the caller's.
 PLANNED_RESOURCES: Final[tuple[PlannedResource, ...]] = (
-    PlannedResource("vpc", "throwaway VPC + one subnet for the stack below", 0.0),
     PlannedResource(
         "efs-volumes-stack",
-        "rayito stack deploy efs-volumes: file system, mount target, connector, SGs, IAM",
+        "EfsVolumes.deploy in the existing VPC: file system, one mount target per "
+        "subnet, connector, two new security groups, IAM",
         0.02,
     ),
     PlannedResource(
@@ -220,9 +235,9 @@ PLANNED_RESOURCES: Final[tuple[PlannedResource, ...]] = (
         "efs-throughput", "EFS-9 sustained read/write sample (by hand)", 0.25
     ),
     PlannedResource(
-        "nat-gateway",
-        "only if EFS-4 shows INTERNET_EGRESS can't coexist with the connector",
-        0.10,
+        "manual-steps",
+        "steps 4-5 by hand (EFS-4/5/12/15/16): a few short VMs, one 70-min pause",
+        0.15,
     ),
 )
 
@@ -321,32 +336,44 @@ def redact(text: str) -> str:
 # ------------------------------------------------------------- AWS port
 
 
+@dataclass(frozen=True)
+class NetworkCheck:
+    """`EfsVolumes.check`'s verdict, reduced to what this script may keep:
+    the worst level and each finding's code and level. Messages are not
+    kept (they name subnets and AZs); the report prints codes only."""
+
+    ok: bool
+    status: str
+    findings: tuple[tuple[str, str], ...]
+
+
 class MeasurementAwsPort(Protocol):
-    """What `run`/`cleanup` need from AWS: a throwaway VPC and subnet of
-    this script's own, found by the `rayito:run-id` tag before ever being
-    created, the `efs-volumes` `OptionalStack` (file system, mount target,
-    connector, security groups, IAM), the retained file system it leaves
-    behind, and the few out-of-band changes the ★ steps make. Real behind
-    boto3/`rayito.OptionalStacks` (`real_port`), faked in
+    """What `run`/`cleanup` need from AWS: the read-only check of the
+    caller's existing network, the `efs-volumes` `OptionalStack` deployed
+    into it (file system, mount targets, connector, security groups, IAM),
+    the retained file system it leaves behind, and the few out-of-band
+    changes the ★ steps make on the stack's own resources. Real behind
+    boto3/`rayito.EfsVolumes` (`real_port`), faked in
     `scripts/tests/test_measure_efs_volumes.py`.
     """
 
-    def find_tagged_vpc(self, run_id: str) -> str | None: ...
-    def create_vpc(self, *, tags: Mapping[str, str]) -> str: ...
-    def delete_vpc(self, vpc_id: str) -> None: ...
-
-    def find_tagged_subnet(self, run_id: str) -> str | None: ...
-    def create_subnet(self, vpc_id: str, *, tags: Mapping[str, str]) -> str: ...
-    def delete_subnet(self, subnet_id: str) -> None: ...
+    def check_network(self, vpc_id: str, subnet_ids: Sequence[str]) -> NetworkCheck:
+        """`EfsVolumes.check`: read-only, creates nothing."""
+        ...
 
     def stack_status(self, stack_name: str) -> Mapping[str, str] | None:
         """The stack's `Outputs`, or `None` if it does not exist."""
         ...
 
     def deploy_stack(
-        self, stack_name: str, *, vpc_id: str, subnet_id: str, tags: Mapping[str, str]
+        self,
+        stack_name: str,
+        *,
+        vpc_id: str,
+        subnet_ids: Sequence[str],
+        tags: Mapping[str, str],
     ) -> Mapping[str, str]:
-        """`efs-volumes` with its defaults; returns its `Outputs`."""
+        """`EfsVolumes.deploy` with its defaults; returns its `Outputs`."""
         ...
 
     def destroy_stack(self, stack_name: str) -> None:
@@ -358,7 +385,8 @@ class MeasurementAwsPort(Protocol):
     ) -> None: ...
     def find_tagged_file_system(self, run_id: str) -> str | None: ...
     def delete_file_system(self, file_system_id: str) -> None:
-        """Deletes its access points first, then the file system."""
+        """`EfsVolumes.delete_file_system`: access points, then the file
+        system (only one tagged by `infra/efs-volumes.yaml`)."""
         ...
 
     def ensure_access_point(self, file_system_id: str, name: str) -> str:
@@ -392,71 +420,52 @@ def _role_name(role_arn: str) -> str:
 
 @dataclass
 class _RealPort:
-    """boto3 `ec2`/`efs`/`iam` plus `rayito.OptionalStacks`, all lazily
-    imported by `real_port` so `plan`/`report`/the test module never need
-    boto3 or a region to load."""
+    """boto3 `ec2`/`efs`/`iam` plus `rayito.EfsVolumes`, all lazily imported
+    by `real_port` so `plan`/`report`/the test module never need boto3 or a
+    region to load. `ec2` is only used on the stack's OWN mount-target
+    security group (EFS-13)."""
 
     region: str
     ec2: Any
     efs: Any
     iam: Any
-    stacks: Any
+    #: `rayito.EfsVolumes` for a stack name (`None`: the facade's default,
+    #: enough for `check`/`delete_file_system`, which ignore the stack).
+    volumes: Callable[[str | None], Any]
 
-    def find_tagged_vpc(self, run_id: str) -> str | None:
-        response = self.ec2.describe_vpcs(
-            Filters=[{"Name": f"tag:{RUN_ID_TAG_KEY}", "Values": [run_id]}]
+    def check_network(self, vpc_id: str, subnet_ids: Sequence[str]) -> NetworkCheck:
+        report = self.volumes(None).check(
+            vpc_id=vpc_id, subnet_ids=list(subnet_ids)
         )
-        vpcs = response.get("Vpcs", [])
-        return vpcs[0]["VpcId"] if vpcs else None
-
-    def create_vpc(self, *, tags: Mapping[str, str]) -> str:
-        response = self.ec2.create_vpc(
-            CidrBlock=MEASUREMENT_VPC_CIDR,
-            TagSpecifications=[{"ResourceType": "vpc", "Tags": _tag_list(tags)}],
+        return NetworkCheck(
+            ok=report.ok,
+            status=report.status,
+            findings=tuple((finding.code, finding.level) for finding in report.findings),
         )
-        vpc_id: str = response["Vpc"]["VpcId"]
-        return vpc_id
-
-    def delete_vpc(self, vpc_id: str) -> None:
-        self.ec2.delete_vpc(VpcId=vpc_id)
-
-    def find_tagged_subnet(self, run_id: str) -> str | None:
-        response = self.ec2.describe_subnets(
-            Filters=[{"Name": f"tag:{RUN_ID_TAG_KEY}", "Values": [run_id]}]
-        )
-        subnets = response.get("Subnets", [])
-        return subnets[0]["SubnetId"] if subnets else None
-
-    def create_subnet(self, vpc_id: str, *, tags: Mapping[str, str]) -> str:
-        response = self.ec2.create_subnet(
-            VpcId=vpc_id,
-            CidrBlock=MEASUREMENT_SUBNET_CIDR,
-            TagSpecifications=[{"ResourceType": "subnet", "Tags": _tag_list(tags)}],
-        )
-        subnet_id: str = response["Subnet"]["SubnetId"]
-        return subnet_id
-
-    def delete_subnet(self, subnet_id: str) -> None:
-        self.ec2.delete_subnet(SubnetId=subnet_id)
 
     def stack_status(self, stack_name: str) -> Mapping[str, str] | None:
-        status = self.stacks.status(EFS_STACK_COMPONENT, stack_name=stack_name)
+        status = self.volumes(stack_name).status()
         return None if status is None or not status.exists else status.outputs
 
     def deploy_stack(
-        self, stack_name: str, *, vpc_id: str, subnet_id: str, tags: Mapping[str, str]
+        self,
+        stack_name: str,
+        *,
+        vpc_id: str,
+        subnet_ids: Sequence[str],
+        tags: Mapping[str, str],
     ) -> Mapping[str, str]:
-        status = self.stacks.deploy(
-            EFS_STACK_COMPONENT,
-            stack_name=stack_name,
-            parameters={"VpcId": vpc_id, "SubnetId1": subnet_id},
+        status = self.volumes(stack_name).deploy(
+            vpc_id=vpc_id,
+            subnet_ids=list(subnet_ids),
+            connector_name=stack_name,
             tags=dict(tags),
         )
         outputs: Mapping[str, str] = status.outputs
         return outputs
 
     def destroy_stack(self, stack_name: str) -> None:
-        self.stacks.destroy(EFS_STACK_COMPONENT, stack_name=stack_name)
+        self.volumes(stack_name).destroy()
 
     def tag_file_system(self, file_system_id: str, *, tags: Mapping[str, str]) -> None:
         self.efs.tag_resource(ResourceId=file_system_id, Tags=_tag_list(tags))
@@ -474,10 +483,7 @@ class _RealPort:
         return None
 
     def delete_file_system(self, file_system_id: str) -> None:
-        access_points = self.efs.describe_access_points(FileSystemId=file_system_id)
-        for access_point in access_points.get("AccessPoints", []):
-            self.efs.delete_access_point(AccessPointId=access_point["AccessPointId"])
-        self.efs.delete_file_system(FileSystemId=file_system_id)
+        self.volumes(None).delete_file_system(file_system_id)
 
     def ensure_access_point(self, file_system_id: str, name: str) -> str:
         from rayito import VolumeStore
@@ -518,19 +524,24 @@ class _RealPort:
 
 
 def real_port(*, region: str, session: Any | None = None) -> MeasurementAwsPort:
-    """The real adapter: boto3 `ec2`/`efs`/`iam` plus
-    `rayito.OptionalStacks`. Called only from inside `cmd_run`/`cmd_cleanup`
-    when the caller did not inject a fake, never at import time."""
+    """The real adapter: boto3 `ec2`/`efs`/`iam` plus `rayito.EfsVolumes`.
+    Called only from inside `cmd_run`/`cmd_cleanup` when the caller did not
+    inject a fake, never at import time."""
     import boto3
-    from rayito import OptionalStacks
+    from rayito import EfsVolumes
 
     factory = session or boto3
+
+    def volumes(stack_name: str | None) -> Any:
+        named = {} if stack_name is None else {"stack_name": stack_name}
+        return EfsVolumes(**named, region=region, session=session)
+
     return _RealPort(
         region=region,
         ec2=factory.client("ec2", region_name=region),
         efs=factory.client("efs", region_name=region),
         iam=factory.client("iam", region_name=region),
-        stacks=OptionalStacks(region=region, session=session),
+        volumes=volumes,
     )
 
 
@@ -1050,14 +1061,6 @@ def _delete_one(aws: MeasurementAwsPort, kind: str, run_id: str) -> None:
         file_system_id = aws.find_tagged_file_system(run_id)
         if file_system_id is not None:
             aws.delete_file_system(file_system_id)
-    elif kind == "subnet":
-        subnet_id = aws.find_tagged_subnet(run_id)
-        if subnet_id is not None:
-            aws.delete_subnet(subnet_id)
-    elif kind == "vpc":
-        vpc_id = aws.find_tagged_vpc(run_id)
-        if vpc_id is not None:
-            aws.delete_vpc(vpc_id)
     else:  # pragma: no cover - state.json is only ever written by this script
         raise AssertionError(f"unknown resource kind in state: {kind!r}")
 
@@ -1081,47 +1084,26 @@ def _new_or_resumed_state(args: argparse.Namespace) -> RunState:
 
 
 @dataclass(frozen=True)
-class BorrowedNetwork:
-    """A VPC and subnet the caller already has permission to use
-    (`--vpc-id`/`--subnet-id`): `run` deploys into them but never creates,
-    records or deletes them, so `cleanup` cannot touch them."""
+class ExistingNetwork:
+    """The caller's VPC and subnets (`--vpc-id`/`--subnet-ids` or
+    `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`): `run` deploys into them
+    but never creates, modifies, records or deletes them, so `cleanup`
+    cannot touch them."""
 
     vpc_id: str
-    subnet_id: str
-
-
-def own_network(
-    state: RunState, aws: MeasurementAwsPort, tags: Mapping[str, str]
-) -> tuple[str, str]:
-    """This run's throwaway VPC and subnet, each resolved by tag first."""
-    vpc_id = aws.find_tagged_vpc(state.run_id)
-    if vpc_id is None:
-        vpc_id = aws.create_vpc(tags=tags)
-    _ensure_recorded(state, "vpc")
-
-    subnet_id = aws.find_tagged_subnet(state.run_id)
-    if subnet_id is None:
-        subnet_id = aws.create_subnet(vpc_id, tags=tags)
-    _ensure_recorded(state, "subnet")
-    return vpc_id, subnet_id
+    subnet_ids: tuple[str, ...]
 
 
 def provision(
     state: RunState,
     aws: MeasurementAwsPort,
     tags: Mapping[str, str],
-    borrowed: BorrowedNetwork | None = None,
+    network: ExistingNetwork,
 ) -> tuple[Mapping[str, str], float | None]:
-    """The network (own or `borrowed`) and the `efs-volumes` stack, each
-    resolved first. The stack and its retained file system are recorded
-    *before* the deploy, so a deploy that fails half-way is still cleaned
-    up. Returns the stack's outputs and how long a fresh deploy took
-    (`None` if resumed)."""
-    if borrowed is None:
-        vpc_id, subnet_id = own_network(state, aws, tags)
-    else:
-        vpc_id, subnet_id = borrowed.vpc_id, borrowed.subnet_id
-
+    """The `efs-volumes` stack in `network`, resolved first. The stack and
+    its retained file system are recorded *before* the deploy, so a deploy
+    that fails half-way is still cleaned up. Returns the stack's outputs and
+    how long a fresh deploy took (`None` if resumed)."""
     stack_name = measurement_stack_name(state.run_id)
     outputs = aws.stack_status(stack_name)
     deploy_seconds: float | None = None
@@ -1130,7 +1112,7 @@ def provision(
         _ensure_recorded(state, "stack")
         started = time.monotonic()
         outputs = aws.deploy_stack(
-            stack_name, vpc_id=vpc_id, subnet_id=subnet_id, tags=tags
+            stack_name, vpc_id=network.vpc_id, subnet_ids=network.subnet_ids, tags=tags
         )
         deploy_seconds = time.monotonic() - started
     _ensure_recorded(state, "file-system")
@@ -1190,7 +1172,11 @@ def cmd_plan(
         print(
             f"  - {resource.kind}: {resource.purpose} (~${resource.approx_cost_usd:.2f})"
         )
-    print(f"Estimated total: ~${total:.2f} (architecture §8 cap: $1.50)")
+    print(f"Estimated total: ~${total:.2f} (budget cap: ${BUDGET_CAP_USD:.2f})")
+    print(
+        f"Network: an EXISTING VPC from --vpc-id/--subnet-ids or {VPC_ID_ENV}/"
+        f"{SUBNET_IDS_ENV}; never created, modified, recorded or deleted"
+    )
     print(
         f"Tags: {MEASUREMENT_TAG_KEY}={MEASUREMENT_TAG_VALUE}, {RUN_ID_TAG_KEY}=<run-id>, "
         f"{EXPIRES_AT_TAG_KEY}=<unix-ms, {MEASUREMENT_TTL_HOURS}h TTL>"
@@ -1198,10 +1184,15 @@ def cmd_plan(
     return 0
 
 
-def borrowed_network(args: argparse.Namespace) -> BorrowedNetwork | None:
-    if args.vpc_id is None or args.subnet_id is None:
+def existing_network(args: argparse.Namespace) -> ExistingNetwork | None:
+    """`--vpc-id`/`--subnet-ids`, falling back to the environment; `None`
+    if either is missing. Malformed ids are left to `EfsVolumes.check`."""
+    vpc_id = args.vpc_id or os.environ.get(VPC_ID_ENV, "")
+    raw_subnets = args.subnet_ids or os.environ.get(SUBNET_IDS_ENV, "")
+    subnet_ids = tuple(part.strip() for part in raw_subnets.split(",") if part.strip())
+    if not vpc_id or not subnet_ids:
         return None
-    return BorrowedNetwork(vpc_id=args.vpc_id, subnet_id=args.subnet_id)
+    return ExistingNetwork(vpc_id=vpc_id, subnet_ids=subnet_ids)
 
 
 def cmd_run(
@@ -1213,6 +1204,12 @@ def cmd_run(
     """Idempotent: provisions (or resolves) the infra, then measures the
     automated ★ steps not already answered. A ★ failure stops the run and
     cleans up; `--infra-only` stops after provisioning."""
+    if not RUN_ID_PATTERN.match(args.run_id):
+        print(
+            f"--run-id must match {RUN_ID_PATTERN.pattern} (it names the stack and connector)",
+            file=sys.stderr,
+        )
+        return 2
     state = _new_or_resumed_state(args)
     if state.stopped:
         print(
@@ -1220,9 +1217,12 @@ def cmd_run(
             file=sys.stderr,
         )
         return 1
-    if (args.vpc_id is None) != (args.subnet_id is None):
+    network = existing_network(args)
+    if network is None:
         print(
-            "--vpc-id and --subnet-id go together (a borrowed network)", file=sys.stderr
+            f"run needs an existing VPC: --vpc-id and --subnet-ids (or {VPC_ID_ENV} and "
+            f"{SUBNET_IDS_ENV}); this script never creates one",
+            file=sys.stderr,
         )
         return 2
     if not args.infra_only and (
@@ -1235,11 +1235,21 @@ def cmd_run(
         return 2
 
     aws = port or real_port(region=state.region)
+    if aws.stack_status(measurement_stack_name(args.run_id)) is None:
+        check = aws.check_network(network.vpc_id, network.subnet_ids)
+        codes = ", ".join(f"{code}={level}" for code, level in check.findings)
+        print(f"network check (read-only): {check.status} [{codes}]")
+        if not check.ok:
+            print(
+                "STOP: the existing VPC fails EfsVolumes.check; nothing was created",
+                file=sys.stderr,
+            )
+            return 1
     tags = resource_tags(args.run_id, state.expires_at_ms)
-    outputs, deploy_seconds = provision(state, aws, tags, borrowed_network(args))
+    outputs, deploy_seconds = provision(state, aws, tags, network)
     print(f"state at {state_path(args.run_id)}; tags {tags}")
     print(
-        "infra ready: throwaway VPC/subnet and the efs-volumes stack. No resource id is "
+        "infra ready: the efs-volumes stack in the existing VPC. No resource id is "
         "printed or stored here (AWS_API_NOTES.md §22) — use `rayito stack status "
         f"efs-volumes --stack-name {measurement_stack_name(args.run_id)}` to read "
         "FileSystemId/ConnectorArn when you need them."
@@ -1373,11 +1383,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--vpc-id",
-        help="borrowed VPC (with its owner's permission) instead of a throwaway one; "
-        "never created, recorded or deleted (needs --subnet-id)",
+        help=f"existing VPC you may use (default: ${VPC_ID_ENV}); never created, "
+        "modified, recorded or deleted",
     )
     run_parser.add_argument(
-        "--subnet-id", help="borrowed subnet inside --vpc-id; never created or deleted"
+        "--subnet-ids",
+        help=f"1-3 comma-separated subnets of --vpc-id, one per AZ (default: "
+        f"${SUBNET_IDS_ENV}); never created, modified or deleted",
     )
     run_parser.add_argument(
         "--infra-only",

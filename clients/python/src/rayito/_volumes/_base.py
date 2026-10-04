@@ -35,6 +35,8 @@ _CLIENT_TOKEN_LENGTH = 64
 #: `AccessPointAlreadyExists`, nunca el access point ya creado
 #: (`VolumeStore.create` lo atrapa y hace `get(name)` en su lugar).
 ACCESS_POINT_ALREADY_EXISTS: Final = "AccessPointAlreadyExists"
+#: `DeleteFileSystem` mientras quede algún mount target (modelo `efs`).
+FILE_SYSTEM_IN_USE: Final = "FileSystemInUse"
 
 #: `DescribeAccessPoints(FileSystemId=...)` es eventualmente consistente
 #: (AWS_API_NOTES.md §16 Q125, medido 2026-10-02 en tres ciclos
@@ -59,13 +61,28 @@ class EfsApi(Protocol):
     def delete_access_point(self, **params: Any) -> dict[str, Any]: ...
 
 
-#: `describe_mount_targets` is deliberately absent: nothing calls it yet
-#: (no SDK resolves `EfsVolumeMount.mount_target_ip`, proto comment), so it
-#: would be dead code and dead IAM until the first real mounter lands.
+class EfsFileSystemApi(EfsApi, Protocol):
+    """Lo que añade `EfsVolumes.delete_file_system` (y
+    `destroy(delete_file_system=True)`) para borrar el sistema de ficheros
+    que la pila conserva (AWS_API_NOTES.md §22): comprobar su etiqueta,
+    esperar a que no quede ningún mount target y borrarlo."""
+
+    def describe_file_systems(self, **params: Any) -> dict[str, Any]: ...
+    def describe_mount_targets(self, **params: Any) -> dict[str, Any]: ...
+    def delete_file_system(self, **params: Any) -> dict[str, Any]: ...
+
+
+#: El permiso IAM de cada operación que el SDK llama (AWS_API_NOTES.md §22),
+#: para los mensajes de `translate_error`. `describe_file_systems`,
+#: `describe_mount_targets` y `delete_file_system` sólo los usa
+#: `EfsVolumes.delete_file_system`.
 IAM_ACTIONS: Mapping[str, str] = {
     "create_access_point": "elasticfilesystem:CreateAccessPoint",
     "describe_access_points": "elasticfilesystem:DescribeAccessPoints",
     "delete_access_point": "elasticfilesystem:DeleteAccessPoint",
+    "describe_file_systems": "elasticfilesystem:DescribeFileSystems",
+    "describe_mount_targets": "elasticfilesystem:DescribeMountTargets",
+    "delete_file_system": "elasticfilesystem:DeleteFileSystem",
 }
 
 
@@ -141,6 +158,8 @@ def translate_error(operation: str, exc: BaseException) -> Exception:
         error = VolumeException("se alcanzó el límite de access points del sistema de ficheros")
     elif code == "IncorrectFileSystemLifeCycleState":
         error = VolumeException("el sistema de ficheros no está en estado 'available'")
+    elif code == FILE_SYSTEM_IN_USE:
+        error = VolumeException("el sistema de ficheros aún tiene mount targets")
     else:
         label = code or type(exc).__name__
         error = VolumeException(f"EFS falló en {IAM_ACTIONS[operation]} ({label})")

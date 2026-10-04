@@ -168,6 +168,7 @@ Apagadas por defecto; cada una carga su *peerDependency* sólo al activarse.
 | `SecretStore`, `SecretCache`, `SecretRef` | `@aws-sdk/client-secrets-manager` | [Secretos](../secrets.md) |
 | `DynamoDbIndex` | `@aws-sdk/client-dynamodb` | [Índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) |
 | `VolumeStore`, `EfsVolume` (experimental) | `@aws-sdk/client-efs` | [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) |
+| `EfsVolumes` (experimental) | `@aws-sdk/client-ec2` (`check`), `@aws-sdk/client-efs` (borrar el sistema de ficheros) | [Volúmenes EFS en tu VPC](../funciones-opcionales/volumenes-efs-vpc.md) |
 | opción `tracerProvider` | `@opentelemetry/api` (sólo tipos) | [OpenTelemetry](../funciones-opcionales/opentelemetry.md) |
 
 ## Errores { #errores }

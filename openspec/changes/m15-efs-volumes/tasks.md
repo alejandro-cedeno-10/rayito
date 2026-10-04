@@ -141,7 +141,7 @@
       on a ★ failure, EFS-13 restoring ingress on a hang, redaction,
       resume skipping answered steps, cleanup order. No AWS calls.
 
-### 7.5 Acceptance checklist (serialized AWS stage, cap $1.50, in order)
+### 7.5 Acceptance checklist (serialized AWS stage, cap $3, in order)
 
 This change does not run any of it. The acceptance agent follows it step
 by step and stops at the first ★ failure (the script then cleans up by
@@ -156,13 +156,15 @@ itself; re-run `cleanup` until it exits 0 anyway).
    `codeInstallSizeInBytes`/`memorySnapshotSizeInBytes` delta and build
    time in `AWS_API_NOTES.md` §16. If the package cannot be installed on
    `al2023-minimal` ARM64, stop here (no infra exists yet).
-3. `... efs_volumes.py run --region <r> --run-id <id> --caps-template
-   <throwaway caps> --execution-role-arn <infra/iam.yaml role>
-   [--default-template <rayito-base>] [--vpc-id <v> --subnet-id <s>]` —
-   `--vpc-id`/`--subnet-id` use a network borrowed with its owner's
-   permission instead of a throwaway VPC (never created or deleted by the
-   script; needed where an SCP denies `ec2:CreateVpc`, Q124) — measures EFS-2, 3, 8, 11, 13 and
-   stops + cleans up on the first ★ failure. `--efs11-pauses 60` only for
+3. `RAYITO_E2E_VPC_ID=<vpc> RAYITO_E2E_SUBNET_IDS=<s1,s2> ... efs_volumes.py
+   run --region <r> --run-id <id> --caps-template <throwaway caps>
+   --execution-role-arn <infra/iam.yaml role> [--default-template
+   <rayito-base>]` — the existing VPC comes only from those variables (or
+   `--vpc-id`/`--subnet-ids`) and is never created, modified, recorded or
+   deleted (needed where an SCP denies `ec2:CreateVpc`, Q124); `run` first
+   runs `EfsVolumes.check` and stops before creating anything on a `FAIL`
+   — then measures EFS-2, 3, 8, 11, 13 and stops + cleans up on the first
+   ★ failure. `--efs11-pauses 60` only for
    a quick smoke run; the go/no-go needs the default 60,600,3600.
 4. Only if step 3 exited 0, by hand against the infra it left up
    (`rayito stack status efs-volumes --stack-name
@@ -174,9 +176,10 @@ itself; re-run `cleanup` until it exits 0 anyway).
 5. `... efs_volumes.py report --run-id <id>`; copy the redacted rows into
    `AWS_API_NOTES.md` §16 and the research doc §9.
 6. `... efs_volumes.py cleanup --run-id <id>` until it exits 0; then
-   confirm no file system tagged `rayito:run-id=<id>`, no stack
-   `rayito-efs-volumes-measure-<id>` and no VPC with that tag remain, and
-   delete the throwaway caps image version (and only it).
+   confirm no file system tagged `rayito:run-id=<id>` and no stack
+   `rayito-efs-volumes-measure-<id>` remain, that the VPC's route tables,
+   NACLs and security groups are as before, and delete the throwaway caps
+   image version (and only it).
 
 ### 7.6 Acceptance run 2026-10-02 (results in `AWS_API_NOTES.md` §16 Q122–Q125)
 
@@ -188,7 +191,8 @@ itself; re-run `cleanup` until it exits 0 anyway).
 - [ ] Step 3 **blocked** (Q124): the test account's organization SCP denies
       `ec2:CreateVpc`; `run` stopped before creating anything. EFS-3, 8, 11
       and 13 (★) and steps 4-5 wait for a VPC borrowed with permission
-      (`--vpc-id`/`--subnet-id`).
+      (`--vpc-id`/`--subnet-ids`, or `RAYITO_E2E_VPC_ID`/
+      `RAYITO_E2E_SUBNET_IDS`; see §9).
 - [x] Python + TypeScript e2e of the CRUD, the E2B shim and the
       `volumes=`/`volume_mounts` gates against a throwaway file system;
       found and fixed the `DescribeAccessPoints` lag (Q125).
@@ -197,6 +201,34 @@ itself; re-run `cleanup` until it exits 0 anyway).
 - [x] Cleanup: only this run's resources deleted (two throwaway images,
       their zips and log groups, one file system); before/after inventory
       identical.
+
+## 9. Existing VPC quick setup (`EfsVolumes`, design D5)
+
+- [x] 9.1 Merge `origin/main` (FeatureSet/single Configure path kept;
+      `AWS_API_NOTES.md` rows renumbered Q96–Q99 → Q122–Q125, Q121 left
+      for PR #74's own renumbering).
+- [x] 9.2 `infra/efs-volumes.yaml`: `SubnetIds` list (1–3), `AccessPointArns`,
+      `ClientSecurityGroupId` output, policy scoped to this file system and
+      its access points; template tests pin "no network resource" and
+      "rules only on own groups"; `make infra-lint` lints it (cfn-lint
+      1.56.3 clean).
+- [x] 9.3 Pure check (`_volumes/_network.py`, `src/volumes/network.ts`) +
+      read-only EC2 adapter (`_vpc.py`, `vpc.ts`, peer
+      `@aws-sdk/client-ec2`); `EfsVolumes`/`AsyncEfsVolumes`/TS
+      `EfsVolumes`: `check`, `deploy` (refuses on `FAIL`), `status`,
+      `volume_store`, `destroy(delete_file_system=)`, `delete_file_system`
+      (tag-guarded). `AWS_API_NOTES.md` §22 rows for every new operation.
+- [x] 9.4 `rayito doctor --efs-vpc-id/--efs-subnet-ids` (`efs-network`).
+- [x] 9.5 Unit tests with fakes (Python + TS), e2e
+      `test_m15_efs_volumes_vpc.py` (deploy/CRUD/destroy, VPC snapshot
+      before/after) and TS check-only e2e, gated on
+      `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`.
+- [x] 9.6 Docs page "Volúmenes EFS en tu VPC", `cli.md`, references;
+      T21 delta extended (docs-delta.md).
+- [x] 9.7 Measurement script: no throwaway VPC; network only from
+      args/env; `EfsVolumes` for check/deploy/destroy/delete.
+- [ ] 9.8 AWS acceptance (next serialized stage, cap $3): e2e on an
+      existing VPC, then §7.5 steps 3–6.
 
 ## 8. OpenSpec
 

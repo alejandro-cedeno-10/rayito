@@ -30,6 +30,7 @@ SERVICE_NAMES: dict[str, str] = {
     "quotas": "service-quotas",
     "logs": "logs",
     "cloudformation": "cloudformation",
+    "ec2": "ec2",
 }
 REGION_ENV_VAR = "AWS_REGION"
 NO_REGION_MESSAGE = f"sin región: pasa --region o exporta {REGION_ENV_VAR}"

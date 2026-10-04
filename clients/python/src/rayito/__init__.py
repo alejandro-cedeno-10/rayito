@@ -105,7 +105,16 @@ from rayito._templates import (
 )
 from rayito._transport import TransportSettings
 from rayito._version import __version__
-from rayito._volumes import AsyncVolumeStore, EfsVolume, VolumeStatus, VolumeStore
+from rayito._volumes import (
+    AsyncEfsVolumes,
+    AsyncVolumeStore,
+    EfsNetworkReport,
+    EfsVolume,
+    EfsVolumes,
+    NetworkFinding,
+    VolumeStatus,
+    VolumeStore,
+)
 from rayito.exceptions import (
     AuthenticationException,
     BuildException,
@@ -164,6 +173,7 @@ from rayito.sandbox_sync.pty import PtyHandle
 __all__ = [
     "ALL_TRAFFIC",
     "AsyncCommandHandle",
+    "AsyncEfsVolumes",
     "AsyncGit",
     "AsyncLifecycleEvents",
     "AsyncOptionalStacks",
@@ -201,7 +211,9 @@ __all__ = [
     "DiskFullException",
     "DownloadLink",
     "DynamoDbIndex",
+    "EfsNetworkReport",
     "EfsVolume",
+    "EfsVolumes",
     "EgressEnforcement",
     "EgressProxy",
     "EntryInfo",
@@ -239,6 +251,7 @@ __all__ = [
     "MicrovmListPage",
     "MountException",
     "MountStatus",
+    "NetworkFinding",
     "NetworkOptions",
     "NetworkPolicy",
     "NetworkSelectorContext",

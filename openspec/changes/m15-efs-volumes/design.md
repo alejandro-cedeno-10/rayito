@@ -77,10 +77,53 @@ once a message has a non-scalar field) — both covered in tasks.md 2.4.
 `tests/unit/test_m15_stacks_service.py` /
 `tests/unit/m15-stacks.test.ts` used `"efs-volumes"` as their example of
 an *unsupported* `OptionalStack` component; this change made that
-component real, so both now use `"sizes-guard"` instead (tasks.md 5.6).
+component real, so both now used `"sizes-guard"`; after merging main
+(where `sizes-guard` became real too) they use `"custom-domain"`, the last
+stub (tasks.md 5.6).
 `tests/unit/test_m15_feature_options.py` / `test_m15_create_kwargs.py` and
 their TypeScript mirrors used a bare `object()`/`{}` as the `volumes=`
 value to test the generic "any 0.6 option raises `UnimplementedError`"
 behaviour; `require_volume_support` now type-checks that value before
 reaching `UnimplementedError`, so those rows now use a well-formed
 `EfsVolume` (tasks.md 5.5).
+
+### D5. Existing VPC first: `EfsVolumes` (check, deploy, destroy)
+
+Most accounts cannot create a VPC (the test account's organization SCP
+denies `ec2:CreateVpc`, Q124), so the quick path is an existing VPC:
+
+- **Template**: `SubnetIds` is one `List<AWS::EC2::Subnet::Id>` (typed, so
+  CloudFormation rejects a foreign id before creating anything) instead of
+  `SubnetId1..3`. CloudFormation has no list length function; `HasSubnet2`/
+  `HasSubnet3` read the n-th element of the list joined with two trailing
+  empty elements (`Fn::Select` over `Fn::Split` of `Fn::Join`), which is
+  `""` exactly when fewer subnets were passed. `MAX_SUBNETS = 3` matches the
+  three mount-target slots; EFS allows one mount target per AZ. The stack
+  never declares a network resource and every security-group rule hangs off
+  its own two groups (template tests pin both).
+- **Encryption**: `Encrypted: true` with the AWS-managed key. A
+  `KmsKeyId` parameter was rejected: it is create-only, so a redeploy that
+  re-sends its empty default would replace (and, with `Retain`, orphan)
+  the file system — the same hazard D1 of the review removed.
+- **IAM scope**: `AccessPointArns` (optional) narrows `RayitoEfsVolumeClient`
+  to exact access points with `ArnEquals`; empty, it uses `ArnLike` on the
+  stack's own account/Region access-point prefix, with `Resource` still this
+  file system only. Access points are created after the stack by
+  `VolumeStore`, so exact scoping is a redeploy with the new list.
+- **Connector egress stays NFS-only**: the client group's only egress is TCP
+  2049 to the mount targets. Internet egress through the VPC would depend on
+  the VPC's own NAT and a connector that allows it (none here); combining
+  with `INTERNET_EGRESS` is EFS-4. `check()` reports how many subnets route
+  to a NAT, informationally.
+- **Preflight**: `check()` is pure evaluation (`_network.py`/`network.ts`)
+  over facts from a read-only `NetworkInspector` port (`Describe*` only);
+  `deploy()` always runs it and refuses on `FAIL`. `rayito doctor` reuses
+  the same evaluation (`efs-network`, only with `--efs-vpc-id`), so CHECK_NAMES
+  and the default doctor run are unchanged.
+- **Destroy**: the file system stays `Retain` (D1). `destroy(delete_file_system=True)`
+  and `delete_file_system(id)` remove it explicitly, only when it carries the
+  template's literal `rayito=efs-volumes` tag (never a foreign file system),
+  after polling `DescribeMountTargets` empty (120 s budget), deleting its
+  access points. Generic `rayito stack destroy` keeps it, documented.
+- **Measurement script**: the throwaway-VPC path is gone; the VPC comes only
+  from args/env, is never recorded, and `cleanup` has no network stage.

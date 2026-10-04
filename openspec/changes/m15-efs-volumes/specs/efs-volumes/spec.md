@@ -52,12 +52,12 @@ The `efs-volumes` `StackComponent` SHALL be `supported`. `OptionalStacks.deploy(
 - **WHEN** a sandbox is created with `volumes=` unset, or `VolumeStore` is used
 - **THEN** no `CreateStack`/`UpdateStack`/`DeleteStack` call for the `efs-volumes` component is made
 
-#### Scenario: destroy always retains the data
-- **WHEN** `rayito stack destroy efs-volumes` runs
-- **THEN** the file system and its data survive stack deletion; deleting them is a separate, explicit `aws efs delete-file-system`
+#### Scenario: destroy retains the data unless deletion is asked for explicitly
+- **WHEN** `rayito stack destroy efs-volumes` (or `EfsVolumes.destroy()`) runs
+- **THEN** the file system and its data survive stack deletion; deleting them takes an explicit `EfsVolumes.destroy(delete_file_system=True)` or `EfsVolumes.delete_file_system(<id>)`
 
 #### Scenario: a redeploy never swaps the file system
-- **WHEN** `rayito stack deploy efs-volumes` runs again on an existing stack, with or without parameters (e.g. to add `SubnetId2`)
+- **WHEN** `rayito stack deploy efs-volumes` runs again on an existing stack, with or without parameters (e.g. to add a subnet to `SubnetIds`)
 - **THEN** the same `AWS::EFS::FileSystem` resource stays in place with the same `FileSystemId`; no parameter selects, conditions or replaces it
 
 #### Scenario: AllowWrite is reachable
@@ -82,3 +82,48 @@ The `efs-volumes` `StackComponent` SHALL be `supported`. `OptionalStacks.deploy(
 #### Scenario: volume_mounts never calls AWS
 - **WHEN** `Sandbox.create(volume_mounts={"/mnt/v": "ws"})` runs on a client bound to a `VolumeStore`
 - **THEN** no `DescribeAccessPoints` (or any other AWS call) is made and `UnimplementedError` is raised
+
+### Requirement: the efs-volumes stack deploys only new resources inside an existing VPC
+`infra/efs-volumes.yaml` SHALL take `VpcId` (`AWS::EC2::VPC::Id`) and `SubnetIds` (`List<AWS::EC2::Subnet::Id>`, one to three subnets, one mount target per subnet) and SHALL create only new resources: the encrypted file system, its mount targets, a mount-target security group whose only ingress is TCP 2049 from a dedicated client security group (also created, used by the connector, whose only egress is TCP 2049 to the mount-target group), the VPC egress `AWS::Lambda::NetworkConnector` for MicroVMs, its operator role and the `RayitoEfsVolumeClient` policy. It SHALL NOT declare a VPC, subnet, route, route table, NACL, gateway or endpoint, and every security-group rule it declares SHALL belong to one of its own two groups. The file-system policy SHALL deny any request without `aws:SecureTransport`, without an access point or not coming through a mount target, and SHALL grant nothing. `RayitoEfsVolumeClient` SHALL grant `elasticfilesystem:ClientMount` (and `ClientWrite` unless `AllowWrite=false`) only on this file system, conditioned on the access point being one of `AccessPointArns` when given or an access point of the stack's account and Region otherwise, and never `ClientRootAccess`.
+
+#### Scenario: a deploy never changes the caller's network
+- **WHEN** the stack is deployed into an existing VPC and then destroyed
+- **THEN** the VPC's route tables, NACLs and pre-existing security groups are identical before and after
+
+#### Scenario: the mount targets accept NFS only from the client group
+- **WHEN** the stack is deployed
+- **THEN** the mount-target security group has exactly one ingress rule, TCP 2049 from the client security group, and no CIDR rule
+
+#### Scenario: the client policy can be narrowed to exact access points
+- **WHEN** it is deployed with `AccessPointArns` set
+- **THEN** `RayitoEfsVolumeClient` allows `ClientMount`/`ClientWrite` only for those access point ARNs
+
+### Requirement: EfsVolumes checks the existing VPC read-only and is the explicit, reversible way to deploy it
+`EfsVolumes`/`AsyncEfsVolumes` (TypeScript `EfsVolumes`) SHALL make no AWS call on construction. `check(vpc_id, subnet_ids)` SHALL first validate the request without I/O (VPC and subnet id formats, one to three distinct subnets) and then call only `ec2:DescribeVpcs`, `DescribeVpcAttribute`, `DescribeSubnets` and `DescribeRouteTables`, returning an `EfsNetworkReport` whose findings are `FAIL` for a missing or unavailable VPC or subnet, a subnet of another VPC, two subnets in one AZ or fewer than two free IPs in a subnet; `WARN` for a single AZ or a VPC without DNS support/hostnames; and an informational `internet-egress` finding stating that internet egress through the VPC depends on the VPC's own NAT. The report SHALL carry the component's `CostStatement`. `deploy()` SHALL run `check()` and SHALL NOT create anything when any finding is `FAIL`. `destroy(delete_file_system=True)` SHALL, after the stack is gone, wait for no mount target to remain, delete the file system's access points and the file system. `delete_file_system(id)` SHALL refuse a file system that does not carry the template's literal `rayito=efs-volumes` tag. `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...` SHALL add an `efs-network` check built from the same evaluation; without those options the check SHALL NOT run and no EC2 call SHALL be made.
+
+#### Scenario: check is read-only
+- **WHEN** `EfsVolumes(...).check(vpc_id=..., subnet_ids=[...])` runs
+- **THEN** only `Describe*` EC2 operations are called and nothing is created
+
+#### Scenario: deploy refuses a VPC that fails the check
+- **WHEN** `deploy()` is called with two subnets in the same AZ
+- **THEN** `InvalidArgumentException`/`InvalidArgumentError` is raised and no `CreateStack`/`UpdateStack` call is made
+
+#### Scenario: destroy can remove everything deploy created
+- **WHEN** `destroy(delete_file_system=True)` runs on a deployed stack
+- **THEN** the stack, every access point of its file system and the file system itself are deleted
+
+#### Scenario: delete_file_system never deletes a foreign file system
+- **WHEN** `delete_file_system(id)` is called on a file system without the `rayito=efs-volumes` tag
+- **THEN** `VolumeException`/`VolumeError` is raised and nothing is deleted
+
+### Requirement: the measurement script never creates or records the caller's VPC
+`scripts/measure/efs_volumes.py run` SHALL take the existing VPC and subnets only from `--vpc-id`/`--subnet-ids` or `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`, SHALL refuse to run without them before any AWS call, SHALL run `EfsVolumes.check` before deploying and stop without creating anything on a `FAIL`, and SHALL never create, modify, record or delete a VPC, subnet, route table or NACL. Every resource it creates SHALL carry the run's tags, and `cleanup` SHALL delete them (client-policy attachment, stack, retained file system) in dependency order.
+
+#### Scenario: run without a network refuses before any AWS call
+- **WHEN** `run` is invoked without `--vpc-id`/`--subnet-ids` and without the environment variables
+- **THEN** it exits with status 2 and makes no AWS call
+
+#### Scenario: cleanup never touches the network
+- **WHEN** `cleanup --run-id <id>` runs
+- **THEN** it deletes only the client-policy attachment, the stack and the retained file system, never a VPC or subnet

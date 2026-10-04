@@ -30,6 +30,7 @@ IAM_TEMPLATE  := infra/iam.yaml
 SECRETS_TEMPLATE := infra/secrets-access.yaml
 METADATA_INDEX_TEMPLATE := infra/metadata-index.yaml
 EVENTS_WEBHOOKS_TEMPLATE := infra/events-webhooks.yaml
+EFS_VOLUMES_TEMPLATE := infra/efs-volumes.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
@@ -202,7 +203,7 @@ image-prune:
 # Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e, el
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
 # transferencias, las políticas opcionales de secretos de M13a y la tabla
-# opcional del índice de metadatos de M14):
+# opcional del índice de metadatos de M14, y los volúmenes EFS de M15):
 # validate-template (servidor, gratis) + cfn-lint. cfn-lint 1.56.3 ya conoce
 # AWS::Lambda::NetworkConnector; si una versión anterior no lo conociera,
 # añadir `--ignore-checks E3006` sólo para esa ejecución (infra/README.md).
@@ -213,8 +214,9 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(EVENTS_WEBHOOKS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EVENTS_WEBHOOKS_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(EFS_VOLUMES_TEMPLATE) >/dev/null && echo "validate-template ok: $(EFS_VOLUMES_TEMPLATE)"
 	uvx cfn-lint==1.56.3 --version
-	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE)
+	uvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

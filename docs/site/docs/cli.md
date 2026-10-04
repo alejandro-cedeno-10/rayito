@@ -306,6 +306,7 @@ curl http://127.0.0.1:8000/
 
 ```bash
 rayito doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch] [--json]
+              [--efs-vpc-id V --efs-subnet-ids S1,S2]
 ```
 
 Diez comprobaciones, en orden, cada una con `OK`, `WARN`, `FAIL` o `SKIP`.
@@ -327,6 +328,16 @@ con 1 sólo si alguna es `FAIL`.
 | 8 | `token` | `create-microvm-auth-token` (puerto 8080) para el sandbox de `--launch` o el `RUNNING` más nuevo | — | `AccessDenied`, `ValidationException` | sin sandbox `RUNNING` (usa `--launch`) | revisa `lambda:CreateMicrovmAuthToken` |
 | 9 | `agent` | un `Health` de `rayd`: `agent_version`, `kernel_ready`, `imds_blocked`, `hook_anomalies` | `kernel_ready=false`, `hook_anomalies>0`, `imds_blocked=false` en una imagen `-caps` | `Health` falla (`UNAVAILABLE`, `UNAUTHENTICATED`, 403 del proxy) | sin token | espera al kernel; revisa quién tiene un token `allPorts`; republica la imagen |
 | 10 | `compatibility` | la tabla SDK ↔ `rayd` de [Límites](limits.md); la versión de imagen (contador de builds por imagen y cuenta) sólo se informa | `rayd` más nuevo que el SDK en `MAJOR.MINOR` | `rayd` por debajo del mínimo del SDK | sin `agent_version` | actualiza el SDK o publica una imagen desde el tag del `rayd` mínimo |
+
+Con `--efs-vpc-id` y `--efs-subnet-ids` (volúmenes EFS en una VPC que ya
+existe) se añade, tras la 7, la comprobación **`efs-network`**: la misma que
+`EfsVolumes.check()`, de sólo lectura (`ec2:DescribeVpcs`,
+`DescribeVpcAttribute`, `DescribeSubnets`, `DescribeRouteTables`). `FAIL`
+si la VPC o una subred no existe, una subred es de otra VPC, dos comparten
+AZ o a una le quedan menos de 2 IPs libres; `WARN` con una sola AZ o sin DNS
+en la VPC. El resumen dice qué crearía `rayito stack deploy efs-volumes` y
+su coste en reposo; no crea nada. Ver
+[Volúmenes EFS en tu VPC](funciones-opcionales/volumenes-efs-vpc.md).
 
 Sin `--launch` el doctor **nunca crea un MicroVM**: las comprobaciones 8–10
 usan el sandbox `RUNNING` más nuevo de la imagen o quedan en `SKIP`. Con

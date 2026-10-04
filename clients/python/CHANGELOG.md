@@ -6,6 +6,42 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Added
+
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
+  por defecto): `VolumeStore`/`AsyncVolumeStore` (CRUD real de access
+  points EFS: `CreateAccessPoint`/`DescribeAccessPoints`/
+  `DeleteAccessPoint`, sin cliente `efs` hasta el primer uso) y
+  `Sandbox.create(volumes=)`, que valida la petición (tipos, rutas,
+  variante `caps`) antes de cualquier llamada a AWS y siempre lanza
+  `UnimplementedError` hasta que la campaña de medición EFS-1..EFS-20
+  decida un adaptador de montaje real (`docs/research/2026-10-efs-persistence.md`).
+  `EfsVolume`, `VolumeStatus` y las excepciones `VolumeException`/
+  `VolumeNotFoundException`/`VolumePathNotFoundException`. El shim de E2B
+  (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
+  `E2B(volume_store=...)` (`volume_id` es el nombre del volumen, el mismo
+  que reciben `connect`/`get_info`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `volume_mounts=` valida sin llamar a AWS y siempre lanza
+  `UnimplementedError`. Componente
+  `rayito stack {deploy,status,destroy} efs-volumes`
+  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
+  target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y
+  conector de egress dedicado, sólo dentro de una VPC que ya existe).
+  `EfsVolumes`/`AsyncEfsVolumes`: `check(vpc_id=, subnet_ids=)` comprueba
+  la VPC sin crear nada (sólo `ec2:Describe*`: AZs distintas, IPs libres,
+  DNS, NAT; también `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`),
+  `deploy()` se niega si algún hallazgo es `FAIL`, `volume_store()` da un
+  `VolumeStore` sobre la pila, y `destroy(delete_file_system=True)`/
+  `delete_file_system(id)` borran el sistema de ficheros conservado (sólo
+  uno con la etiqueta `rayito=efs-volumes`). `AccessPointArns` acota la
+  política del execution role a access points exactos.
+  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
+  (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
+  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
+  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
+  point que el listado aún mostraba pero ya no existe devuelve `False`.
+
 ### Fixed
 
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**

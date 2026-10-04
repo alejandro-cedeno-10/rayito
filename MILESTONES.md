@@ -1428,7 +1428,10 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   `UnimplementedError`), `infra/efs-volumes.yaml` y el shim `Volume`
   construidos; el montaje real en el guest (`rayd`'s único adaptador hoy es
   `UnavailableEfsMounter`) queda pendiente de la campaña de medición
-  EFS-1..EFS-20.
+  EFS-1..EFS-20. Puesta en marcha en una VPC existente: `EfsVolumes`
+  (`check` de sólo lectura, también en `rayito doctor --efs-vpc-id`;
+  `deploy` que se niega con un `FAIL`; `destroy(delete_file_system=True)`),
+  pendiente de la aceptación en AWS real (cap $3).
 - **sizes-catalog** (`m15-sizes-catalog`, **entregado y aceptado en AWS
   real el 2026-10-02**, Q118/Q119): catálogo cerrado de cinco tamaños
   (512mb/1gb/2gb/4gb/8gb, Q87) resuelto en cliente, sin RPC ni sección de

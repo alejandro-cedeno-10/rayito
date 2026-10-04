@@ -31,8 +31,13 @@ def _load_module():
 
 measure = _load_module()
 
-#: `run` without a caps template: only the infra (vpc, subnet, stack).
-RUN_INFRA = ["run", "--region", "us-east-1", "--infra-only", "--run-id"]
+#: The caller's existing network; `run` must never create, record or delete it.
+VPC_ID = "vpc-0123456789abcdef0"
+SUBNET_IDS = "subnet-0123456789abcdef0,subnet-ffffffffffff"
+EXISTING = ["--vpc-id", VPC_ID, "--subnet-ids", SUBNET_IDS]
+
+#: `run` without a caps template: only the infra (the stack in the VPC).
+RUN_INFRA = ["run", "--region", "us-east-1", "--infra-only", *EXISTING, "--run-id"]
 
 
 @pytest.fixture(autouse=True)
@@ -48,15 +53,14 @@ class FakeMeasurementPort:
     `rayito:run-id` tag, never by a locally stored id. `fail_on` makes one
     delete raise, to exercise `cleanup`'s "stop and keep state" path."""
 
-    vpcs: dict[str, str] = field(default_factory=dict)
-    subnets: dict[str, str] = field(default_factory=dict)
     stacks: dict[str, dict[str, str]] = field(default_factory=dict)
     file_systems: dict[str, str] = field(default_factory=dict)
     attached: set[str] = field(default_factory=set)
     isolated: bool = False
     calls: list[str] = field(default_factory=list)
     fail_on: str | None = None
-    deployed_into: tuple[str, str] | None = None
+    deployed_into: tuple[str, tuple[str, ...]] | None = None
+    network_ok: bool = True
     _next_id: int = 1
 
     def _new_id(self, prefix: str) -> str:
@@ -64,49 +68,24 @@ class FakeMeasurementPort:
         self._next_id += 1
         return value
 
-    def find_tagged_vpc(self, run_id: str) -> str | None:
-        self.calls.append("find_tagged_vpc")
-        return self.vpcs.get(run_id)
-
-    def create_vpc(self, *, tags: dict[str, str]) -> str:
-        self.calls.append("create_vpc")
-        vpc_id = self._new_id("vpc")
-        self.vpcs[tags["rayito:run-id"]] = vpc_id
-        return vpc_id
-
-    def delete_vpc(self, vpc_id: str) -> None:
-        if self.fail_on == "delete_vpc":
-            raise RuntimeError("DependencyViolation (fake)")
-        self.calls.append("delete_vpc")
-        self.vpcs = {run_id: v for run_id, v in self.vpcs.items() if v != vpc_id}
-
-    def find_tagged_subnet(self, run_id: str) -> str | None:
-        self.calls.append("find_tagged_subnet")
-        return self.subnets.get(run_id)
-
-    def create_subnet(self, vpc_id: str, *, tags: dict[str, str]) -> str:
-        self.calls.append("create_subnet")
-        subnet_id = self._new_id("subnet")
-        self.subnets[tags["rayito:run-id"]] = subnet_id
-        return subnet_id
-
-    def delete_subnet(self, subnet_id: str) -> None:
-        if self.fail_on == "delete_subnet":
-            raise RuntimeError("InvalidSubnetID.NotFound-ish (fake)")
-        self.calls.append("delete_subnet")
-        self.subnets = {
-            run_id: s for run_id, s in self.subnets.items() if s != subnet_id
-        }
+    def check_network(self, vpc_id: str, subnet_ids: Any) -> Any:
+        self.calls.append("check_network")
+        findings = (("internet-egress", "OK"),)
+        if not self.network_ok:
+            findings = (("subnet-same-az", "FAIL"),)
+        return measure.NetworkCheck(
+            ok=self.network_ok, status="OK" if self.network_ok else "FAIL", findings=findings
+        )
 
     def stack_status(self, stack_name: str) -> dict[str, str] | None:
         self.calls.append("stack_status")
         return self.stacks.get(stack_name)
 
     def deploy_stack(
-        self, stack_name: str, *, vpc_id: str, subnet_id: str, tags: dict[str, str]
+        self, stack_name: str, *, vpc_id: str, subnet_ids: Any, tags: dict[str, str]
     ) -> dict[str, str]:
         self.calls.append("deploy_stack")
-        self.deployed_into = (vpc_id, subnet_id)
+        self.deployed_into = (vpc_id, tuple(subnet_ids))
         outputs = {
             "FileSystemId": self._new_id("fs"),
             "ConnectorArn": "arn:aws:lambda:us-east-1:123456789012:network-connector/fake",
@@ -131,6 +110,8 @@ class FakeMeasurementPort:
         return self.file_systems.get(run_id)
 
     def delete_file_system(self, file_system_id: str) -> None:
+        if self.fail_on == "delete_file_system":
+            raise RuntimeError("FileSystemInUse (fake)")
         if self.stacks:
             raise RuntimeError("FileSystemInUse: mount targets still exist (fake)")
         self.calls.append("delete_file_system")
@@ -183,30 +164,28 @@ def test_plan_makes_no_aws_call_and_exits_zero(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "EFS-2" in out
-    assert "cap: $1.50" in out
+    assert "budget cap: $3.00" in out
+    assert "EXISTING VPC" in out
 
 
-def test_run_creates_each_resource_once_and_resolves_the_rest_by_tag(
+def test_run_checks_the_network_then_deploys_once_and_resolves_the_rest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake = FakeMeasurementPort()
     assert measure.main(RUN_INFRA + ["r1"], port=fake) == 0
-    assert fake.calls.count("create_vpc") == 1
-    assert fake.calls.count("create_subnet") == 1
+    assert fake.calls.index("check_network") < fake.calls.index("deploy_stack")
     assert fake.calls.count("deploy_stack") == 1
+    assert fake.deployed_into == (VPC_ID, tuple(SUBNET_IDS.split(",")))
     state = measure.load_state("r1")
     assert state is not None
-    assert state.resources == ["vpc", "subnet", "file-system", "stack"]
+    assert state.resources == ["file-system", "stack"]
+    assert VPC_ID not in json.dumps(state.to_json())
 
     capsys.readouterr()
     fake.calls.clear()
     assert measure.main(RUN_INFRA + ["r1"], port=fake) == 0
-    assert "create_vpc" not in fake.calls
-    assert "create_subnet" not in fake.calls
     assert "deploy_stack" not in fake.calls
-    assert fake.calls.count("find_tagged_vpc") == 1
-    assert fake.calls.count("find_tagged_subnet") == 1
-    assert fake.calls.count("stack_status") == 1
+    assert "check_network" not in fake.calls
 
 
 def test_run_never_prints_a_real_resource_id(
@@ -221,40 +200,61 @@ def test_run_never_prints_a_real_resource_id(
     assert "arn:aws" not in out
 
 
-#: A network the caller borrowed with its owner's permission (Q124: an SCP
-#: can deny `ec2:CreateVpc`); `run` must never create, record or delete it.
-BORROWED = [
-    "--vpc-id",
-    "vpc-0123456789abcdef0",
-    "--subnet-id",
-    "subnet-0123456789abcdef0",
-]
-
-
-def test_run_with_a_borrowed_network_never_creates_records_or_deletes_it() -> None:
-    fake = FakeMeasurementPort()
-    assert measure.main(RUN_INFRA + ["b1"] + BORROWED, port=fake) == 0
-    assert "create_vpc" not in fake.calls
-    assert "create_subnet" not in fake.calls
-    assert fake.deployed_into == ("vpc-0123456789abcdef0", "subnet-0123456789abcdef0")
-    state = measure.load_state("b1")
-    assert state is not None
-    assert state.resources == ["file-system", "stack"]
-
-    fake.calls.clear()
-    assert measure.main(["cleanup", "--run-id", "b1"], port=fake) == 0
-    assert "delete_vpc" not in fake.calls
-    assert "delete_subnet" not in fake.calls
-    assert fake.calls.count("destroy_stack") == 1
-
-
-@pytest.mark.parametrize("half", [BORROWED[:2], BORROWED[2:]])
-def test_run_refuses_half_a_borrowed_network_before_any_aws_call(
-    half: list[str],
+def test_the_network_can_come_only_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv(measure.VPC_ID_ENV, VPC_ID)
+    monkeypatch.setenv(measure.SUBNET_IDS_ENV, SUBNET_IDS)
     fake = FakeMeasurementPort()
-    assert measure.main(RUN_INFRA + ["b2"] + half, port=fake) == 2
+    args = ["run", "--region", "us-east-1", "--infra-only", "--run-id", "e1"]
+    assert measure.main(args, port=fake) == 0
+    assert fake.deployed_into == (VPC_ID, tuple(SUBNET_IDS.split(",")))
+
+
+@pytest.mark.parametrize("half", [EXISTING[:2], EXISTING[2:], []])
+def test_run_refuses_without_a_full_existing_network_before_any_aws_call(
+    half: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(measure.VPC_ID_ENV, raising=False)
+    monkeypatch.delenv(measure.SUBNET_IDS_ENV, raising=False)
+    fake = FakeMeasurementPort()
+    args = ["run", "--region", "us-east-1", "--infra-only", *half, "--run-id", "b2"]
+    assert measure.main(args, port=fake) == 2
     assert fake.calls == []
+
+
+def test_a_network_that_fails_the_check_stops_before_creating_anything() -> None:
+    fake = FakeMeasurementPort(network_ok=False)
+    assert measure.main(RUN_INFRA + ["n1"], port=fake) == 1
+    assert "deploy_stack" not in fake.calls
+    state = measure.load_state("n1")
+    assert state is not None and state.resources == []
+
+
+@pytest.mark.parametrize("run_id", ["Upper", "has.dot", "x" * 38, "_lead"])
+def test_a_run_id_that_cannot_name_the_stack_is_refused(run_id: str) -> None:
+    fake = FakeMeasurementPort()
+    assert measure.main(RUN_INFRA + [run_id], port=fake) == 2
+    assert fake.calls == []
+
+
+def test_the_script_never_creates_or_changes_a_network() -> None:
+    """No VPC/subnet/route/NACL operation anywhere in the port or the real
+    adapter: the only EC2 writes are EFS-13's on the stack's own group."""
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    for forbidden in (
+        "create_vpc",
+        "delete_vpc",
+        "create_subnet",
+        "delete_subnet",
+        "create_route",
+        "replace_route",
+        "network_acl",
+        "modify_vpc",
+        "modify_subnet",
+    ):
+        assert forbidden not in source
+    assert measure.CLEANUP_ORDER == ("client-policy", "stack", "file-system")
 
 
 def test_report_without_a_run_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -295,29 +295,22 @@ def test_cleanup_deletes_in_reverse_dependency_order_and_removes_state() -> None
 
     assert measure.main(["cleanup", "--run-id", "r3"], port=fake) == 0
     deletes = [call for call in fake.calls if call.startswith(("destroy_", "delete_"))]
-    assert deletes == [
-        "destroy_stack",
-        "delete_file_system",
-        "delete_subnet",
-        "delete_vpc",
-    ]
+    assert deletes == ["destroy_stack", "delete_file_system"]
     assert measure.load_state("r3") is None
     assert fake.stacks == {}
     assert fake.file_systems == {}
-    assert fake.vpcs == {}
-    assert fake.subnets == {}
 
 
 def test_cleanup_stops_and_keeps_the_rest_of_state_when_a_delete_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    fake = FakeMeasurementPort(fail_on="delete_subnet")
+    fake = FakeMeasurementPort(fail_on="delete_file_system")
     measure.main(RUN_INFRA + ["r4"], port=fake)
 
     assert measure.main(["cleanup", "--run-id", "r4"], port=fake) == 1
     state = measure.load_state("r4")
     assert state is not None
-    assert state.resources == ["vpc", "subnet"]  # "stack" already deleted, kept out
+    assert state.resources == ["file-system"]  # "stack" already deleted, kept out
     assert fake.stacks == {}
 
     fake.fail_on = None
@@ -328,9 +321,9 @@ def test_cleanup_stops_and_keeps_the_rest_of_state_when_a_delete_fails(
 def test_cleanup_tolerates_a_resource_already_gone() -> None:
     fake = FakeMeasurementPort()
     measure.main(RUN_INFRA + ["r5"], port=fake)
-    # Someone deleted the subnet out of band; `cleanup` must not treat an
-    # already-gone resource as a failure.
-    fake.subnets.clear()
+    # Someone deleted the file system out of band; `cleanup` must not treat
+    # an already-gone resource as a failure.
+    fake.file_systems.clear()
 
     assert measure.main(["cleanup", "--run-id", "r5"], port=fake) == 0
     assert measure.load_state("r5") is None
@@ -342,7 +335,7 @@ def test_state_round_trips_through_json(tmp_path) -> None:
         region="us-east-1",
         created_at_ms=1,
         expires_at_ms=2,
-        resources=["vpc"],
+        resources=["stack"],
     )
     measure.save_state(state)
     raw = json.loads(measure.state_path("r6").read_text(encoding="utf-8"))
@@ -423,6 +416,7 @@ CAMPAIGN = [
     "run",
     "--region",
     "us-east-1",
+    *EXISTING,
     "--caps-template",
     "caps-throwaway",
     "--execution-role-arn",
@@ -441,7 +435,8 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch):
 def test_run_without_a_caps_template_refuses_before_any_aws_call() -> None:
     fake = FakeMeasurementPort()
     assert (
-        measure.main(["run", "--region", "us-east-1", "--run-id", "c0"], port=fake) == 2
+        measure.main(["run", "--region", "us-east-1", *EXISTING, "--run-id", "c0"], port=fake)
+        == 2
     )
     assert fake.calls == []
 
@@ -591,13 +586,7 @@ def test_cleanup_detaches_the_client_policy_before_the_stack_and_fs_after() -> N
     fake.calls.clear()
     assert measure.main(["cleanup", "--run-id", "c6"], port=fake) == 0
     order = [c for c in fake.calls if c.startswith(("detach_", "destroy_", "delete_"))]
-    assert order == [
-        "detach_client_policy",
-        "destroy_stack",
-        "delete_file_system",
-        "delete_subnet",
-        "delete_vpc",
-    ]
+    assert order == ["detach_client_policy", "destroy_stack", "delete_file_system"]
 
 
 def test_percentile_is_nearest_rank() -> None:

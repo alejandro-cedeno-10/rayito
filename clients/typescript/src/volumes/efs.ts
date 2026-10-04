@@ -67,15 +67,40 @@ export interface EfsApi {
   deleteAccessPoint(input: { AccessPointId: string }): Promise<unknown>;
 }
 
+/** Lo que añade `EfsVolumes.deleteFileSystem` (y `destroy({ deleteFileSystem:
+ * true })`) para borrar el sistema de ficheros que la pila conserva
+ * (AWS_API_NOTES.md §22): comprobar su etiqueta, esperar a que no quede
+ * ningún mount target y borrarlo. */
+export interface EfsFileSystemApi extends EfsApi {
+  describeFileSystems(input: { FileSystemId: string }): Promise<{
+    FileSystems?:
+      | Array<{
+          FileSystemId?: string | undefined;
+          Tags?: Array<{ Key?: string | undefined; Value?: string | undefined }> | undefined;
+        }>
+      | undefined;
+  }>;
+  describeMountTargets(input: { FileSystemId: string }): Promise<{
+    MountTargets?: Array<{ MountTargetId?: string | undefined }> | undefined;
+  }>;
+  deleteFileSystem(input: { FileSystemId: string }): Promise<unknown>;
+}
+
+/** `DeleteFileSystem` mientras quede algún mount target (modelo `efs`). */
+export const FILE_SYSTEM_IN_USE = "FileSystemInUse";
+
 interface EfsModule {
   readonly EFSClient: new (config: object) => { send(command: unknown): Promise<unknown> };
   readonly CreateAccessPointCommand: new (input: object) => unknown;
   readonly DescribeAccessPointsCommand: new (input: object) => unknown;
   readonly DeleteAccessPointCommand: new (input: object) => unknown;
+  readonly DescribeFileSystemsCommand: new (input: object) => unknown;
+  readonly DescribeMountTargetsCommand: new (input: object) => unknown;
+  readonly DeleteFileSystemCommand: new (input: object) => unknown;
 }
 
 /** El adaptador real: carga el peer opcional en el primer uso. */
-export async function efsApi(region: string, credentials: Credentials): Promise<EfsApi> {
+export async function efsApi(region: string, credentials: Credentials): Promise<EfsFileSystemApi> {
   const { sdk, send } = await loadOptionalSdkClient<EfsModule>(
     EFS_PEER,
     "EFS (VolumeStore / volumes, experimental)",
@@ -87,26 +112,35 @@ export async function efsApi(region: string, credentials: Credentials): Promise<
     createAccessPoint: (input) => send(new sdk.CreateAccessPointCommand(input)),
     describeAccessPoints: (input) => send(new sdk.DescribeAccessPointsCommand(input)),
     deleteAccessPoint: (input) => send(new sdk.DeleteAccessPointCommand(input)),
+    describeFileSystems: (input) => send(new sdk.DescribeFileSystemsCommand(input)),
+    describeMountTargets: (input) => send(new sdk.DescribeMountTargetsCommand(input)),
+    deleteFileSystem: (input) => send(new sdk.DeleteFileSystemCommand(input)),
   };
 }
 
-export function newLazyEfsApi(
+export function newLazyEfsApi<T extends EfsApi = EfsApi>(
   region: string | undefined,
   credentials: Credentials,
-  preset: EfsApi | undefined,
-): LazyAwsApi<EfsApi> {
+  preset: T | undefined,
+): LazyAwsApi<T> {
   return new LazyAwsApi(
     region,
     "falta la región: pasa `region` o define AWS_REGION",
-    (resolvedRegion) => efsApi(resolvedRegion, credentials),
+    (resolvedRegion) => efsApi(resolvedRegion, credentials) as Promise<EfsFileSystemApi & T>,
     preset,
   );
 }
 
-const IAM_ACTIONS: Readonly<Record<keyof EfsApi, string>> = Object.freeze({
+/** El permiso IAM de cada operación (AWS_API_NOTES.md §22), para los
+ * mensajes de `translateError`; `describeFileSystems`/`describeMountTargets`/
+ * `deleteFileSystem` sólo los usa `EfsVolumes.deleteFileSystem`. */
+const IAM_ACTIONS: Readonly<Record<keyof EfsFileSystemApi, string>> = Object.freeze({
   createAccessPoint: "elasticfilesystem:CreateAccessPoint",
   describeAccessPoints: "elasticfilesystem:DescribeAccessPoints",
   deleteAccessPoint: "elasticfilesystem:DeleteAccessPoint",
+  describeFileSystems: "elasticfilesystem:DescribeFileSystems",
+  describeMountTargets: "elasticfilesystem:DescribeMountTargets",
+  deleteFileSystem: "elasticfilesystem:DeleteFileSystem",
 });
 
 /** Hash estable de `fileSystemId`+nombre lógico: scoped al sistema de
@@ -165,7 +199,7 @@ export function volumeFromDescription(
 }
 
 /** El error del SDK de AWS como error propio de Rayito, sin el mensaje de AWS. */
-export function translateError(operation: keyof EfsApi, error: unknown): Error {
+export function translateError(operation: keyof EfsFileSystemApi, error: unknown): Error {
   const code = awsCode(error);
   const cause = sanitizeAwsError(error, { includeMessage: false });
   const options = { awsCode: code, cause };
@@ -189,6 +223,8 @@ export function translateError(operation: keyof EfsApi, error: unknown): Error {
       );
     case "IncorrectFileSystemLifeCycleState":
       return new VolumeError("el sistema de ficheros no está en estado 'available'", options);
+    case FILE_SYSTEM_IN_USE:
+      return new VolumeError("el sistema de ficheros aún tiene mount targets", options);
     default:
       return new VolumeError(
         `EFS falló en ${IAM_ACTIONS[operation]} (${code ?? "error"})`,

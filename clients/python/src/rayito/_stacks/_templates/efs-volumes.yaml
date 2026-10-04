@@ -1,38 +1,30 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Rayito M15 efs-volumes (ADR-018, experimental): an encrypted, Elastic
-  Throughput EFS file system reachable only from a Lambda Network Connector
-  dedicated to it, plus the mount-target security group, the file-system
-  policy (TLS + access point + mount-target only, no anonymous NFS client)
-  and the connector's operator role. Nothing here mounts anything inside a
-  sandbox: rayd's only adapter today is UnavailableEfsMounter, ahead of the
-  EFS-1..EFS-20 measurement campaign
-  (docs/research/2026-10-efs-persistence.md). Pass the ConnectorArn output as
-  Sandbox.create(egress=[...]) and the FileSystemId to VolumeStore(...).
-  Property names come from the CloudFormation resource reference for
-  AWS::EFS::FileSystem, AWS::EFS::MountTarget and
-  AWS::Lambda::NetworkConnector; see infra/README.md and AWS_API_NOTES.md
-  section 22. The file system is always retained on stack deletion (and on
-  any replacement): removing its data is a separate, explicit
-  `aws efs delete-file-system` call.
+  Rayito M15 efs-volumes (ADR-018, experimental): an encrypted (KMS at rest,
+  AWS managed key), Elastic Throughput EFS file system inside an EXISTING
+  VPC, reachable only from a Lambda Network Connector dedicated to it, plus
+  the mount-target and client security groups, the file-system policy (TLS,
+  IAM, access point and mount target required) and least-privilege IAM.
+  Only creates new resources: never modifies the VPC, its subnets, route
+  tables, NACLs or any existing security group. Nothing mounts inside a
+  sandbox yet (rayd ships UnavailableEfsMounter until EFS-1..EFS-20,
+  docs/research/2026-10-efs-persistence.md). The file system is always
+  retained on stack deletion; EfsVolumes.destroy(delete_file_system=True)
+  removes it explicitly. See AWS_API_NOTES.md section 22.
 
 Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: VPC of the subnets below; both security groups are created here.
-  SubnetId1:
-    Type: AWS::EC2::Subnet::Id
     Description: >-
-      First subnet (its own AZ) for a mount target and for the connector's
-      ENIs. EFS allows at most one mount target per AZ.
-  SubnetId2:
-    Type: String
-    Default: ""
-    Description: Second subnet's id (different AZ from SubnetId1); empty = none.
-  SubnetId3:
-    Type: String
-    Default: ""
-    Description: Third subnet's id (different AZ); empty = none.
+      Existing VPC of the subnets below; both security groups are created
+      here. Never modified.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      One to three existing subnets of VpcId, each in a different AZ (EFS
+      allows one mount target per AZ): one mount target per subnet, and the
+      connector's ENIs. Never modified. Run `EfsVolumes.check()` (or
+      `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`) first.
   ConnectorName:
     Type: String
     Default: rayito-efs
@@ -47,11 +39,30 @@ Parameters:
       elasticfilesystem:ClientWrite. "false": read-only, ClientMount only.
       Never grants elasticfilesystem:ClientRootAccess either way (research
       doc section 4.1 rule 5, root squash always on).
+  AccessPointArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      Optional access point ARNs (VolumeStore.create() makes them after this
+      stack exists). Empty (default): RayitoEfsVolumeClient allows any
+      access point of this account and Region on this file system only.
+      Set: it allows exactly these access points; redeploy with the new
+      list when you add a volume.
 
 Conditions:
-  HasSubnet2: !Not [!Equals [!Ref SubnetId2, ""]]
-  HasSubnet3: !Not [!Equals [!Ref SubnetId3, ""]]
+  # `SubnetIds` is a list; CloudFormation has no length function, so the
+  # n-th element is read from the list joined with trailing empty
+  # elements: it is "" exactly when the caller passed fewer than n subnets.
+  HasSubnet2: !Not
+    - !Equals
+      - !Select [1, !Split [",", !Join [",", [!Join [",", !Ref SubnetIds], "", ""]]]]
+      - ""
+  HasSubnet3: !Not
+    - !Equals
+      - !Select [2, !Split [",", !Join [",", [!Join [",", !Ref SubnetIds], "", ""]]]]
+      - ""
   GrantClientWrite: !Equals [!Ref AllowWrite, "true"]
+  ScopeToAccessPoints: !Not [!Equals [!Join ["", !Ref AccessPointArns], ""]]
 
 Resources:
   # Egress from the connector's ENIs: only NFS (2049) to the mount-target
@@ -64,7 +75,7 @@ Resources:
   ConnectorSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub Rayito EFS connector egress for ${ConnectorName}
+      GroupDescription: !Sub Rayito EFS client (connector) egress for ${ConnectorName}
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: "-1"
@@ -128,10 +139,14 @@ Resources:
         - Key: rayito
           Value: efs-volumes
       # Three denies (research doc section 4.6): no plaintext NFS, no
-      # anonymous client without an access point, and only a request that
-      # actually came in through a mount target (never a VPC endpoint or a
+      # client without an access point, and only a request that actually
+      # came in through a mount target (never a VPC endpoint or a
       # cross-account path). `elasticfilesystem:AccessPointArn` being null
-      # is exactly "no access point named".
+      # is exactly "no access point named". The policy has no Allow at all:
+      # once a file-system policy exists, an NFS client that does not
+      # authenticate with IAM (`-o iam`) is anonymous and gets only what the
+      # policy grants, i.e. nothing; an IAM principal needs the identity
+      # side Allow of EfsVolumeClientPolicy below.
       FileSystemPolicy:
         Version: "2012-10-17"
         Statement:
@@ -168,7 +183,7 @@ Resources:
     Type: AWS::EFS::MountTarget
     Properties:
       FileSystemId: !Ref FileSystem
-      SubnetId: !Ref SubnetId1
+      SubnetId: !Select [0, !Ref SubnetIds]
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
 
@@ -177,7 +192,7 @@ Resources:
     Condition: HasSubnet2
     Properties:
       FileSystemId: !Ref FileSystem
-      SubnetId: !Ref SubnetId2
+      SubnetId: !Select [1, !Ref SubnetIds]
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
 
@@ -186,7 +201,7 @@ Resources:
     Condition: HasSubnet3
     Properties:
       FileSystemId: !Ref FileSystem
-      SubnetId: !Ref SubnetId3
+      SubnetId: !Select [2, !Ref SubnetIds]
       SecurityGroups:
         - !Ref MountTargetSecurityGroup
 
@@ -225,10 +240,11 @@ Resources:
   # (research doc section 4.6): without this attached to the MicroVM's
   # execution role (infra/iam.yaml), ClientMount/ClientWrite are denied even
   # with a valid access point, because the file-system policy above never
-  # grants anything by itself. Scoped to "some access point named" (the
-  # same elasticfilesystem:AccessPointArn condition key the deny statements
-  # use), never a specific access point, since VolumeStore.create() makes
-  # those after this stack already exists. Never
+  # grants anything by itself. Resource: this file system only. Condition:
+  # the access point named (elasticfilesystem:AccessPointArn, the key the
+  # deny statements use) is exactly one of AccessPointArns when given, or
+  # any access point of this account and Region otherwise (VolumeStore
+  # creates them after this stack exists). Never
   # elasticfilesystem:ClientRootAccess.
   EfsVolumeClientPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -250,9 +266,12 @@ Resources:
               - elasticfilesystem:ClientMount
               - !If [GrantClientWrite, elasticfilesystem:ClientWrite, !Ref AWS::NoValue]
             Resource: !GetAtt FileSystem.Arn
-            Condition:
-              "Null":
-                elasticfilesystem:AccessPointArn: "false"
+            Condition: !If
+              - ScopeToAccessPoints
+              - ArnEquals:
+                  elasticfilesystem:AccessPointArn: !Ref AccessPointArns
+              - ArnLike:
+                  elasticfilesystem:AccessPointArn: !Sub "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/fsap-*"
 
   Connector:
     Type: AWS::Lambda::NetworkConnector
@@ -266,10 +285,7 @@ Resources:
           NetworkProtocol: IPv4
           SecurityGroupIds:
             - !Ref ConnectorSecurityGroup
-          SubnetIds:
-            - !Ref SubnetId1
-            - !If [HasSubnet2, !Ref SubnetId2, !Ref AWS::NoValue]
-            - !If [HasSubnet3, !Ref SubnetId3, !Ref AWS::NoValue]
+          SubnetIds: !Ref SubnetIds
 
 Outputs:
   FileSystemId:
@@ -284,6 +300,11 @@ Outputs:
     Value: !GetAtt Connector.State
   MountTargetSecurityGroupId:
     Value: !Ref MountTargetSecurityGroup
+  ClientSecurityGroupId:
+    Description: >-
+      The connector's own security group: the only source the mount targets
+      accept NFS (2049) from.
+    Value: !Ref ConnectorSecurityGroup
   CallerPolicyArn:
     Description: >-
       Attach to infra/iam.yaml's execution role so it can
