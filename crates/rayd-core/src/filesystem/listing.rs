@@ -41,8 +41,8 @@ pub struct ListingRequest<'a> {
 
 /// An entry at relative depth `d` (1 = direct child) is included iff
 /// `d <= depth`. The root's own `read_dir` failure is the caller's error; a
-/// subdirectory that vanishes or is unreadable mid-walk is listed but not
-/// descended.
+/// subdirectory that vanishes, is unreadable or is swapped for a symlink
+/// mid-walk is listed but not descended.
 pub fn walk_listing(
     fs: &dyn FileSystem,
     id: &FsIdentity,
@@ -120,9 +120,12 @@ impl Walk<'_, '_> {
     ) -> Result<(), FilesystemError> {
         match self.fs.read_dir(self.id, canonical_dir) {
             Ok(children) => self.push_children(children, request_dir, canonical_dir, remaining),
-            Err(FsIoError::NotFound | FsIoError::NotADirectory | FsIoError::PermissionDenied) => {
-                Ok(())
-            }
+            Err(
+                FsIoError::NotFound
+                | FsIoError::NotADirectory
+                | FsIoError::PermissionDenied
+                | FsIoError::Redirected,
+            ) => Ok(()),
             Err(other) => Err(FilesystemError::from_io("read_dir", other)),
         }
     }

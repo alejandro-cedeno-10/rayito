@@ -24,7 +24,8 @@ export interface StackProvisioner {
   ): Promise<void>;
 
   /** `"no_changes"` cuando CloudFormation responde "No updates are to be
-   * performed" (no es un fallo). */
+   * performed" (no es un fallo). `keepPrevious` son los parámetros que se
+   * mandan con `UsePreviousValue: true` (`ParameterPlan.keepPrevious`). */
   update(
     component: StackComponent,
     options: {
@@ -32,6 +33,7 @@ export interface StackProvisioner {
       readonly templateBody: string;
       readonly parameters: Readonly<Record<string, string>>;
       readonly tags: Readonly<Record<string, string>>;
+      readonly keepPrevious?: readonly string[];
     },
   ): Promise<UpdateOutcome>;
 

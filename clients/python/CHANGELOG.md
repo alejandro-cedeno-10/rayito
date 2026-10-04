@@ -8,47 +8,214 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
-- **Dominio propio** (`m15-custom-domain`, ADR-024, experimental y apagado
-  por defecto): `CustomDomain`/`AsyncCustomDomain` despliegan una
-  distribución CloudFront con alias comodín, una CloudFront Function de
-  enrutado (`cloudfront-js-2.0`) y un KeyValueStore (`infra/
-  custom-domain.yaml`, `rayito domain deploy|status|destroy`); `register`/
-  `unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.<tu
-  dominio>` sin que la Function necesite confiar en nada que el viewer
-  mande. `register()` exige `traffic_token` salvo `public=True` explícito
-  — nunca hay una ruta pública por omisión — y reintenta/limpia sus dos
-  escrituras encadenadas al KVS ante una carrera de `ETag`. Nuevo extra
-  `rayito[custom-domain]` (`awscrt`): el plano de datos de
-  `cloudfront-keyvaluestore` exige SigV4A pese a declarar
-  `signatureVersion: v4` en su modelo. Sin instanciar `CustomDomain` no hay
-  ningún cliente `cloudfront-keyvaluestore` ni `cloudformation`.
-  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`, con un
-  mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`: la
-  integración con `get_host()`/`expose()` queda para un cambio posterior
-  (ver `ARCHITECTURE.md` ADR-024). La CloudFront Function trata una ruta
-  cuyo TTL (`register(ttl_seconds=)`/`refresh()`) ya pasó como si nunca
-  hubiera existido (404), no sólo cuando caduca el JWE en sí (T25).
-  `deploy()`/`destroy()` usan un timeout propio
-  (`CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`, 30 min) en vez del genérico de
-  `OptionalStacks`, porque CloudFront tarda bastante más en deshabilitar y
-  borrar una distribución; `refresh()` ya no deshace una escritura previa
-  si la segunda falla (sólo `register()` lo hace, al tratarse de claves
-  nuevas). `deploy(alternate_domain_names=[...])` (y `rayito domain deploy
-  --alternate-domain-name`, repetible) sustituye el alias comodín por
-  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a AWS:
-  sirve si otra distribución ya tiene `*.<dominio>`. `rayito domain deploy`
-  imprime a qué apuntar el `CNAME`. El e2e toma el dominio y el certificado
-  sólo de `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos,
-  usa una pila y unos hostnames aleatorios por corrida y llega a la
-  distribución sin DNS (SNI y `Host` propios contra su `*.cloudfront.net`).
-  DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real; DOM-14 (el
-  refresher Lambda) no se construyó.
-  La plantilla ya cabe en los 128 caracteres que CloudFront admite en
-  cada `Comment` (la primera pila real fallaba en la Function; la
-  distribución nombra ahora la pila, no el dominio).
+- **Dominio propio** (`m15-custom-domain`, ADR-024, **experimental**,
+  apagado por defecto): `CustomDomain`/`AsyncCustomDomain` despliegan una
+  distribución CloudFront, una CloudFront Function de enrutado
+  (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`,
+  `rayito domain deploy|status|destroy`), y `register`/`unregister`/
+  `refresh`/`host_for` gestionan las rutas `{puerto}-{alias}.<tu-dominio>`
+  (hostname HTTPS normal, sin las cabeceras `x-aws-proxy-*`).
+  `register()` exige `traffic_token` salvo `public=True` explícito.
+  `deploy(alternate_domain_names=[...])` (`--alternate-domain-name`)
+  sustituye el alias comodín por hostnames exactos. Nuevo extra
+  `rayito[custom-domain]` (`awscrt`), porque el plano de datos del
+  KeyValueStore firma con SigV4A. Sin instanciar `CustomDomain` no se crea
+  ningún cliente de CloudFront ni de CloudFormation.
+  `Sandbox.create(domain=)` sigue lanzando `UnimplementedError`: la
+  integración con `get_host()`/`expose()` llega en un cambio posterior.
+  **Experimental** porque no se ha verificado de punta a punta en AWS real:
+  la Function compila y enruta en el runtime real (`TestFunction`), y la
+  pila crea el KeyValueStore y la Function, pero la cuenta de pruebas
+  deniega `cloudfront:CreateDistribution` por una SCP, así que nunca se ha
+  servido tráfico por una distribución desplegada con esta plantilla
+  (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar en una minor.
+- `rayito image zip --with-efs` y `rayito image publish --with-efs`
+  (`m15-efs-volumes`): publican `rayito-base-caps-efs`, la imagen caps con
+  `amazon-efs-utils` que necesita `volumes=` (+~198 MB de imagen, snapshot
+  igual; exige `--os-capabilities ALL` y un zip con el marcador
+  `efs_variant`, comprobado antes de llamar a AWS). `make image-zip-efs` /
+  `make image-publish-caps-efs`. Las imágenes por defecto no cambian.
+- `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
+  para `mounts=`, `volumes=` y `telemetry=` (también en TypeScript).
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
+  por defecto): `VolumeStore`/`AsyncVolumeStore` (CRUD real de access
+  points EFS: `CreateAccessPoint`/`DescribeAccessPoints`/
+  `DeleteAccessPoint`, sin cliente `efs` hasta el primer uso) y
+  `Sandbox.create(volumes=)`, que valida la petición (tipos, rutas,
+  variante `caps` y un único conector propio en `egress=`: sin él, con
+  `INTERNET_EGRESS` o con dos conectores es `InvalidArgumentException`,
+  porque un MicroVM sólo admite un conector de egress, `AWS_API_NOTES.md`
+  §16 Q131), como mucho 4 volúmenes y `execution_role_arn=` antes de
+  cualquier llamada a AWS; resuelve la IP de mount target que falte con una
+  `DescribeMountTargets` por sistema de ficheros antes de `run-microvm`,
+  manda la sección `efs_volumes` en el único `ConfigureSandbox` de
+  `create()` (con plazo de 65 s), sólo vuelve con todos los volúmenes
+  `mounted` y, si uno falla, termina el sandbox (salvo `keep_on_failure`)
+  y lanza `VolumeMountException` (`code`: `network`, `iam_denied`,
+  `not_found`, `tls`, `helper_missing`, `timeout`, `invalid_path`); sobre
+  una imagen sin `amazon-efs-utils`, `UnimplementedError`.
+  `reincarnate()` la vuelve a mandar. `sbx.volumes` (`await sbx.volumes()`
+  en `AsyncSandbox`) da el estado en vivo. `EfsVolume` (valida
+  `mount_target_ip` como IPv4), `VolumeStatus` y las excepciones
+  `VolumeException`/`VolumeMountException`/`VolumeNotFoundException`/
+  `VolumePathNotFoundException`. El shim de E2B
+  (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
+  `E2B(volume_store=...)` (`volume_id` es el nombre del volumen, el mismo
+  que reciben `connect`/`get_info`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `Sandbox.create(volume_mounts=)` monta con
+  `E2B(volume_store=..., volume_connector_arn=...)`: ese sandbox sale sólo
+  por el conector del volumen y `allow_internet_access=True` explícito es
+  `InvalidArgumentException`. Componente
+  `rayito stack {deploy,status,destroy} efs-volumes`
+  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
+  target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y
+  conector de egress dedicado, sólo dentro de una VPC que ya existe).
+  `EfsVolumes`/`AsyncEfsVolumes`: `check(vpc_id=, subnet_ids=)` comprueba
+  la VPC sin crear nada (sólo `ec2:Describe*`: AZs distintas, IPs libres,
+  DNS y ruta por defecto de cada subred, a un NAT o a otra puerta como un
+  transit gateway; también `rayito doctor --efs-vpc-id ... --efs-subnet-ids ...`),
+  `deploy()` se niega si algún hallazgo es `FAIL`, `volume_store()` da un
+  `VolumeStore` sobre la pila, y `destroy(delete_file_system=True)`/
+  `delete_file_system(id)` borran el sistema de ficheros conservado (sólo
+  uno con la etiqueta `rayito=efs-volumes`). `AccessPointArns` acota la
+  política del execution role a access points exactos y
+  `deploy(read_only_access_point_arns=...)` (`ReadOnlyAccessPointArns`) le
+  deniega `ClientWrite` a los de sólo lectura: la opción `ro` del montaje no
+  basta, porque el usuario del sandbox alcanza el puerto local de
+  `efs-proxy` (Q133). El hallazgo `internet-egress` de `check()` explica que
+  un sandbox con volumen sólo tiene internet por la VPC.
+  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
+  (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
+  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
+  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
+  point que el listado aún mostraba pero ya no existe devuelve `False`.
+
+### Security
+
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentException` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
+- **`rayito sandbox proxy` comprueba `Host` y `Origin`**. El proxy añade tu
+  token a todo lo que reenvía, así que una web abierta en tu navegador podía
+  usar el servicio del sandbox (DNS rebinding, un POST entre sitios o un
+  `WebSocket` de otro origen). Ahora sólo reenvía si `Host` es de loopback
+  con el puerto local, la dirección de `--bind`, `<id>.localhost` o un nuevo
+  `--allowed-host` (si no, `421`), y si el `Origin`, cuando viene, es uno de
+  esos orígenes o un nuevo `--allow-origin` (si no, `403`). **Cambio**:
+  `--bind 0.0.0.0`/`::` exige `--allowed-host`, y un cliente que mande otro
+  `Host` (p. ej. un proxy inverso) necesita `--allowed-host`. Como mucho
+  `--max-connections` (8) conexiones a la vez (`503` después). Anuncia
+  también `http://<id>.localhost:<puerto>`, con cookies separadas de tus
+  otras apps locales.
+- **`rayito sandbox proxy` reenvía un solo mensaje por conexión**: la
+  primera petición, con su cuerpo delimitado por `Content-Length` o
+  `chunked`; lo que el cliente mande después por esa conexión ya no llega
+  al upstream sin reescribir, y un upgrade al que el sandbox no responde
+  `101` se reenvía con `Connection: close` y se cierra en vez de quedar como
+  túnel sin filtrar. **Cambio**: una delimitación ambigua
+  (`Transfer-Encoding` junto a `Content-Length`, un `Transfer-Encoding` que
+  no acaba en `chunked`, varios `Content-Length` distintos) es `400`.
+- **`.dockerignore` con la semántica de Docker** en `Template.build`:
+  anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
+  `**/.git` y el resto de los valores de `docker init` excluyen también los
+  de la raíz, que antes acababan en la imagen), un directorio excluido
+  excluye lo de dentro y la última coincidencia gana. **Cambio**: `*` y `?`
+  ya no cruzan `/` (`*.pyc` sólo excluye los de la raíz; usa `**/*.pyc`).
+  Un `UserWarning` (con las rutas, nunca el contenido) avisa si el contexto
+  va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o `*.key`.
+- **`Template.build` no sigue enlaces simbólicos** dentro de un directorio
+  copiado (ni a fichero ni a directorio), como Docker y el SDK de
+  TypeScript (el zip de `rayito image zip`/`publish` los rechaza, ver más
+  abajo): un enlace a un fichero de tu máquina ya no
+  acaba en el artefacto de S3 ni en la imagen. Cada fichero del contexto se
+  vuelve a comprobar dentro del contexto y se abre con `O_NOFOLLOW` justo
+  antes de leerlo.
+- **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
+  restauran siempre la URL sin credenciales (también si vence la orden o la
+  restauración), conservan el error de la operación y avisan por el logger
+  `rayito.git`, sin la URL, si el token puede seguir en `.git/config`. Esas
+  órdenes corren sin hooks ni credential helpers y se niegan
+  (`GitAuthException`) si la configuración de git reescribe URLs
+  (`url.*.insteadOf`). La documentación dice ahora que el token queda al
+  alcance del código del sandbox: usa tokens de vida corta y de un solo
+  repositorio.
+- **Errores de AWS saneados en más caminos**: los stacks opcionales encadenan
+  el resumen saneado y no el `ClientError` crudo; `Template.build` traduce un
+  rechazo de AWS a `BuildException(reason="aws_error")` (antes subía el
+  `ClientError`); el manejador de errores de la CLI, `rayito doctor` y
+  `rayito prune` redactan el mensaje de AWS (un error de firma repite la
+  cadena canónica con el token de sesión).
+- **Salida acotada en memoria**: cada descriptor de un comando o una PTY
+  guarda como mucho 64 MiB (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el
+  final y `CommandResult.truncated`/`CommandExitException.truncated` lo
+  indican. `commands.run`/`connect` aceptan `max_output_bytes` (`0` no
+  guarda nada; los callbacks reciben siempre todo) y `rayito sandbox exec`
+  ya no guarda la salida que imprime.
+- **La CLI neutraliza secuencias de escape**: hacia una terminal, los
+  caracteres de control de logs de CloudWatch, logs de build y mensajes de
+  AWS salen como `\xNN` visibles. `rayito sandbox logs` sólo usa un stream
+  que no es el esperado si tiene exactamente la forma `YYYY/MM/DD[<versión>]<id>`
+  y un día no anterior al arranque, y avisa cuando lo hace.
+- **Access token mínimo**: un token propio (`access_token=`,
+  `RAYITO_ACCESS_TOKEN`, `--token-file`) tiene que decodificar a al menos 16
+  bytes (`ACCESS_TOKEN_MIN_BYTES`). **Cambio**: uno más corto, aceptado
+  antes, ahora es `InvalidArgumentException`. Los generados (32 bytes) no
+  cambian.
+- `ProxyToken` y el contexto de `rayito doctor` ya no muestran el JWE en
+  `repr`.
+- **`Sandbox.create(persist=)` y `AsyncSandbox.create(persist=)` ligan el sandbox a su prefijo de persistencia** (C-07): el
+  `runHookPayload` lleva el bucket y la base `prefix` del `S3Prefix` (nunca
+  `prefix/name`), y un `rayd` con la corrección rechaza con
+  `permission_denied` cualquier checkpoint o restore fuera de esa base. Con
+  un `prefix` por inquilino, el token de un sandbox ya no alcanza el `HOME`
+  persistido de otro aunque compartan execution role. Cambia un uso: un
+  restore o checkpoint explícito hacia otra base desde un sandbox creado con
+  `persist=` ahora falla con `permission_denied`. No añade llamadas a AWS.
+- **La wheel y el sdist se hashean justo después de `uv build`**, antes de
+  que `check_wheel.py` o twine ejecuten nada, y se vuelven a comprobar al
+  final del job: el `sha256sum -c` del job que publica ahora prueba que lo
+  publicado es lo que produjo `uv build`. twine y su grafo se instalan desde
+  requisitos con `--hash` (`.github/release/requirements-twine.txt`), uv va
+  fijado por versión y checksum, y la caché de uv está apagada en la release.
+- **La release comprueba que `dist/` es exactamente la wheel y el sdist del
+  tag** antes de subirlo y antes de publicarlo: `sha256sum -c` no detecta un
+  fichero que no esté en `SHA256SUMS`, y la acción de publicación sube todo
+  lo que haya en el directorio.
+- **`rayito image zip` y `make image-publish` rechazan enlaces simbólicos**
+  en el árbol de la imagen y en el sidecar (salvo dentro de los directorios
+  que nunca viajan, como `.venv`): un enlace metía en todas las imágenes el
+  contenido de un fichero de la máquina que construye, legible por el
+  usuario del sandbox.
+
+## [0.6.1] - 2026-10-04
 
 ### Fixed
 
+- **Redesplegar una pila opcional ya no deshace su configuración**
+  (`OptionalStacks.deploy()`/`AsyncOptionalStacks.deploy()` y
+  `rayito stack deploy`): los valores por defecto del catálogo sólo se
+  aplican al crear la pila; al actualizarla, cada parámetro que no vuelves a
+  pasar y la pila ya tiene se manda con `UsePreviousValue`. Antes, por
+  ejemplo, redesplegar `s3-mounts` sin repetir `Prefixes` volvía a `'*'`
+  (todo el bucket), `metadata-index` sin `TableName` reemplazaba (y borraba)
+  la tabla y `secrets-access` sin `KmsKeyArn` quitaba `kms:Decrypt`. Nuevo
+  `parameter_changes()` para ver qué cambiaría sin desplegar; `rayito stack
+  deploy` lo imprime antes de pedir confirmación.
+- **Guardián SSRF de los webhooks** (pila `events-webhooks`): una dirección
+  IPv6 que encapsula una IPv4 (`::ffff:100.64.0.1`, de un registro AAAA) se
+  clasifica como esa IPv4, así que el rango CGNAT queda bloqueado también
+  por esa vía. Se regenera el zip de la Lambda que el SDK sube.
+- `volumes=`/`domain=` lanzan `UnimplementedError` con "todavía no
+  disponible" en vez de "llega en 0.6"; `rayito domain` (pendiente) ya no
+  aparece en `rayito --help`; `rayito template build|status|logs`,
+  `rayito stack` y `rayito events` tienen texto de ayuda.
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
   (`m15-reincarnate-configure-replay`, sync y async): hasta ahora sólo
   reenviaba `gateways=` y un sucesor perdía `mounts=`, `events=` y
@@ -63,6 +230,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Documentation
 
+- Bloques "Coste y activación" completos para `mounts`/`S3Mount` y
+  `size`/el catálogo de tamaños, y filas de las seis funciones 0.6 en la
+  tabla de funciones opcionales; la referencia de la CLI, la paridad con
+  E2B, la guía de migración, `limits.md` y las notas de 0.6.0 ya no
+  describen como pendientes funciones publicadas en 0.6.0.
 - **Metadatos del paquete**: la URL `Documentation` apunta al sitio de
   documentación y se añade `Issues`; el README del paquete termina con la
   licencia, el `NOTICE` incluido y la nota de marcas (proyecto independiente,
@@ -923,7 +1095,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...python-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.1...python-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.0...python-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.4.0...python-v0.5.0

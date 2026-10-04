@@ -50,6 +50,26 @@ class S3Mount:
     `read_only=True` (el valor por defecto) es la postura de mínimo
     privilegio: `allow_overwrite`/`allow_delete` sólo tienen efecto, y sólo
     se aceptan, con `read_only=False`.
+
+    Coste y activación
+    -------------------
+    Activa: `Sandbox.create(mounts={"/mnt/data": S3Mount(...)})`; construir
+        un `S3Mount` no llama a AWS.
+    Recursos y llamadas AWS: ningún recurso nuevo; `mount-s3` hace las
+        peticiones S3 normales (`GetObject`/`ListObjectsV2`, y
+        `PutObject`/`DeleteObject` con `read_only=False`) con el execution
+        role del sandbox.
+    Coste aproximado: $0 propio de Rayito; las peticiones y el
+        almacenamiento normales de S3 del bucket (us-east-1, consultado
+        2026-10-01); la pila `s3-mounts` es $0 (sólo IAM).
+    IAM: `RayitoS3MountAccess` (`rayito stack deploy s3-mounts`) en el
+        execution role, y el bucket en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la
+        imagen.
+    Cómo apagarla: no pases `mounts=`; `rayito stack destroy s3-mounts`
+        quita la política (no borra objetos ni el bucket).
+    Ejemplo:
+        Sandbox.create("rayito-base-caps", execution_role_arn=role_arn,
+                       mounts={"/mnt/data": S3Mount(bucket="mi-bucket", prefix="team7/")})
     """
 
     bucket: str

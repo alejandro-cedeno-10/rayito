@@ -14,13 +14,15 @@ cosign: el certificado de Sigstore lleva la identidad del workflow y del tag),
 `aarch64-unknown-linux-musl`) y `SHA256SUMS`.
 
 ```bash
+RAYD_VERSION=0.6.1   # la versión que vas a instalar, sin la "v"
+
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/alejandro-cedeno-10/rayito/\.github/workflows/release\.yml@refs/tags/rayd-v' \
+  --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   rayito-image.zip
 
 cosign verify-blob --bundle rayd.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/alejandro-cedeno-10/rayito/\.github/workflows/release\.yml@refs/tags/rayd-v' \
+  --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   rayd
 
@@ -28,8 +30,35 @@ sha256sum -c SHA256SUMS
 ```
 
 La verificación falla si cambian el fichero o el bundle, o si la firma la hizo
-otro workflow, otro repositorio u otra rama que no sea un tag `rayd-v*`.
-`cosign` ≥ 2.x (la release usa `sigstore/cosign-installer`, cosign 3.x).
+otro workflow, otro repositorio, otra rama u **otro tag** que no sea
+`rayd-v${RAYD_VERSION}`. La identidad va completa y no como expresión
+regular a propósito: con una regexp que acaba en `rayd-v`, un bundle firmado
+por cualquier release de `rayd` verificaba cualquier otra, así que un asset
+antiguo (una versión con fallos conocidos) o uno firmado bajo otro tag
+pasaba por el que ibas a instalar. `cosign` ≥ 2.x (la release usa
+`sigstore/cosign-installer`, cosign 3.x).
+
+### Qué prueba la firma
+
+Una firma válida prueba que `release.yml` de este repositorio firmó ese
+fichero en un run lanzado desde el tag `rayd-v${RAYD_VERSION}`. En las
+releases posteriores a la 0.6.1 prueba además que el run pasó por la
+aprobación del mantenedor: el job que firma corre en el environment
+`release`, con revisor obligatorio, así que GitHub no le da el token OIDC
+(ni Sigstore emite el certificado) hasta que alguien aprueba el run. La
+aprobación llega antes de que exista el token OIDC, y un ensayo (`dry_run`)
+no firma nada: sólo construye. El job que firma no hace checkout ni compila,
+firma sólo lo que `sha256sum -c` confirma que salió del build, y el que sube
+los assets nunca reemplaza uno ya publicado.
+
+Lo que la firma **no** prueba por sí sola es que el código del tag se
+revisara en `main`: la identidad la fijan el fichero de workflow y el tag,
+no quién creó el tag. Publicar exige que el commit del tag esté en `main`,
+pero el `release.yml` que corre es el del commit etiquetado. Para firmar con
+esta identidad hace falta, a la vez, poder crear un tag `rayd-v*` y aprobar
+el environment `release`. Con un único mantenedor y revisor, eso es su
+cuenta: un token filtrado que sólo escribe contenido y PRs (el de
+release-please) puede crear el tag, pero no aprobar el environment.
 
 El binario se compila con `cargo auditable`, así que lleva el grafo exacto de
 crates en la sección ELF `.dep-v0`; cualquier herramienta que lea ese formato

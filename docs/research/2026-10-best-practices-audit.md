@@ -77,7 +77,7 @@ decisión o un cambio más grande. Referencias a `main` en 4dc0ee0.
 | BP-05 | Media | `clients/typescript/package.json:12-14,106`, `ci.yml:117,201`, `src/index.ts:11`, `src/e2b/index.ts:18` | `engines` `>=20` cuando Node 20 ya no tiene soporte (2026-04-30), y CI solo prueba Node 22. El polyfill de `Symbol.asyncDispose` para Node 20.0–20.3 no funciona: en ESM los imports se evalúan antes que el cuerpo, así que las clases de `dist/dsl-*.mjs` se definen antes que el polyfill (verificado en el bundle), y además choca con `"sideEffects": false` | Pendiente (subir el mínimo a 22 en una minor y quitar el polyfill) |
 | BP-06 | Media | `docs/site/docs/limits.md` ("Versionado y soporte") | No había una política escrita de estabilidad y obsolescencia. #95 la añadió: API pública, qué puede romper una minor en 0.x, obsolescencia de al menos una minor y soporte de la última línea. Falta la ventana de soporte de las versiones de Python y Node | #95 (falta la ventana de Python/Node) |
 | BP-07 | Media | — | La paridad Python/TypeScript solo la garantiza la revisión. Ningún test compara `__all__` con las exportaciones de `src/index.ts` (con una tabla de excepciones explícita) | Pendiente |
-| BP-08 | Media | `clients/python/src/rayito/exceptions.py:306-322,369,379`, `clients/typescript/src/errors.ts:337-343,410,420`, `sandbox_sync/main.py:562,567`, `_feature_options.py:181,204` | API pública especulativa. `Volume*`, `CustomDomain*` y `Gateway*` son públicas y nada las lanza. `create(volumes=, domain=)` tipados `Any` lanzan `UnimplementedError` con el texto "llega en 0.6", que en 0.6.0 ya es falso. Contradice la regla 3 de `CLAUDE.md` | Pendiente (lo resuelven las ramas de EFS y dominio, o se retira antes de 1.0) |
+| BP-08 | Media | `clients/python/src/rayito/exceptions.py:306-322,369,379`, `clients/typescript/src/errors.ts:337-343,410,420`, `sandbox_sync/main.py:562,567`, `_feature_options.py:181,204` | API pública especulativa. `Volume*`, `CustomDomain*` y `Gateway*` son públicas y nada las lanza. `create(volumes=, domain=)` tipados `Any` lanzan `UnimplementedError` con el texto "llega en 0.6", que en 0.6.0 ya es falso. Contradice la regla 3 de `CLAUDE.md` | Parcial: el texto ya no lleva versión ("todavía no disponible", antes de 0.6.1); la API especulativa sigue pendiente (lo resuelven las ramas de EFS y dominio, o se retira antes de 1.0) |
 | BP-09 | Media | `.github/workflows/release.yml` (job `rayd`) | Los assets de `rayd` van firmados con cosign y traen SBOM, pero no tienen provenance SLSA: Scorecard da 8 en Signed-Releases por eso. PyPI (PEP 740) y npm sí la tienen. Coincide con el punto 4 de §8 de la auditoría de #95 | Pendiente (`actions/attest-build-provenance` en el job `rayd`) |
 | BP-10 | Media | `crates/rayd-core/src/{filesystem/path.rs,secret_gateway/route.rs}`, `crates/rayd/src/adapters/tar_archiver.rs` | Sin fuzzing ni pruebas por propiedades en los parsers que deciden la seguridad (normalizar rutas, allowlist de la pasarela, tar), que solo tienen ejemplos. Scorecard da 0 en Fuzzing. Coincide con el punto 8 de §8 de la auditoría de #95 | Pendiente (`cargo-fuzz` o `proptest` en `rayd-core`) |
 | BP-11 | Media | `clients/typescript/src/index/dynamodb.ts:13-49,190` | El bloque "Coste y activación" de `DynamoDbIndex` estaba en el comentario de módulo, que tsdown descarta, así que no salía en el hover. La clase tampoco estaba en el registro de `check-dts-cost-blocks` | #96 |
@@ -187,9 +187,8 @@ publican en la próxima release (0.6.1).
    SDK cuando una versión sale de esa ventana. Esfuerzo bajo, pero es una
    decisión del mantenedor.
 5. **BP-08, API especulativa**: que las ramas de EFS y dominio sustituyan
-   los stubs. Lo que no llegue antes de 1.0 se retira. Mientras tanto,
-   cambiar "llega en 0.6" por un texto sin versión cuando se toquen esas
-   ramas, para no chocar con ellas.
+   los stubs. Lo que no llegue antes de 1.0 se retira. El texto "llega en
+   0.6" ya se cambió por "todavía no disponible" antes de 0.6.1.
 6. **BP-10, fuzzing**: objetivos `cargo-fuzz` (o `proptest`) para
    `filesystem::path`, `secret_gateway::route` y el lector de tar, en un
    job nocturno. Esfuerzo medio.

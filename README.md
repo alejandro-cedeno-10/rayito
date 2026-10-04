@@ -30,9 +30,10 @@ pnpm add rayito             # SDK TypeScript (clients/typescript); Node >= 20
 ```python
 from rayito import Sandbox
 
+data = "a,b\n1,2\n"
 with Sandbox.create() as sbx:
-    sbx.files.write("/work/data.csv", data)
-    print(sbx.run_code("import pandas as pd; pd.read_csv('/work/data.csv').head()").text)
+    sbx.files.write("/home/user/data.csv", data)
+    print(sbx.run_code("import pandas as pd; pd.read_csv('/home/user/data.csv').head()").text)
 ```
 
 Para sandboxes en menos de un segundo, un [pool de suspendidos](docs/site/docs/pool.md)
@@ -277,8 +278,9 @@ CycloneDX) van firmados keyless con cosign; PyPI y npm publican por OIDC con
 attestations. Receta completa en [`docs/site/docs/verify.md`](docs/site/docs/verify.md):
 
 ```bash
+RAYD_VERSION=0.6.1   # la versión que instalas: la identidad liga la firma a ese tag
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/alejandro-cedeno-10/rayito/\.github/workflows/release\.yml@refs/tags/rayd-v' \
+  --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
 ```
 

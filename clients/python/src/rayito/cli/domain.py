@@ -33,7 +33,7 @@ from rayito.cli._session import clients_of, json_mode
 
 domain_app = typer.Typer(
     no_args_is_help=True,
-    help="Dominio propio sobre CloudFront (domain=/CustomDomain): deploy, status, destroy.",
+    help="Dominio propio sobre CloudFront (experimental, CustomDomain): deploy, status, destroy.",
 )
 
 

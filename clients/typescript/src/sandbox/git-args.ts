@@ -8,10 +8,70 @@
  */
 
 import { CommandExitError, InvalidArgumentError } from "../errors.js";
+import { stripTrailing } from "../strings.js";
 
 export const GIT_ENV: Readonly<Record<string, string>> = Object.freeze({
   GIT_TERMINAL_PROMPT: "0",
 });
+
+/**
+ * `-c` de cada `git clone/push/pull` que lleva credenciales: sin hooks (un
+ * `pre-push` plantado por código del sandbox recibe la URL con credenciales
+ * como `$2`, y cualquier hook puede leer `.git/config` mientras dura la
+ * orden) y sin credential helpers (con uno configurado, p. ej. `store`, git
+ * aprobaría el usuario y el token de la URL y los dejaría en disco). Un
+ * `credential.helper` vacío vacía la lista (git-config(1)). Espejo de
+ * `CREDENTIAL_ISOLATION_ARGS` de `_git_base.py`.
+ */
+export const CREDENTIAL_ISOLATION_ARGS: readonly string[] = Object.freeze([
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "credential.helper=",
+]);
+
+/**
+ * Reescrituras de URL (`url.<base>.insteadOf`/`pushInsteadOf`, en cualquier
+ * scope e `include`s) que mandarían la URL con credenciales a otro sitio;
+ * con alguna, no se envían credenciales.
+ */
+export const URL_REWRITE_CONFIG_PATTERN = "^url\\..*\\.(push)?insteadof$";
+
+/** `git config --get-regexp` sale con 1 cuando ninguna clave coincide (git-config(1)). */
+export const GIT_CONFIG_NO_MATCH_EXIT_CODE = 1;
+
+/**
+ * El aviso (`logger.warn`) cuando no se pudo devolver un remoto a su URL sin
+ * credenciales: puede que el token siga en `.git/config`. Nunca lleva la
+ * URL, el remoto ni la ruta.
+ */
+export function credentialsMayRemainMessage(action: GitAction): string {
+  return (
+    `git ${action}: no se pudo quitar la URL con credenciales del remoto; ` +
+    "puede seguir en .git/config del sandbox"
+  );
+}
+
+export function urlRewriteCheckArgs(): string[] {
+  return ["config", "--get-regexp", URL_REWRITE_CONFIG_PATTERN];
+}
+
+/** Lo que imprime `urlRewriteCheckArgs` al salir con 0: alguna clave coincide si hay alguna línea. */
+export function hasUrlRewrites(stdout: string): boolean {
+  return stdout.trim().length > 0;
+}
+
+export function urlRewriteErrorMessage(action: GitAction): string {
+  return (
+    `git ${action}: la configuración de git del sandbox reescribe URLs ` +
+    "(url.*.insteadOf/pushInsteadOf); no se envían las credenciales"
+  );
+}
+
+/** `args` con `CREDENTIAL_ISOLATION_ARGS` delante (van antes del subcomando). */
+export function isolatedArgs(args: readonly string[]): string[] {
+  return [...CREDENTIAL_ISOLATION_ARGS, ...args];
+}
 
 export const GIT_RESET_MODES = ["soft", "mixed", "hard", "merge", "keep"] as const;
 export type GitResetMode = (typeof GIT_RESET_MODES)[number];
@@ -56,7 +116,16 @@ const MISSING_UPSTREAM_SNIPPETS: readonly string[] = [
 ];
 
 const CONFLICT_CODES: ReadonlySet<string> = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
-const HTTP_URL = /^(https?:\/\/)([^/?#]*)(.*)$/i;
+/**
+ * Esquema, autoridad y cola de una URL http(s). La cola es `[\s\S]*` y no
+ * `.*`: con `.*`, un salto de línea tras la autoridad hacía fallar el `$` y
+ * el motor devolvía la autoridad carácter a carácter (tiempo cuadrático,
+ * CodeQL `js/polynomial-redos`). `LINE_TERMINATOR` conserva la semántica de
+ * antes: una cola con un fin de línea no es una URL http(s).
+ */
+const HTTP_URL = /^(https?:\/\/)([^/?#]*)([\s\S]*)$/i;
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+const URL_PATH_SEPARATOR = "/";
 const RFC3986_EXTRA = /[!'()*]/g;
 
 export interface GitFileStatus {
@@ -93,10 +162,12 @@ export interface GitBranches {
 }
 
 /** Lo que `clone` ejecuta: el argv, el repo donde quitar las credenciales y la URL limpia. */
+/** Con credenciales (`credentialed`), `args` empieza por `CREDENTIAL_ISOLATION_ARGS`. */
 export interface ClonePlan {
   readonly args: readonly string[];
   readonly repoPath: string | undefined;
   readonly sanitizedUrl: string | undefined;
+  readonly credentialed: boolean;
 }
 
 export interface ClonePlanInput {
@@ -428,28 +499,44 @@ export function withCredentials(
   if (!username || !password) {
     throw new InvalidArgumentError("las credenciales de git necesitan username y password");
   }
-  const match = HTTP_URL.exec(url);
-  if (match === null) {
+  const parts = splitHttpUrl(url);
+  if (parts === undefined) {
     throw new InvalidArgumentError("sólo las URLs http(s) admiten username/password");
   }
-  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  const { scheme, authority, rest } = parts;
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   return `${scheme}${percentEncode(username)}:${percentEncode(password)}@${host}${rest}`;
 }
 
 export function stripCredentials(url: string): string {
-  const match = HTTP_URL.exec(url);
-  if (match === null) {
+  const parts = splitHttpUrl(url);
+  if (parts === undefined) {
     return url;
   }
-  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  const { scheme, authority, rest } = parts;
   const at = authority.lastIndexOf("@");
   return at < 0 ? url : `${scheme}${authority.slice(at + 1)}${rest}`;
 }
 
+interface HttpUrlParts {
+  readonly scheme: string;
+  readonly authority: string;
+  readonly rest: string;
+}
+
+/** Las tres partes de una URL http(s), en tiempo lineal; `undefined` si no lo es. */
+function splitHttpUrl(url: string): HttpUrlParts | undefined {
+  const match = HTTP_URL.exec(url);
+  if (match === null) {
+    return undefined;
+  }
+  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  return LINE_TERMINATOR.test(rest) ? undefined : { scheme, authority, rest };
+}
+
 export function deriveRepoDirFromUrl(url: string): string | undefined {
   const withoutQuery = url.split(/[?#]/, 1)[0] ?? "";
-  const trimmed = withoutQuery.replace(/\/+$/, "");
+  const trimmed = stripTrailing(withoutQuery, URL_PATH_SEPARATOR);
   const afterScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
   const last = afterScheme.split(/[/:]/).pop();
   if (!last) {
@@ -479,14 +566,16 @@ export function buildClonePlan(input: ClonePlanInput): ClonePlan {
       "clone con credenciales necesita una ruta de destino si no se guardan",
     );
   }
+  const credentialed = cloneUrl !== input.url;
   const args = [
+    ...(credentialed ? CREDENTIAL_ISOLATION_ARGS : []),
     "clone",
     cloneUrl,
     ...(input.branch ? ["--branch", input.branch, "--single-branch"] : []),
     ...(input.depth ? ["--depth", String(input.depth)] : []),
     ...(input.path ? [input.path] : []),
   ];
-  return { args, repoPath, sanitizedUrl: strip ? sanitized : undefined };
+  return { args, repoPath, sanitizedUrl: strip ? sanitized : undefined, credentialed };
 }
 
 // ------------------------------------------------------------------ parsing
@@ -696,5 +785,6 @@ export function redactedExitError(
     stderr: redact(error.stderr, secrets),
     error: error.error === undefined ? undefined : redact(error.error, secrets),
     grpcCode: error.grpcCode,
+    truncated: error.truncated,
   });
 }

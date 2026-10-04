@@ -82,6 +82,8 @@ export {
   type TransferErrorOptions,
   UnimplementedError,
   VolumeError,
+  VolumeMountError,
+  type VolumeMountErrorOptions,
   VolumeNotFoundError,
   VolumePathNotFoundError,
   WebhookError,
@@ -287,6 +289,8 @@ export type {
   CostStatement,
   DeployAction,
   DeployPlan,
+  ParameterChange,
+  ParameterPlan,
   StackArtifact,
   StackComponent,
   StackParameter,
@@ -298,6 +302,7 @@ export {
   type DestroyOptions,
   OptionalStacks,
   type OptionalStacksOptions,
+  type ParameterChangesOptions,
 } from "./stacks/service.js";
 export {
   DEFAULT_INTERVAL_S,
@@ -329,6 +334,7 @@ export type {
   TemplateSpec,
   UserStep,
   WireStep,
+  WorkdirStep,
 } from "./templates/instructions.js";
 export {
   ReadyCommand,
@@ -339,3 +345,21 @@ export {
 } from "./templates/ready-cmds.js";
 export type { TransportSettings } from "./transport/transport.js";
 export { VERSION } from "./version.js";
+export {
+  EfsVolume,
+  type EfsVolumeOptions,
+  type MountState,
+  type VolumeStatus,
+} from "./volumes/domain.js";
+export {
+  EfsVolumes,
+  type EfsVolumesDeployOptions,
+  type EfsVolumesOptions,
+} from "./volumes/efs-volumes.js";
+export type {
+  EfsNetworkReport,
+  FindingLevel,
+  NetworkFinding,
+  NetworkInspector,
+} from "./volumes/network.js";
+export { VolumeStore, type VolumeStoreOptions } from "./volumes/store.js";

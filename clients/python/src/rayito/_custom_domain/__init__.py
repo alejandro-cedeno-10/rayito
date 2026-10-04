@@ -1,4 +1,4 @@
-"""`m15-custom-domain` (ADR-024): dominio propio sobre CloudFront.
+"""`m15-custom-domain` (ADR-024, experimental): dominio propio sobre CloudFront.
 
 `CustomDomain`/`AsyncCustomDomain` son la API pública (reexportadas desde
 `rayito`); el resto de este paquete (`_domain`, `_kvs`) es implementación.

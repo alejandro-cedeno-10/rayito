@@ -30,7 +30,7 @@ pub enum ProcessError {
     #[error("esta imagen no permite ejecutar como root")]
     RootNotAllowed,
     #[error(
-        "sólo las cuentas sin privilegios de esta imagen pueden ejecutar código (uid y gid >= 1000, nunca en el grupo 0)"
+        "sólo las cuentas sin privilegios de esta imagen pueden ejecutar código (uid y gid entre 1000 y 65535, nunca en el grupo 0)"
     )]
     PrivilegedAccount,
     #[error("usuario desconocido")]

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "../../src/errors.js";
-import { RUN_HOOK_PAYLOAD_MAX_CHARS } from "../../src/limits.js";
+import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "../../src/limits.js";
 import {
   accessTokenSha256,
   buildRunHookPayload,
@@ -11,6 +11,7 @@ import {
   validateAccessToken,
   validatedEnvs,
 } from "../../src/payload.js";
+import { S3Prefix } from "../../src/sandbox/persistence.js";
 import { ACCESS_TOKEN, ACCESS_TOKEN_SECRET } from "./helpers.js";
 
 describe("access token", () => {
@@ -122,6 +123,22 @@ describe("runHookPayload", () => {
     expect(plain).not.toContain("network");
   });
 
+  test("the persist block binds the bucket and the base prefix, never prefix/name", () => {
+    const bound = JSON.parse(
+      buildRunHookPayload({
+        accessToken: ACCESS_TOKEN,
+        persist: new S3Prefix({
+          bucket: "amzn-s3-demo-bucket",
+          prefix: "tenants/acme",
+          name: "agent-7",
+        }),
+      }),
+    ) as Record<string, unknown>;
+    expect(bound.persist).toEqual({ bucket: "amzn-s3-demo-bucket", key_prefix: "tenants/acme" });
+    expect(bound.v).toBe(1);
+    expect(buildRunHookPayload({ accessToken: ACCESS_TOKEN })).not.toContain("persist");
+  });
+
   test("an empty access token is refused", () => {
     expect(() => buildRunHookPayload({ accessToken: "" })).toThrow(InvalidArgumentError);
   });
@@ -130,5 +147,27 @@ describe("runHookPayload", () => {
     expect(validatedEnvs({ A: "1" })).toEqual({ A: "1" });
     expect(() => validatedEnvs({ "": "1" })).toThrow(InvalidArgumentError);
     expect(() => validatedEnvs({ A: 1 as unknown as string })).toThrow(InvalidArgumentError);
+  });
+});
+
+describe("caller-supplied access tokens", () => {
+  test("a token shorter than the minimum is rejected without echoing it", () => {
+    const short = encodeAccessToken(new Uint8Array(ACCESS_TOKEN_MIN_BYTES - 1).fill(120));
+    expect(() => validateAccessToken(short)).toThrow(InvalidArgumentError);
+    expect(() => validateAccessToken(short)).toThrow(/demasiado corto/);
+    try {
+      validateAccessToken(short);
+    } catch (error) {
+      expect((error as Error).message).not.toContain(short);
+      expect((error as Error).message).toContain(String(ACCESS_TOKEN_MIN_BYTES));
+    }
+    expect(() => accessTokenSha256(encodeAccessToken(new Uint8Array([65])))).toThrow(
+      /demasiado corto/,
+    );
+  });
+
+  test("a token at the minimum is accepted", () => {
+    const token = encodeAccessToken(new Uint8Array(ACCESS_TOKEN_MIN_BYTES).fill(120));
+    expect(validateAccessToken(token)).toBe(token);
   });
 });

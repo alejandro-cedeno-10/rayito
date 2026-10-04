@@ -32,6 +32,21 @@ const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", 
 // RFC 9110 §5.6.2 `token`: los mismos bytes que acepta
 // `rayd_core::secret_gateway::route::is_header_token_byte`.
 const HEADER_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+// Caracteres que una ruta de `allow` puede llevar en crudo: `unreserved`,
+// `:`, `@` y los `sub-delims` de RFC 3986 salvo `;` (Tomcat, Jetty, Spring y
+// varios proxies quitan un parámetro `;...` antes de enrutar), más `/` y el
+// `%` de un byte codificado. Mismo conjunto que
+// `rayd_core::secret_gateway::route::is_allowed_raw_path_byte`.
+const ALLOWED_RAW_PATH_PATTERN = /^[A-Za-z0-9\-._~:@!$&'()*+,=/%]*$/;
+// Bytes que un segmento no puede llevar una vez decodificado: `/` y `\`
+// cambian cómo parte la ruta un upstream que decodifica, `%` es una segunda
+// capa de codificación y `;` vuelve a ser un parámetro de ruta
+// (`rayd_core::secret_gateway::route::FORBIDDEN_DECODED_BYTES`).
+const FORBIDDEN_DECODED_BYTES = new Set([0x2f, 0x5c, 0x25, 0x3b]);
+const FIRST_PRINTABLE_ASCII = 0x20;
+const ASCII_DELETE = 0x7f;
+const PERCENT_ESCAPE_PATTERN = /^[0-9A-Fa-f]{2}$/;
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 // Cabeceras hop-by-hop (RFC 9110 §7.6.1) y de framing/host: una ruta nunca
 // puede inyectarlas (mismo conjunto que
 // `rayd_core::secret_gateway::route::FORBIDDEN_INJECTED_HEADERS`).
@@ -70,7 +85,8 @@ export interface SecretGatewayOptions {
  *
  * Coste y activación
  * -------------------
- * Activa: `gateways: { nombre: new SecretGateway(...) }` en
+ * Activa: `gateways: { nombre: new SecretGateway(...) }` (Python:
+ *     `gateways=`) en
  *     `Sandbox.create()` (o `pool.take({ gateways })`); sin él, `rayd` no
  *     abre ningún listener de loopback y el SDK no hace ninguna llamada a
  *     `ConfigureSandbox` ni a Secrets Manager.
@@ -201,6 +217,70 @@ function validateAllow(allow: readonly AllowRule[]): void {
     if (typeof rule.path !== "string" || !rule.path.startsWith("/")) {
       throw new InvalidArgumentError("una ruta de allow debe ser absoluta (empezar por '/')");
     }
+    if (!isSafeRequestPath(rule.path)) {
+      throw new InvalidArgumentError(
+        "una ruta de allow sólo admite caracteres RFC 3986 sin ';', ni segmentos " +
+          "'.'/'..' o vacíos, ni '/', '\\', '%' o ';' codificados: rayd rechazaría " +
+          "cada petición que la cumpliera",
+      );
+    }
+  }
+}
+
+/**
+ * La misma regla que `rayd_core::secret_gateway::route::path_is_safe`
+ * (lista de permitidos, `testdata/secret-gateway/request-paths.json`):
+ * absoluta, cada carácter crudo en `ALLOWED_RAW_PATH_PATTERN`, ningún
+ * segmento vacío salvo el último y cada segmento, decodificado una sola
+ * vez, UTF-8 válido, sin bytes de control ni `FORBIDDEN_DECODED_BYTES` y
+ * distinto de `.` y `..`. `rayd` reenvía la ruta tal cual llega, así que una
+ * regla que no la cumpla nunca casaría con una petición. Espejo de
+ * `rayito._secret_gateway._domain.is_safe_request_path`.
+ */
+export function isSafeRequestPath(path: string): boolean {
+  if (!path.startsWith("/") || !ALLOWED_RAW_PATH_PATTERN.test(path)) {
+    return false;
+  }
+  const segments = path.slice(1).split("/");
+  const last = segments.length - 1;
+  return segments.every((segment, index) => {
+    if (segment === "") {
+      return index === last;
+    }
+    const decoded = decodeSegmentOnce(segment);
+    return decoded !== undefined && decoded !== "." && decoded !== "..";
+  });
+}
+
+function decodeSegmentOnce(segment: string): string | undefined {
+  const bytes: number[] = [];
+  let index = 0;
+  while (index < segment.length) {
+    const char = segment.charCodeAt(index);
+    if (segment[index] !== "%") {
+      bytes.push(char);
+      index += 1;
+      continue;
+    }
+    const hexPair = segment.slice(index + 1, index + 3);
+    if (!PERCENT_ESCAPE_PATTERN.test(hexPair)) {
+      return undefined;
+    }
+    const value = Number.parseInt(hexPair, 16);
+    if (
+      value < FIRST_PRINTABLE_ASCII ||
+      value === ASCII_DELETE ||
+      FORBIDDEN_DECODED_BYTES.has(value)
+    ) {
+      return undefined;
+    }
+    bytes.push(value);
+    index += 3;
+  }
+  try {
+    return STRICT_UTF8.decode(Uint8Array.from(bytes));
+  } catch {
+    return undefined;
   }
 }
 

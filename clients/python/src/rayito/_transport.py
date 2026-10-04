@@ -86,9 +86,11 @@ TokenMinter = Callable[[Sequence[PortSpec]], str]
 
 @dataclass(frozen=True)
 class ProxyToken:
-    """Un JWE de `create-microvm-auth-token` y los puertos que cubre."""
+    """Un JWE de `create-microvm-auth-token` y los puertos que cubre. El
+    JWE no sale en `repr` (un traceback con variables locales lo
+    imprimiría)."""
 
-    jwe: str
+    jwe: str = field(repr=False)
     ports: tuple[PortSpec, ...]
     minted_at: float
 

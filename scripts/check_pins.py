@@ -1,19 +1,27 @@
 """Comprueba que todo lo que la automatización de este repo ejecuta está clavado.
 
-Cinco puertas, todas en lista blanca (fallan salvo que la línea demuestre estar
+Seis puertas, todas en lista blanca (fallan salvo que la línea demuestre estar
 clavada), sin red y sólo con la biblioteca estándar:
 
-1. **Acciones**: cada `uses:` de `.github/workflows/` tiene que nombrar un SHA
+1. **Acciones**: cada `uses:` de `.github/workflows/` (y de las acciones
+   locales `.github/actions/*/action.yml`) tiene que nombrar un SHA
    de 40 hex, con un comentario opcional con la etiqueta de la que salió
    (`owner/repo@<sha> # vX.Y.Z`). Una etiqueta, un alias de mayor, una rama o
    un SHA truncado son hallazgos; sólo se saltan las líneas comentadas y las
    acciones locales (`./...`).
 2. **uvx**: cada invocación de `uvx` en esos workflows y en el `Makefile` tiene
-   que nombrar su herramienta con `==` (`uvx twine==7.0.0 check ...`, también
+   que nombrar su herramienta con `==` (`uvx ruff==0.16.7 check ...`, también
    en la forma `uvx --from paquete==1.2.3 orden`), porque resuelven y ejecutan
    código de terceros dentro de trabajos que llevan credenciales de publicación.
-3. **Descargas**: en `image/Dockerfile` (y en todo fichero llamado
-   `Dockerfile` que se le pase) cada instrucción con `curl` tiene que asignar
+   Y `==` sólo fija la herramienta, no su grafo: cada run resuelve la última
+   versión de cada dependencia transitiva, sin hash ni cooldown
+   (`sec-supply-chain-followups`, SC-A03). Por eso sólo pasan por `uvx` las
+   herramientas sin dependencias de `DEPENDENCY_FREE_UVX_TOOLS` (hoy `ruff`,
+   un binario sin dependencias de Python); las demás se instalan desde un
+   fichero de requisitos con `--hash` (`.github/release/requirements-*.txt`).
+3. **Descargas**: en `image/Dockerfile`, en los del entorno local
+   (`dev/local/*/Dockerfile`) y en todo fichero llamado `Dockerfile` que se
+   le pase, cada instrucción con `curl` tiene que asignar
    un `<NOMBRE>_SHA256=` de 64 hex en minúsculas y no nombrar una release
    flotante (`/releases/latest`, `/latest/download/`); además cada `curl` de
    la instrucción tiene que escribir a un fichero con `-o`/`--output` (nunca
@@ -28,8 +36,9 @@ clavada), sin red y sólo con la biblioteca estándar:
    puerta es léxica: no sigue variables de shell (`-o "$F"` sólo casa con una
    comprobación que nombre `$F` igual) ni interpreta subshells.
 4. **dnf**: en esos mismos `Dockerfile`, cada paquete de
-   `PINNED_DNF_PACKAGES` (hoy `git-core`) que nombre un `dnf install` tiene
-   que llevar `-<versión>-<release>` (`git-core-2.50.1-1.amzn2023.0.1`), así
+   `PINNED_DNF_PACKAGES` (hoy `git-core` y `amazon-efs-utils`) que nombre un
+   `dnf install` tiene que llevar `-<versión>-<release>`
+   (`git-core-2.50.1-1.amzn2023.0.1`), así
    subirlo es un diff revisable y una versión de imagen nueva. Los demás
    paquetes de la línea siguen sin clavar: la línea base de M1 (SECURITY.md
    T10). El hallazgo cuenta desde la primera línea de la instrucción y cita el
@@ -48,6 +57,19 @@ clavada), sin red y sólo con la biblioteca estándar:
    hex; una línea sin ninguno es un hallazgo. El hallazgo del `pip install`
    cuenta desde la primera línea de la instrucción; el de la línea de
    requisito, desde esa misma línea del fichero de pines.
+
+6. **Descargas en workflows** (`sec-supply-chain-ci`): la misma regla de la
+   puerta 3 en cada paso de `.github/workflows/*.yml` y de las acciones
+   locales `.github/actions/*/action.yml` cuyo `run:` lleve `curl` o
+   `wget`: el paso declara en su `env:` un `<NOMBRE>_SHA256:` de 64 hex (o
+   lo asigna con `=` en el propio `run:`), cada `curl` escribe con `-o` una
+   ruta que comprueba un `sha256sum -c` del mismo `run:`, sin tuberías, sin
+   `wget` y sin releases flotantes. El hallazgo cuenta desde la primera línea
+   del paso. Un binario descargado sin hash en un job de `main` es código
+   arbitrario con el token de caché de ese job (SECURITY.md T10). La puerta
+   es léxica: un paso es un elemento de lista YAML y su `run:` el bloque
+   (`|`/`>`) o la línea que sigue a la clave; las líneas comentadas del
+   bloque se saltan.
 
 Las recetas de instalación para usuarios de `docs/site/` quedan fuera: instalan
 Rayito publicado, no una herramienta de esta construcción.
@@ -75,12 +97,22 @@ DOCKERFILE_NAME = "Dockerfile"
 DEFAULT_PATHS = (
     ".github/workflows/*.yml",
     ".github/workflows/*.yaml",
+    ".github/actions/*/action.yml",
+    ".github/actions/*/action.yaml",
+    ".github/release/requirements*.txt",
     "Makefile",
     "image/Dockerfile",
+    "dev/local/*/Dockerfile",
     "kernel-sidecar/requirements*.txt",
 )
 ACTION_REASON = "la acción no está clavada a un SHA de 40 hex"
 UVX_REASON = "la herramienta de uvx no lleva ==<versión>"
+UVX_GRAPH_REASON = (
+    "uvx resuelve al vuelo el grafo de esta herramienta: instálala desde un "
+    "fichero de requisitos con --hash (.github/release/requirements-*.txt)"
+)
+DEPENDENCY_FREE_UVX_TOOLS = frozenset({"ruff"})
+EXTRAS = re.compile(r"\[.*?\]")
 DOWNLOAD_REASON = "la descarga no está verificada contra un sha256 fijado"
 DOWNLOAD_TOOL = re.compile(r"\bcurl\b")
 UNVERIFIABLE_TOOL = re.compile(r"\bwget\b")
@@ -92,14 +124,26 @@ SHORT_OUTPUT_FLAG = "-o"
 COMMAND_SEPARATORS = re.compile(r"&&|\|\||;")
 PIPE = re.compile(r"(?<!\|)\|(?!\|)")
 PINNED_SHA256 = re.compile(r"\b[A-Z][A-Z0-9_]*_SHA256=[0-9a-f]{64}\b")
+PINNED_SHA256_ENV = re.compile(
+    r"^\s*[A-Z][A-Z0-9_]*_SHA256:\s*[\"']?[0-9a-f]{64}[\"']?\s*$", re.MULTILINE
+)
+LIST_ITEM = re.compile(r"^(?P<indent>\s*)-\s+\S")
+RUN_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*?)\s*$")
+BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*$")
+SHELL_LINE_SEPARATOR = " ; "
 SHA256_CHECK = "sha256sum -c"
 FLOATING_RELEASE = re.compile(r"/releases/latest\b|/latest/download/")
 LINE_CONTINUATION = "\\"
 DNF_REASON = "el paquete dnf no lleva -<versión>-<release>"
-PINNED_DNF_PACKAGES = frozenset({"git-core"})
+PINNED_DNF_PACKAGES = frozenset({"git-core", "amazon-efs-utils"})
 DNF = "dnf"
 DNF_INSTALL = "install"
 DOCKERFILE_RUN = "RUN"
+#: Palabras de shell que pueden ir delante de una orden dentro de una capa
+#: condicional (`RUN if ...; then dnf install ...; fi`, la capa de
+#: `amazon-efs-utils` de `image/Dockerfile`): se quitan antes de mirar si la
+#: orden es `dnf`.
+SHELL_COMPOUND_KEYWORDS = frozenset({"then", "else", "do"})
 SHELL_SEPARATORS = re.compile(r"&&|\|\||[;|]")
 VERSION_START = re.compile(r"-(?=\d)")
 PIP = "pip"
@@ -186,6 +230,12 @@ def uvx_invocations(line: str) -> list[list[str]]:
     return [words[index + 1 :] for index, word in enumerate(words) if word == UVX]
 
 
+def tool_name(specification: str) -> str:
+    """El nombre del paquete de una especificación (`ruff==0.16.7`,
+    `rayito[mcp]==0.6.1`), sin versión ni extras y en minúsculas."""
+    return EXTRAS.sub("", specification.split(VERSION_PIN, 1)[0]).strip().lower()
+
+
 def unpinned_uvx(text: str) -> list[Finding]:
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -193,6 +243,8 @@ def unpinned_uvx(text: str) -> list[Finding]:
             specification = tool_specification(arguments)
             if specification is None or VERSION_PIN not in specification:
                 findings.append((number, line.strip(), UVX_REASON))
+            elif tool_name(specification) not in DEPENDENCY_FREE_UVX_TOOLS:
+                findings.append((number, line.strip(), UVX_GRAPH_REASON))
     return findings
 
 
@@ -259,9 +311,17 @@ def checked_paths(commands: list[str]) -> set[str]:
     return paths
 
 
-def download_is_verified(instruction: str) -> bool:
+def download_is_verified(instruction: str, sha256_pinned: bool | None = None) -> bool:
+    """`sha256_pinned` dice si el sha256 está fijado fuera del texto (el
+    `env:` de un paso de workflow); sin él se busca `<NOMBRE>_SHA256=` en la
+    propia instrucción, como en un `Dockerfile`."""
+    pinned = (
+        PINNED_SHA256.search(instruction) is not None
+        if sha256_pinned is None
+        else sha256_pinned or PINNED_SHA256.search(instruction) is not None
+    )
     if (
-        PINNED_SHA256.search(instruction) is None
+        not pinned
         or SHA256_CHECK not in instruction
         or FLOATING_RELEASE.search(instruction) is not None
         or UNVERIFIABLE_TOOL.search(instruction) is not None
@@ -297,15 +357,86 @@ def unpinned_downloads(text: str) -> list[Finding]:
     ]
 
 
+def indentation(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def run_script(step_lines: list[str]) -> str:
+    """El `run:` de un paso como una sola instrucción de shell: las líneas
+    del bloque se unen con `;` (cada una es una orden), las acabadas en `\\`
+    con la siguiente, y las comentadas o vacías se saltan."""
+    for position, line in enumerate(step_lines):
+        match = RUN_KEY.match(line)
+        if match is None or is_comment(line):
+            continue
+        value = match.group("value")
+        if not BLOCK_SCALAR.match(value):
+            return value
+        key_indent = len(match.group("indent"))
+        body: list[str] = []
+        for following in step_lines[position + 1 :]:
+            if following.strip() and indentation(following) <= key_indent:
+                break
+            body.append(following)
+        commands: list[str] = []
+        for instruction in dockerfile_instructions("\n".join(body)):
+            commands.append(instruction.text.strip())
+        return SHELL_LINE_SEPARATOR.join(commands)
+    return ""
+
+
+def workflow_steps(text: str) -> list[Instruction]:
+    """Cada elemento de lista YAML de nivel más externo que lleve un `run:`,
+    con su primera línea y su script (ver `run_script`). Un elemento acaba en
+    la primera línea no vacía con su sangría o menos; los anidados se
+    recorren como parte de su padre."""
+    lines = text.splitlines()
+    steps: list[Instruction] = []
+    position = 0
+    while position < len(lines):
+        line = lines[position]
+        match = LIST_ITEM.match(line)
+        if match is None or is_comment(line):
+            position += 1
+            continue
+        item_indent = len(match.group("indent"))
+        end = position + 1
+        while end < len(lines) and (
+            not lines[end].strip() or indentation(lines[end]) > item_indent
+        ):
+            end += 1
+        block = lines[position:end]
+        script = run_script(block)
+        if script:
+            steps.append(Instruction(position + 1, line.strip(), "\n".join(block)))
+        position = end
+    return steps
+
+
+def unpinned_workflow_downloads(text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for step in workflow_steps(text):
+        script = run_script(step.text.splitlines())
+        if not is_download(script):
+            continue
+        pinned = PINNED_SHA256_ENV.search(step.text) is not None
+        if not download_is_verified(script, sha256_pinned=pinned):
+            findings.append((step.number, step.first_line, DOWNLOAD_REASON))
+    return findings
+
+
 def dnf_install_packages(instruction: str) -> list[str]:
     """Los paquetes que nombran los `dnf install` de una instrucción: cada
     orden de shell (cortada en `&&`, `||`, `;` y `|`) cuya primera palabra,
-    quitado `RUN`, es `dnf` y que lleva `install`. Las opciones (`-y`,
-    `--setopt=...`) no son paquetes."""
+    quitados `RUN` y un `then`/`else`/`do` de una capa condicional, es `dnf`
+    y que lleva `install`. Las opciones (`-y`, `--setopt=...`) no son
+    paquetes."""
     packages: list[str] = []
     for command in SHELL_SEPARATORS.split(instruction):
         words = split_words(command)
         if words[:1] == [DOCKERFILE_RUN]:
+            words = words[1:]
+        if words[:1] and words[0] in SHELL_COMPOUND_KEYWORDS:
             words = words[1:]
         if words[:1] != [DNF] or DNF_INSTALL not in words:
             continue
@@ -417,6 +548,7 @@ def findings_for(path: Path) -> list[Finding]:
     findings = set(unpinned_uvx(text))
     if path.suffix in WORKFLOW_SUFFIXES:
         findings.update(unpinned_actions(text))
+        findings.update(unpinned_workflow_downloads(text))
     if path.name == DOCKERFILE_NAME:
         findings.update(unpinned_downloads(text))
         findings.update(unpinned_dnf_packages(text))
@@ -455,7 +587,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 1
     checked = ", ".join(displayed(path, base) for path in paths)
     print(
-        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga, todo paquete dnf vigilado y todo pip install con hashes clavados ({checked})"
+        f"OK {len(paths)} fichero(s): toda acción, todo uvx, toda descarga (Dockerfile y workflows), todo paquete dnf vigilado y todo pip install con hashes clavados ({checked})"
     )
     return 0
 

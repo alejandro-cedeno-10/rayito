@@ -5,7 +5,7 @@ members = ["crates/rayito-proto", "crates/rayd-core", "crates/rayd"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.98"
-version = "0.6.0"
+version = "0.6.1"
 license = "Apache-2.0"
 repository = "https://github.com/alejandro-cedeno-10/rayito"
 homepage = "https://github.com/alejandro-cedeno-10/rayito"
@@ -28,14 +28,17 @@ tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "
 tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
 tokio-util = { version = "=0.7.19", default-features = false, features = ["codec"] }
 axum = { version = "=0.8.9", default-features = false, features = ["tokio", "http1", "json"] }
-hyper = { version = "=1.11.1", features = ["client", "http1"] }
+# `server`: the hooks listener serves HTTP/1.1 with hyper directly
+# (`rayd::hooks::serve`, a request-head deadline axum::serve cannot set);
+# axum already pulls the same feature in.
+hyper = { version = "=1.11.1", features = ["client", "http1", "server"] }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 http = "=1.5.0"
 http-body = "=1.1.0"
 http-body-util = "=0.1.5"
 bytes = "=1.12.1"
 futures = { version = "=0.3.34", default-features = false, features = ["std"] }
-nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "ioctl", "resource"] }
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "dir", "ioctl", "resource"] }
 libc = "=0.2.189"
 thiserror = "=2.0.21"
 anyhow = "=1.0.104"

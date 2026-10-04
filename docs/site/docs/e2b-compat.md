@@ -212,7 +212,8 @@ rechazada. Las claves y los motivos de esta tabla son los de
 | `network.allow_public_traffic=True` | `network.allowPublicTraffic=true` | no existe acceso sin autenticar: toda petición al endpoint exige X-aws-proxy-auth (AWS_API_NOTES.md §3 y §7); allow_public_traffic=False es el comportamiento permanente |
 | `iam` | `iam` | los MicroVMs no emiten tokens con audiencia: la única identidad es el execution role por IMDSv2 (AWS_API_NOTES.md §9) |
 | `mcp`, `get_mcp_url`, `get_mcp_token` | `mcp`, `getMcpUrl`, `getMcpToken` | cada petición al endpoint necesita además un JWE en cabecera con TTL de 60 min como máximo (AWS_API_NOTES.md §3 y §7), así que una URL con token fijo no sirve; usa el servidor rayito-mcp |
-| `volume_mounts`, `Volume` (y `AsyncVolume`) | `volumeMounts`, `Volume` | SPEC.md §4 deja fuera EFS y los montajes compartidos; usa persist= (S3) o upload_url/download_url |
+| `volume_mounts`, `Volume` (y `AsyncVolume`) sin `volume_store=`/`volumeStore` | `volumeMounts`, `Volume` | sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen: pasa E2B(volume_store=VolumeStore(...)) (y volume_connector_arn= para volume_mounts, sobre la imagen opcional con amazon-efs-utils, AWS_API_NOTES.md §22; m15-efs-volumes, experimental), o usa persist= (S3) o upload_url/download_url |
+| `volume.content`: `read_file`/`write_file`/`make_dir`/`list_files`/`remove`/`update_metadata` de un `Volume` | `volume.content`: `readFile`/`writeFile`/`makeDir`/`list`/`remove`/`updateMetadata` | no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y monta el volumen, o usa upload_url/download_url sobre persist= |
 | `get_signature` | `getSignature` | una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3 |
 | `Template.alias_exists`/`assign_tags`/`remove_tags`/`get_tags` (y en `AsyncTemplate`) | `Template.aliasExists`/`assignTags`/`removeTags`/`getTags` | create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de AWS mientras tanto |
 
@@ -238,8 +239,8 @@ feature en camelCase, salvo las diferencias que se listan tras la tabla):
 | el historial de métricas por la forma de clase, sin access token ni `RAYITO_ACCESS_TOKEN` | `Sandbox.get_metrics(sandbox_id)` | rayd exige el access token del sandbox (x-access-token): pásalo con access_token= o define RAYITO_ACCESS_TOKEN |
 | el historial de métricas con rango (`start`/`end`) o por la forma de clase, contra una imagen anterior a 0.3.0 | `get_metrics(start=, end=)` / `Sandbox.get_metrics(sandbox_id)` (TS: `getMetrics({ start, end })` / `Sandbox.getMetrics(sandboxId)`) | la imagen es anterior a 0.3.0 (rayd sin MetricsHistory): publica una imagen 0.3.0 o posterior |
 | cualquier `create()` contra una imagen anterior a 0.3.0 (el VM se termina antes de lanzar) | `lifecycle` | la imagen no impone el timeout del servidor: publica una imagen 0.3.0 o posterior |
-| `cpu`/`memory` por sandbox | — | no son parámetros de `create()`: el tamaño es propiedad de la imagen (`rayito image publish --memory-mib`), igual que `Template.build(cpu_count=, memory_mb=)` en E2B ([Límites](limits.md#tamano-cpuram)) |
-| la CLI de templates/snapshots/fork de E2B | — | no existen: fuera del alcance (`SPEC.md` §4) |
+| `cpu`/`memory` por sandbox | — | no son parámetros de `create()`: el tamaño es propiedad de la imagen, igual que `Template.build(cpu_count=, memory_mb=)` en E2B; el SDK nativo elige entre imágenes ya publicadas con `size=` ([Tamaños](funciones-opcionales/tamanos.md), [Límites](limits.md#tamano-cpuram)) |
+| la CLI de snapshots/fork de E2B | — | no existen: fuera del alcance (`SPEC.md` §4); la de templates es `rayito template` ([CLI](cli.md#rayito-template)) |
 
 El SDK nativo sigue la misma regla: `get_metrics_history()` (TS
 `getMetricsHistory()`), en instancia y en la forma de clase, contra un `rayd`

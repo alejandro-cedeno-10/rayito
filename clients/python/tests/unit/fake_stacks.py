@@ -20,6 +20,9 @@ class FakeStackProvisioner:
     #: Objetos subidos por `put_artifact`, por `(bucket, key)`.
     artifacts: dict[tuple[str, str], bytes] = field(default_factory=dict)
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    #: Los `parameters`/`keep_previous` de la última `create`/`update`.
+    sent_parameters: dict[str, str] = field(default_factory=dict)
+    sent_keep_previous: tuple[str, ...] = ()
     next_update_outcome: UpdateOutcome = "changed"
     fail_wait: bool = False
     #: Cada `timeout` que `wait()` recibió, en orden; permite a un test de
@@ -46,10 +49,13 @@ class FakeStackProvisioner:
     ) -> None:
         self.calls.append(("create", stack_name))
         self.parameters[stack_name] = dict(parameters)
+        self.sent_parameters = dict(parameters)
+        self.sent_keep_previous = ()
         self.stacks[stack_name] = StackStatus(
             name=stack_name,
             state="CREATE_COMPLETE",
             outputs={"StackName": stack_name},
+            parameters=dict(parameters),
         )
 
     def update(
@@ -60,14 +66,20 @@ class FakeStackProvisioner:
         template_body: str,
         parameters: dict[str, str],
         tags: dict[str, str],
+        keep_previous: tuple[str, ...] = (),
     ) -> UpdateOutcome:
         self.calls.append(("update", stack_name))
         self.parameters[stack_name] = dict(parameters)
+        self.sent_parameters = dict(parameters)
+        self.sent_keep_previous = keep_previous
         if self.next_update_outcome == "changed":
             existing = self.stacks.get(stack_name)
             outputs = existing.outputs if existing else {}
+            previous = existing.parameters if existing else {}
+            merged = {key: previous[key] for key in keep_previous if key in previous}
+            merged.update(parameters)
             self.stacks[stack_name] = StackStatus(
-                name=stack_name, state="UPDATE_COMPLETE", outputs=outputs
+                name=stack_name, state="UPDATE_COMPLETE", outputs=outputs, parameters=merged
             )
         return self.next_update_outcome
 

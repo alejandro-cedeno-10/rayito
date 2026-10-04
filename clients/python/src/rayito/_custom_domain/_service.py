@@ -152,7 +152,14 @@ def _resolve_kvs_arn(explicit: str | None, status: StackStatus | None) -> str | 
 
 
 class CustomDomain:
-    """Construirlo no hace ninguna llamada a AWS.
+    """Dominio propio sobre CloudFront (experimental). Construirlo no hace
+    ninguna llamada a AWS.
+
+    **Experimental**: la API puede cambiar en una minor. La CloudFront
+    Function de enrutado y la creación de su `KeyValueStore` se comprobaron
+    en AWS real (`AWS_API_NOTES.md` Q121, Q140), pero crear la distribución
+    y servir tráfico por ella no (Q141: la cuenta de pruebas lo deniega con
+    una SCP). Si lo pruebas, cuéntalo en un issue de GitHub.
 
     Coste y activación
     -------------------

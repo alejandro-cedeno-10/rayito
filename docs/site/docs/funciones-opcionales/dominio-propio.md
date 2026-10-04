@@ -1,4 +1,4 @@
-# Dominio propio
+# Dominio propio (experimental)
 
 ## Qué hace
 
@@ -17,21 +17,47 @@ cada petición, busca la ruta del hostname en un `KeyValueStore`, comprueba el
 token de tráfico y reenvía al sandbox poniendo ella misma las cabeceras del
 proxy de AWS.
 
-!!! warning "Experimental (0.6): `CustomDomain` sí, `Sandbox.create(domain=)` todavía no"
-    `CustomDomain` (desplegar/borrar la pila y `register`/`unregister`/
-    `refresh` de rutas) está implementada y probada. Lo que **no** existe
-    todavía es que `Sandbox.create(domain=...)`/`get_host()` devuelvan esa
-    URL solos: `domain=` sigue lanzando `UnimplementedError` (seguimiento
-    no bloqueante, ADR-024 de `ARCHITECTURE.md`). Hoy registras la ruta tú
-    mismo y `route.host` es exactamente el hostname de arriba (ver el
-    ejemplo). La Function de enrutado ya se comprobó contra el runtime real
-    de CloudFront (`TestFunction`, Q121 de `AWS_API_NOTES.md`); el recorrido
-    completo por una distribución (DOM-2/3/5/7/8) queda para la aceptación
-    contra AWS real, que el e2e del repositorio automatiza. El primer
-    intento (Q140, Q141) arregló un `Comment` demasiado largo en la plantilla
-    y se paró en una SCP de la organización que deniega crear distribuciones.
+!!! warning "Experimental: no verificado de punta a punta en AWS real"
+    `CustomDomain` (desplegar y borrar la pila, y `register`/`unregister`/
+    `refresh` de rutas) está implementada en Python y TypeScript, con tests
+    unitarios, `cfn-lint` sobre la plantilla y tests de la Function de
+    enrutado. Se publica como experimental para que puedas probarla: la API
+    puede cambiar en una minor.
+
+    **Verificado en AWS real** (`AWS_API_NOTES.md`):
+
+    - La CloudFront Function compila y enruta en el runtime real
+      `cloudfront-js-2.0` (`TestFunction`, Q121): token correcto → sigue;
+      sin token o con token erróneo → 403; ruta caducada o inexistente → 404.
+    - `CustomDomain.deploy()` crea el `KeyValueStore` y la Function de la
+      plantilla tal cual (Q140, tras ajustar los `Comment` al límite de 128
+      caracteres de CloudFront), y el rollback y `destroy()` no dejan nada.
+
+    **Sin verificar en AWS real**: crear la distribución y servir tráfico
+    por ella (HTTP/1.1, WebSocket, latencia de propagación del
+    `KeyValueStore`, renovación del JWE). La cuenta de pruebas del proyecto
+    deniega `cloudfront:CreateDistribution` con una SCP de la organización
+    (Q141), así que nadie ha abierto todavía una URL de dominio propio
+    desplegada con esta plantilla. El e2e del repositorio
+    (`tests/e2e/test_m15_custom_domain.py`, `custom-domain.e2e.test.ts`)
+    automatiza esa prueba para una cuenta que sí lo permita.
+
+    Tampoco existe todavía que `Sandbox.create(domain=...)`/`get_host()`
+    devuelvan esa URL solos: `domain=` sigue lanzando `UnimplementedError`
+    (ADR-024 de `ARCHITECTURE.md`). Hoy registras la ruta tú mismo y
+    `route.host` es exactamente el hostname de arriba (ver el ejemplo).
+
+    **Si lo pruebas**, cuéntanos cómo te fue en un
+    [issue de GitHub](https://github.com/alejandro-cedeno-10/rayito/issues/new/choose)
+    con `[custom-domain]` en el título: SDK y versión, región, qué paso falló
+    (`deploy`, `register`, la petición HTTP), el código de estado y el
+    motivo de los eventos de la pila si la hubo. Nunca pegues el ARN de tu
+    certificado, tu dominio real, tokens ni JWE: usa `example.com` y
+    `123456789012`.
 
 !!! info "Coste y activación"
+    - **Estado**: experimental. Las cifras de coste son de lista y no se han
+      medido con una distribución real (ver el aviso de arriba).
     - **Por defecto**: apagado. Sin instanciar `CustomDomain` el SDK no
       construye ningún cliente `cloudformation` ni `cloudfront-keyvaluestore`.
     - **Activa**: `CustomDomain(public_domain="sbx.example.com").deploy(certificate_arn=...)`

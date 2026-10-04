@@ -19,11 +19,12 @@ import secrets
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
-from rayito._limits import RUN_HOOK_PAYLOAD_MAX_CHARS
+from rayito._limits import ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._lifecycle_base import LifecycleBlock
+    from rayito._models import S3Prefix
 
 PAYLOAD_VERSION: Final = 1
 DEFAULT_USER: Final = "user"
@@ -43,7 +44,11 @@ def encode_access_token(secret: bytes) -> str:
 
 def decode_access_token(access_token: str) -> bytes:
     """Los bytes que `rayd` hashea. Falla si el token no es base64url canónico
-    (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`."""
+    (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`,
+    o si decodifica a menos de `ACCESS_TOKEN_MIN_BYTES` bytes: un secreto
+    elegido a mano y corto (en `access_token=`, `RAYITO_ACCESS_TOKEN` o
+    `--token-file`) se adivinaría por fuerza bruta o desde `token_sha256`.
+    El mensaje nunca repite el token."""
     stripped = access_token.rstrip("=")
     padded = stripped + "=" * (-len(stripped) % 4)
     try:
@@ -52,6 +57,11 @@ def decode_access_token(access_token: str) -> bytes:
         raise InvalidArgumentException("access_token no es base64url") from exc
     if not secret or encode_access_token(secret) != stripped:
         raise InvalidArgumentException("access_token no es base64url")
+    if len(secret) < ACCESS_TOKEN_MIN_BYTES:
+        raise InvalidArgumentException(
+            f"access_token demasiado corto: mínimo {ACCESS_TOKEN_MIN_BYTES} bytes aleatorios "
+            f"(los generados tienen {ACCESS_TOKEN_BYTES})"
+        )
     return secret
 
 
@@ -74,6 +84,7 @@ def build_run_hook_payload(
     cpu_time_limit: int | None = None,
     lifecycle: LifecycleBlock | None = None,
     network_enforce: bool = False,
+    persist: S3Prefix | None = None,
 ) -> str:
     """Serializa el payload y falla si supera el límite del modelo (4096 chars).
 
@@ -88,6 +99,13 @@ def build_run_hook_payload(
     `network_enforce` añade `"network": {"enforce": true}` (ADR-012): `rayd`
     instala deny-all antes de responder a `/run` y la política real llega
     después por `UpdateNetwork`; el payload nunca lleva reglas ni credenciales.
+    `persist` (el `S3Prefix` de `create(persist=)`) añade
+    `"persist": {"bucket": ..., "key_prefix": <prefix>}`: `rayd` liga a ese
+    bucket y a esa base cada `Checkpoint`/`Restore` del sandbox y rechaza con
+    `PERMISSION_DENIED` cualquier ubicación fuera de ella (C-07). Viaja la base
+    (`prefix`), no `prefix/name`: el `name` por defecto es el `sandbox_id`,
+    que aún no existe al lanzar, y un restore desde otro `name` de la misma
+    base sigue siendo legítimo.
     """
     if not access_token:
         raise InvalidArgumentException("access_token no puede estar vacío")
@@ -107,6 +125,8 @@ def build_run_hook_payload(
         payload["lifecycle"] = lifecycle.to_wire()
     if network_enforce:
         payload["network"] = {"enforce": True}
+    if persist is not None:
+        payload["persist"] = persist_binding(persist)
     text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     if len(text) > RUN_HOOK_PAYLOAD_MAX_CHARS:
         raise InvalidArgumentException(
@@ -116,6 +136,11 @@ def build_run_hook_payload(
             "files.write()."
         )
     return text
+
+
+def persist_binding(persist: S3Prefix) -> dict[str, str]:
+    """El bloque `persist` del payload: el bucket y la base del `S3Prefix`."""
+    return {"bucket": persist.bucket, "key_prefix": persist.prefix}
 
 
 def validated_cpu_time_limit(cpu_time_limit: int) -> int:

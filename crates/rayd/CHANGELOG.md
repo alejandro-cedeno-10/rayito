@@ -10,6 +10,158 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Added
+
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, experimental):
+  `rayd_core::volume` (`VolumeSpec`/`VolumePlan`/`MountState`/`VolumeError`,
+  la atribución de `efs-proxy` y la decisión de `/resume`, todo puro) y el
+  adaptador real `EfsUtilsMounter` (`mount -t efs -o tls,iam,accesspoint`,
+  medido en AWS real, `AWS_API_NOTES.md` §16 Q128), activo sólo en una
+  imagen con `amazon-efs-utils` y `CAP_SYS_ADMIN` (en las demás
+  `Health.features.efs_volumes` es `false` y la sección responde
+  `UNSUPPORTED`). Monta sobre un directorio de root y enlaza el resultado a
+  la ruta pedida sin seguir enlaces simbólicos (recorrido compartido con
+  `mounts=`, `adapters::mountpoint`); termina el `efs-proxy` de cada volumen
+  al desmontar y en `/terminate` (`umount` no lo para, Q128); en `/resume`
+  remonta el volumen cuya pausa cruzó la caducidad de las credenciales del
+  túnel o cuya sonda falla (en segundo plano si no cabe en el presupuesto,
+  con el estado en `ConfigureStatus`; Q129); en `/suspend` vacía cada
+  volumen con plazo y lo marca `degraded`/`flush_timeout` si no termina
+  (Q130). `proto/rayito/v1/efs_volumes.proto` documenta las clases nuevas
+  (`invalid_path`, `credentials_expired`, `flush_timeout`, `stale`,
+  `unreachable`, `gone`).
+
+### Changed
+
+- `EfsUtilsMounter` pasa `AWS_REGION` (la región del MicroVM) al entorno de
+  `mount -t efs`: `amazon-efs-utils` 3.1.3 la lee antes que su
+  `efs-utils.conf`, así que una imagen sin región horneada monta en
+  cualquier región. Sin `AWS_REGION`, el helper sigue con sus propios
+  respaldos.
+- `image/Dockerfile`: capa condicional de
+  `amazon-efs-utils-3.1.3-1.amzn2023` (sólo con el marcador `efs_variant` de
+  `--with-efs`), que rehace el enlace de `/usr/bin/python3` a 3.12;
+  `scripts/check_pins.py` clava su NEVRA y ve los `dnf install` dentro de
+  `if …; then`.
+
+### Security
+
+- **Las operaciones de ficheros ya no vuelven a resolver la ruta que la
+  lista de denegación comprobó** (`sec-rayd-agent-hardening`, RAYD-01):
+  cada RPC de `FilesystemService` (y la exportación e importación por S3)
+  abre el directorio padre componente a componente sin seguir enlaces
+  simbólicos y actúa sobre ese descriptor, así que un componente que el
+  código del sandbox cambie entre la comprobación y el uso se rechaza con
+  la denegación de la política en vez de seguirse; un directorio en `proc`,
+  `sysfs` o `devpts` se rechaza llegue por donde llegue. El borrado
+  recursivo y las escrituras atómicas trabajan también por descriptor.
+- **La pasarela de secretos valida la ruta con una lista de permitidos**
+  (RAYD-02): en vez de rechazar unas cuantas codificaciones conocidas,
+  `rayd` sólo deja pasar caracteres de ruta de RFC 3986 salvo `;`, y cada
+  segmento decodificado una sola vez debe ser UTF-8 válido, sin `/`, `\`,
+  `%`, `;` ni bytes de control y distinto de `.`/`..`. Cierra el uso de la
+  credencial inyectada fuera de `allow` a través de un upstream que quite
+  parámetros `;` o decodifique dos veces. Una ruta de `allow` que ninguna
+  petición pueda cumplir se rechaza en `Configure` (`invalid_allow_path`).
+- **Los lanzadores internos ya no heredan el entorno de `rayd`** (RAYD-04):
+  la sonda de disponibilidad de los montajes S3 (uid 1000) arranca con un
+  entorno con sólo `PATH`, un binario absoluto, el sellado de descriptores
+  y el restablecimiento de señales que ya tenían los procesos del usuario;
+  `mount-s3` gana el mismo sellado por encima de su descriptor FUSE.
+- **Un `/run` desde un proceso del sandbox ya no consume el `/run` del
+  arranque** (RAYD-08): `rayd` lee el uid dueño del socket del llamante y
+  rechaza (200 `sandbox_origin`, contado en `hook_anomalies`) un `/run`
+  de un uid del sandbox, así que el `start_cmd` de una plantilla, que
+  corre antes de que llegue el `/run` de la plataforma, no puede instalar
+  su propio token ni dejar el sandbox sin él. Pendiente de aceptación en
+  AWS real.
+- **Documentado el alcance de la reescritura de `Host` del proxy de
+  egress** (RAYD-06): sólo cubre la forma absoluta `http://`; un túnel
+  `CONNECT`/SOCKS5 a un nombre permitido en el 80 comparte el riesgo
+  residual de IPs compartidas que ya tenía el 443 (`SECURITY.md` T17).
+- **Los puertos de `rayd` tienen un tope de conexiones**: el gRPC (8080)
+  atiende como mucho 256 conexiones a la vez y los hooks (9000) 32; las
+  demás esperan en el backlog del kernel sin ocupar un descriptor, así que
+  un proceso del sandbox ya no puede agotar los 1024 descriptores de
+  `rayd` abriendo conexiones ociosas. Los hooks cortan una cabecera que no
+  llega en 10 s y cierran la conexión tras cada respuesta, y un `accept`
+  que falla por falta de descriptores espera 100 ms en vez de reintentar
+  en bucle (`SECURITY.md` T7). Pendiente de aceptación en AWS real.
+- **`rayd` comprueba los pids de kernel que le reporta el sidecar antes de
+  señalarlos**: un proceso del sandbox puede escribir en la tubería del
+  protocolo del sidecar, así que `rayd` (root) sólo registra un kernel que
+  `/proc` confirma como hijo del sidecar en curso, líder de su grupo y del
+  mismo usuario, lo fija por su hora de arranque y lo vuelve a comprobar
+  antes de cada `killpg`, que nunca va a los grupos 0 y 1 ni al suyo
+  propio. Un pid que no pasa se descarta (`kernel_pid_rejected`)
+  (`SECURITY.md` T12).
+- **La puerta de identidad tiene techo**: un proceso, PTY, operación de
+  ficheros o kernel sólo corre con uid y gid entre 1000 y 65535, el mismo
+  rango que cubren el bloqueo de IMDS y las reglas de egress y DNS; una
+  cuenta por encima de 65535 en una imagen propia se rechaza como cuenta
+  con privilegios (`SECURITY.md` T1).
+- **Los hooks de ciclo de vida comprueban quién abrió la conexión**
+  (`sec-sandbox-isolation`, C-01): `rayd` busca el extremo cliente de cada
+  conexión al puerto de hooks en las tablas de sockets del kernel. Un
+  `/terminate` o un `/validate` que llega desde un proceso del sandbox
+  (uid 1000-65535) responde 200 `peer_refused` sin hacer nada y cuenta en
+  `hook_anomalies`; un `/suspend` o un `/resume` desde el sandbox se sigue
+  aceptando pero también cuenta. Ningún hook responde nunca un no-2xx por
+  esta comprobación.
+- **`/validate` y `/ready` ya no actúan tras el `/run`** (C-02, C-03): un
+  `/validate` posterior al `/run` responde 200 `validate_skipped` sin
+  reiniciar el contexto `default` del kernel ni ejecutar la celda de
+  validación, y tanto él como un `/ready` tardío quedan en `hook_audit` como
+  anomalía. Las llamadas del build, antes del `/run`, no cambian.
+  Además, el camino de ejecución propio del build (el que se salta el
+  `stream_gate`) se niega por sí solo fuera de la fase de build, aunque se
+  llegue a él sin pasar por el hook.
+- **`Checkpoint` y `Restore` quedan dentro del ámbito que liga el `/run`**
+  (C-07): si el `runHookPayload` trae el bloque `persist` (bucket y base del
+  prefijo, lo manda el SDK desde `create(persist=)`), `rayd` responde
+  `PERMISSION_DENIED`, antes de tocar S3, a cualquier destino de otro bucket
+  o fuera de esa base. Un prefijo por inquilino separa así inquilinos que
+  comparten execution role. Sin el bloque nada cambia.
+- **La pasarela de secretos no devuelve la credencial en las cabeceras de la
+  respuesta**: se eliminan las cabeceras de la respuesta del `upstream` que
+  llevan el nombre de una cabecera inyectada o contienen un valor vaultado.
+  El cuerpo sigue llegando sin cambios, así que la documentación (T24 y la
+  página de la pasarela) avisa de no permitir endpoints que reflejen las
+  cabeceras de la petición.
+- **Los assets firmados de `rayd` se construyen sin credenciales y no se
+  pueden reemplazar desde la release.** `release.yml` parte el job `rayd` en
+  `rayd-build` (sólo lectura), `rayd-sign` (token OIDC, sin checkout ni
+  herramientas de build, firma lo que `sha256sum -c` confirma que salió del
+  build) y `rayd-upload` (environment `release` con aprobación del
+  mantenedor, sin `--clobber`). Ningún job de la release restaura ya una
+  caché de Actions: zig se descarga contra un sha256 fijado y las
+  herramientas de cargo se compilan en una raíz nueva en cada release.
+  Publicar exige que el commit del tag esté en `main`.
+- **La receta de verificación liga la firma a la versión que instalas**:
+  `cosign verify-blob --certificate-identity
+  "…/release.yml@refs/tags/rayd-v${RAYD_VERSION}"` en vez de una regexp que
+  aceptaba la firma de cualquier tag `rayd-v*` (`docs/site/docs/verify.md`).
+- **Firmar `rayd` espera la aprobación del mantenedor.** `rayd-sign` corre en
+  el environment `release` y sólo cuando el run publica: sin aprobación no
+  hay token OIDC ni certificado de Sigstore con la identidad
+  `release.yml@refs/tags/rayd-v<versión>`, y un ensayo (`dry_run`) ya no
+  firma. Antes, un ensayo lanzado desde un tag `rayd-v*` firmaba con la
+  identidad exacta que verifican los usuarios sin pasar por ningún revisor.
+  `verify.md` dice ahora qué prueba la firma y qué no.
+- **La receta recomendada de `rayito-image.zip` verifica antes de
+  publicar**: descarga `SHA256SUMS`, comprueba el bundle con
+  `cosign verify-blob` y la suma, y sólo después llama a
+  `rayito image publish` (`docs/site/docs/primeros-pasos/configurar-aws.md`).
+  Ya no es un paso opcional: un asset de una release se podría reemplazar
+  con un token del repositorio.
+- **CI sin cachés donde hay credenciales y con herramientas fijadas**: los
+  jobs del sitio de documentación y del e2e ya no restauran cachés de
+  Actions; uv se instala fijado por versión y sha256 en todos los workflows
+  y nunca re-bloquea un `uv.lock` desfasado; pip-audit y cfn-lint salen de
+  requisitos con `--hash` en vez de `uvx`.
+
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
 - **`rayd` (PID 1) recoge los zombis huérfanos** (`rayd-orphan-reaper`,
@@ -560,7 +712,8 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.6.0...rayd-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.1...rayd-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.5.0...rayd-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.4.0...rayd-v0.5.0

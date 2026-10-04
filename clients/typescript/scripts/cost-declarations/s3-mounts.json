@@ -1,0 +1,4 @@
+[
+  { "name": "class S3Mount", "pattern": "^(export )?declare class S3Mount\\b" },
+  { "name": "opción mounts", "pattern": "^\\s*readonly mounts\\?: S3MountsOption\\b" }
+]

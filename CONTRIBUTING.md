@@ -219,8 +219,16 @@ cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
 ```bash
 (cd clients/python && uv build)
 python3 scripts/check_wheel.py clients/python/dist/*.whl
-uvx twine==7.0.0 check clients/python/dist/*
+T="$(mktemp -d)" && uv venv -q --python 3.12 "$T" && \
+  uv pip install --python "$T" --require-hashes --no-deps --only-binary :all: \
+  -r .github/release/requirements-twine.txt && "$T/bin/twine" check clients/python/dist/*
 ```
+
+twine, cfn-lint y pip-audit nunca corren con `uvx`: `==` fija la
+herramienta pero no su grafo, que se resolvería al vuelo en cada ejecución.
+Se instalan desde `.github/release/requirements-*.txt` (cada pin con
+`--hash`), y `scripts/check_pins.py` sólo admite `uvx` para herramientas sin
+dependencias (`ruff`).
 
 Kernel sidecar:
 
@@ -265,11 +273,29 @@ Gates locales que CI no ejecuta:
 
 ```bash
 openspec validate --all --strict --no-interactive
-uvx cfn-lint==1.56.3 infra/*.yaml
+T="$(mktemp -d)" && uv venv -q --python 3.12 "$T" && \
+  uv pip install --python "$T" --require-hashes --no-deps --only-binary :all: \
+  -r .github/release/requirements-cfn-lint.txt && "$T/bin/cfn-lint" infra/*.yaml
 ```
 
 `make infra-lint` añade `aws cloudformation validate-template` sobre las
 mismas plantillas (necesita credenciales de AWS; la llamada es gratuita).
+
+### Pruebas punta a punta en local (Docker + Floci)
+
+Sin cuenta de AWS ni credenciales, el entorno de `dev/local` corre los SDK
+contra un `rayd` real (la imagen de producto en un contenedor) y contra
+[Floci](https://github.com/floci-io/floci), un emulador de AWS:
+
+```bash
+make local-up      # floci, runner y guest; compila rayd dentro de Docker
+make local-e2e     # tests `local` de Python y TypeScript
+make local-down
+```
+
+Qué cubre, qué no frente a AWS real y cómo está encerrado el emulador:
+[Probar en local](docs/site/docs/guias/probar-en-local.md). No sustituye al
+e2e contra AWS que cierra un hito o una release (`CLAUDE.md`, regla 4).
 
 ### Plantilla IAM y e2e contra tu cuenta de AWS
 
@@ -301,6 +327,8 @@ export RAYITO_TEMPLATE_CAPS=rayito-base-caps     # IMDS, egress y persistencia
 export RAYITO_TEMPLATE_POLY=rayito-base-poly     # kernels bash/JavaScript/TypeScript
 export RAYITO_PERSIST_BUCKET=<tu-bucket>         # RAYITO_PERSIST_PREFIX: rayito-e2e
 export RAYITO_E2E_TRANSFER_BUCKET=<tu-bucket>    # RAYITO_E2E_TRANSFER_PREFIX: rayito-e2e-transfer
+export RAYITO_E2E_VPC_ID=<tu-vpc>               # efs-volumes: una VPC existente que puedes usar
+export RAYITO_E2E_SUBNET_IDS=<subred-a>,<subred-b> # de 1 a 3 subredes privadas de esa VPC, una por AZ
 make test-e2e
 make test-e2e-typescript
 ```

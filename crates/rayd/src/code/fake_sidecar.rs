@@ -1,24 +1,111 @@
 //! An in-memory `KernelSidecar` for the host tests of the supervisor and
 //! the execute stream: each launch hands its event sink to the test, which
 //! plays the sidecar's stdout by hand; the link records every request line
-//! it is given and whether it was killed or terminated.
+//! it is given and whether it was killed or terminated. `FakeKernels` is
+//! the process table those tests check kernel pids against.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rayd_core::clock::Clock;
 use rayd_core::code::{
-    ContextRegistry, EventFuture, KernelSidecar, SIDECAR_PROTOCOL_VERSION, SidecarEvent,
-    SidecarEventSink, SidecarExitSink, SidecarIoError, SidecarLink, SidecarState,
+    ContextRegistry, EventFuture, KernelPidRejection, KernelProcess, KernelProcesses,
+    KernelSidecar, ProcessFacts, SIDECAR_PROTOCOL_VERSION, SidecarEvent, SidecarEventSink,
+    SidecarExitSink, SidecarIoError, SidecarLink, SidecarState,
 };
 use rayd_core::process::{Pid, ProcessIdentity, ResourceLimits, SpawnError, SpawnSpec, StdinMode};
 use rayd_core::session::{RunHookInput, SandboxSession};
 use tokio::sync::mpsc;
 
-use super::supervisor::{KernelSignaller, SidecarSupervisor, SupervisorSettings, lock};
+use super::supervisor::{SidecarSupervisor, SupervisorSettings, lock};
 
 pub const FAKE_PID: u32 = 4242;
+/// The fake sidecar's user, also its kernels'.
+const FAKE_UID: u32 = 1000;
+/// Start time of every process the fake table holds until a test
+/// recycles one.
+const FAKE_START_TICKS: u64 = 1;
+
+/// A process table holding the fake sidecar (`FAKE_PID`) and its default
+/// kernel (`FAKE_PID + 1`), judged with the real admission rules, and the
+/// signals the supervisor sent through it.
+pub struct FakeKernels {
+    table: Mutex<HashMap<u32, ProcessFacts>>,
+    signalled: Mutex<Vec<(u32, i32)>>,
+}
+
+impl Default for FakeKernels {
+    fn default() -> Self {
+        let kernels = Self {
+            table: Mutex::new(HashMap::new()),
+            signalled: Mutex::new(Vec::new()),
+        };
+        kernels.set(FAKE_PID, Some(facts(1, FAKE_PID)));
+        kernels.set(FAKE_PID + 1, Some(facts(FAKE_PID, FAKE_PID + 1)));
+        kernels
+    }
+}
+
+impl FakeKernels {
+    /// What the table says about `pid` from now on (`None`: gone).
+    pub fn set(&self, pid: u32, entry: Option<ProcessFacts>) {
+        let mut table = lock(&self.table);
+        match entry {
+            Some(entry) => table.insert(pid, entry),
+            None => table.remove(&pid),
+        };
+    }
+
+    /// A kernel of the fake sidecar under `pid`.
+    pub fn add_kernel(&self, pid: u32) {
+        self.set(pid, Some(facts(FAKE_PID, pid)));
+    }
+
+    /// `pid` is now another process (a later start time).
+    pub fn recycle(&self, pid: u32) {
+        self.set(
+            pid,
+            Some(ProcessFacts {
+                start_ticks: FAKE_START_TICKS + 1,
+                ..facts(1, pid)
+            }),
+        );
+    }
+
+    pub fn signalled(&self) -> Vec<(u32, i32)> {
+        lock(&self.signalled).clone()
+    }
+
+    fn get(&self, pid: u32) -> Option<ProcessFacts> {
+        lock(&self.table).get(&pid).copied()
+    }
+}
+
+impl KernelProcesses for FakeKernels {
+    fn admit(&self, pid: u32, sidecar_pid: u32) -> Result<KernelProcess, KernelPidRejection> {
+        KernelProcess::admit(pid, sidecar_pid, self.get(pid), self.get(sidecar_pid))
+    }
+
+    fn signal(&self, kernel: &KernelProcess, signal: i32) -> bool {
+        if !kernel.may_signal(self.get(kernel.pid())) {
+            return false;
+        }
+        lock(&self.signalled).push((kernel.pid(), signal));
+        true
+    }
+}
+
+/// A process of the fake sidecar's user leading its own group.
+pub fn facts(parent: u32, pid: u32) -> ProcessFacts {
+    ProcessFacts {
+        ppid: parent,
+        pgrp: pid,
+        start_ticks: FAKE_START_TICKS,
+        uid: FAKE_UID,
+    }
+}
 
 /// What the link recorded: shared between the test and the launch.
 #[derive(Clone, Default)]
@@ -215,6 +302,14 @@ pub fn running_session() -> Arc<SandboxSession> {
 pub async fn starting_supervisor(
     settings: SupervisorSettings,
 ) -> (Arc<SidecarSupervisor>, Launched) {
+    starting_supervisor_with(settings, Arc::new(FakeKernels::default())).await
+}
+
+/// The same, over the process table the test observes.
+pub async fn starting_supervisor_with(
+    settings: SupervisorSettings,
+    kernels: Arc<FakeKernels>,
+) -> (Arc<SidecarSupervisor>, Launched) {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
     let session = running_session();
@@ -224,7 +319,7 @@ pub async fn starting_supervisor(
         session,
         registry,
         settings,
-        Arc::new(|_, _| {}),
+        kernels,
     );
     drop(supervisor.spawn());
     let launched = receiver
@@ -236,13 +331,13 @@ pub async fn starting_supervisor(
 
 /// A supervisor whose loop already launched the fake and saw its `ready`.
 pub async fn ready_supervisor(settings: SupervisorSettings) -> ReadySupervisor {
-    ready_supervisor_with(settings, Arc::new(|_, _| {})).await
+    ready_supervisor_with(settings, Arc::new(FakeKernels::default())).await
 }
 
-/// The same, with the kernel signaller the test observes.
+/// The same, over the process table the test observes.
 pub async fn ready_supervisor_with(
     settings: SupervisorSettings,
-    kernel_signaller: KernelSignaller,
+    kernels: Arc<FakeKernels>,
 ) -> ReadySupervisor {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
@@ -253,7 +348,7 @@ pub async fn ready_supervisor_with(
         session.clone(),
         registry.clone(),
         settings,
-        kernel_signaller,
+        kernels,
     );
     drop(supervisor.spawn());
     let mut launched = receiver

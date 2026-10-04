@@ -168,7 +168,13 @@ en `create()`.
   (sockets en crudo, algunos runtimes, `git://`, `ssh`); E2B filtra de forma
   transparente fuera del VM.
 - Las reglas por nombre de host sólo valen en los puertos 80 y 443 y a través
-  del proxy.
+  del proxy. En una petición `http://` en forma absoluta (lo que hace un
+  cliente con `HTTP_PROXY`), el proxy reescribe la cabecera `Host` con el
+  nombre comprobado; un túnel `CONNECT` o SOCKS5 hacia un nombre permitido
+  pasa tal cual, así que puede llevar otra cabecera `Host` (en el 80) u otro
+  SNI (en el 443) hacia las mismas direcciones IP. Es el mismo riesgo
+  residual de las IPs compartidas (CDN) en los dos puertos (`SECURITY.md`
+  T17).
 - Bajo deny-all en `rayito-base-caps` el DNS de uid ≥ 1000 se bloquea: los
   resolvedores de la plataforma siguen escuchando dentro del guest (medido),
   pero una regla `ip rule` de puerto 53 los intercepta antes de que la tabla `local` los

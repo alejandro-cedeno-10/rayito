@@ -4,9 +4,44 @@ Funciones con coste propio en AWS, **apagadas por defecto**: sólo se activan
 al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 "Coste y activación". Guías: [Secretos](../../secrets.md),
 [Índice de metadatos](../../funciones-opcionales/indice-de-metadatos.md),
+[Montajes S3](../../funciones-opcionales/montajes-s3.md),
+[Tamaños](../../funciones-opcionales/tamanos.md),
+[Eventos y webhooks](../../funciones-opcionales/eventos-y-webhooks.md),
+[Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md),
 [Pasarela de secretos](../../funciones-opcionales/pasarela-de-secretos.md),
-[Templates declarativos](../../funciones-opcionales/templates.md) y
+[Templates declarativos](../../funciones-opcionales/templates.md),
+[Pilas opcionales](../../funciones-opcionales/pilas-opcionales.md) y
 [Funciones opcionales](../../optional-features.md).
+
+## Pilas opcionales
+
+::: rayito.OptionalStacks
+
+::: rayito.AsyncOptionalStacks
+
+::: rayito.StackComponent
+
+::: rayito.StackParameter
+
+::: rayito.StackStatus
+
+::: rayito.CostStatement
+
+## Montajes S3
+
+::: rayito.S3Mount
+
+::: rayito.MountStatus
+
+## Eventos y webhooks
+
+::: rayito.LifecycleEvents
+
+::: rayito.AsyncLifecycleEvents
+
+::: rayito.WebhookInfo
+
+::: rayito.EventRecord
 
 ## Templates declarativos
 
@@ -66,3 +101,30 @@ Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
 ::: rayito.OtlpAuth
 
 ::: rayito.TelemetryHealth
+
+## Volúmenes EFS (experimental)
+
+::: rayito.VolumeStore
+
+::: rayito.EfsVolume
+
+::: rayito.VolumeStatus
+
+::: rayito.EfsVolumes
+
+::: rayito.AsyncEfsVolumes
+
+::: rayito.EfsNetworkReport
+
+::: rayito.NetworkFinding
+
+## Dominio propio (experimental)
+
+Guía: [Dominio propio](../../funciones-opcionales/dominio-propio.md). Sin
+verificar aún de punta a punta en AWS real.
+
+::: rayito.CustomDomain
+
+::: rayito.AsyncCustomDomain
+
+::: rayito.CustomDomainRoute

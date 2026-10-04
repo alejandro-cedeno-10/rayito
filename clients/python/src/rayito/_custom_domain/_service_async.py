@@ -23,6 +23,12 @@ from rayito._stacks._port import StackProvisioner
 
 
 class AsyncCustomDomain:
+    """`CustomDomain` para `asyncio` (experimental): los mismos métodos,
+    cada uno en un hilo porque boto3 es bloqueante. Construirlo no hace
+    ninguna llamada a AWS. El bloque "Coste y activación" y el alcance de lo
+    verificado en AWS real son los de `CustomDomain`.
+    """
+
     def __init__(
         self,
         *,

@@ -53,7 +53,7 @@ use rayito_proto::v1::{
 use super::FeatureContext;
 use super::slot::ConfigurableFeature;
 use crate::adapters::{
-    LinuxFuseDevice, MOUNT_S3_BINARY, TokioMountS3Daemon, detect_guest_capabilities,
+    LinuxFuseDevice, MOUNT_S3_BINARY, TokioMountS3Daemon, binary_on_path, detect_guest_capabilities,
 };
 use crate::hooks::PARTICIPANT_RESUME_TIMEOUT;
 use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
@@ -65,8 +65,9 @@ use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
 const ALLOWED_BUCKETS_ENV: &str = "RAYITO_ALLOWED_MOUNT_BUCKETS";
 /// The platform's own region, read the same way `adapters::s3_store`
 /// already reads it for ADR-009 persistence; `mount-s3`'s own `AWS_REGION`
-/// comes from this, never a per-request value.
-const AWS_REGION_ENV: &str = "AWS_REGION";
+/// comes from this, never a per-request value; `adapters::efs_mount`
+/// hands the same variable to the `efs-utils` helper.
+pub(crate) const AWS_REGION_ENV: &str = "AWS_REGION";
 const FUSE_DEVICE_PATH: &str = "/dev/fuse";
 /// The system account `image/Dockerfile` creates for the `mount-s3`
 /// daemon. Like the binary, it exists in all four image variants (one
@@ -641,11 +642,6 @@ fn detect_s3_mounts_supported() -> bool {
         && system_user_exists(MOUNT_USER_NAME)
 }
 
-fn binary_on_path(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-}
-
 fn system_user_exists(name: &str) -> bool {
     std::fs::read_to_string("/etc/passwd").is_ok_and(|passwd| {
         passwd
@@ -1121,13 +1117,6 @@ mod tests {
         assert_eq!(relaunch_backoff(0), RELAUNCH_BACKOFF_BASE);
         assert_eq!(relaunch_backoff(1), RELAUNCH_BACKOFF_BASE * 2);
         assert_eq!(relaunch_backoff(10), RELAUNCH_BACKOFF_MAX);
-    }
-
-    #[test]
-    fn binary_on_path_finds_a_binary_known_to_exist_in_tests() {
-        // `sh` exists on every Unix CI runner and in the Lima VM alike.
-        assert!(binary_on_path("sh"));
-        assert!(!binary_on_path("not-a-real-rayito-binary"));
     }
 
     #[test]

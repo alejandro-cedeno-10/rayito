@@ -91,6 +91,10 @@ class PoolClosedException(SandboxException):
 
 
 class CommandExitException(SandboxException):
+    """Un comando terminó con exit code distinto de cero. `truncated` es
+    `True` cuando `stdout` o `stderr` superaron `max_output_bytes` y sólo
+    conservan su final."""
+
     def __init__(
         self,
         message: str,
@@ -100,12 +104,14 @@ class CommandExitException(SandboxException):
         stderr: str = "",
         error: str | None = None,
         grpc_code: grpc.StatusCode | None = None,
+        truncated: bool = False,
     ) -> None:
         super().__init__(message, grpc_code=grpc_code)
         self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
         self.error = error
+        self.truncated = truncated
 
 
 class PersistenceException(SandboxException):
@@ -309,6 +315,18 @@ class VolumeException(SandboxException):
     `/run`."""
 
 
+class VolumeMountException(VolumeException):
+    """Un volumen de `volumes=` (m15-efs-volumes) no se montó: `create()`
+    ya terminó el sandbox (salvo `keep_on_failure`). `code` es uno de
+    `network`, `iam_denied`, `not_found`, `tls`, `helper_missing`,
+    `timeout`, `invalid_path` o `unknown` (la clase que reporta `rayd`,
+    nunca el mensaje del helper)."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class VolumeNotFoundException(VolumeException):
     """El `AccessPoint` del volumen no existe (`DescribeAccessPoints` vacío
     o `DeleteAccessPoint` sobre un id que ya no está)."""
@@ -322,8 +340,10 @@ class VolumePathNotFoundException(VolumeException):
 
 class BuildException(SandboxException):
     """`Template.build` (m15-templates) falló: `reason` nombra la causa
-    (`build_quota`, `ready_client_error`, `ready_server_error`, o `None`
-    con `step`/`command`/`exit_code`/`log_tail` cuando falló un paso del
+    (`build_quota`, `aws_error` cuando AWS rechazó el build por otro motivo
+    —el mensaje y `__cause__` llevan sólo el resumen saneado—,
+    `ready_client_error`, `ready_server_error`, o `None` con
+    `step`/`command`/`exit_code`/`log_tail` cuando falló un paso del
     Dockerfile compilado)."""
 
     def __init__(

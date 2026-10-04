@@ -25,7 +25,11 @@ metadatos, OpenTelemetry): esas sólo se activan con una opción del SDK.
     Si la exportas, cada `create()` de ese proceso reutiliza el mismo
     secreto, así que una fuga abre todos sus sandboxes, no uno. Por defecto
     `create()` genera 32 bytes aleatorios por sandbox. Úsala para `connect()`
-    o la CLI desde otro proceso, no en el proceso que crea sandboxes.
+    o la CLI desde otro proceso, no en el proceso que crea sandboxes. Un
+    token propio (aquí, en `access_token=`/`accessToken` o en
+    `--token-file`) tiene que ser base64url de al menos 16 bytes aleatorios
+    (`ACCESS_TOKEN_MIN_BYTES`); uno más corto es `InvalidArgumentException`
+    / `InvalidArgumentError`, sin repetir el token en el mensaje.
 
 ## CLI
 
@@ -33,6 +37,14 @@ metadatos, OpenTelemetry): esas sólo se activan con una opción del SDK.
 |---|---|
 | `RAYITO_BUCKET` | bucket de artefactos de imagen para `rayito image publish` y la comprobación `bucket` de `rayito doctor` (equivale a `--bucket`) |
 | `RAYITO_ACCESS_TOKEN` | token de `sandbox connect`, `exec` y `metrics` si no pasas `--token-file` (gana el fichero) |
+
+`rayito image publish` no lee estas dos, las **imprime** al terminar un
+build lanzable, para que un script las recoja de la última línea:
+
+| Línea impresa | Qué es |
+|---|---|
+| `RAYITO_TEMPLATE=<ARN>` | ARN de la imagen baseline publicada |
+| `RAYITO_TEMPLATE_<SIZE>=<ARN>` (p. ej. `RAYITO_TEMPLATE_4GB`) | con `--sizes`, ARN de cada imagen de tamaño adicional; el SDK no la lee: `size=` resuelve la imagen por nombre ([Tamaños](../funciones-opcionales/tamanos.md)) |
 
 ## Servidor MCP
 
@@ -52,6 +64,7 @@ Detalle: [Servidor MCP](../mcp.md#variables-de-entorno).
 | Variable | Dónde | Qué hace |
 |---|---|---|
 | `RAYITO_ALLOW_ROOT=1` | en el `Dockerfile` de la imagen, nunca en el SDK | permite `user="root"` en comandos y terminales; por defecto todo corre como uid 1000 |
+| `RAYITO_ALLOWED_MOUNT_BUCKETS` | en la imagen (`rayito image publish --env RAYITO_ALLOWED_MOUNT_BUCKETS=b1,b2`), nunca en el SDK | lista separada por comas de los buckets que `mounts=` puede montar; ausente o vacía, ninguno ([Montajes S3](../funciones-opcionales/montajes-s3.md)) |
 
 ## AWS
 

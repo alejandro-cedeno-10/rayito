@@ -8,42 +8,163 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
-- **Dominio propio** (`m15-custom-domain`, ADR-024, experimental y apagado
-  por defecto): la clase `CustomDomain` despliega una distribución
-  CloudFront con alias comodín, una CloudFront Function de enrutado
-  (`cloudfront-js-2.0`) y un KeyValueStore (`infra/custom-domain.yaml`);
-  `register`/`unregister`/`refresh` gestionan las rutas `{puerto}-{alias}.
-  <tu dominio>`. `register()` exige `trafficToken` salvo `public: true`
-  explícito — nunca hay una ruta pública por omisión — y
-  reintenta/limpia sus dos escrituras encadenadas al KVS ante una carrera
-  de `ETag`. Nuevos peers opcionales `@aws-sdk/client-cloudfront-
-  keyvaluestore` y `@aws-sdk/signature-v4a` (el plano de datos del KVS
-  exige SigV4A pese a declarar `signatureVersion: v4` en su modelo); sin
-  instanciar `CustomDomain` no se importa ni se construye ninguno.
-  `domain` en `Sandbox.create()` sigue lanzando `UnimplementedError`, con
-  un mensaje que ya nombra ese seguimiento en vez de `m15-custom-domain`:
-  la integración con `getHost()`/`expose()` queda para un cambio
-  posterior. La CloudFront Function trata una ruta cuyo TTL
-  (`register({ttlSeconds})`/`refresh()`) ya pasó como si nunca hubiera
-  existido (404), no sólo cuando caduca el JWE en sí (T25). `deploy()`/
-  `destroy()` usan un timeout propio (`CUSTOM_DOMAIN_WAIT_TIMEOUT_MS`,
-  30 min) en vez del genérico de `OptionalStacks`; `refresh()` ya no
-  deshace una escritura previa si la segunda falla (sólo `register()` lo
-  hace). `deploy({ alternateDomainNames })` sustituye el alias comodín por
-  hostnames exactos `<etiqueta>.<dominio>`, validados antes de llamar a
-  AWS; las líneas de coste del componente `custom-domain` son ya las mismas
-  que en Python. El e2e toma el dominio y el certificado sólo de
-  `RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`, se salta sin ellos, usa una
-  pila y unos hostnames aleatorios por corrida, llega a la distribución sin
-  DNS y da a sus hooks el timeout propio de CloudFront en vez del genérico
-  de 300 s. DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real;
-  DOM-14 (el refresher Lambda) no se construyó.
-  La plantilla ya cabe en los 128 caracteres que CloudFront admite en
-  cada `Comment` (la primera pila real fallaba en la Function; la
-  distribución nombra ahora la pila, no el dominio).
+- **Dominio propio** (`m15-custom-domain`, ADR-024, **experimental**,
+  apagado por defecto): la clase `CustomDomain` despliega una distribución
+  CloudFront, una CloudFront Function de enrutado (`cloudfront-js-2.0`) y
+  un KeyValueStore (`infra/custom-domain.yaml`), y `register`/`unregister`/
+  `refresh`/`hostFor` gestionan las rutas `{puerto}-{alias}.<tu-dominio>`
+  (hostname HTTPS normal, sin las cabeceras `x-aws-proxy-*`).
+  `register()` exige `trafficToken` salvo `public: true` explícito.
+  `deploy({ alternateDomainNames })` sustituye el alias comodín por
+  hostnames exactos. Nuevos peers opcionales
+  `@aws-sdk/client-cloudfront-keyvaluestore` y `@aws-sdk/signature-v4a` (el
+  plano de datos del KeyValueStore firma con SigV4A); sin instanciar
+  `CustomDomain` no se importa ninguno. `domain` en `Sandbox.create()` sigue
+  lanzando `UnimplementedError`: la integración con `getHost()`/`expose()`
+  llega en un cambio posterior. **Experimental** porque no se ha verificado
+  de punta a punta en AWS real: la Function compila y enruta en el runtime
+  real (`TestFunction`), y la pila crea el KeyValueStore y la Function, pero
+  la cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP,
+  así que nunca se ha servido tráfico por una distribución desplegada con
+  esta plantilla (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar
+  en una minor.
+- `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
+  para `mounts`, `volumes` y `telemetry` (`requireCapsFor`, `CAPS_VARIANTS`,
+  `EFS_CAPS_VARIANT`).
+- **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
+  por defecto): `VolumeStore` (CRUD real de access points EFS:
+  `CreateAccessPointCommand`/`DescribeAccessPointsCommand`/
+  `DeleteAccessPointCommand`, con `@aws-sdk/client-efs` como peer opcional
+  cargado sólo en el primer uso) y `Sandbox.create({ volumes })`, que
+  valida la petición (tipos, rutas, variante `caps` y un único conector
+  propio en `egress`: sin él, con `INTERNET_EGRESS` o con dos conectores es
+  `InvalidArgumentError`, porque un MicroVM sólo admite un conector de
+  egress, `AWS_API_NOTES.md` §16 Q131), como mucho 4 volúmenes y
+  `executionRoleArn` antes de cualquier llamada a AWS; resuelve la IP de
+  mount target que falte con un `DescribeMountTargetsCommand` por sistema de
+  ficheros antes de `run-microvm`, manda la sección `efs_volumes` en el
+  único `ConfigureSandbox` de `create()` (con plazo de 65 s), sólo vuelve
+  con todos los volúmenes `mounted` y, si uno falla, termina el sandbox
+  (salvo `keepOnFailure`) y lanza `VolumeMountError` (`code`); sobre una
+  imagen sin `amazon-efs-utils`, `UnimplementedError`. `reincarnate()` la
+  vuelve a mandar y `sbx.volumes()` da el estado en vivo. `EfsVolume`
+  (valida `mountTargetIp` como IPv4), `VolumeStatus` y los errores
+  `VolumeError`/`VolumeMountError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
+  El shim de E2B (`Volume`) hace CRUD real sobre
+  `new E2B({ volumeStore })` (`volumeId` es el nombre del volumen, el mismo
+  que reciben `connect`/`getInfo`/`destroy`); sus operaciones de contenido
+  (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
+  `Sandbox.create({ volumeMounts })` monta con
+  `new E2B({ volumeStore, volumeConnectorArn })`: ese sandbox sale sólo por
+  el conector del volumen y `allowInternetAccess: true` explícito es
+  `InvalidArgumentError`. Componente
+  `rayito stack {deploy,status,destroy} efs-volumes`
+  (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
+  target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y
+  conector de egress dedicado, sólo dentro de una VPC que ya existe).
+  `EfsVolumes`: `check({ vpcId, subnetIds })` comprueba la VPC sin crear
+  nada (sólo `Describe*` de EC2 con el peer opcional `@aws-sdk/client-ec2`;
+  cuenta las subredes con ruta por defecto a un NAT y a otra puerta, como un
+  transit gateway),
+  `deploy()` se niega si algún hallazgo es `FAIL`, `volumeStore()` da un
+  `VolumeStore` sobre la pila, y `destroy({ deleteFileSystem: true })`/
+  `deleteFileSystem(id)` borran el sistema de ficheros conservado (sólo uno
+  con la etiqueta `rayito=efs-volumes`). `deploy({ readOnlyAccessPointArns })`
+  (`ReadOnlyAccessPointArns`) le deniega `ClientWrite` a los access points de
+  sólo lectura: la opción `ro` del montaje no basta, porque el usuario del
+  sandbox alcanza el puerto local de `efs-proxy` (Q133). El hallazgo
+  `internet-egress` de `check()` explica que un sandbox con volumen sólo
+  tiene internet por la VPC.
+  `list`/`get` son eventualmente consistentes, como `DescribeAccessPoints`
+  (medido en AWS real, `AWS_API_NOTES.md` §16 Q125: hasta 11 s en listar un
+  access point nuevo y 8 s en dejar de listar uno borrado): `create` de un
+  nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
+  point que el listado aún mostraba pero ya no existe devuelve `false`.
+
+### Security
+
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentError` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
+- **`.dockerignore` con la semántica de Docker** en `Template.build`:
+  anclado en la raíz, `**` como cero o más directorios (así `**/.env`,
+  `**/.git` y el resto de los valores de `docker init` excluyen también los
+  de la raíz, que antes acababan en la imagen), un directorio excluido
+  excluye lo de dentro y la última coincidencia gana; mismos vectores que el
+  SDK de Python. **Cambio**: `*` y `?` ya no cruzan `/` (`*.pyc` sólo
+  excluye los de la raíz; usa `**/*.pyc`). Un `process.emitWarning` de tipo
+  `RayitoContextWarning` (con las rutas, nunca el contenido) avisa si el
+  contexto va a empaquetar `.env*`, `.git/`, `.aws/`, `.ssh/`, `*.pem` o
+  `*.key`. Cada fichero del contexto se vuelve a comprobar dentro del
+  contexto y se abre con `O_NOFOLLOW` justo antes de leerlo.
+- **`Template.build()`**: un rechazo de AWS distinto de la cuota es ahora
+  `BuildError({ reason: "aws_error" })` con el resumen saneado como mensaje y
+  `cause`, y el adaptador sanea cada llamada al SDK de AWS (el error crudo de
+  smithy lleva `$response`, la petición firmada; un error de firma lleva la
+  cadena canónica con el token de sesión). El `name` del error se conserva.
+  `StackError` usa también el resumen saneado como `cause`.
+- **Credenciales de git**: `clone`/`push`/`pull` con `username`/`password`
+  corren sin hooks ni credential helpers, se niegan (`GitAuthError`) si la
+  configuración de git reescribe URLs (`url.*.insteadOf`), y un `clone` que
+  falla sin exit de git intenta igualmente quitar las credenciales de
+  `origin`; si una restauración falla, el `logger` del sandbox avisa sin la
+  URL. La documentación dice ahora que el token queda al alcance del código
+  del sandbox.
+- **Salida acotada en memoria**: cada descriptor de un comando o una PTY
+  guarda como mucho 64 MiB (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el
+  final y `CommandResult.truncated`/`CommandExitError.truncated` lo indican.
+  `commands.run`/`connect` aceptan `maxOutputBytes` (`0` no guarda nada; los
+  callbacks reciben siempre todo).
+- **Access token mínimo**: un token propio (`accessToken`,
+  `RAYITO_ACCESS_TOKEN`) tiene que decodificar a al menos 16 bytes
+  (`ACCESS_TOKEN_MIN_BYTES`). **Cambio**: uno más corto, aceptado antes,
+  ahora es `InvalidArgumentError`. Los generados (32 bytes) no cambian.
+- `ProxyToken.jwe` ya no es enumerable: `console.log`/`util.inspect` y
+  `JSON.stringify` no lo muestran.
+- Tests que fijan que `Template.build()` no sigue enlaces simbólicos dentro
+  de un directorio copiado (misma regla que el SDK de Python).
+- **`Sandbox.create({ persist })` ligan el sandbox a su prefijo de persistencia** (C-07): el
+  `runHookPayload` lleva el bucket y la base `prefix` del `S3Prefix` (nunca
+  `prefix/name`), y un `rayd` con la corrección rechaza con
+  `permission_denied` cualquier checkpoint o restore fuera de esa base. Con
+  un `prefix` por inquilino, el token de un sandbox ya no alcanza el `HOME`
+  persistido de otro aunque compartan execution role. Cambia un uso: un
+  restore o checkpoint explícito hacia otra base desde un sandbox creado con
+  `persist=` ahora falla con `permission_denied`. No añade llamadas a AWS.
+- **Recortes y troceo de cadenas en tiempo lineal** (CodeQL
+  `js/polynomial-redos`): `git.clone()` con credenciales, `files.download()`
+  sin `filename`, el access token y las líneas de `.dockerignore` de un
+  template usaban expresiones regulares que retrocedían en tiempo
+  cuadrático (50 000 caracteres bloqueaban el bucle de eventos más de un
+  segundo). La semántica no cambia: una URL con un fin de línea tras la
+  autoridad sigue sin reconocerse como http(s).
+
+## [0.6.1] - 2026-10-04
 
 ### Fixed
 
+- **Redesplegar una pila opcional ya no deshace su configuración**
+  (`OptionalStacks.deploy()`): los valores por defecto del catálogo sólo se
+  aplican al crear la pila; al actualizarla, cada parámetro que no vuelves a
+  pasar y la pila ya tiene se manda con `UsePreviousValue`. Antes, por
+  ejemplo, redesplegar `s3-mounts` sin repetir `Prefixes` volvía a `'*'`
+  (todo el bucket), `metadata-index` sin `TableName` reemplazaba (y borraba)
+  la tabla y `secrets-access` sin `KmsKeyArn` quitaba `kms:Decrypt`. Nuevo
+  `parameterChanges()` para ver qué cambiaría sin desplegar.
+- **Guardián SSRF de los webhooks** (pila `events-webhooks`): una dirección
+  IPv6 que encapsula una IPv4 (`::ffff:100.64.0.1`) se clasifica como esa
+  IPv4, así que el rango CGNAT queda bloqueado también por esa vía. Se
+  regenera el artefacto de la Lambda que el SDK sube.
+- `volumes`/`domain` lanzan `UnimplementedError` con "todavía no
+  disponible" en vez de "llega en 0.6".
+- Se exporta `WorkdirStep` desde `rayito` (paridad con Python: ya era
+  miembro de la unión `WireStep`).
 - **`reincarnate()` reaplica todas las secciones de `ConfigureSandbox`**
   (`m15-reincarnate-configure-replay`): hasta ahora sólo reenviaba
   `gateways` y un sucesor perdía `mounts`, `events` y `telemetry`.
@@ -68,6 +189,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Documentation
 
+- Bloques "Coste y activación" completos para `mounts`/`S3Mount` y
+  `size`/el catálogo de tamaños, y filas de las seis funciones 0.6 en la
+  tabla de funciones opcionales; la referencia de la CLI, la paridad con
+  E2B, la guía de migración, `limits.md` y las notas de 0.6.0 ya no
+  describen como pendientes funciones publicadas en 0.6.0.
 - **`DynamoDbIndex` enseña su bloque "Coste y activación" en el hover del
   IDE**: vivía en el comentario de módulo, que tsdown descarta; ahora está
   en el TSDoc de la clase y `check-dts-cost-blocks` lo exige.
@@ -755,7 +881,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...typescript-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.1...typescript-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.0...typescript-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.4.0...typescript-v0.5.0

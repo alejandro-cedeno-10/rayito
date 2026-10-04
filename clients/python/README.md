@@ -433,7 +433,7 @@ uv sync
 uv run pytest tests/unit
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests
-uv build && python ../../scripts/check_wheel.py dist/*.whl && uvx twine==7.0.0 check dist/*
+uv build && python ../../scripts/check_wheel.py dist/*.whl   # y `make wheel` desde la raíz: twine con --hash
 RAYITO_E2E=1 RAYITO_TEMPLATE=<arn-o-nombre> uv run pytest tests/e2e -m e2e -v -s
 ```
 

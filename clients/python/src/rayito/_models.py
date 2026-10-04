@@ -295,17 +295,19 @@ def validate_pty_dimension(value: object, *, field: str) -> int:
 
 @dataclass(frozen=True)
 class CommandResult:
-    """Salida completa de un comando que terminó con exit code 0.
+    """Salida de un comando que terminó con exit code 0.
 
     Un exit code distinto de cero llega como `CommandExitException`, que lleva
     los mismos campos; `error` queda reservado para futuros estados sin
-    excepción y es `None` en M2.
+    excepción y es `None` en M2. `truncated` es `True` cuando `stdout` o
+    `stderr` superaron `max_output_bytes` y sólo conservan su final.
     """
 
     stdout: str
     stderr: str
     exit_code: int
     error: str | None = None
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,6 +325,16 @@ class ProcessInfo:
 
 
 ALL_TRAFFIC: Final = "0.0.0.0/0"
+
+#: El conector de egress gestionado que da internet al MicroVM
+#: (`AWS_API_NOTES.md` §2, `_limits.MANAGED_NETWORK_CONNECTORS`); un
+#: `egress=` omitido o vacío lo hereda de la imagen (§16 Q60).
+INTERNET_EGRESS_CONNECTOR: Final = "INTERNET_EGRESS"
+
+
+def has_internet_connector(egress: Sequence[str]) -> bool:
+    """Si `egress` (nombres gestionados o ARNs) incluye `INTERNET_EGRESS`."""
+    return any(connector.rsplit(":", 1)[-1] == INTERNET_EGRESS_CONNECTOR for connector in egress)
 
 
 class EgressEnforcement(StrEnum):

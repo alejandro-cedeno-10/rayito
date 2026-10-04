@@ -40,6 +40,7 @@ from rayito._configure_base import (
     agent_features_from_health,
     build_configure_request,
     check_configure_response,
+    configure_timeout_s,
     require_capabilities,
     require_configure_support,
     resolve_sections,
@@ -49,6 +50,7 @@ from rayito._configure_base import (
 from rayito._feature_options import (
     FeatureOptions,
     LaunchFacts,
+    aprepare_features,
     plan_features,
     planned_sections,
     relaunch_features,
@@ -222,6 +224,8 @@ from rayito._transport import (
     rpc_status,
     translate_rpc_error,
 )
+from rayito._volumes import VolumeStatus
+from rayito._volumes._section import from_proto_status as volumes_from_proto_status
 from rayito.exceptions import (
     InvalidArgumentException,
     NotFoundException,
@@ -610,6 +614,78 @@ class AsyncSandbox:
                 telemetry=TelemetryExport(auth=OtlpAuth.execution_role()),
             )
 
+        `domain=` sigue sin cablear (`UnimplementedError` antes de
+        `run-microvm`; para un dominio propio usa `AsyncCustomDomain`,
+        experimental); `mounts=`, `volumes=`, `size=`, `events=`,
+        `telemetry=` y `gateways=` son reales, como en `Sandbox.create`.
+
+        `volumes=` (m15-efs-volumes, experimental) monta cada `EfsVolume`
+        con `amazon-efs-utils` antes de que `create()` vuelva, igual que
+        `Sandbox.create` (mismas exigencias: `execution_role_arn=`, un solo
+        conector propio en `egress=`, imagen `rayito-base-caps-efs`);
+        `await sbx.volumes()` da el estado en vivo.
+
+        Coste y activación
+        -------------------
+        Activa: `volumes={"/mnt/datos": vol}` en `create()`, con
+            `execution_role_arn=`, `egress=[<ConnectorArn>]` y la imagen
+            opcional `rayito-base-caps-efs`.
+        Recursos y llamadas AWS: ningún recurso nuevo; una
+            `DescribeMountTargets` por sistema de ficheros y `create()` si un
+            `EfsVolume` no trae `mount_target_ip` (credenciales del
+            llamante); la pila `efs-volumes` va aparte.
+        Coste aproximado: $0 propio; almacenamiento y rendimiento de EFS, y
+            ≈ 198 MB más de código instalado en la imagen (us-east-1,
+            consultado 2026-10-04, https://aws.amazon.com/efs/pricing/).
+        IAM: el llamante, `elasticfilesystem:DescribeMountTargets`; el
+            execution role, `CallerPolicyArn` de la pila `efs-volumes`.
+        Cómo apagarla: no pases `volumes=` (por defecto `None`).
+        Ejemplo:
+            sbx = await AsyncSandbox.create(
+                "rayito-base-caps-efs", execution_role_arn=role_arn,
+                egress=[connector_arn], volumes={"/mnt/datos": vol},
+            )
+
+        `mounts=` (m15-s3-mounts) monta cada `S3Mount` con `mount-s3`, sólo
+        en `rayito-base-caps` y sólo los buckets del allowlist de la imagen.
+
+        Coste y activación
+        -------------------
+        Activa: `mounts={"/mnt/data": S3Mount(bucket="...")}` en `create()`,
+            con `execution_role_arn=` y el bucket en
+            `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen.
+        Recursos y llamadas AWS: ningún recurso nuevo; las peticiones S3
+            normales de `mount-s3` con el execution role; la política sale de
+            la pila `s3-mounts` (sólo IAM).
+        Coste aproximado: $0 propio; las peticiones y el almacenamiento de
+            S3 del bucket montado (us-east-1, consultado 2026-10-01).
+        IAM: `RayitoS3MountAccess` (`infra/s3-mounts.yaml`) en el execution
+            role.
+        Cómo apagarla: no pases `mounts=` (por defecto `None`); `rayito
+            stack destroy s3-mounts` quita la política.
+        Ejemplo:
+            sbx = await AsyncSandbox.create(
+                "rayito-base-caps", execution_role_arn=role_arn,
+                mounts={"/mnt/data": S3Mount(bucket="mi-bucket")},
+            )
+
+        `size=` (m15-sizes-catalog) elige en el cliente la imagen de ese
+        tamaño (`rayito-base-4gb`), que tiene que estar publicada.
+
+        Coste y activación
+        -------------------
+        Activa: `size="4gb"` (o `SizeRequest(memory_mib=...)`) en
+            `create()`, tras `rayito image publish --sizes 4gb`.
+        Recursos y llamadas AWS: ninguno nuevo al lanzar; cada tamaño
+            publicado es una imagen más en tu cuenta.
+        Coste aproximado: de $0,0315/h (512 MiB) a $0,5044/h (8192 MiB) en
+            baseline (`limits.md`, us-east-1, consultado 2026-09-30), más
+            ≈ $0,04/semana de snapshot por versión de imagen publicada.
+        IAM: ninguno adicional (`sizes-guard` es opcional).
+        Cómo apagarla: no pases `size=` (por defecto `None`).
+        Ejemplo:
+            sbx = await AsyncSandbox.create(size="4gb")
+
         `events=` (m15-events-webhooks, ADR-020) manda a `rayd` la clave de
         este sandbox (`k_sbx`) en el mismo `ConfigureSandbox`, como en
         `Sandbox.create`; acepta `AsyncLifecycleEvents` o `LifecycleEvents`
@@ -718,6 +794,8 @@ class AsyncSandbox:
             feature_options,
             image_variant=resolve_image_variant(template),
             logging=logging,
+            egress=egress,
+            execution_role_arn=execution_role_arn,
         )
         plane = resolve_control_plane(control_plane, session, region)
         binding = await awarm(
@@ -726,6 +804,9 @@ class AsyncSandbox:
         )
         template_name = sized_template_name(resolve_template(template), resolved_size)
         image_arn = await asyncio.to_thread(plane.resolve_template_arn, template_name)
+        feature_plan = await aprepare_features(
+            feature_plan, region=plane.region, session=session or control_plane_session(plane)
+        )
         plan = build_launch_plan(
             image_arn=image_arn,
             region=plane.region,
@@ -744,6 +825,7 @@ class AsyncSandbox:
             max_lifetime=max_lifetime,
             on_timeout=on_timeout,
             network_enforce=launch.enforce,
+            persist=persist,
         )
         with instrumentation.span(
             "rayito.sandbox.create",
@@ -1477,6 +1559,15 @@ class AsyncSandbox:
         response = await call_configure_status(self._configure, timeout=self._request_timeout)
         return from_proto_status(response.s3_mounts)
 
+    async def volumes(self) -> dict[str, VolumeStatus]:
+        """Estado en vivo de cada `volumes=` (`m15-efs-volumes`): una
+        `ConfigureStatus` por lectura, nunca cacheada — tras un `resume()`
+        un volumen puede pasar por `"remounting"`/`"degraded"`. Vacío si
+        `create()` no recibió `volumes=`.
+        """
+        response = await call_configure_status(self._configure, timeout=self._request_timeout)
+        return volumes_from_proto_status(response.efs_volumes)
+
     async def upload_url(
         self,
         path: str,
@@ -1966,7 +2057,9 @@ class AsyncSandbox:
     ) -> None:
         """Misma semántica que `Sandbox._configure_sections`, en `asyncio`."""
         request = build_configure_request(sections)
-        response = await call_configure(self._configure, request, timeout=timeout)
+        response = await call_configure(
+            self._configure, request, timeout=configure_timeout_s(sections, timeout)
+        )
         await self._wait_settled(check_configure_response(response, sections), timeout=timeout)
 
     def _section_secret_cache(self) -> SecretCache:

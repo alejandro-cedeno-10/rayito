@@ -120,9 +120,26 @@ Q46.
 
 `.github/workflows/e2e.yml` no guarda ninguna credencial: asume por OIDC el
 rol de esta plantilla con `aws-actions/configure-aws-credentials`. El trust
-acepta un único `sub` exacto (`repo:<GitHubRepository>:environment:<GitHubEnvironment>`,
-por defecto `repo:alejandro-cedeno-10/rayito:environment:e2e`) y `aud` = `sts.amazonaws.com`:
-otro environment u otro repositorio no pueden asumirlo. La rama no entra: el
+acepta un único `sub` exacto (`<GitHubSubjectPrefix>:environment:<GitHubEnvironment>`,
+comparado con `StringEquals`) y `aud` = `sts.amazonaws.com`: otro environment
+u otro repositorio no pueden asumirlo.
+
+`GitHubSubjectPrefix` no tiene valor por defecto: es el prefijo que GitHub
+pone en el `sub` de tu repositorio, y se lee de la API antes de desplegar:
+
+```bash
+gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+```
+
+Con sujetos inmutables (`use_immutable_subject: true`, lo que devuelve este
+repositorio) el prefijo lleva los ids numéricos del propietario y del
+repositorio, `repo:<owner>@<owner_id>/<repo>@<repo_id>`; sin ellos es
+`repo:<owner>/<repo>`. Si el trust no casa, `AssumeRoleWithWebIdentity` se
+deniega (falla cerrado): la corrección es pasar el prefijo exacto, nunca
+cambiar a `StringLike` ni poner comodines. Para confirmar el `sub` real sin
+AWS, un job de prueba con `id-token: write` y `environment: e2e` puede pedir
+el token a `ACTIONS_ID_TOKEN_REQUEST_URL` e imprimir sólo el claim `sub`
+(nunca el token entero). La rama no entra: el
 `sub` de un job que declara un environment no lleva componente de rama, así
 que cualquier workflow de este repositorio —en cualquier rama— que declare
 `environment: e2e` presenta el `sub` aceptado. La rama se cierra fuera de
@@ -130,7 +147,7 @@ IAM: al crear el environment `e2e`, fijar sus deployment branches a `main`
 (Settings → Environments → Deployment branches and tags → selected
 branches). Si algún día hace falta cerrarlo también en IAM, el camino es un
 parámetro `GitHubRef` y una segunda condición `StringLike` sobre
-`repo:<repo>:ref:refs/heads/main`. La política inline concede sólo
+`<GitHubSubjectPrefix>:ref:refs/heads/main`. La política inline concede sólo
 `lambda:RunMicrovm`, `GetMicrovm`,
 `SuspendMicrovm`, `ResumeMicrovm`, `TerminateMicrovm` y
 `CreateMicrovmAuthToken` sobre `TestImageArns`, `lambda:ListMicrovms` sobre
@@ -142,12 +159,12 @@ workflow nunca publica una imagen.
 ### Desplegar
 
 ```bash
-aws cloudformation deploy   --stack-name rayito-ci-oidc   --template-file infra/ci-oidc-role.yaml   --capabilities CAPABILITY_NAMED_IAM   --parameter-overrides       TestImageArns=arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base       GitHubRepository=alejandro-cedeno-10/rayito GitHubEnvironment=e2e
+aws cloudformation deploy   --stack-name rayito-ci-oidc   --template-file infra/ci-oidc-role.yaml   --capabilities CAPABILITY_NAMED_IAM   --parameter-overrides       TestImageArns=arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base       GitHubSubjectPrefix="$(gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix)" GitHubEnvironment=e2e
 
 aws cloudformation describe-stacks --stack-name rayito-ci-oidc   --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" --output text
 ```
 
-Parámetros: `GitHubRepository` (`alejandro-cedeno-10/rayito`), `GitHubEnvironment`
+Parámetros: `GitHubSubjectPrefix` (obligatorio, el `sub_claim_prefix` de arriba), `GitHubEnvironment`
 (`e2e`), `TestImageArns` (lista: `rayito-base` y, si se quiere, la variante
 `rayito-base-caps`), `CreateOidcProvider` (`true`; `false` reutiliza el
 proveedor `token.actions.githubusercontent.com` que ya exista en la cuenta,
@@ -225,7 +242,9 @@ Notas de operación:
 2. Variables del repositorio (Settings → Variables → Repository):
    `RAYITO_E2E_ROLE_ARN` (output `RoleArn`), `RAYITO_E2E_TEMPLATE_ARN` (el
    ARN de `rayito-base`, **siempre un ARN**: la política compara ARNs),
-   `RAYITO_E2E_REGION` (opcional, `us-east-1` por defecto).
+   `RAYITO_E2E_REGION` (opcional, `us-east-1` por defecto). Mientras
+   `RAYITO_E2E_ROLE_ARN` no exista, los jobs de `e2e.yml` se saltan en vez
+   de fallar cada noche.
 3. AWS Budget de $10/mes (Billing → Budgets) filtrado por servicio `AWS
    Lambda` con alerta por correo al 80 %: el nightly cuesta ≈ $0,03 por
    ejecución (≈ $1/mes), así que un exceso señala sandboxes huérfanos.

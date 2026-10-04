@@ -12,8 +12,10 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { InvalidArgumentError } from "./errors.js";
-import { RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
+import { ACCESS_TOKEN_MIN_BYTES, RUN_HOOK_PAYLOAD_MAX_CHARS } from "./limits.js";
 import { type LifecycleBlock, lifecycleBlockToWire } from "./sandbox/lifecycle.js";
+import type { S3Prefix } from "./sandbox/persistence.js";
+import { stripTrailing } from "./strings.js";
 
 export const PAYLOAD_VERSION = 1;
 export const DEFAULT_USER = "user";
@@ -21,6 +23,8 @@ export const DEFAULT_WORKDIR = "/home/user";
 export const ACCESS_TOKEN_BYTES = 32;
 export const CPU_TIME_LIMIT_MIN_SECONDS = 1;
 export const CPU_TIME_LIMIT_MAX_SECONDS = 28_800;
+
+const BASE64_PADDING = "=";
 
 const BASE64URL_ALPHABET = /^[A-Za-z0-9_-]+$/;
 
@@ -34,16 +38,26 @@ export function encodeAccessToken(secret: Uint8Array): string {
 
 /**
  * Los bytes que `rayd` hashea. Falla si el token no es base64url canónico
- * (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`.
+ * (alfabeto estricto, bits sobrantes a cero), igual que el decoder de `rayd`,
+ * o si decodifica a menos de `ACCESS_TOKEN_MIN_BYTES` bytes: un secreto
+ * elegido a mano y corto (en `accessToken` o `RAYITO_ACCESS_TOKEN`) se
+ * adivinaría por fuerza bruta o desde `token_sha256`. El mensaje nunca
+ * repite el token.
  */
 export function decodeAccessToken(accessToken: string): Uint8Array {
-  const stripped = accessToken.replace(/=+$/, "");
+  const stripped = stripTrailing(accessToken, BASE64_PADDING);
   if (!BASE64URL_ALPHABET.test(stripped)) {
     throw new InvalidArgumentError("accessToken no es base64url");
   }
   const secret = Buffer.from(stripped, "base64url");
   if (secret.length === 0 || encodeAccessToken(secret) !== stripped) {
     throw new InvalidArgumentError("accessToken no es base64url");
+  }
+  if (secret.length < ACCESS_TOKEN_MIN_BYTES) {
+    throw new InvalidArgumentError(
+      `accessToken demasiado corto: mínimo ${ACCESS_TOKEN_MIN_BYTES} bytes aleatorios ` +
+        `(los generados tienen ${ACCESS_TOKEN_BYTES})`,
+    );
   }
   return new Uint8Array(secret);
 }
@@ -72,6 +86,15 @@ export interface RunHookPayloadOptions {
   readonly networkEnforce?: boolean | undefined;
   /** El plazo lógico (ADR-011), ya validado por `resolveLifecycle`; sin él no viaja la clave. */
   readonly lifecycle?: LifecycleBlock | undefined;
+  /**
+   * El `S3Prefix` de `create({ persist })`: añade
+   * `"persist": {"bucket": ..., "key_prefix": <prefix>}` y `rayd` liga a ese
+   * bucket y a esa base cada `Checkpoint`/`Restore` del sandbox, con
+   * `PERMISSION_DENIED` fuera de ella (C-07). Viaja la base (`prefix`), no
+   * `prefix/name`: el `name` por defecto es el `sandboxId`, que aún no existe
+   * al lanzar, y un restore desde otro `name` de la misma base es legítimo.
+   */
+  readonly persist?: S3Prefix | undefined;
 }
 
 /**
@@ -108,6 +131,9 @@ export function buildRunHookPayload(options: RunHookPayloadOptions): string {
   if (options.lifecycle !== undefined) {
     payload.lifecycle = lifecycleBlockToWire(options.lifecycle);
   }
+  if (options.persist !== undefined) {
+    payload.persist = persistBinding(options.persist);
+  }
   const text = asciiJson(sortedKeys(payload));
   if (text.length > RUN_HOOK_PAYLOAD_MAX_CHARS) {
     throw new InvalidArgumentError(
@@ -117,6 +143,11 @@ export function buildRunHookPayload(options: RunHookPayloadOptions): string {
     );
   }
   return text;
+}
+
+/** El bloque `persist` del payload: el bucket y la base del `S3Prefix`. */
+export function persistBinding(persist: S3Prefix): { bucket: string; key_prefix: string } {
+  return { bucket: persist.bucket, key_prefix: persist.prefix };
 }
 
 export function validatedEnvs(envs: Readonly<Record<string, string>>): Record<string, string> {

@@ -20,7 +20,6 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use nix::sys::signal::Signal;
-use nix::unistd::{Gid, Uid, setgid, setgroups, setuid};
 use rayd_core::process::env::DEFAULT_PATH;
 use rayd_core::s3_mount::{FuseDaemon, MountErrorClass, S3Mount};
 // `tokio::process::Command::pre_exec` is an inherent method (unix-only), so
@@ -29,7 +28,8 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use super::child_registry::ChildRegistry;
-use super::fuse_device::{GUEST_GROUP_ID, GUEST_USER_ID};
+use super::exec_posture::ExecPosture;
+use super::mountpoint::{GUEST_GROUP_ID, GUEST_USER_ID};
 use super::sidecar_process::signal_process_group;
 
 /// Mountpoint for Amazon S3 1.24.0, installed by `image/Dockerfile` from
@@ -54,7 +54,7 @@ const MOUNT_FD_SLOT: RawFd = 3;
 /// crosses the wire or a log line (`MountErrorClass` is the closed set
 /// that does) — the bytes themselves are discarded the moment
 /// classification is done.
-const STDERR_TAIL_BYTES: usize = 4096;
+pub(crate) const STDERR_TAIL_BYTES: usize = 4096;
 /// One `read` of the stderr pipe while draining it.
 const STDERR_READ_CHUNK_BYTES: usize = 1024;
 
@@ -107,10 +107,16 @@ impl FuseDaemon for TokioMountS3Daemon {
             .stderr(Stdio::piped())
             .process_group(0)
             .kill_on_drop(false);
+        let posture =
+            ExecPosture::as_user(MOUNT_USER_UID, MOUNT_USER_GID).inheriting_up_to(MOUNT_FD_SLOT);
         // SAFETY: runs in the forked child between `fork` and `exec`.
         // `dup2`/`close` only touch `fd`, computed in the parent before
-        // `fork`; `setgroups`/`setgid`/`setuid` only touch the fixed
-        // `MOUNT_USER_{UID,GID}` constants. No allocation, no lock.
+        // `fork`; `ExecPosture::apply` then drops to the fixed
+        // `MOUNT_USER_{UID,GID}`, marks every descriptor above
+        // `MOUNT_FD_SLOT` close-on-exec (an inheritable PTY master from a
+        // concurrent `openpty` never reaches `mount-s3`) and resets every
+        // signal disposition, all on values computed before the fork. No
+        // allocation, no lock.
         unsafe {
             command.pre_exec(move || {
                 if libc::dup2(fd, MOUNT_FD_SLOT) == -1 {
@@ -119,10 +125,7 @@ impl FuseDaemon for TokioMountS3Daemon {
                 if fd != MOUNT_FD_SLOT {
                     libc::close(fd);
                 }
-                setgroups(&[Gid::from_raw(MOUNT_USER_GID)]).map_err(io_error)?;
-                setgid(Gid::from_raw(MOUNT_USER_GID)).map_err(io_error)?;
-                setuid(Uid::from_raw(MOUNT_USER_UID)).map_err(io_error)?;
-                Ok(())
+                posture.apply()
             });
         }
         let mut child = ChildRegistry::process()
@@ -184,7 +187,7 @@ impl FuseDaemon for TokioMountS3Daemon {
 }
 
 /// Reads `pipe` to EOF, keeping only its last `STDERR_TAIL_BYTES`.
-async fn drain_stderr_tail<R: AsyncRead + Unpin>(pipe: &mut R) -> Vec<u8> {
+pub(crate) async fn drain_stderr_tail<R: AsyncRead + Unpin>(pipe: &mut R) -> Vec<u8> {
     let mut tail = Vec::with_capacity(STDERR_TAIL_BYTES);
     let mut chunk = [0u8; STDERR_READ_CHUNK_BYTES];
     loop {
@@ -269,10 +272,6 @@ fn classify_exit(status: Option<&std::process::ExitStatus>, stderr_tail: &[u8]) 
     MountErrorClass::Network
 }
 
-fn io_error(error: nix::Error) -> std::io::Error {
-    std::io::Error::from_raw_os_error(error as i32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,12 +313,6 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--allow-overwrite"));
         assert!(args.iter().any(|arg| arg == "--allow-delete"));
         assert!(!args.iter().any(|arg| arg == "--read-only"));
-    }
-
-    #[test]
-    fn io_error_round_trips_the_errno_value() {
-        let error = io_error(nix::Error::EACCES);
-        assert_eq!(error.raw_os_error(), Some(nix::Error::EACCES as i32));
     }
 
     #[test]

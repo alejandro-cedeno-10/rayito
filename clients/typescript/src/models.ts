@@ -376,6 +376,11 @@ export interface CommandResult {
   readonly stderr: string;
   readonly exitCode: number;
   readonly error: string | undefined;
+  /**
+   * `true` cuando `stdout` o `stderr` superaron `maxOutputBytes` y sólo
+   * conservan su final; ausente si no se descartó nada.
+   */
+  readonly truncated?: true | undefined;
 }
 
 /**
@@ -394,6 +399,18 @@ export interface ProcessInfo {
 
 /** El `ALL_TRAFFIC` de E2B: en una lista de egress cubre IPv4 e IPv6 (`0.0.0.0/0` y `::/0`). */
 export const ALL_TRAFFIC = "0.0.0.0/0";
+
+/**
+ * El conector de egress gestionado que da internet al MicroVM
+ * (`AWS_API_NOTES.md` §2, `MANAGED_NETWORK_CONNECTORS`); un `egress`
+ * omitido o vacío lo hereda de la imagen (§16 Q60).
+ */
+export const INTERNET_EGRESS_CONNECTOR = "INTERNET_EGRESS";
+
+/** Si `egress` (nombres gestionados o ARNs) incluye `INTERNET_EGRESS`. */
+export function hasInternetConnector(egress: readonly string[]): boolean {
+  return egress.some((connector) => connector.split(":").at(-1) === INTERNET_EGRESS_CONNECTOR);
+}
 
 /**
  * Lo que recibe un selector función de `allowOut`/`denyOut`, con los nombres

@@ -13,6 +13,9 @@ export class FakeStackProvisioner implements StackProvisioner {
   readonly artifacts = new Map<string, Uint8Array>();
   readonly calls: Array<readonly [string, ...unknown[]]> = [];
   nextUpdateOutcome: UpdateOutcome = "changed";
+  /** Los `parameters`/`keepPrevious` de la última `create`/`update`. */
+  sentParameters: Readonly<Record<string, string>> = {};
+  sentKeepPrevious: readonly string[] = [];
   failWait = false;
   /** Cada `timeoutMs` que `wait()` recibió, en orden; espejo de
    * `fake_stacks.FakeStackProvisioner.wait_timeouts`. */
@@ -30,15 +33,18 @@ export class FakeStackProvisioner implements StackProvisioner {
     _component: StackComponent,
     options: {
       readonly stackName: string;
-      readonly parameters?: Readonly<Record<string, string>>;
+      readonly parameters: Readonly<Record<string, string>>;
     },
   ): Promise<void> {
     this.calls.push(["create", options.stackName]);
     this.parameters.set(options.stackName, { ...options.parameters });
+    this.sentParameters = { ...options.parameters };
+    this.sentKeepPrevious = [];
     this.stacks.set(options.stackName, {
       name: options.stackName,
       state: "CREATE_COMPLETE",
       outputs: { StackName: options.stackName },
+      parameters: { ...options.parameters },
     });
   }
 
@@ -46,17 +52,30 @@ export class FakeStackProvisioner implements StackProvisioner {
     _component: StackComponent,
     options: {
       readonly stackName: string;
-      readonly parameters?: Readonly<Record<string, string>>;
+      readonly parameters: Readonly<Record<string, string>>;
+      readonly keepPrevious?: readonly string[];
     },
   ): Promise<UpdateOutcome> {
     this.calls.push(["update", options.stackName]);
     this.parameters.set(options.stackName, { ...options.parameters });
+    const keepPrevious = options.keepPrevious ?? [];
+    this.sentParameters = { ...options.parameters };
+    this.sentKeepPrevious = keepPrevious;
     if (this.nextUpdateOutcome === "changed") {
       const existing = this.stacks.get(options.stackName);
+      const previous = existing?.parameters ?? {};
+      const merged: Record<string, string> = {};
+      for (const key of keepPrevious) {
+        const value = previous[key];
+        if (value !== undefined) {
+          merged[key] = value;
+        }
+      }
       this.stacks.set(options.stackName, {
         name: options.stackName,
         state: "UPDATE_COMPLETE",
         outputs: existing?.outputs ?? {},
+        parameters: { ...merged, ...options.parameters },
       });
     }
     return this.nextUpdateOutcome;

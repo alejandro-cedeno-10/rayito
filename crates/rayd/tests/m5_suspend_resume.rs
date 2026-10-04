@@ -28,11 +28,10 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use http::{Request, StatusCode};
 use rayd::adapters::{
-    OsRandomSource, PlatformMetricsProbe, TokioSidecarLauncher, detect_spawn_platform,
+    OsRandomSource, PlatformMetricsProbe, ProcfsProcessTable, TokioSidecarLauncher,
+    detect_spawn_platform,
 };
-use rayd::code::{
-    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
-};
+use rayd::code::{CodeManager, CodeSettings, OpTimeouts, SidecarSupervisor, sidecar_identity};
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{Services, StreamSettings};
 use rayd::hooks::{HookReply, hook_path};
@@ -278,14 +277,13 @@ fn code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let kernel_killer: KernelSignaller = Arc::new(|_, _| {});
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
         session.clone(),
         registry.clone(),
         settings.supervisor_settings(),
-        kernel_killer,
+        Arc::new(ProcfsProcessTable),
     );
     CodeManager::new(
         session.clone(),

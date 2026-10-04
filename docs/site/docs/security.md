@@ -13,15 +13,23 @@ hooks, snapshot).
 | El código del sandbox lee las credenciales del execution role por IMDS | `create(execution_role_arn=None)` **por defecto**: sin rol no hay credenciales dentro (ni logs de runtime). Con rol, mínimo privilegio |
 | Robo del JWE del proxy | Todo RPC salvo `Health` exige además `x-access-token`; TTL 60 min; el SDK nunca loguea cabeceras |
 | El sha256 del secreto viaja en `runHookPayload` (CloudTrail) | Sólo el hash sale del cliente; `rayd` compara en tiempo constante y nunca escribe el body de `/run` |
-| Escalada a root dentro del guest | Procesos, PTYs y kernels como uid 1000; root sólo con `user="root"` **y** `RAYITO_ALLOW_ROOT=1` en la imagen |
-| Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels |
-| `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, `O_NOFOLLOW`, sin `..` |
+| Escalada a root dentro del guest | Procesos, PTYs y kernels como uid 1000; otra cuenta sólo si su uid y gid están entre 1000 y 65535 (el rango que cubren el bloqueo de IMDS y las reglas de red) y no está en el grupo 0; root sólo con `user="root"` **y** `RAYITO_ALLOW_ROOT=1` en la imagen |
+| Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels; en el cliente, la salida guardada de un comando o una PTY está acotada a 64 MiB por descriptor (`max_output_bytes`/`maxOutputBytes`, `truncated` lo indica); los puertos de `rayd` (8080 y 9000) atienden un número máximo de conexiones a la vez y los hooks cortan una cabecera que no termina de llegar, así que conexiones ociosas no agotan sus descriptores (T7) |
+| Pids falsos en el protocolo del sidecar (T12) | `rayd` sólo registra y señala el kernel que `/proc` confirma como hijo del sidecar, líder de su grupo y de su mismo uid, fijado por su hora de arranque; nunca señala el grupo 0, el 1 ni el suyo propio |
+| Credenciales de git en el sandbox | `clone`/`push`/`pull` con `username`/`password` corren sin hooks ni credential helpers, se niegan si la configuración de git reescribe URLs y siempre intentan quitar el token de `.git/config` al acabar; **riesgo residual**: el código del sandbox con el mismo usuario puede capturarlo igualmente: trátalo como revelado y usa tokens de vida corta y de un solo repositorio ([Git](git.md#credenciales)) |
+| Contenido de terceros o secretos en un build de template | los enlaces simbólicos dentro de un directorio copiado nunca se siguen (como Docker), así que un enlace a un fichero de tu máquina no acaba en el artefacto ni en la imagen; `.dockerignore` sigue la semántica de Docker (`**/.env` excluye también el `.env` de la raíz) y el SDK avisa si va a empaquetar `.env`, `.git/`, `.aws/`, `.ssh/` o claves `*.pem`/`*.key`, que cualquier código del sandbox podría leer ([Templates](funciones-opcionales/templates.md#contexto-de-build)) |
+| Logs de CloudWatch o de build con secuencias de escape | la CLI muestra los caracteres de control como `\xNN` visibles cuando escribe en una terminal; con un execution role, el código de un sandbox puede escribir en cualquier stream de `/rayito/*`, así que los logs de runtime no prueban integridad |
+| `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, sin `..`; cada ruta se abre componente a componente con `O_NOFOLLOW` y se actúa sobre el descriptor, así que un componente que el código del sandbox cambie por un enlace entre la comprobación y el uso se rechaza en vez de seguirse, y un directorio en `proc`, `sysfs` o `devpts` se rechaza llegue por donde llegue (T11) |
+| Pasarela de secretos como *confused deputy* | la ruta de cada petición pasa una lista de permitidos (RFC 3986 sin `;`, decodificada una sola vez, sin segmentos `.`/`..`) antes de la allowlist, así que un upstream que normalice `..;` o decodifique dos veces no la saca de `allow` ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)) |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
 | Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde 0.3.0, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
 | URLs prefirmadas y SSRF de `rayd` (T16) | las firmas el SDK con tus credenciales, `rayd` no guarda ninguna; nunca se loguean; cada URL cubre una clave ligada al sandbox, un método y una caducidad; `rayd` sólo acepta `https` al host regional exacto del bucket y su resolvedor descarta loopback, link-local e IMDS ([Ficheros](files.md)) |
-| Proxy de egress de `rayd` como SSRF (T17) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; bajo deny-all en `rayito-base-caps`, desde 0.3.2 el DNS de uid ≥ 1000 también se bloquea (una regla `ip rule` del puerto 53 por delante de los resolvedores de la plataforma, que escuchan dentro del guest), así que ni las conexiones ni las consultas DNS de los procesos del sandbox salen del VM; **riesgo residual**: las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
+| Proxy de egress de `rayd` como SSRF (T17) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; la cabecera `Host` se reescribe sólo en la forma absoluta `http://`: un túnel `CONNECT`/SOCKS5 a un nombre permitido (80 o 443) comparte el riesgo de las IPs compartidas; bajo deny-all en `rayito-base-caps`, desde 0.3.2 el DNS de uid ≥ 1000 también se bloquea (una regla `ip rule` del puerto 53 por delante de los resolvedores de la plataforma, que escuchan dentro del guest), así que ni las conexiones ni las consultas DNS de los procesos del sandbox salen del VM; **riesgo residual**: las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
 | Secretos inyectados (T18) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
 | Índice de metadatos (T19) | apagado por defecto; con `index=DynamoDbIndex(...)` se copia en tu tabla DynamoDB sólo la `metadata` (no secreta) más la imagen, `startedAt` y el TTL, nunca tokens, `envs` ni secretos; una fila falsa nunca crea un sandbox fantasma (el listado parte de `list-microvms` y exige misma imagen y `startedAt`); rol escritor (`PutItem`) separado del lector (`BatchGetItem`) ([Índice de metadatos](funciones-opcionales/indice-de-metadatos.md)) |
+| Hooks de ciclo de vida forjados desde dentro de la VM (T2) | el puerto 9000 nunca va en un token; `rayd` comprueba qué uid es dueño de cada conexión a los hooks: un `/terminate` o un `/validate` de un proceso del sandbox responde 200 sin hacer nada, un `/run` suyo no consume el `/run` del arranque (así el `start_cmd` de una plantilla, que llega antes que la plataforma, no instala su token), y tras el primer `/run` un `/ready` o un `/validate` no reinicia ningún kernel; todo queda en `hook_audit` y en `get_health().hook_anomalies`; **riesgo residual**: `/suspend` y `/resume` forjados se aceptan (cuentan como anomalía), y un `/terminate` que esquiva la búsqueda se acepta pero también cuenta |
+| Pasarela de secretos (T24) | apagada por defecto; con `gateways=` el valor vive sólo en `rayd`, el `upstream` es fijo (`https://host`) y la allowlist decide antes de conectar; de la respuesta se quitan las cabeceras que llevan el valor; **riesgo residual**: el cuerpo vuelve sin inspeccionar, así que una regla de `allow` hacia un endpoint que refleje las cabeceras de la petición entrega el secreto ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#lo-que-la-pasarela-no-puede-impedir)) |
+| Dominio propio (T25, experimental) | apagado por defecto; con `CustomDomain` la CloudFront Function borra toda cabecera `x-aws-proxy-*` del viewer antes de poner las suyas, una ruta exige token de tráfico salvo `public=True` explícito (se guarda sólo su sha256) y una ruta caducada responde 404; **riesgo residual**: la ruta no se borra sola al matar el sandbox (llama a `unregister()`) y el JWE de cada ruta vive en el KeyValueStore de tu cuenta ([Dominio propio](funciones-opcionales/dominio-propio.md)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -71,7 +79,32 @@ la tabla "Cadena de suministro"):
 - `rayd` se compila con `cargo auditable` (grafo de crates embebido) y lleva
   un SBOM CycloneDX; los assets de cada release van firmados keyless con
   cosign, y PyPI y npm publican por OIDC con attestations. Cómo comprobarlo:
-  [Verificar una release](verify.md).
+  [Verificar una release](verify.md). La receta liga la firma a la versión
+  exacta que instalas (`release.yml@refs/tags/rayd-v<versión>`), así que un
+  asset antiguo o firmado bajo otro tag no la pasa.
+- El job que compila no tiene ninguna credencial: firmar (token OIDC) y subir
+  a la release (`contents: write`) son jobs aparte que no hacen checkout ni
+  ejecutan herramientas de build, y comprueban con `sha256sum -c` lo que
+  produjo el build. Los dos esperan la aprobación del mantenedor (environment
+  `release`): sin ella no hay token OIDC ni certificado de Sigstore, y un
+  ensayo no firma nada. Ningún job de la release, del sitio de documentación
+  ni del e2e restaura una caché de Actions; zig, `cargo-deny` y uv se
+  descargan contra un sha256 fijado; el workflow nunca reemplaza un asset
+  publicado, y publicar exige que el commit del tag esté en `main`.
+- Un token del repositorio con `contents: write` sí podría reemplazar un
+  asset de una release (las releases inmutables siguen apagadas): por eso la
+  receta de [Configurar AWS](primeros-pasos/configurar-aws.md) comprueba la
+  firma y `SHA256SUMS` **antes** de `rayito image publish`, que no verifica
+  nada por sí mismo.
+- Las herramientas de CI con dependencias (twine, pip-audit, cfn-lint) se
+  instalan desde requisitos con `--hash`, nunca con `uvx`, y `uv` nunca
+  re-bloquea un `uv.lock` desfasado (`UV_LOCKED=1`).
+- Dependabot espera 7 días (14 para un major) antes de proponer una versión
+  recién publicada; las actualizaciones de seguridad no esperan.
+- El constructor del artefacto de imagen (`rayito image zip`,
+  `make image-publish`) rechaza cualquier enlace simbólico en `image/` y en
+  `kernel-sidecar/`: un enlace metería en la imagen el contenido de un
+  fichero de la máquina que construye.
 
 ## Persistencia en S3 (T15)
 
@@ -79,10 +112,13 @@ Con `Sandbox.create(persist=S3Prefix(...))` el `HOME` del usuario viaja a tu
 bucket. Lo hace `rayd` como root con el execution role (que `persist=` exige
 explícitamente), no el código del sandbox: en `rayito-base-caps` uid 1000
 sigue sin alcanzar IMDS. El rol sólo puede escribir y leer bajo
-`<bucket>/<prefix>/*` (`infra/iam.yaml`), nunca borrar; ese prefijo **no
-separa inquilinos**: `rayd` no liga el destino al sandbox que lo pide, así
-que quien tenga el access token de un sandbox alcanza cualquier `name` bajo
-el mismo prefijo. El restore corre con
+`<bucket>/<prefix>/*` (`infra/iam.yaml`), nunca borrar. `persist=` liga
+además el sandbox a su bucket y a su `prefix`: `rayd` rechaza con
+`permission_denied` cualquier checkpoint o restore fuera de ellos, así que un
+`prefix` por inquilino separa inquilinos aunque compartan rol. Un sandbox
+creado sin `persist=` no liga nada y su access token alcanza cualquier
+destino que su rol alcance: no le des un rol que llegue al prefijo de
+persistencia. El restore corre con
 la identidad del usuario y sólo extrae ficheros regulares, directorios y
 symlinks (nada de dispositivos ni hard links), rechaza `..`, rutas absolutas y
 padres que salgan del `HOME`, descarta los bits setuid/setgid/sticky y
@@ -149,7 +185,10 @@ Detalle en `SECURITY.md` T19.
 ## Qué nunca se loguea
 
 Contenido de ficheros, código ejecutado, bytes de PTY, tokens, cabeceras del
-proxy, `envs`, `metadata`, el body de los hooks; tampoco URLs
+proxy, `envs`, `metadata`, el body de los hooks, ni el mensaje crudo de un
+error de AWS (un error de firma lleva la cadena canónica con el token de
+sesión: el SDK, los stacks, `Template.build` y la CLI sólo muestran su
+resumen saneado); tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
 credenciales de git, ni el JWE, las cabeceras, los cuerpos ni las rutas de
@@ -168,9 +207,30 @@ tocar AWS. El listener se enlaza a `127.0.0.1` por defecto; `--bind` fuera
 de loopback exige `--allow-remote` y avisa por stderr. Quita cualquier
 cabecera `x-aws-proxy-*` que traiga el cliente antes de reenviar la
 petición, así que un cliente local no puede suplantar la autenticación del
-proxy de AWS. Riesgo residual, sin mitigación nueva ni número de amenaza
-propio (`SECURITY.md` T2/T3): mientras el proxy está en marcha, cualquier
-proceso que alcance el puerto local reenviado —de la máquina del operador,
-o de otra si se usó `--allow-remote`— tiene el mismo acceso al sandbox que
-el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
+proxy de AWS.
+
+**Webs abiertas en el navegador del operador**: como el proxy añade el JWE a
+todo lo que reenvía y el guest sólo ve `Host: <endpoint>`, una web
+cualquiera podía usar el servicio del sandbox por DNS rebinding, con un POST
+entre sitios o con un `WebSocket` de otro origen (con Jupyter, code-server o
+una terminal web, eso es ejecutar código en el sandbox). Desde 0.6.x el
+proxy sólo reenvía peticiones cuyo `Host` es de loopback con el puerto
+local, la dirección de `--bind`, `<id>.localhost` o un `--allowed-host`
+(si no, `421`) y cuyo `Origin`, si lo trae, es uno de esos orígenes o un
+`--allow-origin` (si no, `403`); como mucho `--max-connections` (8)
+conexiones a la vez (`503` después). Por cada conexión sólo reenvía **un
+mensaje**: la primera petición reescrita, con su cuerpo delimitado por
+`Content-Length` o `chunked` (una delimitación ambigua es `400`); nada de lo
+que el cliente mande después llega al upstream, y un upgrade que el guest
+no acepta con `101` se responde con `Connection: close` y se cierra, en vez
+de quedar como túnel sin filtrar. **Cookies**: no se separan por puerto,
+así que lo que el sandbox sirve en `http://127.0.0.1:<puerto>` recibe las
+cookies de tus otras apps locales y comparte "sitio" con ellas; ábrelo en
+`http://<id>.localhost:<puerto>` (tarro propio, la CLI lo anuncia) o en un
+perfil de navegador dedicado ([Proxy local](funciones-opcionales/proxy-local.md#navegador-y-cookies)).
+
+Riesgo residual (`SECURITY.md` T2/T3): mientras el proxy está en marcha,
+cualquier proceso que alcance el puerto local reenviado —de la máquina del
+operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
+sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).

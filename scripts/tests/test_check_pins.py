@@ -2,7 +2,8 @@
 old denylist grep missed (``@1.2.3``, ``@latest``, ``@release-v2`` and a
 truncated ``@ab12cd34``) are findings, a full SHA with or without its version
 comment and a local ``./`` action are not, every ``uvx`` without ``==`` is a
-finding in both the bare and the ``--from`` form, every ``curl`` of a
+finding in both the bare and the ``--from`` form (and so is a pinned ``uvx``
+of a tool that pulls a dependency graph), every ``curl`` of a
 ``Dockerfile`` needs a pinned ``<NAME>_SHA256=`` checked by ``sha256sum -c``
 and no floating release, a ``dnf install`` of a package in
 ``PINNED_DNF_PACKAGES`` needs ``-<version>-<release>``, a ``pip install -r``
@@ -92,15 +93,31 @@ def test_uvx_without_a_version_is_a_finding() -> None:
     assert all(reason == check_pins.UVX_REASON for _, _, reason in findings)
 
 
-def test_pinned_uvx_invocations_pass() -> None:
-    text = """        run: uvx pip-audit==2.10.1 -r req.txt --no-deps --strict
-\tuvx twine==7.0.0 check dist/*
-\tuvx ruff==0.16.7 format --check .
-\tuvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(IAM_TEMPLATE)
-          uvx --from pkg==1.0 tool
-# uvx twine check dist/*"""
+def test_pinned_uvx_of_a_dependency_free_tool_passes() -> None:
+    text = """\tuvx ruff==0.16.7 format --check .
+          uvx ruff==0.16.7 check scripts
+          uvx --from ruff==0.16.7 ruff check .
+# uvx twine check dist/*
+# uvx pip-audit==2.10.1 -r req.txt"""
 
     assert check_pins.unpinned_uvx(text) == []
+
+
+def test_pinned_uvx_of_a_tool_with_dependencies_is_a_finding() -> None:
+    """``==`` pins the tool, not its transitive graph: every run resolves
+    the newest release of each dependency, with no hash and no cooldown.
+    Only a tool without dependencies (``ruff``) may run through ``uvx``;
+    the rest install from a hash-pinned requirements file."""
+    text = """        run: uvx pip-audit==2.10.1 -r req.txt --no-deps --strict
+\tuvx twine==7.0.0 check dist/*
+\tuvx cfn-lint==1.56.3 -- $(EGRESS_TEMPLATE) $(IAM_TEMPLATE)
+          uvx --from pkg==1.0 tool
+          uvx --from "rayito[mcp]==0.6.1" rayito-mcp"""
+
+    findings = check_pins.unpinned_uvx(text)
+
+    assert [number for number, _, _ in findings] == [1, 2, 3, 4, 5]
+    assert all(reason == check_pins.UVX_GRAPH_REASON for _, _, reason in findings)
 
 
 def test_unverified_downloads_are_findings() -> None:
@@ -231,6 +248,20 @@ RUN dnf install -y --setopt=install_weak_deps=0 jq \\
     findings = check_pins.unpinned_dnf_packages(text)
 
     assert findings == [(1, "git-core", check_pins.DNF_REASON)]
+
+
+def test_a_bare_efs_utils_inside_a_conditional_layer_is_a_dnf_finding() -> None:
+    text = """RUN if [ "$(cat /opt/rayito/sidecar/efs_variant)" = "efs" ]; then \\
+      dnf install -y --setopt=install_weak_deps=0 amazon-efs-utils \\
+      && dnf clean all; \\
+    fi
+RUN if [ -f /x ]; then \\
+      dnf install -y amazon-efs-utils-3.1.3-1.amzn2023 && dnf clean all; \\
+    fi"""
+
+    assert check_pins.unpinned_dnf_packages(text) == [
+        (1, "amazon-efs-utils", check_pins.DNF_REASON)
+    ]
 
 
 def test_a_version_without_release_is_a_dnf_finding() -> None:
@@ -396,3 +427,109 @@ def test_the_real_dockerfile_poly_layer_is_seen_by_the_gate() -> None:
     ]
     assert len(installs) == 2
     assert check_pins.unhashed_pip_installs(dockerfile) == []
+
+
+ACTIONLINT_SHA256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+VERIFIED_STEP = f"""jobs:
+  check:
+    steps:
+      - name: tool (checked against a pinned sha256)
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          mkdir -p "$RUNNER_TEMP/tool"
+          curl -fsSL -o "$RUNNER_TEMP/tool/tool.tgz" \\
+            "https://example.com/tool.tgz"
+          echo "${{TOOL_SHA256}}  $RUNNER_TEMP/tool/tool.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tool/tool.tgz" -C "$RUNNER_TEMP/tool"
+      - run: echo "no download in this step"
+"""
+
+
+def test_a_verified_workflow_download_passes() -> None:
+    assert check_pins.unpinned_workflow_downloads(VERIFIED_STEP) == []
+
+
+def test_unverified_workflow_downloads_are_findings() -> None:
+    text = f"""jobs:
+  deny:
+    steps:
+      - run: curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+      - name: piped into tar
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl --silent -L https://example.com/tool.tgz | tar -xzv -C /usr/bin
+      - name: no pinned sha256
+        run: |
+          curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+          echo "$TOOL_SHA256  /tmp/tool.tgz" | sha256sum -c -
+      - name: floating release
+        env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl -fsSL -o /tmp/t.tgz https://github.com/o/r/releases/latest/download/t.tgz
+          echo "$TOOL_SHA256  /tmp/t.tgz" | sha256sum -c -
+      - run: wget -q https://example.com/install.sh
+"""
+
+    findings = check_pins.unpinned_workflow_downloads(text)
+
+    assert [number for number, _, _ in findings] == [4, 5, 10, 14, 20]
+    assert all(reason == check_pins.DOWNLOAD_REASON for _, _, reason in findings)
+
+
+def test_the_checked_path_must_be_the_one_the_workflow_downloaded() -> None:
+    text = f"""      - env:
+          TOOL_SHA256: {ACTIONLINT_SHA256}
+        run: |
+          curl -fsSL -o /tmp/tool.tgz https://example.com/tool.tgz
+          echo "$TOOL_SHA256  /tmp/other.tgz" | sha256sum -c -
+"""
+
+    assert [n for n, _, _ in check_pins.unpinned_workflow_downloads(text)] == [1]
+
+
+def test_commented_curls_in_a_run_block_are_skipped() -> None:
+    text = """      - run: |
+          # curl -fsSL https://example.com/install.sh | sh
+          echo ok
+"""
+
+    assert check_pins.unpinned_workflow_downloads(text) == []
+
+
+def test_composite_actions_get_the_workflow_gates(tmp_path: Path) -> None:
+    action = tmp_path / ".github" / "actions" / "tool" / "action.yml"
+    action.parent.mkdir(parents=True)
+    action.write_text(
+        "runs:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: curl -fsSL https://example.com/x | sh\n"
+        "    - uses: actions/checkout@v7\n",
+        encoding="utf-8",
+    )
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = check_pins.main([], root=tmp_path)
+
+    printed = stdout.getvalue()
+    assert code == 1
+    assert ".github/actions/tool/action.yml:4: " + check_pins.DOWNLOAD_REASON in printed
+    assert ".github/actions/tool/action.yml:6: " + check_pins.ACTION_REASON in printed
+
+
+def test_the_real_workflows_download_only_verified_files() -> None:
+    paths = sorted((REPO_ROOT / ".github").glob("workflows/*.yml")) + sorted(
+        (REPO_ROOT / ".github").glob("actions/*/action.yml")
+    )
+    downloads = 0
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        downloads += sum(
+            1
+            for step in check_pins.workflow_steps(text)
+            if check_pins.is_download(step.text)
+        )
+        assert check_pins.unpinned_workflow_downloads(text) == [], path
+    assert downloads >= 3, "actionlint, zig and cargo-deny are downloaded and checked"

@@ -3,8 +3,10 @@
 `rayito` es la herramienta de línea de comandos del SDK: publica y lista la
 imagen, borra versiones antiguas, lista, inspecciona y mata sandboxes, lee
 sus logs de CloudWatch y diagnostica una cuenta antes del primer
-`Sandbox.create()`. Es una CLI **operativa** sobre el flujo Dockerfile que ya
-existe: no hay templates declarativos ni `rayito.toml`.
+`Sandbox.create()`. Desde 0.6 también despliega las pilas opcionales
+(`rayito stack`, `rayito events`) y construye templates declarativos
+(`rayito template`). No hay `rayito.toml`: la configuración son opciones y
+variables de entorno.
 
 ## Instalación
 
@@ -53,8 +55,15 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     --bucket <bucket> [--variant full|slim|poly] [--image-name N] \
     [--os-capabilities ALL] [--build-role-arn ARN | --stack-name rayito-m0-iam] \
     [--memory-mib 2048] [--timeout-seconds 1800] [--force] \
-    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]...
+    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]... [--with-efs]
 ```
+
+`--with-efs` publica la imagen con `amazon-efs-utils` que necesita
+`volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)): exige
+un zip hecho con `rayito image zip --with-efs`, `--os-capabilities ALL` (`rayd`
+sólo monta con `CAP_SYS_ADMIN`) y la variante `full`, y su nombre por defecto
+es `rayito-base-caps-efs`. Un zip con el marcador de efs sin `--with-efs`, o
+`--with-efs` con un zip sin él, se rechaza antes de llamar a AWS.
 
 `--sizes` publica, además del baseline (2048 MiB), una imagen con sufijo de
 tamaño por cada nombre listado desde el mismo artefacto; `--env KEY=VALUE`
@@ -67,7 +76,8 @@ Reproduce el pipeline de `make image-publish`:
 
 1. Comprueba, antes de llamar a AWS, que el zip existe y que su marcador de
    variante (`warmup_variant` para `slim`, `kernels_variant` para `poly`)
-   coincide con `--variant`.
+   coincide con `--variant`, y que el marcador `efs_variant` aparece si y
+   sólo si se pasa `--with-efs`.
 2. Sube el zip a `s3://<bucket>/rayito/images/rayd-<12 hex del sha256>.zip`,
    salvo que la clave ya exista (clave por contenido: mismo zip, misma clave).
 3. Toma el build role de `--build-role-arn` o de la salida `BuildRoleArn` del
@@ -147,8 +157,12 @@ API se niegue a borrar. Imprime la tabla del plan y un resumen JSON; sale con
 ### `image zip`
 
 ```bash
-rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar]
+rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar] [--with-efs]
 ```
+
+`--with-efs` añade el marcador `kernel-sidecar/efs_variant`, que activa la
+capa condicional de `amazon-efs-utils` del `Dockerfile` (sin él, ninguna
+imagen cambia). El resumen `--json` lo indica en `withEfs`.
 
 Zip determinista (fechas y modos fijos; sin `__pycache__`, `tests`, `.venv`,
 cachés, `uv.lock` ni otros zips) con el `Dockerfile` en la raíz. Con
@@ -167,7 +181,7 @@ rayito sandbox create [TEMPLATE] [--timeout S] [--metadata K=V]… [--env K=V]�
 rayito sandbox connect ID [--user U] [--cwd D] [--env K=V]… [--token-file F]
 rayito sandbox exec ID [--background] [--cwd D] [--user U] [--env K=V]… [--timeout 0] [--token-file F] -- CMD…
 rayito sandbox metrics ID [--follow] [--interval 5] [--token-file F]
-rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-remote]
+rayito sandbox proxy ID --port N [--local-port M] [--bind 127.0.0.1] [--allow-remote] [--allowed-host H]… [--allow-origin O]… [--max-connections 8]
 ```
 
 - `list` omite `TERMINATING` y `TERMINATED` (AWS los sigue listando unos 20
@@ -272,6 +286,7 @@ sandbox, sólo el JWE del proxy.
 ```bash
 rayito sandbox proxy microvm-<id> --port 8000
 # http://127.0.0.1:8000 → microvm-<id>:8000
+#   con cookies aisladas de otras apps locales: http://microvm-<id>.localhost:8000
 curl http://127.0.0.1:8000/
 ```
 
@@ -279,11 +294,25 @@ curl http://127.0.0.1:8000/
   cualquier valor fuera de 1-65535, sin llamar a AWS.
 - `--bind` fuera de `127.0.0.1`/`::1`/`localhost` necesita `--allow-remote`
   (si no, salida de uso): cualquiera que llegue a ese puerto usa el sandbox
-  con el mismo acceso que quien lanzó el proxy.
+  con el mismo acceso que quien lanzó el proxy. `--bind 0.0.0.0`/`::`
+  necesita además `--allowed-host`.
+- `Host` y `Origin`: sólo reenvía si `Host` es `127.0.0.1`, `localhost` o
+  `[::1]` con el puerto local, la dirección de `--bind`, `<id>.localhost` o
+  un `--allowed-host` (si no, `421`), y si el `Origin`, cuando viene, es uno
+  de esos mismos orígenes o un `--allow-origin` (si no, `403`). Así una web
+  abierta en tu navegador no llega al sandbox por DNS rebinding, con un POST
+  entre sitios ni con un `WebSocket` de otro origen
+  ([Proxy local](funciones-opcionales/proxy-local.md#que-peticiones-reenvia)).
+- Como mucho `--max-connections` (8) conexiones reenviadas a la vez; la
+  siguiente recibe `503`.
 - Cabeceras: quita cualquier `x-aws-proxy-*` que traiga el cliente, fija
   `Host` al endpoint del sandbox, añade `X-aws-proxy-auth` (el JWE vigente)
   y `X-aws-proxy-port`, y fuerza `Connection: close` salvo en una petición
-  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sin JWE
+  de upgrade (`Upgrade` + `Connection: upgrade`, WebSocket). Sólo reenvía
+  la primera petición de cada conexión, con su cuerpo delimitado por
+  `Content-Length` o `chunked` (`400` si es ambiguo); un upgrade al que el
+  sandbox no responde `101` se reenvía con `Connection: close` y se
+  cierra. Sin JWE
   vigente o sin conexión al sandbox responde `502` y escribe el motivo en
   stderr; la cabecera tiene que llegar en 30 s y la conexión al sandbox
   abrirse en 30 s. Nunca registra el JWE, las cabeceras, los cuerpos
@@ -302,10 +331,83 @@ curl http://127.0.0.1:8000/
   MicroVM (ya en la `CallerPolicy` de `infra/iam.yaml`; nada nuevo que
   desplegar para usar el proxy).
 
+## `rayito stack`
+
+```bash
+rayito stack list
+rayito stack status <componente> [--stack-name N]
+rayito stack deploy <componente> [--param K=V]... [--artifact-bucket B] [--tag K=V]... [--stack-name N] [--yes]
+rayito stack destroy <componente> [--stack-name N] [--yes]
+```
+
+El convenio [`OptionalStack`](funciones-opcionales/pilas-opcionales.md):
+cada función opcional con infraestructura propia es una pila de
+CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
+
+- `list` imprime el catálogo (nombre, si está implementado y coste en
+  reposo) **sin llamar a AWS**.
+- `deploy` imprime el bloque "Coste y activación" del componente y los
+  parámetros que cambian, y pide confirmación salvo `--yes` (o `--json`).
+  Sobre una pila que ya existe, los parámetros que no repites conservan su
+  valor actual; los valores por defecto sólo se aplican al crearla.
+  `--artifact-bucket` es obligatorio para un componente con código Lambda
+  (`events-webhooks`): ahí se sube el código, por su hash.
+- `status` es un `DescribeStacks`: estado y salidas de la pila.
+- `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
+
+## `rayito domain`
+
+```bash
+rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--stack-name N] [--yes]
+rayito domain status | destroy [--stack-name N] [--yes]
+```
+
+[Dominio propio](funciones-opcionales/dominio-propio.md) (**experimental**,
+sin verificar aún de punta a punta en AWS real): una fachada de
+`rayito stack {deploy,status,destroy} custom-domain` con los nombres de
+`CustomDomain`. `deploy` valida `--public-domain` y cada
+`--alternate-domain-name` antes de llamar a AWS, pide confirmación salvo
+`--yes` e imprime a qué apuntar el `CNAME`. El certificado ACM tiene que
+estar en `us-east-1`.
+
+## `rayito events`
+
+```bash
+rayito events deploy --artifact-bucket B --log-group-name G [--reconciler-interval-minutes M] [--tag K=V]... [--yes]
+rayito events status | destroy [--yes]
+rayito events list [--sandbox-id ID] [--type T]... [--limit N] [--order desc|asc]
+rayito events webhook add <url> --secret-name S --type T [--type T]...
+rayito events webhook list
+rayito events webhook remove <webhook-id>
+```
+
+Atajo de `rayito stack deploy events-webhooks` más la gestión de webhooks y
+la consulta de eventos ([Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md)).
+Todos aceptan `--stack-name` (por defecto `rayito-events-webhooks`).
+`deploy` imprime el coste (≈ $0,40/mes en reposo, el secreto HMAC) y pide
+confirmación como `rayito stack deploy`.
+
+## `rayito template`
+
+```bash
+rayito template build <spec.py> --name N --bucket B [--memory-mb M] [--force] [--timeout S]
+rayito template status <name> [--version V]
+rayito template logs <name> [--limit N]
+```
+
+Construye un [template declarativo](funciones-opcionales/templates.md):
+`build` ejecuta `spec.py` (que debe definir una variable de módulo
+`template` con un `rayito.Template`), sube el contexto a `--bucket` bajo
+`rayito/templates/` y crea o actualiza la imagen `--name`, imprimiendo el
+log del build. Cada versión nueva cuesta almacenamiento de snapshot, igual
+que `rayito image publish`; las antiguas se borran con `rayito image prune --image-name <name>`. `status` y
+`logs` sólo leen: sin `--version`, la versión más reciente.
+
 ## `rayito doctor`
 
 ```bash
-rayito doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch] [--json]
+rayito [--json] doctor [--template rayito-base] [--template-version V] [--bucket B] [--launch]
+                       [--efs-vpc-id V --efs-subnet-ids S1,S2]
 ```
 
 Diez comprobaciones, en orden, cada una con `OK`, `WARN`, `FAIL` o `SKIP`.
@@ -327,6 +429,16 @@ con 1 sólo si alguna es `FAIL`.
 | 8 | `token` | `create-microvm-auth-token` (puerto 8080) para el sandbox de `--launch` o el `RUNNING` más nuevo | — | `AccessDenied`, `ValidationException` | sin sandbox `RUNNING` (usa `--launch`) | revisa `lambda:CreateMicrovmAuthToken` |
 | 9 | `agent` | un `Health` de `rayd`: `agent_version`, `kernel_ready`, `imds_blocked`, `hook_anomalies` | `kernel_ready=false`, `hook_anomalies>0`, `imds_blocked=false` en una imagen `-caps` | `Health` falla (`UNAVAILABLE`, `UNAUTHENTICATED`, 403 del proxy) | sin token | espera al kernel; revisa quién tiene un token `allPorts`; republica la imagen |
 | 10 | `compatibility` | la tabla SDK ↔ `rayd` de [Límites](limits.md); la versión de imagen (contador de builds por imagen y cuenta) sólo se informa | `rayd` más nuevo que el SDK en `MAJOR.MINOR` | `rayd` por debajo del mínimo del SDK | sin `agent_version` | actualiza el SDK o publica una imagen desde el tag del `rayd` mínimo |
+
+Con `--efs-vpc-id` y `--efs-subnet-ids` (volúmenes EFS en una VPC que ya
+existe) se añade, tras la 7, la comprobación **`efs-network`**: la misma que
+`EfsVolumes.check()`, de sólo lectura (`ec2:DescribeVpcs`,
+`DescribeVpcAttribute`, `DescribeSubnets`, `DescribeRouteTables`). `FAIL`
+si la VPC o una subred no existe, una subred es de otra VPC, dos comparten
+AZ o a una le quedan menos de 2 IPs libres; `WARN` con una sola AZ o sin DNS
+en la VPC. El resumen dice qué crearía `rayito stack deploy efs-volumes` y
+su coste en reposo; no crea nada. Ver
+[Volúmenes EFS en tu VPC](funciones-opcionales/volumenes-efs-vpc.md).
 
 Sin `--launch` el doctor **nunca crea un MicroVM**: las comprobaciones 8–10
 usan el sandbox `RUNNING` más nuevo de la imagen o quedan en `SKIP`. Con
@@ -371,6 +483,8 @@ y son *shims* de la CLI, así que los targets del `Makefile` no cambian:
 | `make` | Script | Equivalente |
 |---|---|---|
 | `make image-zip` | `python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar` y `python scripts/image_zip.py image image/rayito-image.zip` | `rayito image zip image image/rayito-image.zip --sidecar kernel-sidecar` |
+| `make image-zip-efs` | `python scripts/image_zip.py image image/rayito-image-efs.zip --with-efs` | `rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs` |
+| `make image-publish-caps-efs` | `… publish_image.py --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` | `rayito image publish --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` |
 | `make image-publish` (`-slim`, `-poly`, `-caps`) | `uv run --project clients/python python scripts/publish_image.py --artifact … --bucket $(BUCKET) --base-image-version 1` | `rayito image publish --artifact … --bucket … --base-image-version 1` |
 | `make image-prune PRUNE_ARGS="--keep 5 --dry-run"` | `uv run --project clients/python python scripts/image_prune.py --image-name rayito-base --keep 5 --dry-run` | `rayito image prune --keep 5 --dry-run` |
 
@@ -382,13 +496,11 @@ imprimen el comando `uv run --project clients/python …` y salen con 2.
 
 ## Lo que la CLI no hace
 
-- Templates declarativos (`rayito.toml`, `rayito template build`): la imagen
-  se construye desde `image/Dockerfile` con `create-microvm-image`, como
-  siempre (`SPEC.md` §4).
+- `rayito.toml` ni ningún fichero de configuración propio.
 - Construir la imagen más allá del zip: el Dockerfile lo construye AWS.
 - `sandbox logs --follow`: para eso están los SDKs y el
   [servidor MCP](mcp.md).
-- `auth`, `template`, `snapshots` y `fork` de la CLI de E2B: no tienen
+- `auth`, `snapshots` y `fork` de la CLI de E2B: no tienen
   primitiva o quedan fuera por `SPEC.md` §4 ([Compatibilidad con E2B](e2b-compat.md)).
 - Envolver las herramientas de desarrollo (`bench_cold_start.py`,
   `hooks-sim.py`, `gen_limits.py`, `check_*.py`).

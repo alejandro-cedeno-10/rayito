@@ -46,9 +46,32 @@ def test_list_makes_no_provisioner_call(
 def test_deploying_an_unsupported_component_fails_before_any_call(
     runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
 ) -> None:
-    result = runner.invoke(app, ["stack", "deploy", "s3-mounts", "--yes"], obj=clients)
+    result = runner.invoke(app, ["stack", "deploy", "custom-domain", "--yes"], obj=clients)
     assert result.exit_code != 0
     assert fake_provisioner.calls == []
+
+
+def test_redeploy_prints_only_the_parameters_that_change(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    first = runner.invoke(
+        app,
+        ["stack", "deploy", "s3-mounts", "--param", "BucketName=b", "--param", "Prefixes=t/*"],
+        input="y\n",
+        obj=clients,
+    )
+    assert first.exit_code == 0, first.output
+    assert "Prefixes: '(sin valor)' -> 't/*'" in first.output
+    second = runner.invoke(
+        app,
+        ["stack", "deploy", "s3-mounts", "--param", "ReadOnly=false"],
+        input="y\n",
+        obj=clients,
+    )
+    assert second.exit_code == 0, second.output
+    assert "ReadOnly: 'true' -> 'false'" in second.output
+    assert "Prefixes" not in second.output.split("Parámetros que cambian")[1]
+    assert fake_provisioner.stacks["rayito-s3-mounts"].parameters["Prefixes"] == "t/*"
 
 
 def test_deploy_without_yes_asks_for_confirmation_and_aborts_on_no(
@@ -57,7 +80,8 @@ def test_deploy_without_yes_asks_for_confirmation_and_aborts_on_no(
     result = runner.invoke(app, ["stack", "deploy", "metadata-index"], input="n\n", obj=clients)
     assert result.exit_code != 0
     assert "Coste y activación" in result.output
-    assert fake_provisioner.calls == []
+    # Only the read that shows which parameters would change; nothing deployed.
+    assert [call[0] for call in fake_provisioner.calls] == ["describe"]
 
 
 def test_deploy_with_yes_creates_the_stack(
@@ -96,9 +120,12 @@ def test_status_of_an_undeployed_component_is_none(
 
 
 def test_domain_subapp_left_the_pending_stub_in_m15_custom_domain(runner: CliRunner) -> None:
-    # `domain` is no longer a stub (m15-custom-domain); see
-    # `test_m15_domain_cli.py` for its real subcommands. With events and
-    # template already real, no pending stub sub-app is left.
+    # `domain` is no longer a stub (m15-custom-domain, experimental); see
+    # `test_m15_domain_cli.py` for its real subcommands. It now shows up in
+    # `rayito --help` like every other real sub-app.
+    top = runner.invoke(app, ["--help"])
+    assert top.exit_code == 0, top.output
+    assert "domain" in top.output
     result = runner.invoke(app, ["domain", "--help"])
     assert result.exit_code == 0, result.output
     assert "m15-custom-domain" not in result.output

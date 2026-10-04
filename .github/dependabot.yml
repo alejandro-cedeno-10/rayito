@@ -1,7 +1,16 @@
 # Actualizaciones semanales agrupadas por ecosistema (minor + patch en un solo
 # PR; los majors abren el suyo porque el árbol de Cargo va fijado con `=`).
+# `cooldown` (sec-supply-chain-ci, SC-07): una versión no se propone hasta 7
+# días después de publicarse (14 para un major), la ventana en la que se
+# detectan y retiran los releases secuestrados; las actualizaciones de
+# seguridad se saltan el cooldown. `scripts/tests/test_dependabot_cooldown.py`
+# lo exige en cada entrada.
 # `kernel-sidecar` lo vigila sólo el ecosistema `uv`: `pip` sobre el mismo
 # directorio abría cada PR por duplicado sobre `requirements.txt`.
+# `pip` sobre `/.github/release` vigila los requisitos con hash de las
+# herramientas (twine, pip-audit, cfn-lint), y `github-actions` lee también
+# las acciones compuestas de `.github/actions/*`, que fijan acciones de
+# terceros (sec-supply-chain-followups, SC-A06 y SC-A12).
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -9,6 +18,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -20,6 +32,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -31,6 +46,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -42,6 +60,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     commit-message:
       prefix: "chore(deps)"
     # `@types/node` sigue al Node mínimo soportado (`engines`: >= 20); sus
@@ -53,11 +74,27 @@ updates:
       npm:
         patterns: ["*"]
         update-types: ["minor", "patch"]
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: pip
+    directory: /.github/release
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-release-tools:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -69,9 +106,52 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(deps)"
     groups:
       docker:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+  # Entorno local (dev/local, docs/site/docs/guias/probar-en-local.md): las
+  # bases del runner y del compilador de rayd, y la imagen de Floci del
+  # compose. Un bump de Floci se revisa contra sus notas de release y sus
+  # avisos de seguridad (docs/research/2026-10-local-testing.md) antes de
+  # fusionarlo. `docker` y `docker-compose` no admiten `semver-major-days`
+  # (Dependabot rechaza el fichero), así que solo llevan `default-days`.
+  - package-ecosystem: docker
+    directory: /dev/local/runner
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-local-runner:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directory: /dev/local/rayd
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-local-rayd:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker-compose
+    directory: /dev/local
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"

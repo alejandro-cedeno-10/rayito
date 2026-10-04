@@ -120,3 +120,8 @@ export const COMPRESSION_OPT_IN_HEADER = "rayito-compress" as const;
 export const SUPPORTED_MEMORY_MIB = [512, 1024, 2048, 4096, 8192] as const;
 export const GUEST_MEMORY_MULTIPLIER = 4 as const;
 export const RESERVED_PORTS = [8080, 9000] as const;
+
+export const EFS_VOLUMES_MAX_PER_SANDBOX = 4 as const;
+
+export const ACCESS_TOKEN_MIN_BYTES = 16 as const;
+export const COMMAND_OUTPUT_MAX_BYTES = 67108864 as const;

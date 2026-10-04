@@ -23,6 +23,7 @@ import {
   CONFIGURE_SETTLE_POLL_MS,
   type ConfigureSection,
   checkConfigureResponse,
+  configureTimeoutMs,
   isPostApplySection,
   type PlannedSection,
   requireCapabilities,
@@ -44,6 +45,7 @@ import {
   type FeatureOptions,
   planFeatures,
   plannedSections,
+  prepareFeatures,
   relaunchFeatures,
 } from "../feature-options.js";
 import {
@@ -114,6 +116,8 @@ import { translateSetTimeoutError } from "../transport/errors.js";
 import type { CallMetadataProvider } from "../transport/headers.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
+import type { EfsVolume, VolumeStatus } from "../volumes/domain.js";
+import { fromProtoStatus as volumeStatusesFromProto } from "../volumes/section.js";
 import {
   CodeClient,
   type ContextLike,
@@ -378,16 +382,108 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    */
   readonly index?: DynamoDbIndex | undefined;
   /**
-   * Las siete opciones 0.6 (M15): cada una llega en su propio cambio
-   * OpenSpec y, mientras siga siendo un stub, ponerla a algo distinto de
-   * `undefined` lanza `UnimplementedError` nombrando ese cambio, antes de
-   * `run-microvm`. Ninguna hace ninguna llamada a AWS por sí sola; con las
-   * siete ausentes (su valor por defecto) el comportamiento es exactamente
-   * el de 0.5.x. `size` ya no es un stub (m15-sizes-catalog): ver
-   * `sizing/sizing.ts`; `telemetry` tampoco: ver su propio TSDoc debajo.
+   * `S3Mount` por ruta (m15-s3-mounts): `rayd` monta cada bucket (o
+   * prefijo) con `mount-s3` en su ruta (bajo `/mnt/` o `/home/user/`, como
+   * mucho 4), en el mismo `ConfigureSandbox` que el resto de secciones;
+   * sólo en `rayito-base-caps` (o una variante por tamaño) y sólo los
+   * buckets del allowlist de la imagen. Si un montaje falla, termina el
+   * sandbox (salvo `keepOnFailure`) y relanza el error; `sbx.mounts()` da el
+   * estado en vivo.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `mounts: { "/mnt/data": new S3Mount({ bucket: "..." }) }`
+   *   (Python: `mounts=`) en `create()`, con `executionRoleArn` y una imagen `rayito-base-caps`
+   *   cuyo `RAYITO_ALLOWED_MOUNT_BUCKETS` incluya el bucket.
+   * Recursos y llamadas AWS: ningún recurso nuevo; `mount-s3` hace las
+   *   peticiones S3 normales (`GetObject`/`ListObjectsV2`, y
+   *   `PutObject`/`DeleteObject` con `readOnly: false`) con el execution
+   *   role. La política sale de la pila `s3-mounts`
+   *   (`rayito stack deploy s3-mounts`, sólo IAM).
+   * Coste aproximado: $0 propio de Rayito; pagas las peticiones y el
+   *   almacenamiento normales de S3 del bucket montado (us-east-1,
+   *   consultado 2026-10-01); la pila `s3-mounts` es $0 (sólo IAM).
+   * IAM: `RayitoS3MountAccess` (`infra/s3-mounts.yaml`) en el execution
+   *   role, acotada a un bucket y a sus prefijos.
+   * Cómo apagarla: no pases `mounts` (por defecto `undefined`);
+   *   `rayito stack destroy s3-mounts` quita la política (no borra objetos).
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({
+   *     template: "rayito-base-caps", executionRoleArn,
+   *     mounts: { "/mnt/data": new S3Mount({ bucket: "mi-bucket" }) },
+   *   });
+   *   await sbx.commands.run("ls /mnt/data");
    */
   readonly mounts?: S3MountsOption | undefined;
-  readonly volumes?: Readonly<Record<string, unknown>> | undefined;
+  /**
+   * `EfsVolume` por ruta (m15-efs-volumes, experimental): `rayd` monta cada
+   * access point con `amazon-efs-utils` (TLS + IAM) en su ruta (bajo
+   * `/mnt/` o `/home/user/`, como mucho 4), en el mismo `ConfigureSandbox`
+   * que el resto de secciones y antes de que `create()` vuelva. Exige
+   * `executionRoleArn`, exactamente un conector propio en `egress` (un
+   * MicroVM sólo admite uno, así que el sandbox no tiene `INTERNET_EGRESS`) y
+   * una imagen con `amazon-efs-utils` (`rayito-base-caps-efs`); si un
+   * volumen no monta, termina el sandbox (salvo `keepOnFailure`) y lanza
+   * `VolumeMountError`, y sobre otra imagen `UnimplementedError`.
+   * `reincarnate()` vuelve a montarlos en el sucesor.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `volumes: { "/mnt/datos": vol }` (Python: `volumes=`) en
+   *   `create()`, con `executionRoleArn`, `egress: [<ConnectorArn>]` y la
+   *   imagen opcional `rayito-base-caps-efs`
+   *   (`rayito image publish --with-efs --os-capabilities ALL`).
+   * Recursos y llamadas AWS: ningún recurso nuevo por `create()`; si un
+   *   `EfsVolume` no trae `mountTargetIp`, un `DescribeMountTargets` por
+   *   sistema de ficheros y `create()`, con las credenciales del llamante. El
+   *   sistema de ficheros, sus mount targets y el conector los crea la pila
+   *   `efs-volumes` (`EfsVolumes.deploy()`), aparte; el tráfico NFS va con el
+   *   execution role.
+   * Coste aproximado: $0 propio de Rayito; pagas el almacenamiento y el
+   *   rendimiento normales de EFS (Elastic) de lo que leas y escribas, y la
+   *   imagen con `amazon-efs-utils` ocupa ≈ 198 MB más de código instalado
+   *   (us-east-1, consultado 2026-10-04, https://aws.amazon.com/efs/pricing/).
+   * IAM: el llamante, `elasticfilesystem:DescribeMountTargets` (sólo sin
+   *   `mountTargetIp`); el execution role, la política `CallerPolicyArn` de la
+   *   pila `efs-volumes` (`ClientMount`, y `ClientWrite` salvo sólo lectura).
+   * Cómo apagarla: no pases `volumes` (por defecto `undefined`);
+   *   `EfsVolumes.destroy()` quita la pila.
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({
+   *     template: "rayito-base-caps-efs", executionRoleArn, egress: [connectorArn],
+   *     volumes: { "/mnt/datos": await store.create("datos-agente-7") },
+   *   });
+   */
+  readonly volumes?: Readonly<Record<string, EfsVolume>> | undefined;
+  /**
+   * Tamaño del catálogo cerrado (m15-sizes-catalog): `"512mb"`, `"1gb"`,
+   * `"2gb"`, `"4gb"`, `"8gb"` o `{ memoryMib }` (redondea hacia arriba).
+   * El SDK lo resuelve en el cliente, sin llamar a AWS, a la imagen de ese
+   * tamaño (`rayito-base` con `"4gb"` lanza `rayito-base-4gb`), que tiene
+   * que estar publicada. No cambia la memoria de ninguna imagen ni de un
+   * sandbox en marcha; ver `sizing/sizing.ts`.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `size: "4gb"` (o `size: { memoryMib: 3000 }`) en `create()`,
+   *   tras `rayito image publish --sizes 4gb`.
+   * Recursos y llamadas AWS: ninguno nuevo al lanzar (el tamaño va en el
+   *   nombre de la imagen); `getInfo()` hace como mucho una
+   *   `GetMicrovmImageVersion` gratuita por versión de imagen y proceso.
+   *   Cada tamaño publicado es una imagen más en tu cuenta.
+   * Coste aproximado: un MicroVM más grande cuesta más por hora, de
+   *   $0,0315/h (512 MiB) a $0,5044/h (8192 MiB) en baseline (`limits.md`,
+   *   us-east-1, consultado 2026-09-30); cada tamaño publicado añade
+   *   storage de snapshot, ≈ $0,04/semana por versión.
+   * IAM: ninguno adicional; la pila opcional `sizes-guard` niega
+   *   `RunMicrovm` fuera de las imágenes que listes.
+   * Cómo apagarla: no pases `size` (por defecto `undefined`); las versiones
+   *   de cada imagen de tamaño se borran con
+   *   `rayito image prune --image-name rayito-base-4gb`.
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({ size: "4gb" });
+   *   await sbx.getInfo(); // size: "4gb", baselineMemoryMib: 4096
+   */
   readonly size?: SizeInput | undefined;
   /**
    * `LifecycleEvents` (m15-events-webhooks, ADR-020): con su pila
@@ -402,7 +498,7 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    *
    * Coste y activación
    * -------------------
-   * Activa: `events: new LifecycleEvents()` en `create()`, tras
+   * Activa: `events: new LifecycleEvents()` (Python: `events=`) en `create()`, tras
    *   `deploy(...)` (o `rayito events deploy`).
    * Recursos y llamadas AWS: un `secretsmanager:GetSecretValue` de la clave
    *   del stack por instancia de `LifecycleEvents` (más un
@@ -436,7 +532,8 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    *
    * Coste y activación
    * -------------------
-   * Activa: `telemetry: new TelemetryExport({ ... })` en `create()`.
+   * Activa: `telemetry: new TelemetryExport({ ... })` (Python:
+   *   `telemetry=`) en `create()`.
    * Recursos y llamadas AWS: ninguno propio más allá de lo que adjuntes:
    *   con `OtlpAuth.executionRole()` necesitas la política
    *   `RayitoOtlpExport` (`infra/otlp-export.yaml`,
@@ -458,7 +555,12 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    *   await sbx.getTelemetryStatus(); // { exported, dropped, lastErrorClass }
    */
   readonly telemetry?: unknown;
+  /** `SecretGateway` por nombre (m15-secrets-gateway, ADR-023): su bloque
+   * "Coste y activación" está en la propia clase `SecretGateway`. */
   readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
+  /** Aún sin cablear: con algo distinto de `undefined`, `create()` lanza
+   * `UnimplementedError` antes de `run-microvm`. Para un dominio propio usa
+   * `CustomDomain` (experimental) y registra la ruta tú mismo. */
   readonly domain?: unknown;
 }
 
@@ -759,7 +861,7 @@ export class Sandbox implements AsyncDisposable {
     this.commands = new Commands(core, this.#secrets, () => this.#instrumentation);
     this.files = new Filesystem(core, undefined, () => this.#instrumentation);
     this.pty = new Pty(core, this.commands, this.#secrets);
-    this.git = new Git(this.commands);
+    this.git = new Git(this.commands, core.logger);
     this.#code = new CodeClient(core, this.#secrets, () => this.#instrumentation);
     this.#persistence = new PersistenceClient(core);
   }
@@ -821,12 +923,18 @@ export class Sandbox implements AsyncDisposable {
       gateways: options.gateways,
       domain: options.domain,
     } satisfies FeatureOptions;
-    const featurePlan = planFeatures(
+    const plannedFeatures = planFeatures(
       featureOptions,
       resolveImageVariant(options.template),
       options.logging,
+      options.egress,
+      options.executionRoleArn,
     );
     const plane = resolveControlPlane(options);
+    const featurePlan = await prepareFeatures(plannedFeatures, {
+      region: plane.region,
+      credentials: awsClientSettingsOf(plane).credentials,
+    });
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
@@ -852,6 +960,7 @@ export class Sandbox implements AsyncDisposable {
       logging: options.logging,
       accessToken: options.accessToken,
       networkEnforce: requiresEnforcement(network),
+      persist: options.persist,
     });
     options.signal?.throwIfAborted();
     const sandbox = await instrumentation.span(
@@ -1624,6 +1733,17 @@ export class Sandbox implements AsyncDisposable {
     return fromProtoStatus(response.s3Mounts ?? create(S3MountsStatusSchema, {}));
   }
 
+  /**
+   * Estado en vivo de cada `volumes` (`m15-efs-volumes`, experimental): una
+   * `ConfigureStatus` por lectura, nunca cacheada — un volumen puede pasar a
+   * `"degraded"`/`"remounting"` tras una pausa. Vacío si `create()` no
+   * recibió `volumes`. Espejo de `Sandbox.volumes` de Python.
+   */
+  async volumes(): Promise<ReadonlyMap<string, VolumeStatus>> {
+    const response = await this.#configureStatus(this.#core.resolveRequestTimeout(undefined));
+    return volumeStatusesFromProto(response.efsVolumes);
+  }
+
   /** Un `HostAccess` con el JWE que cubre `port` (acuñado si hace falta); 9000 está prohibido (ADR-006). */
   async getHost(port: number): Promise<HostAccess> {
     const validated = validateHostPort(port);
@@ -1856,7 +1976,7 @@ export class Sandbox implements AsyncDisposable {
     timeoutMs: number,
   ): Promise<void> {
     const request = await buildConfigureRequest(sections);
-    const response = await this.#configure(request, timeoutMs);
+    const response = await this.#configure(request, configureTimeoutMs(sections, timeoutMs));
     await this.#waitSettled(checkConfigureResponse(response, sections), timeoutMs);
   }
 

@@ -24,9 +24,7 @@ use http::{Request, StatusCode};
 use rayd::adapters::{
     OsRandomSource, PlatformMetricsProbe, TokioSidecarLauncher, detect_spawn_platform,
 };
-use rayd::code::{
-    CodeManager, CodeSettings, KernelSignaller, OpTimeouts, SidecarSupervisor, sidecar_identity,
-};
+use rayd::code::{CodeManager, CodeSettings, OpTimeouts, SidecarSupervisor, sidecar_identity};
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{Services, StreamSettings};
 use rayd::hooks::{HookReply, hook_path};
@@ -35,7 +33,8 @@ use rayd::process::{ManagerSettings, platform_manager, shared_registry};
 use rayd::pty::{PtySettings, platform_pty_manager};
 use rayd_core::clock::SystemClock;
 use rayd_core::code::{
-    ContextRegistry, ExecutionLimits, KernelSidecar, SidecarConfig, sidecar_spawn_spec,
+    ContextRegistry, ExecutionLimits, KernelPidRejection, KernelProcess, KernelProcesses,
+    KernelSidecar, ProcessFacts, SidecarConfig, sidecar_spawn_spec,
 };
 use rayd_core::filesystem::DenyList;
 use rayd_core::lifecycle::Hook;
@@ -255,8 +254,34 @@ fn code_settings(options: &Options, config: &SidecarConfig) -> CodeSettings {
     }
 }
 
-/// A launcher for this host and a kernel killer that only records pids:
-/// the fake's pids are made up and must never be signalled.
+/// Vouches for every pid the fake sidecar reports and records the groups
+/// the supervisor would signal: the fake's pids are made up, so they must
+/// never reach the real table or `killpg`.
+struct RecordingKernels(Arc<Mutex<Vec<u32>>>);
+
+impl KernelProcesses for RecordingKernels {
+    fn admit(&self, pid: u32, sidecar_pid: u32) -> Result<KernelProcess, KernelPidRejection> {
+        let facts = |ppid, pgrp| ProcessFacts {
+            ppid,
+            pgrp,
+            start_ticks: 1,
+            uid: 1000,
+        };
+        KernelProcess::admit(
+            pid,
+            sidecar_pid,
+            Some(facts(sidecar_pid, pid)),
+            Some(facts(1, sidecar_pid)),
+        )
+    }
+
+    fn signal(&self, kernel: &KernelProcess, _signal: i32) -> bool {
+        self.0.lock().unwrap().push(kernel.pid());
+        true
+    }
+}
+
+/// A launcher for this host and a kernel table that only records pids.
 fn code_manager(
     session: &Arc<SandboxSession>,
     platform: &rayd::adapters::SpawnPlatform,
@@ -272,16 +297,13 @@ fn code_manager(
     let launcher: Arc<dyn KernelSidecar> =
         Arc::new(TokioSidecarLauncher::new(platform.identity_switch));
     let registry = Arc::new(Mutex::new(ContextRegistry::default()));
-    let recorder = killed.clone();
-    let kernel_killer: KernelSignaller =
-        Arc::new(move |pid, _signal| recorder.lock().unwrap().push(pid));
     let supervisor = SidecarSupervisor::new(
         launcher,
         spec,
         session.clone(),
         registry.clone(),
         settings.supervisor_settings(),
-        kernel_killer,
+        Arc::new(RecordingKernels(killed.clone())),
     );
     CodeManager::new(
         session.clone(),
@@ -595,6 +617,77 @@ async fn validate_answers_503_until_the_cell_finished() {
         "validate restarts the default kernel like /run"
     );
     assert_eq!(restart[0]["context_id"], "default");
+}
+
+/// A launched sandbox's validation state is always `Idle` (the build's
+/// `/validate` ran on a throwaway VM), so a `/validate` forged from
+/// inside it after `/run` must not restart the operator's default kernel
+/// nor run the validation cell.
+#[tokio::test]
+async fn a_validate_after_run_never_touches_the_default_kernel() {
+    let harness = harness_with(Options {
+        run: false,
+        ..Options::default()
+    })
+    .await;
+    harness.wait_kernel_ready(Duration::from_secs(10)).await;
+    harness.post(Hook::Ready, None).await;
+    let (_, reply) = harness.post(Hook::Run, Some(run_envelope())).await;
+    assert_eq!(reply.outcome, "installed");
+    harness
+        .wait_for_request("restart_context", Duration::from_secs(5))
+        .await;
+    harness.wait_kernel_ready(Duration::from_secs(10)).await;
+
+    let (status, reply) = harness.post(Hook::Validate, None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply.outcome, "validate_skipped");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(harness.requests_of("execute").is_empty());
+    assert_eq!(
+        harness.requests_of("restart_context").len(),
+        1,
+        "only /run's rotation"
+    );
+}
+
+/// Defence in depth behind the `/validate` handler: the build-only path
+/// that skips the stream gate refuses on its own once `/run` is accepted,
+/// so neither the restart nor the cell reaches the sidecar.
+#[tokio::test]
+async fn the_build_only_execute_path_refuses_after_run() {
+    let harness = harness().await;
+    let restarts_before = harness.requests_of("restart_context").len();
+
+    let refused = harness
+        .manager
+        .execute_unchecked(rayd::code::ExecuteInput {
+            context_id: None,
+            language: None,
+            code: "1".to_owned(),
+            timeout_ms: 1_000,
+            envs: std::collections::BTreeMap::new(),
+        })
+        .await;
+    let outcome = rayd::code::run_validation(&harness.manager).await;
+
+    assert!(matches!(
+        refused,
+        Err(rayd_core::code::CodeError::NotAcceptingStreams {
+            phase: rayd_core::lifecycle::HookPhase::Running
+        })
+    ));
+    assert!(matches!(
+        outcome,
+        rayd_core::code::ValidationOutcome::Failed { .. }
+    ));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(harness.requests_of("execute").is_empty());
+    assert_eq!(
+        harness.requests_of("restart_context").len(),
+        restarts_before
+    );
 }
 
 #[tokio::test]

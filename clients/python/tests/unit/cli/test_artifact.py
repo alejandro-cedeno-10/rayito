@@ -207,3 +207,80 @@ def test_artifact_module_is_stdlib_only() -> None:
             assert node.level == 0, "sin imports relativos"
             assert node.module is not None
             assert node.module.split(".")[0] in sys.stdlib_module_names, node.module
+
+
+def test_a_symlink_in_the_image_tree_is_refused(image_dir: Path, tmp_path: Path) -> None:
+    """A link would ship its target's bytes (a file of the builder's home)
+    into every sandbox image: the walk refuses it before reading anything."""
+    secret = tmp_path / "outside.txt"
+    secret.write_text("not for the image\n", encoding="utf-8")
+    (image_dir / "kernel-sidecar" / "leak.txt").symlink_to(secret)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _artifact.write_zip(image_dir, tmp_path / "out.zip")
+
+
+def test_a_symlinked_directory_in_the_sidecar_is_refused(sidecar_dir: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "credentials").write_text("x\n", encoding="utf-8")
+    (sidecar_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy")
+    assert not (tmp_path / "copy" / "linked" / "credentials").exists()
+
+
+def test_a_symlink_inside_an_excluded_directory_is_ignored(
+    sidecar_dir: Path, tmp_path: Path
+) -> None:
+    """Virtualenvs are full of interpreter links and never ship."""
+    (sidecar_dir / ".venv" / "python").symlink_to(sidecar_dir / "sidecar.py")
+
+    assert _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy") == 3
+
+
+def test_a_linked_virtualenv_is_skipped_not_refused(sidecar_dir: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "venvs" / "sidecar"
+    elsewhere.mkdir(parents=True)
+    (sidecar_dir / ".venv").rename(tmp_path / "old-venv")
+    (sidecar_dir / ".venv").symlink_to(elsewhere, target_is_directory=True)
+
+    assert _artifact.copy_sidecar(sidecar_dir, tmp_path / "copy") == 3
+
+
+def test_with_efs_adds_only_the_efs_marker(image_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "efs.zip"
+    assert _artifact.write_zip(image_dir, out, with_efs=True) == 4
+    assert _artifact.EFS_MARKER_ENTRY in names(out)
+    with zipfile.ZipFile(out) as archive:
+        assert archive.read(_artifact.EFS_MARKER_ENTRY) == b"efs\n"
+    assert _artifact.marker_has_efs(out)
+    assert _artifact.marker_variant(out) == "full"
+    plain = tmp_path / "plain.zip"
+    _artifact.write_zip(image_dir, plain)
+    assert not _artifact.marker_has_efs(plain)
+    assert not (image_dir / "kernel-sidecar" / "efs_variant").exists()
+
+
+def test_with_efs_is_orthogonal_to_the_variant(image_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "poly-efs.zip"
+    _artifact.write_zip(image_dir, out, "poly", with_efs=True)
+    assert _artifact.marker_variant(out) == "poly"
+    assert _artifact.marker_has_efs(out)
+
+
+def test_an_efs_marker_with_unexpected_content_does_not_count(tmp_path: Path) -> None:
+    odd = tmp_path / "odd.zip"
+    with zipfile.ZipFile(odd, "w") as archive:
+        archive.writestr(_artifact.EFS_MARKER_ENTRY, "yes\n")
+    assert not _artifact.marker_has_efs(odd)
+
+
+def test_zip_main_with_efs_flag(
+    image_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "cli-efs.zip"
+    assert _artifact.zip_main([str(image_dir), str(out), "--with-efs"]) == 0
+    assert _artifact.marker_has_efs(out)
+    assert "(variant full, with efs)" in capsys.readouterr().out

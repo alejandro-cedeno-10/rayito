@@ -135,13 +135,20 @@ export interface CommandExitErrorOptions {
   readonly stderr?: string | undefined;
   readonly error?: string | undefined;
   readonly grpcCode?: Code | undefined;
+  readonly truncated?: boolean | undefined;
 }
 
+/**
+ * Un comando terminó con exit code distinto de cero. `truncated` es `true`
+ * cuando `stdout` o `stderr` superaron `maxOutputBytes` y sólo conservan su
+ * final.
+ */
 export class CommandExitError extends SandboxError {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
   readonly error: string | undefined;
+  readonly truncated: boolean;
 
   constructor(message: string, options: CommandExitErrorOptions) {
     super(message, { grpcCode: options.grpcCode });
@@ -149,6 +156,7 @@ export class CommandExitError extends SandboxError {
     this.stdout = options.stdout ?? "";
     this.stderr = options.stderr ?? "";
     this.error = options.error;
+    this.truncated = options.truncated ?? false;
   }
 }
 
@@ -339,6 +347,27 @@ export class VolumeError extends SandboxError {}
 /** El `AccessPoint` del volumen no existe. */
 export class VolumeNotFoundError extends VolumeError {}
 
+export interface VolumeMountErrorOptions extends SandboxErrorOptions {
+  readonly code: string;
+}
+
+/**
+ * Un volumen de `volumes` (m15-efs-volumes, experimental) no se pudo montar
+ * en el sandbox o no llegó a `mounted` a tiempo: `create()` ya terminó el
+ * MicroVM (salvo `keepOnFailure`). `code` es uno de `network`,
+ * `iam_denied`, `not_found`, `tls`, `helper_missing`, `timeout`,
+ * `invalid_path` o `unknown` (`VOLUME_MOUNT_ERROR_CLASSES`). Espejo de
+ * `VolumeMountException` de Python.
+ */
+export class VolumeMountError extends VolumeError {
+  readonly code: string;
+
+  constructor(message: string, options: VolumeMountErrorOptions) {
+    super(message, options);
+    this.code = options.code;
+  }
+}
+
 /** Una operación de contenido nombra una ruta fuera del volumen montado. */
 export class VolumePathNotFoundError extends VolumeError {}
 
@@ -352,9 +381,11 @@ export interface BuildErrorOptions extends SandboxErrorOptions {
 
 /**
  * `Template.build` (m15-templates) falló: `reason` nombra la causa
- * (`build_quota`, `ready_client_error`, `ready_server_error`, o
- * `undefined` con `step`/`command`/`exitCode`/`logTail` cuando falló un
- * paso del Dockerfile compilado).
+ * (`build_quota`, `aws_error` cuando AWS rechazó el build por otro motivo
+ * —el mensaje y `cause` llevan sólo el resumen saneado—,
+ * `ready_client_error`, `ready_server_error`, o `undefined` con
+ * `step`/`command`/`exitCode`/`logTail` cuando falló un paso del Dockerfile
+ * compilado).
  *
  * El shim `rayito/e2b` (`e2b/template.js`) ya construye de verdad: su
  * `BuildError`/`TemplateError` son alias de estas clases nativas (mismo

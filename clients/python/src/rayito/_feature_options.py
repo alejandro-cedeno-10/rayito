@@ -21,17 +21,22 @@ sólo valida su forma (pura, cero AWS) y devuelve un `GatewaySectionFactory`
 `create()`/`take()` una vez conocen la `SecretCache`. `telemetry=`
 (m15-rayd-otlp) y `events=` (m15-events-webhooks) se validan aquí y su
 sección se planea tras `run-microvm` (`planned_sections`), porque necesitan
-hechos que sólo existen entonces. Cada función sustituye
+hechos que sólo existen entonces. `volumes=` (m15-efs-volumes) se valida
+aquí y `prepare_features` resuelve con EFS, antes de `run-microvm`, la IP de
+mount target de cada volumen; su sección viaja en el mismo `Configure`.
+Cada función sustituye
 su propia rama por una implementación real en su propio cambio OpenSpec; ni
 esta firma ni `FeatureOptions`/`FeaturePlan` cambian para eso.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Final
 
+from rayito._aws import LazyClient
 from rayito._configure_base import PlannedSection
 from rayito._lifecycle_events._options import validate_events_option
 from rayito._lifecycle_events._section import LifecycleEventsSectionFactory
@@ -40,13 +45,20 @@ from rayito._s3_mounts import S3Mount, plan_s3_mounts
 from rayito._secret_gateway import GatewaySectionFactory, validate_gateways
 from rayito._telemetry_export import TelemetrySectionFactory
 from rayito._telemetry_export import plan as plan_telemetry
+from rayito._volumes._mount_targets import (
+    MountTargetResolver,
+    needs_mount_targets,
+    resolve_mount_targets,
+)
+from rayito._volumes._section import EfsVolumesSection, VolumesRequest, plan_volumes
 from rayito.exceptions import UnimplementedError
 
 if TYPE_CHECKING:
+    import boto3
+
     from rayito._lifecycle_events._service import LifecycleEvents
     from rayito._telemetry_export import TelemetryExport
 
-VOLUMES_CHANGE: Final = "m15-efs-volumes"
 EVENTS_CHANGE: Final = "m15-events-webhooks"
 TELEMETRY_CHANGE: Final = "m15-rayd-otlp"
 GATEWAYS_CHANGE: Final = "m15-secrets-gateway"
@@ -107,12 +119,16 @@ class FeaturePlan:
     primer `Health`); y `events`, el `LifecycleEvents` (síncrono, también
     para `AsyncLifecycleEvents`) cuya sección necesita además el
     `sandbox_id` para derivar `k_sbx`. `planned_sections` las junta en
-    cuanto `create()` conoce esos hechos.
+    cuanto `create()` conoce esos hechos. `volumes`, el `volumes=` ya
+    validado al que `prepare_features` añade las IPs de mount target antes de
+    `run-microvm`, convirtiéndolo en una sección más de
+    `configure_sections`.
     """
 
     configure_sections: tuple[PlannedSection, ...] = ()
     telemetry: TelemetryExport | None = None
     events: LifecycleEvents | None = None
+    volumes: VolumesRequest | None = None
 
 
 @dataclass(frozen=True)
@@ -154,15 +170,22 @@ def planned_sections(plan: FeaturePlan, facts: LaunchFacts) -> tuple[PlannedSect
 
 
 def plan_features(
-    options: FeatureOptions, *, image_variant: str | None = None, logging: object = None
+    options: FeatureOptions,
+    *,
+    image_variant: str | None = None,
+    logging: object = None,
+    egress: Sequence[str] | None = None,
+    execution_role_arn: str | None = None,
 ) -> FeaturePlan:
     """Punto único por el que `create()`/`take()` pasan las siete opciones
     0.6. `image_variant` (de `_role_policy.resolve_image_variant`) es la
-    variante de imagen, cuando el nombre ya permite decidirla; `mounts=` y
-    `telemetry=` (con `OtlpAuth.execution_role()`) lo usan para exigir la
-    variante caps antes de lanzar (`require_caps_for`, una comprobación
-    puramente sobre el nombre de la imagen). `logging` es el `logging=` de
-    `create()`: `events=` exige que mande los logs a CloudWatch. No hace
+    variante de imagen, cuando el nombre ya permite decidirla; `mounts=`,
+    `volumes=` y `telemetry=` (con `OtlpAuth.execution_role()`) lo usan
+    para exigir la variante caps antes de lanzar (`require_caps_for`, una
+    comprobación puramente sobre el nombre de la imagen). `logging` es el `logging=` de
+    `create()`: `events=` exige que mande los logs a CloudWatch. `egress` y
+    `execution_role_arn` son los de `create()`: `volumes=` exige un único
+    conector propio y un rol (`_volumes._section.plan_volumes`). No hace
     ninguna llamada a AWS ni construye ningún cliente.
 
     `events=` se valida aquí (tipo y `logging`) y viaja en
@@ -177,8 +200,16 @@ def plan_features(
         section = plan_s3_mounts(options.mounts)
         if section is not None:
             sections.append(section)
-    if options.volumes is not None:
-        raise UnimplementedError("volumes=", f"llega en 0.6 ({VOLUMES_CHANGE})")
+    volumes = (
+        plan_volumes(
+            options.volumes,
+            image_variant=image_variant,
+            egress=egress,
+            execution_role_arn=execution_role_arn,
+        )
+        if options.volumes is not None
+        else None
+    )
     # `size=` (m15-sizes-catalog) ya no es un stub: no produce ninguna
     # sección de `ConfigureSandbox` (no es un ajuste del guest en marcha,
     # es qué imagen lanzar), así que `create()` la resuelve por su cuenta
@@ -201,17 +232,43 @@ def plan_features(
         # `secrets=` — ver `GatewaySectionFactory`.
         sections.append(GatewaySectionFactory(validate_gateways(options.gateways)))
     if options.domain is not None:
-        # A diferencia de `volumes=` (aún sin construir), `DOMAIN_CHANGE` sí
-        # construye `CustomDomain` (deploy/register/unregister/refresh) completa
-        # y probada, pero sin cablearla aquí (falta el seam `HostResolver` que la
-        # arquitectura de M15 §1(g) esperaba de foundations; ver MILESTONES.md
-        # "M15 — Rayito 0.6" y `ARCHITECTURE.md` ADR-024). El mensaje lo dice
-        # explícitamente para no mandar a quien lea el error a esperar un cambio
-        # que ya existe.
         raise UnimplementedError(
             "domain=",
-            f"{DOMAIN_CHANGE} construyó CustomDomain pero no la cableó a Sandbox.create()/"
-            "get_host()/expose(): usa rayito.CustomDomain directamente mientras tanto "
-            "(seguimiento no bloqueante, ver MILESTONES.md M15)",
+            f"{DOMAIN_CHANGE} aún no se cablea a Sandbox.create(): usa rayito.CustomDomain "
+            "(experimental) directamente",
         )
-    return FeaturePlan(configure_sections=tuple(sections), telemetry=telemetry, events=events)
+    return FeaturePlan(
+        configure_sections=tuple(sections), telemetry=telemetry, events=events, volumes=volumes
+    )
+
+
+def prepare_features(
+    plan: FeaturePlan, *, region: str | None, session: boto3.session.Session | None
+) -> FeaturePlan:
+    """Lo que `create()` resuelve con AWS después de `plan_features` y antes
+    de `run-microvm`, para que un fallo no llegue a lanzar (ni a pagar) un
+    MicroVM: hoy, la IP de mount target de cada volumen de `volumes=` que no
+    la trae (`DescribeMountTargets`, credenciales del llamante, una llamada
+    por sistema de ficheros). Sin `volumes=` devuelve `plan` tal cual, sin
+    construir ningún cliente. `main.py` nunca nombra la función concreta."""
+    if plan.volumes is None:
+        return plan
+    volumes = plan.volumes.volumes
+    if needs_mount_targets(volumes):
+        client = LazyClient("efs", region=region, session=session).get()
+        volumes = resolve_mount_targets(volumes, MountTargetResolver(client))
+    return replace(
+        plan,
+        configure_sections=(*plan.configure_sections, EfsVolumesSection(volumes)),
+        volumes=None,
+    )
+
+
+async def aprepare_features(
+    plan: FeaturePlan, *, region: str | None, session: boto3.session.Session | None
+) -> FeaturePlan:
+    """`prepare_features` para `AsyncSandbox.create()`: sin nada que
+    resolver vuelve en el acto; si no, en un hilo (boto3 es bloqueante)."""
+    if plan.volumes is None:
+        return plan
+    return await asyncio.to_thread(prepare_features, plan, region=region, session=session)

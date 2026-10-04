@@ -30,6 +30,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from rayito._aws import LazyClient
+from rayito._aws_sanitize import sanitize_aws_error
 from rayito._images import (
     ACTIVE_VERSION_STATUS,
     BUILD_QUOTA_ERROR_CODE,
@@ -261,7 +262,9 @@ def submit_build(
 ) -> tuple[str, str]:
     """`create`/`update-microvm-image`; la cuota de 10 builds simultáneos
     por cuenta (Q83) llega como `BuildException(reason="build_quota")`, la
-    misma que da el guardia local de `_concurrency.py`."""
+    misma que da el guardia local de `_concurrency.py`, y cualquier otro
+    rechazo de AWS como `BuildException(reason="aws_error")` con el
+    resumen saneado (`sanitize_aws_error`) como mensaje y `__cause__`."""
     try:
         submitted = submit_image_build(
             clients, name, arn, {**desired, "description": BUILD_DESCRIPTION}
@@ -273,7 +276,10 @@ def submit_build(
                 "de la cuenta agotada (Q83); reintenta cuando termine alguno",
                 reason="build_quota",
             ) from None
-        raise
+        summary = sanitize_aws_error(exc)
+        raise BuildException(
+            f"AWS rechazó el build del template {name!r}: {summary}", reason="aws_error"
+        ) from summary
     return submitted.arn, submitted.version
 
 

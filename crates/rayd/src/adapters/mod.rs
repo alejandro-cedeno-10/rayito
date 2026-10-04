@@ -8,28 +8,38 @@
 //! credential-free HTTPS client of presigned transfers (ADR-010), the
 //! bounded per-filesystem `syncfs` of `/suspend`, the boot-time reader of
 //! `/etc/rayito/template.json`, the shell runner behind a template's
-//! `ready_cmd` (ADR-022, `features::template_start`), and the process-wide
+//! `ready_cmd` (ADR-022, `features::template_start`), the process-wide
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
-//! (`rayd-orphan-reaper`).
+//! (`rayd-orphan-reaper`), the symlink-proof mountpoint walk both mount
+//! features share, the EFS volume mounter over `amazon-efs-utils`
+//! (ADR-018), the `/proc/net/tcp` lookup of who opened a hook
+//! connection (`hook_peer`), and the connection cap of `rayd`'s own
+//! listeners.
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
 pub mod bounded_sync;
 pub mod capabilities;
+pub mod capped_listener;
 pub mod child_registry;
 pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
+pub mod dir_walk;
+pub mod efs_mount;
 pub mod egress_routes;
+pub mod exec_posture;
 pub mod fs_identity;
 pub mod fs_template_spec;
 pub mod fuse_device;
 pub mod imds_block;
 pub mod ip_command;
 pub mod mount_s3;
+pub mod mountpoint;
 pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
 pub mod otlp_codec;
+pub mod proc_net_peers;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod procfs_process_table;
@@ -44,7 +54,10 @@ pub mod stdout_event_sink;
 pub mod tar_archiver;
 
 pub use bounded_sync::{BoundedFlush, PlatformFilesystemSync};
-pub use capabilities::{GuestCapabilities, detect_guest_capabilities};
+pub use capabilities::{
+    GuestCapabilities, binary_on_path, detect_guest_capabilities, kernel_supports_filesystem,
+};
+pub use capped_listener::{Accept, CappedIncoming, CappedListener, CappedStream};
 pub use child_registry::{ChildRegistry, SpawnChild};
 pub use cloudwatch_otlp_sink::{
     CloudWatchOtlpSink, FixedCredentialsSink, SinkCredentials, SinkInitError,
@@ -52,6 +65,7 @@ pub use cloudwatch_otlp_sink::{
 pub use credential_broker::{
     CredentialBrokerError, GuestCredentials, ImdsCredentialBroker, PushedCredentials,
 };
+pub use efs_mount::{EfsHost, EfsUtilsMounter, LeaseSource, LinuxEfsHost, detect_efs_supported};
 pub use fs_identity::FsIdentityGuard;
 pub use fs_template_spec::{FsTemplateSpecSource, TemplateSpecSource};
 pub use fuse_device::LinuxFuseDevice;
@@ -69,6 +83,7 @@ pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
 pub use orphan_reaper::OrphanReaper;
 pub use otlp_codec::ProstOtlpEncoder;
+pub use proc_net_peers::{ProcNetPeers, agent_uid};
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };

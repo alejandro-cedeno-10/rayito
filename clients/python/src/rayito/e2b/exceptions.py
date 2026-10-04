@@ -40,6 +40,9 @@ from rayito.exceptions import (
     SecretNotFoundException,
     TimeoutException,
     UnimplementedError,
+    VolumeException,
+    VolumeNotFoundException,
+    VolumePathNotFoundException,
 )
 
 COMPAT_DOC_PATH = "docs/site/docs/e2b-compat.md"
@@ -80,4 +83,7 @@ __all__ = [
     "TemplateException",
     "TimeoutException",
     "UnimplementedError",
+    "VolumeException",
+    "VolumeNotFoundException",
+    "VolumePathNotFoundException",
 ]

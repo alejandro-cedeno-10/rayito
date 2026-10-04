@@ -18,6 +18,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # uv nunca vuelve a resolver un uv.lock que ya no casa con su pyproject.toml
+  # (sec-supply-chain-followups, SC-A05): sin esto `uv run` re-bloquea en
+  # silencio e instala versiones que ni Dependabot ni los hashes del lock
+  # vieron.
+  UV_LOCKED: "1"
 
 jobs:
   check:
@@ -73,7 +78,13 @@ jobs:
           timeout --kill-after=30s 20m cargo test --workspace --locked --no-fail-fast > "$RUNNER_TEMP/cargo-test.log" 2>&1 < /dev/null || status=$?
           cat "$RUNNER_TEMP/cargo-test.log"
           exit "$status"
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
+        with:
+          enable-cache: auto
+      - name: uv.lock matches pyproject.toml (a stale lock fails here instead of re-locking in a job)
+        run: |
+          (cd clients/python && uv lock --check)
+          (cd kernel-sidecar && uv lock --check)
       - run: uvx ruff==0.16.7 check scripts
       - name: limits.json renders _limits.py and limits.ts without drift
         run: python3 scripts/gen_limits.py --check
@@ -94,7 +105,12 @@ jobs:
         run: |
           (cd clients/python && uv build)
           python3 scripts/check_wheel.py clients/python/dist/*.whl
-          uvx twine==7.0.0 check clients/python/dist/*
+      - name: twine check from the hash-pinned requirements release.yml installs
+        run: |
+          uv venv "$RUNNER_TEMP/twine"
+          uv pip install --python "$RUNNER_TEMP/twine" --require-hashes --no-deps --only-binary :all: \
+            -r .github/release/requirements-twine.txt
+          "$RUNNER_TEMP/twine/bin/twine" check clients/python/dist/*
 
   python-versions:
     # `check` runs the Python client on the runner's 3.12; this job runs the
@@ -114,9 +130,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: ${{ matrix.python }}
+          enable-cache: auto
       - name: Python client unit tests on a declared version
         run: cd clients/python && uv run pytest tests/unit
 
@@ -160,9 +177,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
+          enable-cache: auto
       - name: Lint and type-check
         run: |
           cd kernel-sidecar
@@ -186,11 +204,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+      - uses: ./.github/actions/cargo-deny
       - name: advisories, bans, licenses, sources (deny.toml)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          rust-version: "1.98"
+        run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
   audit:
     name: dependency audit
@@ -202,21 +220,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
+          enable-cache: auto
+      - name: pip-audit from hash-pinned requirements (its graph never resolves at run time)
+        run: |
+          uv venv "$RUNNER_TEMP/pip-audit"
+          uv pip install --python "$RUNNER_TEMP/pip-audit" --require-hashes --no-deps --only-binary :all: \
+            -r .github/release/requirements-pip-audit.txt
       - name: pip-audit over the image pins (kernel-sidecar/requirements.txt)
-        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements.txt --no-deps --strict
+        run: |
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r kernel-sidecar/requirements.txt --no-deps --strict
       - name: pip-audit over the poly variant pins (kernel-sidecar/requirements-poly.txt)
-        run: uvx pip-audit==2.10.1 -r kernel-sidecar/requirements-poly.txt --no-deps --strict
+        run: |
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r kernel-sidecar/requirements-poly.txt --no-deps --strict
       - name: pip-audit over the SDK runtime graph (uv export of clients/python)
         run: |
           (cd clients/python && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/rayito-client.txt")
-          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$RUNNER_TEMP/rayito-client.txt" --no-deps --strict
       - name: pip-audit over the sidecar lock (uv export of kernel-sidecar)
         run: |
           (cd kernel-sidecar && uv export --frozen --no-dev --no-emit-project -o "$RUNNER_TEMP/kernel-sidecar.txt")
-          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$RUNNER_TEMP/kernel-sidecar.txt" --no-deps --strict
+      - name: pip-audit over the hash-pinned tool requirements (.github/release/requirements-*.txt)
+        run: |
+          for requirements in .github/release/requirements-*.txt; do
+            "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$requirements" --no-deps --strict
+          done
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 9.15.4
@@ -258,9 +289,10 @@ jobs:
             | jq -r 'select(.reason == "compiler-artifact" and .target.name == "m9_egress" and .executable != null) | .executable')"
           test -x "$binary"
           sudo env RAYITO_REQUIRE_EGRESS_NETNS=1 unshare --net -- "$binary" --test-threads=1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
+          enable-cache: auto
       - name: Sidecar host tests with the image pins (manylinux_2_28_aarch64 wheels)
         run: cd kernel-sidecar && uv run --with-requirements requirements.txt pytest
       - name: Sidecar real kernel tests on aarch64 (plus the poly bash kernel)
@@ -282,9 +314,7 @@ jobs:
       - name: Toolchain from rust-toolchain.toml
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: 0.16.0
+      - uses: ./.github/actions/zig
       - run: cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.6 cargo-cyclonedx@0.5.9
       - name: cargo auditable zigbuild (embeds the crate graph in .dep-v0, same --remap-path-prefix rustflags as `make build`'s REMAP_CONFIG)
         run: |
@@ -329,10 +359,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
+          enable-cache: auto
       - name: Build the docs site strictly (no deploy)
         run: cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
-      - name: Docs examples compile, name-check and typecheck against rayito (no AWS)
-        run: cd clients/python && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy
+      - name: Docs examples compile, name-check and typecheck against rayito; CLI commands exist (no AWS)
+        run: cd clients/python && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy --cli

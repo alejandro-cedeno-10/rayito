@@ -36,6 +36,7 @@ from rayito._limits import (
 )
 from rayito._models import (
     IdlePolicy,
+    S3Prefix,
     SandboxHealth,
     SandboxInfo,
     template_name_from_arn,
@@ -296,6 +297,7 @@ def build_launch_plan(
     max_lifetime: int | None = None,
     on_timeout: str | None = None,
     network_enforce: bool = False,
+    persist: S3Prefix | None = None,
 ) -> LaunchPlan:
     token = resolve_access_token(access_token)
     lifecycle = resolve_lifecycle(
@@ -315,6 +317,7 @@ def build_launch_plan(
             cpu_time_limit=cpu_time_limit,
             lifecycle=lifecycle.block,
             network_enforce=network_enforce,
+            persist=persist,
         ),
         client_token=uuid.uuid4().hex,
         logging=logging_config(logging, template_name=template_name_from_arn(image_arn)),

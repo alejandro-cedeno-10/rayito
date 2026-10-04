@@ -21,7 +21,15 @@ use super::{
 };
 
 /// Ports on which a hostname rule may allow a target by name (E2B: HTTP
-/// Host on 80, TLS SNI on 443).
+/// Host on 80, TLS SNI on 443). The decision is the same whatever form
+/// the request arrives in: an absolute-form `http://` request has its
+/// `Host` rewritten to the checked authority (`proxy_protocol`), but a
+/// `CONNECT` or SOCKS5 tunnel to an allowed name on either port carries
+/// whatever bytes the client sends, so a `Host` header (on 80) or an SNI
+/// (on 443) naming another virtual host of the same addresses gets
+/// through: the shared-IP residual `SECURITY.md` T17 states. Refusing a
+/// tunnel to 80 would close the `Host` half at the cost of `ws://` and of
+/// every client that tunnels plain HTTP through SOCKS5.
 pub const NAME_RULE_PORTS: [u16; 2] = [80, 443];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -825,6 +833,28 @@ mod tests {
         assert_eq!(
             policy.decide(&TargetHost::Ip(ip("203.0.113.7")), 0, &guard),
             TargetDecision::Deny(DenyReason::Invalid)
+        );
+    }
+
+    /// The policy cannot tell how the request will reach the target: an
+    /// allowed name on 80 is allowed by name, resolved to that name's own
+    /// addresses, whether the proxy then rewrites an absolute-form `Host`
+    /// or tunnels a `CONNECT`/SOCKS5 stream verbatim (T17's residual).
+    /// Other ports stay closed to a name rule.
+    #[test]
+    fn an_allowed_name_on_port_80_is_allowed_by_name_whatever_the_request_form() {
+        let guard = TargetGuard::default();
+        let routes = policy(&["api.example.test"], &[ALL_TRAFFIC]);
+        for port in NAME_RULE_PORTS {
+            assert_eq!(
+                routes.decide(&name("api.example.test"), port, &guard),
+                TargetDecision::ResolveByName("api.example.test".to_owned()),
+                "{port}"
+            );
+        }
+        assert_eq!(
+            routes.decide(&name("api.example.test"), 8080, &guard),
+            TargetDecision::Deny(DenyReason::Policy)
         );
     }
 

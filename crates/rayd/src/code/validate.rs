@@ -19,7 +19,15 @@ pub const VALIDATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Bound on the whole run, after the server timeout's own restart branch.
 const VALIDATE_DEADLINE: Duration = Duration::from_secs(90);
 
+/// Refused outright once the boot is a sandbox (the build gate): neither
+/// the restart nor the cell may touch the operator's `default` context.
 pub async fn run_validation(manager: &Arc<CodeManager>) -> ValidationOutcome {
+    if let Err(error) = manager.build_gate() {
+        tracing::warn!(reason = %error, "validate refused outside the build");
+        return ValidationOutcome::Failed {
+            error_name: error.to_string(),
+        };
+    }
     if let Err(error) = manager.restart_context(DEFAULT_CONTEXT_ID).await {
         tracing::warn!(reason = %error, "validate could not restart the default kernel");
     }

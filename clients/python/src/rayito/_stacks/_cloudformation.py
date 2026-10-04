@@ -2,10 +2,11 @@
 
 Parámetros y formas verificados offline contra botocore 1.43.103
 (`AWS_API_NOTES.md` §21): `CreateStack` (`StackName`, `TemplateBody`,
-`Parameters` [{ParameterKey, ParameterValue}], `Tags` [{Key, Value}],
+`Parameters` [{ParameterKey, ParameterValue}] o, sólo en
+`UpdateStack`, [{ParameterKey, UsePreviousValue}], `Tags` [{Key, Value}],
 `Capabilities`), `UpdateStack` (igual, más el `ValidationError` "No updates
 are to be performed" cuando no hay cambios), `DescribeStacks` (`StackName`
--> `Stacks[0].{StackStatus, StackStatusReason, Outputs}`, o `ValidationError`
+-> `Stacks[0].{StackStatus, StackStatusReason, Outputs, Parameters}`, o `ValidationError`
 "does not exist" si no hay pila), `DeleteStack` (idempotente: no falla sobre
 una pila que no existe) y `DescribeStackEvents` (no usado todavía: `wait`
 sondea `DescribeStacks`, más simple y suficiente para pilas sin recursos
@@ -66,6 +67,10 @@ class _ClientSource(Protocol):
 
 
 def _wrap(exc: BotoCoreError | ClientError) -> StackException:
+    """El `StackException` de un error de botocore; quien lo lanza lo
+    encadena `from sanitize_aws_error(exc)`, nunca `from exc`, para que el
+    `ClientError` crudo (con la cadena canónica de un error de firma en su
+    `Message`) no llegue a ningún traceback."""
     return StackException(str(sanitize_aws_error(exc)), code="failed")
 
 
@@ -104,7 +109,7 @@ class CloudFormationProvisioner:
         except (BotoCoreError, ClientError) as exc:
             if _is_missing_stack(exc):
                 return None
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         stacks = response.get("Stacks") or []
         if not stacks:
             return None
@@ -112,11 +117,16 @@ class CloudFormationProvisioner:
         outputs = {
             output["OutputKey"]: output["OutputValue"] for output in stack.get("Outputs") or []
         }
+        parameters = {
+            parameter["ParameterKey"]: parameter.get("ParameterValue", "")
+            for parameter in stack.get("Parameters") or []
+        }
         return StackStatus(
             name=stack_name,
             state=stack.get("StackStatus"),
             outputs=outputs,
             reason_code=stack.get("StackStatusReason"),
+            parameters=parameters,
         )
 
     def create(
@@ -137,7 +147,7 @@ class CloudFormationProvisioner:
                 Capabilities=list(component.capabilities),
             )
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def update(
         self,
@@ -147,28 +157,29 @@ class CloudFormationProvisioner:
         template_body: str,
         parameters: dict[str, str],
         tags: dict[str, str],
+        keep_previous: tuple[str, ...] = (),
     ) -> UpdateOutcome:
         try:
             self._cloudformation.get().update_stack(
                 StackName=stack_name,
                 TemplateBody=template_body,
-                Parameters=_proto_parameters(parameters),
+                Parameters=_proto_parameters(parameters, keep_previous),
                 Tags=_proto_tags(tags),
                 Capabilities=list(component.capabilities),
             )
         except ClientError as exc:
             if _is_no_updates(exc):
                 return "no_changes"
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         except BotoCoreError as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
         return "changed"
 
     def delete(self, stack_name: str) -> None:
         try:
             self._cloudformation.get().delete_stack(StackName=stack_name)
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def wait(self, stack_name: str, target: DeployTarget, timeout: float) -> None:
         deadline = self._clock() + timeout
@@ -200,21 +211,26 @@ class CloudFormationProvisioner:
             return
         except ClientError as exc:
             if _aws_code(exc) != HEAD_NOT_FOUND_CODE:
-                raise _wrap(exc) from exc
+                raise _wrap(exc) from sanitize_aws_error(exc)
         try:
             client.put_object(Bucket=bucket, Key=key, Body=data)
         except (BotoCoreError, ClientError) as exc:
-            raise _wrap(exc) from exc
+            raise _wrap(exc) from sanitize_aws_error(exc)
 
     def failure_reason(self, stack_name: str) -> str | None:
         status = self.describe(stack_name)
         return None if status is None else status.reason_code
 
 
-def _proto_parameters(parameters: dict[str, str]) -> list[dict[str, str]]:
-    return [
-        {"ParameterKey": key, "ParameterValue": value} for key, value in sorted(parameters.items())
-    ]
+def _proto_parameters(
+    parameters: dict[str, str], keep_previous: tuple[str, ...] = ()
+) -> list[dict[str, str | bool]]:
+    entries: dict[str, dict[str, str | bool]] = {
+        key: {"ParameterKey": key, "ParameterValue": value} for key, value in parameters.items()
+    }
+    for key in keep_previous:
+        entries[key] = {"ParameterKey": key, "UsePreviousValue": True}
+    return [entries[key] for key in sorted(entries)]
 
 
 def _proto_tags(tags: dict[str, str]) -> list[dict[str, str]]:

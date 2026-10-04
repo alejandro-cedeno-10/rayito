@@ -44,6 +44,22 @@ _VALID_METHODS: Final = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEA
 # RFC 9110 §5.6.2 `token`: los mismos bytes que acepta
 # `rayd_core::secret_gateway::route::is_header_token_byte`.
 _HEADER_TOKEN_PATTERN: Final = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+# Bytes que una ruta de `allow` puede llevar en crudo: `unreserved`, `:`,
+# `@` y los `sub-delims` de RFC 3986 salvo `;` (Tomcat, Jetty, Spring y
+# varios proxies quitan un parámetro `;...` antes de enrutar), más `/` y el
+# `%` de un byte codificado. Mismo conjunto que
+# `rayd_core::secret_gateway::route::is_allowed_raw_path_byte`.
+_ALLOWED_RAW_PATH_CHARS: Final = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:@!$&'()*+,=/%"
+)
+# Bytes que un segmento no puede llevar una vez decodificado: `/` y `\`
+# cambian cómo parte la ruta un upstream que decodifica, `%` es una segunda
+# capa de codificación y `;` vuelve a ser un parámetro de ruta
+# (`rayd_core::secret_gateway::route::FORBIDDEN_DECODED_BYTES`).
+_FORBIDDEN_DECODED_BYTES: Final = frozenset(b"/\\%;")
+_FIRST_PRINTABLE_ASCII: Final = 0x20
+_ASCII_DELETE: Final = 0x7F
+_HEX_DIGITS: Final = frozenset("0123456789abcdefABCDEF")
 # Cabeceras hop-by-hop (RFC 9110 §7.6.1) y de framing/host: una ruta nunca
 # puede inyectarlas, o podría desincronizar la petición reenviada o apuntarla
 # a un host distinto del de `upstream` (mismo conjunto que
@@ -187,6 +203,62 @@ def _validate_allow_rule(rule: tuple[str, str]) -> None:
         )
     if not isinstance(path, str) or not path.startswith("/"):
         raise InvalidArgumentException("una ruta de allow debe ser absoluta (empezar por '/')")
+    if not is_safe_request_path(path):
+        raise InvalidArgumentException(
+            "una ruta de allow sólo admite caracteres RFC 3986 sin ';', ni segmentos "
+            "'.'/'..' o vacíos, ni '/', '\\', '%' o ';' codificados: rayd rechazaría "
+            "cada petición que la cumpliera"
+        )
+
+
+def is_safe_request_path(path: str) -> bool:
+    """La misma regla que `rayd_core::secret_gateway::route::path_is_safe`
+    (lista de permitidos, `testdata/secret-gateway/request-paths.json`):
+    absoluta, cada byte crudo en `_ALLOWED_RAW_PATH_CHARS`, ningún segmento
+    vacío salvo el último y cada segmento, decodificado una sola vez, UTF-8
+    válido, sin bytes de control ni `_FORBIDDEN_DECODED_BYTES` y distinto de
+    `.` y `..`. `rayd` reenvía la ruta tal cual llega, así que una regla que
+    no la cumpla nunca casaría con una petición."""
+    if not path.startswith("/") or not all(char in _ALLOWED_RAW_PATH_CHARS for char in path):
+        return False
+    segments = path[1:].split("/")
+    last = len(segments) - 1
+    for index, segment in enumerate(segments):
+        if segment == "":
+            if index != last:
+                return False
+            continue
+        decoded = _decode_segment_once(segment)
+        if decoded is None or decoded in (".", ".."):
+            return False
+    return True
+
+
+def _decode_segment_once(segment: str) -> str | None:
+    decoded = bytearray()
+    index = 0
+    while index < len(segment):
+        char = segment[index]
+        if char != "%":
+            decoded.extend(char.encode("ascii"))
+            index += 1
+            continue
+        escape = segment[index + 1 : index + 3]
+        if len(escape) != 2 or not all(digit in _HEX_DIGITS for digit in escape):
+            return None
+        value = int(escape, 16)
+        if (
+            value < _FIRST_PRINTABLE_ASCII
+            or value == _ASCII_DELETE
+            or value in _FORBIDDEN_DECODED_BYTES
+        ):
+            return None
+        decoded.append(value)
+        index += 3
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 def validate_route_name(name: str) -> str:

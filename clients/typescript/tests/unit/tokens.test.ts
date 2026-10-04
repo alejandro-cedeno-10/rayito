@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { PortSpec } from "../../src/aws/control-plane.js";
 import { AuthenticationError } from "../../src/errors.js";
@@ -198,5 +199,19 @@ describe("TokenRefresher", () => {
     const refresh = refresher(mint);
     await Promise.all([refresh.mint(PORT_8080), refresh.mint(PORT_8080)]);
     expect(mint).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ProxyToken never shows its JWE", () => {
+  test("util.inspect, JSON.stringify and the spread hide jwe; direct access keeps it", () => {
+    const token = new ProxyToken("JWE-DO-NOT-PRINT", [PortSpec.single(8080)], 1);
+    expect(inspect(token, { depth: 5 })).not.toContain("JWE-DO-NOT-PRINT");
+    expect(JSON.stringify(token)).not.toContain("JWE-DO-NOT-PRINT");
+    expect(JSON.stringify({ ...token })).not.toContain("JWE-DO-NOT-PRINT");
+    expect(token.jwe).toBe("JWE-DO-NOT-PRINT");
+    const store = new TokenStore();
+    store.put(token);
+    expect(inspect(store, { depth: 5 })).not.toContain("JWE-DO-NOT-PRINT");
+    expect(store.jweFor(8080)).toBe("JWE-DO-NOT-PRINT");
   });
 });

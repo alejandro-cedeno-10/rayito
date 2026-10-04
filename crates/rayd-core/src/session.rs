@@ -18,12 +18,14 @@ use std::time::Duration;
 use crate::auth::{self, AccessTokenGate, AuthError, InstallOutcome};
 use crate::clock::{Clock, ClockReading};
 use crate::health::HealthSnapshot;
+use crate::hook_peer::PeerOrigin;
 use crate::hooks::{AuditEntry, HookAudit, HookCallOutcome};
 use crate::lifecycle::{
     FREEZE_THRESHOLD, Hook, HookPhase, LifecycleError, LifecycleState, RunClaim,
     SUSPEND_GATE_TIMEOUT, Transition, WATCHDOG_TICK,
 };
 use crate::network::EgressEnforcement;
+use crate::persistence::PersistBinding;
 use crate::process::ProcessError;
 use crate::run_payload::{RunDefaults, RunPayloadError, parse_run_payload};
 use crate::sandbox_timeout::{
@@ -69,6 +71,10 @@ pub enum RunOutcome {
     AlreadyRan,
     /// `/run` arrived in a phase where it is not legal; nothing changed.
     Illegal(LifecycleError),
+    /// The caller's socket belongs to a sandbox uid (`PeerOrigin::Sandbox`):
+    /// refused without claiming the boot's one `/run`, so the genuine one
+    /// that follows still installs its payload; counted as an anomaly.
+    SandboxOrigin,
 }
 
 pub struct SandboxSession {
@@ -76,6 +82,7 @@ pub struct SandboxSession {
     audit: Mutex<HookAudit>,
     defaults: Mutex<Option<RunDefaults>>,
     metadata: Mutex<BTreeMap<String, String>>,
+    persist_binding: Mutex<Option<PersistBinding>>,
     timeout: Mutex<SandboxTimeout>,
     network_enforce: AtomicBool,
     egress_settling: AtomicBool,
@@ -104,6 +111,7 @@ impl SandboxSession {
             audit: Mutex::new(HookAudit::default()),
             defaults: Mutex::new(None),
             metadata: Mutex::new(BTreeMap::new()),
+            persist_binding: Mutex::new(None),
             timeout: Mutex::new(SandboxTimeout::new(&settings.timeout)),
             network_enforce: AtomicBool::new(false),
             egress_settling: AtomicBool::new(false),
@@ -130,7 +138,28 @@ impl SandboxSession {
         self.state().validate()
     }
 
+    /// Whether this boot already accepted its one `/run`.
+    #[must_use]
+    pub fn run_claimed(&self) -> bool {
+        self.state().run_claimed()
+    }
+
+    /// A `/run` whose caller could not be told apart
+    /// (`PeerOrigin::Unverified`).
     pub fn run(&self, input: RunHookInput<'_>) -> RunOutcome {
+        self.run_from(PeerOrigin::Unverified, input)
+    }
+
+    /// `/run` once per boot, except from a sandbox process: a uid ≥ 1000
+    /// reaching `127.0.0.1:9000` before the platform does (a template's
+    /// `start_cmd` is already running when the genuine `/run` arrives)
+    /// would otherwise install its own token digest and payload and leave
+    /// the genuine `/run` as `AlreadyRan`.
+    pub fn run_from(&self, origin: PeerOrigin, input: RunHookInput<'_>) -> RunOutcome {
+        if origin == PeerOrigin::Sandbox {
+            self.audit().note_anomaly();
+            return RunOutcome::SandboxOrigin;
+        }
         let claim = self.state().run(input.sandbox_id);
         match claim {
             Err(error) => RunOutcome::Illegal(error),
@@ -176,6 +205,12 @@ impl SandboxSession {
         self.audit().record(hook, outcome)
     }
 
+    /// Counts one anomaly about a hook call whose handler audits it on its
+    /// own (`HookAudit::note_anomaly_after_run`); `false` before `/run`.
+    pub fn note_hook_anomaly(&self) -> bool {
+        self.audit().note_anomaly_after_run()
+    }
+
     /// Anomalous hook calls plus stale-suspend recoveries this boot.
     #[must_use]
     pub fn hook_anomalies(&self) -> u64 {
@@ -187,6 +222,16 @@ impl SandboxSession {
     #[must_use]
     pub fn metadata(&self) -> BTreeMap<String, String> {
         self.metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The persistence scope the accepted `/run` payload bound (C-07);
+    /// `None` before `/run` or when the payload carried no `persist`.
+    #[must_use]
+    pub fn persist_binding(&self) -> Option<PersistBinding> {
+        self.persist_binding
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -312,6 +357,18 @@ impl SandboxSession {
         }
     }
 
+    /// Build-hook work (the `/validate` cell, which skips the stream gate)
+    /// runs only while the boot is still a build: `Booting` or `Ready` and
+    /// no `/run` accepted. Read under one lock so a `/run` landing between
+    /// the two checks cannot slip through.
+    pub fn build_gate(&self) -> Result<(), HookPhase> {
+        let state = self.state();
+        match state.phase() {
+            HookPhase::Booting | HookPhase::Ready if !state.run_claimed() => Ok(()),
+            phase => Err(phase),
+        }
+    }
+
     #[must_use]
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
@@ -400,6 +457,10 @@ impl SandboxSession {
                 *self.defaults.lock().unwrap_or_else(PoisonError::into_inner) =
                     Some(parsed.defaults);
                 *self.metadata.lock().unwrap_or_else(PoisonError::into_inner) = parsed.metadata;
+                *self
+                    .persist_binding
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = parsed.persist;
                 match self.gate.install_once(parsed.token_digest) {
                     InstallOutcome::Installed => {
                         self.install_lifecycle(lifecycle);
@@ -492,6 +553,57 @@ mod tests {
             sandbox_id: Some("mvm-1"),
             payload: Some(&payload),
         })
+    }
+
+    /// RAYD-08: a sandbox process (a template's `start_cmd`, thawed with
+    /// the snapshot) posts a well-formed `/run` before the platform does.
+    /// It is refused without claiming the boot's `/run`, counted as an
+    /// anomaly, and the genuine `/run` that follows still installs.
+    #[test]
+    fn a_run_from_a_sandbox_uid_never_claims_the_boots_run() {
+        let (_, session) = session();
+        let forged = payload_for(b"attacker");
+        let refused = session.run_from(
+            PeerOrigin::Sandbox,
+            RunHookInput {
+                sandbox_id: Some("mvm-1"),
+                payload: Some(&forged),
+            },
+        );
+        assert_eq!(refused, RunOutcome::SandboxOrigin);
+        assert_eq!(session.hook_anomalies(), 1);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(b"attacker")),
+            Err(AuthError::TokenNotInstalled)
+        );
+        let genuine = payload_for(SECRET);
+        let installed = session.run_from(
+            PeerOrigin::Platform,
+            RunHookInput {
+                sandbox_id: Some("mvm-1"),
+                payload: Some(&genuine),
+            },
+        );
+        assert_eq!(installed, RunOutcome::Installed);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(SECRET)),
+            Ok(())
+        );
+        assert_eq!(
+            session.run_from(
+                PeerOrigin::Sandbox,
+                RunHookInput {
+                    sandbox_id: Some("mvm-1"),
+                    payload: Some(&forged),
+                },
+            ),
+            RunOutcome::SandboxOrigin
+        );
+        assert_eq!(session.hook_anomalies(), 2);
+        assert_eq!(
+            session.authorize("/rayito.v1.ProcessService/List", Some(SECRET)),
+            Ok(())
+        );
     }
 
     #[test]
@@ -853,6 +965,46 @@ mod tests {
         );
         assert_eq!(session.metadata().get("a").map(String::as_str), Some("1"));
         assert!(!session.metadata().contains_key("b"));
+    }
+
+    #[test]
+    fn persist_binding_comes_from_the_accepted_run_only() {
+        let (_, session) = session();
+        assert_eq!(session.persist_binding(), None);
+        let bound = |bucket: &str| {
+            format!(
+                "{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\",\"persist\":{{\"bucket\":\"{bucket}\",\"key_prefix\":\"tenants/acme\"}}}}"
+            )
+        };
+        let first = bound("amzn-s3-demo-bucket");
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&first),
+        });
+        let expected =
+            PersistBinding::parse(Some("amzn-s3-demo-bucket"), Some("tenants/acme")).unwrap();
+        assert_eq!(session.persist_binding(), Some(expected.clone()));
+        let second = bound("other-bucket");
+        assert_eq!(
+            session.run(RunHookInput {
+                sandbox_id: Some("mvm-2"),
+                payload: Some(&second),
+            }),
+            RunOutcome::AlreadyRan
+        );
+        assert_eq!(session.persist_binding(), Some(expected));
+    }
+
+    #[test]
+    fn the_build_gate_closes_with_the_accepted_run() {
+        let (_, session) = session();
+        assert_eq!(session.build_gate(), Ok(()));
+        session.ready().unwrap();
+        assert_eq!(session.build_gate(), Ok(()));
+        assert_eq!(run_with_secret(&session, SECRET), RunOutcome::Installed);
+        assert_eq!(session.build_gate(), Err(HookPhase::Running));
+        session.suspend().unwrap();
+        assert_eq!(session.build_gate(), Err(HookPhase::Suspending));
     }
 
     fn run_with_lifecycle(session: &SandboxSession, block: &str) -> RunOutcome {

@@ -619,6 +619,81 @@ mod tests {
         assert_eq!(ops.remove(&user(), "/", true), Err(FilesystemError::Denied));
     }
 
+    /// The race behind RAYD-01: the deny list runs on the string
+    /// `canonicalize` returned, and the sandbox swaps a component of that
+    /// string for a symlink into a denied tree before the operation uses
+    /// it. The port never follows it, so every operation answers `Denied`:
+    /// never the denied file's contents, never a listing of the denied
+    /// tree, never a write into it.
+    #[test]
+    fn a_component_swapped_for_a_symlink_after_the_check_is_denied() {
+        type Operation = fn(&FilesystemOps<'_>) -> Result<(), FilesystemError>;
+        let operations: [(&str, Operation); 11] = [
+            ("stat", |ops| {
+                ops.stat(&user(), "/home/user/m3/many/f00.txt").map(drop)
+            }),
+            ("read", |ops| {
+                ops.prepare_read(&user(), "/home/user/m3/many/f00.txt")
+                    .map(drop)
+            }),
+            ("export", |ops| {
+                ops.export_source(&user(), "/home/user/m3/many/f00.txt")
+                    .map(drop)
+            }),
+            ("list", |ops| {
+                ops.list_dir(&user(), "/home/user/m3/many", 1, ListingLimits::default())
+                    .map(drop)
+            }),
+            ("watch", |ops| {
+                ops.prepare_watch(&user(), "/home/user/m3/many", true)
+                    .map(drop)
+            }),
+            ("remove", |ops| {
+                ops.remove(&user(), "/home/user/m3/many/f00.txt", false)
+            }),
+            ("rename", |ops| {
+                ops.rename(
+                    &user(),
+                    "/home/user/m3/many/f00.txt",
+                    "/home/user/moved.txt",
+                )
+                .map(drop)
+            }),
+            ("mkdir", |ops| {
+                ops.make_dir(&user(), "/home/user/m3/many/new").map(drop)
+            }),
+            ("write", |ops| {
+                ops.write_target(&user(), "/home/user/m3/many/new.txt", 0o644)
+                    .map(drop)
+            }),
+            ("import", |ops| {
+                ops.import_destination(&user(), "/home/user/m3/many/f00.txt")
+                    .map(drop)
+            }),
+            ("passwd", |ops| {
+                ops.prepare_read(&user(), "/home/user/m3/many/passwd")
+                    .map(drop)
+            }),
+        ];
+        for (label, operation) in operations {
+            let fixture = Fixture::new();
+            fixture.fs.add_file("/etc/many/f00.txt", b"denied");
+            fixture
+                .fs
+                .swap_for_symlink_after_next_canonicalize("/home/user/m3", "/etc");
+            assert_eq!(
+                operation(&fixture.ops()),
+                Err(FilesystemError::Denied),
+                "{label}"
+            );
+            assert_eq!(fixture.fs.open_temps(), 0, "{label}");
+            assert!(!fixture.fs.exists("/etc/many/new"), "{label}");
+            assert!(!fixture.fs.exists("/etc/many/new.txt"), "{label}");
+            assert!(fixture.fs.exists("/etc/many/f00.txt"), "{label}");
+            assert!(!fixture.fs.exists("/home/user/moved.txt"), "{label}");
+        }
+    }
+
     #[test]
     fn read_refuses_directories_symlinks_and_other_kinds() {
         let fixture = Fixture::new();

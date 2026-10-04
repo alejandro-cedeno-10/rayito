@@ -17,14 +17,21 @@ name: e2e (AWS)
 # además `maximumDurationInSeconds` ≤ 1800.
 #
 # Credenciales: sólo por OIDC con `aws-actions/configure-aws-credentials`
-# sobre el rol de `infra/ci-oidc-role.yaml` (trust exacto a
-# `repo:alejandro-cedeno-10/rayito:environment:e2e`; sólo las acciones de MicroVM sobre
-# el ARN de la imagen de test). Sin `RAYITO_EXECUTION_ROLE_ARN`: los tests
+# sobre el rol de `infra/ci-oidc-role.yaml` (trust `StringEquals` al `sub`
+# exacto `<GitHubSubjectPrefix>:environment:e2e`, con el prefijo de sujeto
+# inmutable que devuelve la API de GitHub; sólo las acciones de MicroVM sobre
+# el ARN de la imagen de test). Ningún job restaura una caché de Actions
+# (sec-supply-chain-followups, SC-A02). Sin `RAYITO_EXECUTION_ROLE_ARN`: los tests
 # que lo necesitan se saltan solos y no hay logs de runtime en CI.
 #
 # Pasos manuales, una sola vez (infra/README.md):
 #   1. Desplegar `infra/ci-oidc-role.yaml` con `TestImageArns=<arn de rayito-base>`.
-#   2. Crear el environment `e2e` en GitHub con required reviewers.
+#   2. Crear el environment `e2e` en GitHub con required reviewers y
+#      deployment branches limitadas a `main` (el `sub` que confía el rol no
+#      lleva rama: infra/README.md).
+#
+# Sin `RAYITO_E2E_ROLE_ARN` los dos jobs se saltan (`if:`): no hay rol que
+# asumir y el nightly sólo fallaría (sec-supply-chain-ci, SC-08).
 #   3. Variables del repositorio: RAYITO_E2E_ROLE_ARN (output `RoleArn` de la
 #      pila), RAYITO_E2E_TEMPLATE_ARN (siempre un ARN, nunca un nombre: la
 #      política del rol compara ARNs), RAYITO_E2E_REGION (opcional, us-east-1).
@@ -60,6 +67,11 @@ permissions:
   contents: read
 
 env:
+  # uv nunca vuelve a resolver un uv.lock que ya no casa con su pyproject.toml
+  # (sec-supply-chain-followups, SC-A05): sin esto `uv run` re-bloquea en
+  # silencio e instala versiones que ni Dependabot ni los hashes del lock
+  # vieron.
+  UV_LOCKED: "1"
   RAYITO_E2E: "1"
   RAYITO_TEMPLATE: ${{ vars.RAYITO_E2E_TEMPLATE_ARN }}
   RAYITO_TEMPLATE_VERSION: ${{ inputs.template_version }}
@@ -67,7 +79,7 @@ env:
 jobs:
   python:
     name: python e2e (pytest -m e2e)
-    if: github.event_name == 'schedule' || inputs.suite == 'python' || inputs.suite == 'both'
+    if: vars.RAYITO_E2E_ROLE_ARN != '' && (github.event_name == 'schedule' || inputs.suite == 'python' || inputs.suite == 'both')
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     environment: e2e
@@ -95,7 +107,7 @@ jobs:
             --query "items[?state!='TERMINATED' && state!='TERMINATING'].microvmId" --output text | wc -w)
           echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE"
           test "$live" -le 10 || { echo "pre-flight: $live live MicroVMs of $RAYITO_TEMPLATE (> 10)"; exit 1; }
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.github/actions/setup-uv
         with:
           python-version: "3.12"
       - name: pytest tests/e2e -m e2e
@@ -118,7 +130,7 @@ jobs:
   typescript:
     name: typescript e2e (pnpm test:e2e)
     needs: python
-    if: ${{ !cancelled() && needs.python.result != 'failure' && github.event_name == 'workflow_dispatch' && (inputs.suite == 'typescript' || inputs.suite == 'both') }}
+    if: ${{ !cancelled() && vars.RAYITO_E2E_ROLE_ARN != '' && needs.python.result != 'failure' && github.event_name == 'workflow_dispatch' && (inputs.suite == 'typescript' || inputs.suite == 'both') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: e2e
@@ -155,8 +167,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: clients/typescript/pnpm-lock.yaml
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:e2e
       - name: sweeper (terminate every remaining MicroVM of the template)

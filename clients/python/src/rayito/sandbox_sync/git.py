@@ -1,17 +1,29 @@
 """`Sandbox.git`: el módulo git de E2B 2.x como envoltorio de
 `commands.run` (cada operación es un `git ...` en foreground dentro del
 sandbox, con `GIT_TERMINAL_PROMPT=0`). No hay RPC propio ni cambio en el
-agente, y el módulo no emite ningún registro de log: el comando, que lleva
-las credenciales cuando se pasan, sólo viaja dentro de `StartRequest`.
+agente. El comando, que lleva las credenciales cuando se pasan, sólo viaja
+dentro de `StartRequest`; el único registro de log es el aviso
+`CREDENTIALS_MAY_REMAIN_MESSAGE` (logger `rayito.git`), sin URL, remoto ni
+ruta, cuando no se pudo quitar la URL con credenciales de un remoto.
+
+Con credenciales, antes de enviarlas se comprueba que la configuración de
+git no reescribe URLs (`url.*.insteadOf`, `GitAuthException` si lo hace) y
+la orden corre sin hooks ni credential helpers
+(`CREDENTIAL_ISOLATION_ARGS`). Eso no las protege de código que ya corre
+en el sandbox con el mismo usuario (shell de login, `/proc`): ver
+`SECURITY.md` T9.
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from rayito._git_base import (
+    CREDENTIALS_MAY_REMAIN_MESSAGE,
+    GIT_CONFIG_NO_MATCH_EXIT_CODE,
     FailurePolicy,
     GitBranches,
     GitCommandOptions,
@@ -31,7 +43,9 @@ from rayito._git_base import (
     git_command,
     git_failure,
     has_upstream_args,
+    has_url_rewrites,
     init_args,
+    isolated_args,
     parse_git_branches,
     parse_git_status,
     parse_remote_url,
@@ -53,15 +67,19 @@ from rayito._git_base import (
     restore_args,
     status_args,
     upstream_error_message,
+    url_rewrite_check_args,
+    url_rewrite_error_message,
     with_credentials,
 )
 from rayito._models import CommandResult
-from rayito.exceptions import CommandExitException, GitUpstreamException
+from rayito.exceptions import CommandExitException, GitAuthException, GitUpstreamException
 
 if TYPE_CHECKING:
     from rayito.sandbox_sync.commands import Commands
 
 T = TypeVar("T")
+
+logger = logging.getLogger("rayito.git")
 
 
 class Git:
@@ -109,12 +127,27 @@ class Git:
             secrets=credential_secrets(password),
         )
 
-        def clone_and_strip() -> CommandResult:
-            result = self._run(plan.args, None, options)
+        def strip() -> None:
             if plan.should_strip and plan.repo_path and plan.sanitized_url:
-                self._run(
-                    remote_set_url_args("origin", plan.sanitized_url), plan.repo_path, options
+                self._restore_remote(
+                    remote_set_url_args("origin", plan.sanitized_url),
+                    plan.repo_path,
+                    options,
+                    action="clone",
                 )
+
+        def clone_and_strip() -> CommandResult:
+            if plan.credentialed:
+                self._refuse_url_rewrites(None, options, "clone")
+            try:
+                result = self._run(plan.args, None, options)
+            except CommandExitException:
+                raise
+            except Exception:
+                with contextlib.suppress(Exception):
+                    strip()
+                raise
+            strip()
             return result
 
         return self._guarded(clone_and_strip, policy)
@@ -344,7 +377,8 @@ class Git:
                 username,
                 password,
                 options,
-                lambda: self._run(args, path, options),
+                lambda: self._run(isolated_args(args), path, options),
+                action="push",
             )
 
         return self._guarded(push_with_credentials, policy)
@@ -389,7 +423,8 @@ class Git:
                 username,
                 password,
                 options,
-                lambda: self._run(args, path, options),
+                lambda: self._run(isolated_args(args), path, options),
+                action="pull",
             )
 
         return self._guarded(pull_with_credentials, policy)
@@ -516,24 +551,55 @@ class Git:
         password: str,
         options: GitCommandOptions,
         operation: Callable[[], T],
+        *,
+        action: str,
     ) -> T:
-        """La URL original se restaura siempre. Si la operación falla, su
-        error es el que sale aunque la restauración también falle (como en
-        E2B); si sólo falla la restauración, sale ese error."""
+        """La URL original se restaura siempre, también si falla (o vence)
+        el propio `set-url` con credenciales. Si la operación falla, su
+        error es el que sale aunque la restauración también falle (con el
+        aviso `CREDENTIALS_MAY_REMAIN_MESSAGE`); si sólo falla la
+        restauración, sale ese error (también con el aviso)."""
+        self._refuse_url_rewrites(path, options, action)
         original = parse_remote_url(
             self._run(remote_get_url_args(remote), path, options).stdout, remote
         )
         credentialed = with_credentials(original, username, password)
         restore = remote_set_url_args(remote, original)
-        self._run(remote_set_url_args(remote, credentialed), path, options)
         try:
+            self._run(remote_set_url_args(remote, credentialed), path, options)
             result = operation()
         except BaseException:
-            with contextlib.suppress(CommandExitException):
-                self._run(restore, path, options)
+            with contextlib.suppress(Exception):
+                self._restore_remote(restore, path, options, action=action)
             raise
-        self._run(restore, path, options)
+        self._restore_remote(restore, path, options, action=action)
         return result
+
+    def _restore_remote(
+        self, args: Sequence[str], path: str, options: GitCommandOptions, *, action: str
+    ) -> None:
+        """Devuelve un remoto a su URL sin credenciales; si no puede, avisa
+        (sin URL, remoto ni ruta) y relanza el error."""
+        try:
+            self._run(args, path, options)
+        except Exception:
+            logger.warning(CREDENTIALS_MAY_REMAIN_MESSAGE, action)
+            raise
+
+    def _refuse_url_rewrites(
+        self, repo_path: str | None, options: GitCommandOptions, action: str
+    ) -> None:
+        """`GitAuthException` antes de enviar credenciales si la
+        configuración efectiva (global, de sistema y, con `repo_path`, la
+        del repo) reescribe URLs."""
+        try:
+            found = self._run(url_rewrite_check_args(), repo_path, options).stdout
+        except CommandExitException as exc:
+            if exc.exit_code == GIT_CONFIG_NO_MATCH_EXIT_CODE:
+                return
+            raise
+        if has_url_rewrites(found):
+            raise GitAuthException(url_rewrite_error_message(action))
 
     def _guarded(self, operation: Callable[[], T], policy: FailurePolicy) -> T:
         """Traduce el `CommandExitException` según `policy`. Con secretos de

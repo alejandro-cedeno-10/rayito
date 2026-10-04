@@ -105,15 +105,90 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
   su plazo, `/ready` falla y el build termina con
   `BuildException(reason="ready_server_error")`. Una imagen base publicada
   con un `rayd` anterior ignora el fichero.
+- **El `start_cmd` ya corre cuando llega el `/run`.** Como va en el
+  snapshot, en cada sandbox lanzado desde la plantilla se descongela antes
+  que el hook `/run` que instala el token de acceso. `rayd` rechaza un
+  `/run` que venga de un proceso del sandbox (cualquier uid ≥ 1000) sin
+  consumir el `/run` del arranque, así que un `start_cmd` malicioso o
+  comprometido no puede instalar su propio token ni dejar el sandbox sin
+  él; sólo uno que corra como root (`user="root"` con
+  `RAYITO_ALLOW_ROOT=1` en la imagen) queda fuera de esa protección
+  (`SECURITY.md` T2).
 
 ## Contexto de build
 
 `copy("app/", "/srv/app/")` lee `app/` relativo a `context_dir=`/
 `contextDir` (por defecto, el directorio actual) y respeta su
-`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un enlace
-simbólico hacia fuera) da `BuildException(reason="context_path_outside")`.
+`.dockerignore`. Una ruta que sale del contexto (`../secreto`, o un `src`
+que es un enlace simbólico hacia fuera) da
+`BuildException(reason="context_path_outside")`. Dentro de un directorio
+copiado, los enlaces simbólicos (a fichero o a directorio) **nunca se
+siguen**, igual que en Docker y en los dos SDKs: un `config ->
+~/.aws/credentials` dentro de `app/` no acaba en el artefacto que se sube a
+S3 ni en la imagen, donde el código del sandbox lo podría leer. Si
+necesitas ese contenido, cópialo como fichero real dentro del contexto.
 Los ficheros van bajo `__rayito_context/` dentro del zip: nunca sustituyen
 el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
+
+### `.dockerignore`
+
+Los dos SDKs siguen la semántica de `.dockerignore` de Docker (con los
+mismos vectores de prueba):
+
+- Cada patrón queda **anclado en la raíz del contexto**: `README.md` no
+  excluye `docs/README.md`, y `/build`, `build` y `build/` son lo mismo.
+- `*` y `?` **no cruzan `/`**: `*.pyc` sólo excluye los de la raíz; para
+  cualquier profundidad, `**/*.pyc`.
+- `**` es cero o más directorios: `**/.env` excluye el `.env` de la raíz y
+  los de cualquier subdirectorio (el idioma que genera `docker init`).
+- Un patrón que casa con un directorio excluye todo lo que hay dentro, y
+  el último patrón que casa gana: `node_modules` seguido de
+  `!node_modules/keep.js` deja pasar `keep.js`.
+
+```text
+**/.env
+**/.env.*
+**/.git
+**/node_modules
+**/*.pem
+```
+
+Si el contexto va a empaquetar algo que suele llevar secretos (`.env`,
+`.env.*`, `.git/`, `.aws/`, `.ssh/`, `*.pem`, `*.key`), el SDK avisa con
+las rutas (nunca el contenido) antes de subir nada: en la imagen, cualquier
+código del sandbox podría leerlo. Para que el aviso pare un build en CI:
+
+=== "Python"
+
+    ```python
+    import warnings
+
+    from rayito import Template
+
+    warnings.filterwarnings("error", message="el contexto de build empaqueta")
+    t = Template().from_base_image().copy(".", "/app")
+    Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    process.on("warning", (warning) => {
+      if (warning.name === "RayitoContextWarning") {
+        console.error(warning.message);
+        process.exit(1);
+      }
+    });
+    const t = new Template().fromBaseImage().copy(".", "/app");
+    await Template.build(t, "mi-template", { bucket: "mi-bucket-de-artefactos" });
+    ```
+
+!!! warning "Cambio de comportamiento en 0.6.x"
+    Antes, `*` cruzaba `/` (`*.pyc` excluía también `sub/x.pyc`) y `**/X`
+    no casaba en la raíz. Si tu `.dockerignore` contaba con lo primero,
+    añade `**/` delante del patrón.
 
 ## Errores
 
@@ -122,12 +197,13 @@ el `Dockerfile` compuesto ni el binario de `rayd` de la imagen base.
 | `None` + `step`/`command`/`exit_code`/`log_tail` | un `RUN` del Dockerfile compuesto salió con error |
 | `ready_client_error` / `ready_server_error` | el proceso detrás de `/ready` respondió 4xx/5xx durante el build (Q85) |
 | `build_quota` | ya hay 10 builds en marcha en este proceso, o AWS rechazó el undécimo de la cuenta (Q83) |
+| `aws_error` | AWS rechazó el build por otro motivo; el mensaje y la causa llevan sólo el código y el mensaje saneados (sin la cadena canónica de un error de firma) |
 | `build_timeout` | el build no terminó en `timeout`; sigue en AWS y `get_build_status()` lo consulta |
 | `context_path_missing` / `context_path_outside` | un `copy()` nombra algo que no existe, o fuera del contexto |
 | `base_image_not_s3` / `base_image_missing_artifact` / `base_image_missing_entrypoint` | la imagen base no es una imagen `rayito-*` publicada con `rayito image publish` |
 
 Los mensajes nombran el template que pasaste, nunca un ARN ni el texto
-libre de AWS.
+libre de AWS sin sanear.
 
 ## Ejemplo rápido
 
@@ -233,6 +309,110 @@ try:
 except BuildException as exc:
     print(exc.step, exc.command, exc.exit_code)  # 1 'RUN pip install ...' 1
 ```
+
+## Build en segundo plano y logs
+
+`Template.build()` espera a que el build termine (como mucho `timeout`, 30
+minutos por defecto). Para no bloquear, `build_in_background()`
+(TypeScript: `buildInBackground()`) devuelve en cuanto AWS acepta el build
+un `BuildHandle`, que `get_build_status()` consulta cuando quieras, también
+desde otro proceso:
+
+=== "Python"
+
+    ```python
+    import time
+
+    from rayito import Template
+
+    t = Template().from_base_image().pip_install(["pandas==2.2.3"])
+    handle = Template.build_in_background(t, "mi-template", bucket="mi-bucket-de-artefactos")
+    status = Template.get_build_status(handle)
+    while status.state == "IN_PROGRESS":
+        time.sleep(15)
+        status = Template.get_build_status(handle)
+    if status.info is not None:
+        print(status.info.template_id)  # SUCCESSFUL
+    else:
+        print(status.error_message)  # FAILED
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { setTimeout as sleep } from "node:timers/promises";
+    import { Template } from "rayito";
+
+    const t = new Template().fromBaseImage().pipInstall(["pandas==2.2.3"]);
+    const handle = await Template.buildInBackground(t, "mi-template", {
+      bucket: "mi-bucket-de-artefactos",
+    });
+    let status = await Template.getBuildStatus(handle);
+    while (status.state === "IN_PROGRESS") {
+      await sleep(15_000);
+      status = await Template.getBuildStatus(handle);
+    }
+    console.log(status.info?.templateId ?? status.errorMessage);
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito template status mi-template            # la versión más reciente
+    rayito template status mi-template --version 3
+    rayito template logs mi-template --limit 200
+    ```
+
+El log de BuildKit llega **al terminar** el build, nunca en vivo (el grupo
+de logs de la imagen lo recibe de golpe, Q83). Para recibirlo línea a línea
+desde `Template.build()`, pasa `on_build_logs` (TypeScript:
+`onBuildLogs`); sin él, el SDK no lee el grupo de logs salvo para explicar
+un fallo:
+
+=== "Python"
+
+    ```python
+    from rayito import Template
+
+    t = Template().from_base_image().pip_install(["pandas==2.2.3"])
+    Template.build(t, "mi-template", bucket="mi-bucket-de-artefactos", on_build_logs=print)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    const t = new Template().fromBaseImage().pipInstall(["pandas==2.2.3"]);
+    await Template.build(t, "mi-template", {
+      bucket: "mi-bucket-de-artefactos",
+      onBuildLogs: (line) => console.log(line),
+    });
+    ```
+
+En TypeScript, `onBuildLogs` y la explicación de un build fallido leen el
+log con el peer opcional `@aws-sdk/client-cloudwatch-logs`
+(`pnpm add @aws-sdk/client-cloudwatch-logs`); sin él instalado, el build
+funciona igual, pero `onBuildLogs` no recibe ninguna línea y
+`BuildError` llega sin `step`/`command`/`logTail`.
+
+## Del `Template` de E2B a Rayito
+
+El shim (`rayito.e2b` / `rayito/e2b`) acepta la firma de build de E2B y la
+traduce a la nativa; el DSL es la misma clase en los dos.
+
+| E2B | Rayito nativo | Nota |
+|---|---|---|
+| `Template().from_image("python:3.12")`, `from_template`, `from_dockerfile`, `from_gcp_registry` | `Template().from_base_image("rayito-base")` | sólo se compone sobre una imagen `rayito-*` publicada; esos cuatro orígenes lanzan `UnimplementedError` |
+| `copy`, `run_cmd`, `pip_install`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True` |
+| `set_workdir(path)` | `workdir(path)` | — |
+| `apt_install([...])` | `run_cmd("dnf install -y ...")` | `rayito-base` es Amazon Linux 2023; `apt_install` lanza `UnimplementedError` |
+| `set_start_cmd(cmd, wait_for_port(8000))` | igual, también `wait_for_url`/`wait_for_process`/`wait_for_file` | necesita una imagen base con `rayd` 0.6 |
+| `Template.build(t, alias="x", cpu_count=, memory_mb=, skip_cache=, on_build_logs=)` | `Template.build(t, "x", bucket=, memory_mb=, force=, on_build_logs=)` | el shim pide `bucket` en la llamada o en `E2B(bucket=...)`; `memory_mb` se redondea al tamaño siguiente y `cpu_count` se ignora, los dos con `RayitoCompatWarning` |
+| `Template.build_in_background(...)` + `Template.get_build_status(...)` | igual, con un `BuildHandle` | — |
+| `Template.exists(name)` | igual | — |
+| `alias_exists`, `assign_tags`, `remove_tags`, `get_tags` | — | lanzan `UnimplementedError`: Lambda MicroVMs etiqueta la imagen entera, no una versión |
+| `TemplateException`, `BuildException` | las mismas clases | `BuildException` trae `reason`, `step`, `command`, `exit_code` y `log_tail` |
 
 ## Referencia
 

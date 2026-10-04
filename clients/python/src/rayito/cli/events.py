@@ -59,6 +59,7 @@ def deploy_command(
     ] = [],  # noqa: B006
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
+    """Despliega (o actualiza) la pila events-webhooks; imprime su coste."""
     ev = _events(ctx, stack_name)
     tags = parse_pairs(tag, option="--tag")
     confirm_deploy(ctx, _COMPONENT, yes=yes)
@@ -79,6 +80,7 @@ def status_command(
     ctx: typer.Context,
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:
+    """Estado de la pila events-webhooks (sólo lectura)."""
     status = _events(ctx, stack_name).status()
     if json_mode(ctx):
         emit_json(
@@ -96,6 +98,7 @@ def destroy_command(
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
+    """Borra la pila events-webhooks y sus recursos."""
     confirm_destroy(ctx, _COMPONENT, yes=yes)
     _events(ctx, stack_name).destroy()
     if json_mode(ctx):
@@ -113,6 +116,7 @@ def list_events_command(
     order: Annotated[str, typer.Option("--order")] = "desc",
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:
+    """Eventos de ciclo de vida guardados (por defecto, los más recientes primero)."""
     events = _events(ctx, stack_name).get_events(
         sandbox_id=sandbox_id, types=event_type or None, limit=limit, order=order
     )
@@ -145,6 +149,7 @@ def webhook_add_command(
     event_type: Annotated[list[str], typer.Option("--type")],
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:
+    """Registra un webhook firmado con el secreto HMAC indicado."""
     webhook = _events(ctx, stack_name).register_webhook(
         url, secret_name=secret_name, types=event_type
     )
@@ -161,6 +166,7 @@ def webhook_list_command(
     ctx: typer.Context,
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:
+    """Webhooks registrados en la pila."""
     webhooks = _events(ctx, stack_name).list_webhooks()
     if json_mode(ctx):
         emit_json(
@@ -179,6 +185,7 @@ def webhook_remove_command(
     webhook_id: Annotated[str, typer.Argument()],
     stack_name: Annotated[str, typer.Option("--stack-name")] = DEFAULT_STACK_NAME,
 ) -> None:
+    """Da de baja un webhook por su id."""
     _events(ctx, stack_name).delete_webhook(webhook_id)
     if json_mode(ctx):
         emit_json({"webhookId": webhook_id, "state": "deleted"})

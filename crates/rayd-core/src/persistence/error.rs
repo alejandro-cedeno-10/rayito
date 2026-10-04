@@ -60,6 +60,9 @@ pub enum PersistenceError {
     CredentialsRejected,
     #[error("el bucket o el rol de ejecución denegaron el acceso")]
     AccessDenied,
+    /// The request named a location outside the scope `/run` bound (C-07).
+    #[error("la ubicación queda fuera del prefijo de persistencia ligado al sandbox")]
+    OutsideBinding,
     #[error("no hay checkpoint bajo el prefijo")]
     NotFound,
     #[error("falta el archivo aunque el manifest existe")]
@@ -119,7 +122,8 @@ impl PersistenceError {
             | Self::PrivilegedAccount
             | Self::NoCredentials
             | Self::CredentialsRejected
-            | Self::AccessDenied => StatusKind::PermissionDenied,
+            | Self::AccessDenied
+            | Self::OutsideBinding => StatusKind::PermissionDenied,
             Self::NotFound | Self::ArchiveMissing => StatusKind::NotFound,
             Self::Busy | Self::RegionUnknown => StatusKind::FailedPrecondition,
             Self::DiskFull => StatusKind::ResourceExhausted,
@@ -194,6 +198,7 @@ mod tests {
             PersistenceError::NoCredentials,
             PersistenceError::CredentialsRejected,
             PersistenceError::AccessDenied,
+            PersistenceError::OutsideBinding,
             PersistenceError::NotFound,
             PersistenceError::ArchiveMissing,
             PersistenceError::Busy,
@@ -266,6 +271,10 @@ mod tests {
                 StatusKind::PermissionDenied,
             ),
             (PersistenceError::AccessDenied, StatusKind::PermissionDenied),
+            (
+                PersistenceError::OutsideBinding,
+                StatusKind::PermissionDenied,
+            ),
             (
                 PersistenceError::CredentialsRejected,
                 StatusKind::PermissionDenied,
