@@ -27,7 +27,9 @@ proxy de AWS.
     ejemplo). La Function de enrutado ya se comprobó contra el runtime real
     de CloudFront (`TestFunction`, Q121 de `AWS_API_NOTES.md`); el recorrido
     completo por una distribución (DOM-2/3/5/7/8) queda para la aceptación
-    contra AWS real, que el e2e del repositorio automatiza.
+    contra AWS real, que el e2e del repositorio automatiza. El primer
+    intento (Q140, Q141) arregló un `Comment` demasiado largo en la plantilla
+    y se paró en una SCP de la organización que deniega crear distribuciones.
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin instanciar `CustomDomain` el SDK no
@@ -48,7 +50,9 @@ proxy de AWS.
       KeyValueStore, ~$0,50 por 1 000 000 de lecturas (las de la Function) y
       ~$5 por 1 000 000 de llamadas de gestión (`PutKey`/`DeleteKey`).
     - **IAM** (credenciales de quien llama al SDK): `cloudformation:*Stack*`
-      para `deploy`/`status`/`destroy`;
+      para `deploy`/`status`/`destroy`, y los permisos de CloudFront para
+      crear y borrar la distribución, la Function y el KeyValueStore (la
+      pila corre con esas mismas credenciales);
       `cloudfront-keyvaluestore:DescribeKeyValueStore/PutKey/DeleteKey`
       sobre el KVS de la pila.
     - **Cómo apagarla**: `destroy()` o `rayito domain destroy` borra la
@@ -328,3 +332,12 @@ borra todo al terminar. Sin esas variables se salta.
   caduque el JWE si la ruta debe vivir más.
 - Los puertos `8080` y `9000` (puerto de hooks y reservado) no se pueden
   exponer, igual que en el resto del SDK.
+- Si tu cuenta está en una organización de AWS, una SCP puede denegar
+  `cloudfront:CreateDistribution` aunque tu rol sea administrador. Entonces
+  `deploy()` falla con `StackException` (la pila termina en
+  `ROLLBACK_COMPLETE`; el motivo, `AccessDenied ... explicit deny in a
+  service control policy`, sale en los eventos de la pila,
+  `aws cloudformation describe-stack-events`). No queda nada creado: el
+  rollback borra la Function y el KeyValueStore, y `destroy()` quita la pila
+  fallida. Pide al administrador de la organización que permita esa acción
+  (Q141 de `AWS_API_NOTES.md`).

@@ -43,6 +43,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   distribución sin DNS (SNI y `Host` propios contra su `*.cloudfront.net`).
   DOM-2/3/5/7/8 pendientes de la aceptación contra AWS real; DOM-14 (el
   refresher Lambda) no se construyó.
+  La plantilla ya cabe en los 128 caracteres que CloudFront admite en
+  cada `Comment` (la primera pila real fallaba en la Function; la
+  distribución nombra ahora la pila, no el dominio).
 
 ### Fixed
 

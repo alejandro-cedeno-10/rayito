@@ -58,13 +58,15 @@ Resources:
     Properties:
       Name: !Sub "rayito-custom-domain-router-\${AWS::StackName}"
       FunctionConfig:
-        Comment: >-
-          Rayito custom-domain router: strips any viewer x-aws-proxy-*
-          header, checks the route's traffic token (constant-time) and
-          calls cf.updateRequestOrigin() with the sandbox's endpoint and
-          the proxy headers it expects. Source of truth:
-          infra/functions/custom_domain_router.js (kept in sync, minus its
-          \`export \` keywords, by scripts/tests/test_custom_domain_function_sync.py).
+        # CloudFront caps every Comment at 128 characters (FunctionConfig,
+        # KeyValueStore and DistributionConfig; AWS_API_NOTES.md section 29,
+        # Q140). What this Function does: strips any viewer x-aws-proxy-*
+        # header, checks the route's traffic token (constant-time) and calls
+        # cf.updateRequestOrigin() with the sandbox's endpoint and the proxy
+        # headers it expects. Source of truth:
+        # infra/functions/custom_domain_router.js (kept in sync, minus its
+        # \`export \` keywords, by scripts/tests/test_custom_domain_function_sync.py).
+        Comment: Rayito custom-domain router (source of truth infra/functions/custom_domain_router.js)
         Runtime: cloudfront-js-2.0
         KeyValueStoreAssociations:
           - KeyValueStoreARN: !GetAtt RouteKeyValueStore.Arn
@@ -304,7 +306,9 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub "Rayito custom-domain (\${PublicDomain})"
+        # The stack name, not PublicDomain: a domain can be up to 253
+        # characters and Comment only 128 (Q140).
+        Comment: !Sub "Rayito custom-domain (\${AWS::StackName})"
         HttpVersion: http2
         Aliases: !If
           - UseWildcardAlias

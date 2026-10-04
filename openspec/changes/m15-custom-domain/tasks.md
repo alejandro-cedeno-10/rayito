@@ -86,6 +86,18 @@
       (403/404/origin as in the Node tests). Off-by-default re-checked on
       real AWS: a plain sandbox only calls `lambda-microvms` (+ `sts`).
       DOM-2/3/5 end to end still need a real distribution (3.4).
+- [ ] 3.6 AWS acceptance with a real distribution (DOM-2/3/5/7/8), first
+      attempt 2026-10-04 (Q140, Q141). Python and TypeScript e2e, environment
+      only from variables: the first stack died in `RouterFunction` (its
+      `Comment` was longer than CloudFront's 128 characters; fixed, the
+      distribution's `Comment` now names the stack instead of the domain,
+      and `test_every_cloudfront_comment_fits_in_128_characters` guards all
+      three). With the fix, KVS and Function create fine, but the test
+      account's organisation SCP denies `cloudfront:CreateDistribution`, so
+      the stack rolls back at `Distribution` and DOM-2/3/5/7/8 stay
+      **unmeasured**. Teardown verified in both SDKs (stack gone, no KVS or
+      Function left, inventory diff empty). Pending: rerun the two e2e in an
+      account where `CreateDistribution` is allowed.
 
 ## 4. Stack `infra/custom-domain.yaml`
 

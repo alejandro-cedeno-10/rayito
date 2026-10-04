@@ -168,3 +168,44 @@ def test_distribution_has_no_lambda_or_iam_resources() -> None:
         "AWS::CloudFront::Function",
         "AWS::CloudFront::Distribution",
     }
+
+
+#: CloudFront limita a 128 caracteres el `Comment` de una Function
+#: (`FunctionConfig`), de un KeyValueStore y de una distribución
+#: (`DistributionConfig`):
+#: https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_FunctionConfig.html,
+#: .../API_CreateKeyValueStore.html y .../API_DistributionConfig.html. La
+#: primera pila real murió en `RouterFunction` con "The parameter Comment is
+#: too big" (Q140 de AWS_API_NOTES.md); ni cfn-lint ni los tests lo veían.
+CLOUDFRONT_COMMENT_MAX_LENGTH = 128
+#: El peor caso de cada referencia que un `Comment` pueda interpolar:
+#: `MAX_STACK_NAME_LENGTH` (36, `_custom_domain/_service.py`) y un nombre
+#: DNS completo (253, RFC 1035 §2.3.4 con la representación en texto).
+_WORST_CASE_SUBSTITUTIONS = {"AWS::StackName": "s" * 36, "PublicDomain": "d" * 253}
+
+
+def _worst_case_comment(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    assert isinstance(value, dict) and set(value) == {"Fn::Sub"}, value
+    rendered = value["Fn::Sub"]
+    assert isinstance(rendered, str)
+    for name, worst in _WORST_CASE_SUBSTITUTIONS.items():
+        rendered = rendered.replace(f"${{{name}}}", worst)
+    assert "${" not in rendered, f"referencia sin peor caso conocido en {value!r}"
+    return rendered
+
+
+def test_every_cloudfront_comment_fits_in_128_characters() -> None:
+    resources = _template()["Resources"]
+    comments = {
+        "RouteKeyValueStore": resources["RouteKeyValueStore"]["Properties"]["Comment"],
+        "RouterFunction": resources["RouterFunction"]["Properties"]["FunctionConfig"]["Comment"],
+        "Distribution": resources["Distribution"]["Properties"]["DistributionConfig"]["Comment"],
+    }
+    for resource, comment in comments.items():
+        length = len(_worst_case_comment(comment))
+        assert length <= CLOUDFRONT_COMMENT_MAX_LENGTH, (
+            f"{resource}: Comment de {length} caracteres en el peor caso; CloudFront "
+            f"rechaza más de {CLOUDFRONT_COMMENT_MAX_LENGTH}"
+        )
