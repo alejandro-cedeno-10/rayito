@@ -29,8 +29,9 @@ pub const RESUME_PROBE_BUDGET: Duration = Duration::from_secs(12);
 pub enum HookCallOutcome {
     /// The call did what it came for (or nothing, idempotently).
     Nominal,
-    /// A `/run` after the accepted one: the only hook call the audit can
-    /// tell apart from a genuine one.
+    /// A call the audit can tell apart from a genuine one: a `/run` after
+    /// the accepted one, a build hook (`/ready`, `/validate`) after it, or
+    /// a call whose connection a sandbox uid owns (`hook_peer`).
     Anomalous,
 }
 
@@ -81,6 +82,18 @@ impl HookAudit {
     /// A stale-suspend recovery: not a hook call, still an anomaly.
     pub fn note_anomaly(&mut self) {
         self.anomalies += 1;
+    }
+
+    /// An anomaly about a hook call that its handler audits on its own
+    /// (the peer check of `hook_peer` runs before the handler): counted
+    /// only once the audit is open, so a build-time call never leaves a
+    /// count in the memory snapshot every launched sandbox starts from.
+    /// Returns whether it was counted.
+    pub fn note_anomaly_after_run(&mut self) -> bool {
+        if self.run_accepted {
+            self.anomalies += 1;
+        }
+        self.run_accepted
     }
 
     #[must_use]
@@ -137,6 +150,17 @@ mod tests {
         let hook_budget = Duration::from_secs(24);
         assert!(STREAM_CLOSE_GRACE + QUIESCE_TIMEOUT < Duration::from_secs(5));
         assert!(RESUME_PROBE_BUDGET < hook_budget);
+    }
+
+    #[test]
+    fn a_peer_anomaly_counts_only_once_the_audit_is_open() {
+        let mut audit = HookAudit::default();
+        assert!(!audit.note_anomaly_after_run());
+        assert_eq!(audit.anomalies(), 0);
+        audit.run_accepted();
+        assert!(audit.note_anomaly_after_run());
+        assert_eq!(audit.anomalies(), 1);
+        assert_eq!(audit.calls_since_run(Hook::Suspend), 0);
     }
 
     #[test]

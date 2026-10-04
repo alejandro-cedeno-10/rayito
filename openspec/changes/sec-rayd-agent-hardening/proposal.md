@@ -59,7 +59,8 @@ A second review pass confirmed three more (and restated C-01 as info):
   state that the `Host` rewrite only covers the absolute form, with a
   policy test pinning the decision for both ports.
 - Hooks: `rayd` reads the uid owning the caller's socket
-  (`/proc/net/tcp{,6}`, `rayd_core::hook_origin`, `HookPeer` connect info)
+  (`/proc/net/tcp{,6}`, through the peer check `guard_peers` over
+  `rayd_core::hook_peer` that `sec-sandbox-isolation` added)
   and refuses a `/run` from a sandbox uid (1000-65535) without claiming the
   boot's `/run` (`RunOutcome::SandboxOrigin`, 200 `sandbox_origin`, one
   more `hook_anomalies`).
@@ -81,9 +82,9 @@ A second review pass confirmed three more (and restated C-01 as info):
 ## Impact
 
 - Rust: `rayd-core` (`filesystem`, `secret_gateway::route`,
-  `network::policy`, new `hook_origin`, `session`), `rayd` (adapters
+  `network::policy`, `session`), `rayd` (adapters
   `std_filesystem`, `mountpoint`, `mount_s3`, `process_spawner`, new
-  `dir_walk`, `exec_posture`, `proc_net_sockets`, `capped_listener`,
+  `dir_walk`, `exec_posture`, `capped_listener`,
   `procfs_process_table`, `sidecar_process`; `hooks` with `hooks::serve`;
   `code` supervisor and manager; `main`), `rayd-core` (`listeners`,
   `code::kernel_process`, `process::identity`). Workspace `nix` gains the

@@ -2,8 +2,8 @@
 //! the gRPC listener (`adapters::CappedListener`), a deadline for each
 //! request head and one request per connection, so neither an idle socket
 //! nor a request head sent a byte at a time can keep a slot. Every
-//! accepted connection records both of its ends (`HookPeer`) for the
-//! `/run` origin check.
+//! request carries its connection's peer address as
+//! `ConnectInfo<SocketAddr>`, which the peer check (`guard_peers`) reads.
 //!
 //! `axum::serve` builds its hyper connection without a timer, which leaves
 //! hyper's request-head timeout inert, and accepts without a cap; this
@@ -22,7 +22,6 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-use super::HookPeer;
 use crate::adapters::{CappedListener, CappedStream};
 
 /// The hooks listener's bounds (`rayd_core::listeners` in production,
@@ -79,7 +78,7 @@ async fn serve_connection(
     header_read_timeout: Duration,
     shutdown: CancellationToken,
 ) {
-    let peer = hook_peer(stream.io());
+    let peer = stream.io().peer_addr().ok();
     let service = hyper::service::service_fn(move |mut request: hyper::Request<Incoming>| {
         if let Some(peer) = peer {
             request.extensions_mut().insert(ConnectInfo(peer));
@@ -103,13 +102,4 @@ async fn serve_connection(
     if let Err(error) = result {
         tracing::debug!(head_timeout = error.is_timeout(), "hook connection dropped");
     }
-}
-
-/// Both ends of the connection; `None` (origin `Unknown`) when either
-/// cannot be read.
-fn hook_peer(stream: &TcpStream) -> Option<HookPeer> {
-    Some(HookPeer {
-        remote: stream.peer_addr().ok()?,
-        local: stream.local_addr().ok()?,
-    })
 }

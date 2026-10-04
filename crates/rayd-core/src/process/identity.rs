@@ -213,14 +213,6 @@ mod tests {
     }
 
     #[test]
-    fn the_gate_covers_exactly_the_uid_range_of_the_routes() {
-        assert_eq!(
-            crate::network::route_plan::SANDBOX_UID_RANGE,
-            format!("{MIN_UNPRIVILEGED_ID}-{MAX_UNPRIVILEGED_ID}")
-        );
-    }
-
-    #[test]
     fn without_root_drops_the_image_opt_in() {
         let permissive = UserPolicy { allow_root: true };
         assert_eq!(

@@ -1,7 +1,6 @@
 //! `/run` over a real connection, the way `main` serves the hooks
-//! (`rayd::hooks::serve`, which records each connection's `HookPeer`),
-//! with a scripted `SocketOwners` so the test does not depend on which uid
-//! runs it: the RAYD-08 race, where a sandbox process (a template's
+//! (`rayd::hooks::serve` behind `guard_peers`), with a scripted
+//! `PeerSocketTable` so the test does not depend on which uid runs it: the RAYD-08 race, where a sandbox process (a template's
 //! `start_cmd`, thawed with the snapshot before the platform's `/run`
 //! arrives) posts a well-formed `/run` first.
 
@@ -13,11 +12,11 @@ use std::sync::{Arc, Mutex};
 
 use rayd::adapters::{ImdsState, OsRandomSource};
 use rayd::code::CodeManager;
-use rayd::hooks::{HookReply, HookServerSettings, HookServices, hook_path};
+use rayd::hooks::{HookReply, HookServerSettings, HookServices, PeerGuard, hook_path};
 use rayd::lifecycle::{SuspendSignal, TimeoutWatcher};
 use rayd::network::NetworkManager;
 use rayd_core::clock::SystemClock;
-use rayd_core::hook_origin::SocketOwners;
+use rayd_core::hook_peer::{PeerSocket, PeerSocketTable};
 use rayd_core::lifecycle::Hook;
 use rayd_core::session::SandboxSession;
 use sha2::{Digest, Sha256};
@@ -31,24 +30,30 @@ const PROTECTED_RPC: &str = "/rayito.v1.ProcessService/List";
 /// The image's sandbox user and one of the platform agent's uids (Q48).
 const SANDBOX_UID: u32 = 1000;
 const PLATFORM_UID: u32 = 993;
+/// `rayd`'s own uid in the image.
+const ROOT_UID: u32 = 0;
 
 /// Answers `SANDBOX_UID` for the client ports registered as sandbox
-/// processes and `PLATFORM_UID` for every other one, and records the
-/// listener end it was asked about.
+/// processes and `PLATFORM_UID` for every other one, as established
+/// connections, and records the peer it was asked about.
 #[derive(Default)]
 struct ScriptedOwners {
     sandbox_ports: Mutex<HashSet<u16>>,
-    listener_ends: Mutex<Vec<SocketAddr>>,
+    asked: Mutex<Vec<SocketAddr>>,
 }
 
-impl SocketOwners for ScriptedOwners {
-    fn owner_uid(&self, peer: SocketAddr, local: SocketAddr) -> Option<u32> {
-        self.listener_ends.lock().unwrap().push(local);
-        if self.sandbox_ports.lock().unwrap().contains(&peer.port()) {
-            Some(SANDBOX_UID)
+impl PeerSocketTable for ScriptedOwners {
+    fn find(&self, peer: SocketAddr) -> Option<PeerSocket> {
+        self.asked.lock().unwrap().push(peer);
+        let uid = if self.sandbox_ports.lock().unwrap().contains(&peer.port()) {
+            SANDBOX_UID
         } else {
-            Some(PLATFORM_UID)
-        }
+            PLATFORM_UID
+        };
+        Some(PeerSocket {
+            uid,
+            established: true,
+        })
     }
 }
 
@@ -111,8 +116,12 @@ async fn a_run_from_a_sandbox_socket_never_claims_the_boot_and_the_genuine_run_s
         timeout: TimeoutWatcher::detached(),
         network: NetworkManager::unavailable(session.clone()),
         participants: Vec::new(),
-        socket_owners: owners.clone(),
     });
+    let guard = PeerGuard {
+        peers: owners.clone(),
+        agent_uid: ROOT_UID,
+    };
+    let router = rayd::hooks::guard_peers(router, session.clone(), guard);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let hooks = listener.local_addr().unwrap();
     tokio::spawn(rayd::hooks::serve(
@@ -146,12 +155,12 @@ async fn a_run_from_a_sandbox_socket_never_claims_the_boot_and_the_genuine_run_s
     );
     assert!(
         owners
-            .listener_ends
+            .asked
             .lock()
             .unwrap()
             .iter()
-            .all(|local| *local == hooks),
-        "the owner lookup gets the listener's own end of each connection"
+            .all(|peer| *peer != hooks && peer.ip().is_loopback()),
+        "the owner lookup gets the client end of each connection"
     );
     shutdown.cancel();
 }

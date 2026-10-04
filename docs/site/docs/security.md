@@ -17,7 +17,6 @@ hooks, snapshot).
 | Agotamiento de recursos desde el sandbox | rlimits, grupos de procesos, timeouts de servidor, canales de salida acotados, máx. 256 procesos/PTYs, máx. 8 kernels; los puertos de `rayd` (8080 y 9000) atienden un número máximo de conexiones a la vez y los hooks cortan una cabecera que no termina de llegar, así que conexiones ociosas no agotan sus descriptores (T7) |
 | Pids falsos en el protocolo del sidecar (T12) | `rayd` sólo registra y señala el kernel que `/proc` confirma como hijo del sidecar, líder de su grupo y de su mismo uid, fijado por su hora de arranque; nunca señala el grupo 0, el 1 ni el suyo propio |
 | `rayd` (root) como *confused deputy* en el filesystem | lista de denegación sobre rutas canónicas, `setfsuid` del usuario en cada operación, sin `..`; cada ruta se abre componente a componente con `O_NOFOLLOW` y se actúa sobre el descriptor, así que un componente que el código del sandbox cambie por un enlace entre la comprobación y el uso se rechaza en vez de seguirse, y un directorio en `proc`, `sysfs` o `devpts` se rechaza llegue por donde llegue (T11) |
-| Hooks forjados desde dentro de la VM (T2) | `/run` se acepta una vez por arranque y nunca desde un socket de un uid del sandbox (≥ 1000), así que un proceso que llegue antes que la plataforma (el `start_cmd` de una plantilla) no instala su token; **riesgo residual**: `/suspend`, `/resume`, `/terminate` y `/validate` aún no se autentican por uid |
 | Pasarela de secretos como *confused deputy* | la ruta de cada petición pasa una lista de permitidos (RFC 3986 sin `;`, decodificada una sola vez, sin segmentos `.`/`..`) antes de la allowlist, así que un upstream que normalice `..;` o decodifique dos veces no la saca de `allow` ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)) |
 | Estado clonado del snapshot compartido entre sandboxes | nada único antes de `/ready`; `/run` reinicia el kernel por defecto; `/resume` reseed de `random`/`numpy.random` |
 | Exfiltración por red saliente | `egress=` explícito en `create()`; allowlist vía conector VPC (fuera del guest); desde 0.3.0, `network=` / `allow_internet_access=False` aplicados dentro del guest en `rayito-base-caps` (rutas por uid + proxy local, [Red saliente](network.md)); en otra imagen fallan cerrados |
@@ -25,6 +24,8 @@ hooks, snapshot).
 | Proxy de egress de `rayd` como SSRF (T17) | guardia después de resolver (loopback, IMDS, las direcciones propias del guest), el proxy no resuelve nombres denegados, credenciales del proxy del operador sólo por RPC y nunca en logs; la cabecera `Host` se reescribe sólo en la forma absoluta `http://`: un túnel `CONNECT`/SOCKS5 a un nombre permitido (80 o 443) comparte el riesgo de las IPs compartidas; bajo deny-all en `rayito-base-caps`, desde 0.3.2 el DNS de uid ≥ 1000 también se bloquea (una regla `ip rule` del puerto 53 por delante de los resolvedores de la plataforma, que escuchan dentro del guest), así que ni las conexiones ni las consultas DNS de los procesos del sandbox salen del VM; **riesgo residual**: las capas del guest son de mejor esfuerzo y no resisten a root en el guest ni a un exploit del kernel: el conector VPC sigue siendo el control duro de plataforma |
 | Secretos inyectados (T18) | apagado por defecto; con `secrets=` el valor viaja sólo en los `envs` por llamada (nunca en `runHookPayload`, `metadata`, logs ni errores) y se cachea sólo en la memoria del SDK; **riesgo residual**: el código del sandbox puede leerlo (fase 1) y queda en el snapshot si se suspende ([Secretos](secrets.md)) |
 | Índice de metadatos (T19) | apagado por defecto; con `index=DynamoDbIndex(...)` se copia en tu tabla DynamoDB sólo la `metadata` (no secreta) más la imagen, `startedAt` y el TTL, nunca tokens, `envs` ni secretos; una fila falsa nunca crea un sandbox fantasma (el listado parte de `list-microvms` y exige misma imagen y `startedAt`); rol escritor (`PutItem`) separado del lector (`BatchGetItem`) ([Índice de metadatos](funciones-opcionales/indice-de-metadatos.md)) |
+| Hooks de ciclo de vida forjados desde dentro de la VM (T2) | el puerto 9000 nunca va en un token; `rayd` comprueba qué uid es dueño de cada conexión a los hooks: un `/terminate` o un `/validate` de un proceso del sandbox responde 200 sin hacer nada, un `/run` suyo no consume el `/run` del arranque (así el `start_cmd` de una plantilla, que llega antes que la plataforma, no instala su token), y tras el primer `/run` un `/ready` o un `/validate` no reinicia ningún kernel; todo queda en `hook_audit` y en `get_health().hook_anomalies`; **riesgo residual**: `/suspend` y `/resume` forjados se aceptan (cuentan como anomalía), y un `/terminate` que esquiva la búsqueda se acepta pero también cuenta |
+| Pasarela de secretos (T24) | apagada por defecto; con `gateways=` el valor vive sólo en `rayd`, el `upstream` es fijo (`https://host`) y la allowlist decide antes de conectar; de la respuesta se quitan las cabeceras que llevan el valor; **riesgo residual**: el cuerpo vuelve sin inspeccionar, así que una regla de `allow` hacia un endpoint que refleje las cabeceras de la petición entrega el secreto ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#lo-que-la-pasarela-no-puede-impedir)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -107,10 +108,13 @@ Con `Sandbox.create(persist=S3Prefix(...))` el `HOME` del usuario viaja a tu
 bucket. Lo hace `rayd` como root con el execution role (que `persist=` exige
 explícitamente), no el código del sandbox: en `rayito-base-caps` uid 1000
 sigue sin alcanzar IMDS. El rol sólo puede escribir y leer bajo
-`<bucket>/<prefix>/*` (`infra/iam.yaml`), nunca borrar; ese prefijo **no
-separa inquilinos**: `rayd` no liga el destino al sandbox que lo pide, así
-que quien tenga el access token de un sandbox alcanza cualquier `name` bajo
-el mismo prefijo. El restore corre con
+`<bucket>/<prefix>/*` (`infra/iam.yaml`), nunca borrar. `persist=` liga
+además el sandbox a su bucket y a su `prefix`: `rayd` rechaza con
+`permission_denied` cualquier checkpoint o restore fuera de ellos, así que un
+`prefix` por inquilino separa inquilinos aunque compartan rol. Un sandbox
+creado sin `persist=` no liga nada y su access token alcanza cualquier
+destino que su rol alcance: no le des un rol que llegue al prefijo de
+persistencia. El restore corre con
 la identidad del usuario y sólo extrae ficheros regulares, directorios y
 symlinks (nada de dispositivos ni hard links), rechaza `..`, rutas absolutas y
 padres que salgan del `HOME`, descarta los bits setuid/setgid/sticky y

@@ -85,15 +85,17 @@ absolute form and that tunnels on 80 and 443 share the shared-IP residual.
 
 ### D5. `/run` origin by socket owner (RAYD-08)
 
-The listener records both ends of every connection (`HookPeer`) as the
-request's `ConnectInfo` (D6's `hooks::serve` inserts it per connection). The `/run` handler asks `SocketOwners` for
-the uid owning the caller's socket (the `/proc/net/tcp{,6}` row whose local
-end is the peer and whose remote end is the listener; `rayd` is root and
-shares the netns) on the blocking pool, and
-`SandboxSession::run_from(origin, ..)` refuses `HookOrigin::Sandbox`
-(uid 1000-65535) before the once-per-boot claim, counting an anomaly.
-`Platform` (root, 991-994) and `Unknown` (no row, no connect info) behave
-as before, so a failed lookup never blocks the genuine `/run`.
+After the merge of `sec-sandbox-isolation` there is one socket-owner
+lookup: its `guard_peers` middleware classifies every hook call
+(`rayd_core::hook_peer::classify_peer` over `ProcNetPeers`, the
+`/proc/net/tcp{,6}` row whose local end is the caller's address) and now
+inserts the `PeerOrigin` it found as a request extension. The `/run`
+handler passes it to `SandboxSession::run_from(origin, ..)`, which refuses
+`PeerOrigin::Sandbox` (uid 1000-65535) before the once-per-boot claim,
+counting an anomaly. `Platform` and `Unverified` behave as before, so a
+failed lookup never blocks the genuine `/run`. This change's own parser,
+port and connect-info type were dropped in the merge (one mechanism, not
+two).
 
 - Freezing `start_cmd` (`SIGSTOP` of its group before `/ready`, `SIGCONT`
   after `Installed`) was considered: a process that left the group with
@@ -180,8 +182,8 @@ help: the attacker names a live pid.
 `MAX_UNPRIVILEGED_ID = 65_535` next to the floor; `is_unprivileged` checks
 both ids against `MIN..=MAX`. `SANDBOX_UID_RANGE` stays the `&str` the `ip`
 commands and the probe compare against; tests pin it to the two constants
-(`process::identity`, `hook_origin`, whose `SANDBOX_UID_LAST` now is
-`MAX_UNPRIVILEGED_ID`).
+(`network::route_plan`'s `SANDBOX_UID_MIN`/`SANDBOX_UID_MAX`, which the
+peer check uses, are now the identity constants themselves).
 
 ## Out of scope
 

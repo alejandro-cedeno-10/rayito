@@ -11,6 +11,7 @@ import {
   validateAccessToken,
   validatedEnvs,
 } from "../../src/payload.js";
+import { S3Prefix } from "../../src/sandbox/persistence.js";
 import { ACCESS_TOKEN, ACCESS_TOKEN_SECRET } from "./helpers.js";
 
 describe("access token", () => {
@@ -120,6 +121,22 @@ describe("runHookPayload", () => {
     const plain = buildRunHookPayload({ accessToken: ACCESS_TOKEN });
     expect(buildRunHookPayload({ accessToken: ACCESS_TOKEN, networkEnforce: false })).toBe(plain);
     expect(plain).not.toContain("network");
+  });
+
+  test("the persist block binds the bucket and the base prefix, never prefix/name", () => {
+    const bound = JSON.parse(
+      buildRunHookPayload({
+        accessToken: ACCESS_TOKEN,
+        persist: new S3Prefix({
+          bucket: "amzn-s3-demo-bucket",
+          prefix: "tenants/acme",
+          name: "agent-7",
+        }),
+      }),
+    ) as Record<string, unknown>;
+    expect(bound.persist).toEqual({ bucket: "amzn-s3-demo-bucket", key_prefix: "tenants/acme" });
+    expect(bound.v).toBe(1);
+    expect(buildRunHookPayload({ accessToken: ACCESS_TOKEN })).not.toContain("persist");
   });
 
   test("an empty access token is refused", () => {

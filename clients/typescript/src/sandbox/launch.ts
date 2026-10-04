@@ -22,6 +22,7 @@ import {
 import { type IdlePolicyInput, templateNameFromArn, validatePort } from "../models.js";
 import { buildRunHookPayload, generateAccessToken, validateAccessToken } from "../payload.js";
 import { type OnTimeout, resolveLifecycle } from "./lifecycle.js";
+import type { S3Prefix } from "./persistence.js";
 
 export { resolveIdlePolicy } from "./lifecycle.js";
 
@@ -223,6 +224,8 @@ export interface LaunchPlanInput {
   readonly networkEnforce?: boolean | undefined;
   readonly maxLifetimeMs?: number | undefined;
   readonly onTimeout?: OnTimeout | undefined;
+  /** El `S3Prefix` de `create({ persist })`, ligado al sandbox en el payload (C-07). */
+  readonly persist?: S3Prefix | undefined;
 }
 
 export function buildLaunchPlan(input: LaunchPlanInput): LaunchPlan {
@@ -244,6 +247,7 @@ export function buildLaunchPlan(input: LaunchPlanInput): LaunchPlan {
       cpuTimeLimit: input.cpuTimeLimit,
       networkEnforce: input.networkEnforce,
       lifecycle: lifecycle.block,
+      persist: input.persist,
     }),
     clientToken: randomUUID().replaceAll("-", ""),
     logging: loggingConfig(input.logging ?? "disabled", templateNameFromArn(input.imageArn)),

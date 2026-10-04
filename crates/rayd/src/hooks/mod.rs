@@ -12,7 +12,8 @@
 //! `sandbox_origin` (`/run`),
 //! `kernel_warming` (503) / `ready_escape` (`/ready`), `validating` (503) /
 //! `validated` / `validate_failed` / `validate_skipped` with `--no-sidecar`
-//! (`/validate`), `terminating`, `budget_exceeded`.
+//! or after the accepted `/run` (`/validate`), `terminating`,
+//! `budget_exceeded`, and `peer_refused` (any hook the peer check refuses).
 //!
 //! `/suspend` (design D8) closes every open client stream through the
 //! `SuspendSignal`, quiesces the sidecar and syncs each filesystem inside a
@@ -28,20 +29,25 @@
 //! after a real checkpoint.
 //!
 //! Hooks cannot be authenticated by source address (they arrive from
-//! `127.0.0.1` like proxied client traffic), but the uid owning the
-//! caller's socket can be read (`HookPeer`, `SocketOwners`): a `/run` from
-//! a sandbox uid is refused without claiming the boot's one `/run`
-//! (`HookOrigin`, C-01's first step), so a sandbox process that reaches
-//! the port before the platform (a template's `start_cmd`, which thaws
-//! with the snapshot) can no longer install its own token. The other hooks
-//! still take any caller, so after the first accepted `/run` every
-//! runtime hook is audited (`hook_audit` lines, never a body), every
+//! `127.0.0.1` like proxied client traffic), but the kernel knows who owns
+//! the client end of each connection: `guard_peers` refuses a `/terminate`
+//! or `/validate` from a sandbox uid (200 `peer_refused`) and counts the
+//! other anomalies it finds (`rayd_core::hook_peer`). After the first
+//! accepted `/run` every hook is audited (`hook_audit` lines, never a
+//! body; a build hook called then is itself an anomaly), every
 //! accepted `/suspend` arms the stale-suspend watchdog, and `/run` spawns
 //! the IMDS verification when the block was installed at boot. A
-//! session-changing `/suspend` or `/resume` is never refused: the adapter
-//! cannot tell a forged call from the genuine one right behind it, and a
-//! refused genuine `/suspend` would skip the checklist of a real
-//! checkpoint while the platform freezes the VM anyway.
+//! session-changing `/suspend` or `/resume` is never refused, not even
+//! from a sandbox uid (the peer check only counts it): the uid the
+//! platform's own hook caller runs at is not measured, and a refused
+//! genuine `/suspend` would skip the checklist of a real checkpoint while
+//! the platform freezes the VM anyway.
+//! A `/run` from a sandbox uid is not refused by the guard but by the
+//! session (`SandboxSession::run_from`, 200 `sandbox_origin`): it never
+//! claims the boot's one `/run`, so a sandbox process that reaches the port
+//! before the platform (a template's `start_cmd`, which thaws with the
+//! snapshot) can no longer install its own token. The guard hands the
+//! handler the origin it found (`PeerOrigin` request extension).
 //!
 //! The listener itself (`server::serve`) serves at most
 //! `HOOKS_MAX_CONNECTIONS` connections, drops one whose request head does
@@ -54,9 +60,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
-use axum::extract::State;
-use axum::extract::connect_info::ConnectInfo;
+use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use axum::{Extension, Router};
@@ -64,7 +70,9 @@ use rayd_core::code::{
     KernelStatus, ReadyDecision, SidecarState, ValidateDecision, ready_hook_decision,
     validate_hook_decision,
 };
-use rayd_core::hook_origin::{HookOrigin, NoSocketOwners, SocketOwners};
+use rayd_core::hook_peer::{
+    PEER_REFUSED, PeerAction, PeerOrigin, PeerSocket, PeerSocketTable, classify_peer, peer_action,
+};
 use rayd_core::hooks::{
     HookCallOutcome, QUIESCE_TIMEOUT, RESUME_PROBE_BUDGET, STREAM_CLOSE_GRACE, suspend_actions,
 };
@@ -110,6 +118,15 @@ pub const PARTICIPANT_RESUME_TIMEOUT: Duration = Duration::from_secs(2);
 pub const PARTICIPANT_TERMINATE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub const HOOK_PATH_PREFIX: &str = "/aws/lambda-microvms/runtime/v1";
+
+/// `/validate`'s 200 outcome when it runs nothing: the image has no
+/// sidecar (`--no-sidecar`) or the boot already accepted its `/run`.
+pub const VALIDATE_SKIPPED: &str = "validate_skipped";
+
+/// Bound on the socket-table lookup of the peer check (`PeerGuard`): two
+/// small `/proc` reads. One that overruns it leaves the caller unverified
+/// rather than holding the hook.
+pub const PEER_LOOKUP_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Timeouts declared in the image's `hooks` configuration
 /// (`scripts/publish_image.py`, `IMAGE_HOOKS`). The budgets below derive from
@@ -157,20 +174,6 @@ pub struct HookServices {
     /// returns `Some`, which is how `/suspend` and `/ready` stay byte-for-byte
     /// the 0.5.x behaviour with no 0.6 feature configured.
     pub participants: Vec<Arc<dyn LifecycleParticipant>>,
-    /// Who owns the caller's socket of a hook connection
-    /// (`adapters::ProcNetSocketOwners` in `main`, `NoSocketOwners` where
-    /// hooks are never served over a real connection).
-    pub socket_owners: Arc<dyn SocketOwners>,
-}
-
-/// Both ends of a hook connection, recorded for each accepted socket by
-/// `server::serve` as the request's `ConnectInfo`: the caller's address
-/// and the listener's own end, which together name the caller's socket
-/// row in `/proc/net/tcp{,6}`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HookPeer {
-    pub remote: SocketAddr,
-    pub local: SocketAddr,
 }
 
 #[derive(Clone)]
@@ -185,7 +188,6 @@ struct HooksState {
     network: Arc<NetworkManager>,
     flush: Arc<BoundedFlush>,
     participants: Arc<Vec<Arc<dyn LifecycleParticipant>>>,
-    socket_owners: Arc<dyn SocketOwners>,
 }
 
 /// The router without an IMDS block, a user probe or a deadline watcher
@@ -207,7 +209,6 @@ pub fn router(
         timeout: TimeoutWatcher::detached(),
         network: NetworkManager::unavailable(session_for_network),
         participants: Vec::new(),
-        socket_owners: Arc::new(NoSocketOwners),
     })
 }
 
@@ -235,7 +236,6 @@ pub fn router_with_flush(services: HookServices, flush: BoundedFlush) -> Router 
         network: services.network,
         flush: Arc::new(flush),
         participants: Arc::new(services.participants),
-        socket_owners: services.socket_owners,
     };
     Router::new()
         .route(&hook_path(Hook::Ready), post(ready))
@@ -245,6 +245,92 @@ pub fn router_with_flush(services: HookServices, flush: BoundedFlush) -> Router 
         .route(&hook_path(Hook::Resume), post(resume))
         .route(&hook_path(Hook::Terminate), post(terminate))
         .with_state(state)
+}
+
+/// What the peer check of the hooks listener needs (`SECURITY.md` T2,
+/// C-01): the kernel's socket tables and `rayd`'s own effective uid.
+#[derive(Clone)]
+pub struct PeerGuard {
+    pub peers: Arc<dyn PeerSocketTable>,
+    pub agent_uid: u32,
+}
+
+#[derive(Clone)]
+struct PeerGuardState {
+    session: Arc<SandboxSession>,
+    guard: PeerGuard,
+}
+
+/// `router` with every hook call checked against the owner of its
+/// connection before the handler runs (`hook_peer::peer_action`): a
+/// `/terminate` or `/validate` from a sandbox uid answers 200
+/// `peer_refused` without running, audited as an anomaly, and the other
+/// anomalies the check finds are counted in `hook_anomalies`; every call
+/// that proceeds carries the origin found as a `PeerOrigin` extension (the
+/// `/run` handler's `SandboxSession::run_from`). The listener must give each
+/// request its peer address as `ConnectInfo<SocketAddr>` (`serve` does); a
+/// request without one is treated as unverified.
+pub fn guard_peers(router: Router, session: Arc<SandboxSession>, guard: PeerGuard) -> Router {
+    router.layer(middleware::from_fn_with_state(
+        PeerGuardState { session, guard },
+        check_peer,
+    ))
+}
+
+async fn check_peer(State(state): State<PeerGuardState>, request: Request, next: Next) -> Response {
+    let Some(hook) = hook_for_path(request.uri().path()) else {
+        return next.run(request).await;
+    };
+    let (mut parts, body) = request.into_parts();
+    let peer = ConnectInfo::<SocketAddr>::from_request_parts(&mut parts, &())
+        .await
+        .ok()
+        .map(|ConnectInfo(address)| address);
+    let origin = classify_peer(lookup_peer(&state.guard, peer).await, state.guard.agent_uid);
+    parts.extensions.insert(origin);
+    let request = Request::from_parts(parts, body);
+    match peer_action(hook, origin) {
+        PeerAction::Refuse => {
+            tracing::warn!(hook = %hook, peer_origin = origin.as_str(), outcome = PEER_REFUSED, "hook refused");
+            audit(
+                &state.session,
+                hook,
+                PEER_REFUSED,
+                HookCallOutcome::Anomalous,
+            );
+            Json(HookReply::new(hook, PEER_REFUSED, &state.session)).into_response()
+        }
+        PeerAction::Proceed(HookCallOutcome::Anomalous) => {
+            let counted = state.session.note_hook_anomaly();
+            tracing::warn!(
+                hook = %hook,
+                peer_origin = origin.as_str(),
+                counted,
+                hook_anomalies = state.session.hook_anomalies(),
+                "hook_peer_anomaly"
+            );
+            next.run(request).await
+        }
+        PeerAction::Proceed(HookCallOutcome::Nominal) => next.run(request).await,
+    }
+}
+
+fn hook_for_path(path: &str) -> Option<Hook> {
+    Hook::ALL.into_iter().find(|hook| hook_path(*hook) == path)
+}
+
+/// The table read runs off the runtime (two blocking `/proc` reads) under
+/// `PEER_LOOKUP_TIMEOUT`; no peer address, a failed read or an overrun all
+/// leave the caller unverified.
+async fn lookup_peer(guard: &PeerGuard, peer: Option<SocketAddr>) -> Option<PeerSocket> {
+    let peer = peer?;
+    let peers = guard.peers.clone();
+    let lookup = tokio::task::spawn_blocking(move || peers.find(peer));
+    tokio::time::timeout(PEER_LOOKUP_TIMEOUT, lookup)
+        .await
+        .ok()?
+        .ok()
+        .flatten()
 }
 
 /// Body of every hook response. AWS only reads the status code; the fields
@@ -297,7 +383,21 @@ struct RunEnvelope {
 /// 503 without a transition while the default kernel warms (AWS retries),
 /// 200 with the transition once it is warm, and 200 anyway five minutes
 /// after boot so a broken kernel never blocks a build silently.
+///
+/// After the accepted `/run` nobody legitimate calls it (it is a build
+/// hook): the call changes nothing, answers 200 `illegal` and is audited
+/// as an anomaly.
 async fn ready(State(state): State<HooksState>) -> Response {
+    if state.session.run_claimed() {
+        let outcome = transition_outcome(Hook::Ready, state.session.ready());
+        audit(
+            &state.session,
+            Hook::Ready,
+            &outcome,
+            HookCallOutcome::Anomalous,
+        );
+        return Json(HookReply::new(Hook::Ready, outcome, &state.session)).into_response();
+    }
     let sidecar_state = state.code.sidecar_state();
     let decision = ready_hook_decision(&sidecar_state, state.code.boot_elapsed());
     if matches!(decision, ReadyDecision::Ok) {
@@ -338,17 +438,30 @@ async fn ready(State(state): State<HooksState>) -> Response {
 /// The first call starts the pandas + matplotlib cell and answers 503;
 /// later calls answer 503 while it runs and 200 once it finished, with
 /// the outcome in the body (the build is never failed on purpose).
+///
+/// After the accepted `/run` the call is a forgery from inside the VM
+/// (`/validate` runs on a throwaway build VM, so every launched sandbox is
+/// still `Idle`): it never starts the cell, which would restart the
+/// operator's `default` context past the stream gate, answers 200
+/// `validate_skipped` and is audited as an anomaly.
 async fn validate(State(state): State<HooksState>) -> Response {
     log_transition(state.session.validate());
-    if state.code.sidecar_state() == SidecarState::Disabled {
-        return Json(HookReply::new(
-            Hook::Validate,
-            "validate_skipped",
-            &state.session,
-        ))
-        .into_response();
-    }
-    match validate_hook_decision(&state.code.validation_state()) {
+    let decision =
+        validate_hook_decision(&state.code.validation_state(), state.session.run_claimed());
+    match decision {
+        ValidateDecision::AfterRun => {
+            tracing::warn!(hook = %Hook::Validate, outcome = VALIDATE_SKIPPED, "validate after run ignored");
+            audit(
+                &state.session,
+                Hook::Validate,
+                VALIDATE_SKIPPED,
+                HookCallOutcome::Anomalous,
+            );
+            validate_skipped(&state.session)
+        }
+        _ if state.code.sidecar_state() == SidecarState::Disabled => {
+            validate_skipped(&state.session)
+        }
         ValidateDecision::Start => {
             state.code.start_validation();
             tracing::info!(hook = %Hook::Validate, outcome = "validating", "validate cell started");
@@ -367,6 +480,10 @@ async fn validate(State(state): State<HooksState>) -> Response {
     }
 }
 
+fn validate_skipped(session: &SandboxSession) -> Response {
+    Json(HookReply::new(Hook::Validate, VALIDATE_SKIPPED, session)).into_response()
+}
+
 /// The 200 goes out first; the default-kernel rotation (fresh HMAC key,
 /// fresh seeds, payload envs) and the IMDS verification run in the
 /// background (design D11, D4). A `/run` after the accepted one is an
@@ -380,12 +497,12 @@ async fn validate(State(state): State<HooksState>) -> Response {
 /// settled proxy env.
 async fn run(
     State(state): State<HooksState>,
-    peer: Option<Extension<ConnectInfo<HookPeer>>>,
+    origin: Option<Extension<PeerOrigin>>,
     body: Bytes,
 ) -> Response {
     within_budget(Hook::Run, state.session.clone(), async move {
         let envelope = parse_envelope(&body);
-        let origin = hook_origin(&state, peer.map(|Extension(ConnectInfo(peer))| peer)).await;
+        let origin = origin.map_or(PeerOrigin::Unverified, |Extension(origin)| origin);
         let outcome = state.session.run_from(
             origin,
             RunHookInput {
@@ -423,33 +540,6 @@ async fn run(
         run_outcome(&outcome, envelope.run_hook_payload.as_deref())
     })
     .await
-}
-
-/// The uid owning the caller's socket, read off the blocking pool (two
-/// small `/proc` files) and judged against `rayd`'s own uid; `Unknown`
-/// without connection info or a row.
-async fn hook_origin(state: &HooksState, peer: Option<HookPeer>) -> HookOrigin {
-    let Some(peer) = peer else {
-        return HookOrigin::Unknown;
-    };
-    let owners = state.socket_owners.clone();
-    let owner = tokio::task::spawn_blocking(move || owners.owner_uid(peer.remote, peer.local))
-        .await
-        .ok()
-        .flatten();
-    HookOrigin::from_socket_owner(owner, agent_uid())
-}
-
-/// `rayd`'s own effective uid: root in the image.
-#[cfg(unix)]
-fn agent_uid() -> u32 {
-    nix::unistd::geteuid().as_raw()
-}
-
-/// Off Unix no socket owner is ever read (`NoSocketOwners`).
-#[cfg(not(unix))]
-fn agent_uid() -> u32 {
-    0
 }
 
 /// Design D8: transition, detach the execute origins, broadcast, wait the
@@ -916,7 +1006,7 @@ fn run_outcome(outcome: &RunOutcome, payload: Option<&str>) -> String {
             "illegal".to_owned()
         }
         RunOutcome::SandboxOrigin => {
-            tracing::warn!(hook = %Hook::Run, outcome = "sandbox_origin", origin = HookOrigin::Sandbox.as_str(), "run refused: the caller's socket belongs to a sandbox uid");
+            tracing::warn!(hook = %Hook::Run, outcome = "sandbox_origin", origin = PeerOrigin::Sandbox.as_str(), "run refused: the caller's socket belongs to a sandbox uid");
             "sandbox_origin".to_owned()
         }
     }
@@ -1119,7 +1209,6 @@ mod tests {
                         Arc::new(FixedVerdict(*verdict)) as Arc<dyn LifecycleParticipant>
                     })
                     .collect(),
-                socket_owners: Arc::new(NoSocketOwners),
             });
             let request = Request::post(hook_path(Hook::Ready))
                 .body(Body::empty())
@@ -1176,7 +1265,6 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network,
                 participants: Vec::new(),
-                socket_owners: Arc::new(NoSocketOwners),
             });
             (session, router)
         }
@@ -1244,7 +1332,6 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network,
                 participants: Vec::new(),
-                socket_owners: Arc::new(NoSocketOwners),
             });
             let status = post(
                 &router,
@@ -1337,7 +1424,6 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network: NetworkManager::unavailable(session),
                 participants,
-                socket_owners: Arc::new(NoSocketOwners),
             };
             let flush = BoundedFlush::new(fake, SuspendBudget::for_hook(budget(Hook::Suspend)));
             router_with_flush(services, flush)
@@ -1578,6 +1664,242 @@ mod tests {
         fn each_participant_cap_fits_well_inside_its_hook_budget() {
             assert!(PARTICIPANT_RESUME_TIMEOUT < RESUME_PROBE_BUDGET);
             assert!(PARTICIPANT_TERMINATE_TIMEOUT * 4 <= budget(Hook::Terminate));
+        }
+    }
+
+    /// A build hook after the accepted `/run` has no legitimate caller:
+    /// it changes nothing and is audited as an anomaly.
+    mod build_hooks_after_run {
+        use rayd_core::clock::SystemClock;
+
+        use super::fixture::{post, run_body};
+        use super::*;
+        use crate::adapters::OsRandomSource;
+
+        fn hooks() -> (Arc<SandboxSession>, Router) {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let router = router(
+                session.clone(),
+                CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                Arc::new(SuspendSignal::new()),
+                CancellationToken::new(),
+            );
+            (session, router)
+        }
+
+        #[tokio::test]
+        async fn a_validate_after_run_is_skipped_and_audited() {
+            let (session, router) = hooks();
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            let (status, reply) = post(&router, Hook::Validate, String::new()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, VALIDATE_SKIPPED);
+            assert_eq!(session.hook_anomalies(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_ready_after_run_changes_nothing_and_is_audited() {
+            let (session, router) = hooks();
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            let (status, reply) = post(&router, Hook::Ready, String::new()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "illegal");
+            assert_eq!(reply.phase, "running");
+            assert_eq!(session.hook_anomalies(), 1);
+        }
+
+        #[tokio::test]
+        async fn build_hooks_before_run_are_never_counted() {
+            let (session, router) = hooks();
+            assert_eq!(
+                post(&router, Hook::Ready, String::new()).await.0,
+                StatusCode::OK
+            );
+            let (status, reply) = post(&router, Hook::Validate, String::new()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, VALIDATE_SKIPPED);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+            assert_eq!(session.hook_anomalies(), 0);
+        }
+    }
+
+    /// `guard_peers` over a fake socket table: what each origin does to
+    /// each hook, through real HTTP requests carrying a peer address.
+    mod peer_guard {
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        use axum::extract::connect_info::MockConnectInfo;
+        use rayd_core::clock::SystemClock;
+        use rayd_core::lifecycle::HookPhase;
+
+        use super::fixture::{post, run_body};
+        use super::*;
+        use crate::adapters::OsRandomSource;
+
+        const PEER_PORT: u16 = 41_234;
+        const ROOT: u32 = 0;
+        const PLATFORM_AGENT: u32 = 993;
+        const SANDBOX_USER: u32 = 1000;
+
+        /// Answers every lookup with the one socket it was built with, so
+        /// a test decides who "opened" each connection.
+        struct FixedTable(Option<PeerSocket>);
+
+        impl PeerSocketTable for FixedTable {
+            fn find(&self, _peer: SocketAddr) -> Option<PeerSocket> {
+                self.0
+            }
+        }
+
+        struct Guarded {
+            session: Arc<SandboxSession>,
+            shutdown: CancellationToken,
+            router: Router,
+        }
+
+        fn guarded(socket: Option<PeerSocket>) -> Guarded {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let shutdown = CancellationToken::new();
+            let hooks = router(
+                session.clone(),
+                CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                Arc::new(SuspendSignal::new()),
+                shutdown.clone(),
+            );
+            let guard = PeerGuard {
+                peers: Arc::new(FixedTable(socket)),
+                agent_uid: ROOT,
+            };
+            let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, PEER_PORT));
+            let router = guard_peers(hooks, session.clone(), guard).layer(MockConnectInfo(peer));
+            Guarded {
+                session,
+                shutdown,
+                router,
+            }
+        }
+
+        fn owned_by(uid: u32) -> PeerSocket {
+            PeerSocket {
+                uid,
+                established: true,
+            }
+        }
+
+        async fn after_run(socket: Option<PeerSocket>) -> Guarded {
+            let guarded = guarded(socket);
+            assert_eq!(
+                post(&guarded.router, Hook::Run, run_body()).await.0,
+                StatusCode::OK
+            );
+            guarded
+        }
+
+        #[tokio::test]
+        async fn a_terminate_from_a_sandbox_uid_is_refused_with_200() {
+            let guarded = after_run(Some(owned_by(SANDBOX_USER))).await;
+
+            let (status, reply) = post(&guarded.router, Hook::Terminate, String::new()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, PEER_REFUSED);
+            assert_eq!(guarded.session.phase(), HookPhase::Running);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(!guarded.shutdown.is_cancelled(), "rayd keeps serving");
+            assert_eq!(guarded.session.hook_anomalies(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_validate_from_a_sandbox_uid_is_refused_before_run_too() {
+            let guarded = guarded(Some(owned_by(SANDBOX_USER)));
+
+            let (status, reply) = post(&guarded.router, Hook::Validate, String::new()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, PEER_REFUSED);
+            assert_eq!(
+                guarded.session.hook_anomalies(),
+                0,
+                "nothing counts before /run"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_terminate_from_the_platform_agent_or_root_goes_through() {
+            for uid in [PLATFORM_AGENT, ROOT] {
+                let guarded = after_run(Some(owned_by(uid))).await;
+
+                let (status, reply) = post(&guarded.router, Hook::Terminate, String::new()).await;
+
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(reply.outcome, TERMINATING);
+                assert_eq!(guarded.session.phase(), HookPhase::Terminating);
+                assert_eq!(guarded.session.hook_anomalies(), 0);
+            }
+        }
+
+        #[tokio::test]
+        async fn an_unverified_terminate_goes_through_but_is_counted() {
+            for socket in [
+                None,
+                Some(PeerSocket {
+                    uid: ROOT,
+                    established: false,
+                }),
+            ] {
+                let guarded = after_run(socket).await;
+
+                let (status, reply) = post(&guarded.router, Hook::Terminate, String::new()).await;
+
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(reply.outcome, TERMINATING);
+                assert_eq!(guarded.session.hook_anomalies(), 1);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_suspend_from_a_sandbox_uid_is_honoured_and_counted() {
+            let guarded = after_run(Some(owned_by(SANDBOX_USER))).await;
+
+            let (status, reply) = post(&guarded.router, Hook::Suspend, String::new()).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply.outcome, "changed");
+            assert_eq!(guarded.session.phase(), HookPhase::Suspending);
+            assert_eq!(guarded.session.hook_anomalies(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_validate_after_run_from_a_sandbox_uid_counts_once() {
+            let guarded = after_run(Some(owned_by(SANDBOX_USER))).await;
+            post(&guarded.router, Hook::Validate, String::new()).await;
+            assert_eq!(guarded.session.hook_anomalies(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_request_without_a_peer_address_is_unverified() {
+            let session = Arc::new(SandboxSession::new(Arc::new(SystemClock::new()), "test"));
+            let hooks = router(
+                session.clone(),
+                CodeManager::disabled(session.clone(), Arc::new(OsRandomSource)),
+                Arc::new(SuspendSignal::new()),
+                CancellationToken::new(),
+            );
+            let guard = PeerGuard {
+                peers: Arc::new(FixedTable(Some(owned_by(SANDBOX_USER)))),
+                agent_uid: ROOT,
+            };
+            let router = guard_peers(hooks, session.clone(), guard);
+            assert_eq!(post(&router, Hook::Run, run_body()).await.0, StatusCode::OK);
+
+            let (_, reply) = post(&router, Hook::Terminate, String::new()).await;
+
+            assert_eq!(reply.outcome, TERMINATING);
+            assert_eq!(session.hook_anomalies(), 1);
         }
     }
 }

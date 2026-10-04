@@ -5,6 +5,7 @@
 //! `PartSource`/`ChunkSink` and `BlockingRunner` ports; tar, gzip, S3 and
 //! the blocking pool live in the `rayd` adapters.
 
+pub mod binding;
 pub mod checkpoint;
 pub mod error;
 pub mod keys;
@@ -20,6 +21,7 @@ pub(crate) mod fake;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub use binding::{BindingRejection, PersistBinding};
 pub use checkpoint::{
     CheckpointDone, CheckpointRequestInfo, ManifestMeta, PreparedCheckpoint, prepare_checkpoint,
     run_checkpoint,
@@ -64,6 +66,14 @@ pub struct LocationRequest {
     pub region: Option<String>,
 }
 
+/// What the session adds to every request: the payload's default user
+/// and the scope `/run` bound (C-07), both `None` before a payload set them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SessionScope<'a> {
+    pub default_user: Option<&'a str>,
+    pub binding: Option<&'a PersistBinding>,
+}
+
 /// A validated location: the store target plus the two keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedLocation {
@@ -72,15 +82,22 @@ pub struct ResolvedLocation {
     pub keys: ObjectKeys,
 }
 
-/// D2 validation plus D5's region rule: the request's region, else the
-/// agent's default (`AWS_REGION`), else `RegionUnknown`.
+/// D2 validation, the sandbox's bound scope (C-07: with a `persist` block
+/// in the `runHookPayload`, a location outside it is `OutsideBinding`
+/// before any network call; without one, any valid location passes) and
+/// D5's region rule: the request's region, else the agent's default
+/// (`AWS_REGION`), else `RegionUnknown`.
 pub fn resolve_location(
     request: &LocationRequest,
     default_region: Option<&str>,
+    binding: Option<&PersistBinding>,
 ) -> Result<ResolvedLocation, PersistenceError> {
     let bucket = BucketName::parse(&request.bucket).map_err(PersistenceError::InvalidBucket)?;
     let key_prefix =
         KeyPrefix::parse(&request.key_prefix).map_err(PersistenceError::InvalidKeyPrefix)?;
+    if binding.is_some_and(|binding| !binding.admits(&bucket, &key_prefix)) {
+        return Err(PersistenceError::OutsideBinding);
+    }
     let region = request
         .region
         .as_deref()
@@ -202,10 +219,10 @@ mod tests {
             region: None,
         };
         assert_eq!(
-            resolve_location(&request, None).unwrap_err(),
+            resolve_location(&request, None, None).unwrap_err(),
             PersistenceError::RegionUnknown
         );
-        let resolved = resolve_location(&request, Some("us-east-1")).unwrap();
+        let resolved = resolve_location(&request, Some("us-east-1"), None).unwrap();
         assert_eq!(resolved.target.region.as_deref(), Some("us-east-1"));
         assert_eq!(resolved.keys.manifest, "rayito/x/manifest.json");
         let explicit = resolve_location(
@@ -214,6 +231,7 @@ mod tests {
                 ..request.clone()
             },
             Some("us-east-1"),
+            None,
         )
         .unwrap();
         assert_eq!(explicit.target.region.as_deref(), Some("eu-west-1"));
@@ -223,6 +241,7 @@ mod tests {
                 ..request.clone()
             },
             Some("us-east-1"),
+            None,
         )
         .unwrap();
         assert_eq!(empty_region.target.region.as_deref(), Some("us-east-1"));
@@ -232,7 +251,8 @@ mod tests {
                     bucket: "B".to_owned(),
                     ..request.clone()
                 },
-                Some("us-east-1")
+                Some("us-east-1"),
+                None,
             ),
             Err(PersistenceError::InvalidBucket(_))
         ));
@@ -242,7 +262,52 @@ mod tests {
                     key_prefix: "/x".to_owned(),
                     ..request
                 },
-                Some("us-east-1")
+                Some("us-east-1"),
+                None,
+            ),
+            Err(PersistenceError::InvalidKeyPrefix(_))
+        ));
+    }
+
+    #[test]
+    fn a_bound_sandbox_never_resolves_a_location_outside_its_scope() {
+        let binding =
+            PersistBinding::parse(Some("amzn-s3-demo-bucket"), Some("tenants/acme")).unwrap();
+        let inside = LocationRequest {
+            bucket: "amzn-s3-demo-bucket".to_owned(),
+            key_prefix: "tenants/acme/agent-7".to_owned(),
+            region: None,
+        };
+        let resolved = resolve_location(&inside, Some("us-east-1"), Some(&binding)).unwrap();
+        assert_eq!(resolved.key_prefix.as_str(), "tenants/acme/agent-7");
+        for outside in [
+            LocationRequest {
+                key_prefix: "tenants/other/agent-7".to_owned(),
+                ..inside.clone()
+            },
+            LocationRequest {
+                key_prefix: "tenants/acme-evil".to_owned(),
+                ..inside.clone()
+            },
+            LocationRequest {
+                bucket: "other-bucket".to_owned(),
+                ..inside.clone()
+            },
+        ] {
+            assert_eq!(
+                resolve_location(&outside, Some("us-east-1"), Some(&binding)).unwrap_err(),
+                PersistenceError::OutsideBinding,
+            );
+            assert!(resolve_location(&outside, Some("us-east-1"), None).is_ok());
+        }
+        assert!(matches!(
+            resolve_location(
+                &LocationRequest {
+                    key_prefix: "tenants/acme/../other".to_owned(),
+                    ..inside
+                },
+                Some("us-east-1"),
+                Some(&binding),
             ),
             Err(PersistenceError::InvalidKeyPrefix(_))
         ));

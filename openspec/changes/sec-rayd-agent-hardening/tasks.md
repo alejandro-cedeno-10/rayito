@@ -33,10 +33,14 @@
 
 ## 5. Hooks (RAYD-08)
 
-- [x] 5.1 `rayd_core::hook_origin` (parser, `HookOrigin`, `SocketOwners`)
+- [x] 5.1 Socket-owner lookup and `SandboxSession::run_from` (after the
+  merge of `sec-sandbox-isolation`, on its `rayd_core::hook_peer`:
+  `PeerOrigin`, `PeerSocketTable`, `ProcNetPeers`; this change's own
+  parser was dropped)
   and `SandboxSession::run_from` with tests.
-- [x] 5.2 `HookPeer` connect info, `ProcNetSocketOwners`, `/run` wiring,
-  integration test over a real connection.
+- [x] 5.2 `guard_peers` hands the origin to the `/run` handler
+  (`PeerOrigin` request extension); integration test over a real
+  connection through `hooks::serve`.
 
 ## 6. Listeners (second pass)
 

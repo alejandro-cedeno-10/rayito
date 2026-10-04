@@ -122,7 +122,6 @@ async fn harness() -> Harness {
         timeout: TimeoutWatcher::detached(),
         network,
         participants: Vec::new(),
-        socket_owners: Arc::new(rayd_core::hook_origin::NoSocketOwners),
     });
     Harness {
         channel,

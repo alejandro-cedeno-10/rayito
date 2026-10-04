@@ -100,6 +100,34 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   rango que cubren el bloqueo de IMDS y las reglas de egress y DNS; una
   cuenta por encima de 65535 en una imagen propia se rechaza como cuenta
   con privilegios (`SECURITY.md` T1).
+- **Los hooks de ciclo de vida comprueban quién abrió la conexión**
+  (`sec-sandbox-isolation`, C-01): `rayd` busca el extremo cliente de cada
+  conexión al puerto de hooks en las tablas de sockets del kernel. Un
+  `/terminate` o un `/validate` que llega desde un proceso del sandbox
+  (uid 1000-65535) responde 200 `peer_refused` sin hacer nada y cuenta en
+  `hook_anomalies`; un `/suspend` o un `/resume` desde el sandbox se sigue
+  aceptando pero también cuenta. Ningún hook responde nunca un no-2xx por
+  esta comprobación.
+- **`/validate` y `/ready` ya no actúan tras el `/run`** (C-02, C-03): un
+  `/validate` posterior al `/run` responde 200 `validate_skipped` sin
+  reiniciar el contexto `default` del kernel ni ejecutar la celda de
+  validación, y tanto él como un `/ready` tardío quedan en `hook_audit` como
+  anomalía. Las llamadas del build, antes del `/run`, no cambian.
+  Además, el camino de ejecución propio del build (el que se salta el
+  `stream_gate`) se niega por sí solo fuera de la fase de build, aunque se
+  llegue a él sin pasar por el hook.
+- **`Checkpoint` y `Restore` quedan dentro del ámbito que liga el `/run`**
+  (C-07): si el `runHookPayload` trae el bloque `persist` (bucket y base del
+  prefijo, lo manda el SDK desde `create(persist=)`), `rayd` responde
+  `PERMISSION_DENIED`, antes de tocar S3, a cualquier destino de otro bucket
+  o fuera de esa base. Un prefijo por inquilino separa así inquilinos que
+  comparten execution role. Sin el bloque nada cambia.
+- **La pasarela de secretos no devuelve la credencial en las cabeceras de la
+  respuesta**: se eliminan las cabeceras de la respuesta del `upstream` que
+  llevan el nombre de una cabecera inyectada o contienen un valor vaultado.
+  El cuerpo sigue llegando sin cambios, así que la documentación (T24 y la
+  página de la pasarela) avisa de no permitir endpoints que reflejen las
+  cabeceras de la petición.
 - **Los assets firmados de `rayd` se construyen sin credenciales y no se
   pueden reemplazar desde la release.** `release.yml` parte el job `rayd` en
   `rayd-build` (sólo lectura), `rayd-sign` (token OIDC, sin checkout ni

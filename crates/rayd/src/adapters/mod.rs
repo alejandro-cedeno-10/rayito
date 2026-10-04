@@ -12,7 +12,9 @@
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
 //! (`rayd-orphan-reaper`), the symlink-proof mountpoint walk both mount
 //! features share, the EFS volume mounter over `amazon-efs-utils`
-//! (ADR-018), and the connection cap of `rayd`'s own listeners.
+//! (ADR-018), the `/proc/net/tcp` lookup of who opened a hook
+//! connection (`hook_peer`), and the connection cap of `rayd`'s own
+//! listeners.
 //! Each has a Linux implementation and an `Unsupported` stand-in so the
 //! crate builds and its domain tests run on any host.
 
@@ -37,7 +39,7 @@ pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
 pub mod otlp_codec;
-pub mod proc_net_sockets;
+pub mod proc_net_peers;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod procfs_process_table;
@@ -81,7 +83,7 @@ pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
 pub use orphan_reaper::OrphanReaper;
 pub use otlp_codec::ProstOtlpEncoder;
-pub use proc_net_sockets::ProcNetSocketOwners;
+pub use proc_net_peers::{ProcNetPeers, agent_uid};
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };

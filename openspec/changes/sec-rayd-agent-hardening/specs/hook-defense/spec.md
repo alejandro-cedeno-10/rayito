@@ -2,10 +2,12 @@
 
 ### Requirement: A /run from a sandbox uid never claims the boot's run
 `rayd` SHALL read the uid owning the caller's TCP socket of every `/run`
-(the `/proc/net/tcp` or `/proc/net/tcp6` row whose local end is the caller's
-address and whose remote end is the hooks listener) and, when that uid is in
+through the hooks' peer check (the `/proc/net/tcp` or `/proc/net/tcp6` row
+whose local end is the caller's address) and, when that uid is in
 the sandbox range 1000-65535, SHALL answer 200 with `outcome:
-"sandbox_origin"`, count one `hook_anomalies` and SHALL NOT claim the boot's
+"sandbox_origin"`, count one `hook_anomalies` (the one call counted before
+the accepted `/run`: a sandbox-owned `/run` is an anomaly whether or not the
+boot accepted one) and SHALL NOT claim the boot's
 once-only `/run`, install a token digest or apply any part of the payload. A
 `/run` whose socket owner is root, a platform uid or cannot be found SHALL
 behave exactly as before. `SECURITY.md` T2 and `ARCHITECTURE.md` ADR-022

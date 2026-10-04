@@ -22,16 +22,17 @@ use aws_sdk_s3::config::SharedCredentialsProvider;
 use rayd::adapters::{
     CappedListener, ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
-    ProcNetSocketOwners, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
-    USER_PROBE_PROGRAM, UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
-    imds_execution_role_provider, inherited_nofile_limits, install_imds_block, prepare_socket_root,
+    ProcNetPeers, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
+    USER_PROBE_PROGRAM, UserConnectProbe, agent_uid, detect_guest_capabilities,
+    detect_spawn_platform, imds_execution_role_provider, inherited_nofile_limits,
+    install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
 use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
-use rayd::hooks::{HookServerSettings, HookServices};
+use rayd::hooks::{HookServerSettings, HookServices, PeerGuard};
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
     StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
@@ -263,7 +264,6 @@ async fn main() -> anyhow::Result<ExitCode> {
             // (`boot_participants`); empty while no slot has one, which
             // keeps every hook exactly as in 0.5.x.
             participants,
-            socket_owners: Arc::new(ProcNetSocketOwners),
         },
         shutdown.clone(),
     );
@@ -274,17 +274,23 @@ async fn main() -> anyhow::Result<ExitCode> {
 }
 
 /// The hooks listener (`rayd::hooks::serve`: capped, with a request-head
-/// deadline), recording both ends of every connection (`HookPeer`) so
-/// `/run` can read who owns the caller's socket. It never fails; it ends
-/// once `shutdown` is cancelled and its open connections are answered.
+/// deadline), with every call checked against the owner of its connection
+/// over the kernel's socket tables (`guard_peers`, C-01). It never fails;
+/// it ends once `shutdown` is cancelled and its open connections are
+/// answered.
 fn serve_hooks(
     listener: TcpListener,
     services: HookServices,
     shutdown: CancellationToken,
 ) -> impl Future<Output = anyhow::Result<()>> {
+    let session = services.session.clone();
+    let guard = PeerGuard {
+        peers: Arc::new(ProcNetPeers),
+        agent_uid: agent_uid(),
+    };
     let serve = rayd::hooks::serve(
         listener,
-        rayd::hooks::router_with(services),
+        rayd::hooks::guard_peers(rayd::hooks::router_with(services), session, guard),
         HookServerSettings::default(),
         shutdown,
     );
