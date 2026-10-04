@@ -6,6 +6,18 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Security
+
+- **`SecretGateway` rechaza una ruta de `allow` que `rayd` nunca dejaría
+  pasar** (`sec-rayd-agent-hardening`): las rutas de `allow` siguen ahora
+  la misma lista de permitidos que `rayd` aplica a cada petición
+  (caracteres de ruta de RFC 3986 salvo `;`, sin segmentos vacíos salvo el
+  último, y cada segmento decodificado una sola vez UTF-8 válido, sin `/`,
+  `\`, `%`, `;` ni bytes de control y distinto de `.`/`..`), y una que no
+  la cumpla lanza `InvalidArgumentException` antes de cualquier llamada,
+  con los mismos vectores compartidos que `rayd`
+  (`testdata/secret-gateway/request-paths.json`).
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

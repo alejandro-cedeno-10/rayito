@@ -331,7 +331,13 @@ escucha en `0.0.0.0:9000` en el netns del sandbox, así que un proceso uid
 que faltaban en T2, y `/ready` y `/validate` son hooks de build que nunca
 llegan a `audit()`, así que un `/validate` forjado no deja línea `hook_audit`
 ni sube `hook_anomalies`. Autenticar `/terminate` y `/validate` por el uid del
-par queda pendiente. Ninguna transición se
+par queda pendiente. El primer paso ya está hecho para `/run`
+(`sec-rayd-agent-hardening`): `rayd` lee el uid dueño del socket del
+llamante en `/proc/net/tcp{,6}` (`HookPeer`, `rayd_core::hook_origin`) y un
+`/run` desde un uid del sandbox (1000-65535) se rechaza con
+`sandbox_origin` sin consumir el `/run` del arranque, así que un proceso
+que llegue antes que la plataforma (el `start_cmd` de una plantilla, que se
+descongela con el snapshot, ADR-022) ya no instala su token. Ninguna transición se
 rechaza ni se limita: `rayd` no distingue un hook forjado del genuino que
 llega justo detrás, y rechazar el genuino dejaría un checkpoint real sin
 preparar (revisión de M6; `SECURITY.md` T2).
@@ -1266,7 +1272,9 @@ cualquier proceso uid 1000 de dentro de la VM alcanza las seis rutas por
 loopback sin token alguno —`/terminate` se lleva la VM y `/validate` reinicia
 el contexto `default` del kernel—, y la auditoría cubre sólo los hooks de
 runtime (`/ready` y `/validate` nunca pasan por `audit()`). Autenticar
-`/terminate` y `/validate` por el uid del par queda pendiente.
+`/terminate` y `/validate` por el uid del par queda pendiente; `/run` ya
+rechaza un socket de un uid del sandbox sin consumir el `/run` del arranque
+(`sec-rayd-agent-hardening`, `SECURITY.md` T2).
 
 ---
 
@@ -2208,6 +2216,21 @@ pila de $0 sólo-IAM en una con datos que borrar al destruirla); el bucket
 es del cliente, y la guía y la pila le piden una regla de ciclo de vida
 sobre `rayito/templates/`.
 
+**Riesgo residual antes del `/run` (`sec-rayd-agent-hardening`, RAYD-08).**
+El `start_cmd` está en el snapshot, así que en cada sandbox lanzado desde
+la plantilla corre **antes** de que llegue el `/run` de la plataforma, y
+`/run` se acepta una sola vez por arranque. Un `start_cmd` malicioso o
+comprometido podía ganar esa carrera: con un payload malformado dejaba la
+VM sin token, y con uno bien formado instalaba su propio digest (con su
+`network`, `envs`, `metadata` y `lifecycle`) y el `/run` genuino quedaba
+como `already_ran`. `rayd` rechaza ahora un `/run` cuyo socket pertenece a
+un uid del sandbox sin consumir el del arranque (`HookOrigin`, ADR-006), lo
+que cubre al `start_cmd` del usuario por defecto (uid 1000) y a cualquier
+otro uid ≥ 1000. Sigue abierto: un `start_cmd` que corra como root
+(`RAYITO_ALLOW_ROOT`), y congelar los procesos del `start_cmd` hasta el
+`/run` (`SIGSTOP` del grupo antes del snapshot), que no protege de un
+proceso que se haya separado con `setsid` y necesita validarse en AWS real.
+
 **Reversible.** Aditivo: ningún `Sandbox.create()` existente cambia de
 comportamiento, y nada se importa ni se construye hasta que se llama a
 `Template.build()`/`build_in_background()`.
@@ -2233,7 +2256,17 @@ cada `ConfigureSandbox`). `rayd` abre un listener de loopback por ruta
 (`rayd::secret_gateway::listener::GatewayRuntime`), que decide
 (`rayd_core::secret_gateway::decision`, cubo de tokens entero y
 determinista) antes de tocar la red: una petición fuera de la allowlist o
-por encima del límite nunca llega al upstream. Lo que sí llega tiene las
+por encima del límite nunca llega al upstream. Antes de la allowlist, la
+ruta de la petición pasa una lista de permitidos
+(`rayd_core::secret_gateway::route::path_is_safe`,
+`sec-rayd-agent-hardening`): sólo caracteres RFC 3986 de ruta salvo `;`,
+ningún segmento vacío salvo el último, y cada segmento, decodificado una
+sola vez, UTF-8 válido sin bytes de control, sin `/`, `\`, `%` ni `;` y
+distinto de `.` y `..`. `rayd` reenvía la ruta tal cual, así que eso es lo
+que impide que un upstream que normaliza `..;` o decodifica dos veces
+(`%252e`) la lleve fuera de una regla `/*`; las rutas de `allow` deben
+cumplir la misma regla (`invalid_allow_path`, y los SDKs lo comprueban
+antes de llamar). Lo que sí llega tiene las
 cabeceras que el guest pudo haber puesto para esos mismos nombres
 eliminadas primero (`header_template::must_drop`) y las vaultadas
 inyectadas después, así que el código del sandbox no puede ni suplantar ni

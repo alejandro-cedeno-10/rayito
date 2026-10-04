@@ -105,6 +105,15 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
   su plazo, `/ready` falla y el build termina con
   `BuildException(reason="ready_server_error")`. Una imagen base publicada
   con un `rayd` anterior ignora el fichero.
+- **El `start_cmd` ya corre cuando llega el `/run`.** Como va en el
+  snapshot, en cada sandbox lanzado desde la plantilla se descongela antes
+  que el hook `/run` que instala el token de acceso. `rayd` rechaza un
+  `/run` que venga de un proceso del sandbox (cualquier uid ≥ 1000) sin
+  consumir el `/run` del arranque, así que un `start_cmd` malicioso o
+  comprometido no puede instalar su propio token ni dejar el sandbox sin
+  él; sólo uno que corra como root (`user="root"` con
+  `RAYITO_ALLOW_ROOT=1` en la imagen) queda fuera de esa protección
+  (`SECURITY.md` T2).
 
 ## Contexto de build
 

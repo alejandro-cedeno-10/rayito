@@ -10,6 +10,42 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- **Las operaciones de ficheros ya no vuelven a resolver la ruta que la
+  lista de denegación comprobó** (`sec-rayd-agent-hardening`, RAYD-01):
+  cada RPC de `FilesystemService` (y la exportación e importación por S3)
+  abre el directorio padre componente a componente sin seguir enlaces
+  simbólicos y actúa sobre ese descriptor, así que un componente que el
+  código del sandbox cambie entre la comprobación y el uso se rechaza con
+  la denegación de la política en vez de seguirse; un directorio en `proc`,
+  `sysfs` o `devpts` se rechaza llegue por donde llegue. El borrado
+  recursivo y las escrituras atómicas trabajan también por descriptor.
+- **La pasarela de secretos valida la ruta con una lista de permitidos**
+  (RAYD-02): en vez de rechazar unas cuantas codificaciones conocidas,
+  `rayd` sólo deja pasar caracteres de ruta de RFC 3986 salvo `;`, y cada
+  segmento decodificado una sola vez debe ser UTF-8 válido, sin `/`, `\`,
+  `%`, `;` ni bytes de control y distinto de `.`/`..`. Cierra el uso de la
+  credencial inyectada fuera de `allow` a través de un upstream que quite
+  parámetros `;` o decodifique dos veces. Una ruta de `allow` que ninguna
+  petición pueda cumplir se rechaza en `Configure` (`invalid_allow_path`).
+- **Los lanzadores internos ya no heredan el entorno de `rayd`** (RAYD-04):
+  la sonda de disponibilidad de los montajes S3 (uid 1000) arranca con un
+  entorno con sólo `PATH`, un binario absoluto, el sellado de descriptores
+  y el restablecimiento de señales que ya tenían los procesos del usuario;
+  `mount-s3` gana el mismo sellado por encima de su descriptor FUSE.
+- **Un `/run` desde un proceso del sandbox ya no consume el `/run` del
+  arranque** (RAYD-08): `rayd` lee el uid dueño del socket del llamante y
+  rechaza (200 `sandbox_origin`, contado en `hook_anomalies`) un `/run`
+  de un uid del sandbox, así que el `start_cmd` de una plantilla, que
+  corre antes de que llegue el `/run` de la plataforma, no puede instalar
+  su propio token ni dejar el sandbox sin él. Pendiente de aceptación en
+  AWS real.
+- **Documentado el alcance de la reescritura de `Host` del proxy de
+  egress** (RAYD-06): sólo cubre la forma absoluta `http://`; un túnel
+  `CONNECT`/SOCKS5 a un nombre permitido en el 80 comparte el riesgo
+  residual de IPs compartidas que ya tenía el 443 (`SECURITY.md` T17).
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

@@ -175,6 +175,13 @@ para esto.
 - El bucket debe estar en `RAYITO_ALLOWED_MOUNT_BUCKETS` de la imagen
   (config de imagen, no una opción por sandbox); vacío o ausente deniega
   todos los buckets.
+- La sonda de disponibilidad que `rayd` lanza como uid 1000 tras cada
+  montaje (`/usr/bin/stat <ruta>`) y el propio `mount-s3` arrancan con un
+  entorno construido desde cero (sólo `PATH`, más `AWS_REGION` en
+  `mount-s3`), sin heredar ningún descriptor de `rayd` ni sus señales
+  ignoradas: el entorno de `rayd` (el ARN de la imagen, variables
+  `RAYITO_*` o `--env` de la imagen) nunca llega a un proceso que otro
+  proceso uid 1000 pueda leer en `/proc/<pid>/environ`.
 - `rayd` monta como root, pero nunca sigue un enlace simbólico en la ruta
   de montaje (ni al crearla ni al relanzar un montaje): si el código del
   sandbox cambia `/home/user/<carpeta>` por un enlace a un directorio del
