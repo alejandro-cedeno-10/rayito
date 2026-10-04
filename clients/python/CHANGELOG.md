@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
 - **Redesplegar una pila opcional ya no deshace su configuración**
@@ -905,7 +907,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...python-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.1...python-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.5.0...python-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.4.0...python-v0.5.0

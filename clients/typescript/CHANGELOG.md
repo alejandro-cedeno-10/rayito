@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-04
+
 ### Fixed
 
 - **Redesplegar una pila opcional ya no deshace su configuración**
@@ -740,7 +742,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.1...HEAD
+[0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...typescript-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.1...typescript-v0.6.0
 [0.5.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.0...typescript-v0.5.1
 [0.5.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.4.0...typescript-v0.5.0
