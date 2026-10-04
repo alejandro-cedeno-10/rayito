@@ -263,8 +263,7 @@ ningún kwarg nuevo para esto.
 
 ## Ver también
 
-- [Funciones opcionales](../optional-features.md) (fila "sizes-catalog"
-  pendiente de `m15-docs-integration`)
+- [Funciones opcionales](../optional-features.md)
 - [Pilas opcionales (`rayito stack`)](pilas-opcionales.md)
 - [Coste](../cost.md)
 - [IAM](../operacion/iam.md)

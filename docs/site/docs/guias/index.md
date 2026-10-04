@@ -53,6 +53,8 @@ diferencias con E2B.
 |---|---|
 | [Probar en local (Docker + Floci)](probar-en-local.md) | correr los SDK contra un `rayd` real y un AWS emulado, sin cuenta ni coste |
 
-Las funciones que tienen coste propio en AWS (secretos, índice de metadatos)
-o que son sólo de la CLI (proxy local) están en
-[Funciones opcionales](../optional-features.md).
+Las funciones que tienen coste propio en AWS (secretos, índice de metadatos,
+montajes S3, tamaños, eventos y webhooks, exportación OTLP, templates,
+pasarela de secretos) o que son sólo de la CLI (proxy local) están en
+[Funciones opcionales](../optional-features.md). Lo nuevo de cada versión:
+[Novedades](../novedades/index.md).
