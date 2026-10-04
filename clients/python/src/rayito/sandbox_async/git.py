@@ -1,14 +1,18 @@
 """`AsyncSandbox.git`: la misma superficie que `sandbox_sync.git` como
 corrutinas sobre `AsyncCommands`, con los mismos helpers puros de
-`rayito._git_base`. Tampoco emite registros de log."""
+`rayito._git_base`, el mismo tratamiento de credenciales y el mismo único
+aviso de log (`CREDENTIALS_MAY_REMAIN_MESSAGE`, logger `rayito.git`)."""
 
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from rayito._git_base import (
+    CREDENTIALS_MAY_REMAIN_MESSAGE,
+    GIT_CONFIG_NO_MATCH_EXIT_CODE,
     FailurePolicy,
     GitBranches,
     GitCommandOptions,
@@ -28,7 +32,9 @@ from rayito._git_base import (
     git_command,
     git_failure,
     has_upstream_args,
+    has_url_rewrites,
     init_args,
+    isolated_args,
     parse_git_branches,
     parse_git_status,
     parse_remote_url,
@@ -50,15 +56,19 @@ from rayito._git_base import (
     restore_args,
     status_args,
     upstream_error_message,
+    url_rewrite_check_args,
+    url_rewrite_error_message,
     with_credentials,
 )
 from rayito._models import CommandResult
-from rayito.exceptions import CommandExitException, GitUpstreamException
+from rayito.exceptions import CommandExitException, GitAuthException, GitUpstreamException
 
 if TYPE_CHECKING:
     from rayito.sandbox_async.commands import AsyncCommands
 
 T = TypeVar("T")
+
+logger = logging.getLogger("rayito.git")
 
 
 class AsyncGit:
@@ -106,12 +116,27 @@ class AsyncGit:
             secrets=credential_secrets(password),
         )
 
-        async def clone_and_strip() -> CommandResult:
-            result = await self._run(plan.args, None, options)
+        async def strip() -> None:
             if plan.should_strip and plan.repo_path and plan.sanitized_url:
-                await self._run(
-                    remote_set_url_args("origin", plan.sanitized_url), plan.repo_path, options
+                await self._restore_remote(
+                    remote_set_url_args("origin", plan.sanitized_url),
+                    plan.repo_path,
+                    options,
+                    action="clone",
                 )
+
+        async def clone_and_strip() -> CommandResult:
+            if plan.credentialed:
+                await self._refuse_url_rewrites(None, options, "clone")
+            try:
+                result = await self._run(plan.args, None, options)
+            except CommandExitException:
+                raise
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await strip()
+                raise
+            await strip()
             return result
 
         return await self._guarded(clone_and_strip, policy)
@@ -341,7 +366,8 @@ class AsyncGit:
                 username,
                 password,
                 options,
-                lambda: self._run(args, path, options),
+                lambda: self._run(isolated_args(args), path, options),
+                action="push",
             )
 
         return await self._guarded(push_with_credentials, policy)
@@ -386,7 +412,8 @@ class AsyncGit:
                 username,
                 password,
                 options,
-                lambda: self._run(args, path, options),
+                lambda: self._run(isolated_args(args), path, options),
+                action="pull",
             )
 
         return await self._guarded(pull_with_credentials, policy)
@@ -517,24 +544,49 @@ class AsyncGit:
         password: str,
         options: GitCommandOptions,
         operation: Callable[[], Awaitable[T]],
+        *,
+        action: str,
     ) -> T:
-        """La URL original se restaura siempre. Si la operación falla, su
-        error es el que sale aunque la restauración también falle (como en
-        E2B); si sólo falla la restauración, sale ese error."""
+        """Igual que `Git._with_remote_credentials`: la URL original se
+        restaura siempre, el error de la operación gana al de la
+        restauración y cualquier restauración fallida deja el aviso
+        `CREDENTIALS_MAY_REMAIN_MESSAGE`."""
+        await self._refuse_url_rewrites(path, options, action)
         original = parse_remote_url(
             (await self._run(remote_get_url_args(remote), path, options)).stdout, remote
         )
         credentialed = with_credentials(original, username, password)
         restore = remote_set_url_args(remote, original)
-        await self._run(remote_set_url_args(remote, credentialed), path, options)
         try:
+            await self._run(remote_set_url_args(remote, credentialed), path, options)
             result = await operation()
         except BaseException:
-            with contextlib.suppress(CommandExitException):
-                await self._run(restore, path, options)
+            with contextlib.suppress(Exception):
+                await self._restore_remote(restore, path, options, action=action)
             raise
-        await self._run(restore, path, options)
+        await self._restore_remote(restore, path, options, action=action)
         return result
+
+    async def _restore_remote(
+        self, args: Sequence[str], path: str, options: GitCommandOptions, *, action: str
+    ) -> None:
+        try:
+            await self._run(args, path, options)
+        except Exception:
+            logger.warning(CREDENTIALS_MAY_REMAIN_MESSAGE, action)
+            raise
+
+    async def _refuse_url_rewrites(
+        self, repo_path: str | None, options: GitCommandOptions, action: str
+    ) -> None:
+        try:
+            found = (await self._run(url_rewrite_check_args(), repo_path, options)).stdout
+        except CommandExitException as exc:
+            if exc.exit_code == GIT_CONFIG_NO_MATCH_EXIT_CODE:
+                return
+            raise
+        if has_url_rewrites(found):
+            raise GitAuthException(url_rewrite_error_message(action))
 
     async def _guarded(self, operation: Callable[[], Awaitable[T]], policy: FailurePolicy) -> T:
         """Traduce el `CommandExitException` según `policy`. Con secretos de

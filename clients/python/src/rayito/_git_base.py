@@ -25,6 +25,27 @@ from rayito.exceptions import (
 GitResetMode = Literal["soft", "mixed", "hard", "merge", "keep"]
 
 GIT_ENV: Final[Mapping[str, str]] = MappingProxyType({"GIT_TERMINAL_PROMPT": "0"})
+#: `-c` de cada `git clone/push/pull` que lleva credenciales: sin hooks (un
+#: `pre-push` plantado por código del sandbox recibe la URL con credenciales
+#: como `$2`, y cualquier hook puede leer `.git/config` mientras dura la
+#: orden) y sin credential helpers (con uno configurado, p. ej. `store`, git
+#: aprobaría el usuario y el token de la URL y los dejaría en disco más allá
+#: de la orden). Un `credential.helper` vacío vacía la lista de helpers
+#: (git-config(1), `credential.helper`).
+CREDENTIAL_ISOLATION_ARGS: Final[tuple[str, ...]] = (
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "credential.helper=",
+)
+#: Reescrituras de URL (`url.<base>.insteadOf`/`pushInsteadOf`, en cualquier
+#: scope e `include`s) que mandarían la URL con credenciales a otro sitio, p.
+#: ej. a un listener del propio sandbox. Con alguna, no se envían
+#: credenciales.
+URL_REWRITE_CONFIG_PATTERN: Final = r"^url\..*\.(push)?insteadof$"
+#: `git config --get-regexp` sale con 1 cuando ninguna clave coincide
+#: (git-config(1), EXIT STATUS).
+GIT_CONFIG_NO_MATCH_EXIT_CODE: Final = 1
 RESET_MODES: Final[tuple[str, ...]] = ("soft", "mixed", "hard", "merge", "keep")
 CONFIG_SCOPE_FLAGS: Final[Mapping[str, str]] = MappingProxyType(
     {"global": "--global", "local": "--local", "system": "--system"}
@@ -141,12 +162,14 @@ class GitBranches:
 @dataclass(frozen=True)
 class ClonePlan:
     """Los argumentos de `git clone` y, si la URL llevaba credenciales que no
-    deben quedarse, el `remote set-url origin` posterior."""
+    deben quedarse, el `remote set-url origin` posterior. Con credenciales
+    (`credentialed`), `args` empieza por `CREDENTIAL_ISOLATION_ARGS`."""
 
     args: tuple[str, ...]
     repo_path: str | None
     sanitized_url: str | None
     should_strip: bool
+    credentialed: bool = False
 
 
 @dataclass(frozen=True)
@@ -275,6 +298,39 @@ def remote_list_args() -> list[str]:
 
 def remote_get_url_args(name: str) -> list[str]:
     return ["remote", "get-url", name]
+
+
+def url_rewrite_check_args() -> list[str]:
+    return ["config", "--get-regexp", URL_REWRITE_CONFIG_PATTERN]
+
+
+def has_url_rewrites(stdout: str) -> bool:
+    """Lo que imprime `url_rewrite_check_args` cuando sale con 0: alguna
+    clave coincide si hay alguna línea."""
+    return bool(stdout.strip())
+
+
+#: Lo que se registra (logger `rayito.git`, nivel WARNING) cuando no se pudo
+#: devolver un remoto a su URL sin credenciales: puede que el token siga en
+#: `.git/config` y viaje en snapshots, `persist=` o checkpoints. Nunca lleva
+#: la URL, el remoto ni la ruta.
+CREDENTIALS_MAY_REMAIN_MESSAGE: Final = (
+    "git %s: no se pudo quitar la URL con credenciales del remoto; "
+    "puede seguir en .git/config del sandbox"
+)
+
+
+def url_rewrite_error_message(action: str) -> str:
+    return (
+        f"git {action}: la configuración de git del sandbox reescribe URLs "
+        "(url.*.insteadOf/pushInsteadOf); no se envían las credenciales"
+    )
+
+
+def isolated_args(args: Sequence[str]) -> tuple[str, ...]:
+    """`args` con `CREDENTIAL_ISOLATION_ARGS` delante (van antes del
+    subcomando)."""
+    return (*CREDENTIAL_ISOLATION_ARGS, *args)
 
 
 def remote_set_url_args(name: str, url: str) -> list[str]:
@@ -437,7 +493,9 @@ def build_clone_plan(
             "clone: con credenciales hace falta path (no se deduce de la URL) para quitarlas "
             "del remoto después"
         )
+    credentialed = clone_url != url
     args = (
+        *(CREDENTIAL_ISOLATION_ARGS if credentialed else ()),
         "clone",
         clone_url,
         *(("--branch", branch, "--single-branch") if branch else ()),
@@ -449,6 +507,7 @@ def build_clone_plan(
         repo_path=repo_path,
         sanitized_url=sanitized_url if should_strip else None,
         should_strip=should_strip,
+        credentialed=credentialed,
     )
 
 
@@ -678,7 +737,9 @@ def git_failure(exc: CommandExitException, policy: FailurePolicy) -> Exception:
 
 
 __all__ = [
+    "CREDENTIAL_ISOLATION_ARGS",
     "GIT_ENV",
+    "URL_REWRITE_CONFIG_PATTERN",
     "ClonePlan",
     "FailurePolicy",
     "GitBranches",

@@ -13,6 +13,65 @@ export const GIT_ENV: Readonly<Record<string, string>> = Object.freeze({
   GIT_TERMINAL_PROMPT: "0",
 });
 
+/**
+ * `-c` de cada `git clone/push/pull` que lleva credenciales: sin hooks (un
+ * `pre-push` plantado por código del sandbox recibe la URL con credenciales
+ * como `$2`, y cualquier hook puede leer `.git/config` mientras dura la
+ * orden) y sin credential helpers (con uno configurado, p. ej. `store`, git
+ * aprobaría el usuario y el token de la URL y los dejaría en disco). Un
+ * `credential.helper` vacío vacía la lista (git-config(1)). Espejo de
+ * `CREDENTIAL_ISOLATION_ARGS` de `_git_base.py`.
+ */
+export const CREDENTIAL_ISOLATION_ARGS: readonly string[] = Object.freeze([
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "credential.helper=",
+]);
+
+/**
+ * Reescrituras de URL (`url.<base>.insteadOf`/`pushInsteadOf`, en cualquier
+ * scope e `include`s) que mandarían la URL con credenciales a otro sitio;
+ * con alguna, no se envían credenciales.
+ */
+export const URL_REWRITE_CONFIG_PATTERN = "^url\\..*\\.(push)?insteadof$";
+
+/** `git config --get-regexp` sale con 1 cuando ninguna clave coincide (git-config(1)). */
+export const GIT_CONFIG_NO_MATCH_EXIT_CODE = 1;
+
+/**
+ * El aviso (`logger.warn`) cuando no se pudo devolver un remoto a su URL sin
+ * credenciales: puede que el token siga en `.git/config`. Nunca lleva la
+ * URL, el remoto ni la ruta.
+ */
+export function credentialsMayRemainMessage(action: GitAction): string {
+  return (
+    `git ${action}: no se pudo quitar la URL con credenciales del remoto; ` +
+    "puede seguir en .git/config del sandbox"
+  );
+}
+
+export function urlRewriteCheckArgs(): string[] {
+  return ["config", "--get-regexp", URL_REWRITE_CONFIG_PATTERN];
+}
+
+/** Lo que imprime `urlRewriteCheckArgs` al salir con 0: alguna clave coincide si hay alguna línea. */
+export function hasUrlRewrites(stdout: string): boolean {
+  return stdout.trim().length > 0;
+}
+
+export function urlRewriteErrorMessage(action: GitAction): string {
+  return (
+    `git ${action}: la configuración de git del sandbox reescribe URLs ` +
+    "(url.*.insteadOf/pushInsteadOf); no se envían las credenciales"
+  );
+}
+
+/** `args` con `CREDENTIAL_ISOLATION_ARGS` delante (van antes del subcomando). */
+export function isolatedArgs(args: readonly string[]): string[] {
+  return [...CREDENTIAL_ISOLATION_ARGS, ...args];
+}
+
 export const GIT_RESET_MODES = ["soft", "mixed", "hard", "merge", "keep"] as const;
 export type GitResetMode = (typeof GIT_RESET_MODES)[number];
 
@@ -93,10 +152,12 @@ export interface GitBranches {
 }
 
 /** Lo que `clone` ejecuta: el argv, el repo donde quitar las credenciales y la URL limpia. */
+/** Con credenciales (`credentialed`), `args` empieza por `CREDENTIAL_ISOLATION_ARGS`. */
 export interface ClonePlan {
   readonly args: readonly string[];
   readonly repoPath: string | undefined;
   readonly sanitizedUrl: string | undefined;
+  readonly credentialed: boolean;
 }
 
 export interface ClonePlanInput {
@@ -479,14 +540,16 @@ export function buildClonePlan(input: ClonePlanInput): ClonePlan {
       "clone con credenciales necesita una ruta de destino si no se guardan",
     );
   }
+  const credentialed = cloneUrl !== input.url;
   const args = [
+    ...(credentialed ? CREDENTIAL_ISOLATION_ARGS : []),
     "clone",
     cloneUrl,
     ...(input.branch ? ["--branch", input.branch, "--single-branch"] : []),
     ...(input.depth ? ["--depth", String(input.depth)] : []),
     ...(input.path ? [input.path] : []),
   ];
-  return { args, repoPath, sanitizedUrl: strip ? sanitized : undefined };
+  return { args, repoPath, sanitizedUrl: strip ? sanitized : undefined, credentialed };
 }
 
 // ------------------------------------------------------------------ parsing
