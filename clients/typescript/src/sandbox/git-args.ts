@@ -8,6 +8,7 @@
  */
 
 import { CommandExitError, InvalidArgumentError } from "../errors.js";
+import { stripTrailing } from "../strings.js";
 
 export const GIT_ENV: Readonly<Record<string, string>> = Object.freeze({
   GIT_TERMINAL_PROMPT: "0",
@@ -56,7 +57,16 @@ const MISSING_UPSTREAM_SNIPPETS: readonly string[] = [
 ];
 
 const CONFLICT_CODES: ReadonlySet<string> = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
-const HTTP_URL = /^(https?:\/\/)([^/?#]*)(.*)$/i;
+/**
+ * Esquema, autoridad y cola de una URL http(s). La cola es `[\s\S]*` y no
+ * `.*`: con `.*`, un salto de línea tras la autoridad hacía fallar el `$` y
+ * el motor devolvía la autoridad carácter a carácter (tiempo cuadrático,
+ * CodeQL `js/polynomial-redos`). `LINE_TERMINATOR` conserva la semántica de
+ * antes: una cola con un fin de línea no es una URL http(s).
+ */
+const HTTP_URL = /^(https?:\/\/)([^/?#]*)([\s\S]*)$/i;
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+const URL_PATH_SEPARATOR = "/";
 const RFC3986_EXTRA = /[!'()*]/g;
 
 export interface GitFileStatus {
@@ -428,28 +438,44 @@ export function withCredentials(
   if (!username || !password) {
     throw new InvalidArgumentError("las credenciales de git necesitan username y password");
   }
-  const match = HTTP_URL.exec(url);
-  if (match === null) {
+  const parts = splitHttpUrl(url);
+  if (parts === undefined) {
     throw new InvalidArgumentError("sólo las URLs http(s) admiten username/password");
   }
-  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  const { scheme, authority, rest } = parts;
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   return `${scheme}${percentEncode(username)}:${percentEncode(password)}@${host}${rest}`;
 }
 
 export function stripCredentials(url: string): string {
-  const match = HTTP_URL.exec(url);
-  if (match === null) {
+  const parts = splitHttpUrl(url);
+  if (parts === undefined) {
     return url;
   }
-  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  const { scheme, authority, rest } = parts;
   const at = authority.lastIndexOf("@");
   return at < 0 ? url : `${scheme}${authority.slice(at + 1)}${rest}`;
 }
 
+interface HttpUrlParts {
+  readonly scheme: string;
+  readonly authority: string;
+  readonly rest: string;
+}
+
+/** Las tres partes de una URL http(s), en tiempo lineal; `undefined` si no lo es. */
+function splitHttpUrl(url: string): HttpUrlParts | undefined {
+  const match = HTTP_URL.exec(url);
+  if (match === null) {
+    return undefined;
+  }
+  const [, scheme, authority, rest] = match as unknown as [string, string, string, string];
+  return LINE_TERMINATOR.test(rest) ? undefined : { scheme, authority, rest };
+}
+
 export function deriveRepoDirFromUrl(url: string): string | undefined {
   const withoutQuery = url.split(/[?#]/, 1)[0] ?? "";
-  const trimmed = withoutQuery.replace(/\/+$/, "");
+  const trimmed = stripTrailing(withoutQuery, URL_PATH_SEPARATOR);
   const afterScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
   const last = afterScheme.split(/[/:]/).pop();
   if (!last) {
