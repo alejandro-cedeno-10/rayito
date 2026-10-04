@@ -42,10 +42,11 @@ export interface VolumeStoreOptions {
  * -------------------
  * Activa: `new VolumeStore({...})`; construirlo no llama a AWS ni carga
  *   `@aws-sdk/client-efs` (peer opcional): el cliente se crea en la primera
- *   llamada a un método. Experimental: el CRUD es real, pero
- *   `Sandbox.create({volumes})` sigue en `UnimplementedError` (ninguna imagen
- *   publicada trae `amazon-efs-utils` todavía,
- *   `docs/research/2026-10-efs-persistence.md`).
+ *   llamada a un método. Experimental: lo que devuelve se monta con
+ *   `Sandbox.create({ volumes: { ruta: vol } })` sobre la imagen opcional
+ *   `rayito-base-caps-efs` (`rayito image publish --with-efs`); ese
+ *   `create()` añade un `DescribeMountTargets` por sistema de ficheros si el
+ *   volumen no trae `mountTargetIp`.
  * Recursos y llamadas AWS: ningún recurso nuevo (el sistema de ficheros lo
  *   crea `infra/efs-volumes.yaml`, por separado); `create` =
  *   `CreateAccessPointCommand`, `get`/`list` = `DescribeAccessPointsCommand`,
@@ -53,7 +54,8 @@ export interface VolumeStoreOptions {
  * Coste aproximado: los access points no tienen cargo propio listado; el
  *   sistema de ficheros se factura por `infra/efs-volumes.yaml`.
  * IAM: `elasticfilesystem:CreateAccessPoint`, `DescribeAccessPoints`,
- *   `DeleteAccessPoint` sobre el sistema de ficheros (credenciales del
+ *   `DeleteAccessPoint` (y `DescribeMountTargets` para montar sin
+ *   `mountTargetIp`) sobre el sistema de ficheros (credenciales del
  *   LLAMANTE, no del execution role del MicroVM).
  * Cómo apagarla: no instancies `VolumeStore`; borra con `destroy()` los
  *   volúmenes que ya no uses.

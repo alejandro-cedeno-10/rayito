@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly require-bucket release-pr docs-examples
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -9,6 +9,7 @@ RAYD_BIN      := $(BUILD_TARGET_DIR)/$(TARGET)/release/rayd
 IMAGE_ZIP     := image/rayito-image.zip
 IMAGE_ZIP_SLIM := image/rayito-image-slim.zip
 IMAGE_ZIP_POLY := image/rayito-image-poly.zip
+IMAGE_ZIP_EFS := image/rayito-image-efs.zip
 PYTHON_CLIENT := clients/python
 TS_CLIENT     := clients/typescript
 SIDECAR       := kernel-sidecar
@@ -193,6 +194,19 @@ image-publish-poly: require-bucket image-zip-poly
 # IMDS para todo uid distinto de 0.
 image-publish-caps: require-bucket image-zip
 	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+
+# Variante caps con amazon-efs-utils (m15-efs-volumes, `volumes=`): mismo
+# Dockerfile, marcador `efs_variant` sólo dentro del zip (`--with-efs`); la capa
+# condicional instala efs-utils (+~198 MB de imagen, snapshot igual, Q122) y
+# rehace el enlace de /usr/bin/python3. Imagen aparte `rayito-base-caps-efs`,
+# siempre con additionalOsCapabilities ALL; las demás imágenes no cambian.
+image-zip-efs: build
+	cp $(RAYD_BIN) image/rayd
+	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
+	python scripts/image_zip.py image $(IMAGE_ZIP_EFS) --with-efs
+
+image-publish-caps-efs: require-bucket image-zip-efs
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
 
 # Borra versiones antiguas de rayito-base de una en una (espera a que la
 # imagen salga de UPDATING/DELETING entre borrados). Primero `--dry-run`.

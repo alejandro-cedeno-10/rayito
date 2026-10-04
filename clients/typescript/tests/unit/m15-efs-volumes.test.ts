@@ -1,12 +1,13 @@
 /**
  * `m15-efs-volumes` (ADR-018, experimental): `EfsVolume` validation,
- * `VolumeStore` CRUD over a fake `EfsApi`, and `requireVolumeSupport`'s
- * pre-launch gate. Espejo de `test_m15_efs_volumes_domain.py` /
+ * `VolumeStore` CRUD over a fake `EfsApi`, and `planVolumes`'s
+ * pre-launch validation. Espejo de `test_m15_efs_volumes_domain.py` /
  * `test_m15_efs_volumes_store.py` / `test_m15_efs_volumes_section.py`.
  */
 
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, UnimplementedError, VolumeNotFoundError } from "../../src/errors.js";
+import { EFS_VOLUMES_MAX_PER_SANDBOX } from "../../src/limits.js";
 import { EfsVolume } from "../../src/volumes/domain.js";
 import {
   type DescribedAccessPoint,
@@ -14,7 +15,7 @@ import {
   LIST_VISIBILITY_BUDGET_MS,
   LIST_VISIBILITY_POLL_MS,
 } from "../../src/volumes/efs.js";
-import { requireVolumeSupport, VPC_GUIDE } from "../../src/volumes/section.js";
+import { planVolumes, VPC_GUIDE } from "../../src/volumes/section.js";
 import { VolumeStore } from "../../src/volumes/store.js";
 
 function awsError(name: string): Error {
@@ -242,13 +243,34 @@ const VALID_VOLUME = {
 // Marcador de documentación (cuenta ficticia).
 const CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs";
 
-describe("requireVolumeSupport", () => {
+const ROLE = "arn:aws:iam::123456789012:role/rayito-execution";
+
+describe("planVolumes", () => {
+  const plan = (
+    volumes: Readonly<Record<string, unknown>>,
+    imageVariant?: string,
+    egress?: readonly string[],
+    executionRoleArn: string | undefined = ROLE,
+  ) => planVolumes(volumes, { imageVariant, egress, executionRoleArn });
+
   test("an empty object is invalid", () => {
-    expect(() => requireVolumeSupport({}, undefined)).toThrow(InvalidArgumentError);
+    expect(() => plan({}, undefined, [CONNECTOR])).toThrow(InvalidArgumentError);
   });
 
   test("a non-EfsVolume value is invalid", () => {
-    expect(() => requireVolumeSupport({ "/mnt/v": {} }, undefined)).toThrow(InvalidArgumentError);
+    expect(() => plan({ "/mnt/v": {} }, undefined, [CONNECTOR])).toThrow(InvalidArgumentError);
+  });
+
+  test("more than the per-sandbox cap is invalid", () => {
+    const tooMany = Object.fromEntries(
+      Array.from({ length: EFS_VOLUMES_MAX_PER_SANDBOX + 1 }, (_, index) => [
+        `/mnt/v${index}`,
+        new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: `fsap-0123abc${index}` }),
+      ]),
+    );
+    expect(() => plan(tooMany, "base-caps-efs", [CONNECTOR])).toThrow(
+      new RegExp(`como mucho ${EFS_VOLUMES_MAX_PER_SANDBOX}`),
+    );
   });
 
   test("an overlapping path is invalid", () => {
@@ -256,20 +278,25 @@ describe("requireVolumeSupport", () => {
       "/mnt/v": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abcd" }),
       "/mnt/v/sub": new EfsVolume({ fileSystemId: FILE_SYSTEM_ID, accessPointId: "fsap-0123abce" }),
     };
-    expect(() => requireVolumeSupport(overlapping, undefined)).toThrow(InvalidArgumentError);
+    expect(() => plan(overlapping, undefined, [CONNECTOR])).toThrow(InvalidArgumentError);
   });
 
-  test("a non-caps image variant is rejected before the generic message", () => {
-    expect(() => requireVolumeSupport(VALID_VOLUME, "base")).toThrow(UnimplementedError);
+  test("a non-caps image variant is rejected", () => {
+    expect(() => plan(VALID_VOLUME, "base", [CONNECTOR])).toThrow(UnimplementedError);
   });
 
-  test("a well-formed request with its connector still raises UnimplementedError (experimental)", () => {
-    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR])).toThrow(
-      /amazon-efs-utils/,
-    );
-    expect(() => requireVolumeSupport(VALID_VOLUME, undefined, [CONNECTOR])).toThrow(
-      UnimplementedError,
-    );
+  test("a well-formed request returns the validated volumes", () => {
+    for (const variant of ["base-caps", "base-caps-efs", undefined]) {
+      const request = plan(VALID_VOLUME, variant, [CONNECTOR]);
+      expect([...request.volumes.keys()]).toEqual(["/mnt/v"]);
+      expect(request.volumes.get("/mnt/v")).toBe(VALID_VOLUME["/mnt/v"]);
+    }
+  });
+
+  test("the execution role is required", () => {
+    expect(() =>
+      planVolumes(VALID_VOLUME, { imageVariant: "base-caps-efs", egress: [CONNECTOR] }),
+    ).toThrow(/executionRoleArn/);
   });
 
   test.each([
@@ -278,10 +305,8 @@ describe("requireVolumeSupport", () => {
   ] as const)(
     "a volume without its connector (%s) is rejected naming the alternative",
     (_, egress) => {
-      expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", egress)).toThrow(
-        InvalidArgumentError,
-      );
-      expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", egress)).toThrow(VPC_GUIDE);
+      expect(() => plan(VALID_VOLUME, "base-caps", egress)).toThrow(InvalidArgumentError);
+      expect(() => plan(VALID_VOLUME, "base-caps", egress)).toThrow(VPC_GUIDE);
     },
   );
 
@@ -289,18 +314,18 @@ describe("requireVolumeSupport", () => {
     "INTERNET_EGRESS",
     "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
   ])("a volume combined with %s is rejected before launch (Q131)", (internet) => {
-    expect(() => requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR, internet])).toThrow(
+    expect(() => plan(VALID_VOLUME, "base-caps", [CONNECTOR, internet])).toThrow(
       /INTERNET_EGRESS.*NAT.*transit gateway/,
     );
   });
 
   test("a volume with two own connectors is rejected", () => {
-    expect(() =>
-      requireVolumeSupport(VALID_VOLUME, "base-caps", [CONNECTOR, `${CONNECTOR}-b`]),
-    ).toThrow(/un solo conector/);
+    expect(() => plan(VALID_VOLUME, "base-caps", [CONNECTOR, `${CONNECTOR}-b`])).toThrow(
+      /un solo conector/,
+    );
   });
 
-  test("the caps check comes before the connector check", () => {
-    expect(() => requireVolumeSupport(VALID_VOLUME, "base", undefined)).toThrow(UnimplementedError);
+  test("the caps check comes before the connector and role checks", () => {
+    expect(() => planVolumes(VALID_VOLUME, { imageVariant: "base" })).toThrow(UnimplementedError);
   });
 });

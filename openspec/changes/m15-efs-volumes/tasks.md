@@ -312,3 +312,29 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
 - [x] 8.1 `proposal.md`, `design.md`, `tasks.md` (this file),
       `specs/efs-volumes/spec.md`.
 - [x] 8.2 `npx -y @fission-ai/openspec@1.10.0 validate --strict` passes.
+
+## 11. `create(volumes=)` for real (design D11–D14)
+
+- [x] 11.1 `limits.json` `efsVolumesMaxPerSandbox` (4) → `_limits.py`/`limits.ts`.
+- [x] 11.2 Python: `_volumes/_mount_targets.py` (`choose_mount_target_ip`,
+      `MountTargetResolver`, `resolve_mount_targets`), `_section.py`
+      (`plan_volumes`, `EfsVolumesSection`, `VolumeMountException`),
+      `_configure_base.SlowApplySection`/`configure_timeout_s`,
+      `_feature_options.prepare_features`/`aprepare_features`,
+      `sbx.volumes`/`await sbx.volumes()`; `EfsVolume` validates
+      `mount_target_ip`.
+- [x] 11.3 TypeScript mirror (`volumes/mount-targets.ts`, `section.ts`,
+      `configure/base.ts`, `prepareFeatures`, `VolumeMountError`,
+      `sbx.volumes()`).
+- [x] 11.4 E2B shim: `E2B(volume_store=, volume_connector_arn=)`,
+      `volume_mounts` → native `volumes=` with the connector as the only
+      egress (both SDKs).
+- [x] 11.5 Opt-in image: `rayito image zip|publish --with-efs`, Dockerfile
+      conditional layer (pinned `amazon-efs-utils`, `python3` re-link),
+      `check_pins.py`, Makefile `image-zip-efs`/`image-publish-caps-efs`,
+      `rayito-base-caps-efs` accepted as caps; `rayd` passes `AWS_REGION`
+      to the helper.
+- [x] 11.6 Unit tests (both SDKs, shim, CLI, rayd adapter); docs, CHANGELOGs.
+- [ ] 11.7 AWS re-check through the real `create(volumes=)` path (Python and
+      TypeScript), serialized, cap $2.5: tasks 10.8 plus the e2e with
+      `volumes=` and the E2B shim `Volume`.

@@ -7,7 +7,8 @@ eagerly (never inside the coroutine it returns); content operations
 `update_metadata`) are always `UnimplementedError("volume.content")`,
 bound or not. `volume_id` is the logical name everywhere, so the E2B round
 trip `destroy(vol.volume_id)` works; `Sandbox.create(volume_mounts=)` goes
-through an I/O-free gate before any AWS call."""
+through an I/O-free gate (store, connector, paths, caps) and then launches
+the native `volumes=` with only `E2B(volume_connector_arn=)` as egress."""
 
 from __future__ import annotations
 
@@ -16,9 +17,12 @@ from typing import Any, cast
 
 import pytest
 
-from rayito import AsyncVolumeStore, VolumeStore
+from rayito import AsyncSandbox as NativeAsyncSandbox
+from rayito import AsyncVolumeStore, EfsVolume, VolumeStore
+from rayito import Sandbox as NativeSandbox
 from rayito.e2b import E2B, AsyncSandbox, AsyncVolume, Sandbox, UnimplementedError, Volume
-from rayito.e2b._volume import require_volume_mount_support
+from rayito.e2b._compat import map_create_kwargs
+from rayito.e2b._volume import plan_volume_mounts, resolve_volume_mounts
 from rayito.exceptions import InvalidArgumentException
 
 from .fake_efs import FakeEfsApi, SpySession
@@ -166,60 +170,155 @@ def test_async_volume_create_is_a_real_coroutine_once_bound() -> None:
 
 # -------------------------------------------- Sandbox.create(volume_mounts=)
 
+#: Marcadores de documentación (cuenta ficticia).
+CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs"
+ROLE = "arn:aws:iam::123456789012:role/rayito-execution"
+
+
+def plan(mounts: Any, **overrides: Any) -> Any:
+    kwargs: dict[str, Any] = {
+        "store": store_with(FakeEfsApi()),
+        "connector_arn": CONNECTOR,
+        "template": "rayito-base-caps-efs",
+        "allow_internet_access": None,
+        **overrides,
+    }
+    return plan_volume_mounts(mounts, **kwargs)
+
 
 def test_volume_mounts_without_a_bound_store_is_unimplemented_volume() -> None:
     """Without `volume_store=`, `Sandbox.create(volume_mounts=)` fails the
     same way `client.Volume` does."""
     with pytest.raises(UnimplementedError) as excinfo:
-        require_volume_mount_support({"/mnt/v": "x"}, store=None, template=None)
+        plan({"/mnt/v": "x"}, store=None)
     assert excinfo.value.feature == "Volume"
 
 
-@pytest.mark.parametrize("value", ["datos-agente-7", "volume"], ids=["plain-name", "bound-volume"])
-def test_volume_mounts_never_calls_aws_and_ends_unimplemented(value: str) -> None:
-    """A plain name is never resolved (`DescribeAccessPoints`) while no
-    mounter exists: the gate always ends in `UnimplementedError`, so the
-    call would cost an AWS request for nothing."""
+def test_volume_mounts_without_a_connector_names_the_client_option() -> None:
+    with pytest.raises(InvalidArgumentException, match="volume_connector_arn"):
+        plan({"/mnt/v": "x"}, connector_arn=None)
+
+
+def test_volume_mounts_refuses_explicit_internet_access() -> None:
+    """Q131: one egress connector per MicroVM."""
+    with pytest.raises(InvalidArgumentException, match="allow_internet_access"):
+        plan({"/mnt/v": "x"}, allow_internet_access=True)
+
+
+def test_volume_mounts_plan_is_pure_and_keeps_names_unresolved() -> None:
     api = FakeEfsApi()
-    store = store_with(api)
-    mount: Any = value
-    if value == "volume":
-        mount = E2B(volume_store=store).Volume(volume_id="datos-agente-7")
-    with pytest.raises(UnimplementedError) as excinfo:
-        require_volume_mount_support({"/mnt/v": mount}, store=store, template="rayito-base-caps")
-    assert excinfo.value.feature == "volume_mounts"
+    planned = plan({"/mnt/v": "datos"}, store=store_with(api))
+    assert dict(planned) == {"/mnt/v": "datos"}
     assert api.calls == []
 
 
-def test_volume_mounts_checks_paths_then_caps_before_the_final_unimplemented() -> None:
-    store = store_with(FakeEfsApi())
+def test_volume_mounts_checks_paths_then_caps() -> None:
     with pytest.raises(InvalidArgumentException):
-        require_volume_mount_support({"relative": "x"}, store=store, template="rayito-base")
+        plan({"relative": "x"}, template="rayito-base")
     with pytest.raises(UnimplementedError, match="base-caps"):
-        require_volume_mount_support({"/mnt/v": "x"}, store=store, template="rayito-base")
+        plan({"/mnt/v": "x"}, template="rayito-base")
 
 
 @pytest.mark.parametrize("mounts", [{}, {"/mnt/v": 123}, {"/mnt/v": "no valid name!"}])
 def test_volume_mounts_rejects_a_malformed_request(mounts: dict[str, Any]) -> None:
-    store = store_with(FakeEfsApi())
     with pytest.raises(InvalidArgumentException):
-        require_volume_mount_support(mounts, store=store, template="rayito-base-caps")
+        plan(mounts)
 
 
-def test_sandbox_create_with_volume_mounts_makes_no_aws_call() -> None:
+def test_map_create_kwargs_launches_only_through_the_volume_connector() -> None:
+    store = store_with(FakeEfsApi())
+    mapping = map_create_kwargs(
+        "rayito-base-caps-efs",
+        volume_mounts={"/mnt/v": "datos"},
+        volume_store=store,
+        volume_connector_arn=CONNECTOR,
+    )
+    assert mapping.native_kwargs["egress"] == [CONNECTOR]
+    assert "allow_internet_access" not in mapping.native_kwargs
+    assert dict(mapping.volume_mounts or {}) == {"/mnt/v": "datos"}
+    denied = map_create_kwargs(
+        "rayito-base-caps-efs",
+        allow_internet_access=False,
+        volume_mounts={"/mnt/v": "datos"},
+        volume_store=store,
+        volume_connector_arn=CONNECTOR,
+    )
+    assert denied.native_kwargs["allow_internet_access"] is False
+
+
+def test_map_create_kwargs_without_volume_mounts_keeps_internet_egress() -> None:
+    mapping = map_create_kwargs("rayito-base", volume_connector_arn=CONNECTOR)
+    assert mapping.native_kwargs["egress"] == ["INTERNET_EGRESS"]
+    assert mapping.volume_mounts is None
+
+
+def test_resolve_volume_mounts_maps_volumes_and_resolves_names() -> None:
     api = FakeEfsApi()
-    client = E2B(volume_store=store_with(api))
-    with pytest.raises(UnimplementedError):
-        client.Sandbox.create("rayito-base-caps", volume_mounts={"/mnt/v": "datos"})
-    assert api.calls == []
+    store = store_with(api)
+    created = store.create("datos")
+    client = E2B(volume_store=store, volume_connector_arn=CONNECTOR)
+    bound = client.Volume(volume_id="otro", access_point_id="fsap-0456abcd")
+    api.calls.clear()
+    resolved = resolve_volume_mounts({"/mnt/a": "datos", "/mnt/b": bound}, store)
+    assert resolved["/mnt/a"].access_point_id == created.access_point_id
+    assert resolved["/mnt/b"] == EfsVolume(
+        file_system_id=FILE_SYSTEM_ID,
+        access_point_id="fsap-0456abcd",
+        name="otro",
+        region=store.region,
+    )
+    assert api.calls == ["describe_access_points"]
+
+
+def test_sandbox_create_with_volume_mounts_launches_native_volumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def native_create(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise RuntimeError("stop after mapping")
+
+    monkeypatch.setattr(NativeSandbox, "create", staticmethod(native_create))
+    store = store_with(FakeEfsApi())
+    created = store.create("datos")
+    client = E2B(volume_store=store, volume_connector_arn=CONNECTOR)
+    with pytest.raises(RuntimeError, match="stop after mapping"):
+        client.Sandbox.create(
+            "rayito-base-caps-efs", volume_mounts={"/mnt/v": "datos"}, execution_role_arn=ROLE
+        )
+    assert captured["egress"] == [CONNECTOR]
+    assert captured["volumes"]["/mnt/v"].access_point_id == created.access_point_id
+    assert captured["execution_role_arn"] == ROLE
 
 
 @pytest.mark.asyncio
-async def test_async_sandbox_create_with_volume_mounts_makes_no_aws_call() -> None:
+async def test_async_sandbox_create_with_volume_mounts_launches_native_volumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def native_create(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise RuntimeError("stop after mapping")
+
+    monkeypatch.setattr(NativeAsyncSandbox, "create", staticmethod(native_create))
+    store = store_with(FakeEfsApi())
+    created = store.create("datos")
+    client = E2B(volume_store=store, volume_connector_arn=CONNECTOR)
+    with pytest.raises(RuntimeError, match="stop after mapping"):
+        await client.AsyncSandbox.create(
+            "rayito-base-caps-efs", volume_mounts={"/mnt/v": "datos"}, execution_role_arn=ROLE
+        )
+    assert captured["egress"] == [CONNECTOR]
+    assert captured["volumes"]["/mnt/v"].access_point_id == created.access_point_id
+
+
+def test_sandbox_create_without_a_connector_makes_no_aws_call() -> None:
     api = FakeEfsApi()
     client = E2B(volume_store=store_with(api))
-    with pytest.raises(UnimplementedError):
-        await client.AsyncSandbox.create("rayito-base-caps", volume_mounts={"/mnt/v": "datos"})
+    with pytest.raises(InvalidArgumentException, match="volume_connector_arn"):
+        client.Sandbox.create("rayito-base-caps", volume_mounts={"/mnt/v": "datos"})
     assert api.calls == []
 
 

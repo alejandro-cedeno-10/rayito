@@ -14,9 +14,8 @@
  */
 
 import { InvalidArgumentError } from "../errors.js";
-import { resolveImageVariant } from "../role-policy.js";
-import { type EfsVolume, validateVolumeName } from "../volumes/domain.js";
-import { requireVolumeMounts } from "../volumes/section.js";
+import { EfsVolume, validateVolumeName } from "../volumes/domain.js";
+import { INTERNET_THROUGH_VPC } from "../volumes/section.js";
 import type { VolumeStore } from "../volumes/store.js";
 import { unimplemented } from "./unimplemented.js";
 
@@ -123,20 +122,40 @@ export function bindVolume(store: VolumeStore): typeof Volume {
 }
 
 /**
- * `Sandbox.create({ volumeMounts: {path: Volume|nombre} })`, sin I/O: la
- * misma puerta que `volumes` (`requireVolumeMounts`). Sin `volumeStore` en
- * el cliente lanza `unimplemented("Volume")`, el mismo guard que
- * `client.Volume`. Valida la forma y nunca resuelve un nombre: mientras no
- * haya montaje real, `requireVolumeMounts` siempre termina en
- * `UnimplementedError`, así que un `DescribeAccessPoints` sólo costaría una
- * llamada sin cambiar el resultado. Espejo de
- * `rayito.e2b._volume.require_volume_mount_support`.
+ * Lo que `new E2B({ volumeStore, volumeConnectorArn })` liga a
+ * `client.Sandbox` para `volumeMounts`: el store que resuelve cada nombre y
+ * el único conector de egress con el que se lanza un sandbox con volumen.
  */
-export function requireVolumeMountSupport(
+export interface ShimVolumeConfig {
+  readonly store?: VolumeStore | undefined;
+  readonly connectorArn?: string | undefined;
+}
+
+/** `volumeMounts` ya validado: el store y el conector del cliente y cada
+ * ruta con su `Volume` o nombre. */
+export interface PlannedVolumeMounts {
+  readonly store: VolumeStore;
+  readonly connectorArn: string;
+  readonly entries: readonly (readonly [string, Volume | string])[];
+}
+
+/**
+ * `Sandbox.create({ volumeMounts: {path: Volume|nombre} })`, sin I/O. Sin
+ * `volumeStore` en el cliente lanza `unimplemented("Volume")`, el mismo
+ * guard que `client.Volume`; valida la forma (objeto no vacío; cada valor un
+ * `Volume` o un nombre válido), exige `volumeConnectorArn` (un MicroVM sólo
+ * admite un conector de egress y el volumen necesita el de tu VPC, así que
+ * el shim no lanza con `INTERNET_EGRESS`) y rechaza `allowInternetAccess:
+ * true`. El resto (rutas, variante de imagen, execution role) lo valida la
+ * puerta nativa de `volumes`. Espejo de
+ * `rayito.e2b._volume.plan_volume_mounts`.
+ */
+export function planVolumeMounts(
   volumeMounts: unknown,
-  store: VolumeStore | undefined,
-  template: string | undefined,
-): never {
+  config: ShimVolumeConfig | undefined,
+  allowInternetAccess: boolean | undefined,
+): PlannedVolumeMounts {
+  const store = config?.store;
   if (store === undefined) {
     throw unimplemented("Volume");
   }
@@ -147,18 +166,61 @@ export function requireVolumeMountSupport(
   if (entries.length === 0) {
     throw new InvalidArgumentError("volumeMounts no admite un objeto vacío; omite la opción");
   }
-  for (const [, value] of entries) {
+  const planned: [string, Volume | string][] = [];
+  for (const [path, value] of entries) {
     if (typeof value === "string") {
-      validateVolumeName(value);
-    } else if (!(value instanceof Volume)) {
+      planned.push([path, validateVolumeName(value)]);
+    } else if (value instanceof Volume) {
+      planned.push([path, value]);
+    } else {
       throw new InvalidArgumentError(
         `volumeMounts espera un Volume o un nombre de texto, se recibió ${typeof value}`,
       );
     }
   }
-  return requireVolumeMounts(
-    entries.map(([path]) => path),
-    resolveImageVariant(template),
-    "volumeMounts",
-  );
+  const connectorArn = config?.connectorArn;
+  if (connectorArn === undefined) {
+    throw new InvalidArgumentError(
+      "volumeMounts necesita new E2B({ volumeConnectorArn: <ConnectorArn de efs-volumes> }): " +
+        `el sandbox sólo puede salir por ese conector; ${INTERNET_THROUGH_VPC}`,
+    );
+  }
+  if (allowInternetAccess === true) {
+    throw new InvalidArgumentError(
+      "volumeMounts no se combina con allowInternetAccess: true: un MicroVM admite un solo " +
+        `conector de egress y el volumen necesita el de tu VPC; ${INTERNET_THROUGH_VPC}`,
+    );
+  }
+  return { store, connectorArn, entries: planned };
+}
+
+/**
+ * El `volumes` nativo de `planned`: un `Volume` se monta por su
+ * `accessPointId` sobre el sistema de ficheros del store (sin llamar a
+ * AWS); un nombre se resuelve con `store.get(nombre)`
+ * (`DescribeAccessPoints`). Espejo de `resolve_volume_mounts`.
+ */
+export async function resolveVolumeMounts(
+  planned: PlannedVolumeMounts,
+): Promise<Record<string, EfsVolume>> {
+  const volumes: Record<string, EfsVolume> = {};
+  for (const [path, value] of planned.entries) {
+    volumes[path] =
+      typeof value === "string" ? await planned.store.get(value) : volumeOf(planned.store, value);
+  }
+  return volumes;
+}
+
+function volumeOf(store: VolumeStore, volume: Volume): EfsVolume {
+  if (volume.accessPointId === undefined) {
+    throw new InvalidArgumentError(
+      "volumeMounts: el Volume no trae accessPointId; pásalo por nombre o usa Volume.connect",
+    );
+  }
+  return new EfsVolume({
+    fileSystemId: store.fileSystemId,
+    accessPointId: volume.accessPointId,
+    name: volume.volumeId,
+    region: store.region,
+  });
 }

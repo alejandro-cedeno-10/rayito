@@ -455,7 +455,8 @@ function rejectUnsupportedCreateOpts(opts: SandboxOpts): void {
     throw unimplemented("iam");
   }
   // `volumeMounts` is gated right after this, by `Sandbox.createFor`
-  // (`requireVolumeMountSupport`), which holds the client's `volumeStore`.
+  // (`planVolumeMounts`), which holds the client's `volumeStore` and
+  // `volumeConnectorArn`.
 }
 
 function lifecycleIdle(lifecycle: ShimLifecycle): IdlePolicyInput | null {

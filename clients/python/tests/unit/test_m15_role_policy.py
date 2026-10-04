@@ -14,6 +14,8 @@ from rayito.exceptions import UnimplementedError
     [
         ("rayito-base-caps", "base-caps"),
         ("rayito-base-caps-4gb", "base-caps"),
+        ("rayito-base-caps-efs", "base-caps-efs"),
+        ("rayito-base-caps-efs-4gb", "base-caps-efs"),
         ("rayito-base", "base"),
         ("rayito-base-poly", "base-poly"),
         (None, None),
@@ -25,8 +27,13 @@ def test_resolve_image_variant(template: str | None, expected: str | None) -> No
     assert resolve_image_variant(template) == expected
 
 
-def test_the_caps_variant_is_accepted() -> None:
-    require_caps_for("volumes=", "base-caps")  # no debe lanzar
+@pytest.mark.parametrize("variant", ["base-caps", "base-caps-efs"])
+def test_the_caps_variants_are_accepted(variant: str) -> None:
+    require_caps_for("volumes=", variant)  # no debe lanzar
+
+
+def test_the_efs_image_name_resolves_to_an_accepted_caps_variant() -> None:
+    require_caps_for("mounts=", resolve_image_variant("rayito-base-caps-efs-4gb"))
 
 
 def test_an_unknown_variant_is_deferred_not_rejected() -> None:

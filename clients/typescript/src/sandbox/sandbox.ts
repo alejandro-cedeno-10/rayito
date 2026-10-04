@@ -23,6 +23,7 @@ import {
   CONFIGURE_SETTLE_POLL_MS,
   type ConfigureSection,
   checkConfigureResponse,
+  configureTimeoutMs,
   isPostApplySection,
   type PlannedSection,
   requireCapabilities,
@@ -44,6 +45,7 @@ import {
   type FeatureOptions,
   planFeatures,
   plannedSections,
+  prepareFeatures,
   relaunchFeatures,
 } from "../feature-options.js";
 import {
@@ -114,6 +116,8 @@ import { translateSetTimeoutError } from "../transport/errors.js";
 import type { CallMetadataProvider } from "../transport/headers.js";
 import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
+import type { EfsVolume, VolumeStatus } from "../volumes/domain.js";
+import { fromProtoStatus as volumeStatusesFromProto } from "../volumes/section.js";
 import {
   CodeClient,
   type ContextLike,
@@ -412,12 +416,45 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    */
   readonly mounts?: S3MountsOption | undefined;
   /**
-   * Stub de m15-efs-volumes: con algo distinto de `undefined`, `create()`
-   * lanza `UnimplementedError` antes de `run-microvm`, sin llamar a AWS.
-   * De las siete opciones 0.6 (M15) sólo `volumes` y `domain` siguen siendo
-   * stubs; con todas ausentes el comportamiento es el de 0.5.x.
+   * `EfsVolume` por ruta (m15-efs-volumes, experimental): `rayd` monta cada
+   * access point con `amazon-efs-utils` (TLS + IAM) en su ruta (bajo
+   * `/mnt/` o `/home/user/`, como mucho 4), en el mismo `ConfigureSandbox`
+   * que el resto de secciones y antes de que `create()` vuelva. Exige
+   * `executionRoleArn`, exactamente un conector propio en `egress` (un
+   * MicroVM sólo admite uno, así que el sandbox no tiene `INTERNET_EGRESS`) y
+   * una imagen con `amazon-efs-utils` (`rayito-base-caps-efs`); si un
+   * volumen no monta, termina el sandbox (salvo `keepOnFailure`) y lanza
+   * `VolumeMountError`, y sobre otra imagen `UnimplementedError`.
+   * `reincarnate()` vuelve a montarlos en el sucesor.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `volumes: { "/mnt/datos": vol }` (Python: `volumes=`) en
+   *   `create()`, con `executionRoleArn`, `egress: [<ConnectorArn>]` y la
+   *   imagen opcional `rayito-base-caps-efs`
+   *   (`rayito image publish --with-efs --os-capabilities ALL`).
+   * Recursos y llamadas AWS: ningún recurso nuevo por `create()`; si un
+   *   `EfsVolume` no trae `mountTargetIp`, un `DescribeMountTargets` por
+   *   sistema de ficheros y `create()`, con las credenciales del llamante. El
+   *   sistema de ficheros, sus mount targets y el conector los crea la pila
+   *   `efs-volumes` (`EfsVolumes.deploy()`), aparte; el tráfico NFS va con el
+   *   execution role.
+   * Coste aproximado: $0 propio de Rayito; pagas el almacenamiento y el
+   *   rendimiento normales de EFS (Elastic) de lo que leas y escribas, y la
+   *   imagen con `amazon-efs-utils` ocupa ≈ 198 MB más de código instalado
+   *   (us-east-1, consultado 2026-10-04, https://aws.amazon.com/efs/pricing/).
+   * IAM: el llamante, `elasticfilesystem:DescribeMountTargets` (sólo sin
+   *   `mountTargetIp`); el execution role, la política `CallerPolicyArn` de la
+   *   pila `efs-volumes` (`ClientMount`, y `ClientWrite` salvo sólo lectura).
+   * Cómo apagarla: no pases `volumes` (por defecto `undefined`);
+   *   `EfsVolumes.destroy()` quita la pila.
+   * Ejemplo:
+   *   const sbx = await Sandbox.create({
+   *     template: "rayito-base-caps-efs", executionRoleArn, egress: [connectorArn],
+   *     volumes: { "/mnt/datos": await store.create("datos-agente-7") },
+   *   });
    */
-  readonly volumes?: Readonly<Record<string, unknown>> | undefined;
+  readonly volumes?: Readonly<Record<string, EfsVolume>> | undefined;
   /**
    * Tamaño del catálogo cerrado (m15-sizes-catalog): `"512mb"`, `"1gb"`,
    * `"2gb"`, `"4gb"`, `"8gb"` o `{ memoryMib }` (redondea hacia arriba).
@@ -885,13 +922,18 @@ export class Sandbox implements AsyncDisposable {
       gateways: options.gateways,
       domain: options.domain,
     } satisfies FeatureOptions;
-    const featurePlan = planFeatures(
+    const plannedFeatures = planFeatures(
       featureOptions,
       resolveImageVariant(options.template),
       options.logging,
       options.egress,
+      options.executionRoleArn,
     );
     const plane = resolveControlPlane(options);
+    const featurePlan = await prepareFeatures(plannedFeatures, {
+      region: plane.region,
+      credentials: awsClientSettingsOf(plane).credentials,
+    });
     const secrets = await warm(binding, () =>
       sharedSecretCache(plane.region, awsClientSettingsOf(plane).credentials),
     );
@@ -1689,6 +1731,17 @@ export class Sandbox implements AsyncDisposable {
     return fromProtoStatus(response.s3Mounts ?? create(S3MountsStatusSchema, {}));
   }
 
+  /**
+   * Estado en vivo de cada `volumes` (`m15-efs-volumes`, experimental): una
+   * `ConfigureStatus` por lectura, nunca cacheada — un volumen puede pasar a
+   * `"degraded"`/`"remounting"` tras una pausa. Vacío si `create()` no
+   * recibió `volumes`. Espejo de `Sandbox.volumes` de Python.
+   */
+  async volumes(): Promise<ReadonlyMap<string, VolumeStatus>> {
+    const response = await this.#configureStatus(this.#core.resolveRequestTimeout(undefined));
+    return volumeStatusesFromProto(response.efsVolumes);
+  }
+
   /** Un `HostAccess` con el JWE que cubre `port` (acuñado si hace falta); 9000 está prohibido (ADR-006). */
   async getHost(port: number): Promise<HostAccess> {
     const validated = validateHostPort(port);
@@ -1921,7 +1974,7 @@ export class Sandbox implements AsyncDisposable {
     timeoutMs: number,
   ): Promise<void> {
     const request = await buildConfigureRequest(sections);
-    const response = await this.#configure(request, timeoutMs);
+    const response = await this.#configure(request, configureTimeoutMs(sections, timeoutMs));
     await this.#waitSettled(checkConfigureResponse(response, sections), timeoutMs);
   }
 

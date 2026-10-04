@@ -6,7 +6,8 @@
  * `client.Template` (m15-templates) usa su `region` y `bucket` (extensión
  * de Rayito: el bucket de artefactos de `Template.build`). `client.Volume`
  * (m15-efs-volumes, experimental) sólo funciona con `volumeStore` en las
- * opciones del constructor — sin él, `UnimplementedError`.
+ * opciones del constructor — sin él, `UnimplementedError` — y
+ * `Sandbox.create({ volumeMounts })` necesita además `volumeConnectorArn`.
  */
 
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
@@ -32,6 +33,13 @@ export type E2BClientOpts = ConnectionOpts & {
   readonly bucket?: string | undefined;
   /** m15-efs-volumes, experimental: liga `client.Volume` a este store. */
   readonly volumeStore?: VolumeStore | undefined;
+  /**
+   * m15-efs-volumes, experimental: el `ConnectorArn` de `efs-volumes` (o uno
+   * de tu VPC que llegue al mount target). `Sandbox.create({ volumeMounts })`
+   * lanza con él como único conector de egress (un MicroVM sólo admite uno),
+   * así que ese sandbox no tiene `INTERNET_EGRESS`.
+   */
+  readonly volumeConnectorArn?: string | undefined;
 };
 
 function withoutIgnored(opts: ConnectionOpts): ConnectionOpts {
@@ -54,7 +62,10 @@ export class E2B {
     const { ignored } = splitConnectionOpts(opts);
     emitIgnoredWarnings(ignored);
     validateIndex(opts.index);
-    this.Sandbox = bindSandbox(withoutIgnored(opts), opts.volumeStore);
+    this.Sandbox = bindSandbox(withoutIgnored(opts), {
+      store: opts.volumeStore,
+      connectorArn: opts.volumeConnectorArn,
+    });
     this.Secret = bindSecret(opts.region === undefined ? {} : { region: opts.region });
     this.Template = bindTemplate({
       ...(opts.region === undefined ? {} : { region: opts.region }),

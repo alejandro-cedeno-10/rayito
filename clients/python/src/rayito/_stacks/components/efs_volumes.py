@@ -7,10 +7,11 @@ vía mount target) y el `NetworkConnector` propio; nunca modifica la VPC, sus
 subredes, rutas, NACLs ni grupos existentes. `EfsVolumes` (`_volumes`) es su
 fachada: comprueba la VPC antes (`check`) y borra el sistema de ficheros
 conservado si se le pide (`destroy(delete_file_system=True)`). Desplegar esta pila
-no activa el montaje dentro del sandbox: `rayd` sólo monta en una imagen con
-`amazon-efs-utils` y `Sandbox.create(volumes=...)` sigue en
-`UnimplementedError` (experimental); `VolumeStore` (CRUD de access points) sí
-es real y no depende de esta pila para `create`/`get`/`list`/`destroy`.
+no activa el montaje por sí solo: `Sandbox.create(volumes=...)` monta
+(experimental) sólo sobre una imagen con `amazon-efs-utils`
+(`rayito-base-caps-efs`), con el execution role y el conector de esta pila;
+`VolumeStore` (CRUD de access points) no depende de esta pila para
+`create`/`get`/`list`/`destroy`.
 """
 
 from __future__ import annotations
@@ -22,8 +23,8 @@ COMPONENT: StackComponent = StackComponent(
     description=(
         "Sistema de ficheros EFS cifrado (Elastic Throughput) en una VPC existente: un "
         "mount target por subred, grupos de seguridad NFS nuevos y un "
-        "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: "
-        "Sandbox.create(volumes=...) aún no monta)."
+        "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: monta "
+        "sobre una imagen con amazon-efs-utils, rayito-base-caps-efs)."
     ),
     parameters=(
         StackParameter(

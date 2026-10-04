@@ -75,6 +75,8 @@ export {
   type TransferErrorOptions,
   UnimplementedError,
   VolumeError,
+  VolumeMountError,
+  type VolumeMountErrorOptions,
   VolumeNotFoundError,
   VolumePathNotFoundError,
   WebhookError,

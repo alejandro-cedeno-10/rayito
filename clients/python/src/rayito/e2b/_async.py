@@ -7,6 +7,7 @@ corrutinas sobre `rayito.AsyncSandbox` (`await AsyncSandbox.create(...)`,
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import logging
 import os
@@ -91,6 +92,7 @@ from rayito.e2b._sync import (
     instance_request_timeout,
 )
 from rayito.e2b._unimplemented import UnimplementedMember
+from rayito.e2b._volume import resolve_volume_mounts
 from rayito.exceptions import (
     InvalidArgumentException,
     LifecycleUnsupportedException,
@@ -113,6 +115,7 @@ class AsyncSandbox:
     #: Ver `Sandbox._bound_volume_store` (`_sync.py`): la misma puerta sin
     #: I/O de `volume_mounts=` en la tabla pura, nada bloquea el event loop.
     _bound_volume_store: ClassVar[VolumeStore | None] = None
+    _bound_volume_connector_arn: ClassVar[str | None] = None
 
     def __init__(
         self, *, _native: NativeAsyncSandbox, _connection: ConnectionConfig | None = None
@@ -149,8 +152,18 @@ class AsyncSandbox:
 
     @classmethod
     async def _launch(cls, create_kwargs: Mapping[str, Any], api_params: Mapping[str, Any]) -> Self:
-        mapping = map_create_kwargs(**create_kwargs, volume_store=cls._bound_volume_store)
-        resolved = cls._native_call(mapping.native_kwargs, api_params, call="create")
+        mapping = map_create_kwargs(
+            **create_kwargs,
+            volume_store=cls._bound_volume_store,
+            volume_connector_arn=cls._bound_volume_connector_arn,
+        )
+        native_kwargs = mapping.native_kwargs
+        if mapping.volume_mounts is not None and cls._bound_volume_store is not None:
+            volumes = await asyncio.to_thread(
+                resolve_volume_mounts, mapping.volume_mounts, cls._bound_volume_store
+            )
+            native_kwargs = {**native_kwargs, "volumes": volumes}
+        resolved = cls._native_call(native_kwargs, api_params, call="create")
         emit_warnings(mapping.warnings)
         try:
             native = await NativeAsyncSandbox.create(**resolved.kwargs)

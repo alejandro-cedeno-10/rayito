@@ -57,7 +57,11 @@ class E2B:
     artefactos de `Template.build`, `None` por defecto; sin él cada
     `build` debe pasar `bucket=`). `client.Volume`/`client.AsyncVolume`
     (m15-efs-volumes, experimental) sólo funcionan con
-    `volume_store=VolumeStore(...)` — sin él, `UnimplementedError`."""
+    `volume_store=VolumeStore(...)` — sin él, `UnimplementedError`; y
+    `Sandbox.create(volume_mounts=...)` necesita además
+    `volume_connector_arn=` (el `ConnectorArn` de la pila efs-volumes), que
+    sustituye a `INTERNET_EGRESS` como único conector de egress de ese
+    sandbox."""
 
     def __init__(
         self,
@@ -68,6 +72,7 @@ class E2B:
         index: DynamoDbIndex | None = None,
         bucket: str | None = None,
         volume_store: VolumeStore | None = None,
+        volume_connector_arn: str | None = None,
         **api_params: Unpack[ApiParams],
     ) -> None:
         split_api_params(api_params, call="E2B")
@@ -82,11 +87,15 @@ class E2B:
         bound = {key: value for key, value in params.items() if value is not None}
         chosen_index = validate_index(index)
         volume_store = require_sync_store(volume_store)
+        volume_binding = {
+            "_bound_volume_store": volume_store,
+            "_bound_volume_connector_arn": volume_connector_arn,
+        }
         self.Sandbox: type[Sandbox] = bind_class(
-            Sandbox, bound, _bound_index=chosen_index, _bound_volume_store=volume_store
+            Sandbox, bound, _bound_index=chosen_index, **volume_binding
         )
         self.AsyncSandbox: type[AsyncSandbox] = bind_class(
-            AsyncSandbox, bound, _bound_index=chosen_index, _bound_volume_store=volume_store
+            AsyncSandbox, bound, _bound_index=chosen_index, **volume_binding
         )
         secret_bound: dict[str, Any] = {
             key: bound[key] for key in ("region", "session") if key in bound

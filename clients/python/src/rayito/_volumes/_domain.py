@@ -8,6 +8,7 @@ llamadas a EFS viven en `_store.py`/`_store_async.py`.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Final, Literal
@@ -55,6 +56,19 @@ def validate_file_system_id(value: str) -> str:
     return value
 
 
+def validate_mount_target_ip(value: str) -> str:
+    """Una IPv4 en notación decimal con puntos (la que `rayd` pasa como
+    `mounttargetip=`, `rayd_core::volume::MountTargetIp`); nunca repite
+    `value` en el mensaje."""
+    try:
+        ipaddress.IPv4Address(value)
+    except (ipaddress.AddressValueError, TypeError, ValueError):
+        raise InvalidArgumentException(
+            "mount_target_ip inválido: se esperaba una IPv4 (a.b.c.d)"
+        ) from None
+    return value
+
+
 def validate_access_point_id(value: str) -> str:
     """Nunca repite `value` en el mensaje (§6, igual que
     `validate_file_system_id`)."""
@@ -64,10 +78,7 @@ def validate_access_point_id(value: str) -> str:
 
 
 #: Mirrors `rayd_core::volume::MountState`; sólo `"mounted"` deja usar el
-#: volumen. `rayd` sólo lo rellena en una imagen con `amazon-efs-utils` y
-#: `create()` aún no manda la sección, así que hoy ningún `VolumeStatus`
-#: real llega al SDK: el tipo está aquí para cuando `ConfigureStatus` lo
-#: rellene.
+#: volumen (`"degraded"`/`"remounting"` aparecen tras un `resume()`).
 MountState = Literal[
     "requested", "mounting", "mounted", "degraded", "remounting", "unmounted", "failed"
 ]
@@ -93,14 +104,16 @@ class EfsVolume:
         validate_access_point_id(self.access_point_id)
         if self.name is not None:
             validate_volume_name(self.name)
+        if self.mount_target_ip is not None:
+            validate_mount_target_ip(self.mount_target_ip)
 
 
 @dataclass(frozen=True)
 class VolumeStatus:
-    """Lo que `sbx.volumes[path]` reporta tras `/run` (research doc §4.5);
-    en 0.6 ningún build de `rayd` llega a `mounted`, así que todo volumen
-    pedido termina en `last_error_class="unsupported"` antes de que el SDK
-    siquiera construya uno de estos (ver `_section.require_volume_support`)."""
+    """Lo que `sbx.volumes[path]` reporta (una `ConfigureStatus` por
+    lectura). `last_error_class` es una cadena cerrada de
+    `efs_volumes.proto` (`credentials_expired`, `flush_timeout`, `stale`,
+    `iam_denied`...), nunca un mensaje de AWS."""
 
     state: MountState
     last_error_class: str | None = None

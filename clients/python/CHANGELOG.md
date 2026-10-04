@@ -8,6 +8,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- `rayito image zip --with-efs` y `rayito image publish --with-efs`
+  (`m15-efs-volumes`): publican `rayito-base-caps-efs`, la imagen caps con
+  `amazon-efs-utils` que necesita `volumes=` (+~198 MB de imagen, snapshot
+  igual; exige `--os-capabilities ALL` y un zip con el marcador
+  `efs_variant`, comprobado antes de llamar a AWS). `make image-zip-efs` /
+  `make image-publish-caps-efs`. Las imágenes por defecto no cambian.
+- `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
+  para `mounts=`, `volumes=` y `telemetry=` (también en TypeScript).
 - **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
   por defecto): `VolumeStore`/`AsyncVolumeStore` (CRUD real de access
   points EFS: `CreateAccessPoint`/`DescribeAccessPoints`/
@@ -16,17 +24,28 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   variante `caps` y un único conector propio en `egress=`: sin él, con
   `INTERNET_EGRESS` o con dos conectores es `InvalidArgumentException`,
   porque un MicroVM sólo admite un conector de egress, `AWS_API_NOTES.md`
-  §16 Q131) antes de cualquier llamada a AWS y siempre lanza
-  `UnimplementedError` mientras ninguna imagen publicada traiga
-  `amazon-efs-utils` (`docs/research/2026-10-efs-persistence.md`).
-  `EfsVolume`, `VolumeStatus` y las excepciones `VolumeException`/
-  `VolumeNotFoundException`/`VolumePathNotFoundException`. El shim de E2B
+  §16 Q131), como mucho 4 volúmenes y `execution_role_arn=` antes de
+  cualquier llamada a AWS; resuelve la IP de mount target que falte con una
+  `DescribeMountTargets` por sistema de ficheros antes de `run-microvm`,
+  manda la sección `efs_volumes` en el único `ConfigureSandbox` de
+  `create()` (con plazo de 65 s), sólo vuelve con todos los volúmenes
+  `mounted` y, si uno falla, termina el sandbox (salvo `keep_on_failure`)
+  y lanza `VolumeMountException` (`code`: `network`, `iam_denied`,
+  `not_found`, `tls`, `helper_missing`, `timeout`, `invalid_path`); sobre
+  una imagen sin `amazon-efs-utils`, `UnimplementedError`.
+  `reincarnate()` la vuelve a mandar. `sbx.volumes` (`await sbx.volumes()`
+  en `AsyncSandbox`) da el estado en vivo. `EfsVolume` (valida
+  `mount_target_ip` como IPv4), `VolumeStatus` y las excepciones
+  `VolumeException`/`VolumeMountException`/`VolumeNotFoundException`/
+  `VolumePathNotFoundException`. El shim de E2B
   (`rayito.e2b.Volume`/`AsyncVolume`) hace CRUD real sobre
   `E2B(volume_store=...)` (`volume_id` es el nombre del volumen, el mismo
   que reciben `connect`/`get_info`/`destroy`); sus operaciones de contenido
   (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
-  `volume_mounts=` valida sin llamar a AWS y siempre lanza
-  `UnimplementedError`. Componente
+  `Sandbox.create(volume_mounts=)` monta con
+  `E2B(volume_store=..., volume_connector_arn=...)`: ese sandbox sale sólo
+  por el conector del volumen y `allow_internet_access=True` explícito es
+  `InvalidArgumentException`. Componente
   `rayito stack {deploy,status,destroy} efs-volumes`
   (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
   target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y

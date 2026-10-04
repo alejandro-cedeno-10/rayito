@@ -102,6 +102,17 @@ for the serialized AWS acceptance stage.
   (`ReadOnlyAccessPointArns`); the SDKs reject `volumes=` without exactly
   one own egress connector.
 
+- **`create(volumes=)` for real** (design D11–D14, tasks §11): the SDKs
+  resolve each missing mount target IP (`DescribeMountTargets`, once per file
+  system), send the `efs_volumes` section through the single post-ready
+  `Configure` (deadline covering `rayd`'s synchronous mounts), wait for
+  `MOUNTED`, terminate on failure (`VolumeMountException`/`VolumeMountError`)
+  and replay it on `reincarnate()`; the E2B shim's `volume_mounts` mounts with
+  `E2B(volume_connector_arn=)` as the only egress. `amazon-efs-utils` ships
+  only in the opt-in image `rayito-base-caps-efs` (`rayito image publish
+  --with-efs`); the default images are unchanged. This supersedes the
+  "always `UnimplementedError`" behaviour described above.
+
 ## Impact
 
 - Affected specs: new capability `efs-volumes` (this change); no existing

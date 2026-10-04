@@ -8,6 +8,9 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
+  para `mounts`, `volumes` y `telemetry` (`requireCapsFor`, `CAPS_VARIANTS`,
+  `EFS_CAPS_VARIANT`).
 - **Volúmenes EFS** (`m15-efs-volumes`, ADR-018, **experimental**, apagado
   por defecto): `VolumeStore` (CRUD real de access points EFS:
   `CreateAccessPointCommand`/`DescribeAccessPointsCommand`/
@@ -16,16 +19,25 @@ versionado [SemVer](https://semver.org/lang/es/).
   valida la petición (tipos, rutas, variante `caps` y un único conector
   propio en `egress`: sin él, con `INTERNET_EGRESS` o con dos conectores es
   `InvalidArgumentError`, porque un MicroVM sólo admite un conector de
-  egress, `AWS_API_NOTES.md` §16 Q131) antes de cualquier llamada a AWS y
-  siempre lanza `UnimplementedError` mientras ninguna imagen publicada
-  traiga `amazon-efs-utils` (`docs/research/2026-10-efs-persistence.md`). `EfsVolume`, `VolumeStatus`
-  y los errores `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
+  egress, `AWS_API_NOTES.md` §16 Q131), como mucho 4 volúmenes y
+  `executionRoleArn` antes de cualquier llamada a AWS; resuelve la IP de
+  mount target que falte con un `DescribeMountTargetsCommand` por sistema de
+  ficheros antes de `run-microvm`, manda la sección `efs_volumes` en el
+  único `ConfigureSandbox` de `create()` (con plazo de 65 s), sólo vuelve
+  con todos los volúmenes `mounted` y, si uno falla, termina el sandbox
+  (salvo `keepOnFailure`) y lanza `VolumeMountError` (`code`); sobre una
+  imagen sin `amazon-efs-utils`, `UnimplementedError`. `reincarnate()` la
+  vuelve a mandar y `sbx.volumes()` da el estado en vivo. `EfsVolume`
+  (valida `mountTargetIp` como IPv4), `VolumeStatus` y los errores
+  `VolumeError`/`VolumeMountError`/`VolumeNotFoundError`/`VolumePathNotFoundError`.
   El shim de E2B (`Volume`) hace CRUD real sobre
   `new E2B({ volumeStore })` (`volumeId` es el nombre del volumen, el mismo
   que reciben `connect`/`getInfo`/`destroy`); sus operaciones de contenido
   (`UnimplementedError("volume.content")`) siguen sin plano de datos, y
-  `volumeMounts` valida sin llamar a AWS y siempre lanza
-  `UnimplementedError`. Componente
+  `Sandbox.create({ volumeMounts })` monta con
+  `new E2B({ volumeStore, volumeConnectorArn })`: ese sandbox sale sólo por
+  el conector del volumen y `allowInternetAccess: true` explícito es
+  `InvalidArgumentError`. Componente
   `rayito stack {deploy,status,destroy} efs-volumes`
   (`infra/efs-volumes.yaml`: sistema de ficheros EFS cifrado, un mount
   target por subred de `SubnetIds`, grupos de seguridad NFS nuevos y

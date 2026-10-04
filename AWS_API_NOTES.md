@@ -1096,9 +1096,16 @@ medido el 2026-10-04 (Q128–Q133) y lo que `rayd` hace con ello:
 
 - **Invocación** (Q128, 20 de 20 sin `systemd`, p50 313 ms, p95 589 ms):
   `mount -t efs -o tls,iam,accesspoint=<fsap>,mounttargetip=<ip>
-  <fs-id>:/ <dir>`, como root, con el entorno reconstruido (`PATH`):
-  `efs-utils` lee la región de su `efs-utils.conf` y las credenciales del
-  execution role de IMDSv2 (EFS-6). `rayd` añade `ro` para un volumen de
+  <fs-id>:/ <dir>`, como root, con el entorno reconstruido (`PATH` y
+  `AWS_REGION`): `efs-utils` 3.1.3 toma la región de la opción `region`, si
+  no de `AWS_REGION`/`AWS_DEFAULT_REGION`, si no de su `efs-utils.conf` y si
+  no de IMDS (`efs_utils_common/metadata.py:get_target_region` de
+  `aws/efs-utils` v3.1.3, consultado 2026-10-04), así que la imagen no hornea
+  ninguna región; las credenciales del execution role las lee de IMDSv2
+  (EFS-6). La IP la resuelve el SDK antes de lanzar con
+  `DescribeMountTargets(FileSystemId=…)` (la fila de arriba; una llamada por
+  sistema de ficheros y `create()`, el primer mount target `available` por
+  `AvailabilityZoneId`) cuando el `EfsVolume` no la trae. `rayd` añade `ro` para un volumen de
   sólo lectura y omite `mounttargetip=` si la petición no trae IP (el
   nombre `<fs-id>.efs.<región>.amazonaws.com` resuelve desde el guest,
   Q131); **ninguna de las dos variantes está medida todavía**. `rayd` monta

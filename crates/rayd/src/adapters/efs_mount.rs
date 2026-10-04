@@ -63,6 +63,7 @@ use super::mountpoint::{
 };
 use super::procfs_process_table::ProcfsProcessTable;
 use super::sidecar_process::signal_process_group;
+use crate::features::s3_mounts::AWS_REGION_ENV;
 
 /// `util-linux`'s `mount`, which hands `-t efs` to `mount.efs`.
 pub const MOUNT_BINARY: &str = "mount";
@@ -110,6 +111,8 @@ const ROOT_UID: u32 = 0;
 /// `/proc/<pid>/exe` of a process.
 const PROC_ROOT: &str = "/proc";
 const PROC_EXE: &str = "exe";
+/// The one variable besides `AWS_REGION` the helper inherits.
+const PATH_ENV: &str = "PATH";
 
 /// What `EfsUtilsMounter` needs from the guest, so its rules (proxy
 /// attribution, the stop sequence, the flush bookkeeping) are tested with a
@@ -412,10 +415,20 @@ pub fn detect_efs_supported() -> bool {
 }
 
 /// `EfsHost` over the real guest.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LinuxEfsHost;
+#[derive(Debug, Default, Clone)]
+pub struct LinuxEfsHost {
+    /// The platform's `AWS_REGION` as `main` read it (`FeatureContext::
+    /// region`), handed to the helper; `None` leaves `efs-utils` to its own
+    /// fallbacks (`helper_environment`).
+    region: Option<String>,
+}
 
 impl LinuxEfsHost {
+    #[must_use]
+    pub fn new(region: Option<String>) -> Self {
+        Self { region }
+    }
+
     fn proc_path(pid: i32) -> PathBuf {
         Path::new(PROC_ROOT).join(pid.to_string())
     }
@@ -438,7 +451,11 @@ impl EfsHost for LinuxEfsHost {
         args: Vec<String>,
         timeout: Duration,
     ) -> BoxFuture<'_, Result<(), MountFailureClass>> {
-        Box::pin(run_mount_helper(args, timeout))
+        Box::pin(run_mount_helper(
+            args,
+            helper_environment(self.region.as_deref()),
+            timeout,
+        ))
     }
 
     fn publish(&self, mount_path: &MountPath) -> Result<(), MountFailureClass> {
@@ -521,17 +538,37 @@ fn walk_class(error: MountpointError) -> MountFailureClass {
     }
 }
 
-/// `mount -t efs ...` through `ChildRegistry`, with an environment rebuilt
-/// from scratch (`PATH` only: `efs-utils` reads its region from its own
-/// configuration file and its credentials from IMDS, Q128), in its own
-/// process group so a run past `timeout` is killed whole (the helper's own
-/// children included) and then reaped off the caller's path.
-async fn run_mount_helper(args: Vec<String>, timeout: Duration) -> Result<(), MountFailureClass> {
+/// The helper's whole environment, rebuilt from scratch: `PATH`, plus
+/// `AWS_REGION` when the platform set it. `efs-utils` 3.1.3 takes the
+/// region from the `region` mount option, then `AWS_REGION`/
+/// `AWS_DEFAULT_REGION`, then its `efs-utils.conf`, then IMDS
+/// (`get_target_region` in `src/efs_utils_common/metadata.py` of
+/// `aws/efs-utils` v3.1.3, read 2026-10-04); a product image ships
+/// the configuration file untouched (it cannot know the Region it will run
+/// in), so the variable is what tells it. Credentials still come from IMDS
+/// (Q128), never from this environment.
+fn helper_environment(region: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut environment = vec![(PATH_ENV, DEFAULT_PATH.to_owned())];
+    if let Some(region) = region.filter(|region| !region.is_empty()) {
+        environment.push((AWS_REGION_ENV, region.to_owned()));
+    }
+    environment
+}
+
+/// `mount -t efs ...` through `ChildRegistry`, with `environment` as its
+/// whole environment (`helper_environment`), in its own process group so a
+/// run past `timeout` is killed whole (the helper's own children included)
+/// and then reaped off the caller's path.
+async fn run_mount_helper(
+    args: Vec<String>,
+    environment: Vec<(&'static str, String)>,
+    timeout: Duration,
+) -> Result<(), MountFailureClass> {
     let mut command = Command::new(MOUNT_BINARY);
     command
         .args(&args)
         .env_clear()
-        .env("PATH", DEFAULT_PATH)
+        .envs(environment)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -729,6 +766,24 @@ mod tests {
                 STAGING_DIR,
             ]
         );
+    }
+
+    #[test]
+    fn the_helper_environment_is_path_plus_the_platform_region() {
+        assert_eq!(
+            helper_environment(Some("us-east-1")),
+            [
+                (PATH_ENV, DEFAULT_PATH.to_owned()),
+                (AWS_REGION_ENV, "us-east-1".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_region_the_helper_only_gets_path() {
+        let path_only = [(PATH_ENV, DEFAULT_PATH.to_owned())];
+        assert_eq!(helper_environment(None), path_only);
+        assert_eq!(helper_environment(Some("")), path_only);
     }
 
     #[test]
@@ -952,7 +1007,7 @@ mod tests {
             pid,
             start_ticks: entry.start_ticks,
         };
-        let host = LinuxEfsHost;
+        let host = LinuxEfsHost::default();
         assert!(host.is_running(sleeper));
         host.stop(sleeper, false);
         let _ = child.wait().await;
@@ -962,7 +1017,7 @@ mod tests {
 
     #[test]
     fn the_real_host_never_takes_a_test_process_for_a_proxy() {
-        assert!(LinuxEfsHost.proxies().is_empty());
+        assert!(LinuxEfsHost::default().proxies().is_empty());
     }
 
     #[test]

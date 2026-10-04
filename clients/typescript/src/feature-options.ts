@@ -14,7 +14,10 @@
  * `create()`/`take()` con su `SecretCache` (`GatewaySectionFactory`).
  * `telemetry` (m15-rayd-otlp) y `events` (m15-events-webhooks) se validan
  * aquí y su sección se planea tras `run-microvm` (`plannedSections`),
- * porque necesitan hechos que sólo existen entonces.
+ * porque necesitan hechos que sólo existen entonces. `volumes`
+ * (m15-efs-volumes) se valida aquí y su sección la construye
+ * `prepareFeatures` antes de `run-microvm`, cuando ya conoce la región y las
+ * credenciales con las que resolver cada IP de mount target.
  */
 
 import type { PlannedSection } from "./configure/base.js";
@@ -30,7 +33,15 @@ import { GatewaySectionFactory } from "./secret-gateway/section.js";
 import type { TelemetryExport } from "./telemetry-export/domain.js";
 import { planTelemetry } from "./telemetry-export/domain.js";
 import { type TelemetryLaunchFacts, TelemetrySectionFactory } from "./telemetry-export/section.js";
-import { requireVolumeSupport } from "./volumes/section.js";
+import type { Credentials, EfsFileSystemApi } from "./volumes/efs.js";
+import { newLazyEfsApi } from "./volumes/efs.js";
+import {
+  MountTargetResolver,
+  type MountTargetsApiSource,
+  needsMountTargets,
+  resolveMountTargets,
+} from "./volumes/mount-targets.js";
+import { EfsVolumesSection, planVolumes, type VolumesRequest } from "./volumes/section.js";
 
 export const EVENTS_CHANGE = "m15-events-webhooks";
 export const TELEMETRY_CHANGE = "m15-rayd-otlp";
@@ -67,11 +78,13 @@ export function relaunchFeatures<T extends FeatureOptions>(options: T): Omit<T, 
  * `telemetry`, el `TelemetryExport` ya validado cuya sección necesita los
  * hechos de imagen, y `events`, el `LifecycleEvents` cuya sección necesita
  * además el `sandboxId` para derivar `k_sbx`: `plannedSections` las junta
- * en cuanto `create()` conoce esos hechos. */
+ * en cuanto `create()` conoce esos hechos. `volumes`, la petición ya
+ * validada que `prepareFeatures` convierte en `EfsVolumesSection`. */
 export interface FeaturePlan {
   readonly configureSections: readonly PlannedSection[];
   readonly telemetry?: TelemetryExport | undefined;
   readonly events?: LifecycleEvents | undefined;
+  readonly volumes?: VolumesRequest | undefined;
 }
 
 /** Lo que sólo `run-microvm` y el primer `Health` saben. */
@@ -83,6 +96,7 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({
   configureSections: [],
   telemetry: undefined,
   events: undefined,
+  volumes: undefined,
 });
 
 /**
@@ -94,7 +108,8 @@ const EMPTY_PLAN: FeaturePlan = Object.freeze({
  * de la imagen). `logging` es el `logging` de `create()`: `events` exige
  * que mande los logs a CloudWatch. `egress` es el `egress` de `create()` tal
  * cual: `volumes` exige exactamente un conector propio (un MicroVM sólo
- * admite uno, `AWS_API_NOTES.md` §16 Q131). No hace ninguna llamada a AWS ni
+ * admite uno, `AWS_API_NOTES.md` §16 Q131) y `executionRoleArn` (con el que
+ * `efs-utils` firma el túnel TLS). No hace ninguna llamada a AWS ni
  * construye ningún cliente.
  *
  * `events` se valida aquí (tipo y `logging`) y viaja en
@@ -108,6 +123,7 @@ export function planFeatures(
   imageVariant?: string,
   logging?: unknown,
   egress?: readonly string[],
+  executionRoleArn?: string,
 ): FeaturePlan {
   const sections: PlannedSection[] = [];
   if (options.mounts !== undefined) {
@@ -117,9 +133,10 @@ export function planFeatures(
       sections.push(section);
     }
   }
-  if (options.volumes !== undefined) {
-    requireVolumeSupport(options.volumes, imageVariant, egress);
-  }
+  const volumes =
+    options.volumes === undefined
+      ? undefined
+      : planVolumes(options.volumes, { imageVariant, egress, executionRoleArn });
   // `size` (m15-sizes-catalog) ya no es un stub: no produce ninguna
   // sección de ConfigureSandbox (decide qué imagen lanzar, no un ajuste
   // del guest en marcha), así que `create()` la resuelve por su cuenta con
@@ -138,9 +155,55 @@ export function planFeatures(
   if (options.domain !== undefined) {
     throw new UnimplementedError("domain", `todavía no disponible (${DOMAIN_CHANGE})`);
   }
-  return sections.length === 0 && telemetry === undefined && events === undefined
+  return sections.length === 0 &&
+    telemetry === undefined &&
+    events === undefined &&
+    volumes === undefined
     ? EMPTY_PLAN
-    : { configureSections: sections, telemetry, events };
+    : { configureSections: sections, telemetry, events, volumes };
+}
+
+/** Lo que `prepareFeatures` necesita para resolver las IPs de mount target:
+ * la región y las credenciales del plano de control de `create()` (las del
+ * llamante) y, sólo en tests, la fuente del cliente de EFS. */
+export interface PrepareFeaturesOptions {
+  readonly region: string;
+  readonly credentials?: Credentials | undefined;
+  readonly efs?: MountTargetsApiSource | undefined;
+}
+
+/**
+ * La parte de `create()` con E/S que va antes de `run-microvm`: sin
+ * `volumes` devuelve `plan` tal cual (sin cargar `@aws-sdk/client-efs` ni
+ * construir ningún cliente); con `volumes`, resuelve con
+ * `DescribeMountTargets` (uno por sistema de ficheros, sólo si algún volumen
+ * no trae `mountTargetIp`) cada IP de mount target y añade la
+ * `EfsVolumesSection` a `configureSections`. Un sistema de ficheros sin
+ * mount target `available` falla aquí, antes de lanzar ningún MicroVM.
+ * Espejo de `prepare_features`.
+ */
+export async function prepareFeatures(
+  plan: FeaturePlan,
+  options: PrepareFeaturesOptions,
+): Promise<FeaturePlan> {
+  if (plan.volumes === undefined) {
+    return plan;
+  }
+  const requested = plan.volumes.volumes;
+  const resolved = needsMountTargets(requested)
+    ? await resolveMountTargets(
+        requested,
+        new MountTargetResolver(
+          options.efs ??
+            newLazyEfsApi<EfsFileSystemApi>(options.region, options.credentials, undefined),
+        ),
+      )
+    : requested;
+  return {
+    ...plan,
+    configureSections: [...plan.configureSections, new EfsVolumesSection(resolved)],
+    volumes: undefined,
+  };
 }
 
 /**

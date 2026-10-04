@@ -65,8 +65,9 @@ use crate::lifecycle::{LifecycleParticipant, ReadyVerdict};
 const ALLOWED_BUCKETS_ENV: &str = "RAYITO_ALLOWED_MOUNT_BUCKETS";
 /// The platform's own region, read the same way `adapters::s3_store`
 /// already reads it for ADR-009 persistence; `mount-s3`'s own `AWS_REGION`
-/// comes from this, never a per-request value.
-const AWS_REGION_ENV: &str = "AWS_REGION";
+/// comes from this, never a per-request value; `adapters::efs_mount`
+/// hands the same variable to the `efs-utils` helper.
+pub(crate) const AWS_REGION_ENV: &str = "AWS_REGION";
 const FUSE_DEVICE_PATH: &str = "/dev/fuse";
 /// The system account `image/Dockerfile` creates for the `mount-s3`
 /// daemon. Like the binary, it exists in all four image variants (one

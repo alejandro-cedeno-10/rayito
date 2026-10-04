@@ -17,8 +17,8 @@ export const COMPONENT: StackComponent = {
   description:
     "Sistema de ficheros EFS cifrado (Elastic Throughput) en una VPC existente: un " +
     "mount target por subred, grupos de seguridad NFS nuevos y un " +
-    "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: " +
-    "Sandbox.create(volumes=...) aún no monta).",
+    "AWS::Lambda::NetworkConnector dedicado, para volumes= (experimental: monta " +
+    "sobre una imagen con amazon-efs-utils, rayito-base-caps-efs).",
   parameters: [
     {
       name: "VpcId",

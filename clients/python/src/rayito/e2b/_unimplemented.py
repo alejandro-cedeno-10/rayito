@@ -32,10 +32,10 @@ MCP_REASON: Final = (
     "servidor rayito-mcp"
 )
 VOLUME_REASON: Final = (
-    "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen; incluso "
-    "configurado, volumes=/volume_mounts sigue en UnimplementedError (experimental: ninguna "
-    "imagen publicada trae amazon-efs-utils, AWS_API_NOTES.md §22, m15-efs-volumes); usa "
-    "persist= (S3) o upload_url/download_url mientras tanto"
+    "sin un volume_store/volumeStore configurado en el cliente E2B no hay volumen: pasa "
+    "E2B(volume_store=VolumeStore(...)) (y volume_connector_arn= para volume_mounts, sobre la "
+    "imagen opcional con amazon-efs-utils, AWS_API_NOTES.md §22; m15-efs-volumes, "
+    "experimental), o usa persist= (S3) o upload_url/download_url"
 )
 VOLUME_CONTENT_REASON: Final = (
     "no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y "

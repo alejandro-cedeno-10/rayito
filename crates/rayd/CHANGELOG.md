@@ -31,6 +31,19 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   (`invalid_path`, `credentials_expired`, `flush_timeout`, `stale`,
   `unreachable`, `gone`).
 
+### Changed
+
+- `EfsUtilsMounter` pasa `AWS_REGION` (la región del MicroVM) al entorno de
+  `mount -t efs`: `amazon-efs-utils` 3.1.3 la lee antes que su
+  `efs-utils.conf`, así que una imagen sin región horneada monta en
+  cualquier región. Sin `AWS_REGION`, el helper sigue con sus propios
+  respaldos.
+- `image/Dockerfile`: capa condicional de
+  `amazon-efs-utils-3.1.3-1.amzn2023` (sólo con el marcador `efs_variant` de
+  `--with-efs`), que rehace el enlace de `/usr/bin/python3` a 3.12;
+  `scripts/check_pins.py` clava su NEVRA y ve los `dnf install` dentro de
+  `if …; then`.
+
 ## [0.6.1] - 2026-10-04
 
 ### Fixed

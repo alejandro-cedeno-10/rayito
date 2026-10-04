@@ -11,7 +11,7 @@ se prueba en `test_m15_sizes_catalog_domain.py` y
 distinto de `None`, siguen lanzando `UnimplementedError` nombrando su propio
 cambio OpenSpec, antes de construir ningún `FeaturePlan`.
 `volumes=` ya no es un stub genérico (m15-efs-volumes reemplazó su rama con
-`require_volume_support`, que exige un `EfsVolume` real y valida rutas antes
+`plan_volumes`, que exige un `EfsVolume` real y valida rutas antes
 de llegar a `UnimplementedError`): su propio comportamiento se cubre en
 `test_m15_efs_volumes_section.py`, no en el parametrize de abajo."""
 

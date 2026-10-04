@@ -35,10 +35,11 @@ class VolumeStore:
     Coste y activación
     -------------------
     Activa: `VolumeStore(...)`; construirlo no llama a AWS (el cliente boto3
-        `efs` se crea en el primer método). Experimental: el CRUD es real, pero
-        `Sandbox.create(volumes=...)` sigue en `UnimplementedError` (ninguna
-        imagen publicada trae `amazon-efs-utils` todavía,
-        `docs/research/2026-10-efs-persistence.md`).
+        `efs` se crea en el primer método). Experimental: lo que devuelve se
+        monta con `Sandbox.create(volumes={ruta: vol})` sobre la imagen
+        opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`);
+        ese `create()` añade una `DescribeMountTargets` por sistema de
+        ficheros si el volumen no trae `mount_target_ip`.
     Recursos y llamadas AWS: ningún recurso nuevo (el sistema de ficheros lo
         crea `infra/efs-volumes.yaml`, por separado); `create` = `CreateAccessPoint`,
         `get`/`list` = `DescribeAccessPoints`, `destroy` = `DeleteAccessPoint`.
@@ -46,7 +47,8 @@ class VolumeStore:
         sistema de ficheros se factura por `infra/efs-volumes.yaml` (ver ese
         componente en `rayito stack list`).
     IAM: `elasticfilesystem:CreateAccessPoint`, `DescribeAccessPoints`,
-        `DeleteAccessPoint` sobre el sistema de ficheros (credenciales del
+        `DeleteAccessPoint` (y `DescribeMountTargets` para montar sin
+        `mount_target_ip`) sobre el sistema de ficheros (credenciales del
         LLAMANTE, no del execution role del MicroVM).
     Cómo apagarla: no instancies `VolumeStore`; borra con `destroy()` los
         volúmenes que ya no uses (el directorio que cubrían no se borra, sólo el

@@ -35,7 +35,7 @@ describe("feature-options", () => {
   });
 
   // `volumes` ya no es un stub genérico (m15-efs-volumes reemplazó su rama
-  // con `requireVolumeSupport`, que exige un `EfsVolume` real y valida rutas
+  // con `planVolumes`, que exige un `EfsVolume` real y valida rutas
   // antes de llegar a `UnimplementedError`): ver m15-efs-volumes.test.ts.
   test.each([
     // `events` validates its type and `logging` first: see

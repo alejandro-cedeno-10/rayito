@@ -9,12 +9,11 @@ borra todos cuando se lo pides.
 
 !!! warning "Experimental"
     El sistema de ficheros, los grupos de seguridad, el conector, el CRUD de
-    volúmenes (`VolumeStore`) y el adaptador de montaje de `rayd` son
-    reales. `Sandbox.create(volumes=...)` sigue en `UnimplementedError`
-    porque ninguna imagen publicada trae todavía `amazon-efs-utils` (ver
-    [Volúmenes EFS](volumenes-efs.md) y [Medido en AWS real](#medido-en-aws-real)).
-    Lo que sí puedes hacer hoy: comprobar tu VPC, desplegar la pila, crear y
-    borrar volúmenes, y dejar listo el execution role.
+    volúmenes (`VolumeStore`) y el montaje con `Sandbox.create(volumes=...)`
+    son reales, pero montar exige la imagen opcional con `amazon-efs-utils`
+    (`rayito-base-caps-efs`, ver
+    [Imagen con amazon-efs-utils](volumenes-efs.md#imagen-con-amazon-efs-utils)
+    y [Medido en AWS real](#medido-en-aws-real)).
 
 ## En cinco minutos
 
@@ -30,10 +29,12 @@ cada una en una AZ distinta. Con eso:
 3. **Adjunta** la salida `CallerPolicyArn` al execution role con el que
    lanzarás los sandboxes, y guarda `ConnectorArn`.
 4. **Crea** un volumen con `efs.volume_store().create("nombre")`.
-5. Cuando la imagen con `amazon-efs-utils` exista, lanza con
+5. **Monta**: publica la imagen con `amazon-efs-utils` (`make
+   image-publish-caps-efs` o `rayito image publish --with-efs
+   --os-capabilities ALL`) y lanza con ella, `execution_role_arn=`,
    `egress=[ConnectorArn]` (sólo ese conector: un sandbox con volumen no usa
    `INTERNET_EGRESS`, ver [Salida a internet](#salida-a-internet)) y
-   `volumes={...}`.
+   `volumes={...}` ([Montar volúmenes](volumenes-efs.md#sandboxcreatevolumes-montar-volumenes)).
 
 Para quitarlo todo: `destroy(delete_file_system=True)`, sección
 [3](#3-borralo).

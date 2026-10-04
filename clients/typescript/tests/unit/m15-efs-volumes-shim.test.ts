@@ -7,14 +7,16 @@
  * `remove`/`updateMetadata`) son siempre `UnimplementedError("volume.content")`,
  * ligado o no. `volumeId` es el nombre lógico en todas partes (el ida y
  * vuelta `destroy(vol.volumeId)` de E2B funciona) y `volumeMounts` pasa por
- * una puerta sin I/O antes de cualquier llamada a AWS. Espejo de
+ * una puerta sin I/O (store, `volumeConnectorArn`, sin internet) y después
+ * se monta con el `volumes` nativo, con el conector como único egress. Espejo de
  * `test_m15_efs_volumes_shim.py`.
  */
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { E2B, Sandbox, UnimplementedError, Volume } from "../../src/e2b/index.js";
-import { requireVolumeMountSupport } from "../../src/e2b/volume.js";
+import { planVolumeMounts, resolveVolumeMounts } from "../../src/e2b/volume.js";
 import { InvalidArgumentError } from "../../src/errors.js";
+import { Sandbox as NativeSandbox } from "../../src/sandbox/sandbox.js";
 import type { DescribedAccessPoint, EfsApi } from "../../src/volumes/efs.js";
 import { VolumeStore } from "../../src/volumes/store.js";
 
@@ -153,55 +155,155 @@ describe("bound Volume", () => {
   });
 });
 
-describe("volumeMounts gate", () => {
+// Marcador de documentación (cuenta ficticia).
+const CONNECTOR = "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs";
+const ROLE = "arn:aws:iam::123456789012:role/rayito-execution";
+
+function config(api: FakeEfsApi, connectorArn: string | undefined = CONNECTOR) {
+  return { store: storeWith(api), connectorArn };
+}
+
+describe("planVolumeMounts", () => {
   test("without a bound store it is UnimplementedError('Volume')", () => {
-    const error = caught(() => requireVolumeMountSupport({ "/mnt/v": "x" }, undefined, undefined));
+    const error = caught(() => planVolumeMounts({ "/mnt/v": "x" }, undefined, undefined));
     expect((error as UnimplementedError).feature).toBe("Volume");
   });
 
   test.each([
     ["plain name", "datos-agente-7"],
-    ["bound volume", new Volume("datos-agente-7")],
-  ])("%s: never calls AWS and ends unimplemented", (_label, value) => {
+    ["bound volume", new Volume("datos-agente-7", "fsap-00000001")],
+  ])("%s: validated without calling AWS", (_label, value) => {
     const api = new FakeEfsApi();
-    const error = caught(() =>
-      requireVolumeMountSupport({ "/mnt/v": value }, storeWith(api), "rayito-base-caps"),
-    );
-    expect((error as UnimplementedError).feature).toBe("volumeMounts");
+    const planned = planVolumeMounts({ "/mnt/v": value }, config(api), undefined);
+    expect(planned.connectorArn).toBe(CONNECTOR);
+    expect(planned.entries).toEqual([["/mnt/v", value]]);
     expect(api.calls).toEqual([]);
   });
 
-  test("checks paths, then caps, before the final unimplemented", () => {
-    const store = storeWith(new FakeEfsApi());
-    expect(() => requireVolumeMountSupport({ relative: "x" }, store, "rayito-base")).toThrow(
-      InvalidArgumentError,
+  test("without volumeConnectorArn it names the option and the one-connector rule", () => {
+    const error = caught(() =>
+      planVolumeMounts({ "/mnt/v": "datos" }, { store: storeWith(new FakeEfsApi()) }, undefined),
     );
-    expect(() => requireVolumeMountSupport({ "/mnt/v": "x" }, store, "rayito-base")).toThrow(
-      /base-caps/,
+    expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect((error as Error).message).toContain("volumeConnectorArn");
+    expect((error as Error).message).toContain("NAT");
+  });
+
+  test("allowInternetAccess: true is refused (one egress connector per MicroVM)", () => {
+    expect(() => planVolumeMounts({ "/mnt/v": "datos" }, config(new FakeEfsApi()), true)).toThrow(
+      /un solo conector/,
     );
+    expect(() =>
+      planVolumeMounts({ "/mnt/v": "datos" }, config(new FakeEfsApi()), false),
+    ).not.toThrow();
   });
 
   test.each([[{}], [{ "/mnt/v": 123 }], [{ "/mnt/v": "no valid name!" }], [["x"]]])(
     "rejects a malformed request %#",
     (mounts) => {
-      expect(() =>
-        requireVolumeMountSupport(mounts, storeWith(new FakeEfsApi()), "rayito-base-caps"),
-      ).toThrow(InvalidArgumentError);
+      expect(() => planVolumeMounts(mounts, config(new FakeEfsApi()), undefined)).toThrow(
+        InvalidArgumentError,
+      );
     },
   );
+});
 
-  test("Sandbox.create with volumeMounts makes no AWS call, after mcp/iam", async () => {
+describe("resolveVolumeMounts", () => {
+  test("a name is looked up in the store, a Volume maps without AWS", async () => {
     const api = new FakeEfsApi();
-    const client = new E2B({ volumeStore: storeWith(api) });
+    const store = storeWith(api);
+    const created = await store.create("por-nombre");
+    api.calls.length = 0;
+    const volumes = await resolveVolumeMounts({
+      store,
+      connectorArn: CONNECTOR,
+      entries: [
+        ["/mnt/a", "por-nombre"],
+        ["/mnt/b", new Volume("por-objeto", "fsap-0000000a")],
+      ],
+    });
+    expect(volumes["/mnt/a"]?.accessPointId).toBe(created.accessPointId);
+    expect(volumes["/mnt/b"]?.accessPointId).toBe("fsap-0000000a");
+    expect(volumes["/mnt/b"]?.fileSystemId).toBe(FILE_SYSTEM_ID);
+    expect(volumes["/mnt/b"]?.name).toBe("por-objeto");
+    expect(api.calls).toEqual(["describeAccessPoints"]);
+  });
+
+  test("a Volume without accessPointId is refused", async () => {
     await expect(
-      client.Sandbox.create("rayito-base-caps", { volumeMounts: { "/mnt/v": "datos" } }),
-    ).rejects.toThrow(UnimplementedError);
+      resolveVolumeMounts({
+        store: storeWith(new FakeEfsApi()),
+        connectorArn: CONNECTOR,
+        entries: [["/mnt/a", new Volume("sin-id")]],
+      }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+  });
+});
+
+describe("Sandbox.create({ volumeMounts })", () => {
+  const launched = new Error("lanzamiento interceptado");
+
+  test("launches the native create with volumes and the connector as the only egress", async () => {
+    const api = new FakeEfsApi();
+    const store = storeWith(api);
+    await store.create("datos");
+    const native = vi.spyOn(NativeSandbox, "create").mockRejectedValue(launched);
+    try {
+      const client = new E2B({ volumeStore: store, volumeConnectorArn: CONNECTOR });
+      await expect(
+        client.Sandbox.create("rayito-base-caps-efs", {
+          executionRoleArn: ROLE,
+          volumeMounts: { "/mnt/v": "datos" },
+        }),
+      ).rejects.toBe(launched);
+      const [options] = native.mock.calls[0] ?? [];
+      expect(options?.egress).toEqual([CONNECTOR]);
+      expect(options?.allowInternetAccess).toBeUndefined();
+      expect(options?.executionRoleArn).toBe(ROLE);
+      expect(Object.keys(options?.volumes ?? {})).toEqual(["/mnt/v"]);
+      expect(options?.volumes?.["/mnt/v"]?.fileSystemId).toBe(FILE_SYSTEM_ID);
+    } finally {
+      native.mockRestore();
+    }
+  });
+
+  test("allowInternetAccess: false still reaches the native create", async () => {
+    const native = vi.spyOn(NativeSandbox, "create").mockRejectedValue(launched);
+    try {
+      const client = new E2B({
+        volumeStore: storeWith(new FakeEfsApi()),
+        volumeConnectorArn: CONNECTOR,
+      });
+      await expect(
+        client.Sandbox.create("rayito-base-caps-efs", {
+          allowInternetAccess: false,
+          volumeMounts: { "/mnt/v": new Volume("datos", "fsap-00000001") },
+        }),
+      ).rejects.toBe(launched);
+      expect(native.mock.calls[0]?.[0]?.allowInternetAccess).toBe(false);
+    } finally {
+      native.mockRestore();
+    }
+  });
+
+  test("mcp/iam are rejected first and nothing reaches AWS", async () => {
+    const api = new FakeEfsApi();
+    const client = new E2B({ volumeStore: storeWith(api), volumeConnectorArn: CONNECTOR });
     await expect(
-      client.Sandbox.create("rayito-base-caps", {
+      client.Sandbox.create("rayito-base-caps-efs", {
         mcp: { github: {} },
         volumeMounts: { "/mnt/v": "datos" },
       }),
     ).rejects.toMatchObject({ feature: "mcp" });
+    expect(api.calls).toEqual([]);
+  });
+
+  test("without volumeConnectorArn nothing reaches AWS", async () => {
+    const api = new FakeEfsApi();
+    const client = new E2B({ volumeStore: storeWith(api) });
+    await expect(
+      client.Sandbox.create("rayito-base-caps-efs", { volumeMounts: { "/mnt/v": "datos" } }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
     expect(api.calls).toEqual([]);
   });
 

@@ -67,6 +67,27 @@ export interface EfsApi {
   deleteAccessPoint(input: { AccessPointId: string }): Promise<unknown>;
 }
 
+/** Un mount target tal como lo lee Rayito de `DescribeMountTargets`
+ * (AWS_API_NOTES.md §22: `MountTargets[].{MountTargetId, SubnetId,
+ * LifeCycleState, IpAddress, AvailabilityZoneId}`). */
+export interface DescribedMountTarget {
+  readonly MountTargetId?: string | undefined;
+  readonly SubnetId?: string | undefined;
+  readonly LifeCycleState?: string | undefined;
+  readonly IpAddress?: string | undefined;
+  readonly AvailabilityZoneId?: string | undefined;
+}
+
+export interface DescribedMountTargets {
+  readonly MountTargets?: DescribedMountTarget[] | undefined;
+}
+
+/** Lo único que `create({ volumes })` usa de EFS: resolver la IP de un mount
+ * target cuando un `EfsVolume` no la trae (`mount-targets.ts`). */
+export interface EfsMountTargetsApi {
+  describeMountTargets(input: { FileSystemId: string }): Promise<DescribedMountTargets>;
+}
+
 /** Lo que añade `EfsVolumes.deleteFileSystem` (y `destroy({ deleteFileSystem:
  * true })`) para borrar el sistema de ficheros que la pila conserva
  * (AWS_API_NOTES.md §22): comprobar su etiqueta, esperar a que no quede
@@ -80,9 +101,7 @@ export interface EfsFileSystemApi extends EfsApi {
         }>
       | undefined;
   }>;
-  describeMountTargets(input: { FileSystemId: string }): Promise<{
-    MountTargets?: Array<{ MountTargetId?: string | undefined }> | undefined;
-  }>;
+  describeMountTargets(input: { FileSystemId: string }): Promise<DescribedMountTargets>;
   deleteFileSystem(input: { FileSystemId: string }): Promise<unknown>;
 }
 
@@ -132,8 +151,9 @@ export function newLazyEfsApi<T extends EfsApi = EfsApi>(
 }
 
 /** El permiso IAM de cada operación (AWS_API_NOTES.md §22), para los
- * mensajes de `translateError`; `describeFileSystems`/`describeMountTargets`/
- * `deleteFileSystem` sólo los usa `EfsVolumes.deleteFileSystem`. */
+ * mensajes de `translateError`; `describeFileSystems`/`deleteFileSystem`
+ * sólo los usa `EfsVolumes.deleteFileSystem`, y `describeMountTargets`
+ * también `create({ volumes })` (`mount-targets.ts`). */
 const IAM_ACTIONS: Readonly<Record<keyof EfsFileSystemApi, string>> = Object.freeze({
   createAccessPoint: "elasticfilesystem:CreateAccessPoint",
   describeAccessPoints: "elasticfilesystem:DescribeAccessPoints",

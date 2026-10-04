@@ -1987,7 +1987,8 @@ as root), still gated by support detection (`CAP_SYS_ADMIN`, `nfs4`,
 `mount`, `/usr/sbin/mount.efs`, `/usr/sbin/efs-proxy`): no published image
 installs `amazon-efs-utils` yet, so shipped images keep answering
 `UNSUPPORTED` and the SDK keeps `volumes=` in `UnimplementedError` until
-an image layer and the `create()` wiring land. What the measurements
+an image layer and the `create()` wiring land (both landed: addendum (b)
+below). What the measurements
 changed:
 
 - *`efs-proxy` outlives `umount`* (Q128). The adapter serializes mounts,
@@ -2020,6 +2021,26 @@ changed:
   without exactly one own connector in `egress=` (never `INTERNET_EGRESS`)
   before `run-microvm`; internet for such a sandbox must come through the
   customer's VPC (NAT or transit gateway plus a connector that allows it).
+
+**Adenda 2026-10-04 (b): `create(volumes=)` real e imagen opcional.**
+`volumes=` leaves `UnimplementedError` (OpenSpec `m15-efs-volumes`
+design D11–D14). The SDKs validate before launching (1–4 volumes, paths,
+caps, one own connector, `execution_role_arn`), resolve each missing mount
+target IP with one `DescribeMountTargets` per file system (caller
+credentials, first `available` by `AvailabilityZoneId`) in a generic
+pre-launch step (`prepare_features`/`prepareFeatures`), and send the
+`efs_volumes` section in the single post-ready `Configure`; because `rayd`
+mounts inside that call, a `SlowApplySection` stretches the call deadline
+to 4 × 15 s + 5 s. A failed mount terminates the sandbox
+(`VolumeMountException`/`VolumeMountError` with a closed `code`) and
+`reincarnate()` replays the section. `amazon-efs-utils` ships only in the
+opt-in image `rayito-base-caps-efs` (`rayito image publish --with-efs`,
+a zip marker read by a conditional Dockerfile layer that also re-links
+`/usr/bin/python3` to 3.12), so the default images and their
+`Health.features.efs_volumes = false` do not change; `rayd` passes
+`AWS_REGION` to the helper, so the image bakes no region. The E2B shim's
+`volume_mounts` launches with `E2B(volume_connector_arn=)` as its only
+egress connector.
 
 ## ADR-019 — sizes-catalog (M15, 0.6)
 

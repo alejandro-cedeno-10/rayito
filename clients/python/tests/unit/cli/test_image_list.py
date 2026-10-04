@@ -10,7 +10,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from rayito.cli._artifact import KERNELS_MARKER_ENTRY, WARMUP_MARKER_ENTRY
+from rayito.cli._artifact import EFS_MARKER_ENTRY, KERNELS_MARKER_ENTRY, WARMUP_MARKER_ENTRY
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 
@@ -135,3 +135,15 @@ def test_zip_with_sidecar_copy_is_deterministic(runner: CliRunner, tmp_path: Pat
         app, ["image", "zip", str(image_dir), str(destination), "--variant", "caps"]
     )
     assert refused.exit_code == 2
+
+
+def test_zip_with_efs_adds_the_efs_marker(runner: CliRunner, tmp_path: Path) -> None:
+    image_dir, _sidecar = image_tree(tmp_path)
+    destination = tmp_path / "efs.zip"
+    result = runner.invoke(
+        app, ["--json", "image", "zip", str(image_dir), str(destination), "--with-efs"]
+    )
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["withEfs"] is True
+    with zipfile.ZipFile(destination) as archive:
+        assert archive.read(EFS_MARKER_ENTRY) == b"efs\n"

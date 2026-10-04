@@ -11,6 +11,11 @@ por nombre), así que `Volume.destroy(vol.volume_id)` borra el volumen que
 `Volume.create` devolvió. El `AccessPointId` de AWS va aparte, en
 `access_point_id`.
 
+`Sandbox.create(volume_mounts={ruta: Volume|nombre})` monta de verdad
+(`plan_volume_mounts` + `resolve_volume_mounts` → `volumes=` nativo) con
+`E2B(volume_store=..., volume_connector_arn=...)`, sobre una imagen con
+`amazon-efs-utils` y un `execution_role_arn`.
+
 Las operaciones de contenido (`read_file`, `write_file`, `make_dir`,
 `list_files`, `remove`, `update_metadata`) no tienen plano de datos propio
 fuera de un MicroVM (`SPEC.md` §4): siempre son
@@ -22,17 +27,23 @@ from __future__ import annotations
 import asyncio
 import builtins
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, ClassVar, NoReturn, Self
+from typing import Any, ClassVar, Final, NoReturn, Self
 
 from rayito._role_policy import resolve_image_variant
 from rayito._volumes import EfsVolume, VolumeStore
 from rayito._volumes._domain import validate_volume_name
-from rayito._volumes._section import require_volume_mounts
+from rayito._volumes._section import (
+    INTERNET_THROUGH_VPC,
+    refuse_internet_with_volumes,
+    require_volume_mounts,
+)
 from rayito.e2b._unimplemented import unimplemented
 from rayito.exceptions import InvalidArgumentException
 
 #: La clave de `UNIMPLEMENTED_REASONS` de toda operación de contenido.
 VOLUME_CONTENT_FEATURE = "volume.content"
+#: El nombre de E2B del kwarg de `Sandbox.create` que monta volúmenes.
+VOLUME_MOUNTS_FEATURE: Final = "volume_mounts"
 
 
 def require_sync_store(store: object) -> VolumeStore | None:
@@ -155,22 +166,29 @@ class AsyncVolume(_VolumeBase):
         return [cls._from_efs(v) for v in volumes if v.name]
 
 
-def require_volume_mount_support(
-    volume_mounts: Mapping[str, Any], *, store: VolumeStore | None, template: str | None
-) -> NoReturn:
+def plan_volume_mounts(
+    volume_mounts: Mapping[str, Any],
+    *,
+    store: VolumeStore | None,
+    connector_arn: str | None,
+    template: str | None,
+    allow_internet_access: bool | None,
+) -> Mapping[str, Any]:
     """`Sandbox.create(volume_mounts={path: Volume|nombre})`, sin I/O: la
-    misma puerta que `volumes=` (`require_volume_mounts`), antes de
-    cualquier llamada a AWS. Sin `volume_store=` en el cliente lanza
-    `unimplemented("Volume")`, el mismo guard que `client.Volume`. Valida la
-    forma (mapa no vacío; cada valor un `Volume`/`AsyncVolume` o un nombre
-    válido) y nunca resuelve un nombre: mientras no haya montaje real,
-    `require_volume_mounts` siempre termina en `UnimplementedError`, así que
-    un `DescribeAccessPoints` sólo costaría una llamada sin cambiar el
-    resultado. Cuando el montaje exista, `_launch` resolverá los nombres
-    contra el store (en `asyncio.to_thread` en el shim asíncrono)."""
+    parte del shim de la puerta de `volumes=`, antes de cualquier llamada a
+    AWS. Sin `volume_store=` en el cliente lanza `unimplemented("Volume")`,
+    el mismo guard que `client.Volume`; sin `volume_connector_arn=` (el
+    `ConnectorArn` de la pila efs-volumes), `InvalidArgumentException`: el
+    shim lanza por defecto con `INTERNET_EGRESS` y un MicroVM sólo admite un
+    conector de egress (Q131), así que con volúmenes lanza sólo con ese
+    conector, y `allow_internet_access=True` explícito se rechaza. Valida la
+    forma (mapa no vacío, cada valor un `Volume`/`AsyncVolume` o un nombre
+    válido), las rutas y la variante caps, y devuelve el mapa tal cual: los
+    nombres los resuelve `resolve_volume_mounts` en `_launch` (I/O). El rol
+    y el conector los vuelve a exigir `Sandbox.create(volumes=)` nativo."""
     if store is None:
         raise unimplemented("Volume")
-    if not isinstance(volume_mounts, Mapping) or not volume_mounts:
+    if not isinstance(volume_mounts, Mapping):
         raise InvalidArgumentException(
             "volume_mounts espera un mapa no vacío {ruta: Volume|nombre}"
         )
@@ -185,5 +203,36 @@ def require_volume_mount_support(
     require_volume_mounts(
         volume_mounts.keys(),
         image_variant=resolve_image_variant(template),
-        feature="volume_mounts",
+        feature=VOLUME_MOUNTS_FEATURE,
     )
+    if not connector_arn:
+        raise InvalidArgumentException(
+            "volume_mounts necesita E2B(volume_connector_arn=<ConnectorArn de efs-volumes>): un "
+            "MicroVM admite un solo conector de egress y el volumen necesita el de tu VPC; "
+            f"{INTERNET_THROUGH_VPC}"
+        )
+    if allow_internet_access is True:
+        refuse_internet_with_volumes(VOLUME_MOUNTS_FEATURE)
+    return dict(volume_mounts)
+
+
+def resolve_volume_mounts(
+    volume_mounts: Mapping[str, Any], store: VolumeStore
+) -> dict[str, EfsVolume]:
+    """Cada valor de `volume_mounts` (ya validado por `plan_volume_mounts`)
+    como `EfsVolume` del sistema de ficheros de `store`: un `Volume` con su
+    `access_point_id`, tal cual; un nombre (o un `Volume` sin él), con
+    `store.get` (`DescribeAccessPoints`, credenciales del llamante)."""
+    return {path: _efs_volume(value, store) for path, value in volume_mounts.items()}
+
+
+def _efs_volume(value: Any, store: VolumeStore) -> EfsVolume:
+    if isinstance(value, _VolumeBase) and value.access_point_id is not None:
+        return EfsVolume(
+            file_system_id=store.file_system_id,
+            access_point_id=value.access_point_id,
+            name=value.volume_id,
+            region=store.region,
+        )
+    name = value.volume_id if isinstance(value, _VolumeBase) else str(value)
+    return store.get(name)

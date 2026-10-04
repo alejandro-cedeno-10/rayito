@@ -1,7 +1,10 @@
 # docs-delta: m15-efs-volumes
 
-For `m15-docs-integration` to apply. Exact replacement/addition rows; this
-feature does not edit the shared files directly.
+Applied directly by this change on 2026-10-04 (tasks §11), like the other
+0.6 features: `e2b-parity.md` row 26 and the "sin equivalente" row,
+`optional-features.md` (both tables), `referencia/errores.md` (the three
+`Volume*` rows) and `e2b-compat.md`. The rows below are the historical
+proposal; where they disagree with the docs, the docs win.
 
 ## docs/site/docs/e2b-parity.md
 

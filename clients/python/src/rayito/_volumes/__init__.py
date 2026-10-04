@@ -11,7 +11,7 @@ from rayito._volumes._domain import EfsVolume, MountState, VolumeStatus
 from rayito._volumes._efs_volumes import EfsVolumes
 from rayito._volumes._efs_volumes_async import AsyncEfsVolumes
 from rayito._volumes._network import EfsNetworkReport, NetworkFinding
-from rayito._volumes._section import require_volume_support
+from rayito._volumes._section import plan_volumes
 from rayito._volumes._store import VolumeStore
 from rayito._volumes._store_async import AsyncVolumeStore
 
@@ -25,5 +25,5 @@ __all__ = [
     "NetworkFinding",
     "VolumeStatus",
     "VolumeStore",
-    "require_volume_support",
+    "plan_volumes",
 ]

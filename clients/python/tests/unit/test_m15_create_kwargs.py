@@ -25,9 +25,9 @@ from rayito import (
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 #: Un valor bien formado: m15-efs-volumes valida la forma de `volumes=`
-#: (tipo, rutas) antes de llegar a `UnimplementedError`, así que un
-#: `object()` ahí ya no llegaría tan lejos (lanzaría InvalidArgumentException
-#: por el tipo, no por ser un stub).
+#: (tipo, rutas) antes que la variante caps, así que un `object()` ahí no
+#: llegaría a la puerta de caps (lanzaría InvalidArgumentException por el
+#: tipo).
 _VALID_VOLUME = {"/mnt/v": EfsVolume(file_system_id="fs-0123abcd", access_point_id="fsap-0123abcd")}
 
 
@@ -113,6 +113,11 @@ async def test_async_create_rejects_volumes_with_internet_egress() -> None:
         )
 
 
-def test_sync_create_with_volumes_and_its_connector_is_still_unimplemented() -> None:
-    with pytest.raises(UnimplementedError, match="amazon-efs-utils"):
+def test_sync_create_with_volumes_needs_an_execution_role_before_resolving_a_control_plane() -> (
+    None
+):
+    """`amazon-efs-utils` signs the TLS tunnel with the execution role's
+    IMDS credentials (Q128): without one the mount would end `iam_denied`
+    after paying for the MicroVM."""
+    with pytest.raises(InvalidArgumentException, match="execution_role_arn"):
         Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR])

@@ -210,3 +210,79 @@ names the alternative (internet through the customer's VPC NAT or transit
 gateway and a connector that allows it). The shim always launches with
 `INTERNET_EGRESS`, so its `volume_mounts` says so in its
 `UnimplementedError`.
+
+### D11. `create(volumes=)` goes through the single post-ready `Configure`
+
+D2/D3/D6 kept `volumes=` in `UnimplementedError` until an image could
+mount. With the opt-in image (D13) it joins the path every other 0.6
+section uses, without `main.py`/`sandbox.ts` naming the feature:
+
+- `plan_volumes`/`planVolumes` (pure) validates before anything else and
+  adds what D2 deferred: the cap of 4 (`limits.json`
+  `efsVolumesMaxPerSandbox`, the same cap as `rayd_core::volume`) and
+  `execution_role_arn` (without it `efs-utils` would fail `iam_denied` after
+  the MicroVM was paid for). `plan_features` gains the
+  `execution_role_arn` argument D2 anticipated.
+- `prepare_features`/`aprepare_features`/`prepareFeatures` is the new,
+  generic pre-launch step (after the control plane, before `run-microvm`):
+  with no `volumes=` it returns the plan untouched and builds no client;
+  otherwise it resolves the missing mount target IPs and appends an
+  `EfsVolumesSection` to `configure_sections`.
+- `EfsVolumesSection` is a `ConfigureSection`, a `CapabilityGate` (its own
+  message naming the opt-in image when `Health.features.efs_volumes` is
+  false) and a new `SlowApplySection`: `rayd` mounts inside the
+  `Configure` call itself (one volume at a time, 15 s helper timeout each),
+  so the call deadline becomes `max(request_timeout, apply_timeout_s)` =
+  at least 4 × 15 s + 5 s. `APPLIED` already means every volume `MOUNTED`
+  (`rayd` stops at the first failure and answers `FAILED`); a future `rayd`
+  answering `PENDING` is polled with the same bound (`check_status`).
+- Failures map to `VolumeMountException(code)`/`VolumeMountError` (a
+  closed list, never the helper's text); the shared path already terminates
+  the sandbox unless `keep_on_failure`. `reincarnate()` re-enters `create()`
+  with the stored feature options, so the successor re-resolves and
+  re-sends the section. `sbx.volumes`/`volumes()` mirror `sbx.mounts`.
+
+### D12. Mount target IP: one `DescribeMountTargets` per file system per `create()`
+
+`rayd` mounts with `mounttargetip=` (research doc R3) so the guest never
+depends on the VPC's DNS. The SDK resolves it with the caller's
+credentials (`elasticfilesystem:DescribeMountTargets`, AWS_API_NOTES §22,
+already listed) before launching, so a file system without mount targets
+fails without paying for a MicroVM. `MountTargetResolver` is per
+`create()` and caches per file system. EFS allows one mount target per AZ
+and the SDK cannot know which subnet the connector uses, so it picks the
+first `available` one by `AvailabilityZoneId` (research doc §4.5, "if
+EFS-18 does not reveal the AZ, the first available"); every subnet of the
+VPC reaches it (the mount-target group admits the connector's group), and
+cross-AZ traffic is EC2 data transfer, documented. An `EfsVolume` that
+carries `mount_target_ip` (validated as IPv4) skips the lookup.
+
+### D13. `amazon-efs-utils` lives in an opt-in image variant
+
+Q122: the RPM adds ≈ 198 MB of code install (37 packages, incl. Python 3.9
+and `systemd`, which nobody starts) and re-points `/usr/bin/python3` to
+3.9, which `rayd`'s IMDS probe runs by absolute path (Q48). The default
+images must not pay for it, so `rayito image zip --with-efs` adds a marker
+entry that the Dockerfile's conditional layer reads (the same mechanism as
+`poly`), installs the pinned NEVRA and re-links `/usr/bin/python3` to 3.12;
+`rayito image publish --with-efs` demands `--os-capabilities ALL` and the
+marker, and names the image `rayito-base-caps-efs`, which the caps-variant
+check accepts. `efs-utils` 3.1.3 takes the region from the `region` mount
+option, then `AWS_REGION`/`AWS_DEFAULT_REGION`, then its configuration file
+(`efs_utils_common/metadata.py:get_target_region`); `rayd` rebuilds the
+helper's environment from scratch, so it now passes `AWS_REGION` (which
+the platform injects, AWS_API_NOTES §9) and the image needs no
+region-specific configuration.
+
+### D14. The E2B shim mounts with a client-bound connector
+
+The shim launches with `INTERNET_EGRESS` and a MicroVM takes one egress
+connector (Q131), so `volume_mounts` cannot keep the E2B default. The
+client gains `volume_connector_arn`/`volumeConnectorArn` (a Rayito
+extension, off by default, next to `volume_store`): with `volume_mounts`
+the sandbox's only egress is that connector, an explicit
+`allow_internet_access=True` is refused, and `allow_internet_access=False`
+is still forwarded (guest policy). The pure mapping validates (store,
+connector, paths, caps) without I/O; the launch then maps a `Volume` with
+its access point id and resolves a plain name with `VolumeStore.get`
+(`asyncio.to_thread` in the async shim) before the native `volumes=` path.

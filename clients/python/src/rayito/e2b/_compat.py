@@ -52,7 +52,7 @@ from rayito.e2b._models import (
     SandboxState,
 )
 from rayito.e2b._unimplemented import unimplemented
-from rayito.e2b._volume import require_volume_mount_support
+from rayito.e2b._volume import plan_volume_mounts
 from rayito.e2b.exceptions import NotFoundException, UnimplementedError
 from rayito.exceptions import InvalidArgumentException
 
@@ -127,6 +127,9 @@ class CreateMapping:
 
     native_kwargs: dict[str, Any]
     warnings: tuple[str, ...]
+    #: `volume_mounts` ya validado y sin resolver (`None` sin él): `_launch`
+    #: lo convierte en el `volumes=` nativo (`resolve_volume_mounts`, I/O).
+    volume_mounts: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -320,6 +323,7 @@ def map_create_kwargs(
     control_plane: Any | None = None,
     transport: Any | None = None,
     volume_store: VolumeStore | None = None,
+    volume_connector_arn: str | None = None,
 ) -> CreateMapping:
     """La tabla D5 en el orden posicional de E2B 2.x: `mcp` e `iam` son
     `UnimplementedError` antes de mapear nada; `timeout` (300 s por
@@ -329,13 +333,24 @@ def map_create_kwargs(
     de idle de la pausa; `allow_internet_access` y `network` son la política
     de egress en el guest sobre el conector `INTERNET_EGRESS`; `ingress` es
     `ALL_INGRESS` salvo que se pase; `secure=False` sólo avisa.
-    `volume_mounts` pasa, justo después de `mcp`/`iam`, por la misma puerta
-    sin I/O que `volumes=` (`rayito.e2b._volume.require_volume_mount_support`)
-    con el `volume_store` que `_launch` trae del cliente `E2B(volume_store=)`;
-    hoy siempre termina en `UnimplementedError`, sin ninguna llamada a AWS."""
+    `volume_mounts` pasa, justo después de `mcp`/`iam`, por la puerta sin
+    I/O de `volumes=` (`rayito.e2b._volume.plan_volume_mounts`) con el
+    `volume_store` y el `volume_connector_arn` que `_launch` trae del cliente
+    `E2B(...)`: con volúmenes el sandbox sale sólo por ese conector (un
+    MicroVM admite uno, Q131), nunca por `INTERNET_EGRESS`, y
+    `allow_internet_access` sólo se reenvía si es `False`."""
     reject_resource_kwargs(mcp=mcp, iam=iam)
-    if volume_mounts is not None:
-        require_volume_mount_support(volume_mounts, store=volume_store, template=template)
+    planned_mounts = (
+        plan_volume_mounts(
+            volume_mounts,
+            store=volume_store,
+            connector_arn=volume_connector_arn,
+            template=template,
+            allow_internet_access=allow_internet_access,
+        )
+        if volume_mounts is not None
+        else None
+    )
     shim_lifecycle = map_lifecycle(lifecycle, auto_pause=auto_pause)
     native_network = map_network(network)
     resolved_timeout = E2B_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
@@ -375,8 +390,13 @@ def map_create_kwargs(
         "transport": transport,
     }
     native.update({name: value for name, value in optional.items() if value is not None})
+    if planned_mounts is not None and volume_connector_arn is not None:
+        native["egress"] = [volume_connector_arn]
+        del native["allow_internet_access"]
+        if allow_internet_access is False:
+            native["allow_internet_access"] = False
     warnings = (SECURE_FALSE_WARNING,) if secure is False else ()
-    return CreateMapping(native_kwargs=native, warnings=warnings)
+    return CreateMapping(native_kwargs=native, warnings=warnings, volume_mounts=planned_mounts)
 
 
 def native_call_kwargs(

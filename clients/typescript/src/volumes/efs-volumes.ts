@@ -83,11 +83,11 @@ class FileSystemGone extends Error {}
  * -------------------
  * Activa: una llamada explícita a `deploy({ vpcId, subnetIds })` (o
  *   `rayito stack deploy efs-volumes --param VpcId=... --param SubnetIds=...`).
- *   `check()` es de sólo lectura y no crea nada. Experimental: el CRUD de
- *   volúmenes es real, pero `Sandbox.create({ volumes })` sigue en
- *   `UnimplementedError` (ninguna imagen publicada trae `amazon-efs-utils`
- *   todavía). Un sandbox con volumen usa este conector como único `egress`
- *   y no puede usar además `INTERNET_EGRESS`.
+ *   `check()` es de sólo lectura y no crea nada. Experimental:
+ *   `Sandbox.create({ volumes })` monta sobre la imagen opcional
+ *   `rayito-base-caps-efs` (`rayito image publish --with-efs`), con el
+ *   execution role y este conector como único `egress`: no puede usar
+ *   además `INTERNET_EGRESS`.
  * Recursos y llamadas AWS: `check()` = `DescribeVpcs`, `DescribeVpcAttribute`,
  *   `DescribeSubnets`, `DescribeRouteTables` (peer `@aws-sdk/client-ec2`).
  *   `deploy()` crea, sólo dentro de la VPC dada y etiquetado: un sistema de

@@ -103,7 +103,7 @@ pub fn build(
         MountSupport::Unsupported
     };
     let mounter = EfsUtilsMounter::new(
-        Arc::new(LinuxEfsHost),
+        Arc::new(LinuxEfsHost::new(ctx.region.clone())),
         Arc::clone(&ctx.credentials) as Arc<dyn LeaseSource>,
         support,
     );

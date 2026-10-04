@@ -4,6 +4,8 @@
  * viven en `efs.ts`/`store.ts`.
  */
 
+import { isIPv4 } from "node:net";
+
 import { InvalidArgumentError } from "../errors.js";
 
 /** `fs-[0-9a-f]{8,40}` (research doc R3; AWS_API_NOTES.md §22). */
@@ -53,8 +55,19 @@ export function validateAccessPointId(value: string): string {
   return value;
 }
 
+/** Nunca repite `value` en el mensaje (§6): una IPv4 en notación decimal
+ * con puntos, lo único que `rayd` acepta como `mounttargetip`
+ * (`rayd_core::volume::MountTargetIp`). Espejo de
+ * `validate_mount_target_ip`. */
+export function validateMountTargetIp(value: string): string {
+  if (!isIPv4(value)) {
+    throw new InvalidArgumentError("mountTargetIp inválida: se esperaba una IPv4 (a.b.c.d)");
+  }
+  return value;
+}
+
 /** Mirrors `rayd_core::volume::MountState`; `rayd` sólo lo rellena en una
- * imagen con `amazon-efs-utils` y `create()` aún no manda la sección. */
+ * imagen con `amazon-efs-utils` (`rayito-base-caps-efs`). */
 export type MountState =
   | "requested"
   | "mounting"
@@ -76,7 +89,8 @@ export interface EfsVolumeOptions {
 /**
  * Un volumen EFS: el access point que un sandbox puede montar bajo
  * `volumes: {path: new EfsVolume({...})}`. Validado en construcción, sin
- * ninguna llamada a AWS.
+ * ninguna llamada a AWS. `mountTargetIp` es opcional: sin ella, `create()`
+ * la resuelve con `DescribeMountTargets` (`mount-targets.ts`).
  */
 export class EfsVolume {
   readonly fileSystemId: string;
@@ -92,13 +106,16 @@ export class EfsVolume {
     this.name = options.name === undefined ? undefined : validateVolumeName(options.name);
     this.region = options.region;
     this.readOnly = options.readOnly ?? false;
-    this.mountTargetIp = options.mountTargetIp;
+    this.mountTargetIp =
+      options.mountTargetIp === undefined
+        ? undefined
+        : validateMountTargetIp(options.mountTargetIp);
   }
 }
 
 /**
- * Lo que `sbx.volumes[path]` reporta tras `/run`; en 0.6 ningún build de
- * `rayd` llega a `"mounted"` (ver `requireVolumeSupport` en `section.ts`).
+ * El estado de un volumen tal como lo reporta `ConfigureStatus`
+ * (`efs_volumes.proto`): sólo `"mounted"` deja usarlo.
  */
 export interface VolumeStatus {
   readonly state: MountState;

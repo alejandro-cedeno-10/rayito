@@ -24,8 +24,8 @@ const TEMPLATE = "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-bas
 // above): needed for the `telemetry` + `executionRole` case below, which
 // relies on the caps check actually running before any control plane call.
 const NAMED_TEMPLATE = "rayito-base";
-// m15-efs-volumes valida la forma de `volumes` (tipo, rutas) antes de
-// UnimplementedError, así que `{}` ya no llegaría tan lejos.
+// m15-efs-volumes valida la forma de `volumes` (tipo, rutas, caps,
+// conector, execution role) antes de `resolveControlPlane`.
 const VALID_VOLUME = {
   "/mnt/v": new EfsVolume({ fileSystemId: "fs-0123abcd", accessPointId: "fsap-0123abcd" }),
 };
@@ -39,7 +39,8 @@ describe("Sandbox.create: 0.6 options", () => {
   // the dedicated `telemetry` tests below), so it is not part of this
   // generic "still a stub" table.
   test.each([
-    ["volumes", VALID_VOLUME, { egress: [CONNECTOR] }],
+    // `volumes` left this stub list in m15-efs-volumes (it now mounts; its
+    // validation is covered below and in `m15-efs-volumes.test.ts`).
     // `events` left this stub list in m15-events-webhooks (now
     // `InvalidArgumentError` without `logging: "cloudwatch"`, still before
     // any control plane) — see `m15-events-webhooks-feature-options.test.ts`.
@@ -61,6 +62,12 @@ describe("Sandbox.create: 0.6 options", () => {
     await expect(
       Sandbox.create({ template: TEMPLATE, volumes: VALID_VOLUME, egress }),
     ).rejects.toThrow(/NAT/);
+  });
+
+  test("rejects volumes without executionRoleArn before resolving a control plane", async () => {
+    await expect(
+      Sandbox.create({ template: TEMPLATE, volumes: VALID_VOLUME, egress: [CONNECTOR] }),
+    ).rejects.toThrow(/executionRoleArn/);
   });
 
   test("rejects a telemetry value needing caps on a known non-caps image", async () => {

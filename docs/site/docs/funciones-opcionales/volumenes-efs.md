@@ -6,17 +6,15 @@ guest por `rayd`: el análogo de `Volume` de E2B. A diferencia de
 volumen EFS se comparte **en vivo** entre varios sandboxes mientras están
 vivos.
 
-!!! warning "Experimental: `Sandbox.create(volumes=...)` aún no monta"
-    El CRUD de volúmenes (`VolumeStore`), la pila en tu VPC (`EfsVolumes`)
-    y el adaptador de montaje de `rayd` (`EfsUtilsMounter`) son reales y
-    están probados, y la campaña contra AWS real pasó todos sus criterios de
-    parada (2026-10-04). Pero `rayd` sólo monta en una imagen
-    `rayito-base-caps` que traiga `amazon-efs-utils`, y **ninguna imagen
-    publicada lo trae todavía**; por eso `Sandbox.create(volumes=...)`
-    valida la petición (rutas, variante, conector) y termina siempre en
-    `UnimplementedError`, sin lanzar nada. Ver
-    [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md)
-    para el estudio completo.
+!!! warning "Experimental, y sólo con la imagen opcional que trae `amazon-efs-utils`"
+    `Sandbox.create(volumes=...)` monta de verdad, pero sólo sobre una imagen
+    que traiga `amazon-efs-utils` y corra con `additionalOsCapabilities`
+    `ALL`: la imagen opcional `rayito-base-caps-efs`
+    ([Imagen con amazon-efs-utils](#imagen-con-amazon-efs-utils)). Las
+    imágenes por defecto no cambian y en ellas `Health.features.efs_volumes`
+    es `false`: `create(volumes=...)` termina el sandbox y lanza
+    `UnimplementedError`. El estudio completo está en
+    [`docs/research/2026-10-efs-persistence.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-efs-persistence.md).
 
 !!! tip "¿Ya tienes una VPC?"
     [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) explica cómo comprobarla
@@ -28,10 +26,13 @@ vivos.
       no construye ningún cliente `efs` ni hace ninguna llamada a AWS.
     - **Activa**: `VolumeStore(file_system_id=...)` para el CRUD de
       volúmenes (access points); `Sandbox.create(volumes={...})` para
-      montarlos (hoy siempre `UnimplementedError`, ver arriba).
+      montarlos, con `execution_role_arn=`, un solo conector en `egress=` y
+      la imagen opcional `rayito-base-caps-efs`.
     - **Recursos y llamadas AWS**: `VolumeStore.create` = `CreateAccessPoint`;
       `get`/`list` = `DescribeAccessPoints`; `destroy` = `DeleteAccessPoint`
-      (AWS_API_NOTES.md §22). El sistema de ficheros, sus mount targets, el
+      (AWS_API_NOTES.md §22). `create(volumes=...)` hace además una
+      `DescribeMountTargets` por sistema de ficheros, antes de lanzar, si un
+      `EfsVolume` no trae `mount_target_ip`. El sistema de ficheros, sus mount targets, el
       grupo de seguridad NFS y el conector de egress dedicado los crea
       `rayito stack deploy efs-volumes` (`infra/efs-volumes.yaml`), por
       separado — `VolumeStore` nunca los crea.
@@ -40,9 +41,13 @@ vivos.
       mes (Standard), $0,016/GB-mes tras 30 días (IA, con la política de
       ciclo de vida de la plantilla); $0,03/GB leído y $0,06/GB escrito con
       Elastic Throughput. Los access points no tienen cargo propio listado.
-      Un sistema de ficheros vacío cuesta $0.
+      Un sistema de ficheros vacío cuesta $0. La imagen con
+      `amazon-efs-utils` ocupa ≈ 198 MB más de código instalado
+      (`AWS_API_NOTES.md` §16 Q122); el tráfico hacia un mount target de otra
+      AZ lo factura EC2 como transferencia entre AZs.
     - **IAM**: `elasticfilesystem:CreateAccessPoint/DescribeAccessPoints/
-      DeleteAccessPoint` sobre el sistema de ficheros (credenciales de quien
+      DeleteAccessPoint` (y `DescribeMountTargets` para montar sin
+      `mount_target_ip`) sobre el sistema de ficheros (credenciales de quien
       llama al SDK). Dentro del guest, el execution role necesita
       `elasticfilesystem:ClientMount` (+ `ClientWrite` si el volumen admite
       escritura) condicionado al `AccessPointArn`, nunca `ClientRootAccess`;
@@ -137,31 +142,106 @@ volumen es un *access point* con `RootDirectory.Path =
     devuelve `False`. Un `get`/`list` justo después de `create` o `destroy`
     puede ver el estado anterior.
 
-## `Sandbox.create(volumes=)`: todavía `UnimplementedError`
+## `Sandbox.create(volumes=)`: montar volúmenes
 
-La forma final de la API (research doc §4.5):
+=== "Python"
 
-```python
-from rayito import EfsVolume, Sandbox
+    ```python
+    from rayito import Sandbox, VolumeStore
 
-vol = EfsVolume(file_system_id="fs-0123abcd", access_point_id="fsap-0123abcd")
-with Sandbox.create(
-    "rayito-base-caps",
-    execution_role_arn="arn:aws:iam::123456789012:role/<rol>",
-    egress=["<ConnectorArn de la pila efs-volumes>"],  # (1)!
-    volumes={"/mnt/datos": vol},
-) as sbx:
-    ...  # UnimplementedError se lanza antes de llegar aquí
+    store = VolumeStore(file_system_id="fs-0123abcd", region="us-east-1")
+    datos = store.create("datos-agente-7")
+    with Sandbox.create(
+        "rayito-base-caps-efs",
+        execution_role_arn="arn:aws:iam::123456789012:role/rayito-execution",
+        egress=["arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs"],
+        volumes={"/mnt/datos": datos},
+    ) as sbx:
+        sbx.commands.run("echo hola > /mnt/datos/saludo.txt")
+        print(sbx.volumes["/mnt/datos"].state)  # "mounted"
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox, VolumeStore } from "rayito";
+
+    const store = new VolumeStore({ fileSystemId: "fs-0123abcd", region: "us-east-1" });
+    const datos = await store.create("datos-agente-7");
+    const sbx = await Sandbox.create({
+      template: "rayito-base-caps-efs",
+      executionRoleArn: "arn:aws:iam::123456789012:role/rayito-execution",
+      egress: ["arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs"],
+      volumes: { "/mnt/datos": datos },
+    });
+    await sbx.commands.run("echo hola > /mnt/datos/saludo.txt");
+    console.log((await sbx.volumes()).get("/mnt/datos")?.state); // "mounted"
+    await sbx.kill();
+    ```
+
+Lo que hace `create()`, en orden:
+
+1. **Antes de lanzar, sin red**: valida la petición (de 1 a 4 volúmenes,
+   rutas bajo `/mnt/` o `/home/user/` sin solaparse, valores `EfsVolume`,
+   variante caps si el nombre de la imagen la revela, exactamente **un**
+   conector propio en `egress=` y `execution_role_arn=`). Cualquier fallo es
+   `InvalidArgumentException`/`InvalidArgumentError` y no se lanza nada.
+2. **Antes de lanzar, con EFS**: si un volumen no trae `mount_target_ip`,
+   una `DescribeMountTargets` por sistema de ficheros (credenciales de quien
+   llama; dos volúmenes del mismo sistema de ficheros comparten la
+   respuesta) y elige el primer mount target `available` por
+   `AvailabilityZoneId`. Sin ninguno disponible, `VolumeException`/
+   `VolumeError` antes de lanzar.
+3. **Tras la readiness**: manda la sección `efs_volumes` en el **mismo**
+   `ConfigureSandbox` que `mounts=`, `gateways=`, `telemetry=` y `events=`.
+   `rayd` monta los volúmenes de uno en uno dentro de esa llamada, cuyo
+   plazo es como mucho 65 s (4 volúmenes × 15 s del helper, más margen);
+   `create()` sólo vuelve con todos `mounted`.
+4. **Si algo falla**: termina el sandbox (salvo `keep_on_failure=True`) y
+   lanza `VolumeMountException`/`VolumeMountError` con `code` (`network`,
+   `iam_denied`, `not_found`, `tls`, `helper_missing`, `timeout`,
+   `invalid_path` o `unknown`), o `UnimplementedError` si la imagen no
+   trae `amazon-efs-utils`.
+
+`sbx.volumes` (Python síncrono), `await sbx.volumes()` (asíncrono y
+TypeScript) lee el estado en vivo de cada ruta (`mounted`, `degraded`,
+`remounting`…). `reincarnate()` vuelve a mandar la sección (y a resolver
+las IPs) en el sucesor.
+
+## Imagen con amazon-efs-utils
+
+`volumes=` sólo monta en una imagen que traiga el *mount helper* de EFS
+(`mount.efs` y `efs-proxy`, del paquete `amazon-efs-utils` de AL2023) y que
+corra con `additionalOsCapabilities: ["ALL"]` (`CAP_SYS_ADMIN`). Ninguna de las
+imágenes por defecto lo trae: `rayito-base`, `-slim`, `-caps` y `-poly` no
+cambian, y en ellas `Health.features.efs_volumes` sigue en `false` (un
+`create(volumes=...)` sobre ellas termina el sandbox y lanza
+`UnimplementedError`). La imagen con efs-utils es una variante aparte,
+`rayito-base-caps-efs`, que publicas tú:
+
+```bash
+make image-publish-caps-efs BUCKET=amzn-s3-demo-bucket
+# o, paso a paso:
+rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs
+rayito image publish --artifact image/rayito-image-efs.zip --with-efs \
+    --os-capabilities ALL --bucket amzn-s3-demo-bucket --base-image-version 1
 ```
 
-1. Exactamente **un** conector: el de la pila (o uno tuyo que llegue al
-   mount target). Nunca `INTERNET_EGRESS`: ver
-   [Internet y volúmenes](#internet-y-volumenes).
+`--with-efs` añade al zip el marcador `kernel-sidecar/efs_variant`; la capa
+condicional del `Dockerfile` instala entonces `amazon-efs-utils-3.1.3`
+(clavado por versión), vuelve a enlazar `/usr/bin/python3` a Python 3.12 (el
+paquete trae Python 3.9 y lo reapunta; `rayd` usa esa ruta) y comprueba que
+`mount.efs` y `efs-proxy` existen. La región no se hornea: `rayd` se la pasa al
+helper en cada montaje (`AWS_REGION` del MicroVM), así que la misma imagen
+sirve en cualquier región donde la publiques. `rayito-base-caps-efs` cuenta
+como variante caps para `mounts=` y `telemetry=` igual que `rayito-base-caps`.
 
-Hoy, esta llamada valida la petición (rutas bajo `/mnt/` o `/home/user/`,
-como mucho 4 montajes entre `mounts=` y `volumes=`, tipos correctos,
-variante caps y el conector de `egress=`) y **siempre** termina en
-`UnimplementedError` — nunca una llamada a AWS a medias.
+!!! info "Coste de la imagen"
+    Medido en AWS real (`AWS_API_NOTES.md` §16 Q122, AL2023 ARM64): 37 paquetes
+    más (entre ellos `nfs-utils`, `stunnel`, Python 3.9 y `systemd`, que nadie
+    arranca), **+~198 MB** de `codeInstallSizeInBytes` (almacenamiento de la
+    imagen), el snapshot de memoria **no cambia** y la build tarda **≈ 10 s**
+    más. Sin `--with-efs` no se instala nada ni cambia ningún coste.
 
 ## Internet y volúmenes
 
@@ -272,11 +352,16 @@ mismo que arriba, con los nombres de E2B (`Volume.create/connect/list/
 get_info/destroy`). `volume_id`/`volumeId` es el **nombre** del volumen, el
 mismo identificador que reciben `connect`/`get_info`/`destroy`; el
 `AccessPointId` va aparte, en `access_point_id`/`accessPointId`.
-`Sandbox.create(volume_mounts={ruta: Volume|nombre})` valida la petición
-sin ninguna llamada a AWS (un nombre de texto no se busca) y siempre
-termina en `UnimplementedError`: el shim lanza siempre con `INTERNET_EGRESS`
-y un MicroVM sólo admite un conector de egress, así que para montar un
-volumen usa `rayito.Sandbox.create(volumes=..., egress=[ConnectorArn])`.
+`Sandbox.create(volume_mounts={ruta: Volume|nombre})` monta esos volúmenes
+por el mismo camino que `volumes=` si el cliente trae además
+`volume_connector_arn=`/`volumeConnectorArn` (el `ConnectorArn` de la pila):
+como un MicroVM sólo admite un conector de egress, ese sandbox sale **sólo**
+por ese conector, nunca por `INTERNET_EGRESS`, y un
+`allow_internet_access=True` explícito es `InvalidArgumentException`. Un
+`Volume` se monta con su `access_point_id` sin llamar a AWS; un nombre de
+texto se busca con `VolumeStore.get` (`DescribeAccessPoints`). También
+necesita `execution_role_arn=` y la imagen con `amazon-efs-utils`. Sin
+`volume_connector_arn` falla antes de cualquier llamada a AWS.
 
 === "Python"
 
@@ -284,8 +369,17 @@ volumen usa `rayito.Sandbox.create(volumes=..., egress=[ConnectorArn])`.
     from rayito import VolumeStore
     from rayito.e2b import E2B
 
-    client = E2B(volume_store=VolumeStore(file_system_id="fs-0123abcd"))
+    client = E2B(
+        volume_store=VolumeStore(file_system_id="fs-0123abcd"),
+        volume_connector_arn="arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs",
+    )
     vol = client.Volume.create("datos-agente-7")  # sin volume_store: UnimplementedError
+    sbx = client.Sandbox.create(
+        "rayito-base-caps-efs",
+        execution_role_arn="arn:aws:iam::123456789012:role/rayito-execution",
+        volume_mounts={"/mnt/datos": vol},
+    )
+    sbx.kill()
     client.Volume.destroy(vol.volume_id)
     ```
 
@@ -295,8 +389,16 @@ volumen usa `rayito.Sandbox.create(volumes=..., egress=[ConnectorArn])`.
     import { VolumeStore } from "rayito";
     import { E2B } from "rayito/e2b";
 
-    const client = new E2B({ volumeStore: new VolumeStore({ fileSystemId: "fs-0123abcd" }) });
+    const client = new E2B({
+      volumeStore: new VolumeStore({ fileSystemId: "fs-0123abcd" }),
+      volumeConnectorArn: "arn:aws:lambda:us-east-1:123456789012:network-connector:rayito-efs",
+    });
     const vol = await client.Volume.create("datos-agente-7");
+    const sbx = await client.Sandbox.create("rayito-base-caps-efs", {
+      executionRoleArn: "arn:aws:iam::123456789012:role/rayito-execution",
+      volumeMounts: { "/mnt/datos": vol },
+    });
+    await sbx.kill();
     await client.Volume.destroy(vol.volumeId);
     ```
 
@@ -304,9 +406,11 @@ volumen usa `rayito.Sandbox.create(volumes=..., egress=[ConnectorArn])`.
 
 | Python | TypeScript | Cuándo | Qué hacer |
 |---|---|---|---|
-| `InvalidArgumentException` | `InvalidArgumentError` | `volumes=` vacío, con un valor que no es `EfsVolume`, con rutas solapadas o fuera de `/mnt/`·`/home/user/` | corrige la forma de la petición |
+| `InvalidArgumentException` | `InvalidArgumentError` | `volumes=` vacío, con más de 4 volúmenes, con un valor que no es `EfsVolume`, con rutas solapadas o fuera de `/mnt/`·`/home/user/`, o sin `execution_role_arn=` | corrige la forma de la petición |
 | `InvalidArgumentException` | `InvalidArgumentError` | `volumes=` sin `egress=`, con `INTERNET_EGRESS` o con más de un conector | pasa sólo el `ConnectorArn` de la pila; internet, por tu VPC ([Internet y volúmenes](#internet-y-volumenes)) |
-| `UnimplementedError` | `UnimplementedError` | cualquier `volumes=` bien formado, hoy siempre (ninguna imagen publicada trae `amazon-efs-utils`); o una variante no-caps | usa `persist=` (S3) mientras tanto |
+| `UnimplementedError` | `UnimplementedError` | la imagen no trae `amazon-efs-utils` (`Health.features.efs_volumes` es `false`: el sandbox ya se terminó) o es una variante no-caps | publica y usa `rayito-base-caps-efs` ([Imagen con amazon-efs-utils](#imagen-con-amazon-efs-utils)) |
+| `VolumeMountException` (`code`) | `VolumeMountError` (`code`) | un volumen no montó: `iam_denied` (política del rol o access point fuera de `access_point_arns`), `network` (conector o grupo de seguridad), `not_found`, `tls`, `timeout`, `invalid_path` (la ruta es un enlace simbólico)… El sandbox ya se terminó (salvo `keep_on_failure`) | revisa el rol, el conector o la ruta según `code` |
+| `VolumeException` | `VolumeError` | el sistema de ficheros no tiene ningún mount target `available` (antes de lanzar) | despliega la pila o espera a que termine |
 | `VolumeException` | `VolumeError` | `VolumeStore.create/get/list/destroy` falló (IAM, límite de access points, sistema de ficheros no disponible) | revisa el permiso o el estado del sistema de ficheros |
 | `VolumeNotFoundException` | `VolumeNotFoundError` | `get`/`destroy` sobre un nombre que no existe | lista con `VolumeStore.list()` |
 

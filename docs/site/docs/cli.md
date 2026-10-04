@@ -55,8 +55,15 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     --bucket <bucket> [--variant full|slim|poly] [--image-name N] \
     [--os-capabilities ALL] [--build-role-arn ARN | --stack-name rayito-m0-iam] \
     [--memory-mib 2048] [--timeout-seconds 1800] [--force] \
-    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]...
+    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]... [--with-efs]
 ```
+
+`--with-efs` publica la imagen con `amazon-efs-utils` que necesita
+`volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)): exige
+un zip hecho con `rayito image zip --with-efs`, `--os-capabilities ALL` (`rayd`
+sólo monta con `CAP_SYS_ADMIN`) y la variante `full`, y su nombre por defecto
+es `rayito-base-caps-efs`. Un zip con el marcador de efs sin `--with-efs`, o
+`--with-efs` con un zip sin él, se rechaza antes de llamar a AWS.
 
 `--sizes` publica, además del baseline (2048 MiB), una imagen con sufijo de
 tamaño por cada nombre listado desde el mismo artefacto; `--env KEY=VALUE`
@@ -69,7 +76,8 @@ Reproduce el pipeline de `make image-publish`:
 
 1. Comprueba, antes de llamar a AWS, que el zip existe y que su marcador de
    variante (`warmup_variant` para `slim`, `kernels_variant` para `poly`)
-   coincide con `--variant`.
+   coincide con `--variant`, y que el marcador `efs_variant` aparece si y
+   sólo si se pasa `--with-efs`.
 2. Sube el zip a `s3://<bucket>/rayito/images/rayd-<12 hex del sha256>.zip`,
    salvo que la clave ya exista (clave por contenido: mismo zip, misma clave).
 3. Toma el build role de `--build-role-arn` o de la salida `BuildRoleArn` del
@@ -149,8 +157,12 @@ API se niegue a borrar. Imprime la tabla del plan y un resumen JSON; sale con
 ### `image zip`
 
 ```bash
-rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar]
+rayito image zip image image/rayito-image.zip [--variant full|slim|poly] [--sidecar kernel-sidecar] [--with-efs]
 ```
+
+`--with-efs` añade el marcador `kernel-sidecar/efs_variant`, que activa la
+capa condicional de `amazon-efs-utils` del `Dockerfile` (sin él, ninguna
+imagen cambia). El resumen `--json` lo indica en `withEfs`.
 
 Zip determinista (fechas y modos fijos; sin `__pycache__`, `tests`, `.venv`,
 cachés, `uv.lock` ni otros zips) con el `Dockerfile` en la raíz. Con
@@ -443,6 +455,8 @@ y son *shims* de la CLI, así que los targets del `Makefile` no cambian:
 | `make` | Script | Equivalente |
 |---|---|---|
 | `make image-zip` | `python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar` y `python scripts/image_zip.py image image/rayito-image.zip` | `rayito image zip image image/rayito-image.zip --sidecar kernel-sidecar` |
+| `make image-zip-efs` | `python scripts/image_zip.py image image/rayito-image-efs.zip --with-efs` | `rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs` |
+| `make image-publish-caps-efs` | `… publish_image.py --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` | `rayito image publish --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` |
 | `make image-publish` (`-slim`, `-poly`, `-caps`) | `uv run --project clients/python python scripts/publish_image.py --artifact … --bucket $(BUCKET) --base-image-version 1` | `rayito image publish --artifact … --bucket … --base-image-version 1` |
 | `make image-prune PRUNE_ARGS="--keep 5 --dry-run"` | `uv run --project clients/python python scripts/image_prune.py --image-name rayito-base --keep 5 --dry-run` | `rayito image prune --keep 5 --dry-run` |
 
