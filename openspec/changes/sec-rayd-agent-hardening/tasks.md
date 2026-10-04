@@ -68,7 +68,7 @@
 
 - [x] 9.1 `SECURITY.md` T1/T2/T6/T7/T11/T12/T17, `ARCHITECTURE.md`, site
   pages, changelogs.
-- [ ] 9.2 Gates: Rust (VM), Python, TypeScript, docs, OpenSpec.
+- [x] 9.2 Gates: Rust (VM), Python, TypeScript, docs, OpenSpec.
 - [ ] 9.3 Real-AWS acceptance (`rayito-base` and `rayito-base-caps` with
   this `rayd`): `create()` succeeds and no `sandbox_origin` appears in the
   `/run` log line; filesystem e2e (`m3`, transfer) green; a template with a
