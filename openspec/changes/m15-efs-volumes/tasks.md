@@ -188,7 +188,7 @@ itself; re-run `cleanup` until it exits 0 anyway).
       AL2023 repo, code install +197.6 MB, memory unchanged, build +10 s;
       the real image layer must re-link `/usr/bin/python3` to 3.12.
 - [x] EFS-2 ★ passes (Q123), measured with `measure_efs2` without a VPC.
-- [ ] Step 3 **blocked** (Q124): the test account's organization SCP denies
+- [x] Step 3 **blocked** (Q124; done in §7.7): the test account's organization SCP denies
       `ec2:CreateVpc`; `run` stopped before creating anything. EFS-3, 8, 11
       and 13 (★) and steps 4-5 wait for a VPC borrowed with permission
       (`--vpc-id`/`--subnet-ids`, or `RAYITO_E2E_VPC_ID`/
@@ -225,10 +225,10 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       EFS-16 (unscoped policy) measured; **EFS-12 fails** (70-min pause:
       `Permission denied` until a remount). Not measured: EFS-16 with
       `AccessPointArns`/`AllowWrite=false`, EFS-14, 17, 19, 20.
-- [ ] Step 6 cleanup (`efs_volumes.py cleanup --run-id <id>`, the throwaway
+- [x] Step 6 cleanup (`efs_volumes.py cleanup --run-id <id>`, the throwaway
       image, its zip and log group) and the before/after inventory diff:
-      blocked by the expired SSO session; resources are tagged with the run
-      id and listed in the acceptance report.
+      done after the SSO session was renewed (the acc061 inventory confirmed
+      the removals).
 
 ## 9. Existing VPC quick setup (`EfsVolumes`, design D5)
 
@@ -255,7 +255,7 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       T21 delta extended (docs-delta.md).
 - [x] 9.7 Measurement script: no throwaway VPC; network only from
       args/env; `EfsVolumes` for check/deploy/destroy/delete.
-- [ ] 9.8 AWS acceptance (serialized stage, cap $3): e2e on an existing
+- [x] 9.8 AWS acceptance (serialized stage, cap $3): e2e on an existing
       VPC, then §7.5 steps 3–6. Measured 2026-10-04 (§7.7); cleanup and the
       inventory diff are still pending (the SSO session expired first).
 
@@ -347,5 +347,9 @@ private subnets in two AZs, default route to a transit gateway, no NAT).
       writes OK, 1 proxy); EFS-13 repeated (same as Q130, ingress restored);
       e2e `test_efs_volumes_mount.py` 2 passed, `efs-volumes-mount.e2e.test.ts`
       2 passed (incl. the E2B shim `Volume`).
-- [ ] 11.8 Teardown (detach the policy, `destroy(delete_file_system=True)`,
-      this run's images, zips and log groups) and before/after inventory diff.
+- [x] 11.8 Teardown (detach the policy, `destroy(delete_file_system=True)`,
+      this run's two images, zips and log groups; connector ENIs gone) and
+      before/after inventory diff over 37 categories, VPC snapshot included:
+      nothing of the run left, nothing pre-existing changed (route tables
+      equal as sets, Q126). Cost ≈ $0.30 (two image builds, ~20 short VMs,
+      two VMs suspended 70 min, an empty file system for ~3 h).
