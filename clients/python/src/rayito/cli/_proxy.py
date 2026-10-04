@@ -99,7 +99,14 @@ from dataclasses import dataclass
 
 from rayito._authority import http_authority, is_ipv6_literal, is_wildcard
 from rayito._aws import ControlPlane, PortSpec
-from rayito._limits import ENDPOINT_TLS_PORT, HOOKS_PORT, PORT_MAX, PORT_MIN, TERMINAL_STATES
+from rayito._limits import (
+    ENDPOINT_TLS_PORT,
+    HOOKS_PORT,
+    MAX_CONCURRENT_CONNECTIONS_1_VCPU,
+    PORT_MAX,
+    PORT_MIN,
+    TERMINAL_STATES,
+)
 from rayito._transport import TokenRefresher, TokenStore
 from rayito.exceptions import InvalidArgumentException, SandboxStateException
 
@@ -158,10 +165,10 @@ _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 #: Lo que nunca aparece en un `host[:puerto]`: esquema, ruta, userinfo,
 #: espacios.
 _NOT_IN_AUTHORITY = re.compile(r"[/@\s?#]")
-#: Cap no ajustable de conexiones concurrentes de una MicroVM de 1 vCPU
+#: El cap no ajustable de conexiones concurrentes de una MicroVM de 1 vCPU
 #: (AWS_API_NOTES.md §7, tabla de límites): el mínimo que cualquier sandbox
 #: aguanta.
-DEFAULT_MAX_CONNECTIONS = 8
+DEFAULT_MAX_CONNECTIONS = MAX_CONCURRENT_CONNECTIONS_1_VCPU
 ALLOW_REMOTE_OPTION = "--allow-remote"
 ALLOWED_HOST_OPTION = "--allowed-host"
 ALLOW_ORIGIN_OPTION = "--allow-origin"
