@@ -8,7 +8,8 @@
 //! `create-microvm-image` and still answers when it expires.
 //!
 //! `HookReply.outcome` values: `changed` / `unchanged` / `illegal`
-//! (phase transitions), `installed` / `tokenless` / `already_ran` (`/run`),
+//! (phase transitions), `installed` / `tokenless` / `already_ran` /
+//! `sandbox_origin` (`/run`),
 //! `kernel_warming` (503) / `ready_escape` (`/ready`), `validating` (503) /
 //! `validated` / `validate_failed` / `validate_skipped` with `--no-sidecar`
 //! (`/validate`), `terminating`, `budget_exceeded`.
@@ -26,8 +27,14 @@
 //! kernel probe, so the resume grace or the auto-resume rule applies only
 //! after a real checkpoint.
 //!
-//! Hooks cannot be authenticated by origin (they arrive from `127.0.0.1`
-//! like proxied client traffic), so after the first accepted `/run` every
+//! Hooks cannot be authenticated by source address (they arrive from
+//! `127.0.0.1` like proxied client traffic), but the uid owning the
+//! caller's socket can be read (`HookPeer`, `SocketOwners`): a `/run` from
+//! a sandbox uid is refused without claiming the boot's one `/run`
+//! (`HookOrigin`, C-01's first step), so a sandbox process that reaches
+//! the port before the platform (a template's `start_cmd`, which thaws
+//! with the snapshot) can no longer install its own token. The other hooks
+//! still take any caller, so after the first accepted `/run` every
 //! runtime hook is audited (`hook_audit` lines, never a body), every
 //! accepted `/suspend` arms the stale-suspend watchdog, and `/run` spawns
 //! the IMDS verification when the block was installed at boot. A
@@ -36,19 +43,23 @@
 //! refused genuine `/suspend` would skip the checklist of a real
 //! checkpoint while the platform freezes the VM anyway.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
+use axum::extract::connect_info::{ConnectInfo, Connected};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
+use axum::serve::IncomingStream;
+use axum::{Extension, Router};
 use rayd_core::code::{
     KernelStatus, ReadyDecision, SidecarState, ValidateDecision, ready_hook_decision,
     validate_hook_decision,
 };
+use rayd_core::hook_origin::{HookOrigin, NoSocketOwners, SocketOwners};
 use rayd_core::hooks::{
     HookCallOutcome, QUIESCE_TIMEOUT, RESUME_PROBE_BUDGET, STREAM_CLOSE_GRACE, suspend_actions,
 };
@@ -56,6 +67,7 @@ use rayd_core::lifecycle::{Hook, LifecycleError, Transition};
 use rayd_core::session::{RunHookInput, RunOutcome, SandboxSession};
 use rayd_core::wire_tokens::TERMINATING;
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use rayd_core::suspend_sync::{FlushReport, ParticipantDemand, SuspendBudget, SuspendShares};
@@ -137,6 +149,33 @@ pub struct HookServices {
     /// returns `Some`, which is how `/suspend` and `/ready` stay byte-for-byte
     /// the 0.5.x behaviour with no 0.6 feature configured.
     pub participants: Vec<Arc<dyn LifecycleParticipant>>,
+    /// Who owns the caller's socket of a hook connection
+    /// (`adapters::ProcNetSocketOwners` in `main`, `NoSocketOwners` where
+    /// hooks are never served over a real connection).
+    pub socket_owners: Arc<dyn SocketOwners>,
+}
+
+/// Both ends of a hook connection, recorded for each accepted socket when
+/// the router is served with
+/// `into_make_service_with_connect_info::<HookPeer>()`: the caller's
+/// address and the listener's own end, which together name the caller's
+/// socket row in `/proc/net/tcp{,6}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HookPeer {
+    pub remote: SocketAddr,
+    pub local: SocketAddr,
+}
+
+impl Connected<IncomingStream<'_, TcpListener>> for HookPeer {
+    /// A socket whose local address cannot be read keeps the remote one
+    /// there too, which matches no row: the origin is then `Unknown`.
+    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Self {
+        let remote = *stream.remote_addr();
+        Self {
+            remote,
+            local: stream.io().local_addr().unwrap_or(remote),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -151,6 +190,7 @@ struct HooksState {
     network: Arc<NetworkManager>,
     flush: Arc<BoundedFlush>,
     participants: Arc<Vec<Arc<dyn LifecycleParticipant>>>,
+    socket_owners: Arc<dyn SocketOwners>,
 }
 
 /// The router without an IMDS block, a user probe or a deadline watcher
@@ -172,6 +212,7 @@ pub fn router(
         timeout: TimeoutWatcher::detached(),
         network: NetworkManager::unavailable(session_for_network),
         participants: Vec::new(),
+        socket_owners: Arc::new(NoSocketOwners),
     })
 }
 
@@ -199,6 +240,7 @@ pub fn router_with_flush(services: HookServices, flush: BoundedFlush) -> Router 
         network: services.network,
         flush: Arc::new(flush),
         participants: Arc::new(services.participants),
+        socket_owners: services.socket_owners,
     };
     Router::new()
         .route(&hook_path(Hook::Ready), post(ready))
@@ -341,16 +383,24 @@ async fn validate(State(state): State<HooksState>) -> Response {
 /// kernel as ready. The actual restart request, `spawn_run_rotation`,
 /// stays after egress enforcement so the rotated kernel still picks up the
 /// settled proxy env.
-async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
+async fn run(
+    State(state): State<HooksState>,
+    peer: Option<Extension<ConnectInfo<HookPeer>>>,
+    body: Bytes,
+) -> Response {
     within_budget(Hook::Run, state.session.clone(), async move {
         let envelope = parse_envelope(&body);
-        let outcome = state.session.run(RunHookInput {
-            sandbox_id: envelope.microvm_id.as_deref(),
-            payload: envelope
-                .run_hook_payload
-                .as_deref()
-                .filter(|payload| !payload.is_empty()),
-        });
+        let origin = hook_origin(&state, peer.map(|Extension(ConnectInfo(peer))| peer)).await;
+        let outcome = state.session.run_from(
+            origin,
+            RunHookInput {
+                sandbox_id: envelope.microvm_id.as_deref(),
+                payload: envelope
+                    .run_hook_payload
+                    .as_deref()
+                    .filter(|payload| !payload.is_empty()),
+            },
+        );
         if outcome == RunOutcome::Installed {
             state.code.mark_rotation_pending();
             state.timeout.wake();
@@ -378,6 +428,33 @@ async fn run(State(state): State<HooksState>, body: Bytes) -> Response {
         run_outcome(&outcome, envelope.run_hook_payload.as_deref())
     })
     .await
+}
+
+/// The uid owning the caller's socket, read off the blocking pool (two
+/// small `/proc` files) and judged against `rayd`'s own uid; `Unknown`
+/// without connection info or a row.
+async fn hook_origin(state: &HooksState, peer: Option<HookPeer>) -> HookOrigin {
+    let Some(peer) = peer else {
+        return HookOrigin::Unknown;
+    };
+    let owners = state.socket_owners.clone();
+    let owner = tokio::task::spawn_blocking(move || owners.owner_uid(peer.remote, peer.local))
+        .await
+        .ok()
+        .flatten();
+    HookOrigin::from_socket_owner(owner, agent_uid())
+}
+
+/// `rayd`'s own effective uid: root in the image.
+#[cfg(unix)]
+fn agent_uid() -> u32 {
+    nix::unistd::geteuid().as_raw()
+}
+
+/// Off Unix no socket owner is ever read (`NoSocketOwners`).
+#[cfg(not(unix))]
+fn agent_uid() -> u32 {
+    0
 }
 
 /// Design D8: transition, detach the execute origins, broadcast, wait the
@@ -843,6 +920,10 @@ fn run_outcome(outcome: &RunOutcome, payload: Option<&str>) -> String {
             tracing::warn!(hook = %Hook::Run, outcome = "illegal", reason = %error, "run ignored");
             "illegal".to_owned()
         }
+        RunOutcome::SandboxOrigin => {
+            tracing::warn!(hook = %Hook::Run, outcome = "sandbox_origin", origin = HookOrigin::Sandbox.as_str(), "run refused: the caller's socket belongs to a sandbox uid");
+            "sandbox_origin".to_owned()
+        }
     }
 }
 
@@ -1043,6 +1124,7 @@ mod tests {
                         Arc::new(FixedVerdict(*verdict)) as Arc<dyn LifecycleParticipant>
                     })
                     .collect(),
+                socket_owners: Arc::new(NoSocketOwners),
             });
             let request = Request::post(hook_path(Hook::Ready))
                 .body(Body::empty())
@@ -1099,6 +1181,7 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network,
                 participants: Vec::new(),
+                socket_owners: Arc::new(NoSocketOwners),
             });
             (session, router)
         }
@@ -1166,6 +1249,7 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network,
                 participants: Vec::new(),
+                socket_owners: Arc::new(NoSocketOwners),
             });
             let status = post(
                 &router,
@@ -1258,6 +1342,7 @@ mod tests {
                 timeout: TimeoutWatcher::detached(),
                 network: NetworkManager::unavailable(session),
                 participants,
+                socket_owners: Arc::new(NoSocketOwners),
             };
             let flush = BoundedFlush::new(fake, SuspendBudget::for_hook(budget(Hook::Suspend)));
             router_with_flush(services, flush)

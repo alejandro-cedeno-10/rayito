@@ -22,8 +22,8 @@ use aws_sdk_s3::config::SharedCredentialsProvider;
 use rayd::adapters::{
     ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
-    PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE, USER_PROBE_PROGRAM,
-    UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
+    ProcNetSocketOwners, PushedCredentials, S3ObjectStore, SpawnPlatform, USER_PROBE_CODE,
+    USER_PROBE_PROGRAM, UserConnectProbe, detect_guest_capabilities, detect_spawn_platform,
     imds_execution_role_provider, inherited_nofile_limits, install_imds_block, prepare_socket_root,
 };
 use rayd::code::{CodeSettings, platform_code_manager, sidecar_identity};
@@ -31,7 +31,7 @@ use rayd::features::{FeatureContext, FeatureSet};
 use rayd::filesystem::FilesystemManager;
 use rayd::filesystem::{FilesystemSettings, platform_filesystem_manager};
 use rayd::grpc::{PlatformProcessManager, Services, StreamSettings, TransferServices};
-use rayd::hooks::HookServices;
+use rayd::hooks::{HookPeer, HookServices};
 use rayd::lifecycle::{
     DEFAULT_REAPER_INTERVAL, ExitParts, ExitReason, ExitTerminator, LifecycleParticipant, Reaper,
     StreamCloser, SuspendSignal, TimeoutWatcher, spawn_child_reaper, spawn_metrics_sampler,
@@ -248,9 +248,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         TcpIncoming::from(grpc_listener).with_nodelay(Some(true)),
         shutdown.clone().cancelled_owned(),
     );
-    let hooks = axum::serve(
+    let hooks = serve_hooks(
         hooks_listener,
-        rayd::hooks::router_with(HookServices {
+        HookServices {
             session,
             code,
             suspend,
@@ -263,9 +263,10 @@ async fn main() -> anyhow::Result<ExitCode> {
             // (`boot_participants`); empty while no slot has one, which
             // keeps every hook exactly as in 0.5.x.
             participants,
-        }),
-    )
-    .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+            socket_owners: Arc::new(ProcNetSocketOwners),
+        },
+        shutdown.clone(),
+    );
 
     tokio::try_join!(
         async { grpc.await.context("gRPC listener failed") },
@@ -273,6 +274,21 @@ async fn main() -> anyhow::Result<ExitCode> {
     )?;
     tracing::info!(reason = exit_reason.as_str(), "rayd stopped");
     Ok(ExitCode::from(exit_reason.exit_code()))
+}
+
+/// The hooks listener, recording both ends of every connection
+/// (`HookPeer`) so `/run` can read who owns the caller's socket.
+async fn serve_hooks(
+    listener: tokio::net::TcpListener,
+    services: HookServices,
+    shutdown: CancellationToken,
+) -> std::io::Result<()> {
+    axum::serve(
+        listener,
+        rayd::hooks::router_with(services).into_make_service_with_connect_info::<HookPeer>(),
+    )
+    .with_graceful_shutdown(shutdown.cancelled_owned())
+    .await
 }
 
 /// The process's one `FeatureSet` (ADR-015), shared by `ConfigureGrpc`,

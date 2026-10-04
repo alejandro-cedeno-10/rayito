@@ -1,11 +1,19 @@
-//! The `FileSystem` port over blocking `std::fs`, every call wrapped in the
-//! requesting user's filesystem identity (design D2/D3): `realpath`,
-//! `lstat`, `O_NOFOLLOW` reads, temp-file writes committed by `rename`,
-//! `mkdir -p`, `rename(2)`, symlink-safe removal and the `statvfs` behind
-//! the disk reserve; the export snapshot (`fstat` + `pread` on one
-//! descriptor) and the `user.rayito.*` metadata (`fsetxattr` on the temp
-//! file's descriptor, `llistxattr`/`lgetxattr` that never follow a
-//! symlink, `m9-file-transfer` D17). Off Unix every call answers
+//! The `FileSystem` port over blocking descriptor-based syscalls, every
+//! call wrapped in the requesting user's filesystem identity (design
+//! D2/D3). `canonicalize` is the domain's `realpath`; every other call
+//! opens the parent of its canonical path with `dir_walk` (one component
+//! at a time, `O_PATH | O_NOFOLLOW`, refusing a symlink and a directory on
+//! `proc`/`sysfs`/`devpts` as `Redirected`) and reaches the final
+//! component with an `*at` call relative to that descriptor: `fstatat`,
+//! `O_NOFOLLOW` reads, temp-file writes created with `O_EXCL` and
+//! committed by `renameat`, `mkdirat`, `renameat`, and a removal that
+//! empties each directory through its own descriptor. So the deny list the
+//! domain checked on the path string still describes the object each call
+//! acts on (`sec-rayd-agent-hardening`, RAYD-01). The `statvfs` behind the
+//! disk reserve, the export snapshot (`fstat` + `pread` on one descriptor)
+//! and the `user.rayito.*` metadata (`fsetxattr` on the temp file's
+//! descriptor, reads through the entry's own `O_PATH` descriptor,
+//! `m9-file-transfer` D17) work the same way. Off Unix every call answers
 //! `Unsupported` so the gRPC surface still routes.
 
 #[cfg(unix)]
@@ -20,23 +28,65 @@ pub type PlatformFileSystem = unsupported::UnsupportedFileSystem;
 
 #[cfg(unix)]
 mod unix {
-    use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
+    use std::ffi::{CStr, CString};
+    use std::fmt::Write as _;
+    use std::fs::{File, Permissions};
     use std::io::{self, Read, Write};
-    use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::fd::{AsFd, OwnedFd};
+    use std::os::unix::fs::{FileExt, PermissionsExt};
     use std::path::Path;
 
+    use nix::dir::Dir;
     use nix::errno::Errno;
-    use nix::sys::statvfs::statvfs;
-    use nix::unistd::{Gid, Uid, fchown};
+    use nix::fcntl::{AtFlags, OFlag, openat, readlinkat, renameat};
+    use nix::sys::stat::{FileStat, Mode, SFlag, fstat, fstatat, mkdirat};
+    use nix::sys::statvfs::fstatvfs;
+    use nix::unistd::{Gid, Uid, UnlinkatFlags, fchown, unlinkat};
+    use rayd_core::code::RandomSource;
     use rayd_core::filesystem::{
         DEFAULT_DIR_MODE, EntryKind, FileMetadata, FileSystem, FsIdentity, FsIoError, MODE_MASK,
-        OpenedSnapshot, RawEntry, SnapshotFile, TEMP_PREFIX, WriteSink, join_canonical,
+        OpenedSnapshot, RawEntry, SnapshotFile, TEMP_PREFIX, WriteSink,
     };
-    use tempfile::NamedTempFile;
 
     use super::xattr;
     use crate::adapters::IdentitySwitch;
+    use crate::adapters::dir_walk::{MissingDir, WalkError, open_dir_beneath, open_step};
     use crate::adapters::fs_identity::FsIdentityGuard;
+    use crate::adapters::random::OsRandomSource;
+
+    /// Where every walk starts: the domain hands over canonical absolute
+    /// paths.
+    const FILESYSTEM_ROOT: &str = "/";
+    /// The final component of the root itself, for the calls that act on
+    /// `/` (`Stat`, `ListDir` of the root).
+    const CURRENT_DIR: &str = ".";
+    /// `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`, regular files only.
+    /// `O_NONBLOCK` is there for the open, not the reads: `open(2)` of a FIFO
+    /// without a writer blocks forever otherwise, parking a pool thread;
+    /// with it the FIFO opens at once and the regular-file check refuses
+    /// it. Reads of a regular file ignore the flag.
+    const READ_FLAGS: OFlag = OFlag::O_RDONLY
+        .union(OFlag::O_NOFOLLOW)
+        .union(OFlag::O_CLOEXEC)
+        .union(OFlag::O_NONBLOCK);
+    /// A directory opened to read its entries or to `fsync` it.
+    const LIST_FLAGS: OFlag = OFlag::O_RDONLY
+        .union(OFlag::O_DIRECTORY)
+        .union(OFlag::O_NOFOLLOW)
+        .union(OFlag::O_CLOEXEC);
+    /// The temp file of a write: created, never reused, never a symlink.
+    const TEMP_FLAGS: OFlag = OFlag::O_RDWR
+        .union(OFlag::O_CREAT)
+        .union(OFlag::O_EXCL)
+        .union(OFlag::O_NOFOLLOW)
+        .union(OFlag::O_CLOEXEC);
+    /// Mode of the temp file until the commit's `fchmod`: owner-only, as
+    /// `tempfile` creates it.
+    const TEMP_FILE_MODE: u32 = 0o600;
+    /// Random bytes behind a temp name (12 hex characters), and how many
+    /// names are tried before giving up on `EEXIST`.
+    const TEMP_SUFFIX_BYTES: usize = 6;
+    const TEMP_NAME_ATTEMPTS: usize = 8;
 
     pub struct StdFileSystem {
         identity_switch: IdentitySwitch,
@@ -53,29 +103,37 @@ mod unix {
         }
     }
 
+    /// Every call below acts on descriptors (design D2/D3, `sec-rayd-agent-hardening`):
+    /// the parent of a canonical path is opened by `dir_walk`, one
+    /// component at a time without following a symlink, and checked
+    /// against the kernel filesystems the deny list keeps out; the final
+    /// component is then reached with an `*at` call relative to it. So the
+    /// object a call touches is the one the domain's deny check saw, even
+    /// when the sandbox swaps a component in between (RAYD-01).
     impl FileSystem for StdFileSystem {
+        /// The domain's resolution step: the deny check runs on this
+        /// string, and nothing else here ever follows a symlink.
         fn canonicalize(&self, id: &FsIdentity, path: &str) -> Result<String, FsIoError> {
             let _guard = self.enter(id)?;
-            fs::canonicalize(path)
+            std::fs::canonicalize(path)
                 .map(|canonical| canonical.to_string_lossy().into_owned())
                 .map_err(|error| io_error(&error))
         }
 
         fn lstat(&self, id: &FsIdentity, path: &str) -> Result<RawEntry, FsIoError> {
             let _guard = self.enter(id)?;
-            let metadata = fs::symlink_metadata(path).map_err(|error| io_error(&error))?;
-            Ok(raw_entry(entry_name(path), &metadata, Path::new(path)))
+            let (parent, name) = open_parent(path)?;
+            entry_at(&parent, name, entry_name(path))
         }
 
         fn read_dir(&self, id: &FsIdentity, path: &str) -> Result<Vec<RawEntry>, FsIoError> {
             let _guard = self.enter(id)?;
-            let entries = fs::read_dir(path).map_err(|error| io_error(&error))?;
-            Ok(entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| {
-                    let metadata = entry.metadata().ok()?;
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    Some(raw_entry(name, &metadata, &entry.path()))
+            let dir = open_directory(path, MissingDir::Fail)?;
+            Ok(child_names(&dir)?
+                .into_iter()
+                .filter_map(|name| {
+                    let shown = name.to_string_lossy().into_owned();
+                    entry_at(&dir, name.as_c_str(), shown).ok()
                 })
                 .collect())
         }
@@ -87,7 +145,8 @@ mod unix {
             path: &str,
         ) -> Result<Box<dyn Read + Send>, FsIoError> {
             let _guard = self.enter(id)?;
-            let (file, _) = open_regular(path)?;
+            let (parent, name) = open_parent(path)?;
+            let (file, _) = open_regular(&parent, name)?;
             Ok(Box::new(file))
         }
 
@@ -96,16 +155,23 @@ mod unix {
         /// name is replaced afterwards.
         fn open_snapshot(&self, id: &FsIdentity, path: &str) -> Result<OpenedSnapshot, FsIoError> {
             let _guard = self.enter(id)?;
-            let (file, metadata) = open_regular(path)?;
+            let (parent, name) = open_parent(path)?;
+            let (file, stat) = open_regular(&parent, name)?;
             Ok(OpenedSnapshot {
-                entry: raw_entry(entry_name(path), &metadata, Path::new(path)),
+                entry: raw_entry(entry_name(path), &stat, None),
                 file: Box::new(PositionedFile(file)),
             })
         }
 
+        /// A parent the identity may not search reads an empty set, like an
+        /// entry it may not read.
         fn read_metadata(&self, id: &FsIdentity, path: &str) -> Result<FileMetadata, FsIoError> {
             let _guard = self.enter(id)?;
-            xattr::read_metadata(path)
+            match open_parent(path) {
+                Ok((parent, name)) => xattr::read_metadata_at(&parent, name),
+                Err(FsIoError::PermissionDenied) => Ok(FileMetadata::default()),
+                Err(error) => Err(error),
+            }
         }
 
         /// `f_bavail * f_frsize` of the deepest existing ancestor of the
@@ -113,8 +179,8 @@ mod unix {
         /// reserved blocks excluded.
         fn free_bytes(&self, id: &FsIdentity, canonical_dir: &str) -> Result<u64, FsIoError> {
             let _guard = self.enter(id)?;
-            let existing = deepest_existing_ancestor(Path::new(canonical_dir));
-            let stats = statvfs(existing).map_err(errno_error)?;
+            let existing = deepest_existing_directory(canonical_dir)?;
+            let stats = fstatvfs(existing.as_fd()).map_err(errno_error)?;
             Ok(widen(stats.blocks_available()).saturating_mul(widen(stats.fragment_size())))
         }
 
@@ -125,14 +191,13 @@ mod unix {
             mode: u32,
         ) -> Result<Box<dyn WriteSink>, FsIoError> {
             let _guard = self.enter(id)?;
-            create_parents(Path::new(dir))?;
-            let file = tempfile::Builder::new()
-                .prefix(TEMP_PREFIX)
-                .tempfile_in(dir)
-                .map_err(|error| io_error(&error))?;
+            let dir = open_directory(dir, MissingDir::Create(DEFAULT_DIR_MODE))?;
+            let (file, temp_name) = create_temp_file(&dir)?;
             Ok(Box::new(TempWriteSink {
                 file,
-                dir: dir.to_owned(),
+                dir,
+                temp_name,
+                committed: false,
                 mode,
                 identity_switch: self.identity_switch,
             }))
@@ -140,18 +205,17 @@ mod unix {
 
         fn make_dir(&self, id: &FsIdentity, path: &str, mode: u32) -> Result<(), FsIoError> {
             let _guard = self.enter(id)?;
-            if let Some(parent) = Path::new(path).parent() {
-                create_parents(parent)?;
-            }
-            DirBuilder::new()
-                .mode(mode)
-                .create(path)
-                .map_err(|error| io_error(&error))
+            let (dir, name) = split_parent(path);
+            let parent = open_directory(dir, MissingDir::Create(DEFAULT_DIR_MODE))?;
+            mkdirat(parent.as_fd(), name, Mode::from_bits_truncate(mode)).map_err(errno_error)
         }
 
         fn rename(&self, id: &FsIdentity, from: &str, to: &str) -> Result<(), FsIoError> {
             let _guard = self.enter(id)?;
-            fs::rename(from, to).map_err(|error| io_error(&error))
+            let (from_parent, from_name) = open_parent(from)?;
+            let (to_parent, to_name) = open_parent(to)?;
+            renameat(from_parent.as_fd(), from_name, to_parent.as_fd(), to_name)
+                .map_err(errno_error)
         }
 
         fn remove(
@@ -162,96 +226,92 @@ mod unix {
             recursive: bool,
         ) -> Result<(), FsIoError> {
             let _guard = self.enter(id)?;
-            let removed = match (kind, recursive) {
-                (EntryKind::Directory, true) => fs::remove_dir_all(path),
-                (EntryKind::Directory, false) => fs::remove_dir(path),
-                _ => fs::remove_file(path),
-            };
-            removed.map_err(|error| io_error(&error))
+            let (parent, name) = open_parent(path)?;
+            match (kind, recursive) {
+                (EntryKind::Directory, true) => remove_tree(&parent, name),
+                (EntryKind::Directory, false) => {
+                    unlinkat(parent.as_fd(), name, UnlinkatFlags::RemoveDir).map_err(errno_error)
+                }
+                _ => {
+                    unlinkat(parent.as_fd(), name, UnlinkatFlags::NoRemoveDir).map_err(errno_error)
+                }
+            }
         }
     }
 
-    /// A `.rayito-tmp-*` file next to its destination. Dropping it without
-    /// `commit` unlinks it (`NamedTempFile` semantics).
+    /// A `.rayito-tmp-*` file next to its destination, held by descriptor
+    /// together with its directory. Dropping it without `commit` unlinks it
+    /// from that same directory.
     pub struct TempWriteSink {
-        file: NamedTempFile,
-        dir: String,
+        file: File,
+        dir: OwnedFd,
+        temp_name: String,
+        committed: bool,
         mode: u32,
         identity_switch: IdentitySwitch,
     }
 
     impl WriteSink for TempWriteSink {
         fn write_chunk(&mut self, bytes: &[u8]) -> Result<(), FsIoError> {
-            self.file
-                .as_file_mut()
-                .write_all(bytes)
-                .map_err(|error| io_error(&error))
+            self.file.write_all(bytes).map_err(|error| io_error(&error))
         }
 
         /// On the descriptor with the agent's own rights, like `fchmod`: no
         /// path is resolved, so the set lands on this inode and appears with
         /// its content at the rename.
         fn set_metadata(&mut self, metadata: &FileMetadata) -> Result<(), FsIoError> {
-            xattr::set_metadata(self.file.as_file(), metadata)
+            xattr::set_metadata(&self.file, metadata)
         }
 
         /// `fsync`, `fchmod` and `fchown` run on the descriptor with the
         /// agent's own rights (the temp file is already the user's); the
-        /// `rename`, the directory `fsync` and the final `lstat` run under
-        /// the user's identity like every other path operation.
+        /// `renameat` inside the sink's directory, the directory `fsync`
+        /// and the final `fstatat` run under the user's identity like every
+        /// other operation.
         fn commit(
             self: Box<Self>,
             final_name: &str,
             id: &FsIdentity,
         ) -> Result<RawEntry, FsIoError> {
-            let this = *self;
-            let file = this.file.as_file();
-            file.sync_all().map_err(|error| io_error(&error))?;
-            file.set_permissions(Permissions::from_mode(this.mode))
+            let mut this = *self;
+            this.file.sync_all().map_err(|error| io_error(&error))?;
+            this.file
+                .set_permissions(Permissions::from_mode(this.mode))
                 .map_err(|error| io_error(&error))?;
             if this.identity_switch == IdentitySwitch::Enforce {
                 fchown(
-                    file,
+                    &this.file,
                     Some(Uid::from_raw(id.uid)),
                     Some(Gid::from_raw(id.gid)),
                 )
                 .map_err(errno_error)?;
             }
-            let final_path = join_canonical(&this.dir, final_name);
             let _guard = FsIdentityGuard::enter(this.identity_switch, id)?;
-            this.file
-                .persist(&final_path)
-                .map_err(|error| io_error(&error.error))?;
+            renameat(
+                this.dir.as_fd(),
+                this.temp_name.as_str(),
+                this.dir.as_fd(),
+                final_name,
+            )
+            .map_err(errno_error)?;
+            this.committed = true;
             sync_directory(&this.dir);
-            let metadata = fs::symlink_metadata(&final_path).map_err(|error| io_error(&error))?;
-            Ok(raw_entry(
-                final_name.to_owned(),
-                &metadata,
-                Path::new(&final_path),
-            ))
+            entry_at(&this.dir, final_name, final_name.to_owned())
         }
     }
 
-    /// `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`, regular files only.
-    /// `O_NONBLOCK` is there for the open, not the reads: `open(2)` of a FIFO
-    /// without a writer blocks forever otherwise, parking a pool thread;
-    /// with it the FIFO opens at once and the regular-file check refuses
-    /// it. Reads of a regular file ignore the flag.
-    fn open_regular(path: &str) -> Result<(File, fs::Metadata), FsIoError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|error| io_error(&error))?;
-        let metadata = file.metadata().map_err(|error| io_error(&error))?;
-        let file_type = metadata.file_type();
-        if file_type.is_dir() {
-            return Err(FsIoError::IsADirectory);
+    impl Drop for TempWriteSink {
+        /// Relative to the sink's own directory descriptor and by the name
+        /// this sink created, so it can only ever remove its own temp file.
+        fn drop(&mut self) {
+            if !self.committed {
+                let _ = unlinkat(
+                    self.dir.as_fd(),
+                    self.temp_name.as_str(),
+                    UnlinkatFlags::NoRemoveDir,
+                );
+            }
         }
-        if !file_type.is_file() {
-            return Err(FsIoError::NotARegularFile);
-        }
-        Ok((file, metadata))
     }
 
     /// `pread` on an open descriptor: a retried part re-reads its own range
@@ -274,13 +334,236 @@ mod unix {
         }
     }
 
+    /// `(parent, name)` of a canonical path; the root is its own parent,
+    /// named `.`.
+    fn split_parent(path: &str) -> (&str, &str) {
+        match path.rfind('/') {
+            Some(_) if path == FILESYSTEM_ROOT => (FILESYSTEM_ROOT, CURRENT_DIR),
+            Some(0) => (FILESYSTEM_ROOT, &path[1..]),
+            Some(cut) => (&path[..cut], &path[cut + 1..]),
+            None => (FILESYSTEM_ROOT, path),
+        }
+    }
+
+    /// The parent directory of `path`, opened without following any
+    /// component, and the final name to reach from it.
+    fn open_parent(path: &str) -> Result<(OwnedFd, &str), FsIoError> {
+        let (dir, name) = split_parent(path);
+        Ok((open_directory(dir, MissingDir::Fail)?, name))
+    }
+
+    /// Every component of `path`, the last included, opened by `dir_walk`;
+    /// the result is checked against the kernel filesystems.
+    fn open_directory(path: &str, missing: MissingDir) -> Result<OwnedFd, FsIoError> {
+        let dir =
+            open_dir_beneath(Path::new(FILESYSTEM_ROOT), path, missing).map_err(walk_error)?;
+        refuse_kernel_filesystem(&dir)?;
+        Ok(dir)
+    }
+
+    /// The deepest directory of `path` that exists, for `statvfs`: the walk
+    /// stops at the first missing component instead of failing.
+    fn deepest_existing_directory(path: &str) -> Result<OwnedFd, FsIoError> {
+        let mut current = root_directory()?;
+        for component in path.split('/').filter(|part| !part.is_empty()) {
+            match open_step(&current, component) {
+                Ok(next) => current = next,
+                Err(WalkError::Io(Errno::ENOENT)) => break,
+                Err(error) => return Err(walk_error(error)),
+            }
+        }
+        refuse_kernel_filesystem(&current)?;
+        Ok(current)
+    }
+
+    fn root_directory() -> Result<OwnedFd, FsIoError> {
+        open_dir_beneath(Path::new(FILESYSTEM_ROOT), "", MissingDir::Fail).map_err(walk_error)
+    }
+
+    /// Defence in depth behind the walk: a directory on `proc`, `sysfs` or
+    /// `devpts` is never one a filesystem RPC may act in, whatever path led
+    /// there (the deny list covers their usual mountpoints; this covers any
+    /// other).
+    #[cfg(target_os = "linux")]
+    fn refuse_kernel_filesystem(dir: &OwnedFd) -> Result<(), FsIoError> {
+        use nix::sys::statfs::{DEVPTS_SUPER_MAGIC, PROC_SUPER_MAGIC, SYSFS_MAGIC, fstatfs};
+        let kind = fstatfs(dir.as_fd()).map_err(errno_error)?.filesystem_type();
+        if [PROC_SUPER_MAGIC, SYSFS_MAGIC, DEVPTS_SUPER_MAGIC].contains(&kind) {
+            return Err(FsIoError::Redirected);
+        }
+        Ok(())
+    }
+
+    /// No kernel filesystems with these magic numbers off Linux.
+    #[cfg(not(target_os = "linux"))]
+    fn refuse_kernel_filesystem(_dir: &OwnedFd) -> Result<(), FsIoError> {
+        Ok(())
+    }
+
+    /// `lstat` of `name` inside `parent`, with the symlink target read the
+    /// same way.
+    fn entry_at<P: ?Sized + nix::NixPath>(
+        parent: &OwnedFd,
+        name: &P,
+        shown: String,
+    ) -> Result<RawEntry, FsIoError> {
+        let stat =
+            fstatat(parent.as_fd(), name, AtFlags::AT_SYMLINK_NOFOLLOW).map_err(errno_error)?;
+        let symlink_target = (kind_of(&stat) == EntryKind::Symlink)
+            .then(|| readlinkat(parent.as_fd(), name).ok())
+            .flatten()
+            .map(|target| target.to_string_lossy().into_owned());
+        Ok(raw_entry(shown, &stat, symlink_target))
+    }
+
+    /// Every entry name of a directory but `.` and `..`, read through a
+    /// fresh descriptor so `dir` stays usable for the `*at` calls.
+    fn child_names(dir: &OwnedFd) -> Result<Vec<CString>, FsIoError> {
+        let listing =
+            openat(dir.as_fd(), CURRENT_DIR, LIST_FLAGS, Mode::empty()).map_err(errno_error)?;
+        let mut entries = Dir::from_fd(listing).map_err(errno_error)?;
+        Ok(entries
+            .iter()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_owned())
+            .filter(|name| !is_dot_entry(name))
+            .collect())
+    }
+
+    fn is_dot_entry(name: &CStr) -> bool {
+        matches!(name.to_bytes(), b"." | b"..")
+    }
+
+    /// `name` inside `parent` with `READ_FLAGS`, regular files only.
+    fn open_regular(parent: &OwnedFd, name: &str) -> Result<(File, FileStat), FsIoError> {
+        let fd = openat(parent.as_fd(), name, READ_FLAGS, Mode::empty()).map_err(errno_error)?;
+        let stat = fstat(fd.as_fd()).map_err(errno_error)?;
+        match kind_of(&stat) {
+            EntryKind::File => Ok((File::from(fd), stat)),
+            EntryKind::Directory => Err(FsIoError::IsADirectory),
+            EntryKind::Symlink | EntryKind::Other => Err(FsIoError::NotARegularFile),
+        }
+    }
+
+    /// `O_CREAT | O_EXCL | O_NOFOLLOW` inside the directory descriptor,
+    /// under a random name; a name that already exists is retried.
+    fn create_temp_file(dir: &OwnedFd) -> Result<(File, String), FsIoError> {
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let name = temp_name()?;
+            match openat(
+                dir.as_fd(),
+                name.as_str(),
+                TEMP_FLAGS,
+                Mode::from_bits_truncate(TEMP_FILE_MODE),
+            ) {
+                Ok(fd) => return Ok((File::from(fd), name)),
+                Err(Errno::EEXIST) => {}
+                Err(errno) => return Err(errno_error(errno)),
+            }
+        }
+        Err(FsIoError::AlreadyExists)
+    }
+
+    fn temp_name() -> Result<String, FsIoError> {
+        let mut suffix = [0u8; TEMP_SUFFIX_BYTES];
+        OsRandomSource
+            .fill(&mut suffix)
+            .map_err(|_| FsIoError::Other {
+                errno: "EIO".to_owned(),
+            })?;
+        Ok(suffix
+            .iter()
+            .fold(TEMP_PREFIX.to_owned(), |mut name, byte| {
+                let _ = write!(name, "{byte:02x}");
+                name
+            }))
+    }
+
     /// The rename is already durable in the file's own inode; a directory
     /// `fsync` that fails (an unreadable parent) must not undo a commit
     /// that happened.
-    fn sync_directory(dir: &str) {
-        if let Err(error) = File::open(dir).and_then(|handle| handle.sync_all()) {
+    fn sync_directory(dir: &OwnedFd) {
+        let synced = openat(dir.as_fd(), CURRENT_DIR, LIST_FLAGS, Mode::empty())
+            .map_err(|errno| io::Error::from_raw_os_error(errno as i32))
+            .and_then(|fd| File::from(fd).sync_all());
+        if let Err(error) = synced {
             tracing::debug!(reason = %io_error(&error), "directory fsync skipped");
         }
+    }
+
+    /// One directory being emptied by `remove_tree`: its descriptor, its
+    /// name inside its parent and the children still to remove.
+    struct RemovalFrame {
+        dir: OwnedFd,
+        name: CString,
+        pending: Vec<CString>,
+    }
+
+    /// What opening a child as a directory to empty it found.
+    enum Opened {
+        Directory(RemovalFrame),
+        /// A file, a symlink (never followed) or anything else: unlinked
+        /// as it is.
+        NotADirectory,
+        /// Gone between the listing and the open (a race with the sandbox).
+        Gone,
+    }
+
+    /// Recursive removal relative to descriptors, depth first, without
+    /// recursion on the stack and without following a symlink at any
+    /// depth: each directory is opened `O_NOFOLLOW` beneath its parent's
+    /// descriptor, emptied, then removed with `unlinkat(AT_REMOVEDIR)` from
+    /// that parent.
+    fn remove_tree(parent: &OwnedFd, name: &str) -> Result<(), FsIoError> {
+        let name = CString::new(name).map_err(|_| FsIoError::Other {
+            errno: "EINVAL".to_owned(),
+        })?;
+        let mut stack = match open_for_removal(parent, name.clone())? {
+            Opened::Directory(frame) => vec![frame],
+            Opened::NotADirectory => return Err(FsIoError::NotADirectory),
+            Opened::Gone => return Err(FsIoError::NotFound),
+        };
+        while let Some(top) = stack.last_mut() {
+            let Some(child) = top.pending.pop() else {
+                let finished = stack.pop();
+                let parent_dir = stack.last().map_or(parent, |frame| &frame.dir);
+                if let Some(finished) = finished {
+                    unlinkat(
+                        parent_dir.as_fd(),
+                        finished.name.as_c_str(),
+                        UnlinkatFlags::RemoveDir,
+                    )
+                    .map_err(errno_error)?;
+                }
+                continue;
+            };
+            match open_for_removal(&top.dir, child.clone())? {
+                Opened::Directory(frame) => stack.push(frame),
+                Opened::NotADirectory => {
+                    match unlinkat(
+                        top.dir.as_fd(),
+                        child.as_c_str(),
+                        UnlinkatFlags::NoRemoveDir,
+                    ) {
+                        Ok(()) | Err(Errno::ENOENT) => {}
+                        Err(errno) => return Err(errno_error(errno)),
+                    }
+                }
+                Opened::Gone => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn open_for_removal(parent: &OwnedFd, name: CString) -> Result<Opened, FsIoError> {
+        let dir = match openat(parent.as_fd(), name.as_c_str(), LIST_FLAGS, Mode::empty()) {
+            Ok(dir) => dir,
+            Err(Errno::ENOTDIR | Errno::ELOOP) => return Ok(Opened::NotADirectory),
+            Err(Errno::ENOENT) => return Ok(Opened::Gone),
+            Err(errno) => return Err(errno_error(errno)),
+        };
+        let pending = child_names(&dir)?;
+        Ok(Opened::Directory(RemovalFrame { dir, name, pending }))
     }
 
     /// `statvfs` field widths differ by target (`u32` on some, `u64` on the
@@ -289,53 +572,31 @@ mod unix {
         value.into()
     }
 
-    /// The write may create parents: the filesystem to measure is the one
-    /// holding the deepest ancestor that already exists (`/` at worst).
-    fn deepest_existing_ancestor(dir: &Path) -> &Path {
-        dir.ancestors()
-            .find(|candidate| candidate.exists())
-            .unwrap_or_else(|| Path::new("/"))
-    }
-
-    /// `mkdir -p` with `0o755`; an existing component that is not a
-    /// directory surfaces as `EEXIST`/`ENOTDIR`, both `NotADirectory` here.
-    fn create_parents(dir: &Path) -> Result<(), FsIoError> {
-        DirBuilder::new()
-            .recursive(true)
-            .mode(DEFAULT_DIR_MODE)
-            .create(dir)
-            .map_err(|error| match io_error(&error) {
-                FsIoError::AlreadyExists => FsIoError::NotADirectory,
-                other => other,
-            })
-    }
-
-    fn raw_entry(name: String, metadata: &fs::Metadata, path: &Path) -> RawEntry {
-        let file_type = metadata.file_type();
-        let kind = if file_type.is_symlink() {
+    fn kind_of(stat: &FileStat) -> EntryKind {
+        let format = SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT;
+        if format == SFlag::S_IFLNK {
             EntryKind::Symlink
-        } else if file_type.is_dir() {
+        } else if format == SFlag::S_IFDIR {
             EntryKind::Directory
-        } else if file_type.is_file() {
+        } else if format == SFlag::S_IFREG {
             EntryKind::File
         } else {
             EntryKind::Other
-        };
-        let symlink_target = (kind == EntryKind::Symlink)
-            .then(|| fs::read_link(path).ok())
-            .flatten()
-            .map(|target| target.to_string_lossy().into_owned());
+        }
+    }
+
+    fn raw_entry(name: String, stat: &FileStat, symlink_target: Option<String>) -> RawEntry {
         RawEntry {
             name,
-            kind,
-            size: metadata.len(),
-            mode: metadata.mode() & MODE_MASK,
-            uid: metadata.uid(),
-            gid: metadata.gid(),
-            modified_ms: metadata
-                .mtime()
+            kind: kind_of(stat),
+            size: u64::try_from(stat.st_size).unwrap_or(0),
+            mode: stat.st_mode & MODE_MASK,
+            uid: stat.st_uid,
+            gid: stat.st_gid,
+            modified_ms: stat
+                .st_mtime
                 .saturating_mul(1_000)
-                .saturating_add(metadata.mtime_nsec() / 1_000_000),
+                .saturating_add(stat.st_mtime_nsec / 1_000_000),
             symlink_target,
         }
     }
@@ -343,8 +604,16 @@ mod unix {
     fn entry_name(path: &str) -> String {
         path.rsplit('/')
             .find(|component| !component.is_empty())
-            .unwrap_or("/")
+            .unwrap_or(FILESYSTEM_ROOT)
             .to_owned()
+    }
+
+    fn walk_error(error: WalkError) -> FsIoError {
+        match error {
+            WalkError::Symlink => FsIoError::Redirected,
+            WalkError::NotADirectory => FsIoError::NotADirectory,
+            WalkError::Io(errno) => errno_error(errno),
+        }
     }
 
     /// errno → port error; the name (`EIO`) is all that leaves the adapter.
@@ -375,6 +644,7 @@ mod unix {
 
     #[cfg(test)]
     mod tests {
+        use std::fs;
         use std::os::unix::fs::symlink;
 
         use super::*;
@@ -688,24 +958,164 @@ mod unix {
                 .unwrap();
             assert_eq!(fs_adapter.read_dir(&id, &root).unwrap().len(), 0);
         }
+
+        /// RAYD-01 at the adapter: the domain resolved `<root>/a/<name>`
+        /// while `a` was a directory and deny-checked that string; the
+        /// sandbox then swapped `a` for a symlink into a tree it must not
+        /// reach. No call follows it: each answers `Redirected` and the
+        /// tree behind the link is untouched.
+        #[test]
+        fn an_intermediate_symlink_swapped_in_after_resolution_is_never_followed() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            let denied = format!("{root}/denied");
+            fs::create_dir(&denied).unwrap();
+            fs::write(format!("{denied}/secret"), b"secret").unwrap();
+            fs::create_dir(format!("{denied}/sub")).unwrap();
+            symlink(&denied, format!("{root}/a")).unwrap();
+            let through = |name: &str| format!("{root}/a/{name}");
+            let redirected = Some(FsIoError::Redirected);
+            assert_eq!(
+                fs_adapter.open_read(&id, &through("secret")).err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter.open_snapshot(&id, &through("secret")).err(),
+                redirected
+            );
+            assert_eq!(fs_adapter.lstat(&id, &through("secret")).err(), redirected);
+            assert_eq!(
+                fs_adapter.read_metadata(&id, &through("secret")).err(),
+                redirected
+            );
+            assert_eq!(fs_adapter.read_dir(&id, &through("sub")).err(), redirected);
+            assert_eq!(
+                fs_adapter.read_dir(&id, &format!("{root}/a")).err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter.free_bytes(&id, &through("sub")).err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter.begin_write(&id, &through("sub"), 0o644).err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter.make_dir(&id, &through("new"), 0o755).err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter
+                    .rename(&id, &through("secret"), &format!("{root}/stolen"))
+                    .err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter
+                    .remove(&id, &through("secret"), EntryKind::File, false)
+                    .err(),
+                redirected
+            );
+            assert_eq!(
+                fs_adapter
+                    .remove(&id, &through("sub"), EntryKind::Directory, true)
+                    .err(),
+                redirected
+            );
+            assert_eq!(fs::read(format!("{denied}/secret")).unwrap(), b"secret");
+            assert!(fs::symlink_metadata(format!("{denied}/new")).is_err());
+            assert!(fs::symlink_metadata(format!("{root}/stolen")).is_err());
+            assert_eq!(temp_files(&format!("{denied}/sub")), 0);
+            assert_eq!(
+                fs_adapter.lstat(&id, &format!("{root}/a")).unwrap().kind,
+                EntryKind::Symlink,
+                "the link itself is an entry like any other"
+            );
+            fs_adapter
+                .remove(&id, &format!("{root}/a"), EntryKind::Symlink, false)
+                .unwrap();
+            assert!(fs::symlink_metadata(format!("{denied}/secret")).is_ok());
+        }
+
+        /// A recursive removal empties every level through descriptors:
+        /// a symlink at any depth is unlinked, never followed.
+        #[test]
+        fn recursive_removal_never_follows_a_symlink_at_any_depth() {
+            let (_dir, root) = playground();
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            fs::create_dir_all(format!("{root}/outside/keep")).unwrap();
+            fs::write(format!("{root}/outside/keep/file"), b"x").unwrap();
+            fs::create_dir_all(format!("{root}/tree/a/b/c")).unwrap();
+            fs::write(format!("{root}/tree/a/b/c/leaf"), b"y").unwrap();
+            fs::write(format!("{root}/tree/top"), b"z").unwrap();
+            symlink(format!("{root}/outside"), format!("{root}/tree/a/b/escape")).unwrap();
+            symlink(format!("{root}/outside/keep"), format!("{root}/tree/link")).unwrap();
+            fs_adapter
+                .remove(&id, &format!("{root}/tree"), EntryKind::Directory, true)
+                .unwrap();
+            assert!(fs::symlink_metadata(format!("{root}/tree")).is_err());
+            assert_eq!(fs::read(format!("{root}/outside/keep/file")).unwrap(), b"x");
+        }
+
+        /// The defence behind the walk: a directory on `proc` or `sysfs`
+        /// is refused whatever path reached it.
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn kernel_filesystems_are_refused_by_descriptor() {
+            let fs_adapter = StdFileSystem::new(IdentitySwitch::KeepCurrent);
+            let id = identity();
+            for path in ["/proc", "/sys"] {
+                assert_eq!(
+                    fs_adapter.read_dir(&id, path).err(),
+                    Some(FsIoError::Redirected),
+                    "{path}"
+                );
+            }
+            assert_eq!(
+                fs_adapter.lstat(&id, "/proc/version").err(),
+                Some(FsIoError::Redirected)
+            );
+            assert_eq!(
+                fs_adapter.open_read(&id, "/proc/self/status").err(),
+                Some(FsIoError::Redirected)
+            );
+        }
     }
 }
 
 /// `user.rayito.*` extended attributes through `libc`: the set is written
-/// on a descriptor and read back with the `l*` calls, so no symlink is ever
-/// followed. Values are capped at the domain's byte budget; a name listing
-/// that changes between the size query and the read is read again once.
+/// on a descriptor and read back through the descriptor of the entry
+/// itself (`O_PATH | O_NOFOLLOW` beneath its parent's), so no symlink is
+/// ever followed. Values are capped at the domain's byte budget; a name
+/// listing that changes between the size query and the read is read again
+/// once.
 #[cfg(target_os = "linux")]
 mod xattr {
     use std::ffi::CString;
     use std::fs::File;
     use std::io;
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 
     use nix::errno::Errno;
+    use nix::fcntl::{OFlag, openat};
+    use nix::sys::stat::{Mode, SFlag, fstat};
     use rayd_core::filesystem::{FileMetadata, FsIoError, METADATA_MAX_BYTES};
 
     use super::unix::io_error;
+
+    /// The entry whose attributes are read: `O_PATH` (the file itself is
+    /// not opened, so no FUSE open and no read permission for this step),
+    /// `O_NOFOLLOW` (a symlink is the entry, never its target).
+    const ENTRY_FLAGS: OFlag = OFlag::O_PATH
+        .union(OFlag::O_NOFOLLOW)
+        .union(OFlag::O_CLOEXEC);
+    /// `proc(5)`'s per-descriptor magic links: `listxattr`/`getxattr` of
+    /// `/proc/self/fd/<n>` act on exactly the inode `<n>` names (an
+    /// `O_PATH` descriptor answers `EBADF` to `flistxattr`).
+    const PROC_SELF_FD: &str = "/proc/self/fd";
 
     pub fn set_metadata(file: &File, metadata: &FileMetadata) -> Result<(), FsIoError> {
         for (key, value) in metadata.iter() {
@@ -715,10 +1125,23 @@ mod xattr {
         Ok(())
     }
 
-    /// A file without attributes, a filesystem without them or one the
-    /// identity may not read answers an empty set.
-    pub fn read_metadata(path: &str) -> Result<FileMetadata, FsIoError> {
-        let path = c_string(path)?;
+    /// `user.*` attributes exist only on regular files and directories: a
+    /// symlink or any other kind, a file without attributes, a filesystem
+    /// without them or one the identity may not read answers an empty set;
+    /// a missing entry is `NotFound`.
+    pub fn read_metadata_at(parent: &OwnedFd, name: &str) -> Result<FileMetadata, FsIoError> {
+        let entry = match openat(parent.as_fd(), name, ENTRY_FLAGS, Mode::empty()) {
+            Ok(entry) => entry,
+            Err(Errno::EACCES | Errno::EPERM) => return Ok(FileMetadata::default()),
+            Err(errno) => return Err(io_error(&io::Error::from_raw_os_error(errno as i32))),
+        };
+        let stat = fstat(entry.as_fd())
+            .map_err(|errno| io_error(&io::Error::from_raw_os_error(errno as i32)))?;
+        let format = SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT;
+        if format != SFlag::S_IFREG && format != SFlag::S_IFDIR {
+            return Ok(FileMetadata::default());
+        }
+        let path = c_string(&format!("{PROC_SELF_FD}/{}", entry.as_raw_fd()))?;
         let names = match list_names(&path) {
             Ok(names) => names,
             Err(error) if is_unreadable(&error) => return Ok(FileMetadata::default()),
@@ -735,10 +1158,12 @@ mod xattr {
         Ok(FileMetadata::from_xattrs(attributes))
     }
 
+    /// `ENOENT` here is a `/proc` that is not mounted: the entry itself
+    /// was just opened.
     fn is_unreadable(error: &io::Error) -> bool {
         matches!(
             error.raw_os_error().map(Errno::from_raw),
-            Some(Errno::ENOTSUP | Errno::ENODATA | Errno::EACCES | Errno::EPERM)
+            Some(Errno::ENOTSUP | Errno::ENODATA | Errno::EACCES | Errno::EPERM | Errno::ENOENT)
         )
     }
 
@@ -778,17 +1203,18 @@ mod xattr {
         }
     }
 
-    /// `llistxattr(2)`: a size query, then the read into a buffer of that
-    /// size. Sound: the buffer outlives both calls and its exact length is
+    /// `listxattr(2)` of a `/proc/self/fd/<n>` magic link (followed to the
+    /// inode it names, never further: that inode is a regular file or a
+    /// directory): a size query, then the read into a buffer of that size.
+    /// Sound: the buffer outlives both calls and its exact length is
     /// passed; a null buffer with size 0 is the documented size query.
     fn list_names(path: &CString) -> io::Result<Vec<u8>> {
         for _ in 0..2 {
-            let size = unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
+            let size = unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
             let size = usize::try_from(size).map_err(|_| io::Error::last_os_error())?;
             let mut buffer = vec![0u8; size];
-            let read = unsafe {
-                libc::llistxattr(path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len())
-            };
+            let read =
+                unsafe { libc::listxattr(path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len()) };
             match usize::try_from(read) {
                 Ok(read) => {
                     buffer.truncate(read);
@@ -801,13 +1227,13 @@ mod xattr {
         Err(io::Error::from_raw_os_error(Errno::ERANGE as i32))
     }
 
-    /// `lgetxattr(2)` into a buffer of the whole metadata budget: a value
-    /// larger than that is not one the write rules could have stored.
-    /// Sound for the same reasons as `list_names`.
+    /// `getxattr(2)` of the same magic link into a buffer of the whole
+    /// metadata budget: a value larger than that is not one the write rules
+    /// could have stored. Sound for the same reasons as `list_names`.
     fn get_one(path: &CString, name: &CString) -> io::Result<Vec<u8>> {
         let mut buffer = vec![0u8; METADATA_MAX_BYTES];
         let read = unsafe {
-            libc::lgetxattr(
+            libc::getxattr(
                 path.as_ptr(),
                 name.as_ptr(),
                 buffer.as_mut_ptr().cast(),
@@ -836,7 +1262,10 @@ mod xattr {
         }
     }
 
-    pub fn read_metadata(_path: &str) -> Result<FileMetadata, FsIoError> {
+    pub fn read_metadata_at(
+        _parent: &std::os::fd::OwnedFd,
+        _name: &str,
+    ) -> Result<FileMetadata, FsIoError> {
         Ok(FileMetadata::default())
     }
 }

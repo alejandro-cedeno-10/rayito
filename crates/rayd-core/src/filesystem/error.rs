@@ -116,6 +116,7 @@ impl FilesystemError {
             FsIoError::IsSymlink => Self::IsSymlink,
             FsIoError::CrossDevice => Self::CrossDevice,
             FsIoError::NoSpace => Self::DiskFull,
+            FsIoError::Redirected => Self::Denied,
             FsIoError::Unsupported => Self::Unsupported,
             FsIoError::Other { errno } => Self::Io { operation, errno },
         }

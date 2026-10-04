@@ -19,7 +19,9 @@ pub mod capabilities;
 pub mod child_registry;
 pub mod cloudwatch_otlp_sink;
 pub mod credential_broker;
+pub mod dir_walk;
 pub mod egress_routes;
+pub mod exec_posture;
 pub mod fs_identity;
 pub mod fs_template_spec;
 pub mod fuse_device;
@@ -30,6 +32,7 @@ pub mod name_resolver;
 pub mod notify_watcher;
 pub mod orphan_reaper;
 pub mod otlp_codec;
+pub mod proc_net_sockets;
 pub mod process_spawner;
 pub mod procfs_metrics;
 pub mod procfs_process_table;
@@ -69,6 +72,7 @@ pub use notify_watcher::NotifyWatcher;
 pub use notify_watcher::PlatformWatcher;
 pub use orphan_reaper::OrphanReaper;
 pub use otlp_codec::ProstOtlpEncoder;
+pub use proc_net_sockets::ProcNetSocketOwners;
 pub use process_spawner::{
     IdentitySwitch, PlatformSpawner, SpawnPlatform, detect_spawn_platform, inherited_nofile_limits,
 };

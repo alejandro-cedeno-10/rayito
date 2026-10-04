@@ -42,6 +42,7 @@ pub mod credentials;
 pub mod features;
 pub mod filesystem;
 pub mod health;
+pub mod hook_origin;
 pub mod hooks;
 pub mod lifecycle;
 pub mod lifecycle_events;

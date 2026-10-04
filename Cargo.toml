@@ -35,7 +35,7 @@ http-body = "=1.1.0"
 http-body-util = "=0.1.5"
 bytes = "=1.12.1"
 futures = { version = "=0.3.34", default-features = false, features = ["std"] }
-nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "ioctl", "resource"] }
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "dir", "ioctl", "resource"] }
 libc = "=0.2.189"
 thiserror = "=2.0.21"
 anyhow = "=1.0.104"

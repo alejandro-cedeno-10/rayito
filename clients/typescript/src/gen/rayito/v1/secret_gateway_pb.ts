@@ -44,7 +44,9 @@ export const file_rayito_v1_secret_gateway: GenFile = /*@__PURE__*/
  * `content-length`, `transfer-encoding`, `connection`, ...;
  * `invalid_header_name`); two header names equal ignoring case
  * (`duplicate_header_name`); an upstream with userinfo or a fragment
- * (`invalid_upstream_host`).
+ * (`invalid_upstream_host`); an `allow` path no request could match because
+ * the listener refuses every request that would (`invalid_allow_path`, the
+ * same rule as for request paths below).
  *
  * @generated from message rayito.v1.SecretGatewayConfig
  */
@@ -64,10 +66,14 @@ export const SecretGatewayConfigSchema: GenMessage<SecretGatewayConfig> = /*@__P
 
 /**
  * One loopback HTTP listener: `rayd` accepts on `127.0.0.1:<ephemeral>`,
- * refuses (403 `not_allowed`) any request path with a dot-segment (`.`,
- * `..`, raw or percent-encoded), an encoded `/` or `\`, a backslash or an
- * empty segment — it never normalises a path, so it never forwards one an
- * upstream could normalise past `allow` — checks `allow` and the rate limit
+ * refuses (403 `not_allowed`) any request path outside an allowlist: every
+ * raw byte must be an RFC 3986 path character other than `;` (unreserved,
+ * `:`, `@`, the other sub-delims, or a well-formed `%XX`), no segment may be
+ * empty except the last, and each segment, percent-decoded exactly once,
+ * must be valid UTF-8 with no control byte, no `/`, `\`, `%` or `;`, and must
+ * not be `.` or `..` — it never normalises a path, so it never forwards one
+ * an upstream could normalise, strip of a `;` parameter or decode a second
+ * time past `allow` — checks `allow` and the rate limit
  * before touching the network, strips
  * any inbound header `headers` also names (so the sandbox can never spoof
  * or read back its own gateway's credential) and injects the vaulted

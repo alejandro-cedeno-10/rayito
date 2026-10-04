@@ -449,6 +449,7 @@ pub async fn harness_with(options: Options) -> Harness {
         timeout,
         network,
         participants: features.participants(),
+        socket_owners: Arc::new(rayd_core::hook_origin::NoSocketOwners),
     });
     let harness = Harness {
         processes: ProcessServiceClient::new(channel.clone()),
