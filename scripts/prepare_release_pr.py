@@ -16,6 +16,11 @@ siempre a mano (lo aprendido en 0.3.0, 0.3.1 y 0.3.2):
    release-please por la API no lo están. Se rehace el PR como un único
    commit firmado (`git commit -S -s`) sobre `origin/main` y se sube con
    `--force-with-lease`.
+4. **Base atrasada**: release-please no rehace su rama en cada push a
+   `main`, así que su commit puede colgar de un `main` anterior. El commit
+   se porta sobre `origin/main` (sólo el diff de versiones de release-please,
+   sin sus CHANGELOG) en vez de reescribir el árbol de su rama, que
+   revertiría lo fusionado después.
 
 Uso (desde la raíz del repositorio, con la firma SSH configurada):
 
@@ -124,6 +129,25 @@ def git(*args: str, capture: bool = False) -> str:
     return result.stdout.strip() if capture else ""
 
 
+def port_release_commit(main_ref: str, release_ref: str) -> None:
+    """Pone `RELEASE_BRANCH` en `main_ref` con los cambios de versión de
+    `release_ref` en el índice. Sólo se aplica el diff de release-please
+    respecto a su base (`git merge-base`), sin los CHANGELOG: su bloque
+    generado se descarta igualmente y `normalize_changelog` parte del
+    `## [Unreleased]` de `main_ref`. Así lo fusionado en `main` después de
+    que release-please creara su commit no se revierte."""
+    base = git("merge-base", main_ref, release_ref, capture=True)
+    git("switch", "--quiet", "-C", RELEASE_BRANCH, main_ref)
+    excludes = [f":(exclude){path}" for path in CHANGELOGS]
+    diff = subprocess.run(
+        ["git", "diff", "--binary", base, release_ref, "--", ".", *excludes],
+        check=True,
+        capture_output=True,
+    ).stdout
+    if diff:
+        subprocess.run(["git", "apply", "--3way", "--index"], input=diff, check=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -145,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     git("fetch", "--quiet", "origin")
-    git("switch", "--quiet", "-C", RELEASE_BRANCH, f"origin/{RELEASE_BRANCH}")
+    port_release_commit("origin/main", f"origin/{RELEASE_BRANCH}")
 
     versions = set(json.loads(Path(MANIFEST).read_text(encoding="utf-8")).values())
     if len(versions) != 1:

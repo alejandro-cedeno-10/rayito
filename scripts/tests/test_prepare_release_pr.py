@@ -1,10 +1,13 @@
 """``prepare_release_pr.py`` over crafted text: the release-please block is
 dropped and ``## [Unreleased]`` becomes the dated section with repeated
 ``###`` headings merged, the transform is idempotent, and ``Cargo.lock``
-gets the version on exactly the three workspace crates."""
+gets the version on exactly the three workspace crates. ``port_release_commit``
+runs against a throwaway git repository: a release-please commit hanging from
+an older ``main`` is ported onto the current one without reverting it."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -102,3 +105,65 @@ def test_compat_row_is_required_for_the_release_series() -> None:
     assert prp.has_compat_row(source, "0.3.3")
     assert prp.has_compat_row(source, "0.4.0")
     assert not prp.has_compat_row(source, "9.9.0")
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, text=True, capture_output=True
+    ).stdout.strip()
+
+
+def _commit(repo: Path, files: dict[str, str], message: str) -> None:
+    for name, text in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", message)
+
+
+def test_release_commit_on_a_stale_base_is_ported_onto_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    for key, value in (
+        ("user.name", "t"),
+        ("user.email", "t@example.invalid"),
+        ("commit.gpgsign", "false"),
+    ):
+        _git(repo, "config", key, value)
+    changelog = prp.CHANGELOGS[0]
+    unreleased = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Uno.\n"
+    _commit(repo, {"Cargo.toml": 'version = "0.1.0"\n', changelog: unreleased}, "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-c", "release")
+    _commit(
+        repo,
+        {
+            "Cargo.toml": 'version = "0.1.1"\n',
+            changelog: unreleased.replace(
+                "## [Unreleased]",
+                "## [0.1.1](https://example.invalid) (x)\n\n## [Unreleased]",
+            ),
+        },
+        "chore: release main",
+    )
+    _git(repo, "switch", "-q", "main")
+    _commit(
+        repo,
+        {"later.txt": "merged after\n", changelog: unreleased + "- Dos.\n"},
+        "merged after release-please",
+    )
+    main = _git(repo, "rev-parse", "HEAD")
+    assert _git(repo, "merge-base", "main", "release") == base
+
+    monkeypatch.chdir(repo)
+    prp.port_release_commit("main", "release")
+
+    assert _git(repo, "rev-parse", "HEAD") == main
+    assert _git(repo, "branch", "--show-current") == prp.RELEASE_BRANCH
+    assert (repo / "later.txt").exists()
+    assert (repo / "Cargo.toml").read_text(encoding="utf-8") == 'version = "0.1.1"\n'
+    assert (repo / changelog).read_text(encoding="utf-8") == unreleased + "- Dos.\n"
+    assert _git(repo, "diff", "--cached", "--name-only") == "Cargo.toml"

@@ -180,9 +180,12 @@ cargo publish --dry-run -p rayito-proto
    `## [Unreleased]` escrito a mano durante el ciclo en `## [x.y.z] - fecha`
    (descartando las notas que genera release-please) y rehace el PR como un
    único commit firmado: el ruleset de `main` exige firmas y los commits
-   que crea release-please por la API no lo están. Revisar después que las
-   versiones de `pyproject.toml`, `src/rayito/_version.py`, `package.json`,
-   `src/version.ts`, `Cargo.toml` y `Cargo.lock` son idénticas.
+   que crea release-please por la API no lo están. Si release-please dejó su
+   commit sobre un `main` anterior, el script porta sólo su diff de
+   versiones sobre `origin/main` (no revierte lo fusionado después).
+   Revisar después que las versiones de `pyproject.toml`,
+   `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
+   y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
    `python scripts/check_license.py`, `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please
