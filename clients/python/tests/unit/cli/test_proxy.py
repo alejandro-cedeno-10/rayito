@@ -790,20 +790,37 @@ class _RecordingWriter:
         return None
 
 
+DEFAULT_UPSTREAM_RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+#: Lo que tarda el upstream en memoria en cerrar tras responder: deja que el
+#: proxy termine de mandarle el cuerpo de la petición antes.
+UPSTREAM_EOF_DELAY_SECONDS = 0.05
+
+
 @dataclass
 class _FakeConnector:
-    """Un upstream en memoria: guarda la cabecera reescrita y responde `200`."""
+    """Un upstream en memoria: guarda lo que recibe (`upstream_writer`) y
+    responde `response`; cierra tras `eof_delay` segundos."""
 
     calls: int = 0
     upstream_writer: _RecordingWriter | None = None
+    response: bytes = DEFAULT_UPSTREAM_RESPONSE
+    eof_delay: float = 0.0
 
     async def __call__(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         self.calls += 1
         reader = asyncio.StreamReader()
-        reader.feed_data(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
-        reader.feed_eof()
+        reader.feed_data(self.response)
+        if self.eof_delay:
+            asyncio.get_running_loop().call_later(self.eof_delay, reader.feed_eof)
+        else:
+            reader.feed_eof()
         self.upstream_writer = _RecordingWriter()
         return reader, cast(asyncio.StreamWriter, self.upstream_writer)
+
+    @property
+    def received(self) -> bytes:
+        assert self.upstream_writer is not None
+        return bytes(self.upstream_writer.buffer)
 
 
 def _access(
@@ -826,12 +843,13 @@ async def _drive(
     *,
     access: _proxy.ProxyAccess | None = None,
     slots: asyncio.Semaphore | None = None,
+    connector: _FakeConnector | None = None,
 ) -> tuple[bytes, _FakeConnector]:
     reader = asyncio.StreamReader()
     reader.feed_data(raw)
     reader.feed_eof()
     writer = _RecordingWriter()
-    connector = _FakeConnector()
+    connector = connector if connector is not None else _FakeConnector()
     await _proxy.handle_connection(
         reader,
         cast(asyncio.StreamWriter, writer),
@@ -997,3 +1015,149 @@ def test_wildcard_bind_without_allowed_host_is_a_usage_error(
     )
     assert result.exit_code == EXIT_USAGE, result.stderr
     assert "--allowed-host" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# Un solo mensaje por conexión: nada después de la primera petición llega
+# al upstream sin reescribir (pipelining, upgrade rechazado)
+# --------------------------------------------------------------------------
+
+LOCAL_HOST = f"localhost:{LOCAL_PORT}"
+UPGRADE_REQUEST = (
+    f"GET /ws HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+).encode()
+SMUGGLED_REQUEST = b"POST /terminate HTTP/1.1\r\nHost: x\r\nX-aws-proxy-port: 9000\r\n\r\n"
+
+
+def _rewritten(raw_head: bytes) -> bytes:
+    return _proxy.rewrite_head(
+        _proxy.parse_http_head(raw_head), endpoint=ENDPOINT, jwe="JWE-OPERATOR", port=8080
+    )
+
+
+async def test_an_upgrade_refused_with_200_never_tunnels_a_second_request() -> None:
+    """El guest responde `200` keep-alive a un `Upgrade`: la respuesta llega
+    al cliente con `Connection: close` y la segunda petición (con un
+    `X-aws-proxy-port: 9000` propio) nunca llega al upstream."""
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nno"
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+    assert b"9000" not in connector.received
+    assert response == b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
+
+
+async def test_an_upgrade_refused_with_a_chunked_body_forwards_only_that_body() -> None:
+    body = b"3\r\nnop\r\n0\r\n\r\n"
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 426 Upgrade Required\r\nTransfer-Encoding: chunked\r\n\r\n"
+        + body
+        + b"HTTP/1.1 200 OK\r\n\r\n",
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+    assert response == (
+        b"HTTP/1.1 426 Upgrade Required\r\nTransfer-Encoding: chunked\r\n"
+        b"Connection: close\r\n\r\n" + body
+    )
+
+
+async def test_an_upgrade_accepted_with_101_tunnels_both_ways() -> None:
+    switching = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+    connector = _FakeConnector(response=switching + b"server-frame")
+
+    response, _ = await _drive(UPGRADE_REQUEST + b"client-frame", connector=connector)
+
+    assert connector.received == _rewritten(UPGRADE_REQUEST) + b"client-frame"
+    assert response == switching + b"server-frame"
+
+
+async def test_informational_responses_before_101_pass_through() -> None:
+    connector = _FakeConnector(
+        response=b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 Switching Protocols\r\n\r\nok"
+    )
+
+    response, _ = await _drive(UPGRADE_REQUEST, connector=connector)
+
+    assert response == b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 Switching Protocols\r\n\r\nok"
+
+
+@pytest.mark.parametrize(
+    "upstream_response", [b"garbage\r\n\r\n", b"HTTP/1.1 200 OK\r\nBad Header\r\n\r\n", b""]
+)
+async def test_an_invalid_or_missing_upgrade_response_is_502(upstream_response: bytes) -> None:
+    connector = _FakeConnector(response=upstream_response)
+
+    response, _ = await _drive(UPGRADE_REQUEST + SMUGGLED_REQUEST, connector=connector)
+
+    assert response == _proxy.BAD_GATEWAY_RESPONSE
+    assert connector.received == _rewritten(UPGRADE_REQUEST)
+
+
+async def test_a_pipelined_request_after_a_content_length_body_never_reaches_the_upstream() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nContent-Length: 5\r\n\r\n".encode()
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    response, _ = await _drive(first + b"hello" + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first) + b"hello"
+    assert response == DEFAULT_UPSTREAM_RESPONSE
+
+
+async def test_a_pipelined_request_after_a_chunked_body_never_reaches_the_upstream() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nTransfer-Encoding: chunked\r\n\r\n"
+    body = b"5;ext=1\r\nhello\r\n0\r\nX-Trailer: t\r\n\r\n"
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(first.encode() + body + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first.encode()) + body
+
+
+async def test_a_request_without_a_body_forwards_only_its_head() -> None:
+    first = f"GET /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\n\r\n".encode()
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(first + SMUGGLED_REQUEST, connector=connector)
+
+    assert connector.received == _rewritten(first)
+
+
+@pytest.mark.parametrize(
+    "framing",
+    [
+        "Transfer-Encoding: chunked\r\nContent-Length: 5",
+        "Transfer-Encoding: gzip",
+        "Transfer-Encoding: chunked, gzip",
+        "Content-Length: 5\r\nContent-Length: 6",
+        "Content-Length: 5, 6",
+        "Content-Length: -1",
+        "Content-Length: abc",
+    ],
+)
+async def test_an_ambiguous_body_framing_is_400_and_never_reaches_the_upstream(
+    framing: str,
+) -> None:
+    raw = f"POST / HTTP/1.1\r\nHost: {LOCAL_HOST}\r\n{framing}\r\n\r\nhello".encode()
+
+    response, connector = await _drive(raw)
+
+    assert response == _proxy.BAD_REQUEST_RESPONSE
+    assert connector.calls == 0
+
+
+async def test_a_malformed_chunk_stops_forwarding() -> None:
+    first = f"POST /a HTTP/1.1\r\nHost: {LOCAL_HOST}\r\nTransfer-Encoding: chunked\r\n\r\n"
+    connector = _FakeConnector(eof_delay=UPSTREAM_EOF_DELAY_SECONDS)
+
+    await _drive(
+        first.encode() + b"zz\r\nhello\r\n0\r\n\r\n" + SMUGGLED_REQUEST, connector=connector
+    )
+
+    assert b"hello" not in connector.received
+    assert b"9000" not in connector.received

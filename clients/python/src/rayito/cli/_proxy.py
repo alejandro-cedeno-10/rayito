@@ -28,16 +28,21 @@ Contrato (research custom-domain opción D, AWS_API_NOTES.md §7):
   fallando más allá del TTL) o si la conexión al upstream falla o vence,
   responde `502` + `Connection: close` y escribe en stderr una línea sin
   JWE, cabeceras ni ruta.
-- **Sólo la primera petición de cada conexión se reescribe.** Como todas
-  las peticiones que no son upgrade llegan al upstream con
-  `Connection: close` (el `Connection` del cliente se descarta), el
-  servidor del guest cierra tras la primera respuesta. Si un cliente manda
-  igualmente más peticiones por la misma conexión (pipelining), esos bytes
-  se reenvían tal cual por la tubería, sin volver a pasar por
-  `parse_http_head`/`rewrite_head`. Si el proxy de AWS valida
-  `X-aws-proxy-auth` por petición o por conexión en un keep-alive HTTP/1.1
-  NO está medido (AWS_API_NOTES.md §16, Q-M12-1): no se cuenta con que AWS
-  las rechace.
+- **Un solo mensaje por conexión.** Sólo la primera petición de cada
+  conexión se reescribe, así que sólo esa llega al upstream: su cuerpo se
+  reenvía exactamente según `Content-Length` o el troceado `chunked`
+  (`_http_framing`; una delimitación ambigua — `Transfer-Encoding` junto a
+  `Content-Length`, un `Transfer-Encoding` que no acaba en `chunked`,
+  varios `Content-Length` distintos — es `400`) y nada de lo que el cliente
+  mande después (pipelining) se reenvía. En una petición de upgrade el
+  proxy lee la cabecera de la respuesta (en
+  `UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS`): con `101` empieza la tubería en
+  los dos sentidos; con cualquier otra respuesta final la reenvía con
+  `Connection: close`, con su cuerpo delimitado, y cierra. Así ninguna
+  petición sin reescribir (sin quitar sus `x-aws-proxy-*`, con otro
+  `X-aws-proxy-port`) llega al proxy de AWS por una conexión ya
+  autenticada, valide AWS el JWE por petición o por conexión
+  (AWS_API_NOTES.md §16, Q-M12-1, sin medir).
 - **Contrabando de cabeceras (`request smuggling`)**: `parse_http_head`
   rechaza (`MalformedHttpHeadError`, el llamante responde `400` y cierra)
   cualquier cabecera con un CR o LF suelto fuera de un `\\r\\n`, una
@@ -108,6 +113,19 @@ from rayito._limits import (
     TERMINAL_STATES,
 )
 from rayito._transport import TokenRefresher, TokenStore
+from rayito.cli._http_framing import (
+    CONTENT_LENGTH_HEADER_NAME,
+    SWITCHING_PROTOCOLS,
+    TRANSFER_ENCODING_HEADER_NAME,
+    BodyFraming,
+    BodyKind,
+    MalformedFramingError,
+    chunk_size,
+    is_informational,
+    request_body_framing,
+    response_body_framing,
+    response_status,
+)
 from rayito.exceptions import InvalidArgumentException, SandboxStateException
 
 HEADER_TERMINATOR: bytes = b"\r\n\r\n"
@@ -133,6 +151,9 @@ SERVICE_UNAVAILABLE_RESPONSE: bytes = (
 # TLS que se queda colgado, no retienen una tarea para siempre.
 HEAD_READ_TIMEOUT_SECONDS = 30.0
 UPSTREAM_CONNECT_TIMEOUT_SECONDS = 30.0
+#: Lo que espera la cabecera de la respuesta a una petición de upgrade
+#: antes de responder `502` (un handshake de WebSocket es inmediato).
+UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS = 30.0
 # Cada cuánto `_run_until_stopped` mira el `stop_event` del e2e.
 STOP_POLL_SECONDS = 0.1
 # RFC 9110 §5.6.2 `tchar`: los nombres de cabecera del cliente que no
@@ -151,6 +172,9 @@ LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
 LOOPBACK_AUTHORITY_HOSTS = ("127.0.0.1", "localhost", "::1")
 DEFAULT_BIND = "127.0.0.1"
 PIPE_CHUNK_BYTES = 64 * 1024
+CRLF = b"\r\n"
+#: El método es la primera palabra de la línea de petición (RFC 9112 §3).
+REQUEST_LINE_SEPARATOR = " "
 #: Un `Host` sin puerto sólo equivale a `<nombre>:<puerto>` cuando el puerto
 #: es el de HTTP (RFC 9110 §4.2.1).
 HTTP_DEFAULT_PORT = 80
@@ -386,6 +410,24 @@ class HttpHead:
                 return value
         return None
 
+    def header_values(self, name: str) -> list[str]:
+        """Todos los valores de `name`, en orden (para las cabeceras que
+        pueden repetirse, como `Transfer-Encoding`)."""
+        target = name.lower()
+        return [value for key, value in self.headers if key.lower() == target]
+
+    @property
+    def method(self) -> str:
+        return self.request_line.split(REQUEST_LINE_SEPARATOR, 1)[0]
+
+    def body_framing(self) -> BodyFraming:
+        """El cuerpo de esta petición; `MalformedFramingError` si es
+        ambiguo."""
+        return request_body_framing(
+            self.header_values(TRANSFER_ENCODING_HEADER_NAME),
+            self.header_values(CONTENT_LENGTH_HEADER_NAME),
+        )
+
     def is_upgrade(self) -> bool:
         """RFC 9110 §7.8: hace falta `Upgrade` Y el token `upgrade` en
         `Connection`; un `Upgrade` suelto (p. ej. con `Connection:
@@ -519,12 +561,14 @@ async def handle_connection(
     slots: asyncio.Semaphore,
     head_timeout: float = HEAD_READ_TIMEOUT_SECONDS,
     connect_timeout: float = UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+    response_timeout: float = UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS,
 ) -> None:
     """Una conexión de cliente: comprueba `Host` (`421`) y `Origin` (`403`)
-    contra `access`, reserva una de las `slots` (`503` si no queda), y sólo
-    entonces reescribe la cabecera de la primera petición y hace de tubería
-    en los dos sentidos. Nunca registra nada de lo que pasa por ella; sin
-    JWE o sin upstream responde `502` y deja en stderr sólo el motivo."""
+    contra `access` y la delimitación del cuerpo (`400`), reserva una de las
+    `slots` (`503` si no queda), y sólo entonces reenvía la primera petición
+    reescrita (ver "Un solo mensaje por conexión" en el docstring del
+    módulo). Nunca registra nada de lo que pasa por ella; sin JWE o sin
+    upstream responde `502` y deja en stderr sólo el motivo."""
     try:
         raw_head = await asyncio.wait_for(client_reader.readuntil(HEADER_TERMINATOR), head_timeout)
     except (
@@ -545,6 +589,12 @@ async def handle_connection(
     if rejection is not None:
         await _reply_and_close(client_writer, rejection)
         return
+    try:
+        framing = head.body_framing()
+    except MalformedFramingError:
+        _report("delimitación del cuerpo ambigua (Transfer-Encoding/Content-Length): 400")
+        await _reply_and_close(client_writer, BAD_REQUEST_RESPONSE)
+        return
     if slots.locked():
         _report(f"{MAX_CONNECTIONS_OPTION} alcanzado: 503")
         await _reply_and_close(client_writer, SERVICE_UNAVAILABLE_RESPONSE)
@@ -552,6 +602,7 @@ async def handle_connection(
     async with slots:
         await _forward(
             head,
+            framing,
             client_reader,
             client_writer,
             endpoint=endpoint,
@@ -559,6 +610,7 @@ async def handle_connection(
             jwe_provider=jwe_provider,
             connector=connector,
             connect_timeout=connect_timeout,
+            response_timeout=response_timeout,
         )
 
 
@@ -575,8 +627,28 @@ def _access_rejection(head: HttpHead, access: ProxyAccess) -> bytes | None:
     return None
 
 
+@dataclass(frozen=True)
+class _Upstream:
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+
+
+#: Lo que corta un reenvío a medias: el otro lado cerró, un mensaje mal
+#: delimitado o una cabecera de respuesta que no llega o no es HTTP/1.1.
+_RELAY_ERRORS: tuple[type[BaseException], ...] = (
+    asyncio.IncompleteReadError,
+    asyncio.LimitOverrunError,
+    MalformedFramingError,
+    MalformedHttpHeadError,
+    TimeoutError,
+    ConnectionError,
+    OSError,
+)
+
+
 async def _forward(
     head: HttpHead,
+    framing: BodyFraming,
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     *,
@@ -585,7 +657,13 @@ async def _forward(
     jwe_provider: JweProvider,
     connector: Connector,
     connect_timeout: float,
+    response_timeout: float,
 ) -> None:
+    """Reenvía la primera petición: la cabecera reescrita y su cuerpo
+    exacto (`framing`); después ya no lee del cliente, así que una segunda
+    petición en la misma conexión nunca llega al upstream. Sin upgrade, la
+    respuesta pasa tal cual hasta que el upstream cierra (le llegó
+    `Connection: close`); con upgrade, `_exchange_upgrade`."""
     jwe = jwe_provider()
     if jwe is None:
         _report("sin JWE vigente (falla la renovación con CreateMicrovmAuthToken): 502")
@@ -602,16 +680,144 @@ async def _forward(
         _report("no se pudo conectar al upstream (endpoint del sandbox): 502")
         await _reply_and_close(client_writer, BAD_GATEWAY_RESPONSE)
         return
+    upstream = _Upstream(upstream_reader, upstream_writer)
+    upstream_writer.write(upstream_head)
+    body = asyncio.ensure_future(_relay_body(client_reader, upstream_writer, framing))
     try:
-        upstream_writer.write(upstream_head)
         await upstream_writer.drain()
-        await asyncio.gather(
-            _pump(client_reader, upstream_writer),
-            _pump(upstream_reader, client_writer),
-        )
+        if head.is_upgrade():
+            await _exchange_upgrade(
+                head, body, client_reader, client_writer, upstream, response_timeout
+            )
+        else:
+            await _pump(upstream_reader, client_writer)
+    except _RELAY_ERRORS:
+        pass
     finally:
+        body.cancel()
+        with contextlib.suppress(asyncio.CancelledError, *_RELAY_ERRORS):
+            await body
         await _close(upstream_writer)
         await _close(client_writer)
+
+
+async def _exchange_upgrade(
+    head: HttpHead,
+    body: asyncio.Future[None],
+    client_reader: asyncio.StreamReader,
+    client_writer: asyncio.StreamWriter,
+    upstream: _Upstream,
+    response_timeout: float,
+) -> None:
+    """Respuesta a una petición de upgrade: los `1xx` informativos pasan
+    tal cual; con `101` empieza la tubería en los dos sentidos; cualquier
+    otra respuesta final se reenvía con `Connection: close` y su cuerpo
+    delimitado, y la conexión se cierra (nada más del cliente llega al
+    upstream). Sin una cabecera de respuesta válida a tiempo, `502`."""
+    while True:
+        try:
+            raw = await asyncio.wait_for(
+                upstream.reader.readuntil(HEADER_TERMINATOR), response_timeout
+            )
+            response = parse_http_head(raw)
+            status = response_status(response.request_line)
+        except _RELAY_ERRORS:
+            _report("el upstream no respondió al upgrade con una cabecera HTTP/1.1 válida: 502")
+            client_writer.write(BAD_GATEWAY_RESPONSE)
+            await client_writer.drain()
+            return
+        if status == SWITCHING_PROTOCOLS:
+            client_writer.write(raw)
+            await client_writer.drain()
+            await body
+            await asyncio.gather(
+                _pump(client_reader, upstream.writer),
+                _pump(upstream.reader, client_writer),
+            )
+            return
+        if is_informational(status):
+            client_writer.write(raw)
+            await client_writer.drain()
+            continue
+        client_writer.write(closing_response_head(response))
+        await client_writer.drain()
+        await _relay_body(
+            upstream.reader,
+            client_writer,
+            response_body_framing(
+                status,
+                request_method=head.method,
+                transfer_encodings=response.header_values(TRANSFER_ENCODING_HEADER_NAME),
+                content_lengths=response.header_values(CONTENT_LENGTH_HEADER_NAME),
+            ),
+        )
+        return
+
+
+def closing_response_head(response: HttpHead) -> bytes:
+    """La cabecera de una respuesta con su `Connection` sustituido por
+    `Connection: close`: el cliente sabe que la conexión no sigue."""
+    kept = [
+        (name, value)
+        for name, value in response.headers
+        if name.lower() != CONNECTION_HEADER_NAME.lower()
+    ]
+    kept.append((CONNECTION_HEADER_NAME, "close"))
+    lines = [response.request_line, *(f"{name}: {value}" for name, value in kept), "", ""]
+    return "\r\n".join(lines).encode("latin-1")
+
+
+async def _relay_body(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, framing: BodyFraming
+) -> None:
+    if framing.kind is BodyKind.LENGTH:
+        await _copy_exactly(reader, writer, framing.length)
+    elif framing.kind is BodyKind.CHUNKED:
+        await _relay_chunked(reader, writer)
+    elif framing.kind is BodyKind.UNTIL_CLOSE:
+        await _copy_until_eof(reader, writer)
+
+
+async def _copy_exactly(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, length: int
+) -> None:
+    remaining = length
+    while remaining > 0:
+        chunk = await reader.read(min(remaining, PIPE_CHUNK_BYTES))
+        if not chunk:
+            raise asyncio.IncompleteReadError(b"", remaining)
+        writer.write(chunk)
+        await writer.drain()
+        remaining -= len(chunk)
+
+
+async def _copy_until_eof(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    while chunk := await reader.read(PIPE_CHUNK_BYTES):
+        writer.write(chunk)
+        await writer.drain()
+
+
+async def _relay_chunked(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Un cuerpo `chunked` (RFC 9112 §7.1) tal cual, hasta el trozo de
+    tamaño 0 y la línea vacía tras los `trailer`; ni un byte más."""
+    while True:
+        size_line = await reader.readuntil(CRLF)
+        writer.write(size_line)
+        size = chunk_size(size_line)
+        if size == 0:
+            break
+        await _copy_exactly(reader, writer, size)
+        terminator = await reader.readexactly(len(CRLF))
+        if terminator != CRLF:
+            raise MalformedFramingError("trozo sin CRLF final")
+        writer.write(terminator)
+        await writer.drain()
+    while True:
+        trailer = await reader.readuntil(CRLF)
+        writer.write(trailer)
+        if trailer == CRLF:
+            break
+    await writer.drain()
 
 
 @dataclass(frozen=True)
