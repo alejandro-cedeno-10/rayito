@@ -14,6 +14,9 @@ BACKOFF_BASE_SECONDS: Final = 0.5
 
 _SUCCESS_RANGE: Final = range(200, 300)
 _SERVER_ERROR_RANGE: Final = range(500, 600)
+#: A receiver refusing the signature or the credential it expects
+#: (RFC 9110 §15.5.2 and §15.5.4).
+_AUTH_REJECTION_STATUSES: Final = (401, 403)
 
 
 def is_delivered(status: int) -> bool:
@@ -25,6 +28,12 @@ def is_retryable(status: int) -> bool:
     deliberate answer (redirects are never followed, T22), and repeating
     the same signed request will not change it."""
     return status in _SERVER_ERROR_RANGE
+
+
+def is_auth_rejection(status: int) -> bool:
+    """A 401/403: worth one more attempt only if the webhook's secret
+    turns out to have changed since it was cached."""
+    return status in _AUTH_REJECTION_STATUSES
 
 
 def backoff_seconds(attempt: int) -> float:

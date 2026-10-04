@@ -56,9 +56,46 @@ versionado [SemVer](https://semver.org/lang/es/).
   esos secretos por `secrets`/`SecretCache` (`InvalidArgumentError`).
   `SecretPrefix` de `infra/secrets-access.yaml` debe terminar en `/`.
 - **Mínimo privilegio en `events-webhooks`**: cada Lambda escribe sólo sus
-  tipos de fila (`dynamodb:LeadingKeys`) y sólo en los log groups de Lambda,
-  la política del operador sólo escribe filas de webhooks y el rol del
-  Scheduler exige `aws:SourceAccount`.
+  tipos de fila (`dynamodb:LeadingKeys`) y sólo en su propio log group (la
+  pila crea uno por función y lo borra con ella), y el rol del Scheduler
+  exige `aws:SourceAccount`.
+- **Eventos: el código del sandbox ya no puede inundar la pila con
+  `paused`/`resumed`.** Esos dos eventos los emite `rayd` cuando corren sus
+  hooks de suspensión y reanudación, que el código sin privilegios del
+  sandbox puede invocar. El forwarder sólo admite ahora eventos que hagan
+  avanzar el ciclo de vida de su sandbox (nada tras `killed`, ningún
+  `created` repetido, ninguna posición repetida o anterior) y limita
+  `paused`/`resumed` con un cubo por sandbox (20 seguidos, después uno cada
+  30 s); lo rechazado se cuenta como `invalid_transition` o `rate_limited`
+  y nunca se guarda ni se entrega. El reconciliador consulta un índice
+  disperso de sandboxes abiertos en vez de escanear la tabla entera, y el
+  deliverer sólo se invoca por eventos nuevos. `paused`/`resumed` quedan
+  documentados como orientativos (`SECURITY.md` T22). Al actualizar la
+  pila, un sandbox que ya estaba abierto entra en el índice con su
+  siguiente evento.
+- **Webhooks: segunda firma con marca de tiempo.** Cada entrega lleva
+  además `rayito-signature: t=<segundos>,v1=<HMAC-SHA256>` sobre
+  `"<t>.<webhook_id>."` y el cuerpo; la guía de eventos explica cómo
+  verificarla con una ventana de 5 minutos. `e2b-signature` no cambia.
+- **Webhooks: un secreto rotado deja de usarse en 5 minutos.** El deliverer
+  guardaba cada secreto en caché mientras viviera su contenedor; ahora lo
+  relee cada 5 minutos y, si el receptor responde `401`/`403`, lo relee en
+  el acto y reintenta una vez con el nuevo.
+- **Políticas del llamante por tarea en `events-webhooks`.** La pila emite
+  `EventsLauncherPolicy` (`events=`: sólo la clave del stack),
+  `EventsReaderPolicy` (`getEvents`: sólo filas de eventos; ya no puede
+  registrar un webhook ni leer la clave del stack) y
+  `EventsWebhookAdminPolicy` (`registerWebhook`/listar/borrar: sólo filas `WEBHOOK`).
+  La guía de eventos tiene la tabla de qué llamada necesita cuál y avisa de
+  que los webhooks son de toda la pila.
+- **`sizes-guard`: `RayitoRunAllowedSizes` niega también publicar
+  imágenes.** Sin ello, una identidad con la `CallerPolicy` estándar podía
+  reconstruir una imagen permitida a un tamaño mayor y lanzarla sin salir
+  de la lista. La política ya no dice que valga "sin importar lo demás": una
+  versión antigua y mayor bajo un nombre permitido sigue siendo lanzable con
+  `imageVersion` (`SECURITY.md` T27).
+- **`SECURITY.md`: filas T20, T23, T26 y T27**, que los cambios de M15
+  planearon y nunca se aplicaron (`infra/otlp-export.yaml` ya citaba T23).
 - `infra/ci-oidc-role.yaml` y `infra/README.md` piden una cuenta dedicada a
   e2e (o imágenes de test propias): el rol puede acuñar tokens y terminar
   cualquier sandbox de las imágenes de `TestImageArns`.
@@ -69,6 +106,13 @@ versionado [SemVer](https://semver.org/lang/es/).
   cuadrático (50 000 caracteres bloqueaban el bucle de eventos más de un
   segundo). La semántica no cambia: una URL con un fin de línea tras la
   autoridad sigue sin reconocerse como http(s).
+
+### Deprecated
+
+- `EventsOperatorPolicy` (salida `OperatorPolicyArn` de `events-webhooks`):
+  sigue siendo la unión de las tres políticas nuevas durante esta versión.
+  Vincula a cada identidad la suya (`EventsLauncherPolicy`,
+  `EventsReaderPolicy` o `EventsWebhookAdminPolicy`).
 
 ## [0.6.1] - 2026-10-04
 

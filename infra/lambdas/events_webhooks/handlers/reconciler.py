@@ -4,7 +4,12 @@ sandbox the events table still considers open but `ListMicrovms` no longer
 reports — the only path to a `killed` event when the sandbox itself never
 got to call `/terminate` (a hard platform kill). The synthesized event
 carries the generation and image of the sandbox's own last event (its
-`STATE#` row). `timeout` is never synthesized: nothing in the table or in
+`STATE#` row). Open sandboxes come from the sparse `open` index (a query
+whose cost follows the number of open sandboxes, never a scan of every
+event and delivery row). The event is stored before the tombstone is
+written: a failure in between leaves the sandbox open, and the next run
+(same window: same id, the stored event is kept and only the tombstone is
+written) closes it rather than losing it. `timeout` is never synthesized: nothing in the table or in
 `ListMicrovms` tells a deadline kill from any other one.
 
 Decision 8: the Lambda runtime's `boto3` does not know `lambda-microvms`.
@@ -88,9 +93,9 @@ def reconcile(store: EventStore, lister: MicrovmLister) -> int:
         if sandbox.sandbox_id in live:
             continue
         event = _synthesized_killed(sandbox, now_ms=now_ms, window_start_ms=window_start_ms)
-        if store.put_event_if_absent(event):
-            store.record_sandbox_state(event)
-            synthesized += 1
+        written = store.put_event_if_absent(event)
+        store.admit(event, now_ms)
+        synthesized += int(written)
     return synthesized
 
 

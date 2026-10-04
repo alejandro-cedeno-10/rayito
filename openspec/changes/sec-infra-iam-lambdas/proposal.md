@@ -20,6 +20,14 @@ higher-trust one:
   artifact bucket; `RayitoSecretsReader` exposed the webhook signing
   secrets to `secrets=`; several roles had account-wide log writes and
   unscoped table writes.
+- Guest code can drive `rayd`'s `/suspend`/`/resume` hooks over loopback,
+  so authentic `paused`/`resumed` events could be emitted at will, and the
+  reconciler's full-table scan let one sandbox's flood degrade all of them.
+- The events stack had one caller policy for every job, warm deliverers
+  kept a rotated webhook secret forever, the delivery signature had no
+  timestamp, and the sizes guard could be bypassed by rebuilding an
+  allowed image at a larger size. `SECURITY.md` never got the planned
+  T20, T23, T26 and T27 rows.
 
 ## What Changes
 
@@ -42,7 +50,15 @@ higher-trust one:
   secrets in `secrets=`/`SecretCache`.
 - `infra/events-webhooks.yaml`: `dynamodb:LeadingKeys` per role, logs only
   on `/aws/lambda/*`, `aws:SourceAccount` on the Scheduler trust.
-- Docs: `SECURITY.md` T22 (only the MAC authenticates) and IAM section,
+- Forwarder admission (order plus a per-sandbox rate bucket), a sparse
+  `open` index for the reconciler, a `FilterCriteria` on the deliverer.
+- Deliverer: `rayito-signature` timestamped HMAC header, secret cache TTL
+  and a re-read on 401/403.
+- `infra/events-webhooks.yaml`: launcher, reader and webhook-admin
+  policies (`EventsOperatorPolicy` deprecated), one log group per function.
+- `infra/sizes-guard.yaml`: deny image publishing too.
+- Docs: `SECURITY.md` T20, T22 (advisory `paused`/`resumed`, stack-wide
+  webhooks), T23, T26, T27 and IAM section,
   security, IAM, setup, events, templates and secrets pages, CI role
   warning, `AWS_API_NOTES.md` §21 and §25.
 
@@ -51,7 +67,10 @@ higher-trust one:
 - Code: `infra/lambdas/events_webhooks/`, `infra/*.yaml`,
   `clients/python/src/rayito/{_stacks,_lifecycle_events,_secrets.py}`,
   `clients/typescript/src/{stacks,lifecycle-events,secrets}/`.
-- Behaviour: deliveries in flight when the stack is updated may be repeated
+- Behaviour: `paused`/`resumed` beyond the bucket, and lines older than the
+  last admitted one, are no longer stored; open sandboxes from before the
+  upgrade enter the reconciler's index with their next event; deliveries
+  in flight when the stack is updated may be repeated
   once (new dedupe key); a `SecretPrefix` without a trailing `/` no longer
   validates; `secrets=` refuses `rayito/webhooks/*`; register rejects URLs
   the deliverer could never reach.

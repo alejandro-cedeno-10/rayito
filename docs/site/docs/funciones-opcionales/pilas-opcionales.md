@@ -32,8 +32,8 @@ CloudFormation.
 | `metadata-index` | Tabla DynamoDB + 2 políticas IAM (lector/escritor) | $0 (on-demand, tabla vacía) | [Índice de metadatos](indice-de-metadatos.md) |
 | `secrets-access` | 2 políticas IAM sobre un prefijo de Secrets Manager | $0 | [Secretos](../secrets.md) |
 | `s3-mounts` | 1 política IAM sobre un bucket (y sus prefijos) | $0 | [Montajes S3](montajes-s3.md) |
-| `sizes-guard` | 1 política IAM que niega `RunMicrovm` fuera de las imágenes listadas | $0 | [Tamaños](tamanos.md) |
-| `events-webhooks` | Secreto HMAC, tabla DynamoDB con streams, 3 Lambdas, filtro de suscripción, scheduler, cola SQS de fallos, roles IAM | ≈ $0,40/mes (el secreto) | [Eventos y webhooks](eventos-y-webhooks.md) |
+| `sizes-guard` | 1 política IAM que niega `RunMicrovm` fuera de las imágenes listadas y publicar imágenes | $0 | [Tamaños](tamanos.md) |
+| `events-webhooks` | Secreto HMAC, tabla DynamoDB con streams, 3 Lambdas con sus log groups, filtro de suscripción, scheduler, colas SQS de fallos, roles y 4 políticas IAM | ≈ $0,40/mes (el secreto) | [Eventos y webhooks](eventos-y-webhooks.md) |
 | `otlp-export` | 1 política IAM (`cloudwatch:PutMetricData`) | $0 | [Exportación OTLP](exportacion-otlp.md) |
 | `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
 

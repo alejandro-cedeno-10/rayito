@@ -35,7 +35,22 @@
   `configurar-aws.md`, `eventos-y-webhooks.md`, `templates.md`,
   `secrets.md`; `AWS_API_NOTES.md` §21 and §25; CHANGELOGs.
 
-## 5. Acceptance
+## 5. Second security sweep
 
-- [ ] 5.1 `events-webhooks` acceptance on real AWS (deploy, forward,
-  deliver, reconcile) with the new templates, before archiving.
+- [x] 5.1 Admission (`domain/admission.py`), conditional state write,
+  reconciler through `admit`, with tests for the forged loop, order and
+  contention.
+- [x] 5.2 Sparse `open` index, reconciler `Query`, `FilterCriteria` on the
+  deliverer, per-function log groups.
+- [x] 5.3 Secret cache TTL, 401/403 re-read, `rayito-signature`.
+- [x] 5.4 Launcher, reader and webhook-admin policies; deprecated union.
+- [x] 5.5 Sizes guard image-publishing Deny.
+- [x] 5.6 `SECURITY.md` T20, T22, T23, T26, T27; events, security, sizes,
+  stacks pages; `AWS_API_NOTES.md` §25; CHANGELOGs.
+
+## 6. Acceptance
+
+- [ ] 6.1 `events-webhooks` acceptance on real AWS (deploy, forward,
+  deliver, reconcile) with the new templates, before archiving: the GSI
+  added on update, `LoggingConfig`, `FilterCriteria`, the per-job
+  policies and admission under a real suspend/resume loop.

@@ -15,3 +15,10 @@ The IAM section of `SECURITY.md` SHALL introduce `SandboxLauncherPolicy` as the 
 #### Scenario: the T22 row is pinned
 - **WHEN** `scripts/tests/test_security_docs.py::test_t22_says_only_the_mac_authenticates_an_event` reads the T22 row
 - **THEN** it holds those statements and not the retired "double identity check" wording
+
+### Requirement: SECURITY.md carries the M15 threat rows and does not overstate them
+`SECURITY.md` SHALL carry exactly one row each for T20 (S3 mounts), T23 (OTLP export), T26 (templates) and T27 (size cost guard). T22 SHALL say that `paused`/`resumed` are advisory (guest code can make `rayd` emit them through the loopback-reachable hooks), how admission bounds them, that webhooks are stack-wide, that receivers dedupe on `(sandbox_id, event_id)`, and that a `rayito-signature` header exists. T27 SHALL name the image-publishing Deny and the `imageVersion` residual.
+
+#### Scenario: the rows are pinned
+- **WHEN** `scripts/tests/test_security_docs.py` reads `SECURITY.md`
+- **THEN** each of T20, T23, T26 and T27 appears once, and T22 and T27 hold those statements

@@ -131,14 +131,17 @@ interface SecretsManagerModule {
  *   escritos (WRU) más las lecturas de `getEvents`; el reconciliador
  *   factura una invocación cada `reconcilerIntervalMinutes` (5 por
  *   defecto, mínimo 2, ~$0,0000002 c/u). us-east-1, consultado 2026-09-30.
- * IAM: `EventsOperatorPolicy` (salida de la pila), en las credenciales del
- *   llamante: `PutItem`/`Query`/`DeleteItem` sobre la tabla y su índice,
- *   `cloudformation:DescribeStacks` sobre la pila y
- *   `secretsmanager:GetSecretValue` sobre la clave del stack.
+ * IAM: la pila emite una política por tarea; adjunta a cada identidad sólo
+ *   la suya: `EventsLauncherPolicy` (`events`: lee la clave del stack),
+ *   `EventsReaderPolicy` (`getEvents`: sólo filas de eventos) y
+ *   `EventsWebhookAdminPolicy` (`registerWebhook`/`listWebhooks`/
+ *   `deleteWebhook`: sólo filas `WEBHOOK`). Todas incluyen
+ *   `cloudformation:DescribeStacks` sobre la pila. `EventsOperatorPolicy`
+ *   (la unión de las tres) queda obsoleta.
  * Cómo apagarla: no pases `events`; `destroy()` borra el secreto
  *   (force-delete: cualquier webhook registrado deja de poder verificarse),
  *   la tabla, las tres Lambdas, la suscripción y el scheduler (desvincula
- *   antes `EventsOperatorPolicy`, o la pila acaba en `DELETE_FAILED`).
+ *   antes sus políticas, o la pila acaba en `DELETE_FAILED`).
  * Ejemplo:
  *   const ev = new LifecycleEvents();
  *   await ev.deploy({ artifactBucket: "mi-bucket", logGroupName: "/rayito/rayito-base" });
@@ -198,8 +201,10 @@ export class LifecycleEvents implements LifecycleEventsSectionSource {
    * todos sus eventos y webhooks, las tres Lambdas, la suscripción, la cola
    * de fallos y el scheduler. No toca los secretos de cada webhook
    * (`rayito/webhooks/...`, de `SecretStore`) ni el log group de la imagen,
-   * que esta pila nunca creó. Si `EventsOperatorPolicy` sigue vinculada a
-   * algún usuario o rol, CloudFormation no puede borrarla y la pila termina
+   * que esta pila nunca creó. Si alguna de sus políticas
+   * (`EventsLauncherPolicy`, `EventsReaderPolicy`, `EventsWebhookAdminPolicy`
+   * o `EventsOperatorPolicy`) sigue vinculada a algún usuario o rol,
+   * CloudFormation no puede borrarla y la pila termina
    * en `DELETE_FAILED` (`StackError`): desvincúlala y repite
    * (`AWS_API_NOTES.md` Q108).
    */

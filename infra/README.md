@@ -493,15 +493,19 @@ Nunca se despliega sola ni el SDK la crea. Acciones y parámetros:
 
 | Recurso / salida | Qué es |
 |---|---|
-| `EventsTableName` | `AWS::DynamoDB::Table` on-demand, streams (`NEW_IMAGE`), GSI `gsi1` para listar por todos los sandboxes |
+| `EventsTableName` | `AWS::DynamoDB::Table` on-demand, streams (`NEW_IMAGE`), GSI `gsi1` para listar por todos los sandboxes y GSI disperso `open` (sólo las filas `STATE#` de sandboxes abiertos) para el reconciliador |
 | `StackKeySecretArn` | `AWS::SecretsManager::Secret`: la clave HMAC del stack; el SDK la lee para derivar `k_sbx` por sandbox, el forwarder la lee para verificar |
-| `OperatorPolicyArn` | `EventsOperatorPolicy`, para las credenciales del **llamante**: `dynamodb:PutItem`/`DeleteItem` sólo sobre filas `WEBHOOK` (`dynamodb:LeadingKeys`) y `dynamodb:Query` sobre la tabla y su índice `gsi1` (`register_webhook`/`list_webhooks`/`delete_webhook`/`get_events`), `cloudformation:DescribeStacks` sobre esta pila (resolver sus salidas) y `secretsmanager:GetSecretValue` sólo sobre el secreto del stack |
+| `LauncherPolicyArn` | `EventsLauncherPolicy`, para quien llama a `Sandbox.create(events=...)`: `secretsmanager:GetSecretValue` sólo sobre el secreto del stack y `cloudformation:DescribeStacks` sobre esta pila. Nada sobre la tabla |
+| `ReaderPolicyArn` | `EventsReaderPolicy`, para quien sólo llama a `get_events`: `dynamodb:Query` sobre filas `EVENT#*` (`dynamodb:LeadingKeys`) y sobre `…/index/gsi1`, y `DescribeStacks`. No lee webhooks ni la clave del stack |
+| `WebhookAdminPolicyArn` | `EventsWebhookAdminPolicy`, para `register_webhook`/`list_webhooks`/`delete_webhook`: `dynamodb:PutItem`/`DeleteItem`/`Query` sólo sobre filas `WEBHOOK` (`dynamodb:LeadingKeys`) y `DescribeStacks`. Los webhooks son de toda la pila: trátala como una política de operador |
+| `OperatorPolicyArn` | `EventsOperatorPolicy`, **obsoleta**: la unión de las tres anteriores, que se mantiene una versión más para quien ya la tiene vinculada |
 | `ReconcilerFunctionArn` | El Lambda reconciliador (`rate(<ReconcilerIntervalMinutes> minutes)`, 5 por defecto, mínimo 2) |
 | `DelivererFailuresQueueUrl` | Cola SQS: los registros del stream que agotan sus reintentos; vacía en condiciones normales |
 | `ForwarderFailuresQueueUrl` | Cola SQS (destino `OnFailure` de la invocación asíncrona del forwarder): los lotes de log cuya escritura en la tabla siguió fallando tras los reintentos de Lambda; vacía en condiciones normales. Una línea mala nunca hace fallar el lote: se cuenta y se descarta |
 
 Tres funciones Lambda (forwarder, deliverer, reconciliador; Python 3.12,
-`infra/lambdas/events_webhooks/`), una suscripción de CloudWatch Logs sobre
+`infra/lambdas/events_webhooks/`), cada una con su propio log group creado
+por la pila (y borrado con ella), una suscripción de CloudWatch Logs sobre
 `LogGroupName` (parámetro), dos colas SQS de fallos y una regla de
 EventBridge Scheduler. `scripts/gen_stack_assets.py` inyecta
 `docs/aws-api/service-2.json` en el zip bajo

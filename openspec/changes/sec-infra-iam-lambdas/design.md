@@ -58,10 +58,54 @@
     trust (documented by Scheduler); the Lambda trusts stay as they are
     until measured.
 
+11. **Admission before storage.** `domain/admission.py` is pure: an event
+    must move its sandbox strictly forward, ordered by `(generation, phase)`
+    with `created`/`resumed` opening a generation and `paused` closing it;
+    a gap is allowed so a refused or lost line never wedges a sandbox (the
+    proposal of "generation == last + 1" would). Repeated `/suspend` never
+    re-emits (`hooks::suspend`), so order alone cannot stop a forged loop:
+    `paused`/`resumed` spend from a GCRA bucket (one field,
+    `rate_tat_ms`; burst 20, one per 30 s) on the forwarder's clock, never
+    the event's. The state row is written first, under
+    `attribute_not_exists(revision) OR revision = :revision` after a
+    consistent `GetItem` (three attempts, then `AdmissionContended`, a
+    failed write); `last_event_id` lets the retry of a line whose event
+    write failed store it. Trade-off: a line older than the last admitted
+    one (an out-of-order retry) is now refused instead of delivered out of
+    order; documented. The reconciler goes through the same `admit` after
+    storing its event, so a failure in between is closed by the next run.
+12. **Sparse `open` index.** `open_pk = "OPEN"` (range `pk`) on open state
+    rows only; the tombstone drops it. One partition is enough at this
+    stack's scale (each write is rate limited). Rows written before the
+    upgrade enter the index with their next event; documented, no backfill
+    scan.
+13. **Deliverer filter.** `FilterCriteria` on `INSERT` + `NewImage.pk`
+    prefix `EVENT#`; the handler keeps its own check.
+14. **Secrets.** TTL cache of 300 s (`SECRET_CACHE_TTL_SECONDS`) plus
+    `invalidate`; a 401/403 re-reads once and retries only if the value
+    changed. `rayito-signature` is always sent (no cost, ignored by E2B
+    consumers); verification is documented with Python and TypeScript
+    receivers rather than shipped as SDK helpers (no new public API).
+15. **Caller policies per job.** Launcher, reader (table `Query` with
+    `LeadingKeys` `EVENT#*`, index `Query` in a separate statement so the
+    index never depends on how `LeadingKeys` evaluates on a GSI) and
+    webhook admin; `EventsOperatorPolicy` kept as the deprecated union.
+    Per-function log groups via `LoggingConfig.LogGroup`; no retention set
+    (same as Lambda's own groups).
+16. **Sizes guard.** Deny the four image-publishing actions on `*`
+    (stronger than per-ARN and simpler); the `imageVersion` residual is
+    documented because `RunMicrovm` authorizes on the unversioned ARN.
+
 ## Not in this change (follow-ups)
 
-- Optional `rayito-signature` header with a timestamped HMAC and verify
-  helpers (new public API).
+- Authenticating the hook peer in `rayd` so a guest cannot drive
+  `/suspend`/`/resume` (T2; the rate limit only bounds it).
+- `ReservedConcurrentExecutions` on the forwarder: it fails to deploy in
+  accounts whose unreserved concurrency would drop below the floor, which
+  needs a product decision and a real-AWS check.
+- Optional per-webhook filter (sandbox metadata or id prefix) for operators
+  that want tenant-scoped webhooks; generating or enforcing strong webhook
+  secrets in `register_webhook` (the SDK only sees the secret's name).
 - Optional `KmsKeyArn` for the events table, queues and stack secret, and a
   resource policy on the stack secret.
 - Tag-based trust for protected base-image names (needs a product decision

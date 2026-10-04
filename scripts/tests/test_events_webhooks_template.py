@@ -60,7 +60,7 @@ def test_the_table_is_on_demand_with_streams_and_a_sparse_gsi() -> None:
     assert table["BillingMode"] == "PAY_PER_REQUEST"
     assert table["StreamSpecification"] == {"StreamViewType": "NEW_IMAGE"}
     gsi_names = [gsi["IndexName"] for gsi in table["GlobalSecondaryIndexes"]]
-    assert gsi_names == ["gsi1"]
+    assert gsi_names == ["gsi1", "open"]
     assert table["TimeToLiveSpecification"] == {
         "AttributeName": "expires_at",
         "Enabled": True,
@@ -89,10 +89,10 @@ def role_actions(role: str) -> set[str]:
 def test_each_lambda_role_is_scoped_to_what_it_needs() -> None:
     forwarder = role_actions("ForwarderRole")
     assert forwarder == {
+        "dynamodb:GetItem",
         "dynamodb:PutItem",
         "secretsmanager:GetSecretValue",
         "sqs:SendMessage",
-        "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
     }
@@ -102,6 +102,44 @@ def test_each_lambda_role_is_scoped_to_what_it_needs() -> None:
     reconciler = role_actions("ReconcilerRole")
     assert "lambda:ListMicrovms" in reconciler
     assert "secretsmanager:GetSecretValue" not in reconciler
+
+
+def test_the_reconciler_queries_the_sparse_open_index_and_never_scans() -> None:
+    # A full-table scan grows with every EVENT/DELIVERY row a flood leaves
+    # behind, under a fixed Lambda timeout; the sparse index only holds the
+    # open sandboxes' STATE# rows.
+    (index,) = [
+        gsi
+        for gsi in resources()["EventsTable"]["Properties"]["GlobalSecondaryIndexes"]
+        if gsi["IndexName"] == "open"
+    ]
+    assert index["KeySchema"] == [
+        {"AttributeName": "open_pk", "KeyType": "HASH"},
+        {"AttributeName": "pk", "KeyType": "RANGE"},
+    ]
+    for role in LAMBDA_ROLES:
+        assert "dynamodb:Scan" not in role_actions(role), role
+    (query,) = writes(role_statements("ReconcilerRole"), "dynamodb:Query")
+    assert query["Resource"] == {"Fn::Sub": "${EventsTable.Arn}/index/open"}
+
+
+def test_admission_reads_only_state_rows() -> None:
+    for role in ("ForwarderRole", "ReconcilerRole"):
+        (read,) = writes(role_statements(role), "dynamodb:GetItem")
+        assert leading_keys(read) == ["STATE#*"], role
+
+
+def test_only_new_event_rows_invoke_the_deliverer() -> None:
+    # Without a filter the deliverer is invoked for its own DELIVERY#
+    # writes and for every STATE# move as well.
+    import json
+
+    mapping = resources()["DelivererEventSourceMapping"]["Properties"]
+    (pattern,) = [json.loads(f["Pattern"]) for f in mapping["FilterCriteria"]["Filters"]]
+    assert pattern == {
+        "eventName": ["INSERT"],
+        "dynamodb": {"NewImage": {"pk": {"S": [{"prefix": "EVENT#"}]}}},
+    }
 
 
 def test_no_statement_grants_a_wildcard_dynamodb_or_secret_resource() -> None:
@@ -159,20 +197,79 @@ def test_the_deliverer_reports_partial_batch_failures_and_keeps_failed_records()
     }
 
 
-def test_the_operator_policy_covers_every_sdk_call() -> None:
-    statements = resources()["EventsOperatorPolicy"]["Properties"]["PolicyDocument"]["Statement"]
-    actions = {action for statement in statements for action in as_list(statement["Action"])}
-    assert {
+def policy_statements(policy: str) -> list[dict[str, Any]]:
+    return list(resources()[policy]["Properties"]["PolicyDocument"]["Statement"])
+
+
+def policy_actions(policy: str) -> set[str]:
+    return {action for st in policy_statements(policy) for action in as_list(st["Action"])}
+
+
+def test_each_caller_policy_holds_only_its_jobs_actions() -> None:
+    # A get_events-only consumer must not be able to register an
+    # exfiltration webhook or derive any sandbox's key, and a launcher
+    # needs nothing on the table.
+    assert policy_actions("EventsLauncherPolicy") == {
         "secretsmanager:GetSecretValue",
-        "dynamodb:PutItem",
-        "dynamodb:Query",
-        "dynamodb:DeleteItem",
         "cloudformation:DescribeStacks",
-    } <= actions
+    }
+    assert policy_actions("EventsReaderPolicy") == {
+        "dynamodb:Query",
+        "cloudformation:DescribeStacks",
+    }
+    assert policy_actions("EventsWebhookAdminPolicy") == {
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "cloudformation:DescribeStacks",
+    }
+
+
+def test_the_reader_queries_only_event_rows_and_the_event_index() -> None:
+    queries = writes(policy_statements("EventsReaderPolicy"), "dynamodb:Query")
+    by_resource = {json_key(st["Resource"]): leading_keys(st) for st in queries}
+    assert by_resource == {
+        json_key({"Fn::GetAtt": "EventsTable.Arn"}): ["EVENT#*"],
+        json_key({"Fn::Sub": "${EventsTable.Arn}/index/gsi1"}): None,
+    }
+
+
+def test_the_webhook_admin_touches_only_webhook_rows() -> None:
+    (statement,) = writes(policy_statements("EventsWebhookAdminPolicy"), "dynamodb:PutItem")
+    assert leading_keys(statement) == ["WEBHOOK"]
+    assert set(as_list(statement["Action"])) == {
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+    }
+
+
+def test_the_deprecated_operator_policy_still_covers_every_sdk_call() -> None:
+    actions = policy_actions("EventsOperatorPolicy")
+    for policy in ("EventsLauncherPolicy", "EventsReaderPolicy", "EventsWebhookAdminPolicy"):
+        assert policy_actions(policy) <= actions, policy
     table_statement = next(
-        statement for statement in statements if "dynamodb:Query" in as_list(statement["Action"])
+        st for st in policy_statements("EventsOperatorPolicy") if "dynamodb:Query" in as_list(st["Action"])
     )
     assert {"Fn::Sub": "${EventsTable.Arn}/index/gsi1"} in table_statement["Resource"]
+
+
+def test_every_caller_policy_is_an_output() -> None:
+    outputs = template()["Outputs"]
+    expected = {
+        "LauncherPolicyArn": "EventsLauncherPolicy",
+        "ReaderPolicyArn": "EventsReaderPolicy",
+        "WebhookAdminPolicyArn": "EventsWebhookAdminPolicy",
+        "OperatorPolicyArn": "EventsOperatorPolicy",
+    }
+    for output, policy in expected.items():
+        assert outputs[output]["Value"] == {"Ref": policy}
+
+
+def json_key(value: Any) -> str:
+    import json
+
+    return json.dumps(value, sort_keys=True)
 
 
 def test_no_account_id_or_bucket_name_is_hard_coded() -> None:
@@ -225,13 +322,20 @@ def test_the_forwarder_failures_reach_a_queue_instead_of_being_dropped() -> None
     }
 
 
-def test_lambda_roles_write_only_lambdas_own_log_groups() -> None:
-    # Never `logs:*` on the whole account: the sandboxes' `/rayito/*` groups
-    # are where the forwarder reads events from.
-    for role in LAMBDA_ROLES:
-        (statement,) = [s for s in role_statements(role) if s.get("Sid") == "WriteLogs"]
-        resource = statement["Resource"]["Fn::Sub"]
-        assert resource.endswith(":log-group:/aws/lambda/*"), (role, resource)
+def test_lambda_roles_write_only_their_own_log_group() -> None:
+    # Never `logs:*` on the whole account, nor every /aws/lambda/* group:
+    # each function logs to the group the stack creates for it, and its
+    # role can write there only (the sandboxes' `/rayito/*` groups are
+    # where the forwarder reads events from).
+    for function in ("Forwarder", "Deliverer", "Reconciler"):
+        assert resources()[f"{function}LogGroup"]["Type"] == "AWS::Logs::LogGroup"
+        properties = resources()[f"{function}Function"]["Properties"]
+        assert properties["LoggingConfig"] == {"LogGroup": {"Ref": f"{function}LogGroup"}}
+        (statement,) = [
+            s for s in role_statements(f"{function}Role") if s.get("Sid") == "WriteLogs"
+        ]
+        assert statement["Resource"] == {"Fn::GetAtt": f"{function}LogGroup.Arn"}
+        assert set(as_list(statement["Action"])) == {"logs:CreateLogStream", "logs:PutLogEvents"}
 
 
 def test_every_table_write_is_limited_to_its_own_row_types() -> None:
@@ -246,10 +350,12 @@ def test_every_table_write_is_limited_to_its_own_row_types() -> None:
         assert statements, (role, action)
         for statement in statements:
             assert leading_keys(statement) == keys, (role, action)
-    operator = resources()["EventsOperatorPolicy"]["Properties"]["PolicyDocument"]["Statement"]
-    for action in ("dynamodb:PutItem", "dynamodb:DeleteItem"):
-        for statement in writes(operator, action):
-            assert leading_keys(statement) == ["WEBHOOK"], action
+    for policy in ("EventsOperatorPolicy", "EventsWebhookAdminPolicy"):
+        for action in ("dynamodb:PutItem", "dynamodb:DeleteItem"):
+            for statement in writes(policy_statements(policy), action):
+                assert leading_keys(statement) == ["WEBHOOK"], (policy, action)
+    for policy in ("EventsLauncherPolicy", "EventsReaderPolicy"):
+        assert not writes(policy_statements(policy), "dynamodb:PutItem"), policy
 
 
 def test_the_scheduler_role_trusts_only_this_account() -> None:

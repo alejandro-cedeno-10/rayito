@@ -26,13 +26,14 @@ class _FakeSecretsClient:
     def __init__(self, *, missing: bool = False) -> None:
         self.requested_secret_ids: list[str] = []
         self._missing = missing
+        self.value = "webhook-secret-value"
 
     def get_secret_value(self, *, SecretId: str) -> dict[str, str]:
         self.requested_secret_ids.append(SecretId)
         if self._missing:
             error = {"Error": {"Code": "ResourceNotFoundException", "Message": "not found"}}
             raise ClientError(error, "GetSecretValue")  # type: ignore[arg-type]
-        return {"SecretString": "webhook-secret-value"}
+        return {"SecretString": self.value}
 
 
 class _FakeSender:
@@ -50,10 +51,12 @@ class _FakeSender:
         self._context = context
         self._seconds_per_post = seconds_per_post
         self.posts: list[tuple[str, float]] = []
+        self.headers: list[dict[str, str]] = []
 
     def post(self, url: str, headers: dict[str, str], body: bytes, *, timeout: float) -> int:
-        del headers, body
+        del body
         self.posts.append((url, timeout))
+        self.headers.append(headers)
         if self._context is not None:
             self._context.spend(self._seconds_per_post)
         outcome = self._outcomes[min(len(self.posts), len(self._outcomes)) - 1]
@@ -278,3 +281,44 @@ def test_an_unexpected_error_on_one_webhook_does_not_fail_the_batch(
     assert _status(table, webhook_id="wh-0") == "failed"
     assert _status(table, webhook_id="wh-1") == "delivered"
     assert '"delivery_failure_reason": "internal_error"' in capsys.readouterr().out
+
+
+def test_every_request_carries_the_timestamped_rayito_signature(
+    table: FakeTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sender, secrets = _FakeSender(200), _FakeSecretsClient()
+    _use(monkeypatch, sender, secrets)
+    monkeypatch.setattr(deliverer.time, "time", lambda: 1_790_000_000.5)
+    deliverer.handler({"Records": [_record()]}, FakeContext(_PLENTY_OF_TIME_MS))
+    (headers,) = sender.headers
+    assert headers["rayito-signature"].startswith("t=1790000000,v1=")
+    assert "e2b-signature" in headers
+
+
+def test_a_401_after_a_rotation_is_retried_once_with_the_new_secret(
+    table: FakeTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sender, secrets = _FakeSender(401, 200), _FakeSecretsClient()
+    _use(monkeypatch, sender, secrets)
+    deliverer._secrets_singleton().read("rayito/webhooks/wh-1")  # warm, stale cache
+    secrets.value = "rotated-secret-value"
+
+    deliverer.handler({"Records": [_record()]}, FakeContext(_PLENTY_OF_TIME_MS))
+
+    assert len(sender.posts) == 2
+    first, second = (h["e2b-signature"] for h in sender.headers)
+    assert first != second
+    assert _status(table) == "delivered"
+
+
+def test_a_401_with_an_unchanged_secret_is_final(
+    table: FakeTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sender, secrets = _FakeSender(403), _FakeSecretsClient()
+    _use(monkeypatch, sender, secrets)
+
+    deliverer.handler({"Records": [_record()]}, FakeContext(_PLENTY_OF_TIME_MS))
+
+    assert len(sender.posts) == 1
+    assert secrets.requested_secret_ids == ["rayito/webhooks/wh-1"] * 2
+    assert _status(table) == "failed"

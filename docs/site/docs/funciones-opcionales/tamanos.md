@@ -245,6 +245,22 @@ de la `CallerPolicy` estándar de `infra/iam.yaml` (un Deny explícito gana
 siempre sobre cualquier Allow, venga de la política que venga). `rayito
 stack destroy sizes-guard` borra la política; ninguna imagen se toca.
 
+La política también niega crear, actualizar o borrar imágenes y versiones
+(`CreateMicrovmImage`, `UpdateMicrovmImage`, `UpdateMicrovmImageVersion`,
+`DeleteMicrovmImageVersion`): el tamaño es una propiedad de cada versión,
+así que sin ese Deny una identidad que además tenga la `CallerPolicy`
+podría reconstruir una imagen permitida a 8192 MiB y lanzarla sin salir de
+la lista. Vincúlala a la identidad que **lanza** sandboxes
+(`SandboxLauncherPolicy`) y publica las imágenes con otra
+(`ImagePublisherPolicy` o `RayitoTemplateBuilder`).
+
+!!! warning "Versiones antiguas de una imagen permitida"
+    `lambda:RunMicrovm` se autoriza contra el ARN de la imagen sin versión
+    (`AWS_API_NOTES.md` §24), así que la política no puede impedir un
+    `imageVersion` concreto. Si alguna vez publicaste un tamaño mayor bajo
+    un nombre que ahora permites, borra esas versiones
+    (`rayito image prune`): mientras existan, se pueden lanzar.
+
 ## Errores y solución de problemas
 
 | Python | TypeScript | Cuándo | Qué hacer |

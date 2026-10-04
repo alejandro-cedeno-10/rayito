@@ -46,6 +46,21 @@ The deliverer SHALL sign each webhook request with `e2b-webhook-id`, `e2b-delive
 - **WHEN** a receiver answers one byte at a time, each well within a per-read timeout
 - **THEN** the attempt ends with a timeout once its deadline passes
 
+### Requirement: The reconciler synthesizes killed events for sandboxes that vanished
+A scheduled reconciler SHALL compare `ListMicrovms` against the sandboxes the events table still considers open (no `killed` event recorded) and SHALL write a `killed{reason: "unknown"}` event, with a deterministic id and the generation and image of the sandbox's last recorded event, for each one missing from the live set (or listed only in a terminal state) — re-running the reconciler over the same gap SHALL NOT create a second event. It SHALL find the open sandboxes by querying a sparse index that holds only open sandboxes' state rows, never by scanning the table, so its cost does not grow with the number of event or delivery rows. A sandbox's recorded state SHALL only move forward, and SHALL stay `killed` once a `killed` event is recorded, so a late or duplicate line can never reopen it.
+
+#### Scenario: a vanished sandbox gets a killed event
+- **WHEN** a sandbox the table considers open does not appear in `ListMicrovms`
+- **THEN** exactly one synthesized `killed{reason: "unknown"}` event is written for it, even if the reconciler runs again before the next real event
+
+#### Scenario: a line after killed does not reopen the sandbox
+- **WHEN** a `resumed` line arrives after the sandbox's `killed` was recorded
+- **THEN** the sandbox stays closed and the reconciler synthesizes nothing for it
+
+#### Scenario: the reconciler never scans the table
+- **WHEN** the reconciler lists open sandboxes
+- **THEN** it queries the `open` index and the table fake has no scan operation at all
+
 ## ADDED Requirements
 
 ### Requirement: register_webhook only accepts URLs the deliverer can reach
@@ -54,3 +69,35 @@ The deliverer SHALL sign each webhook request with `e2b-webhook-id`, `e2b-delive
 #### Scenario: an unreachable URL is never stored
 - **WHEN** `register_webhook("https://h:99999/", ...)` is called
 - **THEN** `InvalidArgumentException` is raised, its message does not contain the URL, and no row is written
+
+### Requirement: The forwarder admits only events that move a sandbox forward, at a bounded rate
+After the MAC and shape checks, the forwarder SHALL admit an event only if it moves its sandbox's recorded lifecycle strictly forward: `created` only as the sandbox's first event, `paused` only after `created` or `resumed` of the same generation, `resumed` only with a generation higher than the last admitted event's, and nothing after `killed`; a gap SHALL be allowed. `paused` and `resumed` SHALL additionally spend from a per-sandbox token bucket kept on the sandbox's state row (a burst of 20, then one every 30 seconds, measured on the forwarder's clock). An event refused by either rule SHALL be counted under `invalid_transition` or `rate_limited` and SHALL NOT be stored or delivered. The state row SHALL be written with an optimistic-concurrency condition, and a retry of the last admitted event SHALL still store it.
+
+#### Scenario: a guest-driven suspend/resume loop is bounded
+- **WHEN** one batch holds a `created` followed by 20 authentic `paused`/`resumed` pairs of the same sandbox
+- **THEN** 20 of those 40 events are stored and the other 20 are counted as `rate_limited`
+
+#### Scenario: an older position is refused
+- **WHEN** a `paused` of generation 0 arrives after a `resumed` of generation 1 was admitted
+- **THEN** it is counted as `invalid_transition` and not stored
+
+### Requirement: Only new event rows invoke the deliverer
+The deliverer's event source mapping SHALL carry a filter that passes only `INSERT` records whose new image has a partition key starting with `EVENT#`, so delivery-status, state and webhook writes never invoke it.
+
+#### Scenario: the filter is pinned
+- **WHEN** `scripts/tests/test_events_webhooks_template.py` reads `DelivererEventSourceMapping`
+- **THEN** its `FilterCriteria` holds exactly that pattern
+
+### Requirement: Every delivery carries a timestamped HMAC and rotated secrets take effect in bounded time
+Besides the E2B headers, every delivery attempt SHALL carry `rayito-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<webhook_id>." + body)>`. The deliverer SHALL cache a webhook secret for at most 300 seconds and, when a receiver answers 401 or 403, SHALL re-read the secret once past the cache and, if it changed, retry immediately with the new value.
+
+#### Scenario: a rotated secret is used after a 401
+- **WHEN** a warm deliverer holds the old secret and the receiver answers 401, then 200
+- **THEN** the second attempt is signed with the new secret and the pair is recorded `delivered`
+
+### Requirement: The stack emits one caller policy per job
+`infra/events-webhooks.yaml` SHALL emit `EventsLauncherPolicy` (read the stack key, `DescribeStacks`), `EventsReaderPolicy` (`Query` on `EVENT#*` rows and the `gsi1` index, `DescribeStacks`) and `EventsWebhookAdminPolicy` (`PutItem`/`DeleteItem`/`Query` on `WEBHOOK` rows only, `DescribeStacks`), each as an output. `EventsOperatorPolicy` SHALL remain, as their deprecated union, for one release. Each Lambda SHALL log only to its own log group, created by the stack.
+
+#### Scenario: a reader cannot register a webhook
+- **WHEN** the template test reads `EventsReaderPolicy`
+- **THEN** it grants no `PutItem`, no `DeleteItem` and no `GetSecretValue`

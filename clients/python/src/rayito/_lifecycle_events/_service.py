@@ -93,21 +93,24 @@ class LifecycleEvents:
         Activa: una llamada explícita a este método (o `rayito events deploy`).
         Recursos y llamadas AWS: un secreto de Secrets Manager (la clave
             HMAC del stack), una tabla DynamoDB on-demand con streams, tres
-            funciones Lambda, una suscripción de CloudWatch Logs, una cola
-            SQS de fallos del deliverer y una regla de EventBridge Scheduler
-            (`rate(reconciler_interval_minutes)`, mínimo 2).
+            funciones Lambda con un log group cada una, una suscripción de
+            CloudWatch Logs, dos colas SQS de fallos, una regla de
+            EventBridge Scheduler (`rate(reconciler_interval_minutes)`,
+            mínimo 2) y cuatro políticas IAM gestionadas.
         Coste aproximado: $0,40/mes el secreto; DynamoDB, Lambda y SQS son
             on-demand/por uso ($0 en reposo); el Scheduler invoca el
             reconciliador cada `reconciler_interval_minutes` minutos
             (~$0,0000002 por invocación, us-east-1, 2026-09-30).
-        IAM: la política `EventsOperatorPolicy` que la pila emite (adjúntala
-            a quien llame a `events=`/`register_webhook`/`list_webhooks`/
-            `delete_webhook`/`get_events`): `PutItem`/`Query`/`DeleteItem`
-            sobre la tabla y su índice, `DescribeStacks` sobre la pila y
-            `GetSecretValue` sobre la clave del stack.
+        IAM: la pila emite una política por tarea; adjunta a cada identidad
+            sólo la suya: `EventsLauncherPolicy` (`events=`: lee la clave
+            del stack), `EventsReaderPolicy` (`get_events`: sólo filas de
+            eventos) y `EventsWebhookAdminPolicy` (`register_webhook`/
+            `list_webhooks`/`delete_webhook`: sólo filas `WEBHOOK`). Todas
+            incluyen `DescribeStacks` sobre la pila. `EventsOperatorPolicy`
+            (la unión de las tres) queda obsoleta.
         Cómo apagarla: `destroy()` (fuerza el borrado del secreto: cualquier
             webhook registrado deja de poder verificarse); desvincula antes
-            `EventsOperatorPolicy` de quien la tenga, o la pila acaba en
+            esas políticas de quien las tenga, o la pila acaba en
             `DELETE_FAILED` (AWS_API_NOTES.md Q108).
         Ejemplo:
             ev = LifecycleEvents()
@@ -136,10 +139,12 @@ class LifecycleEvents:
         tabla con todos sus eventos y webhooks, las tres Lambdas, la
         suscripción, las colas de fallos y el scheduler. No toca los secretos
         de cada webhook (`rayito/webhooks/...`, de `SecretStore`) ni el log
-        group de la imagen, que esta pila nunca creó. Si `EventsOperatorPolicy`
-        sigue vinculada a algún usuario o rol, CloudFormation no puede
-        borrarla y la pila termina en `DELETE_FAILED` (`StackException`):
-        desvincúlala y repite (AWS_API_NOTES.md Q108)."""
+        group de la imagen, que esta pila nunca creó. Si alguna de sus
+        políticas (`EventsLauncherPolicy`, `EventsReaderPolicy`,
+        `EventsWebhookAdminPolicy` o `EventsOperatorPolicy`) sigue vinculada a
+        algún usuario o rol, CloudFormation no puede borrarla y la pila
+        termina en `DELETE_FAILED` (`StackException`): desvincúlala y repite
+        (AWS_API_NOTES.md Q108)."""
         self._stacks.destroy(_COMPONENT, stack_name=self._stack_name, wait=wait)
 
     # -- Webhooks ----------------------------------------------------------

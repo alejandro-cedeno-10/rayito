@@ -40,6 +40,10 @@ lo concede.
 | Secretos con una CMK propia | `kms:Decrypt` (y `kms:GenerateDataKey` para escribir), sólo a través de Secrets Manager | parámetro `KmsKeyArn` de `infra/secrets-access.yaml` |
 | Índice de metadatos: crear con `index=` | `dynamodb:PutItem` sobre la tabla | `RayitoIndexWriter` |
 | Índice de metadatos: listar con `index=` | `dynamodb:BatchGetItem` sobre la tabla | `RayitoIndexReader` |
+| Eventos: lanzar con `events=` | `secretsmanager:GetSecretValue` sobre la clave del stack y `cloudformation:DescribeStacks` sobre la pila | `EventsLauncherPolicy` (pila `events-webhooks`) |
+| Eventos: leer (`get_events`) | `dynamodb:Query` sobre las filas de eventos y el índice `gsi1`, y `DescribeStacks` | `EventsReaderPolicy` |
+| Eventos: webhooks (`register_webhook`, `list_webhooks`, `delete_webhook`) | `dynamodb:PutItem`/`DeleteItem`/`Query` sólo sobre filas `WEBHOOK`, y `DescribeStacks` | `EventsWebhookAdminPolicy` (de operador: los webhooks son de toda la pila) |
+| Limitar los tamaños que se pueden lanzar | un Deny de `RunMicrovm` fuera de la lista y de publicar imágenes | `RayitoRunAllowedSizes` (pila `sizes-guard`): sólo para el lanzador, nunca el publicador |
 | Proxy local (`rayito sandbox proxy`) | `lambda:GetMicrovm` y `CreateMicrovmAuthToken` | `SandboxLauncherPolicy` o `CallerPolicy` |
 | Logs de CloudWatch (`rayito sandbox logs`) | `logs:DescribeLogStreams` y `logs:GetLogEvents` sobre el grupo `/rayito/<imagen>` | no viene en la plantilla: añádelo a tu política |
 

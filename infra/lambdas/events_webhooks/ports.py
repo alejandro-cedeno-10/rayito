@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from domain.admission import Admission
 from domain.event import LifecycleEvent
 
 
@@ -38,15 +39,16 @@ class EventStore(Protocol):
         exception for the duplicate case."""
         ...
 
-    def record_sandbox_state(self, event: LifecycleEvent) -> None:
-        """Moves the `STATE#<sandbox_id>` row to `event`, but only forward:
-        an event older than the one already recorded, or anything after a
-        `killed` (which stays as a tombstone until its TTL), changes
-        nothing."""
+    def admit(self, event: LifecycleEvent, now_ms: int) -> Admission:
+        """Moves the `STATE#<sandbox_id>` row to `event` if
+        `domain.admission.admit` accepts it (order, rate, the `killed`
+        tombstone) and nobody changed the row meanwhile; returns the
+        decision. Called before the event is stored."""
         ...
 
     def open_sandboxes(self) -> list[OpenSandbox]:
-        """Sandboxes whose last recorded event is not `killed`."""
+        """Sandboxes whose last admitted event is not `killed` (a query
+        on the sparse `open` index, never a table scan)."""
         ...
 
     def claim_delivery(self, event: LifecycleEvent, webhook_id: str) -> bool:
@@ -69,7 +71,12 @@ class WebhookStore(Protocol):
 
 class SecretReader(Protocol):
     def read(self, secret_id: str) -> bytes:
-        """The secret's value (`SecretString` as UTF-8, or `SecretBinary`)."""
+        """The secret's value (`SecretString` as UTF-8, or `SecretBinary`),
+        possibly cached for a bounded time."""
+        ...
+
+    def invalidate(self, secret_id: str) -> None:
+        """Forgets any cached value, so the next `read` asks again."""
         ...
 
 

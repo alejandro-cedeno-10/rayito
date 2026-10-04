@@ -7,6 +7,13 @@ invocation is retried and then discarded as a whole batch, genuine lines
 included. `decide` never raises; if it ever did, that one line is counted
 under `REASON_INTERNAL_ERROR` and the batch goes on.
 
+A verified line is then admitted (`domain/admission.py`: the sandbox's
+events only move forward, and `paused`/`resumed` spend from a per-sandbox
+rate bucket) before it is stored: a refused one is counted under
+`invalid_transition` or `rate_limited`, never stored nor delivered. The
+state moves first and the event row second; a retry of the same line after
+the event write failed is recognized (`last_event_id`) and stores it.
+
 A failed table write is different (DynamoDB unavailable, not the line's
 fault): every other line is still processed, and only then does the
 invocation fail, so Lambda's asynchronous retries run it again (the writes
@@ -29,6 +36,7 @@ from typing import Any, Final
 import boto3
 from adapters.dynamodb import DynamoDbStore
 from adapters.secrets import SecretsManagerReader
+from domain.admission import Refused
 from domain.event import LINE_TOKEN
 from domain.forwarding import Accepted, Decision, Rejected, decide
 
@@ -91,10 +99,11 @@ def handler(event: dict[str, Any], _context: object) -> dict[str, int]:
             rejected[decision.reason] += 1
             continue
         try:
-            # A duplicate line (CloudWatch Logs redelivery) changes nothing:
-            # only a newly written event may move the sandbox's state.
-            if store.put_event_if_absent(decision.event):
-                store.record_sandbox_state(decision.event)
+            admission = store.admit(decision.event, now_ms)
+            if isinstance(admission, Refused):
+                rejected[admission.reason] += 1
+                continue
+            store.put_event_if_absent(decision.event)
         except Exception:
             failed_writes += 1
             continue

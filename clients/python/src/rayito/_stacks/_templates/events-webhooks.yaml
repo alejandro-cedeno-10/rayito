@@ -5,9 +5,11 @@ Description: >-
   CloudWatch Logs subscription, stored for 7 days and delivered to
   registered webhooks with E2B-compatible signatures. Creates one Secrets
   Manager secret (the stack-wide HMAC key), one on-demand DynamoDB table,
-  three Lambda functions, one CloudWatch Logs subscription filter, two SQS
+  three Lambda functions (each with its own log group), one CloudWatch
+  Logs subscription filter, two SQS
   queues (the forwarder's and the deliverer's on-failure destinations) and
-  one EventBridge Scheduler rule. Deploy it only if you pass `events=` to
+  one EventBridge Scheduler rule, plus four caller IAM policies. Deploy it
+  only if you pass `events=` to
   `Sandbox.create`; delete the stack to remove everything it created
   (the Secrets Manager secret is force-deleted, losing every already
   registered webhook's ability to re-verify old events). Action names and
@@ -82,6 +84,8 @@ Resources:
           AttributeType: S
         - AttributeName: gsi1sk
           AttributeType: S
+        - AttributeName: open_pk
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
@@ -93,6 +97,17 @@ Resources:
             - AttributeName: gsi1pk
               KeyType: HASH
             - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # Sparse: only an open sandbox's STATE# row carries open_pk, so the
+        # reconciler queries the open sandboxes instead of scanning every
+        # EVENT/DELIVERY row (domain/schema.py).
+        - IndexName: open
+          KeySchema:
+            - AttributeName: open_pk
+              KeyType: HASH
+            - AttributeName: pk
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -126,6 +141,15 @@ Resources:
                 Condition:
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys: ["EVENT#*", "STATE#*"]
+              # Admission reads the sandbox's STATE# row before moving it
+              # (domain/admission.py).
+              - Sid: ReadSandboxState
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ["STATE#*"]
               - Sid: SendToFailuresQueue
                 Effect: Allow
                 Action: sqs:SendMessage
@@ -134,13 +158,13 @@ Resources:
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref StackKeySecret
-              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
-              # a bug in a function can never write lines into an image's log
-              # group, which is what the forwarder reads events from.
+              # Only this function's own log group (LoggingConfig below), never
+              # another function's nor the sandboxes' (/rayito/*), which is
+              # what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
-                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ForwarderLogGroup.Arn
 
   DelivererRole:
     Type: AWS::IAM::Role
@@ -182,13 +206,13 @@ Resources:
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rayito/webhooks/*"
-              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
-              # a bug in a function can never write lines into an image's log
-              # group, which is what the forwarder reads events from.
+              # Only this function's own log group (LoggingConfig below), never
+              # another function's nor the sandboxes' (/rayito/*), which is
+              # what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
-                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt DelivererLogGroup.Arn
               - Sid: SendToFailuresQueue
                 Effect: Allow
                 Action: sqs:SendMessage
@@ -208,12 +232,20 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Scan cannot be narrowed by key (it reads the whole table);
-              # the writes are, to the rows a synthesized event touches.
-              - Sid: ScanOpenSandboxes
+              # The sparse `open` index holds only open sandboxes' STATE#
+              # rows; the writes are limited to the rows a synthesized event
+              # touches.
+              - Sid: QueryOpenSandboxes
                 Effect: Allow
-                Action: dynamodb:Scan
+                Action: dynamodb:Query
+                Resource: !Sub "${EventsTable.Arn}/index/open"
+              - Sid: ReadSandboxState
+                Effect: Allow
+                Action: dynamodb:GetItem
                 Resource: !GetAtt EventsTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ["STATE#*"]
               - Sid: WriteSynthesizedEvents
                 Effect: Allow
                 Action: dynamodb:PutItem
@@ -225,13 +257,25 @@ Resources:
                 Effect: Allow
                 Action: lambda:ListMicrovms
                 Resource: "*"
-              # Only Lambda's own log groups, never the sandboxes' (/rayito/*):
-              # a bug in a function can never write lines into an image's log
-              # group, which is what the forwarder reads events from.
+              # Only this function's own log group (LoggingConfig below), never
+              # another function's nor the sandboxes' (/rayito/*), which is
+              # what the forwarder reads events from.
               - Sid: WriteLogs
                 Effect: Allow
-                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ReconcilerLogGroup.Arn
+
+  # --- Lambda log groups ---------------------------------------------------
+  # One per function, created by the stack (and deleted with it) so each
+  # role can be limited to its own group instead of every /aws/lambda/*
+  # group of the account. No RetentionInDays: the same as the groups Lambda
+  # would create on its own.
+  ForwarderLogGroup:
+    Type: AWS::Logs::LogGroup
+  DelivererLogGroup:
+    Type: AWS::Logs::LogGroup
+  ReconcilerLogGroup:
+    Type: AWS::Logs::LogGroup
 
   # --- Lambda functions ---------------------------------------------------
   ForwarderFunction:
@@ -240,6 +284,8 @@ Resources:
       Runtime: python3.12
       Handler: handlers.forwarder.handler
       Role: !GetAtt ForwarderRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ForwarderLogGroup
       Timeout: 30
       MemorySize: 256
       Code:
@@ -292,6 +338,8 @@ Resources:
       Runtime: python3.12
       Handler: handlers.deliverer.handler
       Role: !GetAtt DelivererRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref DelivererLogGroup
       Timeout: 60
       MemorySize: 256
       Code:
@@ -330,6 +378,13 @@ Resources:
       # not finish inside its time budget): the retry resumes there, and
       # every webhook already marked `delivered` is skipped.
       FunctionResponseTypes: [ReportBatchItemFailures]
+      # Only new EVENT# rows invoke the deliverer: its own DELIVERY# writes,
+      # STATE# moves and WEBHOOK edits are dropped by Lambda before any
+      # invocation (Lambda event filtering for DynamoDB streams,
+      # AWS_API_NOTES.md section 25). The handler still checks the same.
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName": ["INSERT"], "dynamodb": {"NewImage": {"pk": {"S": [{"prefix": "EVENT#"}]}}}}'
       DestinationConfig:
         OnFailure:
           Destination: !GetAtt DelivererFailuresQueue.Arn
@@ -340,6 +395,8 @@ Resources:
       Runtime: python3.12
       Handler: handlers.reconciler.handler
       Role: !GetAtt ReconcilerRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ReconcilerLogGroup
       Timeout: 60
       MemorySize: 256
       Code:
@@ -388,20 +445,90 @@ Resources:
         Arn: !GetAtt ReconcilerFunction.Arn
         RoleArn: !GetAtt ReconcilerSchedulerRole.Arn
 
-  # --- Operator policy: everything LifecycleEvents() itself calls, direct
-  # on this stack's own table/secret/status; the three Lambdas have their
-  # own, separate least-privilege roles above. ---------------------------
+  # --- Caller policies: one per job, so an identity gets only what its
+  # SDK calls need (infra/README.md has the call -> policy table). The three
+  # Lambdas have their own, separate least-privilege roles above. ---------
+  EventsLauncherPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Attach to the identity that calls Sandbox.create(events=...): reads
+        the stack key to derive each sandbox's own k_sbx and resolves this
+        stack's outputs. Nothing on the table.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadStackKey
+            Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Ref StackKeySecret
+          - Sid: ResolveStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Ref "AWS::StackId"
+
+  EventsReaderPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Attach to the identity that only calls get_events (a dashboard, an
+        analytics job): queries EVENT# rows and the gsi1 index. It can
+        neither read nor write webhooks, nor read the stack key.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: QueryEvents
+            Effect: Allow
+            Action: dynamodb:Query
+            Resource: !GetAtt EventsTable.Arn
+            Condition:
+              ForAllValues:StringLike:
+                dynamodb:LeadingKeys: ["EVENT#*"]
+          - Sid: QueryAllEvents
+            Effect: Allow
+            Action: dynamodb:Query
+            Resource: !Sub "${EventsTable.Arn}/index/gsi1"
+          - Sid: ResolveStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Ref "AWS::StackId"
+
+  EventsWebhookAdminPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Attach to the identity that calls register_webhook, list_webhooks or
+        delete_webhook: writes, deletes and lists WEBHOOK rows only. It can
+        never mark a delivery done, plant an event row nor read the stack
+        key. Webhooks are stack-wide (every webhook receives every
+        sandbox's events of its types): treat this as an operator policy.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ManageWebhooks
+            Effect: Allow
+            Action: [dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query]
+            Resource: !GetAtt EventsTable.Arn
+            Condition:
+              ForAllValues:StringEquals:
+                dynamodb:LeadingKeys: ["WEBHOOK"]
+          - Sid: ResolveStackOutputs
+            Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Ref "AWS::StackId"
+
+  # Deprecated: the union of the three policies above, kept for one release
+  # so an identity that already has it attached keeps working. Prefer the
+  # one policy each identity needs.
   EventsOperatorPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       Description: >-
-        Attach to the identity calling LifecycleEvents(...)/events=:
-        register_webhook/list_webhooks/delete_webhook/get_events read and
-        write the events table directly (no Lambda in that path), status()
-        resolves this stack's outputs, and deriving k_sbx reads the stack
-        key. SecretStore itself is a separate concern: register_webhook's
-        own secret lives under rayito/webhooks/, covered by
-        secrets-access.yaml, not this policy.
+        Deprecated (use EventsLauncherPolicy, EventsReaderPolicy or
+        EventsWebhookAdminPolicy): the union of the three, for an identity
+        calling every LifecycleEvents method. SecretStore itself is a
+        separate concern: register_webhook's own secret lives under
+        rayito/webhooks/, covered by secrets-access.yaml, not this policy.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -435,8 +562,17 @@ Outputs:
   StackKeySecretArn:
     Description: Pass to LifecycleEvents(stack_key_secret_arn=...) / read by the forwarder.
     Value: !Ref StackKeySecret
+  LauncherPolicyArn:
+    Description: Attach to the identity that calls Sandbox.create(events=...).
+    Value: !Ref EventsLauncherPolicy
+  ReaderPolicyArn:
+    Description: Attach to the identity that only calls get_events.
+    Value: !Ref EventsReaderPolicy
+  WebhookAdminPolicyArn:
+    Description: Attach to the identity that calls register_webhook/list_webhooks/delete_webhook.
+    Value: !Ref EventsWebhookAdminPolicy
   OperatorPolicyArn:
-    Description: Attach to the identity that calls events=/register_webhook/get_events.
+    Description: Deprecated union of the three policies above (kept for one release).
     Value: !Ref EventsOperatorPolicy
   ReconcilerFunctionArn:
     Value: !GetAtt ReconcilerFunction.Arn

@@ -1311,22 +1311,49 @@ sola vez al crearse), y la plantilla fija además `AWS_DATA_PATH`.
 §10) — el campo `microvmId` de cada `items[]` es el `sandbox_id` del resto
 del SDK; un `state` `TERMINATING`/`TERMINATED` cuenta como no vivo.
 
-**IAM del llamante** (`EventsOperatorPolicy`): `dynamodb:PutItem`/
-`DeleteItem` sólo sobre filas `WEBHOOK` y `dynamodb:Query` sobre la tabla y
-`…/index/gsi1`, `cloudformation:DescribeStacks` sobre la pila y
-`secretsmanager:GetSecretValue` sobre el secreto del stack.
+**IAM del llamante**, una política por tarea: `EventsLauncherPolicy`
+(`events=`: `secretsmanager:GetSecretValue` sobre el secreto del stack),
+`EventsReaderPolicy` (`get_events`: `dynamodb:Query` sobre la tabla con
+`dynamodb:LeadingKeys` `EVENT#*` y sobre `…/index/gsi1` sin condición, en
+dos sentencias con recursos distintos, así que la consulta al índice nunca
+depende de cómo evalúe IAM `LeadingKeys` sobre un GSI) y
+`EventsWebhookAdminPolicy` (`PutItem`/`DeleteItem`/`Query` con
+`LeadingKeys` `WEBHOOK`); las tres con `cloudformation:DescribeStacks` sobre
+la pila. `EventsOperatorPolicy` es su unión, obsoleta.
 
 **Mínimo privilegio por fila** (sin medir en AWS real: pendiente de la
 aceptación de `sec/infra-iam-lambdas`): cada `PutItem`/`DeleteItem` y el
 `Query` del deliverer llevan `ForAllValues:StringLike`/`StringEquals` sobre
 `dynamodb:LeadingKeys` (el valor de la clave de partición de la petición):
 forwarder y reconciliador `EVENT#*`/`STATE#*`, deliverer `DELIVERY#*` (y
-`Query` sobre `WEBHOOK`), operador `WEBHOOK`. `Scan` (reconciliador) y el
-`Query` del operador sobre `gsi1` no se acotan por clave. Los logs de las
-tres Lambdas se limitan a `log-group:/aws/lambda/*` (nunca los
-`/rayito/*` de los sandboxes) y el rol del Scheduler exige
-`aws:SourceAccount`. La misma condición en el trust de los roles de las
-Lambdas queda pendiente de medir.
+`Query` sobre `WEBHOOK`), administración de webhooks `WEBHOOK`. La admisión
+(forwarder y reconciliador) lee la fila con `GetItem` acotado a `STATE#*`.
+El `Query` del reconciliador sobre `…/index/open` y el del lector sobre
+`gsi1` no se acotan por clave (cada índice sólo contiene un tipo de fila).
+Cada Lambda escribe sólo en su propio log group, creado por la pila
+(`AWS::Logs::LogGroup` + `LoggingConfig.LogGroup` en la función; la
+`Arn` de `Fn::GetAtt` de un log group ya termina en `:*` y cubre sus
+streams; doc de AWS `AWS::Lambda::Function LoggingConfig`, consultada
+2026-10-04), y el rol del Scheduler exige `aws:SourceAccount`. La misma
+condición en el trust de los roles de las Lambdas queda pendiente de medir.
+
+**Admisión y GSI disperso** (sin medir en AWS real: misma aceptación): la
+fila `STATE#` lleva `revision` y cada escritura es un `PutItem` con
+`attribute_not_exists(revision) OR revision = :revision` tras un `GetItem`
+con `ConsistentRead`. Mientras el sandbox está abierto la fila lleva
+`open_pk = "OPEN"`, la clave de partición del GSI `open` (rango `pk`,
+proyección `ALL`); la lápida `killed` la quita. Añadir un GSI a una tabla
+existente es una actualización de CloudFormation sin reemplazo (un GSI por
+actualización); el índice se rellena con las filas que ya tienen
+`open_pk`, así que un sandbox abierto antes de actualizar entra con su
+siguiente evento.
+
+**Filtro del deliverer** (sin medir en AWS real): `FilterCriteria` del
+`AWS::Lambda::EventSourceMapping` con el patrón
+`{"eventName": ["INSERT"], "dynamodb": {"NewImage": {"pk": {"S": [{"prefix": "EVENT#"}]}}}}`
+(filtrado de eventos de Lambda para DynamoDB Streams, doc de AWS "Using
+event filtering with a DynamoDB event source", consultada 2026-10-04): los
+registros que no casan no invocan la función.
 
 ## 26. CloudWatch OTLP (`m15-rayd-otlp`)
 

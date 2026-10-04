@@ -13,6 +13,7 @@ import time
 from typing import Any, Final
 
 from domain import schema
+from domain.admission import Admission, Refused, SandboxState, admit
 from domain.event import LifecycleEvent
 from ports import OpenSandbox, Webhook
 
@@ -20,15 +21,21 @@ from ports import OpenSandbox, Webhook
 IF_ABSENT: Final = "attribute_not_exists(pk)"
 #: A delivery may be (re)claimed unless it is already `delivered`.
 IF_NOT_DELIVERED: Final = "attribute_not_exists(pk) OR delivery_status <> :delivered"
-#: A non-`killed` event moves `STATE#` forward only: never past a `killed`
-#: tombstone, never back to an older event.
-IF_OPEN_AND_NOT_NEWER: Final = (
-    "attribute_not_exists(pk) OR (last_kind <> :killed AND last_seen_ms <= :seen)"
-)
-#: A `killed` event closes `STATE#` unless it is already closed.
-IF_OPEN: Final = "attribute_not_exists(pk) OR last_kind <> :killed"
-#: `open_sandboxes`' scan filter.
-OPEN_STATE_FILTER: Final = "begins_with(pk, :prefix) AND last_kind <> :killed"
+#: `admit`'s optimistic concurrency: the `STATE#` row is written only if
+#: nobody changed it since it was read. Every admitted write sets
+#: `revision >= 1`, so an absent row (read as revision 0) and a row from
+#: before admission existed (no `revision` at all) both pass with `:revision
+#: = 0`, and a row another writer created in between does not.
+IF_REVISION_UNCHANGED: Final = "attribute_not_exists(revision) OR revision = :revision"
+#: Reads and conditional writes of one `admit` before giving up: two
+#: writers racing on one sandbox (the forwarder and the reconciler) settle
+#: in one retry; more means the table is misbehaving.
+MAX_ADMISSION_ATTEMPTS: Final = 3
+
+
+class AdmissionContended(RuntimeError):
+    """`admit` lost every optimistic-concurrency race it ran; the forwarder
+    treats it as a failed write (the batch is retried)."""
 
 
 class DynamoDbStore:
@@ -57,43 +64,43 @@ class DynamoDbStore:
             item["kill_reason"] = event.kill_reason
         return self._put_if(item, IF_ABSENT, {})
 
-    def record_sandbox_state(self, event: LifecycleEvent) -> None:
-        item: dict[str, Any] = {
-            "pk": schema.state_pk(event.sandbox_id),
-            "sk": schema.STATE_SK,
-            "sandbox_id": event.sandbox_id,
-            "last_kind": event.kind,
-            "last_seen_ms": event.occurred_at_ms,
-            "generation": event.generation,
-            "image_arn": event.image_arn,
-            "image_version": event.image_version,
-        }
-        values: dict[str, Any] = {":killed": schema.KILLED_KIND}
-        if event.kind == schema.KILLED_KIND:
-            # The tombstone: keeps a late line from reopening the sandbox,
-            # and expires with the events it closes.
-            item["expires_at"] = _expires_at(schema.EVENT_TTL_SECONDS)
-            self._put_if(item, IF_OPEN, values)
-            return
-        values[":seen"] = event.occurred_at_ms
-        self._put_if(item, IF_OPEN_AND_NOT_NEWER, values)
+    def admit(self, event: LifecycleEvent, now_ms: int) -> Admission:
+        for _attempt in range(MAX_ADMISSION_ATTEMPTS):
+            current = self._read_state(event.sandbox_id)
+            admission = admit(current, event, now_ms)
+            if isinstance(admission, Refused) or admission.duplicate:
+                return admission
+            expected_revision = 0 if current is None else current.revision
+            if self._put_if(
+                _state_item(admission.state),
+                IF_REVISION_UNCHANGED,
+                {":revision": expected_revision},
+            ):
+                return admission
+        raise AdmissionContended("STATE# cambió en cada intento")
 
     def open_sandboxes(self) -> list[OpenSandbox]:
         sandboxes: list[OpenSandbox] = []
-        scan_kwargs: dict[str, Any] = {
-            "FilterExpression": OPEN_STATE_FILTER,
-            "ExpressionAttributeValues": {
-                ":prefix": schema.STATE_PK_PREFIX,
-                ":killed": schema.KILLED_KIND,
-            },
+        query_kwargs: dict[str, Any] = {
+            "IndexName": schema.OPEN_INDEX_NAME,
+            "KeyConditionExpression": f"{schema.OPEN_INDEX_ATTRIBUTE} = :open",
+            "ExpressionAttributeValues": {":open": schema.OPEN_PARTITION_VALUE},
         }
         while True:
-            page = self._table.scan(**scan_kwargs)
+            page = self._table.query(**query_kwargs)
             sandboxes.extend(_open_sandbox(item) for item in page.get("Items", []))
             last_key = page.get("LastEvaluatedKey")
             if not last_key:
                 return sandboxes
-            scan_kwargs["ExclusiveStartKey"] = last_key
+            query_kwargs["ExclusiveStartKey"] = last_key
+
+    def _read_state(self, sandbox_id: str) -> SandboxState | None:
+        response = self._table.get_item(
+            Key={"pk": schema.state_pk(sandbox_id), "sk": schema.STATE_SK},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        return None if item is None else _sandbox_state(item)
 
     def claim_delivery(self, event: LifecycleEvent, webhook_id: str) -> bool:
         return self._put_if(
@@ -154,6 +161,46 @@ def _delivery_item(event: LifecycleEvent, webhook_id: str, status: str) -> dict[
         "delivery_status": status,
         "expires_at": _expires_at(schema.DELIVERY_DEDUPE_TTL_SECONDS),
     }
+
+
+def _state_item(state: SandboxState) -> dict[str, Any]:
+    """An open sandbox carries `open_pk` (the sparse `open` index the
+    reconciler queries); the `killed` tombstone drops it and expires with
+    the events it closes, so a late line can never reopen the sandbox."""
+    item: dict[str, Any] = {
+        "pk": schema.state_pk(state.sandbox_id),
+        "sk": schema.STATE_SK,
+        "sandbox_id": state.sandbox_id,
+        "last_kind": state.last_kind,
+        "last_seen_ms": state.last_seen_ms,
+        "generation": state.generation,
+        "image_arn": state.image_arn,
+        "image_version": state.image_version,
+        "last_event_id": state.last_event_id,
+        "rate_tat_ms": state.rate_tat_ms,
+        "revision": state.revision,
+    }
+    if state.is_open:
+        item[schema.OPEN_INDEX_ATTRIBUTE] = schema.OPEN_PARTITION_VALUE
+    else:
+        item["expires_at"] = _expires_at(schema.EVENT_TTL_SECONDS)
+    return item
+
+
+def _sandbox_state(item: dict[str, Any]) -> SandboxState:
+    """Reads a `STATE#` row; a row from before admission existed lacks the
+    newer fields and reads as revision 0 with a full bucket."""
+    return SandboxState(
+        sandbox_id=item["sandbox_id"],
+        last_kind=item["last_kind"],
+        generation=int(item.get("generation", 0)),
+        last_seen_ms=int(item.get("last_seen_ms", 0)),
+        image_arn=item.get("image_arn", ""),
+        image_version=item.get("image_version", ""),
+        last_event_id=item.get("last_event_id", ""),
+        rate_tat_ms=int(item.get("rate_tat_ms", 0)),
+        revision=int(item.get("revision", 0)),
+    )
 
 
 def _open_sandbox(item: dict[str, Any]) -> OpenSandbox:

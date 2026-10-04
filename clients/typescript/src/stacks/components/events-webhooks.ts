@@ -46,12 +46,13 @@ export const COMPONENT: StackComponent = {
     creates: [
       "AWS::SecretsManager::Secret",
       "AWS::DynamoDB::Table (streams habilitados)",
-      "AWS::Lambda::Function (x3)",
+      "AWS::Lambda::Function (x3) + AWS::Logs::LogGroup (x3, uno por función)",
       "AWS::Logs::SubscriptionFilter",
       "AWS::Scheduler::Schedule",
       "AWS::SQS::Queue (x2: destinos OnFailure del forwarder y del deliverer; vacías en " +
         "condiciones normales)",
-      "AWS::IAM::Role (x4) + AWS::IAM::ManagedPolicy",
+      "AWS::IAM::Role (x4) + AWS::IAM::ManagedPolicy (x4: lanzador, lector, " +
+        "administración de webhooks y la unión obsoleta)",
     ],
     idleMonthly: "~$0,40/mes (el secreto; DynamoDB, Lambda y SQS son on-demand/por uso)",
     perUse: [
@@ -65,8 +66,8 @@ export const COMPONENT: StackComponent = {
     ],
     removal:
       "destroy() borra el secreto (force-delete: cualquier webhook ya registrado deja de " +
-      "poder verificarse), la tabla, las tres Lambdas, la suscripción, las dos colas de " +
-      "fallos y el scheduler",
+      "poder verificarse), la tabla, las tres Lambdas con sus log groups, la suscripción, " +
+      "las dos colas de fallos y el scheduler",
     source: "AWS_API_NOTES.md §25; precios de Lambda/DynamoDB/Scheduler/SQS us-east-1, 2026-09-30",
   },
 };
