@@ -1420,7 +1420,7 @@ clippy`, `ruff`, `mypy`, `pnpm lint/typecheck/test/pack:check`,
 Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
 `microdnf` y añadió `--allow-other` al daemon).
 
-### Funciones (pendientes de su propio cambio OpenSpec)
+### Funciones (cada una en su propio cambio OpenSpec)
 
 - **efs-volumes** (`m15-efs-volumes`, experimental): volúmenes EFS,
   pendiente de la campaña de medición EFS-1..EFS-20.
@@ -1459,9 +1459,9 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   al canal gRPC real (seguimiento razonado y no bloqueante; ver el diseño
   del cambio). La
   política IAM mínima de CloudWatch no se puede acotar por namespace
-  (investigado, OT9): documentado en T23. Sin AWS real todavía: la
-  aceptación (bytes facturados, overhead de CPU, comportamiento en
-  `/suspend`/`/resume`) es la etapa serializada posterior.
+  (investigado, OT9): documentado en T23. **Aceptado en AWS real** el
+  2026-10-02 (bytes facturados, overhead de CPU y comportamiento en
+  `/suspend`/`/resume`; `AWS_API_NOTES.md` §26).
 - **templates** (`m15-templates`): DSL de templates declarativos
   (`Template`/`AsyncTemplate`, igual al `Template` de E2B v2), compilado
   enteramente en el cliente: Dockerfile + zip deterministas compuestos
@@ -1488,10 +1488,56 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   pasan sin cambios). Reutiliza `infra/secrets-access.yaml` sin plantilla
   propia: el valor lo resuelve siempre el SDK con `SecretCache`, nunca
   `rayd`. Implementado y probado localmente (231 tests Rust, unit Python y
-  TypeScript, `openspec validate --strict`); PR abierto, pendiente de la
-  aceptación serializada contra AWS real del hito.
+  TypeScript, `openspec validate --strict`); **aceptado en AWS real** el
+  2026-10-02 (`AWS_API_NOTES.md` §28).
 - **custom-domain** (`m15-custom-domain`): dominio propio sobre
   CloudFront; necesita D3 (dominio y certificado ACM del mantenedor).
+
+---
+
+## 0.6.0 — Funciones opcionales sobre `ConfigureSandbox` (2026-10-03)
+
+Siete cambios OpenSpec (`v06-foundations`, `m15-s3-mounts`,
+`m15-sizes-catalog`, `m15-secrets-gateway`, `m15-events-webhooks`,
+`m15-templates`, `m15-rayd-otlp`), archivados tras la aceptación contra AWS
+real y la publicación de 0.6.0. Como en 0.5.0, todo lo que cuesta está
+apagado por defecto y se activa sólo con una opción explícita del SDK
+(ADR-014); sin ninguna opción 0.6, el comportamiento es el de 0.5.x (traza
+de oro de llamadas AWS y gRPC, sin cambios):
+
+- **Base**: `ConfigureSandbox` (un único servicio gRPC con secciones en
+  orden fijo, ADR-015) y el convenio `OptionalStack` (`rayito stack`,
+  catálogo de componentes con plantilla CloudFormation, ADR-016).
+- **Montajes S3** (`mounts=`): buckets montados en el guest con
+  `mount-s3`/FUSE, sólo en `rayito-base-caps` y con allowlist de imagen.
+- **Tamaños** (`size=`): catálogo cerrado de cinco tamaños resuelto en
+  cliente, imágenes por tamaño y guardarraíles IAM opcionales.
+- **Pasarela de credenciales** (`gateways=`): proxy en loopback que inyecta
+  cabeceras guardadas en Secrets Manager, con allowlist y límite de tasa.
+- **Eventos y webhooks** (`events=`, `LifecycleEvents`): eventos de ciclo
+  de vida firmados, guardados en DynamoDB y entregados a webhooks con firma
+  compatible con E2B.
+- **Templates** (`Template`/`AsyncTemplate`): DSL declarativo compilado en
+  el cliente a Dockerfile + zip sobre `rayito-base`.
+- **Exportación OTLP de `rayd`** (`telemetry=`): métricas de CPU, memoria y
+  disco a CloudWatch por OTLP/HTTP.
+
+**Aceptación (2026-10-02/03, cuenta de pruebas, us-east-1):** cada función
+pasó su etapa serializada (e2e Python y TypeScript sobre imágenes
+desechables con el `rayd` de su rama; los hallazgos se arreglaron en la
+misma rama y están en `AWS_API_NOTES.md` §23–§28) y después la suite e2e
+completa corrió contra el `main` integrado, que encontró y arregló tres
+problemas (el parámetro de bucket de `rayito stack deploy`, la banda de
+tamaño de snapshot con la capa de `mount-s3` y un objeto que una prueba de
+egress dejaba atrás). Sin opciones no hay llamadas AWS nuevas. Limpieza:
+en cada etapa sólo se borró lo creado por la prueba, con inventario
+idéntico antes y después.
+
+Fuera de 0.6.0: `m15-efs-volumes` (experimental, pendiente de su campaña de
+medición) y `m15-custom-domain` (necesita un dominio y un certificado del
+mantenedor). La activación del reaper de huérfanos de PID 1 y la
+reaplicación completa de `ConfigureSandbox` en `reincarnate()` van en
+0.6.1.
 
 ---
 

@@ -118,9 +118,10 @@
 
 ## 12. Not done in this change (by design)
 
-- [ ] AWS acceptance (OT1-OT12 Q-numbers): this change does not touch AWS;
+- [x] AWS acceptance (OT1-OT12 Q-numbers): this change does not touch AWS;
       the serialized acceptance stage runs separately (see `aws_plan` in
-      the delivery report).
+      the delivery report). (Done in that stage on 2026-10-02, before the
+      0.6.0 release: Q109-Q113 and Q120 in `AWS_API_NOTES.md` §26.)
 
 ## 13. Post-review fixes
 
