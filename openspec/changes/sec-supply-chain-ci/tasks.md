@@ -43,9 +43,11 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Gates: Python, TypeScript, docs, OpenSpec, root scripts,
-  actionlint.
-- [ ] 5.2 Dry run of `release.yml` for `rayd-v<current>` from this branch:
-  `rayd-build` and `rayd-sign` green, `rayd-upload` skipped.
-- [ ] 5.3 Green CI on the pull request (the `deny` job runs the verified
+- [x] 5.1 Gates: Python, TypeScript, docs, OpenSpec, root scripts,
+  actionlint (macOS; no Rust change).
+- [x] 5.2 Dry run of `release.yml` for `rayd-v<current>` from this branch:
+  `rayd-build` and `rayd-sign` green, `rayd-upload` skipped (run of
+  2026-10-04: zig sha256 OK, build output `sha256sum -c` OK in the sign job,
+  cosign self-check `Verified OK` with the exact identity, no cache restored).
+- [x] 5.3 Green CI on the pull request (the `deny` job runs the verified
   cargo-deny, `build` the verified zig).
