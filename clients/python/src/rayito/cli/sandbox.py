@@ -31,10 +31,12 @@ from rayito.cli import _proxy
 from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
 from rayito.cli._logs import (
     DEFAULT_EVENT_LIMIT,
+    FALLBACK_WARNING,
     LogsNotFound,
     default_log_group,
     epoch_ms,
     event_timestamp,
+    expected_stream_name,
     find_streams,
     iter_events,
     parse_since,
@@ -313,6 +315,9 @@ def logs_command(
     except LogsNotFound as exc:
         echo(f"rayito: {exc}", err=True)
         raise typer.Exit(1) from exc
+    expected = expected_stream_name(info)
+    if streams != [expected]:
+        echo(FALLBACK_WARNING.format(expected=expected, streams=", ".join(streams)), err=True)
     events = collect_events(clients, group, streams, start_time_ms, limit)
     if json_mode(ctx):
         emit_json(events)

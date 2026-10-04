@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import sys
 from collections.abc import Iterable, Iterator, Sequence
@@ -25,15 +26,31 @@ STATUS_WIDTH = 4
 MIN_TABLE_WIDTH = 120
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
+#: Caracteres de control C0 (salvo tabulador y salto de línea), DEL y C1: de
+#: ahí salen ESC, CSI (`\x9b`) y OSC, es decir, mover el cursor, borrar
+#: líneas, escribir en el portapapeles (OSC 52) o falsear enlaces (OSC 8).
+_TERMINAL_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def visible_controls(text: str) -> str:
+    """`text` con cada carácter de control (C0 salvo tabulador y salto de
+    línea, DEL y C1) escrito como `\\xNN` visible y sin efecto. Pura."""
+    return _TERMINAL_CONTROLS.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
 
 
 def echo(message: str = "", *, err: bool = False) -> None:
     """Los build logs y los `stateReason` traen UTF-8 arbitrario y una consola
     de Windows por defecto es cp1252: lo no codificable se sustituye en vez
-    de abortar el informe."""
+    de abortar el informe. Hacia una terminal, además, los caracteres de
+    control salen visibles (`visible_controls`): un log de CloudWatch o de
+    un build lo puede escribir código no fiable y no debe poder mover el
+    cursor, borrar líneas ni tocar el portapapeles. Redirigido a un fichero
+    o a otra orden, el texto sale tal cual. `exec`/`connect` no pasan por
+    aquí: su salida es la terminal del sandbox, como en ssh."""
     stream = sys.stderr if err else sys.stdout
     encoding = stream.encoding or "utf-8"
-    safe = message.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    text = visible_controls(message) if stream.isatty() else message
+    safe = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
     print(safe, file=stream, flush=True)
 
 
