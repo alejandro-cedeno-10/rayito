@@ -1,0 +1,53 @@
+name: uv (pinned)
+description: >-
+  Instala uv con astral-sh/setup-uv fijado por versión y por el sha256 del
+  tarball de la arquitectura del runner. Sin versión, setup-uv instala la
+  última release en cada run, y sólo comprueba un checksum para las
+  versiones de su tabla interna (sec-supply-chain-followups, SC-A06). La
+  caché va apagada salvo que el job la pida: sólo los jobs sin credenciales
+  de ci.yml la encienden.
+
+# UV_X64_SHA256 y UV_ARM64_SHA256 son los sha256 de
+# uv-x86_64-unknown-linux-gnu.tar.gz y uv-aarch64-unknown-linux-gnu.tar.gz de
+# la release 0.12.18 de astral-sh/uv, iguales en su `.sha256` y en el
+# `digest` del asset (2026-10-04). Subir de versión: cambiar las tres
+# variables a la vez.
+inputs:
+  python-version:
+    description: "Python que setup-uv deja activo (vacío: el del runner)"
+    required: false
+    default: ""
+  enable-cache:
+    description: >-
+      `false` (por defecto) o `auto`. Un job con un token, un environment o
+      cuyo resultado se publica nunca restaura caché: la del ámbito de `main`
+      la escribe cualquier job de `main` (SC-01, SC-A02).
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - id: pin
+      name: uv version and the checksum of this runner's architecture
+      shell: bash
+      env:
+        UV_VERSION: 0.12.18
+        UV_X64_SHA256: 89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16
+        UV_ARM64_SHA256: afb6291f3f0a6b4521fc67b947822506c41dde5b60d2189dd8f3695b2ac8c9e7
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        case "$RUNNER_ARCH" in
+          X64) sha256="$UV_X64_SHA256" ;;
+          ARM64) sha256="$UV_ARM64_SHA256" ;;
+          *) echo "no pinned uv checksum for runner architecture $RUNNER_ARCH"; exit 1 ;;
+        esac
+        {
+          echo "version=$UV_VERSION"
+          echo "sha256=$sha256"
+        } >> "$GITHUB_OUTPUT"
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        version: ${{ steps.pin.outputs.version }}
+        checksum: ${{ steps.pin.outputs.sha256 }}
+        python-version: ${{ inputs.python-version }}
+        enable-cache: ${{ inputs.enable-cache }}

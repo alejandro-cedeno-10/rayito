@@ -96,23 +96,36 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=0.5.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
-    BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION
+    RAYD_VERSION=0.6.1      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
+    curl -fsSLO "$BASE/SHA256SUMS"
+
+    cosign verify-blob --bundle rayito-image.zip.sigstore.json \
+      --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      rayito-image.zip
+    sha256sum -c --ignore-missing SHA256SUMS   # en macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+
     rayito image publish --artifact rayito-image.zip --base-image-version 1
     ```
+
+    Comprueba la firma **antes** de publicar: `rayito image publish` no
+    verifica nada, y el zip de una release se podría reemplazar con un token
+    del repositorio. Si `cosign verify-blob` no dice `Verified OK`, no
+    publiques ese fichero. Necesitas [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+    ≥ 2.x; qué prueba la firma y cómo verificar el binario `rayd` suelto, en
+    [Verificar una release](../verify.md).
 
     Usa el `rayd` de la misma versión que el SDK instalado: si la imagen es
     más vieja, la comprobación `compatibility` de `rayito doctor` lo marca.
     Todas las versiones están en las
     [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
-    Opcional pero recomendable: comprueba la firma antes de publicar
-    ([Verificar una release](../verify.md)).
 
-    Con la CLI de GitHub (`gh`, autenticada con `gh auth login`) es lo mismo
-    en una línea:
-    `gh release download "rayd-v$RAYD_VERSION" --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*'`.
+    Con la CLI de GitHub (`gh`, autenticada con `gh auth login`) la descarga
+    es una línea:
+    `gh release download "rayd-v${RAYD_VERSION}" --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*' --pattern SHA256SUMS`.
 
 === "Desde el código fuente"
 

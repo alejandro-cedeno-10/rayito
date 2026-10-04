@@ -38,10 +38,27 @@ antiguo (una versión con fallos conocidos) o uno firmado bajo otro tag
 pasaba por el que ibas a instalar. `cosign` ≥ 2.x (la release usa
 `sigstore/cosign-installer`, cosign 3.x).
 
-En las releases posteriores a la 0.6.1, el workflow firma en un job que no
-hace checkout ni compila nada, sube los assets en otro que exige la
-aprobación del mantenedor (environment `release`) y nunca reemplaza un asset
-ya publicado; publicar exige además que el commit del tag esté en `main`.
+### Qué prueba la firma
+
+Una firma válida prueba que `release.yml` de este repositorio firmó ese
+fichero en un run lanzado desde el tag `rayd-v${RAYD_VERSION}`. En las
+releases posteriores a la 0.6.1 prueba además que el run pasó por la
+aprobación del mantenedor: el job que firma corre en el environment
+`release`, con revisor obligatorio, así que GitHub no le da el token OIDC
+(ni Sigstore emite el certificado) hasta que alguien aprueba el run. La
+aprobación llega antes de que exista el token OIDC, y un ensayo (`dry_run`)
+no firma nada: sólo construye. El job que firma no hace checkout ni compila,
+firma sólo lo que `sha256sum -c` confirma que salió del build, y el que sube
+los assets nunca reemplaza uno ya publicado.
+
+Lo que la firma **no** prueba por sí sola es que el código del tag se
+revisara en `main`: la identidad la fijan el fichero de workflow y el tag,
+no quién creó el tag. Publicar exige que el commit del tag esté en `main`,
+pero el `release.yml` que corre es el del commit etiquetado. Para firmar con
+esta identidad hace falta, a la vez, poder crear un tag `rayd-v*` y aprobar
+el environment `release`. Con un único mantenedor y revisor, eso es su
+cuenta: un token filtrado que sólo escribe contenido y PRs (el de
+release-please) puede crear el tag, pero no aprobar el environment.
 
 El binario se compila con `cargo auditable`, así que lleva el grafo exacto de
 crates en la sección ELF `.dep-v0`; cualquier herramienta que lea ese formato
