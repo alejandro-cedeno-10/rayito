@@ -39,7 +39,7 @@ import pytest
 
 from rayito import LifecycleEvents, SecretStore
 from rayito._lifecycle_events._keys import derive_sandbox_key
-from rayito._lifecycle_events._service import WEBHOOK_SECRET_PREFIX
+from rayito._secrets import WEBHOOK_SECRET_PREFIX
 from rayito.exceptions import SandboxNotFoundException
 
 from .conftest import LocalSettings, create_local_sandbox
