@@ -275,7 +275,8 @@ LOCAL_COMPOSE := docker compose -f $(LOCAL_DIR)/compose.yaml
 LOCAL_GUEST_CONTEXT := $(LOCAL_DIR)/.guest-context
 LOCAL_RAYD_IMAGE := rayito-local-rayd:dev
 LOCAL_RAYD_BIN ?=
-# Jobs de cargo dentro de dev/local/rayd/Dockerfile (~1 GiB por job al enlazar).
+# Jobs de cargo dentro de dev/local/rayd/Dockerfile (~1 GiB por job al enlazar;
+# aws-sdk-s3 solo pasa de 2 GiB, así que esa vía pide ~6 GiB en la VM de Docker).
 LOCAL_CARGO_JOBS ?= 2
 LOCAL_E2E_ARGS ?=
 

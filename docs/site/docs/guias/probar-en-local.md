@@ -37,7 +37,10 @@ cada decisión está en `docs/research/2026-10-local-testing.md`.
 - Un host **arm64** (Apple Silicon, Graviton o el runner `ubuntu-24.04-arm`
   de GitHub): la base de la imagen de producto solo existe para arm64. En x86
   funciona con emulación QEMU, mucho más despacio.
-- Unos 6 GB de disco libres y 3 GB de memoria para Docker.
+- Unos 6 GB de disco libres para Docker. De memoria, 3 GB bastan para correr
+  el entorno, pero compilar `rayd` dentro de Docker pide unos 6 GB: el crate
+  `aws-sdk-s3` (montajes S3) solo ya pasa de 2 GB al compilarse. Con menos,
+  compila `rayd` en tu máquina y pásalo con `LOCAL_RAYD_BIN` (abajo).
 - `make` y `python3` (para copiar el sidecar al contexto del guest).
 
 ## Uso
@@ -49,8 +52,10 @@ make local-down    # lo para todo y borra los volúmenes
 ```
 
 `make local-up` compila `rayd` dentro de Docker la primera vez (unos minutos,
-sin Rust en tu máquina). Si ya tienes el binario de `make build`, pásalo y te
-ahorras la compilación:
+sin Rust en tu máquina). Si ya tienes el binario de `make build` (estático,
+musl, con `cargo zigbuild`; funciona también desde macOS), pásalo y te
+ahorras la compilación; es la vía si tu VM de Docker tiene menos de 6 GB y
+rustc muere con `SIGKILL`:
 
 ```bash
 make build

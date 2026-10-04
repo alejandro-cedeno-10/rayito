@@ -38,7 +38,9 @@ COPY proto proto
 COPY crates crates
 
 # `CARGO_JOBS` acota el paralelismo: el enlazado de rayd necesita ~1 GiB por
-# job y una VM de Docker de 3 GiB se queda sin memoria con más de dos.
+# job. Compilar aws-sdk-s3 pasa de 2 GiB aunque sea con un solo job, así que
+# esta imagen pide una VM de Docker de unos 6 GiB; con menos, `LOCAL_RAYD_BIN`
+# (docs/site/docs/guias/probar-en-local.md).
 ARG CARGO_JOBS=2
 RUN cargo build --release --locked -p rayd -j "${CARGO_JOBS}" \
     && cp target/release/rayd /rayd \

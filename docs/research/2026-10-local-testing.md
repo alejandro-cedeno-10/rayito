@@ -12,7 +12,10 @@ encerrado (sin privilegios, sin capabilities, sin socket de Docker, sin
 salida a Internet y sin puertos en el host). Primera corrida completa en
 local (macOS, Docker en una VM Lima arm64 de 2 vCPU y 3 GiB): **38 tests,
 38 en verde** (22 de Python y 16 de TypeScript) en ~100 s, con el entorno
-ya levantado.
+ya levantado. Tras fusionar los montajes S3 en `rayd`, esa VM ya no compila
+`rayd` dentro de Docker (rustc muere por memoria con `aws-sdk-s3`); con el
+binario musl de `cargo zigbuild` en macOS vía `LOCAL_RAYD_BIN`, la corrida
+sigue en 38 de 38.
 
 ## Por qué Floci
 
