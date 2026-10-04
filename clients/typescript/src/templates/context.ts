@@ -10,57 +10,43 @@
  */
 
 import { createHash } from "node:crypto";
-import { stripLeading, stripTrailing } from "../strings.js";
+import { DockerIgnore } from "./dockerignore.js";
 import type { CopyStep } from "./instructions.js";
 
-export const DOCKERIGNORE_FILENAME = ".dockerignore";
-const PATTERN_SEPARATOR = "/";
+export { DOCKERIGNORE_FILENAME, DockerIgnore } from "./dockerignore.js";
 
-export class DockerIgnore {
-  readonly #patterns: ReadonlyArray<readonly [pattern: string, negated: boolean]>;
+/**
+ * Rutas que casi siempre llevan secretos o historia que no debería acabar en
+ * una imagen (credenciales de `.env`, `.git` con remotos con token,
+ * `.aws`/`.ssh`, claves privadas). Sólo avisan, no excluyen: el
+ * `.dockerignore` del usuario manda. Mismo texto que `SENSITIVE_PATTERNS` de
+ * `rayito._templates._context`.
+ */
+export const SENSITIVE_PATTERNS =
+  "**/.env\n**/.env.*\n**/.git\n**/.aws\n**/.ssh\n**/*.pem\n**/*.key\n";
+/** Cuántas rutas sensibles se nombran en el aviso (el resto sólo se cuenta). */
+export const SENSITIVE_SAMPLE_SIZE = 3;
+/** El `type` de `process.emitWarning` del aviso de rutas sensibles. */
+export const SENSITIVE_CONTEXT_WARNING_TYPE = "RayitoContextWarning";
+const SENSITIVE = DockerIgnore.fromText(SENSITIVE_PATTERNS);
 
-  private constructor(patterns: ReadonlyArray<readonly [string, boolean]>) {
-    this.#patterns = patterns;
-  }
-
-  static fromText(text: string): DockerIgnore {
-    const patterns: Array<[string, boolean]> = [];
-    for (const rawLine of text.split("\n")) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) {
-        continue;
-      }
-      const negated = line.startsWith("!");
-      const body = (negated ? line.slice(1) : line).trim();
-      const pattern = stripTrailing(stripLeading(body, PATTERN_SEPARATOR), PATTERN_SEPARATOR);
-      patterns.push([pattern, negated]);
-    }
-    return new DockerIgnore(patterns);
-  }
-
-  static empty(): DockerIgnore {
-    return new DockerIgnore([]);
-  }
-
-  matches(relpath: string): boolean {
-    let excluded = false;
-    for (const [pattern, negated] of this.#patterns) {
-      if (globMatch(pattern, relpath) || globMatch(`${pattern}/*`, relpath)) {
-        excluded = !negated;
-      }
-    }
-    return excluded;
-  }
+/** Las rutas de `relpaths` que casan con `SENSITIVE_PATTERNS`. */
+export function sensitivePaths(relpaths: readonly string[]): string[] {
+  return relpaths.filter((relpath) => SENSITIVE.matches(relpath));
 }
 
-/** Glob simple (`*` cruza `/`, como `fnmatch` de Python), suficiente para un
- * `.dockerignore` de contexto de template. */
-function globMatch(pattern: string, value: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-  return new RegExp(`^${escaped}$`).test(value);
+/** El texto del aviso, o `null` si ninguna ruta es sensible. Nunca lleva el
+ * contenido de los ficheros. */
+export function sensitiveContextWarning(relpaths: readonly string[]): string | null {
+  const found = sensitivePaths(relpaths);
+  if (found.length === 0) {
+    return null;
+  }
+  return (
+    `el contexto de build empaqueta ${found.length} fichero(s) que suelen llevar secretos ` +
+    `(p. ej. ${found.slice(0, SENSITIVE_SAMPLE_SIZE).join(", ")}): exclúyelos en .dockerignore ` +
+    "si no deben acabar en la imagen, donde cualquier código del sandbox puede leerlos"
+  );
 }
 
 /** sha256 hexadecimal sobre `entries`: el mismo conjunto de ficheros con el
