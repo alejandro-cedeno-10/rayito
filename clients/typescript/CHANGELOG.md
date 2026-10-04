@@ -19,9 +19,22 @@ versionado [SemVer](https://semver.org/lang/es/).
   imagen y la memoria del sucesor. De paso, `reincarnate()` de un sandbox
   creado con `size` ya no reenvía el tamaño resuelto junto al ARN de la
   imagen (que ya lo lleva), combinación que `create()` rechaza.
+- **Tipos correctos para consumidores CommonJS** (`exports` de
+  `package.json`): `"rayito"` y `"rayito/e2b"` declaraban un `types` hermano
+  de `import`/`require`, que TypeScript elige antes que ambos, así que un
+  proyecto CommonJS con `moduleResolution: node16`/`nodenext` recibía los
+  `.d.mts` (ESM) para un `require` que carga el `.cjs` ("Masquerading as
+  ESM" de arethetypeswrong). Ahora cada condición lleva su `types` (`import`
+  → `.d.mts`, `require` → `.d.cts`), el `types` de nivel superior apunta al
+  `.d.cts` de `main`, se exporta `"./package.json"` y `pnpm pack:check`
+  rechaza un mapa que vuelva a la forma anterior. Mismos ficheros en tiempo
+  de ejecución.
 
 ### Documentation
 
+- **`DynamoDbIndex` enseña su bloque "Coste y activación" en el hover del
+  IDE**: vivía en el comentario de módulo, que tsdown descarta; ahora está
+  en el TSDoc de la clase y `check-dts-cost-blocks` lo exige.
 - **Metadatos del paquete**: `package.json` declara `homepage` (el sitio de
   documentación) y `bugs`; el README del paquete termina con la licencia, el
   `NOTICE` incluido y la nota de marcas (proyecto independiente, no afiliado

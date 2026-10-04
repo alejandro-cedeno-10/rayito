@@ -33,6 +33,8 @@ DRIVE = "C"
 OTHER_DRIVE = "D"
 GIT_BASH_DRIVE = "d"
 GIT_BASH_SYSTEM_DRIVE = "c"
+HOME_ROOT = "Users"
+PRIVATE_ROOT = "private"
 QUALIFIER = check_hygiene.CDK_QUALIFIER
 
 
@@ -209,13 +211,17 @@ def test_placeholder_network_ids_pass(line: str) -> None:
     "line",
     [
         f'File "{DRIVE}:\\Users\\someone\\repo\\run.py", line 1',
-        f"{DRIVE}:/Users/someone/AppData",
+        f"{DRIVE}:/{HOME_ROOT}/someone/AppData",
         f'"cwd": "{DRIVE}:\\\\Users\\\\someone"',
         f"export RUSTUP_HOME={OTHER_DRIVE}:/tools/rustup",
         f"done: results in {OTHER_DRIVE}:\\Projects\\repo\\out.jsonl",
         f'export PATH="/{GIT_BASH_DRIVE}/tools/bin:$PATH"',
-        f"cd /{GIT_BASH_SYSTEM_DRIVE}/Users/someone",
+        f"cd /{GIT_BASH_SYSTEM_DRIVE}/{HOME_ROOT}/someone",
         f"/{GIT_BASH_DRIVE}/Projects/repo",
+        f'File "/{HOME_ROOT}/someone/repo/run.py", line 1',
+        f"cd /{HOME_ROOT}/someone",
+        f"wrote /{PRIVATE_ROOT}/tmp/session/notes.txt",
+        f"TMPDIR=/{PRIVATE_ROOT}/var/folders/ab/T/",
     ],
 )
 def test_local_machine_path_is_reported(line: str) -> None:
@@ -230,6 +236,9 @@ def test_local_machine_path_is_reported(line: str) -> None:
         "https://example.com/a/Users/list",
         'export PATH="$CARGO_HOME/bin:<dir-zig>:$PATH"',
         "clients/python/tests/unit/cli/fixtures/quotas.json",
+        "/Users/<tu-usuario>/repo",
+        "docs/Users/guide.md",
+        "/private-link/tmp/x",
     ],
 )
 def test_repo_relative_and_generic_paths_pass(line: str) -> None:

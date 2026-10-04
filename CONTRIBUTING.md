@@ -203,6 +203,15 @@ uv run ruff format --check .
 uv run mypy src tests
 ```
 
+El job `python-versions` repite `uv run pytest tests/unit` con el Python
+más antiguo y el más nuevo que declaran los classifiers (3.11 y 3.13; `check`
+cubre el 3.12 del runner). En local, sin tocar `.venv`:
+
+```bash
+cd clients/python && uv run --isolated --python 3.11 pytest tests/unit
+cd clients/python && uv run --isolated --python 3.13 pytest tests/unit
+```
+
 ```bash
 cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider
 ```
