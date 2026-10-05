@@ -177,12 +177,26 @@ fn io_error(errno: Errno) -> io::Error {
 #[cfg(test)]
 mod tests {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::sync::{Mutex, MutexGuard, PoisonError};
 
     use nix::sys::signal::{SigHandler, Signal, signal};
     use nix::sys::wait::{WaitStatus, waitpid};
     use nix::unistd::{ForkResult, fork};
 
     use super::*;
+
+    /// The descriptor table is per process and the test harness runs tests
+    /// on parallel threads: a seal from one test (`close_range` from 3 up)
+    /// would mark another test's inheritable descriptor between its `open`
+    /// and its assertion. Every test that opens an inheritable descriptor
+    /// or seals in the test process holds this lock.
+    static DESCRIPTOR_TABLE: Mutex<()> = Mutex::new(());
+
+    fn descriptor_table() -> MutexGuard<'static, ()> {
+        DESCRIPTOR_TABLE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 
     /// `/dev/null` without `O_CLOEXEC`, as `openpty` hands its pair back.
     fn inheritable() -> OwnedFd {
@@ -201,6 +215,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn close_range_marks_an_inheritable_descriptor() {
+        let _table = descriptor_table();
         let fd = inheritable();
         close_range_close_on_exec(FIRST_NON_STDIO_FD).unwrap();
         assert!(close_on_exec(&fd));
@@ -208,6 +223,7 @@ mod tests {
 
     #[test]
     fn the_old_kernel_fallback_marks_an_inheritable_descriptor() {
+        let _table = descriptor_table();
         let fd = inheritable();
         mark_close_on_exec_between(FIRST_NON_STDIO_FD, fd.as_raw_fd() + 1);
         assert!(close_on_exec(&fd));
@@ -218,6 +234,7 @@ mod tests {
     /// descriptor it `dup2`s onto its fixed slot.
     #[test]
     fn a_posture_inheriting_a_slot_seals_only_above_it() {
+        let _table = descriptor_table();
         let kept = inheritable();
         let sealed = inheritable();
         let (low, high) = if kept.as_raw_fd() < sealed.as_raw_fd() {
