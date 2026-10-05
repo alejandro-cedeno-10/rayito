@@ -6,8 +6,10 @@ name: local-e2e
 # como guest y el runner, y `make local-e2e` corre los tests. Sin AWS ni
 # credenciales ni secretos del repositorio: no hay `id-token` ni `environment`.
 # Corre en arm64 porque la base de la imagen de producto solo existe para
-# arm64. En los PR solo cuando cambia algo del entorno local (el arranque en
-# frío compila `rayd`), además de cada noche y a mano.
+# arm64. En los PR solo cuando cambia algo del entorno local o del propio
+# `rayd` que corre en el guest (el arranque en frío compila `rayd`; un cambio
+# en sus hooks puede romper el plano de control local), además de cada noche
+# y a mano.
 
 on:
   pull_request:
@@ -17,6 +19,9 @@ on:
       - "clients/typescript/tests/local/**"
       - "clients/typescript/vitest.config.ts"
       - "image/Dockerfile"
+      - "crates/**"
+      - "proto/**"
+      - "Cargo.lock"
       - ".dockerignore"
       - ".github/workflows/local-e2e.yml"
   schedule:
