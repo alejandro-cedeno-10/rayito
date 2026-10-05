@@ -1,5 +1,5 @@
 {
-  "clients/python": "0.6.1",
-  "clients/typescript": "0.6.1",
-  "crates/rayd": "0.6.1"
+  "clients/python": "0.7.0",
+  "clients/typescript": "0.7.0",
+  "crates/rayd": "0.7.0"
 }
