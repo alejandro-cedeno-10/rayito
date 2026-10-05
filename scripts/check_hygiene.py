@@ -25,14 +25,43 @@ pasen) línea a línea y falla con estas reglas:
    (`microvm-00000000-0000-0000-0000-000000000001`, …) o si el prefijo
    truncado es `00000000` (el de esos falsos cuando la prosa los abrevia o
    los escribe con un marcador); `microvm-<id>` en prosa no casa.
-6. **Red**: `vpc-`, `subnet-`, `sg-` y `eni-` con 8 o 17 hex, salvo el
-   marcador `0123456789abcdef0`.
+6. **Recursos de AWS**: `vpc-`, `subnet-`, `sg-`, `eni-`, `rtb-`, `igw-`,
+   `acl-`, `pcx-`, `tgw-`, `tgw-attach-`, `vpce-`, `eipalloc-`, `fs-`,
+   `fsap-`, `fsmt-`, `nc-`, `ami-`, `snap-` y `vol-` con 8 o 17 hex, y
+   `nat-`, `lt-` e `i-` con 17. Un ID real es hex aleatorio; pasa, como
+   marcador, el sufijo que contiene `0123` (`vpc-0123456789abcdef0`,
+   `fs-0123abcd`) o `abcd` (`fsap-0456abcd`), o que repite un carácter seis
+   veces seguidas (`fs-99999999`, `fsap-00000001`). Un ID aleatorio pasa
+   por azar una vez de cada ~6.500 (8 hex) o ~2.300 (17 hex).
 7. **Ruta local**: `<unidad>:\\` o `<unidad>:/` seguido de `Users`, `tools` o
    `Projects`, las mismas carpetas en la forma de Git Bash
    (`/<unidad>/Users/…`), el home de macOS (`/Users/<usuario>`) y sus
    temporales (`tmp` y `var` bajo `/private/`).
 8. **Access key de AWS**: `AKIA`/`ASIA` y 16 mayúsculas o dígitos, salvo las
    que acaban en `EXAMPLE` (la de la documentación de AWS).
+9. **Cuenta en un campo de cuenta**: 12 dígitos tras `account`,
+   `accountId`, `account_id`, `sso_account_id`, `"Account":` o
+   `--account-id`. En esta regla y en las 1 y 2 pasan también las cuentas de
+   un solo dígito repetido (`111111111111`, `999999999999`).
+10. **Portal de SSO**: `<algo>.awsapps.com` y `<algo>.portal.<región>.app.aws`
+    (las URLs de inicio de IAM Identity Center), `ssoins-<16 hex>` y el
+    identity store `d-<10 hex>`; pasan `my-sso-portal` y `d-xxxxxxxxxx`, los
+    marcadores de la documentación de AWS.
+11. **URL prefirmada o credencial temporal**: `X-Amz-Signature=` con los 64
+    hex de una firma SigV4, `X-Amz-Security-Token=` con 40 o más caracteres
+    y el principio de un session token de STS (`IQoJb3JpZ2lu…`,
+    `FwoGZXIvYXdz…`).
+12. **Token**: un JWT o JWE compacto (`eyJ…` con sus segmentos separados por
+    puntos) y los tokens de GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+    `github_pat_`), npm (`npm_`), PyPI (`pypi-AgE…`) y Slack (`xox?-`).
+13. **Lista privada**: nombres de empresa, dominios, cuentas o cualquier otro
+    término que no puede aparecer pero que tampoco puede escribirse aquí,
+    porque listarlo sería publicarlo. Se leen, sin distinguir mayúsculas, de
+    la variable de entorno `RAYITO_HYGIENE_DENYLIST` (separados por comas o
+    saltos de línea; en CI es un secreto del repositorio) y del fichero
+    `.git/info/hygiene-denylist` (uno por línea, `#` comenta), que Git nunca
+    versiona. Sin ninguno de los dos la regla no hace nada; el hallazgo nunca
+    dice qué término casó.
 
 Los ficheros binarios (un byte NUL o UTF-8 inválido) se saltan, como hace
 `git grep -I`; los lockfiles se recorren como cualquier otro fichero. Cada
@@ -45,10 +74,12 @@ publicarlos; las reglas de rutas los cazan donde aparecen.
 
     python scripts/check_hygiene.py              # todo `git ls-files`
     python scripts/check_hygiene.py FICHERO...   # otros caminos (tests)
+    printf '%s' "$TEXTO" | python scripts/check_hygiene.py -   # stdin (título y cuerpo de un PR)
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -59,7 +90,13 @@ from pathlib import Path
 PLACEHOLDER_ACCOUNTS = frozenset(
     {"123456789012", "000000000000", "111122223333", "444455556666"}
 )
-PLACEHOLDER_NETWORK_SUFFIX = "0123456789abcdef0"
+REPEATED_DIGIT_ACCOUNT = re.compile(r"([0-9])\1{11}")
+PLACEHOLDER_RESOURCE_SUFFIX = re.compile(r"0123|abcd|(.)\1{5}")
+PLACEHOLDER_SSO_PORTALS = frozenset({"my-sso-portal", "d-xxxxxxxxxx"})
+DENYLIST_ENV = "RAYITO_HYGIENE_DENYLIST"
+DENYLIST_GIT_PATH = "info/hygiene-denylist"
+STDIN_ARGUMENT = "-"
+STDIN_NAME = "<stdin>"
 EXAMPLE_KEY_SUFFIX = "EXAMPLE"
 CDK_QUALIFIER = "hnb659fds"
 FAKE_UUID = re.compile(r"00000000(?:-0000-0000-0000-[0-9]{12})?")
@@ -76,11 +113,18 @@ CDK_BUCKET_REASON = (
 )
 SSO_REASON = "perfil o rol de SSO con datos de la cuenta (usa <tu-perfil>)"
 MICROVM_REASON = "ID o endpoint de MicroVM real (usa microvm-<id> o microvm-00000000-0000-0000-0000-<12 dígitos>)"
-NETWORK_REASON = (
-    "ID de VPC, subnet, security group o ENI real (usa <prefijo>-0123456789abcdef0)"
-)
+NETWORK_REASON = "ID de recurso de AWS real: VPC, subnet, SG, ENI, rutas, gateways, EFS, AMI… (usa <prefijo>-0123456789abcdef0)"
 LOCAL_PATH_REASON = "ruta local de una máquina (usa rutas relativas al repo o el nombre de la herramienta)"
 ACCESS_KEY_REASON = "access key id de AWS"
+ACCOUNT_FIELD_REASON = "ID de cuenta de AWS en un campo de cuenta (usa 123456789012)"
+SSO_PORTAL_REASON = (
+    "portal o instancia de IAM Identity Center (usa my-sso-portal.awsapps.com)"
+)
+PRESIGNED_REASON = "firma de URL prefirmada o session token de STS"
+TOKEN_REASON = "token (JWT/JWE, GitHub, npm, PyPI o Slack)"
+PRIVATE_TERM_REASON = (
+    "término de la lista privada (empresa, dominio, cuenta u organización)"
+)
 
 Finding = tuple[int, str]
 
@@ -97,15 +141,24 @@ def never(_: re.Match[str]) -> bool:
 
 
 def placeholder_account(match: re.Match[str]) -> bool:
-    return match.group("account") in PLACEHOLDER_ACCOUNTS
+    account = match.group("account")
+    return (
+        account in PLACEHOLDER_ACCOUNTS
+        or REPEATED_DIGIT_ACCOUNT.fullmatch(account) is not None
+    )
 
 
 def fake_microvm(match: re.Match[str]) -> bool:
     return FAKE_UUID.fullmatch(match.group("uuid")) is not None
 
 
-def placeholder_network(match: re.Match[str]) -> bool:
-    return match.group("suffix") == PLACEHOLDER_NETWORK_SUFFIX
+def placeholder_resource(match: re.Match[str]) -> bool:
+    suffix = match.group("suffix") or match.group("long_suffix")
+    return PLACEHOLDER_RESOURCE_SUFFIX.search(suffix) is not None
+
+
+def placeholder_sso_portal(match: re.Match[str]) -> bool:
+    return (match.group("portal") or "").lower() in PLACEHOLDER_SSO_PORTALS
 
 
 def example_key(match: re.Match[str]) -> bool:
@@ -158,8 +211,12 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         NETWORK_REASON,
-        re.compile(r"\b(?:vpc|subnet|sg|eni)-(?P<suffix>[0-9a-f]{17}|[0-9a-f]{8})\b"),
-        placeholder_network,
+        re.compile(
+            r"\b(?:vpc|subnet|sg|eni|rtb|igw|acl|pcx|tgw|tgw-attach|vpce|eipalloc"
+            r"|fs|fsap|fsmt|nc|ami|snap|vol)-(?P<suffix>[0-9a-f]{17}|[0-9a-f]{8})\b"
+            r"|\b(?:nat|lt|i)-(?P<long_suffix>[0-9a-f]{17})\b"
+        ),
+        placeholder_resource,
     ),
     Rule(
         LOCAL_PATH_REASON,
@@ -177,25 +234,102 @@ RULES: tuple[Rule, ...] = (
         never,
     ),
     Rule(ACCESS_KEY_REASON, re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), example_key),
+    Rule(
+        ACCOUNT_FIELD_REASON,
+        re.compile(
+            r"(?i)(?:account(?:[_-]?id)?[\"']?\s*[:=]\s*[\"']?|--account-id[\s=]+)"
+            r"(?P<account>[0-9]{12})(?![0-9])"
+        ),
+        placeholder_account,
+    ),
+    Rule(
+        SSO_PORTAL_REASON,
+        re.compile(
+            r"(?i)(?<![\w.-])(?P<portal>[a-z0-9][a-z0-9-]*)\.awsapps\.com\b"
+            r"|(?i:\b[a-z0-9-]+\.portal\.[a-z0-9-]+\.app\.aws\b)"
+            r"|\bssoins-[0-9a-f]{16}\b|\bd-[0-9a-f]{10}\b"
+        ),
+        placeholder_sso_portal,
+    ),
+    Rule(
+        PRESIGNED_REASON,
+        re.compile(
+            r"X-Amz-Signature=[0-9a-f]{64}\b"
+            r"|X-Amz-Security-Token=[A-Za-z0-9%/+=_-]{40,}"
+            r"|\b(?:IQoJb3JpZ2lu|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}"
+        ),
+        never,
+    ),
+    Rule(
+        TOKEN_REASON,
+        re.compile(
+            r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}"
+            r"|\bgh[pousr]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{22,}"
+            r"|\bnpm_[A-Za-z0-9]{36}\b|\bpypi-AgE[A-Za-z0-9_-]{20,}"
+            r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+        ),
+        never,
+    ),
 )
 
 
-def line_reasons(line: str) -> list[str]:
+def line_reasons(line: str, private_terms: tuple[str, ...] = ()) -> list[str]:
     reasons: list[str] = []
     for rule in RULES:
         if rule.reason in reasons:
             continue
         if any(not rule.is_placeholder(match) for match in rule.pattern.finditer(line)):
             reasons.append(rule.reason)
+    folded = line.casefold()
+    if any(term in folded for term in private_terms):
+        reasons.append(PRIVATE_TERM_REASON)
     return reasons
 
 
-def findings_in_text(text: str) -> list[Finding]:
+def findings_in_text(text: str, private_terms: tuple[str, ...] = ()) -> list[Finding]:
     return [
         (number, reason)
         for number, line in enumerate(text.splitlines(), start=1)
-        for reason in line_reasons(line)
+        for reason in line_reasons(line, private_terms)
     ]
+
+
+def parse_terms(raw: str, *, comments: bool) -> list[str]:
+    """Los términos de una lista privada: separados por comas o saltos de
+    línea, sin espacios alrededor, en minúsculas plegadas y sin vacíos; con
+    `comments`, una línea que empieza por `#` se ignora."""
+    terms: list[str] = []
+    for line in raw.splitlines():
+        if comments and line.lstrip().startswith("#"):
+            continue
+        terms.extend(part.strip().casefold() for part in line.split(","))
+    return [term for term in terms if term]
+
+
+def denylist_file(root: Path) -> Path | None:
+    """`.git/info/hygiene-denylist` del repositorio de `root` (también desde un
+    worktree), o `None` si `root` no está en un repositorio de Git."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--git-path", DENYLIST_GIT_PATH],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    path = Path(result.stdout.strip())
+    return path if path.is_absolute() else root / path
+
+
+def private_terms(root: Path, environ: dict[str, str] | None = None) -> tuple[str, ...]:
+    """La lista privada: la variable `RAYITO_HYGIENE_DENYLIST` más el fichero
+    `.git/info/hygiene-denylist`, sin duplicados. Nunca se imprime."""
+    env = os.environ if environ is None else environ
+    terms = parse_terms(env.get(DENYLIST_ENV, ""), comments=False)
+    path = denylist_file(root)
+    if path is not None and path.is_file():
+        terms.extend(parse_terms(path.read_text(encoding="utf-8"), comments=True))
+    return tuple(dict.fromkeys(terms))
 
 
 def readable_text(path: Path) -> str | None:
@@ -233,17 +367,28 @@ def displayed(path: Path, root: Path) -> str:
 
 def main(argv: list[str], root: Path | None = None) -> int:
     base = root or Path.cwd()
-    paths = [path for path in resolve_paths(argv, base) if path.is_file()]
+    terms = private_terms(base)
+    read_stdin = STDIN_ARGUMENT in argv
+    files = [argument for argument in argv if argument != STDIN_ARGUMENT]
+    paths = (
+        [path for path in resolve_paths(files, base) if path.is_file()]
+        if files or not read_stdin
+        else []
+    )
+    sources: list[tuple[str, str | None]] = [
+        (displayed(path, base), readable_text(path)) for path in paths
+    ]
+    if read_stdin:
+        sources.append((STDIN_NAME, sys.stdin.read()))
     total = 0
     scanned = 0
-    for path in paths:
-        text = readable_text(path)
+    for name, text in sources:
         if text is None:
             continue
         scanned += 1
-        for number, reason in findings_in_text(text):
+        for number, reason in findings_in_text(text, terms):
             total += 1
-            print(f"KO {displayed(path, base)}:{number}: {reason}")
+            print(f"KO {name}:{number}: {reason}")
     if total:
         print(f"KO {total} hallazgo(s) de identificadores del entorno")
         return 1
