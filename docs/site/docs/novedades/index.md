@@ -12,6 +12,16 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
+-   :material-tag:{ .lg .middle } **0.7.0** · 2026-10-05 · actual
+
+    ---
+
+    Volúmenes EFS en tu VPC, dominio propio (experimental), pruebas en
+    local con Docker y Floci, y un endurecimiento de seguridad de `rayd`,
+    los SDK, la infraestructura y la release.
+
+    [:octicons-arrow-right-24: Novedades de 0.7.0](0.7.0.md)
+
 -   :material-tag:{ .lg .middle } **0.6.1** · 2026-10-04
 
     ---
@@ -40,7 +50,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.6.1"
+    print(rayito.__version__)  # "0.7.0"
     ```
 
 === "TypeScript"
@@ -48,7 +58,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.6.1"
+    console.log(VERSION); // "0.7.0"
     ```
 
 === "CLI"
@@ -77,23 +87,23 @@ imagen publicada con un `rayd` de esa serie:
     ```
 
 Después, republica tu imagen sobre el `rayd` nuevo si quieres usar lo que
-corre dentro del sandbox (por ejemplo `mounts=`, `events=` o `gateways=`,
-o el reaper de 0.6.1): [Imágenes](../images.md#publicar-las-tres). Sin
-republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
-función que necesita el `rayd` nuevo falla cerrada con
-`UnimplementedError` y termina el sandbox que acaba de lanzar.
+corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
+`gateways=`, o el endurecimiento de `rayd` 0.7.0):
+[Imágenes](../images.md#publicar-las-tres). Sin republicar, el SDK nuevo
+sigue funcionando con tu imagen actual, y cada función que necesita el
+`rayd` nuevo falla cerrada con `UnimplementedError` y termina el sandbox
+que acaba de lanzar. Al pasar de 0.6.x a 0.7.0, revisa además los
+[cambios de comportamiento](0.7.0.md#como-actualizar-desde-06x).
 
 ## Disponible como experimental
 
-Funciones que ya puedes usar, apagadas por defecto, pero cuya API puede
-cambiar en una minor. Todavía no tienen versión publicada: llegan en la
-próxima release (ver `[Unreleased]` en el
-[Changelog](../referencia/changelog.md)) o ya están en `main`.
+Funciones publicadas, apagadas por defecto, cuya API puede cambiar en una
+minor.
 
-| Función | Cómo se usa | Qué falta |
-|---|---|---|
-| [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) | `volumes=` / `volumes`, sobre la imagen opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`) | aceptado en AWS real; experimental por la imagen opcional y la VPC |
-| [Dominio propio](../funciones-opcionales/dominio-propio.md) | `CustomDomain` (`rayito domain deploy`) y `register()` de cada ruta | sin verificar de punta a punta en AWS real (crear la distribución y servir tráfico); `domain=` en `Sandbox.create()` sin cablear |
+| Función | Desde | Cómo se usa | Por qué es experimental |
+|---|---|---|---|
+| [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) | 0.7.0 | `volumes=` / `volumes`, `VolumeStore`, `EfsVolumes` (`rayito stack deploy efs-volumes`), sobre la imagen opcional `rayito-base-caps-efs` (`rayito image publish --with-efs`) | aceptados en AWS real, pero dependen de una imagen opcional y de tu VPC |
+| [Dominio propio](../funciones-opcionales/dominio-propio.md) | 0.7.0 | `CustomDomain` (`rayito domain deploy`) y `register()` de cada ruta | sin verificar de punta a punta en AWS real (crear la distribución y servir tráfico); `domain=` en `Sandbox.create()` sin cablear |
 
 Si pruebas una, cuéntanos cómo te fue en un
 [issue de GitHub](https://github.com/alejandro-cedeno-10/rayito/issues/new/choose).
@@ -106,12 +116,10 @@ lleguen, y hoy lanza `UnimplementedError` antes de llamar a AWS:
 
 | Función | Opción | Estado |
 |---|---|---|
-| Dominio propio integrado en el sandbox | `domain=` / `domain` en `Sandbox.create()`, y `get_host()`/`expose()` devolviendo la URL | sin versión comprometida; mientras tanto, [`CustomDomain`](../funciones-opcionales/dominio-propio.md) |
+| Dominio propio integrado en el sandbox | `domain=` / `domain` en `Sandbox.create()`, y `get_host()`/`expose()` devolviendo la URL | sin versión comprometida; mientras tanto, [`CustomDomain`](../funciones-opcionales/dominio-propio.md) (experimental) |
 
-Mientras tanto: para datos compartidos entre sandboxes,
-[montajes S3](../funciones-opcionales/montajes-s3.md) o
-[persistencia en S3](../persistence.md); para exponer un puerto en
-desarrollo, [`rayito sandbox proxy`](../funciones-opcionales/proxy-local.md).
+Mientras tanto, para exponer un puerto en desarrollo,
+[`rayito sandbox proxy`](../funciones-opcionales/proxy-local.md).
 
 ## Versiones anteriores
 

@@ -293,7 +293,7 @@ proxy de AWS.
 todo lo que reenvía y el guest sólo ve `Host: <endpoint>`, una web
 cualquiera podía usar el servicio del sandbox por DNS rebinding, con un POST
 entre sitios o con un `WebSocket` de otro origen (con Jupyter, code-server o
-una terminal web, eso es ejecutar código en el sandbox). Desde 0.6.x el
+una terminal web, eso es ejecutar código en el sandbox). Desde 0.7.0 el
 proxy sólo reenvía peticiones cuyo `Host` es de loopback con el puerto
 local, la dirección de `--bind`, `<id>.localhost` o un `--allowed-host`
 (si no, `421`) y cuyo `Origin`, si lo trae, es uno de esos orígenes o un

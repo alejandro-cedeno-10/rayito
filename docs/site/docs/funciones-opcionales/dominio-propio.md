@@ -1,5 +1,7 @@
 # Dominio propio (experimental)
 
+<small>Desde 0.7.0, experimental ([Novedades](../novedades/0.7.0.md#dominio-propio-experimental)).</small>
+
 ## Qué hace
 
 Sin esta función, un puerto del sandbox sólo es alcanzable mandando las

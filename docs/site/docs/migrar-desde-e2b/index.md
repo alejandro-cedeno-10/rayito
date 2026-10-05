@@ -121,7 +121,7 @@ python -W always::UserWarning -m pytest
 - [ ] `RAYITO_TEMPLATE` apunta a una imagen de la release actual (el shim
       exige una imagen 0.3.0 o posterior).
 - [ ] Ninguna llamada usa algo de [No soportado](../e2b-compat.md#lanza-unimplementederror)
-      (`fork`, snapshots, `Volume`, `mcp=`, `iam=`…).
+      (`fork`, snapshots, `Volume` sin `volume_store=`, `mcp=`, `iam=`…).
 - [ ] Si guardas el `sandbox_id` para reconectar, guarda también el access
       token: `sbx.native.access_token` (TypeScript: `sbx.native.accessToken`).
       E2B no lo necesita; Rayito sí, porque no hay API key.
@@ -151,8 +151,8 @@ Fila a fila (113 funciones): [Paridad](../e2b-parity.md).
 
 ## Qué no existe
 
-`fork`, snapshots y `pause(keep_memory=False)`; `Volume` (volúmenes EFS);
-`mcp=`; `iam=`; `network.rules` y la resolución de `Secret.fill()`;
+`fork`, snapshots y `pause(keep_memory=False)`; las operaciones de
+contenido de `Volume` sin sandbox; `mcp=`; `iam=`; `network.rules` y la resolución de `Secret.fill()`;
 kernels R y Java. Todos lanzan `UnimplementedError` con el motivo. Qué usar
 en su lugar:
 [Qué hacer con lo que no está](../e2b-parity.md#que-hacer-con-lo-que-no-esta).
@@ -165,6 +165,9 @@ eventos de ciclo de vida y webhooks con la firma de E2B con `events=`
 ([Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md)) y
 exportación de métricas del sandbox por OTLP con `telemetry=`
 ([Exportación OTLP](../funciones-opcionales/exportacion-otlp.md)).
+Desde 0.7.0, `Volume` hace CRUD real y `volume_mounts=` monta volúmenes
+EFS con `E2B(volume_store=..., volume_connector_arn=...)`, como función
+experimental ([Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)).
 
 ## Cuándo pasar al SDK nativo
 

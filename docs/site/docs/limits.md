@@ -29,6 +29,9 @@ valida en cliente.
 | `envs` de un comando | como variables de entorno del proceso | sin límite propio; el payload de creación sí |
 | Salida retenida por proceso | 64 × 32 KiB por suscriptor; `output_truncated` si nadie lee en 30 s | `SandboxException("output_truncated: ...")` |
 | Tamaño de un `result` de `run_code` | > 12 MiB recortado a `rayito/omitted` | aparece en `Result.extra` |
+| Salida guardada de un comando o PTY (desde 0.7.0) | 64 MiB por descriptor (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el final | `truncated` en el resultado; ajustable con `max_output_bytes` / `maxOutputBytes` ([Comandos](guias/comandos.md#salida-guardada)) |
+| Volúmenes EFS por sandbox (desde 0.7.0, experimental) | de 1 a 4, y como mucho 4 entre `mounts=` y `volumes=`; exactamente un conector de egress propio (`AWS_API_NOTES.md` §16 Q131); `ConfigureSandbox` con plazo de 65 s | `InvalidArgumentException` antes de lanzar ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)) |
+| Access token propio (desde 0.7.0) | al menos 16 bytes decodificados (`ACCESS_TOKEN_MIN_BYTES`) | `InvalidArgumentException` |
 
 Las cuotas TPS son por cuenta y región (`AWS_API_NOTES.md` §11); cuentas
 nuevas pueden empezar con valores menores.

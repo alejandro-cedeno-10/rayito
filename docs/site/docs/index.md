@@ -16,14 +16,14 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.6"
-    Monta buckets S3 como carpetas, elige el tamaño del sandbox con
-    `size="4gb"`, recibe eventos de ciclo de vida en tus webhooks, exporta
-    métricas por OTLP, construye imágenes con el DSL `Template` de E2B y deja
-    que el código del sandbox use una API key sin poder leerla. Todo
-    apagado por defecto.
-    [Novedades de 0.6.0](novedades/0.6.0.md) ·
-    [0.6.1](novedades/0.6.1.md)
+!!! tip "Nuevo en 0.7"
+    Volúmenes EFS compartidos en vivo entre sandboxes, dentro de tu VPC;
+    dominio propio con CloudFront, como función experimental; un entorno
+    para probar en local con Docker y Floci, sin cuenta de AWS; y un
+    endurecimiento de seguridad de `rayd`, los SDK, la infraestructura y la
+    release. Todo lo que tiene coste, apagado por defecto.
+    [Novedades de 0.7.0](novedades/0.7.0.md) ·
+    [0.6.x](novedades/0.6.0.md)
 
 ## Empieza en tres pasos
 
@@ -217,6 +217,9 @@ código y reconexión en Python, Python async y TypeScript.
 | `Template.build()` (opcional, 0.6) | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
 | `gateways=`, `SecretGateway` (opcional, 0.6) | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
 | `OptionalStacks`, `rayito stack` (0.6) | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
+| `volumes=`, `VolumeStore`, `EfsVolumes` (opcional, experimental, 0.7) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
+| `CustomDomain`, `rayito domain` (opcional, experimental, 0.7) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
+| `make local-up`, `make local-e2e` (0.7) | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
 
 Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
 `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.

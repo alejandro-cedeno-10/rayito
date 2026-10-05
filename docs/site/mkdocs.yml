@@ -176,7 +176,7 @@ nav:
           - OpenTelemetry (SDK): funciones-opcionales/opentelemetry.md
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
       - Proxy local: funciones-opcionales/proxy-local.md
-      - En desarrollo:
+      - Experimental:
           - Dominio propio (experimental): funciones-opcionales/dominio-propio.md
   - Migrar desde E2B:
       - migrar-desde-e2b/index.md
@@ -184,6 +184,7 @@ nav:
       - Paridad: e2b-parity.md
   - Novedades:
       - novedades/index.md
+      - "0.7.0": novedades/0.7.0.md
       - "0.6.1": novedades/0.6.1.md
       - "0.6.0": novedades/0.6.0.md
   - Referencia:

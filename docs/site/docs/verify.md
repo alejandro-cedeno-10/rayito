@@ -14,7 +14,7 @@ cosign: el certificado de Sigstore lleva la identidad del workflow y del tag),
 `aarch64-unknown-linux-musl`) y `SHA256SUMS`.
 
 ```bash
-RAYD_VERSION=0.6.1   # la versión que vas a instalar, sin la "v"
+RAYD_VERSION=0.7.0   # la versión que vas a instalar, sin la "v"
 
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
@@ -41,8 +41,8 @@ pasaba por el que ibas a instalar. `cosign` ≥ 2.x (la release usa
 ### Qué prueba la firma
 
 Una firma válida prueba que `release.yml` de este repositorio firmó ese
-fichero en un run lanzado desde el tag `rayd-v${RAYD_VERSION}`. En las
-releases posteriores a la 0.6.1 prueba además que el run pasó por la
+fichero en un run lanzado desde el tag `rayd-v${RAYD_VERSION}`. Desde la
+0.7.0 prueba además que el run pasó por la
 aprobación del mantenedor: el job que firma corre en el environment
 `release`, con revisor obligatorio, así que GitHub no le da el token OIDC
 (ni Sigstore emite el certificado) hasta que alguien aprueba el run. La

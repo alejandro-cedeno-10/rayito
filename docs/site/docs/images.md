@@ -32,6 +32,8 @@ mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
 | `telemetry=` ([Exportación OTLP](funciones-opcionales/exportacion-otlp.md)) | sí (0.6.0) con `OtlpAuth.bearer(...)` | sí (0.6.0), también con `OtlpAuth.execution_role()` | sí (0.6.0) con `OtlpAuth.bearer(...)` |
 | `Template.set_start_cmd()` ([Templates](funciones-opcionales/templates.md)) como imagen base | sí (0.6.0) | sí (0.6.0) | sí (0.6.0) |
 | Recogida de zombis huérfanos ([Novedades de 0.6.1](novedades/0.6.1.md#rayd-recoge-los-procesos-zombi)) | sí (0.6.1) | sí (0.6.1) | sí (0.6.1) |
+| `volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md), experimental) | no: `UnimplementedError` | no: sólo la variante opcional `rayito-base-caps-efs` (0.7.0, `rayito image publish --with-efs`) | no: `UnimplementedError` |
+| Endurecimiento del agente: hooks aislados, persistencia ligada al `/run` ([Novedades de 0.7.0](novedades/0.7.0.md#endurecimiento-de-seguridad)) | sí (0.7.0) | sí (0.7.0) | sí (0.7.0) |
 
 `size=` ([Tamaños](funciones-opcionales/tamanos.md)) no es una función de
 la imagen sino una imagen más por tamaño: `rayito image publish --sizes`
