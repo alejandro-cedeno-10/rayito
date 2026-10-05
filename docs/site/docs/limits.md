@@ -171,3 +171,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.4` | `0.4.0` | 0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente en español exigen el rayd del tag rayd-v0.4.0 |
 | `0.5` | `0.5.0` | 0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales (secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0 |
 | `0.6` | `0.6.0` | 0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0 |
+| `0.7` | `0.7.0` | 0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks aislados, persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0 |

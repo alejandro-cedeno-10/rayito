@@ -91,6 +91,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   nombre que ya existe reintenta `get` hasta 30 s y `destroy` de un access
   point que el listado aún mostraba pero ya no existe devuelve `False`.
 
+### Changed
+
+- `rayito doctor` conoce la serie 0.7: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.7.0` para el SDK 0.7, porque los volúmenes EFS
+  y el endurecimiento del agente viven en `rayd`.
+
 ### Security
 
 - **Eventos de ciclo de vida (`events-webhooks`): una línea maliciosa ya no
