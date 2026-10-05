@@ -1,0 +1,71 @@
+name: leaks
+
+# Nada del entorno donde se desarrolló o aceptó el proyecto puede publicarse
+# (openspec leak-prevention-hygiene). Dos puertas además de
+# `check_hygiene.py` en el job `check` de ci.yml:
+#
+# - `gitleaks`: gitleaks fijado por versión y sha256 recorre TODA la historia
+#   alcanzable desde HEAD (en un PR, el merge de prueba: main más sus commits)
+#   con sus reglas por defecto y `--redact`, así que el log nunca copia el
+#   valor. Los falsos positivos ya revisados (marcadores de los tests, la
+#   clave TLS de las fixtures de rayd) van por huella en `.gitleaksignore`.
+# - `pr-text`: el título y el cuerpo del PR pasan por `check_hygiene.py -`
+#   con las mismas reglas que los ficheros, incluida la lista privada
+#   (secreto `RAYITO_HYGIENE_DENYLIST`; en un PR desde un fork no hay
+#   secretos y esa regla no hace nada). Corre también al editar el PR.
+#
+# Sólo lectura: `contents: read`, sin caché, sin credenciales persistidas.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks (whole history, redacted)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks git (HEAD history)
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks/gitleaks.tar.gz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --log-opts="HEAD" --redact --no-banner --exit-code 1 .
+
+  pr-text:
+    name: PR title and body carry no environment identifiers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: check_hygiene.py over the PR title and body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          RAYITO_HYGIENE_DENYLIST: ${{ secrets.RAYITO_HYGIENE_DENYLIST }}
+        run: printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | python3 scripts/check_hygiene.py -

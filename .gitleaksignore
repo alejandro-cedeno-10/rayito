@@ -1,0 +1,43 @@
+# Falsos positivos de gitleaks ya revisados, por huella (commit:fichero:regla:línea).
+# Son marcadores de los tests (fsap-0123abcd, hashes y tokens de paginación de
+# ejemplo, ArtifactS3Key) y la clave TLS de prueba de crates/rayd/tests/fixtures.
+# Una huella nueva sólo entra tras revisar que el valor no es real (leaks.yml).
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/python/tests/unit/test_m15_create_kwargs.py:generic-api-key:19
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/python/tests/unit/test_m15_efs_volumes_domain.py:generic-api-key:33
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:13
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-create-options.test.ts:generic-api-key:18
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-efs-volumes.test.ts:generic-api-key:138
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-efs-volumes.test.ts:generic-api-key:152
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-efs-volumes.test.ts:generic-api-key:153
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-efs-volumes.test.ts:generic-api-key:71
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:clients/typescript/tests/unit/m15-efs-volumes.test.ts:generic-api-key:77
+0695fa721c8ce69f4e941f969d7058cbd50a9ace:docs/site/docs/funciones-opcionales/volumenes-efs.md:generic-api-key:125
+41dfbcbcfa1d603128099b91cd202ab1cc2ab871:clients/python/src/rayito/_stacks/components/events_webhooks.py:generic-api-key:46
+41dfbcbcfa1d603128099b91cd202ab1cc2ab871:clients/typescript/src/stacks/components/events-webhooks.ts:generic-api-key:41
+41dfbcbcfa1d603128099b91cd202ab1cc2ab871:testdata/lifecycle-events/mac-vectors.json:generic-api-key:10
+4edd2396f46fa3588dcfbfe7b28910ebfcbeee62:clients/python/tests/unit/test_m15_custom_domain_service.py:generic-api-key:217
+8409453792b8f34cc1d61ecaed0c388542eac91f:clients/typescript/tests/unit/listing.test.ts:generic-api-key:37
+8409453792b8f34cc1d61ecaed0c388542eac91f:clients/typescript/tests/unit/listing.test.ts:generic-api-key:40
+8409453792b8f34cc1d61ecaed0c388542eac91f:clients/typescript/tests/unit/paginate.test.ts:generic-api-key:25
+8409453792b8f34cc1d61ecaed0c388542eac91f:clients/typescript/tests/unit/payload.test.ts:generic-api-key:107
+8409453792b8f34cc1d61ecaed0c388542eac91f:clients/typescript/tests/unit/payload.test.ts:generic-api-key:117
+8409453792b8f34cc1d61ecaed0c388542eac91f:crates/rayd/tests/fixtures/tls/leaf.key:private-key:1
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_efs_volumes_create.py:generic-api-key:36
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_efs_volumes_create.py:generic-api-key:37
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_efs_volumes_create.py:generic-api-key:39
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:150
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:251
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:259
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:47
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_section.py:generic-api-key:49
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_shim.py:generic-api-key:260
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/python/tests/unit/test_m15_efs_volumes_shim.py:generic-api-key:266
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/typescript/tests/unit/efs-volumes-create-resolve.test.ts:generic-api-key:66
+87ba6dcfc244af8ef0e7d788aa418a34278ccf81:clients/typescript/tests/unit/efs-volumes-mount.test.ts:generic-api-key:73
+8f252d63bfaa16e9a79ad3112aab415775366d3b:clients/python/tests/unit/test_m15_efs_volumes_shim.py:generic-api-key:154
+91c1651e1b88b0aa3e670cc569c3ea3bf933bec5:clients/python/src/rayito/_stacks/components/events_webhooks.py:generic-api-key:47
+91c1651e1b88b0aa3e670cc569c3ea3bf933bec5:clients/typescript/src/stacks/components/events-webhooks.ts:generic-api-key:40
+a9b733b458b978b56c487e10c0250ef7ccd0d4ed:crates/rayd/src/features/efs_volumes.rs:generic-api-key:302
+dde681c4858ae548aa550b2e7ab58f21ef8a29d3:clients/python/tests/unit/test_persistence_base.py:generic-api-key:157
+dde681c4858ae548aa550b2e7ab58f21ef8a29d3:scripts/tests/test_check_hygiene.py:generic-api-key:31
+fe66ee2996e9cdb11be885c2344ddcf73aee4a6b:clients/python/tests/unit/fixtures/zero_cost_0_5_trace.json:generic-api-key:14
