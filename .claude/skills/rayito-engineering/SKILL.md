@@ -142,7 +142,18 @@ nombres de secretos y rutas locales absolutas. Usa los marcadores
 `<tu-perfil>`. Los datos del entorno de pruebas llegan solo por variables
 `RAYITO_E2E_*` en tiempo de ejecución, documentadas de forma genérica en la
 cabecera de cada test. `scripts/check_hygiene.py` caza los patrones con forma
-fija, pero no puede conocer nombres ni dominios: revisa tu diff.
+fija (cuentas, ARNs, IDs de recursos, portales SSO, perfiles, rutas locales,
+URLs prefirmadas, tokens). Los nombres de empresa, dominios y cuentas reales
+no se escriben ni en el script: van en su lista privada
+(`.git/info/hygiene-denylist` en local, secreto `RAYITO_HYGIENE_DENYLIST` en
+CI), y nunca en un fichero versionado, un test ni un mensaje. Ninguna puerta
+conoce lo que no está en esa lista: revisa tu diff. Antes de abrir o editar
+un PR, un comentario o una release, pasa su texto por
+`python3 scripts/check_hygiene.py -` (el job `pr-text` de `leaks.yml` repite
+la comprobación sobre título y cuerpo); `gitleaks` recorre la historia en el
+mismo workflow, y un falso positivo sólo entra en `.gitleaksignore` tras
+comprobar que el valor no es real. Si algo se filtra, no reescribas la
+historia por tu cuenta: avisa al mantenedor.
 
 **En logs y errores del SDK y de `rayd`**: solo ids, estados, duraciones,
 bytes y códigos. Nunca contenido de ficheros, código ejecutado, `envs`, bytes
