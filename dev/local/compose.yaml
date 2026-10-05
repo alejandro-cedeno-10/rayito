@@ -81,7 +81,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /home/runner:uid=1000,gid=1000
+      # El uid del usuario `runner` (`RUNNER_UID` en runner/Dockerfile),
+      # fuera del rango del sandbox para que rayd acepte sus hooks.
+      - /home/runner:uid=993,gid=993
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 2g

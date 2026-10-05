@@ -124,7 +124,9 @@ depende de que Floci esté libre de fallos: depende del encierro.
 
 - `floci`: el emulador, en la red interna `aws`.
 - `runner`: Python 3.12 con uv 0.12.18 y Node 22 con pnpm 9.15.4 (todo fijado
-  por digest), usuario uid 1000, sistema de ficheros de solo lectura con el
+  por digest), usuario uid 993 (fuera del rango del sandbox, 1000-65535,
+  como el agente de la plataforma: `rayd` rechaza el `/run` y el `/terminate`
+  de un uid del sandbox), sistema de ficheros de solo lectura con el
   árbol montado en solo lectura y las dependencias en volúmenes. Es el
   dueño del espacio de red.
 - `guest`: la **imagen de producto** (`image/Dockerfile`, sin copiarla) con

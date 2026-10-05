@@ -28,14 +28,23 @@ ENV COREPACK_HOME=/opt/corepack \
     npm_config_store_dir=/opt/rayito/cache/pnpm \
     PYTHONDONTWRITEBYTECODE=1
 
-# `runner` (uid 1000) es quien corre los tests. Los directorios de los
-# volúmenes se crean aquí con su dueño: un volumen con nombre copia el dueño
-# del directorio de la imagen la primera vez que se monta.
+# `runner` es quien corre los tests y, con ellos, el plano de control local
+# que llama a los hooks del guest como lo haría la plataforma. Por eso su uid
+# queda fuera del rango del sandbox (1000-65535): `rayd` rechaza un `/run`
+# (`sandbox_origin`) y un `/terminate` (`peer_refused`) cuyo socket es de un
+# uid del sandbox (`rayd_core::hook_peer`, SECURITY.md T2), y el agente de la
+# plataforma posee los suyos como uids 991-994 (AWS_API_NOTES.md Q48). Debe
+# coincidir con el `uid=` del tmpfs de /home/runner en compose.yaml.
+# Los directorios de los volúmenes se crean aquí con su dueño: un volumen con
+# nombre copia el dueño del directorio de la imagen la primera vez que se
+# monta.
+ARG RUNNER_UID=993
 RUN ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
     && corepack enable pnpm \
     && corepack prepare pnpm@9.15.4 --activate \
     && chmod -R a+rX /opt/corepack \
-    && useradd -m -u 1000 -s /bin/bash runner \
+    && groupadd -g "$RUNNER_UID" runner \
+    && useradd -m -u "$RUNNER_UID" -g runner -s /bin/bash runner \
     && mkdir -p /opt/rayito/venv /opt/rayito/cache /src/clients/typescript/node_modules \
     && chown -R runner:runner /opt/rayito /src \
     && node --version && pnpm --version && uv --version
