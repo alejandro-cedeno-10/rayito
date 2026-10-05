@@ -106,3 +106,21 @@ The appendix SHALL name the residual risk with no new mitigation and no new thre
 #### Scenario: the T19 row exists
 - **WHEN** `scripts/tests/test_metadata_index_template.py::test_security_threat_model_has_t19` runs
 - **THEN** exactly one `| T19 |` row exists and it mentions "nunca", "access token", "fantasma", `RayitoIndexWriter` and `RayitoIndexReader`
+
+### Requirement: SECURITY.md documents the client-side hardening of the SDK-clients sweep
+`SECURITY.md` SHALL state in T3 the proxy's Host/Origin allowlist (`421`/`403`), `--allowed-host`/`--allow-origin`, the wildcard-bind rule, the connection cap, the single-message-per-connection rule (`400` on ambiguous framing, a refused upgrade is closed) and the cookie-sharing risk with the `<id>.localhost` mitigation; in a T28 row the build-context threats (symlinks out of the context, `.dockerignore` semantics, the likely-secrets warning) and their residual risk; in T9 that credentialed git URLs live in `.git/config` during the operation, the always-attempted restore and its warning, the hook/helper isolation and URL-rewrite refusal, that a token passed to the sandbox must be treated as revealed to its code (short-lived, single-repository tokens), that an execution role can write to any `/rayito/*` log stream and that the CLI neutralises terminal control characters; in T4 the access-token minimum; in T7 the client-side output cap and that `run_code` output is not yet bounded; in T18 that the git credential rule matches the secrets rule; and under "Higiene de logging" the sanitizer coverage and the JWE repr redaction. `docs/site/docs/security.md`, `git.md`, `funciones-opcionales/proxy-local.md`, `cli.md`, `funciones-opcionales/templates.md`, `guias/comandos.md` and `referencia/variables-de-entorno.md` SHALL carry the matching guidance in Spanish.
+
+#### Scenario: a reader checks the git guidance
+- **WHEN** a reader opens `docs/site/docs/git.md`
+- **THEN** the credentials section warns that the token is reachable by code already running in the sandbox and recommends short-lived, single-repository tokens, and no longer says the URL only exists in `/proc` while the command runs
+
+### Requirement: The docs state what a release signature proves and verify before publishing
+`docs/site/docs/verify.md` SHALL contain a section "Qué prueba la firma" stating that a valid signature proves `release.yml` of this repository signed the file in a run started from the `rayd-v<version>` tag and, for releases after 0.6.1, that the run passed the `release` environment's approval before the OIDC token existed, that a dry run signs nothing, and what the signature does not prove (that the tagged code was reviewed on `main`; signing needs both creating a `rayd-v*` tag and approving the `release` environment). It SHALL NOT claim that uploading requires approval as the only gate. The recommended "Desde la release" recipe of `docs/site/docs/primeros-pasos/configurar-aws.md` SHALL download `SHA256SUMS`, run `cosign verify-blob` with the exact identity `release.yml@refs/tags/rayd-v${RAYD_VERSION}` and a `sha256sum -c` before `rayito image publish`, and SHALL NOT present the verification as optional. `scripts/tests/test_security_docs.py` SHALL assert both.
+
+#### Scenario: verification is optional again
+- **WHEN** the recipe moves `cosign verify-blob` after `rayito image publish` or reintroduces "Opcional pero recomendable"
+- **THEN** `test_the_release_recipe_verifies_before_publishing` fails
+
+#### Scenario: the overclaim comes back
+- **WHEN** `verify.md` again says only that uploading requires the maintainer's approval
+- **THEN** `test_verify_states_what_a_signature_proves` fails

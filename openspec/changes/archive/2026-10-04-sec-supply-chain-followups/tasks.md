@@ -46,6 +46,6 @@
   from the hashed file (macOS; no Rust change). The `python-build` file-set
   step ran on Linux against a real `uv build` output: passes, and fails on
   an extra wheel or an extra `SHA256SUMS` line.
-- [ ] 4.2 Green CI on the pull request (the first run of the composite
+- [x] 4.2 Green CI on the pull request (the first run of the composite
   setup-uv on x86_64 and aarch64, the hashed pip-audit and `uv lock
   --check`).

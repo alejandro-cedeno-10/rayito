@@ -1605,6 +1605,52 @@ aislados. Limpieza: sólo se borró lo creado por la prueba.
 
 ---
 
+## 0.7.0 — Volúmenes EFS, dominio propio y endurecimiento de seguridad (2026-10-05)
+
+Cinco cambios OpenSpec archivados tras la aceptación contra AWS real y la
+publicación de 0.7.0 (`m15-efs-volumes`, `local-e2e-floci`,
+`sec-sdk-clients`, `sec-supply-chain-ci`, `sec-supply-chain-followups`):
+
+- **Volúmenes EFS** (experimental, apagado por defecto): `volumes=` en
+  `Sandbox.create`, `VolumeStore` con CRUD real de access points, el
+  componente `efs-volumes` (`EfsVolumes.check/deploy/destroy`, también en
+  `rayito doctor`) y la imagen `rayito-base-caps-efs`. El shim de E2B hace
+  CRUD real de `Volume` y monta con `volume_mounts=`.
+- **Dominio propio** (`m15-custom-domain`, experimental, apagado por
+  defecto): `CustomDomain` despliega CloudFront, una Function de enrutado y
+  un KeyValueStore. Sale como experimental para que se pueda probar: la
+  cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP, así
+  que el tráfico de punta a punta por una distribución real sigue sin
+  verificar y el cambio queda abierto (tareas 3.6 y 9.4).
+- **Endurecimiento de seguridad**: el agente frente a rutas de confused
+  deputy desde el sandbox (hooks, persistencia ligada al `/run`, pasarela
+  de credenciales con lista de rutas codificadas, proxy con Host/Origin y
+  un mensaje por conexión), las Lambdas y plantillas IAM de
+  `events-webhooks`, los clientes del SDK (proxy, plantillas, errores de
+  AWS, salida de la CLI, git, límites) y la cadena de suministro de CI y
+  release (firma de `rayd` sólo tras la aprobación, sin cachés en jobs con
+  privilegios, `uv` fijado y herramientas con hash).
+- **Pruebas en local** con Docker y Floci, sin cuenta de AWS.
+
+**Aceptación (2026-10-04/05, cuenta de pruebas, us-east-1):** sobre el
+árbol del PR de release y con imágenes desechables propias de la
+ejecución, en paralelo con imágenes distintas para que ningún sweeper
+tocara los sandboxes de otra sesión. Python: 122 pasados, 0 fallos y 10
+saltados de 132, con el corpus E2B completo. TypeScript: 49 de 57, con el
+corpus E2B (11/11); los 8 que no corrieron son los 5 de dominio propio (la
+SCP de CloudFront) y 3 de EFS/poly sin imagen en ese juego. Funciones y
+seguridad: 26 e2e (14 Python, 12 TypeScript) y 18 comprobaciones dirigidas,
+incluido el montaje EFS real. Los pocos fallos de la primera pasada
+(saturación del ancho de banda local o shards que se pisaban) pasaron al
+repetirlos aislados. Limpieza: sólo se borró lo creado por la ejecución, y
+el inventario de después coincide con el de antes salvo el orden.
+
+Siguen abiertos, a la espera de su aceptación dirigida en AWS:
+`m15-custom-domain`, `sec-infra-iam-lambdas` (6.1),
+`sec-rayd-agent-hardening` (9.3) y `sec-sandbox-isolation` (7.3).
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
