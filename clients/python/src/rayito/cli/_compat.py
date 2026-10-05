@@ -63,6 +63,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, "
         "pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0",
     ),
+    CompatibilityRow(
+        "0.7",
+        "0.7.0",
+        "0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks "
+        "aislados, persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0",
+    ),
 )
 
 
