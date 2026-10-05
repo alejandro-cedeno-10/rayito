@@ -81,3 +81,10 @@ No `Sandbox.create()`, listing, getter or constructor in the SDK SHALL call any 
 #### Scenario: create still fills the defaults
 - **WHEN** `deploy("s3-mounts", parameters={"BucketName": "b"})` is called and `describe` returns no stack
 - **THEN** `create` receives `Prefixes='*'` and `ReadOnly='true'`
+
+### Requirement: Stack errors chain the sanitized AWS summary
+The CloudFormation provisioner SHALL raise `StackException`/`StackError` whose cause is the sanitized summary of the AWS error (`raise ... from sanitize_aws_error(exc)` in Python, `cause: sanitizeAwsError(...)` in TypeScript), never the raw `ClientError` or smithy error.
+
+#### Scenario: a signature error on describe-stacks
+- **WHEN** `describe_stacks` fails with `InvalidSignatureException` carrying the canonical string
+- **THEN** the `StackException` traceback (cause included) contains neither the session token nor the access key id
