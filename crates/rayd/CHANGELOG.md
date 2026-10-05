@@ -10,6 +10,15 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Los tests de `adapters::exec_posture` que abren descriptores heredables o
+  sellan la tabla de descriptores del propio proceso de test se serializan
+  con un cerrojo: con los tests en hilos paralelos, el `close_range` de uno
+  marcaba `FD_CLOEXEC` el descriptor de otro entre su `open` y su aserción,
+  y `a_posture_inheriting_a_slot_seals_only_above_it` fallaba de vez en
+  cuando en aarch64. Sólo cambian los tests.
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
