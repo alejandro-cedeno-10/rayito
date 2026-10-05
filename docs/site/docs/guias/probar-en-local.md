@@ -1,5 +1,7 @@
 # Probar en local (Docker + Floci)
 
+<small>En el repositorio desde 0.7.0 ([Novedades](../novedades/0.7.0.md#probar-en-local-con-docker-y-floci)).</small>
+
 Un entorno de Docker para correr los SDK de Python y TypeScript contra un
 `rayd` de verdad y contra un AWS emulado, sin cuenta de AWS, sin credenciales
 y sin coste. Sirve para el bucle de desarrollo y para revisar un PR antes de

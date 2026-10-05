@@ -1,5 +1,7 @@
 # Volúmenes EFS (experimental)
 
+<small>Desde 0.7.0 ([Novedades](../novedades/0.7.0.md#volumenes-efs)).</small>
+
 Un sistema de ficheros compartido (NFS) **en tu cuenta**, montado dentro del
 guest por `rayd`: el análogo de `Volume` de E2B. A diferencia de
 `persist=` (una copia S3 restaurada/guardada en `create`/`pause`), un

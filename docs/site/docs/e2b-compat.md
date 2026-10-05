@@ -98,7 +98,8 @@ Lo que cambia fuera del código:
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `AsyncSecret`, `SecretInfo`, `SecretPaginator`, `AsyncSecretPaginator` |
     | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException`, `SecretException`, `SecretNotFoundException` |
     | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template`, `AsyncTemplate` construyen de verdad; `alias_exists`/`assign_tags`/`remove_tags`/`get_tags` siguen sin equivalente |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Volume`, `AsyncVolume`, `get_signature` |
+    | Volúmenes EFS (desde 0.7.0, experimental, ver [Volúmenes EFS](funciones-opcionales/volumenes-efs.md#shim-e2b-e2bvolume_store)) | `Volume`, `AsyncVolume` hacen CRUD real con `E2B(volume_store=...)`; sin él, y en las operaciones de contenido, lanzan |
+    | Sin primitiva (importan, pero toda llamada lanza) | `get_signature` |
     | Sólo Rayito | `UnimplementedError`, `RayitoCompatWarning` |
 
 === "TypeScript"
@@ -120,7 +121,8 @@ Lo que cambia fuera del código:
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `SecretPaginator`; tipos `SecretInfo`, `SecretCreateOpts`, `SecretUpdateOpts`, `SecretGetInfoOpts`, `SecretExistsOpts`, `SecretDestroyOpts`, `SecretListOpts`, `SecretConnectionOpts` |
     | Errores (las clases nativas de `rayito`: `instanceof` vale entre los dos) | `SandboxError`, `TimeoutError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `InvalidArgumentError`, `AuthenticationError`, `RateLimitError`, `CommandExitError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`), `FileUploadError`, `GitAuthError`, `GitUpstreamError`, `TemplateError`, `BuildError`, `UnimplementedError`, `SecretError`, `SecretNotFoundError` |
     | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template` construye de verdad; `aliasExists`/`assignTags`/`removeTags`/`getTags` siguen sin equivalente |
-    | Sin primitiva (importan, pero toda llamada lanza) | `Volume`, `getSignature` |
+    | Volúmenes EFS (desde 0.7.0, experimental, ver [Volúmenes EFS](funciones-opcionales/volumenes-efs.md#shim-e2b-e2bvolume_store)) | `Volume` hace CRUD real con `new E2B({ volumeStore })`; sin él, y en las operaciones de contenido, lanza |
+    | Sin primitiva (importan, pero toda llamada lanza) | `getSignature` |
 
     `rayito/e2b` es una entrada del mismo paquete npm `rayito` (ESM y
     CommonJS): no hay que instalar nada más.
@@ -190,7 +192,7 @@ nada se aproxima en silencio.
 | `logger=` | los logs del SDK de ese sandbox van al `logging.Logger` dado (TS: un `Logger` con `debug`/`info`/`warn`/`error`), distinto del `logging=` nativo, que es CloudWatch |
 | JS `sbx.getHost(port)` | síncrono, devuelve el hostname como E2B; las cabeceras del proxy que toda petición necesita salen de `await sbx.getHostHeaders(port)` |
 | JS `signal` (`AbortSignal`) en `ConnectionOpts` | cancela las llamadas del plano de control y los RPC en curso; rechaza con `signal.reason` |
-| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Secret`/`.AsyncSecret` (TS: `.Secret`) usan esa `region` y esa `session` contra Secrets Manager; desde 0.6.0 `.Template`/`.AsyncTemplate` son la clase real; `.Volume` lanza |
+| `E2B(...)` (cliente ligado) | liga `region`, `session` y `control_plane`; `.Secret`/`.AsyncSecret` (TS: `.Secret`) usan esa `region` y esa `session` contra Secrets Manager; desde 0.6.0 `.Template`/`.AsyncTemplate` son la clase real; desde 0.7.0 `.Volume`/`.AsyncVolume` hacen CRUD real con `volume_store=` (sin él, lanzan) |
 | Kwargs nativos (`region`, `session`, `execution_role_arn`, `allowed_ports`, `ingress`, `logging`, `control_plane`, `transport`, ...) | se pasan tal cual; `idle`, `egress` y `pool` no se aceptan (`TypeError`) |
 
 ## Lanza `UnimplementedError`
@@ -219,8 +221,8 @@ rechazada. Las claves y los motivos de esta tabla son los de
 
 Desde 0.6.0, `Template`/`AsyncTemplate` (y `E2B(...).Template`/
 `.AsyncTemplate`) construyen imágenes de verdad: ver
-[Templates](funciones-opcionales/templates.md). `E2B(...).Volume` lanza lo
-mismo que `Volume`; `Secret.iam_token`
+[Templates](funciones-opcionales/templates.md). `E2B(...).Volume` sin `volume_store=`
+lanza lo mismo que `Volume`; `Secret.iam_token`
 (TS: `Secret.iamToken`) lanza el de `iam`. Los casos
 siguientes dependen de la imagen o de la configuración y llevan su propio
 motivo (texto de Python; TypeScript usa el mismo motivo con los nombres de la

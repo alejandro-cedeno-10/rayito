@@ -50,6 +50,8 @@ Nada de esto hace falta para empezar.
 | Trazas OpenTelemetry ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]" opentelemetry-sdk` | `npm i @opentelemetry/api @opentelemetry/sdk-trace-base` |
 | Secretos de Secrets Manager ([Secretos](../secrets.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
 | Índice de metadatos en DynamoDB ([Índice](../funciones-opcionales/indice-de-metadatos.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-dynamodb` |
+| Volúmenes EFS, experimental ([Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-efs @aws-sdk/client-ec2` |
+| Dominio propio, experimental ([Dominio propio](../funciones-opcionales/dominio-propio.md)) | `pip install "rayito[custom-domain]"` | `npm i @aws-sdk/client-cloudformation @aws-sdk/client-cloudfront-keyvaluestore @aws-sdk/signature-v4a` |
 
 En TypeScript esos paquetes son *peerDependencies* opcionales: el SDK sólo
 los carga cuando activas la función. Si la activas sin instalarlos, la

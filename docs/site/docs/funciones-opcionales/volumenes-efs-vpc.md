@@ -1,5 +1,7 @@
 # Volúmenes EFS en tu VPC
 
+<small>Desde 0.7.0, experimental ([Novedades](../novedades/0.7.0.md#volumenes-efs)).</small>
+
 La forma rápida y segura de preparar los
 [volúmenes EFS](volumenes-efs.md) en una **VPC que ya existe**: el caso
 común, porque muchas cuentas no pueden crear VPCs (una política de la
