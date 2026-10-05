@@ -1,7 +1,9 @@
 """``check_hygiene.py`` over crafted lines and temporary trees: every rule
 reports a real-looking sample and lets its documented placeholder through,
 one line reports each rule once, ``main`` prints ``path:line`` without the
-line itself and exits 1, binary and untracked files are skipped, and the real
+line itself and exits 1, binary and untracked files are skipped, the private
+denylist (environment variable and ``.git/info/hygiene-denylist``) is applied
+but never echoed, stdin is scanned for the PR text job, and the real
 repository is clean. The positive samples are assembled from pieces, so this
 file passes the gate it tests."""
 
@@ -22,7 +24,7 @@ if str(SCRIPTS) not in sys.path:
 import check_hygiene
 
 REPO_ROOT = SCRIPTS.parent
-ACCOUNT = "210987654321"
+ACCOUNT = "2109876" + "54321"
 UUID = "5f2d7c1e-9a4b-3c6d-8e1f-2a3b4c5d6e7f"
 HEX17 = "0a1b2c3d4e5f67890"
 HEX8 = "1a2b3c4d"
@@ -36,6 +38,18 @@ GIT_BASH_SYSTEM_DRIVE = "c"
 HOME_ROOT = "Users"
 PRIVATE_ROOT = "private"
 QUALIFIER = check_hygiene.CDK_QUALIFIER
+HEX16 = "9f8e7d6c5b4a3921"
+HEX10 = "9067e1c2b3"
+PORTAL = "acme-" + "corp"
+AWSAPPS = "awsapps" + ".com"
+SIGNATURE = "5e" * 32
+STS_TOKEN = "IQoJb3JpZ2lu" + "X2VjEJr" + "Q" * 48
+JWT = (
+    "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxIn0" + "." + "c2lnbmF0dXJlLXZhbHVl"
+)
+GITHUB_TOKEN = "ghp" + "_" + "Z9" * 18
+NPM_TOKEN = "npm" + "_" + "k7" * 18
+PRIVATE_TERM = "zorb" + "lax"
 
 
 def scan(tmp_path: Path, name: str, content: bytes) -> tuple[int, str]:
@@ -188,6 +202,14 @@ def test_fake_microvm_ids_and_placeholders_pass(line: str) -> None:
         f"SubnetIds=subnet-{HEX8}",
         f"SecurityGroupIds=sg-{HEX17}",
         f"eni-{HEX17} attached",
+        f"RouteTableId=rtb-{HEX17}",
+        f"tgw-attach-{HEX17}",
+        f"igw-{HEX8} vpce-{HEX17}",
+        f'"FileSystemId": "fs-{HEX8}"',
+        f"AccessPointId=fsap-{HEX17}",
+        f"fsmt-{HEX17} nc-{HEX17}",
+        f"nat-{HEX17}",
+        f"i-{HEX17} ami-{HEX8} snap-{HEX17} vol-{HEX17} lt-{HEX17}",
     ],
 )
 def test_real_network_id_is_reported(line: str) -> None:
@@ -201,6 +223,10 @@ def test_real_network_id_is_reported(line: str) -> None:
         "SecurityGroupIds=sg-0123456789abcdef0",
         f"msg-{HEX8}",
         "VpcId=… SubnetIds=…",
+        '"FileSystemId": "fs-0123abcd"',
+        "fsap-0456abcd fsap-0123abce fs-0123456789abcdef1",
+        "fs-99999999 fsap-00000001 fsap-0000000a",
+        f"i-{HEX8} nat-{HEX8} multi-{HEX17}",
     ],
 )
 def test_placeholder_network_ids_pass(line: str) -> None:
@@ -256,6 +282,192 @@ def test_access_key_id_is_reported(line: str) -> None:
 @pytest.mark.parametrize("line", ["AKIAIOSFODNN7EXAMPLE", "AKIA1234", "ASIA"])
 def test_documentation_key_and_short_prefixes_pass(line: str) -> None:
     assert check_hygiene.line_reasons(line) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f'"AccountId": "{ACCOUNT}"',
+        f"sso_account_id = {ACCOUNT}",
+        f"aws_account_id={ACCOUNT}",
+        f"aws organizations describe-account --account-id {ACCOUNT}",
+        f"account: '{ACCOUNT}'",
+    ],
+)
+def test_real_account_in_an_account_field_is_reported(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == [check_hygiene.ACCOUNT_FIELD_REASON]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '"Account": "111111111111"',
+        "sso_account_id = 123456789012",
+        "arn:aws:iam::999999999999:role/x",
+        "account_id = <tu-cuenta>",
+        "accounts: 12",
+        "account_lookup = 300000000000000",
+    ],
+)
+def test_placeholder_account_fields_pass(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"sso_start_url = https://{PORTAL}.{AWSAPPS}/start",
+        f"https://d-{HEX10}.{AWSAPPS}/start#/",
+        f"https://ssoins-{HEX16}.portal.us-east-1.app.aws",
+        f"IdentityStoreId=d-{HEX10}",
+    ],
+)
+def test_sso_portal_is_reported(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == [check_hygiene.SSO_PORTAL_REASON]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"sso_start_url = https://my-sso-portal.{AWSAPPS}/start",
+        f"https://d-xxxxxxxxxx.{AWSAPPS}/start",
+        "sso_start_url = <tu-portal>",
+        f"https://<tu-portal>.{AWSAPPS}/start",
+    ],
+)
+def test_sso_portal_placeholders_pass(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"https://b.s3.amazonaws.com/k?X-Amz-Signature={SIGNATURE}",
+        f"&X-Amz-Security-Token={STS_TOKEN}",
+        f"AWS_SESSION_TOKEN={STS_TOKEN}",
+    ],
+)
+def test_presigned_signature_or_session_token_is_reported(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == [check_hygiene.PRESIGNED_REASON]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "X-Amz-Signature=abc",
+        "X-Amz-Signature=deadbeef",
+        "X-Amz-Security-Token={SESSION_TOKEN}",
+        "X-Amz-Security-Token=tok",
+    ],
+)
+def test_presigned_placeholders_pass(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"Authorization: Bearer {JWT}",
+        f"GH_TOKEN={GITHUB_TOKEN}",
+        f"//registry.npmjs.org/:_authToken={NPM_TOKEN}",
+    ],
+)
+def test_token_is_reported(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == [check_hygiene.TOKEN_REASON]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'cursor = "eyJmIjoiMWYxYjEyM2IxYjc0NGMzYSJ9"',
+        "GH_TOKEN=<token>",
+        "pypi-<token>",
+        "ghp_",
+    ],
+)
+def test_token_placeholders_pass(line: str) -> None:
+    assert check_hygiene.line_reasons(line) == []
+
+
+def test_private_terms_match_case_insensitively() -> None:
+    terms = (PRIVATE_TERM,)
+
+    assert check_hygiene.line_reasons(
+        f"tested on the {PRIVATE_TERM.upper()} account", terms
+    ) == [check_hygiene.PRIVATE_TERM_REASON]
+    assert check_hygiene.line_reasons(f"https://{PRIVATE_TERM}.example", terms) == [
+        check_hygiene.PRIVATE_TERM_REASON
+    ]
+    assert check_hygiene.line_reasons("nothing private here", terms) == []
+    assert check_hygiene.line_reasons(f"{PRIVATE_TERM} everywhere") == []
+
+
+def test_private_terms_come_from_the_environment_and_the_git_dir(
+    tmp_path: Path,
+) -> None:
+    git(tmp_path, "init", "-q")
+    denylist = tmp_path / ".git" / "info" / "hygiene-denylist"
+    denylist.parent.mkdir(parents=True, exist_ok=True)
+    denylist.write_text("# comment, ignored\n  Second-Term \n\n", encoding="utf-8")
+    environ = {check_hygiene.DENYLIST_ENV: f" {PRIVATE_TERM.title()} ,second-term\n,"}
+
+    assert check_hygiene.private_terms(tmp_path, environ) == (
+        PRIVATE_TERM,
+        "second-term",
+    )
+
+
+def test_private_terms_outside_a_repository_come_from_the_environment_only(
+    tmp_path: Path,
+) -> None:
+    environ = {check_hygiene.DENYLIST_ENV: PRIVATE_TERM}
+
+    assert check_hygiene.private_terms(tmp_path, environ) == (PRIVATE_TERM,)
+    assert check_hygiene.private_terms(tmp_path, {}) == ()
+
+
+def test_main_reports_a_private_term_without_echoing_it(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    denylist = tmp_path / ".git" / "info" / "hygiene-denylist"
+    denylist.parent.mkdir(parents=True, exist_ok=True)
+    denylist.write_text(f"{PRIVATE_TERM}\n", encoding="utf-8")
+    (tmp_path / "notes.md").write_text(
+        f"clean\nsee https://{PRIVATE_TERM.upper()}.example/start\n", encoding="utf-8"
+    )
+    git(tmp_path, "add", "notes.md")
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = check_hygiene.main([], root=tmp_path)
+
+    printed = stdout.getvalue()
+    assert code == 1
+    assert f"notes.md:2: {check_hygiene.PRIVATE_TERM_REASON}" in printed
+    assert PRIVATE_TERM not in printed.casefold()
+
+
+def test_stdin_is_scanned_when_the_argument_is_a_dash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(f"title\nbody with {GITHUB_TOKEN}\n"))
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = check_hygiene.main([check_hygiene.STDIN_ARGUMENT], root=tmp_path)
+
+    printed = stdout.getvalue()
+    assert code == 1
+    assert f"<stdin>:2: {check_hygiene.TOKEN_REASON}" in printed
+    assert GITHUB_TOKEN not in printed
+
+
+def test_clean_stdin_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO("chore: tidy\n\nNo identifiers.\n"))
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = check_hygiene.main([check_hygiene.STDIN_ARGUMENT], root=tmp_path)
+
+    assert code == 0
+    assert "OK 1 fichero(s)" in stdout.getvalue()
 
 
 def test_a_line_reports_each_rule_once() -> None:

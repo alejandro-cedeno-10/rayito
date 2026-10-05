@@ -50,7 +50,11 @@ jobs:
           "$RUNNER_TEMP/actionlint/actionlint" -no-color
       - name: no unpinned actions (every `uses:` is a commit SHA)
         run: python3 scripts/check_pins.py
-      - name: no environment identifiers in tracked files (accounts, buckets, SSO, resource ids, local paths)
+      - name: no environment identifiers in tracked files (accounts, buckets, SSO, resource ids, local paths, tokens, private denylist)
+        env:
+          # Lista privada (empresa, dominios, cuentas): secreto del repositorio,
+          # vacío en PRs desde forks (scripts/check_hygiene.py, regla 13).
+          RAYITO_HYGIENE_DENYLIST: ${{ secrets.RAYITO_HYGIENE_DENYLIST }}
         run: python3 scripts/check_hygiene.py
       - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:

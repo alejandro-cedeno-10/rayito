@@ -107,7 +107,8 @@ Solo `pnpm` (nunca `npm` ni `yarn`), salvo el `npm publish` de `release.yml`.
 cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict
 cd clients/python && uv run --group dev python ../../scripts/check_docs_examples.py --ruff --mypy --cli
 npx -y @fission-ai/openspec@1.10.0 validate --all --strict --no-interactive
-python3 scripts/check_hygiene.py
+python3 scripts/check_hygiene.py   # más tu lista privada en .git/info/hygiene-denylist
+gitleaks git --log-opts=HEAD --redact --no-banner .   # 8.30.1, como leaks.yml
 python3 scripts/check_pins.py
 python3 scripts/gen_limits.py --check
 python3 scripts/gen_stack_assets.py --check

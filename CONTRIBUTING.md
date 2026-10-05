@@ -337,11 +337,17 @@ Los módulos de `clients/python/tests/e2e/` y `clients/typescript/tests/e2e/`
 documentan en su cabecera las variables propias de cada uno.
 
 **Nunca se versionan** IDs de cuenta, ARNs con cuenta real, nombres de
-bucket, perfiles de AWS/SSO, IDs de MicroVM ni rutas locales:
-`scripts/check_hygiene.py` (gate de CI) los rechaza. En documentación, tests
-y fixtures se usan los marcadores de AWS (`123456789012`,
-`amzn-s3-demo-bucket`, `microvm-00000000-0000-0000-0000-000000000001`,
-`vpc-0123456789abcdef0`) o `<tu-…>`.
+bucket, IDs de recursos (VPC, subred, SG, EFS…), portales o perfiles de
+AWS/SSO, IDs de MicroVM, URLs prefirmadas, tokens, rutas locales ni el nombre
+de tu empresa o sus dominios: `scripts/check_hygiene.py` (gate de CI) los
+rechaza. En documentación, tests y fixtures se usan los marcadores de AWS
+(`123456789012`, `amzn-s3-demo-bucket`,
+`microvm-00000000-0000-0000-0000-000000000001`, `vpc-0123456789abcdef0`) o
+`<tu-…>`. Lo que no tiene forma fija (empresa, dominios, tus cuentas) va en
+tu lista privada `.git/info/hygiene-denylist`, un término por línea, que Git
+nunca versiona y el gate aplica sin imprimirla. Lo mismo vale para el título
+y el cuerpo de un PR: `printf '%s' "$TEXTO" | python3 scripts/check_hygiene.py -`
+(CI lo comprueba en `leaks.yml`, junto con `gitleaks` sobre la historia).
 
 ## 4. Convenciones
 
