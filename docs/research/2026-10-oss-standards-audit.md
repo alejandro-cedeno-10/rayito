@@ -173,9 +173,10 @@ the summary.
   the branch up to date, signed commits, no force push, no deletion, and
   no bypass actors.
 - **License notices:** `LICENSE` and `NOTICE` ship in the wheel, the sdist
-  and the npm tarball. The `rayd` binary and `rayito-image.zip` still ship
-  no third-party notices file (§2.2, §8 #1). This does not affect any
-  badge criterion, but it is the open license-compliance item.
+  and the npm tarball. Since `third-party-licenses` (after 0.7.0), the
+  `rayd` release assets and `rayito-image.zip` also carry `LICENSE`,
+  `NOTICE` and `THIRD_PARTY_LICENSES.md` (§2.2, §8 #1); 0.7.0 and earlier
+  do not. This does not affect any badge criterion.
 - **Supported versions:** `SECURITY.md` lists the 0.7.x line.
 
 | Criterion | Answer | Justification / URL |
