@@ -6,8 +6,10 @@ name: release
 #   typescript-v<v>  clients/typescript → npm (trusted publishing con provenance)
 #   rayd-v<v>        crates/rayd     → assets de la GitHub Release del tag:
 #                    rayd (cargo auditable, .dep-v0), rayito-image.zip,
-#                    rayd.cdx.json (CycloneDX 1.5), los dos bundles cosign
-#                    (keyless, Sigstore) y SHA256SUMS
+#                    rayd.cdx.json (CycloneDX 1.5), LICENSE, NOTICE,
+#                    THIRD_PARTY_LICENSES.md (cargo-about), los dos bundles
+#                    cosign (keyless, Sigstore), SHA256SUMS y su bundle
+#                    SHA256SUMS.sigstore.json
 #
 # Los tags los crea release-please (release-please.yml). Un tag creado con
 # GITHUB_TOKEN no dispara este workflow: en ese caso se lanza a mano con
@@ -40,6 +42,15 @@ name: release
 # `--clobber`: un asset publicado no se reemplaza nunca desde aquí. Un
 # `build.rs` o una herramienta de build comprometidos ya no ven ni el token
 # OIDC ni un token con permiso de escritura sobre las releases.
+#
+# Avisos de licencia (openspec third-party-licenses): `rayd-build` comprueba
+# con `make licenses-check` que el THIRD_PARTY_LICENSES.md del tag es el que
+# cargo-about (binario fijado por sha256, ./.github/actions/cargo-about)
+# genera desde su Cargo.lock y que lista todo crate del `.dep-v0` del
+# binario; lo mete, con LICENSE y NOTICE, en image/licenses/ (y de ahí en el
+# zip firmado) y entre los assets. `rayd-sign` firma además SHA256SUMS
+# (SHA256SUMS.sigstore.json), así que los avisos y el SBOM, que no llevan
+# bundle propio, quedan cubiertos por una firma con la misma identidad.
 #
 # Todo job con `id-token: write` (python-publish, typescript-publish y
 # rayd-sign) declara su environment con revisor y corre sólo con
@@ -104,7 +115,7 @@ env:
   # uv nunca vuelve a resolver un uv.lock desfasado (sec-supply-chain-followups,
   # SC-A05). La versión y el checksum de uv viven en ./.github/actions/setup-uv.
   UV_LOCKED: "1"
-  RAYD_ASSETS: rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json SHA256SUMS
+  RAYD_ASSETS: rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json LICENSE NOTICE THIRD_PARTY_LICENSES.md SHA256SUMS SHA256SUMS.sigstore.json
 
 jobs:
   resolve:
@@ -427,10 +438,19 @@ jobs:
           test "$count" -eq 0
       - name: CycloneDX 1.5 SBOM (crates/rayd/rayd.cdx.json)
         run: cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
-      - name: rayito-image.zip (the artefact the maintainer publishes with make image-publish)
+      - uses: ./.github/actions/cargo-about
+      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from the tag's Cargo.lock and lists exactly the crates cargo tree compiles into rayd
+        run: make licenses-check
+      - name: every crate THIRD_PARTY_LICENSES.md lists is recorded in the binary's .dep-v0, and every crate NOTICE file is carried
+        run: |
+          cargo metadata --format-version 1 --locked --offline > "$RUNNER_TEMP/cargo-metadata.json"
+          python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md \
+            --binary "$RAYD_BIN" --metadata "$RUNNER_TEMP/cargo-metadata.json"
+      - name: rayito-image.zip (the artefact the maintainer publishes with make image-publish), with LICENSE, NOTICE and THIRD_PARTY_LICENSES.md in licenses/
         run: |
           cp "$RAYD_BIN" image/rayd
           python3 scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
+          make image-licenses
           python3 scripts/image_zip.py image image/rayito-image.zip
       - name: Stage the unsigned assets and their SHA256SUMS
         run: |
@@ -438,7 +458,8 @@ jobs:
           cp "$RAYD_BIN" release/rayd
           cp image/rayito-image.zip release/rayito-image.zip
           cp crates/rayd/rayd.cdx.json release/rayd.cdx.json
-          (cd release && sha256sum rayd rayito-image.zip rayd.cdx.json > SHA256SUMS && cat SHA256SUMS)
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md release/
+          (cd release && sha256sum rayd rayito-image.zip rayd.cdx.json LICENSE NOTICE THIRD_PARTY_LICENSES.md > SHA256SUMS && cat SHA256SUMS)
       - id: digest
         run: echo "sha256=$(sha256sum release/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -458,6 +479,7 @@ jobs:
       contents: read
     outputs:
       sha256sums_sha256: ${{ steps.digest.outputs.sha256 }}
+      sha256sums_bundle_sha256: ${{ steps.digest.outputs.bundle_sha256 }}
     env:
       OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
@@ -492,14 +514,25 @@ jobs:
               --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
               --certificate-oidc-issuer "$OIDC_ISSUER" "$asset"
           done
-      - name: SHA256SUMS over the signed assets and their bundles
+      - name: SHA256SUMS over the signed assets, their bundles, the SBOM and the license notices
         working-directory: ${{ runner.temp }}/release
         run: |
-          sha256sum rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json > SHA256SUMS
+          sha256sum rayd rayd.sigstore.json rayito-image.zip rayito-image.zip.sigstore.json rayd.cdx.json LICENSE NOTICE THIRD_PARTY_LICENSES.md > SHA256SUMS
           cat SHA256SUMS
+      - name: cosign sign-blob SHA256SUMS (covers the SBOM and the notices, which carry no bundle of their own)
+        working-directory: ${{ runner.temp }}/release
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      - name: cosign verify-blob self-check of SHA256SUMS (the exact identity of this ref)
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" SHA256SUMS
       - id: digest
         working-directory: ${{ runner.temp }}/release
-        run: echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "bundle_sha256=$(sha256sum SHA256SUMS.sigstore.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rayd-release-${{ needs.resolve.outputs.version }}
@@ -524,11 +557,14 @@ jobs:
         with:
           name: rayd-release-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/release
-      - name: SHA256SUMS is the one rayd-sign produced
+      - name: SHA256SUMS and its bundle are the ones rayd-sign produced
         working-directory: ${{ runner.temp }}/release
         env:
           SHA256SUMS_SHA256: ${{ needs.rayd-sign.outputs.sha256sums_sha256 }}
-        run: echo "${SHA256SUMS_SHA256}  SHA256SUMS" | sha256sum -c -
+          SHA256SUMS_BUNDLE_SHA256: ${{ needs.rayd-sign.outputs.sha256sums_bundle_sha256 }}
+        run: |
+          echo "${SHA256SUMS_SHA256}  SHA256SUMS" | sha256sum -c -
+          echo "${SHA256SUMS_BUNDLE_SHA256}  SHA256SUMS.sigstore.json" | sha256sum -c -
       - name: The assets match SHA256SUMS
         working-directory: ${{ runner.temp }}/release
         run: sha256sum -c SHA256SUMS

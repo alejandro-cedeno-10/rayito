@@ -37,6 +37,11 @@ pins:
   asset (no ``--clobber``) and publishing needs the tagged commit on
   ``main``;
 - the cosign self-check binds the exact workflow ref, never a regexp;
+- ``rayd-build`` proves ``THIRD_PARTY_LICENSES.md`` matches the tag's
+  ``Cargo.lock`` and covers the binary's ``.dep-v0`` before staging it, puts
+  ``LICENSE``, ``NOTICE`` and the notices into the zip and among the assets,
+  and ``rayd-sign`` signs the ``SHA256SUMS`` that lists them (openspec
+  third-party-licenses);
 - every ``pnpm install`` and ``npm publish`` carries ``--ignore-scripts``,
   and ``python-publish`` downloads inside ``GITHUB_WORKSPACE`` (the publish
   action runs twine in a Docker container that mounts only the workspace)."""
@@ -441,3 +446,53 @@ def test_workspace_check_rejects_runner_temp_and_absolute_paths() -> None:
     assert not is_inside_the_workspace("/home/runner/work/_temp/python/dist")
     assert is_inside_the_workspace("python-dist/dist")
     assert is_inside_the_workspace("${{ github.workspace }}/python-dist/dist")
+
+
+LICENSE_ASSETS = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md")
+SUMS_BUNDLE = "SHA256SUMS.sigstore.json"
+
+
+def test_rayd_assets_include_the_license_notices_and_the_sums_bundle() -> None:
+    assets = load_workflow()["env"]["RAYD_ASSETS"].split()
+
+    for asset in (*LICENSE_ASSETS, "SHA256SUMS", SUMS_BUNDLE):
+        assert asset in assets, asset
+
+
+def test_rayd_build_checks_the_notices_before_shipping_them() -> None:
+    job = load_jobs()["rayd-build"]
+    steps = job["steps"]
+
+    assert "./.github/actions/cargo-about" in step_uses(job)
+    fresh = first_index(steps, "make licenses-check")
+    coverage = first_index(steps, "check_third_party_licenses.py")
+    zipped = first_index(steps, "image_zip.py")
+    staged = first_index(steps, "> SHA256SUMS")
+    assert first_index(steps, "cargo auditable zigbuild") < coverage
+    assert fresh < zipped and coverage < zipped < staged
+    zip_run = steps[zipped]["run"]
+    assert zip_run.index("make image-licenses") < zip_run.index("image_zip.py")
+    stage_run = steps[staged]["run"]
+    for asset in LICENSE_ASSETS:
+        assert asset in stage_run.split("> SHA256SUMS")[0], asset
+
+
+def test_rayd_sign_signs_the_sums_that_list_the_notices() -> None:
+    job = load_jobs()["rayd-sign"]
+    steps = job["steps"]
+
+    sums = last_index(steps, "> SHA256SUMS")
+    for asset in LICENSE_ASSETS:
+        assert asset in steps[sums]["run"], asset
+    sign = first_index(steps, f"--bundle {SUMS_BUNDLE} SHA256SUMS")
+    assert sums < sign
+    assert "cosign sign-blob" in steps[sign]["run"]
+    assert "bundle_sha256" in job["outputs"]["sha256sums_bundle_sha256"]
+
+
+def test_rayd_upload_checks_the_sums_bundle_digest() -> None:
+    steps = load_jobs()["rayd-upload"]["steps"]
+
+    check = first_index(steps, f"SHA256SUMS_BUNDLE_SHA256}}  {SUMS_BUNDLE}")
+    assert SHA256_CHECK in steps[check]["run"]
+    assert check < first_index(steps, "gh release upload")

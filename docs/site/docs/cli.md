@@ -170,6 +170,12 @@ cachés, `uv.lock` ni otros zips) con el `Dockerfile` en la raíz. Con
 mismas exclusiones. Imprime ficheros, bytes, variante y el sha256 del zip
 (con él se predice la clave S3). Es el único comando que no necesita AWS.
 
+Si el directorio lleva `rayd`, tiene que llevar también sus avisos de
+licencia en `licenses/` (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`):
+el `Dockerfile` los copia a `/usr/share/doc/rayd/` y el zip se niega a
+empaquetar `rayd` sin ellos. Desde el repositorio los deja ahí
+`make image-licenses` (los objetivos `make image-zip*` ya lo hacen).
+
 ## `rayito sandbox`
 
 ```bash
@@ -484,7 +490,7 @@ y son *shims* de la CLI, así que los targets del `Makefile` no cambian:
 
 | `make` | Script | Equivalente |
 |---|---|---|
-| `make image-zip` | `python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar` y `python scripts/image_zip.py image image/rayito-image.zip` | `rayito image zip image image/rayito-image.zip --sidecar kernel-sidecar` |
+| `make image-zip` | `python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar`, `make image-licenses` y `python scripts/image_zip.py image image/rayito-image.zip` | `rayito image zip image image/rayito-image.zip --sidecar kernel-sidecar` |
 | `make image-zip-efs` | `python scripts/image_zip.py image image/rayito-image-efs.zip --with-efs` | `rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs` |
 | `make image-publish-caps-efs` | `… publish_image.py --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` | `rayito image publish --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` |
 | `make image-publish` (`-slim`, `-poly`, `-caps`) | `uv run --project clients/python python scripts/publish_image.py --artifact … --bucket $(BUCKET) --base-image-version 1` | `rayito image publish --artifact … --bucket … --base-image-version 1` |

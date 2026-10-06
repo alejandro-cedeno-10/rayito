@@ -11,7 +11,12 @@ Los assets de la release son `rayd`, `rayito-image.zip`, sus bundles
 `rayd.sigstore.json` y `rayito-image.zip.sigstore.json` (firma keyless de
 cosign: el certificado de Sigstore lleva la identidad del workflow y del tag),
 `rayd.cdx.json` (SBOM CycloneDX 1.5 del grafo de crates para
-`aarch64-unknown-linux-musl`) y `SHA256SUMS`.
+`aarch64-unknown-linux-musl`), los avisos de licencia `LICENSE`, `NOTICE` y
+`THIRD_PARTY_LICENSES.md`, `SHA256SUMS` y su bundle
+`SHA256SUMS.sigstore.json`. Desde la release siguiente a la 0.7.0,
+`SHA256SUMS` también va firmado: lista todos los assets salvo él mismo y su
+bundle, así que su firma cubre el SBOM y los avisos, que no llevan bundle
+propio.
 
 ```bash
 RAYD_VERSION=0.7.0   # la versión que vas a instalar, sin la "v"
@@ -25,6 +30,12 @@ cosign verify-blob --bundle rayd.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   rayd
+
+# Desde la release siguiente a la 0.7.0: la firma de SHA256SUMS
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
 
 sha256sum -c SHA256SUMS
 ```
@@ -72,6 +83,29 @@ python3 scripts/check_auditable.py rayd   # del repositorio: raíz, versión y c
 El SBOM `rayd.cdx.json` es el mismo grafo en CycloneDX 1.5 para las
 herramientas que consumen SBOMs (el componente `metadata.component` es `rayd`
 con la versión del tag).
+
+### Avisos de licencia de `rayd`
+
+`rayd` es Apache-2.0 y enlaza estáticamente crates de terceros (MIT,
+Apache-2.0, BSD, ISC, Unicode-3.0, Zlib y un CC0). Desde la release
+siguiente a la 0.7.0, sus avisos viajan con cada copia del binario: como
+assets de la release (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`), en
+`licenses/` dentro de `rayito-image.zip` y, en la imagen construida desde
+ese zip, en `/usr/share/doc/rayd/`. `THIRD_PARTY_LICENSES.md` lo genera
+cargo-about desde el `Cargo.lock` del tag, y la release comprueba que lista
+exactamente los crates que `cargo tree` compila en `rayd` para
+`aarch64-unknown-linux-musl` y que todos ellos están en el `.dep-v0` del
+binario. Lo segundo puedes repetirlo con el binario descargado:
+
+```bash
+python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md --binary rayd   # del repositorio
+```
+
+Dentro de un sandbox:
+
+```bash
+ls /usr/share/doc/rayd/   # LICENSE  NOTICE  THIRD_PARTY_LICENSES.md
+```
 
 ## Paquete Python `rayito` (PyPI)
 

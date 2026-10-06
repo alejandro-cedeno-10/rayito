@@ -24,6 +24,14 @@ directory, and the variants of one tree differ only by their marker entry
 ``rayito image publish --with-efs`` publishes it as ``rayito-base-caps-efs``).
 Without the flag no image changes.
 
+An image directory that ships ``rayd`` must also ship its license notices
+in ``licenses/`` (``LICENSE``, ``NOTICE`` and ``THIRD_PARTY_LICENSES.md``,
+staged by ``make image-licenses``; ``image/Dockerfile`` copies them to
+``/usr/share/doc/rayd/``): the binary statically links third-party crates
+whose MIT, BSD, ISC and Zlib terms require their notices to travel with
+every binary copy, so the zip is refused without them instead of failing
+the image build in AWS.
+
 ``scripts/image_zip.py`` and ``scripts/copy_sidecar.py`` load this module by
 file path and run ``zip_main`` / ``copy_main``: the CI ``build`` job and
 ``release.yml`` zip the image on a bare ``python3`` without installing the
@@ -58,6 +66,9 @@ MARKER_CONTENTS = {"slim": SLIM_MARKER_CONTENT, "poly": POLY_MARKER_CONTENT}
 EFS_MARKER_ENTRY = "kernel-sidecar/efs_variant"
 EFS_MARKER_CONTENT = "efs\n"
 FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+RAYD_ENTRY = "rayd"
+NOTICES_DIRECTORY = "licenses"
+RAYD_NOTICE_FILES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md")
 REQUIREMENTS_FILES = ("requirements.txt", "requirements-poly.txt")
 ZIP_USAGE = "image_zip.py IMAGE_DIR DESTINATION [--variant full|slim|poly] [--with-efs]"
 COPY_USAGE = "copy_sidecar.py SOURCE DESTINATION"
@@ -105,10 +116,25 @@ def shipped_files(root: Path) -> list[Path]:
     return files
 
 
+def require_rayd_notices(image_dir: Path) -> None:
+    """A tree that ships ``rayd`` ships ``licenses/`` with the three notice
+    files next to it (``make image-licenses``); a tree without ``rayd``
+    distributes no binary and is left alone."""
+    if not (image_dir / RAYD_ENTRY).is_file():
+        return
+    for name in RAYD_NOTICE_FILES:
+        if not (image_dir / NOTICES_DIRECTORY / name).is_file():
+            raise SystemExit(
+                f"{image_dir}/{NOTICES_DIRECTORY}/{name} is missing: an artifact that "
+                "ships rayd ships its license notices (make image-licenses)"
+            )
+
+
 def image_files(image_dir: Path) -> list[Path]:
     files = shipped_files(image_dir)
     if not (image_dir / "Dockerfile").is_file():
         raise SystemExit(f"{image_dir}/Dockerfile is missing")
+    require_rayd_notices(image_dir)
     return files
 
 

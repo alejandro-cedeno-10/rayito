@@ -3,10 +3,12 @@
 /target-*/
 *.cdx.json
 
-# Artefactos de imagen (se reconstruyen con `make image-zip`)
+# Artefactos de imagen (se reconstruyen con `make image-zip`; licenses/ con
+# `make image-licenses`)
 /image/rayd
 /image/*.zip
 /image/kernel-sidecar/
+/image/licenses/
 
 # Python
 __pycache__/

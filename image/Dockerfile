@@ -254,6 +254,20 @@ RUN if [ "$(cat /opt/rayito/sidecar/efs_variant 2>/dev/null)" = "efs" ]; then \
       && test -x /usr/sbin/efs-proxy; \
     fi
 
+# Avisos de licencia de rayd (openspec third-party-licenses): LICENSE, NOTICE
+# y THIRD_PARTY_LICENSES.md (cargo-about sobre Cargo.lock) viajan con cada
+# copia del binario, porque rayd enlaza estáticamente crates MIT, BSD, ISC y
+# Zlib cuyas licencias lo exigen. `make image-licenses` los deja en
+# image/licenses/ y el zip se niega a empaquetar un rayd sin ellos. Sólo
+# ficheros de texto de root y 0644: no cambian el snapshot. Lo que esta
+# build instala dentro de la cuenta del usuario trae sus propios avisos: los
+# RPM sus ficheros `%license`, y cada wheel del sidecar su `*.dist-info/
+# licenses/` en site-packages (pyzmq incluye ahí el MPL-2.0 de la libzmq que
+# lleva dentro, sin modificar).
+COPY licenses/ /usr/share/doc/rayd/
+RUN chmod 0755 /usr/share/doc/rayd \
+    && chmod 0644 /usr/share/doc/rayd/LICENSE /usr/share/doc/rayd/NOTICE /usr/share/doc/rayd/THIRD_PARTY_LICENSES.md
+
 COPY rayd /usr/local/bin/rayd
 RUN chmod 0755 /usr/local/bin/rayd
 

@@ -181,7 +181,12 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo zigbuild --release --target aarch64-unknown-linux-musl -p rayd
+make licenses-check   # cargo-about 0.9.2: THIRD_PARTY_LICENSES.md al día con Cargo.lock
 ```
+
+Si tu cambio toca `Cargo.lock`, `make licenses` regenera
+`THIRD_PARTY_LICENSES.md` (los avisos de terceros que viajan con `rayd`) y
+se versiona en el mismo PR; el job `build` de CI falla si quedó desfasado.
 
 Scripts de la raíz:
 

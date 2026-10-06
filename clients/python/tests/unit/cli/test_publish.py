@@ -63,6 +63,9 @@ def image_dir(tmp_path: Path) -> Path:
     root.mkdir()
     (root / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     (root / "rayd").write_bytes(b"\x7fELF")
+    (root / "licenses").mkdir()
+    for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"):
+        (root / "licenses" / notice).write_text(notice + "\n", encoding="utf-8")
     return root
 
 

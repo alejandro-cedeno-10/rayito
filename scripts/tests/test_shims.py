@@ -25,6 +25,9 @@ def tree(tmp_path: Path) -> tuple[Path, Path]:
     image_dir.mkdir()
     (image_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     (image_dir / "rayd").write_bytes(b"\x7fELF")
+    (image_dir / "licenses").mkdir()
+    for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"):
+        (image_dir / "licenses" / notice).write_text(notice + "\n", encoding="utf-8")
     sidecar = tmp_path / "kernel-sidecar"
     (sidecar / "ipython" / "startup").mkdir(parents=True)
     (sidecar / "tests").mkdir()

@@ -1,7 +1,8 @@
 """`rayito.cli._artifact` sin AWS: el zip full no lleva marcador y mantiene
 las exclusiones, slim añade sólo el marcador `warmup_variant`, poly sólo
 `kernels_variant`, un zip con ambos se rechaza, el zip es idéntico byte a
-byte al repetirlo, `copy_tree` aplica las mismas exclusiones y el módulo
+byte al repetirlo, un árbol con `rayd` sin sus avisos de licencia se
+rechaza, `copy_tree` aplica las mismas exclusiones y el módulo
 sólo importa la biblioteca estándar."""
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ def image_dir(tmp_path: Path) -> Path:
     (root / "kernel-sidecar" / "__pycache__").mkdir()
     (root / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     (root / "rayd").write_bytes(b"\x7fELF")
+    (root / "licenses").mkdir()
+    for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"):
+        (root / "licenses" / notice).write_text(notice + "\n", encoding="utf-8")
     (root / "kernel-sidecar" / "ipython" / "startup" / "0004_warmup.py").write_text(
         "pass\n", encoding="utf-8"
     )
@@ -60,18 +64,43 @@ def names(archive: Path) -> list[str]:
 
 def test_full_zip_has_no_marker_and_keeps_exclusions(image_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "full.zip"
-    assert _artifact.write_zip(image_dir, out) == 3
+    assert _artifact.write_zip(image_dir, out) == 6
     listed = names(out)
     assert MARKER not in listed
-    assert listed == ["Dockerfile", "kernel-sidecar/ipython/startup/0004_warmup.py", "rayd"]
+    assert listed == [
+        "Dockerfile",
+        "kernel-sidecar/ipython/startup/0004_warmup.py",
+        "licenses/LICENSE",
+        "licenses/NOTICE",
+        "licenses/THIRD_PARTY_LICENSES.md",
+        "rayd",
+    ]
     assert _artifact.marker_variant(out) == "full"
     assert not (image_dir / "kernel-sidecar" / "ipython" / "startup" / "warmup_variant").exists()
+
+
+@pytest.mark.parametrize("notice", _artifact.RAYD_NOTICE_FILES)
+def test_a_tree_shipping_rayd_without_a_notice_is_refused(
+    image_dir: Path, tmp_path: Path, notice: str
+) -> None:
+    (image_dir / "licenses" / notice).unlink()
+    out = tmp_path / "full.zip"
+    with pytest.raises(SystemExit, match=rf"licenses/{notice} is missing.*make image-licenses"):
+        _artifact.write_zip(image_dir, out)
+    assert not out.exists()
+
+
+def test_a_tree_without_rayd_needs_no_notices(image_dir: Path, tmp_path: Path) -> None:
+    (image_dir / "rayd").unlink()
+    for notice in _artifact.RAYD_NOTICE_FILES:
+        (image_dir / "licenses" / notice).unlink()
+    assert _artifact.write_zip(image_dir, tmp_path / "base.zip") == 2
 
 
 def test_slim_zip_adds_only_the_marker(image_dir: Path, tmp_path: Path) -> None:
     full, slim = tmp_path / "full.zip", tmp_path / "slim.zip"
     _artifact.write_zip(image_dir, full)
-    assert _artifact.write_zip(image_dir, slim, "slim") == 4
+    assert _artifact.write_zip(image_dir, slim, "slim") == 7
     assert set(names(slim)) - set(names(full)) == {MARKER}
     with zipfile.ZipFile(slim) as zf:
         info = zf.getinfo(MARKER)
@@ -85,7 +114,7 @@ def test_slim_zip_adds_only_the_marker(image_dir: Path, tmp_path: Path) -> None:
 def test_poly_zip_adds_only_the_kernels_marker(image_dir: Path, tmp_path: Path) -> None:
     full, poly = tmp_path / "full.zip", tmp_path / "poly.zip"
     _artifact.write_zip(image_dir, full)
-    assert _artifact.write_zip(image_dir, poly, "poly") == 4
+    assert _artifact.write_zip(image_dir, poly, "poly") == 7
     assert set(names(poly)) - set(names(full)) == {KERNELS_MARKER}
     assert MARKER not in names(poly)
     with zipfile.ZipFile(poly) as zf:
@@ -251,7 +280,7 @@ def test_a_linked_virtualenv_is_skipped_not_refused(sidecar_dir: Path, tmp_path:
 
 def test_with_efs_adds_only_the_efs_marker(image_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "efs.zip"
-    assert _artifact.write_zip(image_dir, out, with_efs=True) == 4
+    assert _artifact.write_zip(image_dir, out, with_efs=True) == 7
     assert _artifact.EFS_MARKER_ENTRY in names(out)
     with zipfile.ZipFile(out) as archive:
         assert archive.read(_artifact.EFS_MARKER_ENTRY) == b"efs\n"

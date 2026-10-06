@@ -6,6 +6,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Changed
+
+- `rayito image zip` (y `scripts/image_zip.py`) se niega a empaquetar un
+  directorio de imagen que lleva `rayd` sin sus avisos de licencia en
+  `licenses/` (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`, que deja
+  `make image-licenses`): `image/Dockerfile` los copia a
+  `/usr/share/doc/rayd/`, y sin ellos la build de la imagen fallaría en AWS
+  (`third-party-licenses`). Un directorio sin `rayd` no cambia.
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
