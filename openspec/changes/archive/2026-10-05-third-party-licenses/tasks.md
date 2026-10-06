@@ -45,11 +45,13 @@
 - [x] 5.3 Docs: `CONTRIBUTING.md`, `docs/RELEASING.md` (why no workflow
   writes to Dependabot branches), `SECURITY.md`, `docs/site/docs/cli.md`,
   gates reference, audit, `rayd` changelog.
-- [ ] 5.4 A real Dependabot cargo PR goes green after updating its branch,
-  with no commit other than Dependabot's.
+- [x] 5.4 A real Dependabot cargo PR goes green after updating its branch,
+  with no commit other than Dependabot's. Done in #129 (cargo group,
+  `Cargo.lock` changed): one Dependabot commit on top of #128, 13 checks
+  green, merged with no other commit.
 
 ## 6. Acceptance
 
 - [x] 6.1 Gates green locally (Rust in the VM, Python, TypeScript, scripts,
   mkdocs, OpenSpec) and in CI, including `build` and `local-e2e`.
-- [ ] 6.2 Archive after merge (no runtime change: gates are the acceptance).
+- [x] 6.2 Archive after merge (no runtime change: gates are the acceptance).

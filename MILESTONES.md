@@ -1665,9 +1665,12 @@ después sin diferencias propias):
   token del operador sin `sandbox_origin` en su línea de log, y matar el
   sidecar registra `kernels_killed: 1`.
 
-Siguen abiertos `m15-custom-domain` (3.6 y 9.4), a la espera de una cuenta
-que permita `cloudfront:CreateDistribution` (Q141), y `third-party-licenses`
-(5.4: un PR de Dependabot de cargo en verde sin más commits que los suyos).
+- `third-party-licenses` (sin cambio de runtime: los gates son la
+  aceptación): su última tarea la cumplió #129, un PR de Dependabot de
+  cargo que pasó a verde sin más commits que el suyo.
+
+Sigue abierto `m15-custom-domain` (3.6 y 9.4), a la espera de una cuenta
+que permita `cloudfront:CreateDistribution` (Q141).
 
 ---
 
