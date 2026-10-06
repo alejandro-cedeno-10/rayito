@@ -156,6 +156,7 @@ nav:
       - Agentes:
           - Servidor MCP: mcp.md
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
+          - "Agente en el sandbox": guias/agente-en-el-sandbox.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:
@@ -170,6 +171,7 @@ nav:
           - Secretos: secrets.md
       - Imágenes:
           - Templates declarativos: funciones-opcionales/templates.md
+          - "Templates de agente (próximamente)": funciones-opcionales/templates-de-agente.md
       - Observar:
           - Eventos y webhooks: funciones-opcionales/eventos-y-webhooks.md
           - Exportación OTLP: funciones-opcionales/exportacion-otlp.md
@@ -184,6 +186,7 @@ nav:
       - Paridad: e2b-parity.md
   - Novedades:
       - novedades/index.md
+      - "0.8.0 (borrador)": novedades/0.8.0.md
       - "0.7.1": novedades/0.7.1.md
       - "0.7.0": novedades/0.7.0.md
       - "0.6.1": novedades/0.6.1.md
@@ -211,7 +214,7 @@ nav:
       - Imágenes: images.md
       - IAM: operacion/iam.md
       - Seguridad: security.md
-      - Costes: cost.md
+      - Precios (MicroVMs, pool, agentes): cost.md
       - Verificar una release: verify.md
       - Solución de problemas: operacion/solucion-de-problemas.md
       - FAQ: operacion/faq.md
