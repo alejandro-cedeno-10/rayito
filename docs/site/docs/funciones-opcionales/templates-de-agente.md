@@ -9,8 +9,7 @@ description: AgentTemplate compone OpenCode, ripgrep y deepagents sobre rayito-b
     `AgentTemplate` y la orden `agent template build` de la CLI llegan con
     `ai-agent-fast-start`, todavía sin fusionar en `main`; los pines
     (`AGENT_OPENCODE_VERSION`, `AGENT_RIPGREP_VERSION` y sus sha256 en
-    `limits.json`) y el manifiesto `/opt/agents/rayito-agent.json` que lee
-    `sbx.agent` ya están. Se publicará con 0.8.0
+    `limits.json`) ya están; `sbx.agent` todavía no lee el manifiesto. Se publicará con 0.8.0
     ([borrador de Novedades](../novedades/0.8.0.md)).
 
 `AgentTemplate` es una receta fija sobre el [DSL de `Template`](templates.md)
@@ -100,8 +99,8 @@ Las variables `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_DISABLE_MODELS_FETCH`,
 intentaría bajar de Internet al arrancar y evitan que lea un `.claude/` del
 workdir. El manifiesto horneado en `/opt/agents/rayito-agent.json`
 (`rayito.agent-template/1`) lista versiones, sha256 y las rutas que el
-prefetch calienta; `sbx.agent` lo lee una vez por handle para comprobar
-`runtime_version`.
+prefetch calienta. Que `sbx.agent` lo lea una vez por handle para comprobar
+`runtime_version` es **próximamente**.
 
 ## Prefetch
 

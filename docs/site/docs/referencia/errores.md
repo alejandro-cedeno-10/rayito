@@ -136,13 +136,13 @@ del proveedor, el prompt ni el contenido generado.
 |---|---|
 | `model_error` | el modelo respondió con error (`detail_code` lleva sólo el nombre de la clase de error, como `APIError`; nunca el mensaje) |
 | `runtime_error` | el proceso del runtime falló por otra causa (código de salida distinto de 0 sin evento `error`) |
-| `runtime_missing` | la imagen no tiene el runtime (falta el manifiesto) o su servidor residente no responde con `attach=True` |
-| `runtime_version_mismatch` | la versión del manifiesto no coincide con la que `AgentSpec.runtime_version` pide |
+| `runtime_missing` | `opencode` no está en el `PATH` o, con `attach=True`, su servidor residente no responde |
+| `runtime_version_mismatch` | reservado: la comprobación de `AgentSpec.runtime_version` es próximamente y hoy no se emite |
 | `protocol_error` | una línea del protocolo no se pudo interpretar (ver también `dropped_lines` en `AgentResult`) |
 | `timeout` | venció `AgentLimits.timeout_seconds`/`timeoutMs` |
-| `max_steps` | se alcanzó el límite duro de pasos del SDK (`max_steps + 1`) |
-| `token_budget` | se superó `max_total_tokens` tras un `StepFinished` (puede sobrepasarse hasta un paso completo) |
-| `output_limit` | la salida superó `max_output_bytes` |
+| `max_steps` | se alcanzó el límite duro de pasos del SDK (`max_steps + 1`); el stream termina, pero el runtime no se mata (llama a `abort()`) |
+| `token_budget` | se superó `max_total_tokens` tras un `StepFinished` (puede sobrepasarse hasta un paso completo); el runtime no se mata (llama a `abort()`) |
+| `output_limit` | reservado: próximamente, cuando la salida supere `max_output_bytes`; hoy no se emite |
 | `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
 | `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 

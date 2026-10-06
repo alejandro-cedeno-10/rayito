@@ -51,13 +51,14 @@ incluye las otras, y es fácil confundirlas al sumar un escenario:
   versión de imagen publicada o un sandbox suspendido — con un
   **mínimo de una semana** por versión de imagen, aunque la borres antes.
   *List.*
-- **`maximumDuration`**: un sandbox no puede vivir, lanzado + suspendido,
-  más de **8 horas** sin terminarse; el tiempo suspendido cuenta igual que
-  el `RUNNING`. Es la razón por la que [el pool](pool.md) relanza y vuelve
-  a aparcar cada plaza a las ≈ 7 h, antes de tocar el límite. *List
-  (límite), no un precio en sí.*
 - **Transferencia de datos**: tarifas estándar de transferencia de datos
   de AWS (misma región: gratis; a Internet: por GB). *List.*
+
+!!! note "`maximumDuration` no es un precio"
+    Un sandbox no puede vivir, lanzado + suspendido, más de **8 horas** sin
+    terminarse; el tiempo suspendido cuenta igual que el `RUNNING`. Es la
+    razón por la que [el pool](pool.md) relanza y vuelve a aparcar cada
+    plaza a las ≈ 7 h, antes de tocar el límite. *List (límite).*
 
 | Concepto | Precio | Fuente |
 |---|---|---|

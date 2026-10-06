@@ -21,8 +21,9 @@ comandos y el mismo egress que cualquier otro código que ejecutes con
 agente **usa** la credencial del modelo, pero nunca puede **leerla**.
 
 El sandbox necesita una imagen con el runtime instalado (OpenCode en
-`/opt/agents`, con el manifiesto `/opt/agents/rayito-agent.json`). Sin él,
-la ejecución falla con `reason="runtime_missing"`. El constructor de esa
+`/opt/agents`). Si `opencode` no está en el `PATH` (o, con `attach=True`,
+su servidor residente no responde), la ejecución falla con
+`reason="runtime_missing"`. El constructor de esa
 imagen, `AgentTemplate`, es **próximamente**: ver
 [Templates de agente](../funciones-opcionales/templates-de-agente.md).
 
@@ -44,6 +45,12 @@ usa el id del modelo o del perfil de inferencia.
 
 Para Bedrock, el secreto guarda `Bearer <clave de API de Bedrock>`. Usa una
 clave de corta duración (≤ 12 h) y rótala con `sbx.gateways.refresh()`.
+
+Los tres presets aceptan `rate_per_minute` / `ratePerMinute` (por defecto
+0, sin tope): limita las llamadas por minuto que la pasarela deja pasar,
+también las que el código del sandbox haga por su cuenta fuera del
+presupuesto de tokens del SDK (ver
+[Seguridad](../security.md#agente-de-codigo-dentro-del-sandbox)).
 
 ## 2. Crear el sandbox y ejecutar
 
@@ -70,7 +77,7 @@ clave de corta duración (≤ 12 h) y rótala con `sbx.gateways.refresh()`.
         template="rayito-agent",
         allow_internet_access=False,
         gateways={
-            "bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID]),
+            "bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID], rate_per_minute=60),
         },
     ) as sbx:
         result = sbx.agent.run("Lista los ficheros de /home/user y resume qué hay.", spec=spec)
@@ -93,7 +100,7 @@ clave de corta duración (≤ 12 h) y rótala con `sbx.gateways.refresh()`.
             template="rayito-agent",
             allow_internet_access=False,
             gateways={
-                "bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID]),
+                "bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID], rate_per_minute=60),
             },
         ) as sbx:
             result = await sbx.agent.run("Resume el README.", spec=spec)
@@ -120,7 +127,7 @@ clave de corta duración (≤ 12 h) y rótala con `sbx.gateways.refresh()`.
       template: "rayito-agent",
       allowInternetAccess: false,
       gateways: {
-        bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [MODEL_ID] }),
+        bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [MODEL_ID], ratePerMinute: 60 }),
       },
     });
     const result = await sbx.agent.run("Resume el README.", { spec });
@@ -140,7 +147,7 @@ cualquier llamada.
 | `agents` | `{}` | subagentes por nombre: `SubAgent(description, instructions, model=None, permissions=None)`. `build` está reservado |
 | `mcp` | `{}` | servidores MCP por nombre: `McpLocal(command, envs, timeout_seconds)` (un proceso dentro del sandbox) o `McpRemote(gateway, path)` (siempre por una pasarela) |
 | `raw_config` / `rawConfig` | ninguna | se mezcla en la configuración de OpenCode. Las claves de `RESERVED_CONFIG_KEYS` (entre ellas `provider`) las gestiona el SDK y lanzan `InvalidArgumentException`/`InvalidArgumentError` |
-| `runtime_version` / `runtimeVersion` | ninguna | exige esa versión del runtime en el manifiesto de la imagen (`runtime_version_mismatch` si no coincide) |
+| `runtime_version` / `runtimeVersion` | ninguna | se valida como texto; la comprobación contra la imagen es **próximamente** (hoy no produce `runtime_version_mismatch`) |
 
 `AgentSpec` no tiene ningún campo para claves: la credencial sólo llega por
 la pasarela.
@@ -276,9 +283,16 @@ después matan el proceso. El resultado es `reason="aborted"`.
 | Límite (Python / TypeScript) | Por defecto | Por qué |
 |---|---|---|
 | `timeout_seconds` / `timeoutMs` | 600 s | obligatorio: ante un 5xx del modelo, OpenCode reintenta sin fin |
-| `max_steps` / `maxSteps` | 50 | el SDK aborta con `max_steps` al empezar el paso siguiente |
-| `max_total_tokens` / `maxTotalTokens` | 1 000 000 (`None`/`null` lo apaga) | se comprueba tras cada `StepFinished`: puede pasarse hasta en un paso |
-| `max_output_bytes` / `maxOutputBytes` | 16 MiB | tope de la salida del runtime |
+| `max_steps` / `maxSteps` | 50 el stream termina con `max_steps` al empezar el paso siguiente |
+| `max_total_tokens` / `maxTotalTokens` | 1 000 000 (`None`/`null` lo apaga) se comprueba tras cada `StepFinished` (puede pasarse hasta en un paso); el stream termina con `token_budget` |
+| `max_output_bytes` / `maxOutputBytes` | 16 MiB | tope de la salida del runtime; mapearlo a `output_limit` es **próximamente** |
+
+!!! warning "`max_steps` y `token_budget` no paran el runtime"
+    Hoy, al superar `max_steps` o `max_total_tokens` el stream termina con
+    ese `reason`, pero el SDK **no** mata el proceso: OpenCode puede seguir
+    corriendo (y gastando tokens) hasta acabar o hasta `timeout_seconds`.
+    Si necesitas cortarlo, llama a `abort()` al recibir ese `AgentFailed`.
+    Que el SDK lo haga solo es **próximamente**.
 
 Los `reason` posibles están en
 [Errores](../referencia/errores.md#agentexception-agenterror). Ningún mensaje
@@ -296,8 +310,9 @@ defecto se deniegan `question`, `webfetch` y `websearch`
 Pero el runtime ejecuta lo que el modelo pida dentro de lo permitido, sin
 preguntar. **La frontera real es la MicroVM más el egress cerrado**
 (`allow_internet_access=False`), igual que para cualquier código del
-sandbox. Si el egress no está cerrado, el SDK avisa una vez por handle en
-el logger `rayito.agent`. Riesgos y mitigaciones en
+sandbox. `Sandbox.create` deja el egress **abierto** por defecto: pasa
+`allow_internet_access=False` tú mismo (el SDK todavía no avisa si no lo
+haces; ese aviso es **próximamente**). Riesgos y mitigaciones en
 [Seguridad](../security.md#agente-de-codigo-dentro-del-sandbox).
 
 ## Arranque rápido

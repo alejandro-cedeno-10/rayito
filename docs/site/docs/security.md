@@ -331,8 +331,9 @@ un *prompt injection* desde un fichero del propio workdir (un `AGENTS.md`
 o un repositorio clonado con instrucciones ocultas), puede saltarse pidiendo
 otra herramienta o reformulando el pedido. La frontera real es la que ya
 protege cualquier otro código que corra dentro del sandbox: el MicroVM y,
-por defecto, el egress cerrado de `rayito-base-caps` (`allow_internet_access=False`
-en las recetas y en un pool de agentes). La exfiltración sólo puede salir
+el egress cerrado, que exige pasar `allow_internet_access=False` de forma
+explícita (`Sandbox.create` lo deja abierto por defecto; las recetas de la
+guía lo pasan). La exfiltración sólo puede salir
 por el `upstream` que la pasarela de secretos permite, nunca directamente.
 **Riesgo residual**: código dentro del sandbox puede llamar a la propia
 pasarela por su cuenta, fuera del presupuesto de tokens del SDK (no hay
