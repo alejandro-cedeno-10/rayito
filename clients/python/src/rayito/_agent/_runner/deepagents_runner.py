@@ -99,7 +99,9 @@ class Emitter:
 class RunnerContext:
     """Lo que recibe el punto de entrada del usuario (`DeepAgents(entrypoint=
     "pkg.mod:build")`), que debe devolver un grafo compilado. Si el grafo no
-    incluye `middleware`, se pierden los permisos de `AgentSpec`."""
+    incluye `middleware`, se pierden los permisos de `AgentSpec`; si no pasa
+    `subagents` a `create_deep_agent`, el `general-purpose` que deepagents
+    añade solo no los tiene."""
 
     model: Any
     instructions: str | None
@@ -218,15 +220,20 @@ def _messages_of(value: object) -> list[Any]:
 @dataclass
 class Translator:
     """Traduce el `stream(stream_mode=["messages", "updates"])` del grafo
-    principal a eventos del protocolo. Los trozos de los subagentes (con
-    `|` en su `langgraph_checkpoint_ns`) no son pasos del agente principal y
-    se ignoran."""
+    principal a eventos del protocolo. Lo que llega de los subagentes (con
+    `subgraphs=True`, un espacio de nombres no vacío) no son pasos del
+    agente principal: su texto se ignora, pero el `usage_metadata` de los
+    mensajes de su nodo del modelo se acumula y se suma al siguiente
+    `step_finished` del agente principal (el que recibe el resultado de
+    `task`), para que el uso y el tope de tokens del SDK cuenten también lo
+    gastado dentro de los subagentes."""
 
     reasoning: bool = False
     in_step: bool = False
     steps: int = 0
     tool_inputs: dict[str, Any] = field(default_factory=dict)
     new_messages: list[Any] = field(default_factory=list)
+    nested_usage: dict[str, int] = field(default_factory=dict)
 
     def _start(self) -> list[dict[str, Any]]:
         if self.in_step:
@@ -258,6 +265,13 @@ class Translator:
                     events.extend(self._tool_message(message))
         return events
 
+    def on_nested_update(self, update: object) -> None:
+        if not isinstance(update, Mapping):
+            return
+        for message in _messages_of(update.get(MODEL_NODE)):
+            for key, value in usage_of(message).items():
+                self.nested_usage[key] = self.nested_usage.get(key, 0) + value
+
     def _model_message(self, message: Any) -> list[dict[str, Any]]:
         self.new_messages.append(message)
         events = self._start()
@@ -276,12 +290,19 @@ class Translator:
             {
                 "type": "step_finished",
                 "index": self.steps,
-                "usage": usage_of(message),
+                "usage": self._step_usage(message),
                 "finish_reason": _finish_reason(message),
             }
         )
         self.in_step = False
         return events
+
+    def _step_usage(self, message: Any) -> dict[str, int]:
+        usage = usage_of(message)
+        for key, value in self.nested_usage.items():
+            usage[key] = usage.get(key, 0) + value
+        self.nested_usage.clear()
+        return usage
 
     def _tool_message(self, message: Any) -> list[dict[str, Any]]:
         self.new_messages.append(message)
@@ -363,9 +384,25 @@ def disable_prompt_caching(deepagents_graph: Any) -> None:
     deepagents_graph.append_prompt_caching_middleware = lambda middleware: None
 
 
+def general_purpose_subagent(rules: Mapping[str, Any]) -> dict[str, Any]:
+    """El subagente `general-purpose` que deepagents añade solo, pero con el
+    middleware de permisos del agente principal. deepagents 0.7 no le pasa
+    al que añade él el `middleware` del agente principal, y omite el suyo si
+    ya hay uno con ese nombre: así `task` no sirve para saltarse los
+    permisos."""
+    subagents_module = importlib.import_module("deepagents.middleware.subagents")
+    return {
+        **subagents_module.GENERAL_PURPOSE_SUBAGENT,
+        "middleware": [permission_middleware(rules)],
+    }
+
+
 def subagents_of(
     config: Mapping[str, Any], model_for: Callable[[str], Any]
 ) -> list[dict[str, Any]]:
+    """Los subagentes de `AgentSpec.agents`, cada uno con su middleware de
+    permisos (los suyos o, si no tiene, los del agente principal, como en
+    OpenCode), más el `general-purpose` con los del principal."""
     subagents: list[dict[str, Any]] = []
     for entry in config.get("subagents", []):
         sub: dict[str, Any] = {
@@ -375,9 +412,14 @@ def subagents_of(
         }
         if entry.get("model"):
             sub["model"] = model_for(entry["model"])
-        if entry.get("permissions") is not None:
-            sub["middleware"] = [permission_middleware(entry["permissions"])]
+        rules = entry.get("permissions")
+        sub["middleware"] = [
+            permission_middleware(config["permissions"] if rules is None else rules)
+        ]
         subagents.append(sub)
+    general = general_purpose_subagent(config["permissions"])
+    if all(sub["name"] != general["name"] for sub in subagents):
+        subagents.append(general)
     return subagents
 
 
@@ -463,9 +505,13 @@ def stream_events(
         {"messages": history},
         config={"recursion_limit": RECURSION_LIMIT},
         stream_mode=["messages", "updates"],
+        subgraphs=True,
     )
-    for mode, data in stream:
-        if mode == "messages":
+    for namespace, mode, data in stream:
+        if namespace:
+            if mode == "updates":
+                translator.on_nested_update(data)
+        elif mode == "messages":
             chunk, metadata = data
             yield from translator.on_chunk(chunk, metadata if isinstance(metadata, Mapping) else {})
         elif mode == "updates":

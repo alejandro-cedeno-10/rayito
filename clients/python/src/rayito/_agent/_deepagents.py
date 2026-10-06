@@ -83,7 +83,7 @@ DEEPAGENTS_RUNNER_PATH: Final = "/opt/agents/rayito/deepagents_runner.py"
 #: -> herramientas de deepagents 0.7 (`create_deep_agent`).
 DEEPAGENTS_TOOL_NAMES: Final[Mapping[str, tuple[str, ...]]] = {
     "read": ("read_file",),
-    "edit": ("write_file", "edit_file"),
+    "edit": ("write_file", "edit_file", "delete"),
     "list": ("ls",),
     "glob": ("glob",),
     "grep": ("grep",),

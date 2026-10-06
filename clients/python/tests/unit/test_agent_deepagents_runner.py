@@ -36,14 +36,18 @@ class FakeMessage:
 
 
 class FakeGraph:
-    def __init__(self, chunks: list[tuple[str, Any]], error: Exception | None = None) -> None:
+    def __init__(self, chunks: list[tuple[Any, ...]], error: Exception | None = None) -> None:
         self.chunks = chunks
         self.error = error
         self.inputs: list[Any] = []
 
-    def stream(self, inputs: Any, **kwargs: Any) -> Iterator[tuple[str, Any]]:
+    def stream(self, inputs: Any, **kwargs: Any) -> Iterator[tuple[Any, ...]]:
+        """Con `subgraphs=True` cada elemento lleva delante su espacio de
+        nombres; los de dos elementos son del grafo principal."""
         self.inputs.append((inputs, kwargs))
-        yield from self.chunks
+        assert kwargs.get("subgraphs") is True
+        for chunk in self.chunks:
+            yield chunk if len(chunk) == 3 else ((), *chunk)
         if self.error is not None:
             raise self.error
 
@@ -105,6 +109,15 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     _module("deepagents", create_deep_agent=create_deep_agent)
     _module("deepagents.backends", LocalShellBackend=lambda root_dir: ("backend", root_dir))
     _module("deepagents.graph", append_prompt_caching_middleware=lambda middleware: "original")
+    _module("deepagents.middleware")
+    _module(
+        "deepagents.middleware.subagents",
+        GENERAL_PURPOSE_SUBAGENT={
+            "name": "general-purpose",
+            "description": "General",
+            "system_prompt": "Ayuda.",
+        },
+    )
     return calls
 
 
@@ -149,7 +162,7 @@ def _run(config: dict[str, Any], request: dict[str, Any]) -> list[dict[str, Any]
 MODEL_META = {"langgraph_node": "model", "langgraph_checkpoint_ns": "model:1"}
 
 
-def _two_step_chunks() -> list[tuple[str, Any]]:
+def _two_step_chunks() -> list[tuple[Any, ...]]:
     first = FakeMessage(
         content=[{"type": "text", "text": "voy"}],
         tool_calls=[{"name": "execute", "args": {"command": "ls"}, "id": "c1"}],
@@ -329,9 +342,10 @@ def test_subagents_get_their_model_and_permissions(stubs: dict[str, Any], tmp_pa
         "permissions": {"default": "deny", "tools": {}},
     }
     _run(_config(tmp_path, subagents=[sub]), _request(model="modelo-c"))
-    (built,) = stubs["deep_agent"]["subagents"]
+    built, general = stubs["deep_agent"]["subagents"]
     assert (built["name"], built["system_prompt"]) == ("revisor", "Revisa el diff.")
     assert len(built["middleware"]) == 1
+    assert general["name"] == "general-purpose"
     assert [kwargs["model"] for _, kwargs in stubs["models"]] == ["modelo-c", "modelo-b"]
 
 
@@ -419,3 +433,81 @@ def test_main_keeps_stdout_for_the_protocol(tmp_path: Path) -> None:
         "reason": "protocol_error",
         "detail_code": "invalid_input",
     }
+
+
+def _denies_execute(middleware: Any) -> bool:
+    request = types.SimpleNamespace(
+        tool_call={"name": "execute", "args": {"command": "rm x"}, "id": "c"}
+    )
+    return bool(middleware.wrap_tool_call(request, lambda r: "ran") != "ran")
+
+
+def test_subagent_without_permissions_inherits_the_main_rules(
+    stubs: dict[str, Any], tmp_path: Path
+) -> None:
+    stubs["graph"] = FakeGraph([])
+    sub = {
+        "name": "ayudante",
+        "description": "Ayuda",
+        "system_prompt": "Ayuda.",
+        "permissions": None,
+    }
+    _run(_config(tmp_path, subagents=[sub]), _request())
+    built, general = stubs["deep_agent"]["subagents"]
+    assert built["name"] == "ayudante"
+    assert _denies_execute(built["middleware"][0])
+    assert general["name"] == "general-purpose"
+    assert (general["description"], general["system_prompt"]) == ("General", "Ayuda.")
+    assert _denies_execute(general["middleware"][0])
+
+
+def test_user_general_purpose_subagent_replaces_the_default(
+    stubs: dict[str, Any], tmp_path: Path
+) -> None:
+    stubs["graph"] = FakeGraph([])
+    sub = {
+        "name": "general-purpose",
+        "description": "Mío",
+        "system_prompt": "Mío.",
+        "permissions": None,
+    }
+    _run(_config(tmp_path, subagents=[sub]), _request())
+    (built,) = stubs["deep_agent"]["subagents"]
+    assert built["description"] == "Mío"
+
+
+def test_subagent_usage_is_added_to_the_next_main_step(
+    stubs: dict[str, Any], tmp_path: Path
+) -> None:
+    first = FakeMessage(
+        content="",
+        tool_calls=[{"name": "task", "args": {"subagent_type": "general-purpose"}, "id": "t1"}],
+        usage_metadata={"input_tokens": 10, "output_tokens": 1},
+    )
+    nested = FakeMessage(
+        content="hecho",
+        usage_metadata={
+            "input_tokens": 100,
+            "output_tokens": 7,
+            "input_token_details": {"cache_read": 40},
+        },
+    )
+    tool = FakeMessage(content="hecho", tool_call_id="t1", name="task", kind="tool")
+    final = FakeMessage(content="listo", usage_metadata={"input_tokens": 20, "output_tokens": 2})
+    stubs["graph"] = FakeGraph(
+        [
+            ("updates", {"model": {"messages": [first]}}),
+            (
+                ("tools:1",),
+                "messages",
+                (nested, {"langgraph_node": "model", "langgraph_checkpoint_ns": "tools:1|model:2"}),
+            ),
+            (("tools:1",), "updates", {"model": {"messages": [nested]}}),
+            ("updates", {"tools": {"messages": [tool]}}),
+            ("updates", {"model": {"messages": [final]}}),
+        ]
+    )
+    events = _run(_config(tmp_path), _request())
+    usages = [event["usage"] for event in events if event["type"] == "step_finished"]
+    assert [(u["input"], u["output"], u["cache_read"]) for u in usages] == [(10, 1, 0), (80, 9, 40)]
+    assert all(event.get("text") != "hecho" for event in events if event["type"] == "text_delta")

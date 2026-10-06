@@ -20,7 +20,7 @@ langchain 1.4.3 and langchain-aws 1.8.0 (the pins of
   in `input_token_details.cache_read` / `cache_creation`.
 - A `wrap_tool_call` middleware sees `request.tool_call` (`name`, `args`,
   `id`) and may return a `ToolMessage` instead of calling the tool.
-- deepagents tools: `ls`, `read_file`, `write_file`, `edit_file`, `glob`,
+- deepagents tools: `ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`,
   `grep`, `execute`, `task`, `write_todos`.
 
 ## Decisions
@@ -44,7 +44,7 @@ langchain 1.4.3 and langchain-aws 1.8.0 (the pins of
   before building the graph. Pinned in the template, covered by
   `make agent-runner-test`.
 - **D5 — Permissions map to deepagents tool names.** `read→read_file`,
-  `edit→write_file,edit_file`, `list→ls`, `glob`, `grep`, `bash→execute`,
+  `edit→write_file,edit_file,delete`, `list→ls`, `glob`, `grep`, `bash→execute`,
   `task`, `todowrite→write_todos`. Only `bash` takes patterns, matched with
   `fnmatchcase` against the command; the last matching pattern wins and no
   match falls back to `default`. `DEFAULT_DENIED_TOOLS` are skipped because

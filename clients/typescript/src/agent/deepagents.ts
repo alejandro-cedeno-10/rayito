@@ -59,7 +59,7 @@ export const DEEPAGENTS_RUNNER_PATH = "/opt/agents/rayito/deepagents_runner.py";
 /** Herramienta de `AgentPermissions` -> herramientas de deepagents 0.7. */
 export const DEEPAGENTS_TOOL_NAMES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   read: ["read_file"],
-  edit: ["write_file", "edit_file"],
+  edit: ["write_file", "edit_file", "delete"],
   list: ["ls"],
   glob: ["glob"],
   grep: ["grep"],
