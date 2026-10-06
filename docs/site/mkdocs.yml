@@ -184,6 +184,7 @@ nav:
       - Paridad: e2b-parity.md
   - Novedades:
       - novedades/index.md
+      - "0.7.1": novedades/0.7.1.md
       - "0.7.0": novedades/0.7.0.md
       - "0.6.1": novedades/0.6.1.md
       - "0.6.0": novedades/0.6.0.md
