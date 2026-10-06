@@ -16,7 +16,7 @@ obsolescencia y soporte que siguen las releases está en
 |---|---|---|---|
 | `clients/python` (paquete `rayito`) | PyPI | `python-v<versión>` | `.github/workflows/release.yml` con Trusted Publishing (jobs `python-build` + `python-publish`) |
 | `clients/typescript` (paquete `rayito`) | npm | `typescript-v<versión>` | la primera vez el mantenedor a mano (§3); después los jobs `typescript-build` + `typescript-publish` de `.github/workflows/release.yml` (npm trusted publishing) |
-| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | los jobs `rayd-build` (compila, sin credenciales), `rayd-sign` (environment `release`, cosign keyless, sin checkout) y `rayd-upload` (environment `release`, sin checkout, sin `--clobber`) de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip`, `rayd.cdx.json`, los dos bundles cosign y `SHA256SUMS` |
+| `crates/rayd` (binario `rayd` + `rayito-image.zip`) | GitHub Release del tag (creada por release-please) | `rayd-v<versión>` | los jobs `rayd-build` (compila, sin credenciales), `rayd-sign` (environment `release`, cosign keyless, sin checkout) y `rayd-upload` (environment `release`, sin checkout, sin `--clobber`) de `release.yml`: `rayd` (`cargo auditable`), `rayito-image.zip` (con `licenses/`), `rayd.cdx.json`, `LICENSE`, `NOTICE`, `THIRD_PARTY_LICENSES.md`, los dos bundles cosign, `SHA256SUMS` y su bundle `SHA256SUMS.sigstore.json` |
 | imagen `rayito-base` | tu cuenta de AWS | ninguno | `make image-publish` (`rayito image publish`, `scripts/publish_image.py` como shim); la versión de imagen es un número de build opaco de AWS, anotado en `MILESTONES.md` |
 
 Regla de paridad: **el tag debe ser igual a la versión del manifiesto**
@@ -97,8 +97,9 @@ tag `rayd-v*` firmaba con la identidad exacta que verifican los usuarios).
 
 **Sin cachés.** Ningún job de `release.yml` restaura una caché de Actions: un
 run de tag restaura las del ámbito de `main`, que cualquier job de `main`
-puede escribir. zig y `cargo-deny` llegan por las acciones locales
-`.github/actions/zig` y `.github/actions/cargo-deny` (sha256 fijado), las
+puede escribir. zig, `cargo-deny` y `cargo-about` llegan por las acciones
+locales `.github/actions/zig`, `.github/actions/cargo-deny` y
+`.github/actions/cargo-about` (sha256 fijado), las
 herramientas de cargo se compilan en cada release (unos minutos más) y twine
 sale de `.github/release/requirements-twine.txt` con `--require-hashes`. uv
 llega por `.github/actions/setup-uv` (versión y sha256 fijados, la misma
@@ -127,6 +128,30 @@ de PyPI y de npm liga el token OIDC al fichero de workflow
 (`pypi`/`npm`), nunca al nombre del job: mover la publicación de `python`
 a `python-publish` (o de `typescript` a `typescript-publish`) no exige tocar
 nada en pypi.org ni en npmjs.com.
+
+**Avisos de licencia de `rayd`.** `rayd` enlaza estáticamente unos 220
+crates de terceros (MIT, Apache-2.0, BSD, ISC, Unicode-3.0, Zlib y el CC0
+de `notify`), y sus licencias piden que el aviso viaje con cada copia del
+binario. `THIRD_PARTY_LICENSES.md` (en la raíz, versionado) lo genera
+`make licenses` con cargo-about 0.9.2 (`about.toml`, con la misma lista de
+licencias que `deny.toml`, y la plantilla `about.hbs`) desde `Cargo.lock`
+para `aarch64-unknown-linux-musl`, con `--frozen` (sin red). El job `build`
+de CI y `rayd-build` corren `make licenses-check` (falla si el fichero no es
+el que sale del lock actual) y `scripts/check_third_party_licenses.py`
+(todo crate del `.dep-v0` del binario está listado, y ningún crate listado
+trae un `NOTICE` que no recoja el `NOTICE` raíz). `LICENSE`, `NOTICE` y
+`THIRD_PARTY_LICENSES.md` van en `licenses/` dentro de `rayito-image.zip`
+(`make image-licenses`; `image/Dockerfile` los copia a
+`/usr/share/doc/rayd/`) y como assets de la release, listados en
+`SHA256SUMS`, que `rayd-sign` también firma (`SHA256SUMS.sigstore.json`).
+**Cuando Dependabot (o cualquiera) cambie `Cargo.lock`**, `make licenses` y
+versiona el resultado en el mismo PR: si no, el job `build` de CI falla.
+cargo-about llega por `.github/actions/cargo-about` (binario y sha256
+fijados); en local, el mismo binario de su release o `cargo install
+--locked cargo-about@0.9.2`. Las wheels del sidecar y los RPM no se
+redistribuyen en el zip: se instalan en la cuenta del usuario al construir
+la imagen y llevan sus propios avisos (`*.dist-info/licenses/`; pyzmq
+incluye ahí el MPL-2.0 de libzmq, sin modificar).
 
 **Verificación** de lo publicado: `docs/site/docs/verify.md` (cosign,
 `cargo audit bin`, attestations de PyPI, `npm view … dist.attestations`).
@@ -294,7 +319,8 @@ cargo publish --dry-run -p rayito-proto
    `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
    y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
-   `python scripts/check_license.py`, `cargo-deny`, la auditoría de
+   `python scripts/check_license.py`, `make licenses-check` (job `build`),
+   `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please
    no haya actualizado falla aquí, no en la release).
 3. e2e verde contra AWS real sobre la imagen que la release requiere
