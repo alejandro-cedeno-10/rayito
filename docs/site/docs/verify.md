@@ -13,13 +13,12 @@ cosign: el certificado de Sigstore lleva la identidad del workflow y del tag),
 `rayd.cdx.json` (SBOM CycloneDX 1.5 del grafo de crates para
 `aarch64-unknown-linux-musl`), los avisos de licencia `LICENSE`, `NOTICE` y
 `THIRD_PARTY_LICENSES.md`, `SHA256SUMS` y su bundle
-`SHA256SUMS.sigstore.json`. Desde la release siguiente a la 0.7.0,
-`SHA256SUMS` también va firmado: lista todos los assets salvo él mismo y su
-bundle, así que su firma cubre el SBOM y los avisos, que no llevan bundle
-propio.
+`SHA256SUMS.sigstore.json`. Desde la 0.7.1, `SHA256SUMS` también va
+firmado: lista todos los assets salvo él mismo y su bundle, así que su firma
+cubre el SBOM y los avisos, que no llevan bundle propio.
 
 ```bash
-RAYD_VERSION=0.7.0   # la versión que vas a instalar, sin la "v"
+RAYD_VERSION=0.7.1   # la versión que vas a instalar, sin la "v"
 
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
@@ -31,7 +30,7 @@ cosign verify-blob --bundle rayd.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   rayd
 
-# Desde la release siguiente a la 0.7.0: la firma de SHA256SUMS
+# Desde la 0.7.1: la firma de SHA256SUMS
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -87,9 +86,9 @@ con la versión del tag).
 ### Avisos de licencia de `rayd`
 
 `rayd` es Apache-2.0 y enlaza estáticamente crates de terceros (MIT,
-Apache-2.0, BSD, ISC, Unicode-3.0, Zlib y un CC0). Desde la release
-siguiente a la 0.7.0, sus avisos viajan con cada copia del binario: como
-assets de la release (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`), en
+Apache-2.0, BSD, ISC, Unicode-3.0, Zlib y un CC0). Desde la 0.7.1, sus
+avisos viajan con cada copia del binario: como assets de la
+release (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`), en
 `licenses/` dentro de `rayito-image.zip` y, en la imagen construida desde
 ese zip, en `/usr/share/doc/rayd/`. `THIRD_PARTY_LICENSES.md` lo genera
 cargo-about desde el `Cargo.lock` del tag, y la release comprueba que lista
