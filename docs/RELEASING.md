@@ -132,12 +132,12 @@ nada en pypi.org ni en npmjs.com.
 **Avisos de licencia de `rayd`.** `rayd` enlaza estáticamente unos 220
 crates de terceros (MIT, Apache-2.0, BSD, ISC, Unicode-3.0, Zlib y el CC0
 de `notify`), y sus licencias piden que el aviso viaje con cada copia del
-binario. `THIRD_PARTY_LICENSES.md` (en la raíz, versionado) lo genera
-`make licenses` con cargo-about 0.9.2 (`about.toml`, con la misma lista de
+binario. `THIRD_PARTY_LICENSES.md` (en la raíz, sin versionar: está en
+`.gitignore`) lo genera `make licenses` con cargo-about 0.9.2 (`about.toml`, con la misma lista de
 licencias que `deny.toml`, y la plantilla `about.hbs`) desde `Cargo.lock`
 para `aarch64-unknown-linux-musl`, con `--frozen` (sin red). El job `build`
-de CI y `rayd-build` corren `make licenses-check` (falla si el fichero no es
-el que sale del lock actual o si sus crates no son exactamente los que
+de CI y `rayd-build` lo generan con `make image-licenses` (falla si sus
+crates no son exactamente los que
 `cargo tree -p rayd --target aarch64-unknown-linux-musl -e normal` compila)
 y `scripts/check_third_party_licenses.py --binary --metadata` (todo crate
 listado está en el `.dep-v0` del binario, y ningún crate listado trae un
@@ -149,8 +149,15 @@ enlaza (`ring`, por `rcgen`). `LICENSE`, `NOTICE` y
 (`make image-licenses`; `image/Dockerfile` los copia a
 `/usr/share/doc/rayd/`) y como assets de la release, listados en
 `SHA256SUMS`, que `rayd-sign` también firma (`SHA256SUMS.sigstore.json`).
-**Cuando Dependabot (o cualquiera) cambie `Cargo.lock`**, `make licenses` y
-versiona el resultado en el mismo PR: si no, el job `build` de CI falla.
+**Cuando Dependabot (o cualquiera) cambie `Cargo.lock`** no hay nada que
+regenerar ni versionar: el fichero sale siempre del lock que se compila, en
+CI y en la release. Por eso no existe ningún workflow que escriba en las
+ramas de Dependabot: un job con `contents: write` sobre PRs es la forma
+clásica de "pwn request", haría que Dependabot dejase de rebasar sus PRs y
+su commit, hecho con `GITHUB_TOKEN`, no dispararía CI. La política de
+licencias la imponen `cargo-deny` (`deny.toml`) y `cargo about --fail` con
+la misma lista; el fichero generado de cada PR va en el artefacto
+`rayd-aarch64-musl` de CI por si quieres leerlo.
 cargo-about llega por `.github/actions/cargo-about` (binario y sha256
 fijados); en local, el mismo binario de su release o `cargo install
 --locked cargo-about@0.9.2`. Las wheels del sidecar y los RPM no se
@@ -324,7 +331,7 @@ cargo publish --dry-run -p rayito-proto
    `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
    y `Cargo.lock` son idénticas.
 2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
-   `python scripts/check_license.py`, `make licenses-check` (job `build`),
+   `python scripts/check_license.py`, `make image-licenses` (job `build`),
    `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please
    no haya actualizado falla aquí, no en la release).

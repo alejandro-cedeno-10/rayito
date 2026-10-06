@@ -1,9 +1,9 @@
 """Verify that ``THIRD_PARTY_LICENSES.md`` covers what ``rayd`` really ships.
 
 ``make licenses`` generates the notices file with cargo-about from
-``Cargo.lock`` (``about.toml``, ``about.hbs``), and ``make licenses-check``
-proves the committed copy is not stale. This script cross-checks it
-against sources cargo-about does not share, with the standard library only:
+``Cargo.lock`` (``about.toml``, ``about.hbs``) every time it is packaged;
+the file is never committed, so it cannot go stale. This script
+cross-checks it against sources cargo-about does not share, with the standard library only:
 
 - ``--tree``: the output of ``cargo tree --frozen -p rayd --target
   aarch64-unknown-linux-musl -e normal --prefix none --format '{p}'``, i.e.

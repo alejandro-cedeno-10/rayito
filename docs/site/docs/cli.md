@@ -174,7 +174,8 @@ Si el directorio lleva `rayd`, tiene que llevar también sus avisos de
 licencia en `licenses/` (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`):
 el `Dockerfile` los copia a `/usr/share/doc/rayd/` y el zip se niega a
 empaquetar `rayd` sin ellos. Desde el repositorio los deja ahí
-`make image-licenses` (los objetivos `make image-zip*` ya lo hacen).
+`make image-licenses`, que genera `THIRD_PARTY_LICENSES.md` con cargo-about
+desde `Cargo.lock` (los objetivos `make image-zip*` ya lo hacen).
 
 ## `rayito sandbox`
 
