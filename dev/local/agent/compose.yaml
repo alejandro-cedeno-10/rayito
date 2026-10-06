@@ -1,0 +1,20 @@
+# Sobrecarga del entorno local para el spike de agentes
+# (docs/research/2026-10-agent-spike.md). Se usa encima del compose base y
+# después de `make local-up`, que ya construyó rayito-local-guest:dev:
+#
+#   docker compose -f dev/local/compose.yaml -f dev/local/agent/compose.yaml \
+#     up -d --build --wait guest
+#
+# Cambia sólo el guest: su imagen pasa a ser la variante con OpenCode,
+# ripgrep y deepagents (agent/Dockerfile), y recibe CAP_NET_ADMIN para que
+# `rayd` aplique de verdad el deny-all de egress, como en rayito-base-caps.
+# Comparte la red del runner, pero la política de `rayd` son reglas por uid
+# (`ip rule ... uidrange 1000-65535`): el runner (uid 993) y el propio `rayd`
+# (root), que es quien sale a Internet por la pasarela de secretos, quedan
+# fuera. `make local-down` lo baja igual que el entorno base.
+services:
+  guest:
+    build:
+      context: agent
+    image: rayito-local-guest-agent:dev
+    cap_add: [NET_ADMIN]
