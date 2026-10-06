@@ -35,6 +35,6 @@
 
 ## 5. Acceptance
 
-- [ ] 5.1 Gates green locally (Rust in the VM, Python, TypeScript, scripts,
+- [x] 5.1 Gates green locally (Rust in the VM, Python, TypeScript, scripts,
   mkdocs, OpenSpec) and in CI, including `build` and `local-e2e`.
 - [ ] 5.2 Archive after merge (no runtime change: gates are the acceptance).
