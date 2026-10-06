@@ -7,6 +7,8 @@ const CONSTANT_NAME_OVERRIDES: Record<string, string> = {
   s3BucketNameMin: "S3_BUCKET_NAME_MIN",
   s3BucketNameMax: "S3_BUCKET_NAME_MAX",
   supportedMemoryMiB: "SUPPORTED_MEMORY_MIB",
+  agentOpencodeSha256: "AGENT_OPENCODE_SHA256",
+  agentRipgrepSha256: "AGENT_RIPGREP_SHA256",
 };
 
 /** Mirrors scripts/gen_limits.py: a service name with its own digit (s3) keeps it attached. */

@@ -1,0 +1,125 @@
+{
+  "_comment": "Shared vectors for the AI agent domain (ai-agent-core, ADR-025): rayito._agent (test_agent_domain.py, test_agent_events.py) and src/agent (agent-domain.test.ts). Argument keys are snake_case; the TypeScript test converts them to camelCase and seconds to milliseconds. Every 'invalid' case must raise InvalidArgumentException / InvalidArgumentError in both SDKs.",
+  "models": {
+    "valid": [
+      {"provider": "bedrock", "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "gateway": "bedrock", "region": "us-east-1"},
+      {"provider": "anthropic", "id": "claude-sonnet-4-5", "gateway": "anthropic"},
+      {"provider": "openai-compatible", "id": "gpt-4o-mini", "gateway": "openai", "base_path": "/v1"},
+      {"provider": "openai-compatible", "id": "llama3.1:8b", "gateway": "local-llm", "base_path": "", "prompt_caching": false}
+    ],
+    "invalid": [
+      {"why": "unknown provider", "args": {"provider": "vertex", "id": "gemini", "gateway": "g"}},
+      {"why": "bedrock without region", "args": {"provider": "bedrock", "id": "m", "gateway": "bedrock"}},
+      {"why": "region not an AWS region", "args": {"provider": "bedrock", "id": "m", "gateway": "bedrock", "region": "nowhere"}},
+      {"why": "empty model id", "args": {"provider": "anthropic", "id": "", "gateway": "anthropic"}},
+      {"why": "model id with a space", "args": {"provider": "anthropic", "id": "claude sonnet", "gateway": "anthropic"}},
+      {"why": "gateway name not [a-z0-9-]", "args": {"provider": "anthropic", "id": "m", "gateway": "My_Gateway"}},
+      {"why": "base_path with trailing slash", "args": {"provider": "openai-compatible", "id": "m", "gateway": "g", "base_path": "/v1/"}},
+      {"why": "relative base_path", "args": {"provider": "openai-compatible", "id": "m", "gateway": "g", "base_path": "v1"}},
+      {"why": "base_path with dot-segment", "args": {"provider": "openai-compatible", "id": "m", "gateway": "g", "base_path": "/v1/.."}},
+      {"why": "base_path outside openai-compatible", "args": {"provider": "anthropic", "id": "m", "gateway": "g", "base_path": "/v1"}}
+    ]
+  },
+  "permissions": {
+    "valid": [
+      {"args": {}, "effective": {"question": "deny", "webfetch": "deny", "websearch": "deny"}},
+      {"args": {"default": "deny", "tools": {"read": "allow", "webfetch": "allow"}}, "effective": {"question": "deny", "webfetch": "allow", "websearch": "deny", "read": "allow"}},
+      {"args": {"tools": {"bash": {"git *": "allow", "*": "deny"}}}, "effective": {"question": "deny", "webfetch": "deny", "websearch": "deny", "bash": {"git *": "allow", "*": "deny"}}}
+    ],
+    "invalid": [
+      {"why": "ask as default", "args": {"default": "ask"}},
+      {"why": "ask for a tool", "args": {"tools": {"edit": "ask"}}},
+      {"why": "ask for a pattern", "args": {"tools": {"bash": {"rm *": "ask"}}}},
+      {"why": "unknown action", "args": {"tools": {"edit": "maybe"}}},
+      {"why": "empty pattern map", "args": {"tools": {"bash": {}}}},
+      {"why": "empty pattern", "args": {"tools": {"bash": {"": "deny"}}}},
+      {"why": "tool name with uppercase", "args": {"tools": {"Bash": "deny"}}}
+    ]
+  },
+  "raw_config": {
+    "reserved": ["provider", "autoupdate", "share", "enabled_providers", "model", "small_model", "mcp", "agent", "permission", "instructions"],
+    "allowed": [{"theme": "dark"}, {"lsp": false, "formatter": false}]
+  },
+  "spec": {
+    "invalid": [
+      {"why": "reserved subagent name", "agents": {"build": {"description": "d", "instructions": "i"}}},
+      {"why": "subagent without description", "agents": {"reviewer": {"description": "", "instructions": "i"}}},
+      {"why": "subagent name with uppercase", "agents": {"Reviewer": {"description": "d", "instructions": "i"}}},
+      {"why": "mcp remote without gateway", "mcp": {"docs": {"remote": {"gateway": ""}}}},
+      {"why": "mcp remote with relative path", "mcp": {"docs": {"remote": {"gateway": "docs", "path": "mcp"}}}},
+      {"why": "mcp local with empty command", "mcp": {"fs": {"local": {"command": []}}}},
+      {"why": "mcp local with bad env name", "mcp": {"fs": {"local": {"command": ["mcp-fs"], "envs": {"1BAD": "x"}}}}},
+      {"why": "empty instructions", "instructions": "  "}
+    ],
+    "gateways": {
+      "mcp": {"docs": {"remote": {"gateway": "docs-mcp", "path": "/mcp"}}, "fs": {"local": {"command": ["mcp-fs", "--root", "/home/user"]}}},
+      "needed": ["bedrock", "docs-mcp"]
+    }
+  },
+  "limits": {
+    "defaults": {"max_steps": 50, "timeout_seconds": 600, "max_output_bytes": 16777216, "max_total_tokens": 1000000},
+    "invalid": [
+      {"max_steps": 0},
+      {"timeout_seconds": 0},
+      {"max_output_bytes": 0},
+      {"max_output_bytes": 67108865},
+      {"max_total_tokens": 0}
+    ]
+  },
+  "gateway_presets": {
+    "bedrock": {
+      "region": "us-east-1",
+      "models": ["us.anthropic.claude-haiku-4-5-20251001-v1:0", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"],
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": ["authorization"],
+      "allow": [
+        ["POST", "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"],
+        ["POST", "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"],
+        ["POST", "/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream"],
+        ["POST", "/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse"]
+      ]
+    },
+    "bedrock_invalid": [
+      {"why": "no models", "region": "us-east-1", "models": []},
+      {"why": "an ARN (encoded slash)", "region": "us-east-1", "models": ["arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"]},
+      {"why": "bad region", "region": "east", "models": ["m"]}
+    ],
+    "anthropic": {
+      "upstream": "https://api.anthropic.com",
+      "headers": ["x-api-key"],
+      "allow": [["POST", "/v1/messages"]]
+    },
+    "openai_compatible": {
+      "upstream": "https://api.example.com",
+      "base_path": "/v1",
+      "headers": ["authorization"],
+      "allow": [["POST", "/v1/chat/completions"]]
+    }
+  },
+  "failures": {
+    "messages": {
+      "model_error": "el modelo devolvió un error",
+      "runtime_error": "el runtime del agente terminó con un error",
+      "runtime_missing": "el runtime del agente no está en la imagen o su servidor residente no responde",
+      "runtime_version_mismatch": "la versión del runtime de la imagen no es la pedida",
+      "protocol_error": "el runtime del agente emitió una salida fuera de protocolo",
+      "timeout": "el agente superó su tiempo máximo",
+      "max_steps": "el agente superó su número máximo de pasos",
+      "token_budget": "el agente superó su presupuesto de tokens",
+      "output_limit": "el agente superó su máximo de bytes de salida",
+      "aborted": "la ejecución del agente se abortó",
+      "busy": "ya hay otra ejecución del agente en curso en este sandbox"
+    },
+    "detail_codes": [
+      {"reason": "model_error", "detail_code": "APIError", "message": "el modelo devolvió un error (APIError)"},
+      {"reason": "model_error", "detail_code": "Invalid key sk-123 for user", "message": "el modelo devolvió un error"},
+      {"reason": "runtime_error", "detail_code": null, "message": "el runtime del agente terminó con un error"}
+    ]
+  },
+  "usage": [
+    {"tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}, "total": 0},
+    {"tokens": {"input": 1200, "output": 400, "reasoning": 50, "cache_read": 14000, "cache_write": 0}, "total": 15650}
+  ],
+  "event_types": ["text_delta", "text", "reasoning", "tool_call", "step_started", "step_finished", "agent_failed", "done"],
+  "tool_output": {"preview_bytes": 65536}
+}

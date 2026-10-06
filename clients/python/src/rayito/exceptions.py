@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import grpc
 
+    from rayito._agent._events import TokenUsage
+
 
 class SandboxException(Exception):
     """Error atribuible a un sandbox.
@@ -399,3 +401,33 @@ class GatewayException(SandboxException):
 class CustomDomainException(SandboxException):
     """`CustomDomain` (m15-custom-domain) falló: deploy/status/destroy de
     la pila, o un `expose()`/`get_host()` sin ruta válida en el KVS."""
+
+
+class AgentException(SandboxException):
+    """Una ejecución del agente de IA (`sbx.agent.run()`, `ai-agent-core`)
+    falló. `reason` es una lista cerrada: `model_error` (el proveedor
+    devolvió un error; `detail_code` lleva su clase, `APIError`),
+    `runtime_error`, `runtime_missing` (la imagen no tiene el runtime o su
+    servidor residente no responde), `runtime_version_mismatch`,
+    `protocol_error`, `timeout`, `max_steps`, `token_budget`,
+    `output_limit`, `aborted` o `busy` (otra ejecución en curso en el mismo
+    sandbox). `usage` son los tokens consumidos hasta el fallo. El mensaje
+    sale de una tabla fija por `reason`: nunca lleva el texto del
+    proveedor, el prompt ni contenido del sandbox."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        session_id: str | None = None,
+        usage: TokenUsage | None = None,
+        exit_code: int | None = None,
+        detail_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.session_id = session_id
+        self.usage = usage
+        self.exit_code = exit_code
+        self.detail_code = detail_code

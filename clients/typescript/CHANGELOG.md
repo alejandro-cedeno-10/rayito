@@ -6,6 +6,23 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- **Agente de IA, dominio** (`ai-agent-core`, ADR-025): los tipos con los
+  que `sbx.agent` describirá una ejecución, validados al construirlos y sin
+  ninguna llamada a AWS: `AgentSpec`, `AgentModel` (Bedrock, Anthropic o
+  una API compatible con OpenAI, siempre a través de una pasarela de
+  `sbx.gateways`), `AgentPermissions` (sólo `allow`/`deny`; `question`,
+  `webfetch` y `websearch` denegadas por defecto), `SubAgent`, `McpLocal`,
+  `McpRemote` y `AgentLimits` (50 pasos, 600 s, 16 MiB y 1 000 000 de
+  tokens por defecto); los eventos (unión discriminada por `type`;
+  `agentFailed()` construye el de fallo), `TokenUsage` y `AgentResult`;
+  `AgentError` con un `reason` de una lista cerrada y un mensaje fijo que
+  nunca lleva texto del proveedor; y las pasarelas ya hechas
+  `bedrockGateway`, `anthropicGateway` y `openaiCompatibleGateway`, cuyo
+  `allow` cubre sólo los modelos elegidos. `sbx.agent` llega en un cambio
+  posterior.
+
 ## [0.7.1] - 2026-10-06
 
 ### Changed
