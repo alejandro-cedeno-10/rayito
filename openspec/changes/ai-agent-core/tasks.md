@@ -24,9 +24,9 @@
 - [x] 2.1 `AgentRuntime` port (`_agent/_runtime.py`, `agent/runtime.ts`) and
   the `_runtimes` registry (empty until an adapter registers a name; a
   caller can always pass its own `AgentRuntime` object).
-- [ ] 2.2 OpenCode adapter: config builder, run script (lock, attach,
+- [x] 2.2 OpenCode adapter: config builder, run script (lock, attach,
   dispose, `--title`, stdin), event mapping, `finish`, `abort_command`.
-- [ ] 2.3 Golden files `testdata/agent/opencode-config/*.json` and the
+- [x] 2.3 Golden files `testdata/agent/opencode-config/*.json` and the
   captured, anonymised `opencode-v1.18.34-events.jsonl` with
   `expected-events.json`.
 

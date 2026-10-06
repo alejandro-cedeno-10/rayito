@@ -1,0 +1,16 @@
+{
+  "session_id": "ses_0000000000000000000000000a",
+  "attached": true,
+  "ignored_lines": 2,
+  "events": [
+    {"type": "step_started", "index": 1},
+    {"type": "tool_call", "call_id": "toolu_01", "name": "read", "status": "completed", "input": {"filePath": "/home/user/work/notas.txt"}, "output": "texto sintético de ejemplo", "output_truncated": false},
+    {"type": "tool_call", "call_id": "toolu_02", "name": "bash", "status": "error", "input": {"command": "false"}, "output": "salida sintética con error", "output_truncated": false},
+    {"type": "step_finished", "index": 1, "finish_reason": "tool-calls", "usage": {"input": 1200, "output": 80, "reasoning": 0, "cache_read": 4100, "cache_write": 0}},
+    {"type": "step_started", "index": 2},
+    {"type": "reasoning", "text": "razonamiento sintético"},
+    {"type": "text", "text": "Respuesta sintética final."},
+    {"type": "step_finished", "index": 2, "finish_reason": "stop", "usage": {"input": 300, "output": 25, "reasoning": 10, "cache_read": 4100, "cache_write": 512}}
+  ],
+  "done": {"type": "done", "session_id": "ses_0000000000000000000000000a", "exit_code": 0, "usage": {"input": 1500, "output": 105, "reasoning": 10, "cache_read": 8200, "cache_write": 512}}
+}

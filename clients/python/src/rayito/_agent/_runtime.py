@@ -4,11 +4,9 @@ ficheros de configuración, a un comando y de vuelta a eventos. Puro: sin
 `grpc`, `boto3` ni reloj. `_stream_base.py` es quien de verdad llama a estos
 métodos contra el handle de comandos del sandbox.
 
-Un adaptador concreto (`_opencode.py`) llega con el resto de
-`ai-agent-core`; mientras tanto, un llamante puede pasar su propio objeto
-que cumpla `AgentRuntime` como `runtime=` (lo que hacen los tests con un
-runtime de doble), y `_runtimes.py` no necesita tener ninguno registrado
-por nombre para que `sbx.agent.run()` funcione."""
+El adaptador de OpenCode vive en `_opencode.py`; un llamante también puede
+pasar su propio objeto que cumpla `AgentRuntime` como `runtime=` (lo que
+hacen los tests con un runtime de doble)."""
 
 from __future__ import annotations
 

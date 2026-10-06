@@ -5,10 +5,8 @@
  * comando y de vuelta a eventos. Puro: sin `grpc`/Connect, `@aws-sdk/*` ni
  * reloj.
  *
- * Un adaptador concreto (OpenCode) llega con el resto de `ai-agent-core`;
- * mientras tanto, un llamante puede pasar su propio objeto que cumpla
- * `AgentRuntime` como `runtime`, y `runtimes.ts` no necesita tener ninguno
- * registrado por nombre para que `sbx.agent.run()` funcione.
+ * El adaptador de OpenCode vive en `opencode.ts`; un llamante también puede
+ * pasar su propio objeto que cumpla `AgentRuntime` como `runtime`.
  */
 
 import type { AgentSpec } from "./domain.js";

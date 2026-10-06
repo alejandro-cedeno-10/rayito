@@ -8,6 +8,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Agente de IA, adaptador de OpenCode** (`ai-agent-core`): `runtime="opencode"`
+  ya resuelve a un adaptador (`rayito._agent._opencode`) que escribe `opencode.json` sin
+  credenciales, lanza `opencode run` con el prompt por stdin, un cerrojo por
+  sandbox y `--attach` a un `opencode serve` residente si responde, y
+  traduce su JSONL a eventos. Configuración y script idénticos byte a byte
+  entre Python y TypeScript (`testdata/agent/`).
 - **Agente de IA, dominio** (`ai-agent-core`, ADR-025): los tipos con los
   que `sbx.agent` describirá una ejecución, validados al construirlos y sin
   ninguna llamada a AWS: `AgentSpec`, `AgentModel` (Bedrock, Anthropic o

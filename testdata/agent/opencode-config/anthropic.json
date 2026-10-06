@@ -1,0 +1,5 @@
+{
+  "opencode_json": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {\n    \"build\": {\n      \"permission\": {\n        \"*\": \"deny\",\n        \"bash\": {\n          \"*\": \"deny\",\n          \"git *\": \"allow\"\n        },\n        \"question\": \"deny\",\n        \"read\": \"allow\",\n        \"webfetch\": \"deny\",\n        \"websearch\": \"deny\"\n      }\n    }\n  },\n  \"autoupdate\": false,\n  \"enabled_providers\": [\n    \"anthropic\"\n  ],\n  \"instructions\": [\n    \"/home/user/.rayito/agent/opencode/AGENTS.md\"\n  ],\n  \"model\": \"anthropic/claude-haiku-4-5\",\n  \"provider\": {\n    \"anthropic\": {\n      \"options\": {\n        \"apiKey\": \"placeholder-not-a-secret\",\n        \"baseURL\": \"http://127.0.0.1:18002/v1\"\n      }\n    }\n  },\n  \"share\": \"disabled\",\n  \"small_model\": \"anthropic/claude-haiku-4-5-mini\",\n  \"snapshot\": false\n}\n",
+  "agents_md": "Responde en español.",
+  "config_sha256": "06748fe5652cf8a009e88ca0081d67edbd52839faa23ba75c6a4b91c5c7887da"
+}

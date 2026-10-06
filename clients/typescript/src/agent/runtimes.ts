@@ -1,19 +1,21 @@
 /**
- * Registro `nombre -> AgentRuntime` (`ai-agent-core`, design.md §3). Vacío
- * hasta que el adaptador de OpenCode (resto de `ai-agent-core`) registre
- * `"opencode"` y `ai-agent-deepagents` registre `"deepagents"`: hasta
- * entonces, `runtime: "opencode"` falla con `UnimplementedError` en vez de
- * con un error opaco. Un llamante siempre puede saltarse el registro
+ * Registro `nombre -> AgentRuntime` (`ai-agent-core`, design.md §3):
+ * `"opencode"` ya está; `ai-agent-deepagents` añadirá `"deepagents"`. Un
+ * nombre sin adaptador falla con `UnimplementedError` en vez de con un
+ * error opaco. Un llamante siempre puede saltarse el registro
  * pasando su propio objeto `AgentRuntime` (lo que hacen los tests con un
  * doble).
  */
 
 import { InvalidArgumentError, UnimplementedError } from "../errors.js";
+import { OpenCodeRuntime } from "./opencode.js";
 import type { AgentRuntime } from "./runtime.js";
 
 /** Quita y pon: cada adaptador añade su entrada aquí cuando aterriza, sin
  * tocar el resto de este módulo. */
-export const AGENT_RUNTIMES: Record<string, AgentRuntime> = {};
+export const AGENT_RUNTIMES: Record<string, AgentRuntime> = {
+  opencode: new OpenCodeRuntime(),
+};
 
 function looksLikeRuntime(candidate: unknown): candidate is AgentRuntime {
   if (typeof candidate !== "object" || candidate === null) {

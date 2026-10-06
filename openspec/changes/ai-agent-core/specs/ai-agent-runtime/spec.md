@@ -95,3 +95,23 @@ With `tracer_provider=`/`tracerProvider`, `sbx.agent.run()`/`stream()` SHALL ope
 #### Scenario: span attributes are a subset of the allowed list
 - **WHEN** `sbx.agent.run()` is called with `tracer_provider=` set
 - **THEN** the `rayito.agent.run` span's attributes are all members of `ALLOWED_SPAN_ATTRIBUTES`/`ALLOWED_SPAN_ATTRIBUTES` and none is the prompt or the response text
+
+### Requirement: The OpenCode adapter is headless, credential-free and byte-identical across SDKs
+
+The `opencode` runtime SHALL write an `opencode.json` that only carries the
+model credential placeholder, SHALL pass the prompt on stdin and never in
+argv, SHALL always pass `--title`, SHALL hold a per-sandbox run lock and
+SHALL attach to a resident `opencode serve` only when it answers its health
+check. Python and TypeScript SHALL produce the same configuration bytes,
+sha256 and run script for the same spec (`testdata/agent/`).
+
+#### Scenario: Error events decide failure, not the exit code
+
+- **WHEN** OpenCode emits an `error` event and then exits with code 0
+- **THEN** the run ends with `AgentFailed(reason="model_error")`, whose
+  `detail_code` is the error name and never its message
+
+#### Scenario: A second run while one holds the lock
+
+- **WHEN** a run starts while another holds the run lock
+- **THEN** it ends with `AgentFailed(reason="busy")` without starting OpenCode
