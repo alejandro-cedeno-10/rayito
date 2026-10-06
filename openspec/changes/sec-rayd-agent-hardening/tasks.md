@@ -82,3 +82,13 @@
   answers through the new listener (no connection reset at the platform);
   killing the sidecar kills its kernels (`kernels_killed` ≥ 1, no
   `kernel_pid_rejected` on a genuine boot).
+  Partly verified in the 0.7.0 acceptance (2026-10-04, us-east-1):
+  `create()`, `m3` and transfer e2e green on both images; S3 mount e2e
+  green; the gateway forwards the allowed paths and refuses every encoded
+  or `;`/`..` variant with 403; create/pause/resume/kill hooks answer and a
+  genuine cycle adds no anomaly; after killing the sidecar the kernel is
+  back in 0.2 s with no `kernel_pid_rejected`. Still to measure: the
+  `start_cmd` template that posts `/run` at boot, `kernels_killed` ≥ 1 in
+  the runtime log, and the absence of `sandbox_origin` in the genuine
+  `/run` log line.
+
