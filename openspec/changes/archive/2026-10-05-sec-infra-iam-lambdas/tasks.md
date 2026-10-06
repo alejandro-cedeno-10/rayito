@@ -50,7 +50,7 @@
 
 ## 6. Acceptance
 
-- [ ] 6.1 `events-webhooks` acceptance on real AWS (deploy, forward,
+- [x] 6.1 `events-webhooks` acceptance on real AWS (deploy, forward,
   deliver, reconcile) with the new templates, before archiving: the GSI
   added on update, `LoggingConfig`, `FilterCriteria`, the per-job
   policies and admission under a real suspend/resume loop.
@@ -59,6 +59,14 @@
   deliver `created`, `paused`, `resumed` and `killed` to a public receiver
   with valid signatures; deliveries to private and link-local URLs end as
   `failed`; the deliverer logs to the stack's own log group
-  (`LoggingConfig`). Still to measure: the GSI added by updating a stack
-  deployed from the previous template, and a reconciler pass.
+  (`LoggingConfig`). Completed 2026-10-06 (us-east-1, `AWS_API_NOTES.md`
+  Q142): a stack deployed from the 0.6.1 template and seeded with real
+  events (7 rows) was updated in place by `rayito stack deploy` to
+  `UPDATE_COMPLETE` in 120 s with no failed resource, the same table and
+  all 7 rows; the `open` index was added (CloudFormation finishes while it
+  backfills, `ACTIVE` about 6.5 min later, queries served meanwhile). The
+  new forwarder and deliverer handled `paused`/`resumed`/`killed` of a
+  sandbox opened before the update with 0 `Errors` (its old row joins the
+  index with its next event), and the reconciler ran on its schedule
+  (2 invocations, 0 errors, `{"synthesized": 0}` in its own log group).
 

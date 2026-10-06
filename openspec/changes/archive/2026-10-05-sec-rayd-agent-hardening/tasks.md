@@ -73,7 +73,7 @@
 - [x] 9.1 `SECURITY.md` T1/T2/T6/T7/T11/T12/T17, `ARCHITECTURE.md`, site
   pages, changelogs.
 - [x] 9.2 Gates: Rust (VM), Python, TypeScript, docs, OpenSpec.
-- [ ] 9.3 Real-AWS acceptance (`rayito-base` and `rayito-base-caps` with
+- [x] 9.3 Real-AWS acceptance (`rayito-base` and `rayito-base-caps` with
   this `rayd`): `create()` succeeds and no `sandbox_origin` appears in the
   `/run` log line; filesystem e2e (`m3`, transfer) green; a template with a
   `start_cmd` that posts `/run` at boot still gets the operator's token;
@@ -87,8 +87,12 @@
   green; the gateway forwards the allowed paths and refuses every encoded
   or `;`/`..` variant with 403; create/pause/resume/kill hooks answer and a
   genuine cycle adds no anomaly; after killing the sidecar the kernel is
-  back in 0.2 s with no `kernel_pid_rejected`. Still to measure: the
-  `start_cmd` template that posts `/run` at boot, `kernels_killed` ≥ 1 in
-  the runtime log, and the absence of `sandbox_origin` in the genuine
-  `/run` log line.
+  back in 0.2 s with no `kernel_pid_rejected`. Completed 2026-10-06
+  (us-east-1, `AWS_API_NOTES.md` Q143): a template whose `start_cmd`
+  (uid 1000) posts a well-formed `/run` every second from boot got
+  `sandbox_origin` on all 34 attempts, one of them before the platform's
+  `/run`; the platform's `/run` answered `installed` and commands and
+  `run_code` worked with the operator's token. A genuine `create()`
+  without `start_cmd` logs `installed` and no `sandbox_origin`; killing the
+  sidecar logs `kernels_killed: 1` and no `kernel_pid_rejected`.
 

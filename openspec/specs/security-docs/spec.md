@@ -17,11 +17,11 @@ TBD - created by archiving change m8-security-docs. Update Purpose after archive
 - **THEN** the paragraph names `access_token=` / `accessToken` as the way to fix one sandbox's secret and keeps `RAYITO_ACCESS_TOKEN` as the way to `connect()` from another process, and the T4 row names the MCP server as having no opt-out
 
 ### Requirement: SECURITY.md names CallerPolicy as the publisher policy
-The IAM section of `SECURITY.md` SHALL introduce `CallerPolicy` as the policy of the **publisher** — the machine that publishes images with `rayito image publish` / `prune` and launches sandboxes from the SDK — instead of "la máquina que ejecuta el SDK", SHALL say that it therefore carries the image verbs on `arn:aws:lambda:<region>:<acct>:microvm-image:*` and SHALL NOT be attached to an application server that only launches sandboxes, and SHALL point at `infra/ci-oidc-role.yaml` as the runtime-only shape that already exists (the six MicroVM verbs on named image ARNs, `ListMicrovms`, and no image, S3, quota or tagging permission). The section SHALL NOT enumerate individual image verbs, so that removing `lambda:DeleteMicrovmImage` from `infra/iam.yaml` needs no further documentation change.
+The IAM section of `SECURITY.md` SHALL introduce `SandboxLauncherPolicy` as the policy of the service that launches sandboxes (runtime verbs, image reads, `iam:PassRole` on the execution role only, and never an image write, the build role or an artifact upload), `ImagePublisherPolicy` as the policy of the **publisher**, and `CallerPolicy` as their union, kept for existing setups: it publishes images with `rayito image publish` / `prune` and launches sandboxes, and SHALL NOT be attached to an application server, which gets `SandboxLauncherPolicy`. The `CallerPolicy` bullet SHALL NOT enumerate individual image verbs, so that removing `lambda:DeleteMicrovmImage` from `infra/iam.yaml` needs no further documentation change.
 
 #### Scenario: the IAM bullet says publisher and offers the runtime-only policy
-- **WHEN** `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy` reads the `CallerPolicy` bullet of the IAM section of `SECURITY.md`
-- **THEN** the bullet names the publisher, warns against attaching it to an application server, and cites `infra/ci-oidc-role.yaml` as the runtime-only policy
+- **WHEN** `scripts/tests/test_security_docs.py::test_caller_policy_is_the_publisher_policy` reads the IAM section of `SECURITY.md`
+- **THEN** the `CallerPolicy` bullet says it is the union, names `rayito image publish` / `prune`, warns against attaching it to an application server and names `SandboxLauncherPolicy`, and the `SandboxLauncherPolicy` bullet says it never creates or updates images
 
 ### Requirement: A gate test pins every documentation correction of the audit
 `scripts/tests/test_security_docs.py` SHALL assert every sentence this change corrects, resolving the repository root as `Path(__file__).resolve().parents[2]` (the pattern already used by `clients/python/tests/unit/cli/test_compat.py` and `scripts/tests/test_check_license.py`), with one test per audit row (C-01, C-02, C-03, C-04, C-07, C-08, C-09, H-06) plus one for the published persistence recipe that C-07's page shares with H-01. Each test SHALL assert both the presence of the corrected wording and the absence of the retired wording, so reverting a sentence fails the gate. The module SHALL run in the existing `cd clients/python && uv run pytest ../../scripts/tests -p no:cacheprovider` gate (`Makefile` target `test-scripts` and the CI `check` job) and SHALL be `ruff`-clean under `uvx ruff check scripts`, requiring no change to `Makefile`, `.github/workflows/*` or any runtime code. `mkdocs build --strict` SHALL stay green and `docs/site/mkdocs.yml` SHALL NOT change.
@@ -135,3 +135,17 @@ The appendix SHALL name the residual risk with no new mitigation and no new thre
 #### Scenario: C-01, C-02 and C-03 are closed in the audit
 - **WHEN** `scripts/tests/test_security_docs.py::test_c01_c02_c03_are_closed_in_the_security_audit` runs
 - **THEN** §9 has the three code rows and "Lo que sigue abierto" names only the real-AWS measurement those fixes still depend on
+
+### Requirement: SECURITY.md T22 says only the MAC authenticates a lifecycle event
+`SECURITY.md` SHALL carry a T22 row for lifecycle events and webhook delivery that states the log stream name is not proof of identity (holders of the execution role or the build role can write any stream), that the MAC is verified before anything is parsed, that events must be fresh, that one bad line never drops its batch, and that delivery dedupe is per sandbox.
+
+#### Scenario: the T22 row is pinned
+- **WHEN** `scripts/tests/test_security_docs.py::test_t22_says_only_the_mac_authenticates_an_event` reads the T22 row
+- **THEN** it holds those statements and not the retired "double identity check" wording
+
+### Requirement: SECURITY.md carries the M15 threat rows and does not overstate them
+`SECURITY.md` SHALL carry exactly one row each for T20 (S3 mounts), T23 (OTLP export), T26 (templates) and T27 (size cost guard). T22 SHALL say that `paused`/`resumed` are advisory (guest code can make `rayd` emit them through the loopback-reachable hooks), how admission bounds them, that webhooks are stack-wide, that receivers dedupe on `(sandbox_id, event_id)`, and that a `rayito-signature` header exists. T27 SHALL name the image-publishing Deny and the `imageVersion` residual.
+
+#### Scenario: the rows are pinned
+- **WHEN** `scripts/tests/test_security_docs.py` reads `SECURITY.md`
+- **THEN** each of T20, T23, T26 and T27 appears once, and T22 and T27 hold those statements
