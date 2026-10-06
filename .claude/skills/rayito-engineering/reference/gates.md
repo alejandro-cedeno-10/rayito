@@ -28,6 +28,12 @@ Convenciones de la VM:
   `rust-toolchain.toml`.
 - Un `CARGO_TARGET_DIR` por rama (`/var/tmp/tester-target-<rama>`) y
   `CARGO_INCREMENTAL=0`.
+- cargo-about 0.9.2 (para `make licenses` y `make image-zip*`) en
+  `/var/tmp/tester-tools/cargo-about/`, en el PATH de `tester` sin pasos
+  extra: `/etc/profile.d/rayito-tester-tools.sh` lo añade en shells de
+  login (`sudo -u tester -i`) y el enlace `/usr/local/bin/cargo-about` lo
+  cubre en `sudo -u tester -H bash <script>`. Comprobar con
+  `limactl shell <vm> -- sudo -u tester -i bash -lc 'cargo-about --version'`.
 - `-j 2`, porque el linker se queda sin memoria con más jobs.
 - Todo `cargo` va dentro de `flock /var/tmp/rayito-cargo.lock`: puede haber
   otras sesiones compilando en la misma VM, y el lock las serializa.
