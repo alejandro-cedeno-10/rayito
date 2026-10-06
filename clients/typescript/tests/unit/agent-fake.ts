@@ -159,11 +159,15 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 }
 
+export const FAKE_PID = 4242;
+
 export class FakeCommandHandle implements AgentCommandHandle {
+  readonly pid = FAKE_PID;
   readonly #chunks: string[];
   #index = 0;
   #exitCode: number | undefined;
   readonly #raiseOnIterate: Error | undefined;
+  readonly #raiseOnWait: Error | undefined;
   killed = false;
   disconnected = false;
   stdin: Uint8Array | undefined;
@@ -173,7 +177,9 @@ export class FakeCommandHandle implements AgentCommandHandle {
     readonly lines: readonly Uint8Array[];
     readonly exitCode?: number | undefined;
     readonly raiseOnIterate?: Error | undefined;
+    readonly raiseOnWait?: Error | undefined;
   }) {
+    this.#raiseOnWait = options.raiseOnWait;
     this.#chunks = options.lines.map((l) => `${new TextDecoder().decode(l)}\n`);
     this.#exitCode = options.exitCode ?? 0;
     this.#raiseOnIterate = options.raiseOnIterate;
@@ -198,6 +204,14 @@ export class FakeCommandHandle implements AgentCommandHandle {
 
   disconnect(): void {
     this.disconnected = true;
+  }
+
+  /** Como `CommandHandle.wait()` con el stream ya consumido: lanza el error
+   * del `EndEvent` (`raiseOnWait`), si lo hay. */
+  async wait(): Promise<void> {
+    if (this.#raiseOnWait !== undefined) {
+      throw this.#raiseOnWait;
+    }
   }
 
   [Symbol.asyncIterator](): AsyncIterator<{ readonly stdout?: string }> {

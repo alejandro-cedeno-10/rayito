@@ -30,6 +30,41 @@ import { doneAttributes, failureAttributes } from "./telemetry.js";
 /** Tag que `commands.run({ tag })` lleva en cada ejecución del agente. */
 export const AGENT_RUN_TAG = "rayito-agent-run";
 
+/** Los `reason` con los que el SDK, no el runtime, corta una ejecución
+ * (`LimitTracker`): el runtime sigue vivo y hay que pararlo. */
+export const SDK_LIMIT_REASONS: ReadonlySet<string> = new Set(["max_steps", "token_budget"]);
+
+/** Plazo de la orden de `stopTreeCommand`. */
+export const AGENT_STOP_TREE_TIMEOUT_MS = 30_000;
+
+/**
+ * Congela (`SIGSTOP`) el proceso del runtime y, de padres a hijos, cada
+ * descendiente suyo, y luego mata (`SIGKILL`) a los descendientes. Hace
+ * falta porque OpenCode y deepagents lanzan cada orden de su herramienta de
+ * shell en una sesión propia (`setsid`): el `SIGKILL` de `rayd` al grupo del
+ * proceso no las alcanza y, sin esto, un `sleep` o un servidor lanzado por el
+ * agente sobreviviría a `abort()` y a los límites del SDK (medido con
+ * `make local-e2e`, `agents.local.test.ts`). El propio runtime queda
+ * congelado para el `kill()` del handle. Corre como el mismo `user` que el
+ * agente, así que no puede tocar procesos ajenos.
+ */
+export function stopTreeCommand(pid: number): string {
+  if (!Number.isSafeInteger(pid) || pid <= 1) {
+    throw new InvalidArgumentError("pid de agente no válido");
+  }
+  return (
+    't() { local c; for c in $(pgrep -P "$1"); do ' +
+    'kill -STOP "$c" 2>/dev/null; t "$c"; kill -KILL "$c" 2>/dev/null; done; }; ' +
+    `kill -STOP ${pid} 2>/dev/null; t ${pid}; true`
+  );
+}
+
+/** Si `event` es el `AgentFailed` con el que el SDK corta una ejecución que
+ * el runtime aún no terminó. */
+export function isSdkLimitFailure(event: AgentEvent): boolean {
+  return event.type === "agent_failed" && SDK_LIMIT_REASONS.has(event.reason);
+}
+
 /** Lo que `Agent`/`AsyncAgent` necesitan de un `Sandbox`: cualquier objeto
  * con estos cuatro atributos sirve (lo que le dan los tests con un doble). */
 export interface AgentSandbox {
@@ -53,8 +88,10 @@ export interface AgentSandbox {
  * `CommandHandle` de `sandbox/commands.js`, tipado ancho para no acoplar
  * este módulo a su import). */
 export interface AgentCommandHandle extends AsyncIterable<{ readonly stdout?: string }> {
+  readonly pid: number;
   readonly exitCode: number | undefined;
   kill(): Promise<boolean>;
+  wait(): Promise<unknown>;
   disconnect(): void;
   sendStdin(data: Uint8Array): Promise<void>;
   closeStdin(): Promise<void>;
@@ -251,6 +288,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
   #final: Done | AgentFailed | undefined;
   #closed = false;
   #abortRequested = false;
+  #stopped = false;
   readonly #span: Span | undefined;
   readonly #finishSpan: (error?: unknown) => void;
   readonly #attached: boolean;
@@ -303,6 +341,18 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
       return;
     }
     this.#abortRequested = true;
+    await this.#stop();
+  }
+
+  /** Para el runtime y todo lo que lanzó: el `abortCommand` con elegancia
+   * del adaptador, `stopTreeCommand` y el `kill()` del handle. Sirve a
+   * `abort()` y a un límite del SDK (`max_steps`, `token_budget`), que sin
+   * esto dejaría al runtime trabajando (y gastando tokens) en segundo plano. */
+  async #stop(): Promise<void> {
+    if (this.#stopped) {
+      return;
+    }
+    this.#stopped = true;
     const command = this.#runtime.abortCommand(this.#state);
     if (command !== undefined) {
       try {
@@ -311,6 +361,15 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
         if (!(error instanceof SandboxError)) {
           throw error;
         }
+      }
+    }
+    try {
+      await this.#sandbox.commands.run(stopTreeCommand(this.#handle.pid), {
+        timeoutMs: AGENT_STOP_TREE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!(error instanceof SandboxError)) {
+        throw error;
       }
     }
     await this.#handle.kill();
@@ -371,7 +430,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
       throw error;
     }
     if (step.done === true) {
-      this.#finish();
+      await this.#finish();
       return;
     }
     for (const line of this.#buffer.feed(step.value.stdout ?? "")) {
@@ -380,13 +439,17 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
         this.#queue.push(event);
         if (event.type === "done" || event.type === "agent_failed") {
           this.#final = event;
+          if (isSdkLimitFailure(event)) {
+            await this.#stop();
+            await this.#drain();
+          }
           return;
         }
       }
     }
   }
 
-  #finish(): void {
+  async #finish(): Promise<void> {
     if (this.#abortRequested) {
       this.#enqueueFinal(
         agentFailed("aborted", {
@@ -396,9 +459,49 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
       );
       return;
     }
+    if (await this.#endedByTimeout()) {
+      this.#enqueueFinal(agentFailed("timeout", { sessionId: this.#tracker.sessionId }));
+      return;
+    }
     const exitCode = this.#handle.exitCode ?? -1;
     const final = this.#runtime.finish(this.#state, exitCode);
     this.#enqueueFinal(this.#tracker.track(final) as Done | AgentFailed);
+  }
+
+  /** Si `rayd` terminó el proceso por `AgentLimits.timeoutMs`. Iterar el
+   * handle no lo dice (el stream acaba con el `EndEvent` sin lanzar);
+   * `wait()`, sobre el stream ya consumido, lo convierte en `TimeoutError`
+   * sin otra llamada. */
+  async #endedByTimeout(): Promise<boolean> {
+    try {
+      await this.#handle.wait();
+    } catch (error) {
+      if (error instanceof TimeoutError) {
+        return true;
+      }
+      if (!(error instanceof SandboxError)) {
+        throw error;
+      }
+    }
+    return false;
+  }
+
+  /** Consume el handle hasta su `EndEvent` tras pararlo por un límite:
+   * `rayd` sólo lo manda cuando el proceso ya no existe, así que al volver el
+   * cerrojo de ejecución está libre y el siguiente `run()` no encuentra el
+   * runtime `busy` (un proceso con hilos tarda en morir del todo tras el
+   * `SIGKILL`). */
+  async #drain(): Promise<void> {
+    try {
+      let step = await this.#handleIterator.next();
+      while (step.done !== true) {
+        step = await this.#handleIterator.next();
+      }
+    } catch (error) {
+      if (!(error instanceof SandboxError)) {
+        throw error;
+      }
+    }
   }
 
   #enqueueFinal(event: Done | AgentFailed): void {

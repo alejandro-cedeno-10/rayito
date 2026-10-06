@@ -67,7 +67,7 @@ Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`,
 - **THEN** `sbx.agent.run()` uses it directly, with no registry lookup
 
 ### Requirement: sbx.agent is a lazy property that enforces the SDK's own limits
-`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. `AgentStream.abort()` SHALL call the runtime's `abort_command`/`abortCommand` (if any) before killing the underlying command handle, and the stream's final event SHALL be `AgentFailed(reason="aborted")`.
+`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. `AgentStream.abort()` SHALL call the runtime's `abort_command`/`abortCommand` (if any), then run `stop_tree_command(pid)`/`stopTreeCommand(pid)` (which stops the runtime process and stops and kills every descendant of it, including those that started their own session), before killing the underlying command handle, and the stream's final event SHALL be `AgentFailed(reason="aborted")`. When the SDK ends a run for `max_steps` or `token_budget`, it SHALL stop the runtime the same way and consume the handle until its end event before the stream ends, so the run lock is free for the next run. When the handle ends with the command's timeout end status (which `wait()` reports as `TimeoutException`/`TimeoutError`), the final event SHALL be `AgentFailed(reason="timeout")`.
 
 #### Scenario: touching sbx.agent makes no call
 - **WHEN** `sbx.agent` is read right after `Sandbox.create()`/`connect()`
@@ -83,7 +83,15 @@ Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`,
 
 #### Scenario: abort runs the runtime's abort command, then kills the handle
 - **WHEN** `stream.abort()` is called and the runtime's `abort_command()` returns a shell command
-- **THEN** that command runs in the sandbox before the handle is killed, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
+- **THEN** that command and then `stop_tree_command(pid)` run in the sandbox before the handle is killed, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
+
+#### Scenario: an SDK limit stops the runtime and its process tree
+- **WHEN** the stream ends with `AgentFailed(reason="max_steps")` or `AgentFailed(reason="token_budget")`
+- **THEN** `stop_tree_command(pid)` ran and the handle was killed and consumed to its end before the stream ended
+
+#### Scenario: a timeout reported only by the end event is a timeout
+- **WHEN** the command handle ends without raising while iterating and its `wait()` raises `TimeoutException`/`TimeoutError`
+- **THEN** the stream's final event is `AgentFailed(reason="timeout")`
 
 ### Requirement: The agent run span never carries content, only with tracer_provider
 With `tracer_provider=`/`tracerProvider`, `sbx.agent.run()`/`stream()` SHALL open one span `rayito.agent.run` with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` at start and, when the run ends, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` and the `rayito.agent.*` attributes from `ALLOWED_SPAN_ATTRIBUTES`. Without the option, no span SHALL be created. No attribute SHALL ever carry the prompt, the response text or a tool argument.

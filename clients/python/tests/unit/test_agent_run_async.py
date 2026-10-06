@@ -11,10 +11,12 @@ import pytest
 
 from rayito._agent._domain import AgentLimits, AgentModel, AgentSpec
 from rayito._agent._runtime import WarmupStep
+from rayito._agent._stream_base import stop_tree_command
 from rayito.exceptions import AgentException, InvalidArgumentException, TimeoutException
 from rayito.sandbox_async.agent import AsyncAgent
 
 from .fake_agent import (
+    FAKE_PID,
     FAKE_SESSION_ID,
     FakeAgentRuntime,
     FakeAsyncCommandHandle,
@@ -132,7 +134,7 @@ async def test_stream_never_raises_for_an_agent_failure() -> None:
 async def test_abort_runs_the_runtime_abort_command_then_kills_the_handle() -> None:
     handle = FakeAsyncCommandHandle(lines=[_line(event="step_started", index=1)])
     sandbox = FakeSandbox(
-        commands=FakeCommands(handles=[handle], foreground_results=[None], is_async=True),
+        commands=FakeCommands(handles=[handle], foreground_results=[None, None], is_async=True),
         files=FakeFilesystem(is_async=True),
         gateways={"bedrock": gateway_status()},
     )
@@ -141,7 +143,10 @@ async def test_abort_runs_the_runtime_abort_command_then_kills_the_handle() -> N
     stream = await agent.stream("hola", spec=_spec(), runtime=runtime)
     await stream.abort()
     assert handle.killed is True
-    assert sandbox.commands.calls[-1].cmd == runtime.abort_cmd
+    assert [call.cmd for call in sandbox.commands.calls[1:]] == [
+        runtime.abort_cmd,
+        stop_tree_command(FAKE_PID),
+    ]
     with pytest.raises(AgentException) as excinfo:
         await stream.result()
     assert excinfo.value.reason == "aborted"
@@ -179,3 +184,53 @@ async def test_prepare_fires_warmup_steps_in_the_background_and_returns_immediat
     assert [call.cmd for call in sandbox.commands.calls] == ["echo a", "echo b"]
     assert handle_a.disconnected is True
     assert handle_b.disconnected is True
+
+
+@pytest.mark.parametrize(
+    ("limits", "lines", "reason"),
+    [
+        (
+            AgentLimits(max_steps=1),
+            [_line(event="step_started", index=1), _line(event="step_started", index=2)],
+            "max_steps",
+        ),
+        (
+            AgentLimits(max_total_tokens=10),
+            [
+                _line(event="step_started", index=1),
+                _line(event="step_finished", index=1, usage={"input": 100, "output": 50}),
+            ],
+            "token_budget",
+        ),
+    ],
+)
+async def test_sdk_limit_stops_the_runtime_and_its_process_tree(
+    limits: AgentLimits, lines: list[bytes], reason: str
+) -> None:
+    handle = FakeAsyncCommandHandle(lines=[*lines, _line(event="step_started", index=3)])
+    sandbox = FakeSandbox(
+        commands=FakeCommands(handles=[handle], is_async=True),
+        files=FakeFilesystem(is_async=True),
+        gateways={"bedrock": gateway_status()},
+    )
+    agent = AsyncAgent(sandbox)
+    stream = await agent.stream("hola", spec=_spec(), runtime=FakeAgentRuntime(), limits=limits)
+    events = [event async for event in stream]
+    assert events[-1].type == "agent_failed"
+    assert events[-1].reason == reason
+    assert handle.killed is True
+    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
+
+
+async def test_timeout_reported_by_the_end_event_becomes_timeout() -> None:
+    """`rayd` mata el proceso al vencer el timeout y el stream acaba con su
+    `EndEvent`, sin lanzar al iterar: `wait()` es quien lo dice."""
+    handle = FakeAsyncCommandHandle(
+        lines=[_line(event="step_started", index=1)],
+        exit_code=-1,
+        raise_on_wait=TimeoutException("venció"),
+    )
+    agent = AsyncAgent(_sandbox(handle))
+    with pytest.raises(AgentException) as excinfo:
+        await agent.run("hola", spec=_spec(), runtime=FakeAgentRuntime())
+    assert excinfo.value.reason == "timeout"

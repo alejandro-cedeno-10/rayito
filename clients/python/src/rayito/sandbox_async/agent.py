@@ -16,12 +16,15 @@ from rayito._agent._runtime import AgentRuntime, RuntimeState
 from rayito._agent._runtimes import resolve_runtime
 from rayito._agent._stream_base import (
     AGENT_RUN_TAG,
+    AGENT_STOP_TREE_TIMEOUT_SECONDS,
     AgentSandbox,
     ConfigCache,
     LimitTracker,
     LineBuffer,
     build_run_request,
     gateway_urls_for,
+    is_sdk_limit_failure,
+    stop_tree_command,
 )
 from rayito._agent._telemetry import done_attributes, failure_attributes, start_attributes
 from rayito._limits import DEFAULT_AGENT_WORKDIR
@@ -180,6 +183,7 @@ class AsyncAgentStream:
         self._final: Done | AgentFailed | None = None
         self._closed = False
         self._abort_requested = False
+        self._stopped = False
         self._span_context = span_context
         self._span = span
         self._attached = attached
@@ -217,12 +221,29 @@ class AsyncAgentStream:
         if self._abort_requested:
             return
         self._abort_requested = True
+        await self._stop()
+
+    async def _stop(self) -> None:
+        """Para el runtime y todo lo que lanzó: el `abort_command` con
+        elegancia del adaptador, `stop_tree_command` y el `kill()` del
+        handle. Sirve a `abort()` y a un límite del SDK (`max_steps`,
+        `token_budget`), que sin esto dejaría al runtime trabajando (y
+        gastando tokens) en segundo plano."""
+        if self._stopped:
+            return
+        self._stopped = True
         command = self._runtime.abort_command(self._state)
         if command:
             try:
                 await self._sandbox.commands.run(command, timeout=self._limits.timeout_seconds)
             except SandboxException:
                 logger.warning("no se pudo abortar con elegancia la sesión del agente")
+        try:
+            await self._sandbox.commands.run(
+                stop_tree_command(self._handle.pid), timeout=AGENT_STOP_TREE_TIMEOUT_SECONDS
+            )
+        except SandboxException:
+            logger.warning("no se pudieron parar los procesos lanzados por el agente")
         await self._handle.kill()
 
     async def result(self) -> AgentResult:
@@ -267,6 +288,9 @@ class AsyncAgentStream:
                 self._queue.append(event)
                 if isinstance(event, Done | AgentFailed):
                     self._final = event
+                    if is_sdk_limit_failure(event):
+                        await self._stop()
+                        await self._drain()
                     return
 
     async def _finish(self) -> None:
@@ -279,9 +303,37 @@ class AsyncAgentStream:
                 )
             )
             return
+        if await self._ended_by_timeout():
+            self._enqueue_final(AgentFailed(reason="timeout", session_id=self._tracker.session_id))
+            return
         exit_code = self._handle.exit_code if self._handle.exit_code is not None else -1
         final = self._runtime.finish(self._state, exit_code)
         self._enqueue_final(cast("Done | AgentFailed", self._tracker.track(final)))
+
+    async def _ended_by_timeout(self) -> bool:
+        """Si `rayd` terminó el proceso por `AgentLimits.timeout_seconds`.
+        Iterar el handle no lo dice (el stream acaba con el `EndEvent` sin
+        lanzar); `wait()`, sobre el stream ya consumido, lo convierte en
+        `TimeoutException` sin otra llamada."""
+        try:
+            await self._handle.wait()
+        except TimeoutException:
+            return True
+        except SandboxException:
+            return False
+        return False
+
+    async def _drain(self) -> None:
+        """Consume el handle hasta su `EndEvent` tras pararlo por un límite:
+        `rayd` sólo lo manda cuando el proceso ya no existe, así que al
+        volver el cerrojo de ejecución está libre y el siguiente `run()` no
+        encuentra el runtime `busy` (un proceso con hilos tarda en morir del
+        todo tras el `SIGKILL`)."""
+        try:
+            async for _ in self._handle_iter:
+                pass
+        except SandboxException:
+            logger.warning("no se pudo esperar al final del runtime parado")
 
     def _enqueue_final(self, event: Done | AgentFailed) -> None:
         self._queue.append(event)

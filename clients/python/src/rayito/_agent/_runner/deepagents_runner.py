@@ -492,7 +492,7 @@ def build_context(config: Mapping[str, Any], model_id: str) -> RunnerContext:
         model=build_model(config, model_id),
         instructions=config.get("instructions"),
         subagents=subagents_of(config, lambda sub_model: build_model(config, sub_model)),
-        backend=backends.LocalShellBackend(root_dir=workdir),
+        backend=backends.LocalShellBackend(root_dir=workdir, virtual_mode=False),
         middleware=[permission_middleware(config["permissions"])],
         workdir=workdir,
     )

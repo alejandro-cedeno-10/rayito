@@ -73,6 +73,17 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Fixed
 
+- `sbx.agent`: `abort()` y los límites `maxSteps`/`maxTotalTokens`
+  paran también lo que lanzó la herramienta de shell del agente (OpenCode y
+  deepagents la corren en una sesión propia, fuera del grupo que mata
+  `rayd`); antes un `sleep` o un servidor lanzado por el agente sobrevivía.
+  Un límite del SDK, además, ya no deja el runtime trabajando (y gastando
+  tokens) en segundo plano, y el siguiente `run()` no lo encuentra `busy`.
+- `sbx.agent`: un timeout de `AgentLimits` terminaba con
+  `reason="runtime_error"` en vez de `"timeout"`.
+- `runtime: "deepagents"`: las herramientas de ficheros escribían una ruta
+  absoluta dentro del workdir (`/home/user/x` acababa en
+  `/home/user/home/user/x`); ahora usan la ruta tal cual, como el shell.
 - `sbx.agent.prepare()` arranca los pasos en segundo plano sin plazo: con
   `serve: true` el servidor residente moría al agotar `timeoutMs`.
 
