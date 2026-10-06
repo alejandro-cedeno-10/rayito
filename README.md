@@ -1,6 +1,9 @@
 # Rayito
 
 [![CI](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml/badge.svg)](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/rayito)](https://pypi.org/project/rayito/) [![npm](https://img.shields.io/npm/v/rayito)](https://www.npmjs.com/package/rayito) [![Licencia](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/alejandro-cedeno-10/rayito/badge)](https://scorecard.dev/viewer/?uri=github.com/alejandro-cedeno-10/rayito) [![Docs](https://img.shields.io/badge/docs-sitio-amber)](https://alejandro-cedeno-10.github.io/rayito/)
+<!-- OpenSSF Best Practices: tras registrar el proyecto (docs/research/openssf-badge-answers.md), añade este badge al final de la línea anterior con el id del proyecto:
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)
+-->
 
 Sandboxes de ejecución para agentes de IA, aislados por hardware, corriendo en tu
 propia cuenta de AWS sobre Lambda MicroVMs.

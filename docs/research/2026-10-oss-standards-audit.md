@@ -126,7 +126,7 @@ GitHub's community profile scores 100 %.
 | Supported-versions policy | FIXED | `SECURITY.md:20` and `limits.md` "Soporte": only the latest `MAJOR.MINOR` line. |
 | CHANGELOGs (Keep a Changelog) | OK, FIXED | One per component, with `[Unreleased]` and dated `## [x.y.z] - YYYY-MM-DD` headings. **Fixed**: the link-reference footers were stale. `[Unreleased]` compared from `*-v0.2.0`, and `[0.1.0]`/`[0.2.0]` pointed at tags that do not exist (the first tags are `*-v0.3.0`). Every tagged version now has its compare link, and 0.1.0/0.2.0 point at `docs/RELEASE_NOTES_0.x.md`. Remaining gap: `prepare_release_pr.py` does not maintain these links (§8 #7). |
 | Release notes | OK / GAP | The changelog block is the curated note. The GitHub Release body is release-please's raw commit list, with duplicate lines for squash-plus-merge commits (see `python-v0.6.0`). `docs/RELEASING.md` §6 step 8 now states the rule for `### Security` (CVE/GHSA), `Changed`/`Removed` and `Deprecated`. §8 #6 covers publishing the curated block as the Release body. |
-| Signed commits | OK | Ruleset `main-protegida` has `required_signatures`, PR required, no force-push or deletion, and seven required checks with a strict up-to-date policy. |
+| Signed commits | OK | Ruleset `main-protegida` has `required_signatures`, PR required (merge commits only), no force-push or deletion, no bypass actors, and 13 required checks with a strict up-to-date policy (updated 2026-10-05, see §5). |
 | Signed tags | GAP | Release-please creates lightweight, unsigned tags through the API. Mitigated by provenance below. §8 #9. |
 | npm provenance | OK | Trusted publishing over OIDC with automatic provenance: `release.yml:261` `id-token: write`, `:294` `npm publish … --ignore-scripts`. Build and publish jobs are split. |
 | PyPI Trusted Publishing + PEP 740 attestations | OK | `release.yml:178`, `:201` `pypa/gh-action-pypi-publish` v1.14.2 (attestations on by default). |
@@ -141,27 +141,42 @@ GitHub's community profile scores 100 %.
 
 ## 5. OpenSSF Best Practices, passing level: self-assessment
 
-Result: **all MUST criteria can be answered Met or N/A today, with two
-caveats** (C1, C2). The single SHOULD gap is `english` (Unmet with a
-justification is allowed at passing level). Register at
-<https://www.bestpractices.dev/en/projects/new> (maintainer only; nothing was
-registered by this audit) and paste the answers below.
+Result: **every MUST criterion can be answered Met or N/A.** The two
+caveats found on 2026-10-03 are cleared (see below). The SHOULD gap is
+`english`, and the SUGGESTED gap is `dynamic_analysis`; both may be Unmet at
+passing level. Register at <https://www.bestpractices.dev/en/projects/new>
+(maintainer only; nothing has been registered). The step-by-step checklist
+and the exact text to paste per criterion are in
+[`openssf-badge-answers.md`](openssf-badge-answers.md); the table below is
+the summary.
 
-**Caveats to clear before answering `vulnerabilities_fixed_60_days` and
-`static_analysis_fixed`:**
+**Current state (re-checked 2026-10-05, after 0.7.0):**
 
-- **C1:** 11 CodeQL alerts have been open since 2026-09-25: two
-  `rust/hard-coded-cryptographic-value` in
-  `crates/rayd-core/src/network/proxy_protocol.rs` (most likely the PROXY v2
-  signature constant, a false positive), three `rust/cleartext-logging`
-  (two in tests), five `js/polynomial-redos` (`git-args.ts`,
-  `transfer.ts`, `payload.ts`) and one `py/clear-text-logging-sensitive-data`
-  (`scripts/hooks-sim.py`). Each needs to be triaged (fixed or dismissed
-  with a reason) before 2026-11-24.
-- **C2:** Scorecard `Vulnerabilities` flags GHSA-8988-4f7v-96qf, a medium
-  issue in `@opentelemetry/core` < 2.8.0. It arrives through the dev-only
-  `@opentelemetry/sdk-trace-base` 1.x and is not shipped in the npm
-  tarball. Dependabot PR #86 (sdk-trace-base 2.11.0) closes it.
+- **CodeQL (was C1):** 0 open alerts. Of the 12 CodeQL alerts raised so
+  far, 6 are fixed and 6 are dismissed with a written reason (5 in
+  `#[cfg(test)]` code, 1 in the dev-only `scripts/hooks-sim.py`). The 5
+  open code-scanning alerts are Scorecard findings, not CodeQL
+  (`BranchProtection`, `CodeReview`, `Maintained`, `Fuzzing`,
+  `CIIBestPractices`).
+- **Dependabot (was C2):** 0 open alerts. The only one so far,
+  GHSA-8988-4f7v-96qf (medium, dev-only `@opentelemetry/core`), was fixed
+  on 2026-10-04, three days after it was raised. Dependabot security
+  updates, secret scanning and push protection are enabled.
+- **Leaks:** `.github/workflows/leaks.yml` runs pinned gitleaks over the
+  whole history and `check_hygiene.py` (plus a private denylist held in a
+  repository secret) over each PR's title and body. Both are required
+  checks.
+- **Branch protection:** ruleset `main-protegida` on the default branch:
+  pull request required (0 approvals, a single maintainer), merge commits
+  only, conversations resolved, 13 required checks pinned to their app
+  (CI jobs, cargo-deny, dependency audit, gitleaks, PR text, CodeQL) with
+  the branch up to date, signed commits, no force push, no deletion, and
+  no bypass actors.
+- **License notices:** `LICENSE` and `NOTICE` ship in the wheel, the sdist
+  and the npm tarball. The `rayd` binary and `rayito-image.zip` still ship
+  no third-party notices file (§2.2, §8 #1). This does not affect any
+  badge criterion, but it is the open license-compliance item.
+- **Supported versions:** `SECURITY.md` lists the 0.7.x line.
 
 | Criterion | Answer | Justification / URL |
 |---|---|---|
@@ -177,7 +192,7 @@ registered by this audit) and paste the answers below.
 | sites_https | Met | GitHub, GitHub Pages, PyPI and npm are all HTTPS |
 | discussion | Met | GitHub issues (searchable, URL-addressable) |
 | english | Unmet (SHOULD) | Docs are in Spanish. English issues, PRs and security reports are accepted (README "In English", `SUPPORT.md`) |
-| maintained | Met | Releases 0.3.0–0.6.0 between 2026-09-24 and 2026-10-03 |
+| maintained | Met | Releases 0.3.0–0.7.0 between 2026-09-24 and 2026-10-05 |
 | repo_public | Met | <https://github.com/alejandro-cedeno-10/rayito> |
 | repo_track | Met | git |
 | repo_interim | Met | Every PR lands on `main` between releases |
@@ -201,14 +216,14 @@ registered by this audit) and paste the answers below.
 | test | Met | `cargo test`, `pytest`, `vitest`, in public CI |
 | test_invocation | Met | `make test`, `uv run pytest`, `pnpm test` |
 | test_most | Met | 3000 Python unit tests, 1449 TS unit tests, rayd integration suites, e2e on AWS |
-| test_continuous_integration | Met | `.github/workflows/ci.yml` on every PR (seven required checks) |
+| test_continuous_integration | Met | `.github/workflows/ci.yml`, `leaks.yml` and CodeQL on every PR (13 required checks in the `main` ruleset) |
 | test_policy | Met | `CONTRIBUTING.md` §5 "Tests con cada cambio" and §1 rule 4 (acceptance against real AWS) |
 | tests_are_added | Met | E.g. PR #92 (reincarnate replay) added unit tests in both SDKs |
 | tests_documented_added | Met | Same as `test_policy`, plus the PR template checkbox |
 | warnings | Met | clippy pedantic with `unwrap_used`/`expect_used`/`panic` denied, ruff, mypy `--strict`, Biome, tsc `strict` |
 | warnings_fixed | Met | CI fails on warnings |
 | warnings_strict | Met | Same as above |
-| know_secure_design | Met | `SECURITY.md` threat model T1–T19, `docs/SECURITY_AUDIT.md` |
+| know_secure_design | Met | `SECURITY.md` threat model T1–T28, `docs/SECURITY_AUDIT.md` |
 | know_common_errors | Met | Same as above, plus the logging hygiene rules |
 | crypto_published | Met | TLS (rustls/aws-lc-rs), HMAC-SHA256, SigV4, JWE issued by AWS |
 | crypto_call | Met | No hand-rolled crypto (`hmac`, `sha2`, `aws-sigv4`, `rustls`) |
@@ -221,32 +236,32 @@ registered by this audit) and paste the answers below.
 | crypto_random | Met | OS CSPRNG (`getrandom`, Python `secrets`, Node `crypto.randomBytes`) |
 | delivery_mitm | Met | HTTPS on PyPI/npm/GitHub, plus Sigstore, PEP 740 and npm provenance |
 | delivery_unsigned | Met | Hashes come only over HTTPS (`SHA256SUMS` on the Release, `--require-hashes` in the image) |
-| vulnerabilities_fixed_60_days | Met after C2 | Dependabot alerts: 0 open. Scorecard OSV: 1 dev-only (C2) |
+| vulnerabilities_fixed_60_days | Met | Dependabot alerts: 0 open; the only one so far was fixed in 3 days. Scorecard `Vulnerabilities`: 0 |
 | vulnerabilities_critical_fixed | Met | Policy in `deny.toml` header and `SECURITY.md` |
-| no_leaked_credentials | Met | Secret scanning and push protection on; `check_hygiene.py` |
+| no_leaked_credentials | Met | Secret scanning and push protection on; gitleaks over the whole history and `check_hygiene.py` over files and PR text (`leaks.yml`) |
 | static_analysis | Met | CodeQL default setup, clippy, ruff, mypy, Biome, cargo-deny |
 | static_analysis_common_vulnerabilities | Met | CodeQL |
-| static_analysis_fixed | Met after C1 | Triage of the 11 CodeQL alerts |
+| static_analysis_fixed | Met | 0 open CodeQL alerts (6 fixed, 6 dismissed with a reason) |
 | static_analysis_often | Met | CodeQL on push/PR, Scorecard weekly |
 | dynamic_analysis | Unmet (SUGGESTED) | No fuzzing (Scorecard `Fuzzing` = 0). §8 #8 |
 | dynamic_analysis_unsafe | N/A (argued) | Memory-safe languages. The 29 `unsafe` blocks in `rayd` adapters wrap libc FFI (FUSE device, PTY); Miri/ASan are not run (§8 #8) |
 | dynamic_analysis_enable_assertions | Met | Tests run debug builds (`debug_assert!` on) |
-| dynamic_analysis_fixed | Met | No dynamic-analysis findings are open |
+| dynamic_analysis_fixed | N/A | No dynamic analysis tool runs yet, so there are no findings |
 
-The badge can be added to the README after registration:
-`[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)`.
-Scorecard's `CII-Best-Practices` check (currently low) then turns green.
+After registration, uncomment the badge line already in `README.md` (next
+to the Scorecard badge) and replace `<id>` with the project id. Scorecard's
+`CII-Best-Practices` check (currently 0) then picks it up.
 
-### Scorecard checks still low (2026-10-03)
+### Scorecard checks still low (2026-10-05, overall 7.0)
 
 | Check | Why | Action |
 |---|---|---|
-| Code-Review (0) | Single maintainer, 0/12 approved changesets | Structural; improves with a second maintainer |
-| Branch-Protection | The check reads classic protection, but `main` uses a ruleset with `required_approving_review_count: 0` | Fine for one maintainer. Raise to 1 when there are two |
+| Code-Review (0) | Single maintainer, 0/9 approved changesets | Structural; improves with a second maintainer |
+| Branch-Protection (4) | The ruleset blocks force push and deletion, requires a PR, status checks and signed commits, with no bypass; the missing points are approving reviews (and code-owner review), which one maintainer cannot give themself | Fine for one maintainer. Require 1 approval (and code-owner review) when there are two |
 | Maintained | The repo is under 90 days old | Clears with time |
 | Fuzzing | No fuzzers | §8 #8 |
 | CII-Best-Practices | Not registered | §5 |
-| Vulnerabilities | C2 | Merge #86 |
+| Vulnerabilities (10) | Cleared: 0 known vulnerabilities | None |
 
 ## 6. Docs site
 
@@ -278,19 +293,19 @@ chooser; mkdocs footer; trademark admonitions.
    `shipped_files`/`write_zip`), upload it as a Release asset next to `rayd`,
    and `COPY` it to `/usr/share/doc/rayd/` in `image/Dockerfile`. Gate it in
    CI so it is never stale, and keep it inside the signed zip.
-2. **Triage the 11 CodeQL alerts** (C1) before 2026-11-24. Fix or dismiss
-   each with a reason. This blocks `static_analysis_fixed`.
-3. **Merge Dependabot #86** (C2) and register the OpenSSF badge using §5.
+2. ~~**Triage the 11 CodeQL alerts** (C1)~~ Done: 0 open CodeQL alerts
+   (2026-10-05).
+3. ~~**Merge Dependabot #86** (C2)~~ Done. **Register the OpenSSF badge**
+   with [`openssf-badge-answers.md`](openssf-badge-answers.md).
 4. **SLSA build provenance for GitHub Release assets**: add
    `actions/attest-build-provenance` (with `attestations: write`) for `rayd`,
    `rayito-image.zip` and `rayd.cdx.json` in the `rayd` job, and document
    `gh attestation verify` in `docs/site/docs/verify.md`. That reaches SLSA
    Build L2. L3 needs the build in a reusable workflow (or
    `slsa-github-generator`) isolated from the caller.
-5. **Python version matrix**: the classifiers claim 3.11–3.13 but CI only
-   exercises 3.12. Add a `python-version: [3.11, 3.12, 3.13]` matrix for the
-   SDK unit job (or `uv run -p`), or trim the classifiers. Also consider
-   3.14.
+5. ~~**Python version matrix**~~ Done: the `python-versions` job of
+   `ci.yml` runs the SDK unit tests on 3.11 and 3.13 next to the runner's
+   3.12. Still to consider: 3.14.
 6. **GitHub Release body = curated changelog block**: in `release.yml`
    (after tagging), extract `## [x.y.z]` from the component's
    `CHANGELOG.md` and run `gh release edit <tag> --notes-file`. The current
