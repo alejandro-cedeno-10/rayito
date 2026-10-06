@@ -148,7 +148,9 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # (cost bounds, design.md D4), the in-VM paths and protocol both
         # SDKs and the agent template agree on, and the runtime pins the
         # template bakes (OpenCode and ripgrep release assets, sha256 from
-        # docs/research/2026-10-agent-spike.md). Not AWS properties.
+        # docs/research/2026-10-agent-spike.md) and the default timeout of a
+        # single `WarmupStep` (`agent.prepare()`, pool warmup). Not AWS
+        # properties.
         "defaultAgentTimeoutSeconds",
         "defaultAgentMaxSteps",
         "defaultAgentMaxTotalTokens",
@@ -168,6 +170,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentOpencodeSha256",
         "agentRipgrepVersion",
         "agentRipgrepSha256",
+        "defaultWarmupStepTimeoutSeconds",
     ),
 )
 

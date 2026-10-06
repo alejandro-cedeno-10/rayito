@@ -1,0 +1,47 @@
+{
+  "auto": {
+    "script": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\nexec 9>'/home/user/.rayito/agent/run.lock'\nif ! flock -n 9; then printf '%s\\n' '{\"type\":\"rayito.busy\"}'; exit 0; fi\nif ! command -v opencode >/dev/null 2>&1; then printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'; exit 0; fi\nattach=auto\nattached=0\nsecret='/home/user/.rayito/agent/opencode/serve.secret'\nif [ \"$attach\" != never ] && [ -r \"$secret\" ]; then\n  OPENCODE_SERVER_PASSWORD=\"$(cat \"$secret\")\"\n  export OPENCODE_SERVER_PASSWORD\n  if curl -fsS -m 1 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" 'http://127.0.0.1:4096/global/health' >/dev/null 2>&1; then\n    attached=1\n  fi\nfi\nif [ \"$attach\" = always ] && [ \"$attached\" = 0 ]; then\n  printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'\n  exit 0\nfi\nset -- 'opencode' 'run' '--format' 'json' '--auto' '--title' 'rayito' '--dir' '/home/user'\nif [ \"$attached\" = 1 ]; then\n  sha=\"$(sha256sum \"$OPENCODE_CONFIG\" | cut -d \" \" -f 1)\"\n  if [ \"$sha\" != \"$(cat '/home/user/.rayito/agent/opencode/applied.sha256' 2>/dev/null)\" ]; then\n    curl -fsS -m 5 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" -X POST 'http://127.0.0.1:4096/instance/dispose?directory=%2Fhome%2Fuser' >/dev/null 2>&1 || true\n    printf '%s\\n' \"$sha\" > '/home/user/.rayito/agent/opencode/applied.sha256'\n  fi\n  printf '%s\\n' '{\"type\":\"rayito.attached\"}'\n  set -- \"$@\" --attach 'http://127.0.0.1:4096'\nfi\nexec \"$@\"\n",
+    "envs": {
+      "HOME": "/home/user",
+      "OPENCODE_CONFIG": "/home/user/.rayito/agent/opencode/opencode.json",
+      "OPENCODE_DISABLE_AUTOUPDATE": "1",
+      "OPENCODE_DISABLE_MODELS_FETCH": "1",
+      "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
+      "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+      "OPENCODE_PURE": "1",
+      "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+      "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+      "AWS_REGION": "us-east-1"
+    }
+  },
+  "always-resume": {
+    "script": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\nexec 9>'/home/user/.rayito/agent/run.lock'\nif ! flock -n 9; then printf '%s\\n' '{\"type\":\"rayito.busy\"}'; exit 0; fi\nif ! command -v opencode >/dev/null 2>&1; then printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'; exit 0; fi\nattach=always\nattached=0\nsecret='/home/user/.rayito/agent/opencode/serve.secret'\nif [ \"$attach\" != never ] && [ -r \"$secret\" ]; then\n  OPENCODE_SERVER_PASSWORD=\"$(cat \"$secret\")\"\n  export OPENCODE_SERVER_PASSWORD\n  if curl -fsS -m 1 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" 'http://127.0.0.1:4096/global/health' >/dev/null 2>&1; then\n    attached=1\n  fi\nfi\nif [ \"$attach\" = always ] && [ \"$attached\" = 0 ]; then\n  printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'\n  exit 0\nfi\nset -- 'opencode' 'run' '--format' 'json' '--auto' '--title' 'rayito' '--dir' '/home/user/mi proyecto'\"'\"'s' '-m' 'amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0' '-s' 'ses_0000000000000000000000000a' '--thinking'\nif [ \"$attached\" = 1 ]; then\n  sha=\"$(sha256sum \"$OPENCODE_CONFIG\" | cut -d \" \" -f 1)\"\n  if [ \"$sha\" != \"$(cat '/home/user/.rayito/agent/opencode/applied.sha256' 2>/dev/null)\" ]; then\n    curl -fsS -m 5 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" -X POST 'http://127.0.0.1:4096/instance/dispose?directory=%2Fhome%2Fuser%2Fmi%20proyecto%27s' >/dev/null 2>&1 || true\n    printf '%s\\n' \"$sha\" > '/home/user/.rayito/agent/opencode/applied.sha256'\n  fi\n  printf '%s\\n' '{\"type\":\"rayito.attached\"}'\n  set -- \"$@\" --attach 'http://127.0.0.1:4096'\nfi\nexec \"$@\"\n",
+    "envs": {
+      "HOME": "/home/user",
+      "OPENCODE_CONFIG": "/home/user/.rayito/agent/opencode/opencode.json",
+      "OPENCODE_DISABLE_AUTOUPDATE": "1",
+      "OPENCODE_DISABLE_MODELS_FETCH": "1",
+      "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
+      "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+      "OPENCODE_PURE": "1",
+      "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+      "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+      "AWS_REGION": "us-east-1"
+    }
+  },
+  "never": {
+    "script": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\nexec 9>'/home/user/.rayito/agent/run.lock'\nif ! flock -n 9; then printf '%s\\n' '{\"type\":\"rayito.busy\"}'; exit 0; fi\nif ! command -v opencode >/dev/null 2>&1; then printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'; exit 0; fi\nattach=never\nattached=0\nsecret='/home/user/.rayito/agent/opencode/serve.secret'\nif [ \"$attach\" != never ] && [ -r \"$secret\" ]; then\n  OPENCODE_SERVER_PASSWORD=\"$(cat \"$secret\")\"\n  export OPENCODE_SERVER_PASSWORD\n  if curl -fsS -m 1 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" 'http://127.0.0.1:4096/global/health' >/dev/null 2>&1; then\n    attached=1\n  fi\nfi\nif [ \"$attach\" = always ] && [ \"$attached\" = 0 ]; then\n  printf '%s\\n' '{\"type\":\"rayito.runtime_missing\"}'\n  exit 0\nfi\nset -- 'opencode' 'run' '--format' 'json' '--auto' '--title' 'rayito' '--dir' '/home/user'\nif [ \"$attached\" = 1 ]; then\n  sha=\"$(sha256sum \"$OPENCODE_CONFIG\" | cut -d \" \" -f 1)\"\n  if [ \"$sha\" != \"$(cat '/home/user/.rayito/agent/opencode/applied.sha256' 2>/dev/null)\" ]; then\n    curl -fsS -m 5 -u \"opencode:$OPENCODE_SERVER_PASSWORD\" -X POST 'http://127.0.0.1:4096/instance/dispose?directory=%2Fhome%2Fuser' >/dev/null 2>&1 || true\n    printf '%s\\n' \"$sha\" > '/home/user/.rayito/agent/opencode/applied.sha256'\n  fi\n  printf '%s\\n' '{\"type\":\"rayito.attached\"}'\n  set -- \"$@\" --attach 'http://127.0.0.1:4096'\nfi\nexec \"$@\"\n",
+    "envs": {
+      "HOME": "/home/user",
+      "OPENCODE_CONFIG": "/home/user/.rayito/agent/opencode/opencode.json",
+      "OPENCODE_DISABLE_AUTOUPDATE": "1",
+      "OPENCODE_DISABLE_MODELS_FETCH": "1",
+      "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
+      "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+      "OPENCODE_PURE": "1",
+      "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+      "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+      "AWS_REGION": "us-east-1"
+    }
+  }
+}

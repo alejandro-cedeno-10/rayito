@@ -55,6 +55,17 @@ export {
   type OpenAiCompatibleGatewayOptions,
   openaiCompatibleGateway,
 } from "./agent/gateways.js";
+export type {
+  AgentRuntime,
+  RunCommand,
+  RunRequest,
+  RuntimeFile,
+  RuntimeFiles,
+  RuntimeState,
+  TemplateStep,
+  WarmupStep,
+} from "./agent/runtime.js";
+export { AgentStream } from "./agent/stream.js";
 export {
   type CommandSender,
   type ControlPlane,
@@ -203,6 +214,7 @@ export {
   type TakeOptions,
 } from "./pool/pool.js";
 export { type MountStatus, S3Mount, type S3MountOptions } from "./s3-mounts/domain.js";
+export { Agent, type AgentPrepareOptions, type AgentRunOptions } from "./sandbox/agent.js";
 export {
   CodeClient,
   type ContextLike,

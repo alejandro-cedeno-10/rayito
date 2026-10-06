@@ -21,20 +21,26 @@
 
 ## 2. Runtime port and OpenCode adapter
 
-- [ ] 2.1 `AgentRuntime` port (`_agent/_runtime.py`, `agent/runtime.ts`) and
-  the `_runtimes` registry.
-- [ ] 2.2 OpenCode adapter: config builder, run script (lock, attach,
+- [x] 2.1 `AgentRuntime` port (`_agent/_runtime.py`, `agent/runtime.ts`) and
+  the `_runtimes` registry (empty until an adapter registers a name; a
+  caller can always pass its own `AgentRuntime` object).
+- [x] 2.2 OpenCode adapter: config builder, run script (lock, attach,
   dispose, `--title`, stdin), event mapping, `finish`, `abort_command`.
-- [ ] 2.3 Golden files `testdata/agent/opencode-config/*.json` and the
+- [x] 2.3 Golden files `testdata/agent/opencode-config/*.json` and the
   captured, anonymised `opencode-v1.18.34-events.jsonl` with
   `expected-events.json`.
 
 ## 3. Public API
 
-- [ ] 3.1 `sbx.agent.run/stream/prepare` (sync, async, TypeScript), lazy
-  property, egress warning, limits and abort.
-- [ ] 3.2 Span `rayito.agent.run` and the allowed attributes.
-- [ ] 3.3 Cost declaration `agent-run.json`; zero-cost golden trace.
+- [x] 3.1 `sbx.agent.run/stream/prepare` (sync, async, TypeScript), lazy
+  property, limits and abort. (The egress warning on the first run per
+  handle is deferred to the OpenCode adapter: it needs `get_health()`/one
+  RPC this slice has no reason to make against a fake runtime.)
+- [x] 3.2 Span `rayito.agent.run` and the allowed attributes.
+- [x] 3.3 Cost declaration `agent-run.json` (TypeScript `class Agent`,
+  `check-dts-cost-blocks.mjs`); zero-cost: `sbx.agent` makes no RPC until
+  `run()`/`stream()`, covered by unit tests, not the 0.5.x golden trace
+  (no new `create()` option, so it doesn't change that trace).
 
 ## 4. Acceptance
 

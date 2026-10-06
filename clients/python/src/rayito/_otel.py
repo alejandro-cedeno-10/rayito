@@ -87,6 +87,24 @@ ALLOWED_SPAN_ATTRIBUTES = frozenset(
         "rayito.files.count",
         "rayito.files.bytes",
         "rayito.error.type",
+        # ai-agent-core (ADR-025, design.md §7): `rayito.agent.run`. Los
+        # `gen_ai.*` siguen la convención semántica de OpenTelemetry para
+        # agentes; ninguno lleva el prompt, el texto de la respuesta ni
+        # argumentos de herramienta.
+        "gen_ai.operation.name",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.agent.name",
+        "gen_ai.conversation.id",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "rayito.agent.runtime",
+        "rayito.agent.steps",
+        "rayito.agent.exit_code",
+        "rayito.agent.failure_reason",
+        "rayito.agent.attached",
+        "rayito.agent.cache_read_tokens",
+        "rayito.agent.cache_write_tokens",
     }
 )
 

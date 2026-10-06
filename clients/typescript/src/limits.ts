@@ -147,3 +147,4 @@ export const AGENT_OPENCODE_SHA256 =
 export const AGENT_RIPGREP_VERSION = "15.2.0" as const;
 export const AGENT_RIPGREP_SHA256 =
   "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d" as const;
+export const DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS = 120 as const;
