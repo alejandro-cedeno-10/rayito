@@ -86,11 +86,15 @@ The SDKs SHALL make zero Secrets Manager calls, build no boto3 `secretsmanager` 
 - **THEN** it raises `SecretNotFoundException` and `RunMicrovm` is never called
 
 ### Requirement: An optional CloudFormation template grants least-privilege secrets IAM
-`infra/secrets-access.yaml` SHALL create only two `AWS::IAM::ManagedPolicy` resources (`RayitoSecretsReader`: `GetSecretValue`, `DescribeSecret`; `RayitoSecretsAdmin`: reader + `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DeleteSecret` on `secret:<SecretPrefix>*`, and `ListSecrets` on `*`), with KMS statements only when `KmsKeyArn` is set and conditioned on `kms:ViaService = secretsmanager.<region>.amazonaws.com`. It SHALL never be deployed automatically and SHALL pass `cfn-lint`.
+`infra/secrets-access.yaml` SHALL create only two `AWS::IAM::ManagedPolicy` resources (`RayitoSecretsReader`: `GetSecretValue`, `DescribeSecret`; `RayitoSecretsAdmin`: reader + `CreateSecret`, `PutSecretValue`, `UpdateSecret`, `DeleteSecret` on `secret:<SecretPrefix>*`, and `ListSecrets` on `*`), with KMS statements only when `KmsKeyArn` is set and conditioned on `kms:ViaService = secretsmanager.<region>.amazonaws.com`. `RayitoSecretsReader` SHALL deny `GetSecretValue` on `secret:rayito/webhooks/*` (the webhook signing secrets), and `SecretPrefix` SHALL be required to end in `/`. It SHALL never be deployed automatically and SHALL pass `cfn-lint`.
 
 #### Scenario: the template is policies only
 - **WHEN** `scripts/tests/test_secrets_template.py` parses the template
 - **THEN** every resource is a managed policy, every action is on the allow list, only `ListSecrets` uses `Resource: "*"`, and KMS statements live behind `HasKmsKey` with `kms:ViaService`
+
+#### Scenario: the reader never reads a webhook signing secret
+- **WHEN** the reader policy's statements are read
+- **THEN** a `Deny` of `secretsmanager:GetSecretValue` covers `secret:rayito/webhooks/*`, and `SecretPrefix=rayito` (no slash) fails the parameter pattern
 
 ### Requirement: Secret values never reach Rayito's logs and the docs warn about AWS SDK debug logs
 Rayito SHALL NOT write a secret value or name to its own loggers (`rayito.*` in Python, the `logger` option in TypeScript). `docs/site/docs/secrets.md` and the T18 security notes SHALL warn that enabling botocore/urllib3 DEBUG logging (Python) or a Secrets Manager client logger (TypeScript) prints request and response bodies with the `SecretString`. The SEC-10 e2e SHALL capture only Rayito's logger.
@@ -105,3 +109,10 @@ Rayito SHALL NOT write a secret value or name to its own loggers (`rayito.*` in 
 #### Scenario: the listing note is present
 - **WHEN** a reader opens the "Versiones y metadatos" section of `secrets.md`
 - **THEN** it says `list()` is eventually consistent (~3–5 s) and that tests must poll
+
+### Requirement: secrets= never reads a webhook signing secret
+`SecretStore.read_value`/`readValue`, the read path of `secrets=` and `SecretCache`, SHALL refuse with `InvalidArgumentException`/`InvalidArgumentError`, before any AWS call and without naming the secret, any name or ARN that resolves under `rayito/webhooks/` (`WEBHOOK_SECRET_PREFIX`, one definition per SDK).
+
+#### Scenario: a webhook signing secret is refused
+- **WHEN** `SecretCache.get("webhooks/prod")` is called with the default prefix
+- **THEN** `InvalidArgumentException` is raised and `GetSecretValue` is never called

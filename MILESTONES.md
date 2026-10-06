@@ -1647,12 +1647,30 @@ el inventario de después coincide con el de antes salvo el orden.
 
 Archivados después, el 2026-10-05: `leak-prevention-hygiene` (sin cambio de
 runtime: gates y CI) y `sec-sandbox-isolation`, cuya tarea 7.3 quedó cubierta
-por las comprobaciones dirigidas de esta aceptación. Siguen abiertos, a la
-espera de la parte de su aceptación dirigida que falta medir en AWS:
-`m15-custom-domain` (3.6 y 9.4), `sec-infra-iam-lambdas` (6.1: el GSI al
-actualizar y una pasada del reconciliador) y `sec-rayd-agent-hardening`
-(9.3: `start_cmd` que llama a `/run` al arrancar, `kernels_killed` y la
-línea de log del `/run` genuino).
+por las comprobaciones dirigidas de esta aceptación.
+
+Archivados el 2026-10-06, tras medir en AWS real lo que faltaba (imágenes
+desechables con el `rayd` de `main`, menos de $1, inventario de antes y
+después sin diferencias propias):
+
+- `sec-infra-iam-lambdas` (6.1, Q144): una pila `events-webhooks` creada
+  con la plantilla de 0.6.1 y con eventos reales se actualiza en su sitio
+  con `rayito stack deploy`; el GSI `open` se añade sin perder filas ni
+  fallar (CloudFormation termina mientras el índice se rellena), las
+  Lambdas nuevas procesan los eventos de un sandbox abierto antes de la
+  actualización y el reconciliador corre en su horario sin errores.
+- `sec-rayd-agent-hardening` (9.3, Q145): el `/run` que manda un
+  `start_cmd` de template al arrancar recibe `sandbox_origin` (también el
+  que llega antes que el de la plataforma), el `/run` genuino instala el
+  token del operador sin `sandbox_origin` en su línea de log, y matar el
+  sidecar registra `kernels_killed: 1`.
+
+- `third-party-licenses` (sin cambio de runtime: los gates son la
+  aceptación): su última tarea la cumplió #129, un PR de Dependabot de
+  cargo que pasó a verde sin más commits que el suyo.
+
+Sigue abierto `m15-custom-domain` (3.6 y 9.4), a la espera de una cuenta
+que permita `cloudfront:CreateDistribution` (Q141).
 
 ---
 

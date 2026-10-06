@@ -290,10 +290,11 @@ SHALL never create, and `destroy()` SHALL never delete, an S3 bucket, a
 MicroVM image or a Lambda function. The policy SHALL scope image actions
 to this account's `microvm-image:*`, SHALL deny updating the images named
 by `ProtectedImageNamePrefix` (`rayito-base` by default), SHALL grant
-`lambda:PassNetworkConnector` only on the AWS managed connectors, and
-SHALL grant `Resource: "*"` only for `lambda:CreateMicrovmImage`, which
-AWS authorizes on `*` rather than on the new image's ARN (AWS_API_NOTES.md
-Q114).
+`lambda:PassNetworkConnector` only on the AWS managed connectors, SHALL
+grant `Resource: "*"` only for `lambda:CreateMicrovmImage`, which AWS
+authorizes on `*` rather than on the new image's ARN (AWS_API_NOTES.md
+Q114), and SHALL grant S3 reads only under `rayito/` of the artifact or
+base-image bucket, never `<bucket>/*`.
 
 #### Scenario: deploying templates creates no bucket, image or function
 - **WHEN** `OptionalStacks.deploy("templates", parameters={...})` is
@@ -305,6 +306,10 @@ Q114).
 - **THEN** a `Deny` covers `UpdateMicrovmImage` on
   `microvm-image:${ProtectedImageNamePrefix}*` (a create on an existing
   name fails, so it cannot replace a base image either)
+
+#### Scenario: the builder cannot read checkpoints or transfers
+- **WHEN** the artifact bucket is also the persistence or transfer bucket
+- **THEN** no S3 statement of the policy covers keys outside `rayito/`
 
 ### Requirement: Build contexts never follow symlinks inside copied directories
 `collect_context_files` (Python) and `collectContextFiles` (TypeScript) SHALL skip every symbolic link found while walking a copied directory, whether it points to a file or a directory and whether its target is inside or outside the context, so a link's target is never read or packed. A top-level `CopyStep.src` SHALL still be resolved and rejected with `context_path_outside` when it resolves outside the context. Right before reading, each file SHALL be re-checked to resolve inside the context and opened with `O_NOFOLLOW` where the platform has it; a file that no longer passes SHALL raise `context_path_outside`. (The image zip of `rayito image zip`/`publish` refuses symlinks instead; that rule comes from `sec-supply-chain-followups`.)
