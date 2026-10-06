@@ -51,11 +51,11 @@ cargo test -j 2 --workspace --locked --no-fail-fast > /var/tmp/<rama>-test.log 2
 "
 ```
 
-Si cambia `Cargo.lock`, `make licenses-check` (cargo-about 0.9.2 en el
-PATH, el binario de su release con el sha256 de
-`.github/actions/cargo-about`) comprueba que `THIRD_PARTY_LICENSES.md` sigue
-al día; `make licenses` lo regenera. Corre igual en la VM, dentro del mismo
-`flock`.
+Si cambia `Cargo.lock`, `about.toml` o `about.hbs`, `make licenses`
+(cargo-about 0.9.2 en el PATH, el binario de su release con el sha256 de
+`.github/actions/cargo-about`) genera `THIRD_PARTY_LICENSES.md` y comprueba
+que cubre exactamente `cargo tree`. El fichero no se versiona: no hay nada
+que commitear. Corre igual en la VM, dentro del mismo `flock`.
 
 ```bash
 limactl shell <vm> -- sudo -u tester -H bash /var/tmp/<script>.sh
@@ -135,7 +135,7 @@ python scripts/<script>.py`. Un fichero nuevo aún sin versionar no lo ve
 | Tocaste | Gates |
 |---|---|
 | `crates/`, `proto/` | Rust en la VM, más Python y TypeScript si cambió el proto (`make proto`) |
-| `Cargo.lock`, `about.toml`, `about.hbs` | `make licenses-check` (y `make licenses` si falla) |
+| `Cargo.lock`, `about.toml`, `about.hbs` | `make licenses` (genera y comprueba; no se versiona) |
 | `clients/python/` | Python y docs (mkdocstrings lee los docstrings) |
 | `clients/typescript/` | TypeScript |
 | `docs/site/` | docs y ejemplos |

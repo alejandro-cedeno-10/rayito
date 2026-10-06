@@ -43,12 +43,13 @@ name: release
 # `build.rs` o una herramienta de build comprometidos ya no ven ni el token
 # OIDC ni un token con permiso de escritura sobre las releases.
 #
-# Avisos de licencia (openspec third-party-licenses): `rayd-build` comprueba
-# con `make licenses-check` que el THIRD_PARTY_LICENSES.md del tag es el que
-# cargo-about (binario fijado por sha256, ./.github/actions/cargo-about)
-# genera desde su Cargo.lock y que lista todo crate del `.dep-v0` del
-# binario; lo mete, con LICENSE y NOTICE, en image/licenses/ (y de ahí en el
-# zip firmado) y entre los assets. `rayd-sign` firma además SHA256SUMS
+# Avisos de licencia (openspec third-party-licenses): `rayd-build` genera
+# THIRD_PARTY_LICENSES.md con `make image-licenses` desde el Cargo.lock del
+# tag (cargo-about fijado por sha256, ./.github/actions/cargo-about; no se
+# versiona), comprueba que lista exactamente lo que `cargo tree` compila y
+# que todo crate listado está en el `.dep-v0` del binario, y lo mete, con
+# LICENSE y NOTICE, en image/licenses/ (y de ahí en el zip firmado) y entre
+# los assets. `rayd-sign` firma además SHA256SUMS
 # (SHA256SUMS.sigstore.json), así que los avisos y el SBOM, que no llevan
 # bundle propio, quedan cubiertos por una firma con la misma identidad.
 #
@@ -439,8 +440,8 @@ jobs:
       - name: CycloneDX 1.5 SBOM (crates/rayd/rayd.cdx.json)
         run: cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
       - uses: ./.github/actions/cargo-about
-      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from the tag's Cargo.lock and lists exactly the crates cargo tree compiles into rayd
-        run: make licenses-check
+      - name: THIRD_PARTY_LICENSES.md generated from the tag's Cargo.lock, checked to list exactly the crates cargo tree compiles into rayd, and staged with LICENSE and NOTICE in image/licenses/
+        run: make image-licenses
       - name: every crate THIRD_PARTY_LICENSES.md lists is recorded in the binary's .dep-v0, and every crate NOTICE file is carried
         run: |
           cargo metadata --format-version 1 --locked --offline > "$RUNNER_TEMP/cargo-metadata.json"
@@ -450,7 +451,6 @@ jobs:
         run: |
           cp "$RAYD_BIN" image/rayd
           python3 scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
-          make image-licenses
           python3 scripts/image_zip.py image image/rayito-image.zip
       - name: Stage the unsigned assets and their SHA256SUMS
         run: |

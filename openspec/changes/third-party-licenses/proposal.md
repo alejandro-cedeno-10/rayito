@@ -16,11 +16,13 @@ The 2026-10 OSS standards audit ranked this first
   `aarch64-unknown-linux-musl` (`about.toml` reuses `deny.toml`'s allowlist
   and its named `notify` CC0 exception; template `about.hbs`), with
   `--frozen` so the output depends only on the lock, the fetched crate
-  sources, the policy, the template and the pinned tool. The file is
-  committed so license changes are reviewed in the PR that changes the lock.
-- **Staleness and coverage gates**: `make licenses-check` fails when the
-  committed file differs from a fresh generation, or when its crates are
-  not exactly the third-party crates `cargo tree -p rayd --target
+  sources, the policy, the template and the pinned tool. The file is not
+  committed: `make image-licenses` regenerates it every time it is
+  packaged (every `make image-zip*`, CI's `build` job and the release), so
+  a `Cargo.lock` bump, Dependabot's included, needs no extra commit and no
+  workflow ever writes to a pull request branch.
+- **Coverage gates**: `make licenses` fails when the generated file's
+  crates are not exactly the third-party crates `cargo tree -p rayd --target
   aarch64-unknown-linux-musl -e normal` compiles;
   `scripts/check_third_party_licenses.py` also fails when a listed crate is
   absent from the binary's `.dep-v0`, or ships a `NOTICE` file the root
@@ -53,7 +55,7 @@ release is cut; 0.7.0 and earlier stay as published.
 - Affected specs: `oss-licensing` (ADDED), `release-automation` (MODIFIED
   "rayd release artefacts carry an embedded dependency list, an SBOM and
   cosign bundles"), `cli` (ADDED).
-- Affected code: `about.toml`, `about.hbs`, `THIRD_PARTY_LICENSES.md`,
+- Affected code: `about.toml`, `about.hbs`, `.gitignore`,
   `Makefile`, `.github/actions/cargo-about/`, `.github/workflows/ci.yml`,
   `.github/workflows/release.yml`, `image/Dockerfile`, `.gitignore`,
   `clients/python/src/rayito/cli/_artifact.py`,

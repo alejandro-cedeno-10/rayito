@@ -31,16 +31,47 @@ produced the notices those licenses require.
    `cargo fetch --locked` runs first. Online and offline generation were
    compared during the change and are byte-identical today, so offline
    loses nothing and removes the network from the output.
-5. **Committed file + staleness gate, rather than generate-only.** A
-   committed `THIRD_PARTY_LICENSES.md` puts license changes in front of the
-   reviewer of the lock change, lets `make image-zip` and the local guest
-   context stage notices without cargo-about, and lets the release prove
-   that what it ships is what `main` reviewed (`make licenses-check` in
-   `rayd-build`). Cost: a Dependabot cargo PR needs `make licenses` pushed
-   to its branch; CI names the command when it fails.
+5. **Generated at packaging time, never committed.** The first version
+   committed `THIRD_PARTY_LICENSES.md` behind a staleness gate
+   (`make licenses-check`), so every Dependabot cargo PR failed CI until a
+   person pushed `make licenses` to its branch. The three ways out were
+   weighed for a single maintainer:
+   - *A bot that regenerates and commits to the Dependabot branch.* It needs
+     a job with `contents: write` reacting to pull requests, the classic
+     "pwn request" surface: its safety rests on every guard holding (author
+     `dependabot[bot]`, head repo is this one, diff limited to manifests,
+     tooling and `.cargo/config.toml`/`rust-toolchain.toml` taken from the
+     base branch because `cargo metadata` runs `rustc -vV` through any
+     configured `rustc`/`rustc-wrapper` and a toolchain file can point at a
+     local toolchain). A commit made with `GITHUB_TOKEN`, even through
+     `createCommitOnBranch` (signed by GitHub), triggers no workflow, so the
+     new head has no required checks until an extra `workflow_dispatch`
+     (`actions: write`) re-runs CI; and Dependabot stops rebasing a PR once
+     someone else commits to it, so every grouped PR would need
+     `@dependabot recreate` on the next conflict.
+   - *Regenerate in CI and fail with a clear message.* No write token, but
+     it is what already happened: the PR still needs a manual commit.
+   - *Generate when packaging.* No write token anywhere, no extra commit,
+     no re-trigger, Dependabot keeps rebasing. Chosen.
+
+   The output is a pure function of inputs `main` reviews (`Cargo.lock`,
+   the crate sources it pins by checksum, `about.toml`, `about.hbs` and the
+   cargo-about binary pinned by sha256), so the release still ships what
+   `main` reviewed without a committed copy; `rayd-build` generates it with
+   `contents: read`, and `SHA256SUMS`, which `rayd-sign` signs, covers it.
+   Neither cargo-about nor `cargo tree` compiles anything or runs a build
+   script: both read `cargo metadata` and the sources `cargo fetch`
+   downloads. What is lost is the license diff inside the PR: the policy
+   itself is still enforced twice (`cargo-deny` with `deny.toml`,
+   `cargo about --fail` with the same list), and CI's `rayd-aarch64-musl`
+   artifact carries each PR's generated file. `make image-licenses` depends
+   on `make licenses`, so a local `make image-zip*` needs cargo-about and
+   never stages a stale copy. The local guest (`make local-guest-context`)
+   is never redistributed: it copies the generated file when present and a
+   placeholder otherwise, so `make local-up` needs no cargo-about.
 6. **Coverage against cargo's own resolver.** A regeneration only proves
    the file matches cargo-about's view of the graph (its own feature
-   resolution through `krates`). `make licenses-check` also requires the
+   resolution through `krates`). `make licenses` also requires the
    listed crates to equal, in both directions, the third-party crates of
    `cargo tree --frozen -p rayd --target aarch64-unknown-linux-musl -e
    normal`, i.e. what cargo compiles for the release build. The binary's
@@ -83,7 +114,10 @@ produced the notices those licenses require.
 
 ## Risks / Trade-offs
 
-- Dependabot cargo PRs fail CI until `make licenses` is pushed; accepted for
-  review visibility (decision 5).
+- License changes no longer show up as a diff in the PR that changes the
+  lock (decision 5); the allowlist gates of `cargo-deny` and cargo-about
+  still fail any license outside the policy.
+- `make image-zip*` and `make image-licenses` need cargo-about 0.9.2 on the
+  maintainer's machine (`make local-up` does not).
 - cargo-about bumps are manual (version, sha256, `Makefile`), like
   cargo-deny.

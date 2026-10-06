@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses licenses-check require-cargo-about image-licenses
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -39,9 +39,13 @@ SBOM          := crates/rayd/rayd.cdx.json
 # política de about.toml y la plantilla about.hbs sobre el grafo de
 # Cargo.lock para aarch64-unknown-linux-musl. `--frozen`: sin red y sin
 # tocar Cargo.lock; `cargo fetch --locked` deja antes las fuentes en
-# CARGO_HOME. LICENSE, NOTICE y este fichero viajan juntos con cada copia de
-# rayd: en el zip de la imagen (image/licenses/, que el Dockerfile copia a
-# /usr/share/doc/rayd/) y como assets de la release.
+# CARGO_HOME. THIRD_PARTY_LICENSES.md no se versiona: se genera al empaquetar
+# (`image-licenses`, y de ahí cada `image-zip*`, el job `build` de CI y
+# `rayd-build` de la release), así que un cambio de Cargo.lock (p. ej. un PR
+# de Dependabot) no pide ningún commit más. LICENSE, NOTICE y este fichero
+# viajan juntos con cada copia de rayd: en el zip de la imagen
+# (image/licenses/, que el Dockerfile copia a /usr/share/doc/rayd/) y como
+# assets de la release.
 THIRD_PARTY_LICENSES := THIRD_PARTY_LICENSES.md
 CARGO_ABOUT_VERSION := 0.9.2
 CARGO_ABOUT_ARGS := --frozen --fail -c about.toml -m crates/rayd/Cargo.toml about.hbs
@@ -102,45 +106,34 @@ sbom:
 	cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target $(TARGET) --format json --no-build-deps --spec-version 1.5
 	@ls -la $(SBOM)
 
-# cargo-about exacto en el PATH: otra versión puede renderizar distinto y
-# `licenses-check` fallaría sin que cambie ninguna dependencia.
+# cargo-about exacto en el PATH: otra versión puede renderizar distinto, y
+# lo que se genera tiene que ser lo mismo en local, en CI y en la release.
 require-cargo-about:
 	@cargo about --version 2>/dev/null | grep -qx "cargo-about $(CARGO_ABOUT_VERSION)" || { \
 	  echo "falta cargo-about $(CARGO_ABOUT_VERSION): binario de https://github.com/EmbarkStudios/cargo-about/releases/tag/$(CARGO_ABOUT_VERSION) (sha256 en .github/actions/cargo-about) o cargo install --locked cargo-about@$(CARGO_ABOUT_VERSION)"; \
 	  exit 1; }
 
-# Regenera THIRD_PARTY_LICENSES.md tras cambiar Cargo.lock (p. ej. en un PR
-# de Dependabot) y se versiona junto al lock. Algunos crates publican su
-# licencia con finales CRLF: se normaliza a LF, porque la regla `eol=lf` de
-# .gitattributes lo haría en el commit y el fichero versionado dejaría de
-# coincidir con el generado.
+# Genera THIRD_PARTY_LICENSES.md desde el Cargo.lock actual y falla si sus
+# crates no son exactamente los que `cargo tree` (el resolver de cargo, sin
+# cargo-about) compila en rayd para el target de release (job `build` de CI
+# y `rayd-build` de release). Ni cargo-about ni `cargo tree` compilan nada ni
+# ejecutan build scripts: leen `cargo metadata` y las fuentes que deja
+# `cargo fetch`. Algunos crates publican su licencia con finales CRLF: se
+# normaliza a LF para que la salida sea la misma en cualquier máquina.
 licenses: require-cargo-about
-	cargo fetch --locked
-	@generated="$$(mktemp)" && trap 'rm -f "$$generated"' EXIT && \
-	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
-	  tr -d '\r' < "$$generated" > $(THIRD_PARTY_LICENSES)
-
-# Falla si el THIRD_PARTY_LICENSES.md versionado no es exactamente el que
-# genera el Cargo.lock actual, o si sus crates no son exactamente los que
-# `cargo tree` (el resolver de cargo, sin cargo-about) compila en rayd para
-# el target de release (job `build` de CI y `rayd-build` de release).
-licenses-check: require-cargo-about
 	cargo fetch --locked
 	@generated="$$(mktemp)" && tree="$$(mktemp)" && trap 'rm -f "$$generated" "$$tree"' EXIT && \
 	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
-	  if tr -d '\r' < "$$generated" | diff -u $(THIRD_PARTY_LICENSES) -; then \
-	    echo "$(THIRD_PARTY_LICENSES): al día con Cargo.lock"; \
-	  else \
-	    echo "$(THIRD_PARTY_LICENSES) no coincide con Cargo.lock: ejecuta make licenses y versiona el resultado"; \
-	    exit 1; \
-	  fi && \
+	  tr -d '\r' < "$$generated" > $(THIRD_PARTY_LICENSES) && \
 	  cargo tree --frozen -p rayd --target $(TARGET) -e normal --prefix none --format '{p}' > "$$tree" && \
 	  python3 scripts/check_third_party_licenses.py $(THIRD_PARTY_LICENSES) --tree "$$tree"
 
-# Deja LICENSE, NOTICE y THIRD_PARTY_LICENSES.md en image/licenses/, que
-# image/Dockerfile copia a /usr/share/doc/rayd/; el zip se niega a empaquetar
-# un rayd sin ellos (rayito.cli._artifact.require_rayd_notices).
-image-licenses:
+# Deja LICENSE, NOTICE y un THIRD_PARTY_LICENSES.md recién generado en
+# image/licenses/, que image/Dockerfile copia a /usr/share/doc/rayd/; el zip
+# se niega a empaquetar un rayd sin ellos
+# (rayito.cli._artifact.require_rayd_notices). Siempre regenera: nunca se
+# empaqueta un fichero que se quedó atrás respecto al Cargo.lock.
+image-licenses: licenses
 	rm -rf $(IMAGE_LICENSES)
 	mkdir -p $(IMAGE_LICENSES)
 	cp $(LICENSE_FILES) $(IMAGE_LICENSES)/
@@ -355,6 +348,9 @@ dev-run:
 # el Dockerfile de producto, el sidecar y un `rayd`: el de LOCAL_RAYD_BIN si
 # se pasa (p. ej. `LOCAL_RAYD_BIN=$(RAYD_BIN)` tras `make build`) o, si no,
 # uno compilado dentro de Docker con dev/local/rayd/Dockerfile (arm64).
+# Lleva el THIRD_PARTY_LICENSES.md de `make licenses` si existe y, si no, un
+# marcador: el guest local no se redistribuye, y así levantarlo no pide
+# cargo-about en el host (sólo ejercita el COPY del Dockerfile).
 LOCAL_DIR     := dev/local
 LOCAL_COMPOSE := docker compose -f $(LOCAL_DIR)/compose.yaml
 LOCAL_GUEST_CONTEXT := $(LOCAL_DIR)/.guest-context
@@ -378,7 +374,13 @@ local-guest-context:
 	fi
 	python3 scripts/copy_sidecar.py $(SIDECAR) $(LOCAL_GUEST_CONTEXT)/kernel-sidecar
 	mkdir -p $(LOCAL_GUEST_CONTEXT)/licenses
-	cp $(LICENSE_FILES) $(LOCAL_GUEST_CONTEXT)/licenses/
+	cp LICENSE NOTICE $(LOCAL_GUEST_CONTEXT)/licenses/
+	@if [ -f $(THIRD_PARTY_LICENSES) ]; then \
+	  cp $(THIRD_PARTY_LICENSES) $(LOCAL_GUEST_CONTEXT)/licenses/; \
+	else \
+	  echo "local-guest-context: sin $(THIRD_PARTY_LICENSES) (make licenses), el guest local lleva un marcador"; \
+	  printf '%s\n' '# Third-party licenses of rayd' '' 'Local development guest, never redistributed: run `make licenses` to generate the real notices.' > $(LOCAL_GUEST_CONTEXT)/licenses/$(THIRD_PARTY_LICENSES); \
+	fi
 	cp image/Dockerfile $(LOCAL_GUEST_CONTEXT)/Dockerfile
 
 # El punto de montaje de node_modules tiene que existir en el árbol, que el
@@ -419,4 +421,4 @@ docs-examples:
 
 clean:
 	cargo clean
-	rm -rf image/rayd image/kernel-sidecar $(IMAGE_LICENSES) $(IMAGE_ZIP) $(IMAGE_ZIP_SLIM) $(IMAGE_ZIP_POLY)
+	rm -rf image/rayd image/kernel-sidecar $(IMAGE_LICENSES) $(THIRD_PARTY_LICENSES) $(IMAGE_ZIP) $(IMAGE_ZIP_SLIM) $(IMAGE_ZIP_POLY)
