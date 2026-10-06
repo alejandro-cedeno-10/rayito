@@ -181,12 +181,16 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo zigbuild --release --target aarch64-unknown-linux-musl -p rayd
-make licenses-check   # cargo-about 0.9.2: THIRD_PARTY_LICENSES.md al día con Cargo.lock
+make licenses         # cargo-about 0.9.2: genera THIRD_PARTY_LICENSES.md y comprueba que cubre cargo tree
 ```
 
-Si tu cambio toca `Cargo.lock`, `make licenses` regenera
-`THIRD_PARTY_LICENSES.md` (los avisos de terceros que viajan con `rayd`) y
-se versiona en el mismo PR; el job `build` de CI falla si quedó desfasado.
+`THIRD_PARTY_LICENSES.md` (los avisos de terceros que viajan con `rayd`) no
+se versiona: `make licenses` lo genera desde `Cargo.lock`, y
+`make image-licenses` (cada `make image-zip*`, el job `build` de CI y la
+release) lo regenera siempre antes de empaquetarlo. Un cambio de
+`Cargo.lock`, tuyo o de Dependabot, no pide ningún commit más; si toca
+`about.toml` o `about.hbs`, o añade un crate con licencia nueva, corre
+`make licenses` para ver que la política lo acepta (CI lo hará igual).
 
 Scripts de la raíz:
 

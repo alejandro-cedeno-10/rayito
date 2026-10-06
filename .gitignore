@@ -9,6 +9,9 @@
 /image/*.zip
 /image/kernel-sidecar/
 /image/licenses/
+# Avisos de terceros de rayd: los genera `make licenses` (y cada
+# `make image-licenses`) desde Cargo.lock; no se versionan.
+/THIRD_PARTY_LICENSES.md
 
 # Python
 __pycache__/

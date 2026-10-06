@@ -1,9 +1,9 @@
 name: cargo-about (verified)
 description: >-
   Descarga cargo-about 0.9.2 de su GitHub Release, lo comprueba contra un
-  sha256 fijado y lo pone en PATH (`cargo about ...`). Genera y comprueba
-  THIRD_PARTY_LICENSES.md (`make licenses-check`, openspec
-  third-party-licenses). Mismo patrón que ./.github/actions/cargo-deny: un
+  sha256 fijado y lo pone en PATH (`cargo about ...`). Genera
+  THIRD_PARTY_LICENSES.md, que no se versiona (`make image-licenses`,
+  openspec third-party-licenses). Mismo patrón que ./.github/actions/cargo-deny: un
   binario fijado por versión y checksum, sin compilar nada ni restaurar
   cachés, apto para los jobs de release.yml.
 

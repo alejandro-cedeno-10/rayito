@@ -37,8 +37,9 @@ pins:
   asset (no ``--clobber``) and publishing needs the tagged commit on
   ``main``;
 - the cosign self-check binds the exact workflow ref, never a regexp;
-- ``rayd-build`` proves ``THIRD_PARTY_LICENSES.md`` matches the tag's
-  ``Cargo.lock`` and covers the binary's ``.dep-v0`` before staging it, puts
+- ``rayd-build`` generates ``THIRD_PARTY_LICENSES.md`` from the tag's
+  ``Cargo.lock`` (``make image-licenses``, never a committed copy) and
+  checks it covers the binary's ``.dep-v0`` before zipping it, puts
   ``LICENSE``, ``NOTICE`` and the notices into the zip and among the assets,
   and ``rayd-sign`` signs the ``SHA256SUMS`` that lists them (openspec
   third-party-licenses);
@@ -464,14 +465,12 @@ def test_rayd_build_checks_the_notices_before_shipping_them() -> None:
     steps = job["steps"]
 
     assert "./.github/actions/cargo-about" in step_uses(job)
-    fresh = first_index(steps, "make licenses-check")
+    generated = first_index(steps, "make image-licenses")
     coverage = first_index(steps, "check_third_party_licenses.py")
     zipped = first_index(steps, "image_zip.py")
     staged = first_index(steps, "> SHA256SUMS")
     assert first_index(steps, "cargo auditable zigbuild") < coverage
-    assert fresh < zipped and coverage < zipped < staged
-    zip_run = steps[zipped]["run"]
-    assert zip_run.index("make image-licenses") < zip_run.index("image_zip.py")
+    assert generated < coverage < zipped < staged
     stage_run = steps[staged]["run"]
     for asset in LICENSE_ASSETS:
         assert asset in stage_run.split("> SHA256SUMS")[0], asset
