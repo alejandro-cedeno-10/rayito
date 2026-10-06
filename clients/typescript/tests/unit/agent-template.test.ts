@@ -95,7 +95,12 @@ describe("AgentTemplate", () => {
   });
 
   test("build writes the context, passes memory and cleans up", async () => {
-    let seen: { name: string; memoryMb?: number; contextDir?: string; files?: string[] } = {
+    let seen: {
+      name: string;
+      memoryMb?: number | undefined;
+      contextDir?: string;
+      files?: string[];
+    } = {
       name: "",
     };
     let manifest: { schema?: string } = {};
