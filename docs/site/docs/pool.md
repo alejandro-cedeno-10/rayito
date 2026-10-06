@@ -279,8 +279,6 @@ config = PoolConfig(
 )
 ```
 
-<!-- noqa: example: API de ai-agent-fast-start, aún no fusionada -->
-
 Cada paso de `warmup` corre tras `_settle` y antes de `pause()`; un fallo
 cuenta como un calentamiento fallido (se termina el VM, se aplica el mismo
 backoff que un calentamiento normal, `failed += 1`). Un paso en segundo
@@ -298,11 +296,12 @@ snapshot pesa más.
 
 ### Cómo funciona D (servidor residente)
 
-El puerto de `opencode serve` (4096) sólo se conoce **dentro** del
-`warmup`, antes de aparcar — el puerto de la pasarela del modelo, en
-cambio, sólo se conoce al tomar. Eso funciona porque OpenCode carga la
+`opencode serve` arranca en el `warmup`, antes de aparcar, en el puerto
+fijo `OPENCODE_SERVE_PORT` (4096) — eso **sí** se conoce de antemano. Lo
+que no se conoce hasta tomar la plaza es el puerto de la pasarela del
+modelo P, que `take()` asigna. Esto funciona porque OpenCode carga la
 configuración de cada directorio **la primera vez que la usa**, no al
-arrancar el servidor (verificado en local: un servidor arrancado con un
+arrancar el servidor (F1; verificado en local: un servidor arrancado con un
 endpoint, reconfigurado después y corrido con `--attach --dir` nuevo lee la
 configuración nueva, sin ningún código de `rayd`). Con esto, el `run`
 posterior a `take()` escribe la configuración con la pasarela ya aplicada

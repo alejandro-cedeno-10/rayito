@@ -17,21 +17,42 @@ merge.
 
 ## What Changes
 
-- **New guide**: `docs/site/docs/guias/agente-en-el-sandbox.md` — gateway
-  setup, `create(allow_internet_access=False, gateways=...)`, `run`/
-  `stream`, sessions, `abort()`, limits, permissions-are-not-a-boundary,
-  the four fast-start options (A–D) with their measured/estimated cost,
-  the deepagents entry point, and the E2B shim note. Python and TypeScript
-  tabs throughout; every code block that calls the not-yet-merged API is
-  marked `<!-- noqa: example: ... -->` for `check_docs_examples.py`.
+- **New guide**: `docs/site/docs/guias/agente-en-el-sandbox.md` — a
+  "Definir el `AgentSpec`" section (Python, Python async, TS tabs) with a
+  full end-to-end example: `SecretStore.create`, a `bedrock_gateway`/
+  `anthropic_gateway`/`openai_compatible_gateway` preset instead of a
+  hand-built `allow=`, `AgentModel`/`AgentSpec`/`AgentPermissions`/
+  `AgentLimits`, a field table (including `RESERVED_CONFIG_KEYS` and where
+  `instructions` is written, `AGENT_STATE_DIR/<sha>/AGENTS.md`), then
+  gateway setup, `create(allow_internet_access=False, gateways=...)`,
+  `run`/`stream`, sessions, `abort()`, limits,
+  permissions-are-not-a-boundary, the four fast-start options (A–D) with
+  their measured/estimated cost, the deepagents entry point, and the E2B
+  shim note. Python and TypeScript tabs throughout; every code block that
+  calls the not-yet-merged API is marked `<!-- noqa: example: ... -->` for
+  `check_docs_examples.py`. The flagship example restricts the gateway
+  allowlist to the exact models used (`bedrock_gateway(..., models=[...])`),
+  never `/model/*`, matching `security.md` T29.
 - **New template page**: `docs/site/docs/funciones-opcionales/templates-de-agente.md`
   — `AgentTemplate`, its pins, prefetch, `--no-deepagents`/`--no-prefetch`,
   and a "Coste y activación" box with the build and per-version storage
-  cost from the spike's measured sizes.
-- **`cost.md`**: a new "Coste de un agente: VM frente a modelo" section with
-  dated Bedrock prices (Haiku 4.5 / Sonnet 4.5, regional and global,
-  consulted 2026-10-06), the prompt-caching break-even, and the worked
-  10-step example showing the model costs 7–20× the VM.
+  cost from the spike's measured sizes. Every CLI example passes
+  `--bucket`/`--name` to match `rayito template build`'s required option.
+- **`cost.md`**: rewritten in place, nav label renamed to "Precios
+  (MicroVMs, pool, agentes)". A "Componentes del precio" section (compute,
+  snapshot read/write, storage with its one-week minimum, the 8 h
+  `maximumDuration` including suspended time and why the pool recycles at
+  ≈ 7 h, data transfer), each price tagged List or Measured, an "Referencias
+  oficiales" box (aws.amazon.com/lambda/pricing, the `AWSLambda` price-list
+  offer dated 2026-10-01, and the microvms-images-snapshots/
+  microvms-how-it-works/gettingstarted-limits doc pages, consulted
+  2026-10-06) alongside the exact price-list read/write/storage values. A
+  new "Coste de un agente: VM frente a modelo" section with dated Bedrock
+  prices (Haiku 4.5 / Sonnet 4.5, regional and global, consulted
+  2026-10-06), the prompt-caching break-even, and the worked 10-step
+  example with the per-row arithmetic spelled out (tokens written/read per
+  step, the VM formula `300 s × $0,1261/h + launch $0,0014`) showing the
+  model costs ≈ 7–21× the VM.
 - **`pool.md`**: a new "Calentamiento (`warmup`) y servidor residente"
   section with the C/D cost table and the per-slot/per-cycle numbers,
   plus the two open design gates (G1 prefetch-by-default, G2
@@ -43,13 +64,18 @@ merge.
   itself and pool warmup/serve, each marked "(borrador)".
 - **`security.md`**: a new "Agente de código dentro del sandbox" section
   describing the accepted T29/T30 content (permissions are not a security
-  boundary; the runtime supply-chain pins) as a draft, since those
-  identifiers do not exist yet in `SECURITY.md` — that file is
-  `ai-agent-core`'s to write, not this change's.
-- **`e2b-compat.md`**: a row in the `UnimplementedError` table for `agent`,
-  pointing at `rayito.Sandbox.connect()` as the workaround.
+  boundary; the runtime supply-chain pins recorded, not SDK-verified) as a
+  draft, since those identifiers do not exist yet in `SECURITY.md` — that
+  file is `ai-agent-core`'s to write, not this change's.
+- **`e2b-compat.md`**: `agent` is *not* a row of the `UnimplementedError`
+  table (the E2B shim does not change for this design: `sbx.agent` simply
+  doesn't exist on `rayito.e2b.Sandbox`, an `AttributeError`, not an
+  `UnimplementedError`) — a note box outside that table instead, pointing
+  at `rayito.Sandbox.connect()` as the workaround.
 - **`novedades/0.8.0.md`** (new, explicitly marked as an unpublished draft)
-  and a draft card in `novedades/index.md`, plus an "En desarrollo" row.
+  and a draft card in `novedades/index.md`, plus a separate "Diseñado, sin
+  código todavía" list (not the "En desarrollo" table, which claims every
+  row raises `UnimplementedError` today).
 - **`mkdocs.yml`**: nav entries for the two new pages and the draft
   novedades page, each labelled "(borrador)".
 - **Gates**: `mkdocs build --strict` and

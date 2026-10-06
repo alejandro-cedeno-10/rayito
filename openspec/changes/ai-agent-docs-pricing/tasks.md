@@ -1,18 +1,30 @@
 ## 1. Guide and template page
 
-- [x] 1.1 `docs/site/docs/guias/agente-en-el-sandbox.md`: gateway, `create`,
-      `run`/`stream`/`prepare`, sessions, `abort`, limits, permissions,
-      fast-start table (A–D), deepagents entry point, E2B shim note. Python
-      and TypeScript tabs; a top "borrador, sin publicar" warning; every
-      code block against the unmerged API marked `noqa`.
+- [x] 1.1 `docs/site/docs/guias/agente-en-el-sandbox.md`: "Definir el
+      `AgentSpec`" (Python, Python async, TS tabs; full end-to-end
+      example: `SecretStore`, gateway presets, `AgentModel`/`AgentSpec`/
+      `AgentPermissions`/`AgentLimits`, field table with
+      `RESERVED_CONFIG_KEYS` and the `AGENT_STATE_DIR/<sha>/AGENTS.md`
+      instructions path), gateway, `create`, `run`/`stream`/`prepare`,
+      sessions, `abort`, limits, permissions, fast-start table (A–D),
+      deepagents entry point, E2B shim note. Python and TypeScript tabs; a
+      top "borrador, sin publicar" warning; every code block against the
+      unmerged API marked `noqa`. The flagship example allowlists exact
+      model paths (`bedrock_gateway(..., models=[...])`), never `/model/*`.
 - [x] 1.2 `docs/site/docs/funciones-opcionales/templates-de-agente.md`:
       `AgentTemplate`, pins table, prefetch, `--no-deepagents`/
       `--no-prefetch`, "Coste y activación" box.
 
 ## 2. Pricing and pool
 
-- [x] 2.1 `cost.md`: "Coste de un agente: VM frente a modelo" — dated
-      Bedrock prices, prompt-caching break-even, worked 10-step example.
+- [x] 2.1 `cost.md`: rewritten in place — nav label "Precios (MicroVMs,
+      pool, agentes)", "Componentes del precio" section with List/Measured
+      tags and an "Referencias oficiales" box (aws.amazon.com/lambda/pricing,
+      the `AWSLambda` price-list offer, microvms-images-snapshots/
+      microvms-how-it-works/gettingstarted-limits), the exact price-list
+      read/write/storage values, and "Coste de un agente: VM frente a
+      modelo" — dated Bedrock prices, prompt-caching break-even, worked
+      10-step example with the per-row arithmetic spelled out.
 - [x] 2.2 `pool.md`: "Calentamiento (`warmup`) y servidor residente" —
       the C/D cost table, how D's port-at-take works, the two open gates.
 
@@ -24,12 +36,14 @@
       pool warmup/serve, marked "(borrador)".
 - [x] 3.3 `security.md`: "Agente de código dentro del sandbox" section
       (T29/T30 content, marked as draft; no edit to `SECURITY.md` itself).
-- [x] 3.4 `e2b-compat.md`: `agent` row in the `UnimplementedError` table.
+- [x] 3.4 `e2b-compat.md`: `agent` is not in the `UnimplementedError`
+      table (`AttributeError`, no SDK change) — a note box outside it.
 
 ## 4. Nav and novedades
 
 - [x] 4.1 `novedades/0.8.0.md` (new, explicit unpublished-draft warning) and
-      the draft card + "En desarrollo" row in `novedades/index.md`.
+      the draft card + a "Diseñado, sin código todavía" list (not the "En
+      desarrollo" table) in `novedades/index.md`.
 - [x] 4.2 `mkdocs.yml`: nav entries for the two new pages and the draft
       novedades page, each labelled "(borrador)".
 

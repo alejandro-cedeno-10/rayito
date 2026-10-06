@@ -353,8 +353,10 @@ alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
 **Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
 por sha256 fijado (`scripts/check_pins.py` los valida contra `limits.json`);
 el venv de deepagents se instala con `--require-hashes`; el sha256 del
-runner de deepagents viaja en el manifiesto del template y
-`sbx.agent` lo comprueba antes de ejecutarlo. Autoupdate, la descarga de
+runner de deepagents (`runner_sha256`) queda registrado en el manifiesto
+del template, para auditar qué runner trae cada versión de imagen (el SDK
+no lo verifica hoy; esa comprobación no está en el diseño aceptado de
+`ai-agent-core`/`ai-agent-deepagents`). Autoupdate, la descarga de
 modelos, de LSPs, los plugins por defecto y la lectura de un `.claude/` del
 workdir están apagados (`OPENCODE_DISABLE_*`, `OPENCODE_PURE`); nada de eso
 sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y

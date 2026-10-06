@@ -54,7 +54,7 @@ que validó el spike en AWS real
 
     <!-- noqa: example: subcomando de ai-agent-fast-start, aún no fusionado -->
     ```bash
-    rayito agent template build --name rayito-agent --no-deepagents
+    rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents
     ```
 
 `memory_mib`/`memoryMib` por debajo de 2048 lanza
@@ -117,8 +117,8 @@ o para forzarlo tras un rato de inactividad).
 
 <!-- noqa: example: subcomando de ai-agent-fast-start, aún no fusionado -->
 ```bash
-rayito agent template build --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
-rayito agent template build --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco
+rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
+rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco
 ```
 
 ## Ver también

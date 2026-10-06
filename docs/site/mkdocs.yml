@@ -214,7 +214,7 @@ nav:
       - Imágenes: images.md
       - IAM: operacion/iam.md
       - Seguridad: security.md
-      - Costes: cost.md
+      - Precios (MicroVMs, pool, agentes): cost.md
       - Verificar una release: verify.md
       - Solución de problemas: operacion/solucion-de-problemas.md
       - FAQ: operacion/faq.md

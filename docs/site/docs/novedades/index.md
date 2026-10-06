@@ -138,10 +138,19 @@ lleguen, y hoy lanza `UnimplementedError` antes de llamar a AWS:
 | Función | Opción | Estado |
 |---|---|---|
 | Dominio propio integrado en el sandbox | `domain=` / `domain` en `Sandbox.create()`, y `get_host()`/`expose()` devolviendo la URL | sin versión comprometida; mientras tanto, [`CustomDomain`](../funciones-opcionales/dominio-propio.md) (experimental) |
-| Agente de código dentro del sandbox | `sbx.agent` (OpenCode, deepagents) | diseño aceptado, en construcción; ver el [borrador de 0.8.0](0.8.0.md) y [Agente en el sandbox](../guias/agente-en-el-sandbox.md) |
 
 Mientras tanto, para exponer un puerto en desarrollo,
 [`rayito sandbox proxy`](../funciones-opcionales/proxy-local.md).
+
+## Diseñado, sin código todavía
+
+Partes con un diseño ya aceptado pero sin ninguna línea fusionada en
+`main`: no existen en ningún SDK publicado, ni como opción ni como
+`UnimplementedError`.
+
+| Función | Estado |
+|---|---|
+| Agente de código dentro del sandbox (`sbx.agent`, OpenCode, deepagents) | diseño aceptado (`ai-agent-core`, `ai-agent-fast-start`, `ai-agent-deepagents`), sin fusionar; ver el [borrador de 0.8.0](0.8.0.md) y [Agente en el sandbox](../guias/agente-en-el-sandbox.md) |
 
 ## Versiones anteriores
 

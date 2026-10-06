@@ -218,7 +218,15 @@ rechazada. Las claves y los motivos de esta tabla son los de
 | `volume.content`: `read_file`/`write_file`/`make_dir`/`list_files`/`remove`/`update_metadata` de un `Volume` | `volume.content`: `readFile`/`writeFile`/`makeDir`/`list`/`remove`/`updateMetadata` | no hay plano de datos de ficheros fuera de un MicroVM (SPEC.md §4); conecta un sandbox y monta el volumen, o usa upload_url/download_url sobre persist= |
 | `get_signature` | `getSignature` | una firma de envd no autentica en el proxy: el JWE sólo viaja en cabecera o en el subprotocolo WebSocket (AWS_API_NOTES.md §7); usa upload_url/download_url, que firman en S3 |
 | `Template.alias_exists`/`assign_tags`/`remove_tags`/`get_tags` (y en `AsyncTemplate`) | `Template.aliasExists`/`assignTags`/`removeTags`/`getTags` | create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de AWS mientras tanto |
-| `agent` (borrador, sin acceso en `rayito.e2b.Sandbox`) | `agent` | E2B no define un agente de código dentro del sandbox: conecta con el SDK nativo sobre el mismo sandbox (`rayito.Sandbox.connect(sbx.sandbox_id)`) y usa `sbx.agent` desde ahí, ver [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
+
+!!! note "`agent`: no es una entrada de esta tabla"
+    `rayito.e2b.Sandbox` no tiene atributo `agent` en absoluto (el shim de
+    E2B no cambia para este diseño): tocarlo es un `AttributeError` normal
+    de Python/TypeScript, no un `UnimplementedError` de Rayito, y no hay
+    clave `agent` en `_unimplemented.py` ni en `unimplemented.ts`. Conecta
+    con el SDK nativo sobre el mismo sandbox y usa `sbx.agent` desde ahí:
+    `rayito.Sandbox.connect(sbx.sandbox_id)`. Ver
+    [Agente en el sandbox](guias/agente-en-el-sandbox.md).
 
 Desde 0.6.0, `Template`/`AsyncTemplate` (y `E2B(...).Template`/
 `.AsyncTemplate`) construyen imágenes de verdad: ver
