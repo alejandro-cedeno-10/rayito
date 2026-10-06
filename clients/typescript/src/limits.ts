@@ -125,3 +125,26 @@ export const EFS_VOLUMES_MAX_PER_SANDBOX = 4 as const;
 
 export const ACCESS_TOKEN_MIN_BYTES = 16 as const;
 export const COMMAND_OUTPUT_MAX_BYTES = 67108864 as const;
+
+export const DEFAULT_AGENT_TIMEOUT_SECONDS = 600 as const;
+export const DEFAULT_AGENT_MAX_STEPS = 50 as const;
+export const DEFAULT_AGENT_MAX_TOTAL_TOKENS = 1000000 as const;
+export const DEFAULT_AGENT_MAX_OUTPUT_BYTES = 16777216 as const;
+export const MAX_AGENT_EVENT_LINE_BYTES = 4194304 as const;
+export const MAX_TOOL_OUTPUT_PREVIEW_BYTES = 65536 as const;
+export const DEFAULT_AGENT_WORKDIR = "/home/user" as const;
+export const AGENT_STATE_DIR = "/home/user/.rayito/agent" as const;
+export const MODEL_CREDENTIAL_PLACEHOLDER = "placeholder-not-a-secret" as const;
+export const OPENCODE_SERVE_PORT = 4096 as const;
+export const OPENCODE_SESSION_TITLE = "rayito" as const;
+export const AGENT_PROTOCOL_VERSION = 1 as const;
+export const AGENT_TEMPLATE_MANIFEST_PATH = "/opt/agents/rayito-agent.json" as const;
+export const AGENT_TEMPLATE_MANIFEST_SCHEMA = "rayito.agent-template/1" as const;
+export const AGENT_MIN_MEMORY_MIB = 2048 as const;
+export const AGENT_OPENCODE_VERSION = "1.18.34" as const;
+export const AGENT_OPENCODE_SHA256 =
+  "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f" as const;
+export const AGENT_RIPGREP_VERSION = "15.2.0" as const;
+export const AGENT_RIPGREP_SHA256 =
+  "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d" as const;
+export const DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS = 120 as const;

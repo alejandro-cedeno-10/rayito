@@ -2,6 +2,30 @@
 
 from __future__ import annotations
 
+from rayito._agent import (
+    AgentEvent,
+    AgentFailed,
+    AgentLimits,
+    AgentModel,
+    AgentPermissions,
+    AgentResult,
+    AgentSpec,
+    Done,
+    McpLocal,
+    McpRemote,
+    McpServer,
+    Reasoning,
+    StepFinished,
+    StepStarted,
+    SubAgent,
+    Text,
+    TextDelta,
+    TokenUsage,
+    ToolCall,
+    anthropic_gateway,
+    bedrock_gateway,
+    openai_compatible_gateway,
+)
 from rayito._aws import ClientSettings
 from rayito._charts import (
     BarChart,
@@ -117,6 +141,7 @@ from rayito._volumes import (
     VolumeStore,
 )
 from rayito.exceptions import (
+    AgentException,
     AuthenticationException,
     BuildException,
     CapacityException,
@@ -157,6 +182,7 @@ from rayito.exceptions import (
     VolumePathNotFoundException,
     WebhookException,
 )
+from rayito.sandbox_async.agent import AsyncAgentStream
 from rayito.sandbox_async.commands import AsyncCommandHandle
 from rayito.sandbox_async.filesystem import AsyncWatchHandle
 from rayito.sandbox_async.git import AsyncGit
@@ -164,6 +190,7 @@ from rayito.sandbox_async.listing import AsyncSandboxListPaginator
 from rayito.sandbox_async.main import AsyncSandbox
 from rayito.sandbox_async.pool import AsyncSandboxPool
 from rayito.sandbox_async.pty import AsyncPtyHandle
+from rayito.sandbox_sync.agent import AgentStream
 from rayito.sandbox_sync.commands import CommandHandle
 from rayito.sandbox_sync.filesystem import WatchHandle
 from rayito.sandbox_sync.git import Git
@@ -174,6 +201,16 @@ from rayito.sandbox_sync.pty import PtyHandle
 
 __all__ = [
     "ALL_TRAFFIC",
+    "AgentEvent",
+    "AgentException",
+    "AgentFailed",
+    "AgentLimits",
+    "AgentModel",
+    "AgentPermissions",
+    "AgentResult",
+    "AgentSpec",
+    "AgentStream",
+    "AsyncAgentStream",
     "AsyncCommandHandle",
     "AsyncCustomDomain",
     "AsyncEfsVolumes",
@@ -214,6 +251,7 @@ __all__ = [
     "CustomDomainException",
     "CustomDomainRoute",
     "DiskFullException",
+    "Done",
     "DownloadLink",
     "DynamoDbIndex",
     "EfsNetworkReport",
@@ -253,6 +291,9 @@ __all__ = [
     "LineChart",
     "ListOrder",
     "Logs",
+    "McpLocal",
+    "McpRemote",
+    "McpServer",
     "MicrovmListPage",
     "MountException",
     "MountStatus",
@@ -282,6 +323,7 @@ __all__ = [
     "RayitoCompatWarning",
     "ReadyCommand",
     "ReadyPoll",
+    "Reasoning",
     "RestoreProgress",
     "RestoreResult",
     "Result",
@@ -320,13 +362,20 @@ __all__ = [
     "StackParameter",
     "StackStatus",
     "StartSpec",
+    "StepFinished",
+    "StepStarted",
+    "SubAgent",
     "SuperChart",
     "TelemetryExport",
     "TelemetryHealth",
     "Template",
     "TemplateException",
     "TemplateSpec",
+    "Text",
+    "TextDelta",
     "TimeoutException",
+    "TokenUsage",
+    "ToolCall",
     "TransferException",
     "TransferStatus",
     "TransportSettings",
@@ -345,6 +394,9 @@ __all__ = [
     "WorkdirStep",
     "WriteEntry",
     "__version__",
+    "anthropic_gateway",
+    "bedrock_gateway",
+    "openai_compatible_gateway",
     "wait_for_file",
     "wait_for_port",
     "wait_for_process",

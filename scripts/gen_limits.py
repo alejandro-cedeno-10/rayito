@@ -143,6 +143,35 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "accessTokenMinBytes",
         "commandOutputMaxBytes",
     ),
+    (
+        # ai-agent-core (ADR-025): the AI agent's run defaults and caps
+        # (cost bounds, design.md D4), the in-VM paths and protocol both
+        # SDKs and the agent template agree on, and the runtime pins the
+        # template bakes (OpenCode and ripgrep release assets, sha256 from
+        # docs/research/2026-10-agent-spike.md) and the default timeout of a
+        # single `WarmupStep` (`agent.prepare()`, pool warmup). Not AWS
+        # properties.
+        "defaultAgentTimeoutSeconds",
+        "defaultAgentMaxSteps",
+        "defaultAgentMaxTotalTokens",
+        "defaultAgentMaxOutputBytes",
+        "maxAgentEventLineBytes",
+        "maxToolOutputPreviewBytes",
+        "defaultAgentWorkdir",
+        "agentStateDir",
+        "modelCredentialPlaceholder",
+        "opencodeServePort",
+        "opencodeSessionTitle",
+        "agentProtocolVersion",
+        "agentTemplateManifestPath",
+        "agentTemplateManifestSchema",
+        "agentMinMemoryMib",
+        "agentOpencodeVersion",
+        "agentOpencodeSha256",
+        "agentRipgrepVersion",
+        "agentRipgrepSha256",
+        "defaultWarmupStepTimeoutSeconds",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.
@@ -168,6 +197,8 @@ CONSTANT_NAME_OVERRIDES = {
     "s3BucketNameMin": "S3_BUCKET_NAME_MIN",
     "s3BucketNameMax": "S3_BUCKET_NAME_MAX",
     "supportedMemoryMiB": "SUPPORTED_MEMORY_MIB",
+    "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
+    "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
 }
 
 
@@ -301,7 +332,10 @@ def ts_line(key: str, value: object) -> str:
         return ts_collection(
             f"export const {name} = ", elements, "[", "]", " as const;"
         )
-    return f"export const {name} = {ts_scalar(value)} as const;"
+    single = f"export const {name} = {ts_scalar(value)} as const;"
+    if len(single) <= LINE_WIDTH:
+        return single
+    return f"export const {name} =\n{TS_INDENT}{ts_scalar(value)} as const;"
 
 
 def render_typescript(limits: dict[str, object]) -> str:

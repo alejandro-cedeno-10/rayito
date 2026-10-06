@@ -6,6 +6,48 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Added
+
+- **Agente de IA, adaptador de OpenCode** (`ai-agent-core`): `runtime="opencode"`
+  ya resuelve a un adaptador (`rayito._agent._opencode`) que escribe `opencode.json` sin
+  credenciales, lanza `opencode run` con el prompt por stdin, un cerrojo por
+  sandbox y `--attach` a un `opencode serve` residente si responde, y
+  traduce su JSONL a eventos. Configuración y script idénticos byte a byte
+  entre Python y TypeScript (`testdata/agent/`).
+- **Agente de IA, dominio** (`ai-agent-core`, ADR-025): los tipos con los
+  que `sbx.agent` describirá una ejecución, validados al construirlos y sin
+  ninguna llamada a AWS: `AgentSpec`, `AgentModel` (Bedrock, Anthropic o
+  una API compatible con OpenAI, siempre a través de una pasarela de
+  `sbx.gateways`), `AgentPermissions` (sólo `allow`/`deny`; `question`,
+  `webfetch` y `websearch` denegadas por defecto), `SubAgent`, `McpLocal`,
+  `McpRemote` y `AgentLimits` (50 pasos, 600 s, 16 MiB y 1 000 000 de
+  tokens por defecto); los eventos (`TextDelta`, `Text`, `Reasoning`,
+  `ToolCall`, `StepStarted`, `StepFinished`, `AgentFailed`, `Done`),
+  `TokenUsage` y `AgentResult`; `AgentException` con un `reason` de una
+  lista cerrada y un mensaje fijo que nunca lleva texto del proveedor; y
+  las pasarelas ya hechas `bedrock_gateway`, `anthropic_gateway` y
+  `openai_compatible_gateway`, cuyo `allow` cubre sólo los modelos
+  elegidos. `sbx.agent` llega en un cambio posterior.
+- **Agente de IA, API pública** (`ai-agent-core`, design.md §4 y §7):
+  `sbx.agent.run()`/`.stream()`/`.prepare()`, síncronos y `async`. `run()`
+  corre el agente hasta el final y lanza `AgentException` si falla;
+  `stream()` devuelve un `AgentStream` iterable (gestor de contexto) que
+  nunca lanza por un fallo del agente —el último evento es `Done` o
+  `AgentFailed`— y expone `.abort()`, `.session_id` y `.result()`;
+  `prepare()` dispara los pasos de calentamiento del runtime en segundo
+  plano y vuelve enseguida. Aplica la configuración del runtime con
+  `files.write_files` (una sola vez por sha de configuración), lanza el
+  script del runtime con `commands.run(background=True, stdin=True)` y
+  trocea su stdout en eventos; `AgentLimits.max_steps` y
+  `max_total_tokens` los impone el propio SDK sobre esos eventos, no el
+  runtime. `sbx.agent` es una propiedad perezosa: tocarla no manda ningún
+  RPC. Con `tracer_provider=`, cada ejecución abre un span
+  `rayito.agent.run` con atributos `gen_ai.*` y `rayito.agent.*` (nunca el
+  prompt, el texto de la respuesta ni argumentos de herramienta). Un
+  `AgentRuntime` concreto (el adaptador de OpenCode) llega en un cambio
+  posterior; mientras tanto, `runtime=` admite cualquier objeto que
+  implemente el `Protocol` `AgentRuntime`.
+
 ## [0.7.1] - 2026-10-06
 
 ### Changed

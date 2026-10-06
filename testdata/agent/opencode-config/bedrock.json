@@ -1,0 +1,5 @@
+{
+  "opencode_json": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {\n    \"build\": {\n      \"permission\": {\n        \"*\": \"allow\",\n        \"question\": \"deny\",\n        \"webfetch\": \"deny\",\n        \"websearch\": \"deny\"\n      }\n    }\n  },\n  \"autoupdate\": false,\n  \"enabled_providers\": [\n    \"amazon-bedrock\"\n  ],\n  \"model\": \"amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0\",\n  \"provider\": {\n    \"amazon-bedrock\": {\n      \"options\": {\n        \"endpoint\": \"http://127.0.0.1:18001\",\n        \"region\": \"us-east-1\"\n      }\n    }\n  },\n  \"share\": \"disabled\",\n  \"small_model\": \"amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0\",\n  \"snapshot\": false\n}\n",
+  "agents_md": null,
+  "config_sha256": "7f73cd90cdb7a4662fbad005fa9c9d4cba019ce99b24bf4f6a0954df4d9e1422"
+}

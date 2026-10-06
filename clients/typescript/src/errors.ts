@@ -9,6 +9,7 @@
  */
 
 import type { Code } from "@connectrpc/connect";
+import type { TokenUsage } from "./agent/events.js";
 
 export interface SandboxErrorOptions {
   readonly statusCode?: number | undefined;
@@ -449,3 +450,38 @@ export class GatewayError extends SandboxError {
 
 /** `CustomDomain` (m15-custom-domain) falló. */
 export class CustomDomainError extends SandboxError {}
+
+export interface AgentErrorOptions extends SandboxErrorOptions {
+  readonly reason: string;
+  readonly sessionId?: string | undefined;
+  readonly usage?: TokenUsage | undefined;
+  readonly exitCode?: number | undefined;
+  readonly detailCode?: string | undefined;
+}
+
+/**
+ * Una ejecución del agente de IA (`sbx.agent.run()`, `ai-agent-core`)
+ * falló. `reason` es una lista cerrada: `model_error` (`detailCode` lleva la
+ * clase del error del proveedor, `APIError`), `runtime_error`,
+ * `runtime_missing`, `runtime_version_mismatch`, `protocol_error`,
+ * `timeout`, `max_steps`, `token_budget`, `output_limit`, `aborted` o
+ * `busy`. `usage` son los tokens consumidos hasta el fallo. El mensaje sale
+ * de una tabla fija por `reason`: nunca lleva el texto del proveedor, el
+ * prompt ni contenido del sandbox.
+ */
+export class AgentError extends SandboxError {
+  readonly reason: string;
+  readonly sessionId: string | undefined;
+  readonly usage: TokenUsage | undefined;
+  readonly exitCode: number | undefined;
+  readonly detailCode: string | undefined;
+
+  constructor(message: string, options: AgentErrorOptions) {
+    super(message, options);
+    this.reason = options.reason;
+    this.sessionId = options.sessionId;
+    this.usage = options.usage;
+    this.exitCode = options.exitCode;
+    this.detailCode = options.detailCode;
+  }
+}

@@ -234,6 +234,7 @@ from rayito.exceptions import (
     SandboxNotReadyException,
     UnimplementedError,
 )
+from rayito.sandbox_async.agent import AsyncAgent
 from rayito.sandbox_async.code import AsyncCodeClient
 from rayito.sandbox_async.commands import AsyncCommands, StreamStarter
 from rayito.sandbox_async.configure import (
@@ -476,6 +477,7 @@ class AsyncSandbox:
         self._filesystem = AsyncFilesystem(self)
         self._code_client = AsyncCodeClient(self)
         self._pty = AsyncPty(self)
+        self._agent = AsyncAgent(self)
         self._persistence = AsyncPersistenceClient(self)
         self._persist: S3Prefix | None = None
         self._last_restore: RestoreResult | None = None
@@ -1753,6 +1755,12 @@ class AsyncSandbox:
     @property
     def pty(self) -> AsyncPty:
         return self._pty
+
+    @property
+    def agent(self) -> AsyncAgent:
+        """El agente de IA de este sandbox (`ai-agent-core`): `run`,
+        `stream`, `prepare`. Tocar esta propiedad no manda ningún RPC."""
+        return self._agent
 
     @property
     def git(self) -> AsyncGit:

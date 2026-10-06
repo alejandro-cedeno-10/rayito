@@ -30,6 +30,19 @@ Las variantes asíncronas tienen la misma superficie.
 
 ::: rayito.AsyncGit
 
+## Agente de IA (`sbx.agent`)
+
+`run()` corre el agente hasta el final (lanza `AgentException` si falla);
+`stream()` devuelve un `AgentStream` iterable que nunca lanza por un fallo
+del agente; `prepare()` dispara el calentamiento del runtime en segundo
+plano.
+
+::: rayito.sandbox_sync.agent.Agent
+
+::: rayito.AgentStream
+
+::: rayito.AsyncAgentStream
+
 ## Listado
 
 ::: rayito.SandboxListPaginator

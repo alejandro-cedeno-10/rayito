@@ -11,6 +11,62 @@
 (Symbol as { asyncDispose?: symbol }).asyncDispose ??= Symbol.for("Symbol.asyncDispose");
 
 export {
+  AgentLimits,
+  type AgentLimitsOptions,
+  AgentModel,
+  type AgentModelOptions,
+  AgentPermissions,
+  type AgentPermissionsOptions,
+  AgentSpec,
+  type AgentSpecOptions,
+  McpLocal,
+  type McpLocalOptions,
+  McpRemote,
+  type McpRemoteOptions,
+  type McpServer,
+  type ModelProvider,
+  type PermissionAction,
+  SubAgent,
+  type SubAgentOptions,
+  type ToolPermission,
+} from "./agent/domain.js";
+export {
+  type AgentEvent,
+  type AgentFailed,
+  type AgentFailedOptions,
+  type AgentFailureReason,
+  type AgentResult,
+  agentFailed,
+  type Done,
+  type Reasoning,
+  type StepFinished,
+  type StepStarted,
+  type Text,
+  type TextDelta,
+  TokenUsage,
+  type TokenUsageOptions,
+  type ToolCall,
+} from "./agent/events.js";
+export {
+  type AnthropicGatewayOptions,
+  anthropicGateway,
+  type BedrockGatewayOptions,
+  bedrockGateway,
+  type OpenAiCompatibleGatewayOptions,
+  openaiCompatibleGateway,
+} from "./agent/gateways.js";
+export type {
+  AgentRuntime,
+  RunCommand,
+  RunRequest,
+  RuntimeFile,
+  RuntimeFiles,
+  RuntimeState,
+  TemplateStep,
+  WarmupStep,
+} from "./agent/runtime.js";
+export { AgentStream } from "./agent/stream.js";
+export {
   type CommandSender,
   type ControlPlane,
   LambdaMicrovmsControlPlane,
@@ -42,6 +98,8 @@ export {
   type RegisterRouteOptions,
 } from "./custom-domain/service.js";
 export {
+  AgentError,
+  type AgentErrorOptions,
   AuthenticationError,
   BuildError,
   type BuildErrorOptions,
@@ -156,6 +214,7 @@ export {
   type TakeOptions,
 } from "./pool/pool.js";
 export { type MountStatus, S3Mount, type S3MountOptions } from "./s3-mounts/domain.js";
+export { Agent, type AgentPrepareOptions, type AgentRunOptions } from "./sandbox/agent.js";
 export {
   CodeClient,
   type ContextLike,

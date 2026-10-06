@@ -2524,3 +2524,63 @@ corregido tras verificarlo offline).
 **Reversible.** `destroy()` borra la distribución, la Function y el KVS;
 ninguna ruta sobrevive. Mientras `domain=` siga sin cablear, no tocar
 `CustomDomain` dejaría el SDK exactamente como en 0.5.x/`v06-foundations`.
+
+## ADR-025 — ai-agent (agente de IA dentro del sandbox)
+
+**Contexto.** El spike de agentes (`docs/research/2026-10-agent-spike.md`)
+corrió OpenCode 1.18.34 y un grafo de deepagents dentro de un sandbox
+`rayito-base-caps`, con Bedrock alcanzado por una `SecretGateway`
+(ADR-023) y el egress cerrado: la credencial del modelo nunca entra en el
+guest. Rehacer esa receta a mano tiene aristas que el spike midió: OpenCode
+reintenta un 5xx sin fin, sin `--title` hace una llamada oculta a otro
+modelo y, con `--attach`, su código de salida no refleja `session.error`.
+En este repositorio "agente" ya significa `rayd`, así que esta función se
+llama "agente de IA" y sus capacidades OpenSpec llevan el prefijo
+`ai-agent-`.
+
+**Decisión.** `sbx.agent` ejecuta un agente de IA dentro del sandbox con
+las capas hexagonales de siempre:
+
+- **Dominio puro** (`rayito/_agent/_domain.py`, `_events.py`;
+  `src/agent/domain.ts`, `events.ts`): `AgentSpec`, `AgentModel`,
+  `AgentPermissions`, `SubAgent`, `McpLocal`, `McpRemote`, `AgentLimits`,
+  la unión de eventos discriminada por `type` y `TokenUsage`. Ningún tipo
+  tiene campo de clave ni de cabeceras: el modelo y cada MCP remoto nombran
+  una entrada de `sbx.gateways`, y `provider` es una clave reservada de
+  `raw_config`, así que el runtime no puede apuntar a un upstream fuera de
+  la pasarela. Los permisos sólo admiten `allow`/`deny` (la ejecución es
+  desatendida) y niegan por defecto `question`, `webfetch` y `websearch`.
+- **Fallos cerrados**: `AgentException`/`AgentError` con un `reason` de
+  una lista cerrada (`model_error`, `runtime_error`, `runtime_missing`,
+  `runtime_version_mismatch`, `protocol_error`, `timeout`, `max_steps`,
+  `token_budget`, `output_limit`, `aborted`, `busy`) y un mensaje de una
+  tabla fija; la única parte variable es un `detail_code` con forma de
+  nombre de clase (`APIError`). El texto del proveedor, el prompt y el
+  contenido nunca llegan a un mensaje, un log ni un span.
+- **Límites impuestos por el SDK**, con valores por defecto que acotan el
+  coste (`limits.json`): 50 pasos, 600 s, 16 MiB de salida y 1 000 000 de
+  tokens. El `steps` de OpenCode es blando, así que el SDK aborta al
+  empezar el paso `max_steps + 1`; el presupuesto de tokens se comprueba
+  tras cada paso y puede pasarse en uno.
+- **Pasarelas ya hechas** (`bedrock_gateway`, `anthropic_gateway`,
+  `openai_compatible_gateway`): `allow` cubre sólo las rutas de los modelos
+  elegidos, con el id codificado como lo mandan los clientes (`%3A`), que
+  es lo que `rayd` compara en crudo.
+- **Puerto `AgentRuntime`** (puro: configuración, script, traducción de
+  líneas a eventos, cierre y aborto) con un adaptador por runtime
+  (OpenCode; deepagents en `ai-agent-deepagents`). Una ejecución por
+  sandbox a la vez (`flock`), `--title` siempre, prompt por stdin, nunca
+  en argv, y `Done` sólo con salida 0 y sin evento `error`.
+- **Telemetría** sólo con el `tracer_provider` opt-in existente: un span
+  `rayito.agent.run` con atributos de una lista permitida.
+
+**Consecuencias.** Sin llamar a `sbx.agent`, nada cambia: tocar la
+propiedad no hace ningún RPC y construir un `AgentSpec` o una pasarela no
+llama a AWS. Una ejecución usa `commands.run` y `files.write` existentes;
+`rayd` y el `.proto` no cambian. Los permisos no son una frontera de
+seguridad (SECURITY.md T29): la frontera es la MicroVM con el egress
+cerrado. El coste del modelo domina el de la VM (7-20 veces en el spike).
+
+**Reversible.** Aditivo: un paquete nuevo en cada SDK y una propiedad nueva
+en `Sandbox`; ni el shim de E2B ni ningún agente anterior ven
+comportamiento distinto.
