@@ -80,6 +80,58 @@ docker compose -f dev/local/compose.yaml exec runner \
   bash -c 'cd clients/typescript && pnpm exec vitest run --project local'
 ```
 
+## Agentes contra un modelo real
+
+Los tests de agentes (`test_local_agents.py` y `agents.local.test.ts`)
+corren [`sbx.agent`](agente-en-el-sandbox.md) con OpenCode y deepagents
+dentro de un sandbox local, con Claude en Amazon Bedrock como modelo y
+`bedrock_gateway` / `bedrockGateway` como única salida. Comprueban, en cada
+runtime y en los dos SDK, que el agente usa sus herramientas, continúa una
+sesión, se aborta sin dejar procesos vivos, respeta `AgentLimits` (pasos,
+tokens y timeout), emite el stream de eventos esperado, no puede leer la
+credencial, no sale a Internet por su cuenta mientras el modelo sí responde
+y que no hay telemetría encendida por defecto. Sin clave se saltan, así que
+`make local-e2e` y CI siguen sin credenciales.
+
+!!! info "Coste y activación"
+    - **Por defecto**: apagado. Sin `make local-bedrock-key` los tests de
+      agentes se saltan y nada sale del entorno local.
+    - **Activa**: `make local-agent-up` (cambia el guest por la variante
+      con OpenCode, ripgrep, deepagents y su runner de `dev/local/agent/`,
+      con `CAP_NET_ADMIN` para que el deny-all de egress se aplique de
+      verdad) y `AWS_PROFILE=<tu-perfil> make local-bedrock-key`.
+    - **Recursos y llamadas AWS**: ningún recurso. La clave es una URL de
+      `bedrock:CallWithBearerToken` prefirmada en tu máquina (vale lo que tu
+      sesión, como mucho 12 h); cada suite hace unas treinta llamadas
+      `ConverseStream`/`Converse` desde `rayd` por la pasarela. El secreto
+      vive en el Secrets Manager de Floci.
+    - **Coste aproximado**: céntimos por corrida, de tokens de Bedrock
+      (Claude Haiku 4.5, us-east-1, consultado el 2026-10-06:
+      <https://aws.amazon.com/bedrock/pricing/>).
+    - **IAM**: `bedrock:CallWithBearerToken` e `bedrock:InvokeModel*` sobre
+      el perfil de inferencia, y el acceso al modelo ya habilitado en la
+      cuenta (Rayito no lo habilita por ti).
+    - **Cómo apagarla**: `make local-down` (borra el tmpfs del runner con la
+      clave) o no ejecutes `make local-bedrock-key`.
+    - **Ejemplo**:
+
+        ```bash
+        make local-up
+        make local-agent-up
+        AWS_PROFILE=<tu-perfil> make local-bedrock-key
+        make local-e2e LOCAL_E2E_ARGS="-k agents"
+        make local-down
+        ```
+
+La clave pasa del host al runner por una tubería y queda en
+`/tmp/rayito-local-bedrock-key` (`RAYITO_LOCAL_BEDROCK_KEY_FILE`), un tmpfs
+que muere con el contenedor: nunca en un fichero de tu máquina ni en una
+variable de entorno. Los tests la buscan dentro del sandbox para decir sí o
+no y nunca la imprimen. El modelo y su región se cambian con
+`RAYITO_E2E_BEDROCK_MODEL` y `RAYITO_E2E_BEDROCK_REGION` (por defecto,
+Claude Haiku 4.5 en us-east-1). Un test marcado como fallo esperado
+recuerda que el timeout aún no mata lo que lanzó el shell del agente.
+
 ## Cómo funciona por dentro
 
 Los tests (`clients/python/tests/local/` y `clients/typescript/tests/local/`)
@@ -115,7 +167,8 @@ se saltan.
 | `Template.build` | subida del zip a S3 y `create-microvm-image` | el build real de la imagen y su `/ready` |
 | Eventos y webhooks | la pila, los webhooks, `create(events=)` y los tres Lambdas ejecutados en proceso, con una entrega firmada a un receptor local | la suscripción de CloudWatch Logs y la entrega HTTPS con su filtro SSRF |
 | Proxy de AWS (JWE, 403, keepalives) | no | sí |
-| Bloqueo de IMDS, egress, montajes S3 | no: necesitan privilegios en el guest | sí |
+| `sbx.agent` (OpenCode, deepagents) por la pasarela | sí, con `make local-agent-up` y una clave de Bedrock: deny-all de egress real, herramientas, sesión, aborto, límites, eventos | el primer `exec` y la memoria en un MicroVM |
+| Bloqueo de IMDS, egress, montajes S3 | no: necesitan privilegios en el guest (salvo el egress con `make local-agent-up`) | sí |
 | Persistencia y transferencias prefirmadas | no: `rayd` usa IMDS y exige HTTPS | sí |
 | Coste, cuotas, tiempos de arranque | no | sí |
 
