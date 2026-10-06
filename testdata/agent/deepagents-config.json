@@ -1,0 +1,20 @@
+{
+  "bedrock": {
+    "entrypoint": null,
+    "config_json": "{\n  \"base_url\": \"http://127.0.0.1:18001\",\n  \"credential_placeholder\": \"placeholder-not-a-secret\",\n  \"entrypoint\": null,\n  \"instructions\": null,\n  \"model\": \"us.anthropic.claude-haiku-4-5-20251001-v1:0\",\n  \"permissions\": {\n    \"default\": \"allow\",\n    \"tools\": {}\n  },\n  \"prompt_caching\": true,\n  \"provider\": \"bedrock\",\n  \"region\": \"us-east-1\",\n  \"sessions_dir\": \"/home/user/.rayito/agent/deepagents/sessions\",\n  \"subagents\": [],\n  \"v\": 1,\n  \"workdir\": \"/home/user/proyecto\"\n}\n",
+    "mode": 384,
+    "config_sha256": "b1ab0fbdc79646e037c7211af3c1b0f3b03b93b4345a8a732181af9188d78bf0"
+  },
+  "anthropic": {
+    "entrypoint": null,
+    "config_json": "{\n  \"base_url\": \"http://127.0.0.1:18002\",\n  \"credential_placeholder\": \"placeholder-not-a-secret\",\n  \"entrypoint\": null,\n  \"instructions\": \"Responde en español.\",\n  \"model\": \"claude-haiku-4-5\",\n  \"permissions\": {\n    \"default\": \"deny\",\n    \"tools\": {\n      \"delete\": \"allow\",\n      \"edit_file\": \"allow\",\n      \"execute\": {\n        \"*\": \"deny\",\n        \"git *\": \"allow\"\n      },\n      \"read_file\": \"allow\",\n      \"write_file\": \"allow\"\n    }\n  },\n  \"prompt_caching\": false,\n  \"provider\": \"anthropic\",\n  \"region\": null,\n  \"sessions_dir\": \"/home/user/.rayito/agent/deepagents/sessions\",\n  \"subagents\": [],\n  \"v\": 1,\n  \"workdir\": \"/home/user/proyecto\"\n}\n",
+    "mode": 384,
+    "config_sha256": "140e29ebc063e908f4d52bafbb3aa2ffbed93f3bcc330eb61fbc47505ec49b19"
+  },
+  "openai-compatible": {
+    "entrypoint": "agentes.equipo:build",
+    "config_json": "{\n  \"base_url\": \"http://127.0.0.1:18003/v1\",\n  \"credential_placeholder\": \"placeholder-not-a-secret\",\n  \"entrypoint\": \"agentes.equipo:build\",\n  \"instructions\": null,\n  \"model\": \"modelo-a\",\n  \"permissions\": {\n    \"default\": \"allow\",\n    \"tools\": {}\n  },\n  \"prompt_caching\": true,\n  \"provider\": \"openai-compatible\",\n  \"region\": null,\n  \"sessions_dir\": \"/home/user/.rayito/agent/deepagents/sessions\",\n  \"subagents\": [\n    {\n      \"description\": \"Revisa cambios\",\n      \"model\": \"modelo-b\",\n      \"name\": \"revisor\",\n      \"permissions\": {\n        \"default\": \"allow\",\n        \"tools\": {\n          \"delete\": \"deny\",\n          \"edit_file\": \"deny\",\n          \"write_file\": \"deny\"\n        }\n      },\n      \"system_prompt\": \"Revisa el diff.\"\n    }\n  ],\n  \"v\": 1,\n  \"workdir\": \"/home/user/proyecto\"\n}\n",
+    "mode": 384,
+    "config_sha256": "3dbd9ac71e945eae47a24575d86bf6401c9a1e99446e165ba6b04a42daf29632"
+  }
+}

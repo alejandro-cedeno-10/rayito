@@ -8,6 +8,18 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Added
 
+- **Agente de IA, adaptador de deepagents** (`ai-agent-deepagents`):
+  `runtime="deepagents"` o `runtime=DeepAgents(entrypoint="pkg.mod:build")`
+  corre un grafo de deepagents/LangGraph con el mismo contrato que OpenCode
+  (eventos cerrados, límites del SDK, credenciales sólo por la pasarela).
+  Un runner que va como dato del paquete
+  (`rayito/_agent/_runner/deepagents_runner.py`) habla el protocolo JSONL
+  v1 de Rayito por un descriptor privado (un `print` del usuario no lo
+  rompe), construye el modelo contra la pasarela con un marcador como
+  clave, aplica los permisos con un middleware, guarda las sesiones
+  `rda_…` dentro del sandbox y emite `TextDelta`. `mcp`, `raw_config` y
+  `attach=True` fallan con `InvalidArgumentException` antes de cualquier
+  RPC. `make agent-runner-test` lo prueba con el venv real en arm64.
 - **Agente de IA, arranque rápido** (`ai-agent-fast-start`):
   `AgentTemplate`/`AsyncAgentTemplate` y `rayito agent template build`
   construyen la imagen del agente con OpenCode y ripgrep fijados por

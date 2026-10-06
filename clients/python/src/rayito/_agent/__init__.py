@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from rayito._agent._deepagents import DeepAgents
 from rayito._agent._domain import (
     DEFAULT_AGENT_RUNTIME,
     DEFAULT_DENIED_TOOLS,
@@ -61,6 +62,7 @@ __all__ = [
     "AgentSpec",
     "AgentTemplate",
     "AsyncAgentTemplate",
+    "DeepAgents",
     "Done",
     "McpLocal",
     "McpRemote",
