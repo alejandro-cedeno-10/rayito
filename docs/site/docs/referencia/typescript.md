@@ -156,6 +156,19 @@ Iterar un `PtyHandle` da `{ pty: Uint8Array }`. Guía:
 `dangerouslyAuthenticate` y `configureUser`, con las mismas opciones que en
 Python en `camelCase`. Guía: [Git](../git.md).
 
+## Agente de IA (`sbx.agent`) { #agent }
+
+| TypeScript | Python | Devuelve |
+|---|---|---|
+| `agent.run(prompt, opts)` | `agent.run(prompt, ...)` | `AgentResult`; lanza `AgentError` si falla |
+| `agent.stream(prompt, opts)` | `agent.stream(prompt, ...)` | `AgentStream` (`AsyncIterable<AgentEvent>`); nunca lanza por un fallo del agente |
+| `agent.prepare(opts?)` | `agent.prepare(...)` | dispara el calentamiento del runtime en segundo plano |
+
+`AgentRunOptions`: `spec`, `runtime`, `sessionId`, `model`, `limits`,
+`workdir`, `attach`, `reasoning`, `signal` (un `AbortSignal` aborta el
+stream). `AgentStream`: `sessionId`, `droppedLines`, `abort()`, `result()`,
+`close()`.
+
 ## Pool { #pool }
 
 | TypeScript | Python |

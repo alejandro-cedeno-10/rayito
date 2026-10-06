@@ -22,6 +22,25 @@ versionado [SemVer](https://semver.org/lang/es/).
   `bedrockGateway`, `anthropicGateway` y `openaiCompatibleGateway`, cuyo
   `allow` cubre sólo los modelos elegidos. `sbx.agent` llega en un cambio
   posterior.
+- **Agente de IA, API pública** (`ai-agent-core`, design.md §4 y §7): el
+  campo `sbx.agent` (`run`, `stream`, `prepare`). `run()` corre el agente
+  hasta el final y lanza `AgentError` si falla; `stream()` devuelve un
+  `AgentStream` (`AsyncIterable<AgentEvent>`) que nunca lanza por un fallo
+  del agente —el último evento es `Done` o `AgentFailed`— y expone
+  `.abort()`, `.sessionId` y `.result()`; un `AbortSignal` en `stream()`
+  dispara `abort()`. `prepare()` dispara los pasos de calentamiento del
+  runtime en segundo plano y vuelve enseguida. Aplica la configuración del
+  runtime con `files.writeFiles` (una sola vez por sha de configuración),
+  lanza el script del runtime con `commands.run({ background: true, stdin:
+  true })` y trocea su stdout en eventos; `AgentLimits.maxSteps` y
+  `maxTotalTokens` los impone el propio SDK sobre esos eventos, no el
+  runtime. `sbx.agent` no manda ningún RPC hasta el primer `run()`/
+  `stream()`. Con `tracerProvider`, cada ejecución abre un span
+  `rayito.agent.run` con atributos `gen_ai.*` y `rayito.agent.*` (nunca el
+  prompt, el texto de la respuesta ni argumentos de herramienta). Un
+  `AgentRuntime` concreto (el adaptador de OpenCode) llega en un cambio
+  posterior; mientras tanto, `runtime` admite cualquier objeto que
+  implemente la interfaz `AgentRuntime`.
 
 ## [0.7.1] - 2026-10-06
 

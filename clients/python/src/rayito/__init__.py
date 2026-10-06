@@ -182,6 +182,7 @@ from rayito.exceptions import (
     VolumePathNotFoundException,
     WebhookException,
 )
+from rayito.sandbox_async.agent import AsyncAgentStream
 from rayito.sandbox_async.commands import AsyncCommandHandle
 from rayito.sandbox_async.filesystem import AsyncWatchHandle
 from rayito.sandbox_async.git import AsyncGit
@@ -189,6 +190,7 @@ from rayito.sandbox_async.listing import AsyncSandboxListPaginator
 from rayito.sandbox_async.main import AsyncSandbox
 from rayito.sandbox_async.pool import AsyncSandboxPool
 from rayito.sandbox_async.pty import AsyncPtyHandle
+from rayito.sandbox_sync.agent import AgentStream
 from rayito.sandbox_sync.commands import CommandHandle
 from rayito.sandbox_sync.filesystem import WatchHandle
 from rayito.sandbox_sync.git import Git
@@ -207,6 +209,8 @@ __all__ = [
     "AgentPermissions",
     "AgentResult",
     "AgentSpec",
+    "AgentStream",
+    "AsyncAgentStream",
     "AsyncCommandHandle",
     "AsyncCustomDomain",
     "AsyncEfsVolumes",

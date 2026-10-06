@@ -118,6 +118,7 @@ import { TokenRefresher, TokenStore } from "../transport/tokens.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
 import type { EfsVolume, VolumeStatus } from "../volumes/domain.js";
 import { fromProtoStatus as volumeStatusesFromProto } from "../volumes/section.js";
+import { Agent } from "./agent.js";
 import {
   CodeClient,
   type ContextLike,
@@ -833,6 +834,9 @@ export class Sandbox implements AsyncDisposable {
   readonly #core: SandboxCore;
   readonly commands: Commands;
   readonly files: Filesystem;
+  /** El agente de IA de este sandbox (`ai-agent-core`): `run`, `stream`,
+   * `prepare`. Tocar este campo no manda ningún RPC. */
+  readonly agent: Agent;
   readonly pty: Pty;
   /** El módulo git de E2B sobre `commands.run` (ver `Git`). */
   readonly git: Git;
@@ -860,6 +864,12 @@ export class Sandbox implements AsyncDisposable {
     );
     this.commands = new Commands(core, this.#secrets, () => this.#instrumentation);
     this.files = new Filesystem(core, undefined, () => this.#instrumentation);
+    this.agent = new Agent({
+      commands: this.commands,
+      files: this.files,
+      gateways: () => this.gateways,
+      instrumentation: () => this.#instrumentation,
+    });
     this.pty = new Pty(core, this.commands, this.#secrets);
     this.git = new Git(this.commands, core.logger);
     this.#code = new CodeClient(core, this.#secrets, () => this.#instrumentation);

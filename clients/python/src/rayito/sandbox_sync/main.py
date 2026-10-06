@@ -240,6 +240,7 @@ from rayito.exceptions import (
     TimeoutException,
     UnimplementedError,
 )
+from rayito.sandbox_sync.agent import Agent
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
 from rayito.sandbox_sync.configure import CONFIGURE_FEATURE, call_configure, call_configure_status
@@ -511,6 +512,7 @@ class Sandbox:
         self._filesystem = Filesystem(self)
         self._code_client = CodeClient(self)
         self._pty = Pty(self)
+        self._agent = Agent(self)
         self._persistence = PersistenceClient(self)
         self._persist: S3Prefix | None = None
         self._last_restore: RestoreResult | None = None
@@ -2090,6 +2092,12 @@ class Sandbox:
     def pty(self) -> Pty:
         """`PtyService`: `create`, `connect`, `send_input`, `resize`, `kill`."""
         return self._pty
+
+    @property
+    def agent(self) -> Agent:
+        """El agente de IA de este sandbox (`ai-agent-core`): `run`,
+        `stream`, `prepare`. Tocar esta propiedad no manda ningún RPC."""
+        return self._agent
 
     @property
     def git(self) -> Git:

@@ -22,6 +22,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   las pasarelas ya hechas `bedrock_gateway`, `anthropic_gateway` y
   `openai_compatible_gateway`, cuyo `allow` cubre sólo los modelos
   elegidos. `sbx.agent` llega en un cambio posterior.
+- **Agente de IA, API pública** (`ai-agent-core`, design.md §4 y §7):
+  `sbx.agent.run()`/`.stream()`/`.prepare()`, síncronos y `async`. `run()`
+  corre el agente hasta el final y lanza `AgentException` si falla;
+  `stream()` devuelve un `AgentStream` iterable (gestor de contexto) que
+  nunca lanza por un fallo del agente —el último evento es `Done` o
+  `AgentFailed`— y expone `.abort()`, `.session_id` y `.result()`;
+  `prepare()` dispara los pasos de calentamiento del runtime en segundo
+  plano y vuelve enseguida. Aplica la configuración del runtime con
+  `files.write_files` (una sola vez por sha de configuración), lanza el
+  script del runtime con `commands.run(background=True, stdin=True)` y
+  trocea su stdout en eventos; `AgentLimits.max_steps` y
+  `max_total_tokens` los impone el propio SDK sobre esos eventos, no el
+  runtime. `sbx.agent` es una propiedad perezosa: tocarla no manda ningún
+  RPC. Con `tracer_provider=`, cada ejecución abre un span
+  `rayito.agent.run` con atributos `gen_ai.*` y `rayito.agent.*` (nunca el
+  prompt, el texto de la respuesta ni argumentos de herramienta). Un
+  `AgentRuntime` concreto (el adaptador de OpenCode) llega en un cambio
+  posterior; mientras tanto, `runtime=` admite cualquier objeto que
+  implemente el `Protocol` `AgentRuntime`.
 
 ## [0.7.1] - 2026-10-06
 
