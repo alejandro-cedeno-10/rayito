@@ -8,7 +8,7 @@
 import { chmod, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { defineHidden } from "../../src/hidden.js";
 import {
   InMemoryPoolBackend,
@@ -21,8 +21,10 @@ import {
   UnimplementedError,
   validatePoolConfig,
 } from "../../src/index.js";
+import { DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS } from "../../src/limits.js";
 import { accessTokenSha256 } from "../../src/payload.js";
 import { TEMP_SUFFIX } from "../../src/pool/backend.js";
+import { launchOptions } from "../../src/pool/config.js";
 import {
   FillBackoff,
   POOL_SCHEMA,
@@ -34,6 +36,7 @@ import {
   statsFromRecords,
   TakePoll,
 } from "../../src/pool/core.js";
+import { Commands } from "../../src/sandbox/commands.js";
 import { ReadinessPoll } from "../../src/sandbox/readiness.js";
 import { ACCESS_TOKEN_HEADER } from "../../src/transport/headers.js";
 import { presentedTokenSha256 } from "./fake/common.js";
@@ -997,5 +1000,98 @@ describe("SandboxPool", () => {
     });
     expect(stats.slots.every((slot) => slot.state === "ready")).toBe(true);
     expect("accessToken" in (stats.slots[0] as object)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- warmup (ai-agent-fast-start)
+
+describe("PoolConfig.warmup", () => {
+  const Foreground = { cmd: "opencode --version >/dev/null", tag: "fg" };
+  const Background = { cmd: "opencode serve", background: true, tag: "bg" };
+
+  function spyCommands(
+    plane: FakePoolControlPlane,
+    failOn?: string,
+  ): { calls: Record<string, unknown>[]; log: string[] } {
+    const calls: Record<string, unknown>[] = [];
+    const log: string[] = [];
+    vi.spyOn(Commands.prototype, "run").mockImplementation((async (
+      cmd: string,
+      options: Record<string, unknown> = {},
+    ) => {
+      calls.push({ cmd, suspends: plane.callsTo("SuspendMicrovm").length, ...options });
+      log.push(`run:${String(options.tag)}`);
+      if (failOn !== undefined && options.tag === failOn) {
+        throw new InvalidArgumentError("paso fallido");
+      }
+      return options.background === true
+        ? {
+            disconnect: () => {
+              log.push("disconnect");
+            },
+          }
+        : undefined;
+    }) as never);
+    return { calls, log };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("runs after settle and before pause; background steps detach", async () => {
+    const { plane, pool: make } = rig();
+    const { calls, log } = spyCommands(plane);
+    const pool = await make(1, { warmup: [Foreground, Background] }).start();
+    await waitIdle(pool, 1);
+
+    expect(log).toEqual(["run:fg", "run:bg", "disconnect"]);
+    expect(calls.map((c) => c.suspends)).toEqual([0, 0]);
+    expect(calls[0]?.timeoutMs).toBe(DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS * 1000);
+    expect(calls[1]).toMatchObject({ background: true, timeoutMs: 0, maxOutputBytes: 0 });
+    expect(plane.callsTo("SuspendMicrovm")).toHaveLength(1);
+  });
+
+  test("a failed step is a failed warm-up and the slot is terminated", async () => {
+    const { plane, pool: make } = rig();
+    spyCommands(plane, "fg");
+    const pool = await make(1, { warmup: [Foreground] }).start();
+
+    await waitUntil(() => pool.stats().failed >= 1, 15_000, "el paso fallido no contó");
+    await waitUntil(
+      () => plane.callsTo("TerminateMicrovm").length >= 1,
+      15_000,
+      "la plaza no se terminó",
+    );
+    expect(plane.callsTo("SuspendMicrovm")).toHaveLength(0);
+    expect(pool.stats().ready).toBe(0);
+  });
+
+  test("no warmup runs no command", async () => {
+    const { plane, pool: make } = rig();
+    const { calls } = spyCommands(plane);
+    const pool = await make(1).start();
+    await waitIdle(pool, 1);
+    expect(calls).toEqual([]);
+  });
+
+  test("validation and launch options", () => {
+    expect(() => validatePoolConfig({ size: 1, warmup: "x" as never })).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => validatePoolConfig({ size: 1, warmup: [{ cmd: " " }] })).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => validatePoolConfig({ size: 1, warmup: [{ cmd: "x", timeoutMs: 0 }] })).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => validatePoolConfig({ size: 1, network: { denyOut: ["no-es-un-cidr"] } })).toThrow(
+      InvalidArgumentError,
+    );
+    const plain = launchOptions(validatePoolConfig({ size: 1 }));
+    expect("network" in plain).toBe(false);
+    expect("allowInternetAccess" in plain).toBe(false);
+    const closed = launchOptions(validatePoolConfig({ size: 1, allowInternetAccess: false }));
+    expect(closed.allowInternetAccess).toBe(false);
   });
 });

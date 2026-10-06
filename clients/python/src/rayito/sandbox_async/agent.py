@@ -144,7 +144,7 @@ class AsyncAgent:
             handle = await self._sandbox.commands.run(
                 step.cmd,
                 background=True,
-                timeout=step.timeout_seconds,
+                timeout=None if step.background else step.timeout_seconds,
                 tag=step.tag,
             )
             handle.disconnect()

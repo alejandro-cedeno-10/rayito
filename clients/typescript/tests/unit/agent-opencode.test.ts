@@ -238,6 +238,9 @@ describe("OpenCode events", () => {
     const serve = runtime.warmupSteps({ serve: true }).at(-1);
     expect(serve?.background).toBe(true);
     expect(serve?.cmd).toContain("opencode serve --hostname 127.0.0.1 --port 4096");
+    expect(serve?.cmd).toContain(
+      "AWS_BEARER_TOKEN_BEDROCK=placeholder-not-a-secret exec opencode serve",
+    );
     expect(runtime.templateSteps()).toEqual([]);
     expect(resolveRuntime("opencode")).toBeInstanceOf(OpenCodeRuntime);
   });

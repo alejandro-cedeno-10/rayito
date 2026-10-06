@@ -28,9 +28,8 @@
 
 ## 3. Later stages
 
-- [ ] 3.1 Template installs the runner and venv (`ai-agent-fast-start`),
-  which also moves `dev/local/agent/requirements-deepagents.txt` to the
-  package data `rayito/_agent/_assets/requirements-deepagents.txt`
-  (design §10, deferred from B1).
+- [ ] 3.1 Template installs the runner and venv (`ai-agent-fast-start`);
+  it also moved the pins to the package data
+  `rayito/_agent/_assets/requirements-deepagents.txt` (design §10).
 - [ ] 3.2 Docs page and cost box (`ai-agent-docs-pricing`).
 - [ ] 3.3 Local e2e with real Bedrock and AWS acceptance Q150.

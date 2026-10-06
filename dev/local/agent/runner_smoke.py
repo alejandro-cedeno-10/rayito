@@ -1,7 +1,7 @@
 """Prueba del runner de deepagents con el venv real (`make agent-runner-test`).
 
 Corre dentro de un contenedor Linux arm64 con los pines de
-`requirements-deepagents.txt` instalados en `/venv`, sin red hacia ningún
+`rayito/_agent/_assets/requirements-deepagents.txt` instalados en `/venv`, sin red hacia ningún
 modelo: el punto de entrada de usuario construye el grafo con un chat model
 falso (`FakeModel`), así que se ejercitan deepagents, LangGraph, el
 middleware de permisos, el protocolo JSONL y las sesiones de verdad. Además

@@ -185,7 +185,7 @@ export class Agent {
     for (const step of runtime.warmupSteps({ serve: options.serve ?? false })) {
       const handle = (await this.#sandbox.commands.run(step.cmd, {
         background: true,
-        timeoutMs: step.timeoutMs,
+        timeoutMs: step.background === true ? 0 : step.timeoutMs,
         tag: step.tag,
       })) as AgentCommandHandle;
       handle.disconnect();

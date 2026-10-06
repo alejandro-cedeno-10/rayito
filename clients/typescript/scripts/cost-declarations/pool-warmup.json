@@ -1,0 +1,6 @@
+[
+  {
+    "name": "function agentPoolWarmup",
+    "pattern": "^(export )?declare function agentPoolWarmup\\b"
+  }
+]

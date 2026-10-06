@@ -24,6 +24,7 @@ from rayito import (
     PoolClosedException,
     PoolConfig,
     S3Staging,
+    WarmupStep,
 )
 from rayito._payload import access_token_sha256
 from rayito._s3 import S3Gateway
@@ -33,6 +34,7 @@ from rayito.exceptions import (
     InvalidArgumentException,
     QuotaExceededException,
 )
+from rayito.sandbox_async.commands import AsyncCommands
 
 from .conftest import DEADLINE_KEY, IMAGE_ARN, JWE, FakeClock
 from .fake_control_plane import FakeControlPlane, PoolTransport, max_calls_in_window
@@ -776,3 +778,46 @@ async def test_stats_after_a_scripted_sequence(
     assert (stats.launched, stats.recycled, stats.lost, stats.failed) == (6, 1, 1, 0)
     assert len(stats.slots) == 2
     assert all(slot.state == "ready" for slot in stats.slots)
+
+
+# ------------------------------------------------------------- warmup (ai-agent-fast-start)
+
+WARMUP_FOREGROUND = WarmupStep(cmd="opencode --version >/dev/null", tag="fg")
+WARMUP_BACKGROUND = WarmupStep(cmd="opencode serve", background=True, tag="bg")
+
+
+class FakeWarmupHandle:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    def disconnect(self) -> None:
+        self._log.append("disconnect")
+
+
+async def test_async_warmup_runs_after_settle_and_before_pause(
+    make_pool: PoolFactory, plane: FakeControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log: list[str] = []
+    calls: list[dict[str, Any]] = []
+
+    async def run(self: AsyncCommands, cmd: str, **kwargs: Any) -> Any:
+        calls.append({"suspends": len(plane.calls_to("SuspendMicrovm")), **kwargs})
+        log.append(f"run:{kwargs.get('tag')}")
+        return FakeWarmupHandle(log) if kwargs.get("background") else None
+
+    original_run_code = AsyncSandbox.run_code
+
+    async def run_code(self: AsyncSandbox, *args: Any, **kwargs: Any) -> Any:
+        log.append("settle")
+        return await original_run_code(self, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncCommands, "run", run)
+    monkeypatch.setattr(AsyncSandbox, "run_code", run_code)
+    pool = await make_pool(size=1, warmup=(WARMUP_FOREGROUND, WARMUP_BACKGROUND)).start()
+    await wait_idle(pool, 1)
+
+    assert log == ["settle", "run:fg", "run:bg", "disconnect"]
+    assert [c["suspends"] for c in calls] == [0, 0]
+    assert len(plane.calls_to("SuspendMicrovm")) == 1
+    assert calls[1]["background"] is True and calls[1]["timeout"] is None
+    assert calls[1]["max_output_bytes"] == 0

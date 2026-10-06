@@ -1,0 +1,1 @@
+[{ "name": "class AgentTemplate", "pattern": "^(export )?declare class AgentTemplate\\b" }]

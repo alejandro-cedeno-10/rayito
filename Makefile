@@ -195,14 +195,14 @@ lint-typescript:
 	fi
 
 # Runner de deepagents con el venv real (pines con hash de
-# dev/local/agent/requirements-deepagents.txt) en Linux arm64 y un modelo
+# clients/python/src/rayito/_agent/_assets/requirements-deepagents.txt) en Linux arm64 y un modelo
 # falso: sin red hacia ningún proveedor ni coste.
 AGENT_RUNNER_IMAGE ?= python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 agent-runner-test:
 	docker run --rm --platform linux/arm64 -v "$(CURDIR)":/src:ro $(AGENT_RUNNER_IMAGE) sh -c '\
 	  python -m venv /venv && \
 	  /venv/bin/pip install --quiet --no-cache-dir --require-hashes --no-deps --only-binary=:all: \
-	    -r /src/dev/local/agent/requirements-deepagents.txt && \
+	    -r /src/clients/python/src/rayito/_agent/_assets/requirements-deepagents.txt && \
 	  /venv/bin/python /src/dev/local/agent/runner_smoke.py \
 	    /src/clients/python/src/rayito/_agent/_runner/deepagents_runner.py'
 

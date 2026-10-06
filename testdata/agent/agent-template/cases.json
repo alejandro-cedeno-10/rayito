@@ -1,0 +1,85 @@
+{
+  "comment": "Vectores compartidos de AgentTemplate (ai-agent-fast-start): mismas opciones, mismo Dockerfile, manifiesto, start_cmd y ficheros de contexto en Python y TypeScript.",
+  "cases": [
+    {
+      "name": "default",
+      "options": {},
+      "dockerfile": "# >>> rayito template layer (m15-templates), no editar a mano\nRUN curl -fsSL --retry 3 -o /tmp/opencode.tar.gz https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-arm64.tar.gz && echo 'bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f  /tmp/opencode.tar.gz' | sha256sum -c - && curl -fsSL --retry 3 -o /tmp/ripgrep.tar.gz https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-gnu.tar.gz && echo 'a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d  /tmp/ripgrep.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/bin && tar -xzf /tmp/opencode.tar.gz -C /opt/agents/bin opencode && tar -xzf /tmp/ripgrep.tar.gz -C /tmp && mv /tmp/ripgrep-15.2.0-aarch64-unknown-linux-gnu/rg /opt/agents/bin/rg && rm -rf /tmp/opencode.tar.gz /tmp/ripgrep.tar.gz /tmp/ripgrep-15.2.0-aarch64-unknown-linux-gnu && chown -R root:root /opt/agents && chmod 0755 /opt/agents /opt/agents/bin /opt/agents/bin/opencode /opt/agents/bin/rg && ln -sf /opt/agents/bin/opencode /usr/local/bin/opencode && ln -sf /opt/agents/bin/rg /usr/local/bin/rg\nCOPY [\"__rayito_context/requirements-deepagents.txt\", \"/opt/agents/requirements-deepagents.txt\"]\nRUN echo 'edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check\nCOPY [\"__rayito_context/rayito-agent.json\", \"/opt/agents/rayito-agent.json\"]\nCOPY [\"__rayito_context/rayito-agent-prefetch\", \"/opt/agents/bin/rayito-agent-prefetch\"]\nRUN mkdir -p /opt/agents/bin && chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents && chmod 0755 /opt/agents/bin/rayito-agent-prefetch\nENV OPENCODE_DISABLE_AUTOUPDATE=\"1\"\nENV OPENCODE_DISABLE_MODELS_FETCH=\"1\"\nENV OPENCODE_DISABLE_LSP_DOWNLOAD=\"1\"\nENV OPENCODE_DISABLE_DEFAULT_PLUGINS=\"1\"\nENV OPENCODE_PURE=\"1\"\nENV OPENCODE_DISABLE_CLAUDE_CODE=\"1\"\nRUN su user -c 'opencode --version' && su user -c 'rg --version' && su user -c \"/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws'\"\nCOPY [\"__rayito_template.json\", \"/etc/rayito/template.json\"]\n# <<< rayito template layer\n",
+      "manifest": {
+        "schema": "rayito.agent-template/1",
+        "protocol": 1,
+        "opencode": {
+          "version": "1.18.34",
+          "sha256": "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f"
+        },
+        "deepagents": {
+          "requirements_sha256": "edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa"
+        },
+        "runner_sha256": null,
+        "prefetch_paths": [
+          "/opt/agents/bin/opencode",
+          "/opt/agents/bin/rg"
+        ]
+      },
+      "startCmd": "/opt/agents/bin/rayito-agent-prefetch /opt/agents/rayito-agent.json 30 2",
+      "contextFiles": [
+        "rayito-agent-prefetch",
+        "rayito-agent.json",
+        "requirements-deepagents.txt"
+      ]
+    },
+    {
+      "name": "opencode-only-no-prefetch",
+      "options": {
+        "runtimes": [
+          "opencode"
+        ],
+        "prefetch": false
+      },
+      "dockerfile": "# >>> rayito template layer (m15-templates), no editar a mano\nRUN curl -fsSL --retry 3 -o /tmp/opencode.tar.gz https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-arm64.tar.gz && echo 'bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f  /tmp/opencode.tar.gz' | sha256sum -c - && curl -fsSL --retry 3 -o /tmp/ripgrep.tar.gz https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-gnu.tar.gz && echo 'a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d  /tmp/ripgrep.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/bin && tar -xzf /tmp/opencode.tar.gz -C /opt/agents/bin opencode && tar -xzf /tmp/ripgrep.tar.gz -C /tmp && mv /tmp/ripgrep-15.2.0-aarch64-unknown-linux-gnu/rg /opt/agents/bin/rg && rm -rf /tmp/opencode.tar.gz /tmp/ripgrep.tar.gz /tmp/ripgrep-15.2.0-aarch64-unknown-linux-gnu && chown -R root:root /opt/agents && chmod 0755 /opt/agents /opt/agents/bin /opt/agents/bin/opencode /opt/agents/bin/rg && ln -sf /opt/agents/bin/opencode /usr/local/bin/opencode && ln -sf /opt/agents/bin/rg /usr/local/bin/rg\nCOPY [\"__rayito_context/rayito-agent.json\", \"/opt/agents/rayito-agent.json\"]\nRUN mkdir -p /opt/agents/bin && chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents\nENV OPENCODE_DISABLE_AUTOUPDATE=\"1\"\nENV OPENCODE_DISABLE_MODELS_FETCH=\"1\"\nENV OPENCODE_DISABLE_LSP_DOWNLOAD=\"1\"\nENV OPENCODE_DISABLE_DEFAULT_PLUGINS=\"1\"\nENV OPENCODE_PURE=\"1\"\nENV OPENCODE_DISABLE_CLAUDE_CODE=\"1\"\nRUN su user -c 'opencode --version' && su user -c 'rg --version'\n# <<< rayito template layer\n",
+      "manifest": {
+        "schema": "rayito.agent-template/1",
+        "protocol": 1,
+        "opencode": {
+          "version": "1.18.34",
+          "sha256": "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f"
+        },
+        "deepagents": null,
+        "runner_sha256": null,
+        "prefetch_paths": [
+          "/opt/agents/bin/opencode",
+          "/opt/agents/bin/rg"
+        ]
+      },
+      "startCmd": null,
+      "contextFiles": [
+        "rayito-agent.json"
+      ]
+    },
+    {
+      "name": "deepagents-only",
+      "options": {
+        "runtimes": [
+          "deepagents"
+        ]
+      },
+      "dockerfile": "# >>> rayito template layer (m15-templates), no editar a mano\nCOPY [\"__rayito_context/requirements-deepagents.txt\", \"/opt/agents/requirements-deepagents.txt\"]\nRUN echo 'edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check\nCOPY [\"__rayito_context/rayito-agent.json\", \"/opt/agents/rayito-agent.json\"]\nCOPY [\"__rayito_context/rayito-agent-prefetch\", \"/opt/agents/bin/rayito-agent-prefetch\"]\nRUN mkdir -p /opt/agents/bin && chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents && chmod 0755 /opt/agents/bin/rayito-agent-prefetch\nENV OPENCODE_DISABLE_AUTOUPDATE=\"1\"\nENV OPENCODE_DISABLE_MODELS_FETCH=\"1\"\nENV OPENCODE_DISABLE_LSP_DOWNLOAD=\"1\"\nENV OPENCODE_DISABLE_DEFAULT_PLUGINS=\"1\"\nENV OPENCODE_PURE=\"1\"\nENV OPENCODE_DISABLE_CLAUDE_CODE=\"1\"\nRUN su user -c \"/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws'\"\nCOPY [\"__rayito_template.json\", \"/etc/rayito/template.json\"]\n# <<< rayito template layer\n",
+      "manifest": {
+        "schema": "rayito.agent-template/1",
+        "protocol": 1,
+        "opencode": null,
+        "deepagents": {
+          "requirements_sha256": "edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa"
+        },
+        "runner_sha256": null,
+        "prefetch_paths": []
+      },
+      "startCmd": "/opt/agents/bin/rayito-agent-prefetch /opt/agents/rayito-agent.json 30 2",
+      "contextFiles": [
+        "rayito-agent-prefetch",
+        "rayito-agent.json",
+        "requirements-deepagents.txt"
+      ]
+    }
+  ]
+}

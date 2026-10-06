@@ -68,6 +68,17 @@ export type {
 } from "./agent/runtime.js";
 export { AgentStream } from "./agent/stream.js";
 export {
+  AGENT_TEMPLATE_RUNTIMES,
+  AgentTemplate,
+  type AgentTemplateBuildOptions,
+  type AgentTemplateManifest,
+  type AgentTemplateOptions,
+  type AgentTemplateRuntime,
+  DEFAULT_AGENT_TEMPLATE_BASE,
+  DEFAULT_AGENT_TEMPLATE_NAME,
+} from "./agent/template.js";
+export { agentPoolWarmup } from "./agent/warmup.js";
+export {
   type CommandSender,
   type ControlPlane,
   LambdaMicrovmsControlPlane,

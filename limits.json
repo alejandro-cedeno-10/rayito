@@ -112,5 +112,8 @@
   "agentOpencodeSha256": "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f",
   "agentRipgrepVersion": "15.2.0",
   "agentRipgrepSha256": "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d",
-  "defaultWarmupStepTimeoutSeconds": 120
+  "defaultWarmupStepTimeoutSeconds": 120,
+  "agentPrefetchRestoreJumpSeconds": 30,
+  "agentPrefetchIntervalSeconds": 2,
+  "agentDeepagentsRequirementsSha256": "edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa"
 }

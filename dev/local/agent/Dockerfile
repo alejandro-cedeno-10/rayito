@@ -11,7 +11,9 @@
 #     búsqueda y, si no lo encuentra, intenta descargarlo, cosa que bajo
 #     deny-all falla; por eso va preinstalado.
 #   - deepagents 0.7.x (LangChain, MIT) en un venv propio con Python 3.12,
-#     pines con hash en requirements-deepagents.txt.
+#     pines con hash en requirements-deepagents.txt: el mismo fichero que
+#     hornea AgentTemplate (dato de paquete del SDK de Python, que compose
+#     pasa como contexto adicional `agentassets`).
 #
 # Las variables OPENCODE_* apagan todo lo que OpenCode intentaría bajar de
 # Internet en el arranque (autoupdate, catálogo de models.dev, servidores
@@ -41,7 +43,7 @@ RUN OPENCODE_VERSION=1.18.34 \
     && ln -sf /opt/agents/bin/opencode /usr/local/bin/opencode \
     && ln -sf /opt/agents/bin/rg /usr/local/bin/rg
 
-COPY requirements-deepagents.txt /opt/agents/requirements-deepagents.txt
+COPY --from=agentassets requirements-deepagents.txt /opt/agents/requirements-deepagents.txt
 RUN python3 -m venv /opt/agents/deepagents \
     && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir \
          --require-hashes --no-deps --only-binary=:all: \
@@ -54,7 +56,8 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_DISABLE_MODELS_FETCH=1 \
     OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
     OPENCODE_DISABLE_DEFAULT_PLUGINS=1 \
-    OPENCODE_PURE=1
+    OPENCODE_PURE=1 \
+    OPENCODE_DISABLE_CLAUDE_CODE=1
 
 RUN su user -c "opencode --version" \
     && su user -c "rg --version" \
