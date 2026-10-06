@@ -110,10 +110,15 @@ require-cargo-about:
 	  exit 1; }
 
 # Regenera THIRD_PARTY_LICENSES.md tras cambiar Cargo.lock (p. ej. en un PR
-# de Dependabot) y se versiona junto al lock.
+# de Dependabot) y se versiona junto al lock. Algunos crates publican su
+# licencia con finales CRLF: se normaliza a LF, porque la regla `eol=lf` de
+# .gitattributes lo haría en el commit y el fichero versionado dejaría de
+# coincidir con el generado.
 licenses: require-cargo-about
 	cargo fetch --locked
-	cargo about generate $(CARGO_ABOUT_ARGS) -o $(THIRD_PARTY_LICENSES)
+	@generated="$$(mktemp)" && trap 'rm -f "$$generated"' EXIT && \
+	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
+	  tr -d '\r' < "$$generated" > $(THIRD_PARTY_LICENSES)
 
 # Falla si el THIRD_PARTY_LICENSES.md versionado no es exactamente el que
 # genera el Cargo.lock actual (job `build` de CI y `rayd-build` de release).
@@ -121,7 +126,7 @@ licenses-check: require-cargo-about
 	cargo fetch --locked
 	@generated="$$(mktemp)" && trap 'rm -f "$$generated"' EXIT && \
 	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
-	  if diff -u $(THIRD_PARTY_LICENSES) "$$generated"; then \
+	  if tr -d '\r' < "$$generated" | diff -u $(THIRD_PARTY_LICENSES) -; then \
 	    echo "$(THIRD_PARTY_LICENSES): al día con Cargo.lock"; \
 	  else \
 	    echo "$(THIRD_PARTY_LICENSES) no coincide con Cargo.lock: ejecuta make licenses y versiona el resultado"; \
