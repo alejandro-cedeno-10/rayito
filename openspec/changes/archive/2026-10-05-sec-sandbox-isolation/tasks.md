@@ -67,9 +67,18 @@
 - [x] 7.1 Rust gates in the Linux VM (fmt, clippy `-D warnings`,
   `cargo test --workspace --locked`).
 - [x] 7.2 `scripts/tests`, docs `mkdocs --strict`, OpenSpec `validate --all --strict`.
-- [ ] 7.3 Real AWS (follow-up, not in this change): rebuild the image, run
+- [x] 7.3 Real AWS (follow-up, not in this change): rebuild the image, run
   `tests/e2e/test_m6_hardening.py`, and measure the uid owning the
   platform's hook connections; forge `/terminate` and `/validate` from
   `commands.run` and expect `peer_refused`; and a `Checkpoint` from a
   sandbox created with `persist=` towards another base answers
   `permission_denied` on the real image.
+  Verified in the 0.7.0 acceptance (2026-10-04, us-east-1, run-owned
+  images built with this `rayd`): `test_m6_hardening.py` green (the egress
+  case skips without `RAYITO_EGRESS_CONNECTOR_ARN`); `/terminate` and
+  `/validate` forged from uid 1000 answer `peer_refused` and the VM stays
+  up; a genuine pause/resume cycle adds no `hook_anomalies`, so the
+  platform's hook connections pass the peer-uid check (the uid itself was
+  not printed); `Checkpoint`/`Restore` towards another prefix or bucket
+  answer `permission_denied` with no object written.
+
