@@ -1,0 +1,30 @@
+# cargo-about policy for THIRD_PARTY_LICENSES.md (openspec third-party-licenses).
+#
+# The notices file covers what `rayd` links for its only release target, so
+# the graph is filtered to aarch64-unknown-linux-musl and leaves out build and
+# dev dependencies (the same graph as `rayd.cdx.json`, which cargo-cyclonedx
+# builds with `--no-build-deps`). `accepted` is deny.toml's
+# `[licenses].allow`, in the order cargo-about uses to pick one side of an
+# `OR` expression: the most common permissive licenses first, MPL-2.0 last.
+# `notify` keeps deny.toml's named CC0-1.0 exception, so a new CC0 crate
+# still fails here too. `make licenses` runs cargo-about with `--frozen`: the
+# file depends only on Cargo.lock, the crate sources cargo already fetched,
+# this policy, about.hbs and the pinned cargo-about version, never on a
+# network lookup.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+targets = ["aarch64-unknown-linux-musl"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
+
+[notify]
+accepted = ["CC0-1.0"]

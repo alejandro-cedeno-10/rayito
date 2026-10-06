@@ -336,9 +336,23 @@ jobs:
         run: |
           cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
           python3 -c "import json; d = json.load(open('crates/rayd/rayd.cdx.json')); assert d['specVersion'] == '1.5', d['specVersion']; assert d['metadata']['component']['name'] == 'rayd'; print('sbom components:', len(d['components']))"
+      - uses: ./.github/actions/cargo-about
+      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from Cargo.lock (fails when stale; `make licenses` refreshes it)
+        run: make licenses-check
+      - name: THIRD_PARTY_LICENSES.md lists every crate linked into rayd (.dep-v0) and every crate NOTICE file is carried
+        run: |
+          cargo metadata --format-version 1 --locked --offline > "$RUNNER_TEMP/cargo-metadata.json"
+          python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md \
+            --binary target/aarch64-unknown-linux-musl/release/rayd \
+            --metadata "$RUNNER_TEMP/cargo-metadata.json"
       - run: cp target/aarch64-unknown-linux-musl/release/rayd image/rayd
       - run: python3 scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
+      - name: LICENSE, NOTICE and THIRD_PARTY_LICENSES.md staged in image/licenses/ (the zip refuses rayd without them)
+        run: make image-licenses
       - run: python3 scripts/image_zip.py image image/rayito-image.zip
+      - name: rayito-image.zip carries the three license notices
+        run: |
+          python3 -c "import sys, zipfile; names = set(zipfile.ZipFile('image/rayito-image.zip').namelist()); missing = {'licenses/LICENSE', 'licenses/NOTICE', 'licenses/THIRD_PARTY_LICENSES.md'} - names; sys.exit(f'missing from the zip: {sorted(missing)}' if missing else 0)"
       - name: Slim and poly variant zips (each marker present in its zip, none in full)
         run: |
           python3 scripts/image_zip.py image image/rayito-image-slim.zip --variant slim
@@ -351,6 +365,7 @@ jobs:
             target/aarch64-unknown-linux-musl/release/rayd
             image/rayito-image.zip
             crates/rayd/rayd.cdx.json
+            THIRD_PARTY_LICENSES.md
           if-no-files-found: error
 
   docs:

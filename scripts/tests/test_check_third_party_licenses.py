@@ -1,0 +1,130 @@
+"""``check_third_party_licenses.py`` on synthetic inputs: the committed
+``THIRD_PARTY_LICENSES.md`` parses, a crate linked into the binary but not
+listed fails, build-time and workspace packages are skipped, and a listed
+crate shipping a ``NOTICE`` file fails until the root ``NOTICE`` names it."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import check_third_party_licenses as notices
+from test_check_auditable import auditable_elf
+
+REPO_ROOT = SCRIPTS.parent
+COMMITTED = REPO_ROOT / "THIRD_PARTY_LICENSES.md"
+NOTICES = """# Third-party licenses of rayd
+
+### MIT License (`MIT`)
+
+Used by:
+
+- `tokio 1.53.1` <https://github.com/tokio-rs/tokio>
+- `axum 0.8.9`
+
+```text
+MIT text
+```
+"""
+
+
+def graph(*extra: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        {"name": "rayd", "version": "0.7.0", "source": "local", "root": True},
+        {"name": "rayd-core", "version": "0.7.0", "source": "local"},
+        {"name": "tokio", "version": "1.53.1", "source": "crates.io"},
+        {"name": "axum", "version": "0.8.9", "source": "crates.io"},
+        {"name": "cc", "version": "1.2.0", "source": "crates.io", "kind": "build"},
+        *extra,
+    ]
+
+
+def write(tmp_path: Path, name: str, content: str | bytes) -> Path:
+    path = tmp_path / name
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_the_committed_file_lists_the_core_crates() -> None:
+    listed = {
+        name for name, _ in notices.listed_crates(COMMITTED.read_text(encoding="utf-8"))
+    }
+    assert {"tokio", "tonic", "axum", "nix", "rustls"} <= listed
+    assert "rayd" not in listed
+    assert "rayd-core" not in listed
+
+
+def test_binary_coverage_passes_and_skips_build_and_workspace_packages(
+    tmp_path: Path,
+) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
+    binary = write(tmp_path, "rayd", auditable_elf(graph()))
+    assert notices.check(md, binary, None) == 2
+
+
+def test_a_linked_crate_missing_from_the_notices_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
+    extra = {"name": "ring", "version": "0.17.14", "source": "crates.io"}
+    binary = write(tmp_path, "rayd", auditable_elf(graph(extra)))
+    assert notices.main([str(md), "--binary", str(binary)]) == 1
+    assert "ring 0.17.14: linked into rayd but not listed" in capsys.readouterr().err
+
+
+def test_a_version_drift_fails(tmp_path: Path) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES.replace("1.53.1", "1.52.0"))
+    binary = write(tmp_path, "rayd", auditable_elf(graph()))
+    with pytest.raises(notices.NoticesError, match=r"tokio 1\.53\.1"):
+        notices.check(md, binary, None)
+
+
+def test_an_empty_file_fails(tmp_path: Path) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", "# nothing\n")
+    with pytest.raises(notices.NoticesError, match="lists no crate"):
+        notices.check(md, None, None)
+
+
+def metadata_with_notice(tmp_path: Path) -> Path:
+    crate_dir = tmp_path / "registry" / "axum-0.8.9"
+    crate_dir.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+    (crate_dir / "NOTICE").write_text("axum notice\n", encoding="utf-8")
+    plain_dir = tmp_path / "registry" / "tokio-1.53.1"
+    plain_dir.mkdir(parents=True)
+    (plain_dir / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+    metadata = {
+        "packages": [
+            {
+                "name": "axum",
+                "version": "0.8.9",
+                "manifest_path": str(crate_dir / "Cargo.toml"),
+            },
+            {
+                "name": "tokio",
+                "version": "1.53.1",
+                "manifest_path": str(plain_dir / "Cargo.toml"),
+            },
+        ]
+    }
+    return write(tmp_path, "metadata.json", json.dumps(metadata))
+
+
+def test_a_crate_notice_file_must_be_carried_in_the_root_notice(tmp_path: Path) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
+    metadata = metadata_with_notice(tmp_path)
+    bare = write(tmp_path, "NOTICE", "Rayito\nmentions axum-extra only\n")
+    with pytest.raises(notices.NoticesError, match=r"axum 0\.8\.9 ships NOTICE"):
+        notices.check(md, None, metadata, bare)
+    carried = write(tmp_path, "NOTICE", "Rayito\n- axum 0.8.9: axum notice\n")
+    assert notices.check(md, None, metadata, carried) == 2

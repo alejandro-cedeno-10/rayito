@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses licenses-check require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -34,6 +34,19 @@ CUSTOM_DOMAIN_TEMPLATE := infra/custom-domain.yaml
 EVENTS_WEBHOOKS_TEMPLATE := infra/events-webhooks.yaml
 EFS_VOLUMES_TEMPLATE := infra/efs-volumes.yaml
 SBOM          := crates/rayd/rayd.cdx.json
+# Avisos de terceros de rayd (openspec third-party-licenses): cargo-about
+# fijado (el mismo binario y sha256 que ./.github/actions/cargo-about), la
+# política de about.toml y la plantilla about.hbs sobre el grafo de
+# Cargo.lock para aarch64-unknown-linux-musl. `--frozen`: sin red y sin
+# tocar Cargo.lock; `cargo fetch --locked` deja antes las fuentes en
+# CARGO_HOME. LICENSE, NOTICE y este fichero viajan juntos con cada copia de
+# rayd: en el zip de la imagen (image/licenses/, que el Dockerfile copia a
+# /usr/share/doc/rayd/) y como assets de la release.
+THIRD_PARTY_LICENSES := THIRD_PARTY_LICENSES.md
+CARGO_ABOUT_VERSION := 0.9.2
+CARGO_ABOUT_ARGS := --frozen --fail -c about.toml -m crates/rayd/Cargo.toml about.hbs
+LICENSE_FILES := LICENSE NOTICE $(THIRD_PARTY_LICENSES)
+IMAGE_LICENSES := image/licenses
 # Versión de la imagen base gestionada (`baseImageVersion` de create/update-
 # microvm-image): el `imageVersion` más nuevo que devuelve
 # `aws lambda-microvms list-managed-microvm-image-versions --image-identifier
@@ -88,6 +101,40 @@ build:
 sbom:
 	cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target $(TARGET) --format json --no-build-deps --spec-version 1.5
 	@ls -la $(SBOM)
+
+# cargo-about exacto en el PATH: otra versión puede renderizar distinto y
+# `licenses-check` fallaría sin que cambie ninguna dependencia.
+require-cargo-about:
+	@cargo about --version 2>/dev/null | grep -qx "cargo-about $(CARGO_ABOUT_VERSION)" || { \
+	  echo "falta cargo-about $(CARGO_ABOUT_VERSION): binario de https://github.com/EmbarkStudios/cargo-about/releases/tag/$(CARGO_ABOUT_VERSION) (sha256 en .github/actions/cargo-about) o cargo install --locked cargo-about@$(CARGO_ABOUT_VERSION)"; \
+	  exit 1; }
+
+# Regenera THIRD_PARTY_LICENSES.md tras cambiar Cargo.lock (p. ej. en un PR
+# de Dependabot) y se versiona junto al lock.
+licenses: require-cargo-about
+	cargo fetch --locked
+	cargo about generate $(CARGO_ABOUT_ARGS) -o $(THIRD_PARTY_LICENSES)
+
+# Falla si el THIRD_PARTY_LICENSES.md versionado no es exactamente el que
+# genera el Cargo.lock actual (job `build` de CI y `rayd-build` de release).
+licenses-check: require-cargo-about
+	cargo fetch --locked
+	@generated="$$(mktemp)" && trap 'rm -f "$$generated"' EXIT && \
+	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
+	  if diff -u $(THIRD_PARTY_LICENSES) "$$generated"; then \
+	    echo "$(THIRD_PARTY_LICENSES): al día con Cargo.lock"; \
+	  else \
+	    echo "$(THIRD_PARTY_LICENSES) no coincide con Cargo.lock: ejecuta make licenses y versiona el resultado"; \
+	    exit 1; \
+	  fi
+
+# Deja LICENSE, NOTICE y THIRD_PARTY_LICENSES.md en image/licenses/, que
+# image/Dockerfile copia a /usr/share/doc/rayd/; el zip se niega a empaquetar
+# un rayd sin ellos (rayito.cli._artifact.require_rayd_notices).
+image-licenses:
+	rm -rf $(IMAGE_LICENSES)
+	mkdir -p $(IMAGE_LICENSES)
+	cp $(LICENSE_FILES) $(IMAGE_LICENSES)/
 
 test:
 	cargo test --workspace
@@ -153,10 +200,10 @@ fmt:
 	cargo fmt --all
 	uvx ruff==0.16.7 format scripts
 
-# Zip con el Dockerfile en la raíz, el binario precompilado y el sidecar (sin
-# tests ni cachés) al lado, listo para subir a S3 y pasar como --code-artifact
+# Zip con el Dockerfile en la raíz, el binario precompilado, sus avisos de
+# licencia (image/licenses/) y el sidecar (sin tests ni cachés) al lado, listo para subir a S3 y pasar como --code-artifact
 # a create/update-microvm-image.
-image-zip: build
+image-zip: build image-licenses
 	cp $(RAYD_BIN) image/rayd
 	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
 	python scripts/image_zip.py image $(IMAGE_ZIP)
@@ -164,7 +211,7 @@ image-zip: build
 # Variante slim (misma imagen, warm-up del kernel desactivado por el marcador
 # `warmup_variant` que sólo existe dentro del zip): imagen de medición
 # `rayito-base-slim`, no un template de producto.
-image-zip-slim: build
+image-zip-slim: build image-licenses
 	cp $(RAYD_BIN) image/rayd
 	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
 	python scripts/image_zip.py image $(IMAGE_ZIP_SLIM) --variant slim
@@ -189,7 +236,7 @@ image-publish-slim: require-bucket image-zip-slim
 # (`javascript` y `typescript`, ADR-013) y el sidecar arranca cada kernel en
 # la primera celda de su lenguaje. Imagen aparte `rayito-base-poly`;
 # rayito-base no cambia.
-image-zip-poly: build
+image-zip-poly: build image-licenses
 	cp $(RAYD_BIN) image/rayd
 	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
 	python scripts/image_zip.py image $(IMAGE_ZIP_POLY) --variant poly
@@ -209,7 +256,7 @@ image-publish-caps: require-bucket image-zip
 # condicional instala efs-utils (+~198 MB de imagen, snapshot igual, Q122) y
 # rehace el enlace de /usr/bin/python3. Imagen aparte `rayito-base-caps-efs`,
 # siempre con additionalOsCapabilities ALL; las demás imágenes no cambian.
-image-zip-efs: build
+image-zip-efs: build image-licenses
 	cp $(RAYD_BIN) image/rayd
 	python scripts/copy_sidecar.py $(SIDECAR) image/kernel-sidecar
 	python scripts/image_zip.py image $(IMAGE_ZIP_EFS) --with-efs
@@ -321,6 +368,8 @@ local-guest-context:
 	  docker rm "$$id" >/dev/null; exit $$status; \
 	fi
 	python3 scripts/copy_sidecar.py $(SIDECAR) $(LOCAL_GUEST_CONTEXT)/kernel-sidecar
+	mkdir -p $(LOCAL_GUEST_CONTEXT)/licenses
+	cp $(LICENSE_FILES) $(LOCAL_GUEST_CONTEXT)/licenses/
 	cp image/Dockerfile $(LOCAL_GUEST_CONTEXT)/Dockerfile
 
 # El punto de montaje de node_modules tiene que existir en el árbol, que el
@@ -361,4 +410,4 @@ docs-examples:
 
 clean:
 	cargo clean
-	rm -rf image/rayd image/kernel-sidecar $(IMAGE_ZIP) $(IMAGE_ZIP_SLIM) $(IMAGE_ZIP_POLY)
+	rm -rf image/rayd image/kernel-sidecar $(IMAGE_LICENSES) $(IMAGE_ZIP) $(IMAGE_ZIP_SLIM) $(IMAGE_ZIP_POLY)
