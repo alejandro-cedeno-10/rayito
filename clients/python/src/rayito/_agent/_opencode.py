@@ -551,6 +551,9 @@ def _serve_script() -> str:
         f"umask 077 && head -c {_SERVE_SECRET_BYTES} /dev/urandom | base64 > {secret}",
         f'OPENCODE_SERVER_PASSWORD="$(cat {secret})" '
         f"OPENCODE_CONFIG={shell_quote(OPENCODE_CONFIG_PATH)} {envs} "
+        # El cliente adjunto (`run --attach`) no pasa su entorno al servidor: el
+        # placeholder no secreto de Bedrock debe vivir en el proceso residente.
+        f"AWS_BEARER_TOKEN_BEDROCK={MODEL_CREDENTIAL_PLACEHOLDER} "
         f"exec opencode serve --hostname 127.0.0.1 --port {OPENCODE_SERVE_PORT}",
     ]
     return "\n".join(lines) + "\n"

@@ -178,13 +178,15 @@ class Agent:
     ) -> None:
         """Dispara los pasos de calentamiento del runtime (`warmup_steps`)
         en segundo plano y vuelve enseguida: no espera a ninguno, ni
-        siquiera al que arranca un servidor residente con `serve=True`."""
+        siquiera al que arranca un servidor residente con `serve=True`. Un
+        paso con `background=True` (el servidor) corre sin plazo: con él, el
+        servidor moriría al agotarlo."""
         rt = resolve_runtime(runtime)
         for step in rt.warmup_steps(serve=serve):
             handle = self._sandbox.commands.run(
                 step.cmd,
                 background=True,
-                timeout=step.timeout_seconds,
+                timeout=None if step.background else step.timeout_seconds,
                 tag=step.tag,
             )
             handle.disconnect()

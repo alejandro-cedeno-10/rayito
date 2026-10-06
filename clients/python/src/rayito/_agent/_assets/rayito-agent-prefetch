@@ -1,0 +1,46 @@
+#!/bin/bash
+# rayito-agent-prefetch: demonio de precarga de la plantilla de agente
+# (AgentTemplate, ai-agent-fast-start, opción A del diseño).
+#
+# Lo arranca rayd como start_cmd (uid 1000) antes del snapshot del build,
+# así que sigue vivo en cada VM que nace de la plantilla. Duerme INTERVALO
+# segundos en bucle y compara el reloj de pared: un salto mayor que SALTO
+# segundos sólo puede ser una restauración del snapshot (lanzamiento o
+# reanudación, AWS_API_NOTES §15). Entonces lee con `nice -n 19` los
+# ficheros de `prefetch_paths` del manifiesto para traerlos a la caché de
+# páginas antes del primer `opencode run`, y, si el manifiesto declara
+# deepagents, importa sus módulos una vez. No escribe nada ni sale a la red.
+#
+# Uso: rayito-agent-prefetch MANIFIESTO SALTO INTERVALO
+set -u
+
+manifest="$1"
+jump="$2"
+interval="$3"
+
+prefetch() {
+  python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    manifest = json.load(handle)
+for path in manifest.get("prefetch_paths", []):
+    print(path)
+' "$manifest" 2>/dev/null | while IFS= read -r path; do
+    nice -n 19 cat -- "$path" >/dev/null 2>&1
+  done
+  if [ -x /opt/agents/deepagents/bin/python ]; then
+    nice -n 19 /opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws' \
+      >/dev/null 2>&1
+  fi
+}
+
+last="$(date +%s)"
+while true; do
+  sleep "$interval"
+  now="$(date +%s)"
+  if [ $((now - last)) -gt "$jump" ]; then
+    prefetch
+    now="$(date +%s)"
+  fi
+  last="$now"
+done

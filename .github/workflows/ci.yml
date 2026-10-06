@@ -94,6 +94,8 @@ jobs:
         run: python3 scripts/gen_limits.py --check
       - name: infra/*.yaml renders the SDKs' stack templates/artifacts without drift
         run: python3 scripts/gen_stack_assets.py --check
+      - name: agent template package data renders the TypeScript assets without drift
+        run: python3 scripts/gen_agent_template_assets.py --check
       - name: Apache-2.0 declared in the five manifests, LICENSE and NOTICE copies identical
         run: python3 scripts/check_license.py
       - name: Python client unit tests, lint, format and types

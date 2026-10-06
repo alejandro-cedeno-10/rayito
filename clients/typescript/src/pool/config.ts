@@ -6,9 +6,15 @@
  * por toma. Sin I/O.
  */
 
+import type { WarmupStep } from "../agent/runtime.js";
 import { InvalidArgumentError } from "../errors.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
-import { type IdlePolicy, type IdlePolicyInput, validateIdlePolicy } from "../models.js";
+import {
+  type IdlePolicy,
+  type IdlePolicyInput,
+  type NetworkPolicyInput,
+  validateIdlePolicy,
+} from "../models.js";
 import { validatedCpuTimeLimit, validatedStringMap } from "../payload.js";
 import {
   DEFAULT_READY_TIMEOUT_MS,
@@ -16,6 +22,7 @@ import {
   MAX_DURATION_MS,
   validateTimeoutMs,
 } from "../sandbox/launch.js";
+import { resolveNetwork, validatePolicyShape } from "../sandbox/network.js";
 
 export const POOL_SIZE_MAX = 64;
 export const FILL_CONCURRENCY_MAX = 8;
@@ -73,6 +80,20 @@ export interface PoolConfig {
    *   const pool = new SandboxPool({ size: 2, metadata: { pool: "a" }, index });
    */
   readonly index?: DynamoDbIndex | undefined;
+  /**
+   * Pasos de calentamiento que cada plaza corre tras asentarse y antes de su
+   * `pause()` (vacío por defecto): uno de primer plano espera su salida (un
+   * exit distinto de 0 o su plazo es un calentamiento fallido: la plaza se
+   * termina y el relleno aplica el backoff); uno con `background: true` se
+   * arranca y se suelta. Un reciclado relanza la plaza y vuelve a correrlos.
+   * `agentPoolWarmup()` da los del agente de IA; su coste está en su TSDoc.
+   */
+  readonly warmup?: readonly WarmupStep[] | undefined;
+  /** Política de egress de todas las plazas, como en `Sandbox.create()`;
+   * un pool de agentes debe pasar `allowInternetAccess: false`. Las
+   * pasarelas siguen aplicándose sólo en `take()`. */
+  readonly allowInternetAccess?: boolean | undefined;
+  readonly network?: NetworkPolicyInput | undefined;
 }
 
 /** `PoolConfig` con todos los valores por defecto aplicados y validados. */
@@ -94,6 +115,32 @@ export interface ResolvedPoolConfig {
   readonly sweepIntervalMs: number;
   readonly readyTimeoutMs: number;
   readonly index: DynamoDbIndex | undefined;
+  readonly warmup: readonly WarmupStep[];
+  readonly allowInternetAccess: boolean;
+  readonly network: NetworkPolicyInput | undefined;
+}
+
+/** `warmup` es una lista de `WarmupStep` (vacía por defecto). */
+export function validateWarmup(warmup: unknown): readonly WarmupStep[] {
+  if (warmup === undefined) {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(warmup)) {
+    throw new InvalidArgumentError("warmup debe ser una lista de WarmupStep");
+  }
+  for (const step of warmup as unknown[]) {
+    if (step === null || typeof step !== "object" || typeof (step as WarmupStep).cmd !== "string") {
+      throw new InvalidArgumentError("warmup debe ser una lista de WarmupStep");
+    }
+    const { cmd, timeoutMs } = step as WarmupStep;
+    if (!cmd.trim()) {
+      throw new InvalidArgumentError("warmup: el comando de un paso no puede ser vacío");
+    }
+    if (timeoutMs !== undefined && !(typeof timeoutMs === "number" && timeoutMs > 0)) {
+      throw new InvalidArgumentError("warmup: timeoutMs debe ser > 0");
+    }
+  }
+  return Object.freeze([...(warmup as WarmupStep[])]);
 }
 
 function requireInteger(name: string, value: unknown, min: number, max: number): number {
@@ -160,6 +207,12 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     validatedCpuTimeLimit(config.cpuTimeLimit);
   }
   const index = validateIndex(config.index);
+  const warmup = validateWarmup(config.warmup);
+  const allowInternetAccess = config.allowInternetAccess ?? true;
+  if (typeof allowInternetAccess !== "boolean") {
+    throw new InvalidArgumentError("allowInternetAccess debe ser un boolean");
+  }
+  validatePolicyShape(resolveNetwork(config.network, { allowInternetAccess }));
   return Object.freeze({
     size,
     template: config.template,
@@ -178,7 +231,34 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     sweepIntervalMs,
     readyTimeoutMs,
     index,
+    warmup,
+    allowInternetAccess,
+    network: config.network,
   });
+}
+
+/** `index`, `network` y `allowInternetAccess: false` sólo aparecen si el pool
+ * los configuró: sin ellos, las plazas se lanzan exactamente como en 0.4.0. */
+function optionalLaunchOptions(config: ResolvedPoolConfig): {
+  index?: DynamoDbIndex;
+  network?: NetworkPolicyInput;
+  allowInternetAccess?: boolean;
+} {
+  const extra: {
+    index?: DynamoDbIndex;
+    network?: NetworkPolicyInput;
+    allowInternetAccess?: boolean;
+  } = {};
+  if (config.index !== undefined) {
+    extra.index = config.index;
+  }
+  if (config.network !== undefined) {
+    extra.network = config.network;
+  }
+  if (!config.allowInternetAccess) {
+    extra.allowInternetAccess = false;
+  }
+  return extra;
 }
 
 /** Las opciones de `Sandbox.create()` de cada plaza; el pool añade el token, `keepOnFailure`, el plano y el transporte. */
@@ -196,6 +276,8 @@ export function launchOptions(config: ResolvedPoolConfig): {
   readonly logging: LoggingOption;
   readonly readyTimeoutMs: number;
   readonly index?: DynamoDbIndex;
+  readonly network?: NetworkPolicyInput;
+  readonly allowInternetAccess?: boolean;
 } {
   const launch = {
     template: config.template,
@@ -211,7 +293,8 @@ export function launchOptions(config: ResolvedPoolConfig): {
     logging: config.logging,
     readyTimeoutMs: config.readyTimeoutMs,
   };
-  // `index` sólo aparece si el pool lo configuró: sin él, las plazas se
-  // lanzan exactamente como en 0.4.0.
-  return config.index === undefined ? launch : { ...launch, index: config.index };
+  return {
+    ...launch,
+    ...optionalLaunchOptions(config),
+  };
 }

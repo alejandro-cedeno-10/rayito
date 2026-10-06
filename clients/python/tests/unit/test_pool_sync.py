@@ -24,6 +24,7 @@ from rayito import (
     S3Staging,
     Sandbox,
     SandboxPool,
+    WarmupStep,
 )
 from rayito._payload import access_token_sha256
 from rayito._pool_base import SlotRecord
@@ -32,10 +33,12 @@ from rayito._secret_gateway import SecretGateway
 from rayito._transport import ACCESS_TOKEN_KEY
 from rayito.exceptions import (
     AuthenticationException,
+    CommandExitException,
     InvalidArgumentException,
     QuotaExceededException,
     UnimplementedError,
 )
+from rayito.sandbox_sync.commands import Commands
 
 from .conftest import DEADLINE_KEY, IMAGE_ARN, JWE, FakeClock
 from .fake_control_plane import FakeControlPlane, PoolTransport, max_calls_in_window
@@ -873,3 +876,91 @@ def test_stats_after_a_scripted_sequence(
     assert len(stats.slots) == 2
     assert all(slot.state == "ready" for slot in stats.slots)
     assert not any(hasattr(slot, "access_token") for slot in stats.slots)
+
+
+# ------------------------------------------------------------- warmup (ai-agent-fast-start)
+
+
+FOREGROUND = WarmupStep(cmd="opencode --version >/dev/null", tag="fg")
+BACKGROUND = WarmupStep(cmd="opencode serve", background=True, tag="bg")
+
+
+class FakeHandle:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    def disconnect(self) -> None:
+        self._log.append("disconnect")
+
+
+def _spy_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    log: list[str],
+    plane: FakeControlPlane,
+    *,
+    fail_on: str | None = None,
+) -> list[dict[str, Any]]:
+    """Espía `commands.run`; cada llamada anota cuántos `SuspendMicrovm`
+    llevaba ya el plano (0 = antes de aparcar)."""
+    calls: list[dict[str, Any]] = []
+
+    def run(self: Commands, cmd: str, **kwargs: Any) -> Any:
+        suspends = len(plane.calls_to("SuspendMicrovm"))
+        calls.append({"cmd": cmd, "suspends": suspends, **kwargs})
+        log.append(f"run:{kwargs.get('tag')}")
+        if fail_on is not None and kwargs.get("tag") == fail_on:
+            raise CommandExitException("fallo", exit_code=1)
+        return FakeHandle(log) if kwargs.get("background") else None
+
+    original_run_code = Sandbox.run_code
+
+    def run_code(self: Sandbox, *args: Any, **kwargs: Any) -> Any:
+        log.append("settle")
+        return original_run_code(self, *args, **kwargs)
+
+    monkeypatch.setattr(Commands, "run", run)
+    monkeypatch.setattr(Sandbox, "run_code", run_code)
+    return calls
+
+
+def test_warmup_runs_after_settle_and_before_pause(
+    make_pool: PoolFactory, plane: FakeControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log: list[str] = []
+    calls = _spy_commands(monkeypatch, log, plane)
+    pool = make_pool(size=1, warmup=(FOREGROUND, BACKGROUND)).start()
+    wait_idle(pool, 1)
+
+    assert log == ["settle", "run:fg", "run:bg", "disconnect"]
+    assert [c["suspends"] for c in calls] == [0, 0]
+    assert len(plane.calls_to("SuspendMicrovm")) == 1
+    assert calls[0]["timeout"] == FOREGROUND.timeout_seconds
+    assert calls[0].get("background", False) is False
+    assert calls[1]["background"] is True
+    assert calls[1]["timeout"] is None
+    assert calls[1]["max_output_bytes"] == 0
+
+
+def test_failed_step_is_a_failed_warm_up(
+    make_pool: PoolFactory, plane: FakeControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log: list[str] = []
+    _spy_commands(monkeypatch, log, plane, fail_on="fg")
+    pool = make_pool(size=1, warmup=(FOREGROUND,)).start()
+
+    wait_until(lambda: pool.stats().failed >= 1, "el paso fallido no contó como fallo")
+    wait_until(lambda: len(plane.calls_to("TerminateMicrovm")) >= 1, "la plaza no se terminó")
+    assert plane.calls_to("SuspendMicrovm") == []
+    assert pool.stats().ready == 0
+
+
+def test_no_warmup_runs_no_command(
+    make_pool: PoolFactory, plane: FakeControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log: list[str] = []
+    calls = _spy_commands(monkeypatch, log, plane)
+    pool = make_pool(size=1).start()
+    wait_idle(pool, 1)
+
+    assert calls == []
+    assert log == ["settle"]

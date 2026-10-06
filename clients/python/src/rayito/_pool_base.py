@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Literal
 
+from rayito._agent._runtime import WarmupStep
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._limits import MAX_DURATION_SECONDS
 from rayito._models import REDACTED, IdlePolicy, SandboxInfo
+from rayito._network_base import NetworkInput, checked_policy, resolve_network
 from rayito._payload import validated_cpu_time_limit, validated_envs, validated_metadata
 from rayito._sandbox_base import (
     DEFAULT_IDLE_POLICY,
@@ -64,6 +66,17 @@ class PoolConfig:
     `on_write_failure='terminate'` descarta la plaza como cualquier otro
     calentamiento fallido.
 
+    `warmup` (vacío por defecto) son pasos de calentamiento que cada plaza
+    corre tras asentarse y antes de su `pause()`: uno de primer plano espera
+    su salida (un exit distinto de 0 o su plazo es un calentamiento fallido:
+    la plaza se termina y el relleno aplica el backoff); uno con
+    `background=True` se arranca y se suelta. Un reciclado relanza la plaza
+    y vuelve a correrlos. `agent_pool_warmup()` da los del agente de IA.
+    `allow_internet_access` y `network` son la política de egress de todas
+    las plazas, como en `Sandbox.create()`; un pool de agentes debe pasar
+    `allow_internet_access=False`. Las pasarelas siguen aplicándose sólo en
+    `take()`.
+
     Coste y activación
     -------------------
     Activa: `PoolConfig(index=DynamoDbIndex("tabla"))` escribe una fila por
@@ -97,6 +110,9 @@ class PoolConfig:
     sweep_interval_seconds: float = DEFAULT_SWEEP_INTERVAL_SECONDS
     ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS
     index: DynamoDbIndex | None = None
+    warmup: Sequence[WarmupStep] = ()
+    allow_internet_access: bool = True
+    network: NetworkInput = None
 
     def __post_init__(self) -> None:
         validate_pool_size(self.size)
@@ -113,6 +129,27 @@ class PoolConfig:
         if self.cpu_time_limit is not None:
             validated_cpu_time_limit(self.cpu_time_limit)
         validate_index(self.index)
+        object.__setattr__(self, "warmup", validate_warmup(self.warmup))
+        if not isinstance(self.allow_internet_access, bool):
+            raise InvalidArgumentException("allow_internet_access debe ser un bool")
+        checked_policy(
+            resolve_network(self.network, allow_internet_access=self.allow_internet_access)
+        )
+
+
+def validate_warmup(warmup: object) -> tuple[WarmupStep, ...]:
+    """`warmup` es una secuencia de `WarmupStep` (vacía por defecto)."""
+    if isinstance(warmup, str | bytes) or not isinstance(warmup, Sequence):
+        raise InvalidArgumentException("warmup debe ser una secuencia de WarmupStep")
+    steps = tuple(warmup)
+    for step in steps:
+        if not isinstance(step, WarmupStep):
+            raise InvalidArgumentException("warmup debe ser una secuencia de WarmupStep")
+        if not step.cmd.strip():
+            raise InvalidArgumentException("warmup: el comando de un paso no puede ser vacío")
+        if not step.timeout_seconds > 0:
+            raise InvalidArgumentException("warmup: timeout_seconds debe ser > 0")
+    return steps
 
 
 def validate_pool_size(size: object) -> int:
@@ -212,6 +249,10 @@ def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
     }
     if config.index is not None:
         kwargs["index"] = config.index
+    if config.network is not None:
+        kwargs["network"] = config.network
+    if not config.allow_internet_access:
+        kwargs["allow_internet_access"] = False
     return kwargs
 
 

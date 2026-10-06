@@ -18,6 +18,7 @@ import typer
 import typer.core
 
 from rayito.cli._console import translated_failures
+from rayito.cli.agent import agent_app
 from rayito.cli.doctor import doctor
 from rayito.cli.domain import domain_app
 from rayito.cli.events import events_app
@@ -53,6 +54,7 @@ app.add_typer(stack_app, name="stack")
 app.add_typer(events_app, name="events")
 app.add_typer(template_app, name="template")
 app.add_typer(domain_app, name="domain")
+app.add_typer(agent_app, name="agent")
 app.command("doctor")(doctor)
 
 

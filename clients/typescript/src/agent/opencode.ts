@@ -411,7 +411,7 @@ function serveScript(): string {
     "set -u",
     `mkdir -p ${shellQuote(OPENCODE_STATE_DIR)}`,
     `umask 077 && head -c ${SERVE_SECRET_BYTES} /dev/urandom | base64 > ${secret}`,
-    `OPENCODE_SERVER_PASSWORD="$(cat ${secret})" OPENCODE_CONFIG=${shellQuote(OPENCODE_CONFIG_PATH)} ${envs} exec opencode serve --hostname 127.0.0.1 --port ${OPENCODE_SERVE_PORT}`,
+    `OPENCODE_SERVER_PASSWORD="$(cat ${secret})" OPENCODE_CONFIG=${shellQuote(OPENCODE_CONFIG_PATH)} ${envs} AWS_BEARER_TOKEN_BEDROCK=${MODEL_CREDENTIAL_PLACEHOLDER} exec opencode serve --hostname 127.0.0.1 --port ${OPENCODE_SERVE_PORT}`,
   ];
   return `${lines.join("\n")}\n`;
 }

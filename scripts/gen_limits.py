@@ -172,6 +172,19 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentRipgrepSha256",
         "defaultWarmupStepTimeoutSeconds",
     ),
+    (
+        # ai-agent-fast-start (design.md §6, option A): the prefetch daemon
+        # of the agent template wakes every `agentPrefetchIntervalSeconds`
+        # and treats a wall-clock jump above
+        # `agentPrefetchRestoreJumpSeconds` as a snapshot restore (launch
+        # or resume, AWS_API_NOTES §15). The requirements sha256 pins the
+        # hash-locked deepagents venv file the template copies (package
+        # data `rayito/_agent/_assets/requirements-deepagents.txt`). Not AWS
+        # properties.
+        "agentPrefetchRestoreJumpSeconds",
+        "agentPrefetchIntervalSeconds",
+        "agentDeepagentsRequirementsSha256",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.
@@ -199,6 +212,7 @@ CONSTANT_NAME_OVERRIDES = {
     "supportedMemoryMiB": "SUPPORTED_MEMORY_MIB",
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
+    "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
 }
 
 
@@ -283,7 +297,10 @@ def python_line(key: str, value: object) -> str:
         if len(elements) == 1:
             return f"{name}: Final = ({elements[0]},)"
         return python_collection(f"{name}: Final = ", elements, "(", ")")
-    return f"{name}: Final = {python_scalar(value)}"
+    line = f"{name}: Final = {python_scalar(value)}"
+    if len(line) <= LINE_WIDTH:
+        return line
+    return f"{name}: Final = (\n{INDENT}{python_scalar(value)}\n)"
 
 
 def render_python(limits: dict[str, object]) -> str:
