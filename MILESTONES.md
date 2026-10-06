@@ -1645,9 +1645,14 @@ incluido el montaje EFS real. Los pocos fallos de la primera pasada
 repetirlos aislados. Limpieza: sólo se borró lo creado por la ejecución, y
 el inventario de después coincide con el de antes salvo el orden.
 
-Siguen abiertos, a la espera de su aceptación dirigida en AWS:
-`m15-custom-domain`, `sec-infra-iam-lambdas` (6.1),
-`sec-rayd-agent-hardening` (9.3) y `sec-sandbox-isolation` (7.3).
+Archivados después, el 2026-10-05: `leak-prevention-hygiene` (sin cambio de
+runtime: gates y CI) y `sec-sandbox-isolation`, cuya tarea 7.3 quedó cubierta
+por las comprobaciones dirigidas de esta aceptación. Siguen abiertos, a la
+espera de la parte de su aceptación dirigida que falta medir en AWS:
+`m15-custom-domain` (3.6 y 9.4), `sec-infra-iam-lambdas` (6.1: el GSI al
+actualizar y una pasada del reconciliador) y `sec-rayd-agent-hardening`
+(9.3: `start_cmd` que llama a `/run` al arrancar, `kernels_killed` y la
+línea de log del `/run` genuino).
 
 ---
 

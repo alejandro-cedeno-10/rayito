@@ -54,3 +54,11 @@
   deliver, reconcile) with the new templates, before archiving: the GSI
   added on update, `LoggingConfig`, `FilterCriteria`, the per-job
   policies and admission under a real suspend/resume loop.
+  Partly verified in the 0.7.0 acceptance (2026-10-04, us-east-1): a
+  fresh deploy reaches `CREATE_COMPLETE`; the per-job roles forward and
+  deliver `created`, `paused`, `resumed` and `killed` to a public receiver
+  with valid signatures; deliveries to private and link-local URLs end as
+  `failed`; the deliverer logs to the stack's own log group
+  (`LoggingConfig`). Still to measure: the GSI added by updating a stack
+  deployed from the previous template, and a reconciler pass.
+
