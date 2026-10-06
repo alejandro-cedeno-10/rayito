@@ -29,8 +29,9 @@ cuándo ocurre y qué hacer.
     ├── RateLimitException
     ├── GitUpstreamException
     ├── SecretException
-    └── SandboxIndexException
-        └── IndexWriteException
+    ├── SandboxIndexException
+    │   └── IndexWriteException
+    └── AgentException
     AuthenticationException          (Exception: un problema de credenciales, no del sandbox)
     └── GitAuthException
     QuotaExceededException           (Exception)
@@ -62,8 +63,9 @@ cuándo ocurre y qué hacer.
     ├── GitUpstreamError
     ├── SecretError
     │   └── SecretNotFoundError
-    └── SandboxIndexError
-        └── IndexWriteError
+    ├── SandboxIndexError
+    │   └── IndexWriteError
+    └── AgentError
     AuthenticationError              (Error)
     └── GitAuthError
     QuotaExceededError               (Error)
@@ -119,6 +121,30 @@ excepción: llega en `execution.error`.
 | `BuildException` | `BuildError` | el build de la imagen (`reason`) | `Template.build()` falló: un paso del Dockerfile (`step`, `command`, `exit_code`, `log_tail`), el `ready_cmd`, la cuota de builds o el plazo | ver [Templates](../funciones-opcionales/templates.md#errores) |
 | `TemplateException` | `TemplateError` | el SDK | nombre de template inválido (1-64 `[A-Za-z0-9_-]`, sin `:tag`) | corrige el nombre; la imagen base inválida es `BuildException` con `reason="base_image_*"` |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
+| `AgentException` | `AgentError` | el runtime del agente (`reason`) | `sbx.agent.run()`/`.stream()` falló: ver la tabla siguiente | lee `reason`, `session_id` y `usage`; nunca contiene el prompt ni la respuesta |
+
+## `AgentException` / `AgentError`
+
+En `main` desde `ai-agent-core`, sin publicar todavía (llega con 0.8.0):
+[Agente en el sandbox](../guias/agente-en-el-sandbox.md).
+
+Lleva `reason`, `session_id`/`sessionId`, `usage`, `exit_code`/`exitCode` y `detail_code`/`detailCode`.
+El mensaje es una tabla fija en español por `reason`; nunca el texto crudo
+del proveedor, el prompt ni el contenido generado.
+
+| `reason` | Cuándo |
+|---|---|
+| `model_error` | el modelo respondió con error (`detail_code` lleva sólo el nombre de la clase de error, como `APIError`; nunca el mensaje) |
+| `runtime_error` | el proceso del runtime falló por otra causa (código de salida distinto de 0 sin evento `error`) |
+| `runtime_missing` | `opencode` no está en el `PATH` o, con `attach=True`, su servidor residente no responde |
+| `runtime_version_mismatch` | reservado: la comprobación de `AgentSpec.runtime_version` es próximamente y hoy no se emite |
+| `protocol_error` | una línea del protocolo no se pudo interpretar (ver también `dropped_lines` en `AgentResult`) |
+| `timeout` | venció `AgentLimits.timeout_seconds`/`timeoutMs` |
+| `max_steps` | se alcanzó el límite duro de pasos del SDK (`max_steps + 1`); el stream termina, pero el runtime no se mata (llama a `abort()`) |
+| `token_budget` | se superó `max_total_tokens` tras un `StepFinished` (puede sobrepasarse hasta un paso completo); el runtime no se mata (llama a `abort()`) |
+| `output_limit` | reservado: próximamente, cuando la salida supere `max_output_bytes`; hoy no se emite |
+| `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
+| `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 
 ## Errores del shim de E2B
 

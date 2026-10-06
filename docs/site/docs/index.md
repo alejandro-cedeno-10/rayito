@@ -152,10 +152,12 @@ código y reconexión en Python, Python async y TypeScript.
 
     ---
 
-    Lo que cuesta cada operación, medido en AWS real. Las funciones con
-    coste propio están apagadas por defecto.
+    Lo que cuesta cada operación (precio de lista y medido en AWS real), el
+    pool y un agente de IA: VM frente a tokens del modelo. Las funciones
+    con coste propio están apagadas por defecto.
 
-    [:octicons-arrow-right-24: Modelo de costes](cost.md)
+    [:octicons-arrow-right-24: Precios](cost.md) ·
+    [Agente en el sandbox](guias/agente-en-el-sandbox.md)
 
 -   :material-shield-lock:{ .lg .middle } **Seguridad**
 
