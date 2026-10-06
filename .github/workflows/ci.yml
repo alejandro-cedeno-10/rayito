@@ -337,9 +337,9 @@ jobs:
           cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
           python3 -c "import json; d = json.load(open('crates/rayd/rayd.cdx.json')); assert d['specVersion'] == '1.5', d['specVersion']; assert d['metadata']['component']['name'] == 'rayd'; print('sbom components:', len(d['components']))"
       - uses: ./.github/actions/cargo-about
-      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from Cargo.lock (fails when stale; `make licenses` refreshes it)
+      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from Cargo.lock and lists exactly the crates cargo tree compiles into rayd (`make licenses` refreshes it)
         run: make licenses-check
-      - name: THIRD_PARTY_LICENSES.md lists every crate linked into rayd (.dep-v0) and every crate NOTICE file is carried
+      - name: every crate THIRD_PARTY_LICENSES.md lists is recorded in the binary's .dep-v0, and every crate NOTICE file is carried
         run: |
           cargo metadata --format-version 1 --locked --offline > "$RUNNER_TEMP/cargo-metadata.json"
           python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md \

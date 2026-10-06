@@ -10,8 +10,9 @@
 
 ## 2. Gates
 
-- [x] 2.1 `scripts/check_third_party_licenses.py` (coverage of `.dep-v0`,
-  upstream `NOTICE` files) with `scripts/tests/test_check_third_party_licenses.py`.
+- [x] 2.1 `scripts/check_third_party_licenses.py` (exact coverage of the
+  `cargo tree` graph, listed crates recorded in `.dep-v0`, upstream
+  `NOTICE` files; `.dep-v0` found to be a superset on the first CI run) with `scripts/tests/test_check_third_party_licenses.py`.
 - [x] 2.2 `.github/actions/cargo-about` (binary pinned by sha256).
 - [x] 2.3 `ci.yml` `build`: `make licenses-check`, coverage, staged
   notices, zip content check, notices in the artifact.

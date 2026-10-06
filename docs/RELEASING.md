@@ -137,9 +137,14 @@ binario. `THIRD_PARTY_LICENSES.md` (en la raíz, versionado) lo genera
 licencias que `deny.toml`, y la plantilla `about.hbs`) desde `Cargo.lock`
 para `aarch64-unknown-linux-musl`, con `--frozen` (sin red). El job `build`
 de CI y `rayd-build` corren `make licenses-check` (falla si el fichero no es
-el que sale del lock actual) y `scripts/check_third_party_licenses.py`
-(todo crate del `.dep-v0` del binario está listado, y ningún crate listado
-trae un `NOTICE` que no recoja el `NOTICE` raíz). `LICENSE`, `NOTICE` y
+el que sale del lock actual o si sus crates no son exactamente los que
+`cargo tree -p rayd --target aarch64-unknown-linux-musl -e normal` compila)
+y `scripts/check_third_party_licenses.py --binary --metadata` (todo crate
+listado está en el `.dep-v0` del binario, y ningún crate listado trae un
+`NOTICE` que no recoja el `NOTICE` raíz). El `.dep-v0` no sirve como lista
+exacta: `cargo auditable` lo saca de `cargo metadata`, que unifica features
+con las dev-dependencies del workspace, y nombra crates que el binario no
+enlaza (`ring`, por `rcgen`). `LICENSE`, `NOTICE` y
 `THIRD_PARTY_LICENSES.md` van en `licenses/` dentro de `rayito-image.zip`
 (`make image-licenses`; `image/Dockerfile` los copia a
 `/usr/share/doc/rayd/`) y como assets de la release, listados en

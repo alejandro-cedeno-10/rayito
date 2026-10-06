@@ -19,10 +19,12 @@ The 2026-10 OSS standards audit ranked this first
   sources, the policy, the template and the pinned tool. The file is
   committed so license changes are reviewed in the PR that changes the lock.
 - **Staleness and coverage gates**: `make licenses-check` fails when the
-  committed file differs from a fresh generation;
-  `scripts/check_third_party_licenses.py` fails when a crate in the
-  binary's `.dep-v0` is not listed at the same version, or when a listed
-  crate ships a `NOTICE` file the root `NOTICE` does not carry. CI's
+  committed file differs from a fresh generation, or when its crates are
+  not exactly the third-party crates `cargo tree -p rayd --target
+  aarch64-unknown-linux-musl -e normal` compiles;
+  `scripts/check_third_party_licenses.py` also fails when a listed crate is
+  absent from the binary's `.dep-v0`, or ships a `NOTICE` file the root
+  `NOTICE` does not carry. CI's
   `build` job and `release.yml`'s `rayd-build` run both. cargo-about comes
   from `.github/actions/cargo-about` (release binary pinned by sha256).
 - **Shipped with every copy of rayd**: `LICENSE`, `NOTICE` and

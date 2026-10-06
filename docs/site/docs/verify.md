@@ -93,8 +93,9 @@ assets de la release (`LICENSE`, `NOTICE` y `THIRD_PARTY_LICENSES.md`), en
 `licenses/` dentro de `rayito-image.zip` y, en la imagen construida desde
 ese zip, en `/usr/share/doc/rayd/`. `THIRD_PARTY_LICENSES.md` lo genera
 cargo-about desde el `Cargo.lock` del tag, y la release comprueba que lista
-todos los crates del `.dep-v0` del binario; puedes repetirlo con el binario
-descargado:
+exactamente los crates que `cargo tree` compila en `rayd` para
+`aarch64-unknown-linux-musl` y que todos ellos están en el `.dep-v0` del
+binario. Lo segundo puedes repetirlo con el binario descargado:
 
 ```bash
 python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md --binary rayd   # del repositorio

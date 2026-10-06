@@ -2,16 +2,21 @@
 
 ``make licenses`` generates the notices file with cargo-about from
 ``Cargo.lock`` (``about.toml``, ``about.hbs``), and ``make licenses-check``
-proves the committed copy is not stale. This script closes the two gaps a
-regeneration alone cannot see, with the standard library only:
+proves the committed copy is not stale. This script cross-checks it
+against sources cargo-about does not share, with the standard library only:
 
-- ``--binary``: every third-party crate that the ``rayd`` binary embeds in
-  its ``.dep-v0`` section (``cargo auditable``; read by
-  ``scripts/check_auditable.py``) and that is linked at run time is listed in
-  the notices file at the same version. Build-time packages (``kind:
-  build``: build scripts and proc macros) and the workspace's own crates
-  (any source other than ``crates.io``) are not distributed in the binary
-  and are skipped. A crate the cargo-about graph missed fails here.
+- ``--tree``: the output of ``cargo tree --frozen -p rayd --target
+  aarch64-unknown-linux-musl -e normal --prefix none --format '{p}'``, i.e.
+  cargo's own feature resolver for exactly what ``rayd`` compiles. The
+  third-party crates there and the crates the notices list must be the same
+  set: a crate cargo-about's graph missed, or a stale extra entry, fails.
+- ``--binary``: every listed crate is in the ``.dep-v0`` section that
+  ``cargo auditable`` embeds in ``rayd`` (read by
+  ``scripts/check_auditable.py``), so the notices belong to the binary
+  being shipped. Only this direction holds: ``.dep-v0`` comes from
+  ``cargo metadata``, which unifies features across the whole workspace
+  including dev-dependencies, so it also names crates the release binary
+  never links (``ring`` through the ``rcgen`` dev-dependency, for one).
 - ``--metadata``: the JSON of ``cargo metadata --format-version 1`` for the
   workspace. A listed crate whose source directory carries a ``NOTICE`` file
   (Apache-2.0 §4(d): its text must travel with the binary) fails unless the
@@ -21,6 +26,7 @@ regeneration alone cannot see, with the standard library only:
 Usage::
 
     python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md \\
+        --tree rayd-tree.txt \\
         --binary target/aarch64-unknown-linux-musl/release/rayd \\
         --metadata cargo-metadata.json
 """
@@ -39,8 +45,9 @@ import check_auditable
 CRATE_LINE = re.compile(
     r"^- `(?P<name>[A-Za-z0-9_.-]+) (?P<version>[^`\s]+)`", re.MULTILINE
 )
+TREE_LINE = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+) v(?P<version>\S+)(?P<rest>.*)$")
+PATH_DEPENDENCY = " (/"
 REGISTRY_SOURCE = "crates.io"
-BUILD_KIND = "build"
 NOTICE_PREFIX = "notice"
 ROOT_NOTICE = Path(__file__).resolve().parents[1] / "NOTICE"
 
@@ -61,21 +68,31 @@ def listed_crates(notices: str) -> set[tuple[str, str]]:
     return crates
 
 
-def shipped_crates(packages: list[dict[str, Any]]) -> set[tuple[str, str]]:
-    """Third-party crates linked into the binary at run time, from ``.dep-v0``."""
+def tree_crates(tree: str) -> set[tuple[str, str]]:
+    """Third-party crates of a ``cargo tree --prefix none --format '{p}'``
+    listing; path dependencies (the workspace's own crates) are skipped."""
+    crates: set[tuple[str, str]] = set()
+    for line in tree.splitlines():
+        match = TREE_LINE.match(line.strip())
+        if match and PATH_DEPENDENCY not in match["rest"]:
+            crates.add((match["name"], match["version"]))
+    if not crates:
+        raise NoticesError("the cargo tree listing names no third-party crate")
+    return crates
+
+
+def recorded_crates(packages: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """crates.io packages recorded in ``.dep-v0`` (a superset of the linked
+    ones, see the module docstring)."""
     return {
         (str(package["name"]), str(package["version"]))
         for package in packages
         if package.get("source") == REGISTRY_SOURCE
-        and package.get("kind", "runtime") != BUILD_KIND
-        and not package.get("root", False)
     }
 
 
-def missing_from_notices(
-    shipped: set[tuple[str, str]], listed: set[tuple[str, str]]
-) -> list[str]:
-    return sorted(f"{name} {version}" for name, version in shipped - listed)
+def labels(crates: set[tuple[str, str]]) -> list[str]:
+    return sorted(f"{name} {version}" for name, version in crates)
 
 
 def crates_with_notice_files(
@@ -116,14 +133,25 @@ def check(
     binary: Path | None,
     metadata_path: Path | None,
     root_notice_path: Path = ROOT_NOTICE,
+    tree_path: Path | None = None,
 ) -> int:
     listed = listed_crates(notices_path.read_text(encoding="utf-8"))
     problems: list[str] = []
+    if tree_path is not None:
+        compiled = tree_crates(tree_path.read_text(encoding="utf-8"))
+        problems += [
+            f"{crate}: compiled into rayd but not listed"
+            for crate in labels(compiled - listed)
+        ]
+        problems += [
+            f"{crate}: listed but not compiled into rayd"
+            for crate in labels(listed - compiled)
+        ]
     if binary is not None:
         packages = check_auditable.embedded_packages(binary.read_bytes())
-        missing = missing_from_notices(shipped_crates(packages), listed)
         problems += [
-            f"{crate}: linked into {binary.name} but not listed" for crate in missing
+            f"{crate}: listed but absent from the .dep-v0 of {binary.name}"
+            for crate in labels(listed - recorded_crates(packages))
         ]
     if metadata_path is not None:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -141,6 +169,9 @@ def check(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("notices", type=Path, help="THIRD_PARTY_LICENSES.md")
+    parser.add_argument(
+        "--tree", type=Path, help="output of `cargo tree -p rayd ... --format '{p}'`"
+    )
     parser.add_argument("--binary", type=Path, help="rayd built with `cargo auditable`")
     parser.add_argument(
         "--metadata", type=Path, help="output of `cargo metadata --format-version 1`"
@@ -151,7 +182,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
-        count = check(args.notices, args.binary, args.metadata)
+        count = check(args.notices, args.binary, args.metadata, tree_path=args.tree)
     except (NoticesError, check_auditable.AuditableError) as exc:
         print(f"check_third_party_licenses: {exc}", file=sys.stderr)
         return 1

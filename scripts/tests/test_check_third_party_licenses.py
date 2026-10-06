@@ -1,7 +1,8 @@
 """``check_third_party_licenses.py`` on synthetic inputs: the committed
-``THIRD_PARTY_LICENSES.md`` parses, a crate linked into the binary but not
-listed fails, build-time and workspace packages are skipped, and a listed
-crate shipping a ``NOTICE`` file fails until the root ``NOTICE`` names it."""
+``THIRD_PARTY_LICENSES.md`` parses, the notices and the ``cargo tree`` graph
+must be the same set (workspace crates skipped), every listed crate must be
+in the binary's ``.dep-v0`` (a superset), and a listed crate shipping a
+``NOTICE`` file fails until the root ``NOTICE`` names it."""
 
 from __future__ import annotations
 
@@ -64,29 +65,70 @@ def test_the_committed_file_lists_the_core_crates() -> None:
     assert "rayd-core" not in listed
 
 
-def test_binary_coverage_passes_and_skips_build_and_workspace_packages(
-    tmp_path: Path,
-) -> None:
-    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
-    binary = write(tmp_path, "rayd", auditable_elf(graph()))
-    assert notices.check(md, binary, None) == 2
+TREE = """axum v0.8.9
+rayd-core v0.7.0 (/work/crates/rayd-core)
+tokio v1.53.1
+async-trait v0.1.92 (proc-macro)
+tokio v1.53.1 (*)
+"""
 
 
-def test_a_linked_crate_missing_from_the_notices_fails(
+def test_tree_coverage_passes_and_skips_path_dependencies(tmp_path: Path) -> None:
+    md = write(
+        tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES + "- `async-trait 0.1.92`\n"
+    )
+    tree = write(tmp_path, "tree.txt", TREE)
+    assert notices.check(md, None, None, tree_path=tree) == 3
+
+
+def test_a_compiled_crate_missing_from_the_notices_fails(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
-    extra = {"name": "ring", "version": "0.17.14", "source": "crates.io"}
-    binary = write(tmp_path, "rayd", auditable_elf(graph(extra)))
-    assert notices.main([str(md), "--binary", str(binary)]) == 1
-    assert "ring 0.17.14: linked into rayd but not listed" in capsys.readouterr().err
+    tree = write(tmp_path, "tree.txt", TREE)
+    assert notices.main([str(md), "--tree", str(tree)]) == 1
+    assert (
+        "async-trait 0.1.92: compiled into rayd but not listed"
+        in capsys.readouterr().err
+    )
+
+
+def test_a_stale_extra_entry_fails(tmp_path: Path) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES + "- `ring 0.17.14`\n")
+    tree = write(
+        tmp_path, "tree.txt", TREE.replace("async-trait v0.1.92 (proc-macro)\n", "")
+    )
+    with pytest.raises(
+        notices.NoticesError, match=r"ring 0\.17\.14: listed but not compiled"
+    ):
+        notices.check(md, None, None, tree_path=tree)
 
 
 def test_a_version_drift_fails(tmp_path: Path) -> None:
     md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES.replace("1.53.1", "1.52.0"))
+    tree = write(tmp_path, "tree.txt", "axum v0.8.9\ntokio v1.53.1\n")
+    with pytest.raises(notices.NoticesError, match=r"tokio 1\.53\.1: compiled"):
+        notices.check(md, None, None, tree_path=tree)
+
+
+def test_the_binary_records_every_listed_crate(tmp_path: Path) -> None:
+    """``.dep-v0`` is a superset (dev-dependency features unify in ``cargo
+    metadata``), so an extra recorded crate such as ``ring`` passes."""
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES)
+    extra = {"name": "ring", "version": "0.17.14", "source": "crates.io"}
+    binary = write(tmp_path, "rayd", auditable_elf(graph(extra)))
+    assert notices.check(md, binary, None) == 2
+
+
+def test_a_listed_crate_absent_from_the_binary_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    md = write(tmp_path, "THIRD_PARTY_LICENSES.md", NOTICES + "- `serde 1.0.228`\n")
     binary = write(tmp_path, "rayd", auditable_elf(graph()))
-    with pytest.raises(notices.NoticesError, match=r"tokio 1\.53\.1"):
-        notices.check(md, binary, None)
+    assert notices.main([str(md), "--binary", str(binary)]) == 1
+    assert "serde 1.0.228: listed but absent from the .dep-v0 of rayd" in (
+        capsys.readouterr().err
+    )
 
 
 def test_an_empty_file_fails(tmp_path: Path) -> None:

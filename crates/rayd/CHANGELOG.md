@@ -17,9 +17,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   Zlib y el CC0 de `notify`) cuyas licencias piden que el aviso viaje con el
   binario. `THIRD_PARTY_LICENSES.md` lo genera `make licenses` con
   cargo-about 0.9.2 (`about.toml`, misma lista que `deny.toml`) desde
-  `Cargo.lock`, y CI y la release fallan si está desfasado
-  (`make licenses-check`) o si falta algún crate del `.dep-v0` del binario
-  (`scripts/check_third_party_licenses.py`). `LICENSE`, `NOTICE` y
+  `Cargo.lock`, y CI y la release fallan si está desfasado, si sus crates
+  no son exactamente los que `cargo tree` compila en `rayd`
+  (`make licenses-check`) o si lista uno que el `.dep-v0` del binario no
+  registra (`scripts/check_third_party_licenses.py`). `LICENSE`, `NOTICE` y
   `THIRD_PARTY_LICENSES.md` viajan en `licenses/` de `rayito-image.zip`, en
   `/usr/share/doc/rayd/` de la imagen y como assets de la release, y
   `SHA256SUMS` se firma (`SHA256SUMS.sigstore.json`), con lo que la firma

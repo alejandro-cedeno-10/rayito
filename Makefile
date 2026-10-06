@@ -121,17 +121,21 @@ licenses: require-cargo-about
 	  tr -d '\r' < "$$generated" > $(THIRD_PARTY_LICENSES)
 
 # Falla si el THIRD_PARTY_LICENSES.md versionado no es exactamente el que
-# genera el Cargo.lock actual (job `build` de CI y `rayd-build` de release).
+# genera el Cargo.lock actual, o si sus crates no son exactamente los que
+# `cargo tree` (el resolver de cargo, sin cargo-about) compila en rayd para
+# el target de release (job `build` de CI y `rayd-build` de release).
 licenses-check: require-cargo-about
 	cargo fetch --locked
-	@generated="$$(mktemp)" && trap 'rm -f "$$generated"' EXIT && \
+	@generated="$$(mktemp)" && tree="$$(mktemp)" && trap 'rm -f "$$generated" "$$tree"' EXIT && \
 	  cargo about generate $(CARGO_ABOUT_ARGS) -o "$$generated" && \
 	  if tr -d '\r' < "$$generated" | diff -u $(THIRD_PARTY_LICENSES) -; then \
 	    echo "$(THIRD_PARTY_LICENSES): al día con Cargo.lock"; \
 	  else \
 	    echo "$(THIRD_PARTY_LICENSES) no coincide con Cargo.lock: ejecuta make licenses y versiona el resultado"; \
 	    exit 1; \
-	  fi
+	  fi && \
+	  cargo tree --frozen -p rayd --target $(TARGET) -e normal --prefix none --format '{p}' > "$$tree" && \
+	  python3 scripts/check_third_party_licenses.py $(THIRD_PARTY_LICENSES) --tree "$$tree"
 
 # Deja LICENSE, NOTICE y THIRD_PARTY_LICENSES.md en image/licenses/, que
 # image/Dockerfile copia a /usr/share/doc/rayd/; el zip se niega a empaquetar

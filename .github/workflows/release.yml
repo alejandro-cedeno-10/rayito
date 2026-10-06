@@ -439,9 +439,9 @@ jobs:
       - name: CycloneDX 1.5 SBOM (crates/rayd/rayd.cdx.json)
         run: cargo cyclonedx --manifest-path crates/rayd/Cargo.toml --target aarch64-unknown-linux-musl --format json --no-build-deps --spec-version 1.5
       - uses: ./.github/actions/cargo-about
-      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from the tag's Cargo.lock
+      - name: THIRD_PARTY_LICENSES.md is what cargo-about generates from the tag's Cargo.lock and lists exactly the crates cargo tree compiles into rayd
         run: make licenses-check
-      - name: THIRD_PARTY_LICENSES.md lists every crate linked into rayd (.dep-v0) and every crate NOTICE file is carried
+      - name: every crate THIRD_PARTY_LICENSES.md lists is recorded in the binary's .dep-v0, and every crate NOTICE file is carried
         run: |
           cargo metadata --format-version 1 --locked --offline > "$RUNNER_TEMP/cargo-metadata.json"
           python3 scripts/check_third_party_licenses.py THIRD_PARTY_LICENSES.md \

@@ -38,11 +38,20 @@ produced the notices those licenses require.
    that what it ships is what `main` reviewed (`make licenses-check` in
    `rayd-build`). Cost: a Dependabot cargo PR needs `make licenses` pushed
    to its branch; CI names the command when it fails.
-6. **Coverage against the real binary.** A regeneration only proves the
-   file matches cargo-about's view of the graph.
-   `check_third_party_licenses.py --binary` cross-checks the `.dep-v0`
-   section `cargo auditable` embeds (runtime, crates.io packages) so a
-   graph-filtering mistake cannot ship an unlisted crate.
+6. **Coverage against cargo's own resolver.** A regeneration only proves
+   the file matches cargo-about's view of the graph (its own feature
+   resolution through `krates`). `make licenses-check` also requires the
+   listed crates to equal, in both directions, the third-party crates of
+   `cargo tree --frozen -p rayd --target aarch64-unknown-linux-musl -e
+   normal`, i.e. what cargo compiles for the release build. The binary's
+   `.dep-v0` was the first choice but is a superset: `cargo auditable`
+   takes it from `cargo metadata`, which unifies features with the
+   workspace's dev-dependencies, and the first CI run showed it naming
+   `ring`, `untrusted 0.7`, `getrandom 0.2`, `zlib-rs`, `hyper-timeout` and
+   `aho-corasick`, none of which the release binary links (no `ring_core_*`
+   symbol, no source path of theirs). So `--binary` checks only the
+   direction that holds: every listed crate is recorded in `.dep-v0`, which
+   ties the notices to the binary being shipped.
 7. **Upstream NOTICE files.** cargo-about collects license texts only.
    None of today's 219 crates ships a `NOTICE`; `--metadata` fails if a
    listed crate starts shipping one that the root `NOTICE` does not name,
