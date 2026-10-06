@@ -1,0 +1,116 @@
+{
+  "session_id": "rda_0000000000000000000000000000000a",
+  "ignored_lines": 3,
+  "events": [
+    {
+      "index": 1,
+      "type": "step_started"
+    },
+    {
+      "text": "texto sintético",
+      "type": "text_delta"
+    },
+    {
+      "text": "texto sintético",
+      "type": "text"
+    },
+    {
+      "index": 1,
+      "usage": {
+        "input": 900,
+        "output": 20,
+        "reasoning": 0,
+        "cache_read": 4100,
+        "cache_write": 0
+      },
+      "finish_reason": null,
+      "type": "step_finished"
+    },
+    {
+      "call_id": "c1",
+      "name": "execute",
+      "status": "error",
+      "input": {
+        "command": "rm -rf x"
+      },
+      "output": "Permiso denegado por la configuración del agente.",
+      "output_truncated": false,
+      "type": "tool_call"
+    },
+    {
+      "index": 2,
+      "type": "step_started"
+    },
+    {
+      "text": "texto sintético",
+      "type": "text_delta"
+    },
+    {
+      "text": "texto sintético",
+      "type": "text"
+    },
+    {
+      "index": 2,
+      "usage": {
+        "input": 10,
+        "output": 2,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": null,
+      "type": "step_finished"
+    },
+    {
+      "call_id": "c2",
+      "name": "ls",
+      "status": "completed",
+      "input": {
+        "path": "/"
+      },
+      "output": "['/notas.txt']",
+      "output_truncated": false,
+      "type": "tool_call"
+    },
+    {
+      "index": 3,
+      "type": "step_started"
+    },
+    {
+      "text": "listo final",
+      "type": "text_delta"
+    },
+    {
+      "text": "listo final",
+      "type": "text"
+    },
+    {
+      "text": "razonamiento sintético",
+      "type": "reasoning"
+    },
+    {
+      "index": 3,
+      "usage": {
+        "input": 30,
+        "output": 3,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": "end_turn",
+      "type": "step_finished"
+    }
+  ],
+  "done": {
+    "session_id": "rda_0000000000000000000000000000000a",
+    "exit_code": 0,
+    "usage": {
+      "input": 940,
+      "output": 25,
+      "reasoning": 0,
+      "cache_read": 4100,
+      "cache_write": 0
+    },
+    "type": "done"
+  }
+}

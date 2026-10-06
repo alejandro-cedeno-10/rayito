@@ -1,11 +1,12 @@
 """Registro `nombre -> AgentRuntime` (`ai-agent-core`, design.md §3):
-`"opencode"` ya está; `ai-agent-deepagents` añadirá `"deepagents"`. Un
+`"opencode"` (`ai-agent-core`) y `"deepagents"` (`ai-agent-deepagents`). Un
 nombre sin adaptador falla con `UnimplementedError` en vez de con un
 `KeyError` opaco. Un llamante siempre puede saltarse el registro pasando
 su propio objeto `AgentRuntime` (lo que hacen los tests con un doble)."""
 
 from __future__ import annotations
 
+from rayito._agent._deepagents import DeepAgents
 from rayito._agent._opencode import OpenCodeRuntime
 from rayito._agent._runtime import AgentRuntime
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
@@ -14,6 +15,7 @@ from rayito.exceptions import InvalidArgumentException, UnimplementedError
 #: tocar el resto de este módulo.
 AGENT_RUNTIMES: dict[str, AgentRuntime] = {
     "opencode": OpenCodeRuntime(),
+    "deepagents": DeepAgents(),
 }
 
 

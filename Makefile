@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -182,6 +182,7 @@ lint:
 	python scripts/check_hygiene.py
 	uvx ruff==0.16.7 check scripts
 	python scripts/gen_limits.py --check
+	python scripts/gen_agent_assets.py --check
 	python scripts/check_license.py
 	@if [ -f $(PYTHON_CLIENT)/pyproject.toml ]; then cd $(PYTHON_CLIENT) && uv run ruff check . && uv run ruff format --check . && uv run mypy src tests; fi
 	$(MAKE) lint-typescript
@@ -192,6 +193,18 @@ lint-typescript:
 	else \
 	  echo "lint-typescript: $(TS_CLIENT) sin paquete todavía, se omite"; \
 	fi
+
+# Runner de deepagents con el venv real (pines con hash de
+# dev/local/agent/requirements-deepagents.txt) en Linux arm64 y un modelo
+# falso: sin red hacia ningún proveedor ni coste.
+AGENT_RUNNER_IMAGE ?= python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+agent-runner-test:
+	docker run --rm --platform linux/arm64 -v "$(CURDIR)":/src:ro $(AGENT_RUNNER_IMAGE) sh -c '\
+	  python -m venv /venv && \
+	  /venv/bin/pip install --quiet --no-cache-dir --require-hashes --no-deps --only-binary=:all: \
+	    -r /src/dev/local/agent/requirements-deepagents.txt && \
+	  /venv/bin/python /src/dev/local/agent/runner_smoke.py \
+	    /src/clients/python/src/rayito/_agent/_runner/deepagents_runner.py'
 
 # Regenera _limits.py y limits.ts desde limits.json (fuente única de los
 # límites de la API que validan ambos SDKs).

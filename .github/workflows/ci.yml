@@ -92,6 +92,8 @@ jobs:
       - run: uvx ruff==0.16.7 check scripts
       - name: limits.json renders _limits.py and limits.ts without drift
         run: python3 scripts/gen_limits.py --check
+      - name: the TypeScript copy of the deepagents runner matches the Python one
+        run: python3 scripts/gen_agent_assets.py --check
       - name: infra/*.yaml renders the SDKs' stack templates/artifacts without drift
         run: python3 scripts/gen_stack_assets.py --check
       - name: Apache-2.0 declared in the five manifests, LICENSE and NOTICE copies identical
@@ -303,6 +305,9 @@ jobs:
         env:
           RAYITO_REQUIRE_BASH_KERNEL: "1"
         run: cd kernel-sidecar && uv run --with-requirements requirements.txt --with-requirements requirements-poly.txt pytest -m kernel
+      - name: deepagents runner with the real pinned venv and a fake model (no provider calls)
+        timeout-minutes: 15
+        run: make agent-runner-test
 
   build:
     name: rayd aarch64-unknown-linux-musl

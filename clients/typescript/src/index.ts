@@ -10,6 +10,7 @@
 
 (Symbol as { asyncDispose?: symbol }).asyncDispose ??= Symbol.for("Symbol.asyncDispose");
 
+export { DeepAgents, type DeepAgentsOptions } from "./agent/deepagents.js";
 export {
   AgentLimits,
   type AgentLimitsOptions,

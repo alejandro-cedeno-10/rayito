@@ -1,0 +1,24 @@
+{
+  "new": {
+    "script": "set -u\nmkdir -p '/home/user/.rayito/agent/deepagents/sessions'\nexec 9>'/home/user/.rayito/agent/run.lock'\nif ! flock -n 9; then printf '%s\\n' '{\"v\":1,\"type\":\"rayito.busy\"}'; exit 0; fi\nif [ ! -x '/opt/agents/deepagents/bin/python' ] || [ ! -r '/opt/agents/rayito/deepagents_runner.py' ]; then printf '%s\\n' '{\"v\":1,\"type\":\"rayito.runtime_missing\"}'; exit 0; fi\nexec '/opt/agents/deepagents/bin/python' '/opt/agents/rayito/deepagents_runner.py' '/home/user/.rayito/agent/deepagents/config.json'\n",
+    "envs": {
+      "HOME": "/home/user",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONUNBUFFERED": "1",
+      "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+      "AWS_REGION": "us-east-1"
+    },
+    "stdin": "{\"v\":1,\"prompt\":\"hola ñ\",\"session_id\":null,\"model\":null,\"reasoning\":false}"
+  },
+  "resume": {
+    "script": "set -u\nmkdir -p '/home/user/.rayito/agent/deepagents/sessions'\nexec 9>'/home/user/.rayito/agent/run.lock'\nif ! flock -n 9; then printf '%s\\n' '{\"v\":1,\"type\":\"rayito.busy\"}'; exit 0; fi\nif [ ! -x '/opt/agents/deepagents/bin/python' ] || [ ! -r '/opt/agents/rayito/deepagents_runner.py' ]; then printf '%s\\n' '{\"v\":1,\"type\":\"rayito.runtime_missing\"}'; exit 0; fi\nexec '/opt/agents/deepagents/bin/python' '/opt/agents/rayito/deepagents_runner.py' '/home/user/.rayito/agent/deepagents/config.json'\n",
+    "envs": {
+      "HOME": "/home/user",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONUNBUFFERED": "1",
+      "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+      "AWS_REGION": "us-east-1"
+    },
+    "stdin": "{\"v\":1,\"prompt\":\"hola ñ\",\"session_id\":\"rda_0000000000000000000000000000000a\",\"model\":\"us.anthropic.claude-sonnet-4-5-20250929-v1:0\",\"reasoning\":true}"
+  }
+}

@@ -4,7 +4,15 @@
     "enabled": false
   },
   "files": {
-    "includes": ["**", "!src/gen", "!dist", "!node_modules", "!coverage", "!.docs-examples"]
+    "includes": [
+      "**",
+      "!src/gen",
+      "!src/agent/assets",
+      "!dist",
+      "!node_modules",
+      "!coverage",
+      "!.docs-examples"
+    ]
   },
   "formatter": {
     "enabled": true,

@@ -8,6 +8,15 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- **Agente de IA, adaptador de deepagents** (`ai-agent-deepagents`):
+  `runtime: "deepagents"` o `runtime: new DeepAgents({ entrypoint: "pkg.mod:build" })`
+  corre un grafo de deepagents/LangGraph con el mismo contrato que OpenCode
+  (eventos cerrados, límites del SDK, credenciales sólo por la pasarela).
+  Configuración, script y traducción del protocolo JSONL v1 idénticos byte
+  a byte a los de Python (`testdata/agent/`); el código del runner va en
+  `src/agent/assets/deepagents-runner.ts`, generado por
+  `scripts/gen_agent_assets.py`. `mcp`, `rawConfig` y `attach: true`
+  fallan con `InvalidArgumentError` antes de cualquier RPC.
 - **Agente de IA, adaptador de OpenCode** (`ai-agent-core`): `runtime="opencode"`
   ya resuelve a un adaptador (`src/agent/opencode.ts`) que escribe `opencode.json` sin
   credenciales, lanza `opencode run` con el prompt por stdin, un cerrojo por

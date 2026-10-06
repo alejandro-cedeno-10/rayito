@@ -1,0 +1,20 @@
+{"v":1,"type":"session","session_id":"rda_0000000000000000000000000000000a"}
+{"v":1,"type":"step_started","index":1}
+{"v":1,"type":"text_delta","text":"texto sintético"}
+{"v":1,"type":"text","text":"texto sintético"}
+{"v":1,"type":"step_finished","index":1,"usage":{"input":900,"output":20,"reasoning":0,"cache_read":4100,"cache_write":0},"finish_reason":null}
+{"v":1,"type":"tool_call","call_id":"c1","name":"execute","status":"error","input":{"command":"rm -rf x"},"output":"Permiso denegado por la configuración del agente.","output_truncated":false}
+{"v":1,"type":"step_started","index":2}
+{"v":1,"type":"text_delta","text":"texto sintético"}
+{"v":1,"type":"text","text":"texto sintético"}
+{"v":1,"type":"step_finished","index":2,"usage":{"input":10,"output":2,"reasoning":0,"cache_read":0,"cache_write":0},"finish_reason":null}
+{"v":1,"type":"tool_call","call_id":"c2","name":"ls","status":"completed","input":{"path":"/"},"output":"['/notas.txt']","output_truncated":false}
+{"v":1,"type":"step_started","index":3}
+{"v":1,"type":"text_delta","text":"listo final"}
+{"v":1,"type":"text","text":"listo final"}
+{"v":1,"type":"reasoning","text":"razonamiento sintético"}
+{"v":1,"type":"step_finished","index":3,"usage":{"input":30,"output":3,"reasoning":0,"cache_read":0,"cache_write":0},"finish_reason":"end_turn"}
+{"v":2,"type":"text","text":"versión futura"}
+no es json
+{"v":1,"type":"desconocido"}
+{"v":1,"type":"done","session_id":"rda_0000000000000000000000000000000a"}
