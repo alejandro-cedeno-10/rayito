@@ -165,7 +165,7 @@ export function buildDeepAgentsConfig(
     provider: model.provider,
     model: model.id,
     region: model.region ?? null,
-    base_url: gatewayUrl.replace(/\/+$/, "") + model.basePath,
+    base_url: stripTrailingSlashes(gatewayUrl) + model.basePath,
     credential_placeholder: MODEL_CREDENTIAL_PLACEHOLDER,
     prompt_caching: model.promptCaching,
     instructions: spec.instructions ?? null,
@@ -175,6 +175,14 @@ export function buildDeepAgentsConfig(
     permissions: toolRules(spec.permissions, "AgentSpec.permissions"),
     subagents,
   };
+}
+
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") {
+    end -= 1;
+  }
+  return url.slice(0, end);
 }
 
 function protocolLine(kind: string): string {
