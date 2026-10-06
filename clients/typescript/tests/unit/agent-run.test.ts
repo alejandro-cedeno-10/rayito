@@ -8,6 +8,7 @@
 
 import { describe, expect, test, vi } from "vitest";
 import { AgentLimits, AgentModel, AgentSpec } from "../../src/agent/domain.js";
+import { stopTreeCommand } from "../../src/agent/stream.js";
 import { InvalidArgumentError, TimeoutError } from "../../src/errors.js";
 import {
   ALLOWED_SPAN_ATTRIBUTES,
@@ -16,6 +17,7 @@ import {
 } from "../../src/otel.js";
 import { Agent } from "../../src/sandbox/agent.js";
 import {
+  FAKE_PID,
   FAKE_SESSION_ID,
   FakeAgentRuntime,
   FakeCommandHandle,
@@ -191,7 +193,7 @@ describe("sbx.agent.run", () => {
   test("abort() corre abortCommand y luego mata el handle", async () => {
     const handle = new FakeCommandHandle({ lines: [line({ event: "step_started", index: 1 })] });
     const sandbox = new FakeSandbox({
-      commands: new FakeCommands({ handles: [handle], foregroundResults: [undefined] }),
+      commands: new FakeCommands({ handles: [handle], foregroundResults: [undefined, undefined] }),
       files: new FakeFilesystem(),
       gateways: { bedrock: gatewayStatus() },
     });
@@ -202,9 +204,10 @@ describe("sbx.agent.run", () => {
     const stream = await agent.stream("hola", { spec: spec(), runtime });
     await stream.abort();
     expect(handle.killed).toBe(true);
-    expect(sandbox.commands.calls.at(-1)?.cmd).toBe(
+    expect(sandbox.commands.calls.slice(1).map((call) => call.cmd)).toEqual([
       "curl -X POST http://127.0.0.1:4096/session/x/abort",
-    );
+      stopTreeCommand(FAKE_PID),
+    ]);
     await expect(stream.result()).rejects.toMatchObject({ reason: "aborted" });
   });
 
@@ -298,5 +301,62 @@ describe("sbx.agent.run", () => {
     }
     expect(attributes["gen_ai.operation.name"]).toBe("invoke_agent");
     expect(attributes["gen_ai.provider.name"]).toBe("aws.bedrock");
+  });
+
+  test.each([
+    {
+      limits: new AgentLimits({ maxSteps: 1 }),
+      lines: [line({ event: "step_started", index: 1 }), line({ event: "step_started", index: 2 })],
+      reason: "max_steps",
+    },
+    {
+      limits: new AgentLimits({ maxTotalTokens: 10 }),
+      lines: [
+        line({ event: "step_started", index: 1 }),
+        line({ event: "step_finished", index: 1, usage: { input: 100, output: 50 } }),
+      ],
+      reason: "token_budget",
+    },
+  ])(
+    "un límite del SDK ($reason) para el runtime y su árbol de procesos",
+    async ({ limits, lines, reason }) => {
+      const handle = new FakeCommandHandle({
+        lines: [...lines, line({ event: "step_started", index: 3 })],
+      });
+      const sandbox = sandboxWith(handle);
+      const agent = new Agent(sandbox);
+      const stream = await agent.stream("hola", {
+        spec: spec(),
+        runtime: new FakeAgentRuntime(),
+        limits,
+      });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+      expect(events.at(-1)).toMatchObject({ type: "agent_failed", reason });
+      expect(handle.killed).toBe(true);
+      expect(sandbox.commands.calls.slice(1).map((call) => call.cmd)).toEqual([
+        stopTreeCommand(FAKE_PID),
+      ]);
+    },
+  );
+
+  test("un timeout que sólo dice el EndEvent se convierte en timeout", async () => {
+    const handle = new FakeCommandHandle({
+      lines: [line({ event: "step_started", index: 1 })],
+      exitCode: -1,
+      raiseOnWait: new TimeoutError("venció"),
+    });
+    const agent = new Agent(sandboxWith(handle));
+    await expect(
+      agent.run("hola", { spec: spec(), runtime: new FakeAgentRuntime() }),
+    ).rejects.toMatchObject({ reason: "timeout" });
+  });
+
+  test("stopTreeCommand rechaza pids que nunca debe señalar", () => {
+    for (const pid of [0, 1, -5, 1.5]) {
+      expect(() => stopTreeCommand(pid)).toThrow(InvalidArgumentError);
+    }
   });
 });

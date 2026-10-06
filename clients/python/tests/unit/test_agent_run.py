@@ -12,11 +12,13 @@ import pytest
 
 from rayito._agent._domain import AgentLimits, AgentModel, AgentSpec
 from rayito._agent._runtime import WarmupStep
+from rayito._agent._stream_base import stop_tree_command
 from rayito._otel import ALLOWED_SPAN_ATTRIBUTES, instrumentation_for
 from rayito.exceptions import AgentException, InvalidArgumentException, TimeoutException
 from rayito.sandbox_sync.agent import Agent
 
 from .fake_agent import (
+    FAKE_PID,
     FAKE_SESSION_ID,
     FakeAgentRuntime,
     FakeCommandHandle,
@@ -169,7 +171,7 @@ def test_stream_never_raises_for_an_agent_failure() -> None:
 def test_abort_runs_the_runtime_abort_command_then_kills_the_handle() -> None:
     handle = FakeCommandHandle(lines=[_line(event="step_started", index=1)])
     sandbox = FakeSandbox(
-        commands=FakeCommands(handles=[handle], foreground_results=[None]),
+        commands=FakeCommands(handles=[handle], foreground_results=[None, None]),
         files=FakeFilesystem(),
         gateways={"bedrock": gateway_status()},
     )
@@ -178,7 +180,10 @@ def test_abort_runs_the_runtime_abort_command_then_kills_the_handle() -> None:
     stream = agent.stream("hola", spec=_spec(), runtime=runtime)
     stream.abort()
     assert handle.killed is True
-    assert sandbox.commands.calls[-1].cmd == runtime.abort_cmd
+    assert [call.cmd for call in sandbox.commands.calls[1:]] == [
+        runtime.abort_cmd,
+        stop_tree_command(FAKE_PID),
+    ]
     with pytest.raises(AgentException) as excinfo:
         stream.result()
     assert excinfo.value.reason == "aborted"
@@ -274,3 +279,59 @@ def test_span_attributes_are_a_subset_of_the_allowed_list() -> None:
     assert attributes["gen_ai.operation.name"] == "invoke_agent"
     assert attributes["gen_ai.provider.name"] == "aws.bedrock"
     assert "prompt" not in str(attributes).lower()
+
+
+@pytest.mark.parametrize(
+    ("limits", "lines", "reason"),
+    [
+        (
+            AgentLimits(max_steps=1),
+            [_line(event="step_started", index=1), _line(event="step_started", index=2)],
+            "max_steps",
+        ),
+        (
+            AgentLimits(max_total_tokens=10),
+            [
+                _line(event="step_started", index=1),
+                _line(event="step_finished", index=1, usage={"input": 100, "output": 50}),
+            ],
+            "token_budget",
+        ),
+    ],
+)
+def test_sdk_limit_stops_the_runtime_and_its_process_tree(
+    limits: AgentLimits, lines: list[bytes], reason: str
+) -> None:
+    handle = FakeCommandHandle(lines=[*lines, _line(event="step_started", index=3)])
+    sandbox = FakeSandbox(
+        commands=FakeCommands(handles=[handle]),
+        files=FakeFilesystem(),
+        gateways={"bedrock": gateway_status()},
+    )
+    agent = Agent(sandbox)
+    stream = agent.stream("hola", spec=_spec(), runtime=FakeAgentRuntime(), limits=limits)
+    events = list(stream)
+    assert events[-1].type == "agent_failed"
+    assert events[-1].reason == reason
+    assert handle.killed is True
+    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
+
+
+def test_stop_tree_command_rejects_pids_it_must_never_signal() -> None:
+    for pid in (0, 1, -5, True):
+        with pytest.raises(InvalidArgumentException):
+            stop_tree_command(pid)
+
+
+def test_timeout_reported_by_the_end_event_becomes_timeout() -> None:
+    """`rayd` mata el proceso al vencer el timeout y el stream acaba con su
+    `EndEvent`, sin lanzar al iterar: `wait()` es quien lo dice."""
+    handle = FakeCommandHandle(
+        lines=[_line(event="step_started", index=1)],
+        exit_code=-1,
+        raise_on_wait=TimeoutException("venció"),
+    )
+    agent = Agent(_sandbox(handle))
+    with pytest.raises(AgentException) as excinfo:
+        agent.run("hola", spec=_spec(), runtime=FakeAgentRuntime())
+    assert excinfo.value.reason == "timeout"

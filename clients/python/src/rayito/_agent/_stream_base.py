@@ -53,6 +53,36 @@ class AgentSandbox(Protocol):
 #: Tag que `commands.run(tag=...)` lleva en cada ejecución del agente: útil
 #: para filtrar en `commands.list()` o en logs de `rayd`.
 AGENT_RUN_TAG: Final = "rayito-agent-run"
+#: Los `reason` con los que el SDK, no el runtime, corta una ejecución
+#: (`LimitTracker`): el runtime sigue vivo y hay que pararlo.
+SDK_LIMIT_REASONS: Final = frozenset({"max_steps", "token_budget"})
+#: Plazo de la orden de `stop_tree_command`.
+AGENT_STOP_TREE_TIMEOUT_SECONDS: Final = 30
+
+
+def stop_tree_command(pid: int) -> str:
+    """Congela (`SIGSTOP`) el proceso del runtime y, de padres a hijos, cada
+    descendiente suyo, y luego mata (`SIGKILL`) a los descendientes. Hace
+    falta porque OpenCode y deepagents lanzan cada orden de su herramienta
+    de shell en una sesión propia (`setsid`): el `SIGKILL` de `rayd` al
+    grupo del proceso no las alcanza y, sin esto, un `sleep` o un servidor
+    lanzado por el agente sobreviviría a `abort()` y a los límites del SDK
+    (medido con `make local-e2e`, `test_local_agents.py`). El propio
+    runtime queda congelado para el `kill()` del handle. Corre como el
+    mismo `user` que el agente, así que no puede tocar procesos ajenos."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        raise InvalidArgumentException("pid de agente no válido")
+    return (
+        't() { local c; for c in $(pgrep -P "$1"); do '
+        'kill -STOP "$c" 2>/dev/null; t "$c"; kill -KILL "$c" 2>/dev/null; done; }; '
+        f"kill -STOP {pid} 2>/dev/null; t {pid}; true"
+    )
+
+
+def is_sdk_limit_failure(event: AgentEvent) -> bool:
+    """Si `event` es el `AgentFailed` con el que el SDK corta una ejecución
+    que el runtime aún no terminó."""
+    return isinstance(event, AgentFailed) and event.reason in SDK_LIMIT_REASONS
 
 
 def gateway_urls_for(spec: AgentSpec, gateways: Mapping[str, object]) -> dict[str, str]:

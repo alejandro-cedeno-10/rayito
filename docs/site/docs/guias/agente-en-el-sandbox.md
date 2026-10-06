@@ -278,7 +278,10 @@ emite deltas), `Reasoning` (sólo con `reasoning=True`), `ToolCall`,
 
 `abort()` (Python, también desde otro hilo), cancelar la tarea `asyncio`
 o un `AbortSignal` piden primero al runtime que pare con elegancia y
-después matan el proceso. El resultado es `reason="aborted"`.
+después matan el proceso y todo lo que lanzó (OpenCode y deepagents corren
+cada orden de su shell en una sesión propia, fuera del grupo del proceso,
+así que el SDK congela y mata ese árbol antes). El resultado es
+`reason="aborted"`.
 
 | Límite (Python / TypeScript) | Por defecto | Por qué |
 |---|---|---|
@@ -287,12 +290,17 @@ después matan el proceso. El resultado es `reason="aborted"`.
 | `max_total_tokens` / `maxTotalTokens` | 1 000 000 (`None`/`null` lo apaga) se comprueba tras cada `StepFinished` (puede pasarse hasta en un paso); el stream termina con `token_budget` |
 | `max_output_bytes` / `maxOutputBytes` | 16 MiB | tope de la salida del runtime; mapearlo a `output_limit` es **próximamente** |
 
-!!! warning "`max_steps` y `token_budget` no paran el runtime"
-    Hoy, al superar `max_steps` o `max_total_tokens` el stream termina con
-    ese `reason`, pero el SDK **no** mata el proceso: OpenCode puede seguir
-    corriendo (y gastando tokens) hasta acabar o hasta `timeout_seconds`.
-    Si necesitas cortarlo, llama a `abort()` al recibir ese `AgentFailed`.
-    Que el SDK lo haga solo es **próximamente**.
+Al superar `max_steps` o `max_total_tokens` el SDK para el runtime igual
+que `abort()` y espera a que termine: el stream acaba con ese `reason` y el
+siguiente `run()` no lo encuentra ocupado (`busy`).
+
+!!! warning "El timeout no alcanza a lo que lanzó el shell del agente"
+    `timeout_seconds` / `timeoutMs` lo impone `rayd` matando el grupo del
+    proceso: el runtime muere y el stream acaba con `reason="timeout"`, pero
+    una orden que su herramienta de shell siga corriendo (en su propia
+    sesión) sobrevive hasta terminar y, mientras viva, el siguiente `run()`
+    puede encontrar el agente `busy`. Que `rayd` mate el árbol entero es
+    **próximamente**; si te importa, corta antes con `abort()`.
 
 Los `reason` posibles están en
 [Errores](../referencia/errores.md#agentexception-agenterror). Ningún mensaje

@@ -107,7 +107,10 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         messages_from_dict=messages_from_dict,
     )
     _module("deepagents", create_deep_agent=create_deep_agent)
-    _module("deepagents.backends", LocalShellBackend=lambda root_dir: ("backend", root_dir))
+    _module(
+        "deepagents.backends",
+        LocalShellBackend=lambda root_dir, virtual_mode: ("backend", root_dir, virtual_mode),
+    )
     _module("deepagents.graph", append_prompt_caching_middleware=lambda middleware: "original")
     _module("deepagents.middleware")
     _module(
@@ -264,7 +267,7 @@ def test_run_streams_protocol_and_saves_the_session(stubs: dict[str, Any], tmp_p
 
     deep_agent = stubs["deep_agent"]
     assert deep_agent["system_prompt"] == "Sé breve."
-    assert deep_agent["backend"] == ("backend", str(tmp_path))
+    assert deep_agent["backend"] == ("backend", str(tmp_path), False)
     assert len(deep_agent["middleware"]) == 1
     ((_, model_kwargs),) = stubs["models"]
     assert model_kwargs == {

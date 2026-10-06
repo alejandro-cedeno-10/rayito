@@ -14,6 +14,10 @@
 #     pines con hash en requirements-deepagents.txt: el mismo fichero que
 #     hornea AgentTemplate (dato de paquete del SDK de Python, que compose
 #     pasa como contexto adicional `agentassets`).
+#   - El runner de deepagents del SDK (`rayito/_agent/_runner`, contexto
+#     adicional `agentrunner`) donde lo instala AgentTemplate
+#     (`DEEPAGENTS_RUNNER_PATH`), para que `sbx.agent` con
+#     `runtime="deepagents"` lo encuentre.
 #
 # Las variables OPENCODE_* apagan todo lo que OpenCode intentaría bajar de
 # Internet en el arranque (autoupdate, catálogo de models.dev, servidores
@@ -51,6 +55,8 @@ RUN python3 -m venv /opt/agents/deepagents \
     && /opt/agents/deepagents/bin/python -m pip check \
     && chown -R root:root /opt/agents \
     && chmod -R a+rX,go-w /opt/agents
+
+COPY --from=agentrunner --chown=root:root --chmod=0755 deepagents_runner.py /opt/agents/rayito/deepagents_runner.py
 
 ENV OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_DISABLE_MODELS_FETCH=1 \

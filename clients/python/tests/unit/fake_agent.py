@@ -39,6 +39,7 @@ from rayito._otel import NOOP, Instrumentation
 from rayito._secret_gateway._domain import GatewayStatus
 
 FAKE_SESSION_ID = "fake-session-1"
+FAKE_PID = 4242
 
 
 def _event_from_json(payload: Mapping[str, Any]) -> AgentEvent:
@@ -154,11 +155,14 @@ class FakeCommandHandle:
         lines: Iterable[bytes],
         exit_code: int | None = 0,
         raise_on_iterate: Exception | None = None,
+        raise_on_wait: Exception | None = None,
     ) -> None:
+        self._raise_on_wait = raise_on_wait
         self._chunks = [line + b"\n" for line in lines]
         self._index = 0
         self._exit_code = exit_code
         self._raise_on_iterate = raise_on_iterate
+        self.pid = FAKE_PID
         self.killed = False
         self.disconnected = False
         self.stdin: bytes = b""
@@ -177,6 +181,12 @@ class FakeCommandHandle:
     def kill(self) -> bool:
         self.killed = True
         return True
+
+    def wait(self) -> None:
+        """Como `CommandHandle.wait()` con el stream ya consumido: lanza la
+        excepción del `EndEvent` (`raise_on_wait`), si la hay."""
+        if self._raise_on_wait is not None:
+            raise self._raise_on_wait
 
     def disconnect(self) -> None:
         self.disconnected = True
@@ -207,6 +217,9 @@ class FakeAsyncCommandHandle(FakeCommandHandle):
 
     async def kill(self) -> bool:  # type: ignore[override]
         return super().kill()
+
+    async def wait(self) -> None:  # type: ignore[override]
+        super().wait()
 
     def __aiter__(self) -> FakeAsyncCommandHandle:
         return self
