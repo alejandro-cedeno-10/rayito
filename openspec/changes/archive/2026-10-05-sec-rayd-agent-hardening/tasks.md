@@ -88,7 +88,7 @@
   or `;`/`..` variant with 403; create/pause/resume/kill hooks answer and a
   genuine cycle adds no anomaly; after killing the sidecar the kernel is
   back in 0.2 s with no `kernel_pid_rejected`. Completed 2026-10-06
-  (us-east-1, `AWS_API_NOTES.md` Q143): a template whose `start_cmd`
+  (us-east-1, `AWS_API_NOTES.md` Q145): a template whose `start_cmd`
   (uid 1000) posts a well-formed `/run` every second from boot got
   `sandbox_origin` on all 34 attempts, one of them before the platform's
   `/run`; the platform's `/run` answered `installed` and commands and

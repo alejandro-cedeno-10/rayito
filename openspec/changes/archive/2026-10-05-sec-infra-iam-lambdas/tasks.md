@@ -60,7 +60,7 @@
   with valid signatures; deliveries to private and link-local URLs end as
   `failed`; the deliverer logs to the stack's own log group
   (`LoggingConfig`). Completed 2026-10-06 (us-east-1, `AWS_API_NOTES.md`
-  Q142): a stack deployed from the 0.6.1 template and seeded with real
+  Q144): a stack deployed from the 0.6.1 template and seeded with real
   events (7 rows) was updated in place by `rayito stack deploy` to
   `UPDATE_COMPLETE` in 120 s with no failed resource, the same table and
   all 7 rows; the `open` index was added (CloudFormation finishes while it
