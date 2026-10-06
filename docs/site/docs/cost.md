@@ -106,3 +106,82 @@ distintas, y es fácil confundirlas:
     - `pause()`, auto-resume, caudal de ficheros, `get_info` y
       `list(metadata=)`: aceptaciones de 0.1.0 (`MILESTONES.md`) y
       `AWS_API_NOTES.md` Q45; S3: Q59; el plazo del servidor: Q58.
+
+## Coste de un agente: VM frente a modelo
+
+!!! warning "Borrador, aún no publicado"
+    Esta sección documenta el diseño aceptado de `sbx.agent`
+    (`ai-agent-core`/`ai-agent-fast-start`/`ai-agent-deepagents`, sin
+    fusionar todavía): [Agente en el sandbox](guias/agente-en-el-sandbox.md).
+    Los precios de MicroVMs de esta página ya están publicados; los de
+    Bedrock que siguen son de la lista de precios pública, consultada el
+    2026-10-06, y todavía no se han medido en una factura real de esta
+    cuenta (eso es [Q151](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)
+    de la etapa de aceptación en AWS).
+
+Un agente dentro del sandbox paga **dos facturas distintas**: la VM (igual
+que cualquier sandbox) y el modelo, por tokens, en Bedrock, Anthropic o el
+proveedor que uses por la pasarela. Casi siempre, la del modelo es la
+mayor con diferencia.
+
+### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
+
+| Modelo | Perfil | Entrada /1M tok | Salida /1M tok | Escritura de caché (5 min) | Lectura de caché |
+|---|---|---|---|---|---|
+| Claude Haiku 4.5 | Regional | $1,10 | $5,50 | $1,375 | $0,11 |
+| Claude Haiku 4.5 | Global | $1,00 | $5,00 | $1,25 | $0,10 |
+| Claude Sonnet 4.5 | Regional | $3,30 | $16,50 | $4,125 | $0,33 |
+| Claude Sonnet 4.5 | Global | $3,00 | $15,00 | $3,75 | $0,30 |
+
+Fuente: offer `AmazonBedrockFoundationModels` de la API de lista de precios
+(`us-east-1`, publicada 2026-09-30) y
+[aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing).
+El [caché de prompts](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+exige al menos 4096 tokens por punto de corte en Haiku (1024 en Sonnet), con
+hasta 4 puntos de corte por petición; por debajo del mínimo la petición
+funciona igual, simplemente no cachea nada, y `inputTokens` nunca cuenta lo
+que ya viene de caché. Con un paso ya sale ≈ 1,25× más caro que sin caché
+(la escritura cuesta más que una lectura normal); desde el segundo paso ya
+gana: 1,35× acumulado frente a 2× sin caché. OpenCode y el runner de
+deepagents la activan por defecto (`prompt_caching=True` en `AgentModel`).
+
+### Ejemplo: una tarea de 10 pasos
+
+5 minutos de VM de 2 GB (≈ $0,0119, igual que cualquier sandbox de esa
+duración) frente al modelo para 10 pasos de 15 000 tokens de entrada y 400
+de salida con Haiku Regional:
+
+| | Coste del modelo |
+|---|---|
+| Sin caché | **≈ $0,187** |
+| Con caché desde el paso 2 | **≈ $0,083** |
+| Global (≈10% más barato) | proporcional a la tabla de arriba |
+| Sonnet 4.5 con caché | **≈ $0,25** |
+
+**El modelo cuesta entre 7 y 20 veces más que la VM** en este ejemplo: el
+tamaño del sandbox casi nunca es la palanca de coste de un agente; el
+número de pasos, el tamaño del contexto y el caché de prompts sí lo son.
+
+### Coste de la VM, con fast-start
+
+| Escenario | Coste aproximado |
+|---|---|
+| Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
+| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,78/mes** |
+| Plaza de pool con servidor residente (opción D) | ≈ **$0,92/mes** |
+| Sandbox pausado 8 h entre turnos | ≈ $0,0008 de almacenamiento + un ciclo suspend/resume |
+| Versión de imagen `rayito-agent` | ≈ **$0,056/semana** ([Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+
+??? info "Fuentes y mediciones (agentes)"
+    - Diseño y los hechos F1–F14 verificados offline: `design.md` de
+      `ai-agent-fast-start`/`ai-agent-core` en
+      [`openspec/changes/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/openspec/changes).
+    - Spike: [`docs/research/2026-10-agent-spike.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-agent-spike.md).
+    - Precios de MicroVMs: igual que el resto de esta página, `AWS_API_NOTES.md` §12.
+    - Precios de Bedrock: offer `AmazonBedrockFoundationModels`,
+      [aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing),
+      consultados 2026-10-06.
+    - Caché de prompts:
+      [docs.aws.amazon.com/bedrock/.../prompt-caching.html](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+    - La medición contra una factura real de esta cuenta queda pendiente de
+      la etapa de aceptación en AWS (Q146–Q152 de `AWS_API_NOTES.md` §16).

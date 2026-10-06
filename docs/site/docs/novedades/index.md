@@ -12,6 +12,16 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
+-   :material-flask-outline:{ .lg .middle } **0.8.0** · borrador, sin publicar
+
+    ---
+
+    Agente de código dentro del sandbox (`sbx.agent`, OpenCode y
+    deepagents), su template y el calentamiento del pool. Diseño aceptado,
+    sin fusionar todavía: nada de esto está disponible hoy.
+
+    [:octicons-arrow-right-24: Borrador de 0.8.0](0.8.0.md)
+
 -   :material-tag:{ .lg .middle } **0.7.1** · 2026-10-06 · actual
 
     ---
@@ -128,6 +138,7 @@ lleguen, y hoy lanza `UnimplementedError` antes de llamar a AWS:
 | Función | Opción | Estado |
 |---|---|---|
 | Dominio propio integrado en el sandbox | `domain=` / `domain` en `Sandbox.create()`, y `get_host()`/`expose()` devolviendo la URL | sin versión comprometida; mientras tanto, [`CustomDomain`](../funciones-opcionales/dominio-propio.md) (experimental) |
+| Agente de código dentro del sandbox | `sbx.agent` (OpenCode, deepagents) | diseño aceptado, en construcción; ver el [borrador de 0.8.0](0.8.0.md) y [Agente en el sandbox](../guias/agente-en-el-sandbox.md) |
 
 Mientras tanto, para exponer un puerto en desarrollo,
 [`rayito sandbox proxy`](../funciones-opcionales/proxy-local.md).

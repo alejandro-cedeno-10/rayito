@@ -314,3 +314,49 @@ cualquier proceso que alcance el puerto local reenviado —de la máquina del
 operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
 sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).
+
+## Agente de código dentro del sandbox
+
+!!! warning "Borrador, aún no publicado"
+    Esta sección anticipa **T29** y **T30**, el modelo de amenazas de
+    `sbx.agent` ([Agente en el sandbox](guias/agente-en-el-sandbox.md)).
+    Esos dos identificadores todavía no existen en
+    [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md):
+    llegan con `ai-agent-core`, sin fusionar todavía. El contenido de esta
+    sección es el diseño ya aceptado; el número de amenaza puede moverse
+    al fusionarse si entre medias se añade otra.
+
+**El agente en sí mismo (T29).** `opencode run --auto` responde "sí" a
+cualquier permiso que el modelo pida, y el backend por defecto de
+deepagents (`LocalShellBackend`) ejecuta lo que el modelo pida sin
+preguntar: **los permisos de `AgentPermissions`/`AgentSpec` no son una
+frontera de seguridad**, son una preferencia que un modelo que alucine, o
+un *prompt injection* desde un fichero del propio workdir (un `AGENTS.md`
+o un repositorio clonado con instrucciones ocultas), puede saltarse pidiendo
+otra herramienta o reformulando el pedido. La frontera real es la que ya
+protege cualquier otro código que corra dentro del sandbox: el MicroVM y,
+por defecto, el egress cerrado de `rayito-base-caps` (`allow_internet_access=False`
+en las recetas y en un pool de agentes). La exfiltración sólo puede salir
+por el `upstream` que la pasarela de secretos permite, nunca directamente.
+**Riesgo residual**: código dentro del sandbox puede llamar a la propia
+pasarela por su cuenta, fuera del presupuesto de tokens del SDK (no hay
+forma de distinguir, desde la pasarela, una llamada que hizo el runtime del
+agente de una que hizo el modelo pidiéndole ejecutar `curl`). Mitigaciones:
+restringir `allow` a los `(método, ruta)` de los modelos exactos que uses
+(nunca `/model/*` salvo que la verificación de rutas con `:` lo obligue) y
+`rate_per_minute`. La contraseña de `opencode serve`, cuando se usa
+([Pool: servidor residente](pool.md#calentamiento-warmup-y-servidor-residente)),
+vive en el snapshot aparcado y el servidor escucha sólo en loopback,
+alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
+— `get_host(4096)` sin la contraseña recibe 401.
+
+**Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
+por sha256 fijado (`scripts/check_pins.py` los valida contra `limits.json`);
+el venv de deepagents se instala con `--require-hashes`; el sha256 del
+runner de deepagents viaja en el manifiesto del template y
+`sbx.agent` lo comprueba antes de ejecutarlo. Autoupdate, la descarga de
+modelos, de LSPs, los plugins por defecto y la lectura de un `.claude/` del
+workdir están apagados (`OPENCODE_DISABLE_*`, `OPENCODE_PURE`); nada de eso
+sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y
+si lo intentara, fallaría igual que cualquier otra conexión saliente no
+permitida.
