@@ -12,7 +12,17 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.7.0** · 2026-10-05 · actual
+-   :material-tag:{ .lg .middle } **0.7.1** · 2026-10-06 · actual
+
+    ---
+
+    `rayd` lleva sus avisos de licencia de terceros en la release, en
+    `rayito-image.zip` y en la imagen (`/usr/share/doc/rayd/`), y
+    `SHA256SUMS` va firmado. Sin cambios de API.
+
+    [:octicons-arrow-right-24: Novedades de 0.7.1](0.7.1.md)
+
+-   :material-tag:{ .lg .middle } **0.7.0** · 2026-10-05
 
     ---
 
@@ -50,7 +60,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.7.0"
+    print(rayito.__version__)  # "0.7.1"
     ```
 
 === "TypeScript"
@@ -58,7 +68,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.7.0"
+    console.log(VERSION); // "0.7.1"
     ```
 
 === "CLI"
@@ -88,7 +98,8 @@ imagen publicada con un `rayd` de esa serie:
 
 Después, republica tu imagen sobre el `rayd` nuevo si quieres usar lo que
 corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
-`gateways=`, o el endurecimiento de `rayd` 0.7.0):
+`gateways=`, el endurecimiento de `rayd` 0.7.0 o los avisos de licencia
+de `rayd` 0.7.1 en `/usr/share/doc/rayd/`):
 [Imágenes](../images.md#publicar-las-tres). Sin republicar, el SDK nuevo
 sigue funcionando con tu imagen actual, y cada función que necesita el
 `rayd` nuevo falla cerrada con `UnimplementedError` y termina el sandbox

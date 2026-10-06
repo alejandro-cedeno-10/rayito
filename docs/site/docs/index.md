@@ -21,8 +21,10 @@ credenciales.
     dominio propio con CloudFront, como función experimental; un entorno
     para probar en local con Docker y Floci, sin cuenta de AWS; y un
     endurecimiento de seguridad de `rayd`, los SDK, la infraestructura y la
-    release. Todo lo que tiene coste, apagado por defecto.
-    [Novedades de 0.7.0](novedades/0.7.0.md) ·
+    release. Todo lo que tiene coste, apagado por defecto. En 0.7.1, `rayd`
+    lleva además sus avisos de licencia de terceros.
+    [Novedades de 0.7.1](novedades/0.7.1.md) ·
+    [0.7.0](novedades/0.7.0.md) ·
     [0.6.x](novedades/0.6.0.md)
 
 ## Empieza en tres pasos
