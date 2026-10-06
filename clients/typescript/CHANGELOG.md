@@ -6,6 +6,14 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-06
+
+### Changed
+
+- Sin cambios en el SDK TypeScript: sube a 0.7.1 por las versiones
+  enlazadas, con `rayd` 0.7.1 (avisos de licencia de terceros en el zip, la
+  imagen y la release).
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
@@ -981,7 +989,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.1...HEAD
+[0.7.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.0...typescript-v0.7.1
 [0.7.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.1...typescript-v0.7.0
 [0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...typescript-v0.6.1
 [0.6.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.5.1...typescript-v0.6.0
