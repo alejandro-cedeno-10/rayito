@@ -249,6 +249,8 @@ def test_warmup_steps() -> None:
     assert serve.background
     assert "opencode serve --hostname 127.0.0.1 --port 4096" in serve.cmd
     assert "--password" not in serve.cmd
+    # Attached runs reuse the server env: the Bedrock placeholder must live there.
+    assert "AWS_BEARER_TOKEN_BEDROCK=placeholder-not-a-secret exec opencode serve" in serve.cmd
     assert runtime.template_steps() == ()
 
 

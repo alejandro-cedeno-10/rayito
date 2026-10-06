@@ -25,7 +25,7 @@
           "tag": null
         },
         {
-          "cmd": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\numask 077 && head -c 32 /dev/urandom | base64 > '/home/user/.rayito/agent/opencode/serve.secret'\nOPENCODE_SERVER_PASSWORD=\"$(cat '/home/user/.rayito/agent/opencode/serve.secret')\" OPENCODE_CONFIG='/home/user/.rayito/agent/opencode/opencode.json' OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1 OPENCODE_DISABLE_DEFAULT_PLUGINS=1 OPENCODE_PURE=1 OPENCODE_DISABLE_CLAUDE_CODE=1 exec opencode serve --hostname 127.0.0.1 --port 4096\n",
+          "cmd": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\numask 077 && head -c 32 /dev/urandom | base64 > '/home/user/.rayito/agent/opencode/serve.secret'\nOPENCODE_SERVER_PASSWORD=\"$(cat '/home/user/.rayito/agent/opencode/serve.secret')\" OPENCODE_CONFIG='/home/user/.rayito/agent/opencode/opencode.json' OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1 OPENCODE_DISABLE_DEFAULT_PLUGINS=1 OPENCODE_PURE=1 OPENCODE_DISABLE_CLAUDE_CODE=1 AWS_BEARER_TOKEN_BEDROCK=placeholder-not-a-secret exec opencode serve --hostname 127.0.0.1 --port 4096\n",
           "background": true,
           "tag": "rayito-agent-serve"
         },
