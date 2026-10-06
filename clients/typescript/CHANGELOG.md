@@ -8,6 +8,19 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Added
 
+- **Agente de IA, arranque rápido** (`ai-agent-fast-start`):
+  `AgentTemplate` (y `rayito agent template build` en la CLI de Python)
+  construye la imagen del agente con OpenCode y ripgrep fijados por
+  sha256 y el venv de deepagents con `--require-hashes` (salvo
+  `runtimes: ["opencode"]`), todo de root, el manifiesto `rayito.agent-template/1`
+  y, salvo `prefetch: false`, un demonio que precarga los binarios tras cada
+  restauración del snapshot. `PoolConfig` gana `warmup` (pasos que cada
+  plaza corre antes de aparcarse; un paso fallido es un calentamiento
+  fallido), `allowInternetAccess` y `network`; `agentPoolWarmup()` da
+  los pasos del agente y, con `serve: true`, deja un `opencode serve`
+  residente con contraseña propia de cada VM al que `agent.run` se
+  engancha tras el `take()`. Coste sólo si construyes la plantilla o pasas
+  `warmup` (bloques "Coste y activación").
 - **Agente de IA, adaptador de OpenCode** (`ai-agent-core`): `runtime="opencode"`
   ya resuelve a un adaptador (`src/agent/opencode.ts`) que escribe `opencode.json` sin
   credenciales, lanza `opencode run` con el prompt por stdin, un cerrojo por
@@ -47,6 +60,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   `AgentRuntime` concreto (el adaptador de OpenCode) llega en un cambio
   posterior; mientras tanto, `runtime` admite cualquier objeto que
   implemente la interfaz `AgentRuntime`.
+
+
+### Fixed
+
+- `sbx.agent.prepare()` arranca los pasos en segundo plano sin plazo: con
+  `serve: true` el servidor residente moría al agotar `timeoutMs`.
 
 ## [0.7.1] - 2026-10-06
 

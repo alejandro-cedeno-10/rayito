@@ -512,6 +512,7 @@ class AsyncSandboxPool:
         stopping = self._stopping_event()
         try:
             await self._settle(sandbox)
+            await self._run_warmup(sandbox)
             if stopping.is_set():
                 raise PoolStoppingError()
             await sandbox.pause(wait=True)
@@ -548,6 +549,22 @@ class AsyncSandboxPool:
                 return
             await sandbox._wait_until_ready(terminate_on_failure=False)
         logger.warning("plaza %s: el kernel siguió rotando tras asentarla", sandbox.sandbox_id)
+
+    async def _run_warmup(self, sandbox: AsyncSandbox) -> None:
+        """Misma regla que `SandboxPool._run_warmup`."""
+        stopping = self._stopping_event()
+        for step in self._config.warmup:
+            if stopping.is_set():
+                raise PoolStoppingError()
+            if step.background:
+                handle = await sandbox.commands.run(
+                    step.cmd, background=True, timeout=None, max_output_bytes=0, tag=step.tag
+                )
+                handle.disconnect()
+            else:
+                await sandbox.commands.run(
+                    step.cmd, timeout=step.timeout_seconds, max_output_bytes=0, tag=step.tag
+                )
 
     async def _settle_grace(self) -> None:
         with contextlib.suppress(TimeoutError):

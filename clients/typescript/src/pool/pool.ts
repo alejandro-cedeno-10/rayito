@@ -42,7 +42,7 @@ import {
   SandboxStateError,
 } from "../errors.js";
 import { planFeatures } from "../feature-options.js";
-import { DEFAULT_PORT, TERMINAL_STATES } from "../limits.js";
+import { DEFAULT_PORT, DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
 import type { MicrovmListPage, SandboxInfo, SandboxListItem } from "../models.js";
 import { generateAccessToken } from "../payload.js";
@@ -82,6 +82,7 @@ export const CLOSE_JOIN_MS = 30_000;
 export const SETTLE_CELL = "pass";
 export const SETTLE_GRACE_MS = 300;
 export const SETTLE_ATTEMPTS = 3;
+const MS_PER_SECOND = 1000;
 
 export interface SandboxPoolOptions extends ControlPlaneOptions {
   readonly backend?: PoolBackend | undefined;
@@ -702,6 +703,7 @@ export class SandboxPool implements AsyncDisposable {
     const sandboxId = sandbox.sandboxId;
     try {
       await this.#settle(sandbox);
+      await this.#runWarmup(sandbox);
       if (this.#stopping) {
         throw new PoolStopping();
       }
@@ -731,6 +733,36 @@ export class SandboxPool implements AsyncDisposable {
       sandboxId,
       ms: elapsedMs(this.#monotonic(), started),
     });
+  }
+
+  /**
+   * Corre `PoolConfig.warmup` en orden, tras asentar y antes de aparcar. Un
+   * paso de primer plano que sale con un código distinto de 0 o agota su
+   * plazo lanza, y `#park` lo cuenta como calentamiento fallido; uno en
+   * segundo plano se arranca sin límite de tiempo ni salida guardada y su
+   * handle se suelta (el proceso sigue en el VM).
+   */
+  async #runWarmup(sandbox: Sandbox): Promise<void> {
+    for (const step of this.#config.warmup) {
+      if (this.#stopping) {
+        throw new PoolStopping();
+      }
+      if (step.background === true) {
+        const handle = await sandbox.commands.run(step.cmd, {
+          background: true,
+          timeoutMs: 0,
+          maxOutputBytes: 0,
+          tag: step.tag,
+        });
+        handle.disconnect();
+      } else {
+        await sandbox.commands.run(step.cmd, {
+          timeoutMs: step.timeoutMs ?? DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS * MS_PER_SECOND,
+          maxOutputBytes: 0,
+          tag: step.tag,
+        });
+      }
+    }
   }
 
   /**

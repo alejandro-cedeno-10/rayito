@@ -58,8 +58,8 @@ export const OLD_AGENT_REASON =
 export const ALLOW_ONLY_NOTICE =
   "allowOut sin denyOut no restringe nada: no se aplica política de egress en el guest";
 export const POOL_NETWORK_MESSAGE =
-  "create({ pool }) no admite network ni allowInternetAccess: false: las plazas de un " +
-  "SandboxPool se lanzan sin política de egress";
+  "create({ pool }) no admite network ni allowInternetAccess: false: la política de egress " +
+  "de las plazas es la del PoolConfig del pool (network, allowInternetAccess)";
 
 const NETWORK_KEYS: ReadonlySet<string> = new Set(["allowOut", "denyOut", "egressProxy"]);
 const EGRESS_PROXY_KEYS: ReadonlySet<string> = new Set(["address", "username", "password"]);

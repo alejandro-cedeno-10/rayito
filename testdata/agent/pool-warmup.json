@@ -1,0 +1,40 @@
+{
+  "comment": "Pasos de agent_pool_warmup / agentPoolWarmup (ai-agent-fast-start) que ambos SDKs deben producir; timeout en segundos (TS: timeoutMs = x1000, o ausente si el paso usa el valor por defecto).",
+  "cases": [
+    {
+      "serve": false,
+      "steps": [
+        {
+          "cmd": "opencode --version >/dev/null",
+          "background": false,
+          "tag": null
+        }
+      ]
+    },
+    {
+      "serve": true,
+      "steps": [
+        {
+          "cmd": "mkdir -p \"$(dirname '/home/user/.rayito/agent/opencode/opencode.json')\" && { [ -e '/home/user/.rayito/agent/opencode/opencode.json' ] || printf '%s\\n' '{\"$schema\":\"https://opencode.ai/config.json\"}' > '/home/user/.rayito/agent/opencode/opencode.json'; }",
+          "background": false,
+          "tag": "rayito-agent-serve-config"
+        },
+        {
+          "cmd": "opencode --version >/dev/null",
+          "background": false,
+          "tag": null
+        },
+        {
+          "cmd": "set -u\nmkdir -p '/home/user/.rayito/agent/opencode'\numask 077 && head -c 32 /dev/urandom | base64 > '/home/user/.rayito/agent/opencode/serve.secret'\nOPENCODE_SERVER_PASSWORD=\"$(cat '/home/user/.rayito/agent/opencode/serve.secret')\" OPENCODE_CONFIG='/home/user/.rayito/agent/opencode/opencode.json' OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1 OPENCODE_DISABLE_DEFAULT_PLUGINS=1 OPENCODE_PURE=1 OPENCODE_DISABLE_CLAUDE_CODE=1 exec opencode serve --hostname 127.0.0.1 --port 4096\n",
+          "background": true,
+          "tag": "rayito-agent-serve"
+        },
+        {
+          "cmd": "set -u\nmkdir -p '/home/user/.rayito/agent/warm'\nuntil [ -s '/home/user/.rayito/agent/opencode/serve.secret' ] && curl -fsS -m 5 -u \"opencode:$(cat '/home/user/.rayito/agent/opencode/serve.secret')\" 'http://127.0.0.1:4096/global/health' >/dev/null 2>&1; do\n  sleep 0.5\ndone\ncurl -fsS -m 5 -u \"opencode:$(cat '/home/user/.rayito/agent/opencode/serve.secret')\" 'http://127.0.0.1:4096/config?directory=%2Fhome%2Fuser%2F.rayito%2Fagent%2Fwarm' >/dev/null\n",
+          "background": false,
+          "tag": "rayito-agent-serve-ready"
+        }
+      ]
+    }
+  ]
+}

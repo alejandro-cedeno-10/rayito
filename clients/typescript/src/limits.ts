@@ -148,3 +148,8 @@ export const AGENT_RIPGREP_VERSION = "15.2.0" as const;
 export const AGENT_RIPGREP_SHA256 =
   "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d" as const;
 export const DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS = 120 as const;
+
+export const AGENT_PREFETCH_RESTORE_JUMP_SECONDS = 30 as const;
+export const AGENT_PREFETCH_INTERVAL_SECONDS = 2 as const;
+export const AGENT_DEEPAGENTS_REQUIREMENTS_SHA256 =
+  "a156ac4b77f3ba98e08d5bfeb137b72d61d339ca13daad8412867a778e96ba26" as const;

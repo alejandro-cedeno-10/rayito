@@ -1,5 +1,7 @@
-# Pines de la variante de agentes del guest local (dev/local/agent/Dockerfile,
-# docs/research/2026-10-agent-spike.md): deepagents 0.7.x con su modelo por
+# Pines del venv de deepagents de la plantilla de agente (AgentTemplate,
+# ai-agent-fast-start) y de la variante local del guest
+# (dev/local/agent/Dockerfile, docs/research/2026-10-agent-spike.md); su
+# sha256 está en limits.json (agentDeepagentsRequirementsSha256): deepagents 0.7.x con su modelo por
 # Amazon Bedrock (langchain-aws). Generado para CPython 3.12 en Linux arm64
 # (glibc 2.34, la de al2023-minimal) y sólo wheels:
 #

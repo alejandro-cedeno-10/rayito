@@ -584,6 +584,7 @@ class SandboxPool:
         started = self._monotonic()
         try:
             self._settle(sandbox)
+            self._run_warmup(sandbox)
             if self._stopping.is_set():
                 raise PoolStoppingError()
             sandbox.pause(wait=True)
@@ -626,6 +627,25 @@ class SandboxPool:
                 return
             sandbox._wait_until_ready(terminate_on_failure=False)
         logger.warning("plaza %s: el kernel siguió rotando tras asentarla", sandbox.sandbox_id)
+
+    def _run_warmup(self, sandbox: Sandbox) -> None:
+        """Corre `PoolConfig.warmup` en orden, tras asentar y antes de
+        aparcar. Un paso de primer plano que sale con un código distinto de
+        0 o agota su plazo lanza, y `_park` lo cuenta como calentamiento
+        fallido; uno en segundo plano se arranca sin límite de tiempo ni
+        salida guardada y su handle se suelta (el proceso sigue en el VM)."""
+        for step in self._config.warmup:
+            if self._stopping.is_set():
+                raise PoolStoppingError()
+            if step.background:
+                handle = sandbox.commands.run(
+                    step.cmd, background=True, timeout=None, max_output_bytes=0, tag=step.tag
+                )
+                handle.disconnect()
+            else:
+                sandbox.commands.run(
+                    step.cmd, timeout=step.timeout_seconds, max_output_bytes=0, tag=step.tag
+                )
 
     def _record_launch(self, info: SandboxInfo, token: str) -> None:
         """Corre dentro de `run_microvm`, antes de que `create()` vea el VM:

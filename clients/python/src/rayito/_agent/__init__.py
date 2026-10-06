@@ -41,6 +41,9 @@ from rayito._agent._gateways import (
     bedrock_gateway,
     openai_compatible_gateway,
 )
+from rayito._agent._runtime import WarmupStep
+from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
+from rayito._agent._warmup import agent_pool_warmup
 
 __all__ = [
     "AGENT_EVENT_TYPES",
@@ -56,6 +59,8 @@ __all__ = [
     "AgentPermissions",
     "AgentResult",
     "AgentSpec",
+    "AgentTemplate",
+    "AsyncAgentTemplate",
     "Done",
     "McpLocal",
     "McpRemote",
@@ -68,6 +73,8 @@ __all__ = [
     "TextDelta",
     "TokenUsage",
     "ToolCall",
+    "WarmupStep",
+    "agent_pool_warmup",
     "anthropic_gateway",
     "bedrock_gateway",
     "failure_message",
