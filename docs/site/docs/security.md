@@ -314,3 +314,47 @@ cualquier proceso que alcance el puerto local reenviado —de la máquina del
 operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
 sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).
+
+## Agente de código dentro del sandbox
+
+Resumen de **T29** y **T30** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`ai-agent-core`), el modelo de amenazas de
+[`sbx.agent`](guias/agente-en-el-sandbox.md).
+
+**El agente en sí mismo (T29).** `opencode run --auto` responde "sí" a
+cualquier permiso que el modelo pida, y el backend por defecto de
+deepagents (`LocalShellBackend`) ejecuta lo que el modelo pida sin
+preguntar: **los permisos de `AgentPermissions`/`AgentSpec` no son una
+frontera de seguridad**, son una preferencia que un modelo que alucine, o
+un *prompt injection* desde un fichero del propio workdir (un `AGENTS.md`
+o un repositorio clonado con instrucciones ocultas), puede saltarse pidiendo
+otra herramienta o reformulando el pedido. La frontera real es la que ya
+protege cualquier otro código que corra dentro del sandbox: el MicroVM y,
+el egress cerrado, que exige pasar `allow_internet_access=False` de forma
+explícita (`Sandbox.create` lo deja abierto por defecto; las recetas de la
+guía lo pasan). La exfiltración sólo puede salir
+por el `upstream` que la pasarela de secretos permite, nunca directamente.
+**Riesgo residual**: código dentro del sandbox puede llamar a la propia
+pasarela por su cuenta, fuera del presupuesto de tokens del SDK (no hay
+forma de distinguir, desde la pasarela, una llamada que hizo el runtime del
+agente de una que hizo el modelo pidiéndole ejecutar `curl`). Mitigaciones:
+restringir `allow` a los `(método, ruta)` de los modelos exactos que uses
+(`bedrock_gateway` nunca abre `/model/*`) y
+`rate_per_minute`. La contraseña de `opencode serve`, cuando se usa
+([Pool: servidor residente](pool.md#calentamiento-warmup-y-servidor-residente)),
+vive en el snapshot aparcado y el servidor escucha sólo en loopback,
+alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
+— `get_host(4096)` sin la contraseña recibe 401.
+
+**Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
+por sha256 fijado (`scripts/check_pins.py` los valida contra `limits.json`);
+el venv de deepagents se instala con `--require-hashes`; el sha256 del
+runner de deepagents (`runner_sha256`) queda registrado en el manifiesto
+del template, y `AgentSpec.runtime_version` se compara con la versión del
+manifiesto. Autoupdate, la descarga de
+modelos, de LSPs, los plugins por defecto y la lectura de un `.claude/` del
+workdir están apagados (`autoupdate: false`, `share: "disabled"`, `OPENCODE_DISABLE_CLAUDE_CODE=1`); nada de eso
+sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y
+si lo intentara, fallaría igual que cualquier otra conexión saliente no
+permitida.

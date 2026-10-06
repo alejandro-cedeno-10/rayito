@@ -1,9 +1,19 @@
-# Modelo de costes
+---
+title: Precios (MicroVMs, pool, agentes)
+---
+
+# Precios: MicroVMs, pool y agentes
 
 Rayito no cobra nada: pagas a AWS, en tu factura, lo que consumen tus
-sandboxes. Todo lo de esta página está medido contra AWS real (`us-east-1`,
-ARM, imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de 2026) o sale de la
-lista de precios pública.
+sandboxes (y, si usas un agente, los tokens del modelo). Cada número de esta
+página lleva una de dos etiquetas:
+
+- **List** (precio de lista): sale de la lista de precios pública de AWS
+  (`us-east-1`, ARM), consultada el **2026-10-06**, o es aritmética sobre
+  ella.
+- **Measured** (medido): contrastado contra AWS real o Cost Explorer en la
+  cuenta de pruebas (imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de
+  2026).
 
 ## Cuánto cuesta, con ejemplos
 
@@ -25,14 +35,58 @@ de imagen y de los sandboxes suspendidos.
 
 ## Precios
 
-| Concepto | Precio |
-|---|---|
-| Cómputo mientras `RUNNING` | $0,0000276944 por vCPU-s + $0,0000036667 por GB-s ⇒ **$0,126/h** a 2 GB / 1 vCPU |
-| Escritura de snapshot (cada `suspend`) | $0,0038 por GB |
-| Lectura de snapshot (cada `run-microvm` o `resume`) | $0,00155 por GB |
-| Almacenamiento de snapshots (versiones de imagen, sandboxes suspendidos) | $0,08 por GB-mes, **mínimo una semana** por versión de imagen ⇒ ≈ $0,037 por semana y versión |
-| Un ciclo suspend + resume a 2 GB (0,92 GB de snapshot escritos y leídos) | ≈ **$0,0049**, lo mismo que ≈ 140 s de cómputo |
-| Un lanzamiento (`run-microvm`, lectura del snapshot de 0,92 GB) | ≈ **$0,0014** |
+### Componentes del precio
+
+Cada MicroVM factura por cinco cosas, cada una por separado — ninguna
+incluye las otras, y es fácil confundirlas al sumar un escenario:
+
+- **Cómputo** mientras el sandbox está `RUNNING`: por vCPU-segundo y por
+  GB-segundo, con los *bursts* por encima de tu tamaño base facturados
+  también (no hay un tope "incluido"). *List.*
+- **Lectura de snapshot**: cada `run-microvm` (lanzamiento) y cada
+  `resume` leen el snapshot completo del disco y la memoria. *List.*
+- **Escritura de snapshot**: cada `suspend` escribe ese mismo snapshot.
+  *List.*
+- **Almacenamiento de snapshots**: por GB-hora mientras existan — una
+  versión de imagen publicada o un sandbox suspendido — con un
+  **mínimo de una semana** por versión de imagen, aunque la borres antes.
+  *List.*
+- **Transferencia de datos**: tarifas estándar de transferencia de datos
+  de AWS (misma región: gratis; a Internet: por GB). *List.*
+
+!!! note "`maximumDuration` no es un precio"
+    Un sandbox no puede vivir, lanzado + suspendido, más de **8 horas** sin
+    terminarse; el tiempo suspendido cuenta igual que el `RUNNING`. Es la
+    razón por la que [el pool](pool.md) relanza y vuelve a aparcar cada
+    plaza a las ≈ 7 h, antes de tocar el límite. *List (límite).*
+
+| Concepto | Precio | Fuente |
+|---|---|---|
+| Cómputo mientras `RUNNING` | $0,0000276944 por vCPU-s + $0,0000036667 por GB-s ⇒ **$0,126/h** a 2 GB / 1 vCPU | List — AWSLambda price-list offer, 2026-10-01 |
+| Escritura de snapshot (cada `suspend`) | $0,0037977138 por GB | List — AWSLambda price-list offer; **Measured** −0,06 % en Cost Explorer (2026-09-16) |
+| Lectura de snapshot (cada `run-microvm` o `resume`) | $0,0015467699 por GB | List — AWSLambda price-list offer; **Measured** −0,21 % en Cost Explorer (2026-09-16) |
+| Almacenamiento de snapshots (versiones de imagen, sandboxes suspendidos) | $0,0001111111 por GB-hora = $0,08 por GB-mes a 720 h/mes, **mínimo una semana** por versión de imagen ⇒ ≈ $0,037 por semana y versión | List — AWSLambda price-list offer; **Measured** exacto en Cost Explorer (2026-09-16) |
+| Un ciclo suspend + resume a 2 GB (0,92 GB de snapshot escritos y leídos) | ≈ **$0,0049**, lo mismo que ≈ 140 s de cómputo | Derivado — List |
+| Un lanzamiento (`run-microvm`, lectura del snapshot de 0,92 GB) | ≈ **$0,0014** | Derivado — List |
+
+Los precios de cómputo y de almacenamiento coinciden exactos con lo
+facturado (Cost Explorer); lectura y escritura de snapshot difieren del
+precio de lista en menos de un 0,25 % — dentro del redondeo de la
+cantidad facturada, no un precio distinto. La relación entre GB-s y vCPU-s
+facturados en la cuenta de pruebas fue **1,87–1,89**, no exactamente 2,0
+(pendiente de contrastar con los VM-segundos del banco de pruebas).
+
+!!! info "Referencias oficiales (consultadas 2026-10-06)"
+    - [aws.amazon.com/lambda/pricing](https://aws.amazon.com/lambda/pricing/)
+      (sección Lambda MicroVMs).
+    - Offer `AWSLambda` de la API de lista de precios de AWS, publicado
+      2026-10-01.
+    - [docs.aws.amazon.com/.../microvms-images-snapshots.html](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images-snapshots.html)
+      (semántica y mínimo de almacenamiento de un snapshot).
+    - [docs.aws.amazon.com/.../microvms-how-it-works.html](https://docs.aws.amazon.com/lambda/latest/dg/microvms-how-it-works.html)
+      (cómputo, lectura/escritura de snapshot por ciclo de vida).
+    - [docs.aws.amazon.com/.../gettingstarted-limits.html](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
+      (`maximumDuration` de 8 h, cuotas por defecto).
 
 !!! tip "La auto-suspensión y el umbral de 150 s"
     Como un ciclo suspend/resume cuesta lo mismo que ≈ 140 s de cómputo, un
@@ -106,3 +160,127 @@ distintas, y es fácil confundirlas:
     - `pause()`, auto-resume, caudal de ficheros, `get_info` y
       `list(metadata=)`: aceptaciones de 0.1.0 (`MILESTONES.md`) y
       `AWS_API_NOTES.md` Q45; S3: Q59; el plazo del servidor: Q58.
+
+## Coste de un agente: VM frente a modelo
+
+Un [agente en el sandbox](guias/agente-en-el-sandbox.md) paga **dos
+facturas distintas**: la VM (igual que cualquier sandbox) y el modelo, por
+tokens, en Bedrock, Anthropic o el proveedor que uses por la pasarela. Casi
+siempre la del modelo es, con diferencia, la mayor. Los precios de Bedrock
+de esta sección son **List**: aún no se han contrastado con una factura real
+(eso es Q151 de la etapa de aceptación en AWS). En la factura aparecen como
+uso de AWS Marketplace.
+
+### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
+
+| Modelo | Perfil | Entrada /1M tok | Salida /1M tok | Escritura de caché (5 min) | Lectura de caché |
+|---|---|---|---|---|---|
+| Claude Haiku 4.5 | Regional | $1,10 | $5,50 | $1,375 | $0,11 |
+| Claude Haiku 4.5 | Global | $1,00 | $5,00 | $1,25 | $0,10 |
+| Claude Sonnet 4.5 | Regional | $3,30 | $16,50 | $4,125 | $0,33 |
+| Claude Sonnet 4.5 | Global | $3,00 | $15,00 | $3,75 | $0,30 |
+
+Fuente: offer `AmazonBedrockFoundationModels` de la API de lista de precios
+(`us-east-1`, publicada 2026-09-30) y
+[aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing).
+El [caché de prompts](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+exige al menos 4096 tokens por punto de corte en Haiku (1024 en Sonnet), con
+hasta 4 puntos de corte por petición; por debajo del mínimo la petición
+funciona igual, simplemente no cachea nada, y `inputTokens` nunca cuenta lo
+que ya viene de caché. Con un paso ya sale ≈ 1,25× más caro que sin caché
+(la escritura cuesta más que una lectura normal); desde el segundo paso ya
+gana: 1,35× acumulado frente a 2× sin caché. OpenCode y el runner de
+deepagents la activan por defecto (`prompt_caching=True` en `AgentModel`).
+
+### Ejemplo: una tarea de 10 pasos
+
+*List* (precio de lista, hechos aritméticos, no medidos contra una factura
+real todavía — ver la advertencia de arriba). 10 pasos, 15 000 tokens de
+entrada y 400 de salida por paso, Haiku Regional ($1,10/$5,50/1M, caché
+$1,375 escritura / $0,11 lectura por 1M):
+
+- **VM**: 300 s × $0,1261/h + lanzamiento $0,0014 = 300 × 0,1261/3600 +
+  0,0014 = $0,0105 + $0,0014 ≈ **$0,0119**.
+- **Modelo, sin caché**: 10 pasos × 15 000 tok × $1,10/1M + 10 × 400 tok ×
+  $5,50/1M = $0,165 + $0,022 ≈ **$0,187**.
+- **Modelo, con caché**: supone que el paso 1 escribe todo el prefijo
+  (15 000 tok) y que, de ahí en adelante, cada paso añade ≈ 15 % de
+  tokens nuevos al contexto (2 250 escritos a caché) y lee el 85 % restante
+  de caché (12 750). Paso 1: 15 000 × $1,375/1M = $0,0206. Pasos 2–10 (9):
+  9 × (2 250 × $1,375/1M + 12 750 × $0,11/1M) = 9 × ($0,0031 + $0,0014) =
+  $0,0405. Más la salida de los 10 pasos ($0,022) ⇒ $0,0206 + $0,0405 +
+  $0,022 ≈ **$0,083**. Sin ese 15 % de tokens nuevos por paso (contexto
+  estático), el mismo cálculo da ≈ $0,057 en vez de $0,083 — la cifra
+  depende de cuánto crece el contexto en cada paso, no sólo de que haya
+  caché.
+- **Global** (misma fórmula, ≈10 % más barato por la tabla de precios de
+  arriba): proporcional a los números de Regional.
+- **Sonnet 4.5 con caché** (misma fórmula y mismo supuesto del 15 %,
+  precios de Sonnet Regional): $0,0619 + 9 × ($0,0093 + $0,0042) + $0,066 ≈
+  **$0,25**.
+
+**El modelo cuesta entre ≈ 7× y ≈ 21× la VM** en este ejemplo ($0,083 y
+$0,25 frente a $0,0119): el tamaño del sandbox casi nunca es la palanca de
+coste de un agente; el número de pasos, el tamaño del contexto y cuánto
+crece en cada paso sí lo son.
+
+<a id="plaza-de-pool-de-agente-c-y-d"></a>
+
+### Coste de la VM, con fast-start (List, estimado)
+
+| Escenario | Coste aproximado |
+|---|---|
+| Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
+| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,78/mes** |
+| Plaza de pool con servidor residente (opción D) | ≈ **$0,92/mes** |
+| Sandbox pausado 8 h entre turnos | ≈ 1,5 GB (snapshot con OpenCode ya corrido, no el de la imagen base) × $0,0001111/GB-h × 8 h ≈ $0,0013 de almacenamiento + un ciclo suspend/resume ≈ $0,008 (opción B, estimado, pendiente de medir: Q149) |
+| Versión de imagen `rayito-agent` | ≈ 3,0 GB × $0,08/GB-mes × 7/30 ≈ **$0,056/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+
+Cómo salen las cifras de las plazas (todas **List**; los tamaños de
+snapshot de C y D están por medir):
+
+- **Plaza base**: el límite de 8 h incluye el tiempo suspendido, así que
+  el pool recicla cada ≈ 7 h ⇒ 720 h / 7 h ≈ **103 ciclos al mes**. Un ciclo
+  es lanzar (lee 0,92 GB: $0,0014) + escribir el snapshot al aparcar
+  (0,92 GB × $0,0038: $0,0035) + unos segundos de cómputo ≈ $0,0052.
+  103 × $0,0052 ≈ $0,53 + almacenamiento 0,92 GB × $0,08 ≈ $0,074 ⇒
+  **≈ $0,60/mes**.
+- **C (warmup)**: lanzar $0,0014 + calentar ≈ 15 s $0,0005 + aparcar
+  ≈ 1,24 GB $0,0047 ≈ $0,0066 × 103 ≈ $0,68 + almacenamiento ≈ $0,10 ⇒
+  **≈ $0,78/mes**.
+- **D (servidor residente)**: igual, con un snapshot de ≈ 1,5 GB ⇒
+  ≈ $0,0078 × 103 + ≈ $0,12 ⇒ **≈ $0,92/mes**.
+- **Pausar 8 h entre turnos (B)**: el sandbox no puede pasar de 8 h
+  lanzado + suspendido. Pasado ese tope, guarda el estado con
+  [persistencia](persistence.md) y crea una VM nueva (otro lanzamiento,
+  $0,0014, y otra vez el primer `exec` frío).
+
+### Qué opción de arranque rápido elegir
+
+| Tu caso | Opción | Coste extra (List) |
+|---|---|---|
+| Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
+| Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,008 por ciclo + ≈ $0,00017/h guardado |
+| Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,78/plaza/mes |
+| Lo anterior y el primer evento cuanto antes | D. Pool con servidor residente | ≈ $0,92/plaza/mes |
+
+La etapa de aceptación decidirá con medidas si A queda encendida por
+defecto (si baja la mediana del primer `exec` al menos un 50 %) y si D se
+recomienda sobre C (si mejora la p50 "toma → primer evento" al menos 1 s).
+
+??? info "Fuentes y mediciones (agentes)"
+    - Diseño: `design.md` de `ai-agent-core` en
+      [`openspec/changes/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/openspec/changes).
+    - Spike: [`docs/research/2026-10-agent-spike.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-agent-spike.md).
+    - Precios de MicroVMs: igual que el resto de esta página, `AWS_API_NOTES.md` §12.
+    - Precios de Lambda MicroVMs:
+      [aws.amazon.com/lambda/pricing](https://aws.amazon.com/lambda/pricing/)
+      y la offer `AWSLambda` (publicada 2026-10-01), consultados 2026-10-06.
+    - Precios de Bedrock: offer `AmazonBedrockFoundationModels` (publicada
+      2026-09-30),
+      [aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing),
+      consultados 2026-10-06.
+    - Caché de prompts:
+      [docs.aws.amazon.com/bedrock/.../prompt-caching.html](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+    - La medición contra una factura real de esta cuenta queda pendiente de
+      la etapa de aceptación en AWS (Q146–Q152 de `AWS_API_NOTES.md` §16).

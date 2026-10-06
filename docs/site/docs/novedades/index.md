@@ -12,6 +12,16 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
+-   :material-flask-outline:{ .lg .middle } **0.8.0** · borrador, sin publicar
+
+    ---
+
+    Agente de IA dentro del sandbox (`sbx.agent` con OpenCode, ya en
+    `main`), presets de pasarela para modelos y la página de precios.
+    Aún no está en ningún paquete publicado.
+
+    [:octicons-arrow-right-24: Borrador de 0.8.0](0.8.0.md)
+
 -   :material-tag:{ .lg .middle } **0.7.1** · 2026-10-06 · actual
 
     ---
@@ -131,6 +141,16 @@ lleguen, y hoy lanza `UnimplementedError` antes de llamar a AWS:
 
 Mientras tanto, para exponer un puerto en desarrollo,
 [`rayito sandbox proxy`](../funciones-opcionales/proxy-local.md).
+
+## Diseñado, sin código todavía
+
+Partes con un diseño ya aceptado pero sin ninguna línea fusionada en
+`main`: no existen en ningún SDK publicado, ni como opción ni como
+`UnimplementedError`.
+
+| Función | Estado |
+|---|---|
+| `AgentTemplate`, `PoolConfig.warmup` y el runtime deepagents | diseño aceptado (`ai-agent-fast-start`, `ai-agent-deepagents`), sin fusionar; ver el [borrador de 0.8.0](0.8.0.md) |
 
 ## Versiones anteriores
 
