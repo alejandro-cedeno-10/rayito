@@ -156,7 +156,7 @@ nav:
       - Agentes:
           - Servidor MCP: mcp.md
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
-          - "Agente en el sandbox (borrador)": guias/agente-en-el-sandbox.md
+          - "Agente en el sandbox": guias/agente-en-el-sandbox.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:
@@ -171,7 +171,7 @@ nav:
           - Secretos: secrets.md
       - Imágenes:
           - Templates declarativos: funciones-opcionales/templates.md
-          - "Templates de agente (borrador)": funciones-opcionales/templates-de-agente.md
+          - "Templates de agente (próximamente)": funciones-opcionales/templates-de-agente.md
       - Observar:
           - Eventos y webhooks: funciones-opcionales/eventos-y-webhooks.md
           - Exportación OTLP: funciones-opcionales/exportacion-otlp.md

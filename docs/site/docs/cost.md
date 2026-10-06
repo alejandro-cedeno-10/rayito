@@ -1,9 +1,19 @@
-# Modelo de costes
+---
+title: Precios (MicroVMs, pool, agentes)
+---
+
+# Precios: MicroVMs, pool y agentes
 
 Rayito no cobra nada: pagas a AWS, en tu factura, lo que consumen tus
-sandboxes. Todo lo de esta página está medido contra AWS real (`us-east-1`,
-ARM, imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de 2026) o sale de la
-lista de precios pública.
+sandboxes (y, si usas un agente, los tokens del modelo). Cada número de esta
+página lleva una de dos etiquetas:
+
+- **List** (precio de lista): sale de la lista de precios pública de AWS
+  (`us-east-1`, ARM), consultada el **2026-10-06**, o es aritmética sobre
+  ella.
+- **Measured** (medido): contrastado contra AWS real o Cost Explorer en la
+  cuenta de pruebas (imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de
+  2026).
 
 ## Cuánto cuesta, con ejemplos
 
@@ -152,20 +162,13 @@ distintas, y es fácil confundirlas:
 
 ## Coste de un agente: VM frente a modelo
 
-!!! warning "Borrador, aún no publicado"
-    Esta sección documenta el diseño aceptado de `sbx.agent`
-    (`ai-agent-core`/`ai-agent-fast-start`/`ai-agent-deepagents`, sin
-    fusionar todavía): [Agente en el sandbox](guias/agente-en-el-sandbox.md).
-    Los precios de MicroVMs de esta página ya están publicados; los de
-    Bedrock que siguen son de la lista de precios pública, consultada el
-    2026-10-06, y todavía no se han medido en una factura real de esta
-    cuenta (eso es [Q151](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)
-    de la etapa de aceptación en AWS).
-
-Un agente dentro del sandbox paga **dos facturas distintas**: la VM (igual
-que cualquier sandbox) y el modelo, por tokens, en Bedrock, Anthropic o el
-proveedor que uses por la pasarela. Casi siempre, la del modelo es la
-mayor con diferencia.
+Un [agente en el sandbox](guias/agente-en-el-sandbox.md) paga **dos
+facturas distintas**: la VM (igual que cualquier sandbox) y el modelo, por
+tokens, en Bedrock, Anthropic o el proveedor que uses por la pasarela. Casi
+siempre la del modelo es, con diferencia, la mayor. Los precios de Bedrock
+de esta sección son **List**: aún no se han contrastado con una factura real
+(eso es Q151 de la etapa de aceptación en AWS). En la factura aparecen como
+uso de AWS Marketplace.
 
 ### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
 
@@ -220,7 +223,9 @@ $0,25 frente a $0,0119): el tamaño del sandbox casi nunca es la palanca de
 coste de un agente; el número de pasos, el tamaño del contexto y cuánto
 crece en cada paso sí lo son.
 
-### Coste de la VM, con fast-start
+<a id="plaza-de-pool-de-agente-c-y-d"></a>
+
+### Coste de la VM, con fast-start (List, estimado)
 
 | Escenario | Coste aproximado |
 |---|---|
@@ -228,15 +233,50 @@ crece en cada paso sí lo son.
 | Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,78/mes** |
 | Plaza de pool con servidor residente (opción D) | ≈ **$0,92/mes** |
 | Sandbox pausado 8 h entre turnos | ≈ 1,5 GB (snapshot con OpenCode ya corrido, no el de la imagen base) × $0,0001111/GB-h × 8 h ≈ $0,0013 de almacenamiento + un ciclo suspend/resume ≈ $0,008 (opción B, estimado, pendiente de medir: Q149) |
-| Versión de imagen `rayito-agent` | ≈ **$0,056/semana** ([Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+| Versión de imagen `rayito-agent` | ≈ 3,0 GB × $0,08/GB-mes × 7/30 ≈ **$0,056/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+
+Cómo salen las cifras de las plazas (todas **List**; los tamaños de
+snapshot de C y D están por medir):
+
+- **Plaza base**: el límite de 8 h incluye el tiempo suspendido, así que
+  el pool recicla cada ≈ 7 h ⇒ 720 h / 7 h ≈ **103 ciclos al mes**. Un ciclo
+  es lanzar (lee 0,92 GB: $0,0014) + escribir el snapshot al aparcar
+  (0,92 GB × $0,0038: $0,0035) + unos segundos de cómputo ≈ $0,0052.
+  103 × $0,0052 ≈ $0,53 + almacenamiento 0,92 GB × $0,08 ≈ $0,074 ⇒
+  **≈ $0,60/mes**.
+- **C (warmup)**: lanzar $0,0014 + calentar ≈ 15 s $0,0005 + aparcar
+  ≈ 1,24 GB $0,0047 ≈ $0,0066 × 103 ≈ $0,68 + almacenamiento ≈ $0,10 ⇒
+  **≈ $0,78/mes**.
+- **D (servidor residente)**: igual, con un snapshot de ≈ 1,5 GB ⇒
+  ≈ $0,0078 × 103 + ≈ $0,12 ⇒ **≈ $0,92/mes**.
+- **Pausar 8 h entre turnos (B)**: el sandbox no puede pasar de 8 h
+  lanzado + suspendido. Pasado ese tope, guarda el estado con
+  [persistencia](persistence.md) y crea una VM nueva (otro lanzamiento,
+  $0,0014, y otra vez el primer `exec` frío).
+
+### Qué opción de arranque rápido elegir
+
+| Tu caso | Opción | Coste extra (List) |
+|---|---|---|
+| Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
+| Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,008 por ciclo + ≈ $0,00017/h guardado |
+| Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,78/plaza/mes |
+| Lo anterior y el primer evento cuanto antes | D. Pool con servidor residente | ≈ $0,92/plaza/mes |
+
+La etapa de aceptación decidirá con medidas si A queda encendida por
+defecto (si baja la mediana del primer `exec` al menos un 50 %) y si D se
+recomienda sobre C (si mejora la p50 "toma → primer evento" al menos 1 s).
 
 ??? info "Fuentes y mediciones (agentes)"
-    - Diseño y los hechos F1–F14 verificados offline: `design.md` de
-      `ai-agent-fast-start`/`ai-agent-core` en
+    - Diseño: `design.md` de `ai-agent-core` en
       [`openspec/changes/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/openspec/changes).
     - Spike: [`docs/research/2026-10-agent-spike.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-agent-spike.md).
     - Precios de MicroVMs: igual que el resto de esta página, `AWS_API_NOTES.md` §12.
-    - Precios de Bedrock: offer `AmazonBedrockFoundationModels`,
+    - Precios de Lambda MicroVMs:
+      [aws.amazon.com/lambda/pricing](https://aws.amazon.com/lambda/pricing/)
+      y la offer `AWSLambda` (publicada 2026-10-01), consultados 2026-10-06.
+    - Precios de Bedrock: offer `AmazonBedrockFoundationModels` (publicada
+      2026-09-30),
       [aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing),
       consultados 2026-10-06.
     - Caché de prompts:

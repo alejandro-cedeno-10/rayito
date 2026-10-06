@@ -257,16 +257,18 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 ## Calentamiento (`warmup`) y servidor residente
 
-!!! warning "Borrador, aún no publicado"
-    Esta sección documenta el diseño aceptado de `PoolConfig.warmup`
-    (`ai-agent-fast-start`, sin fusionar todavía):
+!!! warning "Próximamente"
+    `PoolConfig.warmup` llega con `ai-agent-fast-start`, todavía sin
+    fusionar: la API y las cifras pueden cambiar. Los precios son **List**
+    (consultados 2026-10-06) y los tamaños de snapshot están por medir
+    (Q146–Q148).
     [Agente en el sandbox](guias/agente-en-el-sandbox.md).
 
 Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (mediana
 11,3 s en el spike) en cada VM nueva. `PoolConfig.warmup` deja ese coste en
 el calentamiento de la plaza, antes de aparcarla, en vez de en la toma:
 
-<!-- noqa: example: API de ai-agent-fast-start, aún no fusionada -->
+<!-- noqa: example: API de ai-agent-fast-start, aún no fusionada en main -->
 ```python
 from rayito import PoolConfig, SandboxPool
 from rayito.agent import agent_pool_warmup

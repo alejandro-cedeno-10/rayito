@@ -54,3 +54,18 @@
       agent-API code block is `noqa`-marked with a reason).
 - [x] 5.3 `openspec validate --all --strict --no-interactive` green.
 - [x] 5.4 `check_hygiene.py` on the changed/new files.
+
+## 6. Align with `ai-agent-core` on main
+
+- [x] 6.1 Guide rewritten against the merged API: top-level imports from
+      `rayito`, `AgentSpec` fields as shipped (`small_model`, `agents`,
+      `mcp` maps, no `limits` field; limits go to `run()`), TS
+      `await stream.result()`; the examples on the merged API are checked
+      (no `noqa`); deepagents, `AgentTemplate` and pool warmup marked
+      "próximamente".
+- [x] 6.2 `cost.md`: List/Measured legend, base-slot / C / D arithmetic,
+      8 h limit and recycling, fast-start decision table, prices
+      re-checked on aws.amazon.com/lambda/pricing (2026-10-06).
+- [x] 6.3 `security.md` points at T29/T30 now in `SECURITY.md`; errors
+      table matches `AGENT_FAILURE_MESSAGES`; home card links the guide and
+      pricing; novedades 0.8.0 stays an unreleased draft.

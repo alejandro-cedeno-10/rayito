@@ -317,14 +317,10 @@ primera petición que le llega (factura cómputo, como cualquier reanudación).
 
 ## Agente de código dentro del sandbox
 
-!!! warning "Borrador, aún no publicado"
-    Esta sección anticipa **T29** y **T30**, el modelo de amenazas de
-    `sbx.agent` ([Agente en el sandbox](guias/agente-en-el-sandbox.md)).
-    Esos dos identificadores todavía no existen en
-    [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md):
-    llegan con `ai-agent-core`, sin fusionar todavía. El contenido de esta
-    sección es el diseño ya aceptado; el número de amenaza puede moverse
-    al fusionarse si entre medias se añade otra.
+Resumen de **T29** y **T30** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`ai-agent-core`), el modelo de amenazas de
+[`sbx.agent`](guias/agente-en-el-sandbox.md).
 
 **El agente en sí mismo (T29).** `opencode run --auto` responde "sí" a
 cualquier permiso que el modelo pida, y el backend por defecto de
@@ -343,7 +339,7 @@ pasarela por su cuenta, fuera del presupuesto de tokens del SDK (no hay
 forma de distinguir, desde la pasarela, una llamada que hizo el runtime del
 agente de una que hizo el modelo pidiéndole ejecutar `curl`). Mitigaciones:
 restringir `allow` a los `(método, ruta)` de los modelos exactos que uses
-(nunca `/model/*` salvo que la verificación de rutas con `:` lo obligue) y
+(`bedrock_gateway` nunca abre `/model/*`) y
 `rate_per_minute`. La contraseña de `opencode serve`, cuando se usa
 ([Pool: servidor residente](pool.md#calentamiento-warmup-y-servidor-residente)),
 vive en el snapshot aparcado y el servidor escucha sólo en loopback,
@@ -354,11 +350,10 @@ alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
 por sha256 fijado (`scripts/check_pins.py` los valida contra `limits.json`);
 el venv de deepagents se instala con `--require-hashes`; el sha256 del
 runner de deepagents (`runner_sha256`) queda registrado en el manifiesto
-del template, para auditar qué runner trae cada versión de imagen (el SDK
-no lo verifica hoy; esa comprobación no está en el diseño aceptado de
-`ai-agent-core`/`ai-agent-deepagents`). Autoupdate, la descarga de
+del template, y `AgentSpec.runtime_version` se compara con la versión del
+manifiesto. Autoupdate, la descarga de
 modelos, de LSPs, los plugins por defecto y la lectura de un `.claude/` del
-workdir están apagados (`OPENCODE_DISABLE_*`, `OPENCODE_PURE`); nada de eso
+workdir están apagados (`autoupdate: false`, `share: "disabled"`, `OPENCODE_DISABLE_CLAUDE_CODE=1`); nada de eso
 sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y
 si lo intentara, fallaría igual que cualquier otra conexión saliente no
 permitida.

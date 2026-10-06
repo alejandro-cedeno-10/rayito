@@ -5,10 +5,13 @@ description: AgentTemplate compone OpenCode, ripgrep y deepagents sobre rayito-b
 
 # Templates de agente
 
-!!! warning "Borrador, aún no publicado"
-    Esta página documenta el diseño aceptado de `AgentTemplate`
-    (`ai-agent-fast-start`, sin fusionar todavía). Llega con una futura
-    0.8.0 ([Novedades](../novedades/0.8.0.md)).
+!!! warning "Próximamente"
+    `AgentTemplate` y la orden `agent template build` de la CLI llegan con
+    `ai-agent-fast-start`, todavía sin fusionar en `main`; los pines
+    (`AGENT_OPENCODE_VERSION`, `AGENT_RIPGREP_VERSION` y sus sha256 en
+    `limits.json`) y el manifiesto `/opt/agents/rayito-agent.json` que lee
+    `sbx.agent` ya están. Se publicará con 0.8.0
+    ([borrador de Novedades](../novedades/0.8.0.md)).
 
 `AgentTemplate` es una receta fija sobre el [DSL de `Template`](templates.md)
 que instala, en una sola imagen, todo lo que
@@ -128,4 +131,4 @@ rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos
   debajo.
 - [Pool: calentamiento y servidor residente](../pool.md#calentamiento-warmup-y-servidor-residente):
   evitar pagar el primer `exec` en cada toma.
-- [Coste y pricing](../cost.md#coste-de-un-agente-vm-frente-a-modelo).
+- [Precios (MicroVMs, pool, agentes)](../cost.md#coste-de-un-agente-vm-frente-a-modelo).
