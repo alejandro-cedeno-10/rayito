@@ -54,7 +54,7 @@
 # La versión de la imagen base gestionada (`baseImageVersion`) va aparte, en
 # cada publish: `--base-image-version` obligatoria en scripts/publish_image.py
 # (AWS_API_NOTES.md §4 y Q52).
-FROM public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3
+FROM public.ecr.aws/lambda/microvms:al2023-minimal@sha256:48598370c9d72e1b5fad669ac90c4370d88a3d9ec517d2f3c39092af646839ce
 
 # git-core (M9) es lo que ejecuta el módulo git de los SDK (`sandbox.git`, un
 # envoltorio de `commands.run` en el cliente). Va fijado por versión y release
