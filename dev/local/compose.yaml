@@ -95,6 +95,10 @@ services:
       # variable, el entorno local no se activa).
       RAYITO_LOCAL_GUEST: 127.0.0.1:8080:9000
       RAYITO_LOCAL_ARTIFACT_BUCKET: rayito-local-artifacts
+      # Dónde dejan `make local-bedrock-key` la clave de Bedrock de corta
+      # duración y los tests `local` de agentes la leen: el tmpfs de /tmp,
+      # que muere con el contenedor. Sin el fichero esos tests se saltan.
+      RAYITO_LOCAL_BEDROCK_KEY_FILE: /tmp/rayito-local-bedrock-key
     volumes:
       - ../..:/src:ro
       - venv:/opt/rayito/venv

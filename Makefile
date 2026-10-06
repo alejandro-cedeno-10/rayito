@@ -1,4 +1,4 @@
-.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -393,6 +393,22 @@ local-up: local-guest-context
 # El subconjunto `local` de los e2e de los dos SDK contra el guest y Floci.
 local-e2e:
 	$(LOCAL_COMPOSE) exec -T runner bash $(LOCAL_DIR)/run-e2e.sh $(LOCAL_E2E_ARGS)
+
+# Agentes contra un modelo real (tests `local` de agentes,
+# docs/site/docs/guias/probar-en-local.md): `local-agent-up` cambia el guest
+# por la variante con OpenCode, ripgrep y deepagents (dev/local/agent) y
+# CAP_NET_ADMIN para el deny-all de egress; `local-bedrock-key` acuña en el
+# host una clave de Bedrock de corta duración con tu sesión de AWS
+# (AWS_PROFILE) y la deja en el tmpfs del runner, por stdin y sin pasar por
+# ningún fichero del host. Sin ella esos tests se saltan.
+LOCAL_AGENT_COMPOSE := $(LOCAL_COMPOSE) -f $(LOCAL_DIR)/agent/compose.yaml
+
+local-agent-up:
+	$(LOCAL_AGENT_COMPOSE) up -d --build --wait guest
+
+local-bedrock-key:
+	$(PY) python $(LOCAL_DIR)/agent/mint_bedrock_key.py \
+	  | $(LOCAL_COMPOSE) exec -T runner sh -c 'umask 077 && cat > "$$RAYITO_LOCAL_BEDROCK_KEY_FILE"'
 
 local-down:
 	$(LOCAL_COMPOSE) down --volumes --remove-orphans

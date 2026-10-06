@@ -80,6 +80,58 @@ docker compose -f dev/local/compose.yaml exec runner \
   bash -c 'cd clients/typescript && pnpm exec vitest run --project local'
 ```
 
+## Agentes contra un modelo real
+
+Los tests de agentes (`test_local_agents.py` y `agents.local.test.ts`)
+corren OpenCode y deepagents dentro de un sandbox local, con Claude en
+Amazon Bedrock como modelo y la
+[pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md) como
+única salida. Son la base de `sbx.agent`: comprueban, en cada runtime y en
+los dos SDK, que el agente usa sus herramientas, continúa una sesión, se
+aborta sin dejar procesos hijos, respeta sus límites (`steps` en OpenCode,
+`recursion_limit` en deepagents y el `timeout` del comando), emite eventos
+con la forma esperada, no puede leer la credencial, no sale a Internet por
+su cuenta mientras el modelo sí responde, y que no hay telemetría encendida
+por defecto. Sin clave se saltan, así que `make local-e2e` y CI siguen sin
+credenciales.
+
+!!! info "Coste y activación"
+    - **Por defecto**: apagado. Sin `make local-bedrock-key` los tests de
+      agentes se saltan y nada sale del entorno local.
+    - **Activa**: `make local-agent-up` (cambia el guest por la variante
+      con OpenCode, ripgrep y deepagents de `dev/local/agent/`, con
+      `CAP_NET_ADMIN` para que el deny-all de egress se aplique de verdad) y
+      `AWS_PROFILE=<tu-perfil> make local-bedrock-key`.
+    - **Recursos y llamadas AWS**: ningún recurso. La clave es una URL de
+      `bedrock:CallWithBearerToken` prefirmada en tu máquina (vale lo que tu
+      sesión, como mucho 12 h); los tests hacen unas veinte llamadas
+      `ConverseStream`/`Converse` a Claude Haiku 4.5 desde `rayd` por la
+      pasarela. El secreto vive en el Secrets Manager de Floci.
+    - **Coste aproximado**: céntimos por corrida, de tokens de Bedrock
+      (Claude Haiku 4.5, us-east-1, consultado el 2026-10-06:
+      <https://aws.amazon.com/bedrock/pricing/>).
+    - **IAM**: `bedrock:CallWithBearerToken` e `bedrock:InvokeModel*` sobre
+      el perfil de inferencia, y el acceso al modelo ya habilitado en la
+      cuenta (Rayito no lo habilita por ti).
+    - **Cómo apagarla**: `make local-down` (borra el tmpfs del runner con la
+      clave) o no ejecutes `make local-bedrock-key`.
+    - **Ejemplo**:
+
+        ```bash
+        make local-up LOCAL_RAYD_BIN=<ruta al rayd>
+        make local-agent-up
+        AWS_PROFILE=<tu-perfil> make local-bedrock-key
+        make local-e2e LOCAL_E2E_ARGS="-k agents"
+        make local-down
+        ```
+
+La clave pasa del host al runner por una tubería y queda en
+`/tmp/rayito-local-bedrock-key` (`RAYITO_LOCAL_BEDROCK_KEY_FILE`), un tmpfs
+que muere con el contenedor: nunca en un fichero de tu máquina ni en una
+variable de entorno. Los tests la buscan dentro del sandbox para decir sí o
+no y nunca la imprimen. El detalle de cada runtime está en la investigación del spike,
+`docs/research/2026-10-agent-spike.md`.
+
 ## Cómo funciona por dentro
 
 Los tests (`clients/python/tests/local/` y `clients/typescript/tests/local/`)
@@ -115,7 +167,8 @@ se saltan.
 | `Template.build` | subida del zip a S3 y `create-microvm-image` | el build real de la imagen y su `/ready` |
 | Eventos y webhooks | la pila, los webhooks, `create(events=)` y los tres Lambdas ejecutados en proceso, con una entrega firmada a un receptor local | la suscripción de CloudWatch Logs y la entrega HTTPS con su filtro SSRF |
 | Proxy de AWS (JWE, 403, keepalives) | no | sí |
-| Bloqueo de IMDS, egress, montajes S3 | no: necesitan privilegios en el guest | sí |
+| Agentes (OpenCode, deepagents) por la pasarela | sí, con `make local-agent-up` y una clave de Bedrock: deny-all de egress real, herramientas, sesión, aborto, límites, eventos | el primer `exec` y la memoria en un MicroVM |
+| Bloqueo de IMDS, egress, montajes S3 | no: necesitan privilegios en el guest (salvo el egress con `make local-agent-up`) | sí |
 | Persistencia y transferencias prefirmadas | no: `rayd` usa IMDS y exige HTTPS | sí |
 | Coste, cuotas, tiempos de arranque | no | sí |
 
