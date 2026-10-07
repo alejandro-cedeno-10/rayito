@@ -135,6 +135,247 @@ APIs al estilo de OpenAI). Con OpenAI:
       (`RayitoSecretsReader`).
     - **Cómo apagarla:** no pasar la pasarela ni llamar a `sbx.agent`.
 
+## Configurar cada proveedor
+
+Cada apartado crea el secreto (una vez, desde tu máquina o tu backend), construye el preset y el `AgentModel`. Los dos se pasan como en el [ejemplo](#ejemplo): el preset en `gateways=` y el modelo en `AgentSpec`. Los ids de modelo son ejemplos: usa los que ofrezca tu cuenta.
+
+### OpenAI
+
+Crea la clave en un **proyecto** propio de la plataforma de OpenAI y fija ahí el presupuesto mensual y los modelos permitidos. Referencia: [platform.openai.com](https://platform.openai.com/docs/api-reference).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, openai_gateway
+
+    SecretStore().create("openai-key", "Bearer <clave de API de OpenAI>")
+    gateway = openai_gateway("openai-key")
+    model = AgentModel(provider="openai", id="gpt-5-mini", gateway="openai")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, openaiGateway } from "rayito";
+
+    await new SecretStore().create("openai-key", "Bearer <clave de API de OpenAI>");
+    const gateway = openaiGateway("openai-key");
+    const model = new AgentModel({ provider: "openai", id: "gpt-5-mini", gateway: "openai" });
+    ```
+
+### Gemini (AI Studio)
+
+El secreto guarda la clave tal cual, sin `Bearer`. Es el único preset no Bedrock que limita el modelo en la pasarela: pon en `models` también el `small_model`. Fija además la cuota y la facturación del proyecto de Google. Referencia: [ai.google.dev](https://ai.google.dev/gemini-api/docs/api-key).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, gemini_gateway
+
+    SecretStore().create("gemini-key", "<clave de API de Gemini>")
+    gateway = gemini_gateway("gemini-key", models=["gemini-2.5-flash", "gemini-2.5-flash-lite"])
+    model = AgentModel(provider="google", id="gemini-2.5-flash", gateway="gemini")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, geminiGateway } from "rayito";
+
+    await new SecretStore().create("gemini-key", "<clave de API de Gemini>");
+    const gateway = geminiGateway("gemini-key", { models: ["gemini-2.5-flash", "gemini-2.5-flash-lite"] });
+    const model = new AgentModel({ provider: "google", id: "gemini-2.5-flash", gateway: "gemini" });
+    ```
+
+### Azure OpenAI
+
+El secreto guarda la clave tal cual (cabecera `api-key`). El `id` es el nombre del despliegue. Crea sólo los despliegues que necesites y limita su cuota (TPM). Sólo con OpenCode. Referencia: [learn.microsoft.com](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, azure_openai_gateway
+
+    SecretStore().create("azure-openai-key", "<clave del recurso de Azure OpenAI>")
+    gateway = azure_openai_gateway("azure-openai-key", resource="mi-recurso")
+    model = AgentModel(provider="azure", id="mi-despliegue", gateway="azure")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, azureOpenaiGateway } from "rayito";
+
+    await new SecretStore().create("azure-openai-key", "<clave del recurso de Azure OpenAI>");
+    const gateway = azureOpenaiGateway("azure-openai-key", { resource: "mi-recurso" });
+    const model = new AgentModel({ provider: "azure", id: "mi-despliegue", gateway: "azure" });
+    ```
+
+### OpenRouter
+
+Pon un **límite de crédito** en la clave: la documentación de OpenRouter avisa de que un agente desbocado puede gastar todo el saldo. Referencia: [openrouter.ai](https://openrouter.ai/docs/api/reference/authentication).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, openrouter_gateway
+
+    SecretStore().create("openrouter-key", "Bearer <clave de OpenRouter>")
+    gateway = openrouter_gateway("openrouter-key")
+    model = AgentModel(provider="openai-compatible", id="anthropic/claude-haiku-4.5", gateway="openrouter", base_path="/api/v1")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, openrouterGateway } from "rayito";
+
+    await new SecretStore().create("openrouter-key", "Bearer <clave de OpenRouter>");
+    const gateway = openrouterGateway("openrouter-key");
+    const model = new AgentModel({ provider: "openai-compatible", id: "anthropic/claude-haiku-4.5", gateway: "openrouter", basePath: "/api/v1" });
+    ```
+
+### Groq
+
+Revisa los límites de uso de la organización en la consola de Groq. Referencia: [console.groq.com](https://console.groq.com/docs/openai).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, groq_gateway
+
+    SecretStore().create("groq-key", "Bearer <clave de Groq>")
+    gateway = groq_gateway("groq-key")
+    model = AgentModel(provider="openai-compatible", id="<modelo de Groq>", gateway="groq", base_path="/openai/v1")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, groqGateway } from "rayito";
+
+    await new SecretStore().create("groq-key", "Bearer <clave de Groq>");
+    const gateway = groqGateway("groq-key");
+    const model = new AgentModel({ provider: "openai-compatible", id: "<modelo de Groq>", gateway: "groq", basePath: "/openai/v1" });
+    ```
+
+### Mistral
+
+Fija los límites de gasto del workspace en la consola de Mistral. Referencia: [docs.mistral.ai](https://docs.mistral.ai/api).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, mistral_gateway
+
+    SecretStore().create("mistral-key", "Bearer <clave de Mistral>")
+    gateway = mistral_gateway("mistral-key")
+    model = AgentModel(provider="openai-compatible", id="<modelo de Mistral>", gateway="mistral", base_path="/v1")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, mistralGateway } from "rayito";
+
+    await new SecretStore().create("mistral-key", "Bearer <clave de Mistral>");
+    const gateway = mistralGateway("mistral-key");
+    const model = new AgentModel({ provider: "openai-compatible", id: "<modelo de Mistral>", gateway: "mistral", basePath: "/v1" });
+    ```
+
+### DeepSeek
+
+Sin `base_path`: la API cuelga de la raíz. DeepSeek es de prepago: el saldo cargado es el tope. Referencia: [api-docs.deepseek.com](https://api-docs.deepseek.com/).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, deepseek_gateway
+
+    SecretStore().create("deepseek-key", "Bearer <clave de DeepSeek>")
+    gateway = deepseek_gateway("deepseek-key")
+    model = AgentModel(provider="openai-compatible", id="<modelo de DeepSeek>", gateway="deepseek")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, deepseekGateway } from "rayito";
+
+    await new SecretStore().create("deepseek-key", "Bearer <clave de DeepSeek>");
+    const gateway = deepseekGateway("deepseek-key");
+    const model = new AgentModel({ provider: "openai-compatible", id: "<modelo de DeepSeek>", gateway: "deepseek" });
+    ```
+
+### xAI
+
+Usa el proveedor `openai` contra otro upstream. Fija los límites de gasto del equipo en la consola de xAI. Referencia: [docs.x.ai](https://docs.x.ai/docs/api-reference).
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, xai_gateway
+
+    SecretStore().create("xai-key", "Bearer <clave de API de xAI>")
+    gateway = xai_gateway("xai-key")
+    model = AgentModel(provider="openai", id="<modelo de xAI>", gateway="xai")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, xaiGateway } from "rayito";
+
+    await new SecretStore().create("xai-key", "Bearer <clave de API de xAI>");
+    const gateway = xaiGateway("xai-key");
+    const model = new AgentModel({ provider: "openai", id: "<modelo de xAI>", gateway: "xai" });
+    ```
+### LiteLLM (tu propio proxy)
+
+Si ya tienes un [proxy de LiteLLM](https://docs.litellm.ai/docs/proxy/user_keys),
+el agente puede usar cualquier modelo que ese proxy sirva (de cualquier
+proveedor o local) con una sola **clave virtual**. Condiciones:
+
+- El proxy escucha en **HTTPS** y es alcanzable desde la VPC del sandbox.
+  `upstream` es `https://host` o `https://host:puerto`, sin ruta. El preset
+  rechaza `http://`, `localhost`, loopback, `0.0.0.0` y enlace local.
+- El secreto guarda `Bearer <clave virtual>`. Crea la clave virtual con
+  presupuesto (`max_budget`) y lista de modelos: es el único tope real,
+  porque la pasarela no ve el modelo.
+- `base_path` es `/v1` por defecto; el del `AgentModel` tiene que ser el
+  mismo. Se permiten `POST <base_path>/chat/completions` y
+  `POST <base_path>/responses`.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, SecretStore, litellm_gateway
+
+    SecretStore().create("litellm-key", "Bearer <clave virtual de LiteLLM>")
+    gateway = litellm_gateway("litellm-key", upstream="https://llm.example.com")
+    model = AgentModel(provider="openai-compatible", id="<modelo del proxy>", gateway="litellm", base_path="/v1")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, SecretStore, litellmGateway } from "rayito";
+
+    await new SecretStore().create("litellm-key", "Bearer <clave virtual de LiteLLM>");
+    const gateway = litellmGateway("litellm-key", { upstream: "https://llm.example.com" });
+    const model = new AgentModel({ provider: "openai-compatible", id: "<modelo del proxy>", gateway: "litellm", basePath: "/v1" });
+    ```
+
+### Modelos locales
+
+vLLM, LM Studio, Ollama y similares funcionan si los publicas detrás de
+**HTTPS** en una dirección que la VPC del sandbox alcance (un balanceador
+interno, por ejemplo). Puedes apuntar a ellos directamente con
+`openai_compatible_gateway(secret, upstream=, base_path=)` /
+`openaiCompatibleGateway(secret, { upstream, basePath })`, o ponerlos detrás
+de LiteLLM para tener claves virtuales y presupuestos. El `localhost` de tu
+portátil nunca es alcanzable desde la microVM.
+
 ## Límites del lado del proveedor
 
 Sólo Bedrock y Gemini llevan el modelo en la **ruta**, así que la allowlist
@@ -161,16 +402,16 @@ pasarela, las haga el agente o cualquier otro código del sandbox.
 
 ## Proveedores no admitidos
 
-Rayito sólo admite claves de API. Estas formas de acceso se revisaron y no
-se admiten:
+Rayito sólo admite claves de API. Estas formas de acceso se revisaron
+(consultado el 2026-10-07) y no se admiten:
 
 | Opción | Decisión | Por qué |
 |---|---|---|
-| Plan de ChatGPT con el OAuth que trae OpenCode | Rechazada | Usa el `client_id` de otra aplicación y el `backend-api` de ChatGPT, que OpenAI pide no usar, y exige el refresh token dentro del sandbox, donde el agente podría leerlo. |
-| Plan de ChatGPT con "Sign in with ChatGPT" | Aplazada | OpenAI lo permite para apps open-source alojadas en local; las apps alojadas necesitan su aprobación. Se espera su confirmación para este caso. |
-| Claude Pro/Max | Rechazada | Los términos de Anthropic prohíben que terceros enruten peticiones por credenciales de planes de consumo o las intermedien. Usa una clave de API de Anthropic o Bedrock. |
-| GitHub Copilot | Rechazada | Su soporte en OpenCode es para uso interactivo; no hay términos para flotas desatendidas y exigiría reutilizar el OAuth de OpenCode. |
-| SuperGrok | Rechazada | No hay términos publicados para automatización. Usa la clave de API de xAI. |
+| Plan de ChatGPT con el OAuth que trae OpenCode | Rechazada | Usa el `client_id` de otra aplicación y el `backend-api` de ChatGPT. OpenAI pide expresamente no apuntar a esos endpoints ([models-and-inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)). Además exige el refresh token dentro del sandbox, donde el agente podría leerlo. |
+| Plan de ChatGPT con "Sign in with ChatGPT" | Aplazada | OpenAI lo documenta para apps open-source y alojadas en local; para una app alojada en remoto pide rellenar un formulario de interés ([overview](https://developers.openai.com/siwc/token-sharing-open-source)). Queda pendiente de que OpenAI confirme este caso. Para uso programático, OpenAI recomienda clave de API ([Codex auth](https://learn.chatgpt.com/docs/auth)). |
+| Claude Pro/Max | Rechazada | Los [términos de consumo de Anthropic](https://www.anthropic.com/legal/consumer-terms) y la página [legal and compliance de Claude Code](https://code.claude.com/docs/en/legal-and-compliance) no permiten que terceros enruten peticiones con credenciales de planes de consumo. OpenCode quitó ese acceso ([docs de proveedores](https://opencode.ai/docs/providers/)). Usa una clave de API de Anthropic o Bedrock. |
+| GitHub Copilot | No admitida | GitHub admite Copilot en OpenCode para uso interactivo ([changelog](https://github.blog/changelog/2026-01-16-github-copilot-now-supports-opencode/)), pero su [política de uso aceptable](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies) prohíbe la actividad automatizada masiva, y exigiría reutilizar el OAuth de OpenCode. |
+| SuperGrok | No admitida | xAI lo ofrece en OpenCode ([anuncio](https://x.ai/news/grok-opencode)), pero no hay términos publicados para automatización. Usa la clave de API de xAI. |
 
 Tampoco se pueden colar por otro camino: `provider`, `enabled_providers` y
 `plugin` son claves reservadas de `raw_config` (así no se carga un plugin
