@@ -78,7 +78,14 @@ function serveReadyStep(): WarmupStep {
  * Sin `serve` (opción C) sólo carga el runtime en la caché de páginas antes
  * de aparcar. Con `serve: true` (opción D, sólo OpenCode) deja además el
  * servidor residente arrancado y caliente; `agent.run` se engancha a él tras
- * el `take()`.
+ * el `take()`. D no se recomienda: sólo gana unas décimas a C (Q154) y
+ * cuesta más memoria y más por plaza.
+ *
+ * Un pool sólo compensa si llegan muchas conversaciones nuevas cuyo primer
+ * mensaje tiene que ser rápido: los turnos de una misma conversación de menos
+ * de 8 h van mejor en una sola VM pausada entre turnos (`pause()` y
+ * `connect()`, o la auto-suspensión de `idle`), y más allá de 8 h, con
+ * `persist`. Guía "Agente en el sandbox", "¿Qué uso?".
  *
  * Coste y activación
  * -------------------
@@ -86,16 +93,17 @@ function serveReadyStep(): WarmupStep {
  * Recursos y llamadas AWS: ninguna llamada nueva; cada plaza corre los pasos
  *   antes de su `pause()` y su snapshot crece con la caché y, con `serve`, con
  *   el proceso del servidor.
- * Coste aproximado: ≈ $0,0066 por ciclo de reciclado (≈ 103 al mes) ≈
- *   $0,78/plaza/mes sin `serve` y ≈ $0,92 con `serve`, frente a ≈ $0,60 de una
- *   plaza base; cada `take()` lee ≈ $0,0019 (≈ $0,0023 con `serve`). Precios
+ * Coste aproximado: ≈ $0,0054 por ciclo de reciclado (≈ 103 al mes) ≈
+ *   $0,64/plaza/mes sin `serve` y ≈ $0,0069 ≈ $0,82 con `serve`, frente a
+ *   ≈ $0,60 de una plaza base; cada `take()` lee ≈ $0,0014 (≈ $0,0020 con
+ *   `serve`). Tiempos medidos en AWS (AWS_API_NOTES Q147 y Q148) por precios
  *   de lista, us-east-1, consultados 2026-10-06
  *   (https://aws.amazon.com/lambda/pricing/).
  * IAM: ninguna además de la del pool.
  * Cómo apagarla: `warmup: []` (por defecto).
  * Ejemplo:
  *   new SandboxPool({ size: 2, template: "rayito-agent", allowInternetAccess: false,
- *     warmup: agentPoolWarmup("opencode", { serve: true }) });
+ *     warmup: agentPoolWarmup("opencode") });
  */
 export function agentPoolWarmup(
   runtime: string | AgentRuntime = OPENCODE_RUNTIME_NAME,

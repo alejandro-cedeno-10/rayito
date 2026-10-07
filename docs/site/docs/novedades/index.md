@@ -148,9 +148,8 @@ Partes con un diseño ya aceptado pero sin ninguna línea fusionada en
 `main`: no existen en ningún SDK publicado, ni como opción ni como
 `UnimplementedError`.
 
-| Función | Estado |
-|---|---|
-| `AgentTemplate`, `PoolConfig.warmup` y el runtime deepagents | diseño aceptado (`ai-agent-fast-start`, `ai-agent-deepagents`), sin fusionar; ver el [borrador de 0.8.0](0.8.0.md) |
+Ninguna por ahora: `AgentTemplate`, `PoolConfig.warmup` y el runtime
+deepagents ya están en `main` (ver el [borrador de 0.8.0](0.8.0.md)).
 
 ## Versiones anteriores
 

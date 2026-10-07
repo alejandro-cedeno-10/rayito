@@ -8,6 +8,8 @@ variables del kernel siguen vivos al otro lado.
 
 - Un agente que espera al usuario minutos u horas: pausado no paga cómputo,
   sólo el almacenamiento del snapshot.
+  Para un [agente de código](agente-en-el-sandbox.md) es la opción por
+  defecto entre turnos: ver [¿Qué uso?](agente-en-el-sandbox.md#que-uso).
 - Trabajo con huecos: la **auto-suspensión** (activa por defecto) pausa el
   sandbox tras 300 s sin tráfico y lo reanuda con la siguiente llamada.
 - **Cuándo no**: pausas de menos de ≈ 150 s. Un ciclo suspend/resume cuesta

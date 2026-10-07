@@ -87,6 +87,7 @@ export interface PoolConfig {
    * termina y el relleno aplica el backoff); uno con `background: true` se
    * arranca y se suelta. Un reciclado relanza la plaza y vuelve a correrlos.
    * `agentPoolWarmup()` da los del agente de IA; su coste está en su TSDoc.
+   * Para los turnos de una misma conversación basta con pausar su VM.
    */
   readonly warmup?: readonly WarmupStep[] | undefined;
   /** Política de egress de todas las plazas, como en `Sandbox.create()`;

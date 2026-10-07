@@ -171,7 +171,7 @@ nav:
           - Secretos: secrets.md
       - Imágenes:
           - Templates declarativos: funciones-opcionales/templates.md
-          - "Templates de agente (próximamente)": funciones-opcionales/templates-de-agente.md
+          - "Templates de agente": funciones-opcionales/templates-de-agente.md
       - Observar:
           - Eventos y webhooks: funciones-opcionales/eventos-y-webhooks.md
           - Exportación OTLP: funciones-opcionales/exportacion-otlp.md

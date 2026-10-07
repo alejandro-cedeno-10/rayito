@@ -31,6 +31,6 @@
 - [x] 3.1 Template installs the runner and venv (`ai-agent-fast-start`);
   it also moved the pins to the package data
   `rayito/_agent/_assets/requirements-deepagents.txt` (design §10).
-- [ ] 3.2 Docs page and cost box (`ai-agent-docs-pricing`).
+- [x] 3.2 Docs page and cost box (`ai-agent-docs-pricing`).
 - [x] 3.3 Local e2e with real Bedrock and AWS acceptance Q150 (the runner
   was missing from the template; `AgentTemplate` now installs it).

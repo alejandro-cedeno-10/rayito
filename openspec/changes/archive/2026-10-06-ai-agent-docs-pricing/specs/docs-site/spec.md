@@ -29,6 +29,8 @@ visually distinct — e.g. "borrador" instead of a version tag with "actual").
   accepted design, and `novedades/index.md` shows it with a "borrador"
   label distinct from the "actual" label of the real current release
 
+## ADDED Requirements
+
 ### Requirement: a feature whose runtime code is unmerged is documented without claiming it works
 
 A docs page for a feature whose runtime implementation has not merged
@@ -38,11 +40,13 @@ unmerged API SHALL be excluded from automated execution-style checking
 with an HTML comment naming the reason (the existing `noqa` convention of
 `scripts/check_docs_examples.py`).
 
-#### Scenario: the agent guide is marked as a draft and its examples are excluded
+#### Scenario: a page for an unmerged feature is marked and its examples are excluded
 
-- **WHEN** `scripts/check_docs_examples.py --ruff --mypy` runs over
-  `docs/site/docs/guias/agente-en-el-sandbox.md`
-- **THEN** every Python/TypeScript code block calling `sbx.agent` is
-  preceded by a `noqa` comment naming the unmerged change, and the check
-  does not fail on an attribute or import that does not exist in the
-  installed package
+- **WHEN** a docs page documents a feature whose runtime change is not
+  merged yet (as the agent guide did before `ai-agent-core`,
+  `ai-agent-fast-start` and `ai-agent-deepagents` merged)
+- **THEN** the page carries the warning, every Python/TypeScript code block
+  calling the unmerged API is preceded by a `noqa` comment naming the
+  change, and `scripts/check_docs_examples.py --ruff --mypy` does not fail
+  on an attribute or import that does not exist in the installed package;
+  once the change merges, the warning and the `noqa` comments are removed

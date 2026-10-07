@@ -1,17 +1,14 @@
 ---
 title: Agente en el sandbox
-description: Correr un agente de código (OpenCode) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
+description: Correr un agente de código (OpenCode o deepagents) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
 ---
 
 # Agente en el sandbox
 
 !!! warning "Sin publicar todavía"
-    `sbx.agent` está en `main` (`ai-agent-core`, ADR-025) pero aún no en
-    una release: llegará con la 0.8.0 ([borrador de Novedades](../novedades/0.8.0.md)).
-    Lo marcado como **próximamente** en esta página (el runtime deepagents,
-    `AgentTemplate` y el calentamiento del pool) pertenece a los cambios
-    `ai-agent-deepagents` y `ai-agent-fast-start`, que todavía no están
-    fusionados.
+    `sbx.agent`, el runtime deepagents, `AgentTemplate` y el calentamiento
+    del pool están en `main` pero aún no en una release: llegan con la 0.8.0
+    ([borrador de Novedades](../novedades/0.8.0.md)).
 
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode))
 **dentro** del propio sandbox. El agente ve el mismo filesystem, los mismos
@@ -23,8 +20,8 @@ agente **usa** la credencial del modelo, pero nunca puede **leerla**.
 El sandbox necesita una imagen con el runtime instalado (OpenCode en
 `/opt/agents`). Si `opencode` no está en el `PATH` (o, con `attach=True`,
 su servidor residente no responde), la ejecución falla con
-`reason="runtime_missing"`. El constructor de esa
-imagen, `AgentTemplate`, es **próximamente**: ver
+`reason="runtime_missing"`. `AgentTemplate` construye esa imagen (OpenCode,
+ripgrep y, si quieres, deepagents): ver
 [Templates de agente](../funciones-opcionales/templates-de-agente.md).
 
 ## 1. El secreto y la pasarela
@@ -326,38 +323,205 @@ haces; ese aviso es **próximamente**). Riesgos y mitigaciones en
 ## Arranque rápido
 
 El primer `exec` de OpenCode tras `create()` es lento porque lee el binario
-desde el disco de la VM recién restaurada (Q142). Cómo elegir:
+desde el disco de la VM recién restaurada (Q142): el primer token de una
+VM nueva llega a los 20–28 s. **Para la mayoría de los casos no hace falta
+ningún pool**: ese coste se paga una vez por conversación, y los turnos
+siguientes van sobre la misma VM.
 
-| Si… | Usa | Estado | Coste por encima de la VM |
+### ¿Qué uso?
+
+1. **¿La conversación dura menos de 8 h desde `create()`?** (el tope de la
+   plataforma cuenta el tiempo lanzada **más** el suspendido) → **una VM por
+   conversación, pausada entre turnos (B)**. Crea una vez (primer token
+   ≈ 20 s), pausa al acabar cada turno y reanuda con `connect()` (≈ 3 s
+   hasta el primer token, Q149). No cuesta nada extra salvo
+   ≈ $0,005–0,006 por ciclo suspend/resume y ≈ $0,0001/h mientras está
+   pausada. Sin escribir código: la [auto-suspensión](pausar-reanudar.md#auto-suspension-e-idlepolicy)
+   por defecto (`IdlePolicy(max_idle_seconds=300, auto_resume=True)`) ya
+   la suspende tras 300 s sin tráfico, y la siguiente llamada del SDK
+   (`agent.run` incluida) la despierta sola. Sólo tienes que crearla con
+   un `timeout` que cubra la conversación (por defecto 3600 s, tope 8 h).
+2. **¿Puede quedarse parada más de 8 h?** → guarda su `HOME` en S3 con
+   [persistencia](../persistence.md) (`persist=`) y, cuando vuelva el
+   usuario, crea otra VM con el mismo `persist=`: restaura el `HOME`, y con
+   él las sesiones de OpenCode, así que `session_id` sigue valiendo. Pagas
+   otra vez el primer `exec` frío.
+3. **¿Llegan muchas conversaciones *nuevas* y su primer mensaje tiene que
+   ser rápido?** → un **pool con `warmup` (C)**: el primer token llega a
+   ≈ 5 s de la toma, a cambio de ≈ $0,64 al mes por plaza ociosa.
+4. **D (pool con servidor residente)**: no recomendada. Funciona (Q154), pero
+   sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más.
+
+Una conversación de varios turnos sobre la misma VM (B):
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, AgentSpec, Sandbox, bedrock_gateway
+
+    MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    spec = AgentSpec(model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"))
+
+    sbx = Sandbox.create(
+        template="rayito-agent",
+        timeout=8 * 3600,  # (1)!
+        allow_internet_access=False,
+        gateways={"bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID])},
+    )
+    try:
+        first = sbx.agent.run("Lee el README y resume el proyecto.", spec=spec)
+        sbx.pause()  # (2)!
+        sbx.connect()  # (3)!
+        second = sbx.agent.run("Ahora propón tres mejoras.", spec=spec, session_id=first.session_id)
+        print(second.text)
+    finally:
+        sbx.kill()
+    ```
+
+    1. El tope: 8 h lanzada + suspendida.
+    2. Entre turnos; sin esta línea, la auto-suspensión lo hace a los 300 s sin tráfico.
+    3. ≈ 3 s hasta el primer token del turno siguiente. Desde otro proceso,
+       `Sandbox.connect(sandbox_id, access_token=...)`
+       ([Ciclo de vida](ciclo-de-vida.md#conectar)).
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, AgentSpec, Sandbox, bedrockGateway } from "rayito";
+
+    const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+    const spec = new AgentSpec({
+      model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: "us-east-1" }),
+    });
+
+    const sbx = await Sandbox.create({
+      template: "rayito-agent",
+      timeoutMs: 8 * 3600 * 1000, // el tope: 8 h lanzada + suspendida
+      allowInternetAccess: false,
+      gateways: { bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [MODEL_ID] }) },
+    });
+    try {
+      const first = await sbx.agent.run("Lee el README y resume el proyecto.", { spec });
+      await sbx.pause(); // sin esta línea, la auto-suspensión lo hace a los 300 s sin tráfico
+      await sbx.connect(); // ≈ 3 s hasta el primer token del turno siguiente
+      const second = await sbx.agent.run("Ahora propón tres mejoras.", { spec, sessionId: first.sessionId });
+      console.log(second.text);
+    } finally {
+      await sbx.kill();
+    }
+    ```
+
+Más de 8 h entre turnos: el `HOME` (con las sesiones del agente) va a S3 y
+vuelve en la VM siguiente:
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentSpec, S3Prefix, Sandbox
+
+    role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+    home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="conversacion-42")
+
+
+    def turn(spec: AgentSpec, prompt: str, session_id: str | None) -> str:
+        with Sandbox.create("rayito-agent", execution_role_arn=role, persist=home) as sbx:  # (1)!
+            result = sbx.agent.run(prompt, spec=spec, session_id=session_id)
+            sbx.checkpoint_files()  # (2)!
+            return result.session_id
+    ```
+
+    1. Restaura el `HOME` guardado, si lo hay. La imagen necesita las
+       capacidades de persistencia (`AgentTemplate` parte de
+       `rayito-base-caps`) y la VM, la pasarela del modelo (`gateways=`),
+       omitida aquí.
+    2. `s3://amzn-s3-demo-bucket/rayito-home/conversacion-42/home.tar.gz`.
+
+=== "TypeScript"
+
+    ```ts
+    import { type AgentSpec, S3Prefix, Sandbox } from "rayito";
+
+    const executionRoleArn = process.env.RAYITO_EXECUTION_ROLE_ARN ?? "";
+    const persist = new S3Prefix({ bucket: "amzn-s3-demo-bucket", prefix: "rayito-home", name: "conversacion-42" });
+
+    export async function turn(spec: AgentSpec, prompt: string, sessionId?: string): Promise<string> {
+      await using sbx = await Sandbox.create({ template: "rayito-agent", executionRoleArn, persist });
+      const result = await sbx.agent.run(prompt, { spec, sessionId });
+      await sbx.checkpointFiles(); // el HOME, con las sesiones del agente, a S3
+      return result.sessionId;
+    }
+    ```
+
+### Las cuatro opciones
+
+Se combinan (un pool con `warmup` sobre una imagen con prefetch, por
+ejemplo):
+
+| Opción | Qué hace | Cuándo usarla | Coste por encima de la VM |
 |---|---|---|---|
-| no quieres pagar nada extra | **A. Prefetch** al crear (`AgentTemplate(prefetch=True)`) o `sbx.agent.prepare()` en cualquier imagen | en `main` (0.8.0) | ≈ $0 |
-| la misma conversación sigue más tarde (< 8 h) | **B. `pause()` entre turnos** y `connect()` | disponible | ≈ $0,005–0,006 por ciclo suspend/resume |
-| necesitas el agente caliente al instante, con tráfico regular | **C. Pool con `warmup`** | en `main` (0.8.0) | ≈ **$0,64/plaza/mes** |
-| además quieres el servidor de OpenCode ya arrancado | **D. Pool con servidor residente** | en `main`, **no recomendado**: ver abajo | ≈ $0,82/plaza/mes |
+| **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0 |
+| **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` (o cualquier llamada, con auto-resume) la reanuda | **el caso general**: una conversación de menos de 8 h desde `create()` | ≈ $0,005–0,006 por ciclo suspend/resume + ≈ $0,0001/h pausada |
+| **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | sólo si llegan muchas conversaciones **nuevas** y el primer mensaje tiene que ser rápido | ≈ **$0,64/plaza ociosa/mes** |
+| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` | no recomendada: apenas gana a C | ≈ **$0,82/plaza ociosa/mes** |
+
+Cada ejecución, además, cuesta su VM (≈ $0,002–0,003 entre lanzamiento y
+segundos de cómputo hasta la respuesta) y su modelo (≈ $0,0009 una respuesta
+corta de Claude Haiku 4.5 con la caché de prompts ya escrita). Desglose en
+[Precios](../cost.md#coste-de-un-agente-vm-frente-a-modelo).
 
 !!! success "Medido en AWS real (2026-10-07, us-east-1, Claude Haiku 4.5, n=5)"
     Tiempo hasta el primer token de una respuesta corta, con el egress
-    cerrado y el modelo por `bedrock_gateway`:
+    cerrado y el modelo por `bedrock_gateway` (`AWS_API_NOTES.md` Q146–Q150,
+    y Q153–Q154 para las filas tras los arreglos):
 
-    | Escenario | p50 | p95 |
-    |---|---|---|
-    | `create()` sin prefetch → primer token | 28,3 s | 41,1 s |
-    | `create()` con prefetch (A) → primer token | 20,5 s | 37,0 s |
-    | `connect()` tras `pause()` (B) → primer token | 3,1 s | 3,2 s |
-    | `pool.take()` con `warmup` (C) → primer token | 5,1 s | 6,7 s |
-    | tras `create()`, primer token de deepagents (frente a 5,0 s de OpenCode) | 7,5 s | 9,3 s |
+    | Escenario | `create()` / toma p50 | Primer token p50 | Primer token p95 |
+    |---|---|---|---|
+    | `create()` sin prefetch | 8,7 s | 28,3 s | 41,1 s |
+    | A, **antes del arreglo** (el demonio leía en pleno arranque) | 16,6 s | 20,5 s | 37,0 s |
+    | sin prefetch, en la misma tanda que la fila siguiente | 8,8 s | 13,3 s | 19,5 s |
+    | A, con el demonio que espera a que el guest se calme | 9,2 s | 14,7 s | 15,5 s |
+    | B: `connect()` tras `pause()` | 0,55 s | 3,1 s | 3,2 s |
+    | C: `pool.take()` con `warmup` | 0,95 s | 5,1 s | 6,7 s |
+    | D, **antes del arreglo** | 0,96 s | sin texto: `protocol_error` en 5 de 5 | — |
+    | D, con la relectura del servidor | 1,0 s | 4,8 s | 6,1 s |
 
-    El prefetch baja el tramo posterior a `create()` de 19,6 s a 4,7 s
-    (−76 %), pero su lectura compite con el arranque y alarga `create()`
-    unos 8 s: de extremo a extremo gana un 28 %. Los primeros lanzamientos
-    de una versión de imagen recién publicada tardan bastante más
-    (`create()` de 26 a 65 s).
-    **D no funciona todavía**: en AWS, `opencode run --attach` (1.18.34)
-    sale tras el primer evento aunque el servidor complete la respuesta, y
-    el SDK lo ve como `AgentFailed(reason="protocol_error")`. Usa C.
-    Detalle en `AWS_API_NOTES.md` Q146–Q152; desglose de costes en
-    [Precios](../cost.md#plaza-de-pool-de-agente-c-y-d) y
-    [Pool](../pool.md#calentamiento-warmup-y-servidor-residente).
+    - **A**: el demonio baja el tramo posterior a `create()` de 19,6 s a
+      4,7 s (−76 %), pero en su primera versión leía nada más restaurar y
+      competía con el arranque que `create()` espera, así que `create()`
+      tardaba ≈ 8 s más y de extremo a extremo sólo se ganaba un 28 %.
+      Ahora espera a que el guest lleve 1 s sin E/S en curso antes de leer,
+      y `create()` ya no crece (9,2 s frente a 8,8 s sin prefetch en la
+      misma tanda). El tramo tras `create()` baja de 5,2 s a 3,8 s, pero de
+      extremo a extremo la diferencia (14,7 s frente a 13,3 s) cae dentro
+      del ruido de n=5: el control sin prefetch salió mucho más rápido que
+      en la primera medida (13,3 s frente a 28,3 s), así que hoy la ganancia
+      de A es pequeña. Se queda encendido porque ya no cuesta nada.
+    - **D**: `opencode run --attach` (1.18.34) sale en cuanto el servidor
+      contesta el prompt, sin esperar a sus propios eventos, y el SDK veía
+      `AgentFailed(reason="protocol_error")` o un resultado sin texto
+      aunque el servidor completaba la respuesta. Ahora el SDK crea la
+      sesión en el servidor y, al salir `run`, relee de él los mensajes de
+      esa vuelta. Con el arreglo funciona (5 de 5 con texto y uso), pero
+      sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más memoria
+      y ≈ $0,18 más por plaza al mes: no se recomienda, usa C.
+    - **deepagents** no se cachea con un prompt corto: su prompt de una
+      palabra son ≈ 3 503 tokens de entrada, por debajo de los 4 096 que
+      Haiku exige para un punto de caché, así que cada vuelta los paga
+      enteros (≈ $0,0039 frente a ≈ $0,0009 de OpenCode, que lee 7 596 de
+      caché). Tras `create()`, su primer token llega en 7,5 s de mediana
+      frente a 5,0 s de OpenCode en la misma imagen.
+
+!!! warning "Los primeros lanzamientos de una versión nueva son lentos"
+    Justo después de publicar una versión de imagen, sus primeros
+    lanzamientos tardan mucho más: en Q146 las 3 primeras de la versión 1
+    tardaron 48–65 s en `create()`, y las 5 primeras de la versión 2,
+    26–63 s, frente a 6,9–12,5 s de las siguientes (sin prefetch). Antes de medir o de mandarle tráfico,
+    caliéntala con unos cuantos lanzamientos desechables o con un pool.
+
+Sin demonio (por ejemplo, en una imagen propia sin `AgentTemplate`),
+`prepare()` lanza el mismo calentamiento a mano:
 
 === "Python"
 
@@ -382,13 +546,53 @@ desde el disco de la VM recién restaurada (Q142). Cómo elegir:
 `prepare()` lanza los pasos de calentamiento en segundo plano y vuelve
 enseguida, sin esperar a ninguno.
 
-## deepagents (próximamente)
+## deepagents
 
-`runtime=DeepAgents(entrypoint=...)` correrá un grafo de
-[deepagents](https://github.com/langchain-ai/deepagents) (LangChain) dentro
-de un runner aislado, con la misma API de `run`/`stream`. Llega con
-`ai-agent-deepagents`; hasta entonces el único runtime es `"opencode"`
-(`DEFAULT_AGENT_RUNTIME`).
+El runtime por defecto es OpenCode (`DEFAULT_AGENT_RUNTIME`). Con
+`runtime="deepagents"` (o `runtime=DeepAgents(...)`) el mismo `run`/`stream`
+corre un grafo de [deepagents](https://github.com/langchain-ai/deepagents)
+(LangChain) en un runner aislado del venv de la imagen
+(`AgentTemplate` con deepagents): mismos eventos, mismos límites del SDK y
+el modelo sólo por la pasarela. Sin `entrypoint`, el runner monta
+`create_deep_agent` con el modelo, las `instructions` y los subagentes del
+`AgentSpec`; con `entrypoint="paquete.modulo:build"` importa tu función
+desde el directorio de trabajo y le pasa un `RunnerContext` (modelo,
+backend, middleware de permisos…) para que devuelva tu grafo compilado.
+`mcp`, `raw_config` y `attach=True` no existen en este runtime y fallan
+antes de cualquier llamada.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentSpec, DeepAgents, Sandbox
+
+
+    def run_deepagents(sbx: Sandbox, spec: AgentSpec) -> str:
+        result = sbx.agent.run(
+            "Resume el README.",
+            spec=spec,
+            runtime=DeepAgents(entrypoint="mi_agente.grafo:build"),
+        )
+        return result.text
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { type AgentSpec, DeepAgents, type Sandbox } from "rayito";
+
+    export async function runDeepAgents(sbx: Sandbox, spec: AgentSpec): Promise<string> {
+      const result = await sbx.agent.run("Resume el README.", {
+        spec,
+        runtime: new DeepAgents({ entrypoint: "mi_agente.grafo:build" }),
+      });
+      return result.text;
+    }
+    ```
+
+Si tu `build` no pasa `ctx.middleware` al grafo, se pierden los permisos de
+`AgentSpec`. Con un prompt corto, deepagents no llega al mínimo de la caché
+de prompts de Haiku (ver [Arranque rápido](#arranque-rapido)).
 
 ## El shim de E2B
 
