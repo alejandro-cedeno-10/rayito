@@ -17,7 +17,7 @@ from rayito._configure_base import ImmediateSection
 from rayito._secret_gateway._domain import GatewayStatus, SecretGateway
 
 if TYPE_CHECKING:
-    from rayito._configure_base import AsyncReapply, Reapply, SectionApplied
+    from rayito._configure_base import AgentFeatures, AsyncReapply, Reapply, SectionApplied
     from rayito._secrets import SecretCache
     from rayito.v1 import configure_pb2, secret_gateway_pb2
 
@@ -166,10 +166,18 @@ class GatewayHandle(Mapping[str, GatewayStatus]):
         *,
         refresher: Callable[[], Mapping[str, GatewayStatus]] | None = None,
         async_refresher: Callable[[], Awaitable[Mapping[str, GatewayStatus]]] | None = None,
+        recovered: bool = False,
     ) -> None:
         self._statuses = dict(statuses)
         self._refresher = refresher
         self._async_refresher = async_refresher
+        self._recovered = recovered
+
+    @property
+    def recovered(self) -> bool:
+        """`True` si `connect()` lo reconstruyó desde `ConfigureStatus` (no
+        sabe rotar secretos); `False` si viene de `create(gateways=)`."""
+        return self._recovered
 
     def __getitem__(self, name: str) -> GatewayStatus:
         return self._statuses[name]
@@ -203,3 +211,63 @@ class GatewayHandle(Mapping[str, GatewayStatus]):
 
 
 EMPTY_GATEWAYS: Final = GatewayHandle({})
+
+#: Relee `ConfigureStatus` sin mandar ningún `Configure`: el `refresh()` de
+#: un `sbx.gateways` recuperado por `connect()`.
+StatusReader = Callable[[], "configure_pb2.ConfigureStatusResponse"]
+AsyncStatusReader = Callable[[], Awaitable["configure_pb2.ConfigureStatusResponse"]]
+
+
+def gateways_recoverable(features: AgentFeatures | None) -> bool:
+    """`connect()` sólo pregunta por las pasarelas a un agente que anuncia
+    `ConfigureService` y la función `secret_gateway`: sobre uno anterior,
+    `sbx.gateways` queda vacío sin ninguna llamada extra."""
+    return features is not None and features.configure and features.secret_gateway
+
+
+def owns_gateways(handle: object | None) -> bool:
+    """`True` sólo para el `sbx.gateways` del handle que aplicó `gateways=`:
+    ése se conserva en cada `connect()`. Uno recuperado (o ninguno) se
+    vuelve a leer de `ConfigureStatus`."""
+    return isinstance(handle, GatewayHandle) and not handle.recovered
+
+
+def recovered_gateways(
+    status: configure_pb2.ConfigureStatusResponse,
+    *,
+    reader: StatusReader | None = None,
+    async_reader: AsyncStatusReader | None = None,
+) -> GatewayHandle:
+    """El `sbx.gateways` que `connect()` reconstruye desde el
+    `ConfigureStatus` de un sandbox en marcha: sólo nombre, puerto y último
+    error de cada ruta, porque `rayd` nunca devuelve el upstream, las
+    cabeceras ni sus valores. Sin la definición original no hay nada que
+    rotar, así que su `refresh()`/`arefresh()` sólo relee el estado; rotar
+    un secreto (`refresh()` o `reincarnate()`) sigue siendo cosa del handle
+    que llamó a `create(gateways=)`. Vacío (`EMPTY_GATEWAYS`) si el sandbox no tiene
+    pasarelas."""
+    statuses = gateway_statuses_from_proto(status.secret_gateway)
+    if not statuses:
+        return EMPTY_GATEWAYS
+    return GatewayHandle(
+        statuses,
+        refresher=None if reader is None else _status_refresher(reader),
+        async_refresher=None if async_reader is None else _async_status_refresher(async_reader),
+        recovered=True,
+    )
+
+
+def _status_refresher(reader: StatusReader) -> Callable[[], Mapping[str, GatewayStatus]]:
+    def refresh() -> Mapping[str, GatewayStatus]:
+        return gateway_statuses_from_proto(reader().secret_gateway)
+
+    return refresh
+
+
+def _async_status_refresher(
+    async_reader: AsyncStatusReader,
+) -> Callable[[], Awaitable[Mapping[str, GatewayStatus]]]:
+    async def refresh() -> Mapping[str, GatewayStatus]:
+        return gateway_statuses_from_proto((await async_reader()).secret_gateway)
+
+    return refresh
