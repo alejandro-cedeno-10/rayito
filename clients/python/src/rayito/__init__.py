@@ -2,35 +2,9 @@
 
 from __future__ import annotations
 
-from rayito._agent import (
-    AgentEvent,
-    AgentFailed,
-    AgentLimits,
-    AgentModel,
-    AgentPermissions,
-    AgentResult,
-    AgentSpec,
-    AgentTemplate,
-    AsyncAgentTemplate,
-    DeepAgents,
-    Done,
-    McpLocal,
-    McpRemote,
-    McpServer,
-    Reasoning,
-    StepFinished,
-    StepStarted,
-    SubAgent,
-    Text,
-    TextDelta,
-    TokenUsage,
-    ToolCall,
-    WarmupStep,
-    agent_pool_warmup,
-    anthropic_gateway,
-    bedrock_gateway,
-    openai_compatible_gateway,
-)
+import importlib
+from typing import TYPE_CHECKING, Any, Final
+
 from rayito._aws import ClientSettings
 from rayito._charts import (
     BarChart,
@@ -51,8 +25,6 @@ from rayito._custom_domain import AsyncCustomDomain, CustomDomain, CustomDomainR
 from rayito._git_base import GitBranches, GitFileStatus, GitResetMode, GitStatus
 from rayito._index import DynamoDbIndex
 from rayito._lifecycle_events._domain import EventRecord, WebhookInfo
-from rayito._lifecycle_events._service import LifecycleEvents
-from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
 from rayito._listing_base import ListOrder
 from rayito._models import (
     ALL_TRAFFIC,
@@ -187,7 +159,6 @@ from rayito.exceptions import (
     VolumePathNotFoundException,
     WebhookException,
 )
-from rayito.sandbox_async.agent import AsyncAgentStream
 from rayito.sandbox_async.commands import AsyncCommandHandle
 from rayito.sandbox_async.filesystem import AsyncWatchHandle
 from rayito.sandbox_async.git import AsyncGit
@@ -195,7 +166,6 @@ from rayito.sandbox_async.listing import AsyncSandboxListPaginator
 from rayito.sandbox_async.main import AsyncSandbox
 from rayito.sandbox_async.pool import AsyncSandboxPool
 from rayito.sandbox_async.pty import AsyncPtyHandle
-from rayito.sandbox_sync.agent import AgentStream
 from rayito.sandbox_sync.commands import CommandHandle
 from rayito.sandbox_sync.filesystem import WatchHandle
 from rayito.sandbox_sync.git import Git
@@ -203,6 +173,99 @@ from rayito.sandbox_sync.listing import SandboxListPaginator
 from rayito.sandbox_sync.main import Sandbox
 from rayito.sandbox_sync.pool import SandboxPool
 from rayito.sandbox_sync.pty import PtyHandle
+
+if TYPE_CHECKING:
+    from rayito._agent import (
+        AgentEvent,
+        AgentFailed,
+        AgentLimits,
+        AgentModel,
+        AgentPermissions,
+        AgentResult,
+        AgentSpec,
+        AgentTemplate,
+        AsyncAgentTemplate,
+        DeepAgents,
+        Done,
+        McpLocal,
+        McpRemote,
+        McpServer,
+        Reasoning,
+        StepFinished,
+        StepStarted,
+        SubAgent,
+        Text,
+        TextDelta,
+        TokenUsage,
+        ToolCall,
+        WarmupStep,
+        agent_pool_warmup,
+        anthropic_gateway,
+        bedrock_gateway,
+        openai_compatible_gateway,
+    )
+    from rayito._lifecycle_events._service import LifecycleEvents
+    from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
+    from rayito.sandbox_async.agent import AsyncAgentStream
+    from rayito.sandbox_sync.agent import AgentStream
+
+#: Nombres públicos que se importan en el primer acceso (PEP 562) y no al
+#: hacer `import rayito`: el agente de IA (`rayito._agent`) y
+#: `LifecycleEvents` (que arrastra su adaptador `boto3`) sólo cuestan tiempo
+#: de import y entradas en `sys.modules` a quien los usa.
+_LAZY_EXPORTS: Final[dict[str, str]] = {
+    "AgentEvent": "rayito._agent",
+    "AgentFailed": "rayito._agent",
+    "AgentLimits": "rayito._agent",
+    "AgentModel": "rayito._agent",
+    "AgentPermissions": "rayito._agent",
+    "AgentResult": "rayito._agent",
+    "AgentSpec": "rayito._agent",
+    "AgentTemplate": "rayito._agent",
+    "AsyncAgentTemplate": "rayito._agent",
+    "DeepAgents": "rayito._agent",
+    "Done": "rayito._agent",
+    "McpLocal": "rayito._agent",
+    "McpRemote": "rayito._agent",
+    "McpServer": "rayito._agent",
+    "Reasoning": "rayito._agent",
+    "StepFinished": "rayito._agent",
+    "StepStarted": "rayito._agent",
+    "SubAgent": "rayito._agent",
+    "Text": "rayito._agent",
+    "TextDelta": "rayito._agent",
+    "TokenUsage": "rayito._agent",
+    "ToolCall": "rayito._agent",
+    "WarmupStep": "rayito._agent",
+    "agent_pool_warmup": "rayito._agent",
+    "anthropic_gateway": "rayito._agent",
+    "bedrock_gateway": "rayito._agent",
+    "openai_compatible_gateway": "rayito._agent",
+    "AgentStream": "rayito.sandbox_sync.agent",
+    "AsyncAgentStream": "rayito.sandbox_async.agent",
+    "LifecycleEvents": "rayito._lifecycle_events._service",
+    "AsyncLifecycleEvents": "rayito._lifecycle_events._service_async",
+}
+
+
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str) -> Any:
+        """Resuelve un nombre de `_LAZY_EXPORTS` importando su módulo y lo
+        guarda en el espacio de nombres del paquete para los accesos
+        siguientes. Va fuera de la vista de mypy para que un nombre mal
+        escrito (`rayito.Sandbx`) siga siendo un error de tipos."""
+        module_name = _LAZY_EXPORTS.get(name)
+        if module_name is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        value = getattr(importlib.import_module(module_name), name)
+        globals()[name] = value
+        return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
 
 __all__ = [
     "ALL_TRAFFIC",
