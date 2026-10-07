@@ -8,7 +8,6 @@ inyectan con `CliRunner.invoke(app, args, obj=clients)`.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,6 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ProfileNotFound
 
 from rayito._aws import ControlPlane, client_config, shared_control_plane
+from rayito._aws_region import REGION_ENV_VAR, resolve_region
 from rayito._transport import TransportSettings
 from rayito._version import __version__
 from rayito.sandbox_sync.main import Sandbox
@@ -32,7 +32,6 @@ SERVICE_NAMES: dict[str, str] = {
     "cloudformation": "cloudformation",
     "ec2": "ec2",
 }
-REGION_ENV_VAR = "AWS_REGION"
 NO_REGION_MESSAGE = f"sin región: pasa --region o exporta {REGION_ENV_VAR}"
 NO_CREDENTIALS_MESSAGE = (
     "sin credenciales de AWS: configura un perfil (--profile / AWS_PROFILE), "
@@ -128,7 +127,7 @@ def resolve_session(profile: str | None, region: str | None) -> Clients:
     `AWS_REGION` se honra explícitamente (botocore sólo lee
     `AWS_DEFAULT_REGION` y el perfil). Sin región o sin credenciales
     resolubles es un `UsageError` antes de tocar AWS."""
-    wanted_region = region or os.environ.get(REGION_ENV_VAR) or None
+    wanted_region = resolve_region(region)
     try:
         session = boto3.session.Session(profile_name=profile, region_name=wanted_region)
     except ProfileNotFound as exc:

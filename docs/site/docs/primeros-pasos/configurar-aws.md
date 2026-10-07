@@ -19,13 +19,13 @@ Elige una de las diez regiones con Lambda MicroVMs (`us-east-1`,
 exporta tu perfil:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
 aws sts get-caller-identity          # comprueba que las credenciales funcionan
 ```
 
-Exporta las dos variables de región: el SDK de TypeScript y la CLI leen
-`AWS_REGION`, y el SDK de Python (boto3) sólo lee `AWS_DEFAULT_REGION` o la
-región del perfil.
+Basta con `AWS_REGION`: los dos SDK y la CLI la leen. Si falta, usan
+`AWS_DEFAULT_REGION` y después la región del perfil; `region=` (Python) o
+`region` (TypeScript) gana a todas.
 
 Para estos pasos de preparación hacen falta permisos de administración
 (crear roles de IAM y un bucket). Para usar el SDK después basta la política

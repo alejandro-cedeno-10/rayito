@@ -30,6 +30,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from rayito._aws import LazyClient
+from rayito._aws_region import resolve_region
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito._images import (
     ACTIVE_VERSION_STATUS,
@@ -127,10 +128,10 @@ class _Clients:
 
     @property
     def region(self) -> str:
-        region = self._region or getattr(self._session, "region_name", None)
+        region = resolve_region(self._region, self._session)
         if not region:
             raise InvalidArgumentException(
-                "Template.build: sin región: pasa region= o exporta AWS_DEFAULT_REGION"
+                "Template.build: sin región: pasa region= o exporta AWS_REGION"
             )
         return region
 

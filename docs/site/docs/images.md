@@ -60,7 +60,7 @@ Sin compilar nada, `rayito-base` y `rayito-base-caps` se publican desde el
 Desde el código fuente (Linux o WSL2, para compilar `rayd`):
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
 make image-publish      BUCKET=amzn-s3-demo-bucket    # rayito-base
 make image-publish-caps BUCKET=amzn-s3-demo-bucket    # rayito-base-caps (additionalOsCapabilities ALL)
 make image-publish-poly BUCKET=amzn-s3-demo-bucket    # rayito-base-poly (bash, JavaScript, TypeScript)

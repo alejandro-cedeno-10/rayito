@@ -14,6 +14,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from rayito._aws import LazyClient, aws_code
+from rayito._aws_region import resolve_region
 from rayito._volumes._base import (
     ACCESS_POINT_ALREADY_EXISTS,
     LIST_VISIBILITY_BUDGET_SECONDS,
@@ -84,9 +85,7 @@ class VolumeStore:
 
     @property
     def region(self) -> str | None:
-        if self._region is not None:
-            return self._region
-        return getattr(self._session, "region_name", None)
+        return resolve_region(self._region, self._session)
 
     def __repr__(self) -> str:
         return f"VolumeStore(file_system_id={self._file_system_id!r}, region={self.region!r})"

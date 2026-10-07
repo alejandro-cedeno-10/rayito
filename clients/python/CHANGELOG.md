@@ -6,6 +6,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- **El SDK de Python honra `AWS_REGION`**, como el de TypeScript y la CLI.
+  Antes boto3 sólo leía `AWS_DEFAULT_REGION` o el perfil. Toda sesión boto3
+  del SDK (plano de control, staging S3, secretos, índice DynamoDB, eventos,
+  EFS, CloudFormation…) resuelve la región en un único sitio con la
+  prioridad `region=` > sesión del llamante > `AWS_REGION` >
+  `AWS_DEFAULT_REGION` > perfil. Quien sólo exporta `AWS_DEFAULT_REGION`
+  no nota cambios.
+
 ### Changed
 
 - **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
@@ -14,8 +24,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   y `output_limit`, reservados) y `GatewayException` (hoy no se lanza)
   dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
   `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
-  región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
-  que lee boto3). La ayuda de `rayito image sizes`, `doctor`,
+  región del índice y de `Template.build` piden `AWS_REGION`. La ayuda de `rayito image sizes`, `doctor`,
   `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
   internos.
 

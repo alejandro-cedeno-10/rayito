@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from rayito._aws_region import aws_session
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito._lifecycle_events import _dynamodb
 from rayito.exceptions import WebhookException
@@ -143,8 +144,11 @@ class BotoEventsGateway:
         return bytes(binary)
 
     def _table(self, table_name: str) -> Any:
-        resource = (self._session or boto3).resource("dynamodb", region_name=self._region)
+        resource = self._boto_session().resource("dynamodb", region_name=self._region)
         return resource.Table(table_name)
 
     def _client(self, service_name: str) -> Any:
-        return (self._session or boto3).client(service_name, region_name=self._region)
+        return self._boto_session().client(service_name, region_name=self._region)
+
+    def _boto_session(self) -> boto3.session.Session:
+        return aws_session(self._session, self._region)

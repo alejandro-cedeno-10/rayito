@@ -48,7 +48,7 @@ credenciales.
 el diagnóstico dice qué falta antes del primer sandbox:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 rayito doctor --template "$RAYITO_TEMPLATE"
 ```
 
