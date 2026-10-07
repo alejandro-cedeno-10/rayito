@@ -83,6 +83,25 @@ docs (`ai-agent-docs-pricing`).
 - **D8 — `agent.prepare()` starts background steps without a timeout.** A
   `timeout` on a background `opencode serve` would kill it after 120 s.
 
+- **D9 — An attached run re-reads its turn from the server.** On AWS
+  (Q148) `opencode run --attach` 1.18.34 exited after the first event while
+  the server finished the answer. The cause is in `run.ts`: in attach mode
+  `finish()` returns before awaiting the event loop, so the process exits
+  as soon as `POST /session/<id>/message` returns, dropping whatever the SSE
+  stream had not delivered yet (unchanged in 1.18.35 and on `dev`, so a
+  newer pin does not help; reproduced locally against the agent container
+  with a fake OpenAI-compatible model). The script now creates the session
+  itself (`POST /session` with the CLI's non-interactive rules) so its id is
+  known even if the CLI prints nothing, keeps `opencode run --attach` for
+  the live stream and the permission replies, and after it exits walks
+  `GET /session/<id>/message?limit=1&before=<cursor>` back to the prompt's
+  `user` message, one message per line so each stays below
+  `MAX_AGENT_EVENT_LINE_BYTES`. The adapter dedups by part id and ignores
+  messages created before the run's start time, so an unexpected key order
+  that hides the `user` message can only cost extra reads, never replay an
+  old turn. Driving the server's `/event` SSE directly was rejected: it
+  would re-implement permission replies and idle detection in bash.
+
 ## Risks / Trade-offs
 
 - The prefetch benefit and the serve benefit are unmeasured until the AWS
