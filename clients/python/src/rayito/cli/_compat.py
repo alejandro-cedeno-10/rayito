@@ -69,6 +69,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks "
         "aislados, persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0",
     ),
+    CompatibilityRow(
+        "0.8",
+        "0.8.0",
+        "0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida "
+        "con el rayd del tag rayd-v0.8.0",
+    ),
 )
 
 
