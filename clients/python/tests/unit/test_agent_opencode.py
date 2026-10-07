@@ -159,6 +159,26 @@ def test_run_command_rejects_unknown_attach() -> None:
         )
 
 
+def test_run_command_rejects_a_session_id_that_is_not_opencode_s() -> None:
+    with pytest.raises(InvalidArgumentException):
+        OpenCodeRuntime().command(
+            RunRequest(spec=_bedrock_spec(), prompt="x", workdir="/home/user", session_id='a"b')
+        )
+
+
+def test_attached_run_creates_the_session_and_rereads_the_turn() -> None:
+    script = (
+        OpenCodeRuntime()
+        .command(RunRequest(spec=_bedrock_spec(), prompt="x", workdir="/home/user", attach=True))
+        .script
+    )
+    assert '"permission":"question","action":"deny"' in script
+    assert 'set -- "$@" -s "$sid"' in script
+    assert "/message?directory=%2Fhome%2Fuser&limit=1" in script
+    assert 'exec "$@"' in script
+    assert script.endswith('exit "$rc"\n')
+
+
 def _event_dict(event: object) -> dict[str, Any]:
     data = dataclasses.asdict(event)  # type: ignore[call-overload]
     return {key: value for key, value in data.items()}
@@ -176,6 +196,70 @@ def test_events_match_golden() -> None:
     assert state.attached is expected["attached"]
     assert state.ignored_lines == expected["ignored_lines"]
     assert _event_dict(runtime.finish(state, 0)) == expected["done"]
+
+
+ATTACH_EXPECTED = json.loads(
+    (TESTDATA / "opencode-attach" / "expected.json").read_text(encoding="utf-8")
+)["cases"]
+
+
+@pytest.mark.parametrize("case", sorted(ATTACH_EXPECTED))
+def test_attached_run_recovers_the_parts_the_cli_dropped(case: str) -> None:
+    expected = ATTACH_EXPECTED[case]
+    runtime = OpenCodeRuntime()
+    state = runtime.new_state()
+    events: list[dict[str, Any]] = []
+    for line in (TESTDATA / "opencode-attach" / f"{case}.jsonl").read_bytes().splitlines():
+        events.extend(_event_dict(event) for event in runtime.parse_line(line, state))
+    assert events == expected["events"]
+    assert isinstance(state, OpenCodeState)
+    assert state.attached is expected["attached"]
+    assert state.ignored_lines == expected["ignored_lines"]
+    assert _event_dict(runtime.finish(state, 0)) == expected["done"]
+
+
+def _reread(parts: list[Any], **info: Any) -> bytes:
+    message = {"info": {"role": "assistant", "time": {"created": 20}, **info}, "parts": parts}
+    return json.dumps({"type": "rayito.message", "message": message}).encode()
+
+
+def test_reread_follows_the_cli_filters() -> None:
+    runtime = OpenCodeRuntime()
+    state = runtime.new_state()
+    runtime.parse_line(b'{"type":"rayito.attached","sessionID":"ses_1","since":10}', state)
+    parts = [
+        {"id": "p1", "type": "reasoning", "text": "pienso", "time": {"end": 1}},
+        {"id": "p2", "type": "text", "text": "a medias", "time": {}},
+        {"id": "p3", "type": "tool", "tool": "bash", "state": {"status": "running"}},
+        {"id": "p4", "type": "patch"},
+        {"type": "text", "text": "sin id", "time": {"end": 1}},
+        {"id": "p5", "type": "text", "text": "fin", "time": {"end": 1}},
+    ]
+    events = runtime.parse_line(_reread(parts), state)
+    assert [type(event).__name__ for event in events] == ["Text"]
+    assert runtime.parse_line(_reread(parts), state) == []
+
+
+def test_reread_gives_reasoning_only_when_asked() -> None:
+    runtime = OpenCodeRuntime()
+    state = runtime.new_state()
+    runtime.parse_line(b'{"type":"rayito.attached","sessionID":"ses_1","reasoning":true}', state)
+    part = {"id": "p1", "type": "reasoning", "text": "pienso", "time": {"end": 1}}
+    (event,) = runtime.parse_line(_reread([part]), state)
+    assert type(event).__name__ == "Reasoning"
+
+
+def test_reread_keeps_the_streamed_error_and_ignores_garbage() -> None:
+    runtime = OpenCodeRuntime()
+    state = runtime.new_state()
+    runtime.parse_line(b'{"type":"error","sessionID":"ses_1","error":{"name":"A"}}', state)
+    assert runtime.parse_line(_reread([], error={"name": "B"}), state) == []
+    assert runtime.parse_line(b'{"type":"rayito.message","message":[]}', state) == ()
+    assert isinstance(state, OpenCodeState)
+    assert state.ignored_lines == 1
+    failure = runtime.finish(state, 0)
+    assert isinstance(failure, AgentFailed)
+    assert failure.detail_code == "A"
 
 
 @pytest.mark.parametrize(

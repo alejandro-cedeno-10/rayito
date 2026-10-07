@@ -76,6 +76,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Fixed
 
+- `sbx.agent` con un `opencode serve` residente (`agent_pool_warmup(serve=True)`,
+  opción D): `opencode run --attach` (1.18.34, igual en 1.18.35) sale en
+  cuanto el servidor contesta el prompt, sin esperar a sus propios eventos,
+  y el SDK veía `AgentFailed(reason="protocol_error")` o un `Done` sin texto
+  aunque el servidor completaba la respuesta. Ahora el script crea la sesión
+  en el servidor, y al salir `run` relee de él los mensajes de esa vuelta y
+  emite las partes que faltaban (sin duplicar las ya emitidas), incluido el
+  error del modelo. Un `session_id` que no tiene forma de id de OpenCode es
+  `InvalidArgumentException`.
 - `AgentTemplate`: instala el runner de deepagents en
   `/opt/agents/rayito/deepagents_runner.py` (root, 0755) y pone su sha256 en
   `runner_sha256` del manifiesto. Sin él, `runtime="deepagents"` fallaba

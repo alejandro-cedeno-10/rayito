@@ -16,11 +16,23 @@ Lo que el diseño verificó y este módulo respeta:
 - Con `--attach` el código de salida no refleja `session.error` (F7): el
   fallo sale de los eventos `error`, y `finish()` sólo da `Done` con
   salida 0 y ningún `error` visto.
+- Con `--attach`, `opencode run` (1.18.34 y 1.18.35) sale en cuanto vuelve
+  `POST /session/<id>/message` sin esperar a su propio bucle de eventos
+  (`finish()` de `run.ts` retorna antes de `await completed` si hay
+  `attach`), así que pierde las partes que aún no había escrito
+  (AWS_API_NOTES, Q148). El script crea antes la sesión en el servidor
+  (con las mismas reglas que `run` pone a una sesión no interactiva) y, al
+  salir `run`, relee del servidor los mensajes de esa vuelta, del más
+  nuevo hacia atrás hasta el `user` del prompt, y los escribe en orden como
+  líneas `rayito.message`. El adaptador emite de ellas sólo las partes que
+  el stream no había dado (por `part.id`), con los mismos filtros que
+  `run.ts`.
 
-El script escribe además tres líneas propias, con `type` prefijado
-`rayito.` para no chocar con las de OpenCode: `rayito.busy` (otra
-ejecución tiene el cerrojo), `rayito.runtime_missing` (no hay `opencode` o
-se pidió `attach=True` sin servidor) y `rayito.attached`.
+El script escribe además líneas propias, con `type` prefijado `rayito.`
+para no chocar con las de OpenCode: `rayito.busy` (otra ejecución tiene el
+cerrojo), `rayito.runtime_missing` (no hay `opencode` o se pidió
+`attach=True` sin servidor), `rayito.attached` (con la sesión y si se
+pidió razonamiento) y `rayito.message` (un mensaje releído del servidor).
 """
 
 from __future__ import annotations
@@ -123,6 +135,22 @@ _HEALTH_TIMEOUT_SECONDS: Final = 1
 _CONTROL_TIMEOUT_SECONDS: Final = 5
 #: Bytes aleatorios de la contraseña del servidor residente.
 _SERVE_SECRET_BYTES: Final = 32
+#: Las reglas que `opencode run` (v1.18.34, `run.ts`) pone a la sesión que
+#: crea en modo no interactivo: sin preguntas al usuario ni modo plan. Con
+#: `--attach` la sesión la crea el script y las repite.
+OPENCODE_NONINTERACTIVE_RULES: Final[tuple[Mapping[str, str], ...]] = tuple(
+    {"permission": permission, "action": "deny", "pattern": "*"}
+    for permission in ("question", "plan_enter", "plan_exit")
+)
+#: Tope de mensajes que el script relee del servidor tras una ejecución
+#: con `--attach` (uno por paso del agente más el del prompt). Va por
+#: encima de cualquier `AgentLimits.max_steps` razonable: el SDK corta
+#: antes por `max_steps`, y el tope sólo acota un servidor que no
+#: devolviera nunca el mensaje `user`.
+OPENCODE_RECONCILE_MAX_MESSAGES: Final = 512
+#: Mensajes por página al releer: uno, para que cada mensaje sea una línea
+#: propia por debajo de `MAX_AGENT_EVENT_LINE_BYTES`.
+_RECONCILE_PAGE_SIZE: Final = 1
 
 
 @dataclass
@@ -136,6 +164,9 @@ class OpenCodeState:
     attached: bool = False
     failed: AgentFailed | None = None
     ignored_lines: int = 0
+    reasoning: bool = False
+    since_ms: int | None = None
+    emitted_parts: set[str] = field(default_factory=set)
 
 
 def shell_quote(value: str) -> str:
@@ -360,6 +391,8 @@ class OpenCodeRuntime:
         if request.model is not None:
             args += ["-m", _model_ref(provider_id, request.model)]
         if request.session_id is not None:
+            if not _SESSION_ID_PATTERN.fullmatch(request.session_id):
+                raise InvalidArgumentException("session_id no es un id de sesión de OpenCode")
             args += ["-s", request.session_id]
         if request.reasoning:
             args.append("--thinking")
@@ -402,10 +435,33 @@ class OpenCodeRuntime:
         part = part if isinstance(part, Mapping) else {}
         if kind == "rayito.attached":
             state.attached = True
+            state.reasoning = payload.get("reasoning") is True
+            since = payload.get("since")
+            state.since_ms = None
+            if isinstance(since, int) and not isinstance(since, bool):
+                state.since_ms = since
             return []
+        if kind == "rayito.message":
+            return self._reconcile(payload.get("message"), state)
         if kind in ("rayito.busy", "rayito.runtime_missing"):
             state.failed = _failed(str(kind).removeprefix("rayito."), state)
             return [state.failed]
+        events = self._map_part(kind, part, state)
+        if events is not None:
+            part_id = part.get("id")
+            if isinstance(part_id, str):
+                state.emitted_parts.add(part_id)
+            return events
+        if kind == "error":
+            error = payload.get("error")
+            name = error.get("name") if isinstance(error, Mapping) else None
+            state.failed = _failed("model_error", state, detail_code=name)
+            return [state.failed]
+        return None
+
+    def _map_part(
+        self, kind: object, part: Mapping[str, object], state: OpenCodeState
+    ) -> list[AgentEvent] | None:
         if kind == "step_start":
             state.steps += 1
             return [StepStarted(index=state.steps)]
@@ -428,12 +484,41 @@ class OpenCodeRuntime:
         if kind == "tool_use":
             call = _tool_call(part)
             return None if call is None else [call]
-        if kind == "error":
-            error = payload.get("error")
-            name = error.get("name") if isinstance(error, Mapping) else None
-            state.failed = _failed("model_error", state, detail_code=name)
-            return [state.failed]
         return None
+
+    def _reconcile(self, message: object, state: OpenCodeState) -> list[AgentEvent] | None:
+        """Un mensaje releído del servidor (`rayito.message`): las partes que
+        el stream no dio, con los filtros de `run.ts` (texto y razonamiento
+        terminados, el razonamiento sólo si se pidió, herramientas
+        terminadas), y su `error` si el stream no trajo ninguno. El mensaje
+        `user` del prompt no produce nada, ni los anteriores al arranque de
+        la ejecución (`since` de `rayito.attached`): así una vuelta antigua
+        nunca se repite aunque el script relea de más."""
+        if not isinstance(message, Mapping):
+            return None
+        info = message.get("info")
+        parts = message.get("parts")
+        if not isinstance(info, Mapping) or not isinstance(parts, list):
+            return None
+        if info.get("role") != "assistant" or _before_run(info, state.since_ms):
+            return []
+        events: list[AgentEvent] = []
+        for part in parts:
+            if not isinstance(part, Mapping):
+                continue
+            part_id = part.get("id")
+            kind = _reconciled_kind(part, reasoning=state.reasoning)
+            if kind is None or not isinstance(part_id, str) or part_id in state.emitted_parts:
+                continue
+            mapped = self._map_part(kind, part, state)
+            if mapped:
+                state.emitted_parts.add(part_id)
+                events.extend(mapped)
+        error = info.get("error")
+        if isinstance(error, Mapping) and state.failed is None:
+            state.failed = _failed("model_error", state, detail_code=error.get("name"))
+            events.append(state.failed)
+        return events
 
     def finish(self, state: RuntimeState, exit_code: int) -> Done | AgentFailed:
         """`Done` sólo con salida 0, ningún `error` y una sesión vista (F7)."""
@@ -476,6 +561,34 @@ class OpenCodeRuntime:
         return tuple(steps)
 
 
+def _before_run(info: Mapping[str, object], since_ms: int | None) -> bool:
+    time = info.get("time")
+    created = time.get("created") if isinstance(time, Mapping) else None
+    return since_ms is not None and isinstance(created, int) and created < since_ms
+
+
+def _reconciled_kind(part: Mapping[str, object], *, reasoning: bool) -> str | None:
+    """El `type` de la línea que `run.ts` habría escrito para `part`, o
+    `None` si no la habría escrito."""
+    kind = part.get("type")
+    if kind in ("step-start", "step-finish"):
+        return str(kind).replace("-", "_")
+    if kind == "tool":
+        tool_state = part.get("state")
+        done = isinstance(tool_state, Mapping) and tool_state.get("status") in (
+            "completed",
+            "error",
+        )
+        return "tool_use" if done else None
+    if kind in ("text", "reasoning"):
+        time = part.get("time")
+        ended = isinstance(time, Mapping) and time.get("end") is not None
+        if not ended or (kind == "reasoning" and not reasoning):
+            return None
+        return str(kind)
+    return None
+
+
 def _attach_mode(attach: object) -> str:
     """`True` -> `always`, `False` -> `never`, `"auto"` -> `auto`."""
     if attach is True:
@@ -503,7 +616,9 @@ def _protocol_line(kind: str) -> str:
 
 def _run_script(attach: str, command: str, request: RunRequest) -> str:
     auth = f'"{OPENCODE_SERVE_USER}:$OPENCODE_SERVER_PASSWORD"'
-    dispose = f"{OPENCODE_SERVE_URL}/instance/dispose?directory={quote(request.workdir, safe='')}"
+    directory = f"directory={quote(request.workdir, safe='')}"
+    dispose = f"{OPENCODE_SERVE_URL}/instance/dispose?{directory}"
+    session = "" if request.session_id is None else request.session_id
     lines = [
         "set -u",
         f"mkdir -p {shell_quote(OPENCODE_STATE_DIR)}",
@@ -522,11 +637,8 @@ def _run_script(attach: str, command: str, request: RunRequest) -> str:
         "    attached=1",
         "  fi",
         "fi",
-        'if [ "$attach" = always ] && [ "$attached" = 0 ]; then',
-        f"  {_protocol_line('runtime_missing')}",
-        "  exit 0",
-        "fi",
-        f"set -- {command}",
+        f"sid={shell_quote(session)}",
+        "created=0",
         'if [ "$attached" = 1 ]; then',
         '  sha="$(sha256sum "$OPENCODE_CONFIG" | cut -d " " -f 1)"',
         f'  if [ "$sha" != "$(cat {shell_quote(OPENCODE_APPLIED_SHA_PATH)} 2>/dev/null)" ]; then',
@@ -534,12 +646,69 @@ def _run_script(attach: str, command: str, request: RunRequest) -> str:
         f"{shell_quote(dispose)} >/dev/null 2>&1 || true",
         f"    printf '%s\\n' \"$sha\" > {shell_quote(OPENCODE_APPLIED_SHA_PATH)}",
         "  fi",
-        f"  {_protocol_line('attached')}",
-        f'  set -- "$@" --attach {shell_quote(OPENCODE_SERVE_URL)}',
+        '  if [ -z "$sid" ]; then',
+        f'    sid="$(curl -fsS -m {_CONTROL_TIMEOUT_SECONDS} -u {auth} -X POST '
+        f"-H 'content-type: application/json' --data {shell_quote(_session_body())} "
+        f"{shell_quote(f'{OPENCODE_SERVE_URL}/session?{directory}')} 2>/dev/null "
+        '| grep -o \'"id":"ses_[A-Za-z0-9]*"\' | head -n 1 | cut -d \'"\' -f 4)"',
+        '    if [ -n "$sid" ]; then created=1; else attached=0; fi',
+        "  fi",
         "fi",
-        'exec "$@"',
+        'if [ "$attach" = always ] && [ "$attached" = 0 ]; then',
+        f"  {_protocol_line('runtime_missing')}",
+        "  exit 0",
+        "fi",
+        f"set -- {command}",
+        'if [ "$attached" = 0 ]; then exec "$@"; fi',
+        'since="$(date +%s%3N)"',
+        f'printf \'%s\\n\' "{{\\"type\\":\\"rayito.attached\\",\\"sessionID\\":\\"$sid\\",'
+        f'\\"since\\":$since,\\"reasoning\\":{"true" if request.reasoning else "false"}}}"',
+        'if [ "$created" = 1 ]; then set -- "$@" -s "$sid"; fi',
+        f'set -- "$@" --attach {shell_quote(OPENCODE_SERVE_URL)}',
+        "rc=0",
+        '"$@" || rc=$?',
+        *_reconcile_lines(auth, directory),
+        'exit "$rc"',
     ]
     return "\n".join(lines) + "\n"
+
+
+def _session_body() -> str:
+    """El cuerpo de `POST /session` con que el script crea la sesión de una
+    ejecución adjunta: el título fijo (F4) y las reglas no interactivas."""
+    body = {"title": OPENCODE_SESSION_TITLE, "permission": list(OPENCODE_NONINTERACTIVE_RULES)}
+    return json.dumps(body, separators=(",", ":"))
+
+
+def _reconcile_lines(auth: str, directory: str) -> list[str]:
+    """Relee los mensajes de la vuelta, de uno en uno y del más nuevo hacia
+    atrás (`limit`/`before` y la cabecera `X-Next-Cursor` de
+    `GET /session/<id>/message`), hasta el `user` del prompt o el tope, y
+    los escribe en orden cronológico (`tac`) como líneas `rayito.message`."""
+    messages = (
+        f'"{OPENCODE_SERVE_URL}/session/$sid/message?{directory}&limit={_RECONCILE_PAGE_SIZE}'
+        '${before:+&before=$before}"'
+    )
+    return [
+        'tmp="$(mktemp)"',
+        'before=""',
+        "n=0",
+        f'while [ "$n" -lt {OPENCODE_RECONCILE_MAX_MESSAGES} ]; do',
+        "  n=$((n + 1))",
+        f'  page="$(curl -fsS -m {_CONTROL_TIMEOUT_SECONDS} -u {auth} -D "$tmp.h" {messages} '
+        '2>/dev/null)" || break',
+        '  page="${page#\\[}"',
+        '  page="${page%\\]}"',
+        '  [ -n "$page" ] || break',
+        '  printf \'{"type":"rayito.message","message":%s}\\n\' "$page" >> "$tmp"',
+        "  if printf '%s' \"$page\" | grep -Eq "
+        '\'^\\{"info":\\{[^{}]*"role":"user"\'; then break; fi',
+        "  before=\"$(tr -d '\\r' < \"$tmp.h\" | sed -n 's/^[Xx]-[Nn]ext-[Cc]ursor: *//p')\"",
+        '  [ -n "$before" ] || break',
+        "done",
+        'tac "$tmp"',
+        'rm -f "$tmp" "$tmp.h"',
+    ]
 
 
 def _serve_script() -> str:
