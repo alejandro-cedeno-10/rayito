@@ -32,14 +32,12 @@ export interface AgentRunOptions {
   readonly model?: string | undefined;
   readonly limits?: AgentLimits | undefined;
   readonly workdir?: string | undefined;
-  readonly attach?: boolean | "auto" | undefined;
   readonly reasoning?: boolean | undefined;
   readonly signal?: AbortSignal | undefined;
 }
 
 export interface AgentPrepareOptions {
   readonly runtime?: string | AgentRuntime | undefined;
-  readonly serve?: boolean | undefined;
 }
 
 /**
@@ -119,7 +117,6 @@ export class Agent {
       sessionId: options.sessionId,
       model: options.model,
       reasoning: options.reasoning ?? false,
-      attach: options.attach ?? "auto",
     });
     const runCommand = runtime.command(request);
     const instrumentation = this.#sandbox.instrumentation();
@@ -174,7 +171,6 @@ export class Agent {
       sessionId: options.sessionId,
       span: capturedSpan,
       finishSpan,
-      attached: options.attach === true || (options.attach ?? "auto") === "auto",
     });
     options.signal?.addEventListener(
       "abort",
@@ -188,7 +184,7 @@ export class Agent {
 
   async prepare(options: AgentPrepareOptions = {}): Promise<void> {
     const runtime = resolveRuntime(options.runtime ?? DEFAULT_AGENT_RUNTIME);
-    for (const step of runtime.warmupSteps({ serve: options.serve ?? false })) {
+    for (const step of runtime.warmupSteps()) {
       const handle = (await this.#sandbox.commands.run(step.cmd, {
         background: true,
         timeoutMs: step.background === true ? 0 : step.timeoutMs,

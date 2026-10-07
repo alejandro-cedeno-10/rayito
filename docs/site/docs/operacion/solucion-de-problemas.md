@@ -170,8 +170,7 @@ Los fallos de `sbx.agent.run()`/`.stream()` son `AgentException`
 en [Errores](../referencia/errores.md#agentexception-agenterror).
 
 **`reason="runtime_missing"`.** La imagen no trae el runtime (`opencode` no
-está en el `PATH`) o, con `attach=True`, su servidor residente no responde.
-Crea el sandbox desde una imagen construida con `AgentTemplate`
+está en el `PATH`). Crea el sandbox desde una imagen construida con `AgentTemplate`
 ([Templates de agente](../funciones-opcionales/templates-de-agente.md)).
 
 **`reason="busy"`.** Ya hay un `run`/`stream` en curso en ese sandbox: uno a

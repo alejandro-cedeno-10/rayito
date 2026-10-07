@@ -421,8 +421,7 @@ class AgentException(SandboxException):
     """Una ejecución del agente de IA (`sbx.agent.run()`, `ai-agent-core`)
     falló. `reason` es una lista cerrada: `model_error` (el proveedor
     devolvió un error; `detail_code` lleva su clase, `APIError`),
-    `runtime_error`, `runtime_missing` (la imagen no tiene el runtime o su
-    servidor residente no responde), `protocol_error`, `timeout`,
+    `runtime_error`, `runtime_missing` (la imagen no tiene el runtime), `protocol_error`, `timeout`,
     `max_steps`, `token_budget` (en estos dos el SDK para el runtime),
     `aborted` o `busy` (otra ejecución en curso en el mismo sandbox).
     `runtime_version_mismatch` y `output_limit` están reservados: hoy no se

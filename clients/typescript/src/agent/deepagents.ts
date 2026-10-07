@@ -8,8 +8,8 @@
  * a los de Python (`testdata/agent/`).
  *
  * Los permisos se traducen a los nombres de herramienta de deepagents
- * (`DEEPAGENTS_TOOL_NAMES`); sólo `bash` admite patrones. `mcp`,
- * `rawConfig` y `attach: true` no existen en este runtime y fallan con
+ * (`DEEPAGENTS_TOOL_NAMES`); sólo `bash` admite patrones. `mcp` y
+ * `rawConfig` no existen en este runtime y fallan con
  * `InvalidArgumentError` antes de cualquier RPC.
  */
 
@@ -266,15 +266,8 @@ export class DeepAgents implements AgentRuntime {
   }
 
   /** El script (cerrojo, comprobación del runner, `exec`) y la petición
-   * JSON por stdin. `attach` sólo admite `"auto"` o `false`. */
+   * JSON por stdin. */
   command(request: RunRequest): RunCommand {
-    const attach = request.attach ?? "auto";
-    if (attach === true) {
-      throw new InvalidArgumentError("deepagents no tiene servidor residente: attach: true");
-    }
-    if (attach !== "auto" && attach !== false) {
-      throw new InvalidArgumentError("attach debe ser true, false o 'auto'");
-    }
     if (request.sessionId !== undefined && !SESSION_ID_PATTERN.test(request.sessionId)) {
       throw new InvalidArgumentError("sessionId de deepagents debe tener la forma rda_<hex>");
     }
@@ -414,18 +407,13 @@ export class DeepAgents implements AgentRuntime {
     });
   }
 
-  /** Nada: matar el proceso basta. */
-  abortCommand(_state: RuntimeState): string | undefined {
-    return undefined;
-  }
-
   /** Vacío: la plantilla de agente declara sus propios pasos. */
   templateSteps(): readonly TemplateStep[] {
     return [];
   }
 
-  /** Carga deepagents y langchain en la caché de páginas; `serve` no aplica. */
-  warmupSteps(_options: { readonly serve: boolean }): readonly WarmupStep[] {
+  /** Carga deepagents y langchain en la caché de páginas. */
+  warmupSteps(): readonly WarmupStep[] {
     return [
       {
         cmd: `${shellQuote(DEEPAGENTS_PYTHON)} -c 'import deepagents, langchain_aws' >/dev/null 2>&1 || true`,

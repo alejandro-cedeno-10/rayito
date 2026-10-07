@@ -37,7 +37,6 @@ export function resultAttributes(options: {
   readonly steps: number;
   readonly exitCode: number;
   readonly usage: TokenUsage;
-  readonly attached: boolean;
 }): RayitoSpanAttributes {
   return {
     "gen_ai.conversation.id": options.sessionId,
@@ -45,7 +44,6 @@ export function resultAttributes(options: {
     "gen_ai.usage.output_tokens": options.usage.output,
     "rayito.agent.steps": options.steps,
     "rayito.agent.exit_code": options.exitCode,
-    "rayito.agent.attached": options.attached,
     "rayito.agent.cache_read_tokens": options.usage.cacheRead,
     "rayito.agent.cache_write_tokens": options.usage.cacheWrite,
   };
@@ -53,14 +51,13 @@ export function resultAttributes(options: {
 
 export function doneAttributes(
   done: Done,
-  options: { readonly steps: number; readonly attached: boolean },
+  options: { readonly steps: number },
 ): RayitoSpanAttributes {
   return resultAttributes({
     sessionId: done.sessionId,
     steps: options.steps,
     exitCode: done.exitCode,
     usage: done.usage,
-    attached: options.attached,
   });
 }
 

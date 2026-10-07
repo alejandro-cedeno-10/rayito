@@ -99,7 +99,6 @@ class Agent:
         model: str | None = None,
         limits: AgentLimits | None = None,
         workdir: str = DEFAULT_AGENT_WORKDIR,
-        attach: bool | str = "auto",
         reasoning: bool = False,
     ) -> AgentResult:
         """Corre el agente hasta que termina y devuelve su `AgentResult`.
@@ -114,7 +113,6 @@ class Agent:
             model=model,
             limits=limits,
             workdir=workdir,
-            attach=attach,
             reasoning=reasoning,
         ) as stream:
             return stream.result()
@@ -129,7 +127,6 @@ class Agent:
         model: str | None = None,
         limits: AgentLimits | None = None,
         workdir: str = DEFAULT_AGENT_WORKDIR,
-        attach: bool | str = "auto",
         reasoning: bool = False,
     ) -> AgentStream:
         """Como `run()`, pero devuelve un `AgentStream` iterable que nunca
@@ -152,7 +149,6 @@ class Agent:
             session_id=session_id,
             model=model,
             reasoning=reasoning,
-            attach=attach,
         )
         run_command = rt.command(request)
         span_context = self._sandbox._instrumentation.span(
@@ -183,19 +179,15 @@ class Agent:
             session_id=session_id,
             span_context=span_context,
             span=span,
-            attached=attach is True or attach == "auto",
         )
 
-    def prepare(
-        self, *, runtime: str | AgentRuntime = DEFAULT_AGENT_RUNTIME, serve: bool = False
-    ) -> None:
+    def prepare(self, *, runtime: str | AgentRuntime = DEFAULT_AGENT_RUNTIME) -> None:
         """Dispara los pasos de calentamiento del runtime (`warmup_steps`)
-        en segundo plano y vuelve enseguida: no espera a ninguno, ni
-        siquiera al que arranca un servidor residente con `serve=True`. Un
-        paso con `background=True` (el servidor) corre sin plazo: con él, el
-        servidor moriría al agotarlo."""
+        en segundo plano y vuelve enseguida: no espera a ninguno. Un paso
+        con `background=True` corre sin plazo: es un proceso que debe seguir
+        vivo y moriría al agotarlo."""
         rt = resolve_runtime(runtime)
-        for step in rt.warmup_steps(serve=serve):
+        for step in rt.warmup_steps():
             handle = self._sandbox.commands.run(
                 step.cmd,
                 background=True,
@@ -222,7 +214,6 @@ class AgentStream:
         session_id: str | None,
         span_context: AbstractContextManager[Any],
         span: Any,
-        attached: bool,
     ) -> None:
         self._sandbox = sandbox
         self._handle = handle
@@ -239,7 +230,6 @@ class AgentStream:
         self._stopped = False
         self._span_context = span_context
         self._span = span
-        self._attached = attached
 
     @property
     def session_id(self) -> str | None:
@@ -266,30 +256,21 @@ class AgentStream:
         return self._queue.pop(0)
 
     def abort(self) -> None:
-        """Aborta la ejecución: primero le da al adaptador la oportunidad de
-        pedirle al runtime que pare con elegancia (`abort_command`, por
-        ejemplo `POST /session/<id>/abort`), luego mata el proceso.
-        Puede llamarse desde otro hilo mientras otro consume el stream."""
+        """Aborta la ejecución: para los procesos que lanzó el runtime y mata
+        el proceso. Puede llamarse desde otro hilo mientras otro consume el stream."""
         if self._abort_requested:
             return
         self._abort_requested = True
         self._stop()
 
     def _stop(self) -> None:
-        """Para el runtime y todo lo que lanzó: el `abort_command` con
-        elegancia del adaptador, `stop_tree_command` y el `kill()` del
+        """Para el runtime y todo lo que lanzó: `stop_tree_command` y el `kill()` del
         handle. Sirve a `abort()` y a un límite del SDK (`max_steps`,
         `token_budget`), que sin esto dejaría al runtime trabajando (y
         gastando tokens) en segundo plano."""
         if self._stopped:
             return
         self._stopped = True
-        command = self._runtime.abort_command(self._state)
-        if command:
-            try:
-                self._sandbox.commands.run(command, timeout=self._limits.timeout_seconds)
-            except SandboxException:
-                logger.warning("no se pudo abortar con elegancia la sesión del agente")
         try:
             self._sandbox.commands.run(
                 stop_tree_command(self._handle.pid), timeout=AGENT_STOP_TREE_TIMEOUT_SECONDS
@@ -394,7 +375,7 @@ class AgentStream:
         self._final = event
 
     def _record_done(self, done: Done) -> None:
-        attrs = done_attributes(done, steps=self._tracker.steps, attached=self._attached)
+        attrs = done_attributes(done, steps=self._tracker.steps)
         for key, value in attrs.items():
             self._span.set_attribute(key, value)
 
