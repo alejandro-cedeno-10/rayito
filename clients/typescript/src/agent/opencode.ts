@@ -6,22 +6,11 @@
  * configuración y su sha256 son idénticos byte a byte a los de Python
  * (`testdata/agent/`).
  *
- * El prompt va por stdin, nunca en argv; la contraseña del servidor
- * residente se lee de su fichero dentro del script. Con `--attach` el código
- * de salida no refleja `session.error`, así que el fallo sale de los eventos
- * `error` y `finish()` sólo da `Done` con salida 0 y ningún `error` visto.
- *
- * Con `--attach`, `opencode run` (1.18.34 y 1.18.35) sale en cuanto vuelve
- * `POST /session/<id>/message` sin esperar a su bucle de eventos, y pierde
- * las partes que aún no había escrito (AWS_API_NOTES, Q148). El script crea
- * antes la sesión con las reglas no interactivas de `run` y, al salir `run`,
- * relee del servidor los mensajes de la vuelta (del más nuevo hacia atrás
- * hasta el `user` del prompt) y los escribe en orden como líneas
- * `rayito.message`; el adaptador emite sólo las partes que el stream no dio
- * (por `part.id`), con los filtros de `run.ts`.
+ * El prompt va por stdin, nunca en argv. `finish()` sólo da `Done` con
+ * salida 0, ningún `error` visto y una sesión conocida.
  *
  * Las líneas propias del script llevan `type` con prefijo `rayito.`
- * (`busy`, `runtime_missing`, `attached` y `message`).
+ * (`busy` y `runtime_missing`).
  */
 
 import { createHash } from "node:crypto";
@@ -30,7 +19,6 @@ import {
   AGENT_STATE_DIR,
   DEFAULT_AGENT_WORKDIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
-  OPENCODE_SERVE_PORT,
   OPENCODE_SESSION_TITLE,
 } from "../limits.js";
 import { type AgentPermissions, type AgentSpec, McpLocal } from "./domain.js";
@@ -61,16 +49,8 @@ export const OPENCODE_STATE_DIR = `${AGENT_STATE_DIR}/opencode`;
 export const OPENCODE_CONFIG_PATH = `${OPENCODE_STATE_DIR}/opencode.json`;
 /** Las instrucciones de `AgentSpec.instructions`. */
 export const OPENCODE_INSTRUCTIONS_PATH = `${OPENCODE_STATE_DIR}/AGENTS.md`;
-/** Contraseña del `opencode serve` residente, 0600. */
-export const OPENCODE_SERVE_SECRET_PATH = `${OPENCODE_STATE_DIR}/serve.secret`;
-/** sha256 del `opencode.json` que el servidor residente cargó por última vez. */
-export const OPENCODE_APPLIED_SHA_PATH = `${OPENCODE_STATE_DIR}/applied.sha256`;
 /** Una ejecución a la vez por sandbox en la fase 1. */
 export const AGENT_RUN_LOCK_PATH = `${AGENT_STATE_DIR}/run.lock`;
-/** El servidor residente sólo escucha en loopback. */
-export const OPENCODE_SERVE_URL = `http://127.0.0.1:${OPENCODE_SERVE_PORT}`;
-/** Usuario fijo de la autenticación básica de `opencode serve`. */
-export const OPENCODE_SERVE_USER = "opencode";
 /** `$schema` de la documentación de OpenCode (opencode.ai/docs/config). */
 export const OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json";
 /** El agente principal de OpenCode. */
@@ -96,22 +76,6 @@ export const OPENCODE_FLAG_ENVS: Readonly<Record<string, string>> = Object.freez
   OPENCODE_DISABLE_CLAUDE_CODE: "1",
 });
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-const HEALTH_TIMEOUT_SECONDS = 1;
-const CONTROL_TIMEOUT_SECONDS = 5;
-const SERVE_SECRET_BYTES = 32;
-/** Las reglas que `opencode run` (v1.18.34) pone a la sesión no interactiva
- * que crea; con `--attach` la sesión la crea el script y las repite. */
-export const OPENCODE_NONINTERACTIVE_RULES: readonly Readonly<Record<string, string>>[] =
-  Object.freeze(
-    ["question", "plan_enter", "plan_exit"].map((permission) =>
-      Object.freeze({ permission, action: "deny", pattern: "*" }),
-    ),
-  );
-/** Tope de mensajes que el script relee tras una ejecución con `--attach`
- * (`OPENCODE_RECONCILE_MAX_MESSAGES` en Python). */
-export const OPENCODE_RECONCILE_MAX_MESSAGES = 512;
-/** Un mensaje por página al releer: cada uno, una línea propia. */
-const RECONCILE_PAGE_SIZE = 1;
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 
@@ -120,12 +84,8 @@ export interface OpenCodeState extends RuntimeState {
   sessionId: string | undefined;
   steps: number;
   usage: TokenUsage;
-  attached: boolean;
   failed: AgentFailed | undefined;
   ignoredLines: number;
-  reasoning: boolean;
-  sinceMs: number | undefined;
-  emittedParts: Set<string>;
 }
 
 /** Comillas simples de POSIX, siempre, igual que `shell_quote` en Python. */
@@ -162,14 +122,6 @@ export function filesSha256(files: readonly RuntimeFile[]): string {
     hash.update(Uint8Array.of(0));
   }
   return hash.digest("hex");
-}
-
-/** `encodeURIComponent` más `!'()*`, como `urllib.parse.quote(safe="")`. */
-function quoteUrlComponent(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
 }
 
 function joinUrl(base: string, path: string): string {
@@ -358,45 +310,6 @@ function toolCallOf(part: Record<string, unknown>): ToolCall | undefined {
   });
 }
 
-function beforeRun(info: Record<string, unknown>, sinceMs: number | undefined): boolean {
-  const created = isPlainObject(info.time) ? info.time.created : undefined;
-  return sinceMs !== undefined && Number.isSafeInteger(created) && (created as number) < sinceMs;
-}
-
-/** El `type` de la línea que `run.ts` habría escrito para `part`, o
- * `undefined` si no la habría escrito. */
-function reconciledKind(part: Record<string, unknown>, reasoning: boolean): string | undefined {
-  const kind = part.type;
-  if (kind === "step-start" || kind === "step-finish") {
-    return kind.replace("-", "_");
-  }
-  if (kind === "tool") {
-    const status = isPlainObject(part.state) ? part.state.status : undefined;
-    return status === "completed" || status === "error" ? "tool_use" : undefined;
-  }
-  if (kind === "text" || kind === "reasoning") {
-    const ended = isPlainObject(part.time) && part.time.end !== undefined && part.time.end !== null;
-    if (!ended || (kind === "reasoning" && !reasoning)) {
-      return undefined;
-    }
-    return kind;
-  }
-  return undefined;
-}
-
-function attachMode(attach: unknown): string {
-  if (attach === true) {
-    return "always";
-  }
-  if (attach === false) {
-    return "never";
-  }
-  if (attach === "auto" || attach === undefined) {
-    return "auto";
-  }
-  throw new InvalidArgumentError("attach debe ser true, false o 'auto'");
-}
-
 function runEnvs(spec: AgentSpec): Record<string, string> {
   const envs: Record<string, string> = {
     HOME: DEFAULT_AGENT_WORKDIR,
@@ -416,108 +329,14 @@ function protocolLine(kind: string): string {
   return `printf '%s\\n' '{"type":"rayito.${kind}"}'`;
 }
 
-function runScript(
-  attach: string,
-  command: string,
-  workdir: string,
-  sessionId: string | undefined,
-  reasoning: boolean,
-): string {
-  const auth = `"${OPENCODE_SERVE_USER}:$OPENCODE_SERVER_PASSWORD"`;
-  const directory = `directory=${quoteUrlComponent(workdir)}`;
-  const dispose = `${OPENCODE_SERVE_URL}/instance/dispose?${directory}`;
-  const attachedLine = `{\\"type\\":\\"rayito.attached\\",\\"sessionID\\":\\"$sid\\",\\"since\\":$since,\\"reasoning\\":${reasoning ? "true" : "false"}}`;
+function runScript(command: string): string {
   const lines = [
     "set -u",
     `mkdir -p ${shellQuote(OPENCODE_STATE_DIR)}`,
     `exec 9>${shellQuote(AGENT_RUN_LOCK_PATH)}`,
     `if ! flock -n 9; then ${protocolLine("busy")}; exit 0; fi`,
     `if ! command -v opencode >/dev/null 2>&1; then ${protocolLine("runtime_missing")}; exit 0; fi`,
-    `attach=${attach}`,
-    "attached=0",
-    `secret=${shellQuote(OPENCODE_SERVE_SECRET_PATH)}`,
-    'if [ "$attach" != never ] && [ -r "$secret" ]; then',
-    '  OPENCODE_SERVER_PASSWORD="$(cat "$secret")"',
-    "  export OPENCODE_SERVER_PASSWORD",
-    `  if curl -fsS -m ${HEALTH_TIMEOUT_SECONDS} -u ${auth} ${shellQuote(`${OPENCODE_SERVE_URL}/global/health`)} >/dev/null 2>&1; then`,
-    "    attached=1",
-    "  fi",
-    "fi",
-    `sid=${shellQuote(sessionId ?? "")}`,
-    "created=0",
-    'if [ "$attached" = 1 ]; then',
-    '  sha="$(sha256sum "$OPENCODE_CONFIG" | cut -d " " -f 1)"',
-    `  if [ "$sha" != "$(cat ${shellQuote(OPENCODE_APPLIED_SHA_PATH)} 2>/dev/null)" ]; then`,
-    `    curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -X POST ${shellQuote(dispose)} >/dev/null 2>&1 || true`,
-    `    printf '%s\\n' "$sha" > ${shellQuote(OPENCODE_APPLIED_SHA_PATH)}`,
-    "  fi",
-    '  if [ -z "$sid" ]; then',
-    `    sid="$(curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -X POST -H 'content-type: application/json' --data ${shellQuote(sessionBody())} ${shellQuote(`${OPENCODE_SERVE_URL}/session?${directory}`)} 2>/dev/null | grep -o '"id":"ses_[A-Za-z0-9]*"' | head -n 1 | cut -d '"' -f 4)"`,
-    '    if [ -n "$sid" ]; then created=1; else attached=0; fi',
-    "  fi",
-    "fi",
-    'if [ "$attach" = always ] && [ "$attached" = 0 ]; then',
-    `  ${protocolLine("runtime_missing")}`,
-    "  exit 0",
-    "fi",
-    `set -- ${command}`,
-    'if [ "$attached" = 0 ]; then exec "$@"; fi',
-    'since="$(date +%s%3N)"',
-    `printf '%s\\n' "${attachedLine}"`,
-    'if [ "$created" = 1 ]; then set -- "$@" -s "$sid"; fi',
-    `set -- "$@" --attach ${shellQuote(OPENCODE_SERVE_URL)}`,
-    "rc=0",
-    '"$@" || rc=$?',
-    ...reconcileLines(auth, directory),
-    'exit "$rc"',
-  ];
-  return `${lines.join("\n")}\n`;
-}
-
-/** El cuerpo de `POST /session` de una ejecución adjunta (`_session_body`). */
-function sessionBody(): string {
-  return JSON.stringify({
-    title: OPENCODE_SESSION_TITLE,
-    permission: OPENCODE_NONINTERACTIVE_RULES,
-  });
-}
-
-/** Relee los mensajes de la vuelta, de uno en uno y hacia atrás, hasta el
- * `user` del prompt o el tope, y los escribe en orden (`_reconcile_lines`). */
-function reconcileLines(auth: string, directory: string): string[] {
-  const messages = `"${OPENCODE_SERVE_URL}/session/$sid/message?${directory}&limit=${RECONCILE_PAGE_SIZE}\${before:+&before=$before}"`;
-  return [
-    'tmp="$(mktemp)"',
-    'before=""',
-    "n=0",
-    `while [ "$n" -lt ${OPENCODE_RECONCILE_MAX_MESSAGES} ]; do`,
-    "  n=$((n + 1))",
-    `  page="$(curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -D "$tmp.h" ${messages} 2>/dev/null)" || break`,
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: expansión de bash.
-    '  page="${page#\\[}"',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: expansión de bash.
-    '  page="${page%\\]}"',
-    '  [ -n "$page" ] || break',
-    `  printf '{"type":"rayito.message","message":%s}\\n' "$page" >> "$tmp"`,
-    `  if printf '%s' "$page" | grep -Eq '^\\{"info":\\{[^{}]*"role":"user"'; then break; fi`,
-    `  before="$(tr -d '\\r' < "$tmp.h" | sed -n 's/^[Xx]-[Nn]ext-[Cc]ursor: *//p')"`,
-    '  [ -n "$before" ] || break',
-    "done",
-    'tac "$tmp"',
-    'rm -f "$tmp" "$tmp.h"',
-  ];
-}
-
-function serveScript(): string {
-  const secret = shellQuote(OPENCODE_SERVE_SECRET_PATH);
-  const envs = Object.entries(OPENCODE_FLAG_ENVS)
-    .map(([name, value]) => `${name}=${value}`)
-    .join(" ");
-  const lines = [
-    "set -u",
-    `mkdir -p ${shellQuote(OPENCODE_STATE_DIR)}`,
-    `umask 077 && head -c ${SERVE_SECRET_BYTES} /dev/urandom | base64 > ${secret}`,
-    `OPENCODE_SERVER_PASSWORD="$(cat ${secret})" OPENCODE_CONFIG=${shellQuote(OPENCODE_CONFIG_PATH)} ${envs} AWS_BEARER_TOKEN_BEDROCK=${MODEL_CREDENTIAL_PLACEHOLDER} exec opencode serve --hostname 127.0.0.1 --port ${OPENCODE_SERVE_PORT}`,
+    `exec ${command}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -565,9 +384,8 @@ export class OpenCodeRuntime implements AgentRuntime {
     return { files, configSha256: filesSha256(files) };
   }
 
-  /** El script de una ejecución: cerrojo, `attach`, `dispose`, `exec opencode run`. */
+  /** El script de una ejecución: cerrojo, comprobación del binario y `exec opencode run`. */
   command(request: RunRequest): RunCommand {
-    const mode = attachMode(request.attach);
     const providerId = providerIdOf(request.spec);
     const args = [
       "opencode",
@@ -593,13 +411,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       args.push("--thinking");
     }
     return {
-      script: runScript(
-        mode,
-        args.map(shellQuote).join(" "),
-        request.workdir,
-        request.sessionId,
-        request.reasoning === true,
-      ),
+      script: runScript(args.map(shellQuote).join(" ")),
       envs: runEnvs(request.spec),
       stdin: UTF8.encode(request.prompt),
     };
@@ -610,12 +422,8 @@ export class OpenCodeRuntime implements AgentRuntime {
       sessionId: undefined,
       steps: 0,
       usage: new TokenUsage(),
-      attached: false,
       failed: undefined,
       ignoredLines: 0,
-      reasoning: false,
-      sinceMs: undefined,
-      emittedParts: new Set(),
     };
     return state;
   }
@@ -652,19 +460,9 @@ export class OpenCodeRuntime implements AgentRuntime {
     const part = isPlainObject(payload.part) ? payload.part : {};
     const partEvents = this.mapPart(kind, part, state);
     if (partEvents !== undefined) {
-      if (typeof part.id === "string") {
-        state.emittedParts.add(part.id);
-      }
       return partEvents;
     }
     switch (kind) {
-      case "rayito.attached":
-        state.attached = true;
-        state.reasoning = payload.reasoning === true;
-        state.sinceMs = Number.isSafeInteger(payload.since) ? (payload.since as number) : undefined;
-        return [];
-      case "rayito.message":
-        return this.reconcile(payload.message, state);
       case "rayito.busy":
         state.failed = failed("busy", state);
         return [state.failed];
@@ -724,45 +522,6 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   }
 
-  /** Un mensaje releído del servidor (`rayito.message`): las partes que el
-   * stream no dio, con los filtros de `run.ts`, y su `error` si el stream no
-   * trajo ninguno. El `user` del prompt y lo anterior a `since` no producen
-   * nada. */
-  private reconcile(message: unknown, state: OpenCodeState): AgentEvent[] | undefined {
-    if (!isPlainObject(message)) {
-      return undefined;
-    }
-    const info = message.info;
-    const parts = message.parts;
-    if (!isPlainObject(info) || !Array.isArray(parts)) {
-      return undefined;
-    }
-    if (info.role !== "assistant" || beforeRun(info, state.sinceMs)) {
-      return [];
-    }
-    const events: AgentEvent[] = [];
-    for (const part of parts) {
-      if (!isPlainObject(part)) {
-        continue;
-      }
-      const partId = part.id;
-      const kind = reconciledKind(part, state.reasoning);
-      if (kind === undefined || typeof partId !== "string" || state.emittedParts.has(partId)) {
-        continue;
-      }
-      const mapped = this.mapPart(kind, part, state);
-      if (mapped !== undefined && mapped.length > 0) {
-        state.emittedParts.add(partId);
-        events.push(...mapped);
-      }
-    }
-    if (isPlainObject(info.error) && state.failed === undefined) {
-      state.failed = failed("model_error", state, undefined, info.error.name);
-      events.push(state.failed);
-    }
-    return events;
-  }
-
   /** `Done` sólo con salida 0, ningún `error` y una sesión vista. */
   finish(rawState: RuntimeState, exitCode: number): Done | AgentFailed {
     const state = asState(rawState);
@@ -783,36 +542,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     });
   }
 
-  /** Con `--attach`, `POST /session/<id>/abort` antes de matar el proceso. */
-  abortCommand(rawState: RuntimeState): string | undefined {
-    const state = asState(rawState);
-    if (
-      !state.attached ||
-      state.sessionId === undefined ||
-      !SESSION_ID_PATTERN.test(state.sessionId)
-    ) {
-      return undefined;
-    }
-    return (
-      `curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} ` +
-      `-u "${OPENCODE_SERVE_USER}:$(cat ${shellQuote(OPENCODE_SERVE_SECRET_PATH)})" ` +
-      `-X POST ${shellQuote(`${OPENCODE_SERVE_URL}/session/${state.sessionId}/abort`)}` +
-      " >/dev/null 2>&1 || true"
-    );
-  }
-
   /** Vacío: la plantilla de agente declara sus propios pasos. */
   templateSteps(): readonly TemplateStep[] {
     return [];
   }
 
-  /** Sin `serve`, sólo carga el binario; con `serve`, además arranca
-   * `opencode serve` residente en loopback con una contraseña aleatoria. */
-  warmupSteps(options: { readonly serve: boolean }): readonly WarmupStep[] {
-    const steps: WarmupStep[] = [{ cmd: "opencode --version >/dev/null" }];
-    if (options.serve) {
-      steps.push({ cmd: serveScript(), background: true, tag: "rayito-agent-serve" });
-    }
-    return steps;
+  /** Carga el binario en la caché de páginas. */
+  warmupSteps(): readonly WarmupStep[] {
+    return [{ cmd: "opencode --version >/dev/null" }];
   }
 }

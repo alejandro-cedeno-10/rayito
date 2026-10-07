@@ -243,7 +243,6 @@ export function buildRunRequest(options: {
   readonly sessionId: string | undefined;
   readonly model: string | undefined;
   readonly reasoning: boolean;
-  readonly attach: boolean | "auto";
 }): RunRequest {
   return {
     spec: options.spec,
@@ -252,7 +251,6 @@ export function buildRunRequest(options: {
     sessionId: options.sessionId,
     model: options.model,
     reasoning: options.reasoning,
-    attach: options.attach,
   };
 }
 
@@ -265,7 +263,6 @@ export interface AgentStreamInit {
   readonly sessionId: string | undefined;
   readonly span: Span | undefined;
   readonly finishSpan: (error?: unknown) => void;
-  readonly attached: boolean;
 }
 
 /**
@@ -291,7 +288,6 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
   #stopped = false;
   readonly #span: Span | undefined;
   readonly #finishSpan: (error?: unknown) => void;
-  readonly #attached: boolean;
 
   constructor(init: AgentStreamInit) {
     this.#sandbox = init.sandbox;
@@ -303,7 +299,6 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
     this.#tracker = new LimitTracker(init.limits, init.sessionId);
     this.#span = init.span;
     this.#finishSpan = init.finishSpan;
-    this.#attached = init.attached;
   }
 
   get sessionId(): string | undefined {
@@ -333,9 +328,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
     }
   }
 
-  /** Le da al adaptador la oportunidad de pedirle al runtime que pare con
-   * elegancia (`abortCommand`, por ejemplo `POST /session/<id>/abort`) y
-   * luego mata el proceso. */
+  /** Para los procesos que lanzó el runtime y mata el proceso. */
   async abort(): Promise<void> {
     if (this.#abortRequested) {
       return;
@@ -344,8 +337,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
     await this.#stop();
   }
 
-  /** Para el runtime y todo lo que lanzó: el `abortCommand` con elegancia
-   * del adaptador, `stopTreeCommand` y el `kill()` del handle. Sirve a
+  /** Para el runtime y todo lo que lanzó: `stopTreeCommand` y el `kill()` del handle. Sirve a
    * `abort()` y a un límite del SDK (`max_steps`, `token_budget`), que sin
    * esto dejaría al runtime trabajando (y gastando tokens) en segundo plano. */
   async #stop(): Promise<void> {
@@ -353,16 +345,6 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
       return;
     }
     this.#stopped = true;
-    const command = this.#runtime.abortCommand(this.#state);
-    if (command !== undefined) {
-      try {
-        await this.#sandbox.commands.run(command, { timeoutMs: this.#limits.timeoutMs });
-      } catch (error) {
-        if (!(error instanceof SandboxError)) {
-          throw error;
-        }
-      }
-    }
     try {
       await this.#sandbox.commands.run(stopTreeCommand(this.#handle.pid), {
         timeoutMs: AGENT_STOP_TREE_TIMEOUT_MS,
@@ -394,7 +376,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
     }
     this.#finishSpan();
     for (const [key, value] of Object.entries(
-      doneAttributes(final, { steps: this.#tracker.steps, attached: this.#attached }),
+      doneAttributes(final, { steps: this.#tracker.steps }),
     )) {
       this.#span?.setAttribute(key, value);
     }

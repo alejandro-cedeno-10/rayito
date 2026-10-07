@@ -50,7 +50,6 @@ class RunRequest:
     session_id: str | None = None
     model: str | None = None
     reasoning: bool = False
-    attach: bool | str = "auto"
 
 
 @dataclass(frozen=True)
@@ -75,7 +74,7 @@ class TemplateStep:
 class WarmupStep:
     """Un paso de calentamiento: `agent.prepare()` y el `warmup=` de un pool
     (B2) corren la misma lista. `background=True` no espera a que termine
-    (un servidor residente); si no, se espera su salida con `timeout_seconds`."""
+    (un proceso que sigue vivo); si no, se espera su salida con `timeout_seconds`."""
 
     cmd: str
     background: bool = False
@@ -109,8 +108,6 @@ class AgentRuntime(Protocol):
 
     def finish(self, state: RuntimeState, exit_code: int) -> Done | AgentFailed: ...
 
-    def abort_command(self, state: RuntimeState) -> str | None: ...
-
     def template_steps(self) -> Sequence[TemplateStep]: ...
 
-    def warmup_steps(self, *, serve: bool) -> Sequence[WarmupStep]: ...
+    def warmup_steps(self) -> Sequence[WarmupStep]: ...

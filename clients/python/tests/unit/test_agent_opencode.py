@@ -7,7 +7,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -128,18 +128,16 @@ def test_config_requires_every_gateway() -> None:
 @pytest.mark.parametrize(
     ("case", "request_kwargs"),
     [
-        ("auto", {"attach": "auto"}),
+        ("default", {}),
         (
-            "always-resume",
+            "resume",
             {
-                "attach": True,
                 "session_id": "ses_0000000000000000000000000a",
                 "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "reasoning": True,
                 "workdir": "/home/user/mi proyecto's",
             },
         ),
-        ("never", {"attach": False}),
     ],
 )
 def test_run_command_matches_golden(case: str, request_kwargs: dict[str, Any]) -> None:
@@ -152,13 +150,6 @@ def test_run_command_matches_golden(case: str, request_kwargs: dict[str, Any]) -
     assert "hola" not in command.script
 
 
-def test_run_command_rejects_unknown_attach() -> None:
-    with pytest.raises(InvalidArgumentException):
-        OpenCodeRuntime().command(
-            RunRequest(spec=_bedrock_spec(), prompt="x", workdir="/home/user", attach=cast(Any, 1))
-        )
-
-
 def test_run_command_rejects_a_session_id_that_is_not_opencode_s() -> None:
     with pytest.raises(InvalidArgumentException):
         OpenCodeRuntime().command(
@@ -166,17 +157,17 @@ def test_run_command_rejects_a_session_id_that_is_not_opencode_s() -> None:
         )
 
 
-def test_attached_run_creates_the_session_and_rereads_the_turn() -> None:
+def test_run_script_execs_opencode_directly() -> None:
     script = (
         OpenCodeRuntime()
-        .command(RunRequest(spec=_bedrock_spec(), prompt="x", workdir="/home/user", attach=True))
+        .command(RunRequest(spec=_bedrock_spec(), prompt="x", workdir="/home/user"))
         .script
     )
-    assert '"permission":"question","action":"deny"' in script
-    assert 'set -- "$@" -s "$sid"' in script
-    assert "/message?directory=%2Fhome%2Fuser&limit=1" in script
-    assert 'exec "$@"' in script
-    assert script.endswith('exit "$rc"\n')
+    last_line = script.splitlines()[-1]
+    assert last_line == (
+        "exec 'opencode' 'run' '--format' 'json' '--auto' '--title' 'rayito' '--dir' '/home/user'"
+    )
+    assert "--attach" not in script and "curl" not in script
 
 
 def _event_dict(event: object) -> dict[str, Any]:
@@ -193,73 +184,8 @@ def test_events_match_golden() -> None:
         events.extend(_event_dict(event) for event in runtime.parse_line(line, state))
     assert events == expected["events"]
     assert isinstance(state, OpenCodeState)
-    assert state.attached is expected["attached"]
     assert state.ignored_lines == expected["ignored_lines"]
     assert _event_dict(runtime.finish(state, 0)) == expected["done"]
-
-
-ATTACH_EXPECTED = json.loads(
-    (TESTDATA / "opencode-attach" / "expected.json").read_text(encoding="utf-8")
-)["cases"]
-
-
-@pytest.mark.parametrize("case", sorted(ATTACH_EXPECTED))
-def test_attached_run_recovers_the_parts_the_cli_dropped(case: str) -> None:
-    expected = ATTACH_EXPECTED[case]
-    runtime = OpenCodeRuntime()
-    state = runtime.new_state()
-    events: list[dict[str, Any]] = []
-    for line in (TESTDATA / "opencode-attach" / f"{case}.jsonl").read_bytes().splitlines():
-        events.extend(_event_dict(event) for event in runtime.parse_line(line, state))
-    assert events == expected["events"]
-    assert isinstance(state, OpenCodeState)
-    assert state.attached is expected["attached"]
-    assert state.ignored_lines == expected["ignored_lines"]
-    assert _event_dict(runtime.finish(state, 0)) == expected["done"]
-
-
-def _reread(parts: list[Any], **info: Any) -> bytes:
-    message = {"info": {"role": "assistant", "time": {"created": 20}, **info}, "parts": parts}
-    return json.dumps({"type": "rayito.message", "message": message}).encode()
-
-
-def test_reread_follows_the_cli_filters() -> None:
-    runtime = OpenCodeRuntime()
-    state = runtime.new_state()
-    runtime.parse_line(b'{"type":"rayito.attached","sessionID":"ses_1","since":10}', state)
-    parts = [
-        {"id": "p1", "type": "reasoning", "text": "pienso", "time": {"end": 1}},
-        {"id": "p2", "type": "text", "text": "a medias", "time": {}},
-        {"id": "p3", "type": "tool", "tool": "bash", "state": {"status": "running"}},
-        {"id": "p4", "type": "patch"},
-        {"type": "text", "text": "sin id", "time": {"end": 1}},
-        {"id": "p5", "type": "text", "text": "fin", "time": {"end": 1}},
-    ]
-    events = runtime.parse_line(_reread(parts), state)
-    assert [type(event).__name__ for event in events] == ["Text"]
-    assert runtime.parse_line(_reread(parts), state) == []
-
-
-def test_reread_gives_reasoning_only_when_asked() -> None:
-    runtime = OpenCodeRuntime()
-    state = runtime.new_state()
-    runtime.parse_line(b'{"type":"rayito.attached","sessionID":"ses_1","reasoning":true}', state)
-    part = {"id": "p1", "type": "reasoning", "text": "pienso", "time": {"end": 1}}
-    (event,) = runtime.parse_line(_reread([part]), state)
-    assert type(event).__name__ == "Reasoning"
-
-
-def test_reread_keeps_the_streamed_error_and_ignores_garbage() -> None:
-    runtime = OpenCodeRuntime()
-    state = runtime.new_state()
-    runtime.parse_line(b'{"type":"error","sessionID":"ses_1","error":{"name":"A"}}', state)
-    assert runtime.parse_line(_reread([], error={"name": "B"}), state) == []
-    assert runtime.parse_line(b'{"type":"rayito.message","message":[]}', state) == ()
-    assert isinstance(state, OpenCodeState)
-    assert state.ignored_lines == 1
-    failure = runtime.finish(state, 0)
-    assert isinstance(failure, AgentFailed)
-    assert failure.detail_code == "A"
 
 
 @pytest.mark.parametrize(
@@ -312,29 +238,11 @@ def test_tool_output_is_truncated() -> None:
     assert _event_dict(event)["output_truncated"] is True
 
 
-def test_abort_command_only_when_attached() -> None:
-    runtime = OpenCodeRuntime()
-    state = runtime.new_state()
-    runtime.parse_line(b'{"type":"step_start","sessionID":"ses_1","part":{}}', state)
-    assert runtime.abort_command(state) is None
-    runtime.parse_line(b'{"type":"rayito.attached"}', state)
-    command = runtime.abort_command(state)
-    assert command is not None
-    assert "'http://127.0.0.1:4096/session/ses_1/abort'" in command
-    unsafe = runtime.new_state()
-    runtime.parse_line(b'{"type":"rayito.attached","sessionID":"ses;rm"}', unsafe)
-    assert runtime.abort_command(unsafe) is None
-
-
 def test_warmup_steps() -> None:
     runtime = OpenCodeRuntime()
-    assert [step.background for step in runtime.warmup_steps(serve=False)] == [False]
-    serve = runtime.warmup_steps(serve=True)[-1]
-    assert serve.background
-    assert "opencode serve --hostname 127.0.0.1 --port 4096" in serve.cmd
-    assert "--password" not in serve.cmd
-    # Attached runs reuse the server env: the Bedrock placeholder must live there.
-    assert "AWS_BEARER_TOKEN_BEDROCK=placeholder-not-a-secret exec opencode serve" in serve.cmd
+    assert [(step.cmd, step.background) for step in runtime.warmup_steps()] == [
+        ("opencode --version >/dev/null", False)
+    ]
     assert runtime.template_steps() == ()
 
 

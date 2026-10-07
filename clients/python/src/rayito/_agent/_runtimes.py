@@ -42,5 +42,5 @@ def resolve_runtime(runtime: str | AgentRuntime) -> AgentRuntime:
 
 
 def _looks_like_runtime(candidate: object) -> bool:
-    required = ("build_config", "command", "new_state", "parse_line", "finish", "abort_command")
+    required = ("build_config", "command", "new_state", "parse_line", "finish", "warmup_steps")
     return all(callable(getattr(candidate, attr, None)) for attr in required)

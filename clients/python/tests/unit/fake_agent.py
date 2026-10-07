@@ -90,7 +90,6 @@ class FakeAgentRuntime:
 
     name: str = "fake"
     config_sha: str = "sha-1"
-    abort_cmd: str | None = None
     finish_result: Done | AgentFailed | None = None
     build_config_calls: list[Mapping[str, str]] = field(default_factory=list)
     warmup: tuple[WarmupStep, ...] = ()
@@ -134,13 +133,10 @@ class FakeAgentRuntime:
             reason="runtime_error", exit_code=exit_code, session_id=fake_state.session_id
         )
 
-    def abort_command(self, state: RuntimeState) -> str | None:
-        return self.abort_cmd
-
     def template_steps(self) -> Sequence[TemplateStep]:
         return ()
 
-    def warmup_steps(self, *, serve: bool) -> Sequence[WarmupStep]:
+    def warmup_steps(self) -> Sequence[WarmupStep]:
         return self.warmup
 
 

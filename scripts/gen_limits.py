@@ -160,7 +160,6 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "defaultAgentWorkdir",
         "agentStateDir",
         "modelCredentialPlaceholder",
-        "opencodeServePort",
         "opencodeSessionTitle",
         "agentProtocolVersion",
         "agentTemplateManifestPath",

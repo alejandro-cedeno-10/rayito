@@ -359,11 +359,7 @@ forma de distinguir, desde la pasarela, una llamada que hizo el runtime del
 agente de una que hizo el modelo pidiéndole ejecutar `curl`). Mitigaciones:
 restringir `allow` a los `(método, ruta)` de los modelos exactos que uses
 (`bedrock_gateway` nunca abre `/model/*`) y
-`rate_per_minute`. La contraseña de `opencode serve`, cuando se usa
-([Pool: servidor residente](pool.md#calentamiento-warmup-y-servidor-residente)),
-vive en el snapshot aparcado y el servidor escucha sólo en loopback,
-alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
-— `get_host(4096)` sin la contraseña recibe 401.
+`rate_per_minute`.
 
 **Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
 por versión y sha256 fijados en `limits.json`, que el build de la plantilla

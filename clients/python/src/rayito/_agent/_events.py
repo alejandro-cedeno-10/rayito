@@ -44,9 +44,7 @@ AGENT_FAILURE_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
     {
         "model_error": "el modelo devolvió un error",
         "runtime_error": "el runtime del agente terminó con un error",
-        "runtime_missing": (
-            "el runtime del agente no está en la imagen o su servidor residente no responde"
-        ),
+        "runtime_missing": ("el runtime del agente no está en la imagen"),
         "runtime_version_mismatch": "la versión del runtime de la imagen no es la pedida",
         "protocol_error": "el runtime del agente emitió una salida fuera de protocolo",
         "timeout": "el agente superó su tiempo máximo",

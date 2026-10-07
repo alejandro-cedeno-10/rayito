@@ -66,7 +66,7 @@ código, y lee sus eventos. El agente llama a su modelo a través de la
 [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md), que
 `rayd` sirve en loopback: añade la credencial a cada petición sin que el
 código del sandbox pueda leerla. Lo normal es un `Sandbox.create()` y
-`sbx.agent.run(...)`; un pool calentado o un servidor residente sólo
+`sbx.agent.run(...)`; un pool calentado sólo
 acortan el arranque ([¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)), y
 `persist=` guarda los ficheros si la conversación se para más de 8 h.
 

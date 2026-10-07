@@ -171,12 +171,12 @@ Python en `camelCase`. Guía: [Git](../git.md).
 |---|---|---|
 | `agent.run(prompt, opts)` | `agent.run(prompt, ...)` | `AgentResult`; lanza `AgentError` si falla |
 | `agent.stream(prompt, opts)` | `agent.stream(prompt, ...)` | `AgentStream` (`AsyncIterable<AgentEvent>`); nunca lanza por un fallo del agente |
-| `agent.prepare(opts?)` | `agent.prepare(...)` | dispara el calentamiento del runtime en segundo plano (`runtime`, `serve`) |
+| `agent.prepare(opts?)` | `agent.prepare(...)` | dispara el calentamiento del runtime en segundo plano (`runtime`) |
 
 `AgentRunOptions`: `spec` (obligatoria), `runtime` (`"opencode"` por
 defecto, `"deepagents"` o `new DeepAgents({...})`), `sessionId`, `model`,
 `limits` (`AgentLimits`: `maxSteps`, `timeoutMs`, `maxOutputBytes`,
-`maxTotalTokens`), `workdir` (`/home/user`), `attach` (`"auto"`),
+`maxTotalTokens`), `workdir` (`/home/user`),
 `reasoning` (`false`) y `signal` (un `AbortSignal` aborta el stream).
 `AgentStream`: `sessionId`, `droppedLines`, `abort()`, `result()`,
 `close()` e iteración `for await (const event of stream)`.

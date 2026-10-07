@@ -106,8 +106,8 @@ const result = await sbx.agent.run("Lista los ficheros de /home/user y resume qu
 console.log(result.text, result.usage.total);
 ```
 
-El arranque rápido (`warmup: agentPoolWarmup()` en el pool, servidor
-residente) es opcional:
+El arranque rápido (`warmup: agentPoolWarmup()` en el pool) es
+opcional:
 [¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso).
 Guía: [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/).
 

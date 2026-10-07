@@ -6,6 +6,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- **Se retira la opción D del arranque rápido del agente** (pool con
+  `opencode serve` residente), sin periodo de obsolescencia: apenas ganaba
+  unas décimas a la opción C (`AWS_API_NOTES.md` Q154) y costaba más
+  memoria y más por plaza. Desaparecen `agent_pool_warmup(..., serve=)`,
+  `sbx.agent.prepare(serve=)`, `attach=` de `sbx.agent.run()`/`stream()`
+  (sync y async) y `RunRequest.attach`; el script de OpenCode ya no busca
+  ni se engancha a un servidor (`--attach`) ni relee la vuelta de él, y
+  el span `rayito.agent.run` deja de llevar `rayito.agent.attached`. El
+  puerto `AgentRuntime` pierde `abort_command` (ningún runtime lo usaba ya)
+  y `warmup_steps()` no lleva argumentos; `OPENCODE_SERVE_PORT` desaparece.
+  **Migración**: quita `serve=True` y `attach=`; para un primer mensaje
+  rápido usa `agent_pool_warmup(runtime)` (opción C) o el arranque normal
+  (`Sandbox.create(...)` y `sbx.agent.run(...)`). Un runtime propio borra
+  `abort_command` y el parámetro `serve` de `warmup_steps`.
+
 ### Changed
 
 - **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**

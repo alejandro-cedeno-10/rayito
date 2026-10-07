@@ -105,7 +105,6 @@ export const ALLOWED_SPAN_ATTRIBUTES = [
   "rayito.agent.steps",
   "rayito.agent.exit_code",
   "rayito.agent.failure_reason",
-  "rayito.agent.attached",
   "rayito.agent.cache_read_tokens",
   "rayito.agent.cache_write_tokens",
 ] as const;
