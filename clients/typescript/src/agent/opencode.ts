@@ -10,8 +10,18 @@
  * residente se lee de su fichero dentro del script. Con `--attach` el código
  * de salida no refleja `session.error`, así que el fallo sale de los eventos
  * `error` y `finish()` sólo da `Done` con salida 0 y ningún `error` visto.
+ *
+ * Con `--attach`, `opencode run` (1.18.34 y 1.18.35) sale en cuanto vuelve
+ * `POST /session/<id>/message` sin esperar a su bucle de eventos, y pierde
+ * las partes que aún no había escrito (AWS_API_NOTES, Q148). El script crea
+ * antes la sesión con las reglas no interactivas de `run` y, al salir `run`,
+ * relee del servidor los mensajes de la vuelta (del más nuevo hacia atrás
+ * hasta el `user` del prompt) y los escribe en orden como líneas
+ * `rayito.message`; el adaptador emite sólo las partes que el stream no dio
+ * (por `part.id`), con los filtros de `run.ts`.
+ *
  * Las líneas propias del script llevan `type` con prefijo `rayito.`
- * (`busy`, `runtime_missing`, `attached`).
+ * (`busy`, `runtime_missing`, `attached` y `message`).
  */
 
 import { createHash } from "node:crypto";
@@ -89,6 +99,19 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const HEALTH_TIMEOUT_SECONDS = 1;
 const CONTROL_TIMEOUT_SECONDS = 5;
 const SERVE_SECRET_BYTES = 32;
+/** Las reglas que `opencode run` (v1.18.34) pone a la sesión no interactiva
+ * que crea; con `--attach` la sesión la crea el script y las repite. */
+export const OPENCODE_NONINTERACTIVE_RULES: readonly Readonly<Record<string, string>>[] =
+  Object.freeze(
+    ["question", "plan_enter", "plan_exit"].map((permission) =>
+      Object.freeze({ permission, action: "deny", pattern: "*" }),
+    ),
+  );
+/** Tope de mensajes que el script relee tras una ejecución con `--attach`
+ * (`OPENCODE_RECONCILE_MAX_MESSAGES` en Python). */
+export const OPENCODE_RECONCILE_MAX_MESSAGES = 512;
+/** Un mensaje por página al releer: cada uno, una línea propia. */
+const RECONCILE_PAGE_SIZE = 1;
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 
@@ -100,6 +123,9 @@ export interface OpenCodeState extends RuntimeState {
   attached: boolean;
   failed: AgentFailed | undefined;
   ignoredLines: number;
+  reasoning: boolean;
+  sinceMs: number | undefined;
+  emittedParts: Set<string>;
 }
 
 /** Comillas simples de POSIX, siempre, igual que `shell_quote` en Python. */
@@ -332,6 +358,32 @@ function toolCallOf(part: Record<string, unknown>): ToolCall | undefined {
   });
 }
 
+function beforeRun(info: Record<string, unknown>, sinceMs: number | undefined): boolean {
+  const created = isPlainObject(info.time) ? info.time.created : undefined;
+  return sinceMs !== undefined && Number.isSafeInteger(created) && (created as number) < sinceMs;
+}
+
+/** El `type` de la línea que `run.ts` habría escrito para `part`, o
+ * `undefined` si no la habría escrito. */
+function reconciledKind(part: Record<string, unknown>, reasoning: boolean): string | undefined {
+  const kind = part.type;
+  if (kind === "step-start" || kind === "step-finish") {
+    return kind.replace("-", "_");
+  }
+  if (kind === "tool") {
+    const status = isPlainObject(part.state) ? part.state.status : undefined;
+    return status === "completed" || status === "error" ? "tool_use" : undefined;
+  }
+  if (kind === "text" || kind === "reasoning") {
+    const ended = isPlainObject(part.time) && part.time.end !== undefined && part.time.end !== null;
+    if (!ended || (kind === "reasoning" && !reasoning)) {
+      return undefined;
+    }
+    return kind;
+  }
+  return undefined;
+}
+
 function attachMode(attach: unknown): string {
   if (attach === true) {
     return "always";
@@ -364,9 +416,17 @@ function protocolLine(kind: string): string {
   return `printf '%s\\n' '{"type":"rayito.${kind}"}'`;
 }
 
-function runScript(attach: string, command: string, workdir: string): string {
+function runScript(
+  attach: string,
+  command: string,
+  workdir: string,
+  sessionId: string | undefined,
+  reasoning: boolean,
+): string {
   const auth = `"${OPENCODE_SERVE_USER}:$OPENCODE_SERVER_PASSWORD"`;
-  const dispose = `${OPENCODE_SERVE_URL}/instance/dispose?directory=${quoteUrlComponent(workdir)}`;
+  const directory = `directory=${quoteUrlComponent(workdir)}`;
+  const dispose = `${OPENCODE_SERVE_URL}/instance/dispose?${directory}`;
+  const attachedLine = `{\\"type\\":\\"rayito.attached\\",\\"sessionID\\":\\"$sid\\",\\"since\\":$since,\\"reasoning\\":${reasoning ? "true" : "false"}}`;
   const lines = [
     "set -u",
     `mkdir -p ${shellQuote(OPENCODE_STATE_DIR)}`,
@@ -383,23 +443,69 @@ function runScript(attach: string, command: string, workdir: string): string {
     "    attached=1",
     "  fi",
     "fi",
-    'if [ "$attach" = always ] && [ "$attached" = 0 ]; then',
-    `  ${protocolLine("runtime_missing")}`,
-    "  exit 0",
-    "fi",
-    `set -- ${command}`,
+    `sid=${shellQuote(sessionId ?? "")}`,
+    "created=0",
     'if [ "$attached" = 1 ]; then',
     '  sha="$(sha256sum "$OPENCODE_CONFIG" | cut -d " " -f 1)"',
     `  if [ "$sha" != "$(cat ${shellQuote(OPENCODE_APPLIED_SHA_PATH)} 2>/dev/null)" ]; then`,
     `    curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -X POST ${shellQuote(dispose)} >/dev/null 2>&1 || true`,
     `    printf '%s\\n' "$sha" > ${shellQuote(OPENCODE_APPLIED_SHA_PATH)}`,
     "  fi",
-    `  ${protocolLine("attached")}`,
-    `  set -- "$@" --attach ${shellQuote(OPENCODE_SERVE_URL)}`,
+    '  if [ -z "$sid" ]; then',
+    `    sid="$(curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -X POST -H 'content-type: application/json' --data ${shellQuote(sessionBody())} ${shellQuote(`${OPENCODE_SERVE_URL}/session?${directory}`)} 2>/dev/null | grep -o '"id":"ses_[A-Za-z0-9]*"' | head -n 1 | cut -d '"' -f 4)"`,
+    '    if [ -n "$sid" ]; then created=1; else attached=0; fi',
+    "  fi",
     "fi",
-    'exec "$@"',
+    'if [ "$attach" = always ] && [ "$attached" = 0 ]; then',
+    `  ${protocolLine("runtime_missing")}`,
+    "  exit 0",
+    "fi",
+    `set -- ${command}`,
+    'if [ "$attached" = 0 ]; then exec "$@"; fi',
+    'since="$(date +%s%3N)"',
+    `printf '%s\\n' "${attachedLine}"`,
+    'if [ "$created" = 1 ]; then set -- "$@" -s "$sid"; fi',
+    `set -- "$@" --attach ${shellQuote(OPENCODE_SERVE_URL)}`,
+    "rc=0",
+    '"$@" || rc=$?',
+    ...reconcileLines(auth, directory),
+    'exit "$rc"',
   ];
   return `${lines.join("\n")}\n`;
+}
+
+/** El cuerpo de `POST /session` de una ejecución adjunta (`_session_body`). */
+function sessionBody(): string {
+  return JSON.stringify({
+    title: OPENCODE_SESSION_TITLE,
+    permission: OPENCODE_NONINTERACTIVE_RULES,
+  });
+}
+
+/** Relee los mensajes de la vuelta, de uno en uno y hacia atrás, hasta el
+ * `user` del prompt o el tope, y los escribe en orden (`_reconcile_lines`). */
+function reconcileLines(auth: string, directory: string): string[] {
+  const messages = `"${OPENCODE_SERVE_URL}/session/$sid/message?${directory}&limit=${RECONCILE_PAGE_SIZE}\${before:+&before=$before}"`;
+  return [
+    'tmp="$(mktemp)"',
+    'before=""',
+    "n=0",
+    `while [ "$n" -lt ${OPENCODE_RECONCILE_MAX_MESSAGES} ]; do`,
+    "  n=$((n + 1))",
+    `  page="$(curl -fsS -m ${CONTROL_TIMEOUT_SECONDS} -u ${auth} -D "$tmp.h" ${messages} 2>/dev/null)" || break`,
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: expansión de bash.
+    '  page="${page#\\[}"',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: expansión de bash.
+    '  page="${page%\\]}"',
+    '  [ -n "$page" ] || break',
+    `  printf '{"type":"rayito.message","message":%s}\\n' "$page" >> "$tmp"`,
+    `  if printf '%s' "$page" | grep -Eq '^\\{"info":\\{[^{}]*"role":"user"'; then break; fi`,
+    `  before="$(tr -d '\\r' < "$tmp.h" | sed -n 's/^[Xx]-[Nn]ext-[Cc]ursor: *//p')"`,
+    '  [ -n "$before" ] || break',
+    "done",
+    'tac "$tmp"',
+    'rm -f "$tmp" "$tmp.h"',
+  ];
 }
 
 function serveScript(): string {
@@ -478,13 +584,22 @@ export class OpenCodeRuntime implements AgentRuntime {
       args.push("-m", modelRef(providerId, request.model));
     }
     if (request.sessionId !== undefined) {
+      if (!SESSION_ID_PATTERN.test(request.sessionId)) {
+        throw new InvalidArgumentError("sessionId no es un id de sesión de OpenCode");
+      }
       args.push("-s", request.sessionId);
     }
     if (request.reasoning === true) {
       args.push("--thinking");
     }
     return {
-      script: runScript(mode, args.map(shellQuote).join(" "), request.workdir),
+      script: runScript(
+        mode,
+        args.map(shellQuote).join(" "),
+        request.workdir,
+        request.sessionId,
+        request.reasoning === true,
+      ),
       envs: runEnvs(request.spec),
       stdin: UTF8.encode(request.prompt),
     };
@@ -498,6 +613,9 @@ export class OpenCodeRuntime implements AgentRuntime {
       attached: false,
       failed: undefined,
       ignoredLines: 0,
+      reasoning: false,
+      sinceMs: undefined,
+      emittedParts: new Set(),
     };
     return state;
   }
@@ -532,16 +650,48 @@ export class OpenCodeRuntime implements AgentRuntime {
   private map(payload: Record<string, unknown>, state: OpenCodeState): AgentEvent[] | undefined {
     const kind = payload.type;
     const part = isPlainObject(payload.part) ? payload.part : {};
+    const partEvents = this.mapPart(kind, part, state);
+    if (partEvents !== undefined) {
+      if (typeof part.id === "string") {
+        state.emittedParts.add(part.id);
+      }
+      return partEvents;
+    }
     switch (kind) {
       case "rayito.attached":
         state.attached = true;
+        state.reasoning = payload.reasoning === true;
+        state.sinceMs = Number.isSafeInteger(payload.since) ? (payload.since as number) : undefined;
         return [];
+      case "rayito.message":
+        return this.reconcile(payload.message, state);
       case "rayito.busy":
         state.failed = failed("busy", state);
         return [state.failed];
       case "rayito.runtime_missing":
         state.failed = failed("runtime_missing", state);
         return [state.failed];
+      case "error": {
+        const error = payload.error;
+        state.failed = failed(
+          "model_error",
+          state,
+          undefined,
+          isPlainObject(error) ? error.name : undefined,
+        );
+        return [state.failed];
+      }
+      default:
+        return undefined;
+    }
+  }
+
+  private mapPart(
+    kind: unknown,
+    part: Record<string, unknown>,
+    state: OpenCodeState,
+  ): AgentEvent[] | undefined {
+    switch (kind) {
       case "step_start":
         state.steps += 1;
         return [Object.freeze({ type: "step_started", index: state.steps })];
@@ -569,19 +719,48 @@ export class OpenCodeRuntime implements AgentRuntime {
         const call = toolCallOf(part);
         return call === undefined ? undefined : [call];
       }
-      case "error": {
-        const error = payload.error;
-        state.failed = failed(
-          "model_error",
-          state,
-          undefined,
-          isPlainObject(error) ? error.name : undefined,
-        );
-        return [state.failed];
-      }
       default:
         return undefined;
     }
+  }
+
+  /** Un mensaje releído del servidor (`rayito.message`): las partes que el
+   * stream no dio, con los filtros de `run.ts`, y su `error` si el stream no
+   * trajo ninguno. El `user` del prompt y lo anterior a `since` no producen
+   * nada. */
+  private reconcile(message: unknown, state: OpenCodeState): AgentEvent[] | undefined {
+    if (!isPlainObject(message)) {
+      return undefined;
+    }
+    const info = message.info;
+    const parts = message.parts;
+    if (!isPlainObject(info) || !Array.isArray(parts)) {
+      return undefined;
+    }
+    if (info.role !== "assistant" || beforeRun(info, state.sinceMs)) {
+      return [];
+    }
+    const events: AgentEvent[] = [];
+    for (const part of parts) {
+      if (!isPlainObject(part)) {
+        continue;
+      }
+      const partId = part.id;
+      const kind = reconciledKind(part, state.reasoning);
+      if (kind === undefined || typeof partId !== "string" || state.emittedParts.has(partId)) {
+        continue;
+      }
+      const mapped = this.mapPart(kind, part, state);
+      if (mapped !== undefined && mapped.length > 0) {
+        state.emittedParts.add(partId);
+        events.push(...mapped);
+      }
+    }
+    if (isPlainObject(info.error) && state.failed === undefined) {
+      state.failed = failed("model_error", state, undefined, info.error.name);
+      events.push(state.failed);
+    }
+    return events;
   }
 
   /** `Done` sólo con salida 0, ningún `error` y una sesión vista. */
