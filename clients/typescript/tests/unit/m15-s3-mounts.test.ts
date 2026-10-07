@@ -1,5 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, test } from "vitest";
+import errorHints from "../../../../testdata/s3-mounts/error-hints.json" with { type: "json" };
 import vectors from "../../../../testdata/s3-mounts/mount-specs.json" with { type: "json" };
 import { InvalidArgumentError, MountError, UnimplementedError } from "../../src/errors.js";
 import { ConfigureRequestSchema, SectionCode } from "../../src/gen/rayito/v1/configure_pb.js";
@@ -8,7 +9,7 @@ import {
   S3MountStateSchema,
   S3MountsStatusSchema,
 } from "../../src/gen/rayito/v1/s3_mounts_pb.js";
-import { S3Mount } from "../../src/s3-mounts/domain.js";
+import { MOUNT_ERROR_HINTS, S3Mount } from "../../src/s3-mounts/domain.js";
 import {
   checkMountsSettled,
   checkSectionResult,
@@ -162,6 +163,38 @@ describe("checkSectionResult", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(MountError);
       expect((error as MountError).code).toBe("iam_denied");
+    }
+  });
+
+  test("a bucket off the image allowlist says so and how to fix it", () => {
+    try {
+      checkSectionResult(SectionCode.INVALID, "not_allowed");
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(MountError);
+      const mountError = error as MountError;
+      expect(mountError.code).toBe("not_allowed");
+      expect(mountError.message).toContain("allowlist de la imagen");
+      expect(mountError.message).toContain("--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>");
+      expect(mountError.message).toContain("make image-publish-caps MOUNT_BUCKETS=<bucket>");
+      expect(mountError.message).toBe(
+        `mounts: la sección se rechazó (INVALID, not_allowed): ${MOUNT_ERROR_HINTS.not_allowed}`,
+      );
+    }
+  });
+
+  test("the hints are the shared ones", () => {
+    expect(MOUNT_ERROR_HINTS).toEqual(errorHints.hints);
+  });
+
+  test("a class without a hint keeps the plain message", () => {
+    try {
+      checkSectionResult(SectionCode.INVALID, "invalid_path");
+      expect.unreachable();
+    } catch (error) {
+      expect((error as MountError).message).toBe(
+        "mounts: la sección se rechazó (INVALID, invalid_path)",
+      );
     }
   });
 

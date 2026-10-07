@@ -3,7 +3,10 @@
  * aceptación de M15 (ADR-017; cap de gasto $0.30).
  *
  * Necesita, además de `RAYITO_TEMPLATE`: `RAYITO_TEMPLATE_CAPS` (imagen
- * `rayito-base-caps`), `RAYITO_EXECUTION_ROLE_ARN` (con la política
+ * `rayito-base-caps` publicada con el bucket de abajo en su allowlist:
+ * `rayito image publish ... --env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>`, o
+ * `make image-publish-caps MOUNT_BUCKETS=<bucket>`; sin él, cada montaje es
+ * `MountError` con `code: "not_allowed"`), `RAYITO_EXECUTION_ROLE_ARN` (con la política
  * `RayitoS3MountAccess` de `infra/s3-mounts.yaml` sobre el bucket de abajo)
  * y `RAYITO_S3_MOUNT_BUCKET` (un bucket ya existente; este fichero sólo
  * escribe y borra bajo `rayito-e2e-s3-mounts/<uuid>/`).

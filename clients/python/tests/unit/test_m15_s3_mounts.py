@@ -25,6 +25,7 @@ from rayito._s3_mounts import (
     plan_s3_mounts,
     to_proto,
 )
+from rayito._s3_mounts._domain import MOUNT_ERROR_HINTS
 from rayito._s3_mounts._section import check_mounts_settled
 from rayito.exceptions import InvalidArgumentException, MountException, UnimplementedError
 from rayito.sandbox_async import main as async_main
@@ -155,6 +156,37 @@ def test_failed_raises_mount_exception_with_the_wire_error_class() -> None:
     with pytest.raises(MountException) as excinfo:
         check_section_result(configure_pb2.SECTION_CODE_FAILED, "iam_denied")
     assert excinfo.value.code == "iam_denied"
+
+
+def test_a_bucket_off_the_image_allowlist_says_so_and_how_to_fix_it() -> None:
+    with pytest.raises(MountException) as excinfo:
+        check_section_result(configure_pb2.SECTION_CODE_INVALID, "not_allowed")
+    error = excinfo.value
+    assert error.code == "not_allowed"
+    assert "allowlist de la imagen" in str(error)
+    assert "--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>" in str(error)
+    assert "make image-publish-caps MOUNT_BUCKETS=<bucket>" in str(error)
+    assert str(error) == (
+        "mounts=: la sección se rechazó (SECTION_CODE_INVALID, not_allowed): "
+        + MOUNT_ERROR_HINTS["not_allowed"]
+    )
+
+
+def test_a_class_without_a_hint_keeps_the_plain_message() -> None:
+    with pytest.raises(MountException) as excinfo:
+        check_section_result(configure_pb2.SECTION_CODE_INVALID, "invalid_path")
+    assert (
+        str(excinfo.value) == "mounts=: la sección se rechazó (SECTION_CODE_INVALID, invalid_path)"
+    )
+
+
+def test_the_hints_are_the_shared_ones() -> None:
+    shared = json.loads(
+        (
+            Path(__file__).resolve().parents[4] / "testdata" / "s3-mounts" / "error-hints.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert shared["hints"] == MOUNT_ERROR_HINTS
 
 
 def test_invalid_without_a_known_error_class_falls_back_to_unknown() -> None:

@@ -4,8 +4,10 @@ aceptación de M15 (ADR-017; cap de gasto $0.30).
 Necesita, además de las variables habituales de `conftest.py`:
 - `RAYITO_TEMPLATE_CAPS`: imagen `rayito-base-caps` publicada con
   `rayito image publish ... --image-name rayito-base-caps --os-capabilities
-  ALL --env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` (sin ese allowlist, cada montaje
-  es `MountException(code="not_allowed")`).
+  ALL --env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` (desde el repositorio,
+  `make image-publish-caps MOUNT_BUCKETS=<bucket>`). Sin el bucket en ese
+  allowlist, cada montaje es `MountException(code="not_allowed")` y su
+  mensaje lo dice.
 - `RAYITO_EXECUTION_ROLE_ARN`: el rol debe llevar la política
   `RayitoS3MountAccess` de `infra/s3-mounts.yaml` sobre el bucket de abajo,
   con `Prefixes` que cubra `rayito-e2e-s3-mounts/*` y `ReadOnly=false`.
