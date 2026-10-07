@@ -6,6 +6,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+
+- **TSDoc alineado con la documentación** (barrido de docs de 0.8): los
+  errores sin TSDoc lo tienen, los códigos de `MountError`, `AgentError`
+  (`runtime_version_mismatch` y `output_limit`, reservados) y `GatewayError`
+  (hoy no se lanza) dicen lo que pasa de verdad, y `reincarnate()` lista
+  todo lo que reaplica.
+
+## [0.8.0] - 2026-10-07
+
+### Cambios que rompen
+
+- `registerWebhook` (eventos de ciclo de vida) rechaza con
+  `InvalidArgumentError`, antes de cualquier llamada a AWS, una URL cuyo
+  host es `localhost` (o `*.localhost`) o una IP literal no pública
+  (loopback, privada, link-local, CGNAT, reservada…). Hasta 0.7.1 se
+  guardaba y el deliverer la descartaba en cada entrega, así que nunca se
+  entregó nada. Migración: registra una URL HTTPS con un nombre público
+  (detalle en "Security").
+
 ### Added
 
 - **Agente de IA, adaptador de deepagents** (`ai-agent-deepagents`):
@@ -70,7 +90,6 @@ versionado [SemVer](https://semver.org/lang/es/).
   posterior; mientras tanto, `runtime` admite cualquier objeto que
   implemente la interfaz `AgentRuntime`.
 
-
 ### Fixed
 
 - `sbx.agent` con un `opencode serve` residente (`agentPoolWarmup("opencode", { serve: true })`,
@@ -114,11 +133,6 @@ versionado [SemVer](https://semver.org/lang/es/).
   `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
   El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
   (`testdata/s3-mounts/error-hints.json`).
-- **TSDoc alineado con la documentación** (barrido de docs de 0.8): los
-  errores sin TSDoc lo tienen, los códigos de `MountError`, `AgentError`
-  (`runtime_version_mismatch` y `output_limit`, reservados) y `GatewayError`
-  (hoy no se lanza) dicen lo que pasa de verdad, y `reincarnate()` lista
-  todo lo que reaplica.
 
 ### Security
 
@@ -1117,7 +1131,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.1...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.8.0...HEAD
+[0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.1...typescript-v0.8.0
 [0.7.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.0...typescript-v0.7.1
 [0.7.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.1...typescript-v0.7.0
 [0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.6.0...typescript-v0.6.1

@@ -6,6 +6,31 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Changed
+
+- **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
+  (barrido de docs de 0.8): las excepciones sin docstring lo tienen, los
+  códigos de `MountException`, `AgentException` (`runtime_version_mismatch`
+  y `output_limit`, reservados) y `GatewayException` (hoy no se lanza)
+  dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
+  `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
+  región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
+  que lee boto3). La ayuda de `rayito image sizes`, `doctor`,
+  `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
+  internos.
+
+## [0.8.0] - 2026-10-07
+
+### Cambios que rompen
+
+- `register_webhook` (eventos de ciclo de vida) rechaza con
+  `InvalidArgumentException`, antes de cualquier llamada a AWS, una URL cuyo
+  host es `localhost` (o `*.localhost`) o una IP literal no pública
+  (loopback, privada, link-local, CGNAT, reservada…). Hasta 0.7.1 se
+  guardaba y el deliverer la descartaba en cada entrega, así que nunca se
+  entregó nada. Migración: registra una URL HTTPS con un nombre público
+  (detalle en "Security").
+
 ### Added
 
 - **Agente de IA, adaptador de deepagents** (`ai-agent-deepagents`):
@@ -73,7 +98,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   posterior; mientras tanto, `runtime=` admite cualquier objeto que
   implemente el `Protocol` `AgentRuntime`.
 
-
 ### Fixed
 
 - `sbx.agent` con un `opencode serve` residente (`agent_pool_warmup(serve=True)`,
@@ -130,16 +154,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
   El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
   (`testdata/s3-mounts/error-hints.json`).
-- **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
-  (barrido de docs de 0.8): las excepciones sin docstring lo tienen, los
-  códigos de `MountException`, `AgentException` (`runtime_version_mismatch`
-  y `output_limit`, reservados) y `GatewayException` (hoy no se lanza)
-  dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
-  `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
-  región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
-  que lee boto3). La ayuda de `rayito image sizes`, `doctor`,
-  `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
-  internos.
 
 ### Security
 
@@ -1362,7 +1376,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.7.1...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.8.0...HEAD
+[0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.7.1...python-v0.8.0
 [0.7.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.7.0...python-v0.7.1
 [0.7.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.1...python-v0.7.0
 [0.6.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.6.0...python-v0.6.1
