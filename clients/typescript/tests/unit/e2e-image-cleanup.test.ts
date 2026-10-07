@@ -1,12 +1,15 @@
 /**
  * `tests/e2e/image-cleanup.ts` sin AWS: el teardown del e2e de templates
  * borra cada imagen que construyó, tolera las que nunca llegaron a crearse,
- * reintenta mientras la imagen está ocupada y devuelve como fallo lo que no
- * pudo borrar, sin cortar el resto.
+ * reintenta mientras la imagen está ocupada, borra también su grupo de logs
+ * `/rayito/<nombre>` y devuelve como fallo lo que no pudo borrar, sin
+ * cortar el resto.
  */
 
+import { DeleteLogGroupCommand } from "@aws-sdk/client-cloudwatch-logs";
 import { DeleteMicrovmImageCommand, GetMicrovmImageCommand } from "@aws-sdk/client-lambda-microvms";
 import { describe, expect, test } from "vitest";
+import { LOG_GROUP_PREFIX } from "../../src/images/gateway.js";
 import {
   BuiltImages,
   DEFAULT_TIMEOUT_MS,
@@ -61,7 +64,31 @@ class FakeMicrovms {
   }
 }
 
-function images(microvms: FakeMicrovms): {
+/** `DeleteLogGroup` guiado por guion, como `FakeMicrovms`; sin guion el
+ * grupo existe y se borra. */
+class FakeLogs {
+  readonly calls: string[] = [];
+
+  constructor(readonly deletes: Record<string, Outcome[]> = {}) {}
+
+  async send(command: unknown): Promise<unknown> {
+    if (!(command instanceof DeleteLogGroupCommand)) {
+      throw new Error("comando inesperado");
+    }
+    const group = command.input.logGroupName as string;
+    this.calls.push(group);
+    const outcome = FakeMicrovms.next(this.deletes[group] ?? [undefined]);
+    if (outcome instanceof Error) {
+      throw outcome;
+    }
+    return {};
+  }
+}
+
+function images(
+  microvms: FakeMicrovms,
+  logs: FakeLogs = new FakeLogs(),
+): {
   built: BuiltImages;
   sleeps: number[];
   clock: { now: number };
@@ -71,6 +98,7 @@ function images(microvms: FakeMicrovms): {
   const built = new BuiltImages({
     client: microvms,
     resolveArn: async (name) => `arn:${name}`,
+    logs,
     sleep: async (ms) => {
       sleeps.push(ms);
       clock.now += ms;
@@ -142,5 +170,57 @@ describe("BuiltImages (teardown del e2e de templates)", () => {
     const [failure] = await built.deleteAll();
     expect(failure).toMatch(/^slow: sigue DELETING/);
     expect(clock.now).toBeGreaterThanOrEqual(DEFAULT_TIMEOUT_MS);
+  });
+
+  test("each image log group is deleted too", async () => {
+    const logs = new FakeLogs();
+    const { built } = images(new FakeMicrovms(), logs);
+    built.track("a");
+    built.track("b");
+    expect(await built.deleteAll()).toEqual([]);
+    expect(logs.calls).toEqual([`${LOG_GROUP_PREFIX}/a`, `${LOG_GROUP_PREFIX}/b`]);
+  });
+
+  test("a log group that never existed is fine", async () => {
+    const group = `${LOG_GROUP_PREFIX}/x`;
+    const logs = new FakeLogs({ [group]: [awsError("ResourceNotFoundException")] });
+    const { built } = images(new FakeMicrovms(), logs);
+    built.track("x");
+    expect(await built.deleteAll()).toEqual([]);
+    expect(logs.calls).toEqual([group]);
+  });
+
+  test("a throttled log group delete is retried", async () => {
+    const group = `${LOG_GROUP_PREFIX}/a`;
+    const logs = new FakeLogs({
+      [group]: [awsError("ThrottlingException"), awsError("OperationAbortedException"), undefined],
+    });
+    const { built, sleeps } = images(new FakeMicrovms(), logs);
+    built.track("a");
+    expect(await built.deleteAll()).toEqual([]);
+    expect(logs.calls).toEqual([group, group, group]);
+    expect(sleeps).toEqual(RETRY_BACKOFF_MS.slice(0, 2));
+  });
+
+  test("a log group failure is reported and the image still deleted", async () => {
+    const logs = new FakeLogs({
+      [`${LOG_GROUP_PREFIX}/denied`]: [awsError("AccessDeniedException")],
+    });
+    const microvms = new FakeMicrovms();
+    const { built } = images(microvms, logs);
+    built.track("denied");
+    built.track("ok");
+    expect(await built.deleteAll()).toEqual(["denied (logs): AccessDeniedException"]);
+    expect(microvms.calls).toContainEqual(["delete", "arn:denied"]);
+    expect(logs.calls.at(-1)).toBe(`${LOG_GROUP_PREFIX}/ok`);
+  });
+
+  test("the log group is deleted even when the image is not", async () => {
+    const microvms = new FakeMicrovms({ "arn:denied": [awsError("AccessDeniedException")] });
+    const logs = new FakeLogs();
+    const { built } = images(microvms, logs);
+    built.track("denied");
+    expect(await built.deleteAll()).toEqual(["denied: AccessDeniedException"]);
+    expect(logs.calls).toEqual([`${LOG_GROUP_PREFIX}/denied`]);
   });
 });

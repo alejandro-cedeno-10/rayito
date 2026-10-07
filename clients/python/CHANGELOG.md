@@ -107,9 +107,22 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `/home/user/home/user/x`); ahora usan la ruta tal cual, como el shell.
 - `sbx.agent.prepare()` arranca los pasos en segundo plano sin plazo: con
   `serve=True` el servidor residente moría al agotar `timeout_seconds`.
+- `import rayito` vuelve a no cargar el agente de IA (`rayito._agent.*`,
+  `rayito.sandbox_*.agent`) ni el adaptador `boto3` de los eventos de ciclo
+  de vida (`rayito._lifecycle_events._aws`): sus nombres públicos
+  (`AgentSpec`, `LifecycleEvents`…) se importan en el primer acceso
+  (PEP 562), `Sandbox.agent` se construye en el primer uso y
+  `PoolConfig(warmup=)` importa `WarmupStep` sólo al validarlo. Unas 20
+  entradas menos en `sys.modules` y menos tiempo de import;
+  `tests/unit/test_lazy_imports.py` lo vigila.
 
 ### Changed
 
+- `rayito doctor` conoce la serie 0.8: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.8.0` para el SDK 0.8. Sin la fila, `doctor`
+  daba FAIL en cada instalación 0.8 y `scripts/prepare_release_pr.py` se
+  negaba a preparar la release.
 - **Montajes S3**: el `MountException` de un bucket que no está en el allowlist de
   la imagen (`code="not_allowed"`) ya no dice sólo que la sección se rechazó: explica
   que falta en `RAYITO_ALLOWED_MOUNT_BUCKETS` y cómo publicar la imagen con
@@ -117,6 +130,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
   El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
   (`testdata/s3-mounts/error-hints.json`).
+
+### Security
+
+- **Eventos de ciclo de vida (`webhook-url-public-address`)**: `register_webhook`
+  rechaza también, con `InvalidArgumentException` y antes de cualquier llamada a AWS,
+  un host `localhost` (o bajo `.localhost`) y una IP literal que el guardián
+  SSRF del deliverer bloquearía: loopback, privada, link-local (incluida la
+  de metadatos), multicast, reservada, sin especificar o CGNAT, también como
+  IPv6 con una IPv4 dentro (`::ffff:127.0.0.1`) o en las formas numéricas
+  de IPv4 (`0x7f.1`, `2130706433`). Antes se guardaba y el deliverer la
+  descartaba en cada entrega. `is_blocked_webhook_address` aplica la misma regla que
+  el deliverer y los tres pasan `testdata/lifecycle-events/ssrf-address-vectors.json`.
+  Un nombre DNS sigue sin resolverse al registrarlo: el DNS rebinding lo
+  para el deliverer.
 
 ## [0.7.1] - 2026-10-06
 

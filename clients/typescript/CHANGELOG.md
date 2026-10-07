@@ -115,6 +115,20 @@ versionado [SemVer](https://semver.org/lang/es/).
   El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
   (`testdata/s3-mounts/error-hints.json`).
 
+### Security
+
+- **Eventos de ciclo de vida (`webhook-url-public-address`)**: `registerWebhook`
+  rechaza también, con `InvalidArgumentError` y antes de cualquier llamada a AWS,
+  un host `localhost` (o bajo `.localhost`) y una IP literal que el guardián
+  SSRF del deliverer bloquearía: loopback, privada, link-local (incluida la
+  de metadatos), multicast, reservada, sin especificar o CGNAT, también como
+  IPv6 con una IPv4 dentro (`::ffff:127.0.0.1`) o en las formas numéricas
+  de IPv4 (`0x7f.1`, `2130706433`). Antes se guardaba y el deliverer la
+  descartaba en cada entrega. `isBlockedWebhookAddress` aplica la misma regla que
+  el deliverer y los tres pasan `testdata/lifecycle-events/ssrf-address-vectors.json`.
+  Un nombre DNS sigue sin resolverse al registrarlo: el DNS rebinding lo
+  para el deliverer.
+
 ## [0.7.1] - 2026-10-06
 
 ### Changed

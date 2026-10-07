@@ -57,3 +57,31 @@ def test_webhook_url_check_matches_the_shared_vectors() -> None:
         assert is_deliverable_webhook_url(url), url
     for url in data["rejected"]:
         assert not is_deliverable_webhook_url(url), url
+
+
+SSRF_VECTORS = REPO_ROOT / "testdata" / "lifecycle-events" / "ssrf-address-vectors.json"
+
+
+def _url_for(address: str) -> str:
+    host = f"[{address}]" if ":" in address else address
+    return f"https://{host}/hook"
+
+
+def test_literal_addresses_get_the_deliverer_ssrf_verdict() -> None:
+    """Los mismos vectores que `infra/lambdas/events_webhooks/tests/test_ssrf.py`:
+    una IP que el deliverer bloquearía no se registra, y una pública sí."""
+    import ipaddress
+
+    from rayito._lifecycle_events._domain import (
+        is_blocked_webhook_address,
+        is_deliverable_webhook_url,
+    )
+
+    data = json.loads(SSRF_VECTORS.read_text(encoding="utf-8"))
+    assert data["blocked"] and data["allowed"]
+    for address in data["blocked"]:
+        assert is_blocked_webhook_address(ipaddress.ip_address(address)), address
+        assert not is_deliverable_webhook_url(_url_for(address)), address
+    for address in data["allowed"]:
+        assert not is_blocked_webhook_address(ipaddress.ip_address(address)), address
+        assert is_deliverable_webhook_url(_url_for(address)), address

@@ -152,7 +152,9 @@ la más antigua a la más nueva, **de una en una** (la API responde
 `ConflictException` mientras la imagen está `UPDATING`/`DELETING`), con
 backoff 5/10/20/40/80 s y desactivando primero una versión `ACTIVE` que la
 API se niegue a borrar. Imprime la tabla del plan y un resumen JSON; sale con
-1 si alguna candidata sigue existiendo. Nunca borra la imagen.
+1 si alguna candidata sigue existiendo. Nunca borra la imagen ni su grupo de
+logs `/rayito/<imagen>`; al retirar una imagen entera, borra los dos a mano
+([Templates declarativos](funciones-opcionales/templates.md)).
 
 ### `image zip`
 
