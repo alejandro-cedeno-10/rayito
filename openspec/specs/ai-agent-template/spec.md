@@ -1,7 +1,7 @@
 # ai-agent-template Specification
 
 ## Purpose
-TBD - created by archiving change ai-agent-fast-start. Update Purpose after archive.
+The agent image (`AgentTemplate`, its manifest and prefetch daemon), the `rayito agent template build` CLI and the pool warm-up steps (`agent_pool_warmup`) that make the first agent run fast.
 
 ## Requirements
 

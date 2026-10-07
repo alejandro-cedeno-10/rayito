@@ -1,7 +1,7 @@
 # ai-agent-runtime Specification
 
 ## Purpose
-TBD - created by archiving change ai-agent-core. Update Purpose after archive.
+`sbx.agent`: running a coding agent (OpenCode or deepagents) inside the sandbox through a closed event contract, SDK-side limits and a model credential that only the secrets gateway holds.
 
 ## Requirements
 
