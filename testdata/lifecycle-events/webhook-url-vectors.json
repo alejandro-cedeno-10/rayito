@@ -1,13 +1,15 @@
 {
-  "_comment": "register_webhook / registerWebhook: the same URLs accepted and rejected by both SDKs (is_deliverable_webhook_url / isDeliverableWebhookUrl) and by the deliverer's own parser.",
+  "_comment": "register_webhook / registerWebhook: the same URLs accepted and rejected by both SDKs (is_deliverable_webhook_url / isDeliverableWebhookUrl). The deliverer rejects every one of the rejected URLs too: most when parsing it, and localhost or a non-public literal address after resolving it (its SSRF guard, ssrf-address-vectors.json).",
   "accepted": [
     "https://hooks.example.com/rayito",
     "https://hooks.example.com:8443/path?x=1",
     "https://hooks.example.com./trailing-dot",
-    "https://192.0.2.10/hook",
-    "https://[2001:db8::1]/hook",
+    "https://93.184.216.34/hook",
+    "https://[2606:4700:4700::1111]/hook",
     "https://xn--tda.example.com/",
-    "https://ü.example.com/"
+    "https://ü.example.com/",
+    "https://localhost.example.com/hook",
+    "https://1.2.65535/hook"
   ],
   "rejected": [
     "http://hooks.example.com/",
@@ -25,6 +27,27 @@
     "https://hooks.example.com\\path",
     "https://hooks.example.com/a b",
     "https://hooks.example.com/\tx",
-    " https://hooks.example.com/"
+    " https://hooks.example.com/",
+    "https://localhost/hook",
+    "https://LOCALHOST./hook",
+    "https://api.localhost/hook",
+    "https://127.0.0.1/hook",
+    "https://10.0.0.5:8443/hook",
+    "https://192.168.1.1/hook",
+    "https://169.254.169.254/latest/meta-data/",
+    "https://100.64.0.1/hook",
+    "https://[::1]/hook",
+    "https://[fe80::1]/hook",
+    "https://[fd00:ec2::254]/hook",
+    "https://[::ffff:127.0.0.1]/hook",
+    "https://[::ffff:169.254.169.254]/hook",
+    "https://2130706433/hook",
+    "https://0x7f.1/hook",
+    "https://0177.0.0.1/hook",
+    "https://0x/hook",
+    "https://example.123/hook",
+    "https://1.2.3.4.5/hook",
+    "https://1.2.3.256/hook",
+    "https://192.0.2.10/hook"
   ]
 }
