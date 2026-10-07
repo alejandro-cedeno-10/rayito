@@ -12,7 +12,7 @@ import {
   LifecycleStateSchema,
   TimeoutAction,
 } from "../../src/gen/rayito/v1/lifecycle_pb.js";
-import type { SandboxLifecycle } from "../../src/models.js";
+import { DEFAULT_MAX_IDLE_SECONDS, type SandboxLifecycle } from "../../src/models.js";
 import {
   autoResumeReopenMs,
   beyondCapError,
@@ -24,6 +24,7 @@ import {
   lifecycleBlockToWire,
   lifecycleFromProto,
   olderAgentError,
+  PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
   pauseTriggerDelayMs,
   resolveLifecycle,
   validateSetTimeoutMs,
@@ -163,6 +164,67 @@ describe("resolveLifecycle", () => {
         idle: { maxIdleSeconds: 300 },
       }),
     ).toThrow(/maxIdleSeconds/);
+  });
+
+  test("without idle, the default window is dropped when it does not fit before the timeout", () => {
+    const short = resolveLifecycle({
+      timeoutSeconds: 120,
+      maxLifetimeMs: undefined,
+      onTimeout: undefined,
+      idle: undefined,
+    });
+    expect(short.platformDurationSeconds).toBe(120);
+    expect(short.block).toBeUndefined();
+    expect(short.idle).toBeUndefined();
+    const exact = resolveLifecycle({
+      timeoutSeconds: DEFAULT_MAX_IDLE_SECONDS,
+      maxLifetimeMs: undefined,
+      onTimeout: undefined,
+      idle: undefined,
+    });
+    expect(exact.idle).toBeUndefined();
+    const long = resolveLifecycle({
+      timeoutSeconds: 900,
+      maxLifetimeMs: undefined,
+      onTimeout: undefined,
+      idle: undefined,
+    });
+    expect(long.idle).toEqual({
+      maxIdleSeconds: 300,
+      suspendedDurationSeconds: 600,
+      autoResume: true,
+    });
+  });
+
+  test("without idle, kill drops the default window below the cap and pause falls back to 60 s", () => {
+    const kill = resolveLifecycle({
+      timeoutSeconds: 120,
+      maxLifetimeMs: undefined,
+      onTimeout: "kill",
+      idle: undefined,
+    });
+    expect(kill.platformDurationSeconds).toBe(180);
+    expect(kill.idle).toBeUndefined();
+    const pause = resolveLifecycle({
+      timeoutSeconds: 120,
+      maxLifetimeMs: undefined,
+      onTimeout: "pause",
+      idle: undefined,
+    });
+    expect(pause.block?.autoResume).toBe(true);
+    expect(pause.idle).toEqual({
+      maxIdleSeconds: PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
+      suspendedDurationSeconds: 180 - PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
+      autoResume: true,
+    });
+  });
+
+  test("an explicit idle that does not fit still throws", () => {
+    for (const onTimeout of [undefined, "kill", "pause"] as const) {
+      expect(() =>
+        resolveLifecycle({ timeoutSeconds: 120, maxLifetimeMs: undefined, onTimeout, idle: {} }),
+      ).toThrow(InvalidArgumentError);
+    }
   });
 
   test("maxLifetimeMs bounds", () => {

@@ -595,7 +595,11 @@ class Sandbox:
          reanuda con un plazo nuevo de `max(timeout, 300 s)`). Una imagen
          anterior a 0.3.0 falla con `LifecycleUnsupportedException` y el VM se
          termina (salvo `keep_on_failure`). `idle=None` desactiva la
-         auto-suspensión. Sin `execution_role_arn` no hay logs de runtime.
+         auto-suspensión. Sin `idle`, la de 300 s por defecto se desactiva si
+         no cabe antes del `timeout` (o de `max_lifetime`), y en modo `pause`
+         baja a 60 s; un `idle` explícito que no cabe es
+         `InvalidArgumentException`. Sin `execution_role_arn` no hay logs de
+         runtime.
          `reconnect_timeout` acota cuánto espera el SDK a que el agente vuelva
          tras un corte (pausa, auto-resume, 502 del proxy) antes de fallar.
          `metadata` son etiquetas no secretas (viajan en el `runHookPayload`

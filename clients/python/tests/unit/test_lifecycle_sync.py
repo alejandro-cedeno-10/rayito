@@ -308,6 +308,36 @@ def test_create_without_lifecycle_kwargs_still_works_on_an_older_agent(
     assert "lifecycle" not in json.loads(str(captured["runHookPayload"]))
 
 
+def test_create_with_a_short_timeout_and_no_idle_drops_the_default_idle(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured = capture_launch(control_plane, fake_rayd)
+    expect_terminate(control_plane)
+    with Sandbox.create(
+        IMAGE_ARN,
+        timeout=120,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ):
+        pass
+    assert captured["maximumDurationInSeconds"] == 120
+    assert "idlePolicy" not in captured
+
+
+def test_create_with_a_short_timeout_and_an_explicit_idle_still_raises(
+    control_plane: StubbedControlPlane,
+) -> None:
+    with pytest.raises(InvalidArgumentException, match="debe ser menor que timeout=120"):
+        Sandbox.create(
+            IMAGE_ARN,
+            timeout=120,
+            idle=IdlePolicy(),
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+        )
+
+
 def test_create_records_the_lifecycle_kwargs_for_reincarnate(
     managed: Sandbox, control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
 ) -> None:

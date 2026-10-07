@@ -345,6 +345,21 @@ make test-e2e-typescript
 Los módulos de `clients/python/tests/e2e/` y `clients/typescript/tests/e2e/`
 documentan en su cabecera las variables propias de cada uno.
 
+Los e2e de `s3-mounts` (`test_m15_s3_mounts.py`, `m15-s3-mounts.e2e.test.ts`)
+y de `rayd-otlp` (`test_m15_rayd_otlp.py`, `m15-rayd-otlp.e2e.test.ts`)
+necesitan además que el rol de `RAYITO_EXECUTION_ROLE_ARN` lleve adjunta la
+política gestionada de su componente. `rayito stack deploy s3-mounts` y
+`rayito stack deploy otlp-export` sólo la crean (salida `PolicyArn`);
+adjuntarla es un paso aparte:
+
+```bash
+aws iam attach-role-policy --role-name <tu-rol-de-ejecucion> \
+  --policy-arn <PolicyArn> --profile <tu-perfil>
+```
+
+Sin ella esos casos no se saltan: fallan con un error de permisos dentro del
+sandbox (montaje S3) o porque ningún lote llega a exportarse (OTLP).
+
 **Nunca se versionan** IDs de cuenta, ARNs con cuenta real, nombres de
 bucket, IDs de recursos (VPC, subred, SG, EFS…), portales o perfiles de
 AWS/SSO, IDs de MicroVM, URLs prefirmadas, tokens, rutas locales ni el nombre

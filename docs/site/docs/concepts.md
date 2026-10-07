@@ -113,7 +113,8 @@ suspende el MicroVM cuando no recibe tráfico y lo reanuda con la siguiente
 llamada (`auto_resume=True`). Un ciclo suspend/resume cuesta ≈ $0,0049 a
 2 GB, lo mismo que ≈ 140 s de cómputo, así que un `max_idle_seconds` por
 debajo de ≈ 150 s nunca ahorra dinero ([Precios](cost.md#componentes-del-precio)).
-`idle=None` desactiva la auto-suspensión. Guía: [Pausar y
+`idle=None` desactiva la auto-suspensión, y sin `idle` la de por defecto se
+desactiva sola cuando no cabe antes del `timeout`. Guía: [Pausar y
 reanudar](guias/pausar-reanudar.md).
 
 `pause()` y `resume()` hacen lo mismo a mano: procesos, PTYs, watches y las

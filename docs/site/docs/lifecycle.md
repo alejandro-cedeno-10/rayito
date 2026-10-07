@@ -26,7 +26,7 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
 | `timeout` / `timeoutMs` | ≥ 1 s (por defecto 3600 s) | el plazo lógico desde el arranque |
 | `max_lifetime` / `maxLifetimeMs` | 120–28 800 s (TS: múltiplo de 1000 ms); por defecto `timeout + 60` (al menos 120) | el tope de la plataforma, running + suspendido; el plazo nunca pasa de `max_lifetime − 60 s` desde el arranque |
 | `on_timeout` / `onTimeout` | `"kill"` (por defecto) o `"pause"` | qué hace `rayd` al vencer |
-| `idle` | `IdlePolicy(...)` (por defecto 300 s y `auto_resume=True`) | en modo `pause` es obligatoria (`idle=None` es `InvalidArgumentException`), `max_idle_seconds` debe ser menor que `max_lifetime` y `auto_resume` es la regla de E2B tras el plazo |
+| `idle` | `IdlePolicy(...)` (por defecto 300 s y `auto_resume=True`) | en modo `pause` es obligatoria (`idle=None` es `InvalidArgumentException`), `max_idle_seconds` debe ser menor que `max_lifetime` y `auto_resume` es la regla de E2B tras el plazo; sin `idle`, si los 300 s no caben bajo `max_lifetime`, se desactiva en `kill` y baja a 60 s en `pause` |
 
 === "Python"
 

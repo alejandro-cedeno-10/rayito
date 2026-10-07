@@ -244,7 +244,7 @@ un `AsyncIterable`. Filtros: `template=`, `template_version=`, `states=`,
 | `template_version` | `templateVersion` | la última activa | versión concreta de la imagen |
 | `timeout` | `timeoutMs` | 3600 s / 3 600 000 ms | vida máxima (running + suspendido), tope 28 800 s; con `max_lifetime` u `on_timeout` es el [plazo del servidor](../lifecycle.md) |
 | `max_lifetime`, `on_timeout` | `maxLifetimeMs`, `onTimeout` | — | [plazo del servidor](../lifecycle.md) |
-| `idle` | `idle` | `IdlePolicy(max_idle_seconds=300)` | auto-suspensión por inactividad; `None` / `null` la desactiva ([Pausar y reanudar](pausar-reanudar.md)) |
+| `idle` | `idle` | `IdlePolicy(max_idle_seconds=300)` | auto-suspensión por inactividad; `None` / `null` la desactiva, y sin `idle` se desactiva sola si no cabe antes del `timeout` ([Pausar y reanudar](pausar-reanudar.md)) |
 | `envs` | `envs` | — | variables de entorno de todos los procesos (no secretas: viajan en el lanzamiento) |
 | `metadata` | `metadata` | — | etiquetas inmutables y no secretas |
 | `cpu_time_limit` | `cpuTimeLimit` | — | segundos de CPU por proceso (`RLIMIT_CPU`) |

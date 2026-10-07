@@ -13,6 +13,7 @@ import pytest
 
 from rayito import PtySize as NativePtySize
 from rayito import SandboxException
+from rayito._lifecycle_base import resolve_lifecycle
 from rayito._models import (
     ALL_TRAFFIC,
     EgressEnforcement,
@@ -96,6 +97,19 @@ def test_map_create_kwargs_defaults_follow_e2b() -> None:
     assert "network" not in native
     assert "request_timeout" not in native
     assert "ready_timeout" not in native
+
+
+@pytest.mark.parametrize("lifecycle", [None, {"on_timeout": "pause", "auto_resume": True}])
+def test_a_short_shim_timeout_resolves_a_launch_plan(lifecycle: dict[str, Any] | None) -> None:
+    native = map_create_kwargs(timeout=120, lifecycle=lifecycle).native_kwargs
+    plan = resolve_lifecycle(
+        timeout=native["timeout"],
+        max_lifetime=native["max_lifetime"],
+        on_timeout=native["on_timeout"],
+        idle=native["idle"],
+    )
+    assert plan.block is not None
+    assert plan.block.timeout_s == 120
 
 
 def test_map_create_kwargs_follows_the_2x_positional_order() -> None:

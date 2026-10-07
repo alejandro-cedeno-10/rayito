@@ -9,7 +9,7 @@ Cuotas y límites de Lambda MicroVMs tal como los ve el SDK. Fuente:
 |---|---|---|
 | Vida máxima de un sandbox (`timeout`, o `max_lifetime`) | 28 800 s (8 h), running + suspended, **no ajustable** | `SandboxLifetimeException` por encima; el tope no se puede extender después |
 | Regiones con Lambda MicroVMs | `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`, `ap-southeast-1`, `ap-southeast-2` | `rayito doctor` avisa (`WARN`) fuera de ellas |
-| Auto-suspensión (`IdlePolicy.max_idle_seconds`) | ≥ 60 s | `InvalidArgumentException` |
+| Auto-suspensión (`IdlePolicy.max_idle_seconds`) | ≥ 60 s y menor que `timeout` (o `max_lifetime`) | `InvalidArgumentException` si la pasas tú; sin `idle`, la de 300 s por defecto se desactiva si no cabe (60 s en modo `pause`) |
 | Plazo lógico (`timeout` con `max_lifetime`/`on_timeout`) | ≥ 1 s y como mucho `max_lifetime − 60 s` desde el arranque (`max_lifetime` 120–28 800 s, por defecto `timeout + 60`; 3600 en el shim) | `set_timeout` por encima del tope: `InvalidArgumentException` con el plazo intacto |
 | Historial de métricas | una muestra cada 5 s mientras corre; anillo de 5 760 muestras (8 h), ≈ 350 KB por respuesta completa | `max_points` ≥ 1 reduce la serie |
 | URLs de transferencia | 3600 s por defecto, tope `S3Staging.max_expires_in` (86 400) y 604 800 s (7 días de SigV4) | `InvalidArgumentException` con `use_signature_expiration <= 0` |

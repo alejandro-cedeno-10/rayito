@@ -6,6 +6,23 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Sandbox.create({ timeoutMs: 120_000 })` sin `idle` ya no lanza
+  `InvalidArgumentError`.** Desde 0.3.0, cualquier `timeoutMs` (o
+  `maxLifetimeMs` con `onTimeout`) de 300 s o menos fallaba porque el SDK
+  validaba su propia política de idle por defecto contra él. Ahora, sin
+  `idle`, la auto-suspensión por defecto se desactiva si no cabe (el sandbox
+  termina en su plazo, como en E2B) y, con `onTimeout: "pause"`, baja a
+  60 s (`PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS`). Un `idle` que pasas tú se
+  valida igual que antes.
+
+### Documentation
+
+- Los e2e de `s3-mounts` y `rayd-otlp` documentan como precondición que la
+  política gestionada de su pila (`PolicyArn`) esté adjunta al rol de
+  ejecución; `rayito stack deploy` sólo la crea.
+
 ## [0.9.0] - 2026-10-07
 
 ### Cambios que rompen

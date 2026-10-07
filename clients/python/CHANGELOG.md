@@ -6,6 +6,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Sandbox.create(timeout=120)` sin `idle` ya no lanza
+  `InvalidArgumentException`.** Desde 0.3.0, cualquier `timeout` (o
+  `max_lifetime` con `on_timeout`) de 300 s o menos fallaba porque el SDK
+  validaba su propia `IdlePolicy` por defecto contra él. Ahora, sin `idle`
+  explícito, la auto-suspensión por defecto se desactiva si no cabe (el
+  sandbox termina en su `timeout`, como en E2B) y, con `on_timeout="pause"`,
+  baja a 60 s (`PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS`). Un `idle` que pasas tú
+  se valida igual que antes. Igual en `Sandbox` y `AsyncSandbox`.
+
+### Documentation
+
+- Los e2e de `s3-mounts` y `rayd-otlp` documentan como precondición que la
+  política gestionada de su pila (`PolicyArn`) esté adjunta al rol de
+  ejecución; `rayito stack deploy` sólo la crea.
+
 ## [0.9.0] - 2026-10-07
 
 ### Cambios que rompen

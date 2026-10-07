@@ -180,6 +180,15 @@ Por defecto todo sandbox se crea con `IdlePolicy(max_idle_seconds=300,
 auto_resume=True)`: AWS lo suspende tras 300 s sin tráfico por su endpoint,
 y la siguiente llamada del SDK lo despierta sola (≈ 0,7 s).
 
+Si no pasas `idle` y esa ventana de 300 s no cabe antes del final del
+sandbox (`timeout`, o `max_lifetime` con `on_timeout`), la auto-suspensión
+por defecto se desactiva: no llegaría a dispararse y el sandbox termina en
+su `timeout`, como en E2B. Así `Sandbox.create(timeout=120)` funciona sin
+más. Con `on_timeout="pause"` la idle es la que suspende sin cliente, así
+que en lugar de desactivarse baja a 60 s (el mínimo). Un `idle` que pasas
+tú no se adapta: si no cabe, es `InvalidArgumentException` /
+`InvalidArgumentError`.
+
 === "Python"
 
     ```python
@@ -249,6 +258,7 @@ y la siguiente llamada del SDK lo despierta sola (≈ 0,7 s).
 | `auto_resume` | `autoResume` | `True` | la siguiente llamada reanuda un sandbox suspendido |
 | `suspended_duration_seconds` | `suspendedDurationSeconds` | `timeout − max_idle_seconds` | cuánto puede seguir suspendido antes de terminarse; `0` termina al suspender |
 | `idle=None` | `idle: null` | — | desactiva la auto-suspensión |
+| sin `idle` | sin `idle` | 300 s | se desactiva si no cabe antes del `timeout` (en modo `pause`, 60 s) |
 
 ## Coste
 
@@ -265,6 +275,7 @@ Precios y ejemplos, con fuentes: [Costes](../cost.md#precios).
 |---|---|---|---|
 | `SandboxStateException` | `SandboxStateError` | el sandbox está terminando o en una transición que no admite la operación | espera y reintenta, o crea uno nuevo |
 | `SandboxNotFoundException` | `SandboxNotFoundError` | el sandbox ya no existe (llegó a su `timeout`, también suspendido) | crea uno nuevo; para más de 8 h, [Persistencia](../persistence.md) (`persist=`) |
+| `InvalidArgumentException` | `InvalidArgumentError` | un `idle` explícito con `max_idle_seconds` mayor o igual que el `timeout` (o `max_lifetime`) | baja `max_idle_seconds`, pasa `idle=None` o no pases `idle` |
 | `RateLimitException` | `RateLimitError` | más de 2 suspensiones por segundo en la cuenta | el SDK ya limita el ritmo por proceso; espacia las pausas |
 
 ## Diferencias con E2B
