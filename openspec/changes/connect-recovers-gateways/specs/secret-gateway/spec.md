@@ -32,3 +32,8 @@ handle's `refresh()` SHALL only re-read `ConfigureStatus` and send no
 
 - **WHEN** `Health.features` is absent or lacks `secret_gateway`
 - **THEN** `sbx.gateways` stays empty and no `ConfigureStatus` is called
+
+#### Scenario: a rejected token does not fail connect()
+
+- **WHEN** the recovery `ConfigureStatus` fails with `AuthenticationException` (TS `AuthenticationError`) because the access token does not match the agent's
+- **THEN** `connect()` returns the handle with `sbx.gateways` empty, and the error surfaces on the first authenticated call, as it does on an agent without the feature

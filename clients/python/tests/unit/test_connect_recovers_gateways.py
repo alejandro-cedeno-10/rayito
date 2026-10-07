@@ -25,7 +25,7 @@ from rayito._secret_gateway import (
     recovered_gateways,
 )
 from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
-from rayito.exceptions import SandboxException
+from rayito.exceptions import AuthenticationException, SandboxException
 from rayito.v1 import configure_pb2, features_pb2, secret_gateway_pb2
 
 from .conftest import (
@@ -276,6 +276,26 @@ def test_sync_static_connect_closes_the_handle_when_the_read_fails(
     assert len(closed) == 1
 
 
+def test_sync_static_connect_does_not_validate_the_token_through_recovery(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([], fail_with=AuthenticationException("token rechazado"))
+    record(monkeypatch, sync_main, recorder, is_async=False)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = Sandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    try:
+        assert sbx.gateways is EMPTY_GATEWAYS
+        assert len(recorder.timeouts) == 1
+    finally:
+        sbx.close()
+
+
 def test_sync_instance_connect_uses_its_request_timeout_and_rereads_a_recovered_handle(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -369,6 +389,26 @@ async def test_async_static_connect_closes_the_handle_when_the_read_fails(
             transport=fake_rayd.transport,
         )
     assert len(closed) == 1
+
+
+async def test_async_static_connect_does_not_validate_the_token_through_recovery(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([], fail_with=AuthenticationException("token rechazado"))
+    record(monkeypatch, async_main, recorder, is_async=True)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = await AsyncSandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    try:
+        assert sbx.gateways is EMPTY_GATEWAYS
+        assert len(recorder.timeouts) == 1
+    finally:
+        await sbx.close()
 
 
 async def test_async_instance_connect_uses_its_request_timeout_and_rereads_a_recovered_handle(

@@ -85,7 +85,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `connect()` vuelve a leerlo con el timeout de petición de esa llamada.
   Rotar la clave (`refresh()` o `reincarnate()`) sigue siendo cosa del
   handle que llamó a `create(gateways=)`: en uno recuperado, `reincarnate()`
-  lanza.
+  lanza. Si `rayd` rechaza el token en esa lectura, `connect()` no falla:
+  se salta la recuperación y el `AuthenticationException` sale en la
+  primera llamada autenticada, como hasta ahora.
 
 ## [0.8.0] - 2026-10-07
 

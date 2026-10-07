@@ -8,6 +8,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, test } from "vitest";
+import { AuthenticationError } from "../../src/errors.js";
 import { ConfigureStatusResponseSchema } from "../../src/gen/rayito/v1/configure_pb.js";
 import { AgentFeaturesSchema } from "../../src/gen/rayito/v1/features_pb.js";
 import {
@@ -15,6 +16,7 @@ import {
   SecretGatewayRouteStatusSchema,
   SecretGatewayStatusSchema,
 } from "../../src/gen/rayito/v1/secret_gateway_pb.js";
+import { generateAccessToken } from "../../src/payload.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import {
   EMPTY_GATEWAYS,
@@ -122,6 +124,31 @@ describe("Sandbox.connect() recovers gateways", () => {
       await sbx.gateways.refresh();
       expect(sbx.gateways.get(ROUTE)?.port).toBe(SECOND_PORT);
       expect(rayd.configure.configureRequests).toHaveLength(0);
+      sbx.close();
+    } finally {
+      await rayd.close();
+    }
+  });
+
+  test("a wrong token does not fail connect(); the first authenticated call does", async () => {
+    const rayd = await FakeRayd.start({ accessToken: ACCESS_TOKEN });
+    rayd.health.features = create(AgentFeaturesSchema, {
+      configure: true,
+      secretGateway: true,
+    });
+    rayd.configure.secretGatewayStatus = gatewayStatus(FIRST_PORT);
+    const plane = new FakeControlPlane({
+      endpoint: rayd.host,
+      states: ["RUNNING"],
+    });
+    try {
+      const sbx = await Sandbox.connect("mvm-test-connect-gateways", {
+        accessToken: generateAccessToken(),
+        controlPlane: plane,
+        transport: rayd.transport,
+      });
+      expect(sbx.gateways).toBe(EMPTY_GATEWAYS);
+      await expect(sbx.commands.run("true")).rejects.toBeInstanceOf(AuthenticationError);
       sbx.close();
     } finally {
       await rayd.close();
