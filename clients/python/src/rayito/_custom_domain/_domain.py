@@ -201,7 +201,7 @@ class RouteMetadata:
 
 def check_kvs_value_size(value: str) -> None:
     """`CustomDomainException` no tiene `code=` (a diferencia de
-    `StackException`/`GatewayException`): es la única forma en que esta
+    `StackException`): es la única forma en que esta
     función puede fallar, así que el mensaje ya lo dice todo."""
     size = len(value.encode("utf-8"))
     if size > MAX_KVS_VALUE_BYTES:
