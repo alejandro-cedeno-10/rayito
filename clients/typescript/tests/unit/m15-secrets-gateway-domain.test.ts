@@ -140,3 +140,12 @@ describe("GatewayStatus", () => {
     expect(status.lastErrorClass).toBeUndefined();
   });
 });
+
+describe("errores públicos de la pasarela", () => {
+  test("el SDK no exporta un error propio de la pasarela", async () => {
+    const publicApi: Record<string, unknown> = await import("../../src/index.js");
+    const errors: Record<string, unknown> = await import("../../src/errors.js");
+    expect(publicApi).not.toHaveProperty("GatewayError");
+    expect(errors).not.toHaveProperty("GatewayError");
+  });
+});

@@ -121,8 +121,6 @@ export {
   DiskFullError,
   FileNotFoundError,
   FileUploadError,
-  GatewayError,
-  type GatewayErrorOptions,
   GitAuthError,
   GitUpstreamError,
   IndexWriteError,

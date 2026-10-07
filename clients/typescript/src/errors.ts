@@ -488,25 +488,6 @@ export class StackError extends SandboxError {
  */
 export class WebhookError extends SandboxError {}
 
-export interface GatewayErrorOptions extends SandboxErrorOptions {
-  readonly code: string;
-}
-
-/**
- * Reservada para `SecretGateway` (m15-secrets-gateway): esta versión del SDK
- * no la lanza. Lo que la pasarela rechaza por petición llega al proceso del
- * sandbox como respuesta HTTP (403, 429, 502, 504), y una configuración que
- * `rayd` rechaza es `SandboxError`.
- */
-export class GatewayError extends SandboxError {
-  readonly code: string;
-
-  constructor(message: string, options: GatewayErrorOptions) {
-    super(message, options);
-    this.code = options.code;
-  }
-}
-
 /** `CustomDomain` (m15-custom-domain) falló. */
 export class CustomDomainError extends SandboxError {}
 

@@ -6,12 +6,21 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- **Se elimina `GatewayException`** (no estará en 0.9.0). Nunca se lanzaba:
+  lo que la pasarela de secretos rechaza por petición llega al proceso del
+  sandbox como respuesta HTTP (403, 429, 502, 504), y una configuración que
+  `rayd` rechaza es `SandboxException`. Migración: quita el import y
+  cualquier `except GatewayException`; si capturabas fallos de la pasarela
+  al crear o refrescar, captura `SandboxException`.
+
 ### Changed
 
 - **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
   (barrido de docs de 0.8): las excepciones sin docstring lo tienen, los
   códigos de `MountException`, `AgentException` (`runtime_version_mismatch`
-  y `output_limit`, reservados) y `GatewayException` (hoy no se lanza)
+  y `output_limit`, reservados)
   dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
   `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
   región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
