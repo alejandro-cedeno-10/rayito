@@ -11,7 +11,12 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 
-from rayito import InvalidArgumentException, LifecycleEvents, WebhookException
+from rayito import (
+    AsyncLifecycleEvents,
+    InvalidArgumentException,
+    LifecycleEvents,
+    WebhookException,
+)
 from rayito._aws_sanitize import AwsErrorSummary
 from rayito._lifecycle_events._keys import derive_sandbox_key
 from rayito._stacks._service import OptionalStacks
@@ -88,6 +93,38 @@ def test_register_webhook_rejects_a_url_the_deliverer_could_never_reach(url: str
         ev.register_webhook(url, secret_name="x", types=["sandbox.lifecycle.killed"])
     assert url not in str(raised.value)
     assert ev.list_webhooks() == []
+
+
+PRIVATE_WEBHOOK_URLS = [
+    "https://localhost/hook",
+    "https://127.0.0.1/hook",
+    "https://169.254.169.254/latest/meta-data/",
+    "https://10.0.0.5/hook",
+    "https://[::1]/hook",
+    "https://[fe80::1]/hook",
+    "https://[::ffff:169.254.169.254]/hook",
+]
+
+
+@pytest.mark.parametrize("url", PRIVATE_WEBHOOK_URLS)
+def test_register_webhook_rejects_localhost_and_non_public_literal_ips(url: str) -> None:
+    ev = _events()
+    with pytest.raises(InvalidArgumentException, match="dirección pública") as raised:
+        ev.register_webhook(url, secret_name="x", types=["sandbox.lifecycle.killed"])
+    assert url not in str(raised.value)
+    assert ev.list_webhooks() == []
+
+
+@pytest.mark.parametrize("url", PRIVATE_WEBHOOK_URLS)
+async def test_async_register_webhook_rejects_localhost_and_non_public_literal_ips(
+    url: str,
+) -> None:
+    ev = _events()
+    async_ev = AsyncLifecycleEvents(region="us-east-1")
+    async_ev._inner = ev
+    with pytest.raises(InvalidArgumentException, match="dirección pública"):
+        await async_ev.register_webhook(url, secret_name="x", types=["sandbox.lifecycle.killed"])
+    assert await async_ev.list_webhooks() == []
 
 
 def test_register_webhook_rejects_unknown_type() -> None:
