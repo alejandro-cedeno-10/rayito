@@ -6,6 +6,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- **`rayito.e2b.BuildException` y `rayito.e2b.TemplateException` son las
+  clases nativas.** Antes eran clases propias del shim que nada lanzaba, así
+  que `except rayito.e2b.BuildException` no atrapaba un `Template.build()`
+  fallido. Ahora son `rayito.BuildException`/`rayito.TemplateException`, y
+  `BuildException` hereda de `SandboxException` (en E2B hereda de
+  `Exception`). Migración: nada que cambiar en los `except`; un
+  `except SandboxException` previo a un `except BuildException` pasa a
+  atrapar también los builds fallidos.
+
 ### Changed
 
 - **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
