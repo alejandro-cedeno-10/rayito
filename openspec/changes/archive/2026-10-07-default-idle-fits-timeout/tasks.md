@@ -8,4 +8,4 @@
 
 ## 2. Acceptance
 
-- [ ] 2.1 Python and TypeScript `create(timeout=120)` without `idle` against real AWS end at their timeout
+- [x] 2.1 Python and TypeScript `create(timeout=120)` without `idle` against real AWS end at their timeout
