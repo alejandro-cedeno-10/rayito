@@ -64,6 +64,7 @@ import {
   CAP_MARGIN_MS,
   MAX_LIFETIME_MS,
   defaultMaxLifetimeMs as nativeDefaultMaxLifetimeMs,
+  resolveLifecycle,
 } from "../../src/sandbox/lifecycle.js";
 import {
   HISTORY_UNIMPLEMENTED_REASON,
@@ -248,6 +249,19 @@ describe("mapCreateOptions", () => {
       lifecycle: { onTimeout: { action: "pause", keepMemory: true } },
     });
     expect(object.native.idle).toEqual({ maxIdleSeconds: 300, autoResume: false });
+  });
+
+  test("a short timeoutMs maps to a launch plan that resolves, with and without pause", () => {
+    for (const lifecycle of [undefined, { onTimeout: "pause", autoResume: true } as const]) {
+      const { native } = mapCreateOptions({ timeoutMs: 120_000, lifecycle });
+      const plan = resolveLifecycle({
+        timeoutSeconds: (native.timeoutMs ?? 0) / 1000,
+        maxLifetimeMs: native.maxLifetimeMs,
+        onTimeout: native.onTimeout,
+        idle: native.idle,
+      });
+      expect(plan.block?.timeoutS).toBe(120);
+    }
   });
 
   test("lifecycle is validated like E2B", () => {

@@ -4,6 +4,13 @@ derivada) con el `rayd` del tag `rayd-v0.6.0` o posterior y
 `RAYITO_EXECUTION_ROLE_ARN` con la política `RayitoOtlpExport`
 (`infra/otlp-export.yaml`, `rayito stack deploy otlp-export`) adjunta.
 
+Precondición: `rayito stack deploy otlp-export` sólo crea la política
+gestionada (salida `PolicyArn`); adjuntarla al rol de ejecución es un paso
+aparte (`aws iam attach-role-policy --role-name <rol> --policy-arn
+<PolicyArn>`). Sin ella OT1 no se salta: falla porque ningún lote llega a
+exportarse. Ver `CONTRIBUTING.md` ("Plantilla IAM y e2e contra tu cuenta
+de AWS").
+
 Cubre, de los Q `OT*` reservados por la investigación
 (`docs/research/2026-10-e2b-out-of-scope.md` §6.8, Q-números reales
 asignados por la etapa de aceptación, ≥ Q95):

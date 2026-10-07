@@ -10,6 +10,13 @@
  * `RayitoS3MountAccess` de `infra/s3-mounts.yaml` sobre el bucket de abajo)
  * y `RAYITO_S3_MOUNT_BUCKET` (un bucket ya existente; este fichero sólo
  * escribe y borra bajo `rayito-e2e-s3-mounts/<uuid>/`).
+ *
+ * Precondición: `rayito stack deploy s3-mounts` sólo crea la política
+ * gestionada (salida `PolicyArn`); adjuntarla al rol de ejecución es un paso
+ * aparte (`aws iam attach-role-policy --role-name <rol> --policy-arn
+ * <PolicyArn>`). Sin ella los casos no se saltan: fallan con un error de
+ * permisos dentro del sandbox. Ver `CONTRIBUTING.md` ("Plantilla IAM y e2e
+ * contra tu cuenta de AWS").
  */
 
 import { randomUUID } from "node:crypto";

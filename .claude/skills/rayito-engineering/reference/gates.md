@@ -11,6 +11,7 @@ sistema corrieron.
 - Python
 - TypeScript
 - Docs, OpenSpec y raíz
+- Precondiciones del e2e en AWS
 - Cuándo hace falta cada uno
 
 ## Rust (`rayd`) en una VM Linux
@@ -135,6 +136,16 @@ Los scripts de la raíz necesitan Python ≥ 3.11 (usan `tomllib`). Si el
 python scripts/<script>.py`. Un fichero nuevo aún sin versionar no lo ve
 `check_hygiene.py` sin argumentos: pásalo explícitamente
 (`python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)`).
+
+## Precondiciones del e2e en AWS
+
+No es un gate local, pero falla si falta: los e2e de `s3-mounts` y
+`rayd-otlp` (Python y TypeScript) necesitan que el rol de
+`RAYITO_EXECUTION_ROLE_ARN` lleve adjunta la política gestionada que crean
+`rayito stack deploy s3-mounts` y `rayito stack deploy otlp-export` (salida
+`PolicyArn`; el deploy no la adjunta). Sin ella fallan, no se saltan.
+Detalle y orden: `CONTRIBUTING.md`, "Plantilla IAM y e2e contra tu cuenta de
+AWS", y la cabecera de cada test.
 
 ## Cuándo hace falta cada uno
 

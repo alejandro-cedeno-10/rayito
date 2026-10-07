@@ -327,7 +327,12 @@ export interface SandboxCreateOptions extends SandboxConnectOptions {
    * auto-resume lógico tras el plazo).
    */
   readonly onTimeout?: OnTimeout | undefined;
-  /** `null` desactiva el auto-suspend; por defecto `{ maxIdleSeconds: 300, autoResume: true }`. */
+  /**
+   * `null` desactiva el auto-suspend; por defecto `{ maxIdleSeconds: 300, autoResume: true }`.
+   * Sin `idle`, la de por defecto se desactiva si no cabe antes de `timeoutMs`
+   * (o de `maxLifetimeMs`), y en modo `"pause"` baja a 60 s; un `idle`
+   * explícito que no cabe es `InvalidArgumentError`.
+   */
   readonly idle?: IdlePolicyInput | null | undefined;
   readonly envs?: Readonly<Record<string, string>> | undefined;
   /** Etiquetas no secretas que viajan en el `runHookPayload` y vuelven en `Health`. */

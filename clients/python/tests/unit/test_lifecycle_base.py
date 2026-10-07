@@ -13,6 +13,8 @@ import pytest
 
 from rayito import IdlePolicy, SandboxInfo, SandboxLifecycle
 from rayito._lifecycle_base import (
+    DEFAULT_IDLE_POLICY,
+    PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
     LifecycleBlock,
     TimeoutRequest,
     auto_resume_reopen,
@@ -183,6 +185,64 @@ def test_pause_needs_max_idle_below_max_lifetime() -> None:
         resolve_lifecycle(
             timeout=60, max_lifetime=200, on_timeout="pause", idle=IdlePolicy(max_idle_seconds=300)
         )
+
+
+def test_default_idle_is_dropped_when_it_does_not_fit_before_the_timeout() -> None:
+    duration, payload, idle = plan_payload(timeout=120, idle=DEFAULT_IDLE_POLICY)
+    assert duration == 120
+    assert "lifecycle" not in payload
+    assert idle is None
+
+
+def test_default_idle_is_dropped_at_exactly_the_default_window() -> None:
+    _, _, idle = plan_payload(
+        timeout=DEFAULT_IDLE_POLICY.max_idle_seconds, idle=DEFAULT_IDLE_POLICY
+    )
+    assert idle is None
+
+
+def test_default_idle_is_kept_when_it_fits_before_the_timeout() -> None:
+    _, _, idle = plan_payload(timeout=900, idle=DEFAULT_IDLE_POLICY)
+    assert idle == {
+        "maxIdleDurationSeconds": 300,
+        "suspendedDurationSeconds": 600,
+        "autoResumeEnabled": True,
+    }
+
+
+def test_default_idle_is_dropped_when_it_does_not_fit_below_the_kill_cap() -> None:
+    duration, payload, idle = plan_payload(timeout=120, on_timeout="kill", idle=DEFAULT_IDLE_POLICY)
+    assert duration == 180
+    assert payload["lifecycle"]["on_timeout"] == "kill"
+    assert idle is None
+
+
+def test_default_idle_falls_back_to_the_minimum_window_in_pause_mode() -> None:
+    duration, payload, idle = plan_payload(
+        timeout=120, on_timeout="pause", idle=DEFAULT_IDLE_POLICY
+    )
+    assert duration == 180
+    assert payload["lifecycle"]["auto_resume"] is True
+    assert idle == {
+        "maxIdleDurationSeconds": PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
+        "suspendedDurationSeconds": 180 - PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
+        "autoResumeEnabled": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"timeout": 120}, "debe ser menor que timeout=120"),
+        ({"timeout": 120, "on_timeout": "kill"}, "debe ser menor que timeout=180"),
+        ({"timeout": 120, "on_timeout": "pause"}, "debe ser menor que max_lifetime=180"),
+    ],
+)
+def test_an_explicit_idle_that_does_not_fit_still_raises(
+    kwargs: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(InvalidArgumentException, match=match):
+        plan_payload(idle=IdlePolicy(), **kwargs)
 
 
 def test_on_timeout_must_be_kill_or_pause() -> None:
