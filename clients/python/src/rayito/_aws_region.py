@@ -27,11 +27,12 @@ def resolve_region(
 ) -> str | None:
     """La región que usará el SDK, o `None` para delegar en la cadena de boto3
     (`AWS_DEFAULT_REGION` y el perfil). Una sesión del llamante es
-    configuración explícita: su región gana a `AWS_REGION`."""
+    configuración explícita: su región gana a `AWS_REGION`; una sesión sin
+    región sigue la cadena como si no se hubiera pasado."""
     if region:
         return region
-    if session is not None:
-        return str(session.region_name) if session.region_name else None
+    if session is not None and session.region_name:
+        return str(session.region_name)
     return (os.environ if environ is None else environ).get(REGION_ENV_VAR) or None
 
 

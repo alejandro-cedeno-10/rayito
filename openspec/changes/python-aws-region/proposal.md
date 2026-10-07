@@ -30,5 +30,10 @@ Python without one), and the docs had to ask users to export both variables.
 ## Impact
 
 `clients/python/src/rayito/` (adapters only), Python unit tests, docs site,
-Python CHANGELOG. Not breaking: environments that only set
-`AWS_DEFAULT_REGION` behave as before.
+Python CHANGELOG. Breaking in observable behaviour (announced under "Cambios
+que rompen" with a migration note): when `AWS_REGION` is exported it now wins
+over `AWS_DEFAULT_REGION` and over the profile region, so an environment where
+they differ moves to the `AWS_REGION` region; unset `AWS_REGION` or pass
+`region=` to keep the old one. Environments that only set
+`AWS_DEFAULT_REGION` behave as before. A caller session without a region
+falls through to `AWS_REGION` like no session at all.

@@ -48,7 +48,8 @@ rayito [--profile P] [--region R] [--json] [--verbose] <grupo> <comando> …
 
 - `--profile` y `--region` construyen la sesión de `boto3`; sin ellos se usa
   `AWS_REGION` y, si falta, la cadena habitual (`AWS_PROFILE`,
-  `AWS_DEFAULT_REGION`, el fichero de configuración, el rol de la máquina). No hay API key de Rayito.
+  `AWS_DEFAULT_REGION`, el fichero de configuración, el rol de la máquina).
+  No hay API key de Rayito.
 - Sin región resoluble: `sin región: pasa --region o exporta AWS_REGION` y
   salida 2, antes de cualquier llamada. Sin credenciales o con un perfil
   desconocido, lo mismo.

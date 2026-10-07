@@ -18,7 +18,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from rayito._aws_region import aws_session
+from rayito._aws_region import aws_session, resolve_region
 from rayito._aws_sanitize import AwsErrorSummary, redact_aws_text, sanitize_aws_error
 from rayito._limits import (
     API_TPS,
@@ -269,7 +269,9 @@ class LazyClient:
             if self._client is None:
                 session = aws_session(self._session, self._region)
                 self._client = session.client(
-                    self._service, region_name=self._region, config=client_config()
+                    self._service,
+                    region_name=resolve_region(self._region, self._session),
+                    config=client_config(),
                 )
             return self._client
 
@@ -318,6 +320,7 @@ class LambdaMicrovmsControlPlane:
         """El cliente STS se construye sólo si algún template se resuelve por
         nombre; ambos clientes llevan la `client_config(settings)`."""
         resolved_session = aws_session(session, region)
+        region = resolve_region(region, session)
         config = client_config(settings)
         return cls(
             resolved_session.client("lambda-microvms", region_name=region, config=config),

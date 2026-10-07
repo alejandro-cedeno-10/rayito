@@ -18,6 +18,11 @@ obtain its region from a single adapter-layer resolver.
 - **WHEN** `AWS_REGION` and `AWS_DEFAULT_REGION` hold different regions and no region argument is passed
 - **THEN** the SDK uses `AWS_REGION`
 
+#### Scenario: A caller session without a region falls through
+
+- **WHEN** the caller passes a session whose region is unset and only `AWS_REGION` is set
+- **THEN** every client built from that session targets `AWS_REGION`
+
 #### Scenario: Explicit argument wins
 
 - **WHEN** `region=` is passed
