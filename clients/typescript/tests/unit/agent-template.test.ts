@@ -123,6 +123,7 @@ describe("AgentTemplate", () => {
     expect(info.templateId).toBe("mi-agente");
     expect(seen.memoryMb).toBe(4096);
     expect(seen.files).toEqual([
+      "deepagents_runner.py",
       "rayito-agent-prefetch",
       "rayito-agent.json",
       "requirements-deepagents.txt",

@@ -73,6 +73,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Fixed
 
+- `AgentTemplate`: instala el runner de deepagents en
+  `/opt/agents/rayito/deepagents_runner.py` (root, 0755) y pone su sha256 en
+  `runner_sha256` del manifiesto. Sin él, `runtime="deepagents"` fallaba
+  siempre en una imagen construida con `AgentTemplate` (aceptación en AWS,
+  `AWS_API_NOTES.md` Q150).
 - `sbx.agent`: `abort()` y los límites `maxSteps`/`maxTotalTokens`
   paran también lo que lanzó la herramienta de shell del agente (OpenCode y
   deepagents la corren en una sesión propia, fuera del grupo que mata

@@ -13,6 +13,7 @@ escribe el contexto en un directorio temporal y llama a `Template.build`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -21,6 +22,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from rayito._agent._deepagents import DEEPAGENTS_RUNNER_PATH
 from rayito._agent._opencode import OPENCODE_FLAG_ENVS
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import (
@@ -61,6 +63,9 @@ DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
 PREFETCH_SCRIPT_NAME: Final = "rayito-agent-prefetch"
 PREFETCH_SCRIPT_PATH: Final = f"{AGENT_BIN_DIR}/{PREFETCH_SCRIPT_NAME}"
 MANIFEST_CONTEXT_NAME: Final = "rayito-agent.json"
+#: El runner de deepagents (dato de paquete de `_agent/_runner/`) en el
+#: contexto de build; la plantilla lo instala en `DEEPAGENTS_RUNNER_PATH`.
+DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
 #: Asset de la release de OpenCode (linux arm64 glibc, binario único).
 OPENCODE_RELEASE_URL: Final = (
     "https://github.com/anomalyco/opencode/releases/download/"
@@ -73,6 +78,7 @@ RIPGREP_RELEASE_URL: Final = (
 )
 _ASSETS_PACKAGE: Final = "rayito._agent"
 _ASSETS_DIR: Final = "_assets"
+_RUNNER_DIR: Final = "_runner"
 
 
 def _asset_bytes(name: str) -> bytes:
@@ -83,6 +89,14 @@ def deepagents_requirements() -> bytes:
     """El fichero de requisitos con hash del venv de deepagents (dato de
     paquete; su sha256 está en `limits.json`)."""
     return _asset_bytes(DEEPAGENTS_REQUIREMENTS_NAME)
+
+
+def deepagents_runner() -> bytes:
+    """El runner de deepagents que la plantilla instala (su sha256 va en el
+    manifiesto como `runner_sha256`)."""
+    return (
+        resources.files(_ASSETS_PACKAGE).joinpath(_RUNNER_DIR, DEEPAGENTS_RUNNER_NAME).read_bytes()
+    )
 
 
 def prefetch_script() -> bytes:
@@ -129,6 +143,7 @@ def _smoke_test(runtimes: Sequence[str]) -> str:
         checks.append(
             f"su user -c \"{DEEPAGENTS_PYTHON_PATH} -c 'import deepagents, langchain_aws'\""
         )
+        checks.append(f"su user -c 'test -r {DEEPAGENTS_RUNNER_PATH}'")
     return " && ".join(checks)
 
 
@@ -206,17 +221,19 @@ class AgentTemplate:
         prefetch_paths: list[str] = []
         opencode: dict[str, str] | None = None
         deepagents: dict[str, str] | None = None
+        runner_sha256: str | None = None
         if "opencode" in self.runtimes:
             opencode = {"version": AGENT_OPENCODE_VERSION, "sha256": AGENT_OPENCODE_SHA256}
             prefetch_paths += [OPENCODE_BINARY_PATH, RIPGREP_BINARY_PATH]
         if "deepagents" in self.runtimes:
             deepagents = {"requirements_sha256": AGENT_DEEPAGENTS_REQUIREMENTS_SHA256}
+            runner_sha256 = hashlib.sha256(deepagents_runner()).hexdigest()
         return {
             "schema": AGENT_TEMPLATE_MANIFEST_SCHEMA,
             "protocol": AGENT_PROTOCOL_VERSION,
             "opencode": opencode,
             "deepagents": deepagents,
-            "runner_sha256": None,
+            "runner_sha256": runner_sha256,
             "prefetch_paths": prefetch_paths,
         }
 
@@ -225,6 +242,7 @@ class AgentTemplate:
         files = {MANIFEST_CONTEXT_NAME: _manifest_bytes(self.manifest())}
         if "deepagents" in self.runtimes:
             files[DEEPAGENTS_REQUIREMENTS_NAME] = deepagents_requirements()
+            files[DEEPAGENTS_RUNNER_NAME] = deepagents_runner()
         if self.prefetch:
             files[PREFETCH_SCRIPT_NAME] = prefetch_script()
         return files
@@ -236,16 +254,21 @@ class AgentTemplate:
             tpl = tpl.run_cmd(_opencode_install())
         if "deepagents" in self.runtimes:
             requirements = f"{AGENT_INSTALL_DIR}/{DEEPAGENTS_REQUIREMENTS_NAME}"
-            tpl = tpl.copy(DEEPAGENTS_REQUIREMENTS_NAME, requirements).run_cmd(
-                _deepagents_install()
+            tpl = (
+                tpl.copy(DEEPAGENTS_REQUIREMENTS_NAME, requirements)
+                .run_cmd(_deepagents_install())
+                .copy(DEEPAGENTS_RUNNER_NAME, DEEPAGENTS_RUNNER_PATH)
             )
         tpl = tpl.copy(MANIFEST_CONTEXT_NAME, AGENT_TEMPLATE_MANIFEST_PATH)
         if self.prefetch:
             tpl = tpl.copy(PREFETCH_SCRIPT_NAME, PREFETCH_SCRIPT_PATH)
+        executables = [DEEPAGENTS_RUNNER_PATH] if "deepagents" in self.runtimes else []
+        if self.prefetch:
+            executables.append(PREFETCH_SCRIPT_PATH)
         tpl = tpl.run_cmd(
             f"mkdir -p {AGENT_BIN_DIR} && chown -R root:root {AGENT_INSTALL_DIR}"
             f" && chmod -R a+rX,go-w {AGENT_INSTALL_DIR}"
-            + (f" && chmod 0755 {PREFETCH_SCRIPT_PATH}" if self.prefetch else "")
+            + (f" && chmod 0755 {' '.join(executables)}" if executables else "")
         )
         tpl = tpl.set_envs(dict(OPENCODE_FLAG_ENVS))
         tpl = tpl.run_cmd(_smoke_test(self.runtimes))

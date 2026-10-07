@@ -31,7 +31,9 @@ import {
 } from "../limits.js";
 import type { BuildInfo, BuildOptions } from "../templates/build.js";
 import { Template } from "../templates/dsl.js";
+import { DEEPAGENTS_RUNNER_SHA256, DEEPAGENTS_RUNNER_SOURCE } from "./assets/deepagents-runner.js";
 import { DEEPAGENTS_REQUIREMENTS, PREFETCH_SCRIPT } from "./assets/template-assets.gen.js";
+import { DEEPAGENTS_RUNNER_PATH } from "./deepagents.js";
 import { OPENCODE_FLAG_ENVS } from "./opencode.js";
 
 /** Nombre por defecto de la imagen que construye `AgentTemplate`. */
@@ -53,6 +55,8 @@ const DEEPAGENTS_REQUIREMENTS_NAME = "requirements-deepagents.txt";
 const PREFETCH_SCRIPT_NAME = "rayito-agent-prefetch";
 const PREFETCH_SCRIPT_PATH = `${AGENT_BIN_DIR}/${PREFETCH_SCRIPT_NAME}`;
 const MANIFEST_CONTEXT_NAME = "rayito-agent.json";
+/** El runner de deepagents en el contexto de build; se instala en `DEEPAGENTS_RUNNER_PATH`. */
+const DEEPAGENTS_RUNNER_NAME = "deepagents_runner.py";
 const OPENCODE_RELEASE_URL =
   "https://github.com/anomalyco/opencode/releases/download/" +
   `v${AGENT_OPENCODE_VERSION}/opencode-linux-arm64.tar.gz`;
@@ -122,6 +126,7 @@ function smokeTest(runtimes: readonly AgentTemplateRuntime[]): string {
   }
   if (runtimes.includes("deepagents")) {
     checks.push(`su user -c "${DEEPAGENTS_PYTHON_PATH} -c 'import deepagents, langchain_aws'"`);
+    checks.push(`su user -c 'test -r ${DEEPAGENTS_RUNNER_PATH}'`);
   }
   return checks.join(" && ");
 }
@@ -236,7 +241,7 @@ export class AgentTemplate {
       deepagents: this.runtimes.includes("deepagents")
         ? { requirements_sha256: AGENT_DEEPAGENTS_REQUIREMENTS_SHA256 }
         : null,
-      runner_sha256: null,
+      runner_sha256: this.runtimes.includes("deepagents") ? DEEPAGENTS_RUNNER_SHA256 : null,
       prefetch_paths: hasOpencode ? [OPENCODE_BINARY_PATH, RIPGREP_BINARY_PATH] : [],
     };
   }
@@ -248,6 +253,7 @@ export class AgentTemplate {
     };
     if (this.runtimes.includes("deepagents")) {
       files[DEEPAGENTS_REQUIREMENTS_NAME] = DEEPAGENTS_REQUIREMENTS;
+      files[DEEPAGENTS_RUNNER_NAME] = DEEPAGENTS_RUNNER_SOURCE;
     }
     if (this.prefetch) {
       files[PREFETCH_SCRIPT_NAME] = PREFETCH_SCRIPT;
@@ -264,16 +270,21 @@ export class AgentTemplate {
     if (this.runtimes.includes("deepagents")) {
       tpl = tpl
         .copy(DEEPAGENTS_REQUIREMENTS_NAME, `${AGENT_INSTALL_DIR}/${DEEPAGENTS_REQUIREMENTS_NAME}`)
-        .runCmd(deepagentsInstall());
+        .runCmd(deepagentsInstall())
+        .copy(DEEPAGENTS_RUNNER_NAME, DEEPAGENTS_RUNNER_PATH);
     }
     tpl = tpl.copy(MANIFEST_CONTEXT_NAME, AGENT_TEMPLATE_MANIFEST_PATH);
     if (this.prefetch) {
       tpl = tpl.copy(PREFETCH_SCRIPT_NAME, PREFETCH_SCRIPT_PATH);
     }
+    const executables = this.runtimes.includes("deepagents") ? [DEEPAGENTS_RUNNER_PATH] : [];
+    if (this.prefetch) {
+      executables.push(PREFETCH_SCRIPT_PATH);
+    }
     tpl = tpl.runCmd(
       `mkdir -p ${AGENT_BIN_DIR} && chown -R root:root ${AGENT_INSTALL_DIR}` +
         ` && chmod -R a+rX,go-w ${AGENT_INSTALL_DIR}` +
-        (this.prefetch ? ` && chmod 0755 ${PREFETCH_SCRIPT_PATH}` : ""),
+        (executables.length > 0 ? ` && chmod 0755 ${executables.join(" ")}` : ""),
     );
     tpl = tpl.setEnvs({ ...OPENCODE_FLAG_ENVS });
     tpl = tpl.runCmd(smokeTest(this.runtimes));
