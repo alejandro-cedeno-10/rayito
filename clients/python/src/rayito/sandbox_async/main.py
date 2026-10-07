@@ -233,6 +233,7 @@ from rayito._transport import (
 from rayito._volumes import VolumeStatus
 from rayito._volumes._section import from_proto_status as volumes_from_proto_status
 from rayito.exceptions import (
+    AuthenticationException,
     InvalidArgumentException,
     NotFoundException,
     SandboxException,
@@ -2101,7 +2102,11 @@ class AsyncSandbox:
             self._configure,
             timeout=self._resolve_request_timeout(request_timeout),
         )
-        recovered = recovered_gateways(await reader(), async_reader=reader)
+        try:
+            status = await reader()
+        except AuthenticationException:
+            return
+        recovered = recovered_gateways(status, async_reader=reader)
         if recovered is EMPTY_GATEWAYS:
             self._section_handles.pop(GATEWAY_SECTION, None)
         else:
