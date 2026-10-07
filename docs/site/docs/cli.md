@@ -504,7 +504,7 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
 
 ```json
 {
-  "rayito": "0.8.0",
+  "rayito": "0.9.0",
   "region": "us-east-1",
   "account": "123456789012",
   "principal_kind": "assumed-role",
@@ -517,7 +517,8 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
     {"sdk_series": "0.5", "min_agent_version": "0.5.0", "note": "…"},
     {"sdk_series": "0.6", "min_agent_version": "0.6.0", "note": "…"},
     {"sdk_series": "0.7", "min_agent_version": "0.7.0", "note": "…"},
-    {"sdk_series": "0.8", "min_agent_version": "0.8.0", "note": "…"}
+    {"sdk_series": "0.8", "min_agent_version": "0.8.0", "note": "…"},
+    {"sdk_series": "0.9", "min_agent_version": "0.9.0", "note": "…"}
   ],
   "launched_sandbox_id": null,
   "exit_code": 0

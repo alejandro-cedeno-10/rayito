@@ -427,7 +427,11 @@ lleva el texto del proveedor, el prompt ni contenido del sandbox.
 
 Un proceso puede crear el sandbox con `gateways=` y otro (un worker, una
 API, una tarea programada) conducir el agente con `Sandbox.connect()`, sin
-recrearlo. `connect()` pide a `rayd` un `ConfigureStatus` de sólo lectura y
+recrearlo. Ese otro proceso necesita el access token del sandbox: el
+`sbx.access_token` (`sbx.accessToken` en TypeScript) que guardó quien lo
+creó, pasado como `access_token=` (`accessToken`) o en
+`RAYITO_ACCESS_TOKEN`; sin él, `connect()` lanza `AuthenticationException`
+(`AuthenticationError`). `connect()` pide a `rayd` un `ConfigureStatus` de sólo lectura y
 reconstruye `sbx.gateways`: nombre, puerto y último error de cada ruta.
 Ningún secreto sale de `rayd`: ni el upstream, ni las cabeceras, ni sus
 valores.
@@ -435,6 +439,8 @@ valores.
 === "Python"
 
     ```python
+    import os
+
     from rayito import AgentModel, AgentSpec, Sandbox
 
     MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -442,7 +448,10 @@ valores.
         model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"),
     )
 
-    sbx = Sandbox.connect("microvm-00000000-0000-0000-0000-000000000001")
+    sbx = Sandbox.connect(
+        "microvm-00000000-0000-0000-0000-000000000001",
+        access_token=os.environ["RAYITO_ACCESS_TOKEN"],
+    )
     print(sbx.gateways["bedrock"].url)
     result = sbx.agent.run("Resume el README.", spec=spec)
     ```
@@ -450,6 +459,8 @@ valores.
 === "Python (async)"
 
     ```python
+    import os
+
     from rayito import AgentModel, AgentSpec, AsyncSandbox
 
     MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -459,7 +470,10 @@ valores.
         spec = AgentSpec(
             model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"),
         )
-        sbx = await AsyncSandbox.connect("microvm-00000000-0000-0000-0000-000000000001")
+        sbx = await AsyncSandbox.connect(
+            "microvm-00000000-0000-0000-0000-000000000001",
+            access_token=os.environ["RAYITO_ACCESS_TOKEN"],
+        )
         result = await sbx.agent.run("Resume el README.", spec=spec)
         print(result.text)
     ```
@@ -474,7 +488,13 @@ valores.
       model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: "us-east-1" }),
     });
 
-    const sbx = await Sandbox.connect("microvm-00000000-0000-0000-0000-000000000001");
+    const accessToken = process.env.RAYITO_ACCESS_TOKEN;
+    if (accessToken === undefined) {
+      throw new Error("falta RAYITO_ACCESS_TOKEN");
+    }
+    const sbx = await Sandbox.connect("microvm-00000000-0000-0000-0000-000000000001", {
+      accessToken,
+    });
     console.log(sbx.gateways.get("bedrock")?.url);
     const result = await sbx.agent.run("Resume el README.", { spec });
     ```
@@ -489,7 +509,9 @@ El handle que creó el sandbox conserva el suyo aunque vuelva a llamar a
 con el mismo `request_timeout` (`requestTimeoutMs` en TypeScript) que esa
 llamada. Sobre un agente sin la función
 `secret_gateway`, `sbx.gateways` queda vacío y `connect()` no hace ninguna
-llamada extra.
+llamada extra. Si `rayd` rechaza el token en esa lectura, `connect()` no
+falla: `sbx.gateways` queda vacío y el error sale en la primera llamada
+autenticada, como en cualquier otro `connect()`.
 
 ## Permisos: no son una frontera de seguridad
 

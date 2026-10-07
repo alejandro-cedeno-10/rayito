@@ -16,7 +16,7 @@ región y una reproducción mínima sin datos de clientes. Acuse de recibo en
 7 días y corrección o mitigación en 90; no hay programa de recompensas.
 
 **Versiones soportadas**: sólo la última línea `MAJOR.MINOR`, hoy la
-**0.8.x** (SDK de Python y de TypeScript, y una imagen con `rayd` 0.8.x);
+**0.9.x** (SDK de Python y de TypeScript, y una imagen con `rayd` 0.9.x);
 mientras el proyecto esté en 0.x no hay ramas de mantenimiento de líneas
 anteriores ([Versionado y soporte](limits.md#versionado-y-soporte),
 [Compatibilidad SDK ↔ rayd ↔ imagen](limits.md#compatibilidad-sdk-rayd-imagen)).

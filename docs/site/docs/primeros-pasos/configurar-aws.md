@@ -100,7 +100,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=0.8.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    RAYD_VERSION=0.9.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
@@ -194,7 +194,7 @@ con `--launch` crea uno efímero de 300 s y lo mata al terminar:
 rayito doctor --template rayito-base --launch     # --launch: un sandbox efímero (≈ $0,002)
 ```
 
-Una salida típica en una cuenta recién preparada (con el SDK 0.8.0):
+Una salida típica en una cuenta recién preparada (con el SDK 0.9.0):
 
 <!-- noqa: example: salida de consola, no es código -->
 ```text
@@ -210,8 +210,8 @@ OK   bucket          s3://amzn-s3-demo-bucket accesible en us-east-1
 OK   image-gate      rayito-base 1.0 lanzable
 OK   sandboxes       ningún MicroVM RUNNING de rayito-base
 OK   token           token acuñado por create() para microvm-00000000-0000-0000-0000-000000000001
-OK   agent           rayd 0.8.0 agent_ready, kernel_ready=True, imds_blocked=False
-OK   compatibility   SDK 0.8.0, agent_version 0.8.0; imagen 1.0 (contador de builds, informativo)
+OK   agent           rayd 0.9.0 agent_ready, kernel_ready=True, imds_blocked=False
+OK   compatibility   SDK 0.9.0, agent_version 0.9.0; imagen 1.0 (contador de builds, informativo)
 
 SDK  rayd mínimo  Estado  Nota
 0.1  0.1.0                M6: imds_blocked, hook_anomalies y metadata exigen el rayd del tag rayd-v0.1.0
@@ -226,8 +226,10 @@ SDK  rayd mínimo  Estado  Nota
                           start/ready de templates) exigen el rayd del tag rayd-v0.6.0
 0.7  0.7.0                0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks aislados,
                           persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0
-0.8  0.8.0        OK      0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida con el rayd
+0.8  0.8.0                0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida con el rayd
                           del tag rayd-v0.8.0
+0.9  0.9.0        OK      0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del agente sin
+                          la opción D se validan con el rayd del tag rayd-v0.9.0
 
 rayito doctor: 9 OK, 1 WARN, 0 FAIL, 0 SKIP
 sandbox de --launch terminado: microvm-00000000-0000-0000-0000-000000000001
