@@ -409,18 +409,6 @@ class WebhookException(SandboxException):
     desplegada; el mensaje nunca repite una URL ni un secreto."""
 
 
-class GatewayException(SandboxException):
-    """Reservada para `SecretGateway` (m15-secrets-gateway): esta versión
-    del SDK no la lanza. Lo que la pasarela rechaza por petición llega al
-    proceso del sandbox como respuesta HTTP (403, 429, 502, 504), y una
-    configuración que `rayd` rechaza es `SandboxException`. `code` sería
-    `not_allowed`, `rate_limited` o `upstream_unreachable`."""
-
-    def __init__(self, message: str, *, code: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
 class CustomDomainException(SandboxException):
     """`CustomDomain` (m15-custom-domain, experimental) falló: una llamada
     al `KeyValueStore` de `register()`/`refresh()`/`unregister()`, o una de
