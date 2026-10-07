@@ -1,6 +1,5 @@
 {
   "session_id": "ses_0000000000000000000000000a",
-  "attached": true,
   "ignored_lines": 2,
   "events": [
     {"type": "step_started", "index": 1},

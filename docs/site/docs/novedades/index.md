@@ -10,6 +10,15 @@ ejemplo, correcciones que cambian un comportamiento y los pasos para
 actualizar. El detalle completo, cambio a cambio, está en el
 [Changelog](../referencia/changelog.md) de cada componente.
 
+!!! warning "En la próxima versión (0.9.0): se retira la opción D del agente"
+    El pool con `opencode serve` residente desaparece sin periodo de
+    obsolescencia: `agent_pool_warmup(..., serve=True)`, `prepare(serve=)`
+    y `attach=` de `sbx.agent.run`/`stream` dejarán de existir, y el span
+    `rayito.agent.run` dejará de llevar `rayito.agent.attached`. Migración:
+    quita `serve=True` y `attach=`; para un primer mensaje rápido usa
+    `agent_pool_warmup(runtime)` (opción C) o el arranque normal
+    ([¿Qué uso?](../guias/agente-en-el-sandbox.md#que-uso)).
+
 <div class="grid cards" markdown>
 
 -   :material-tag:{ .lg .middle } **0.8.0** · 2026-10-07 · actual

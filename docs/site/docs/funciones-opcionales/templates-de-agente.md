@@ -177,6 +177,6 @@ rayito agent template build --bucket amzn-s3-demo-bucket --no-prefetch      # si
 - [Agente en el sandbox](../guias/agente-en-el-sandbox.md).
 - [Templates declarativos](templates.md): el DSL que `AgentTemplate` usa por
   debajo.
-- [Pool: calentamiento y servidor residente](../pool.md#calentamiento-warmup-y-servidor-residente):
+- [Pool: calentamiento](../pool.md#calentamiento-warmup):
   evitar pagar el primer `exec` en cada toma.
 - [Precios (MicroVMs, pool, agentes)](../cost.md#coste-de-un-agente-vm-frente-a-modelo).

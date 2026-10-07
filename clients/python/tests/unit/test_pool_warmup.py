@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -53,39 +52,15 @@ def test_invalid_network_is_rejected_at_config_time() -> None:
         PoolConfig(size=1, network={"deny_out": ["no-es-un-cidr"]})
 
 
-def test_agent_pool_warmup_without_serve() -> None:
+def test_agent_pool_warmup_loads_the_runtime_in_the_foreground() -> None:
     steps = agent_pool_warmup()
     assert [s.background for s in steps] == [False]
     assert steps[0].cmd.startswith("opencode --version")
 
 
-def test_agent_pool_warmup_with_serve_orders_config_server_and_ready() -> None:
-    steps = agent_pool_warmup("opencode", serve=True)
-    tags = [s.tag for s in steps]
-    assert tags == [
-        "rayito-agent-serve-config",
-        None,
-        "rayito-agent-serve",
-        "rayito-agent-serve-ready",
-    ]
-    serve = steps[2]
-    assert serve.background
-    assert "/dev/urandom" in serve.cmd and "--hostname 127.0.0.1" in serve.cmd
-    ready = steps[3]
-    assert "/global/health" in ready.cmd
-    assert "/config?directory=%2Fhome%2Fuser%2F.rayito%2Fagent%2Fwarm" in ready.cmd
-    assert "OPENCODE_SERVER_PASSWORD=" not in ready.cmd
-
-
-def test_agent_pool_warmup_rejects_serve_for_other_runtimes() -> None:
-    class Other:
-        name = "otro"
-
-        def __getattr__(self, attr: str) -> Callable[..., Any]:
-            return lambda *a, **k: ()
-
-    with pytest.raises(InvalidArgumentException):
-        agent_pool_warmup(Other(), serve=True)
+def test_agent_pool_warmup_no_longer_accepts_serve() -> None:
+    with pytest.raises(TypeError):
+        agent_pool_warmup("opencode", serve=True)  # type: ignore[call-arg]
 
 
 def test_agent_pool_warmup_matches_shared_vectors() -> None:
@@ -95,7 +70,7 @@ def test_agent_pool_warmup_matches_shared_vectors() -> None:
         )
     )
     for case in vectors["cases"]:
-        steps = agent_pool_warmup(serve=case["serve"])
+        steps = agent_pool_warmup(case["runtime"])
         assert [{"cmd": s.cmd, "background": s.background, "tag": s.tag} for s in steps] == case[
             "steps"
         ]

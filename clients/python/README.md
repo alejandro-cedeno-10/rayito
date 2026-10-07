@@ -114,8 +114,8 @@ with Sandbox.create(
     print(result.text, result.usage.total)
 ```
 
-El arranque rápido (`PoolConfig(warmup=agent_pool_warmup())`, servidor
-residente) es opcional:
+El arranque rápido (`PoolConfig(warmup=agent_pool_warmup())`) es
+opcional:
 [¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso).
 Guía: [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/).
 

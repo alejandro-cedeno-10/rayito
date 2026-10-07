@@ -140,7 +140,6 @@ MAX_TOOL_OUTPUT_PREVIEW_BYTES: Final = 65536
 DEFAULT_AGENT_WORKDIR: Final = "/home/user"
 AGENT_STATE_DIR: Final = "/home/user/.rayito/agent"
 MODEL_CREDENTIAL_PLACEHOLDER: Final = "placeholder-not-a-secret"
-OPENCODE_SERVE_PORT: Final = 4096
 OPENCODE_SESSION_TITLE: Final = "rayito"
 AGENT_PROTOCOL_VERSION: Final = 1
 AGENT_TEMPLATE_MANIFEST_PATH: Final = "/opt/agents/rayito-agent.json"

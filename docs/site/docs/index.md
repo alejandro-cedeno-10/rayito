@@ -152,7 +152,7 @@ normal sobre la imagen `rayito-agent`
     console.log(result.text, result.usage.total);
     ```
 
-Arrancar más rápido (un pool con `warmup` o un servidor residente) es
+Arrancar más rápido (un pool con `warmup`) es
 opcional: cuándo compensa cada opción, en
 [¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso). Lo que cuesta la VM
 frente a los tokens del modelo:
@@ -298,7 +298,7 @@ Funciones opcionales, todas apagadas por defecto hasta que pasas su opción
 | `index=DynamoDbIndex(...)` | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
 | `Template.build()` | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
 | `AgentTemplate`, `rayito agent template build` | la imagen `rayito-agent` con OpenCode, ripgrep y deepagents | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
-| `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup-y-servidor-residente) |
+| `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup) |
 | `OptionalStacks`, `rayito stack` | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
 | `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
 | `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |

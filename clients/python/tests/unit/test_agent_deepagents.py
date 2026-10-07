@@ -148,7 +148,6 @@ def test_config_requires_every_gateway() -> None:
                 "session_id": SESSION_ID,
                 "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "reasoning": True,
-                "attach": False,
             },
         ),
     ],
@@ -169,8 +168,6 @@ def test_run_command_matches_golden(case: str, request_kwargs: dict[str, Any]) -
 @pytest.mark.parametrize(
     "request_kwargs",
     [
-        {"attach": True},
-        {"attach": cast(Any, 1)},
         {"session_id": "ses_otro"},
         {"model": "con espacios"},
     ],
@@ -252,10 +249,9 @@ def test_oversized_tool_output_is_truncated() -> None:
     assert event.output_truncated is True
 
 
-def test_abort_and_warmup() -> None:
+def test_template_and_warmup() -> None:
     runtime = DeepAgents()
-    assert runtime.abort_command(runtime.new_state()) is None
     assert runtime.template_steps() == ()
-    (step,) = runtime.warmup_steps(serve=True)
+    (step,) = runtime.warmup_steps()
     assert "import deepagents" in step.cmd
     assert not step.background

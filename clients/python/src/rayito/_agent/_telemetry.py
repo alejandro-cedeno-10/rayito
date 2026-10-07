@@ -39,7 +39,6 @@ def result_attributes(
     steps: int,
     exit_code: int,
     usage: TokenUsage,
-    attached: bool,
 ) -> dict[str, Any]:
     """Atributos de una ejecución terminada (con éxito o no): tokens y
     estado, nunca el texto producido."""
@@ -49,7 +48,6 @@ def result_attributes(
         "gen_ai.usage.output_tokens": usage.output,
         "rayito.agent.steps": steps,
         "rayito.agent.exit_code": exit_code,
-        "rayito.agent.attached": attached,
         "rayito.agent.cache_read_tokens": usage.cache_read,
         "rayito.agent.cache_write_tokens": usage.cache_write,
     }
@@ -60,11 +58,10 @@ def failure_attributes(failed: AgentFailed) -> dict[str, Any]:
     return {"rayito.agent.failure_reason": failed.reason}
 
 
-def done_attributes(done: Done, *, steps: int, attached: bool) -> dict[str, Any]:
+def done_attributes(done: Done, *, steps: int) -> dict[str, Any]:
     return result_attributes(
         session_id=done.session_id,
         steps=steps,
         exit_code=done.exit_code,
         usage=done.usage,
-        attached=attached,
     )

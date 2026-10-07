@@ -12,7 +12,6 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DEEPAGENTS_REQUIREMENTS } from "../../src/agent/assets/template-assets.gen.js";
-import { OpenCodeRuntime } from "../../src/agent/opencode.js";
 import {
   AgentTemplate,
   type AgentTemplateRuntime,
@@ -25,7 +24,6 @@ import {
   AGENT_OPENCODE_SHA256,
   AGENT_RIPGREP_SHA256,
   AGENT_TEMPLATE_MANIFEST_SCHEMA,
-  DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS,
 } from "../../src/limits.js";
 
 const TESTDATA = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent");
@@ -40,7 +38,7 @@ interface TemplateCase {
 }
 
 interface WarmupCase {
-  readonly serve: boolean;
+  readonly runtime: string;
   readonly steps: { cmd: string; background: boolean; tag: string | null }[];
 }
 
@@ -137,22 +135,10 @@ describe("agentPoolWarmup", () => {
   test("shared vectors", async () => {
     const { cases } = await json<{ cases: WarmupCase[] }>("pool-warmup.json");
     for (const c of cases) {
-      const steps = agentPoolWarmup("opencode", { serve: c.serve });
+      const steps = agentPoolWarmup(c.runtime);
       expect(
         steps.map((s) => ({ cmd: s.cmd, background: s.background ?? false, tag: s.tag ?? null })),
       ).toEqual(c.steps);
     }
-  });
-
-  test("the ready step waits up to the default warm-up timeout", () => {
-    const steps = agentPoolWarmup("opencode", { serve: true });
-    expect(steps.at(-1)?.timeoutMs).toBe(DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS * 1000);
-  });
-
-  test("serve is only for opencode", () => {
-    const other = Object.create(new OpenCodeRuntime(), {
-      name: { value: "otro" },
-    }) as OpenCodeRuntime;
-    expect(() => agentPoolWarmup(other, { serve: true })).toThrow(InvalidArgumentError);
   });
 });

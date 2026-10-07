@@ -190,22 +190,19 @@ describe("sbx.agent.run", () => {
     expect((last as { reason: string }).reason).toBe("busy");
   });
 
-  test("abort() corre abortCommand y luego mata el handle", async () => {
+  test("abort() para el árbol de procesos y luego mata el handle", async () => {
     const handle = new FakeCommandHandle({ lines: [line({ event: "step_started", index: 1 })] });
     const sandbox = new FakeSandbox({
-      commands: new FakeCommands({ handles: [handle], foregroundResults: [undefined, undefined] }),
+      commands: new FakeCommands({ handles: [handle], foregroundResults: [undefined] }),
       files: new FakeFilesystem(),
       gateways: { bedrock: gatewayStatus() },
     });
     const agent = new Agent(sandbox);
-    const runtime = new FakeAgentRuntime("fake", {
-      abortCmd: "curl -X POST http://127.0.0.1:4096/session/x/abort",
-    });
+    const runtime = new FakeAgentRuntime();
     const stream = await agent.stream("hola", { spec: spec(), runtime });
     await stream.abort();
     expect(handle.killed).toBe(true);
     expect(sandbox.commands.calls.slice(1).map((call) => call.cmd)).toEqual([
-      "curl -X POST http://127.0.0.1:4096/session/x/abort",
       stopTreeCommand(FAKE_PID),
     ]);
     await expect(stream.result()).rejects.toMatchObject({ reason: "aborted" });

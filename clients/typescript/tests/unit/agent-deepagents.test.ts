@@ -181,7 +181,6 @@ describe("deepagents run command", () => {
       sessionId: SESSION_ID,
       model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       reasoning: true,
-      attach: false,
     },
   };
   test.each(Object.keys(cases))("%s matches golden", (name) => {
@@ -198,12 +197,7 @@ describe("deepagents run command", () => {
     expect(command.script).not.toContain("hola");
   });
 
-  test.each([
-    { attach: true },
-    { attach: 1 as unknown as boolean },
-    { sessionId: "ses_otro" },
-    { model: "con espacios" },
-  ])("rejects %j", (extra) => {
+  test.each([{ sessionId: "ses_otro" }, { model: "con espacios" }])("rejects %j", (extra) => {
     expect(() =>
       new DeepAgents().command({
         spec: bedrockSpec(),
@@ -278,11 +272,10 @@ describe("deepagents events", () => {
     expect(event).toMatchObject({ type: "tool_call", outputTruncated: true });
   });
 
-  test("abort, template and warmup", () => {
+  test("template and warmup", () => {
     const runtime = new DeepAgents();
-    expect(runtime.abortCommand(runtime.newState())).toBeUndefined();
     expect(runtime.templateSteps()).toEqual([]);
-    const steps = runtime.warmupSteps({ serve: true });
+    const steps = runtime.warmupSteps();
     expect(steps).toHaveLength(1);
     expect(steps[0]?.cmd).toContain("import deepagents");
   });

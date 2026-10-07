@@ -23,8 +23,7 @@ opción. Si la conversación puede quedarse parada más de 8 h, la opción es
 [`persist=`](#mas-de-8-h-parado-persist).
 
 El sandbox necesita una imagen con el runtime instalado (OpenCode en
-`/opt/agents`). Si `opencode` no está en el `PATH` (o, con `attach=True`,
-su servidor residente no responde), la ejecución falla con
+`/opt/agents`). Si `opencode` no está en el `PATH`, la ejecución falla con
 `reason="runtime_missing"`. `AgentTemplate` construye esa imagen (OpenCode,
 ripgrep y, si quieres, deepagents) sobre `rayito-base-caps`, la única base
 que aplica el egress cerrado: ver
@@ -166,7 +165,6 @@ de 8 h, [`persist=`](#mas-de-8-h-parado-persist).
 | `model` | `model` | `spec.model.id` | otro id de modelo para esta ejecución, del mismo proveedor y pasarela (con `bedrock_gateway`, tiene que estar en sus `models`) |
 | `limits` | `limits` | `AgentLimits()` | [límites](#3-stream-sesiones-abortar-y-limites) de pasos, tokens, tiempo y salida |
 | `workdir` | `workdir` | `/home/user` | directorio de trabajo del agente |
-| `attach` | `attach` | `"auto"` | sólo OpenCode: `"auto"` se engancha al servidor residente si lo hay ([opción D](#las-cuatro-opciones)); `True` lo exige (sin él, `runtime_missing`); `False` nunca. deepagents sólo admite `"auto"` o `False` |
 | `reasoning` | `reasoning` | `False` | emite también eventos `Reasoning` |
 | — | `signal` | ninguna | un `AbortSignal` que aborta la ejecución |
 
@@ -477,8 +475,8 @@ turnos siguientes van sobre la misma VM.
    ≈ 5 s de la toma, a cambio de un coste fijo por plaza ociosa al mes
    ([Precios](../cost.md#coste-de-la-vm-con-fast-start);
    [ejemplo](#pool-de-agentes-c)).
-4. **D (pool con servidor residente)**: no recomendada. Funciona (Q154), pero
-   sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más.
+4. **¿Nada de lo anterior?** → **sin pool**: `Sandbox.create(...)` y
+   `sbx.agent.run(...)`, el [arranque normal](#2-arranque-normal-crear-el-sandbox-y-ejecutar).
 
 Una conversación de varios turnos sobre la misma VM (B):
 
@@ -648,10 +646,10 @@ llevan secretos): la pasarela se abre al tomarla, con
     console.log((await sbx.agent.run("Resume el README.", { spec })).text);
     ```
 
-Detalle del calentamiento, su coste por plaza y la opción D en
-[Pool: calentamiento y servidor residente](../pool.md#calentamiento-warmup-y-servidor-residente).
+Detalle del calentamiento y su coste por plaza en
+[Pool: calentamiento](../pool.md#calentamiento-warmup).
 
-### Las cuatro opciones
+### Las opciones
 
 Se combinan (un pool con `warmup` sobre una imagen con prefetch, por
 ejemplo). Los importes de cada una están en
@@ -662,7 +660,7 @@ ejemplo). Los importes de cada una están en
 | **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0 |
 | **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` (o cualquier llamada, con auto-resume) la reanuda | **el caso general**: una conversación de menos de 8 h desde `create()` | un ciclo suspend/resume por pausa + almacenamiento mientras está pausada |
 | **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | sólo si llegan muchas conversaciones **nuevas** y el primer mensaje tiene que ser rápido | un poco más que una plaza de pool base, por plaza ociosa y mes |
-| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` (`attach="auto"`, por defecto) | no recomendada: apenas gana a C | más que C, por plaza ociosa y mes |
+| **Sin pool** | `Sandbox.create(...)` y `sbx.agent.run(...)`, sin calentamiento | conversaciones nuevas cuyo primer mensaje puede tardar lo de una VM nueva | nada además de la VM |
 
 Cada ejecución, además, cuesta su VM (lanzamiento más los segundos de
 cómputo hasta la respuesta) y su modelo; el desglose por escenario está en
@@ -671,7 +669,7 @@ cómputo hasta la respuesta) y su modelo; el desglose por escenario está en
 !!! success "Medido en AWS real (2026-10-07, us-east-1, Claude Haiku 4.5, n=5)"
     Tiempo hasta el primer token de una respuesta corta, con el egress
     cerrado y el modelo por `bedrock_gateway` (`AWS_API_NOTES.md` Q146–Q150,
-    y Q153–Q154 para las filas tras los arreglos):
+    y Q153 para la fila tras el arreglo de A):
 
     | Escenario | `create()` / toma p50 | Primer token p50 | Primer token p95 |
     |---|---|---|---|
@@ -681,8 +679,6 @@ cómputo hasta la respuesta) y su modelo; el desglose por escenario está en
     | A, con el demonio que espera a que el guest se calme | 9,2 s | 14,7 s | 15,5 s |
     | B: `connect()` tras `pause()` | 0,55 s | 3,1 s | 3,2 s |
     | C: `pool.take()` con `warmup` | 0,95 s | 5,1 s | 6,7 s |
-    | D, **antes del arreglo** | 0,96 s | sin texto: `protocol_error` en 5 de 5 | — |
-    | D, con la relectura del servidor | 1,0 s | 4,8 s | 6,1 s |
 
     - **A**: el demonio baja el tramo posterior a `create()` de 19,6 s a
       4,7 s (−76 %), pero en su primera versión leía nada más restaurar y
@@ -695,14 +691,6 @@ cómputo hasta la respuesta) y su modelo; el desglose por escenario está en
       del ruido de n=5: el control sin prefetch salió mucho más rápido que
       en la primera medida (13,3 s frente a 28,3 s), así que hoy la ganancia
       de A es pequeña. Se queda encendido porque ya no cuesta nada.
-    - **D**: `opencode run --attach` (1.18.34) sale en cuanto el servidor
-      contesta el prompt, sin esperar a sus propios eventos, y el SDK veía
-      `AgentFailed(reason="protocol_error")` o un resultado sin texto
-      aunque el servidor completaba la respuesta. Ahora el SDK crea la
-      sesión en el servidor y, al salir `run`, relee de él los mensajes de
-      esa vuelta. Con el arreglo funciona (5 de 5 con texto y uso), pero
-      sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más memoria
-      y más por plaza al mes: no se recomienda, usa C.
     - **deepagents** no se cachea con un prompt corto: su prompt de una
       palabra son ≈ 3 503 tokens de entrada, por debajo de los 4 096 que
       Haiku exige para un punto de caché, así que cada vuelta los paga
@@ -741,10 +729,9 @@ Sin demonio (por ejemplo, en una imagen propia sin `AgentTemplate`),
     }
     ```
 
-`prepare(runtime="opencode", serve=False)` (TS: `prepare({ runtime, serve })`)
-lanza los pasos de calentamiento en segundo plano y vuelve enseguida, sin
-esperar a ninguno. Con `serve=True` arranca además `opencode serve`
-residente en esa VM, al que `run()` se engancha con `attach="auto"`.
+`prepare(runtime="opencode")` (TS: `prepare({ runtime })`) lanza los pasos
+de calentamiento en segundo plano y vuelve enseguida, sin esperar a
+ninguno.
 
 ## deepagents
 
@@ -758,7 +745,7 @@ el modelo, las `instructions` y los subagentes del `AgentSpec`; con
 `entrypoint="paquete.modulo:build"` importa tu función desde el directorio
 de trabajo y le pasa un `RunnerContext` (modelo, instrucciones, subagentes,
 backend, middleware de permisos, directorio de trabajo) para que devuelva
-tu grafo compilado. `mcp`, `raw_config` y `attach=True` no existen en este
+tu grafo compilado. `mcp` y `raw_config` no existen en este
 runtime y fallan antes de cualquier llamada. Sus `session_id` tienen la
 forma `rda_<32 hex>`.
 
@@ -821,7 +808,7 @@ de cualquier llamada.
 ## Ver también
 
 - [Templates de agente](../funciones-opcionales/templates-de-agente.md)
-- [Pool: calentamiento y servidor residente](../pool.md#calentamiento-warmup-y-servidor-residente)
+- [Pool: calentamiento](../pool.md#calentamiento-warmup)
 - [Precios (MicroVMs, pool, agentes)](../cost.md#coste-de-un-agente-vm-frente-a-modelo)
 - [Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md)
 - [Errores: `AgentException`/`AgentError`](../referencia/errores.md#agentexception-agenterror)
