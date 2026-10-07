@@ -148,10 +148,14 @@ async def test_async_build_uses_async_template(monkeypatch: pytest.MonkeyPatch) 
     assert seen["files"] == ["rayito-agent.json"]
 
 
-def test_prefetch_script_detects_a_clock_jump(tmp_path: Path) -> None:
-    """El demonio, con `date` falso: precarga sólo tras un salto de reloj."""
+def _start_prefetch(tmp_path: Path, diskstats: Path) -> tuple[subprocess.Popen[bytes], Path, Path]:
+    """El demonio con `date` y `nice` falsos y `/proc/diskstats` cambiado por
+    `diskstats`: el `date` falso salta 100 s a la tercera llamada."""
     script = tmp_path / "prefetch"
-    script.write_bytes(_template.prefetch_script())
+    source = _template.prefetch_script().replace(
+        b"DISKSTATS=/proc/diskstats", f"DISKSTATS={diskstats}".encode()
+    )
+    script.write_bytes(source)
     script.chmod(0o755)
     target = tmp_path / "bin"
     target.write_bytes(b"x")
@@ -176,10 +180,41 @@ def test_prefetch_script_detects_a_clock_jump(tmp_path: Path) -> None:
         [str(script), str(manifest), "30", "0"],
         env={"PATH": f"{fakebin}:/usr/bin:/bin"},
     )
+    return proc, reads, target
+
+
+def _wait_for(path: Path, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return path.exists()
+
+
+def _diskstats(in_flight: int) -> str:
+    return f" 259       0 vda 10 0 80 5 0 0 0 0 {in_flight} 5 5 0 0 0 0 0 0\n"
+
+
+def test_prefetch_script_detects_a_clock_jump(tmp_path: Path) -> None:
+    """El demonio, con `date` falso: precarga sólo tras un salto de reloj."""
+    proc, reads, target = _start_prefetch(tmp_path, tmp_path / "sin-diskstats")
     try:
-        deadline = time.monotonic() + 10
-        while not reads.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert _wait_for(reads, 10)
+    finally:
+        proc.kill()
+        proc.wait()
+    assert reads.read_text().splitlines()[0] == str(target)
+
+
+def test_prefetch_waits_until_the_guest_has_no_io_in_flight(tmp_path: Path) -> None:
+    """Tras el salto no lee mientras haya E/S en curso (el arranque que
+    `create()` espera), y lee en cuanto el guest se calma."""
+    diskstats = tmp_path / "diskstats"
+    diskstats.write_text(_diskstats(3))
+    proc, reads, target = _start_prefetch(tmp_path, diskstats)
+    try:
+        assert not _wait_for(reads, 2.5)
+        diskstats.write_text(_diskstats(0))
+        assert _wait_for(reads, 10)
     finally:
         proc.kill()
         proc.wait()

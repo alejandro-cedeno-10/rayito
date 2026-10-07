@@ -85,6 +85,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   emite las partes que faltaban (sin duplicar las ya emitidas), incluido el
   error del modelo. Un `session_id` que no tiene forma de id de OpenCode es
   `InvalidArgumentException`.
+- `AgentTemplate` con `prefetch`: el demonio de precarga leía los binarios
+  nada más restaurar el snapshot y su E/S competía con el arranque, así que
+  `create()` tardaba ≈ 8 s más (Q146). Ahora espera a que el guest lleve
+  1 s sin E/S en curso (como mucho 60 s) antes de leer.
 - `AgentTemplate`: instala el runner de deepagents en
   `/opt/agents/rayito/deepagents_runner.py` (root, 0755) y pone su sha256 en
   `runner_sha256` del manifiesto. Sin él, `runtime="deepagents"` fallaba

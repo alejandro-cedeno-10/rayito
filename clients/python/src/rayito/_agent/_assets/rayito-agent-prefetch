@@ -6,10 +6,19 @@
 # así que sigue vivo en cada VM que nace de la plantilla. Duerme INTERVALO
 # segundos en bucle y compara el reloj de pared: un salto mayor que SALTO
 # segundos sólo puede ser una restauración del snapshot (lanzamiento o
-# reanudación, AWS_API_NOTES §15). Entonces lee con `nice -n 19` los
-# ficheros de `prefetch_paths` del manifiesto para traerlos a la caché de
-# páginas antes del primer `opencode run`, y, si el manifiesto declara
+# reanudación, AWS_API_NOTES §15). Entonces trae a la caché de páginas los
+# ficheros de `prefetch_paths` del manifiesto y, si el manifiesto declara
 # deepagents, importa sus módulos una vez. No escribe nada ni sale a la red.
+#
+# Sin retrasar `create()` (AWS_API_NOTES, Q146): la primera versión leía
+# nada más restaurar y su E/S competía con el arranque (la rotación del
+# kernel que `create()` espera), alargando `create()` ≈ 8 s. Ahora, tras el
+# salto, espera a que el guest se calme: QUIET_SAMPLES muestras seguidas sin
+# E/S en curso en /proc/diskstats (como mucho SETTLE_MAX_SAMPLES), que es
+# cuando rayd ya rotó el kernel y respondió listo. Después lee con
+# `nice -n 19` sin ceder: el primer `opencode run` lee el mismo binario, así
+# que la lectura secuencial del demonio le adelanta páginas en vez de
+# quitárselas. Sin /proc/diskstats legible (fuera de Linux) no espera.
 #
 # Uso: rayito-agent-prefetch MANIFIESTO SALTO INTERVALO
 set -u
@@ -18,7 +27,41 @@ manifest="$1"
 jump="$2"
 interval="$3"
 
+DISKSTATS=/proc/diskstats
+# Segundos entre muestras de E/S en curso.
+SAMPLE_SECONDS=0.1
+# 1 s seguido sin E/S en curso: el arranque terminó.
+QUIET_SAMPLES=10
+# Tope de la espera inicial: 60 s; después precarga igual.
+SETTLE_MAX_SAMPLES=600
+
+inflight() {
+  local total=0 n
+  if [ ! -r "$DISKSTATS" ]; then
+    echo 0
+    return
+  fi
+  while read -r _ _ _ _ _ _ _ _ _ _ _ n _; do
+    total=$((total + ${n:-0}))
+  done < "$DISKSTATS"
+  echo "$total"
+}
+
+settle() {
+  local quiet=0 waited=0
+  while [ "$quiet" -lt "$QUIET_SAMPLES" ] && [ "$waited" -lt "$SETTLE_MAX_SAMPLES" ]; do
+    if [ "$(inflight)" -eq 0 ]; then
+      quiet=$((quiet + 1))
+    else
+      quiet=0
+    fi
+    waited=$((waited + 1))
+    sleep "$SAMPLE_SECONDS"
+  done
+}
+
 prefetch() {
+  settle
   python3 -c '
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:

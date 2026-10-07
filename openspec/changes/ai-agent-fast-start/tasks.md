@@ -42,3 +42,8 @@
     the adapter dedups by part id (D9), Python and TypeScript, with the
     captured fixtures `testdata/agent/opencode-attach/`.
   - [ ] 3.5.3 AWS re-measure of D (n=5): take → first token and end.
+- [ ] 3.6 Prefetch must not delay `create()` (Q146).
+  - [x] 3.6.1 The daemon waits for a quiet guest (no I/O in flight for 1 s)
+    after the jump; unit test with a fake `diskstats`.
+  - [ ] 3.6.2 AWS re-measure (n=5): `create()` and `create()` → first token;
+    if `create()` still grows, `prefetch` becomes opt-in.
