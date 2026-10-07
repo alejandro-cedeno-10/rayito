@@ -32,6 +32,13 @@ const CURL_TIMEOUT_MS = 60_000;
  * en directo, sin la pasarela. */
 const UPLOAD_PATH = "/tmp/rayito-e2e-upload";
 const UPLOAD_BYTES = 96 * 1024;
+/** Secrets Manager es de consistencia eventual: justo después de
+ * `UpdateSecret`, `GetSecretValue` puede devolver un momento la versión
+ * anterior, y `refresh()` empuja lo que lee. El test repite `refresh()` +
+ * petición hasta ver el valor nuevo (cada `refresh()` rellena el cubo, así
+ * que los reintentos no gastan la ráfaga del final). */
+const ROTATION_ATTEMPTS = 6;
+const ROTATION_RETRY_MS = 2_000;
 
 async function curl(sandbox: Sandbox, args: string): Promise<[number, string]> {
   const result = await sandbox.commands.run(
@@ -45,6 +52,27 @@ async function curl(sandbox: Sandbox, args: string): Promise<[number, string]> {
 function echoedHeader(body: string): string | undefined {
   const headers = (JSON.parse(body) as { headers?: Record<string, string> }).headers ?? {};
   return headers[INJECTED_HEADER];
+}
+
+/** `refresh()` y una petición, hasta `ROTATION_ATTEMPTS` veces, mientras el
+ * eco no devuelva el valor rotado. */
+async function refreshUntilRotated(
+  sandbox: Sandbox,
+  url: string,
+  rotated: string,
+): Promise<[number, string]> {
+  let result: [number, string] = [0, ""];
+  for (let attempt = 0; attempt < ROTATION_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, ROTATION_RETRY_MS));
+    }
+    await sandbox.gateways.refresh();
+    result = await curl(sandbox, `${url}/headers`);
+    if (result[0] === 200 && echoedHeader(result[1]) === rotated) {
+      break;
+    }
+  }
+  return result;
 }
 
 describe.runIf(e2eEnabled())("M15 secrets gateway (AWS real)", () => {
@@ -107,9 +135,8 @@ describe.runIf(e2eEnabled())("M15 secrets gateway (AWS real)", () => {
       expect(code).toBe(200);
 
       await store.update(name, rotated);
-      await sandbox.gateways.refresh();
+      [code, body] = await refreshUntilRotated(sandbox, url, rotated);
       expect(sandbox.gateways.get(ROUTE)?.port).toBe(port);
-      [code, body] = await curl(sandbox, `${url}/headers`);
       expect(code).toBe(200);
       expect(echoedHeader(body)).toBe(rotated);
 

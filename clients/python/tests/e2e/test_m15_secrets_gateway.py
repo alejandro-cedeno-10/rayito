@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import secrets as stdlib_secrets
+import time
 from typing import Any
 
 import pytest
@@ -59,6 +60,13 @@ LATENCY_SAMPLES = 3
 # en directo, sin la pasarela.
 UPLOAD_PATH = "/tmp/rayito-e2e-upload"
 UPLOAD_BYTES = 96 * 1024
+# Secrets Manager es de consistencia eventual: justo después de
+# `UpdateSecret`, `GetSecretValue` puede devolver un momento la versión
+# anterior, y `refresh()` empuja lo que lee. El test repite `refresh()` +
+# petición hasta ver el valor nuevo (cada `refresh()` rellena el cubo de la
+# ruta, así que los reintentos no gastan la ráfaga del final).
+ROTATION_ATTEMPTS = 6
+ROTATION_RETRY_SECONDS = 2.0
 
 
 def curl(sandbox: Sandbox, args: str) -> tuple[int, str]:
@@ -133,9 +141,8 @@ def test_gateway_injects_enforces_rotates_and_never_leaks(
             report_added_latency(sandbox, url, upstream)
 
             store.update(name, rotated)
-            sandbox.gateways.refresh()
+            status, body = refresh_until_rotated(sandbox, url, rotated)
             assert sandbox.gateways[ROUTE].port == port, "refresh() movió el puerto"
-            status, body = curl(sandbox, f"{url}/headers")
             assert status == 200, body
             assert echoed_header(body) == rotated, "refresh() no empujó el valor rotado"
 
@@ -154,6 +161,20 @@ def test_gateway_injects_enforces_rotates_and_never_leaks(
         store.destroy(name)
     for secret_text in (value, rotated, name):
         assert secret_text not in caplog.text, "SEC-10: el secreto apareció en los logs de Rayito"
+
+
+def refresh_until_rotated(sandbox: Sandbox, url: str, rotated: str) -> tuple[int, str]:
+    """`refresh()` y una petición, repetidos hasta `ROTATION_ATTEMPTS` veces
+    mientras el eco no devuelva el valor rotado (ver la constante)."""
+    status, body = 0, ""
+    for attempt in range(ROTATION_ATTEMPTS):
+        if attempt:
+            time.sleep(ROTATION_RETRY_SECONDS)
+        sandbox.gateways.refresh()
+        status, body = curl(sandbox, f"{url}/headers")
+        if status == 200 and echoed_header(body) == rotated:
+            break
+    return status, body
 
 
 def report_added_latency(sandbox: Sandbox, url: str, upstream: str) -> None:
