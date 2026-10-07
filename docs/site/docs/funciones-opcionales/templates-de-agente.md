@@ -5,11 +5,9 @@ description: AgentTemplate compone OpenCode, ripgrep y deepagents sobre rayito-b
 
 # Templates de agente
 
-!!! warning "Próximamente"
-    `AgentTemplate` y la orden `agent template build` de la CLI llegan con
-    `ai-agent-fast-start`, todavía sin fusionar en `main`; los pines
-    (`AGENT_OPENCODE_VERSION`, `AGENT_RIPGREP_VERSION` y sus sha256 en
-    `limits.json`) ya están; `sbx.agent` todavía no lee el manifiesto. Se publicará con 0.8.0
+!!! warning "Sin publicar todavía"
+    `AgentTemplate` y la orden `agent template build` de la CLI están en
+    `main` y salen con la 0.8.0
     ([borrador de Novedades](../novedades/0.8.0.md)).
 
 `AgentTemplate` es una receta fija sobre el [DSL de `Template`](templates.md)
@@ -24,7 +22,6 @@ que validó el spike en AWS real
 
 === "Python"
 
-    <!-- noqa: example: API de ai-agent-fast-start, aún no fusionada -->
     ```python
     from rayito import AgentTemplate
 
@@ -39,7 +36,6 @@ que validó el spike en AWS real
 
 === "TypeScript"
 
-    <!-- noqa: example: API de ai-agent-fast-start, aún no fusionada -->
     ```ts
     import { AgentTemplate } from "rayito";
 
@@ -54,7 +50,6 @@ que validó el spike en AWS real
 
 === "CLI"
 
-    <!-- noqa: example: subcomando de ai-agent-fast-start, aún no fusionado -->
     ```bash
     rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents
     ```
@@ -67,7 +62,7 @@ documenta que el guest ve más memoria que la configurada).
 
 !!! info "Coste y activación"
     - **Por defecto**: no se construye nada hasta llamar a `.build()` /
-      usar la CLI (subcomando `agent template build`, aún sin fusionar).
+      usar la CLI (`rayito agent template build`).
     - **Build**: 271–320 s medidos en AWS real (2026-10-07, tres builds;
       necesita salida a Internet para GitHub y PyPI; el sandbox que arranca
       desde la imagen resultante, no).
@@ -106,29 +101,34 @@ prefetch calienta. Que `sbx.agent` lo lea una vez por handle para comprobar
 
 Con `prefetch=True` (por defecto), el template añade un `start_cmd` que,
 desde el arranque, detecta si la VM viene de restaurar un snapshot (un
-salto de reloj mayor que `PREFETCH_RESTORE_JUMP_SECONDS`) y, si es así,
-precalienta en segundo plano y con prioridad baja (`nice -n19`) el binario
-de OpenCode y, con el runtime deepagents instalado, el import de
-`deepagents`/`langchain_aws`. No bloquea nada: el sandbox está listo igual
-que sin prefetch, y el primer `sbx.agent.run()` encuentra el binario ya en
-la caché de páginas la mayoría de las veces. `sbx.agent.prepare()` dispara
-el mismo calentamiento cuando no hay demonio (por ejemplo, sin `prefetch`,
-o para forzarlo tras un rato de inactividad).
+salto de reloj mayor que `AGENT_PREFETCH_RESTORE_JUMP_SECONDS`). Entonces
+espera a que el guest lleve 1 s seguido sin E/S en curso (como mucho 60 s)
+y precalienta con prioridad baja (`nice -n 19`) el binario de OpenCode y,
+con el runtime deepagents instalado, el import de
+`deepagents`/`langchain_aws`. Espera porque la restauración también lee del
+disco (la rotación del kernel que `create()` espera): leer a la vez alargaba
+`create()`. Después no cede el paso: el primer `sbx.agent.run()` lee el
+mismo binario, así que leerlo por delante le adelanta páginas.
+`sbx.agent.prepare()` dispara el mismo calentamiento cuando no hay demonio
+(por ejemplo, sin `prefetch`, o para forzarlo tras un rato de inactividad).
+Cuándo conviene cada opción de arranque rápido:
+[Agente en el sandbox](../guias/agente-en-el-sandbox.md#arranque-rapido).
 
 !!! success "Medido en AWS real (2026-10-07, n=5)"
     El demonio no cambia el tamaño del snapshot de memoria (916–925 MB con
-    y sin él). Tras `create()`, el primer token de OpenCode llega en 4,7 s
-    de mediana con prefetch frente a 19,6 s sin él (−76 %). A cambio, la
-    lectura compite con el arranque: `create()` tarda 16,6 s de mediana con
-    prefetch frente a 8,7 s sin él, así que de extremo a extremo (de
-    `create()` al primer token) la mejora es 28,3 s → 20,5 s. Los primeros
-    lanzamientos de una versión recién publicada son más lentos
-    (`create()` de 26 a 65 s): no midas justo después del build. Detalle en
-    `AWS_API_NOTES.md` Q146 y Q150.
+    y sin él). **Antes del arreglo** (el demonio leía nada más restaurar):
+    tras `create()`, el primer token de OpenCode llegaba en 4,7 s de
+    mediana con prefetch frente a 19,6 s sin él (−76 %), pero `create()`
+    tardaba 16,6 s frente a 8,7 s, así que de extremo a extremo (de
+    `create()` al primer token) la mejora era 28,3 s → 20,5 s (−28 %).
+    Con el demonio que espera a que el guest se calme:
+    <!-- REMEDIR-A -->.
+    Los primeros lanzamientos de una versión recién publicada son más
+    lentos (`create()` de 26 a 65 s): no midas justo después del build.
+    Detalle en `AWS_API_NOTES.md` Q146 y Q150.
 
 ## `--no-deepagents`, `--no-prefetch`
 
-<!-- noqa: example: subcomando de ai-agent-fast-start, aún no fusionado -->
 ```bash
 rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
 rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco

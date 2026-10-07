@@ -237,7 +237,7 @@ tiempos (**List**), porque Cost Explorer llega un día tarde.
 |---|---|
 | Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
 | Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,64/mes** |
-| Plaza de pool con servidor residente (opción D, no recomendada todavía) | ≈ **$0,82/mes** |
+| Plaza de pool con servidor residente (opción D, pendiente de la nueva medida) | ≈ **$0,82/mes** |
 | Sandbox pausado entre turnos (opción B) | un ciclo suspend/resume de ≈ 0,92–1,2 GB ≈ **$0,005–0,006** + ≈ $0,0001/h guardado |
 | Versión de imagen `rayito-agent` | código 2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ 3,1 GB × $0,08/GB-mes × 7/30 ≈ **$0,057/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
 
@@ -247,9 +247,11 @@ Haiku 4.5 sin herramientas, p50 de n=5):
 | Escenario | Hasta el primer token | VM | Modelo |
 |---|---|---|---|
 | `create()` sin prefetch | 28,3 s | lanzamiento $0,0014 + 28,5 s ≈ $0,0024 | ≈ $0,0009 (7 596 tokens leídos de caché; $0,0104 la vuelta que los escribe) |
-| `create()` con prefetch (A) | 20,5 s | ≈ $0,0021 | ≈ $0,0009 |
+| `create()` con prefetch (A), antes del arreglo | 20,5 s | ≈ $0,0021 | ≈ $0,0009 |
+| `create()` con prefetch (A), demonio que espera al guest | <!-- REMEDIR-A --> | <!-- REMEDIR-A --> | ≈ $0,0009 |
 | `connect()` tras `pause()` (B) | 3,1 s | ciclo ≈ $0,005–0,006 | ≈ $0,0009 |
 | `take()` de un pool con `warmup` (C) | 5,1 s | lectura $0,0014 + ≈ 5 s ≈ $0,0016 | ≈ $0,0009 |
+| `take()` de un pool con servidor residente (D), con la relectura | <!-- REMEDIR-D --> | <!-- REMEDIR-D --> | ≈ $0,0009 |
 | `create()` con deepagents | 7,5 s tras `create()` (5,0 s OpenCode) | ≈ $0,0014 + segundos de VM | ≈ $0,0039 (3 503 tokens sin caché: por debajo del mínimo de 4 096 de Haiku) |
 
 Cómo salen las cifras de las plazas:
@@ -281,12 +283,15 @@ Cómo salen las cifras de las plazas:
 | Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
 | Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,005–0,006 por ciclo + ≈ $0,0001/h guardado |
 | Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,64/plaza/mes |
-| Lo anterior y el servidor ya arrancado | D. Pool con servidor residente | no recomendado todavía |
+| Lo anterior y el servidor ya arrancado | D. Pool con servidor residente | ≈ $0,82/plaza/mes (pendiente de la nueva medida) |
 
 Decidido con las medidas: A queda encendida por defecto (baja el primer
-`exec` tras `create()` un 76 %, por encima del 50 % pedido) y D no se
-recomienda (`opencode run --attach` pierde los eventos en AWS; ver
-[Pool](pool.md#resultado-de-la-medida-en-aws)).
+`exec` tras `create()` un 76 %, por encima del 50 % pedido) y C es la
+recomendada para latencia mínima. D se midió antes de arreglar la
+relectura de la vuelta (`opencode run --attach` perdía los eventos) y está
+pendiente de la nueva medida; ver
+[Pool](pool.md#resultado-de-la-medida-en-aws) y la tabla completa en
+[Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 
 ??? info "Fuentes y mediciones (agentes)"
     - Diseño: `design.md` de `ai-agent-core` en

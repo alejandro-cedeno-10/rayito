@@ -288,7 +288,7 @@ acabe.
 | Opción | Qué precalienta | Medido (pool de 2, n=5) | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
 |---|---|---|---|---|
 | **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode (y deepagents, si aplica) ya en la caché de páginas | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
-| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | **no funciona todavía** (abajo); plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
+| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | antes del arreglo, sin texto (abajo); con la relectura del servidor: <!-- REMEDIR-D -->; plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
 
 La API no devuelve el tamaño del snapshot de un `suspend`: el de C se toma
 igual al de la imagen (la memoria usada del guest tras la toma, 503 MiB, es
@@ -308,7 +308,12 @@ endpoint, reconfigurado después y corrido con `--attach --dir` nuevo lee la
 configuración nueva, sin ningún código de `rayd`). Con esto, el `run`
 posterior a `take()` escribe la configuración con la pasarela ya aplicada
 y hace `opencode run --attach http://127.0.0.1:4096 --dir <workdir>`: una
-instancia nueva para ese directorio, que lee el puerto correcto. El
+instancia nueva para ese directorio, que lee el puerto correcto. La sesión
+la crea antes el propio script en el servidor y, cuando `run` sale, relee
+de él los mensajes de esa vuelta: `opencode run --attach` (1.18.34, igual
+en 1.18.35) sale en cuanto el servidor contesta el prompt sin esperar a sus
+propios eventos, así que sin esa relectura se perdían las partes que aún no
+había escrito. El SDK emite sólo las que faltaban, sin duplicar. El
 secreto de `OPENCODE_SERVER_PASSWORD` (32 bytes aleatorios, generado dentro
 de la VM en cada calentamiento) vive en el snapshot aparcado, con la misma
 custodia que el access token de la plaza (arriba); sin él, `GET /global/health`
@@ -319,11 +324,13 @@ responde 401.
 El prefetch (opción A de
 [Templates de agente](funciones-opcionales/templates-de-agente.md)) baja el
 primer `exec` tras `create()` un 76 % (19,6 s → 4,7 s de mediana), así que
-sigue encendido por defecto. C deja el primer token a 5,1 s de la toma.
-D no se recomienda: en AWS, `opencode run --attach` (1.18.34) sale tras el
-primer evento aunque el servidor complete la respuesta, y el SDK devuelve
+sigue encendido por defecto. C deja el primer token a 5,1 s de la toma y es
+la opción recomendada hoy. D, **antes del arreglo** de la relectura, no
+servía: `opencode run --attach` salía tras el primer evento aunque el
+servidor completara la respuesta, y el SDK devolvía
 `AgentFailed(reason="protocol_error")` (5 de 5 tomas) o un resultado sin
-texto ni uso. Hasta que se resuelva, usa C.
+texto ni uso. Con la relectura: <!-- REMEDIR-D -->. Cómo elegir entre A,
+B, C y D: [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 
 ## Coste por plaza (`rayito-base`, 0,92 GB de snapshot; `AWS_API_NOTES.md` §12 y `docs/benchmarks/2026-09-cold-start.md`)
 
