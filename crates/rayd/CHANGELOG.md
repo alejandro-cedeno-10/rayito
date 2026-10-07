@@ -10,6 +10,12 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-07
+
+Sin cambios en el agente: versión en paso con los SDK 0.9.1 (la idle por
+defecto que se adapta a un `timeout` corto es sólo del SDK). El SDK 0.9.1 se
+valida con el `rayd` del tag `rayd-v0.9.1`.
+
 ## [0.9.0] - 2026-10-07
 
 Sin cambios en el agente: versión en paso con los SDK 0.9.0 (la
@@ -754,7 +760,8 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.1...HEAD
+[0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.0...rayd-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.8.0...rayd-v0.9.0
 [0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.7.1...rayd-v0.8.0
 [0.7.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.7.0...rayd-v0.7.1
