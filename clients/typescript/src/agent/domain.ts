@@ -22,9 +22,19 @@ import {
 } from "../limits.js";
 import { isSafeRequestPath, validateRouteName } from "../secret-gateway/domain.js";
 
-/** Bedrock `Converse`, la Messages API de Anthropic o cualquier API con
- * `chat/completions` de OpenAI, siempre a través de una pasarela. */
-export const MODEL_PROVIDERS = ["bedrock", "anthropic", "openai-compatible"] as const;
+/** Bedrock `Converse`, la Messages API de Anthropic, cualquier API con
+ * `chat/completions` de OpenAI (OpenRouter, Groq, Mistral, DeepSeek,
+ * LiteLLM), la Responses API de OpenAI (también xAI), Gemini y Azure OpenAI
+ * v1, siempre a través de una pasarela
+ * (`testdata/agent/provider-catalogue.json`). */
+export const MODEL_PROVIDERS = [
+  "bedrock",
+  "anthropic",
+  "openai-compatible",
+  "openai",
+  "google",
+  "azure",
+] as const;
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 export const PERMISSION_ACTIONS = ["allow", "deny"] as const;
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
@@ -168,8 +178,12 @@ export interface AgentModelOptions {
  * `gateway` nombra una entrada de `sbx.gateways`; si el sandbox no la
  * tiene, `sbx.agent.run()` falla con `InvalidArgumentError` antes de
  * cualquier RPC. `region` es obligatoria con `"bedrock"`; `basePath` sólo
- * se usa con `"openai-compatible"`. `promptCaching` (por defecto `true`)
- * deja que el runtime marque puntos de caché.
+ * se usa con `"openai-compatible"` y es el del preset (`"/api/v1"` con
+ * `openrouterGateway`, `"/openai/v1"` con `groqGateway`, `"/v1"` con
+ * `mistralGateway` y `litellmGateway`, `""` con `deepseekGateway`).
+ * `"openai"` va con `openaiGateway` o `xaiGateway`, `"google"` con
+ * `geminiGateway` y `"azure"` con `azureOpenaiGateway`. `promptCaching`
+ * (por defecto `true`) deja que el runtime marque puntos de caché.
  */
 export class AgentModel {
   readonly provider: ModelProvider;

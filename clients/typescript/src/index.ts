@@ -50,11 +50,24 @@ export {
 } from "./agent/events.js";
 export {
   type AnthropicGatewayOptions,
+  type AzureOpenaiGatewayOptions,
   anthropicGateway,
+  azureOpenaiGateway,
   type BedrockGatewayOptions,
   bedrockGateway,
+  deepseekGateway,
+  type GeminiGatewayOptions,
+  geminiGateway,
+  groqGateway,
+  type LitellmGatewayOptions,
+  litellmGateway,
+  mistralGateway,
   type OpenAiCompatibleGatewayOptions,
   openaiCompatibleGateway,
+  openaiGateway,
+  openrouterGateway,
+  type ProviderGatewayOptions,
+  xaiGateway,
 } from "./agent/gateways.js";
 export type {
   AgentRuntime,

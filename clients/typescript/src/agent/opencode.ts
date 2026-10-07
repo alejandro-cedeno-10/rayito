@@ -63,6 +63,19 @@ export const OPENCODE_PROVIDER_IDS: Readonly<Record<string, string>> = Object.fr
   bedrock: "amazon-bedrock",
   anthropic: "anthropic",
   "openai-compatible": OPENAI_COMPATIBLE_PROVIDER_ID,
+  openai: "openai",
+  google: "google",
+  azure: "azure",
+});
+/**
+ * Lo que cada paquete nativo de OpenCode espera en `baseURL` delante de su
+ * ruta: `@ai-sdk/openai` añade `/responses`, `@ai-sdk/google`
+ * `/models/<m>:streamGenerateContent` y `@ai-sdk/azure` `/v1/responses`.
+ */
+export const OPENCODE_NATIVE_BASE_PATHS: Readonly<Record<string, string>> = Object.freeze({
+  openai: "/v1",
+  google: "/v1beta",
+  azure: "/openai",
 });
 /** Prefijo de la Messages API que el SDK de Anthropic añade a `baseURL`. */
 export const ANTHROPIC_BASE_PATH = "/v1";
@@ -157,17 +170,33 @@ function provider(spec: AgentSpec, gatewayUrl: string): Record<string, unknown> 
       },
     };
   }
-  const ids = new Set([model.id, spec.effectiveSmallModel]);
+  const nativeBasePath = OPENCODE_NATIVE_BASE_PATHS[model.provider];
+  if (nativeBasePath !== undefined) {
+    return {
+      options: {
+        baseURL: joinUrl(gatewayUrl, nativeBasePath),
+        apiKey: MODEL_CREDENTIAL_PLACEHOLDER,
+      },
+      models: models(spec),
+    };
+  }
+  return {
+    npm: OPENAI_COMPATIBLE_NPM,
+    options: { baseURL: joinUrl(gatewayUrl, model.basePath), apiKey: MODEL_CREDENTIAL_PLACEHOLDER },
+    models: models(spec),
+  };
+}
+
+/** Los modelos que usa `spec`: sin descargar el catálogo, OpenCode sólo
+ * conoce los que se declaran. */
+function models(spec: AgentSpec): Record<string, unknown> {
+  const ids = new Set([spec.model.id, spec.effectiveSmallModel]);
   for (const sub of Object.values(spec.agents)) {
     if (sub.model !== undefined) {
       ids.add(sub.model);
     }
   }
-  return {
-    npm: OPENAI_COMPATIBLE_NPM,
-    options: { baseURL: joinUrl(gatewayUrl, model.basePath), apiKey: MODEL_CREDENTIAL_PLACEHOLDER },
-    models: Object.fromEntries([...ids].sort().map((id) => [id, {}])),
-  };
+  return Object.fromEntries([...ids].sort().map((id) => [id, {}]));
 }
 
 function mcp(

@@ -358,8 +358,15 @@ pasarela por su cuenta, fuera del presupuesto de tokens del SDK (no hay
 forma de distinguir, desde la pasarela, una llamada que hizo el runtime del
 agente de una que hizo el modelo pidiéndole ejecutar `curl`). Mitigaciones:
 restringir `allow` a los `(método, ruta)` de los modelos exactos que uses
-(`bedrock_gateway` nunca abre `/model/*`) y
-`rate_per_minute`.
+(`bedrock_gateway` nunca abre `/model/*`; `gemini_gateway` sólo abre los
+`models` dados) y `rate_per_minute`. En las APIs al estilo de OpenAI
+(OpenAI, Azure OpenAI, xAI, OpenRouter, Groq, Mistral, DeepSeek, LiteLLM)
+el modelo va en el cuerpo y la pasarela **no puede** limitarlo: fija el
+tope de gasto en el proveedor (ver
+[Proveedores del agente](guias/agente-proveedores.md#limites-del-lado-del-proveedor)).
+Las suscripciones de consumo (plan de ChatGPT, Claude Pro/Max, Copilot,
+SuperGrok) no se admiten: ver
+[Proveedores no admitidos](guias/agente-proveedores.md#proveedores-no-admitidos).
 
 **Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
 por versión y sha256 fijados en `limits.json`, que el build de la plantilla

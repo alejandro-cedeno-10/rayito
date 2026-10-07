@@ -6,6 +6,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Más proveedores para el modelo del agente** (`ai-agent-providers`).
+  `AgentModel` admite `provider` `"openai"` (Responses API, también xAI),
+  `"google"` (Gemini API) y `"azure"` (Azure OpenAI v1), y hay nueve presets
+  de pasarela con clave de API estática: `openaiGateway`,
+  `geminiGateway({ models })`, `azureOpenaiGateway({ resource })`,
+  `openrouterGateway`, `groqGateway`, `mistralGateway`,
+  `deepseekGateway`, `xaiGateway` y `litellmGateway({ upstream,
+  basePath: "/v1" })`. OpenCode usa los proveedores nativos `openai`,
+  `google` y `azure` a través de la pasarela; deepagents construye
+  `ChatOpenAI(use_responses_api=True)` o `ChatGoogleGenerativeAI`, y con
+  `"azure"` lanza `UnimplementedError`. `gen_ai.provider.name` vale
+  `gcp.gemini` y `azure.ai.openai` para los nuevos. En las APIs al estilo
+  de OpenAI la pasarela no puede limitar el modelo: fija el tope de gasto
+  en el proveedor (SECURITY.md T29). Las suscripciones de consumo (plan de
+  ChatGPT, Claude Pro/Max, Copilot, SuperGrok) no se admiten; la guía
+  "Proveedores del agente" explica por qué. Construir un preset no llama a
+  AWS.
+
 ## [0.9.0] - 2026-10-07
 
 ### Cambios que rompen

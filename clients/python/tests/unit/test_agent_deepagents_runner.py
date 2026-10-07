@@ -95,6 +95,9 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     _module("langchain_aws", ChatBedrockConverse=_model("ChatBedrockConverse"))
     _module("langchain_anthropic", ChatAnthropic=_model("ChatAnthropic"))
     _module("langchain_openai", ChatOpenAI=_model("ChatOpenAI"))
+    _module(
+        "langchain_google_genai", ChatGoogleGenerativeAI=_model("ChatGoogleGenerativeAI")
+    )
     _module("langchain")
     _module("langchain.agents")
     _module("langchain.agents.middleware", AgentMiddleware=AgentMiddleware)
@@ -312,6 +315,21 @@ def test_reasoning_only_when_requested(stubs: dict[str, Any], tmp_path: Path) ->
             "openai-compatible",
             "ChatOpenAI",
             {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"},
+        ),
+        (
+            "openai",
+            "ChatOpenAI",
+            {
+                "model": "m",
+                "base_url": "http://gw",
+                "api_key": "placeholder-not-a-secret",
+                "use_responses_api": True,
+            },
+        ),
+        (
+            "google",
+            "ChatGoogleGenerativeAI",
+            {"model": "m", "base_url": "http://gw", "google_api_key": "placeholder-not-a-secret"},
         ),
     ],
 )

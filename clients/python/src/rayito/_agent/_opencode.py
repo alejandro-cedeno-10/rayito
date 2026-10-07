@@ -82,6 +82,19 @@ OPENCODE_PROVIDER_IDS: Final[Mapping[str, str]] = {
     "bedrock": "amazon-bedrock",
     "anthropic": "anthropic",
     "openai-compatible": OPENAI_COMPATIBLE_PROVIDER_ID,
+    "openai": "openai",
+    "google": "google",
+    "azure": "azure",
+}
+#: Lo que cada paquete nativo de OpenCode espera en `baseURL` delante de su
+#: ruta: `@ai-sdk/openai` añade `/responses`, `@ai-sdk/google`
+#: `/models/<m>:streamGenerateContent` y `@ai-sdk/azure` `/v1/responses`.
+#: Con `baseURL` hacia la pasarela, `@ai-sdk/azure` no necesita
+#: `resourceName` (`testdata/agent/provider-catalogue.json`).
+OPENCODE_NATIVE_BASE_PATHS: Final[Mapping[str, str]] = {
+    "openai": "/v1",
+    "google": "/v1beta",
+    "azure": "/openai",
 }
 #: Prefijo de ruta de la Messages API que el SDK de Anthropic añade a
 #: `baseURL`.
@@ -163,16 +176,32 @@ def _provider(spec: AgentSpec, gateway_url: str) -> dict[str, object]:
                 "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
             }
         }
-    model_ids = {model.id, spec.effective_small_model}
-    model_ids.update(sub.model for sub in spec.agents.values() if sub.model is not None)
+    native_base_path = OPENCODE_NATIVE_BASE_PATHS.get(model.provider)
+    if native_base_path is not None:
+        return {
+            "options": {
+                "baseURL": _join_url(gateway_url, native_base_path),
+                "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
+            },
+            "models": _models(spec),
+        }
     return {
         "npm": OPENAI_COMPATIBLE_NPM,
         "options": {
             "baseURL": _join_url(gateway_url, model.base_path),
             "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
         },
-        "models": {model_id: {} for model_id in sorted(model_ids)},
+        "models": _models(spec),
     }
+
+
+def _models(spec: AgentSpec) -> dict[str, object]:
+    """Los modelos que usa `spec` (principal, `small_model` y subagentes):
+    sin descargar el catálogo (`OPENCODE_DISABLE_MODELS_FETCH`), OpenCode
+    sólo conoce los que se declaran."""
+    model_ids = {spec.model.id, spec.effective_small_model}
+    model_ids.update(sub.model for sub in spec.agents.values() if sub.model is not None)
+    return {model_id: {} for model_id in sorted(model_ids)}
 
 
 def _mcp(spec: AgentSpec, gateway_urls: Mapping[str, str]) -> dict[str, object]:
