@@ -108,6 +108,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - `sbx.agent.prepare()` arranca los pasos en segundo plano sin plazo: con
   `serve=True` el servidor residente moría al agotar `timeout_seconds`.
 
+### Changed
+
+- `rayito doctor` conoce la serie 0.8: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.8.0` para el SDK 0.8. Sin la fila, `doctor`
+  daba FAIL en cada instalación 0.8 y `scripts/prepare_release_pr.py` se
+  negaba a preparar la release.
+
 ## [0.7.1] - 2026-10-06
 
 ### Changed
