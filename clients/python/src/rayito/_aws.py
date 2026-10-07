@@ -18,6 +18,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from rayito._aws_region import aws_session, resolve_region
 from rayito._aws_sanitize import AwsErrorSummary, redact_aws_text, sanitize_aws_error
 from rayito._limits import (
     API_TPS,
@@ -250,7 +251,7 @@ def aws_code(exc: BaseException) -> str | None:
 class LazyClient:
     """Un cliente boto3 de `service` que se construye en el primer `get()` (y
     sólo una vez, aunque lo pidan varios hilos), con la sesión dada o una
-    `Session(region_name=region)` y la `client_config()` del SDK. Construirlo
+    sesión de `aws_session` (región según `_aws_region`) y la `client_config()` del SDK. Construirlo
     no hace ninguna llamada a AWS: es lo que usan las funciones opcionales
     (`SecretStore`, `DynamoDbIndex`) para no costar nada mientras no se usan."""
 
@@ -266,9 +267,11 @@ class LazyClient:
     def get(self) -> Any:
         with self._lock:
             if self._client is None:
-                session = self._session or boto3.session.Session(region_name=self._region)
+                session = aws_session(self._session, self._region)
                 self._client = session.client(
-                    self._service, region_name=self._region, config=client_config()
+                    self._service,
+                    region_name=resolve_region(self._region, self._session),
+                    config=client_config(),
                 )
             return self._client
 
@@ -316,7 +319,8 @@ class LambdaMicrovmsControlPlane:
     ) -> LambdaMicrovmsControlPlane:
         """El cliente STS se construye sólo si algún template se resuelve por
         nombre; ambos clientes llevan la `client_config(settings)`."""
-        resolved_session = session or boto3.session.Session(region_name=region)
+        resolved_session = aws_session(session, region)
+        region = resolve_region(region, session)
         config = client_config(settings)
         return cls(
             resolved_session.client("lambda-microvms", region_name=region, config=config),

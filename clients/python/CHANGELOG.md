@@ -41,6 +41,23 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `rayd` rechaza es `SandboxException`. Migración: quita el import y
   cualquier `except GatewayException`; si capturabas fallos de la pasarela
   al crear o refrescar, captura `SandboxException`.
+- **`AWS_REGION` gana a `AWS_DEFAULT_REGION` y a la región del perfil** en el
+  SDK de Python (ver "Fixed"). Si exportas `AWS_REGION` con un valor distinto
+  de `AWS_DEFAULT_REGION` o de la `region` de tu perfil, el SDK pasa a operar
+  (sandboxes, secretos, índice, EFS…) en la región de `AWS_REGION`.
+  Migración: para conservar la región anterior, quita `AWS_REGION` del
+  entorno o pasa `region=` explícita.
+
+### Fixed
+
+- **El SDK de Python honra `AWS_REGION`**, como el de TypeScript y la CLI.
+  Antes boto3 sólo leía `AWS_DEFAULT_REGION` o el perfil. Toda sesión boto3
+  del SDK (plano de control, staging S3, secretos, índice DynamoDB, eventos,
+  EFS, CloudFormation…) resuelve la región en un único sitio con la
+  prioridad `region=` > sesión del llamante > `AWS_REGION` >
+  `AWS_DEFAULT_REGION` > perfil; una sesión del llamante sin región sigue
+  esa misma cadena. Quien sólo exporta `AWS_DEFAULT_REGION` no nota
+  cambios.
 
 ### Changed
 
@@ -50,10 +67,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   y `output_limit`, reservados)
   dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
   `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
-  región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
-  que lee boto3). La ayuda de `rayito image sizes`, `doctor`,
-  `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
-  internos.
+  región del índice y de `Template.build` piden `AWS_REGION`. La ayuda de
+  `rayito image sizes`, `doctor`, `sandbox proxy`, `agent template build` y
+  `domain` ya no nombra detalles internos.
 
 ### Fixed
 

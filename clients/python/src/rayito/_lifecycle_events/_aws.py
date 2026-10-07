@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from rayito._aws_region import aws_session, resolve_region
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito._lifecycle_events import _dynamodb
 from rayito.exceptions import WebhookException
@@ -71,12 +72,13 @@ def _aws_call(operation: str, invoke: Callable[[], T]) -> T:
 
 class BotoEventsGateway:
     """`EventsGateway` sobre una sesión `boto3` (la del llamante, o la por
-    defecto). Construirlo no llama a AWS; cada método crea su recurso o
-    cliente en la región indicada."""
+    defecto). Construirlo no llama a AWS; la sesión se resuelve una vez (y
+    con ella la caché de credenciales) y cada método crea su recurso o
+    cliente sobre ella en la región resuelta."""
 
     def __init__(self, session: boto3.session.Session | None, region: str | None) -> None:
-        self._session = session
-        self._region = region
+        self._session = aws_session(session, region)
+        self._region = resolve_region(region, session)
 
     def put_webhook(
         self,
@@ -143,8 +145,8 @@ class BotoEventsGateway:
         return bytes(binary)
 
     def _table(self, table_name: str) -> Any:
-        resource = (self._session or boto3).resource("dynamodb", region_name=self._region)
+        resource = self._session.resource("dynamodb", region_name=self._region)
         return resource.Table(table_name)
 
     def _client(self, service_name: str) -> Any:
-        return (self._session or boto3).client(service_name, region_name=self._region)
+        return self._session.client(service_name, region_name=self._region)

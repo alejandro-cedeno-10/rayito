@@ -67,7 +67,7 @@ El SDK usa la cadena de credenciales estándar de AWS: la de `boto3` en Python
 y la del AWS SDK v3 en TypeScript. Con un perfil:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
 ```
 
 Con AWS IAM Identity Center (SSO), inicia sesión antes con
