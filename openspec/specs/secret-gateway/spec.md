@@ -149,3 +149,59 @@ resolving any header value or making any RPC.
 - **THEN** every `safe` path is accepted by all three, and every `unsafe`
   path is refused by all three (`rayd`: `empty_path` for a relative or empty
   one, `invalid_allow_path` otherwise)
+
+### Requirement: connect() recovers sbx.gateways from the running sandbox without any secret material
+
+`Sandbox.connect()`, `AsyncSandbox.connect()` and TypeScript `Sandbox.connect()`
+(static and instance) SHALL, after readiness and when the agent advertises
+`configure` and `secret_gateway` and the handle holds no gateway handle of
+its own (a handle recovered by an earlier `connect()` does not count), read
+`ConfigureStatus` once, with the request timeout of that `connect()` call,
+and rebuild `sbx.gateways` from its
+`SecretGatewayStatus` (route name, port, last error class). No upstream,
+header name or header value SHALL be read or returned. The recovered
+handle's `refresh()` SHALL only re-read `ConfigureStatus` and send no
+`Configure`.
+
+#### Scenario: a second process sees the gateways
+
+- **WHEN** a process calls `connect()` on a sandbox whose `create()` applied `gateways={"bedrock": ...}`
+- **THEN** `sbx.gateways["bedrock"].url` is `http://127.0.0.1:<port>` with the port `rayd` reports, and no `Configure` is sent
+
+#### Scenario: the creating handle keeps its own gateways
+
+- **WHEN** the handle that applied `gateways=` calls `connect()` again
+- **THEN** its gateway handle is kept and no `ConfigureStatus` is read for recovery
+
+#### Scenario: a recovered handle re-reads on each connect
+
+- **WHEN** a handle whose `sbx.gateways` was recovered calls `connect(request_timeout=...)` again
+- **THEN** `ConfigureStatus` is read again with that request timeout and `sbx.gateways` reflects the new ports
+
+#### Scenario: an agent without the feature
+
+- **WHEN** `Health.features` is absent or lacks `secret_gateway`
+- **THEN** `sbx.gateways` stays empty and no `ConfigureStatus` is called
+
+#### Scenario: a rejected token does not fail connect()
+
+- **WHEN** the recovery `ConfigureStatus` fails with `AuthenticationException` (TS `AuthenticationError`) because the access token does not match the agent's
+- **THEN** `connect()` returns the handle with `sbx.gateways` empty, and the error surfaces on the first authenticated call, as it does on an agent without the feature
+
+### Requirement: the SDKs expose no gateway-specific exception
+
+Neither SDK SHALL export a gateway-specific exception type
+(`GatewayException` in Python, `GatewayError`/`GatewayErrorOptions` in
+TypeScript). A request the gateway refuses SHALL reach the sandbox process
+only as an HTTP response, and a gateway config `rayd` rejects SHALL surface
+as `SandboxException`/`SandboxError`.
+
+#### Scenario: Python public API has no GatewayException
+
+- **WHEN** a caller inspects `rayito.__all__` and `rayito.exceptions`
+- **THEN** neither contains `GatewayException`
+
+#### Scenario: TypeScript public API has no GatewayError
+
+- **WHEN** a caller imports the package entry point
+- **THEN** it has no `GatewayError` export

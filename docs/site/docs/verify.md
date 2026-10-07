@@ -18,7 +18,7 @@ firmado: lista todos los assets salvo él mismo y su bundle, así que su firma
 cubre el SBOM y los avisos, que no llevan bundle propio.
 
 ```bash
-RAYD_VERSION=0.8.0   # la versión que vas a instalar, sin la "v"
+RAYD_VERSION=0.9.0   # la versión que vas a instalar, sin la "v"
 
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \

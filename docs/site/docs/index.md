@@ -16,15 +16,15 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.8"
-    Un agente de código dentro del sandbox (`sbx.agent` con OpenCode o
-    deepagents) que llama a su modelo sólo por la pasarela de secretos;
-    arranque rápido con `AgentTemplate`, pausa entre turnos o un pool
-    calentado; y una página de precios que separa la VM de los tokens del
-    modelo. Todo lo que tiene coste, apagado por defecto.
-    [Novedades de 0.8.0](novedades/0.8.0.md) ·
-    [0.7.x](novedades/0.7.1.md) ·
-    [0.6.x](novedades/0.6.0.md)
+!!! tip "Nuevo en 0.9"
+    Una release de limpieza: otro proceso puede usar el agente de un
+    sandbox con `Sandbox.connect()` (recupera `sbx.gateways`), el SDK de
+    Python honra `AWS_REGION`, y se retiran la opción D del arranque rápido
+    del agente y las excepciones de la pasarela que nada lanzaba. Tiene
+    cambios que rompen, con su migración.
+    [Novedades de 0.9.0](novedades/0.9.0.md) ·
+    [0.8.0](novedades/0.8.0.md) ·
+    [0.7.x](novedades/0.7.1.md)
 
 ## Empieza en tres pasos
 

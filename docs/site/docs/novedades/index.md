@@ -10,18 +10,20 @@ ejemplo, correcciones que cambian un comportamiento y los pasos para
 actualizar. El detalle completo, cambio a cambio, está en el
 [Changelog](../referencia/changelog.md) de cada componente.
 
-!!! warning "En la próxima versión (0.9.0): se retira la opción D del agente"
-    El pool con `opencode serve` residente desaparece sin periodo de
-    obsolescencia: `agent_pool_warmup(..., serve=True)`, `prepare(serve=)`
-    y `attach=` de `sbx.agent.run`/`stream` dejarán de existir, y el span
-    `rayito.agent.run` dejará de llevar `rayito.agent.attached`. Migración:
-    quita `serve=True` y `attach=`; para un primer mensaje rápido usa
-    `agent_pool_warmup(runtime)` (opción C) o el arranque normal
-    ([¿Qué uso?](../guias/agente-en-el-sandbox.md#que-uso)).
-
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.8.0** · 2026-10-07 · actual
+-   :material-tag:{ .lg .middle } **0.9.0** · 2026-10-07 · actual
+
+    ---
+
+    Limpieza y correcciones: se retira la opción D del agente y las
+    excepciones de la pasarela que nada lanzaba, `connect()` recupera
+    `sbx.gateways` desde otro proceso y el SDK de Python honra
+    `AWS_REGION`. Cambios que rompen, con su migración.
+
+    [:octicons-arrow-right-24: Novedades de 0.9.0](0.9.0.md)
+
+-   :material-tag:{ .lg .middle } **0.8.0** · 2026-10-07
 
     ---
 
@@ -80,7 +82,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.8.0"
+    print(rayito.__version__)  # "0.9.0"
     ```
 
 === "TypeScript"
@@ -88,7 +90,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.8.0"
+    console.log(VERSION); // "0.9.0"
     ```
 
 === "CLI"
@@ -120,14 +122,17 @@ Después, republica tu imagen sobre el `rayd` nuevo si quieres usar lo que
 corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
 `gateways=`, el endurecimiento de `rayd` 0.7.0 o los avisos de licencia
 de `rayd` 0.7.1 en `/usr/share/doc/rayd/`):
-[Imágenes](../images.md#publicar-las-tres). Desde 0.8, `rayito doctor`
-exige el `rayd` del tag `rayd-v0.8.0`, y el agente de IA (`sbx.agent`)
+[Imágenes](../images.md#publicar-las-tres). Desde 0.9, `rayito doctor`
+exige el `rayd` del tag `rayd-v0.9.0`, y el agente de IA (`sbx.agent`)
 necesita además una imagen con su runtime, construida con
 [`AgentTemplate`](../funciones-opcionales/templates-de-agente.md). Sin
 republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
 función que necesita el `rayd` nuevo falla cerrada con
 `UnimplementedError` y termina el sandbox que acaba de lanzar. Al pasar de
-0.7.x a 0.8.0, revisa el
+0.8.x a 0.9.0, revisa los
+[cambios que rompen](0.9.0.md#como-actualizar-desde-08x) (opción D del
+agente, `GatewayException`/`GatewayError` y, en Python, `AWS_REGION`); de
+0.7.x a 0.8.0, el
 [cambio que rompe en `register_webhook`](0.8.0.md#como-actualizar-desde-07x);
 de 0.6.x a 0.7.0, los
 [cambios de comportamiento](0.7.0.md#como-actualizar-desde-06x).
