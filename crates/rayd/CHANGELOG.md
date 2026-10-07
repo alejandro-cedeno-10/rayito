@@ -12,6 +12,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [0.9.1] - 2026-10-07
 
+Sin cambios en el agente: versión en paso con los SDK 0.9.1 (la idle por
+defecto que se adapta a un `timeout` corto es sólo del SDK). El SDK 0.9.1 se
+valida con el `rayd` del tag `rayd-v0.9.1`.
+
 ## [0.9.0] - 2026-10-07
 
 Sin cambios en el agente: versión en paso con los SDK 0.9.0 (la
