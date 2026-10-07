@@ -31,5 +31,8 @@
   `agent-template.json` and `pool-warmup.json`.
 - [x] 3.2 CHANGELOG entries for both SDKs.
 - [x] 3.3 Local gates (Python, TypeScript, OpenSpec, docs, hygiene).
-- [ ] 3.4 AWS acceptance (Q146–Q148, gates G1/G2) in the acceptance stage,
-  then archive.
+- [x] 3.4 AWS acceptance (Q146–Q149): G1 met (prefetch cuts the post-create
+  first token 19.6 s → 4.7 s); G2 not met — `opencode run --attach` loses
+  events on AWS, so D is not recommended. The acceptance also found that
+  the template did not install the deepagents runner; fixed here.
+- [ ] 3.5 Fix or drop serve-in-pool (D) before archiving (Q148).

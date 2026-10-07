@@ -257,27 +257,25 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 ## Calentamiento (`warmup`) y servidor residente
 
-!!! warning "Próximamente"
-    `PoolConfig.warmup` llega con `ai-agent-fast-start`, todavía sin
-    fusionar: la API y las cifras pueden cambiar. Los precios son **List**
-    (consultados 2026-10-06) y los tamaños de snapshot están por medir
-    (Q146–Q148).
+!!! warning "Sin publicar"
+    `PoolConfig.warmup` está en `main` y sale con 0.8.0. Las cifras de
+    esta sección están medidas en AWS real el 2026-10-07 (Q147 y Q148 de
+    `AWS_API_NOTES.md`); los costes son precios de lista (consultados
+    2026-10-06) por esos tiempos.
     [Agente en el sandbox](guias/agente-en-el-sandbox.md).
 
-Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (mediana
-11,3 s en el spike) en cada VM nueva. `PoolConfig.warmup` deja ese coste en
+Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (19,6 s de
+mediana tras `create()` sin prefetch, medido) en cada VM nueva. `PoolConfig.warmup` deja ese coste en
 el calentamiento de la plaza, antes de aparcarla, en vez de en la toma:
 
-<!-- noqa: example: API de ai-agent-fast-start, aún no fusionada en main -->
 ```python
-from rayito import PoolConfig, SandboxPool
-from rayito.agent import agent_pool_warmup
+from rayito import PoolConfig, agent_pool_warmup
 
 config = PoolConfig(
     size=3,
     template="rayito-agent",
     allow_internet_access=False,   # obligatorio en un pool de agentes
-    warmup=agent_pool_warmup(runtime="opencode", serve=True),
+    warmup=agent_pool_warmup("opencode"),
 )
 ```
 
@@ -287,14 +285,16 @@ backoff que un calentamiento normal, `failed += 1`). Un paso en segundo
 plano (`background=True`) se lanza y se suelta: el relleno no espera a que
 acabe.
 
-| Opción | Qué precalienta | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
-|---|---|---|---|
-| **C: `agent_pool_warmup(serve=False)`** | el binario de OpenCode (y deepagents, si aplica) ya en la caché de páginas | lanzamiento $0,0014 + calentar ≈ 15 s $0,0005 + aparcar (snapshot mayor, ≈ 1,24 GB a medir) ≈ $0,0047 ⇒ ≈ **$0,0066** | ≈ **$0,78** (frente a $0,60 de una plaza base) |
-| **D: `agent_pool_warmup(serve=True)`** | lo de C, más `opencode serve` ya arrancado y con una instancia calentada (`GET /config?directory=...`) | snapshot algo mayor (RSS de `serve` ≈ 316–575 MiB) ⇒ ≈ **$0,0078** | ≈ **$0,92** |
+| Opción | Qué precalienta | Medido (pool de 2, n=5) | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
+|---|---|---|---|---|
+| **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode (y deepagents, si aplica) ya en la caché de páginas | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
+| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | **no funciona todavía** (abajo); plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
 
-Una toma de una plaza con warmup lee el snapshot ya calentado: ≈ $0,0019
-(C) o ≈ $0,0023 (D), en vez de los $0,0014 de una plaza base, porque el
-snapshot pesa más.
+La API no devuelve el tamaño del snapshot de un `suspend`: el de C se toma
+igual al de la imagen (la memoria usada del guest tras la toma, 503 MiB, es
+menor que la de un `create()` fresco) y el de D le suma los 352 MiB más que
+usa el guest con el servidor. Una toma lee ese snapshot: ≈ $0,0014 (C) o
+≈ $0,0020 (D).
 
 ### Cómo funciona D (servidor residente)
 
@@ -314,17 +314,16 @@ de la VM en cada calentamiento) vive en el snapshot aparcado, con la misma
 custodia que el access token de la plaza (arriba); sin él, `GET /global/health`
 responde 401.
 
-### Decisión de diseño pendiente de medir en AWS
+### Resultado de la medida en AWS
 
-Si el prefetch (opción A de
-[Templates de agente](funciones-opcionales/templates-de-agente.md)) ya
-baja el primer `exec` al menos un 50% frente a no tener nada, se recomienda
-dejarlo como único mecanismo por defecto y reservar C/D para quien necesite
-exprimir aún más la latencia del primer evento; si el servidor residente
-(D) sólo mejora la mediana de "toma → primer evento" menos de 1 s frente a
-C, su coste extra (≈ $0,14/plaza/mes) no se recomienda por defecto. Ambas
-preguntas están en la etapa de aceptación de AWS, Q146–Q148 de
-`AWS_API_NOTES.md` §16.
+El prefetch (opción A de
+[Templates de agente](funciones-opcionales/templates-de-agente.md)) baja el
+primer `exec` tras `create()` un 76 % (19,6 s → 4,7 s de mediana), así que
+sigue encendido por defecto. C deja el primer token a 5,1 s de la toma.
+D no se recomienda: en AWS, `opencode run --attach` (1.18.34) sale tras el
+primer evento aunque el servidor complete la respuesta, y el SDK devuelve
+`AgentFailed(reason="protocol_error")` (5 de 5 tomas) o un resultado sin
+texto ni uso. Hasta que se resuelva, usa C.
 
 ## Coste por plaza (`rayito-base`, 0,92 GB de snapshot; `AWS_API_NOTES.md` §12 y `docs/benchmarks/2026-09-cold-start.md`)
 

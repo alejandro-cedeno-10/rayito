@@ -68,15 +68,15 @@ documenta que el guest ve más memoria que la configurada).
 !!! info "Coste y activación"
     - **Por defecto**: no se construye nada hasta llamar a `.build()` /
       usar la CLI (subcomando `agent template build`, aún sin fusionar).
-    - **Build**: ≈ 277 s medidos en el spike (necesita salida a Internet
-      para GitHub y PyPI; el sandbox que arranca desde la imagen resultante,
-      no).
-    - **Almacenamiento de la versión**: tres snapshots (código, memoria,
-      disco) suman ≈ 0,91 + 2,06 + 0,04 ≈ **3,0 GB** × $0,08/GB-mes, con el
-      mínimo de una semana por versión de imagen ⇒ ≈ **$0,056/semana**
-      (≈ $0,24/mes) por versión. Estimado: asume que el almacenamiento es
-      la suma de los tres snapshots.
-    - **Lanzamiento**: lectura del snapshot de memoria (0,91 GB)
+    - **Build**: 271–320 s medidos en AWS real (2026-10-07, tres builds;
+      necesita salida a Internet para GitHub y PyPI; el sandbox que arranca
+      desde la imagen resultante, no).
+    - **Almacenamiento de la versión**: tres snapshots medidos, código
+      2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ **3,1 GB** × $0,08/GB-mes,
+      con el mínimo de una semana por versión de imagen ⇒ ≈
+      **$0,057/semana** (≈ $0,25/mes) por versión. Asume que el
+      almacenamiento es la suma de los tres snapshots.
+    - **Lanzamiento**: lectura del snapshot de memoria (0,92 GB)
       ≈ **$0,0014**, igual que cualquier otra imagen.
     - **IAM**: `RayitoTemplateBuilder`, la misma política que
       [Templates declarativos](templates.md) (pila `templates`).
@@ -114,6 +114,17 @@ que sin prefetch, y el primer `sbx.agent.run()` encuentra el binario ya en
 la caché de páginas la mayoría de las veces. `sbx.agent.prepare()` dispara
 el mismo calentamiento cuando no hay demonio (por ejemplo, sin `prefetch`,
 o para forzarlo tras un rato de inactividad).
+
+!!! success "Medido en AWS real (2026-10-07, n=5)"
+    El demonio no cambia el tamaño del snapshot de memoria (916–925 MB con
+    y sin él). Tras `create()`, el primer token de OpenCode llega en 4,7 s
+    de mediana con prefetch frente a 19,6 s sin él (−76 %). A cambio, la
+    lectura compite con el arranque: `create()` tarda 16,6 s de mediana con
+    prefetch frente a 8,7 s sin él, así que de extremo a extremo (de
+    `create()` al primer token) la mejora es 28,3 s → 20,5 s. Los primeros
+    lanzamientos de una versión recién publicada son más lentos
+    (`create()` de 26 a 65 s): no midas justo después del build. Detalle en
+    `AWS_API_NOTES.md` Q146 y Q150.
 
 ## `--no-deepagents`, `--no-prefetch`
 

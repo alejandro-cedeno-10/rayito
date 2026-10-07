@@ -168,7 +168,8 @@ facturas distintas**: la VM (igual que cualquier sandbox) y el modelo, por
 tokens, en Bedrock, Anthropic o el proveedor que uses por la pasarela. Casi
 siempre la del modelo es, con diferencia, la mayor. Los precios de Bedrock
 de esta sección son **List**: aún no se han contrastado con una factura real
-(eso es Q151 de la etapa de aceptación en AWS). En la factura aparecen como
+(Q151 de `AWS_API_NOTES.md` sigue sin medir); los tokens de los ejemplos
+medidos sí son reales. En la factura aparecen como
 uso de AWS Marketplace.
 
 ### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
@@ -226,18 +227,32 @@ crece en cada paso sí lo son.
 
 <a id="plaza-de-pool-de-agente-c-y-d"></a>
 
-### Coste de la VM, con fast-start (List, estimado)
+### Coste de la VM, con fast-start
+
+Medido en AWS real el 2026-10-07 (`AWS_API_NOTES.md` Q146–Q150): los
+tiempos y los tokens son **Measured**; el dinero es precio de lista por esos
+tiempos (**List**), porque Cost Explorer llega un día tarde.
 
 | Escenario | Coste aproximado |
 |---|---|
 | Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
-| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,78/mes** |
-| Plaza de pool con servidor residente (opción D) | ≈ **$0,92/mes** |
-| Sandbox pausado 8 h entre turnos | ≈ 1,5 GB (snapshot con OpenCode ya corrido, no el de la imagen base) × $0,0001111/GB-h × 8 h ≈ $0,0013 de almacenamiento + un ciclo suspend/resume ≈ $0,008 (opción B, estimado, pendiente de medir: Q149) |
-| Versión de imagen `rayito-agent` | ≈ 3,0 GB × $0,08/GB-mes × 7/30 ≈ **$0,056/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,64/mes** |
+| Plaza de pool con servidor residente (opción D, no recomendada todavía) | ≈ **$0,82/mes** |
+| Sandbox pausado entre turnos (opción B) | un ciclo suspend/resume de ≈ 0,92–1,2 GB ≈ **$0,005–0,006** + ≈ $0,0001/h guardado |
+| Versión de imagen `rayito-agent` | código 2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ 3,1 GB × $0,08/GB-mes × 7/30 ≈ **$0,057/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
 
-Cómo salen las cifras de las plazas (todas **List**; los tamaños de
-snapshot de C y D están por medir):
+Coste medido por escenario (VM + modelo, una respuesta corta de Claude
+Haiku 4.5 sin herramientas, p50 de n=5):
+
+| Escenario | Hasta el primer token | VM | Modelo |
+|---|---|---|---|
+| `create()` sin prefetch | 28,3 s | lanzamiento $0,0014 + 28,5 s ≈ $0,0024 | ≈ $0,0009 (7 596 tokens leídos de caché; $0,0104 la vuelta que los escribe) |
+| `create()` con prefetch (A) | 20,5 s | ≈ $0,0021 | ≈ $0,0009 |
+| `connect()` tras `pause()` (B) | 3,1 s | ciclo ≈ $0,005–0,006 | ≈ $0,0009 |
+| `take()` de un pool con `warmup` (C) | 5,1 s | lectura $0,0014 + ≈ 5 s ≈ $0,0016 | ≈ $0,0009 |
+| `create()` con deepagents | 7,5 s tras `create()` (5,0 s OpenCode) | ≈ $0,0014 + segundos de VM | ≈ $0,0039 (3 503 tokens sin caché: por debajo del mínimo de 4 096 de Haiku) |
+
+Cómo salen las cifras de las plazas:
 
 - **Plaza base**: el límite de 8 h incluye el tiempo suspendido, así que
   el pool recicla cada ≈ 7 h ⇒ 720 h / 7 h ≈ **103 ciclos al mes**. Un ciclo
@@ -245,12 +260,16 @@ snapshot de C y D están por medir):
   (0,92 GB × $0,0038: $0,0035) + unos segundos de cómputo ≈ $0,0052.
   103 × $0,0052 ≈ $0,53 + almacenamiento 0,92 GB × $0,08 ≈ $0,074 ⇒
   **≈ $0,60/mes**.
-- **C (warmup)**: lanzar $0,0014 + calentar ≈ 15 s $0,0005 + aparcar
-  ≈ 1,24 GB $0,0047 ≈ $0,0066 × 103 ≈ $0,68 + almacenamiento ≈ $0,10 ⇒
-  **≈ $0,78/mes**.
-- **D (servidor residente)**: igual, con un snapshot de ≈ 1,5 GB ⇒
-  ≈ $0,0078 × 103 + ≈ $0,12 ⇒ **≈ $0,92/mes**.
-- **Pausar 8 h entre turnos (B)**: el sandbox no puede pasar de 8 h
+- **C (warmup)**: lanzar $0,0014 + 15,5 s medidos hasta la plaza lista
+  ($0,0005) + aparcar ≈ 0,92 GB ($0,0035) ≈ $0,0054 × 103 ≈ $0,56 +
+  almacenamiento $0,074 ⇒ **≈ $0,64/mes**. La API no da el tamaño del
+  snapshot de un `suspend`; se toma igual al de la imagen porque la memoria
+  usada del guest tras la toma (503 MiB) es menor que la de un `create()`
+  fresco.
+- **D (servidor residente)**: 17,7 s hasta la plaza lista y un snapshot de
+  ≈ 1,29 GB (el guest usa 352 MiB más, casi todo el servidor) ⇒
+  ≈ $0,0069 × 103 + ≈ $0,10 ⇒ **≈ $0,82/mes**.
+- **Pausar entre turnos (B)**: el sandbox no puede pasar de 8 h
   lanzado + suspendido. Pasado ese tope, guarda el estado con
   [persistencia](persistence.md) y crea una VM nueva (otro lanzamiento,
   $0,0014, y otra vez el primer `exec` frío).
@@ -260,13 +279,14 @@ snapshot de C y D están por medir):
 | Tu caso | Opción | Coste extra (List) |
 |---|---|---|
 | Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
-| Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,008 por ciclo + ≈ $0,00017/h guardado |
-| Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,78/plaza/mes |
-| Lo anterior y el primer evento cuanto antes | D. Pool con servidor residente | ≈ $0,92/plaza/mes |
+| Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,005–0,006 por ciclo + ≈ $0,0001/h guardado |
+| Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,64/plaza/mes |
+| Lo anterior y el servidor ya arrancado | D. Pool con servidor residente | no recomendado todavía |
 
-La etapa de aceptación decidirá con medidas si A queda encendida por
-defecto (si baja la mediana del primer `exec` al menos un 50 %) y si D se
-recomienda sobre C (si mejora la p50 "toma → primer evento" al menos 1 s).
+Decidido con las medidas: A queda encendida por defecto (baja el primer
+`exec` tras `create()` un 76 %, por encima del 50 % pedido) y D no se
+recomienda (`opencode run --attach` pierde los eventos en AWS; ver
+[Pool](pool.md#resultado-de-la-medida-en-aws)).
 
 ??? info "Fuentes y mediciones (agentes)"
     - Diseño: `design.md` de `ai-agent-core` en
@@ -282,5 +302,6 @@ recomienda sobre C (si mejora la p50 "toma → primer evento" al menos 1 s).
       consultados 2026-10-06.
     - Caché de prompts:
       [docs.aws.amazon.com/bedrock/.../prompt-caching.html](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
-    - La medición contra una factura real de esta cuenta queda pendiente de
-      la etapa de aceptación en AWS (Q146–Q152 de `AWS_API_NOTES.md` §16).
+    - Tiempos, tamaños y tokens medidos en AWS real el 2026-10-07
+      (Q146–Q150 y Q152 de `AWS_API_NOTES.md` §16); el contraste con una
+      factura real (Q151) sigue pendiente.
