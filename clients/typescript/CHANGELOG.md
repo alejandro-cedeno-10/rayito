@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-07
+
 ### Fixed
 
 - **`Sandbox.create({ timeoutMs: 120_000 })` sin `idle` ya no lanza
@@ -1188,7 +1190,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.1...HEAD
+[0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.0...typescript-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.8.0...typescript-v0.9.0
 [0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.1...typescript-v0.8.0
 [0.7.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.7.0...typescript-v0.7.1
