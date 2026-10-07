@@ -61,6 +61,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Changed
 
+- `rayito doctor` conoce la serie 0.9: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.9.0` para el SDK 0.9.
 - **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
   (barrido de docs de 0.8): las excepciones sin docstring lo tienen, los
   códigos de `MountException`, `AgentException` (`runtime_version_mismatch`

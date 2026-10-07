@@ -182,3 +182,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.6` | `0.6.0` | 0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0 |
 | `0.7` | `0.7.0` | 0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks aislados, persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0 |
 | `0.8` | `0.8.0` | 0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida con el rayd del tag rayd-v0.8.0 |
+| `0.9` | `0.9.0` | 0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del agente sin la opción D se validan con el rayd del tag rayd-v0.9.0 |
