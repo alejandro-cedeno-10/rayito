@@ -13,9 +13,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   que `except rayito.e2b.BuildException` no atrapaba un `Template.build()`
   fallido. Ahora son `rayito.BuildException`/`rayito.TemplateException`, y
   `BuildException` hereda de `SandboxException` (en E2B hereda de
-  `Exception`). Migración: nada que cambiar en los `except`; un
-  `except SandboxException` previo a un `except BuildException` pasa a
-  atrapar también los builds fallidos.
+  `Exception`). Migración: `except rayito.e2b.BuildException` ahora
+  atrapa los builds fallidos reales. Como la clase es un `SandboxException`,
+  cambian los `isinstance`/`issubclass` que suponían lo contrario. Además
+  tiene el constructor nativo (`BuildException(message, *, reason=...,
+  step=..., command=..., exit_code=..., log_tail=...)`): el código que la
+  lanza o la hereda debe pasar un único mensaje; `BuildException()` o
+  `BuildException(a, b)` fallan con `TypeError`.
 
 ### Changed
 

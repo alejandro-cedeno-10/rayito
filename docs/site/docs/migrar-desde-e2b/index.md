@@ -129,9 +129,10 @@ python -W always::UserWarning -m pytest
       credenciales tienen sus permisos ([IAM](../operacion/iam.md)).
 - [ ] Si tus sandboxes viven más de 8 horas (también pausados), usa
       [Persistencia](../persistence.md) con `reincarnate()`.
-- [ ] Si un `except SandboxException` va antes de tu `except
-      BuildException`, ten en cuenta que en Rayito `BuildException` es un
-      `SandboxException` ([Compatibilidad](../e2b-compat.md#tabla-de-imports)).
+- [ ] `except BuildException` importado de `rayito.e2b` atrapa el build
+      fallido; ojo si un `except SandboxException` va antes, porque lo
+      intercepta: en Rayito `BuildException` es un `SandboxException`
+      ([Compatibilidad](../e2b-compat.md#tabla-de-imports)).
 
 ## Qué cambia
 

@@ -278,10 +278,6 @@ Diferencias reales entre los dos shims:
   `UnimplementedError`: en TS la falta de credencial es un error de
   autenticación a propósito. Python lanza `UnimplementedError` con el motivo
   de la tabla. En los dos casos no se llama a AWS.
-- **`TemplateException`/`BuildException`.** En TS son las clases nativas
-  (`instanceof` vale con lo que lanza `Template.build()`); en Python son
-  clases propias del shim que nada lanza, y hay que atrapar las de
-  `rayito` ([tabla de imports](#tabla-de-imports)).
 - **Errores de volumen.** Python los exporta desde `rayito.e2b`
   (`VolumeException`, `VolumeNotFoundException`,
   `VolumePathNotFoundException`, las nativas); TS no los reexporta desde
