@@ -407,7 +407,16 @@ cabecera `e2b-webhook-id`: ése lo pone quien envía).
 
 El deliverer sólo entrega a URLs `https://` y nunca sigue redirecciones:
 pon el receptor detrás de tu terminación TLS (un balanceador, API Gateway o
-una URL de función de Lambda). Cómo trata tu respuesta:
+una URL de función de Lambda). Tampoco entrega a una dirección que no sea
+pública: su guardián SSRF resuelve el host y descarta loopback, redes
+privadas, link-local (incluida la de metadatos, `169.254.169.254`),
+multicast, reservadas y CGNAT (`100.64.0.0/10`), también escritas como IPv6
+(`::ffff:127.0.0.1`). `register_webhook`/`registerWebhook` aplica la misma
+regla antes de guardar nada cuando la URL lleva una IP literal o el host es
+`localhost` (o acaba en `.localhost`), con `InvalidArgumentException`/
+`InvalidArgumentError`. Un nombre DNS no se resuelve al registrarlo: si
+apunta (o pasa a apuntar, DNS rebinding) a una de esas direcciones, lo sigue
+parando el deliverer al entregar. Cómo trata tu respuesta:
 
 | Respuesta | Qué hace el deliverer |
 |---|---|
@@ -477,7 +486,7 @@ mantiene una versión más para no romper a quien ya la tiene vinculada.
 | `region` | `region` | la de la sesión | región de la pila |
 | `session` | `credentials` | la sesión por defecto | credenciales de AWS |
 | `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=, tags=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes, tags })` | 5 minutos (mínimo 2); sin etiquetas | despliega la pila; `tags` se propagan a sus recursos. El código de las Lambdas se sube a `rayito/stacks/events-webhooks/<sha256>.zip` del bucket, que debe ser de tu cuenta (`ExpectedBucketOwner`); si ya hay un objeto en esa clave, el SDK compara su contenido y lo sobrescribe si no es el suyo |
-| `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `url` es una URL `https://` que el deliverer pueda alcanzar (host DNS válido o IP, puerto 1–65535); `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
+| `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `url` es una URL `https://` que el deliverer pueda alcanzar (host DNS válido que no sea `localhost`, o IP pública; puerto 1–65535); `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
 | `get_events(sandbox_id=, types=, limit=, order=)` | `getEvents({ sandboxId, types, limit, order })` | `limit=100` (1–100), `order="desc"` | lee directamente de tu tabla DynamoDB; filtra `types` en DynamoDB y pagina hasta reunir `limit` |
 
 ## Errores y solución de problemas
@@ -485,7 +494,7 @@ mantiene una versión más para no romper a quien ya la tiene vinculada.
 | Python | TypeScript | Cuándo | Qué hacer |
 |---|---|---|---|
 | `WebhookException` | `WebhookError` | una llamada a DynamoDB o Secrets Manager falló (`aws_code`/`awsCode` trae sólo el código de AWS, nunca ARNs ni la cuenta), o la pila no está desplegada | revisa que quien llama tenga la política de esa llamada ([tabla](#que-politica-necesita-cada-llamada)); llama a `deploy()` primero |
-| `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` o que el deliverer no podría alcanzar (puerto fuera de rango, host inválido) | corrige el argumento antes de reintentar |
+| `InvalidArgumentException` | `InvalidArgumentError` | `events=` que no es un `LifecycleEvents`, o sin `logging` con CloudWatch; un `type` desconocido; `limit` fuera de 1–100; una URL que no es `https://` o que el deliverer no podría alcanzar (puerto fuera de rango, host inválido, `localhost` o una IP de loopback, privada, link-local o de metadatos) | corrige el argumento antes de reintentar |
 | `UnimplementedError` | `UnimplementedError` | `Sandbox.create(events=...)` sobre una imagen anterior a 0.6.0 (el sandbox se termina) | usa una imagen publicada con `rayd` 0.6.0 o posterior |
 | `WebhookException` (desde `create()`) | `WebhookError` | `Sandbox.create(events=...)` sin la pila desplegada, o sin permiso para leer su clave (el sandbox se termina) | despliega la pila o vincula `EventsLauncherPolicy` a quien llama |
 | `StackException` | `StackError` | `deploy`/`destroy` de la pila falló (código `blocked`/`not_found`/`failed`) | ver [Pilas opcionales](pilas-opcionales.md) |

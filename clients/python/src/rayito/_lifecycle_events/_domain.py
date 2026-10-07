@@ -6,6 +6,7 @@ lee el SDK (espejo de `rayd_core::lifecycle_events::event` y de
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Final
@@ -59,8 +60,22 @@ MAX_PORT: Final = 65_535
 #: Mismo texto en `domain.ts` (`INVALID_WEBHOOK_URL`); nunca repite la URL
 #: (puede llevar una credencial en la ruta).
 INVALID_WEBHOOK_URL: Final = (
-    "url debe ser una URL https:// válida: host DNS o IP, puerto entre 1 y 65535"
+    "url debe ser una URL https:// válida hacia una dirección pública: host DNS "
+    "(no localhost) o IP pública (no de loopback, privada, link-local ni de metadatos), "
+    "puerto entre 1 y 65535"
 )
+#: RFC 6761 §6.3: `localhost` y todo nombre bajo `.localhost` resuelven a
+#: loopback; el deliverer los rechazaría tras resolverlos.
+LOCALHOST_NAME: Final = "localhost"
+#: 100.64.0.0/10 (RFC 6598), el `CGNAT_BLOCK` del deliverer
+#: (`infra/lambdas/events_webhooks/domain/ssrf.py`): `ipaddress` no tiene
+#: predicado para este bloque.
+CGNAT_NETWORK: Final = ipaddress.ip_network("100.64.0.0/10")
+_DECIMAL_PATTERN: Final = re.compile(r"[0-9]*")
+_OCTAL_PATTERN: Final = re.compile(r"[0-7]*")
+_HEX_PATTERN: Final = re.compile(r"[0-9A-Fa-f]*")
+_IPV4_PARTS: Final = 4
+_IPV4_OCTET_LIMIT: Final = 256
 
 
 def event_type(kind: str) -> str:
@@ -104,9 +119,10 @@ class WebhookInfo:
 def is_deliverable_webhook_url(url: str) -> bool:
     """`True` si el deliverer puede entregar a `url`: esquema `https`, host
     no vacío (un nombre DNS codificable en IDNA, con etiquetas de 1-63
-    caracteres `[A-Za-z0-9_-]` y 253 en total, o una IP) y, si lo lleva,
-    puerto entre `MIN_PORT` y `MAX_PORT`. El mismo criterio que
-    `isDeliverableWebhookUrl` (`domain.ts`)."""
+    caracteres `[A-Za-z0-9_-]` y 253 en total, que no sea `localhost` ni
+    acabe en `.localhost`, o una IP que `is_blocked_webhook_address` no
+    bloquee) y, si lo lleva, puerto entre `MIN_PORT` y `MAX_PORT`. El mismo
+    criterio que `isDeliverableWebhookUrl` (`domain.ts`)."""
     if not _URL_SHAPE_PATTERN.fullmatch(url):
         return False
     try:
@@ -120,7 +136,90 @@ def is_deliverable_webhook_url(url: str) -> bool:
         return False
     if port is not None and not MIN_PORT <= port <= MAX_PORT:
         return False
-    return ":" in hostname or _is_valid_dns_name(ascii_host)
+    try:
+        address = _literal_address(hostname)
+    except ValueError:
+        return False
+    if address is not None:
+        return not is_blocked_webhook_address(address)
+    return _is_valid_dns_name(ascii_host) and not _is_localhost(ascii_host)
+
+
+def is_blocked_webhook_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """`True` para una dirección a la que el deliverer nunca entrega: la
+    misma regla que `is_blocked` del guard SSRF del deliverer
+    (`infra/lambdas/events_webhooks/domain/ssrf.py`) —loopback, privada,
+    link-local (IMDS incluida), multicast, reservada, sin especificar o
+    CGNAT—, y una IPv6 con una IPv4 dentro (`::ffff:a.b.c.d`) se juzga como
+    esa IPv4. Ambos lados pasan `testdata/lifecycle-events/
+    ssrf-address-vectors.json`. Aquí sólo se miran IPs literales: un nombre
+    DNS que resuelve a una de ellas (o que cambia de respuesta, DNS
+    rebinding) lo sigue parando el deliverer al resolver."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if address.is_loopback or address.is_private or address.is_link_local:
+        return True
+    if address.is_multicast or address.is_reserved or address.is_unspecified:
+        return True
+    return isinstance(address, ipaddress.IPv4Address) and address in CGNAT_NETWORK
+
+
+def _literal_address(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """La IP que `hostname` escribe literalmente, o `None` si es un nombre.
+    Una IPv6 va entre corchetes (`urlsplit` ya los quita). Un host que acaba
+    en número es una IPv4 según el parser WHATWG (`0x7f.1`, `2130706433`),
+    que es el que usa el SDK de TypeScript y lo que `getaddrinfo` acepta en
+    el deliverer; si no es una IPv4 válida, `ValueError`."""
+    if ":" in hostname:
+        return ipaddress.ip_address(hostname)
+    parts = hostname.split(".")
+    if len(parts) > 1 and parts[-1] == "":
+        parts.pop()
+    last = parts[-1]
+    if not (last.isascii() and last.isdigit()) and not _is_hex_number(last):
+        return None
+    return _whatwg_ipv4(parts)
+
+
+def _is_hex_number(part: str) -> bool:
+    return part[:2].lower() == "0x" and _HEX_PATTERN.fullmatch(part[2:]) is not None
+
+
+def _whatwg_ipv4(parts: list[str]) -> ipaddress.IPv4Address:
+    """El IPv4 parser de WHATWG URL sobre las partes ya separadas por `.`:
+    de 1 a 4 números decimales, octales (`0…`) o hexadecimales (`0x…`);
+    todos menos el último caben en un octeto y el último llena el resto."""
+    if len(parts) > _IPV4_PARTS or "" in parts:
+        raise ValueError("IPv4 con partes vacías o de más")
+    numbers = [_ipv4_number(part) for part in parts]
+    *leading, last = numbers
+    if any(number >= _IPV4_OCTET_LIMIT for number in leading):
+        raise ValueError("IPv4 con un octeto de más de 255")
+    if last >= _IPV4_OCTET_LIMIT ** (_IPV4_PARTS + 1 - len(numbers)):
+        raise ValueError("IPv4 fuera de rango")
+    value = last
+    for index, number in enumerate(leading):
+        value += number * _IPV4_OCTET_LIMIT ** (_IPV4_PARTS - 1 - index)
+    return ipaddress.IPv4Address(value)
+
+
+def _ipv4_number(part: str) -> int:
+    if part[:2].lower() == "0x":
+        digits, base, pattern = part[2:], 16, _HEX_PATTERN
+    elif len(part) > 1 and part.startswith("0"):
+        digits, base, pattern = part[1:], 8, _OCTAL_PATTERN
+    else:
+        digits, base, pattern = part, 10, _DECIMAL_PATTERN
+    if pattern.fullmatch(digits) is None:
+        raise ValueError("parte de IPv4 no numérica")
+    return int(digits, base) if digits else 0
+
+
+def _is_localhost(ascii_host: str) -> bool:
+    name = ascii_host.removesuffix(".").lower()
+    return name == LOCALHOST_NAME or name.endswith(f".{LOCALHOST_NAME}")
 
 
 def _is_valid_dns_name(ascii_host: str) -> bool:

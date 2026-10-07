@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
   eventRecordType,
   eventType,
+  type IpAddress,
+  isBlockedWebhookAddress,
   isDeliverableWebhookUrl,
+  parseIpAddress,
   sandboxExecutionId,
 } from "../../src/lifecycle-events/domain.js";
 import { deriveSandboxKey } from "../../src/lifecycle-events/keys.js";
@@ -69,6 +72,32 @@ describe("isDeliverableWebhookUrl", () => {
     }
     for (const url of URL_VECTORS.rejected) {
       expect(isDeliverableWebhookUrl(url), url).toBe(false);
+    }
+  });
+});
+
+const SSRF_VECTORS = JSON.parse(
+  readFileSync(resolve(REPO_ROOT, "testdata/lifecycle-events/ssrf-address-vectors.json"), "utf8"),
+) as { blocked: string[]; allowed: string[] };
+
+function urlFor(address: string): string {
+  return `https://${address.includes(":") ? `[${address}]` : address}/hook`;
+}
+
+describe("isBlockedWebhookAddress", () => {
+  it("gives the deliverer's SSRF verdict on the shared vectors", () => {
+    expect(SSRF_VECTORS.blocked.length).toBeGreaterThan(0);
+    for (const address of SSRF_VECTORS.blocked) {
+      const parsed = parseIpAddress(address);
+      expect(parsed, address).toBeDefined();
+      expect(isBlockedWebhookAddress(parsed as IpAddress), address).toBe(true);
+      expect(isDeliverableWebhookUrl(urlFor(address)), address).toBe(false);
+    }
+    for (const address of SSRF_VECTORS.allowed) {
+      const parsed = parseIpAddress(address);
+      expect(parsed, address).toBeDefined();
+      expect(isBlockedWebhookAddress(parsed as IpAddress), address).toBe(false);
+      expect(isDeliverableWebhookUrl(urlFor(address)), address).toBe(true);
     }
   });
 });

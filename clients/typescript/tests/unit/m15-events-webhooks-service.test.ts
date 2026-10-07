@@ -191,6 +191,27 @@ describe("LifecycleEvents", () => {
     });
   }
 
+  for (const url of [
+    "https://localhost/hook",
+    "https://127.0.0.1/hook",
+    "https://169.254.169.254/latest/meta-data/",
+    "https://10.0.0.5/hook",
+    "https://[::1]/hook",
+    "https://[fe80::1]/hook",
+    "https://[::ffff:169.254.169.254]/hook",
+  ]) {
+    it(`rejects ${url.slice(0, 30)}: localhost or a non-public literal ip`, async () => {
+      const ev = eventsClient(new FakeTable());
+      const failure = ev.registerWebhook(url, {
+        secretName: "x",
+        types: ["sandbox.lifecycle.killed"],
+      });
+      await expect(failure).rejects.toThrow(/dirección pública/);
+      await expect(failure).rejects.not.toThrow(url);
+      expect(await ev.listWebhooks()).toEqual([]);
+    });
+  }
+
   it("rejects an unknown event type", async () => {
     const ev = eventsClient(new FakeTable());
     await expect(
