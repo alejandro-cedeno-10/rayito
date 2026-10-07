@@ -95,9 +95,7 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     _module("langchain_aws", ChatBedrockConverse=_model("ChatBedrockConverse"))
     _module("langchain_anthropic", ChatAnthropic=_model("ChatAnthropic"))
     _module("langchain_openai", ChatOpenAI=_model("ChatOpenAI"))
-    _module(
-        "langchain_google_genai", ChatGoogleGenerativeAI=_model("ChatGoogleGenerativeAI")
-    )
+    _module("langchain_google_genai", ChatGoogleGenerativeAI=_model("ChatGoogleGenerativeAI"))
     _module("langchain")
     _module("langchain.agents")
     _module("langchain.agents.middleware", AgentMiddleware=AgentMiddleware)
