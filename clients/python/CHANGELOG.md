@@ -8,6 +8,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Cambios que rompen
 
+- **`rayito.e2b.BuildException` y `rayito.e2b.TemplateException` son las
+  clases nativas.** Antes eran clases propias del shim que nada lanzaba, así
+  que `except rayito.e2b.BuildException` no atrapaba un `Template.build()`
+  fallido. Ahora son `rayito.BuildException`/`rayito.TemplateException`, y
+  `BuildException` hereda de `SandboxException` (en E2B hereda de
+  `Exception`). Migración: `except rayito.e2b.BuildException` ahora
+  atrapa los builds fallidos reales. Como la clase es un `SandboxException`,
+  cambian los `isinstance`/`issubclass` que suponían lo contrario. Además
+  tiene el constructor nativo (`BuildException(message, *, reason=...,
+  step=..., command=..., exit_code=..., log_tail=...)`): el código que la
+  lanza o la hereda debe pasar un único mensaje; `BuildException()` o
+  `BuildException(a, b)` fallan con `TypeError`.
+
 - **Se retira la opción D del arranque rápido del agente** (pool con
   `opencode serve` residente), sin periodo de obsolescencia: apenas ganaba
   unas décimas a la opción C (`AWS_API_NOTES.md` Q154) y costaba más

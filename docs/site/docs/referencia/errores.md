@@ -231,11 +231,10 @@ apuntando a las clases nativas: `NotEnoughSpaceException` /
 `NotEnoughSpaceError` es `DiskFullException` / `DiskFullError`, y
 `ServiceBusyException` / `ServiceBusyError` es `CapacityException` /
 `CapacityError`. `Template.build()` del shim lanza las nativas
-`BuildException`/`TemplateException`: en TypeScript, `BuildError` y
-`TemplateError` de `rayito/e2b` son esas mismas clases; en Python,
-`rayito.e2b.BuildException` y `rayito.e2b.TemplateException` son todavía
-clases propias del shim que nada lanza, así que para atrapar un build
-fallido usa `rayito.BuildException`. Detalle:
+`BuildException`/`TemplateException`, y las homónimas de `rayito.e2b`
+(`BuildError`/`TemplateError` de `rayito/e2b` en TypeScript) son esas
+mismas clases: un `except rayito.e2b.BuildException` atrapa el build
+fallido igual que `except rayito.BuildException`. Detalle:
 [Diferencias con E2B](../e2b-compat.md#funciona-sin-cambios).
 
 ## Ver también

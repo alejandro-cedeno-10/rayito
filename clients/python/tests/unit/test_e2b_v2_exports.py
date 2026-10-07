@@ -169,15 +169,23 @@ def test_exception_hierarchy_follows_d13() -> None:
     e2b = rayito.e2b
     assert issubclass(e2b.GitAuthException, AuthenticationException)
     assert issubclass(e2b.GitUpstreamException, SandboxException)
-    assert issubclass(e2b.BuildException, Exception)
-    assert not issubclass(e2b.BuildException, SandboxException)
+    assert issubclass(e2b.BuildException, SandboxException)
     assert issubclass(e2b.TemplateException, SandboxException)
     assert issubclass(e2b.FileUploadException, TransferException)
     assert issubclass(e2b.UnimplementedError, NotImplementedError)
     assert not issubclass(e2b.UnimplementedError, SandboxException)
     assert issubclass(e2b.RayitoCompatWarning, UserWarning)
-    assert "nunca" in (e2b.BuildException.__doc__ or "")
-    assert "nunca" in (e2b.TemplateException.__doc__ or "")
+
+
+def test_the_shim_build_exceptions_are_the_native_classes() -> None:
+    """Un `except rayito.e2b.BuildException` atrapa el build fallido que
+    lanza `Template.build()`: el shim re-exporta las clases nativas."""
+    assert rayito.e2b.BuildException is rayito.BuildException
+    assert rayito.e2b.TemplateException is rayito.TemplateException
+    with pytest.raises(rayito.e2b.BuildException):
+        raise rayito.BuildException("fallo", reason="build_quota")
+    with pytest.raises(rayito.e2b.TemplateException):
+        raise rayito.TemplateException("nombre inválido")
 
 
 def test_the_shim_unimplemented_error_is_the_native_class() -> None:

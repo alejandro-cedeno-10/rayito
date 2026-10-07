@@ -129,11 +129,10 @@ python -W always::UserWarning -m pytest
       credenciales tienen sus permisos ([IAM](../operacion/iam.md)).
 - [ ] Si tus sandboxes viven más de 8 horas (también pausados), usa
       [Persistencia](../persistence.md) con `reincarnate()`.
-- [ ] En Python, si atrapas `BuildException` o `TemplateException` de un
-      `Template.build()`, atrapa las de `rayito` (`rayito.BuildException`),
-      no las de `rayito.e2b`: son clases distintas
-      ([Compatibilidad](../e2b-compat.md#tabla-de-imports)). En TypeScript
-      son las mismas.
+- [ ] `except BuildException` importado de `rayito.e2b` atrapa el build
+      fallido; ojo si un `except SandboxException` va antes, porque lo
+      intercepta: en Rayito `BuildException` es un `SandboxException`
+      ([Compatibilidad](../e2b-compat.md#tabla-de-imports)).
 
 ## Qué cambia
 
