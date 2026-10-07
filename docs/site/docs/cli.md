@@ -47,9 +47,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] <grupo> <comando> …
 ```
 
 - `--profile` y `--region` construyen la sesión de `boto3`; sin ellos se usa
-  la cadena habitual (`AWS_PROFILE`, `AWS_DEFAULT_REGION`, el fichero de
-  configuración, el rol de la máquina) más `AWS_REGION`, que la CLI lee
-  aunque `boto3` no lo haga. No hay API key de Rayito.
+  `AWS_REGION` y, si falta, la cadena habitual (`AWS_PROFILE`,
+  `AWS_DEFAULT_REGION`, el fichero de configuración, el rol de la máquina).
+  No hay API key de Rayito.
 - Sin región resoluble: `sin región: pasa --region o exporta AWS_REGION` y
   salida 2, antes de cualquier llamada. Sin credenciales o con un perfil
   desconocido, lo mismo.
@@ -279,7 +279,7 @@ Comportamiento:
 Un recorrido completo, con el token en un fichero que sólo lee tu usuario:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
 mkdir -p ~/.rayito && chmod 700 ~/.rayito           # --detach crea el fichero, no el directorio
 rayito sandbox create rayito-base --detach --timeout 1800 \
     --metadata equipo=datos --token-file ~/.rayito/demo.token      # imprime microvm-<id>

@@ -21,6 +21,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
+from rayito._aws_region import aws_session
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito._filesystem_base import guarded_messages
 from rayito._transfer_base import (
@@ -69,8 +70,10 @@ class S3Gateway:
 
     @classmethod
     def from_session(cls, session: boto3.session.Session | None, region: str) -> S3Gateway:
-        resolved = session or boto3.session.Session()
-        return cls(resolved.client("s3", region_name=region, config=presign_client_config()))
+        client = aws_session(session, region).client(
+            "s3", region_name=region, config=presign_client_config()
+        )
+        return cls(client)
 
     # ----------------------------------------------------------- presigning
 

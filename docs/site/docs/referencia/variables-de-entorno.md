@@ -80,8 +80,8 @@ v3 en TypeScript):
 | Variable | Qué hace |
 |---|---|
 | `AWS_PROFILE` | perfil de `~/.aws/config` (incluidos los de SSO) |
-| `AWS_DEFAULT_REGION` | región de los sandboxes en Python (`boto3`); en TypeScript, la alternativa si falta `AWS_REGION` |
-| `AWS_REGION` | región de los sandboxes en TypeScript y en la CLI. El SDK de Python **no** la lee (`boto3` sólo mira `AWS_DEFAULT_REGION` y el perfil): exporta las dos o pasa `region=` |
+| `AWS_DEFAULT_REGION` | alternativa si falta `AWS_REGION`, en los dos SDK |
+| `AWS_REGION` | región de los sandboxes en Python, TypeScript y la CLI; `region=` / `region` la sustituye |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | credenciales explícitas |
 
 ## Tests de extremo a extremo

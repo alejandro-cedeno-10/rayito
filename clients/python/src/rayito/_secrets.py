@@ -79,6 +79,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from rayito._aws import LazyClient, aws_code
+from rayito._aws_region import resolve_region
 from rayito._aws_sanitize import sanitize_aws_error
 from rayito.exceptions import (
     InvalidArgumentException,
@@ -481,9 +482,7 @@ class SecretStore:
     @property
     def region(self) -> str | None:
         """La región pedida (o la de la sesión); `None` = la cadena por defecto."""
-        if self._region is not None:
-            return self._region
-        return getattr(self._session, "region_name", None)
+        return resolve_region(self._region, self._session)
 
     @property
     def session(self) -> boto3.session.Session | None:

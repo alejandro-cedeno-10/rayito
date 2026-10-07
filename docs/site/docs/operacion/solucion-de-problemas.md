@@ -39,7 +39,7 @@ credenciales temporales dejan de valer cuando caducan esas credenciales,
 aunque la URL diga más.
 
 **`sin región: pasa --region o exporta AWS_REGION` (CLI, salida 2).** El
-SDK y la CLI necesitan una región: `export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1` (el SDK de Python, vía boto3, sólo lee `AWS_DEFAULT_REGION` o la región del perfil; TypeScript y la CLI leen `AWS_REGION`).
+SDK y la CLI necesitan una región: `export AWS_REGION=us-east-1` (los dos SDK y la CLI leen `AWS_REGION`; si falta, usan `AWS_DEFAULT_REGION` y después la región del perfil).
 
 **`AuthenticationException` / `AuthenticationError` al conectar.** El access
 token no es el del sandbox (lo has perdido o es de otro). No se puede

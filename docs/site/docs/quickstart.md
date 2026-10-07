@@ -11,7 +11,7 @@ y la imagen `rayito-base` publicada en tu cuenta
 ([Configurar AWS](primeros-pasos/configurar-aws.md)):
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 ```
 
 !!! tip "Cómo ejecutar cada ejemplo"
