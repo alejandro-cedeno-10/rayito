@@ -75,6 +75,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida "
         "con el rayd del tag rayd-v0.8.0",
     ),
+    CompatibilityRow(
+        "0.9",
+        "0.9.0",
+        "0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del "
+        "agente sin la opción D se validan con el rayd del tag rayd-v0.9.0",
+    ),
 )
 
 
