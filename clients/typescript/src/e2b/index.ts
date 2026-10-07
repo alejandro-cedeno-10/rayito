@@ -6,9 +6,11 @@
  *   import Sandbox from "rayito/e2b";               // antes: from "e2b"
  *   import { Sandbox } from "rayito/e2b";           // antes: from "@e2b/code-interpreter"
  *
- * Lo que Lambda MicroVMs no puede dar (fork, snapshots, templates, volúmenes,
- * secretos, MCP, IAM con audiencia) lanza o rechaza `UnimplementedError` con
- * el motivo; ver docs/site/docs/e2b-compat.md. Los alias de errores son las
+ * `Secret` es CRUD sobre Secrets Manager, `Template` construye de verdad y
+ * `Volume`/`volumeMounts` (experimental) funcionan con `new E2B({ volumeStore })`.
+ * Lo que Lambda MicroVMs no puede dar (fork, snapshots, MCP, IAM con
+ * audiencia, el contenido de un volumen fuera de un sandbox) lanza o rechaza
+ * `UnimplementedError` con el motivo; ver docs/site/docs/e2b-compat.md. Los alias de errores son las
  * clases nativas, así `instanceof` vale entre `rayito` y `rayito/e2b`.
  *
  * Node 20.0–20.3 no define `Symbol.asyncDispose`; el polyfill de E2B hace que

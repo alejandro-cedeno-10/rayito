@@ -1,1 +1,4 @@
-[{ "name": "class LifecycleEvents", "pattern": "^(export )?declare class LifecycleEvents\\b" }]
+[
+  { "name": "class LifecycleEvents", "pattern": "^(export )?declare class LifecycleEvents\\b" },
+  { "name": "opción events", "pattern": "^\\s*readonly events\\?: LifecycleEvents\\b" }
+]

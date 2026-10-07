@@ -26,8 +26,9 @@
  *   snapshot, ≈ $0,04/semana por versión.
  * IAM: ninguno adicional; la pila opcional `sizes-guard` niega `RunMicrovm`
  *   fuera de las imágenes listadas.
- * Cómo apagarla: no pases `size` (por defecto `undefined`); las versiones de
- *   cada imagen de tamaño se borran con `rayito image prune --image-name ...`.
+ * Cómo apagarla: no pases `size` (por defecto `undefined`); las versiones
+ *   antiguas de cada imagen de tamaño se borran con `rayito image prune
+ *   --image-name ... --keep 1` (conserva al menos la más nueva).
  * Ejemplo:
  *   const sbx = await Sandbox.create({ size: "4gb" });
  */

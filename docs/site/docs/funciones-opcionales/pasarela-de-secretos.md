@@ -193,11 +193,12 @@ terminar como mucho la petición en curso.
 
     # desde un pool: las plazas calientes nunca llevan la pasarela
     with SandboxPool(PoolConfig(size=2, template="rayito-base")) as pool:
-        sbx = pool.take(gateways={"anthropic": SecretGateway(
+        pooled = pool.take(gateways={"anthropic": SecretGateway(
             upstream="https://api.anthropic.com",
             headers={"x-api-key": "anthropic"},
             allow=[("POST", "/v1/messages")],
         )})
+        pooled.kill()
     ```
 
 === "TypeScript"
@@ -230,7 +231,7 @@ terminar como mucho la petición en curso.
 
     // desde un pool: las plazas calientes nunca llevan la pasarela
     await using pool = await new SandboxPool({ size: 2, template: "rayito-base" }).start();
-    const pooled = await pool.take({
+    await using pooled = await pool.take({
       gateways: {
         anthropic: new SecretGateway({
           upstream: "https://api.anthropic.com",
@@ -240,6 +241,92 @@ terminar como mucho la petición en curso.
       },
     });
     ```
+
+`sbx.gateways` es un mapa de solo lectura `{nombre: GatewayStatus}`
+(TypeScript: `sbx.gateways.get(nombre)`, `.entries()` y `.size`). Cada
+`GatewayStatus` trae `port`, `url` (`http://127.0.0.1:<port>`) y
+`last_error_class`/`lastErrorClass` (`None`/`undefined` salvo que la ruta
+haya fallado). Sin `gateways=`, `sbx.gateways` está vacío y `refresh()` no
+hace nada.
+
+## Pasarelas para el modelo de un agente
+
+Para el modelo de un [agente en el sandbox](../guias/agente-en-el-sandbox.md),
+tres funciones construyen la `SecretGateway` con el `upstream`, la cabecera
+y un `allow` ya restringido al proveedor (y, en Bedrock, a los modelos que
+elijas). Construirlas no llama a AWS: el coste y la activación son los de
+`SecretGateway`.
+
+| Python | TypeScript | Upstream | Cabecera | `allow` |
+|---|---|---|---|---|
+| `bedrock_gateway(secret, region=, models=)` | `bedrockGateway(secret, { region, models })` | `https://bedrock-runtime.<región>.amazonaws.com` | `authorization` (el secreto guarda `Bearer <clave>`) | `POST /model/<id>/converse-stream` y `/converse` de cada modelo |
+| `anthropic_gateway(secret)` | `anthropicGateway(secret)` | `https://api.anthropic.com` | `x-api-key` | `POST /v1/messages` |
+| `openai_compatible_gateway(secret, upstream=, base_path=)` | `openaiCompatibleGateway(secret, { upstream, basePath })` | el `upstream` que pases | `authorization` (`Bearer <clave>`) | `POST <base_path>/chat/completions` |
+
+Las tres aceptan además `rate_per_minute=`/`ratePerMinute`. `secret` es el
+nombre del secreto (o un `SecretRef`), nunca el valor.
+
+=== "Python"
+
+    ```python
+    from rayito import Sandbox, anthropic_gateway, bedrock_gateway
+
+    with Sandbox.create(
+        gateways={
+            "bedrock": bedrock_gateway(
+                "bedrock-key",
+                region="us-east-1",
+                models=["us.anthropic.claude-haiku-4-5-20251001-v1:0"],
+                rate_per_minute=60,
+            ),
+            "anthropic": anthropic_gateway("anthropic"),
+        }
+    ) as sbx:
+        print(sbx.gateways["bedrock"].url)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox, anthropicGateway, bedrockGateway } from "rayito";
+
+    await using sbx = await Sandbox.create({
+      gateways: {
+        bedrock: bedrockGateway("bedrock-key", {
+          region: "us-east-1",
+          models: ["us.anthropic.claude-haiku-4-5-20251001-v1:0"],
+          ratePerMinute: 60,
+        }),
+        anthropic: anthropicGateway("anthropic"),
+      },
+    });
+    console.log(sbx.gateways.get("bedrock")?.url);
+    ```
+
+`bedrock_gateway` no admite ARNs en `models` (la pasarela rechaza un `/`
+codificado en la ruta): usa el id del modelo o del perfil de inferencia.
+Cómo conectarla con `sbx.agent`:
+[Agente en el sandbox](../guias/agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela).
+
+## Errores
+
+- Una `SecretGateway` mal formada (cabecera prohibida o repetida, ruta de
+  `allow` imposible, `upstream` que no es `https://host`, más rutas o
+  reglas que los [límites](#limites)) es `InvalidArgumentException`/
+  `InvalidArgumentError` al construirla o al pasarla a `create()`/`take()`,
+  antes de cualquier llamada a AWS.
+- Un secreto que no existe es `SecretNotFoundException`/
+  `SecretNotFoundError`: se lee justo antes de configurar el sandbox ya
+  lanzado, que `create()` termina (salvo `keep_on_failure`/
+  `keepOnFailure`).
+- Si `rayd` rechaza la configuración, `create()`/`take()`/`refresh()`
+  lanzan `SandboxException`/`SandboxError` con la clase del fallo en el
+  mensaje (`UnimplementedError` en una imagen anterior a 0.6.0).
+- Lo que la pasarela rechaza **por petición** nunca es una excepción del
+  SDK: el proceso del sandbox recibe la respuesta HTTP (403 fuera de
+  `allow`, 429 por encima del límite, 502/504 si falla el `upstream`).
+  `GatewayException`/`GatewayError` se exporta, pero esta versión del SDK
+  no la lanza.
 
 ## Divergencias con E2B
 

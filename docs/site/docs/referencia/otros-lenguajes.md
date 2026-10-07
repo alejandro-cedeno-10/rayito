@@ -34,6 +34,26 @@ cliente gRPC y un SDK de AWS puede usar Rayito.
 El access token se fija al crear el sandbox: el SDK genera 32 bytes
 aleatorios y envía sólo su sha256 en el `runHookPayload` de `run-microvm`.
 
+## Servicios de `rayd`
+
+Ocho servicios en el paquete `rayito.v1`, todos en el puerto `8080`:
+
+| Servicio (`.proto`) | RPCs | Qué cubre en los SDK |
+|---|---|---|
+| `HealthService` (`health.proto`) | `Health`, `Metrics`, `MetricsHistory` | readiness, `get_health()`, `get_metrics()`, `get_metrics_history()` |
+| `ProcessService` (`process.proto`) | `Start`, `Connect`, `SendInput`, `CloseStdin`, `SendSignal`, `List` | `sbx.commands` (y `sbx.git` y `sbx.agent`, que corren comandos) |
+| `FilesystemService` (`filesystem.proto`) | `Read`, `Write`, `Stat`, `ListDir`, `MakeDir`, `Move`, `Remove`, `WatchDir`, `Checkpoint`, `Restore`, `StartImport`, `StartExport`, `GetTransfer`, `WatchTransfer`, `CancelTransfer` | `sbx.files`, la persistencia y las transferencias por S3 |
+| `PtyService` (`pty.proto`) | `Create`, `Connect`, `SendInput`, `Resize`, `Kill` | `sbx.pty` |
+| `CodeService` (`code.proto`) | `CreateContext`, `Execute`, `Reattach`, `ListContexts`, `DestroyContext`, `RestartContext` | `run_code()` y los contextos de código |
+| `LifecycleService` (`lifecycle.proto`) | `SetTimeout` | el plazo del servidor (`set_timeout()`, `connect(timeout=)`) |
+| `NetworkService` (`network.proto`) | `UpdateNetwork`, `GetNetwork` | la política de egress (`update_network()`, `get_network()`) |
+| `ConfigureService` (`configure.proto`) | `Configure`, `ConfigureStatus` | las secciones de las funciones opcionales: eventos (`lifecycle_events.proto`), OTLP (`telemetry_export.proto`), pasarela de secretos (`secret_gateway.proto`), montajes S3 (`s3_mounts.proto`) y volúmenes EFS (`efs_volumes.proto`) |
+
+`common.proto` define `StreamError` (los códigos de error dentro de un
+stream) y `features.proto`, las capacidades que el agente anuncia. El mapeo
+de status y códigos a excepciones que conviene replicar está en
+[Errores](errores.md#como-se-elige-la-excepcion).
+
 ## Clientes previstos
 
 - Un cliente **Rust** es trivial de construir (`aws-sdk-lambdamicrovms`

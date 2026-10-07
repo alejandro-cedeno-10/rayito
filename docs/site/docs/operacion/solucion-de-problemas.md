@@ -9,22 +9,26 @@ rayito doctor --template rayito-base           # añade --launch para probar un 
 
 ## `rayito doctor` { #rayito-doctor }
 
-Cada comprobación termina en `OK`, `WARN`, `FAIL` o `SKIP`. Con `--json`,
+Cada comprobación termina en `OK`, `WARN`, `FAIL` o `SKIP`. Un permiso
+denegado sale como `<operación> denegado: …`; con `rayito --json doctor`,
 `details.operation` nombra la llamada que AWS rechazó y `details.action` el
-permiso que hace falta.
+permiso que hace falta. Las siete primeras son de sólo lectura; las 8 a 10
+necesitan un sandbox `RUNNING` de la imagen, o `--launch` para crear uno de
+300 s que se mata al final.
 
 | # | Comprobación | `FAIL` (o `WARN`) típico | Arreglo |
 |---|---|---|---|
 | 1 | `credentials` | sin credenciales, token caducado, sin región; `WARN` si la región no tiene Lambda MicroVMs | `aws sso login --profile <tu-perfil>`; exporta `AWS_PROFILE` y `AWS_REGION` con una de las diez regiones |
 | 2 | `managed-images` | `AccessDenied`, endpoint desconocido o región sin el servicio | actualiza `boto3` (`pip install -U boto3`); cambia de región |
-| 3 | `quotas` | `WARN`: una cuota de MicroVM por debajo del valor por defecto (cuentas nuevas) | pide el aumento en Service Quotas |
-| 4 | `iam-simulation` | `WARN` por `lambda:PassNetworkConnector` | es un falso positivo del simulador: ignóralo. Otros `implicitDeny`: revisa la [política](iam.md) |
-| 5 | `bucket` | 403/404 en el bucket de artefactos, o bucket en otra región | concede `s3:ListBucket`; usa un bucket de la misma región |
+| 3 | `quotas` | `WARN`: una cuota de MicroVM por debajo del valor por defecto (cuentas nuevas); `SKIP` si falta el permiso | pide el aumento en Service Quotas |
+| 4 | `iam-simulation` | `WARN` por `lambda:PassNetworkConnector`; `SKIP` sin `iam:SimulatePrincipalPolicy` | es un falso positivo del simulador: ignóralo. Otros `implicitDeny`: revisa la [política](iam.md) |
+| 5 | `bucket` | 403/404 en el bucket de artefactos, o bucket en otra región; `SKIP` sin `--bucket` ni `RAYITO_BUCKET` | concede `s3:ListBucket`; usa un bucket de la misma región |
 | 6 | `image-gate` | la imagen no existe o su versión no es lanzable | `rayito image publish …`; si el build falló, mira su `stateReason` |
-| 7 | `sandboxes` | más de 10 sandboxes `RUNNING` (`WARN` de 1 a 10): facturan | `rayito sandbox list`; `rayito sandbox kill --all` |
+| 7 | `sandboxes` | más de 10 sandboxes `RUNNING` de esa imagen (`WARN` de 1 a 10): facturan | `rayito sandbox list`; `rayito sandbox kill --all --template <imagen>` |
 | 8 | `token` | `AccessDenied` al acuñar el token del proxy; `SKIP` si no hay ningún sandbox `RUNNING` | concede `lambda:CreateMicrovmAuthToken`; usa `--launch` |
-| 9 | `agent` | el agente no responde (`UNAVAILABLE`, 403 del proxy); `WARN` si el kernel no está listo | espera unos segundos; republica la imagen |
-| 10 | `compatibility` | el `rayd` de la imagen es más antiguo que el que exige el SDK | publica la imagen de la release de tu SDK ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) |
+| 9 | `agent` | `rayd responde pero no está agent_ready`, o no responde (`UNAVAILABLE`, 403 del proxy); `WARN` con `kernel_ready=false`, `hook_anomalies` mayor que 0 o `imds_blocked=false` en una imagen `-caps`; `SKIP` sin token | espera unos segundos; republica la imagen; con `hook_anomalies`, revisa quién acuña tokens `allPorts` ([Seguridad](../security.md)) |
+| 10 | `compatibility` | el `rayd` de la imagen es más antiguo que el que exige el SDK ([tabla de compatibilidad](../limits.md#compatibilidad-sdk-rayd-imagen)) | publica la imagen de la release de tu SDK ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) |
+| — | `efs-network` (sólo con `--efs-vpc-id` y `--efs-subnet-ids`) | la VPC o las subredes no sirven para `rayito stack deploy efs-volumes` | corrige lo que nombra; no crea nada ([Volúmenes EFS en tu VPC](../funciones-opcionales/volumenes-efs-vpc.md)) |
 
 ## Credenciales y región
 
@@ -35,7 +39,7 @@ credenciales temporales dejan de valer cuando caducan esas credenciales,
 aunque la URL diga más.
 
 **`sin región: pasa --region o exporta AWS_REGION` (CLI, salida 2).** El
-SDK y la CLI necesitan una región: `export AWS_REGION=us-east-1`.
+SDK y la CLI necesitan una región: `export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1` (el SDK de Python, vía boto3, sólo lee `AWS_DEFAULT_REGION` o la región del perfil; TypeScript y la CLI leen `AWS_REGION`).
 
 **`AuthenticationException` / `AuthenticationError` al conectar.** El access
 token no es el del sandbox (lo has perdido o es de otro). No se puede
@@ -147,13 +151,37 @@ host](../guias/puertos-y-host.md)).
 
 ## TypeScript
 
-**`InvalidArgumentError` diciendo que instales `@aws-sdk/client-secrets-manager`
-o `@aws-sdk/client-dynamodb`.** Son *peerDependencies* opcionales: instálalas
-sólo si usas secretos o el índice (`npm i @aws-sdk/client-secrets-manager`).
+**`InvalidArgumentError: <función> necesita el paquete opcional '<paquete>': instala npm install <paquete>`.**
+Los clientes de AWS de las funciones opcionales (secretos y pasarela,
+índice, pilas opcionales, eventos, volúmenes EFS, dominio propio,
+OpenTelemetry...) son *peerDependencies* opcionales del paquete: sólo se
+cargan cuando usas esa función. Instala el que nombra el mensaje (por
+ejemplo, `npm i @aws-sdk/client-secrets-manager` para `secrets=` o
+`gateways=`).
 
 **`await using` no compila.** Necesitas TypeScript ≥ 5.2 con
 `"lib": ["ES2022", "ESNext.Disposable"]`. Sin `await using`, usa
 `try { … } finally { await sbx.kill(); }`.
+
+## Agente
+
+Los fallos de `sbx.agent.run()`/`.stream()` son `AgentException`
+(TypeScript: `AgentError`) con un `reason` cerrado; la tabla completa está
+en [Errores](../referencia/errores.md#agentexception-agenterror).
+
+**`reason="runtime_missing"`.** La imagen no trae el runtime (`opencode` no
+está en el `PATH`) o, con `attach=True`, su servidor residente no responde.
+Crea el sandbox desde una imagen construida con `AgentTemplate`
+([Templates de agente](../funciones-opcionales/templates-de-agente.md)).
+
+**`reason="busy"`.** Ya hay un `run`/`stream` en curso en ese sandbox: uno a
+la vez por sandbox. Espera a que termine o usa otro sandbox.
+
+**`reason="model_error"`.** El modelo respondió con error. Revisa que el
+secreto de la pasarela tenga la credencial completa (para Bedrock,
+`Bearer <clave>`, que caduca: rótala con `sbx.gateways.refresh()`) y que el
+modelo esté en `models=` del preset
+([Agente en el sandbox](../guias/agente-en-el-sandbox.md)).
 
 ## Secretos
 
@@ -181,7 +209,8 @@ usa siempre `with` / `await using`, un `timeout` ajustado y el
 [plazo del servidor](../lifecycle.md) con `on_timeout="kill"`, que se cumple
 aunque tu proceso muera.
 
-**Versiones de imagen acumuladas.** Cada una cuesta ≈ $0,04 por semana:
+**Versiones de imagen acumuladas.** Cada una cuesta ≈ $0,04 por semana
+([Precios](../cost.md#cuanto-cuesta-con-ejemplos)):
 `rayito image prune --dry-run` y después `rayito image prune --keep 5`.
 
 ## Ver también

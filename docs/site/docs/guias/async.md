@@ -93,7 +93,7 @@ método es una corrutina. En TypeScript todo es asíncrono desde el principio.
     ```
 
 Las llamadas a AWS pasan por un limitador de ritmo por proceso alineado con
-las cuotas de la API (5 `run-microvm` por segundo): lanzar 20 sandboxes a la
+las cuotas de la API ([Límites](../limits.md)): lanzar 20 sandboxes a la
 vez es seguro, sólo tarda algo más.
 
 ## Equivalencias
@@ -103,6 +103,8 @@ vez es seguro, sólo tarda algo más.
 | `Sandbox.create(...)` | `await AsyncSandbox.create(...)` | `await Sandbox.create({...})` |
 | `with Sandbox.create() as sbx:` | `async with await AsyncSandbox.create() as sbx:` | `await using sbx = await Sandbox.create();` |
 | `sbx.kill()` | `await sbx.kill()` | `await sbx.kill()` |
+| `sbx.close()` | `await sbx.close()` | `sbx.close()` |
+| `Sandbox.connect(id, access_token=t)` | `await AsyncSandbox.connect(id, access_token=t)` | `await Sandbox.connect(id, { accessToken: t })` |
 | `for item in Sandbox.list():` | `for item in await AsyncSandbox.list():` | `for await (const item of Sandbox.list())` |
 | `for chunk in handle:` | `async for chunk in handle:` | `for await (const chunk of handle)` |
 | `sbx.files.watch_dir(...)` (con `with`) | `await sbx.files.watch_dir(...)` (con `async with`) | `await using watch = await sbx.files.watchDir(...)` |
@@ -119,7 +121,8 @@ TypeScript](../referencia/typescript.md) lista cada clase.
 
 - Los RPC al agente van por `grpc.aio`; las llamadas al plano de control de
   AWS (`boto3`, que es síncrono) van por `asyncio.to_thread`.
-- `rayito.e2b.AsyncSandbox` (el shim de E2B) es el mismo `AsyncSandbox`.
+- `rayito.e2b.AsyncSandbox` (el shim de E2B) envuelve el `AsyncSandbox`
+  nativo con las firmas de E2B; el nativo está en `sbx.native`.
 - En TypeScript no hay árbol síncrono: Node no tiene un cliente gRPC
   bloqueante, igual que el SDK JS de E2B.
 

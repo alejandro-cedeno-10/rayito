@@ -172,12 +172,13 @@ class AgentTemplate:
     Recursos y llamadas AWS: los de `Template.build` (un build de imagen,
         `s3:PutObject` del contexto, una versión de imagen nueva); nada si
         no se construye.
-    Coste aproximado: build ≈ 277 s (spike); la versión almacenada ≈ 3,0 GB
-        por $0,08/GB-mes, con el mínimo de una semana ≈ $0,056/semana
-        (≈ $0,24/mes) por versión, y cada lanzamiento lee el snapshot de
-        memoria (≈ 0,91 GB por $0,00155/GB ≈ $0,0014). Estimación con precios
-        de lista de Lambda MicroVMs, us-east-1, consultados 2026-10-06
-        (https://aws.amazon.com/lambda/pricing/).
+    Coste aproximado: build de 271-320 s (medido en AWS, 2026-10-07); la
+        versión almacenada ≈ 3,1 GB (código 2,10 + memoria 0,92 + disco
+        0,04) por $0,08/GB-mes, con el mínimo de una semana ≈
+        $0,057/semana (≈ $0,25/mes) por versión, y cada lanzamiento lee el
+        snapshot de memoria (≈ 0,92 GB por $0,00155/GB ≈ $0,0014).
+        Estimación con precios de lista de Lambda MicroVMs, us-east-1,
+        consultados 2026-10-06 (https://aws.amazon.com/lambda/pricing/).
     IAM: la política `RayitoTemplateBuilder` (la misma que `Template.build`).
     Cómo apagarla: no la construyas; borra sus versiones con `rayito image`.
     Ejemplo:

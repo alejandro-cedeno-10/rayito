@@ -97,6 +97,30 @@ proxy de AWS.
   `x-aws-proxy-auth`/`x-aws-proxy-port` — `get_host()` ya lo resuelve sin
   desplegar nada; para desarrollo local, `rayito sandbox proxy`.
 
+## Instalación
+
+Registrar rutas firma con SigV4A (lo exige el plano de datos de
+`cloudfront-keyvaluestore`), que no viene en la instalación por defecto:
+
+=== "Python"
+
+    ```bash
+    pip install "rayito[custom-domain]"   # trae awscrt
+    ```
+
+    Sin el extra, `register()`/`refresh()`/`unregister()` lanzan
+    `CustomDomainException` con esta misma orden. `deploy()`/`status()`/
+    `destroy()` no lo necesitan.
+
+=== "TypeScript"
+
+    ```bash
+    npm i @aws-sdk/client-cloudformation @aws-sdk/client-cloudfront-keyvaluestore @aws-sdk/signature-v4a
+    ```
+
+    Los tres son peers opcionales: se cargan en la primera llamada que los
+    usa.
+
 ## Activarlo
 
 Necesitas tres cosas:
@@ -347,7 +371,7 @@ borra todo al terminar. Sin esas variables se salta.
 
 ## Limitaciones conocidas
 
-- Sin `Sandbox.create(domain=)`/`expose()`/`get_host()` cableados, hay que
+- Sin `Sandbox.create(domain=)` ni `get_host()` cableados, hay que
   registrar la ruta a mano (como en el ejemplo).
 - El token de tráfico sólo se guarda como su hash sha256: si lo pierdes,
   genera uno nuevo y vuelve a registrar la ruta.

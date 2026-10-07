@@ -6,6 +6,21 @@ sus filas). Tres principales: el operador del SDK (confianza
 total), el código que corre dentro del sandbox (**ninguna**) y AWS (proxy,
 hooks, snapshot).
 
+## Reportar una vulnerabilidad
+
+En privado, con [GitHub Private Vulnerability Reporting](https://github.com/alejandro-cedeno-10/rayito/security/advisories/new);
+nunca en un issue público, y nunca pegando un JWE (`x-aws-proxy-auth`), un
+access token (`x-access-token`) ni un `runHookPayload`. Incluye la versión
+del SDK, el `agent_version` de `get_health()`, la imagen y su versión, la
+región y una reproducción mínima sin datos de clientes. Acuse de recibo en
+7 días y corrección o mitigación en 90; no hay programa de recompensas.
+
+**Versiones soportadas**: sólo la última línea `MAJOR.MINOR`, hoy la
+**0.8.x** (SDK de Python y de TypeScript, y una imagen con `rayd` 0.8.x);
+mientras el proyecto esté en 0.x no hay ramas de mantenimiento de líneas
+anteriores ([Versionado y soporte](limits.md#versionado-y-soporte),
+[Compatibilidad SDK ↔ rayd ↔ imagen](limits.md#compatibilidad-sdk-rayd-imagen)).
+
 ## Lo que protege el SDK por defecto
 
 | Amenaza | Mitigación |
@@ -272,8 +287,11 @@ resumen saneado); tampoco URLs
 prefirmadas, buckets, claves o rutas de una transferencia, metadatos de
 fichero, entradas de la política de egress, destinos del proxy ni
 credenciales de git, ni el JWE, las cabeceras, los cuerpos ni las rutas de
-lo que pasa por `rayito sandbox proxy`, ni valores ni nombres de secretos. Sólo ids, códigos de
-estado, recuentos y duraciones.
+lo que pasa por `rayito sandbox proxy`, ni valores ni nombres de secretos,
+ni el prompt, las instrucciones o el texto de un agente de `sbx.agent` (sus
+errores llevan un `reason` cerrado y un mensaje de tabla fija, y el span
+opcional `rayito.agent.run` sólo atributos `gen_ai.*` y de tokens). Sólo
+ids, códigos de estado, recuentos y duraciones.
 
 <a id="rayito-sandbox-proxy-m12"></a>
 
@@ -348,11 +366,12 @@ alcanzable por cualquier proceso del mismo uid (1000) que el propio agente
 — `get_host(4096)` sin la contraseña recibe 401.
 
 **Cadena de suministro del runtime (T30).** OpenCode y ripgrep se instalan
-por sha256 fijado (`scripts/check_pins.py` los valida contra `limits.json`);
+por versión y sha256 fijados en `limits.json`, que el build de la plantilla
+comprueba con `sha256sum -c` antes de instalar;
 el venv de deepagents se instala con `--require-hashes`; el sha256 del
 runner de deepagents (`runner_sha256`) queda registrado en el manifiesto
-del template, y `AgentSpec.runtime_version` se compara con la versión del
-manifiesto. Autoupdate, la descarga de
+del template (`/opt/agents/rayito-agent.json`); `AgentSpec.runtime_version`
+hoy sólo se valida como texto y **no** se compara con ese manifiesto. Autoupdate, la descarga de
 modelos, de LSPs, los plugins por defecto y la lectura de un `.claude/` del
 workdir están apagados (`autoupdate: false`, `share: "disabled"`, `OPENCODE_DISABLE_CLAUDE_CODE=1`); nada de eso
 sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y

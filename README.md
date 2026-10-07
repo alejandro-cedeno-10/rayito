@@ -17,53 +17,130 @@ Documentación completa: **https://alejandro-cedeno-10.github.io/rayito/**
 → [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/)
 → [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
 ¿Vienes de E2B? [Migrar desde E2B](https://alejandro-cedeno-10.github.io/rayito/migrar-desde-e2b/).
-Una guía por función (comandos, código, ficheros, PTY, red, pausa, pool…) en
-[Guías](https://alejandro-cedeno-10.github.io/rayito/guias/) y la API de
-Python y TypeScript en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia/).
+Una guía por función en [Guías](https://alejandro-cedeno-10.github.io/rayito/guias/) y la API de Python, TypeScript
+y la CLI en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia/).
 
 La ergonomía de E2B sin que el código de tus clientes salga de tu cuenta, y sin
 clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
 
+## Instalar
+
 ```bash
-pip install rayito          # SDK Python (clients/python); Python >= 3.11
-pnpm add rayito             # SDK TypeScript (clients/typescript); Node >= 20
-                            # o: npm i rayito / yarn add rayito / bun add rayito
+pip install "rayito[cli]"   # SDK Python (Python >= 3.11) y la CLI `rayito`
+pnpm add rayito             # SDK TypeScript (Node >= 20); o: npm i rayito / yarn add rayito / bun add rayito
 ```
+
+La CLI (`rayito image publish`, `rayito doctor`…) es Python aunque uses el
+SDK de TypeScript. Extras de Python: `cli`, `mcp` (servidor MCP), `otel`
+(trazas OpenTelemetry) y `custom-domain` (dominio propio, experimental); las
+funciones opcionales de TypeScript cargan *peerDependencies* opcionales
+([Instalación](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/instalacion/#extras-opcionales)).
+
+## Primer sandbox
+
+Con la imagen `rayito-base` publicada en tu cuenta
+([Empezar en tu cuenta de AWS](#empezar-en-tu-cuenta-de-aws)) y
+`AWS_PROFILE`, `AWS_REGION` y `RAYITO_TEMPLATE=rayito-base` exportadas:
 
 ```python
 from rayito import Sandbox
 
-data = "a,b\n1,2\n"
-with Sandbox.create() as sbx:
-    sbx.files.write("/home/user/data.csv", data)
-    print(sbx.run_code("import pandas as pd; pd.read_csv('/home/user/data.csv').head()").text)
+with Sandbox.create() as sbx:  # `with` mata el sandbox al salir
+    print(sbx.commands.run("echo hola").stdout)  # "hola\n"
+    sbx.files.write("/home/user/data.csv", "a,b\n1,2\n")
+    print(sbx.run_code("import pandas as pd; pd.read_csv('/home/user/data.csv').shape").text)  # "(1, 2)"
 ```
 
-Para sandboxes en menos de un segundo, un [pool de suspendidos](docs/site/docs/pool.md)
-(ADR-008): N MicroVMs calientes aparcados que `take()` reanuda en ≈ 0,8 s
-(p95 0,90 s medido frente a 6,5 s de `create()`).
+```ts
+import { Sandbox } from "rayito";
 
-```python
-from rayito import PoolConfig, SandboxPool
-
-with SandboxPool(PoolConfig(size=3, template="rayito-base")) as pool:
-    sbx = pool.take()                     # < 1 s con plaza lista; create() si no hay
-    print(sbx.run_code("1 + 1").text)
-    sbx.kill()
+await using sbx = await Sandbox.create(); // `await using` mata el sandbox al salir
+console.log((await sbx.commands.run("echo hola")).stdout); // "hola\n"
+console.log((await sbx.runCode("x = 40; x + 2")).text); // "42"
 ```
 
 Si vienes del SDK de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
 son un drop-in a nivel de import de E2B 2.x: lo que Lambda MicroVMs no puede
 hacer lanza `UnimplementedError` en vez de aproximarse en silencio
-(`docs/site/docs/e2b-compat.md`). El shim exige una imagen 0.3.0 o posterior.
+([Diferencias con E2B](https://alejandro-cedeno-10.github.io/rayito/e2b-compat/)). El shim exige una imagen 0.3.0 o
+posterior.
 
 ```python
-from rayito.e2b import Sandbox          # antes: from e2b_code_interpreter import Sandbox
+from rayito.e2b import Sandbox  # antes: from e2b_code_interpreter import Sandbox
 
 with Sandbox.create(timeout=300, metadata={"run": "42"}) as sbx:
-    print(sbx.run_code("1 + 1").text)
-    sbx.set_timeout(600)                # SetTimeout: rayd mueve el plazo (tope max_lifetime, 3600 s por defecto)
+    print(sbx.run_code("1 + 1").text)  # "2"
+    sbx.set_timeout(600)  # rayd mueve el plazo, hasta max_lifetime
 ```
+
+## Un agente de código dentro del sandbox
+
+`sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode),
+o deepagents) **dentro** del sandbox. El agente llama a su modelo (Bedrock,
+Anthropic o un endpoint compatible con OpenAI) sólo a través de la
+[pasarela de secretos](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/pasarela-de-secretos/): usa la
+credencial, pero nunca puede leerla. Basta un `Sandbox.create()` normal sobre
+la imagen `rayito-agent` (`rayito agent template build`,
+[Templates de agente](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/templates-de-agente/)):
+
+```python
+from rayito import AgentModel, AgentSpec, Sandbox, SecretStore, bedrock_gateway
+
+MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+SecretStore().create("bedrock-key", "Bearer <clave de Bedrock de corta duración>")
+spec = AgentSpec(model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"))
+
+with Sandbox.create(
+    template="rayito-agent",
+    allow_internet_access=False,
+    gateways={"bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID])},
+) as sbx:
+    result = sbx.agent.run("Lista los ficheros de /home/user y resume qué hay.", spec=spec)
+    print(result.text, result.usage.total)
+```
+
+El arranque rápido (un pool con `warmup` o un servidor residente) es
+opcional; cuándo compensa, en
+[¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso). Guía completa:
+[Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/); qué cuesta la VM
+frente a los tokens del modelo: [Precios](https://alejandro-cedeno-10.github.io/rayito/cost/#coste-de-un-agente-vm-frente-a-modelo).
+
+## Qué incluye
+
+Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
+
+- **Ciclo de vida**: `create`, `connect`, `kill`, `list`, metadatos
+  ([Ciclo de vida](https://alejandro-cedeno-10.github.io/rayito/guias/ciclo-de-vida/)); `pause()`/`resume()` con
+  auto-suspensión por inactividad ([Pausar y reanudar](https://alejandro-cedeno-10.github.io/rayito/guias/pausar-reanudar/));
+  un plazo que `rayd` impone aunque tu proceso muera
+  ([Plazo del servidor](https://alejandro-cedeno-10.github.io/rayito/lifecycle/)).
+- **Ejecutar**: `commands` ([Comandos](https://alejandro-cedeno-10.github.io/rayito/guias/comandos/)), `run_code` con un
+  kernel Jupyter con estado ([Ejecutar código](https://alejandro-cedeno-10.github.io/rayito/guias/ejecutar-codigo/)),
+  kernels bash, JavaScript y TypeScript ([Lenguajes y kernels](https://alejandro-cedeno-10.github.io/rayito/kernels/))
+  y terminales reales ([Terminal (PTY)](https://alejandro-cedeno-10.github.io/rayito/guias/terminal-pty/)).
+- **Ficheros y red**: `files`, ficheros grandes y URLs firmadas por S3
+  ([Ficheros y S3](https://alejandro-cedeno-10.github.io/rayito/files/)); política de salida a internet de E2B
+  ([Red saliente](https://alejandro-cedeno-10.github.io/rayito/network/)); HTTP a un puerto del sandbox
+  ([Puertos y host](https://alejandro-cedeno-10.github.io/rayito/guias/puertos-y-host/)).
+- **Arranque y duración**: sandboxes en menos de un segundo desde un pool de
+  suspendidos ([Pool](https://alejandro-cedeno-10.github.io/rayito/pool/)); el `HOME` en S3 más allá de las 8 h
+  ([Persistencia](https://alejandro-cedeno-10.github.io/rayito/persistence/)).
+- **Observar**: métricas e historial, listado reanudable
+  ([Métricas y listado](https://alejandro-cedeno-10.github.io/rayito/observability/)); la API git de E2B ([Git](https://alejandro-cedeno-10.github.io/rayito/git/)).
+- **Agentes**: el agente dentro del sandbox (arriba); el servidor MCP para
+  Claude Code, Cursor o VS Code ([Servidor MCP](https://alejandro-cedeno-10.github.io/rayito/mcp/)); adaptadores para
+  LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/)).
+- **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
+  opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
+- **Probar en local** con Docker y Floci, sin cuenta de AWS
+  ([Probar en local](https://alejandro-cedeno-10.github.io/rayito/guias/probar-en-local/)).
+- **Funciones opcionales, apagadas por defecto** (cada una cuesta algo en
+  tu cuenta y sólo se activa con una opción explícita): secretos de Secrets
+  Manager, pasarela de secretos, montajes S3, tamaños de 512 MiB a 8 GiB,
+  eventos y webhooks, exportación OTLP, trazas OpenTelemetry, índice de
+  metadatos en DynamoDB, templates declarativos y de agente, proxy local,
+  volúmenes EFS (experimental) y dominio propio (experimental). Qué activa y
+  qué cuesta cada una: [Funciones opcionales](https://alejandro-cedeno-10.github.io/rayito/optional-features/).
 
 ## Cómo funciona
 
@@ -83,235 +160,82 @@ tu proceso (Python / TypeScript)                AWS, tu cuenta
   va dentro de la imagen. Nada del runtime de tu agente se copia a la VM.
 - **Dónde corre tu código.** Lo que envías con `run_code` se ejecuta en un
   kernel de Jupyter dentro del MicroVM como uid 1000 (con estado entre
-  celdas); `commands` y `pty` lanzan procesos normales ahí mismo, también
-  como uid 1000. `rayd` corre como root y es el único que toca los hooks de
-  Lambda. Con `run_code(code, language="bash")` la celda va a un kernel bash
-  que la variante de imagen `rayito-base-poly` arranca en la primera celda
-  (`docs/site/docs/kernels.md`); desde M9 esa misma variante sirve
-  `language="javascript"` y `"typescript"` con el kernel de Deno.
+  celdas); `commands`, `pty` y `sbx.agent` lanzan procesos normales ahí
+  mismo, también como uid 1000. `rayd` corre como root y es el único que
+  toca los hooks de Lambda. Los kernels bash, JavaScript y TypeScript (Deno)
+  viven en la variante de imagen `rayito-base-poly`
+  ([Lenguajes y kernels](https://alejandro-cedeno-10.github.io/rayito/kernels/)).
 - **Desde qué lenguajes.** Hoy, Python y TypeScript. Cualquier otro lenguaje
   con un cliente gRPC puede hablar con `rayd` generando el cliente desde
-  `proto/rayito/v1/`: el contrato es la fuente de verdad y los SDKs añaden
-  encima el ciclo de vida, los tokens y la reconexión.
+  `proto/rayito/v1/` ([Otros lenguajes (gRPC)](https://alejandro-cedeno-10.github.io/rayito/referencia/otros-lenguajes/)).
 
-Detalle de procesos, usuarios y transportes en `ARCHITECTURE.md` ("Qué corre
-dónde"); comparación con E2B, Daytona y Modal en `docs/site/docs/concepts.md`.
+Detalle de procesos, usuarios, tokens y transportes en
+[Conceptos](https://alejandro-cedeno-10.github.io/rayito/concepts/) y en `ARCHITECTURE.md` ("Qué corre dónde").
 
-**Estado: alfa (serie 0.x, ver [Licencia, estado y soporte](#licencia-estado-y-soporte)).**
-Lo que sigue describe el hito M7 (release 0.2.0, aceptado contra AWS real el
-2026-09-17, `docs/RELEASE_NOTES_0.2.0.md`); lo posterior está en los
-changelogs. `rayd` 0.2.0 sirve
-`Health`, `ProcessService`, `FilesystemService` (con `Checkpoint`/`Restore`
-a S3), `CodeService` (con `Reattach` y `language`) y `PtyService`, y los
-hooks `/suspend`/`/resume` reales; los SDKs Python y TypeScript (`rayito`
-0.2.0, en lockstep con `rayd`) tienen ciclo de vida, `commands`, `files`,
-`run_code` con contextos (`create_code_context`, `list_code_contexts`,
-`remove_code_context`, `restart_code_context`) y `language=`, `pty`,
-`pause()`/`resume()` y el contrato de reconexión, metadatos por sandbox
-(`create(metadata=)`, `list(metadata=)`), el pool de suspendidos
-(`SandboxPool`), la persistencia del `HOME` en S3 (`create(persist=)`,
-`reincarnate()`), el shim `rayito.e2b`, el servidor MCP (`rayito[mcp]`) y la
-CLI `rayito` (`rayito[cli]`: `image`, `sandbox`, `doctor`). Los SDKs 0.2
-exigen una imagen construida con `rayd` ≥ 0.2.0 (`agent_version` en
-`Health`; `rayito doctor` lo comprueba): sobre un `rayd` anterior
-`persist=` responde `UNIMPLEMENTED`, `language=` se ignora y, en imágenes
-sin el sidecar de kernels, `create()` falla con `SandboxNotReadyException`.
-La versión de imagen (`rayito-base` N.0) es un contador de builds por cuenta,
-no un criterio de compatibilidad. Ver `MILESTONES.md`.
+## Empezar en tu cuenta de AWS
 
-```python
-from rayito import IdlePolicy, PtySize, Sandbox
+Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API
+key). La receta completa, con cada orden, está en
+[Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/).
 
-with Sandbox.create(idle=IdlePolicy(max_idle_seconds=600), reconnect_timeout=60) as sbx:
-    sbx.run_code("x = 42")
-    pty = sbx.pty.create(size=PtySize(cols=100, rows=30), on_data=print, timeout=None)
-    sbx.pty.send_input(pty.pid, "echo hola\n")
-    sbx.pause()                       # suspend-microvm: procesos, PTY y kernel siguen vivos
-    sbx.resume()                      # resume-microvm + Health con la generación nueva
-    assert sbx.run_code("x").text == "42"
-    sbx.pty.send_input(pty.pid, "echo sigo-viva\n")   # el handle se reengancha solo
-    print(sbx.get_health().resume_generation)         # 1
-```
+1. **IAM**: despliega los roles de build y ejecución y las políticas del
+   cliente ([`infra/README.md`](infra/README.md)):
 
-Un handle en background, una PTY o un `watch_dir` nunca despiertan un sandbox
-suspendido (leerlos espera al `resume()` o al auto-resume de otra llamada);
-`reconnect_timeout` (60 s por defecto) es cuánto espera un corte a que el
-agente vuelva antes de fallar.
+   ```bash
+   aws cloudformation deploy --stack-name rayito-m0-iam \
+     --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito
+   ```
 
-El SDK TypeScript (`clients/typescript`, paquete `rayito` en npm, M6) ofrece la
-misma superficie en camelCase y milisegundos, sólo async, generado desde el
-mismo `.proto` y validando el mismo `limits.json`:
+   Asigna a tu usuario la política del output `CallerPolicyArn`
+   (`rayito-m0-caller-<región>`) y al rol de tu servicio, sólo la de
+   `SandboxLauncherPolicyArn` ([IAM](https://alejandro-cedeno-10.github.io/rayito/operacion/iam/)).
 
-```ts
-import { Sandbox } from "rayito";
+2. **Imagen**: publica `rayito-base` desde el `rayito-image.zip` firmado de
+   la release, sin compilar nada. Verifica la firma antes de publicar
+   ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)):
 
-await using sbx = await Sandbox.create({ idle: { maxIdleSeconds: 600 } });
-await sbx.runCode("x = 42");
-await sbx.pause();
-await sbx.resume();
-console.log((await sbx.runCode("x")).text); // "42"
-```
+   ```bash
+   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip"
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip.sigstore.json"
+   cosign verify-blob --bundle rayito-image.zip.sigstore.json \
+     --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
+   rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket amzn-s3-demo-bucket
+   ```
 
-- **Servidor MCP** (`rayito[mcp]`, `python -m rayito.mcp` / `rayito-mcp`) para
-  Claude Code, Claude Desktop, Cursor y VS Code: un sandbox por proceso con
-  `run_code`, `run_command`, `read_file`, `write_file`, `list_files` y
-  `list_sandboxes`, stdio o streamable HTTP; ver `docs/site/docs/mcp.md`.
-- **CLI** (`rayito[cli]`, comando `rayito`): `rayito doctor` diagnostica una
-  cuenta antes del primer `create()` (credenciales, cuotas, IAM, bucket,
-  imagen, agente, compatibilidad SDK ↔ `rayd` ↔ imagen); `rayito sandbox
-  list|info|kill|logs` opera los MicroVMs vivos; `rayito image
-  publish|list|prune|zip` es el flujo de `make image-publish` con nombre
-  estable (los scripts de `scripts/` son shims suyos); ver
-  `docs/site/docs/cli.md`.
+   La imagen debe llevar el `rayd` de la misma versión que el SDK
+   (`rayito doctor` lo comprueba). Las variantes `-caps` (red saliente y el
+   agente) y `-poly` (kernels bash, JavaScript y TypeScript), en
+   [Imágenes](https://alejandro-cedeno-10.github.io/rayito/images/). Desde el código fuente: `make image-publish
+   BUCKET=amzn-s3-demo-bucket`, que compila `rayd` para
+   `aarch64-unknown-linux-musl` en Linux o WSL2 (en macOS, dentro de una VM
+   Linux) con `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
-## Endurecimiento (M6)
+3. **Diagnóstico**: `rayito doctor --template rayito-base` comprueba
+   credenciales, cuotas, IAM, bucket, imagen, versión del agente y
+   compatibilidad SDK ↔ `rayd`; `--launch` prueba además un sandbox efímero.
 
-```python
-from rayito import DiskFullException, Sandbox
+4. **Primer sandbox**: [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
 
-sbx = Sandbox.create(
-    "rayito-base-caps",                  # misma imagen con additionalOsCapabilities ALL
-    execution_role_arn="arn:aws:iam::123456789012:role/rayito-execution",
-    cpu_time_limit=60,                   # RLIMIT_CPU por proceso: segundos de CPU, no de pared
-    egress=["arn:aws:lambda:us-east-1:123456789012:network-connector:mi-allowlist"],
-)
-health = sbx.get_health()
-assert health.imds_blocked              # uid 1000 no alcanza 169.254.169.254; rayd (root) sí
-assert health.hook_anomalies == 0       # /run repetidos y suspensiones estancadas
-try:
-    sbx.files.write("/home/user/grande.bin", b"\0" * (8 << 30))
-except DiskFullException:               # reserva de 256 MiB comprobada antes de escribir
-    ...
-```
+## Coste y latencia
 
-- **IMDS**: en la imagen por defecto cualquier proceso del sandbox lee las
-  credenciales del `execution_role_arn` (el SDK avisa una vez si hay rol e
-  `imds_blocked` sigue en `False` pasados 10 s de `uptime` desde el `Health`
-  de readiness: antes `rayd` todavía está verificando). `rayito-base-caps` (`make image-publish-caps`)
-  las bloquea para uid 1000-65535 con una ruta de política instalada por
-  `rayd` en el arranque y reverificada en cada `/run` y `/resume`
-  (`SECURITY.md` T1, `AWS_API_NOTES.md` Q48).
-- **Hooks forjados**: un token `allPorts` (que el SDK nunca acuña) puede
-  llamar a los hooks de `rayd`; el daño medido es nulo (`/run` → `already_ran`)
-  o una interrupción (`/suspend` sin checkpoint: el watchdog reabre la puerta
-  en ≤ 20 s; pares `/suspend` + `/resume`: un corte por par) de la que los
-  handles se recuperan solos (`Connect`, `Pty.Connect`, `WatchDir` y
-  `Reattach` reintentan la puerta cerrada con backoff). `rayd` nunca rechaza
-  una transición: rechazarla afectaría también al hook genuino que llega
-  detrás de uno forjado. Los `/run` repetidos y las recuperaciones quedan en
-  `get_health().hook_anomalies` (`SECURITY.md` T2).
-- **Límites**: `cpu_time_limit` (1–28 800 s, `SIGXCPU` y `SIGKILL` 5 s
-  después), presupuesto de salida de 128 MiB por sandbox para los replays
-  (`Connect(from_seq)` puede responder `NotFoundException` antes que antes;
-  la entrega en vivo no cambia) y reserva de disco de 256 MiB
-  (`DiskFullException`).
-- **Egress allowlist**: `infra/egress-connector.yaml` crea un
-  `AWS::Lambda::NetworkConnector` con un security group deny-all y hasta
-  cinco CIDRs permitidos; receta en `infra/README.md`; `make infra-lint`
-  valida la plantilla. `SandboxInfo.ingress`/`egress` muestran los conectores
-  con los que se lanzó el sandbox.
-- **Versiones de imagen**: `make image-prune PRUNE_ARGS="--dry-run"` y luego
-  `--keep 5` borra las versiones antiguas de `rayito-base` de una en una
-  (cada versión cuesta ≈ $0,04/semana de storage).
-
-## Persistencia más allá de las 8 h
-
-Un MicroVM vive como mucho 8 h y `kill()` borra su disco. Con `persist=`,
-`rayd` guarda el `HOME` del usuario en tu bucket de S3 (como root, con el
-execution role; el código del sandbox sigue sin ver IMDS en `rayito-base-caps`)
-y lo restaura en el sandbox siguiente. `reincarnate()` es la respuesta a lo
-que `set_timeout` no puede dar, pasar de `max_lifetime` (ADR-011): checkpoint,
-VM nueva con las mismas opciones, restore y `kill()` de la vieja. Sobreviven los ficheros; no las variables del kernel ni
-los procesos. Detalles, lista de exclusión e IAM en
-[`docs/site/docs/persistence.md`](docs/site/docs/persistence.md).
-
-```python
-from rayito import S3Prefix, Sandbox
-
-sbx = Sandbox.create(
-    "rayito-base-caps",
-    execution_role_arn="arn:aws:iam::123456789012:role/rayito-m0-execution-us-east-1",
-    persist=S3Prefix("mi-bucket", name="agente-7"),   # s3://mi-bucket/rayito/agente-7/
-)
-sbx.checkpoint_files(exclude=["data/raw"])          # home.tar.gz + manifest.json
-sbx = sbx.reincarnate()                               # 8 h frescas, mismo HOME
-```
-
-## Novedades de 0.3.0: paridad con E2B (M9)
-
-Rayito 0.3.0 cierra la tabla de paridad con E2B 2.x (113 filas,
-[`docs/site/docs/e2b-parity.md`](docs/site/docs/e2b-parity.md)). Todo está en
-el árbol con tests unitarios y **aceptado contra AWS real** el 2026-09-24
-(`MILESTONES.md`, M9); notas de la release en
-[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md).
-
-| Feature | Qué hace | Imagen | Documentación |
-|---|---|---|---|
-| **Plazo del servidor** (ADR-011) | `create(timeout=, max_lifetime=, on_timeout="kill" \| "pause")`: `rayd` hace cumplir el plazo aunque tu proceso muera; `set_timeout()` lo mueve y `connect(timeout=)` lo alarga | M9 | [`lifecycle.md`](docs/site/docs/lifecycle.md) |
-| **Transferencias por S3** (ADR-010) | `files.upload_url()`/`download_url()` firmadas con tus credenciales (`rayd` no guarda ninguna); con `transfer=S3Staging(...)` los ficheros grandes de `files.write`/`read` van por S3 (55–106 MB/s medidos frente a 0,68 MB/s por el proxy); `gzip=`, `metadata=` | M9 | [`files.md`](docs/site/docs/files.md) |
-| **Kernels JavaScript y TypeScript** (ADR-013) | `run_code(code, language="javascript" \| "typescript")` con el kernel de Deno 2.9.7 | `rayito-base-poly` | [`kernels.md`](docs/site/docs/kernels.md) |
-| **Red saliente** (ADR-012) | `network={"allow_out", "deny_out", "egress_proxy"}`, `allow_internet_access=False` y `update_network()` con la semántica de E2B, aplicados en el guest; en otra imagen fallan cerrados | `rayito-base-caps` | [`network.md`](docs/site/docs/network.md) |
-| **Métricas y listado** | `get_metrics_history()` (una muestra cada 5 s, 8 h), `Sandbox.paginate()` con `order`, `started_after`, `states` y un cursor reanudable | M9 | [`observability.md`](docs/site/docs/observability.md) |
-| **Git** | `sbx.git`: la API git de E2B (`clone`, `status`, `commit`, `push`, `pull`...) sobre `commands.run` | M9 | [`git.md`](docs/site/docs/git.md) |
-| **CLI** | `rayito sandbox create \| connect \| exec \| metrics`, con el access token sólo por fichero o entorno | M9 | [`cli.md`](docs/site/docs/cli.md) |
-| **Shims de E2B 2.x** | `rayito.e2b` (Python) y la nueva entrada `rayito/e2b` (TypeScript): cambia un import | M9 | [`e2b-compat.md`](docs/site/docs/e2b-compat.md) |
-
-Qué imagen necesita cada cosa y el IAM que añade M9 (sólo para las
-transferencias): [`docs/site/docs/images.md`](docs/site/docs/images.md).
-
-```python
-import requests
-from rayito import S3Staging, Sandbox
-
-staging = S3Staging("amzn-s3-demo-bucket")             # o RAYITO_TRANSFER_BUCKET
-with Sandbox.create(timeout=600, max_lifetime=3600, transfer=staging) as sbx:
-    ticket = sbx.files.upload_url("/home/user/in.csv")  # PUT desde cualquier cliente
-    with open("in.csv", "rb") as source:
-        requests.put(ticket, data=source, headers=ticket.headers).raise_for_status()
-    ticket.wait()
-    sbx.set_timeout(1800)
-    link = sbx.files.download_url("/home/user/in.csv", expires_in=600)
-    print(sbx.get_metrics_history(max_points=12))
-```
-
-## Verificar una release
-
-Los assets de cada release `rayd-v<v>` (`rayd`, `rayito-image.zip`, SBOM
-CycloneDX) van firmados keyless con cosign; PyPI y npm publican por OIDC con
-attestations. Receta completa en [`docs/site/docs/verify.md`](docs/site/docs/verify.md):
-
-```bash
-RAYD_VERSION=0.8.0   # la versión que instalas: la identidad liga la firma a ese tag
-cosign verify-blob --bundle rayito-image.zip.sigstore.json \
-  --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
-```
-
-## Coste y latencia (medido 2026-09)
-
-`rayito-base` 10.0 (2 GB, snapshot de memoria de 0,92 GB), us-east-1, cliente a
-≈ 90 ms de RTT, sonda de 100 ms; detalle, crudos y decisión sobre el pool en
+Un sandbox factura el cómputo de Lambda MicroVMs mientras corre, más el
+almacenamiento de cada versión de imagen y de los sandboxes suspendidos; no
+hay cargos de Rayito. Precios de lista, ejemplos, tiempos medidos y el
+coste de un agente (VM frente a tokens del modelo), en
+[Precios](https://alejandro-cedeno-10.github.io/rayito/cost/). Las mediciones de arranque en frío están en
 [`docs/benchmarks/2026-09-cold-start.md`](docs/benchmarks/2026-09-cold-start.md).
 
-| | p50 | p95 |
-|---|---|---|
-| `create()` → `kernel_ready` (20 secuenciales) | 5,2 s | 6,1 s |
-| `create()` → `kernel_ready` (ráfaga de 20 por el SDK, bucket de 5 TPS) | 5,7 s | 8,6 s |
-| `create()` → `agent_ready` | 2,3 s | 3,0 s |
-| `resume()` explícito → kernel listo | 0,38 s | 0,40 s |
-| auto-resume (primer `commands.run` sobre un sandbox suspendido) | 0,67 s | 0,68 s |
-| primera celda (`1+1`) tras crear o reanudar | 0,10 s | 0,11 s |
+## Estado
 
-| Coste (precios verificados en Cost Explorer) | |
-|---|---|
-| hora activa a 2 GB / 1 vCPU | $0,126 |
-| lanzamiento (lectura del snapshot de 0,92 GB) | ≈ $0,0014 |
-| ciclo `pause()` + `resume()` (escritura + lectura) | ≈ $0,0049 (≈ 140 s de compute) |
-| hora suspendida (storage del snapshot) | ≈ $0,0001 |
-
-Sin el warm-up del kernel (`rayito-base-slim` 2.0, imagen de medición) el
-`create()` secuencial baja a 3,0 / 3,4 s y la primera celda con pandas +
-matplotlib sube de 0,14 a 0,79 s.
+**Alfa, serie 0.8** ([Licencia, estado y soporte](#licencia-estado-y-soporte)).
+Los SDK de Python y TypeScript y `rayd` avanzan en lockstep de
+`MAJOR.MINOR`: cada SDK exige una imagen construida con el `rayd` de su
+misma serie, y `rayito doctor` lo comprueba (tabla en
+[Compatibilidad SDK ↔ rayd ↔ imagen](https://alejandro-cedeno-10.github.io/rayito/limits/#compatibilidad-sdk-rayd-imagen)). Lo que trae cada
+versión: [Novedades](https://alejandro-cedeno-10.github.io/rayito/novedades/) y los `CHANGELOG.md` de cada componente.
 
 ## Documentos
 
@@ -332,49 +256,6 @@ matplotlib sube de 0,14 a 0,79 s.
 | `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, atribuciones de terceros y los changelogs por componente |
 | `docs/RELEASING.md` | Pasos manuales de publicación (PyPI, npm, GitHub Release, tags) |
 | `proto/rayito/v1/` | El contrato gRPC. Fuente de verdad de toda la API |
-
-## Empezar en tu cuenta de AWS
-
-Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API key):
-
-1. **IAM**: despliega los roles de build y ejecución y la política del
-   cliente ([`infra/README.md`](infra/README.md)):
-
-   ```bash
-   aws cloudformation deploy --stack-name rayito-m0-iam \
-     --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides ArtifactBucket=<tu-bucket> LogGroupPrefix=/rayito
-   ```
-
-   Asigna la política `rayito-m0-caller-<región>` (output `CallerPolicyArn` de la pila) al rol o
-   usuario que ejecutará el SDK. Para las transferencias por S3 añade
-   `TransferBucket`/`TransferPrefix` ([`images.md`](docs/site/docs/images.md)).
-
-2. **Imagen**: publica `rayito-base` (y, si las usas, `-caps` para la red
-   saliente y `-poly` para JavaScript/TypeScript). Sin compilar nada, desde el
-   `rayito-image.zip` firmado de la release:
-
-   ```bash
-   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
-   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v$RAYD_VERSION/rayito-image.zip"
-   rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket <tu-bucket>
-   ```
-
-   La imagen debe ser de la misma versión que el SDK (`rayito doctor` lo
-   comprueba); las versiones están en las
-   [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
-
-   O desde el código fuente con `make image-publish BUCKET=<tu-bucket>`
-   (también `image-publish-caps` / `-poly`), que compila `rayd` para
-   `aarch64-unknown-linux-musl`: hazlo en Linux o WSL2 (en macOS, dentro de
-   una VM Linux) con `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
-
-3. **Diagnóstico**: `pip install "rayito[cli]" && rayito doctor --template rayito-base`
-   comprueba credenciales, cuotas, IAM, bucket, imagen y versión del agente.
-
-4. **Primer sandbox**: [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/)
-   (fuente en [`docs/site/docs/quickstart.md`](docs/site/docs/quickstart.md)) y el
-   resto de la documentación en el [sitio](https://alejandro-cedeno-10.github.io/rayito/).
 
 ## Estructura del repositorio
 

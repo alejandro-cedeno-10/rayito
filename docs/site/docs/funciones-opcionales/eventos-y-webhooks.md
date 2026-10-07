@@ -104,6 +104,8 @@ Lambdas):
     # si tu organización exige etiquetas al crear recursos: --tag Owner=mi-equipo --tag Environment=dev
     rayito events webhook add https://hooks.example.com/rayito --secret-name mi-webhook --type sandbox.lifecycle.killed
     rayito events list --limit 10
+    rayito events webhook list
+    # rayito events webhook remove <webhook_id>; rayito events status; rayito events destroy
     ```
 
 Después, crea sandboxes que emitan eventos. `events=` necesita un `logging`
@@ -116,7 +118,7 @@ y una imagen con `rayd` 0.6.0 o posterior:
     ```python
     from rayito import LifecycleEvents, Sandbox
 
-    role_arn = "arn:aws:iam::111122223333:role/rayito-sandbox"  # escribe en el log group
+    role_arn = "arn:aws:iam::123456789012:role/rayito-sandbox"  # escribe en el log group
     events = LifecycleEvents()  # la misma pila de antes
     sbx = Sandbox.create(
         execution_role_arn=role_arn,
@@ -138,7 +140,7 @@ y una imagen con `rayd` 0.6.0 o posterior:
     ```ts
     import { LifecycleEvents, Sandbox } from "rayito";
 
-    const roleArn = "arn:aws:iam::111122223333:role/rayito-sandbox"; // escribe en el log group
+    const roleArn = "arn:aws:iam::123456789012:role/rayito-sandbox"; // escribe en el log group
     const events = new LifecycleEvents(); // la misma pila de antes
     const sbx = await Sandbox.create({ executionRoleArn: roleArn, logging: "cloudwatch", events });
     await sbx.pause();
@@ -486,7 +488,11 @@ mantiene una versión más para no romper a quien ya la tiene vinculada.
 | `region` | `region` | la de la sesión | región de la pila |
 | `session` | `credentials` | la sesión por defecto | credenciales de AWS |
 | `deploy(artifact_bucket=, log_group_name=, reconciler_interval_minutes=, tags=)` | `deploy({ artifactBucket, logGroupName, reconcilerIntervalMinutes, tags })` | 5 minutos (mínimo 2); sin etiquetas | despliega la pila; `tags` se propagan a sus recursos. El código de las Lambdas se sube a `rayito/stacks/events-webhooks/<sha256>.zip` del bucket, que debe ser de tu cuenta (`ExpectedBucketOwner`); si ya hay un objeto en esa clave, el SDK compara su contenido y lo sobrescribe si no es el suyo |
+| `status()` | `status()` | — | estado y salidas de la pila (`None`/`undefined` si no está desplegada); sólo `DescribeStacks` |
+| `destroy(wait=)` | `destroy({ wait })` | espera a que se borre | borra la pila (qué se borra y qué se conserva: "Cómo apagarla" en la caja de arriba) |
 | `register_webhook(url, secret_name=, types=)` | `registerWebhook(url, { secretName, types })` | — | `url` es una URL `https://` que el deliverer pueda alcanzar (host DNS válido que no sea `localhost`, o IP pública; puerto 1–65535); `types` son `sandbox.lifecycle.{created,paused,resumed,killed}` |
+| `list_webhooks()` | `listWebhooks()` | — | los webhooks registrados (`WebhookInfo`, con su `webhook_id`) |
+| `delete_webhook(webhook_id)` | `deleteWebhook(webhookId)` | — | da de baja un webhook; no borra su secreto |
 | `get_events(sandbox_id=, types=, limit=, order=)` | `getEvents({ sandboxId, types, limit, order })` | `limit=100` (1–100), `order="desc"` | lee directamente de tu tabla DynamoDB; filtra `types` en DynamoDB y pagina hasta reunir `limit` |
 
 ## Errores y solución de problemas

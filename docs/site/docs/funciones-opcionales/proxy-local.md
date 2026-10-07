@@ -17,8 +17,9 @@ a un servidor del sandbox sin saber nada de AWS.
       sandbox estaba suspendido, la primera petición lo despierta y eso sí
       factura su cómputo normal y la lectura del snapshot.
     - **IAM**: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken` sobre el
-      MicroVM; ya están en la política `rayito-m0-caller-<región>` de
-      `infra/iam.yaml`.
+      MicroVM; ya están en `SandboxLauncherPolicy`
+      (`rayito-m0-launcher-<región>`) y en la `CallerPolicy`
+      (`rayito-m0-caller-<región>`) de `infra/iam.yaml`.
     - **Cómo apagarlo**: Ctrl-C.
 
 ## Cuándo usarlo
@@ -130,7 +131,7 @@ propia app del sandbox.
 | `400` | cabecera que no es HTTP/1.1 estricto, o un cuerpo con delimitación ambigua (`Transfer-Encoding` junto a `Content-Length`, un `Transfer-Encoding` que no acaba en `chunked`, varios `Content-Length` distintos) | manda un solo `Content-Length` o `Transfer-Encoding: chunked` |
 | `503` | todas las `--max-connections` ocupadas | cierra pestañas o sube `--max-connections` (el sandbox aguanta 8 por vCPU) |
 | `502` en cada petición | nada escucha en ese puerto del sandbox | arranca el servidor con `commands.run(..., background=True)` |
-| `AccessDenied` | faltan los permisos de IAM | asigna la política de `infra/iam.yaml` |
+| `AccessDenied` | faltan los permisos de IAM | asigna `SandboxLauncherPolicy` (o la `CallerPolicy`) de `infra/iam.yaml` |
 
 ## Ver también
 

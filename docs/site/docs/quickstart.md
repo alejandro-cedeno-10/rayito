@@ -11,7 +11,7 @@ y la imagen `rayito-base` publicada en tu cuenta
 ([Configurar AWS](primeros-pasos/configurar-aws.md)):
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 ```
 
 !!! tip "Cómo ejecutar cada ejemplo"
@@ -74,6 +74,23 @@ export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
     1. En TypeScript los tiempos van en milisegundos (`timeoutMs`).
        `await using` llama a `kill()` al salir del bloque.
 
+=== "Shim E2B"
+
+    ```python
+    from rayito.e2b import Sandbox  # antes: from e2b_code_interpreter import Sandbox
+
+    with Sandbox.create(timeout=900) as sbx:
+        print(sbx.commands.run("echo hola").stdout)  # "hola\n"
+        sbx.files.write("/home/user/a.txt", "contenido")
+        print(sbx.files.read("/home/user/a.txt"))  # "contenido"
+        print(sbx.run_code("x = 40; x + 2").text)  # "42"
+    ```
+
+    El mismo programa escrito para el SDK de E2B 2.x, cambiando sólo el
+    import. El shim sigue los valores por defecto de E2B (`timeout=300`, sin
+    auto-suspensión) y exige una imagen 0.3.0 o posterior:
+    [Migrar desde E2B](migrar-desde-e2b/index.md).
+
 Qué pasa por debajo:
 
 1. `create()` lanza un MicroVM desde la imagen (`run-microvm`) y espera a
@@ -85,8 +102,9 @@ Qué pasa por debajo:
 
 !!! warning "Libera siempre el sandbox"
     Sin `with` / `await using`, llama a `kill()` tú mismo. Un sandbox
-    olvidado sigue facturando ≈ $0,126/h (2 GB) hasta su `timeout`. Para
-    encontrar huérfanos: `rayito sandbox list` y `rayito sandbox kill`.
+    olvidado sigue facturando ≈ $0,126/h (2 GB, [Precios](cost.md#cuanto-cuesta-con-ejemplos))
+    hasta su `timeout`. Para encontrar huérfanos: `rayito sandbox list` y
+    `rayito sandbox kill`.
 
 ## Reconectar desde otro proceso
 
@@ -143,7 +161,8 @@ reinicio:
     await again.kill();
     ```
 
-`connect()` reanuda el sandbox si estaba pausado y no alarga su vida.
+`connect()` reanuda el sandbox si estaba pausado. Sin `timeout=` no alarga
+su plazo; con él, sólo lo alarga ([Plazo del servidor](lifecycle.md)).
 
 ## Recap
 
@@ -161,6 +180,9 @@ reinicio:
 - [Conceptos](concepts.md): qué corre dónde, plazos, tokens y reconexión.
 - [Comandos](guias/comandos.md), [Ejecutar código](guias/ejecutar-codigo.md)
   y [Ficheros](files.md): cada función en detalle.
+- [Agente en el sandbox](guias/agente-en-el-sandbox.md): un agente de
+  código (OpenCode o deepagents) dentro del sandbox, con un `create()`
+  normal y `sbx.agent.run(...)`.
 - [Migrar desde E2B](migrar-desde-e2b/index.md): si vienes de
   `e2b_code_interpreter` o `@e2b/code-interpreter`.
-- [Costes](cost.md): lo que cuesta cada operación, medido.
+- [Precios](cost.md): lo que cuesta cada operación, medido.

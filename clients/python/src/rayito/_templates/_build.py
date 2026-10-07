@@ -130,7 +130,7 @@ class _Clients:
         region = self._region or getattr(self._session, "region_name", None)
         if not region:
             raise InvalidArgumentException(
-                "Template.build: sin región: pasa region= o exporta AWS_REGION"
+                "Template.build: sin región: pasa region= o exporta AWS_DEFAULT_REGION"
             )
         return region
 

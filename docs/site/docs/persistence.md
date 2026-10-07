@@ -10,6 +10,16 @@ Lo hace `rayd`, el agente de la VM, **como root y con el execution role**
 leído por IMDSv2: el código del sandbox (uid 1000) sigue sin poder alcanzar
 IMDS en la imagen `rayito-base-caps`, y nada pasa por tu máquina.
 
+!!! tip "¿Pausar o persistir?"
+    Para esperas de menos de 8 h desde `create()`,
+    [pausa el sandbox](guias/pausar-reanudar.md): conserva también la
+    memoria, los procesos y el kernel. La persistencia es para lo que va más
+    allá: un sandbox que tiene que sobrevivir a `kill()` o al tope de 8 h,
+    como una conversación con un [agente](guias/agente-en-el-sandbox.md)
+    que puede quedarse parada más de 8 h (punto 2 de
+    [¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)): su `HOME`, con las
+    sesiones del agente, vuelve con el mismo `persist=`.
+
 <a id="quickstart"></a>
 
 ## Ejemplo rápido
@@ -105,6 +115,8 @@ un `HOME` persistido: `s3://bucket/prefix/name/`.
 - `name` identifica un home concreto. `Sandbox.create(persist=)` lo fija al
   `sandbox_id` si viene vacío; para que dos vidas compartan el mismo home,
   pásalo tú. `connect(persist=)` y `restore_files(source=)` lo exigen.
+  `sbx.persist` devuelve el `S3Prefix` enlazado (con su `name`) y
+  `S3Prefix.uri` su `s3://` completo.
 - `region` sólo si el bucket no está en la región del sandbox (por defecto
   `AWS_REGION` de la VM).
 - Se valida en cliente con las mismas reglas que aplica `rayd`: bucket de 3 a
@@ -130,7 +142,7 @@ Límites del ligado:
 - Lo fija el `create` y no cambia en toda la vida del sandbox:
   `connect(persist=)` sólo cambia el destino por defecto del cliente.
 - Un sandbox creado **sin** `persist=`, o con un SDK o un `rayd` anteriores a
-  esta corrección, no liga nada: `rayd` acepta cualquier destino válido y el
+  0.7.0, no liga nada: `rayd` acepta cualquier destino válido y el
   único límite es hasta dónde llega su execution role. No des a un sandbox sin
   `persist=` un rol que alcance el prefijo de persistencia, o usa un rol por
   inquilino.
@@ -141,9 +153,87 @@ gzip nivel 1) y `manifest.json` (sha256 del archivo, tamaños, recuentos,
 `sandbox_id`, versión del agente, lista de exclusión). El manifest se escribe
 **después** del archivo: si existe, el archivo está completo.
 
+## `checkpoint_files` y `restore_files`
+
+| Python | TypeScript | Por defecto | Qué hace |
+|---|---|---|---|
+| `checkpoint_files(target=)` | `checkpointFiles({ target })` | `sbx.persist` | dónde escribir el archivo |
+| `exclude=` | `exclude` | `()` | rutas relativas al `HOME` que no se archivan (abajo) |
+| `restore_files(source=)` | `restoreFiles({ source })` | `sbx.persist` | de dónde restaurar |
+| `timeout=` | `timeoutMs` | 600 s / 600 000 ms | plazo de la operación (`TimeoutException`) |
+| `on_progress=` | `onProgress` | — | recibe `CheckpointProgress` (`files_done`, `bytes_read`, `bytes_uploaded`) o `RestoreProgress` (`files_done`, `bytes_downloaded`) |
+| `user=` | `user` | el usuario del sandbox | de quién es el `HOME`; `"root"` es `permission_denied` |
+
+Devuelven un `CheckpointResult` / `RestoreResult` con `bucket`,
+`key_prefix`, `uri`, `files`, `archive_bytes`, `sha256`, `skipped` y
+`duration` en segundos (TypeScript: `keyPrefix`, `archiveBytes`,
+`durationMs`…), más `bytes_read` o `bytes_written`. Sirven también en un handle
+de `connect(persist=)` o con `target=`/`source=` explícitos, sin
+`create(persist=)`.
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import S3Prefix, Sandbox
+
+    role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+    home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="agente-7")
+
+    with Sandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as sbx:
+        result = sbx.checkpoint_files(
+            exclude=["datos/crudos"],
+            on_progress=lambda p: print(p.files_done, p.bytes_uploaded),
+        )
+        print(result.uri, result.files, result.archive_bytes)
+        sbx.restore_files()  # (1)!
+    ```
+
+    1. Vuelve a extraer el último checkpoint sobre el `HOME`.
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+    import os
+
+    from rayito import AsyncSandbox, S3Prefix
+
+
+    async def main() -> None:
+        role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+        home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="agente-7")
+        async with await AsyncSandbox.create("rayito-base-caps", execution_role_arn=role, persist=home) as sbx:
+            result = await sbx.checkpoint_files(exclude=["datos/crudos"])
+            print(result.uri, result.files)
+            restored = await sbx.restore_files()
+            print(restored.bytes_written)
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { S3Prefix, Sandbox } from "rayito";
+
+    const executionRoleArn = process.env.RAYITO_EXECUTION_ROLE_ARN ?? "";
+    const persist = new S3Prefix({ bucket: "amzn-s3-demo-bucket", prefix: "rayito-home", name: "agente-7" });
+
+    await using sbx = await Sandbox.create({ template: "rayito-base-caps", executionRoleArn, persist });
+    const result = await sbx.checkpointFiles({
+      exclude: ["datos/crudos"],
+      onProgress: (p) => console.log(p.filesDone, p.bytesUploaded),
+    });
+    console.log(result.uri, result.files, result.archiveBytes);
+    await sbx.restoreFiles();
+    ```
+
 ## Qué se archiva y qué no
 
-`checkpoint_files(exclude=(), timeout=600)` empaqueta el `HOME` del usuario
+`checkpoint_files()` empaqueta el `HOME` del usuario
 que hace la petición (nunca `/root`, diga lo que diga `RAYITO_ALLOW_ROOT`):
 
 - ficheros regulares (modo `0o7777`, mtime), directorios y symlinks con su
@@ -169,7 +259,7 @@ consistente. Un solo checkpoint o restore a la vez por sandbox
 
 ## Qué hace un restore
 
-`restore_files(source=None, timeout=600)` descarga el manifest (`NotFoundException`
+`restore_files()` descarga el manifest (`NotFoundException`
 si no hay ninguno) y extrae el archivo sobre el `HOME`:
 
 - los ficheros existentes se sobrescriben, los directorios se fusionan y un
@@ -191,22 +281,22 @@ de readiness (salvo `keep_on_failure`).
 
 ## `reincarnate()`: más allá de `max_lifetime`
 
-`sbx.reincarnate(exclude=(), persist_timeout=600)` hace, en este orden:
+`sbx.reincarnate(exclude=(), persist_timeout=600)` (TypeScript:
+`sbx.reincarnate({ exclude, persistTimeoutMs })`) hace, en este orden:
 `checkpoint_files()` → `Sandbox.create(**mismas opciones de lanzamiento,
 persist=sbx.persist)` (que restaura) → `kill()` del sandbox viejo, y devuelve el
 nuevo. El nuevo tiene 8 h frescas, otro `sandbox_id`, otro access token
 (salvo que el original fuera explícito) y los mismos `metadata`.
 
-Las opciones 0.6 que acaban en `ConfigureSandbox` también se reaplican
-(<small>desde 0.6.1; en 0.6.0 sólo `gateways=`, ver
-[Novedades de 0.6.1](novedades/0.6.1.md#reincarnate-reaplica-todas-las-opciones-06)</small>):
-`mounts=`, `events=`, `telemetry=` y `gateways=` vuelven al único
+Las opciones que acaban en `ConfigureSandbox` también se reaplican:
+`mounts=`, `volumes=`, `events=`, `telemetry=` y `gateways=` vuelven al único
 `Configure` del sucesor por el mismo camino que en `create()`, resueltas
 con los hechos del sandbox nuevo:
 
 | Opción | Qué hace el sucesor |
 |---|---|
 | `mounts=` | vuelve a montar cada bucket y `reincarnate()` no devuelve hasta que todos están `mounted` |
+| `volumes=` (experimental) | vuelve a mandar la sección y a resolver las IPs de los mount targets de EFS |
 | `events=` | deriva una clave `k_sbx` nueva del nuevo `sandbox_id` (nunca reutiliza la del original) |
 | `telemetry=` | resuelve otra vez el ARN y la versión de la imagen y la memoria del guest |
 | `gateways=` | vuelve a leer cada cabecera de Secrets Manager; nunca reenvía un valor ya leído |
@@ -270,7 +360,10 @@ almacenamiento ni ACL: aplican los valores por defecto del bucket
 
 Un checkpoint mueve el `tar.gz` del `HOME` de la VM a S3 (transferencia de
 datos del conector `INTERNET_EGRESS` + `PutObject` en partes de 8 MiB) y un
-restore lo trae de vuelta; el almacenamiento es el de S3 (≈ $0,023/GB-mes).
+restore lo trae de vuelta; el almacenamiento y las peticiones son los de S3
+([precios de Amazon S3](https://aws.amazon.com/s3/pricing/)). La
+persistencia sólo se activa con `persist=` o con una llamada explícita a
+`checkpoint_files()`/`restore_files()`: sin ellas no hay ninguna llamada a S3.
 El binario de `rayd` crece por el cliente TLS (`rustls` + `aws-lc-rs`) y el
 SDK de S3: **4 700 984 → 12 524 384 B** (+7,8 MB, ×2,66); el build limpio
 ARM64 pasa de 106 s a 222 s en la máquina de desarrollo.

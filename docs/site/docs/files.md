@@ -3,8 +3,7 @@
 `sbx.files` lee, escribe, lista y vigila ficheros del sandbox por gRPC a
 través del proxy de Lambda MicroVMs. Además da URLs de S3 prefirmadas
 (`upload_url`/`download_url`), un camino por S3 para los ficheros grandes,
-gzip, metadatos por fichero y un plazo entre trozos de lectura. <small>Desde
-0.3.0</small>
+gzip, metadatos por fichero y un plazo entre trozos de lectura.
 
 !!! note "Las funciones de S3 exigen una imagen 0.3.0 o posterior"
     Las URLs, los ficheros grandes por S3, gzip y los metadatos por fichero
@@ -21,6 +20,110 @@ gzip, metadatos por fichero y un plazo entre trozos de lectura. <small>Desde
 | `files.list(path, depth=)`, `exists`, `get_info`, `remove`, `rename`, `make_dir` | como en E2B |
 | `files.watch_dir(path, on_event=...)` | eventos de inotify hasta `stop()`; un `files.write` en el directorio llega como un único `WRITE` del destino (con `entry` si `include_entry=True`), como el ejemplo de E2B |
 | `files.upload_url(path)` / `download_url(path)` | URLs de S3 firmadas con tus credenciales |
+
+## Lo básico
+
+=== "Python"
+
+    ```python
+    from rayito import FilesystemEventType, Sandbox, WriteEntry
+
+    with Sandbox.create() as sbx:
+        sbx.files.write("/home/user/a.txt", "hola\n")
+        sbx.files.write_files([
+            WriteEntry("/home/user/src/main.py", "print('hola')\n"),
+            WriteEntry("/home/user/run.sh", "#!/bin/sh\necho hi\n", mode=0o755),
+        ])
+        print(sbx.files.read("/home/user/a.txt"))                    # "hola\n"
+        raw = sbx.files.read("/home/user/a.txt", format="bytes")
+        for entry in sbx.files.list("/home/user", depth=2):
+            print(entry.path, entry.type, entry.size)
+        print(sbx.files.exists("/home/user/a.txt"), sbx.files.get_info("/home/user/run.sh").permissions)
+        sbx.files.make_dir("/home/user/out")
+        sbx.files.rename("/home/user/a.txt", "/home/user/out/a.txt")
+        sbx.files.remove("/home/user/src")                             # recursivo por defecto
+
+        with sbx.files.watch_dir("/home/user/out") as watch:          # (1)!
+            sbx.files.write("/home/user/out/b.txt", "b")
+            sbx.commands.run("sleep 1")
+            events = watch.get_new_events()
+            print([(e.name, e.type) for e in events if e.type == FilesystemEventType.WRITE])
+    ```
+
+    1. Sin `on_event=` los eventos se acumulan para `get_new_events()`;
+       salir del `with` llama a `stop()`.
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+
+    from rayito import AsyncSandbox, WriteEntry
+
+
+    async def main() -> None:
+        async with await AsyncSandbox.create() as sbx:
+            await sbx.files.write("/home/user/a.txt", "hola\n")
+            await sbx.files.write_files([WriteEntry("/home/user/b.txt", b"\x00\x01")])
+            print(await sbx.files.read("/home/user/a.txt"))
+            print([e.name for e in await sbx.files.list("/home/user")])
+            async with await sbx.files.watch_dir("/home/user", on_event=print):
+                await sbx.files.write("/home/user/c.txt", "c")
+                await asyncio.sleep(1)
+            await sbx.files.remove("/home/user/c.txt")
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    await using sbx = await Sandbox.create();
+    await sbx.files.write("/home/user/a.txt", "hola\n");
+    await sbx.files.writeFiles([
+      { path: "/home/user/src/main.py", data: "print('hola')\n" },
+      { path: "/home/user/run.sh", data: "#!/bin/sh\necho hi\n", mode: 0o755 },
+    ]);
+    console.log(await sbx.files.read("/home/user/a.txt")); // "hola\n"
+    const raw = await sbx.files.read("/home/user/a.txt", { format: "bytes" }); // Uint8Array
+    for (const entry of await sbx.files.list("/home/user", { depth: 2 })) {
+      console.log(entry.path, entry.type, entry.size, raw.length);
+    }
+    console.log(await sbx.files.exists("/home/user/a.txt"));
+    await sbx.files.makeDir("/home/user/out");
+    await sbx.files.rename("/home/user/a.txt", "/home/user/out/a.txt");
+    await sbx.files.remove("/home/user/src");
+
+    {
+      await using watch = await sbx.files.watchDir("/home/user/out", {
+        onEvent: (event) => console.log(event.type, event.name),
+      });
+      await sbx.files.write("/home/user/out/b.txt", "b");
+      await sbx.commands.run("sleep 1");
+      console.log(watch.isRunning);
+    }
+    ```
+
+- `read` devuelve `str` por defecto; `format="bytes"` da `bytes`
+  (`Uint8Array`) y `format="stream"` un iterador de trozos (un
+  `ReadableStream` en TypeScript, que además acepta `"blob"`).
+- `write` acepta `str`, `bytes` o un fichero abierto (TypeScript: `string`,
+  `Uint8Array`, `ArrayBuffer`, `Blob` o `ReadableStream`), crea los
+  directorios padre y devuelve el `EntryInfo` escrito; `mode=` fija los
+  permisos.
+- `EntryInfo` trae `name`, `path`, `type` (`file`, `dir`, `symlink`),
+  `size`, `mode`, `permissions`, `owner`, `group`, `modified_time`,
+  `symlink_target` y `metadata`.
+- `remove(path, recursive=True)`: con `recursive=False`, un directorio no
+  vacío falla. `make_dir` devuelve `False` si ya existía.
+- `watch_dir` acepta `recursive=`, `include_entry=` (cada evento lleva su
+  `EntryInfo`), `on_exit=` y `timeout=` (`0`/`None`: hasta `stop()`). Los
+  eventos son `CREATE`, `WRITE`, `REMOVE`, `RENAME` y `CHMOD`.
+- Todos aceptan `user=` y `request_timeout=` (TypeScript:
+  `requestTimeoutMs`).
 
 Por el proxy, un fichero sube a ≈ 0,6 MB/s (la ventana HTTP/2 del proxy) y
 baja a 4–5 MB/s. Entre el VM y S3 se midieron 55,7–106,2 MB/s de subida y
@@ -352,7 +455,12 @@ TLS, CORS para navegadores, SSE-KMS) está en `infra/README.md`,
     ```
 
 En TypeScript el shim devuelve la URL como `string`, igual que E2B; para el
-ticket con `wait()` usa `sbx.native.files.uploadUrl()`.
+ticket con `wait()` usa `sbx.native.files.uploadUrl()`. El `Sandbox` nativo
+tiene también esta forma de E2B, `sbx.upload_url(path, user=,
+use_signature_expiration=)` y `sbx.download_url(...)` (TypeScript:
+`sbx.uploadUrl(path, { useSignatureExpiration })`, que devuelve la URL como
+`string`), junto a `sbx.files.upload_url`/`download_url` con todas las
+opciones (`expires_in`, `max_bytes`, `form`, `filename`).
 
 ## Diferencias con E2B
 

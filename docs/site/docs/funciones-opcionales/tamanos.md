@@ -22,14 +22,16 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       (también gratuita) por imagen publicada para `sameArtifact`; nunca
       lanza ningún sandbox. `sizes-guard` crea una única
       `AWS::IAM::ManagedPolicy`.
-    - **Coste aproximado**: $0 por `size=` en sí (una imagen más grande
-      cuesta lo mismo por hora que lanzarla sin `size=` con esa misma
-      memoria: no hay sobreprecio por el catálogo). Cada tamaño publicado
-      añade una semana de storage de snapshot (como cualquier versión de
-      imagen, ver [funciones-opcionales/pilas-opcionales.md](pilas-opcionales.md));
-      el snapshot crece con el tamaño (desde ≈450 MB a 512 MiB hasta
-      ≈1,1 GB a 8192 MiB sobre la misma imagen mínima). `sizes-guard`: $0
-      en reposo y por uso (sólo IAM).
+    - **Coste aproximado** (us-east-1): $0 por `size=` en sí: no hay
+      sobreprecio por el catálogo, pero un MicroVM más grande cuesta más por
+      hora, de ≈ $0,0315/h (512 MiB) a ≈ $0,5044/h (8192 MiB) en baseline
+      ([Límites: tamaño](../limits.md#tamano-cpuram)). Cada tamaño
+      publicado es una versión de imagen más, con su mínimo de una semana
+      de almacenamiento de snapshot (≈ $0,04/semana a 2 GB, ver
+      [Precios](../cost.md#componentes-del-precio)); el snapshot crece con
+      el tamaño (desde ≈450 MB a 512 MiB hasta ≈1,1 GB a 8192 MiB sobre la
+      misma imagen mínima). `sizes-guard`: $0 en reposo y por uso (sólo
+      IAM).
     - **IAM**: ninguno adicional para lanzar con `size=`. `sizes-guard`
       (`RayitoRunAllowedSizes`) añade un Deny de `lambda:RunMicrovm` fuera
       de los ARN de imagen que el operador liste (no sólo un Allow: el
@@ -39,7 +41,10 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       sandboxes para impedir que lance un tamaño no publicado, sea cual sea
       el resto de sus permisos.
     - **Cómo apagarla**: no pases `size=`/`size` (por defecto `None`/
-      `undefined`); borra la pila `sizes-guard` si la desplegaste (no borra
+      `undefined`); `rayito image prune --image-name rayito-base-4gb
+      --keep 1` borra las versiones antiguas de cada imagen de tamaño (cada
+      una factura su snapshot; `prune` conserva al menos la más nueva), y
+      borra la pila `sizes-guard` si la desplegaste (la pila no borra
       ninguna imagen).
     - **Ejemplo**:
       ```python
@@ -56,8 +61,8 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
 
 ## Cuándo usarlo
 
-- Una carga puntual necesita más RAM/CPU que el baseline (2048 MiB, 4
-  vCPU): `size="4gb"` evita publicar y mantener una imagen separada a
+- Una carga puntual necesita más RAM/CPU que el baseline (2048 MiB; el
+  guest ve 4 vCPU): `size="4gb"` evita publicar y mantener una imagen separada a
   mano.
 - Quieres que `Sandbox.create(size="512mb")` siga siendo barato para
   cargas pequeñas sin perder el baseline existente.

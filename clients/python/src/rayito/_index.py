@@ -381,7 +381,8 @@ class DynamoDbIndex:
             self.api()
         except NoRegionError as exc:
             raise InvalidArgumentException(
-                "falta la región del índice: pasa DynamoDbIndex(region=...) o define AWS_REGION"
+                "falta la región del índice: pasa DynamoDbIndex(region=...) "
+                "o define AWS_DEFAULT_REGION"
             ) from exc
 
     def api(self) -> DynamoDbApi:

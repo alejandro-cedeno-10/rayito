@@ -63,11 +63,11 @@ def build_command(
         float, typer.Option("--timeout", help="Segundos de espera del build.")
     ] = DEFAULT_BUILD_TIMEOUT_SECONDS,
 ) -> None:
-    """Construye la imagen NAME con OpenCode, ripgrep y (salvo
+    """Construye la imagen --name con OpenCode, ripgrep y (salvo
     --no-deepagents) deepagents, todo fijado por hash.
 
-    Cada versión nueva cuesta almacenamiento de snapshot (≈ 3 GB, mínimo una
-    semana); las versiones se borran con `rayito image`.
+    Cada versión nueva cuesta almacenamiento de snapshot (≈ 3,1 GB, mínimo una
+    semana: ≈ $0,057/semana); las versiones se borran con `rayito image`.
     """
     clients = clients_of(ctx)
     emit_json_mode = json_mode(ctx)

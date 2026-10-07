@@ -13,9 +13,12 @@ firman en S3; `allow_internet_access=False` y `network` son una política de
 egress en el guest (`rayito-base-caps`); `get_metrics(start, end)` es el
 historial del agente. `Secret`/`AsyncSecret` son CRUD sobre AWS Secrets
 Manager en tu cuenta (`fill` devuelve el placeholder de E2B, que Rayito no
-resuelve). Lo que Lambda MicroVMs no puede hacer (`fork`,
-snapshots, MCP, `iam`, volúmenes, templates, kernels que no sean
-python/bash/javascript/typescript...) lanza `UnimplementedError` (un
+resuelve). `Template`/`AsyncTemplate` construyen imágenes de verdad, y
+`Volume`/`AsyncVolume` y `volume_mounts` (experimental) funcionan con un
+`E2B(volume_store=...)`. Lo que Lambda MicroVMs no puede hacer (`fork`,
+snapshots, MCP, `iam`, el contenido de un volumen fuera de un sandbox,
+kernels que no sean python/bash/javascript/typescript...) lanza
+`UnimplementedError` (un
 `NotImplementedError`, nunca `SandboxException`) nombrando la feature y el
 motivo. Los `ApiParams` sin sentido en AWS (`api_key`, `domain`, `debug`,
 `api_url`, `sandbox_url`, `validate_api_key`, `api_headers`, `secure=False`)

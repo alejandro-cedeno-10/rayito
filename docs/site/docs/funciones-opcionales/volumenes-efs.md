@@ -81,7 +81,7 @@ vivos.
 
 ## `VolumeStore`: CRUD de volúmenes
 
-El CRUD es real hoy, sobre un sistema de ficheros EFS que ya exista
+El CRUD trabaja sobre un sistema de ficheros EFS que ya exista
 (desplegado con `EfsVolumes.deploy`/`rayito stack deploy efs-volumes`, ver
 [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md), o uno propio). Cada
 volumen es un *access point* con `RootDirectory.Path =
@@ -205,9 +205,17 @@ Lo que hace `create()`, en orden:
    `invalid_path` o `unknown`), o `UnimplementedError` si la imagen no
    trae `amazon-efs-utils`.
 
+Cada valor de `volumes=` es un `EfsVolume`: el que devuelve
+`VolumeStore.create/get`, o uno que construyes tú con
+`EfsVolume(file_system_id=, access_point_id=, read_only=, mount_target_ip=)`
+(TypeScript: `new EfsVolume({ fileSystemId, accessPointId, readOnly,
+mountTargetIp })`) si ya conoces el access point. Con `mount_target_ip`,
+`create()` no llama a `DescribeMountTargets`.
+
 `sbx.volumes` (Python síncrono), `await sbx.volumes()` (asíncrono y
-TypeScript) lee el estado en vivo de cada ruta (`mounted`, `degraded`,
-`remounting`…). `reincarnate()` vuelve a mandar la sección (y a resolver
+TypeScript) lee el estado en vivo de cada ruta (`requested`, `mounting`,
+`mounted`, `degraded`, `remounting`, `unmounted` o `failed`, con
+`last_error_class`/`lastErrorClass` si falló). `reincarnate()` vuelve a mandar la sección (y a resolver
 las IPs) en el sucesor.
 
 ## Imagen con amazon-efs-utils
@@ -435,7 +443,7 @@ necesita `execution_role_arn=` y la imagen con `amazon-efs-utils`. Sin
 ## Ver también
 
 - [Funciones opcionales](../optional-features.md)
-- [Persistencia (S3)](../persistence.md) — la alternativa que funciona hoy
+- [Persistencia (S3)](../persistence.md) — la alternativa sin VPC ni imagen especial, sin compartir en vivo
 - [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) — `EfsVolumes`: comprobar, desplegar y borrar
 - [Pilas opcionales](pilas-opcionales.md) — `rayito stack deploy efs-volumes`
 - Plantilla: [`infra/efs-volumes.yaml`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/efs-volumes.yaml)

@@ -13,28 +13,28 @@ página sólo dice **qué hay** y dónde está documentado.
     [`AWS_API_NOTES.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)
     (Qnn).
 
-!!! tip "Lo nuevo de 0.7"
-    0.7.0 trae los volúmenes EFS (fila 26): `Volume` hace CRUD real de
-    access points y `volume_mounts=` monta de verdad sobre la imagen
-    opcional `rayito-base-caps-efs`, como función experimental. El dominio
-    propio (fila 110) llega como `CustomDomain`, también experimental y sin
-    verificar aún de punta a punta en AWS real. Resumen:
-    [Novedades de 0.7.0](novedades/0.7.0.md).
-
-!!! tip "Lo nuevo de 0.6"
-    0.6.0 convierte en reales los templates de E2B (filas 56, 81, 89) y
-    añade, como funciones opcionales en tu cuenta, los análogos de los
-    eventos y webhooks (107), la exportación de telemetría (108), los
-    montajes de buckets (111) y el tamaño por imagen (82); `gateways=` cubre
-    el caso de `Secret.fill()` en las reglas de red. Resumen:
-    [Novedades de 0.6.0](novedades/0.6.0.md).
+!!! note "Qué filas cambiaron en cada versión"
+    - **0.8.0**: ninguna. El agente de IA (`sbx.agent`) no es API de E2B:
+      el shim no lo expone y se usa desde el sandbox nativo
+      (`sbx.native.agent`, ver
+      [Compatibilidad](e2b-compat.md#lanza-unimplementederror)).
+    - **0.7.0**: volúmenes EFS (fila 26, experimental: `Volume` hace CRUD
+      real de access points y `volume_mounts=` monta sobre la imagen
+      opcional `rayito-base-caps-efs`) y dominio propio (fila 110,
+      `CustomDomain`, experimental y sin verificar aún de punta a punta en
+      AWS real). [Novedades de 0.7.0](novedades/0.7.0.md).
+    - **0.6.0**: templates reales (filas 56, 81, 89) y, como funciones
+      opcionales en tu cuenta, eventos y webhooks (107), exportación de
+      telemetría (108), montajes de buckets (111) y tamaño por imagen (82);
+      `gateways=` cubre el caso de `Secret.fill()` en las reglas de red.
+      [Novedades de 0.6.0](novedades/0.6.0.md).
 
 ## Estados
 
 | Estado | Qué significa | Filas |
 |---|---|---|
-| implementado | la feature de E2B funciona con el mismo contrato; "antes de 0.3.0" si ya estaba en 0.2.0 | 73 (24 antes de 0.3.0, 48 en 0.3.0, 1 en 0.6.0) |
-| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla o pila opcional) | 27 |
+| implementado | la feature de E2B funciona con el mismo contrato; "antes de 0.3.0" si ya estaba en 0.2.0 | 72 (24 antes de 0.3.0, 48 en 0.3.0) |
+| **divergente** | funciona, con una diferencia escrita en la nota (una imagen concreta, un bucket, el access token, un tope distinto, una tabla o pila opcional) | 28 |
 | fuera por SPEC | se podría construir, pero `SPEC.md` §4 lo deja fuera o aún no está (kernels R/Java, escritorio); lanza `UnimplementedError` o no existe | 2 |
 | imposible en la plataforma | Lambda MicroVMs no tiene la primitiva; lanza `UnimplementedError` con el motivo (o se ignora con `RayitoCompatWarning`) | 11 |
 
@@ -150,8 +150,8 @@ ya estaba en 0.2.0). **Doc** enlaza la página donde se explica cómo usarlo.
 | 86 | `ServiceBusyException` | implementado (0.3.0) | se lanza ante `InsufficientCapacityException` | [Compatibilidad](e2b-compat.md) |
 | 87 | `FileUploadException` | implementado (0.3.0) | se lanza cuando falla una importación (`m9-file-transfer`) | [Compatibilidad](e2b-compat.md) |
 | 88 | `GitAuthException` / `GitUpstreamException` | implementado (0.3.0) | — | [Git](git.md) |
-| 89 | `TemplateException` / `BuildException` | implementado (0.6.0) | los lanza `Template.build()`: `TemplateException` ante un template o una imagen base inválidos, `BuildException` cuando el build falla (con el motivo, incluida la cuota de builds) | [Templates](funciones-opcionales/templates.md) |
-| 90 | `Volume*Exception` / `Secret*Exception` | divergente (0.5.0, aceptado en AWS real) | `SecretException`/`SecretNotFoundException` (TS: `SecretError`/`SecretNotFoundError`) existen y los lanza `Secret`, con la jerarquía de E2B más una diferencia: `SecretException` hereda de `SandboxException` (TS: `SandboxError`) y, en Python, `SecretNotFoundException` también es `NotFoundException`; los `Volume*Exception` no existen porque su API sigue fuera por SPEC (fila 26) | [Compatibilidad](e2b-compat.md#secretos-secret-asyncsecret) |
+| 89 | `TemplateException` / `BuildException` | divergente (0.6.0) | los lanza `Template.build()`: `TemplateException` ante un template o una imagen base inválidos, `BuildException` cuando el build falla (con el motivo, incluida la cuota de builds). En TS son las clases de `rayito/e2b`; en Python son las nativas `rayito.TemplateException`/`rayito.BuildException`, no las homónimas de `rayito.e2b`, que nada lanza: atrapa las de `rayito` ([Compatibilidad](e2b-compat.md#tabla-de-imports)) | [Templates](funciones-opcionales/templates.md) |
+| 90 | `Volume*Exception` / `Secret*Exception` | divergente (0.5.0, aceptado en AWS real) | `SecretException`/`SecretNotFoundException` (TS: `SecretError`/`SecretNotFoundError`) existen y los lanza `Secret`, con la jerarquía de E2B más una diferencia: `SecretException` hereda de `SandboxException` (TS: `SandboxError`) y, en Python, `SecretNotFoundException` también es `NotFoundException`; desde 0.7.0, `VolumeException`/`VolumeNotFoundException`/`VolumePathNotFoundException` también existen (las nativas, exportadas por `rayito.e2b`; en TS, `VolumeError`/`VolumeNotFoundError`/`VolumePathNotFoundError` se importan de `rayito`) y los lanzan las operaciones de volumen con `volume_store=` (fila 26) | [Compatibilidad](e2b-compat.md#secretos-secret-asyncsecret) |
 | 91 | `SandboxState` `RUNNING` / `PAUSED` | implementado (antes de 0.3.0) | — | [Compatibilidad](e2b-compat.md) |
 | 92 | paridad completa de `AsyncSandbox` | implementado (0.3.0) | los mismos huecos cerrados que en el shim síncrono | [Compatibilidad](e2b-compat.md) |
 | 93 | `run_code(code, language / context, on_stdout, on_stderr, on_result, on_error, envs, timeout, request_timeout)` → `Execution` | implementado (antes de 0.3.0) | — | [Compatibilidad](e2b-compat.md) |

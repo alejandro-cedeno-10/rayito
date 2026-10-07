@@ -12,7 +12,8 @@ pausa, sin despertarlos y sin sondear uno a uno.
       `PoolConfig`, el shim de E2B (`Sandbox.list(..., index=)`,
       `E2B(index=)`) y la CLI (`rayito sandbox list --index-table`).
     - **Recursos y llamadas AWS**: la tabla la despliegas tú
-      (`infra/metadata-index.yaml`, on-demand, TTL en `expires_at`).
+      (`rayito stack deploy metadata-index`, plantilla
+      `infra/metadata-index.yaml`, on-demand, TTL en `expires_at`).
       `dynamodb:PutItem` una vez por sandbox creado y `dynamodb:BatchGetItem`
       una vez por página de `list-microvms` al listar con `metadata` e
       `index`. Nunca `DeleteItem`: el TTL borra las filas gratis.
@@ -27,7 +28,8 @@ pausa, sin despertarlos y sin sondear uno a uno.
       `dynamodb:BatchGetItem` (política `RayitoIndexReader`) sobre el ARN de
       la tabla.
     - **Cómo apagarla**: deja de pasar `index=`; para dejar de pagar el
-      almacenamiento, borra la pila de `infra/metadata-index.yaml`.
+      almacenamiento, borra la pila: `rayito stack destroy metadata-index`
+      (borra la tabla y sus dos políticas).
 
 !!! warning "Pendiente de aceptación en AWS real"
     El índice está implementado y probado con DynamoDB simulado en los dos
@@ -47,15 +49,18 @@ pausa, sin despertarlos y sin sondear uno a uno.
 
 ## Ejemplo rápido
 
-Despliega la tabla una vez:
+Despliega la tabla una vez (componente `metadata-index` de
+[`rayito stack`](pilas-opcionales.md); imprime el coste y pide
+confirmación):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/metadata-index.yaml
-aws cloudformation deploy --stack-name rayito-metadata-index \
-  --template-file metadata-index.yaml --capabilities CAPABILITY_IAM
+rayito stack deploy metadata-index --param TableName=rayito-sandboxes
+rayito stack status metadata-index   # salidas: la tabla y las políticas lector/escritor
 ```
 
-(Si clonaste el repositorio, la plantilla ya está en `infra/metadata-index.yaml`.)
+Desde el SDK, `OptionalStacks().deploy("metadata-index")` hace lo mismo. La
+plantilla es `infra/metadata-index.yaml`, por si prefieres desplegarla con
+CloudFormation a mano.
 
 === "Python"
 

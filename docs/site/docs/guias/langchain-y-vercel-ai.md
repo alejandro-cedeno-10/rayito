@@ -10,6 +10,11 @@ Dos adaptadores de unas cincuenta líneas, listos para copiar.
   quieres darle un intérprete de código seguro.
 - Para hosts que hablan MCP (Claude Code, Claude Desktop, Cursor, VS Code)
   no hace falta código: usa el [servidor MCP](../mcp.md).
+- Si lo que quieres es que el agente entero (el bucle del modelo y sus
+  herramientas) corra **dentro** del sandbox, con el modelo detrás de la
+  pasarela de secretos, no necesitas estos adaptadores: usa
+  [`sbx.agent`](agente-en-el-sandbox.md), con OpenCode o con un grafo de
+  deepagents (LangChain).
 
 ## Ejemplo
 
@@ -57,7 +62,8 @@ estándar de AWS (`AWS_PROFILE`, `AWS_REGION`).
 - **Un sandbox por conversación**: guarda el sandbox en el estado de la
   sesión en vez de en una variable global, y mátalo al cerrar la sesión.
 - **Latencia**: con un [pool](../pool.md), la primera llamada tarda
-  < 1 s en vez de 5–6 s.
+  < 1 s en vez de 5–6 s; cada plaza ociosa tiene un coste fijo al mes
+  ([Precios](../cost.md#el-pool-almacenamiento-frente-a-coste-total-por-plaza)).
 - **Sin internet**: crea el sandbox en `rayito-base-caps` con
   `allow_internet_access=False` ([Red saliente](../network.md)).
 - **Gráficos**: devuelve también `execution.results[i].png` (base64) si tu

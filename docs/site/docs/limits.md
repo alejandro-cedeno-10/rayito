@@ -2,12 +2,14 @@
 
 Cuotas y límites de Lambda MicroVMs tal como los ve el SDK. Fuente:
 `AWS_API_NOTES.md` §2, §6 y §11 (medidos en la cuenta de desarrollo el
-2026-09-15) y `clients/python/src/rayito/_limits.py`, que es donde el SDK los
-valida en cliente.
+2026-09-15) y `limits.json`, del que se generan `_limits.py` (Python) y
+`limits.ts` (TypeScript), donde el SDK los valida en cliente.
 
 | Límite | Valor | Qué hace el SDK |
 |---|---|---|
 | Vida máxima de un sandbox (`timeout`, o `max_lifetime`) | 28 800 s (8 h), running + suspended, **no ajustable** | `SandboxLifetimeException` por encima; el tope no se puede extender después |
+| Regiones con Lambda MicroVMs | `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`, `ap-southeast-1`, `ap-southeast-2` | `rayito doctor` avisa (`WARN`) fuera de ellas |
+| Auto-suspensión (`IdlePolicy.max_idle_seconds`) | ≥ 60 s | `InvalidArgumentException` |
 | Plazo lógico (`timeout` con `max_lifetime`/`on_timeout`) | ≥ 1 s y como mucho `max_lifetime − 60 s` desde el arranque (`max_lifetime` 120–28 800 s, por defecto `timeout + 60`; 3600 en el shim) | `set_timeout` por encima del tope: `InvalidArgumentException` con el plazo intacto |
 | Historial de métricas | una muestra cada 5 s mientras corre; anillo de 5 760 muestras (8 h), ≈ 350 KB por respuesta completa | `max_points` ≥ 1 reduce la serie |
 | URLs de transferencia | 3600 s por defecto, tope `S3Staging.max_expires_in` (86 400) y 604 800 s (7 días de SigV4) | `InvalidArgumentException` con `use_signature_expiration <= 0` |
@@ -15,6 +17,7 @@ valida en cliente.
 | Transferencias por sandbox | 16 activas, 2 moviendo bytes a la vez, 64 terminadas retenidas 30 min | `RateLimitException` (`RESOURCE_EXHAUSTED`) |
 | Metadatos por fichero | ≤ 64 claves y ≤ 4 000 B en total (xattrs `user.rayito.*`) | `InvalidArgumentException` antes de llamar |
 | Política de egress | ≤ 256 entradas por lista, ≤ 64 nombres de host, ≤ 4 096 prefijos por familia tras restar | `InvalidArgumentException` |
+| Persistencia (`persist=S3Prefix(...)`) | prefijo de clave ≤ 900 bytes, ≤ 64 patrones en `exclude`; restauración automática con plazo de 600 s (`persist_timeout` / `persistTimeoutMs`) | `InvalidArgumentException` antes de llamar |
 | `runHookPayload` (`envs` + `metadata` + hash del token) | 4096 caracteres | `InvalidArgumentException` antes de llamar a AWS, nombrando `envs` y `metadata` |
 | Conexiones concurrentes por MicroVM | 8 (1 vCPU), 16, 32, 64, 128 | ≤ 2 canales HTTP/2 por sandbox: unarios y streams |
 | Ancho de banda del endpoint | 1 / 2 / 4 / 8 / 16 MB/s por tamaño | medido: 0,65 MB/s escritura, 6,71 MB/s lectura a 2 GB |
@@ -32,6 +35,9 @@ valida en cliente.
 | Salida guardada de un comando o PTY (desde 0.7.0) | 64 MiB por descriptor (`COMMAND_OUTPUT_MAX_BYTES`); se conserva el final | `truncated` en el resultado; ajustable con `max_output_bytes` / `maxOutputBytes` ([Comandos](guias/comandos.md#salida-guardada)) |
 | Volúmenes EFS por sandbox (desde 0.7.0, experimental) | de 1 a 4, y como mucho 4 entre `mounts=` y `volumes=`; exactamente un conector de egress propio (`AWS_API_NOTES.md` §16 Q131); `ConfigureSandbox` con plazo de 65 s | `InvalidArgumentException` antes de lanzar ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)) |
 | Access token propio (desde 0.7.0) | al menos 16 bytes decodificados (`ACCESS_TOKEN_MIN_BYTES`) | `InvalidArgumentException` |
+| Agente de IA (`AgentLimits`, desde 0.8.0) | por defecto 50 pasos (`max_steps`), 1 000 000 tokens (`max_total_tokens`; `None`/`null` lo desactiva), 600 s (`timeout_seconds` / `timeoutMs: 600_000`) y 16 MiB de salida (`max_output_bytes`, como mucho 64 MiB) | `AgentException` con `reason` `max_steps`, `token_budget` o `timeout` ([Errores](referencia/errores.md#agentexception-agenterror)) |
+| Línea de evento del agente | ≤ 4 MiB; una más larga se descarta y cuenta en `dropped_lines` | — |
+| Memoria de una imagen de agente (`AgentTemplate`) | ≥ 2048 MiB | `InvalidArgumentException` |
 
 Las cuotas TPS son por cuenta y región (`AWS_API_NOTES.md` §11); cuentas
 nuevas pueden empezar con valores menores.
@@ -56,7 +62,7 @@ que quieras ([Templates](funciones-opcionales/templates.md)).
 
 Tabla de la **documentación de AWS** (`AWS_API_NOTES.md` §4; ancho de banda
 del endpoint, entrada + salida), con el coste de la hora en baseline
-derivado de los precios de §12 (`AWS_API_NOTES.md` §12 / [Costes](cost.md)):
+derivado de los precios de §12 (`AWS_API_NOTES.md` §12 / [Precios](cost.md)):
 **nada de esta tabla salvo lo marcado está medido en una cuenta real**.
 
 | `minimumMemoryInMiB` | baseline | pico (4x) | disco | ancho de banda | $/h en baseline |
@@ -104,12 +110,12 @@ simplemente no tiene número de referencia aquí todavía.
 
 **Coste**: mientras el sandbox está `RUNNING`, AWS factura por segundo al
 vCPU/GB de **baseline** de la columna de arriba (columna `$/h en baseline`,
-precios en [Costes](cost.md)); si el sandbox consume por encima del
+precios en [Precios](cost.md)); si el sandbox consume por encima del
 baseline (hasta el pico 4x), **ese exceso se factura aparte, a los vCPU/GB
 realmente consumidos** (`AWS_API_NOTES.md` §12), no al precio del tamaño
 siguiente de la tabla. Cada versión de imagen publicada, sea cual sea su
 tamaño, cuesta además el storage del snapshot (mínimo 1 semana de
-retención, ver [Costes](cost.md) e [Imágenes e IAM](images.md#publicar-las-tres)).
+retención, ver [Precios](cost.md) e [Imágenes e IAM](images.md#publicar-las-tres)).
 
 **Lo que ve el guest no es la línea base**: `SandboxInfo.cpu_count` y
 `SandboxInfo.memory_mb` informan la vista del guest (`nproc` y `MemTotal`),

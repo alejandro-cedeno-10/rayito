@@ -17,18 +17,34 @@ descargarlo — bajo egress cerrado eso falla) y, opcionalmente, un venv con
 que validó el spike en AWS real
 ([`docs/research/2026-10-agent-spike.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/research/2026-10-agent-spike.md)).
 
+Todos los campos tienen valor por defecto: `AgentTemplate().build(bucket=...)`
+construye `rayito-agent` sobre `rayito-base-caps` con OpenCode, deepagents
+y el prefetch. El ejemplo los escribe para que se vean:
+
 === "Python"
 
     ```python
     from rayito import AgentTemplate
 
-    AgentTemplate(
+    info = AgentTemplate(
         name="rayito-agent",
         base="rayito-base-caps",
         runtimes=("opencode", "deepagents"),
         prefetch=True,
         memory_mib=2048,
-    ).build(bucket="tu-bucket-de-artefactos")
+    ).build(bucket="amzn-s3-demo-bucket", on_build_logs=print)
+    print(info)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AsyncAgentTemplate
+
+
+    async def build() -> None:
+        info = await AsyncAgentTemplate(runtimes=("opencode",)).build(bucket="amzn-s3-demo-bucket")
+        print(info)
     ```
 
 === "TypeScript"
@@ -36,20 +52,37 @@ que validó el spike en AWS real
     ```ts
     import { AgentTemplate } from "rayito";
 
-    await new AgentTemplate({
+    const info = await new AgentTemplate({
       name: "rayito-agent",
       base: "rayito-base-caps",
       runtimes: ["opencode", "deepagents"],
       prefetch: true,
       memoryMib: 2048,
-    }).build({ bucket: "tu-bucket-de-artefactos" });
+    }).build({ bucket: "amzn-s3-demo-bucket" });
+    console.log(info);
     ```
 
 === "CLI"
 
     ```bash
-    rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents
+    rayito agent template build --name rayito-agent --bucket amzn-s3-demo-bucket
     ```
+
+| Campo (Python / TypeScript) | CLI | Por defecto | Qué es |
+|---|---|---|---|
+| `name` | `--name` | `rayito-agent` | nombre de la imagen que se crea o actualiza |
+| `base` | `--base` | `rayito-base-caps` | imagen base; la variante con capabilities es la única donde `allow_internet_access=False` se aplica |
+| `base_version` / `baseVersion` | — | la última | versión de la imagen base |
+| `runtimes` | `--deepagents` / `--no-deepagents` | `("opencode", "deepagents")` | qué se instala; la CLI siempre instala OpenCode |
+| `prefetch` | `--prefetch` / `--no-prefetch` | `True` | hornea el demonio de [prefetch](#prefetch) |
+| `memory_mib` / `memoryMib` | `--memory-mb` | 2048 (mínimo) | memoria de la imagen |
+
+`build()` acepta `bucket` (obligatorio), `force`, `timeout` (segundos;
+TS: `timeoutMs`), `on_build_logs`/`onBuildLogs`, `region` y `session`
+(TS: `credentials`), como [`Template.build`](templates.md); la CLI, `--bucket`, `--force` y
+`--timeout` (1800 s por defecto). Devuelve el `BuildInfo` del build. Sin
+construir nada, `to_dockerfile()`/`toDockerfile()` enseña la receta y
+`manifest()` el manifiesto que hornea.
 
 `memory_mib`/`memoryMib` por debajo de 2048 lanza
 `InvalidArgumentException`/`InvalidArgumentError` antes de cualquier
@@ -67,12 +100,15 @@ documenta que el guest ve más memoria que la configurada).
       2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ **3,1 GB** × $0,08/GB-mes,
       con el mínimo de una semana por versión de imagen ⇒ ≈
       **$0,057/semana** (≈ $0,25/mes) por versión. Asume que el
-      almacenamiento es la suma de los tres snapshots.
+      almacenamiento es la suma de los tres snapshots. Precios de lista,
+      us-east-1, consultados 2026-10-06: ver
+      [Precios](../cost.md#coste-de-la-vm-con-fast-start).
     - **Lanzamiento**: lectura del snapshot de memoria (0,92 GB)
       ≈ **$0,0014**, igual que cualquier otra imagen.
     - **IAM**: `RayitoTemplateBuilder`, la misma política que
       [Templates declarativos](templates.md) (pila `templates`).
-    - **Cómo apagarla**: no construyas el template. Un sandbox normal
+    - **Cómo apagarla**: no construyas el template; borra sus versiones
+      con `rayito image prune`. Un sandbox normal
       (`rayito-base`/`rayito-base-caps`) no cambia.
 
 ## Qué instala
@@ -91,8 +127,8 @@ Las variables `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_DISABLE_MODELS_FETCH`,
 intentaría bajar de Internet al arrancar y evitan que lea un `.claude/` del
 workdir. El manifiesto horneado en `/opt/agents/rayito-agent.json`
 (`rayito.agent-template/1`) lista versiones, sha256 y las rutas que el
-prefetch calienta. Que `sbx.agent` lo lea una vez por handle para comprobar
-`runtime_version` es **próximamente**.
+prefetch calienta. `sbx.agent` no lo lee: `AgentSpec.runtime_version` no se
+compara con él.
 
 ## Prefetch
 
@@ -132,8 +168,8 @@ Cuándo conviene cada opción de arranque rápido:
 ## `--no-deepagents`, `--no-prefetch`
 
 ```bash
-rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
-rayito agent template build --name rayito-agent --bucket tu-bucket-de-artefactos --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco
+rayito agent template build --bucket amzn-s3-demo-bucket --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
+rayito agent template build --bucket amzn-s3-demo-bucket --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco
 ```
 
 ## Ver también

@@ -72,6 +72,25 @@ arranca un servidor dentro y llega a él por HTTPS a través del proxy de AWS.
     curl http://127.0.0.1:3000/            # sin cabeceras: las pone el proxy local
     ```
 
+=== "Shim E2B"
+
+    ```python
+    import urllib.request
+
+    from rayito.e2b import Sandbox
+
+    with Sandbox.create() as sbx:
+        sbx.commands.run("python3 -m http.server 3000", background=True, timeout=None)
+        host = sbx.get_host(3000)  # (1)!
+        request = urllib.request.Request(f"https://{host}/", headers=host.headers)
+        with urllib.request.urlopen(request) as response:
+            print(response.status)  # 200
+    ```
+
+    1. El mismo `HostAccess` que el SDK nativo. En el shim de TypeScript,
+       `getHost(port)` devuelve sólo el hostname y las cabeceras salen de
+       `await sbx.getHostHeaders(port)`.
+
 ## Paso a paso
 
 1. El servidor del sandbox debe escuchar en un puerto libre. Dos están
@@ -121,5 +140,8 @@ arranca un servidor dentro y llega a él por HTTPS a través del proxy de AWS.
 ## Ver también
 
 - [Proxy local](../funciones-opcionales/proxy-local.md)
+- [Dominio propio](../funciones-opcionales/dominio-propio.md)
+  (**experimental**, opcional y con coste): una URL de tu dominio delante
+  de un puerto del sandbox
 - [Comandos](comandos.md): arrancar el servidor en segundo plano
 - [Seguridad](../security.md)

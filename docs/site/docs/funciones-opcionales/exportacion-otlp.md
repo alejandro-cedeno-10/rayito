@@ -136,6 +136,19 @@ IAM una vez:
 rayito stack deploy otlp-export
 ```
 
+## Opciones de `TelemetryExport`
+
+| Python | TypeScript | Por defecto | Qué hace |
+|---|---|---|---|
+| `interval_s` | `intervalS` (también en segundos) | `60` | cada cuánto exporta un lote, de 15 a 300 s |
+| `service_name` | `serviceName` | `"rayito"` | el `service.name` del recurso OTLP |
+| `names` | `names` | `"rayito"` | prefijo de las métricas: `"rayito"` o `"e2b"` (ver [Qué exporta](#que-exporta)) |
+| `auth` | `auth` | `OtlpAuth.execution_role()` / `OtlpAuth.executionRole()` | cómo se firma: el execution role o `OtlpAuth.bearer(...)` ([Autenticación](#autenticacion)) |
+
+`sbx.get_telemetry_status()` (`await sbx.getTelemetryStatus()`) devuelve un
+`TelemetryHealth` con `exported`, `dropped` y `last_error_class`/
+`lastErrorClass`.
+
 ## Ejemplo rápido
 
 === "Python"

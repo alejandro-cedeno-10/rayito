@@ -342,8 +342,9 @@ class AgentSpec:
     `instructions` se escribe en un `AGENTS.md` propio bajo
     `AGENT_STATE_DIR`, nunca sobre el del directorio de trabajo (que OpenCode
     también lee). `raw_config` se fusiona en profundidad al final y no puede
-    tocar `RESERVED_CONFIG_KEYS`. `runtime_version` se compara con el
-    manifiesto de la plantilla (`runtime_version_mismatch`)."""
+    tocar `RESERVED_CONFIG_KEYS`. `runtime_version` sólo se valida como
+    texto: hoy no se compara con el manifiesto de la plantilla y nunca
+    produce `runtime_version_mismatch`."""
 
     model: AgentModel
     small_model: str | None = None

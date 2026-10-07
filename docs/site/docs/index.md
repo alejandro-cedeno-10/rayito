@@ -48,7 +48,7 @@ credenciales.
 el diagnóstico dice qué falta antes del primer sandbox:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
 rayito doctor --template "$RAYITO_TEMPLATE"
 ```
 
@@ -83,6 +83,19 @@ no la lee, así que pásasela con `--template` (sin él comprueba
 
     1. `await using` mata el sandbox al salir del bloque.
 
+=== "Shim E2B"
+
+    ```python
+    from rayito.e2b import Sandbox  # antes: from e2b_code_interpreter import Sandbox
+
+    with Sandbox.create(timeout=300) as sbx:
+        print(sbx.commands.run("echo hola").stdout)  # "hola\n"
+        print(sbx.run_code("x = 40; x + 2").text)  # "42"
+    ```
+
+    El código escrito para E2B 2.x, cambiando sólo el import
+    ([Migrar desde E2B](migrar-desde-e2b/index.md)).
+
 Guarda el código en `primer.py` y ejecútalo con `python primer.py`, o en
 `primer.ts` y ejecútalo con `npx tsx primer.ts` (TypeScript necesita
 `"type": "module"` y un `tsconfig.json`: ver
@@ -90,6 +103,60 @@ Guarda el código en `primer.py` y ejecútalo con `python primer.py`, o en
 
 Siguiente paso: [Primer sandbox](quickstart.md) recorre comandos, ficheros,
 código y reconexión en Python, Python async y TypeScript.
+
+## Un agente de código dentro del sandbox
+
+`sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode)
+o deepagents) dentro del propio sandbox. El agente llama a su modelo
+(Bedrock, Anthropic o un endpoint compatible con OpenAI) sólo a través de
+la [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md):
+usa la credencial, pero nunca puede leerla. Basta un `Sandbox.create()`
+normal sobre la imagen `rayito-agent`
+([Templates de agente](funciones-opcionales/templates-de-agente.md)):
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, AgentSpec, Sandbox, SecretStore, bedrock_gateway
+
+    MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    SecretStore().create("bedrock-key", "Bearer <clave de Bedrock de corta duración>")
+    spec = AgentSpec(model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"))
+
+    with Sandbox.create(
+        template="rayito-agent",
+        allow_internet_access=False,
+        gateways={"bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID])},
+    ) as sbx:
+        result = sbx.agent.run("Lista los ficheros de /home/user y resume qué hay.", spec=spec)
+        print(result.text, result.usage.total)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, AgentSpec, Sandbox, SecretStore, bedrockGateway } from "rayito";
+
+    const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+    await new SecretStore().create("bedrock-key", "Bearer <clave de Bedrock de corta duración>");
+    const spec = new AgentSpec({
+      model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: "us-east-1" }),
+    });
+
+    await using sbx = await Sandbox.create({
+      template: "rayito-agent",
+      allowInternetAccess: false,
+      gateways: { bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [MODEL_ID] }) },
+    });
+    const result = await sbx.agent.run("Lista los ficheros de /home/user y resume qué hay.", { spec });
+    console.log(result.text, result.usage.total);
+    ```
+
+Arrancar más rápido (un pool con `warmup` o un servidor residente) es
+opcional: cuándo compensa cada opción, en
+[¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso). Lo que cuesta la VM
+frente a los tokens del modelo:
+[Precios](cost.md#coste-de-un-agente-vm-frente-a-modelo).
 
 ## Explora la documentación
 
@@ -108,7 +175,7 @@ código y reconexión en Python, Python async y TypeScript.
     ---
 
     Una página por función: comandos, código, ficheros, terminal, red,
-    pausa, pool, persistencia y más.
+    pausa, pool, persistencia, el agente dentro del sandbox y más.
 
     [:octicons-arrow-right-24: Ver las guías](guias/index.md)
 
@@ -134,8 +201,9 @@ código y reconexión en Python, Python async y TypeScript.
 
     ---
 
-    Montajes S3, tamaños, eventos y webhooks, OTLP, templates, pasarela de
-    secretos: qué activa cada una, qué cuesta y cómo apagarla.
+    Secretos, pasarela de secretos, montajes S3, tamaños, eventos y
+    webhooks, OTLP, templates, volúmenes EFS y dominio propio: qué activa
+    cada una, qué cuesta y cómo apagarla.
 
     [:octicons-arrow-right-24: Resumen y coste](optional-features.md)
 
@@ -181,8 +249,9 @@ código y reconexión en Python, Python async y TypeScript.
   plataforma no puede hacer lanza `UnimplementedError`: nada se aproxima en
   silencio.
 - **Nunca cobra por sorpresa.** Las funciones opcionales que gastan dinero
-  de AWS además del propio sandbox (secretos, índice de metadatos, eventos
-  y webhooks, exportación OTLP, templates…) están apagadas por defecto y
+  de AWS además del propio sandbox (secretos, pasarela de secretos, índice
+  de metadatos, eventos y webhooks, exportación OTLP, templates, volúmenes
+  EFS, dominio propio…) están apagadas por defecto y
   sólo se activan con una opción explícita del SDK; su infraestructura la
   despliegas tú con `rayito stack deploy`, que imprime el coste antes de
   pedir confirmación ([Funciones opcionales](optional-features.md)). La otra vía con coste
@@ -207,25 +276,33 @@ código y reconexión en Python, Python async y TypeScript.
 | `persist=`, `reincarnate()` | el `HOME` en S3, más allá de las 8 h | [Persistencia](persistence.md) |
 | `get_metrics_history()`, `Sandbox.paginate()` | historial de métricas y listado reanudable | [Métricas y listado](observability.md) |
 | `sbx.git` | la API git de E2B | [Git](git.md) |
+| `sbx.agent` | un agente de código (OpenCode o deepagents) dentro del sandbox, con el modelo tras la pasarela de secretos | [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
 | `rayito.e2b`, `rayito/e2b` | el SDK de E2B 2.x cambiando sólo el import | [Migrar desde E2B](migrar-desde-e2b/index.md) |
 | `rayito-mcp` | un sandbox para Claude Code, Cursor o VS Code por MCP | [Servidor MCP](mcp.md) |
-| `rayito` (CLI) | publicar la imagen, diagnosticar la cuenta, operar sandboxes | [CLI](cli.md) |
-| `secrets=`, `SecretStore` (opcional) | secretos de AWS Secrets Manager como variables de entorno | [Secretos](secrets.md) |
-| `index=DynamoDbIndex(...)` (opcional) | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
-| `tracer_provider=` (opcional) | spans OpenTelemetry del lado del SDK | [OpenTelemetry](funciones-opcionales/opentelemetry.md) |
-| `mounts=`, `S3Mount` (opcional, 0.6) | un bucket S3 como carpeta del sandbox | [Montajes S3](funciones-opcionales/montajes-s3.md) |
-| `size=` (opcional, 0.6) | sandboxes de 512 MiB a 8 GiB desde imágenes por tamaño | [Tamaños](funciones-opcionales/tamanos.md) |
-| `events=`, `LifecycleEvents` (opcional, 0.6) | eventos de ciclo de vida y webhooks con la firma de E2B | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
-| `telemetry=`, `TelemetryExport` (opcional, 0.6) | métricas del sandbox por OTLP a CloudWatch | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md) |
-| `Template.build()` (opcional, 0.6) | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
-| `gateways=`, `SecretGateway` (opcional, 0.6) | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
-| `OptionalStacks`, `rayito stack` (0.6) | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
-| `volumes=`, `VolumeStore`, `EfsVolumes` (opcional, experimental, 0.7) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
-| `CustomDomain`, `rayito domain` (opcional, experimental, 0.7) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
-| `make local-up`, `make local-e2e` (0.7) | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
-| `sbx.agent.run / stream / prepare`, `bedrock_gateway`… (0.8) | un agente de código (OpenCode o deepagents) dentro del sandbox, con su modelo por la pasarela de secretos | [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
-| `AgentTemplate`, `rayito agent template build` (opcional, 0.8) | la imagen del agente, con sus binarios fijados por sha256 y prefetch | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
-| `PoolConfig(warmup=agent_pool_warmup(...))` (opcional, 0.8) | plazas del pool con el agente ya calentado | [Pool](pool.md#calentamiento-warmup-y-servidor-residente) |
+| LangChain, Vercel AI SDK | Rayito como herramienta de un agente que corre fuera del sandbox | [LangChain y Vercel AI](guias/langchain-y-vercel-ai.md) |
+| `rayito` (CLI) | publicar la imagen, diagnosticar la cuenta, operar sandboxes y pilas | [CLI](cli.md) |
+| `make local-up`, `make local-e2e` | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
+
+Funciones opcionales, todas apagadas por defecto hasta que pasas su opción
+(o, en las que son sólo de la CLI, ejecutas su orden):
+
+| Superficie | Qué hace | Guía |
+|---|---|---|
+| `secrets=`, `SecretStore` | secretos de AWS Secrets Manager como variables de entorno | [Secretos](secrets.md) |
+| `gateways=`, `SecretGateway` | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
+| `mounts=`, `S3Mount` | un bucket S3 como carpeta del sandbox | [Montajes S3](funciones-opcionales/montajes-s3.md) |
+| `size=` | sandboxes de 512 MiB a 8 GiB desde imágenes por tamaño | [Tamaños](funciones-opcionales/tamanos.md) |
+| `events=`, `LifecycleEvents` | eventos de ciclo de vida y webhooks con la firma de E2B | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
+| `telemetry=`, `TelemetryExport` | métricas del sandbox por OTLP a CloudWatch | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md) |
+| `tracer_provider=` | spans OpenTelemetry del lado del SDK | [OpenTelemetry](funciones-opcionales/opentelemetry.md) |
+| `index=DynamoDbIndex(...)` | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
+| `Template.build()` | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
+| `AgentTemplate`, `rayito agent template build` | la imagen `rayito-agent` con OpenCode, ripgrep y deepagents | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
+| `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup-y-servidor-residente) |
+| `OptionalStacks`, `rayito stack` | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
+| `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
+| `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
+| `domain=`, `CustomDomain`, `rayito domain` (experimental) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
 
 Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
 `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.

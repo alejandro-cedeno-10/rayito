@@ -49,6 +49,8 @@ cada decisión está en `docs/research/2026-10-local-testing.md`.
   `aws-sdk-s3` (montajes S3) solo ya pasa de 2 GB al compilarse. Con menos,
   compila `rayd` en tu máquina y pásalo con `LOCAL_RAYD_BIN` (abajo).
 - `make` y `python3` (para copiar el sidecar al contexto del guest).
+- Sólo para los tests de agentes (abajo): `uv` y una sesión de AWS en tu
+  máquina, porque `make local-bedrock-key` corre con `uv run`.
 
 ## Uso
 
@@ -161,7 +163,7 @@ se saltan.
 |---|---|---|
 | Comandos, ficheros, PTY, `run_code`, contextos, `connect`, métricas | sí, contra el `rayd` real | |
 | Pausa y reanudación | la máquina de estados de `rayd` | snapshot y restauración de la memoria |
-| `OptionalStacks` (`rayito stack`) | despliegue, estado, redespliegue y borrado de las siete pilas | permisos IAM y coste reales |
+| `OptionalStacks` (`rayito stack`) | despliegue, estado, redespliegue y borrado de seis pilas (`metadata-index`, `secrets-access`, `otlp-export`, `s3-mounts`, `sizes-guard`, `templates`), más `events-webhooks` desde `LifecycleEvents` | `custom-domain` y `efs-volumes`; permisos IAM y coste reales |
 | Índice de metadatos, `SecretStore`, `secrets=` | sí | |
 | Pasarela de secretos (`gateways=`) | la sección de `ConfigureSandbox` y el listener | el reenvío HTTPS al upstream |
 | `Template.build` | subida del zip a S3 y `create-microvm-image` | el build real de la imagen y su `/ready` |

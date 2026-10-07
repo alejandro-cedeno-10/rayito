@@ -6,6 +6,14 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+
+- **TSDoc alineado con la documentación** (barrido de docs de 0.8): los
+  errores sin TSDoc lo tienen, los códigos de `MountError`, `AgentError`
+  (`runtime_version_mismatch` y `output_limit`, reservados) y `GatewayError`
+  (hoy no se lanza) dicen lo que pasa de verdad, y `reincarnate()` lista
+  todo lo que reaplica.
+
 ## [0.8.0] - 2026-10-07
 
 ### Cambios que rompen

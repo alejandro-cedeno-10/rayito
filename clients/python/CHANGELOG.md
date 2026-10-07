@@ -6,6 +6,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Changed
+
+- **Docstrings, ayuda de la CLI y mensajes alineados con la documentación**
+  (barrido de docs de 0.8): las excepciones sin docstring lo tienen, los
+  códigos de `MountException`, `AgentException` (`runtime_version_mismatch`
+  y `output_limit`, reservados) y `GatewayException` (hoy no se lanza)
+  dicen lo que pasa de verdad, `reincarnate()` lista todo lo que reaplica,
+  `Sandbox.create(pool=)` lista los kwargs que pasan, y los errores sin
+  región del índice y de `Template.build` piden `AWS_DEFAULT_REGION` (la
+  que lee boto3). La ayuda de `rayito image sizes`, `doctor`,
+  `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
+  internos.
+
 ## [0.8.0] - 2026-10-07
 
 ### Cambios que rompen

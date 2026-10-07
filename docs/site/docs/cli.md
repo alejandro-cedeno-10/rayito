@@ -3,10 +3,25 @@
 `rayito` es la herramienta de línea de comandos del SDK: publica y lista la
 imagen, borra versiones antiguas, lista, inspecciona y mata sandboxes, lee
 sus logs de CloudWatch y diagnostica una cuenta antes del primer
-`Sandbox.create()`. Desde 0.6 también despliega las pilas opcionales
-(`rayito stack`, `rayito events`) y construye templates declarativos
-(`rayito template`). No hay `rayito.toml`: la configuración son opciones y
-variables de entorno.
+`Sandbox.create()`. También despliega las pilas opcionales
+(`rayito stack`, `rayito events`, `rayito domain`), construye templates
+declarativos (`rayito template`) y la imagen del agente de IA
+(`rayito agent template build`). No hay `rayito.toml`: la configuración son
+opciones y variables de entorno.
+
+| Grupo | Comandos |
+|---|---|
+| [`rayito image`](#rayito-image) | `publish`, `list`, `sizes`, `prune`, `zip` |
+| [`rayito sandbox`](#rayito-sandbox) | `list`, `info`, `kill`, `logs`, `create`, `connect`, `proxy`, `exec`, `metrics` |
+| [`rayito stack`](#rayito-stack) | `list`, `status`, `deploy`, `destroy` |
+| [`rayito domain`](#rayito-domain) (experimental) | `deploy`, `status`, `destroy` |
+| [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
+| [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
+| [`rayito agent`](#rayito-agent) | `template build` |
+| [`rayito doctor`](#rayito-doctor) | — |
+
+El servidor MCP es otro ejecutable del mismo paquete, `rayito-mcp`
+([Servidor MCP](mcp.md)).
 
 ## Instalación
 
@@ -32,8 +47,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] <grupo> <comando> …
 ```
 
 - `--profile` y `--region` construyen la sesión de `boto3`; sin ellos se usa
-  la cadena habitual (`AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`, el
-  fichero de configuración, el rol de la máquina). No hay API key de Rayito.
+  la cadena habitual (`AWS_PROFILE`, `AWS_DEFAULT_REGION`, el fichero de
+  configuración, el rol de la máquina) más `AWS_REGION`, que la CLI lee
+  aunque `boto3` no lo haga. No hay API key de Rayito.
 - Sin región resoluble: `sin región: pasa --region o exporta AWS_REGION` y
   salida 2, antes de cualquier llamada. Sin credenciales o con un perfil
   desconocido, lo mismo.
@@ -263,7 +279,7 @@ Comportamiento:
 Un recorrido completo, con el token en un fichero que sólo lee tu usuario:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 mkdir -p ~/.rayito && chmod 700 ~/.rayito           # --detach crea el fichero, no el directorio
 rayito sandbox create rayito-base --detach --timeout 1800 \
     --metadata equipo=datos --token-file ~/.rayito/demo.token      # imprime microvm-<id>
@@ -331,7 +347,7 @@ curl http://127.0.0.1:8000/
 - Un sandbox `SUSPENDED` con auto-resume se despierta con la primera
   petición que llega al proxy (eso sí factura cómputo, más una lectura de
   snapshot al reanudar: [Límites](limits.md#tamano-cpuram) y
-  [Costes](cost.md) para el precio por GB).
+  [Precios](cost.md) para el precio por GB).
 - $0 de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos,
   cuota de 50 TPS por cuenta/región; ~1 acuñación cada 45 min por proxy en
   marcha); sin recursos nuevos. Ctrl-C para el refresher y cierra el
@@ -384,9 +400,9 @@ estar en `us-east-1`.
 ## `rayito events`
 
 ```bash
-rayito events deploy --artifact-bucket B --log-group-name G [--reconciler-interval-minutes M] [--tag K=V]... [--yes]
+rayito events deploy --artifact-bucket B --log-group-name G [--reconciler-interval-minutes 5] [--tag K=V]... [--yes]
 rayito events status | destroy [--yes]
-rayito events list [--sandbox-id ID] [--type T]... [--limit N] [--order desc|asc]
+rayito events list [--sandbox-id ID] [--type T]... [--limit 100] [--order desc|asc]
 rayito events webhook add <url> --secret-name S --type T [--type T]...
 rayito events webhook list
 rayito events webhook remove <webhook-id>
@@ -401,9 +417,9 @@ confirmación como `rayito stack deploy`.
 ## `rayito template`
 
 ```bash
-rayito template build <spec.py> --name N --bucket B [--memory-mb M] [--force] [--timeout S]
+rayito template build <spec.py> --name N --bucket B [--memory-mb 2048] [--force] [--timeout 1800]
 rayito template status <name> [--version V]
-rayito template logs <name> [--limit N]
+rayito template logs <name> [--limit 500]
 ```
 
 Construye un [template declarativo](funciones-opcionales/templates.md):
@@ -413,6 +429,29 @@ Construye un [template declarativo](funciones-opcionales/templates.md):
 log del build. Cada versión nueva cuesta almacenamiento de snapshot, igual
 que `rayito image publish`; las antiguas se borran con `rayito image prune --image-name <name>`. `status` y
 `logs` sólo leen: sin `--version`, la versión más reciente.
+
+## `rayito agent`
+
+```bash
+rayito agent template build --bucket B [--name rayito-agent] [--base rayito-base-caps] [--memory-mb 2048]
+                            [--no-deepagents] [--no-prefetch] [--force] [--timeout 1800]
+```
+
+Construye la imagen de `AgentTemplate`
+([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte
+de `--base` (una imagen ya publicada con `rayito image publish`) e instala
+OpenCode, ripgrep y, salvo `--no-deepagents`, el entorno de deepagents, todo
+fijado por hash. `--no-prefetch` omite el demonio que precarga los binarios
+tras cada restauración del snapshot. Sin fichero de spec: la receta es la
+del SDK. Imprime `template_id=` y `build_id=` (con `--json`, `templateId`,
+`buildId` y `alias`); un build fallido es `build fallido: …` y salida 1.
+
+Se construye una vez: el arranque normal del agente es
+`Sandbox.create(template="rayito-agent", ...)` + `sbx.agent.run(...)`, sin
+pool. El prefetch y los pools calientes son opcionales:
+[¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso). Cada versión nueva cuesta
+almacenamiento de snapshot ([Precios](cost.md#cuanto-cuesta-con-ejemplos));
+las antiguas se borran con `rayito image prune --image-name <name>`.
 
 ## `rayito doctor`
 
@@ -455,9 +494,9 @@ Sin `--launch` el doctor **nunca crea un MicroVM**: las comprobaciones 8–10
 usan el sandbox `RUNNING` más nuevo de la imagen o quedan en `SKIP`. Con
 `--launch` crea uno de 300 s (`idle=None`, `logging="disabled"`,
 `metadata={"rayito": "doctor"}`), lo usa para 8–10 y lo mata en un `finally`
-pase lo que pase (también con Ctrl-C); cuesta ≈ $0,002 (lectura del snapshot
-de ≈ 0,9 GB más unos segundos de cómputo) y su id aparece como
-`launched_sandbox_id`.
+pase lo que pase (también con Ctrl-C); cuesta la lectura del snapshot más
+unos segundos de cómputo ([Precios](cost.md#cuanto-cuesta-con-ejemplos)) y su
+id aparece como `launched_sandbox_id`.
 
 Salida humana: una línea por comprobación (`OK   credentials  cuenta …`), los
 detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
@@ -465,7 +504,7 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
 
 ```json
 {
-  "rayito": "0.5.0",
+  "rayito": "0.8.0",
   "region": "us-east-1",
   "account": "123456789012",
   "principal_kind": "assumed-role",
@@ -475,7 +514,10 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
     {"sdk_series": "0.2", "min_agent_version": "0.2.0", "note": "…"},
     {"sdk_series": "0.3", "min_agent_version": "0.3.0", "note": "…"},
     {"sdk_series": "0.4", "min_agent_version": "0.4.0", "note": "…"},
-    {"sdk_series": "0.5", "min_agent_version": "0.5.0", "note": "…"}
+    {"sdk_series": "0.5", "min_agent_version": "0.5.0", "note": "…"},
+    {"sdk_series": "0.6", "min_agent_version": "0.6.0", "note": "…"},
+    {"sdk_series": "0.7", "min_agent_version": "0.7.0", "note": "…"},
+    {"sdk_series": "0.8", "min_agent_version": "0.8.0", "note": "…"}
   ],
   "launched_sandbox_id": null,
   "exit_code": 0

@@ -13,7 +13,11 @@ agente de la imagen ([CLI](cli.md#rayito-doctor)).
 
 Las tres variantes salen del mismo `Dockerfile`: `rayito-base-caps` es el
 mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
-`rayito-base-poly` añade una capa con `bash_kernel` y Deno 2.9.7.
+`rayito-base-poly` añade una capa con `bash_kernel` y Deno 2.9.7. Hay además
+dos imágenes opcionales que sólo publicas si usas su función:
+`rayito-base-caps-efs` (`rayito-base-caps` más `amazon-efs-utils`, para
+`volumes=`) y la imagen de un agente que construye `AgentTemplate`
+(`rayito-agent`, sobre `rayito-base-caps`).
 
 | Función | `rayito-base` | `rayito-base-caps` | `rayito-base-poly` |
 |---|---|---|---|
@@ -34,6 +38,7 @@ mismo zip que `rayito-base` publicado con `additionalOsCapabilities ALL`, y
 | Recogida de zombis huérfanos ([Novedades de 0.6.1](novedades/0.6.1.md#rayd-recoge-los-procesos-zombi)) | sí (0.6.1) | sí (0.6.1) | sí (0.6.1) |
 | `volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md), experimental) | no: `UnimplementedError` | no: sólo la variante opcional `rayito-base-caps-efs` (0.7.0, `rayito image publish --with-efs`) | no: `UnimplementedError` |
 | Endurecimiento del agente: hooks aislados, persistencia ligada al `/run` ([Novedades de 0.7.0](novedades/0.7.0.md#endurecimiento-de-seguridad)) | sí (0.7.0) | sí (0.7.0) | sí (0.7.0) |
+| `sbx.agent` ([Agente en el sandbox](guias/agente-en-el-sandbox.md)) | no: falla con `reason="runtime_missing"` | no: igual, salvo que instales el runtime tú | no: igual |
 
 `size=` ([Tamaños](funciones-opcionales/tamanos.md)) no es una función de
 la imagen sino una imagen más por tamaño: `rayito image publish --sizes`
@@ -55,11 +60,21 @@ Sin compilar nada, `rayito-base` y `rayito-base-caps` se publican desde el
 Desde el código fuente (Linux o WSL2, para compilar `rayd`):
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 make image-publish      BUCKET=amzn-s3-demo-bucket    # rayito-base
 make image-publish-caps BUCKET=amzn-s3-demo-bucket    # rayito-base-caps (additionalOsCapabilities ALL)
 make image-publish-poly BUCKET=amzn-s3-demo-bucket    # rayito-base-poly (bash, JavaScript, TypeScript)
+make image-publish-caps-efs BUCKET=amzn-s3-demo-bucket  # opcional: rayito-base-caps-efs, para volumes=
 ```
+
+`BUCKET=` también se puede exportar como `RAYITO_BUCKET`; sin ninguno de
+los dos, `make` para antes de compilar. `MOUNT_BUCKETS=b1,b2` en los
+objetivos `-caps` hornea el allowlist de los
+[montajes S3](funciones-opcionales/montajes-s3.md), y `PUBLISH_ARGS=`
+pasa opciones extra a `rayito image publish` (por ejemplo `--force` o
+`--sizes 4gb`). La imagen del agente no sale de `make`: se construye con
+`rayito agent template build` sobre una `rayito-base-caps` ya publicada
+([Templates de agente](funciones-opcionales/templates-de-agente.md)).
 
 O con la CLI (`rayito image publish`, [CLI](cli.md#image-publish)); el
 bucket es el de los artefactos de imagen (prefijo `rayito/`), no el de
@@ -87,8 +102,10 @@ for sbx in (base, caps, poly):
 
 ## IAM del llamante
 
-El SDK corre con **tus** credenciales (la cadena de boto3 / AWS SDK v3). La
-`CallerPolicy` de `infra/iam.yaml` es la política mínima. La tabla completa,
+El SDK corre con **tus** credenciales (la cadena de boto3 / AWS SDK v3).
+`infra/iam.yaml` trae `SandboxLauncherPolicy` (lanzar y manejar
+sandboxes), `ImagePublisherPolicy` (publicar imágenes) y la `CallerPolicy`,
+la unión de las dos. La tabla completa,
 función por función y con las políticas opcionales de secretos e índice, está
 en [IAM](operacion/iam.md). Lo que añade cada función de esta página:
 

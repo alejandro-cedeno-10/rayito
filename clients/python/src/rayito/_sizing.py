@@ -27,8 +27,9 @@ Coste aproximado: un MicroVM más grande cuesta más por hora, de $0,0315/h
     ≈ $0,04/semana por versión.
 IAM: ninguno adicional; la pila opcional `sizes-guard` niega `RunMicrovm`
     fuera de las imágenes listadas.
-Cómo apagarla: no pases `size=` (por defecto `None`); las versiones de cada
-    imagen de tamaño se borran con `rayito image prune --image-name ...`.
+Cómo apagarla: no pases `size=` (por defecto `None`); las versiones
+    antiguas de cada imagen de tamaño se borran con `rayito image prune
+    --image-name ... --keep 1` (conserva al menos la más nueva).
 Ejemplo:
     sbx = Sandbox.create(size="4gb")
 """

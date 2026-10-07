@@ -46,6 +46,7 @@ diferencias con E2B.
 |---|---|
 | [Servidor MCP](../mcp.md) | un sandbox para Claude Code, Claude Desktop, Cursor o VS Code |
 | [LangChain y Vercel AI](langchain-y-vercel-ai.md) | Rayito como herramienta de un agente |
+| [Agente en el sandbox](agente-en-el-sandbox.md) | un agente de código (OpenCode o deepagents) **dentro** del sandbox con `sbx.agent.run()`, el modelo tras la pasarela de secretos; el arranque rápido, opcional |
 
 ## Desarrollar y probar
 
@@ -53,8 +54,10 @@ diferencias con E2B.
 |---|---|
 | [Probar en local (Docker + Floci)](probar-en-local.md) | correr los SDK contra un `rayd` real y un AWS emulado, sin cuenta ni coste |
 
-Las funciones que tienen coste propio en AWS (secretos, índice de metadatos,
-montajes S3, tamaños, eventos y webhooks, exportación OTLP, templates,
-pasarela de secretos) o que son sólo de la CLI (proxy local) están en
+Las funciones que tienen coste propio en AWS y están apagadas por defecto
+(secretos, pasarela de secretos, montajes S3, tamaños, eventos y webhooks,
+exportación OTLP, OpenTelemetry, índice de metadatos, templates y templates
+de agente, pilas opcionales, volúmenes EFS y dominio propio, estos dos
+experimentales) o que son sólo de la CLI (proxy local) están en
 [Funciones opcionales](../optional-features.md). Lo nuevo de cada versión:
 [Novedades](../novedades/index.md).

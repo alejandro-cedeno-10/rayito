@@ -1,7 +1,7 @@
 # Comandos
 
-`sbx.commands` ejecuta procesos dentro del sandbox con `/bin/sh -c`, como el
-usuario `user` (uid 1000): en primer plano (esperas el resultado) o en
+`sbx.commands` ejecuta procesos dentro del sandbox con `/bin/bash -l -c`
+(un shell de login), como el usuario `user` (uid 1000): en primer plano (esperas el resultado) o en
 segundo plano (recibes un handle y sigues).
 
 ## Cuándo usarlo
@@ -99,9 +99,10 @@ segundo plano (recibes un handle y sigues).
 ### Primer plano
 
 `commands.run(cmd)` espera a que el proceso termine y devuelve un
-`CommandResult` con `stdout`, `stderr` y `exit_code`. El `timeout` (60 s por
-defecto) lo impone el agente dentro del sandbox: al vencer mata el proceso y
-lanza `TimeoutException`.
+`CommandResult` con `stdout`, `stderr`, `exit_code` y `truncated`. El
+`timeout` (60 s por defecto) lo impone el agente dentro del sandbox: al vencer
+manda `SIGTERM` al grupo del proceso, `SIGKILL` 5 s después, y lanza
+`TimeoutException`. Una pausa no consume ese plazo.
 
 Para ver la salida mientras llega, pasa callbacks:
 
@@ -221,14 +222,25 @@ engancharse con `commands.connect(pid)`.
     ```
 
 También puedes iterar el handle para procesar la salida a trozos:
-`for stdout, stderr, _ in handle:` en Python y
-`for await (const chunk of handle)` en TypeScript.
+`for stdout, stderr, _ in handle:` en Python (`async for` en
+`AsyncSandbox`) y `for await (const chunk of handle)` en TypeScript. El
+handle expone además `pid`, `stdout` y `stderr` acumulados hasta ahora,
+`exit_code` (`None`/`undefined` mientras corre), `error`, `reconnects` y
+`last_seq` (TypeScript: `exitCode`, `lastSeq`).
+
+`commands.connect(pid)` acepta `from_seq=` (reengancharse desde una
+posición concreta de la salida, `0` es desde el principio de lo retenido),
+`on_stdout=`/`on_stderr=`, `timeout=` y `max_output_bytes=` (TypeScript:
+`fromSeq`, `onStdout`, `timeoutMs`, `maxOutputBytes`). `handle.wait()` acepta
+también los callbacks en Python: `handle.wait(on_stdout=print)`.
 
 ### Entorno, usuario y directorio
 
 `envs=`, `user=` y `cwd=` se aplican a un comando concreto. El entorno del
 proceso se construye desde cero: sólo lleva las variables de la imagen, las
-de `create(envs=)` y las del comando.
+de `create(envs=)` y las del comando (más las de `secrets=`, si lo usas).
+`tag=` pone una etiqueta libre al proceso para encontrarlo después en
+`commands.list()` (`ProcessInfo.tag`).
 
 ```python
 from rayito import Sandbox
@@ -253,7 +265,7 @@ con `output_truncated`.
 
 | Python | TypeScript | Por defecto | Qué hace |
 |---|---|---|---|
-| `cmd` | `cmd` | — | la orden, ejecutada con `/bin/sh -c` |
+| `cmd` | `cmd` | — | la orden, ejecutada con `/bin/bash -l -c` |
 | `background` | `background` | `False` | devuelve un `CommandHandle` sin esperar |
 | `envs` | `envs` | — | variables de entorno de este proceso |
 | `user` | `user` | `"user"` | usuario que ejecuta el proceso |
@@ -261,7 +273,8 @@ con `output_truncated`.
 | `on_stdout`, `on_stderr` | `onStdout`, `onStderr` | — | callbacks con cada trozo de salida |
 | `stdin` | `stdin` | `False` | deja la entrada estándar abierta para `send_stdin` |
 | `timeout` | `timeoutMs` | 60 s / 60 000 ms | límite en el servidor; `None` / `0` sin límite |
-| `request_timeout` | `requestTimeoutMs` | 60 s | plazo de cada llamada al agente |
+| `request_timeout` | `requestTimeoutMs` | el del sandbox (60 s) | plazo de cada llamada al agente |
+| `tag` | `tag` | — | etiqueta libre que devuelve `commands.list()` |
 | `secrets` | `secrets` | — | [secretos](../secrets.md) como variables de entorno (opcional, con coste) |
 | `max_output_bytes` | `maxOutputBytes` | 64 MiB | tope de la salida guardada por descriptor; ver [Salida guardada](#salida-guardada) |
 | — | `signal` | — | `AbortSignal` que cancela la llamada |
@@ -305,8 +318,10 @@ parar no agota la memoria de tu proceso; las PTY usan el mismo tope.
     }
     ```
 
-Los demás métodos: `commands.list()`, `commands.kill(pid)`,
-`commands.send_stdin(pid, data)`, `commands.close_stdin(pid)` y
+Los demás métodos: `commands.list()` (una lista de `ProcessInfo` con `pid`,
+`cmd`, `args`, `envs`, `cwd`, `tag` y `kind`, que incluye las PTY),
+`commands.kill(pid)` (`SIGKILL` al grupo; `False` si el proceso ya no
+existe), `commands.send_stdin(pid, data)`, `commands.close_stdin(pid)` y
 `commands.connect(pid)` (TypeScript: `sendStdin`, `closeStdin`).
 
 ## Errores y solución de problemas
@@ -315,15 +330,19 @@ Los demás métodos: `commands.list()`, `commands.kill(pid)`,
 |---|---|---|---|
 | `CommandExitException` | `CommandExitError` | el proceso salió con código distinto de cero (`exit_code`, `stdout`, `stderr`) | captúrala si el fallo es esperable |
 | `TimeoutException` | `TimeoutError` | venció el `timeout` del comando | sube `timeout` o usa `background=True` |
-| `RateLimitException` | `RateLimitError` | más de 256 procesos y PTYs vivos en el sandbox | mata procesos que ya no uses |
+| `RateLimitException` | `RateLimitError` | demasiados procesos y PTYs vivos en el sandbox ([Límites](../limits.md)) | mata procesos que ya no uses |
 | `SandboxException` con `output_truncated` | `SandboxError` | nadie leyó la salida en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
-| `NotFoundException` | `NotFoundError` | `connect(pid)` o `kill(pid)` de un proceso que ya no existe | — |
+| `NotFoundException` | `NotFoundError` | `connect(pid)` o `send_stdin(pid)` de un proceso que ya no existe (`kill(pid)` devuelve `False`) | — |
 
 Tabla completa: [Errores](../referencia/errores.md).
 
 ## Diferencias con E2B
 
-- Ninguna en la API: `rayito.e2b` usa el mismo `Commands`.
+- En TypeScript, el shim usa el mismo `Commands` nativo. En Python,
+  `rayito.e2b` lo envuelve con las firmas posicionales de E2B 2.x
+  (`run(cmd, background, envs, user, cwd, ...)`) y devuelve los mismos
+  `CommandResult`/`CommandHandle`; `tag=`, `secrets=` y `max_output_bytes=`
+  sólo están en el nativo, `sbx.native.commands`.
 - Un comando en segundo plano no despierta a un sandbox suspendido al
   leerlo: espera a que algo lo reanude.
 

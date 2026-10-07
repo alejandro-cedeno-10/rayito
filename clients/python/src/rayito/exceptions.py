@@ -39,23 +39,29 @@ class SandboxException(Exception):
 
 
 class TimeoutException(SandboxException):
-    pass
+    """Venció un plazo: el `timeout` de un comando o de `run_code`, el de una
+    llamada (`DEADLINE_EXCEEDED`) o el plazo del propio sandbox
+    (`sandbox_timeout` de `rayd`)."""
 
 
 class InvalidArgumentException(SandboxException):
-    pass
+    """Un argumento inválido, detectado por el SDK antes de llamar a nadie,
+    por el agente (`INVALID_ARGUMENT`, `FAILED_PRECONDITION`) o por la API de
+    AWS (`ValidationException`). El mensaje nombra el argumento."""
 
 
 class NotFoundException(SandboxException):
-    pass
+    """Lo pedido no existe: un proceso, un contexto de código o un
+    checkpoint (`NOT_FOUND`, `OUT_OF_RANGE` del agente)."""
 
 
 class FileNotFoundException(NotFoundException):
-    pass
+    """El fichero o directorio no existe (`NOT_FOUND` en `sbx.files`)."""
 
 
 class SandboxNotFoundException(NotFoundException):
-    pass
+    """El sandbox no existe o ya terminó (`ResourceNotFoundException` del
+    plano de control, o un MicroVM terminado al reconectar)."""
 
 
 class SandboxNotReadyException(SandboxException):
@@ -81,11 +87,15 @@ class SandboxNotReadyException(SandboxException):
 
 
 class SandboxStateException(SandboxException):
-    pass
+    """El sandbox no está en un estado que admita la operación: se está
+    suspendiendo, reanudando o terminando (puerta de fase de `rayd`, o
+    `ConflictException` del plano de control). Suele bastar reintentar."""
 
 
 class SandboxLifetimeException(SandboxException):
-    pass
+    """`timeout` o `max_lifetime` por encima del tope de la plataforma
+    (28 800 s, 8 h contando running y suspendido); el SDK la lanza antes de
+    llamar a AWS."""
 
 
 class PoolClosedException(SandboxException):
@@ -169,6 +179,11 @@ class FileUploadException(TransferException):
 
 
 class RateLimitException(SandboxException):
+    """Límite de tasa o de recursos: `RESOURCE_EXHAUSTED` del agente
+    (procesos, PTYs, contextos o transferencias simultáneas) o
+    `ThrottlingException` de AWS. `retry_after` son los segundos que AWS
+    sugiere esperar, si los dio."""
+
     def __init__(
         self,
         message: str,
@@ -247,13 +262,19 @@ class IndexWriteException(SandboxIndexException):
 
 
 class QuotaExceededException(Exception):
+    """Cuota de la cuenta agotada (`ServiceQuotaExceededException`): no
+    describe un sandbox, por eso no es `SandboxException`. `quota_code` es el
+    código de Service Quotas, si AWS lo dio."""
+
     def __init__(self, message: str, *, quota_code: str | None = None) -> None:
         super().__init__(message)
         self.quota_code = quota_code
 
 
 class CapacityException(Exception):
-    pass
+    """AWS no tiene capacidad momentánea para el MicroVM
+    (`InsufficientCapacityException`); se reintenta con backoff. No es
+    `SandboxException`."""
 
 
 class RayitoCompatWarning(UserWarning):
@@ -294,17 +315,16 @@ class LifecycleUnsupportedException(UnimplementedError):
 
 # --------------------------------------------------------- M15 (Rayito 0.6)
 #
-# Cada clase la usa la función OpenSpec que la nombra en su docstring; hasta
-# entonces nada las lanza (foundations sólo las pre-crea como seam, §1(g) de
-# la arquitectura de M15, para que ningún cambio de feature tenga que tocar
-# este fichero compartido). `code`/`error_class` son cadenas cerradas, nunca
-# el mensaje de AWS ni un identificador del usuario.
+# Cada clase la lanza la función opcional que nombra su docstring.
+# `code`/`error_class` son cadenas cerradas, nunca el mensaje de AWS ni un
+# identificador del usuario.
 
 
 class MountException(SandboxException):
     """Un montaje de `mounts=` (m15-s3-mounts) falló o sigue sin asentarse.
     `code` es uno de `network`, `iam_denied`, `not_found`, `not_allowed`,
-    `helper_missing`, `timeout`."""
+    `invalid_path`, `helper_missing`, `timeout` o `unknown` (una clase que
+    el agente manda y este SDK todavía no conoce)."""
 
     def __init__(self, message: str, *, code: str) -> None:
         super().__init__(message)
@@ -330,14 +350,15 @@ class VolumeMountException(VolumeException):
 
 
 class VolumeNotFoundException(VolumeException):
-    """El `AccessPoint` del volumen no existe (`DescribeAccessPoints` vacío
-    o `DeleteAccessPoint` sobre un id que ya no está)."""
+    """El volumen no existe: `VolumeStore.get`/`destroy` sobre un nombre sin
+    `AccessPoint`, o el access point o el sistema de ficheros ya no están."""
 
 
 class VolumePathNotFoundException(VolumeException):
-    """Una operación de contenido sobre el volumen (fuera de alcance en
-    0.6: `read_file`/`write_file`/... del shim de E2B no tienen plano de
-    datos propio) nombra una ruta que no está bajo el volumen montado."""
+    """Reservada con el nombre de E2B: esta versión no la lanza. Las
+    operaciones de contenido de un volumen (`read_file`/`write_file`/... del
+    shim de E2B) no tienen plano de datos propio fuera de un sandbox y son
+    `UnimplementedError`."""
 
 
 class BuildException(SandboxException):
@@ -383,15 +404,17 @@ class StackException(SandboxException):
 
 
 class WebhookException(SandboxException):
-    """`LifecycleEvents.register_webhook/list_webhooks/delete_webhook`
-    (m15-events-webhooks) falló; el mensaje nunca repite una URL ni un
-    secreto."""
+    """`LifecycleEvents` (m15-events-webhooks) no pudo leer o escribir en su
+    pila (webhooks, eventos o la clave), o `create(events=)` sin la pila
+    desplegada; el mensaje nunca repite una URL ni un secreto."""
 
 
 class GatewayException(SandboxException):
-    """Un `SecretGateway` (m15-secrets-gateway) rechazó o no pudo enrutar
-    una petición: `code` es `not_allowed` (método/ruta fuera de la
-    allowlist), `rate_limited` o `upstream_unreachable`."""
+    """Reservada para `SecretGateway` (m15-secrets-gateway): esta versión
+    del SDK no la lanza. Lo que la pasarela rechaza por petición llega al
+    proceso del sandbox como respuesta HTTP (403, 429, 502, 504), y una
+    configuración que `rayd` rechaza es `SandboxException`. `code` sería
+    `not_allowed`, `rate_limited` o `upstream_unreachable`."""
 
     def __init__(self, message: str, *, code: str) -> None:
         super().__init__(message)
@@ -399,8 +422,11 @@ class GatewayException(SandboxException):
 
 
 class CustomDomainException(SandboxException):
-    """`CustomDomain` (m15-custom-domain) falló: deploy/status/destroy de
-    la pila, o un `expose()`/`get_host()` sin ruta válida en el KVS."""
+    """`CustomDomain` (m15-custom-domain, experimental) falló: una llamada
+    al `KeyValueStore` de `register()`/`refresh()`/`unregister()`, o una de
+    ellas sin el `KvsArn` de la pila (pásalo al construir o llama antes a
+    `status()`/`deploy()`). Los fallos de la pila en sí son
+    `StackException`."""
 
 
 class AgentException(SandboxException):
@@ -408,10 +434,11 @@ class AgentException(SandboxException):
     falló. `reason` es una lista cerrada: `model_error` (el proveedor
     devolvió un error; `detail_code` lleva su clase, `APIError`),
     `runtime_error`, `runtime_missing` (la imagen no tiene el runtime o su
-    servidor residente no responde), `runtime_version_mismatch`,
-    `protocol_error`, `timeout`, `max_steps`, `token_budget`,
-    `output_limit`, `aborted` o `busy` (otra ejecución en curso en el mismo
-    sandbox). `usage` son los tokens consumidos hasta el fallo. El mensaje
+    servidor residente no responde), `protocol_error`, `timeout`,
+    `max_steps`, `token_budget` (en estos dos el SDK para el runtime),
+    `aborted` o `busy` (otra ejecución en curso en el mismo sandbox).
+    `runtime_version_mismatch` y `output_limit` están reservados: hoy no se
+    emiten. `usage` son los tokens consumidos hasta el fallo. El mensaje
     sale de una tabla fija por `reason`: nunca lleva el texto del
     proveedor, el prompt ni contenido del sandbox."""
 
