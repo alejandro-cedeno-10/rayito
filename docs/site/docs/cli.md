@@ -504,7 +504,7 @@ detalles indentados en `WARN`/`FAIL`, la tabla de compatibilidad y
 
 ```json
 {
-  "rayito": "0.9.0",
+  "rayito": "0.9.1",
   "region": "us-east-1",
   "account": "123456789012",
   "principal_kind": "assumed-role",

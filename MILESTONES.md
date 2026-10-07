@@ -1779,6 +1779,34 @@ ejecución:
 
 ---
 
+## 0.9.1 — Parche: idle por defecto con un plazo corto (2026-10-07)
+
+Publicada el 2026-10-07 en PyPI, npm y la GitHub Release `rayd-v0.9.1`.
+Un cambio OpenSpec archivado (2026-10-07): `default-idle-fits-timeout`.
+
+- **`create(timeout=120)` sin `idle` ya no lanza** (#166): desde 0.3.0 el
+  SDK validaba su propia `IdlePolicy` por defecto (300 s) contra el plazo.
+  Sin `idle` explícito, la ventana por defecto se desactiva si no cabe y en
+  modo `pause` baja a 60 s; un `idle` explícito se valida como antes.
+  Python (sync y async) y TypeScript. `rayd` no cambia.
+- Los e2e de `s3-mounts` y `rayd-otlp` documentan que la política
+  gestionada de su pila debe estar adjunta al rol de ejecución.
+
+**Aceptación de la release (2026-10-07, cuenta de pruebas, us-east-1)**,
+sobre el árbol del PR de release, con `rayd` compilado en la VM Linux y una
+imagen desechable propia:
+
+- `rayito doctor --launch`: 9 OK / 1 WARN (simulación IAM orientativa) / 0
+  FAIL.
+- `create(timeout=120)` sin `idle` desde Python y TypeScript: sin
+  `idlePolicy`, `maximumDurationInSeconds` 120 y `TERMINATED` a los ≈ 131 s.
+- Python `test_m1_hello` y el corpus E2B (`test_m9_e2b_v2`): 22 en verde;
+  corpus E2B de TypeScript (`m9-e2b.e2e.test.ts`): 11 en verde.
+- Limpieza: se borraron la imagen, su grupo de logs y su artefacto; el
+  inventario final es igual al inicial.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
