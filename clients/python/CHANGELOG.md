@@ -123,6 +123,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   el `rayd` del tag `rayd-v0.8.0` para el SDK 0.8. Sin la fila, `doctor`
   daba FAIL en cada instalación 0.8 y `scripts/prepare_release_pr.py` se
   negaba a preparar la release.
+- **Montajes S3**: el `MountException` de un bucket que no está en el allowlist de
+  la imagen (`code="not_allowed"`) ya no dice sólo que la sección se rechazó: explica
+  que falta en `RAYITO_ALLOWED_MOUNT_BUCKETS` y cómo publicar la imagen con
+  él (`--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` o
+  `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
+  El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
+  (`testdata/s3-mounts/error-hints.json`).
 
 ### Security
 

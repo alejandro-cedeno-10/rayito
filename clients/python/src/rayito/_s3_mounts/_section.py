@@ -20,6 +20,7 @@ from rayito.v1 import configure_pb2, s3_mounts_pb2
 
 from ._domain import (
     MOUNT_ERROR_CLASSES,
+    MOUNT_ERROR_HINTS,
     TIMEOUT_ERROR_CLASS,
     UNKNOWN_ERROR_CLASS,
     MountPhase,
@@ -131,10 +132,17 @@ def check_section_result(code: int, error_class: str) -> None:
             "necesita una imagen 0.6.0 o posterior con el agente de m15-s3-mounts",
         )
     code_name = configure_pb2.SectionCode.Name(code)
+    mount_code = error_class if error_class in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS
     raise MountException(
-        f"mounts=: la sección se rechazó ({code_name})",
-        code=error_class if error_class in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS,
+        _with_hint(f"mounts=: la sección se rechazó ({code_name}, {mount_code})", mount_code),
+        code=mount_code,
     )
+
+
+def _with_hint(message: str, mount_code: str) -> str:
+    """`message` más `MOUNT_ERROR_HINTS[mount_code]` si esa clase lo tiene."""
+    hint = MOUNT_ERROR_HINTS.get(mount_code)
+    return f"{message}: {hint}" if hint else message
 
 
 def check_mounts_settled(
@@ -152,7 +160,7 @@ def check_mounts_settled(
         if state is not None and state.state == "failed":
             code = state.last_error_class or UNKNOWN_ERROR_CLASS
             raise MountException(
-                f"mounts=: {path} no se pudo montar ({code})",
+                _with_hint(f"mounts=: {path} no se pudo montar ({code})", code),
                 code=code if code in MOUNT_ERROR_CLASSES else UNKNOWN_ERROR_CLASS,
             )
         if state is None or state.state != "mounted":

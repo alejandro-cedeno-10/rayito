@@ -22,6 +22,7 @@ import { validateMountPaths } from "../mount-path.js";
 import type { MountStatus, S3Mount, S3MountsOption } from "./domain.js";
 import {
   MOUNT_ERROR_CLASSES,
+  MOUNT_ERROR_HINTS,
   mountEntries,
   TIMEOUT_ERROR_CLASS,
   UNKNOWN_ERROR_CLASS,
@@ -128,9 +129,17 @@ export function checkSectionResult(code: SectionCode, errorClass: string): void 
       "necesita una imagen 0.6.0 o posterior con el agente de m15-s3-mounts",
     );
   }
-  throw new MountError(`mounts: la sección se rechazó (${SectionCode[code]})`, {
-    code: KNOWN_ERROR_CLASSES.has(errorClass) ? errorClass : UNKNOWN_ERROR_CLASS,
-  });
+  const mountCode = KNOWN_ERROR_CLASSES.has(errorClass) ? errorClass : UNKNOWN_ERROR_CLASS;
+  throw new MountError(
+    withHint(`mounts: la sección se rechazó (${SectionCode[code]}, ${mountCode})`, mountCode),
+    { code: mountCode },
+  );
+}
+
+/** `message` más `MOUNT_ERROR_HINTS[mountCode]` si esa clase lo tiene. */
+function withHint(message: string, mountCode: string): string {
+  const hint = MOUNT_ERROR_HINTS[mountCode];
+  return hint === undefined ? message : `${message}: ${hint}`;
 }
 
 /**
@@ -150,7 +159,7 @@ export function checkMountsSettled(
     const state = states.get(path);
     if (state?.state === "failed") {
       const code = state.lastErrorClass ?? UNKNOWN_ERROR_CLASS;
-      throw new MountError(`mounts: ${path} no se pudo montar (${code})`, {
+      throw new MountError(withHint(`mounts: ${path} no se pudo montar (${code})`, code), {
         code: KNOWN_ERROR_CLASSES.has(code) ? code : UNKNOWN_ERROR_CLASS,
       });
     }

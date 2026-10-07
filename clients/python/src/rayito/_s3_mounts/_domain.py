@@ -32,6 +32,19 @@ MOUNT_ERROR_CLASSES: Final[tuple[str, ...]] = (
 #: el agente usa para su propio límite.
 TIMEOUT_ERROR_CLASS: Final = "timeout"
 
+#: Lo que el mensaje de `MountException` añade para las clases que se
+#: arreglan fuera del código que llama a `create()`. Nunca nombra el bucket
+#: (tampoco lo hace `rayd`, que sólo manda la clase). Mismo texto que
+#: `MOUNT_ERROR_HINTS` en `domain.ts`.
+MOUNT_ERROR_HINTS: Final[dict[str, str]] = {
+    "not_allowed": (
+        "el bucket no está en el allowlist de la imagen (RAYITO_ALLOWED_MOUNT_BUCKETS, "
+        "vacío o ausente deniega todos): publica la imagen con "
+        "`--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` "
+        "(`make image-publish-caps MOUNT_BUCKETS=<bucket>`)"
+    ),
+}
+
 #: Nunca confundir con una clase real del agente (nunca aparece en
 #: `MOUNT_ERROR_CLASSES`): `check_section_result` la usa en vez de adivinar
 #: una de las clases reales cuando el agente manda una que este SDK no
