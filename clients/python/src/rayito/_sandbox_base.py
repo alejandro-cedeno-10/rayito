@@ -20,6 +20,7 @@ import grpc
 
 from rayito._aws import ControlPlane, LaunchRequest, PortSpec
 from rayito._index import DynamoDbIndex, write_failure
+from rayito._lifecycle_base import DEFAULT_IDLE_POLICY as DEFAULT_IDLE_POLICY
 from rayito._lifecycle_base import lifecycle_from_proto, resolve_lifecycle
 from rayito._lifecycle_base import resolve_idle_policy as resolve_idle_policy
 from rayito._limits import (
@@ -75,7 +76,6 @@ DEFAULT_READY_TIMEOUT_SECONDS: Final = 90.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS: Final = 60.0
 DEFAULT_RECONNECT_TIMEOUT_SECONDS: Final = 60.0
 CLOCK_OFFSET_WARN_MS: Final = 5000
-DEFAULT_IDLE_POLICY: Final = IdlePolicy()
 LOG_GROUP_PREFIX: Final = "/rayito"
 
 logger = getLogger("rayito.sandbox")

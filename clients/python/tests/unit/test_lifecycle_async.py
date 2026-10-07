@@ -293,6 +293,36 @@ async def test_async_create_on_an_older_agent_terminates_and_raises(
         await launch(control_plane, fake_rayd, timeout=60, keep_on_failure=True)
 
 
+async def test_async_create_with_a_short_timeout_and_no_idle_drops_the_default_idle(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
+) -> None:
+    captured = capture_launch(control_plane, fake_rayd)
+    expect_terminate(control_plane)
+    async with await AsyncSandbox.create(
+        IMAGE_ARN,
+        timeout=120,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    ):
+        pass
+    assert captured["maximumDurationInSeconds"] == 120
+    assert "idlePolicy" not in captured
+
+
+async def test_async_create_with_a_short_timeout_and_an_explicit_idle_still_raises(
+    control_plane: StubbedControlPlane,
+) -> None:
+    with pytest.raises(InvalidArgumentException, match="debe ser menor que timeout=120"):
+        await AsyncSandbox.create(
+            IMAGE_ARN,
+            timeout=120,
+            idle=IdlePolicy(),
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+        )
+
+
 async def test_async_create_without_lifecycle_kwargs_still_works_on_an_older_agent(
     control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint
 ) -> None:

@@ -20,6 +20,7 @@ from typing import Any, Final, Literal
 import grpc
 
 from rayito._limits import (
+    IDLE_MAX_IDLE_MIN_SECONDS,
     IDLE_SUSPENDED_MIN_SECONDS,
     LIFECYCLE_AUTO_RESUME_MIN_SECONDS,
     LIFECYCLE_MIN_MAX_LIFETIME_SECONDS,
@@ -47,6 +48,7 @@ from rayito.exceptions import (
 from rayito.v1 import lifecycle_pb2
 
 __all__ = [
+    "DEFAULT_IDLE_POLICY",
     "SANDBOX_TIMEOUT_DETAIL",
     "LifecycleBlock",
     "LifecyclePlan",
@@ -94,6 +96,14 @@ MODES: Final[dict[TimeoutModeName, lifecycle_pb2.TimeoutMode]] = {
     "exact": lifecycle_pb2.TIMEOUT_MODE_EXACT,
     "at_least": lifecycle_pb2.TIMEOUT_MODE_AT_LEAST,
 }
+
+DEFAULT_IDLE_POLICY: Final = IdlePolicy()
+"""La política de `create()` sin `idle`. Se reconoce por identidad: un
+`IdlePolicy()` que pasa el usuario es explícito y se valida tal cual."""
+PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS: Final = IDLE_MAX_IDLE_MIN_SECONDS
+"""La ventana de idle por defecto en modo `pause` cuando los 300 s no caben
+bajo `max_lifetime`: el mínimo de la API (`AWS_API_NOTES.md`, `idlePolicy`),
+para que sin cliente la suspensión llegue lo antes posible tras el plazo."""
 
 PAUSE_REQUIRES_IDLE_MESSAGE: Final = (
     "on_timeout='pause' necesita idle=IdlePolicy(...): sin cliente, la suspensión la hace la "
@@ -173,6 +183,27 @@ def resolve_idle_policy(idle: IdlePolicy | None, timeout: int) -> IdlePolicy | N
     )
 
 
+def fit_default_idle(idle: IdlePolicy | None, bound: int) -> IdlePolicy | None:
+    """Sin `idle` explícito, la auto-suspensión por defecto sólo se aplica si
+    cabe antes de `bound` (el `timeout` o el tope): si no, el sandbox
+    termina antes de que pueda dispararse, así que se desactiva y el sandbox
+    acaba en su plazo como en E2B. Un `idle` explícito no se toca."""
+    if idle is DEFAULT_IDLE_POLICY and idle.max_idle_seconds >= bound:
+        return None
+    return idle
+
+
+def fit_default_pause_idle(idle: IdlePolicy | None, cap: int) -> IdlePolicy | None:
+    """En modo `pause` la idle es la que suspende sin cliente, así que la
+    ventana por defecto no se desactiva: si no cabe bajo `cap`, baja a
+    `PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS`. Un `idle` explícito no se toca."""
+    if idle is DEFAULT_IDLE_POLICY and idle.max_idle_seconds >= cap:
+        return IdlePolicy(
+            max_idle_seconds=PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS, auto_resume=idle.auto_resume
+        )
+    return idle
+
+
 def resolve_lifecycle(
     *,
     timeout: int,
@@ -184,19 +215,22 @@ def resolve_lifecycle(
     de ADR-007 (sin bloque, `maximumDurationInSeconds = timeout`). Con
     cualquiera de los dos, `timeout` (ya validado) es el plazo lógico y
     `max_lifetime` el tope de la plataforma (por defecto `timeout + 60`,
-    mínimo 120 s)."""
+    mínimo 120 s). Sin `idle` explícito, la ventana por defecto se adapta
+    al plazo (`fit_default_idle`, `fit_default_pause_idle`)."""
     if max_lifetime is None and on_timeout is None:
         return LifecyclePlan(
-            block=None, platform_duration=timeout, idle=resolve_idle_policy(idle, timeout)
+            block=None,
+            platform_duration=timeout,
+            idle=resolve_idle_policy(fit_default_idle(idle, timeout), timeout),
         )
     action = validate_on_timeout(on_timeout)
     cap = resolve_max_lifetime(timeout, max_lifetime)
     if action == "pause":
-        return pause_plan(timeout, cap, idle)
+        return pause_plan(timeout, cap, fit_default_pause_idle(idle, cap))
     return LifecyclePlan(
         block=LifecycleBlock(timeout_s=timeout, cap_s=cap, on_timeout="kill", auto_resume=False),
         platform_duration=cap,
-        idle=resolve_idle_policy(idle, cap),
+        idle=resolve_idle_policy(fit_default_idle(idle, cap), cap),
     )
 
 

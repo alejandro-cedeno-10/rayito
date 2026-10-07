@@ -29,6 +29,7 @@ import {
   TimeoutMode,
 } from "../gen/rayito/v1/lifecycle_pb.js";
 import {
+  IDLE_MAX_IDLE_MIN_SECONDS,
   LIFECYCLE_AUTO_RESUME_MIN_SECONDS,
   LIFECYCLE_CAP_MARGIN_SECONDS,
   LIFECYCLE_MIN_MAX_LIFETIME_SECONDS,
@@ -36,6 +37,7 @@ import {
   MAX_DURATION_SECONDS,
 } from "../limits.js";
 import {
+  DEFAULT_MAX_IDLE_SECONDS,
   type IdlePolicy,
   type IdlePolicyInput,
   type LifecyclePhaseName,
@@ -60,6 +62,14 @@ export const MIN_SET_TIMEOUT_MS = LIFECYCLE_MIN_TIMEOUT_SECONDS * 1000;
 export const PAUSE_TRIGGER_SLACK_MS = 1000;
 /** Lo que se deja antes del tope al reabrir un sandbox vencido sin `timeoutMs` explícito. */
 export const REOPEN_CAP_SLACK_MS = 5000;
+
+/**
+ * La ventana de idle por defecto en modo `"pause"` cuando los 300 s no caben
+ * bajo `maxLifetimeMs`: el mínimo de la API (`AWS_API_NOTES.md`,
+ * `idlePolicy`), para que sin cliente la suspensión llegue lo antes posible
+ * tras el plazo. Espejo de `PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS` en Python.
+ */
+export const PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS = IDLE_MAX_IDLE_MIN_SECONDS;
 
 /** El bloque `lifecycle` del `runHookPayload`, ya validado. */
 export interface LifecycleBlock {
@@ -126,26 +136,61 @@ export function resolveIdlePolicy(
 }
 
 /**
+ * Sin `idle` (`undefined`), la auto-suspensión por defecto sólo se aplica si
+ * cabe antes de `boundSeconds` (el plazo o el tope): si no, el sandbox
+ * termina antes de que pueda dispararse, así que se desactiva y el sandbox
+ * acaba en su plazo como en E2B. Un `idle` explícito no se toca.
+ */
+export function fitDefaultIdle(
+  idle: IdlePolicyInput | null | undefined,
+  boundSeconds: number,
+): IdlePolicyInput | null | undefined {
+  if (idle === undefined && DEFAULT_MAX_IDLE_SECONDS >= boundSeconds) {
+    return null;
+  }
+  return idle;
+}
+
+/**
+ * En modo `"pause"` la idle es la que suspende sin cliente, así que la
+ * ventana por defecto no se desactiva: si no cabe bajo `capS`, baja a
+ * `PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS`. Un `idle` explícito no se toca.
+ */
+export function fitDefaultPauseIdle(
+  idle: IdlePolicyInput | null | undefined,
+  capS: number,
+): IdlePolicyInput | null | undefined {
+  if (idle === undefined && DEFAULT_MAX_IDLE_SECONDS >= capS) {
+    return { maxIdleSeconds: PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS };
+  }
+  return idle;
+}
+
+/**
  * Sin `maxLifetimeMs` ni `onTimeout`: ningún bloque, `maximumDurationInSeconds
  * = timeout` y la idle de siempre (ADR-007). Con cualquiera de los dos:
  * `onTimeout` por defecto `"kill"`, el tope es `maxLifetimeMs` y el bloque
  * viaja. En `"pause"` la idle de la plataforma siempre auto-reanuda (la
  * suspensión por idle es la que pausa sin cliente) y el `autoResume` lógico
  * es el de `idle`; en `"kill"` la idle se resuelve contra el tope y el
- * `autoResume` lógico es `false`.
+ * `autoResume` lógico es `false`. Sin `idle`, la ventana por defecto se
+ * adapta al plazo (`fitDefaultIdle`, `fitDefaultPauseIdle`).
  */
 export function resolveLifecycle(input: LifecycleInput): LifecyclePlan {
   if (input.maxLifetimeMs === undefined && input.onTimeout === undefined) {
     return Object.freeze({
       block: undefined,
       platformDurationSeconds: input.timeoutSeconds,
-      idle: resolveIdlePolicy(input.idle, input.timeoutSeconds),
+      idle: resolveIdlePolicy(
+        fitDefaultIdle(input.idle, input.timeoutSeconds),
+        input.timeoutSeconds,
+      ),
     });
   }
   const onTimeout = validateOnTimeout(input.onTimeout ?? "kill");
   const capS = resolveMaxLifetimeSeconds(input);
   if (onTimeout === "pause") {
-    return pausePlan(input.timeoutSeconds, capS, input.idle);
+    return pausePlan(input.timeoutSeconds, capS, fitDefaultPauseIdle(input.idle, capS));
   }
   return Object.freeze({
     block: Object.freeze({
@@ -155,7 +200,7 @@ export function resolveLifecycle(input: LifecycleInput): LifecyclePlan {
       autoResume: false,
     }),
     platformDurationSeconds: capS,
-    idle: resolveIdlePolicy(input.idle, capS),
+    idle: resolveIdlePolicy(fitDefaultIdle(input.idle, capS), capS),
   });
 }
 

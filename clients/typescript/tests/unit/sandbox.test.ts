@@ -103,6 +103,23 @@ describe("Sandbox.create", () => {
     ]);
   });
 
+  test("a short timeoutMs without idle drops the default idle instead of throwing", async () => {
+    const handle = await createTestSandbox({ create: { timeoutMs: 120_000, idle: undefined } });
+    try {
+      const request = handle.plane.launches[0];
+      expect(request?.maximumDurationSeconds).toBe(120);
+      expect(request?.idle).toBeUndefined();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  test("a short timeoutMs with an explicit idle still throws InvalidArgumentError", async () => {
+    await expect(
+      createTestSandbox({ create: { timeoutMs: 120_000, idle: { maxIdleSeconds: 300 } } }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+  });
+
   test("not ready within readyTimeoutMs terminates the VM unless keepOnFailure", async () => {
     const rayd = await startRayd();
     rayd.health.notReadyCalls = 1000;
