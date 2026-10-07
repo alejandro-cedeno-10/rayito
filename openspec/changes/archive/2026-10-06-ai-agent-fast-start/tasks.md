@@ -35,15 +35,19 @@
   first token 19.6 s → 4.7 s); G2 not met — `opencode run --attach` loses
   events on AWS, so D is not recommended. The acceptance also found that
   the template did not install the deepagents runner; fixed here.
-- [ ] 3.5 Fix or drop serve-in-pool (D) before archiving (Q148).
+- [x] 3.5 Fix or drop serve-in-pool (D) before archiving (Q148).
   - [x] 3.5.1 Root cause in `run.ts` (attach `finish()` does not await the
     event loop; same in 1.18.35) and local reproduction.
   - [x] 3.5.2 The run script creates the session and re-reads the turn;
     the adapter dedups by part id (D9), Python and TypeScript, with the
     captured fixtures `testdata/agent/opencode-attach/`.
-  - [ ] 3.5.3 AWS re-measure of D (n=5): take → first token and end.
-- [ ] 3.6 Prefetch must not delay `create()` (Q146).
+  - [x] 3.5.3 AWS re-measure of D (n=5, Q154): 5 of 5 runs end in `Done`
+    with text; take → first token p50 4.8 s. Works, but only tenths ahead
+    of C at a higher cost, so D stays not recommended.
+- [x] 3.6 Prefetch must not delay `create()` (Q146).
   - [x] 3.6.1 The daemon waits for a quiet guest (no I/O in flight for 1 s)
     after the jump; unit test with a fake `diskstats`.
-  - [ ] 3.6.2 AWS re-measure (n=5): `create()` and `create()` → first token;
-    if `create()` still grows, `prefetch` becomes opt-in.
+  - [x] 3.6.2 AWS re-measure (n=5, Q153, same-batch control): `create()`
+    p50 9.2 s vs 8.8 s without prefetch, so it no longer delays it and
+    `prefetch` stays on by default; end to end 14.7 s vs 13.3 s, within
+    the noise of n=5.

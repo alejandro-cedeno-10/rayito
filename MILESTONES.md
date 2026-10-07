@@ -1674,6 +1674,46 @@ que permita `cloudfront:CreateDistribution` (Q141).
 
 ---
 
+## 0.8.0 — Agente de IA en el sandbox (sin publicar)
+
+Cuatro cambios OpenSpec archivados, en `main` y pendientes de la release
+0.8.0: `ai-agent-core` (archivado el 2026-10-06), `ai-agent-deepagents`,
+`ai-agent-fast-start` y `ai-agent-docs-pricing`.
+
+- **`sbx.agent`** con OpenCode o deepagents dentro del sandbox: la
+  credencial del modelo sólo llega por la pasarela de secretos, eventos
+  cerrados, límites del SDK, sesiones y `abort()` que para todo el árbol de
+  procesos.
+- **Arranque rápido**: `AgentTemplate` (OpenCode y ripgrep fijados por
+  sha256, venv de deepagents con `--require-hashes`, demonio de prefetch),
+  `PoolConfig.warmup` con `agent_pool_warmup()` y el servidor residente
+  opcional (`serve=True`).
+- **Docs y precios**: la guía del agente con la tabla de decisión A/B/C/D,
+  la página de templates y el coste de un agente (VM frente a modelo).
+
+**Aceptación (2026-10-07, cuenta de pruebas, us-east-1)**, con imágenes
+desechables propias y Claude Haiku 4.5 por la pasarela
+(`AWS_API_NOTES.md` Q146–Q154):
+
+- Primera tanda (Q146–Q152): el egress cerrado y la credencial ilegible se
+  cumplen (e2e 7/7 Python y 5/5 TypeScript), B (`pause()`/`connect()`) da el
+  primer token en 3,1 s y C (pool con `warmup`) en 5,1 s de la toma. Dos
+  fallos: D (`opencode run --attach` 1.18.34 salía antes de terminar sus
+  eventos) y A (el prefetch alargaba `create()` ≈ 8 s).
+- Arreglos (#145, #146) y nueva medida (Q153–Q154, n=5): D termina con
+  texto 5 de 5, primer token a 4,8 s de la toma, pero apenas gana a C y
+  cuesta más, así que no se recomienda. El prefetch ya no retrasa
+  `create()` (9,2 s frente a 8,8 s sin él en la misma tanda) y sigue
+  encendido por defecto; su ganancia de extremo a extremo de hoy cae
+  dentro del ruido.
+- Coste de la nueva medida ≈ $0,35 a precios de lista (tres versiones de
+  imagen con su semana mínima de almacenamiento, ≈ 50 lanzamientos, los
+  aparcamientos de dos pools y el modelo). Limpieza: sólo se borró lo
+  creado por la ejecución; el inventario de después no tiene nada del
+  prefijo de la ejecución, y lo que difiere es de otras sesiones en curso.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

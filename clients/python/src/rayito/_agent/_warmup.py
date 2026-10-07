@@ -96,7 +96,8 @@ def agent_pool_warmup(
     Sin `serve` (opción C) sólo carga el runtime en la caché de páginas
     antes de aparcar. Con `serve=True` (opción D, sólo OpenCode) deja
     además el servidor residente arrancado y caliente; `agent.run` se
-    engancha a él tras el `take()`. D no se recomienda por ahora.
+    engancha a él tras el `take()`. D no se recomienda: sólo gana unas
+    décimas a C (Q154) y cuesta más memoria y más por plaza.
 
     Un pool sólo compensa si llegan muchas conversaciones nuevas cuyo
     primer mensaje tiene que ser rápido: los turnos de una misma

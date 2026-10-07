@@ -121,8 +121,13 @@ Cuándo conviene cada opción de arranque rápido:
     mediana con prefetch frente a 19,6 s sin él (−76 %), pero `create()`
     tardaba 16,6 s frente a 8,7 s, así que de extremo a extremo (de
     `create()` al primer token) la mejora era 28,3 s → 20,5 s (−28 %).
-    Con el demonio que espera a que el guest se calme:
-    <!-- REMEDIR-A -->.
+    Con el demonio que espera a que el guest se calme (Q153, n=5, con un
+    control sin prefetch en la misma tanda): `create()` 9,2 s frente a
+    8,8 s, así que ya no lo retrasa; el tramo tras `create()` 3,8 s frente a
+    5,2 s; de extremo a extremo 14,7 s frente a 13,3 s, dentro del ruido.
+    El control salió mucho más rápido que en la primera medida, así que hoy
+    la ganancia de A es pequeña; sigue encendido por defecto porque ya no
+    cuesta tiempo de `create()`.
     Los primeros lanzamientos de una versión recién publicada son más
     lentos (`create()` de 26 a 65 s): no midas justo después del build.
     Detalle en `AWS_API_NOTES.md` Q146 y Q150.

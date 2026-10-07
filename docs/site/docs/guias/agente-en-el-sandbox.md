@@ -349,7 +349,8 @@ siguientes van sobre la misma VM.
 3. **¿Llegan muchas conversaciones *nuevas* y su primer mensaje tiene que
    ser rápido?** → un **pool con `warmup` (C)**: el primer token llega a
    ≈ 5 s de la toma, a cambio de ≈ $0,64 al mes por plaza ociosa.
-4. **D (pool con servidor residente)**: no recomendada por ahora.
+4. **D (pool con servidor residente)**: no recomendada. Funciona (Q154), pero
+   sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más.
 
 Una conversación de varios turnos sobre la misma VM (B):
 
@@ -463,7 +464,7 @@ ejemplo):
 | **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0 |
 | **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` (o cualquier llamada, con auto-resume) la reanuda | **el caso general**: una conversación de menos de 8 h desde `create()` | ≈ $0,005–0,006 por ciclo suspend/resume + ≈ $0,0001/h pausada |
 | **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | sólo si llegan muchas conversaciones **nuevas** y el primer mensaje tiene que ser rápido | ≈ **$0,64/plaza ociosa/mes** |
-| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` | no recomendada por ahora | ≈ **$0,82/plaza ociosa/mes** |
+| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` | no recomendada: apenas gana a C | ≈ **$0,82/plaza ociosa/mes** |
 
 Cada ejecución, además, cuesta su VM (≈ $0,002–0,003 entre lanzamiento y
 segundos de cómputo hasta la respuesta) y su modelo (≈ $0,0009 una respuesta
@@ -472,29 +473,39 @@ corta de Claude Haiku 4.5 con la caché de prompts ya escrita). Desglose en
 
 !!! success "Medido en AWS real (2026-10-07, us-east-1, Claude Haiku 4.5, n=5)"
     Tiempo hasta el primer token de una respuesta corta, con el egress
-    cerrado y el modelo por `bedrock_gateway` (`AWS_API_NOTES.md` Q146–Q150):
+    cerrado y el modelo por `bedrock_gateway` (`AWS_API_NOTES.md` Q146–Q150,
+    y Q153–Q154 para las filas tras los arreglos):
 
     | Escenario | `create()` / toma p50 | Primer token p50 | Primer token p95 |
     |---|---|---|---|
     | `create()` sin prefetch | 8,7 s | 28,3 s | 41,1 s |
     | A, **antes del arreglo** (el demonio leía en pleno arranque) | 16,6 s | 20,5 s | 37,0 s |
-    | A, con el demonio que espera a que el guest se calme | <!-- REMEDIR-A --> | <!-- REMEDIR-A --> | <!-- REMEDIR-A --> |
+    | sin prefetch, en la misma tanda que la fila siguiente | 8,8 s | 13,3 s | 19,5 s |
+    | A, con el demonio que espera a que el guest se calme | 9,2 s | 14,7 s | 15,5 s |
     | B: `connect()` tras `pause()` | 0,55 s | 3,1 s | 3,2 s |
     | C: `pool.take()` con `warmup` | 0,95 s | 5,1 s | 6,7 s |
     | D, **antes del arreglo** | 0,96 s | sin texto: `protocol_error` en 5 de 5 | — |
-    | D, con la relectura del servidor | <!-- REMEDIR-D --> | <!-- REMEDIR-D --> | <!-- REMEDIR-D --> |
+    | D, con la relectura del servidor | 1,0 s | 4,8 s | 6,1 s |
 
     - **A**: el demonio baja el tramo posterior a `create()` de 19,6 s a
       4,7 s (−76 %), pero en su primera versión leía nada más restaurar y
       competía con el arranque que `create()` espera, así que `create()`
       tardaba ≈ 8 s más y de extremo a extremo sólo se ganaba un 28 %.
-      Ahora espera a que el guest lleve 1 s sin E/S en curso antes de leer.
+      Ahora espera a que el guest lleve 1 s sin E/S en curso antes de leer,
+      y `create()` ya no crece (9,2 s frente a 8,8 s sin prefetch en la
+      misma tanda). El tramo tras `create()` baja de 5,2 s a 3,8 s, pero de
+      extremo a extremo la diferencia (14,7 s frente a 13,3 s) cae dentro
+      del ruido de n=5: el control sin prefetch salió mucho más rápido que
+      en la primera medida (13,3 s frente a 28,3 s), así que hoy la ganancia
+      de A es pequeña. Se queda encendido porque ya no cuesta nada.
     - **D**: `opencode run --attach` (1.18.34) sale en cuanto el servidor
       contesta el prompt, sin esperar a sus propios eventos, y el SDK veía
       `AgentFailed(reason="protocol_error")` o un resultado sin texto
       aunque el servidor completaba la respuesta. Ahora el SDK crea la
       sesión en el servidor y, al salir `run`, relee de él los mensajes de
-      esa vuelta. Mientras no esté la nueva medida, no la uses: C cubre el mismo caso.
+      esa vuelta. Con el arreglo funciona (5 de 5 con texto y uso), pero
+      sólo gana unas décimas a C (4,8 s frente a 5,1 s) y cuesta más memoria
+      y ≈ $0,18 más por plaza al mes: no se recomienda, usa C.
     - **deepagents** no se cachea con un prompt corto: su prompt de una
       palabra son ≈ 3 503 tokens de entrada, por debajo de los 4 096 que
       Haiku exige para un punto de caché, así que cada vuelta los paga

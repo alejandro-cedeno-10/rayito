@@ -292,7 +292,7 @@ acabe.
 | Opción | Qué precalienta | Medido (pool de 2, n=5) | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
 |---|---|---|---|---|
 | **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode (y deepagents, si aplica) ya en la caché de páginas | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
-| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | antes del arreglo, sin texto (abajo); con la relectura del servidor: <!-- REMEDIR-D -->; plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
+| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | antes del arreglo, sin texto (abajo); con la relectura del servidor, toma → primer token **p50 4,8 s / p95 6,1 s**, 5 de 5 con texto; plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
 
 La API no devuelve el tamaño del snapshot de un `suspend`: el de C se toma
 igual al de la imagen (la memoria usada del guest tras la toma, 503 MiB, es
@@ -333,7 +333,11 @@ la opción recomendada hoy. D, **antes del arreglo** de la relectura, no
 servía: `opencode run --attach` salía tras el primer evento aunque el
 servidor completara la respuesta, y el SDK devolvía
 `AgentFailed(reason="protocol_error")` (5 de 5 tomas) o un resultado sin
-texto ni uso. Con la relectura: <!-- REMEDIR-D -->. Cómo elegir entre A,
+texto ni uso. Con la relectura (Q154) funciona: 5 de 5 tomas con texto y
+uso, primer token a 4,8 s de mediana (p95 6,1 s), apenas por debajo de los
+5,1 s de C, a cambio de 350 MiB más de memoria y ≈ $0,18 más por plaza al
+mes. Por eso C sigue siendo la recomendada y D no aporta lo bastante para
+aconsejarla. Cómo elegir entre A,
 B, C y D: [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 
 ## Coste por plaza (`rayito-base`, 0,92 GB de snapshot; `AWS_API_NOTES.md` §12 y `docs/benchmarks/2026-09-cold-start.md`)
