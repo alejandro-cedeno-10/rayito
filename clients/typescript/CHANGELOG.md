@@ -47,7 +47,10 @@ versionado [SemVer](https://semver.org/lang/es/).
   último error de cada ruta; nunca el upstream ni las cabeceras) si el
   agente anuncia `secret_gateway` y el handle no aplicó `gateways` él
   mismo. En un handle recuperado, `refresh()` sólo relee el estado: rotar
-  la clave sigue siendo cosa del proceso que creó la pasarela.
+  la clave sigue siendo cosa del proceso que creó la pasarela. Si `rayd`
+  rechaza el token en esa lectura, `connect()` no falla: se salta la
+  recuperación y el `AuthenticationError` sale en la primera llamada
+  autenticada, como hasta ahora.
 
 ## [0.8.0] - 2026-10-07
 

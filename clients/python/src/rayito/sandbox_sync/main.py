@@ -238,6 +238,7 @@ from rayito._transport import (
 from rayito._volumes import VolumeStatus
 from rayito._volumes._section import from_proto_status as volumes_from_proto_status
 from rayito.exceptions import (
+    AuthenticationException,
     InvalidArgumentException,
     NotFoundException,
     SandboxException,
@@ -2527,7 +2528,10 @@ class Sandbox:
         porque sólo ése sabe rotar los secretos; uno ya recuperado se relee
         en cada `connect()`. El RPC usa el `request_timeout` de ese
         `connect()` (el mismo que `_extend_after_readiness`). Sin la función
-        en el agente no hace ninguna llamada."""
+        en el agente no hace ninguna llamada. Si el agente rechaza el token
+        (`AuthenticationException`), la recuperación se salta y `connect()`
+        no falla: el error sale en la primera llamada autenticada, como en
+        un agente sin la función."""
         if owns_gateways(self._section_handles.get(GATEWAY_SECTION)) or not (
             gateways_recoverable(self._agent_features)
         ):
@@ -2537,7 +2541,11 @@ class Sandbox:
             self._configure,
             timeout=self._resolve_request_timeout(request_timeout),
         )
-        recovered = recovered_gateways(reader(), reader=reader)
+        try:
+            status = reader()
+        except AuthenticationException:
+            return
+        recovered = recovered_gateways(status, reader=reader)
         if recovered is EMPTY_GATEWAYS:
             self._section_handles.pop(GATEWAY_SECTION, None)
         else:

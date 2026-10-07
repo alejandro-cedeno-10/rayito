@@ -33,6 +33,7 @@ import {
   stillPending,
 } from "../configure/base.js";
 import {
+  AuthenticationError,
   errorMessage,
   IndexWriteError,
   InvalidArgumentError,
@@ -2040,7 +2041,10 @@ export class Sandbox implements AsyncDisposable {
    * ése sabe rotar los secretos; uno ya recuperado se relee en cada
    * `connect()`. El RPC usa el `requestTimeoutMs` de ese `connect()` (el
    * mismo que `#extendAfterReadiness`). Sin la función en el agente no hace
-   * ninguna llamada. Espejo de `Sandbox._recover_gateways` de Python.
+   * ninguna llamada. Si el agente rechaza el token (`AuthenticationError`),
+   * la recuperación se salta y `connect()` no falla: el error sale en la
+   * primera llamada autenticada, como en un agente sin la función. Espejo de
+   * `Sandbox._recover_gateways` de Python.
    */
   async #recoverGateways(
     requestTimeoutMs: number | undefined,
@@ -2053,13 +2057,34 @@ export class Sandbox implements AsyncDisposable {
       return;
     }
     const timeoutMs = this.#core.resolveRequestTimeout(requestTimeoutMs);
-    const recovered = recoveredGateways(await this.#configureStatus(timeoutMs, signal), () =>
-      this.#configureStatus(timeoutMs),
-    );
+    const status = await this.#configureStatusUnlessRejected(timeoutMs, signal);
+    if (status === undefined) {
+      return;
+    }
+    const recovered = recoveredGateways(status, () => this.#configureStatus(timeoutMs));
     if (recovered === EMPTY_GATEWAYS) {
       this.#sectionHandles.delete(GATEWAY_SECTION);
     } else {
       this.#sectionHandles.set(GATEWAY_SECTION, recovered);
+    }
+  }
+
+  /**
+   * El `ConfigureStatus` de `#recoverGateways`, o `undefined` si el agente
+   * rechaza el token: `connect()` no valida el token, lo hace la primera
+   * llamada autenticada.
+   */
+  async #configureStatusUnlessRejected(
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<ConfigureStatusResponse | undefined> {
+    try {
+      return await this.#configureStatus(timeoutMs, signal);
+    } catch (error) {
+      if (error instanceof AuthenticationError) {
+        return undefined;
+      }
+      throw error;
     }
   }
 
