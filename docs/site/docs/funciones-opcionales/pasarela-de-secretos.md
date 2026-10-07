@@ -127,6 +127,17 @@ ya abierta, lleva el valor nuevo. Si `rayd` rechaza la configuración
 misma excepción que `create()` y la pasarela sigue con la configuración
 anterior.
 
+!!! note "Justo después de rotar, `refresh()` puede empujar el valor anterior"
+    Secrets Manager es de consistencia eventual: durante unos segundos
+    después de `SecretStore.update()` (o de una rotación), `GetSecretValue`
+    puede devolver todavía la versión anterior, y `refresh()` manda lo que
+    lee. Si necesitas que la siguiente petición lleve ya el valor nuevo,
+    comprueba que lo lleva (por ejemplo, con una petición de prueba a un
+    endpoint que no gaste) y, si no, repite `refresh()` tras una pausa
+    breve, unas pocas veces. Si lo rotas por un horario (una clave que
+    caduca), basta con hacer el `refresh()` con algo de margen antes de que
+    caduque la anterior.
+
 Una ruta que deja de estar en la configuración se cierra de verdad: deja de
 aceptar conexiones, cierra en el acto las keep-alive inactivas y deja
 terminar como mucho la petición en curso.
