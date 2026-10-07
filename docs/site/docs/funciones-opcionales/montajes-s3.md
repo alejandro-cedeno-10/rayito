@@ -64,14 +64,20 @@ como mucho 4 montajes en total por sandbox.
 `RAYITO_ALLOWED_MOUNT_BUCKETS` (coma-separados). Es configuración de la
 imagen, no una opción por sandbox: así el código que llama a `create()` no
 puede montar un bucket que quien publica la imagen no autorizó. **Vacío o
-ausente deniega todos los buckets**: cada montaje acaba en
-`MountException(code="not_allowed")`.
+ausente deniega todos los buckets**: `create()` termina el VM y lanza
+`MountException(code="not_allowed")` (`MountError` con
+`code: "not_allowed"` en TypeScript), cuyo mensaje dice que el bucket no
+está en el allowlist de la imagen y cómo publicarla con él (nunca nombra el
+bucket).
 
 ```bash
 rayito image publish --artifact rayito-image.zip --base-image-version 1 \
   --image-name rayito-base-caps --os-capabilities ALL \
   --env RAYITO_ALLOWED_MOUNT_BUCKETS=mi-bucket,otro-bucket
 ```
+
+Desde el repositorio, `make image-publish-caps MOUNT_BUCKETS=mi-bucket,otro-bucket`
+(o `image-publish-caps-efs`) añade ese `--env` por ti.
 
 Si construyes la imagen con un `Dockerfile` propio sobre
 `rayito-base-caps`, `ENV RAYITO_ALLOWED_MOUNT_BUCKETS=...` hace lo mismo.

@@ -497,6 +497,7 @@ y son *shims* de la CLI, así que los targets del `Makefile` no cambian:
 | `make image-zip-efs` | `python scripts/image_zip.py image image/rayito-image-efs.zip --with-efs` | `rayito image zip image image/rayito-image-efs.zip --sidecar kernel-sidecar --with-efs` |
 | `make image-publish-caps-efs` | `… publish_image.py --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` | `rayito image publish --artifact image/rayito-image-efs.zip --with-efs --os-capabilities ALL …` |
 | `make image-publish` (`-slim`, `-poly`, `-caps`) | `uv run --project clients/python python scripts/publish_image.py --artifact … --bucket $(BUCKET) --base-image-version 1` | `rayito image publish --artifact … --bucket … --base-image-version 1` |
+| `make image-publish-caps MOUNT_BUCKETS=b1,b2` (también `-caps-efs`) | `… publish_image.py … --env RAYITO_ALLOWED_MOUNT_BUCKETS=b1,b2` | `rayito image publish … --env RAYITO_ALLOWED_MOUNT_BUCKETS=b1,b2` |
 | `make image-prune PRUNE_ARGS="--keep 5 --dry-run"` | `uv run --project clients/python python scripts/image_prune.py --image-name rayito-base --keep 5 --dry-run` | `rayito image prune --keep 5 --dry-run` |
 
 `image_zip.py` y `copy_sidecar.py` sólo usan la biblioteca estándar (cargan

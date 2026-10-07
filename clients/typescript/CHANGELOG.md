@@ -105,6 +105,16 @@ versionado [SemVer](https://semver.org/lang/es/).
 - `sbx.agent.prepare()` arranca los pasos en segundo plano sin plazo: con
   `serve: true` el servidor residente moría al agotar `timeoutMs`.
 
+### Changed
+
+- **Montajes S3**: el `MountError` de un bucket que no está en el allowlist de
+  la imagen (`code: "not_allowed"`) ya no dice sólo que la sección se rechazó: explica
+  que falta en `RAYITO_ALLOWED_MOUNT_BUCKETS` y cómo publicar la imagen con
+  él (`--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` o
+  `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
+  El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
+  (`testdata/s3-mounts/error-hints.json`).
+
 ### Security
 
 - **Eventos de ciclo de vida (`webhook-url-public-address`)**: `registerWebhook`

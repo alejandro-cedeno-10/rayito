@@ -1,0 +1,6 @@
+{
+  "description": "MountException/MountError message hints by mount error class: the Python SDK (rayito._s3_mounts._domain.MOUNT_ERROR_HINTS) and the TypeScript SDK (src/s3-mounts/domain.ts MOUNT_ERROR_HINTS) carry exactly this map. Never a bucket name.",
+  "hints": {
+    "not_allowed": "el bucket no está en el allowlist de la imagen (RAYITO_ALLOWED_MOUNT_BUCKETS, vacío o ausente deniega todos): publica la imagen con `--env RAYITO_ALLOWED_MOUNT_BUCKETS=<bucket>` (`make image-publish-caps MOUNT_BUCKETS=<bucket>`)"
+  }
+}

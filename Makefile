@@ -24,6 +24,12 @@ PY            := uv run --project $(PYTHON_CLIENT)
 # ninguno de los dos, require-bucket para el publish antes de compilar.
 BUCKET        ?= $(RAYITO_BUCKET)
 PUBLISH_ARGS  ?=
+# Allowlist de montajes S3 (`mounts=`) de las imágenes con capabilities:
+# image-publish-caps[-efs] MOUNT_BUCKETS=b1,b2 publica con
+# `--env RAYITO_ALLOWED_MOUNT_BUCKETS=b1,b2`. Sin él, la imagen no permite
+# montar ningún bucket (MountException(code="not_allowed")).
+MOUNT_BUCKETS ?=
+MOUNT_ENV      = $(if $(strip $(MOUNT_BUCKETS)),--env RAYITO_ALLOWED_MOUNT_BUCKETS=$(strip $(MOUNT_BUCKETS)))
 PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
@@ -264,7 +270,7 @@ image-publish-poly: require-bucket image-zip-poly
 # arranque la ruta de política (`ip rule uidrange` + blackhole) que bloquea
 # IMDS para todo uid distinto de 0.
 image-publish-caps: require-bucket image-zip
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(PUBLISH_ARGS)
 
 # Variante caps con amazon-efs-utils (m15-efs-volumes, `volumes=`): mismo
 # Dockerfile, marcador `efs_variant` sólo dentro del zip (`--with-efs`); la capa
@@ -277,7 +283,7 @@ image-zip-efs: build image-licenses
 	python scripts/image_zip.py image $(IMAGE_ZIP_EFS) --with-efs
 
 image-publish-caps-efs: require-bucket image-zip-efs
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(PUBLISH_ARGS)
 
 # Borra versiones antiguas de rayito-base de una en una (espera a que la
 # imagen salga de UPDATING/DELETING entre borrados). Primero `--dry-run`.
