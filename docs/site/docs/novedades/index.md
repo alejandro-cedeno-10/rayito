@@ -12,17 +12,18 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-flask-outline:{ .lg .middle } **0.8.0** · borrador, sin publicar
+-   :material-tag:{ .lg .middle } **0.8.0** · 2026-10-07 · actual
 
     ---
 
-    Agente de IA dentro del sandbox (`sbx.agent` con OpenCode, ya en
-    `main`), presets de pasarela para modelos y la página de precios.
-    Aún no está en ningún paquete publicado.
+    Un agente de IA dentro del sandbox (`sbx.agent` con OpenCode o
+    deepagents), arranque rápido con `AgentTemplate` y el calentamiento
+    del pool, presets de pasarela para modelos y la página de precios.
+    Un cambio que rompe en `register_webhook`.
 
-    [:octicons-arrow-right-24: Borrador de 0.8.0](0.8.0.md)
+    [:octicons-arrow-right-24: Novedades de 0.8.0](0.8.0.md)
 
--   :material-tag:{ .lg .middle } **0.7.1** · 2026-10-06 · actual
+-   :material-tag:{ .lg .middle } **0.7.1** · 2026-10-06
 
     ---
 
@@ -70,7 +71,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.7.1"
+    print(rayito.__version__)  # "0.8.0"
     ```
 
 === "TypeScript"
@@ -78,7 +79,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.7.1"
+    console.log(VERSION); // "0.8.0"
     ```
 
 === "CLI"
@@ -110,10 +111,16 @@ Después, republica tu imagen sobre el `rayd` nuevo si quieres usar lo que
 corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
 `gateways=`, el endurecimiento de `rayd` 0.7.0 o los avisos de licencia
 de `rayd` 0.7.1 en `/usr/share/doc/rayd/`):
-[Imágenes](../images.md#publicar-las-tres). Sin republicar, el SDK nuevo
-sigue funcionando con tu imagen actual, y cada función que necesita el
-`rayd` nuevo falla cerrada con `UnimplementedError` y termina el sandbox
-que acaba de lanzar. Al pasar de 0.6.x a 0.7.0, revisa además los
+[Imágenes](../images.md#publicar-las-tres). Desde 0.8, `rayito doctor`
+exige el `rayd` del tag `rayd-v0.8.0`, y el agente de IA (`sbx.agent`)
+necesita además una imagen con su runtime, construida con
+[`AgentTemplate`](../funciones-opcionales/templates-de-agente.md). Sin
+republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
+función que necesita el `rayd` nuevo falla cerrada con
+`UnimplementedError` y termina el sandbox que acaba de lanzar. Al pasar de
+0.7.x a 0.8.0, revisa el
+[cambio que rompe en `register_webhook`](0.8.0.md#como-actualizar-desde-07x);
+de 0.6.x a 0.7.0, los
 [cambios de comportamiento](0.7.0.md#como-actualizar-desde-06x).
 
 ## Disponible como experimental
@@ -149,7 +156,7 @@ Partes con un diseño ya aceptado pero sin ninguna línea fusionada en
 `UnimplementedError`.
 
 Ninguna por ahora: `AgentTemplate`, `PoolConfig.warmup` y el runtime
-deepagents ya están en `main` (ver el [borrador de 0.8.0](0.8.0.md)).
+deepagents se publicaron en [0.8.0](0.8.0.md).
 
 ## Versiones anteriores
 

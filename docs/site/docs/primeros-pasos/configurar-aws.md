@@ -100,7 +100,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la misma versión que tu SDK
+    RAYD_VERSION=0.8.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore

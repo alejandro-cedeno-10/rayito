@@ -1674,11 +1674,13 @@ que permita `cloudfront:CreateDistribution` (Q141).
 
 ---
 
-## 0.8.0 — Agente de IA en el sandbox (sin publicar)
+## 0.8.0 — Agente de IA en el sandbox (2026-10-07)
 
-Cuatro cambios OpenSpec archivados, en `main` y pendientes de la release
-0.8.0: `ai-agent-core` (archivado el 2026-10-06), `ai-agent-deepagents`,
-`ai-agent-fast-start` y `ai-agent-docs-pricing`.
+Publicada el 2026-10-07 en PyPI, npm y la GitHub Release `rayd-v0.8.0`.
+Seis cambios OpenSpec archivados: `ai-agent-core`, `ai-agent-deepagents`,
+`ai-agent-fast-start` y `ai-agent-docs-pricing` (2026-10-06), y
+`local-agent-e2e` y `webhook-url-public-address` (2026-10-07). Sigue
+abierto `m15-custom-domain` (ver 0.7.0).
 
 - **`sbx.agent`** con OpenCode o deepagents dentro del sandbox: la
   credencial del modelo sólo llega por la pasarela de secretos, eventos
@@ -1690,6 +1692,16 @@ Cuatro cambios OpenSpec archivados, en `main` y pendientes de la release
   opcional (`serve=True`).
 - **Docs y precios**: la guía del agente con la tabla de decisión A/B/C/D,
   la página de templates y el coste de un agente (VM frente a modelo).
+- **Cambio que rompe** (#151, `webhook-url-public-address`):
+  `register_webhook`/`registerWebhook` rechaza `localhost` y las IP
+  literales no públicas antes de llamar a AWS; antes se guardaban y nunca
+  se entregaban.
+- **Correcciones de la regresión previa a la release** (#145–#153): turno
+  de `opencode run --attach` recuperado, prefetch que espera a que el guest
+  se calme, fila 0.8 de compatibilidad en `rayito doctor`, `import rayito`
+  sin cargar el agente, grupos de logs de las imágenes de e2e, reintento de
+  la rotación de la pasarela en el e2e y el aviso del allowlist de montajes
+  S3. `rayd` no cambia: versión en paso con los SDK.
 
 **Aceptación (2026-10-07, cuenta de pruebas, us-east-1)**, con imágenes
 desechables propias y Claude Haiku 4.5 por la pasarela
@@ -1711,6 +1723,19 @@ desechables propias y Claude Haiku 4.5 por la pasarela
   aparcamientos de dos pools y el modelo). Limpieza: sólo se borró lo
   creado por la ejecución; el inventario de después no tiene nada del
   prefijo de la ejecución, y lo que difiere es de otras sesiones en curso.
+- Regresión completa sobre `main` con todo lo anterior (2026-10-06/07):
+  Python 122 pasan y 0 fallan; TypeScript y las funciones opcionales,
+  EFS incluido, en verde; aceptación del agente repetida.
+
+**Aceptación de la release (2026-10-07)**, smoke proporcional sobre el árbol
+del PR de release (#138) con imágenes desechables propias: `rayito doctor
+--launch` 9 OK / 1 WARN / 0 FAIL en base y caps (`agent_version` 0.8.0,
+compatibilidad OK); e2e Python m1–m3 y corpus E2B 24/24; e2e TypeScript m6 y
+corpus 13/13; una ejecución de `sbx.agent` con OpenCode y Haiku 4.5 por la
+pasarela sobre un `AgentTemplate` construido desde la rama de release
+(`Done` con texto, la clave ilegible en el sandbox); apagado por defecto en
+los dos SDK. Coste estimado ≈ $0,40; inventario de antes y después sin
+diferencias.
 
 ---
 

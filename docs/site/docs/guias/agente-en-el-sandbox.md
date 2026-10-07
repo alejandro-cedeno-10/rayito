@@ -5,6 +5,8 @@ description: Correr un agente de código (OpenCode o deepagents) dentro del sand
 
 # Agente en el sandbox
 
+<small>Desde 0.8.0 ([Novedades de 0.8.0](../novedades/0.8.0.md)).</small>
+
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode))
 **dentro** del propio sandbox. El agente ve el mismo filesystem, los mismos
 comandos y el mismo egress que cualquier otro código que ejecutes con

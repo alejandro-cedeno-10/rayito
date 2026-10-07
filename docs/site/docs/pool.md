@@ -286,10 +286,14 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 ## Calentamiento (`warmup`) y servidor residente
 
-Las cifras de esta sección están medidas en AWS real el 2026-10-07 (Q147
-y Q148 de `AWS_API_NOTES.md`); los costes son precios de lista
-(consultados 2026-10-06) por esos tiempos, con el detalle en
-[Precios](cost.md#coste-de-la-vm-con-fast-start).
+!!! info "Desde 0.8.0"
+    `PoolConfig.warmup` llega con
+    [0.8.0](novedades/0.8.0.md). Las cifras de
+    esta sección están medidas en AWS real el 2026-10-07 (Q147 y Q148 de
+    `AWS_API_NOTES.md`); los costes son precios de lista (consultados
+    2026-10-06) por esos tiempos, con el detalle en
+    [Precios](cost.md#coste-de-la-vm-con-fast-start).
+    Guía: [Agente en el sandbox](guias/agente-en-el-sandbox.md).
 
 Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (19,6 s de
 mediana tras `create()` sin prefetch, medido) en cada VM nueva. `PoolConfig.warmup` deja ese coste en

@@ -16,15 +16,14 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.7"
-    Volúmenes EFS compartidos en vivo entre sandboxes, dentro de tu VPC;
-    dominio propio con CloudFront, como función experimental; un entorno
-    para probar en local con Docker y Floci, sin cuenta de AWS; y un
-    endurecimiento de seguridad de `rayd`, los SDK, la infraestructura y la
-    release. Todo lo que tiene coste, apagado por defecto. En 0.7.1, `rayd`
-    lleva además sus avisos de licencia de terceros.
-    [Novedades de 0.7.1](novedades/0.7.1.md) ·
-    [0.7.0](novedades/0.7.0.md) ·
+!!! tip "Nuevo en 0.8"
+    Un agente de código dentro del sandbox (`sbx.agent` con OpenCode o
+    deepagents) que llama a su modelo sólo por la pasarela de secretos;
+    arranque rápido con `AgentTemplate`, pausa entre turnos o un pool
+    calentado; y una página de precios que separa la VM de los tokens del
+    modelo. Todo lo que tiene coste, apagado por defecto.
+    [Novedades de 0.8.0](novedades/0.8.0.md) ·
+    [0.7.x](novedades/0.7.1.md) ·
     [0.6.x](novedades/0.6.0.md)
 
 ## Empieza en tres pasos
@@ -299,6 +298,7 @@ Funciones opcionales, todas apagadas por defecto hasta que pasas su opción
 | `index=DynamoDbIndex(...)` | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
 | `Template.build()` | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
 | `AgentTemplate`, `rayito agent template build` | la imagen `rayito-agent` con OpenCode, ripgrep y deepagents | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
+| `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup-y-servidor-residente) |
 | `OptionalStacks`, `rayito stack` | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
 | `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
 | `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |

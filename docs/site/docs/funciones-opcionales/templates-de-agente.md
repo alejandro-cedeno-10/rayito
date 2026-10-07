@@ -5,6 +5,8 @@ description: AgentTemplate compone OpenCode, ripgrep y deepagents sobre rayito-b
 
 # Templates de agente
 
+<small>Desde 0.8.0 ([Novedades de 0.8.0](../novedades/0.8.0.md)).</small>
+
 `AgentTemplate` es una receta fija sobre el [DSL de `Template`](templates.md)
 que instala, en una sola imagen, todo lo que
 [Agente en el sandbox](../guias/agente-en-el-sandbox.md) necesita: el

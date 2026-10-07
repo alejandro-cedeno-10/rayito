@@ -205,7 +205,7 @@ mensaje empieza siempre por `"<reason>: "`.
 
 ## `AgentException` / `AgentError`
 
-La lanza `sbx.agent.run()` (`stream()` nunca lanza por un fallo del agente:
+Desde 0.8.0. La lanza `sbx.agent.run()` (`stream()` nunca lanza por un fallo del agente:
 lo emite como evento `AgentFailed`). Guía:
 [Agente en el sandbox](../guias/agente-en-el-sandbox.md).
 
