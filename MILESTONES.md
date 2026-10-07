@@ -1739,6 +1739,46 @@ diferencias.
 
 ---
 
+## 0.9.0 — Limpieza y correcciones (2026-10-07)
+
+Publicada el 2026-10-07 en PyPI, npm y la GitHub Release `rayd-v0.9.0`.
+Cinco cambios OpenSpec archivados (2026-10-07):
+`ai-agent-remove-serve-in-pool`, `remove-gateway-exception`,
+`shim-build-exceptions`, `python-aws-region` y `connect-recovers-gateways`.
+Sigue abierto `m15-custom-domain` (ver 0.7.0).
+
+- **Cambios que rompen**: se retira la opción D del arranque rápido del
+  agente (#161: `serve=`, `attach=`, `RunRequest.attach`,
+  `AgentRuntime.abort_command`); se eliminan `GatewayException` y
+  `GatewayError`/`GatewayErrorOptions`, que nunca se lanzaban (#158);
+  `rayito.e2b.BuildException`/`TemplateException` pasan a ser las clases
+  nativas (#159); y el SDK de Python honra `AWS_REGION` con la misma
+  prioridad que TypeScript y la CLI (#157).
+- **`connect()` recupera `sbx.gateways`** desde un `ConfigureStatus` de
+  sólo lectura, para que otro proceso use `sbx.agent` sin recrear el
+  sandbox (#160). La regresión en AWS encontró que esa lectura hacía fallar
+  `connect()` con un token incorrecto; desde #162 la recuperación se salta
+  y el error sale en la primera llamada autenticada, como antes.
+- Fila 0.9 de compatibilidad en `rayito doctor` y 0.9.x como línea con
+  soporte (#163). `rayd` no cambia: versión en paso con los SDK.
+
+**Aceptación de la release (2026-10-07, cuenta de pruebas, us-east-1)**,
+sobre `main` con #157–#161 y con imágenes desechables propias de cada
+ejecución:
+
+- TypeScript y funciones opcionales en verde, `rayito doctor --launch`
+  8 OK / 1 WARN / 0 FAIL en base, caps y caps-efs.
+- Agente: la aceptación 0.9.0 (`AgentTemplate` sobre una imagen caps
+  propia y el agente por la pasarela) en verde.
+- Python: una regresión real (la de `connect()` con un token incorrecto,
+  arreglada en #162 y repetida en AWS: `test_m2_processes` pasa); el resto
+  de fallos eran permisos IAM que faltaban en el entorno de pruebas, no
+  errores del producto.
+- Limpieza: sólo se borró lo creado por cada ejecución; el inventario
+  final no tiene nada de los prefijos de la release.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

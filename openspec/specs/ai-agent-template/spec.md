@@ -49,16 +49,20 @@ The CLI SHALL provide `rayito agent template build --bucket B [--name] [--base] 
 - **WHEN** a unit test invokes `template build --bucket amzn-s3-demo-bucket --no-deepagents --no-prefetch` with `AgentTemplate.build` replaced by a spy
 - **THEN** the spy received `runtimes == ("opencode",)` and `prefetch is False`, and the output has `template_id=`
 
-### Requirement: agent_pool_warmup prepares pool slots for the agent
-Both SDKs SHALL export `agent_pool_warmup(runtime="opencode", *, serve=False)` / `agentPoolWarmup(runtime, { serve })` returning the runtime's `warmup_steps(serve=...)`; with `serve=True` (OpenCode only, otherwise `InvalidArgumentException`) it SHALL prepend a step that writes a placeholder config at `OPENCODE_CONFIG` only if none exists and append a foreground step that waits for the serve secret and `/global/health` (basic auth with the in-VM password, never placed in a step's text) and then warms an instance with `GET /config?directory=<AGENT_STATE_DIR>/warm`, within `DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS`. The serve password SHALL be generated inside each VM, so every slot and every recycled slot has its own. Both SDKs SHALL produce the steps of `testdata/agent/pool-warmup.json`.
+### Requirement: agent_pool_warmup returns the runtime's warm-up steps
+Both SDKs SHALL export `agent_pool_warmup(runtime="opencode")` / `agentPoolWarmup(runtime)` returning the runtime's `warmup_steps()`, which load the runtime into the page cache before the slot is parked (option C). Neither SHALL accept a `serve` option, and no step SHALL start a resident server. Both SDKs SHALL produce the steps of `testdata/agent/pool-warmup.json` for every runtime it lists.
 
-#### Scenario: serve steps order
-- **WHEN** a unit test reads `agent_pool_warmup("opencode", serve=True)`
-- **THEN** the tags are the placeholder config, the binary warm-up, the background `rayito-agent-serve` and the ready step, in that order, and the ready step calls `/global/health` and the warm `/config` URL
+#### Scenario: warm-up steps per runtime
+- **WHEN** a unit test reads `agent_pool_warmup(runtime)` for each case of `testdata/agent/pool-warmup.json`
+- **THEN** the steps' `cmd`, `background` and `tag` equal the case's steps, and for `"opencode"` there is a single foreground `opencode --version` step
 
-### Requirement: agent.prepare() leaves background steps running
-`sbx.agent.prepare()` SHALL start background warm-up steps with no timeout, so a resident server started by `prepare(serve=True)` is not killed after `timeout_seconds`.
+#### Scenario: serve is gone
+- **WHEN** a caller passes `serve=True` to `agent_pool_warmup`
+- **THEN** Python raises `TypeError` and TypeScript does not type-check
 
-#### Scenario: prepare with serve
-- **WHEN** a caller runs `sbx.agent.prepare(serve=True)`
-- **THEN** the `opencode serve` step is started with `background=True` and no timeout
+### Requirement: agent.prepare() starts warm-up steps without waiting
+`sbx.agent.prepare(runtime=...)` SHALL take no `serve` option and SHALL start the runtime's warm-up steps in the background without waiting for any of them; a step with `background=True` SHALL run with no timeout, so a long-lived process a runtime starts is not killed after `timeout_seconds`.
+
+#### Scenario: prepare with a background step
+- **WHEN** a caller runs `sbx.agent.prepare(runtime=r)` with a runtime whose warm-up has a `background=True` step
+- **THEN** that step is started with `background=True` and no timeout, every handle is disconnected, and `prepare()` returns without waiting

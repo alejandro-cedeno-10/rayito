@@ -61,7 +61,7 @@ Events SHALL be a union discriminated by `type`, one of `text_delta`, `text`, `r
 - **THEN** `bedrock_gateway` raises `InvalidArgumentException`
 
 ### Requirement: The AgentRuntime port resolves by name or by object
-Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`, `command`, `new_state`/`newState`, `parse_line`/`parseLine`, `finish`, `abort_command`/`abortCommand`, `template_steps`/`templateSteps`, `warmup_steps`/`warmupSteps`) and a `nombre -> AgentRuntime` registry. `runtime=`/`runtime` SHALL accept either a registered name or any object that implements the port. An unregistered name SHALL raise `UnimplementedError`/`UnimplementedError` naming the runtime, never a raw `KeyError`/`undefined` access; any other value SHALL raise `InvalidArgumentException`/`InvalidArgumentError`.
+Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`, `command`, `new_state`/`newState`, `parse_line`/`parseLine`, `finish`, `template_steps`/`templateSteps`, `warmup_steps`/`warmupSteps`) and a `nombre -> AgentRuntime` registry. `warmup_steps()`/`warmupSteps()` SHALL take no argument. `runtime=`/`runtime` SHALL accept either a registered name or any object that implements the port. An unregistered name SHALL raise `UnimplementedError`/`UnimplementedError` naming the runtime, never a raw `KeyError`/`undefined` access; any other value SHALL raise `InvalidArgumentException`/`InvalidArgumentError`.
 
 #### Scenario: an unregistered runtime name
 - **WHEN** `sbx.agent.run(prompt, spec=spec, runtime="opencode")` is called before any adapter registers `"opencode"`
@@ -70,33 +70,6 @@ Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`,
 #### Scenario: a caller's own runtime object
 - **WHEN** `runtime=` is an object that implements every method of `AgentRuntime`
 - **THEN** `sbx.agent.run()` uses it directly, with no registry lookup
-
-### Requirement: sbx.agent is a lazy property that enforces the SDK's own limits
-`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. `AgentStream.abort()` SHALL call the runtime's `abort_command`/`abortCommand` (if any), then run `stop_tree_command(pid)`/`stopTreeCommand(pid)` (which stops the runtime process and stops and kills every descendant of it, including those that started their own session), before killing the underlying command handle, and the stream's final event SHALL be `AgentFailed(reason="aborted")`. When the SDK ends a run for `max_steps` or `token_budget`, it SHALL stop the runtime the same way and consume the handle until its end event before the stream ends, so the run lock is free for the next run. When the handle ends with the command's timeout end status (which `wait()` reports as `TimeoutException`/`TimeoutError`), the final event SHALL be `AgentFailed(reason="timeout")`.
-
-#### Scenario: touching sbx.agent makes no call
-- **WHEN** `sbx.agent` is read right after `Sandbox.create()`/`connect()`
-- **THEN** no `commands.run`, `files.write_files` or boto3 call happens
-
-#### Scenario: max_steps is enforced by the SDK, not only the runtime
-- **WHEN** a runtime emits `StepStarted(index=2)` and `AgentLimits(max_steps=1)` was passed
-- **THEN** the stream's next event is `AgentFailed(reason="max_steps")`, and `run()` raises `AgentException` with that reason
-
-#### Scenario: the config is written once per sha
-- **WHEN** two runs use the same `Agent`/`AsyncAgent` instance and the runtime's `build_config()` returns the same `config_sha256` both times
-- **THEN** `files.write_files`/`files.writeFiles` is called only on the first run
-
-#### Scenario: abort runs the runtime's abort command, then kills the handle
-- **WHEN** `stream.abort()` is called and the runtime's `abort_command()` returns a shell command
-- **THEN** that command and then `stop_tree_command(pid)` run in the sandbox before the handle is killed, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
-
-#### Scenario: an SDK limit stops the runtime and its process tree
-- **WHEN** the stream ends with `AgentFailed(reason="max_steps")` or `AgentFailed(reason="token_budget")`
-- **THEN** `stop_tree_command(pid)` ran and the handle was killed and consumed to its end before the stream ended
-
-#### Scenario: a timeout reported only by the end event is a timeout
-- **WHEN** the command handle ends without raising while iterating and its `wait()` raises `TimeoutException`/`TimeoutError`
-- **THEN** the stream's final event is `AgentFailed(reason="timeout")`
 
 ### Requirement: The agent run span never carries content, only with tracer_provider
 With `tracer_provider=`/`tracerProvider`, `sbx.agent.run()`/`stream()` SHALL open one span `rayito.agent.run` with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` at start and, when the run ends, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` and the `rayito.agent.*` attributes from `ALLOWED_SPAN_ATTRIBUTES`. Without the option, no span SHALL be created. No attribute SHALL ever carry the prompt, the response text or a tool argument.
@@ -108,58 +81,6 @@ With `tracer_provider=`/`tracerProvider`, `sbx.agent.run()`/`stream()` SHALL ope
 #### Scenario: span attributes are a subset of the allowed list
 - **WHEN** `sbx.agent.run()` is called with `tracer_provider=` set
 - **THEN** the `rayito.agent.run` span's attributes are all members of `ALLOWED_SPAN_ATTRIBUTES`/`ALLOWED_SPAN_ATTRIBUTES` and none is the prompt or the response text
-
-### Requirement: The OpenCode adapter is headless, credential-free and byte-identical across SDKs
-
-The `opencode` runtime SHALL write an `opencode.json` that only carries the
-model credential placeholder, SHALL pass the prompt on stdin and never in
-argv, SHALL always pass `--title`, SHALL hold a per-sandbox run lock and
-SHALL attach to a resident `opencode serve` only when it answers its health
-check. When it attaches, the run script SHALL create the session on the
-server (title `OPENCODE_SESSION_TITLE` and the non-interactive rules that
-`opencode run` applies: `question`, `plan_enter` and `plan_exit` denied)
-unless a `session_id` was given, SHALL announce it with a
-`rayito.attached` line that carries the session id, the start time and
-whether reasoning was asked, and, after `opencode run` exits, SHALL re-read
-that turn's messages from `GET /session/<id>/message` one page of one
-message at a time, newest first, until the prompt's `user` message or
-`OPENCODE_RECONCILE_MAX_MESSAGES`, and print them oldest first as
-`rayito.message` lines. The adapter SHALL emit from those lines only the
-parts the stream did not already emit (by part id), with the filters of
-`opencode run --format json` (finished text, finished reasoning only when
-asked, finished tools, step start and finish), SHALL ignore messages older
-than the run's start time, and SHALL turn an assistant message `error` into
-`AgentFailed(reason="model_error")` when the stream carried none. A
-`session_id` that is not an OpenCode id SHALL raise
-`InvalidArgumentException` / `InvalidArgumentError`. Python and TypeScript
-SHALL produce the same configuration bytes, sha256 and run script for the
-same spec (`testdata/agent/`).
-
-#### Scenario: Error events decide failure, not the exit code
-
-- **WHEN** OpenCode emits an `error` event and then exits with code 0
-- **THEN** the run ends with `AgentFailed(reason="model_error")`, whose
-  `detail_code` is the error name and never its message
-
-#### Scenario: A second run while one holds the lock
-
-- **WHEN** a run starts while another holds the run lock
-- **THEN** it ends with `AgentFailed(reason="busy")` without starting OpenCode
-
-#### Scenario: An attached run that the CLI cut short
-
-- **WHEN** a unit test feeds the captured output of `opencode run --attach`
-  1.18.34 (`testdata/agent/opencode-attach/`), whose stream stops after the
-  first `step_start` and is followed by the re-read messages
-- **THEN** both SDKs emit every step, tool call and text of the turn once,
-  in order, end with `Done` and the summed usage, and match `expected.json`
-
-#### Scenario: A model error that only the server saw
-
-- **WHEN** the re-read assistant message carries `error` and the stream had
-  no `error` event
-- **THEN** the run ends with `AgentFailed(reason="model_error")` whose
-  `detail_code` is the error name
 
 ### Requirement: A deepagents runtime runs a LangGraph agent through the same contract
 Both SDKs SHALL provide `DeepAgents(entrypoint=None)` (TypeScript `new DeepAgents({ entrypoint })`), an `AgentRuntime` registered as `"deepagents"`. `entrypoint`, when given, SHALL match `module.path:function`, otherwise construction raises `InvalidArgumentException` / `InvalidArgumentError`. `build_config` SHALL write one file, `AGENT_STATE_DIR/deepagents/config.json` with mode 0600, holding the provider, model id, region, the gateway URL (plus `base_path`), `MODEL_CREDENTIAL_PLACEHOLDER`, `prompt_caching`, instructions, workdir, sessions directory, entry point, permissions and subagents, serialised canonically so that Python and TypeScript produce the same bytes and sha256 (`testdata/agent/deepagents-config.json`). A spec with `mcp`, a non-empty `raw_config`, a tool name deepagents does not have, or argument patterns on any tool other than `bash` SHALL raise before any RPC.
@@ -207,3 +128,62 @@ The runner SHALL generate session ids `rda_<uuid4 hex>`, emit them in a `session
 #### Scenario: continuing a run
 - **WHEN** a second run passes the `session_id` of the first
 - **THEN** the graph receives the first run's messages followed by the new prompt
+
+### Requirement: sbx.agent is lazy, enforces the SDK's own limits and aborts by stopping the process tree
+`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` and `stream()` SHALL NOT accept an `attach` option. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. `AgentStream.abort()` SHALL run `stop_tree_command(pid)`/`stopTreeCommand(pid)` (which stops the runtime process and stops and kills every descendant of it, including those that started their own session), before killing the underlying command handle, and the stream's final event SHALL be `AgentFailed(reason="aborted")`. When the SDK ends a run for `max_steps` or `token_budget`, it SHALL stop the runtime the same way and consume the handle until its end event before the stream ends, so the run lock is free for the next run. When the handle ends with the command's timeout end status (which `wait()` reports as `TimeoutException`/`TimeoutError`), the final event SHALL be `AgentFailed(reason="timeout")`.
+
+#### Scenario: touching sbx.agent makes no call
+- **WHEN** `sbx.agent` is read right after `Sandbox.create()`/`connect()`
+- **THEN** no `commands.run`, `files.write_files` or boto3 call happens
+
+#### Scenario: max_steps is enforced by the SDK, not only the runtime
+- **WHEN** a runtime emits `StepStarted(index=2)` and `AgentLimits(max_steps=1)` was passed
+- **THEN** the stream's next event is `AgentFailed(reason="max_steps")`, and `run()` raises `AgentException` with that reason
+
+#### Scenario: the config is written once per sha
+- **WHEN** two runs use the same `Agent`/`AsyncAgent` instance and the runtime's `build_config()` returns the same `config_sha256` both times
+- **THEN** `files.write_files`/`files.writeFiles` is called only on the first run
+
+#### Scenario: abort stops the process tree, then kills the handle
+- **WHEN** `stream.abort()` is called
+- **THEN** `stop_tree_command(pid)` is the only command run in the sandbox before the handle is killed, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
+
+#### Scenario: an SDK limit stops the runtime and its process tree
+- **WHEN** the stream ends with `AgentFailed(reason="max_steps")` or `AgentFailed(reason="token_budget")`
+- **THEN** `stop_tree_command(pid)` ran and the handle was killed and consumed to its end before the stream ended
+
+#### Scenario: a timeout reported only by the end event is a timeout
+- **WHEN** the command handle ends without raising while iterating and its `wait()` raises `TimeoutException`/`TimeoutError`
+- **THEN** the stream's final event is `AgentFailed(reason="timeout")`
+
+### Requirement: The OpenCode adapter execs opencode run directly, headless and byte-identical across SDKs
+
+The `opencode` runtime SHALL write an `opencode.json` that only carries the
+model credential placeholder, SHALL pass the prompt on stdin and never in
+argv, SHALL always pass `--title` and SHALL hold a per-sandbox run lock.
+After taking the lock and checking that `opencode` is on the `PATH`, the run
+script SHALL `exec` `opencode run --format json` directly: it SHALL NOT
+probe, start or attach to an `opencode serve`, and SHALL NOT print any
+`rayito.` line other than `rayito.busy` and `rayito.runtime_missing`. A
+`session_id` that is not an OpenCode id SHALL raise
+`InvalidArgumentException` / `InvalidArgumentError`. Python and TypeScript
+SHALL produce the same configuration bytes, sha256 and run script for the
+same spec (`testdata/agent/`).
+
+#### Scenario: Error events decide failure, not the exit code
+
+- **WHEN** OpenCode emits an `error` event and then exits with code 0
+- **THEN** the run ends with `AgentFailed(reason="model_error")`, whose
+  `detail_code` is the error name and never its message
+
+#### Scenario: A second run while one holds the lock
+
+- **WHEN** a run starts while another holds the run lock
+- **THEN** it ends with `AgentFailed(reason="busy")` without starting OpenCode
+
+#### Scenario: The run script execs OpenCode
+
+- **WHEN** a unit test builds the run command for a spec in either SDK
+- **THEN** the script equals `testdata/agent/opencode-run-commands.json`,
+  its last line is `exec 'opencode' 'run' …`, and it contains neither
+  `--attach` nor `curl`
