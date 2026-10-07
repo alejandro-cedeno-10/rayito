@@ -194,7 +194,13 @@ from rayito._sandbox_base import (
     with_size_facts,
     write_index_record,
 )
-from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import (
+    EMPTY_GATEWAYS,
+    GatewayHandle,
+    gateways_recoverable,
+    owns_gateways,
+    recovered_gateways,
+)
 from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
@@ -1168,6 +1174,7 @@ class Sandbox:
                 self._refresher.refresh_all()
             self._wait_until_ready(terminate_on_failure=False)
             self._extend_after_readiness(timeout, request_timeout=request_timeout)
+            self._recover_gateways(request_timeout)
         return self
 
     @classmethod
@@ -1267,6 +1274,7 @@ class Sandbox:
             sandbox._secrets = binding
             try:
                 sandbox._extend_after_readiness(timeout, request_timeout=None)
+                sandbox._recover_gateways()
             except BaseException:
                 sandbox.close()
                 raise
@@ -1528,7 +1536,9 @@ class Sandbox:
     @property
     def gateways(self) -> GatewayHandle:
         """`{nombre: GatewayStatus}` de `create(gateways=)`: vacío (y su
-        `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
+        `refresh()` no hace nada) sin esa opción. Tras `connect()` desde otro
+        proceso se reconstruye con `ConfigureStatus` (nombres y puertos;
+        su `refresh()` sólo relee el estado, no rota secretos). `GatewayStatus.url` es
         `"http://127.0.0.1:<puerto>"`, el host al que apuntar
         `ANTHROPIC_BASE_URL` y similares dentro del sandbox."""
         handle = self._section_handles.get(GATEWAY_SECTION)
@@ -2508,6 +2518,30 @@ class Sandbox:
         if self._secrets is not None and self._secrets.cache is not None:
             return self._secrets.cache
         return self._default_secret_cache()
+
+    def _recover_gateways(self, request_timeout: float | None = None) -> None:
+        """`sbx.gateways` tras `connect()`: si este handle no aplicó él mismo
+        `gateways=` (otro proceso lo hizo en `create()`), lo reconstruye con
+        un `ConfigureStatus` de sólo lectura — nombres y puertos, nunca un
+        valor de cabecera. Un handle que aplicó `gateways=` conserva el suyo,
+        porque sólo ése sabe rotar los secretos; uno ya recuperado se relee
+        en cada `connect()`. El RPC usa el `request_timeout` de ese
+        `connect()` (el mismo que `_extend_after_readiness`). Sin la función
+        en el agente no hace ninguna llamada."""
+        if owns_gateways(self._section_handles.get(GATEWAY_SECTION)) or not (
+            gateways_recoverable(self._agent_features)
+        ):
+            return
+        reader = functools.partial(
+            call_configure_status,
+            self._configure,
+            timeout=self._resolve_request_timeout(request_timeout),
+        )
+        recovered = recovered_gateways(reader(), reader=reader)
+        if recovered is EMPTY_GATEWAYS:
+            self._section_handles.pop(GATEWAY_SECTION, None)
+        else:
+            self._section_handles[GATEWAY_SECTION] = recovered
 
     def _reapply_section(
         self, section: ConfigureSection, *, timeout: float

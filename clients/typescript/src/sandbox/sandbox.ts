@@ -98,6 +98,9 @@ import {
   EMPTY_GATEWAYS,
   SECTION_NAME as GATEWAY_SECTION,
   GatewayHandle,
+  gatewaysRecoverable,
+  ownsGateways,
+  recoveredGateways,
 } from "../secret-gateway/section.js";
 import type { SecretCache } from "../secrets/cache.js";
 import {
@@ -1116,6 +1119,7 @@ export class Sandbox implements AsyncDisposable {
         sandbox.#secrets.set(secrets);
         try {
           await sandbox.#extendAfterReadiness(requestedMs, undefined, options.signal);
+          await sandbox.#recoverGateways(undefined, options.signal);
         } catch (error) {
           sandbox.close();
           throw error;
@@ -1467,7 +1471,9 @@ export class Sandbox implements AsyncDisposable {
   }
 
   /** `{ nombre: GatewayStatus }` de `create({ gateways })`: vacío (y su
-   * `refresh()` no hace nada) sin esa opción. `GatewayStatus.url` es
+   * `refresh()` no hace nada) sin esa opción. Tras `connect()` desde otro
+   * proceso se reconstruye con `ConfigureStatus` (nombres y puertos; su
+   * `refresh()` sólo relee el estado, no rota secretos). `GatewayStatus.url` es
    * `"http://127.0.0.1:<puerto>"`, el host al que apuntar
    * `ANTHROPIC_BASE_URL` y similares dentro del sandbox. */
   get gateways(): GatewayHandle {
@@ -1604,6 +1610,7 @@ export class Sandbox implements AsyncDisposable {
         }
         await this.#core.waitUntilReady({ terminateOnFailure: false, signal });
         await this.#extendAfterReadiness(requestedMs, options.requestTimeoutMs, signal);
+        await this.#recoverGateways(options.requestTimeoutMs, signal);
         return this;
       },
     );
@@ -2023,6 +2030,37 @@ export class Sandbox implements AsyncDisposable {
     return this.#core.translatedUnary(() =>
       this.#core.clients.configure.configure(request, callOptions(timeoutMs, undefined)),
     );
+  }
+
+  /**
+   * `sbx.gateways` tras `connect()`: si este handle no aplicó él mismo
+   * `gateways` (otro proceso lo hizo en `create()`), lo reconstruye con un
+   * `ConfigureStatus` de sólo lectura — nombres y puertos, nunca un valor de
+   * cabecera. Un handle que aplicó `gateways` conserva el suyo, porque sólo
+   * ése sabe rotar los secretos; uno ya recuperado se relee en cada
+   * `connect()`. El RPC usa el `requestTimeoutMs` de ese `connect()` (el
+   * mismo que `#extendAfterReadiness`). Sin la función en el agente no hace
+   * ninguna llamada. Espejo de `Sandbox._recover_gateways` de Python.
+   */
+  async #recoverGateways(
+    requestTimeoutMs: number | undefined,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (
+      ownsGateways(this.#sectionHandles.get(GATEWAY_SECTION)) ||
+      !gatewaysRecoverable(this.#core.agentFeatures)
+    ) {
+      return;
+    }
+    const timeoutMs = this.#core.resolveRequestTimeout(requestTimeoutMs);
+    const recovered = recoveredGateways(await this.#configureStatus(timeoutMs, signal), () =>
+      this.#configureStatus(timeoutMs),
+    );
+    if (recovered === EMPTY_GATEWAYS) {
+      this.#sectionHandles.delete(GATEWAY_SECTION);
+    } else {
+      this.#sectionHandles.set(GATEWAY_SECTION, recovered);
+    }
   }
 
   #configureStatus(timeoutMs: number, signal?: AbortSignal): Promise<ConfigureStatusResponse> {
