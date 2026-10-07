@@ -10,6 +10,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+Sin cambios en el agente: versión en paso con los SDK 0.9.0 (la
+recuperación de `sbx.gateways` en `connect()` lee el `ConfigureStatus` que
+ya existía). El SDK 0.9 se valida con el `rayd` del tag `rayd-v0.9.0`.
+
 ## [0.8.0] - 2026-10-07
 
 Sin cambios en el agente: versión en paso con los SDK 0.8.0 (el agente de
