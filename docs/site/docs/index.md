@@ -21,8 +21,10 @@ credenciales.
     sandbox con `Sandbox.connect()` (recupera `sbx.gateways`), el SDK de
     Python honra `AWS_REGION`, y se retiran la opción D del arranque rápido
     del agente y las excepciones de la pasarela que nada lanzaba. Tiene
-    cambios que rompen, con su migración.
-    [Novedades de 0.9.0](novedades/0.9.0.md) ·
+    cambios que rompen, con su migración. 0.9.1 corrige
+    `Sandbox.create()` con un `timeout` corto y sin `idle`.
+    [Novedades de 0.9.1](novedades/0.9.1.md) ·
+    [0.9.0](novedades/0.9.0.md) ·
     [0.8.0](novedades/0.8.0.md) ·
     [0.7.x](novedades/0.7.1.md)
 

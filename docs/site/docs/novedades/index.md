@@ -12,7 +12,17 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.9.0** · 2026-10-07 · actual
+-   :material-tag:{ .lg .middle } **0.9.1** · 2026-10-07 · actual
+
+    ---
+
+    `Sandbox.create()` con un `timeout` de 300 s o menos y sin `idle`
+    vuelve a funcionar: la auto-suspensión por defecto se adapta al plazo.
+    Sin cambios de API.
+
+    [:octicons-arrow-right-24: Novedades de 0.9.1](0.9.1.md)
+
+-   :material-tag:{ .lg .middle } **0.9.0** · 2026-10-07
 
     ---
 
