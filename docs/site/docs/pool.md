@@ -42,7 +42,7 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de arr
 - **Agente en el sandbox**: no hace falta un pool. El arranque normal es
   `Sandbox.create(...)` + `sbx.agent.run(...)`, y los turnos de una misma
   conversación van mejor pausando su VM; un pool con
-  [`warmup`](#calentamiento-warmup-y-servidor-residente) sólo compensa con
+  [`warmup`](#calentamiento-warmup) sólo compensa con
   muchas conversaciones **nuevas** que necesitan el primer mensaje rápido
   ([¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)).
 
@@ -127,7 +127,7 @@ con los mismos campos en camelCase y los tiempos en milisegundos.
 | `sweep_interval_seconds` / `sweepIntervalMs` | 30 s | cadencia del reciclado y la reconciliación (mínimo 5 s) |
 | `ready_timeout` / `readyTimeoutMs` | 90 s | plazo de readiness de cada calentamiento |
 | `index` | ninguno | `DynamoDbIndex(...)`: escribe la fila del [índice de metadatos](optional-features.md) de cada plaza al lanzarla (coste propio, apagado por defecto) |
-| `warmup` | `()` / `[]` | pasos que cada plaza corre antes de aparcarse; ver [Calentamiento](#calentamiento-warmup-y-servidor-residente) |
+| `warmup` | `()` / `[]` | pasos que cada plaza corre antes de aparcarse; ver [Calentamiento](#calentamiento-warmup) |
 
 No hay `access_token` (uno por plaza, ver custodia) ni `allowed_ports`
 (`get_host(port)` acuña por puerto tras la toma, como después de `create()`).
@@ -284,12 +284,12 @@ arrancó una rotación después. Una plaza llega, por tanto, con
 `execution_count == 1`. El arreglo de raíz (marcar `Rotating` en el propio
 handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
-## Calentamiento (`warmup`) y servidor residente
+## Calentamiento (`warmup`)
 
 !!! info "Desde 0.8.0"
     `PoolConfig.warmup` llega con
     [0.8.0](novedades/0.8.0.md). Las cifras de
-    esta sección están medidas en AWS real el 2026-10-07 (Q147 y Q148 de
+    esta sección están medidas en AWS real el 2026-10-07 (Q147 de
     `AWS_API_NOTES.md`); los costes son precios de lista (consultados
     2026-10-06) por esos tiempos, con el detalle en
     [Precios](cost.md#coste-de-la-vm-con-fast-start).
@@ -334,8 +334,8 @@ La pasarela del modelo se abre al tomar la plaza, con
 `pool.take(gateways=...)`: ejemplo completo en
 [Agente en el sandbox: pool de agentes](guias/agente-en-el-sandbox.md#pool-de-agentes-c).
 
-`agent_pool_warmup(runtime="opencode", *, serve=False)` (TS:
-`agentPoolWarmup(runtime, { serve })`) devuelve una lista de `WarmupStep`
+`agent_pool_warmup(runtime="opencode")` (TS: `agentPoolWarmup(runtime)`)
+devuelve una lista de `WarmupStep`
 (`cmd`, `background=False`, `timeout_seconds`/`timeoutMs`, `tag`); puedes
 pasar tus propios pasos en `warmup` igual. Cada paso corre tras la celda de
 asentado (abajo) y antes de `pause()`; un fallo
@@ -347,36 +347,10 @@ acabe. Un reciclado relanza la plaza y vuelve a correrlos.
 | Opción | Qué precalienta | Medido (pool de 2, n=5) | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
 |---|---|---|---|---|
 | **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode ya en la caché de páginas (`agent_pool_warmup("deepagents")` hace lo propio con deepagents) | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
-| **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | antes del arreglo, sin texto (abajo); con la relectura del servidor, toma → primer token **p50 4,8 s / p95 6,1 s**, 5 de 5 con texto; plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
 
 La API no devuelve el tamaño del snapshot de un `suspend`: el de C se toma
 igual al de la imagen (la memoria usada del guest tras la toma, 503 MiB, es
-menor que la de un `create()` fresco) y el de D le suma los 352 MiB más que
-usa el guest con el servidor. Una toma lee ese snapshot: ≈ $0,0014 (C) o
-≈ $0,0020 (D).
-
-### Cómo funciona D (servidor residente)
-
-`opencode serve` arranca en el `warmup`, antes de aparcar, en el puerto
-fijo `OPENCODE_SERVE_PORT` (4096) — eso **sí** se conoce de antemano. Lo
-que no se conoce hasta tomar la plaza es el puerto de la pasarela del
-modelo P, que `take()` asigna. Esto funciona porque OpenCode carga la
-configuración de cada directorio **la primera vez que la usa**, no al
-arrancar el servidor (F1; verificado en local: un servidor arrancado con un
-endpoint, reconfigurado después y corrido con `--attach --dir` nuevo lee la
-configuración nueva, sin ningún código de `rayd`). Con esto, el `run`
-posterior a `take()` escribe la configuración con la pasarela ya aplicada
-y hace `opencode run --attach http://127.0.0.1:4096 --dir <workdir>`: una
-instancia nueva para ese directorio, que lee el puerto correcto. La sesión
-la crea antes el propio script en el servidor y, cuando `run` sale, relee
-de él los mensajes de esa vuelta: `opencode run --attach` (1.18.34, igual
-en 1.18.35) sale en cuanto el servidor contesta el prompt sin esperar a sus
-propios eventos, así que sin esa relectura se perdían las partes que aún no
-había escrito. El SDK emite sólo las que faltaban, sin duplicar. El
-secreto de `OPENCODE_SERVER_PASSWORD` (32 bytes aleatorios, generado dentro
-de la VM en cada calentamiento) vive en el snapshot aparcado, con la misma
-custodia que el access token de la plaza (arriba); sin él, `GET /global/health`
-responde 401.
+menor que la de un `create()` fresco). Una toma lee ese snapshot: ≈ $0,0014.
 
 ### Resultado de la medida en AWS
 
@@ -384,16 +358,8 @@ El prefetch (opción A de
 [Templates de agente](funciones-opcionales/templates-de-agente.md)) baja el
 primer `exec` tras `create()` un 76 % (19,6 s → 4,7 s de mediana), así que
 sigue encendido por defecto. C deja el primer token a 5,1 s de la toma y es
-la opción recomendada hoy. D, **antes del arreglo** de la relectura, no
-servía: `opencode run --attach` salía tras el primer evento aunque el
-servidor completara la respuesta, y el SDK devolvía
-`AgentFailed(reason="protocol_error")` (5 de 5 tomas) o un resultado sin
-texto ni uso. Con la relectura (Q154) funciona: 5 de 5 tomas con texto y
-uso, primer token a 4,8 s de mediana (p95 6,1 s), apenas por debajo de los
-5,1 s de C, a cambio de 350 MiB más de memoria y ≈ $0,18 más por plaza al
-mes. Por eso C sigue siendo la recomendada y D no aporta lo bastante para
-aconsejarla. Cómo elegir entre A,
-B, C y D: [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
+la opción recomendada cuando hace falta un pool. Cómo elegir entre A, B, C
+y no usar pool: [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 
 ## Coste por plaza (`rayito-base`, 0,92 GB de snapshot; `AWS_API_NOTES.md` §12 y `docs/benchmarks/2026-09-cold-start.md`)
 

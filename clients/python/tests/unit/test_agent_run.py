@@ -168,22 +168,19 @@ def test_stream_never_raises_for_an_agent_failure() -> None:
     assert events[-1].reason == "busy"
 
 
-def test_abort_runs_the_runtime_abort_command_then_kills_the_handle() -> None:
+def test_abort_stops_the_process_tree_then_kills_the_handle() -> None:
     handle = FakeCommandHandle(lines=[_line(event="step_started", index=1)])
     sandbox = FakeSandbox(
-        commands=FakeCommands(handles=[handle], foreground_results=[None, None]),
+        commands=FakeCommands(handles=[handle], foreground_results=[None]),
         files=FakeFilesystem(),
         gateways={"bedrock": gateway_status()},
     )
     agent = Agent(sandbox)
-    runtime = FakeAgentRuntime(abort_cmd="curl -X POST http://127.0.0.1:4096/session/x/abort")
+    runtime = FakeAgentRuntime()
     stream = agent.stream("hola", spec=_spec(), runtime=runtime)
     stream.abort()
     assert handle.killed is True
-    assert [call.cmd for call in sandbox.commands.calls[1:]] == [
-        runtime.abort_cmd,
-        stop_tree_command(FAKE_PID),
-    ]
+    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
     with pytest.raises(AgentException) as excinfo:
         stream.result()
     assert excinfo.value.reason == "aborted"

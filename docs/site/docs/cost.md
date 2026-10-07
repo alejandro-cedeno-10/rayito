@@ -225,7 +225,7 @@ $0,25 frente a $0,0119): el tamaño del sandbox casi nunca es la palanca de
 coste de un agente; el número de pasos, el tamaño del contexto y cuánto
 crece en cada paso sí lo son.
 
-<a id="plaza-de-pool-de-agente-c-y-d"></a>
+<a id="plaza-de-pool-de-agente-c"></a>
 
 ### Coste de la VM, con fast-start
 
@@ -236,8 +236,7 @@ tiempos (**List**), porque Cost Explorer llega un día tarde.
 | Escenario | Coste aproximado |
 |---|---|
 | Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
-| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup-y-servidor-residente)) | ≈ **$0,64/mes** |
-| Plaza de pool con servidor residente (opción D, no recomendada) | ≈ **$0,82/mes** |
+| Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup)) | ≈ **$0,64/mes** |
 | Sandbox pausado entre turnos (opción B) | un ciclo suspend/resume de ≈ 0,92–1,2 GB ≈ **$0,005–0,006** + ≈ $0,0001/h guardado |
 | Versión de imagen `rayito-agent` | código 2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ 3,1 GB × $0,08/GB-mes × 7/30 ≈ **$0,057/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
 
@@ -251,7 +250,6 @@ Haiku 4.5 sin herramientas, p50 de n=5):
 | `create()` con prefetch (A), demonio que espera al guest | 14,7 s (13,3 s sin prefetch, misma tanda) | lanzamiento $0,0014 + ≈ 15 s ≈ $0,0019 | ≈ $0,0009 |
 | `connect()` tras `pause()` (B) | 3,1 s | ciclo ≈ $0,005–0,006 | ≈ $0,0009 |
 | `take()` de un pool con `warmup` (C) | 5,1 s | lectura $0,0014 + ≈ 5 s ≈ $0,0016 | ≈ $0,0009 |
-| `take()` de un pool con servidor residente (D), con la relectura | 4,8 s | lectura ≈ $0,0020 + ≈ 5 s ≈ $0,0022 | ≈ $0,0009 |
 | `create()` con deepagents | 7,5 s tras `create()` (5,0 s OpenCode) | ≈ $0,0014 + segundos de VM | ≈ $0,0039 (3 503 tokens sin caché: por debajo del mínimo de 4 096 de Haiku) |
 
 Cómo salen las cifras de las plazas:
@@ -268,9 +266,6 @@ Cómo salen las cifras de las plazas:
   snapshot de un `suspend`; se toma igual al de la imagen porque la memoria
   usada del guest tras la toma (503 MiB) es menor que la de un `create()`
   fresco.
-- **D (servidor residente)**: 17,7 s hasta la plaza lista y un snapshot de
-  ≈ 1,29 GB (el guest usa 352 MiB más, casi todo el servidor) ⇒
-  ≈ $0,0069 × 103 + ≈ $0,10 ⇒ **≈ $0,82/mes**.
 - **Pausar entre turnos (B)**: el sandbox no puede pasar de 8 h
   lanzado + suspendido. Pasado ese tope, guarda el estado con
   [persistencia](persistence.md) y crea una VM nueva (otro lanzamiento,
@@ -284,15 +279,11 @@ Cómo salen las cifras de las plazas:
 | Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
 | Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,005–0,006 por ciclo + ≈ $0,0001/h guardado |
 | Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,64/plaza/mes |
-| Lo anterior y el servidor ya arrancado | D. Pool con servidor residente | ≈ $0,82/plaza/mes (no recomendada: apenas gana a C) |
 
 Todas son opcionales. Decidido con las medidas: A queda encendida por defecto porque, desde que
 el demonio espera a que el guest se calme, ya no retrasa `create()`
 (Q153), aunque de extremo a extremo su ganancia de hoy cae dentro del
-ruido. C es la recomendada para latencia mínima. D funciona desde la
-relectura de la vuelta (Q154: primer token a 4,8 s de la toma, 5 de 5),
-pero sólo gana unas décimas a C con más memoria y más coste por plaza, así
-que no se recomienda; ver
+ruido. C es la recomendada para latencia mínima; ver
 [Pool](pool.md#resultado-de-la-medida-en-aws) y la tabla completa en
 [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 

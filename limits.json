@@ -102,7 +102,6 @@
   "defaultAgentWorkdir": "/home/user",
   "agentStateDir": "/home/user/.rayito/agent",
   "modelCredentialPlaceholder": "placeholder-not-a-secret",
-  "opencodeServePort": 4096,
   "opencodeSessionTitle": "rayito",
   "agentProtocolVersion": 1,
   "agentTemplateManifestPath": "/opt/agents/rayito-agent.json",

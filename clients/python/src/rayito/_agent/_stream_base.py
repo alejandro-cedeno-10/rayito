@@ -200,7 +200,6 @@ def build_run_request(
     session_id: str | None,
     model: str | None,
     reasoning: bool,
-    attach: bool | str,
 ) -> RunRequest:
     return RunRequest(
         spec=spec,
@@ -209,7 +208,6 @@ def build_run_request(
         session_id=session_id,
         model=model,
         reasoning=reasoning,
-        attach=attach,
     )
 
 

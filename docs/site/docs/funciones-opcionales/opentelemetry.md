@@ -131,7 +131,7 @@ Lista cerrada de claves (cualquier otra es un error antes de abrir el span):
 | `rayito.commands.run` | `rayito.commands.background`; en primer plano, `rayito.commands.exit_code` |
 | `rayito.code.run` | `rayito.code.language` cuando se conoce |
 | `rayito.files.*` | `rayito.files.operation`; `read`/`write` añaden `rayito.files.bytes`; `write_files` y `list` añaden `rayito.files.count` |
-| `rayito.agent.run` | al empezar, `gen_ai.operation.name` (`invoke_agent`), `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` y `rayito.agent.runtime`; al terminar, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `rayito.agent.steps`, `rayito.agent.exit_code`, `rayito.agent.attached`, `rayito.agent.cache_read_tokens`, `rayito.agent.cache_write_tokens` y, si falla, `rayito.agent.failure_reason` |
+| `rayito.agent.run` | al empezar, `gen_ai.operation.name` (`invoke_agent`), `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` y `rayito.agent.runtime`; al terminar, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `rayito.agent.steps`, `rayito.agent.exit_code`, `rayito.agent.cache_read_tokens`, `rayito.agent.cache_write_tokens` y, si falla, `rayito.agent.failure_reason` |
 
 `rayito.template.name`, `rayito.resume_generation` y `rayito.error.type`
 están reservadas: hoy ningún span las emite.
