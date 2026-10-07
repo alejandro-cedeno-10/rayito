@@ -325,8 +325,7 @@ Cómo conectarla con `sbx.agent`:
 - Lo que la pasarela rechaza **por petición** nunca es una excepción del
   SDK: el proceso del sandbox recibe la respuesta HTTP (403 fuera de
   `allow`, 429 por encima del límite, 502/504 si falla el `upstream`).
-  `GatewayException`/`GatewayError` se exporta, pero esta versión del SDK
-  no la lanza.
+  Por eso el SDK no tiene una excepción propia de la pasarela.
 
 ## Divergencias con E2B
 
