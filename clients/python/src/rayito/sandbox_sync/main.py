@@ -240,7 +240,6 @@ from rayito.exceptions import (
     TimeoutException,
     UnimplementedError,
 )
-from rayito.sandbox_sync.agent import Agent
 from rayito.sandbox_sync.code import CodeClient
 from rayito.sandbox_sync.commands import Commands, StreamStarter
 from rayito.sandbox_sync.configure import CONFIGURE_FEATURE, call_configure, call_configure_status
@@ -266,6 +265,7 @@ from rayito.v1 import (
 )
 
 if TYPE_CHECKING:
+    from rayito.sandbox_sync.agent import Agent
     from rayito.sandbox_sync.pool import SandboxPool
 
 logger = logging.getLogger("rayito.sandbox")
@@ -512,7 +512,7 @@ class Sandbox:
         self._filesystem = Filesystem(self)
         self._code_client = CodeClient(self)
         self._pty = Pty(self)
-        self._agent = Agent(self)
+        self._agent: Agent | None = None
         self._persistence = PersistenceClient(self)
         self._persist: S3Prefix | None = None
         self._last_restore: RestoreResult | None = None
@@ -2096,7 +2096,13 @@ class Sandbox:
     @property
     def agent(self) -> Agent:
         """El agente de IA de este sandbox (`ai-agent-core`): `run`,
-        `stream`, `prepare`. Tocar esta propiedad no manda ningún RPC."""
+        `stream`, `prepare`. Tocar esta propiedad no manda ningún RPC.
+        Se construye en el primer uso, así que `import rayito` no carga
+        `rayito._agent`."""
+        if self._agent is None:
+            from rayito.sandbox_sync.agent import Agent
+
+            self._agent = Agent(self)
         return self._agent
 
     @property

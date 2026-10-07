@@ -50,7 +50,12 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
       sandboxes.
     - **Cómo apagarla**: no llames a `Template.build()`/
       `buildInBackground()`. Las versiones de imagen ya construidas se
-      borran con `rayito image` (no las borra `Template`).
+      borran con `rayito image` (no las borra `Template`). El grupo de logs
+      `/rayito/<nombre>` que crea el rol de build en el primer build
+      tampoco se borra con la imagen (`delete-microvm-image` no lo toca, y
+      ni el SDK ni la CLI borran imágenes): al retirar una imagen, bórralo
+      tú con `aws logs delete-log-group --log-group-name /rayito/<nombre>`
+      (`logs:DeleteLogGroup`) o ponle una retención.
 
 !!! warning "Publica antes todos los nombres protegidos que vayas a usar"
     Como `CreateMicrovmImage` no se puede acotar por nombre, quien tenga
