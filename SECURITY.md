@@ -26,10 +26,10 @@
 
   | Componente | Dónde se publica | Versión con soporte |
   |---|---|---|
-  | SDK Python `rayito` | PyPI | 0.8.x |
-  | SDK TypeScript `rayito` | npm | 0.8.x |
-  | imagen `rayito-base` con su `rayd` | GitHub Release `rayd-v*` (`rayito-image.zip` firmado) y tu cuenta de AWS (`rayito image publish`) | `rayd` 0.8.x, es decir, una imagen construida desde un tag `rayd-v0.8.*` (`rayito doctor` lo comprueba con la [tabla de compatibilidad](docs/site/docs/limits.md#compatibilidad-sdk--rayd--imagen): el SDK 0.8 exige `agent_version` ≥ 0.8.0) |
-  | anteriores a 0.8 | — | sin soporte: actualiza a la última línea |
+  | SDK Python `rayito` | PyPI | 0.9.x |
+  | SDK TypeScript `rayito` | npm | 0.9.x |
+  | imagen `rayito-base` con su `rayd` | GitHub Release `rayd-v*` (`rayito-image.zip` firmado) y tu cuenta de AWS (`rayito image publish`) | `rayd` 0.9.x, es decir, una imagen construida desde un tag `rayd-v0.9.*` (`rayito doctor` lo comprueba con la [tabla de compatibilidad](docs/site/docs/limits.md#compatibilidad-sdk--rayd--imagen): el SDK 0.9 exige `agent_version` ≥ 0.9.0) |
+  | anteriores a 0.9 | — | sin soporte: actualiza a la última línea |
 
 - **Plazos**: acuse de recibo en **7 días**; corrección o mitigación
   publicada dentro de **90 días** desde el informe; divulgación coordinada a
