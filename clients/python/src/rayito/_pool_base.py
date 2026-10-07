@@ -10,9 +10,8 @@ import random
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
-from rayito._agent._runtime import WarmupStep
 from rayito._index import DynamoDbIndex, validate_index
 from rayito._limits import MAX_DURATION_SECONDS
 from rayito._models import REDACTED, IdlePolicy, SandboxInfo
@@ -28,6 +27,9 @@ from rayito._sandbox_base import (
     validate_timeout,
 )
 from rayito.exceptions import InvalidArgumentException, PoolClosedException
+
+if TYPE_CHECKING:
+    from rayito._agent._runtime import WarmupStep
 
 POOL_SCHEMA: Final = "rayito.pool/1"
 POOL_SIZE_MAX: Final = 64
@@ -138,7 +140,13 @@ class PoolConfig:
 
 
 def validate_warmup(warmup: object) -> tuple[WarmupStep, ...]:
-    """`warmup` es una secuencia de `WarmupStep` (vacía por defecto)."""
+    """`warmup` es una secuencia de `WarmupStep` (vacía por defecto).
+
+    `WarmupStep` se importa aquí y no arriba: `rayito._agent` sólo se carga
+    cuando alguien usa `warmup`, y `import rayito` no lo arrastra.
+    """
+    from rayito._agent._runtime import WarmupStep
+
     if isinstance(warmup, str | bytes) or not isinstance(warmup, Sequence):
         raise InvalidArgumentException("warmup debe ser una secuencia de WarmupStep")
     steps = tuple(warmup)
