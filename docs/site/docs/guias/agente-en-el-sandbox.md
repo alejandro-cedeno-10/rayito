@@ -483,9 +483,13 @@ valores.
 
 Sin la definición de la pasarela no hay nada que rotar: en un handle
 recuperado, `sbx.gateways.refresh()` sólo relee el estado (puertos y
-errores). Para rotar la clave, llama a `refresh()` desde el proceso que pasó
-`gateways=`, o usa `reincarnate()`. El handle que creó el sandbox conserva
-el suyo aunque vuelva a llamar a `connect()`. Sobre un agente sin la función
+errores). Rotar la clave, con `refresh()` o con `reincarnate()`, sólo es
+posible desde el handle que llamó a `create(gateways=)`: en un handle
+recuperado, `reincarnate()` lanza porque no conoce la definición original.
+El handle que creó el sandbox conserva el suyo aunque vuelva a llamar a
+`connect()`; uno recuperado vuelve a leer el estado en cada `connect()`,
+con el mismo `request_timeout` (`requestTimeoutMs` en TypeScript) que esa
+llamada. Sobre un agente sin la función
 `secret_gateway`, `sbx.gateways` queda vacío y `connect()` no hace ninguna
 llamada extra.
 

@@ -140,10 +140,18 @@ export type GatewayRefresher = () => Promise<Readonly<Record<string, GatewayStat
 export class GatewayHandle {
   #statuses: Readonly<Record<string, GatewayStatus>>;
   readonly #refresher: GatewayRefresher | undefined;
+  /** `true` si `connect()` lo reconstruyó desde `ConfigureStatus` (no sabe
+   * rotar secretos); `false` si viene de `create({ gateways })`. */
+  readonly recovered: boolean;
 
-  constructor(statuses: Readonly<Record<string, GatewayStatus>>, refresher?: GatewayRefresher) {
+  constructor(
+    statuses: Readonly<Record<string, GatewayStatus>>,
+    refresher?: GatewayRefresher,
+    recovered = false,
+  ) {
     this.#statuses = statuses;
     this.#refresher = refresher;
+    this.recovered = recovered;
   }
 
   get(name: string): GatewayStatus | undefined {
@@ -179,13 +187,20 @@ export function gatewaysRecoverable(features: AgentFeatures | undefined): boolea
   return features?.configure === true && features.secretGateway;
 }
 
+/** `true` sólo para el `sbx.gateways` del handle que aplicó `gateways`: ése
+ * se conserva en cada `connect()`. Uno recuperado (o ninguno) se vuelve a
+ * leer de `ConfigureStatus`. Espejo de `owns_gateways` de Python. */
+export function ownsGateways(handle: unknown): boolean {
+  return handle instanceof GatewayHandle && !handle.recovered;
+}
+
 /**
  * El `sbx.gateways` que `connect()` reconstruye desde el `ConfigureStatus`
  * de un sandbox en marcha: sólo nombre, puerto y último error de cada ruta,
  * porque `rayd` nunca devuelve el upstream, las cabeceras ni sus valores.
  * Sin la definición original no hay nada que rotar, así que su `refresh()`
- * sólo relee el estado; rotar un secreto sigue siendo cosa del proceso que
- * pasó `gateways` (o de un `reincarnate()`). `EMPTY_GATEWAYS` si el sandbox
+ * sólo relee el estado; rotar un secreto (`refresh()` o `reincarnate()`)
+ * sigue siendo cosa del handle que llamó a `create({ gateways })`. `EMPTY_GATEWAYS` si el sandbox
  * no tiene pasarelas. Espejo de `recovered_gateways` de Python.
  */
 export function recoveredGateways(
@@ -199,5 +214,6 @@ export function recoveredGateways(
   return new GatewayHandle(
     statuses,
     reader === undefined ? undefined : async () => statusesOf(await reader()),
+    true,
   );
 }

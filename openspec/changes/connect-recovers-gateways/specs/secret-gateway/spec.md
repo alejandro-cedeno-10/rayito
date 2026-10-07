@@ -5,7 +5,9 @@
 `Sandbox.connect()`, `AsyncSandbox.connect()` and TypeScript `Sandbox.connect()`
 (static and instance) SHALL, after readiness and when the agent advertises
 `configure` and `secret_gateway` and the handle holds no gateway handle of
-its own, read `ConfigureStatus` once and rebuild `sbx.gateways` from its
+its own (a handle recovered by an earlier `connect()` does not count), read
+`ConfigureStatus` once, with the request timeout of that `connect()` call,
+and rebuild `sbx.gateways` from its
 `SecretGatewayStatus` (route name, port, last error class). No upstream,
 header name or header value SHALL be read or returned. The recovered
 handle's `refresh()` SHALL only re-read `ConfigureStatus` and send no
@@ -20,6 +22,11 @@ handle's `refresh()` SHALL only re-read `ConfigureStatus` and send no
 
 - **WHEN** the handle that applied `gateways=` calls `connect()` again
 - **THEN** its gateway handle is kept and no `ConfigureStatus` is read for recovery
+
+#### Scenario: a recovered handle re-reads on each connect
+
+- **WHEN** a handle whose `sbx.gateways` was recovered calls `connect(request_timeout=...)` again
+- **THEN** `ConfigureStatus` is read again with that request timeout and `sbx.gateways` reflects the new ports
 
 #### Scenario: an agent without the feature
 

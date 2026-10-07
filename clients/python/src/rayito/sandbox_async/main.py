@@ -192,6 +192,7 @@ from rayito._secret_gateway import (
     EMPTY_GATEWAYS,
     GatewayHandle,
     gateways_recoverable,
+    owns_gateways,
     recovered_gateways,
 )
 from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
@@ -976,7 +977,7 @@ class AsyncSandbox:
                 await self._refresher.refresh_all()
             await self._wait_until_ready(terminate_on_failure=False)
             await self._extend_after_readiness(timeout, request_timeout=request_timeout)
-            await self._recover_gateways()
+            await self._recover_gateways(request_timeout)
         return self
 
     @classmethod
@@ -2089,17 +2090,21 @@ class AsyncSandbox:
             return self._secrets.cache
         return self._default_secret_cache()
 
-    async def _recover_gateways(self) -> None:
+    async def _recover_gateways(self, request_timeout: float | None = None) -> None:
         """Misma semántica que `Sandbox._recover_gateways`, en `asyncio`."""
-        if GATEWAY_SECTION in self._section_handles or not gateways_recoverable(
-            self._agent_features
+        if owns_gateways(self._section_handles.get(GATEWAY_SECTION)) or not (
+            gateways_recoverable(self._agent_features)
         ):
             return
         reader = functools.partial(
-            call_configure_status, self._configure, timeout=self._request_timeout
+            call_configure_status,
+            self._configure,
+            timeout=self._resolve_request_timeout(request_timeout),
         )
         recovered = recovered_gateways(await reader(), async_reader=reader)
-        if recovered is not EMPTY_GATEWAYS:
+        if recovered is EMPTY_GATEWAYS:
+            self._section_handles.pop(GATEWAY_SECTION, None)
+        else:
             self._section_handles[GATEWAY_SECTION] = recovered
 
     async def _reapply_section(

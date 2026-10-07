@@ -26,8 +26,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `connect()` lee una vez el `ConfigureStatus` de `rayd` (nombre, puerto y
   último error de cada ruta; nunca el upstream ni las cabeceras) si el
   agente anuncia `secret_gateway` y el handle no aplicó `gateways=` él
-  mismo. En un handle recuperado, `refresh()` sólo relee el estado: rotar
-  la clave sigue siendo cosa del proceso que creó la pasarela.
+  mismo. En un handle recuperado, `refresh()` sólo relee el estado y cada
+  `connect()` vuelve a leerlo con el timeout de petición de esa llamada.
+  Rotar la clave (`refresh()` o `reincarnate()`) sigue siendo cosa del
+  handle que llamó a `create(gateways=)`: en uno recuperado, `reincarnate()`
+  lanza.
 
 ## [0.8.0] - 2026-10-07
 

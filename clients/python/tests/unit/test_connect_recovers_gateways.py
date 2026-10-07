@@ -6,6 +6,7 @@ names, ports and the last error class travel, never a header value."""
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -20,10 +21,21 @@ from rayito._secret_gateway import (
     GatewayHandle,
     GatewayStatus,
     gateways_recoverable,
+    owns_gateways,
     recovered_gateways,
 )
 from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
-from rayito.v1 import configure_pb2, secret_gateway_pb2
+from rayito.exceptions import SandboxException
+from rayito.v1 import configure_pb2, features_pb2, secret_gateway_pb2
+
+from .conftest import (
+    ACCESS_TOKEN,
+    SANDBOX_ID,
+    RaydEndpoint,
+    StubbedControlPlane,
+    auth_token_response,
+    microvm_response,
+)
 
 FIRST_PORT = 40123
 SECOND_PORT = 40999
@@ -158,3 +170,239 @@ async def test_async_recover_makes_no_call_without_the_feature(
     sandbox = bare(AsyncSandbox, None)
     await sandbox._recover_gateways()
     assert sandbox.gateways is EMPTY_GATEWAYS
+
+
+# ------------------------------------------- through the real connect() path
+#
+# `Sandbox.connect(...)` / `sbx.connect()` against the fake `rayd` (as
+# `test_reconnect_sync`/`_async` do): the agent advertises the feature over
+# `Health`, and `call_configure_status`/`call_configure` (the
+# `ConfigureService` port) are recorded, so deleting the wiring in
+# `connect()` makes these fail.
+
+CONNECT_REQUEST_TIMEOUT_SECONDS = 7.0
+
+
+@dataclass
+class ConfigureRecorder:
+    """Records each `ConfigureStatus` timeout and fails on any `Configure`."""
+
+    statuses: list[configure_pb2.ConfigureStatusResponse]
+    timeouts: list[float] = field(default_factory=list)
+    fail_with: BaseException | None = None
+
+    def status(self, stub: object, *, timeout: float) -> configure_pb2.ConfigureStatusResponse:
+        self.timeouts.append(timeout)
+        if self.fail_with is not None:
+            raise self.fail_with
+        return self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+
+    async def astatus(
+        self, stub: object, *, timeout: float
+    ) -> configure_pb2.ConfigureStatusResponse:
+        return self.status(stub, timeout=timeout)
+
+
+def advertise_gateways(fake_rayd: RaydEndpoint) -> None:
+    fake_rayd.servicer.features = features_pb2.AgentFeatures(configure=True, secret_gateway=True)
+
+
+def stub_static_connect(control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint) -> None:
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+    control_plane.microvms.add_response("create_microvm_auth_token", auth_token_response())
+
+
+def stub_instance_connect(control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint) -> None:
+    control_plane.microvms.add_response(
+        "get_microvm", microvm_response(endpoint=fake_rayd.host, state="RUNNING")
+    )
+
+
+def record(
+    monkeypatch: pytest.MonkeyPatch, module: Any, recorder: ConfigureRecorder, *, is_async: bool
+) -> None:
+    monkeypatch.setattr(
+        module, "call_configure_status", recorder.astatus if is_async else recorder.status
+    )
+    monkeypatch.setattr(module, "call_configure", pytest.fail)
+
+
+def test_sync_static_connect_recovers_without_any_configure(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([status_with(FIRST_PORT)])
+    record(monkeypatch, sync_main, recorder, is_async=False)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = Sandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        request_timeout=CONNECT_REQUEST_TIMEOUT_SECONDS,
+    )
+    try:
+        assert sbx.gateways["bedrock"].port == FIRST_PORT
+        assert sbx.gateways.recovered
+        assert recorder.timeouts == [CONNECT_REQUEST_TIMEOUT_SECONDS]
+    finally:
+        sbx.close()
+
+
+def test_sync_static_connect_closes_the_handle_when_the_read_fails(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([], fail_with=SandboxException("configure status failed"))
+    record(monkeypatch, sync_main, recorder, is_async=False)
+    closed: list[Sandbox] = []
+    original_close = Sandbox.close
+
+    def spy_close(self: Sandbox) -> None:
+        closed.append(self)
+        original_close(self)
+
+    monkeypatch.setattr(Sandbox, "close", spy_close)
+    stub_static_connect(control_plane, fake_rayd)
+    with pytest.raises(SandboxException, match="configure status failed"):
+        Sandbox.connect(
+            SANDBOX_ID,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+    assert len(closed) == 1
+
+
+def test_sync_instance_connect_uses_its_request_timeout_and_rereads_a_recovered_handle(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([status_with(FIRST_PORT), status_with(SECOND_PORT)])
+    record(monkeypatch, sync_main, recorder, is_async=False)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = Sandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    try:
+        assert sbx.gateways["bedrock"].port == FIRST_PORT
+        stub_instance_connect(control_plane, fake_rayd)
+        sbx.connect(request_timeout=CONNECT_REQUEST_TIMEOUT_SECONDS)
+        assert sbx.gateways["bedrock"].port == SECOND_PORT
+        assert recorder.timeouts[-1] == CONNECT_REQUEST_TIMEOUT_SECONDS
+    finally:
+        sbx.close()
+
+
+def test_sync_instance_connect_keeps_the_handle_that_applied_gateways(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([configure_pb2.ConfigureStatusResponse()])
+    record(monkeypatch, sync_main, recorder, is_async=False)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = Sandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    try:
+        own = GatewayHandle({"bedrock": GatewayStatus(port=FIRST_PORT)})
+        sbx._section_handles[GATEWAY_SECTION] = own
+        reads_before = len(recorder.timeouts)
+        stub_instance_connect(control_plane, fake_rayd)
+        sbx.connect()
+        assert sbx.gateways is own
+        assert len(recorder.timeouts) == reads_before
+    finally:
+        sbx.close()
+
+
+async def test_async_static_connect_recovers_without_any_configure(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([status_with(FIRST_PORT)])
+    record(monkeypatch, async_main, recorder, is_async=True)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = await AsyncSandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+        request_timeout=CONNECT_REQUEST_TIMEOUT_SECONDS,
+    )
+    try:
+        assert sbx.gateways["bedrock"].port == FIRST_PORT
+        assert sbx.gateways.recovered
+        assert recorder.timeouts == [CONNECT_REQUEST_TIMEOUT_SECONDS]
+    finally:
+        await sbx.close()
+
+
+async def test_async_static_connect_closes_the_handle_when_the_read_fails(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([], fail_with=SandboxException("configure status failed"))
+    record(monkeypatch, async_main, recorder, is_async=True)
+    closed: list[AsyncSandbox] = []
+    original_close = AsyncSandbox.close
+
+    async def spy_close(self: AsyncSandbox) -> None:
+        closed.append(self)
+        await original_close(self)
+
+    monkeypatch.setattr(AsyncSandbox, "close", spy_close)
+    stub_static_connect(control_plane, fake_rayd)
+    with pytest.raises(SandboxException, match="configure status failed"):
+        await AsyncSandbox.connect(
+            SANDBOX_ID,
+            access_token=ACCESS_TOKEN,
+            control_plane=control_plane.plane,
+            transport=fake_rayd.transport,
+        )
+    assert len(closed) == 1
+
+
+async def test_async_instance_connect_uses_its_request_timeout_and_rereads_a_recovered_handle(
+    control_plane: StubbedControlPlane, fake_rayd: RaydEndpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advertise_gateways(fake_rayd)
+    recorder = ConfigureRecorder([status_with(FIRST_PORT), status_with(SECOND_PORT)])
+    record(monkeypatch, async_main, recorder, is_async=True)
+    stub_static_connect(control_plane, fake_rayd)
+    sbx = await AsyncSandbox.connect(
+        SANDBOX_ID,
+        access_token=ACCESS_TOKEN,
+        control_plane=control_plane.plane,
+        transport=fake_rayd.transport,
+    )
+    try:
+        assert sbx.gateways["bedrock"].port == FIRST_PORT
+        stub_instance_connect(control_plane, fake_rayd)
+        await sbx.connect(request_timeout=CONNECT_REQUEST_TIMEOUT_SECONDS)
+        assert sbx.gateways["bedrock"].port == SECOND_PORT
+        assert recorder.timeouts[-1] == CONNECT_REQUEST_TIMEOUT_SECONDS
+    finally:
+        await sbx.close()
+
+
+@pytest.mark.parametrize(
+    ("handle", "expected"),
+    [
+        (None, False),
+        (GatewayHandle({}), True),
+        (recovered_gateways(status_with(FIRST_PORT)), False),
+    ],
+)
+def test_owns_gateways_only_for_the_handle_that_applied_them(
+    handle: object | None, expected: bool
+) -> None:
+    assert owns_gateways(handle) is expected

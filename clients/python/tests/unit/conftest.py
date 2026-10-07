@@ -21,6 +21,7 @@ from rayito._payload import encode_access_token
 from rayito._transport import ProxyAuthPlugin, TransportSettings, metadata_dict
 from rayito.v1 import (
     code_pb2_grpc,
+    features_pb2,
     filesystem_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
@@ -137,6 +138,7 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
     lifecycle: Any = None
     timeout_gate: bool = False
     egress_enforcement: network_pb2.EgressEnforcement = network_pb2.EGRESS_ENFORCEMENT_UNSPECIFIED
+    features: features_pb2.AgentFeatures | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def Health(self, request: Any, context: grpc.ServicerContext) -> health_pb2.HealthResponse:
@@ -176,6 +178,8 @@ class FakeRayd(health_pb2_grpc.HealthServiceServicer):
         )
         if lifecycle is not None:
             response.lifecycle.CopyFrom(lifecycle)
+        if self.features is not None:
+            response.features.CopyFrom(self.features)
         return response
 
     def Metrics(self, request: Any, context: grpc.ServicerContext) -> health_pb2.MetricsResponse:

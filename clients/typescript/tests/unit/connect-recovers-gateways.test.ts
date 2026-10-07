@@ -18,16 +18,24 @@ import {
 import { Sandbox } from "../../src/sandbox/sandbox.js";
 import {
   EMPTY_GATEWAYS,
+  GatewayHandle,
   gatewaysRecoverable,
+  ownsGateways,
   recoveredGateways,
 } from "../../src/secret-gateway/section.js";
-import { FakeControlPlane } from "./fake/control-plane.js";
+import { SecretCache } from "../../src/secrets/cache.js";
+import { SecretStore } from "../../src/secrets/store.js";
+import { deadlineFromHeaders } from "./fake/common.js";
+import { FakeControlPlane, IMAGE_ARN } from "./fake/control-plane.js";
 import { FakeRayd } from "./fake/server.js";
 import { ACCESS_TOKEN } from "./helpers.js";
+import { gateway } from "./m15-secrets-gateway-fixtures.js";
+import { FakeSecretsManager, SENTINEL_VALUE } from "./secrets-fake.js";
 
 const FIRST_PORT = 40123;
 const SECOND_PORT = 40999;
 const ROUTE = "bedrock";
+const CONNECT_REQUEST_TIMEOUT_MS = 7_000;
 
 function gatewayStatus(port: number, lastErrorClass = "") {
   return create(SecretGatewayStatusSchema, {
@@ -60,6 +68,15 @@ describe("recoveredGateways", () => {
     expect(gatewaysRecoverable(FULL)).toBe(true);
   });
 
+  test("ownsGateways is true only for the handle that applied gateways", () => {
+    expect(ownsGateways(undefined)).toBe(false);
+    expect(ownsGateways(new GatewayHandle({}))).toBe(true);
+    const status = create(ConfigureStatusResponseSchema, {
+      secretGateway: gatewayStatus(FIRST_PORT),
+    });
+    expect(ownsGateways(recoveredGateways(status))).toBe(false);
+  });
+
   test("is EMPTY_GATEWAYS without routes", () => {
     expect(recoveredGateways(create(ConfigureStatusResponseSchema, {}))).toBe(EMPTY_GATEWAYS);
   });
@@ -70,7 +87,9 @@ describe("recoveredGateways", () => {
         secretGateway: gatewayStatus(FIRST_PORT, "upstream_timeout"),
       }),
       async () =>
-        create(ConfigureStatusResponseSchema, { secretGateway: gatewayStatus(SECOND_PORT) }),
+        create(ConfigureStatusResponseSchema, {
+          secretGateway: gatewayStatus(SECOND_PORT),
+        }),
     );
     expect(handle.get(ROUTE)?.url).toBe(`http://127.0.0.1:${FIRST_PORT}`);
     expect(handle.get(ROUTE)?.lastErrorClass).toBe("upstream_timeout");
@@ -82,9 +101,15 @@ describe("recoveredGateways", () => {
 describe("Sandbox.connect() recovers gateways", () => {
   test("a second process sees the gateways another one created", async () => {
     const rayd = await FakeRayd.start({ accessToken: ACCESS_TOKEN });
-    rayd.health.features = create(AgentFeaturesSchema, { configure: true, secretGateway: true });
+    rayd.health.features = create(AgentFeaturesSchema, {
+      configure: true,
+      secretGateway: true,
+    });
     rayd.configure.secretGatewayStatus = gatewayStatus(FIRST_PORT);
-    const plane = new FakeControlPlane({ endpoint: rayd.host, states: ["RUNNING"] });
+    const plane = new FakeControlPlane({
+      endpoint: rayd.host,
+      states: ["RUNNING"],
+    });
     try {
       const sbx = await Sandbox.connect("mvm-test-connect-gateways", {
         accessToken: ACCESS_TOKEN,
@@ -105,7 +130,10 @@ describe("Sandbox.connect() recovers gateways", () => {
 
   test("an agent without the feature gets no ConfigureStatus call", async () => {
     const rayd = await FakeRayd.start({ accessToken: ACCESS_TOKEN });
-    const plane = new FakeControlPlane({ endpoint: rayd.host, states: ["RUNNING"] });
+    const plane = new FakeControlPlane({
+      endpoint: rayd.host,
+      states: ["RUNNING"],
+    });
     try {
       const sbx = await Sandbox.connect("mvm-test-connect-gateways", {
         accessToken: ACCESS_TOKEN,
@@ -114,6 +142,80 @@ describe("Sandbox.connect() recovers gateways", () => {
       });
       expect(sbx.gateways).toBe(EMPTY_GATEWAYS);
       expect(rayd.configure.configureStatusHeaders).toHaveLength(0);
+      sbx.close();
+    } finally {
+      await rayd.close();
+    }
+  });
+
+  test("instance connect() rereads a recovered handle with its requestTimeoutMs", async () => {
+    const rayd = await FakeRayd.start({ accessToken: ACCESS_TOKEN });
+    rayd.health.features = create(AgentFeaturesSchema, {
+      configure: true,
+      secretGateway: true,
+    });
+    rayd.configure.secretGatewayStatus = gatewayStatus(FIRST_PORT);
+    const plane = new FakeControlPlane({
+      endpoint: rayd.host,
+      states: ["RUNNING"],
+    });
+    try {
+      const sbx = await Sandbox.connect("mvm-test-connect-gateways", {
+        accessToken: ACCESS_TOKEN,
+        controlPlane: plane,
+        transport: rayd.transport,
+      });
+      expect(sbx.gateways.recovered).toBe(true);
+      rayd.configure.secretGatewayStatus = gatewayStatus(SECOND_PORT);
+      await sbx.connect({ requestTimeoutMs: CONNECT_REQUEST_TIMEOUT_MS });
+      expect(sbx.gateways.get(ROUTE)?.port).toBe(SECOND_PORT);
+      const last = rayd.configure.configureStatusHeaders.at(-1);
+      expect(last === undefined ? undefined : deadlineFromHeaders(last)).toBeLessThanOrEqual(
+        CONNECT_REQUEST_TIMEOUT_MS,
+      );
+      expect(last === undefined ? undefined : deadlineFromHeaders(last)).toBeGreaterThan(
+        CONNECT_REQUEST_TIMEOUT_MS / 2,
+      );
+      expect(rayd.configure.configureRequests).toHaveLength(0);
+      sbx.close();
+    } finally {
+      await rayd.close();
+    }
+  });
+
+  test("the creating handle keeps its own gateways on connect()", async () => {
+    const rayd = await FakeRayd.start({ accessToken: ACCESS_TOKEN });
+    rayd.health.features = create(AgentFeaturesSchema, {
+      configure: true,
+      secretGateway: true,
+    });
+    rayd.configure.secretGatewayStatus = gatewayStatus(FIRST_PORT);
+    const plane = new FakeControlPlane({
+      endpoint: rayd.host,
+      states: ["RUNNING"],
+    });
+    const api = new FakeSecretsManager();
+    api.put("rayito/anthropic", SENTINEL_VALUE);
+    try {
+      const sbx = await Sandbox.create({
+        template: IMAGE_ARN,
+        idle: null,
+        accessToken: ACCESS_TOKEN,
+        controlPlane: plane,
+        transport: rayd.transport,
+        gateways: { [ROUTE]: gateway() },
+        secretCache: new SecretCache({
+          store: new SecretStore({ client: api, region: "us-east-1" }),
+        }),
+      });
+      const own = sbx.gateways;
+      expect(own.recovered).toBe(false);
+      const statusReads = rayd.configure.configureStatusHeaders.length;
+      const configures = rayd.configure.configureRequests.length;
+      await sbx.connect();
+      expect(sbx.gateways).toBe(own);
+      expect(rayd.configure.configureStatusHeaders).toHaveLength(statusReads);
+      expect(rayd.configure.configureRequests).toHaveLength(configures);
       sbx.close();
     } finally {
       await rayd.close();

@@ -166,10 +166,18 @@ class GatewayHandle(Mapping[str, GatewayStatus]):
         *,
         refresher: Callable[[], Mapping[str, GatewayStatus]] | None = None,
         async_refresher: Callable[[], Awaitable[Mapping[str, GatewayStatus]]] | None = None,
+        recovered: bool = False,
     ) -> None:
         self._statuses = dict(statuses)
         self._refresher = refresher
         self._async_refresher = async_refresher
+        self._recovered = recovered
+
+    @property
+    def recovered(self) -> bool:
+        """`True` si `connect()` lo reconstruyó desde `ConfigureStatus` (no
+        sabe rotar secretos); `False` si viene de `create(gateways=)`."""
+        return self._recovered
 
     def __getitem__(self, name: str) -> GatewayStatus:
         return self._statuses[name]
@@ -217,6 +225,13 @@ def gateways_recoverable(features: AgentFeatures | None) -> bool:
     return features is not None and features.configure and features.secret_gateway
 
 
+def owns_gateways(handle: object | None) -> bool:
+    """`True` sólo para el `sbx.gateways` del handle que aplicó `gateways=`:
+    ése se conserva en cada `connect()`. Uno recuperado (o ninguno) se
+    vuelve a leer de `ConfigureStatus`."""
+    return isinstance(handle, GatewayHandle) and not handle.recovered
+
+
 def recovered_gateways(
     status: configure_pb2.ConfigureStatusResponse,
     *,
@@ -228,8 +243,8 @@ def recovered_gateways(
     error de cada ruta, porque `rayd` nunca devuelve el upstream, las
     cabeceras ni sus valores. Sin la definición original no hay nada que
     rotar, así que su `refresh()`/`arefresh()` sólo relee el estado; rotar
-    un secreto sigue siendo cosa del proceso que pasó `gateways=` (o de un
-    `reincarnate()`). Vacío (`EMPTY_GATEWAYS`) si el sandbox no tiene
+    un secreto (`refresh()` o `reincarnate()`) sigue siendo cosa del handle
+    que llamó a `create(gateways=)`. Vacío (`EMPTY_GATEWAYS`) si el sandbox no tiene
     pasarelas."""
     statuses = gateway_statuses_from_proto(status.secret_gateway)
     if not statuses:
@@ -238,6 +253,7 @@ def recovered_gateways(
         statuses,
         refresher=None if reader is None else _status_refresher(reader),
         async_refresher=None if async_reader is None else _async_status_refresher(async_reader),
+        recovered=True,
     )
 
 

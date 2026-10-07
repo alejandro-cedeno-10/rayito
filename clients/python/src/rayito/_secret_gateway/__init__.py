@@ -25,6 +25,7 @@ from rayito._secret_gateway._section import (
     GatewaySectionFactory,
     gateway_statuses_from_proto,
     gateways_recoverable,
+    owns_gateways,
     recovered_gateways,
 )
 
@@ -45,6 +46,7 @@ __all__ = [
     "SecretGateway",
     "gateway_statuses_from_proto",
     "gateways_recoverable",
+    "owns_gateways",
     "recovered_gateways",
     "validate_gateways",
 ]

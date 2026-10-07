@@ -99,6 +99,7 @@ import {
   SECTION_NAME as GATEWAY_SECTION,
   GatewayHandle,
   gatewaysRecoverable,
+  ownsGateways,
   recoveredGateways,
 } from "../secret-gateway/section.js";
 import type { SecretCache } from "../secrets/cache.js";
@@ -1118,7 +1119,7 @@ export class Sandbox implements AsyncDisposable {
         sandbox.#secrets.set(secrets);
         try {
           await sandbox.#extendAfterReadiness(requestedMs, undefined, options.signal);
-          await sandbox.#recoverGateways(options.signal);
+          await sandbox.#recoverGateways(undefined, options.signal);
         } catch (error) {
           sandbox.close();
           throw error;
@@ -1609,7 +1610,7 @@ export class Sandbox implements AsyncDisposable {
         }
         await this.#core.waitUntilReady({ terminateOnFailure: false, signal });
         await this.#extendAfterReadiness(requestedMs, options.requestTimeoutMs, signal);
-        await this.#recoverGateways(signal);
+        await this.#recoverGateways(options.requestTimeoutMs, signal);
         return this;
       },
     );
@@ -2035,22 +2036,29 @@ export class Sandbox implements AsyncDisposable {
    * `sbx.gateways` tras `connect()`: si este handle no aplicó él mismo
    * `gateways` (otro proceso lo hizo en `create()`), lo reconstruye con un
    * `ConfigureStatus` de sólo lectura — nombres y puertos, nunca un valor de
-   * cabecera. Un handle que ya tiene el suyo lo conserva, porque sólo ése
-   * sabe rotar los secretos. Sin la función en el agente no hace ninguna
-   * llamada. Espejo de `Sandbox._recover_gateways` de Python.
+   * cabecera. Un handle que aplicó `gateways` conserva el suyo, porque sólo
+   * ése sabe rotar los secretos; uno ya recuperado se relee en cada
+   * `connect()`. El RPC usa el `requestTimeoutMs` de ese `connect()` (el
+   * mismo que `#extendAfterReadiness`). Sin la función en el agente no hace
+   * ninguna llamada. Espejo de `Sandbox._recover_gateways` de Python.
    */
-  async #recoverGateways(signal?: AbortSignal): Promise<void> {
+  async #recoverGateways(
+    requestTimeoutMs: number | undefined,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (
-      this.#sectionHandles.has(GATEWAY_SECTION) ||
+      ownsGateways(this.#sectionHandles.get(GATEWAY_SECTION)) ||
       !gatewaysRecoverable(this.#core.agentFeatures)
     ) {
       return;
     }
-    const timeoutMs = this.#core.resolveRequestTimeout(undefined);
+    const timeoutMs = this.#core.resolveRequestTimeout(requestTimeoutMs);
     const recovered = recoveredGateways(await this.#configureStatus(timeoutMs, signal), () =>
       this.#configureStatus(timeoutMs),
     );
-    if (recovered !== EMPTY_GATEWAYS) {
+    if (recovered === EMPTY_GATEWAYS) {
+      this.#sectionHandles.delete(GATEWAY_SECTION);
+    } else {
       this.#sectionHandles.set(GATEWAY_SECTION, recovered);
     }
   }
