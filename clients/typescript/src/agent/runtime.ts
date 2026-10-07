@@ -34,7 +34,6 @@ export interface RunRequest {
   readonly sessionId?: string | undefined;
   readonly model?: string | undefined;
   readonly reasoning?: boolean | undefined;
-  readonly attach?: boolean | "auto" | undefined;
 }
 
 /** El comando que ejecuta la petición: texto de script de bash (nunca un
@@ -53,7 +52,7 @@ export interface TemplateStep {
 
 /** Un paso de calentamiento: `agent.prepare()` y el `warmup` de un pool
  * corren la misma lista. `background: true` no espera a que termine (un
- * servidor residente); si no, se espera su salida con `timeoutMs`. */
+ * proceso que sigue vivo); si no, se espera su salida con `timeoutMs`. */
 export interface WarmupStep {
   readonly cmd: string;
   readonly background?: boolean | undefined;
@@ -78,7 +77,6 @@ export interface AgentRuntime {
   newState(): RuntimeState;
   parseLine(line: Uint8Array, state: RuntimeState): readonly AgentEvent[];
   finish(state: RuntimeState, exitCode: number): Done | AgentFailed;
-  abortCommand(state: RuntimeState): string | undefined;
   templateSteps(): readonly TemplateStep[];
-  warmupSteps(options: { readonly serve: boolean }): readonly WarmupStep[];
+  warmupSteps(): readonly WarmupStep[];
 }

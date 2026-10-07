@@ -57,7 +57,6 @@ class AsyncAgent:
         model: str | None = None,
         limits: AgentLimits | None = None,
         workdir: str = DEFAULT_AGENT_WORKDIR,
-        attach: bool | str = "auto",
         reasoning: bool = False,
     ) -> AgentResult:
         stream = await self.stream(
@@ -68,7 +67,6 @@ class AsyncAgent:
             model=model,
             limits=limits,
             workdir=workdir,
-            attach=attach,
             reasoning=reasoning,
         )
         try:
@@ -86,7 +84,6 @@ class AsyncAgent:
         model: str | None = None,
         limits: AgentLimits | None = None,
         workdir: str = DEFAULT_AGENT_WORKDIR,
-        attach: bool | str = "auto",
         reasoning: bool = False,
     ) -> AsyncAgentStream:
         limits = limits or AgentLimits()
@@ -105,7 +102,6 @@ class AsyncAgent:
             session_id=session_id,
             model=model,
             reasoning=reasoning,
-            attach=attach,
         )
         run_command = rt.command(request)
         span_context = self._sandbox._instrumentation.span(
@@ -136,14 +132,11 @@ class AsyncAgent:
             session_id=session_id,
             span_context=span_context,
             span=span,
-            attached=attach is True or attach == "auto",
         )
 
-    async def prepare(
-        self, *, runtime: str | AgentRuntime = DEFAULT_AGENT_RUNTIME, serve: bool = False
-    ) -> None:
+    async def prepare(self, *, runtime: str | AgentRuntime = DEFAULT_AGENT_RUNTIME) -> None:
         rt = resolve_runtime(runtime)
-        for step in rt.warmup_steps(serve=serve):
+        for step in rt.warmup_steps():
             handle = await self._sandbox.commands.run(
                 step.cmd,
                 background=True,
@@ -169,7 +162,6 @@ class AsyncAgentStream:
         session_id: str | None,
         span_context: AbstractContextManager[Any],
         span: Any,
-        attached: bool,
     ) -> None:
         self._sandbox = sandbox
         self._handle = handle
@@ -186,7 +178,6 @@ class AsyncAgentStream:
         self._stopped = False
         self._span_context = span_context
         self._span = span
-        self._attached = attached
 
     @property
     def session_id(self) -> str | None:
@@ -215,29 +206,20 @@ class AsyncAgentStream:
         return self._queue.pop(0)
 
     async def abort(self) -> None:
-        """Le da al adaptador la oportunidad de pedirle al runtime que pare
-        con elegancia (`abort_command`, por ejemplo `POST /session/<id>/abort`)
-        y luego mata el proceso."""
+        """Para los procesos que lanzó el runtime y mata el proceso."""
         if self._abort_requested:
             return
         self._abort_requested = True
         await self._stop()
 
     async def _stop(self) -> None:
-        """Para el runtime y todo lo que lanzó: el `abort_command` con
-        elegancia del adaptador, `stop_tree_command` y el `kill()` del
+        """Para el runtime y todo lo que lanzó: `stop_tree_command` y el `kill()` del
         handle. Sirve a `abort()` y a un límite del SDK (`max_steps`,
         `token_budget`), que sin esto dejaría al runtime trabajando (y
         gastando tokens) en segundo plano."""
         if self._stopped:
             return
         self._stopped = True
-        command = self._runtime.abort_command(self._state)
-        if command:
-            try:
-                await self._sandbox.commands.run(command, timeout=self._limits.timeout_seconds)
-            except SandboxException:
-                logger.warning("no se pudo abortar con elegancia la sesión del agente")
         try:
             await self._sandbox.commands.run(
                 stop_tree_command(self._handle.pid), timeout=AGENT_STOP_TREE_TIMEOUT_SECONDS
@@ -340,7 +322,7 @@ class AsyncAgentStream:
         self._final = event
 
     def _record_done(self, done: Done) -> None:
-        attrs = done_attributes(done, steps=self._tracker.steps, attached=self._attached)
+        attrs = done_attributes(done, steps=self._tracker.steps)
         for key, value in attrs.items():
             self._span.set_attribute(key, value)
 

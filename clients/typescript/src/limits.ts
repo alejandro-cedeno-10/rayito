@@ -135,7 +135,6 @@ export const MAX_TOOL_OUTPUT_PREVIEW_BYTES = 65536 as const;
 export const DEFAULT_AGENT_WORKDIR = "/home/user" as const;
 export const AGENT_STATE_DIR = "/home/user/.rayito/agent" as const;
 export const MODEL_CREDENTIAL_PLACEHOLDER = "placeholder-not-a-secret" as const;
-export const OPENCODE_SERVE_PORT = 4096 as const;
 export const OPENCODE_SESSION_TITLE = "rayito" as const;
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const AGENT_TEMPLATE_MANIFEST_PATH = "/opt/agents/rayito-agent.json" as const;

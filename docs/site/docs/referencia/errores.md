@@ -214,7 +214,7 @@ del proveedor, el prompt ni el contenido generado.
 |---|---|
 | `model_error` | el modelo respondió con error (`detail_code` lleva sólo el nombre de la clase de error, como `APIError`; nunca el mensaje) |
 | `runtime_error` | el proceso del runtime falló por otra causa (código de salida distinto de 0 sin evento `error`) |
-| `runtime_missing` | el runtime (`opencode` o deepagents) no está en la imagen o, con `attach=True`, su servidor residente no responde |
+| `runtime_missing` | el runtime (`opencode` o deepagents) no está en la imagen |
 | `runtime_version_mismatch` | reservado: hoy no se emite (`AgentSpec.runtime_version` todavía no se compara) |
 | `protocol_error` | una línea del protocolo no se pudo interpretar (ver también `dropped_lines` en `AgentResult`) |
 | `timeout` | venció `AgentLimits.timeout_seconds`/`timeoutMs` |

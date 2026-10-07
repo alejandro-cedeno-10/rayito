@@ -8,6 +8,21 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Cambios que rompen
 
+- **Se retira la opción D del arranque rápido del agente** (pool con
+  `opencode serve` residente), sin periodo de obsolescencia: apenas ganaba
+  unas décimas a la opción C (`AWS_API_NOTES.md` Q154) y costaba más
+  memoria y más por plaza. Desaparecen la opción `serve` de
+  `agentPoolWarmup()` y de `sbx.agent.prepare()`, `attach` de
+  `AgentRunOptions` (`sbx.agent.run()`/`stream()`) y `RunRequest.attach`;
+  el script de OpenCode ya no busca ni se engancha a un servidor
+  (`--attach`) ni relee la vuelta de él, y el span `rayito.agent.run` deja
+  de llevar `rayito.agent.attached`. La interfaz `AgentRuntime` pierde
+  `abortCommand` (ningún runtime lo usaba ya) y `warmupSteps()` no lleva
+  argumentos; `OPENCODE_SERVE_PORT` desaparece. **Migración**: quita
+  `serve: true` y `attach`; para un primer mensaje rápido usa
+  `agentPoolWarmup(runtime)` (opción C) o el arranque normal
+  (`Sandbox.create(...)` y `sbx.agent.run(...)`). Un runtime propio borra
+  `abortCommand` y el parámetro de `warmupSteps`.
 - **Se eliminan `GatewayError` y `GatewayErrorOptions`** (no estarán en
   0.9.0). `GatewayError` nunca se lanzaba: lo que la pasarela de secretos
   rechaza por petición llega al proceso del sandbox como respuesta HTTP

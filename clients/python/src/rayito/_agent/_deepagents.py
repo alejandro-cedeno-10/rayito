@@ -12,7 +12,7 @@ los valida, recorta y acumula. El script escribe además `rayito.busy` y
 
 Los permisos de `AgentSpec` se traducen a los nombres de herramienta de
 deepagents (`DEEPAGENTS_TOOL_NAMES`). Sólo `bash` admite patrones (sobre el
-comando de `execute`); `mcp`, `raw_config` y `attach=True` no existen en
+comando de `execute`); `mcp` y `raw_config` no existen en
 este runtime y fallan con `InvalidArgumentException` antes de cualquier
 RPC.
 """
@@ -277,12 +277,7 @@ class DeepAgents:
 
     def command(self, request: RunRequest) -> RunCommand:
         """El script (cerrojo, comprobación del runner, `exec` del Python
-        del venv) y la petición JSON por stdin. `attach` no aplica: sólo se
-        admite `"auto"` o `False`."""
-        if request.attach is True:
-            raise InvalidArgumentException("deepagents no tiene servidor residente: attach=True")
-        if request.attach not in ("auto", False):
-            raise InvalidArgumentException("attach debe ser True, False o 'auto'")
+        del venv) y la petición JSON por stdin."""
         if request.session_id is not None and not _SESSION_ID_PATTERN.fullmatch(request.session_id):
             raise InvalidArgumentException("session_id de deepagents debe tener la forma rda_<hex>")
         if request.model is not None:
@@ -412,19 +407,13 @@ class DeepAgents:
             )
         return Done(session_id=state.session_id, exit_code=exit_code, usage=state.usage)
 
-    def abort_command(self, state: RuntimeState) -> str | None:
-        """Nada: matar el proceso basta (no hay servidor residente)."""
-        return None
-
     def template_steps(self) -> Sequence[TemplateStep]:
         """Vacío: la plantilla de agente (`ai-agent-fast-start`) declara sus
         propios pasos."""
         return ()
 
-    def warmup_steps(self, *, serve: bool) -> Sequence[WarmupStep]:
-        """Carga deepagents y langchain en la caché de páginas; `serve` no
-        aplica."""
-        del serve
+    def warmup_steps(self) -> Sequence[WarmupStep]:
+        """Carga deepagents y langchain en la caché de páginas."""
         return (
             WarmupStep(
                 cmd=f"{shell_quote(DEEPAGENTS_PYTHON)} -c 'import deepagents, langchain_aws' "

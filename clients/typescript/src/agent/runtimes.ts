@@ -23,7 +23,7 @@ function looksLikeRuntime(candidate: unknown): candidate is AgentRuntime {
   if (typeof candidate !== "object" || candidate === null) {
     return false;
   }
-  const required = ["buildConfig", "command", "newState", "parseLine", "finish", "abortCommand"];
+  const required = ["buildConfig", "command", "newState", "parseLine", "finish", "warmupSteps"];
   return required.every((key) => typeof (candidate as Record<string, unknown>)[key] === "function");
 }
 

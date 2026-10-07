@@ -79,7 +79,6 @@ interface FakeState extends RuntimeState {
 
 export interface FakeAgentRuntimeOptions {
   readonly configSha?: string;
-  readonly abortCmd?: string;
   readonly finishResult?: Done | import("../../src/agent/events.js").AgentFailed;
   readonly warmup?: readonly WarmupStep[];
 }
@@ -87,7 +86,6 @@ export interface FakeAgentRuntimeOptions {
 export class FakeAgentRuntime implements AgentRuntime {
   readonly name: string;
   readonly #configSha: string;
-  readonly #abortCmd: string | undefined;
   readonly #finishResult: Done | import("../../src/agent/events.js").AgentFailed | undefined;
   readonly #warmup: readonly WarmupStep[];
   readonly buildConfigCalls: Readonly<Record<string, string>>[] = [];
@@ -95,7 +93,6 @@ export class FakeAgentRuntime implements AgentRuntime {
   constructor(name = "fake", options: FakeAgentRuntimeOptions = {}) {
     this.name = name;
     this.#configSha = options.configSha ?? "sha-1";
-    this.#abortCmd = options.abortCmd;
     this.#finishResult = options.finishResult;
     this.#warmup = options.warmup ?? [];
   }
@@ -144,10 +141,6 @@ export class FakeAgentRuntime implements AgentRuntime {
       return { type: "done", sessionId, exitCode, usage: new TokenUsage() };
     }
     return agentFailed("runtime_error", { exitCode, sessionId });
-  }
-
-  abortCommand(): string | undefined {
-    return this.#abortCmd;
   }
 
   templateSteps() {

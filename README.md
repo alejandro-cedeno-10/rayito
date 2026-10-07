@@ -99,7 +99,7 @@ with Sandbox.create(
     print(result.text, result.usage.total)
 ```
 
-El arranque rápido (un pool con `warmup` o un servidor residente) es
+El arranque rápido (un pool con `warmup`) es
 opcional; cuándo compensa, en
 [¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso). Guía completa:
 [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/); qué cuesta la VM
