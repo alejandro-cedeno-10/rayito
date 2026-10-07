@@ -50,6 +50,16 @@ docs (`ai-agent-docs-pricing`).
   manifest's `prefetch_paths` with `nice -n 19` and imports deepagents once.
   It never writes and never touches the network. G1 decides whether it
   stays on by default.
+  The AWS acceptance (Q146) showed the reads competing with the boot:
+  `create()` p50 8.7 s → 16.6 s. The daemon now waits, after the jump,
+  until `/proc/diskstats` shows no I/O in flight for 1 s (at most 60 s):
+  the default kernel rotation that `create()` waits for reads from the
+  code disk, so the quiet window starts once the VM is ready. After that it
+  reads without yielding, because the first `opencode run` reads the same
+  binary and a sequential read ahead of its page faults helps rather than
+  competes. `ionice` was rejected (no effect without a BFQ/CFQ scheduler
+  on the virtio disk), and so was a `rayd` readiness marker (a Rust and
+  base-image change for the same signal).
 - **D4 — Pool warm-up runs between settle and pause.** Foreground steps use
   `commands.run(timeout=step.timeout_seconds, max_output_bytes=0)`, so a
   non-zero exit (`CommandExitException`) or a timeout fails the warm-up

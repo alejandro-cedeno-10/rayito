@@ -36,3 +36,8 @@
   events on AWS, so D is not recommended. The acceptance also found that
   the template did not install the deepagents runner; fixed here.
 - [ ] 3.5 Fix or drop serve-in-pool (D) before archiving (Q148).
+- [ ] 3.6 Prefetch must not delay `create()` (Q146).
+  - [x] 3.6.1 The daemon waits for a quiet guest (no I/O in flight for 1 s)
+    after the jump; unit test with a fake `diskstats`.
+  - [ ] 3.6.2 AWS re-measure (n=5): `create()` and `create()` → first token;
+    if `create()` still grows, `prefetch` becomes opt-in.

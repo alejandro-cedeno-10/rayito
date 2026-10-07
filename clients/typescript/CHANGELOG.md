@@ -73,6 +73,10 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Fixed
 
+- `AgentTemplate` con `prefetch`: el demonio de precarga leía los binarios
+  nada más restaurar el snapshot y su E/S competía con el arranque, así que
+  `create()` tardaba ≈ 8 s más (Q146). Ahora espera a que el guest lleve
+  1 s sin E/S en curso (como mucho 60 s) antes de leer.
 - `AgentTemplate`: instala el runner de deepagents en
   `/opt/agents/rayito/deepagents_runner.py` (root, 0755) y pone su sha256 en
   `runner_sha256` del manifiesto. Sin él, `runtime="deepagents"` fallaba
