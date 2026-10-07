@@ -3,8 +3,9 @@
 Un DSL fluido (igual al `Template` de E2B v2) que compila a un Dockerfile y
 un zip deterministas, compuestos sobre una imagen `rayito-base`/
 `rayito-base-caps` ya publicada, y los sube con
-`create`/`update-microvm-image`. Sin plano de control propio: 0.6 lo hace
-todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.md`).
+`create`/`update-microvm-image`. Sin plano de control propio: todo ocurre
+en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.md`).
+<small>Desde 0.6.0.</small>
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Sin llamar a `Template.build()`/
@@ -49,8 +50,9 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
       imagen. Deliberadamente separada de cualquier política de lanzar
       sandboxes.
     - **Cómo apagarla**: no llames a `Template.build()`/
-      `buildInBackground()`. Las versiones de imagen ya construidas se
-      borran con `rayito image` (no las borra `Template`). El grupo de logs
+      `buildInBackground()`. Las versiones antiguas de una imagen ya
+      construida se borran con `rayito image prune --image-name <nombre>`
+      (no las borra `Template`; `prune` conserva al menos una). El grupo de logs
       `/rayito/<nombre>` que crea el rol de build en el primer build
       tampoco se borra con la imagen (`delete-microvm-image` no lo toca, y
       ni el SDK ni la CLI borran imágenes): al retirar una imagen, bórralo
@@ -78,9 +80,27 @@ todo en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.
 - **Cuándo no**: un único cambio puntual en una imagen ya publicada —
   `rayito image publish` sigue siendo el camino directo.
 
+## Antes de empezar: la política IAM
+
+Quien llama a `Template.build()` necesita `RayitoTemplateBuilder`, el
+componente `templates` de [`rayito stack`](pilas-opcionales.md). Los dos
+ARN obligatorios salen de tu pila de IAM (`BuildRoleArn` es una salida de
+`infra/iam.yaml`):
+
+```bash
+rayito stack deploy templates \
+  --param ArtifactBucketArn=arn:aws:s3:::amzn-s3-demo-bucket \
+  --param BuildRoleArn=arn:aws:iam::123456789012:role/<rol-de-build>
+rayito stack status templates   # el ARN de la política, para vincularla
+```
+
+`BaseImageBucketArn` sólo hace falta si el zip de la imagen base está en
+otro bucket; `ProtectedImageNamePrefix` (`rayito-base` por defecto) es el
+prefijo de las imágenes que el builder nunca puede actualizar.
+
 ## Divergencias con E2B
 
-- **Sin caché de capas entre builds.** 0.6 no tiene una (investigación
+- **Sin caché de capas entre builds.** Rayito no tiene una (investigación
   §3.4): cada `Template.build()` reconstruye todo lo que cambió desde la
   imagen base. Una versión ya construida con exactamente el mismo
   artefacto y la misma configuración se reusa sin llamar a
@@ -314,6 +334,25 @@ libre de AWS sin sanear.
     rayito template status mi-template
     rayito template logs mi-template
     ```
+
+## Opciones de `Template.build()`
+
+| Python | TypeScript | Por defecto | Qué hace |
+|---|---|---|---|
+| `bucket` | `bucket` | — (obligatorio) | bucket de artefactos donde se sube el zip, bajo `rayito/templates/` |
+| `memory_mb` | `memoryMb` | `2048` | tamaño de la imagen, uno de 512/1024/2048/4096/8192 |
+| `force` | `force` | `False` | construye aunque ya exista una versión con el mismo artefacto (`skip_cache()`) |
+| `timeout` (s) | `timeoutMs` | 1800 s | espera máxima del build (sólo `build()`); al agotarla, `BuildException(reason="build_timeout")` |
+| `base_image_version` | `baseImageVersion` | la última `ACTIVE` | versión de la imagen base sobre la que compones |
+| `on_build_logs` | `onBuildLogs` | — | recibe el log del build línea a línea, al terminar (sólo `build()`) |
+| `context_dir` | `contextDir` | el directorio actual | raíz de las rutas de `copy()` |
+| `region`, `session` | `region`, `credentials` | la sesión por defecto | dónde y con qué credenciales |
+| `cpu_count`, `build_role_arn` | — | — | se aceptan y se ignoran: la CPU sale de `memory_mb` y el rol de build es el de la imagen base |
+
+`Template.exists(nombre)` dice si la imagen ya existe, y
+`t.to_dockerfile()`/`t.to_json()` (`toDockerfile()`/`toJSON()`) enseñan lo
+que se va a construir sin llamar a AWS. Con la CLI, `rayito template build`
+lee un fichero `.py` que define una variable `template`.
 
 ## Un build que falla
 

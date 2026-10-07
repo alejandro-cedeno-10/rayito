@@ -118,6 +118,7 @@ global, pásalo: `tracer_provider=trace.get_tracer_provider()`.
 | `rayito.code.run` | `run_code()` / `runCode()` |
 | `rayito.commands.run` | `commands.run()` (en segundo plano, el span se cierra cuando arranca el proceso, no cuando termina) |
 | `rayito.files.read`, `write`, `write_files`, `list`, `exists`, `get_info`, `remove`, `rename`, `make_dir` | `files.*` |
+| `rayito.agent.run` | `sbx.agent.run()` / `.stream()` ([Agente en el sandbox](../guias/agente-en-el-sandbox.md)) |
 
 ## Atributos
 
@@ -130,6 +131,7 @@ Lista cerrada de claves (cualquier otra es un error antes de abrir el span):
 | `rayito.commands.run` | `rayito.commands.background`; en primer plano, `rayito.commands.exit_code` |
 | `rayito.code.run` | `rayito.code.language` cuando se conoce |
 | `rayito.files.*` | `rayito.files.operation`; `read`/`write` añaden `rayito.files.bytes`; `write_files` y `list` añaden `rayito.files.count` |
+| `rayito.agent.run` | al empezar, `gen_ai.operation.name` (`invoke_agent`), `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` y `rayito.agent.runtime`; al terminar, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `rayito.agent.steps`, `rayito.agent.exit_code`, `rayito.agent.attached`, `rayito.agent.cache_read_tokens`, `rayito.agent.cache_write_tokens` y, si falla, `rayito.agent.failure_reason` |
 
 `rayito.template.name`, `rayito.resume_generation` y `rayito.error.type`
 están reservadas: hoy ningún span las emite.
@@ -137,16 +139,23 @@ están reservadas: hoy ningún span las emite.
 !!! note "Lo que nunca se registra"
     El texto de un comando, código fuente, rutas de ficheros, valores de
     `envs`, nombres o valores de secretos, valores de `metadata`, el access
-    token, el token del proxy ni URLs prefirmadas. Un error dentro de un span
+    token, el token del proxy ni URLs prefirmadas. En `rayito.agent.run`,
+    tampoco el prompt, el texto de la respuesta ni los argumentos de una
+    herramienta: sólo modelo, proveedor y contadores. Un error dentro de un span
     registra sólo el **nombre de la clase** de la excepción, nunca su mensaje
     ni su traza.
 
 ## Qué no incluye
 
-- No propaga `traceparent` / `tracestate` hacia el sandbox: un span de
-  Rayito nunca es padre de nada dentro del MicroVM.
-- No hay telemetría del sandbox: ni métricas ni logs del MicroVM viajan por
-  aquí.
+- Con `tracer_provider=`, cada llamada del handle lleva además
+  `traceparent` (y `tracestate`, nunca `baggage`) hacia `rayd`, que lo
+  escribe como `trace_id`/`span_id` en sus logs. `rayd` no crea spans: un
+  span de Rayito nunca es padre de nada dentro del MicroVM. Las llamadas de
+  clase (`Sandbox.kill(id)` y compañía) no lo llevan. Sin la opción, no se
+  añade ninguna cabecera.
+- Las métricas del interior del sandbox (CPU, memoria, disco) no viajan
+  por aquí: son la [exportación OTLP](exportacion-otlp.md) (`telemetry=`),
+  otra opción con su propio coste.
 - El shim de E2B (`rayito.e2b` / `rayito/e2b`) no está instrumentado.
 
 ## Errores y solución de problemas
@@ -161,8 +170,10 @@ están reservadas: hoy ningún span las emite.
 
 ## Diferencias con E2B
 
-La exportación de telemetría del sandbox de E2B (Enterprise) no existe en
-Rayito. Lo que hay son spans del lado del **cliente** sobre tus llamadas.
+Estos spans son del lado del **cliente**, sobre tus llamadas; E2B no tiene
+un equivalente en su SDK. Su exportación de telemetría del sandbox
+(Enterprise) se parece más a la [exportación OTLP](exportacion-otlp.md) de
+Rayito.
 
 ## Ver también
 

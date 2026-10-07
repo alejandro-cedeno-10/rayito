@@ -2,7 +2,7 @@
 
 `sbx.git` es la API git del SDK de E2B sobre `commands.run`: cada método
 construye la orden `git` con los argumentos de E2B y la ejecuta dentro del
-sandbox como el usuario del sandbox. `rayito-base` trae `git-core` desde 0.3.0
+sandbox como el usuario del sandbox. `rayito-base` trae `git-core`
 (`git-core-2.50.1-1.amzn2023.0.1`, fijado en `image/Dockerfile`).
 
 !!! note "E2B marca este módulo como obsoleto"
@@ -75,7 +75,19 @@ Métodos (los mismos en `Git` y `AsyncGit`; en TypeScript en camelCase):
 `reset`, `restore`, `push`, `pull`, `set_config`, `get_config`,
 `dangerously_authenticate` y `configure_user`. Todos aceptan además `envs`,
 `user`, `cwd`, `timeout` y `request_timeout`, y fijan `GIT_TERMINAL_PROMPT=0`
-(un git que pediría una contraseña falla en vez de colgarse).
+(un git que pediría una contraseña falla en vez de colgarse). En TypeScript
+los argumentos obligatorios siguen siendo posicionales (`path`, `branch`,
+`message`, `url` en `clone`…) y los opcionales van en un objeto (`{ path, depth }`,
+`{ username, password }`, `{ authorName, authorEmail }`…);
+`dangerouslyAuthenticate({ username, password, host })` recibe todo en el
+objeto.
+
+`status()` devuelve un `GitStatus` (`current_branch`, `upstream`, `ahead`,
+`behind`, `detached`, `file_status` y las propiedades `is_clean`,
+`has_changes`, `has_staged`, `has_untracked`); `branches()`, un
+`GitBranches` (`branches`, `current_branch`); `get_config()` y
+`remote_get()`, el valor o `None`. El resto devuelve el `CommandResult` de
+la orden.
 
 ## Credenciales
 

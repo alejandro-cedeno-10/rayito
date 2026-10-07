@@ -12,12 +12,12 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
     Pedir un ciclo de vida (`max_lifetime` u `on_timeout`) a una imagen
     anterior a 0.3.0 termina el VM (salvo `keep_on_failure`) y lanza
     `LifecycleUnsupportedException` (TS `LifecycleUnsupportedError`), la misma
-    feature ausente que cualquier otra: desde 0.4.0 es una subclase de
+    feature ausente que cualquier otra: es una subclase de
     `UnimplementedError` (TS `UnimplementedError`), no de
     `InvalidArgumentException`; captura `rayito.UnimplementedError` (o el
     nombre específico) si quieres distinguir el caso. Sin `max_lifetime` ni
-    `on_timeout`, `create()` se comporta exactamente como en 0.2.0: `timeout`
-    es la vida de la plataforma y no se mueve.
+    `on_timeout` no hay plazo lógico: `timeout` es la vida de la plataforma y
+    no se mueve.
 
 ## Crear con plazo
 
@@ -42,6 +42,7 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
     token, sandbox_id = sbx.access_token, sbx.sandbox_id
     # Desde otro proceso, sin handle: hace falta el access token
     Sandbox.set_timeout(sandbox_id, 3600, access_token=token)
+    sbx.close()                               # suelta este handle; el sandbox sigue
     again = Sandbox.connect(sandbox_id, access_token=token, timeout=1200)
     again.kill()
     ```
@@ -97,7 +98,7 @@ relojes (plazo, tope, idle) está en [Conceptos](concepts.md#plazo-tope-e-idle).
 - **`set_timeout(t)`** (`SetTimeout` `EXACT`): el plazo pasa a ser ahora +
   `t`, más largo o más corto. Por encima de `max_lifetime − 60 s` desde el
   arranque es `InvalidArgumentException` y el plazo queda intacto; más allá
-  del tope sólo queda `reincarnate()` ([Persistencia](persistence.md)). Sobre
+  del tope sólo queda `reincarnate()` ([Persistencia](persistence.md#reincarnate-mas-alla-de-max_lifetime)). Sobre
   un sandbox creado sin `max_lifetime` ni `on_timeout` también es
   `InvalidArgumentException`. En modo `pause`, reabre un sandbox cuyo plazo
   venció pero que aún no se suspendió.

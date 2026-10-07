@@ -49,7 +49,11 @@ Nada de esto hace falta para empezar.
 | El servidor MCP ([Servidor MCP](../mcp.md)) | `pip install "rayito[mcp]"` | — |
 | Trazas OpenTelemetry ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]" opentelemetry-sdk` | `npm i @opentelemetry/api @opentelemetry/sdk-trace-base` |
 | Secretos de Secrets Manager ([Secretos](../secrets.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
+| Pasarela de secretos y agente en el sandbox ([Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md), [Agente en el sandbox](../guias/agente-en-el-sandbox.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
 | Índice de metadatos en DynamoDB ([Índice](../funciones-opcionales/indice-de-metadatos.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-dynamodb` |
+| Eventos y webhooks ([Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-dynamodb @aws-sdk/client-secrets-manager` |
+| Pilas opcionales desde código ([Pilas opcionales](../funciones-opcionales/pilas-opcionales.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-cloudformation` |
+| Logs de un build fallido de `Template.build()` ([Templates](../funciones-opcionales/templates.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-cloudwatch-logs` |
 | Volúmenes EFS, experimental ([Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-efs @aws-sdk/client-ec2` |
 | Dominio propio, experimental ([Dominio propio](../funciones-opcionales/dominio-propio.md)) | `pip install "rayito[custom-domain]"` | `npm i @aws-sdk/client-cloudformation @aws-sdk/client-cloudfront-keyvaluestore @aws-sdk/signature-v4a` |
 
@@ -63,7 +67,7 @@ El SDK usa la cadena de credenciales estándar de AWS: la de `boto3` en Python
 y la del AWS SDK v3 en TypeScript. Con un perfil:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 ```
 
 Con AWS IAM Identity Center (SSO), inicia sesión antes con

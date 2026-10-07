@@ -129,6 +129,11 @@ python -W always::UserWarning -m pytest
       credenciales tienen sus permisos ([IAM](../operacion/iam.md)).
 - [ ] Si tus sandboxes viven más de 8 horas (también pausados), usa
       [Persistencia](../persistence.md) con `reincarnate()`.
+- [ ] En Python, si atrapas `BuildException` o `TemplateException` de un
+      `Template.build()`, atrapa las de `rayito` (`rayito.BuildException`),
+      no las de `rayito.e2b`: son clases distintas
+      ([Compatibilidad](../e2b-compat.md#tabla-de-imports)). En TypeScript
+      son las mismas.
 
 ## Qué cambia
 
@@ -174,8 +179,11 @@ experimental ([Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)).
 El shim cubre la API de E2B. El SDK nativo (`from rayito import Sandbox`)
 añade lo que E2B no tiene: [pool](../pool.md) de sandboxes en < 1 s,
 [persistencia](../persistence.md) en S3, la [auto-suspensión](../guias/pausar-reanudar.md)
-por defecto y las [funciones opcionales](../optional-features.md). Desde el
-shim, `sbx.native` es el sandbox nativo, así que puedes migrar poco a poco.
+por defecto, las [funciones opcionales](../optional-features.md) y, desde
+0.8.0, un [agente de código](../guias/agente-en-el-sandbox.md) que corre
+dentro del sandbox (`sbx.agent`). Desde el shim, `sbx.native` es el sandbox
+nativo (`sbx.native.agent`, `sbx.native.access_token`...), así que puedes
+migrar poco a poco.
 
 ## Ver también
 

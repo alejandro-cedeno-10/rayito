@@ -19,9 +19,13 @@ Elige una de las diez regiones con Lambda MicroVMs (`us-east-1`,
 exporta tu perfil:
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 aws sts get-caller-identity          # comprueba que las credenciales funcionan
 ```
+
+Exporta las dos variables de región: el SDK de TypeScript y la CLI leen
+`AWS_REGION`, y el SDK de Python (boto3) sólo lee `AWS_DEFAULT_REGION` o la
+región del perfil.
 
 Para estos pasos de preparación hacen falta permisos de administración
 (crear roles de IAM y un bucket). Para usar el SDK después basta la política
@@ -96,7 +100,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=0.7.0      # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la misma versión que tu SDK
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
@@ -141,12 +145,13 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 `rayito image publish` sube el zip, pide a AWS que construya la imagen y
 espera a que la versión sea lanzable (unos 10 minutos). La última línea es
 `RAYITO_TEMPLATE=<arn>`. Cada versión publicada cuesta ≈ $0,04 por semana de
-almacenamiento ([Costes](../cost.md)).
+almacenamiento ([Precios](../cost.md#componentes-del-precio)).
 
-??? example "Las otras dos variantes: `-caps` y `-poly`"
+??? example "Las otras variantes: `-caps`, `-poly` y la imagen del agente"
     - `rayito-base-caps` es el mismo zip publicado con
       `additionalOsCapabilities ALL`; hace falta para la
-      [política de red saliente](../network.md):
+      [política de red saliente](../network.md) y es la base de la imagen
+      del agente:
 
         ```bash
         rayito image publish --artifact rayito-image.zip --base-image-version 1 \
@@ -156,6 +161,15 @@ almacenamiento ([Costes](../cost.md)).
     - `rayito-base-poly` añade los kernels bash, JavaScript y TypeScript
       ([Lenguajes y kernels](../kernels.md)). Se construye desde el código
       fuente: `make image-publish-poly BUCKET=amzn-s3-demo-bucket`.
+
+    - `rayito-agent`, para el [agente en el sandbox](../guias/agente-en-el-sandbox.md),
+      se construye en tu cuenta sobre `rayito-base-caps` (publícala antes)
+      con OpenCode, ripgrep y deepagents
+      ([Templates de agente](../funciones-opcionales/templates-de-agente.md)):
+
+        ```bash
+        rayito agent template build --bucket amzn-s3-demo-bucket
+        ```
 
     Qué imagen necesita cada función: [Imágenes](../images.md).
 
@@ -171,31 +185,63 @@ nombre se resuelve al ARN de tu cuenta y región.
 ## 6. Diagnóstico
 
 `rayito doctor` hace diez comprobaciones de la cuenta (credenciales,
-cuotas, IAM, bucket, imagen, versión del agente) y dice qué falta:
+imágenes gestionadas, cuotas, IAM, bucket, imagen, sandboxes vivos, token,
+agente y compatibilidad SDK ↔ `rayd`) y dice qué falta. Sin `--launch`,
+las tres últimas sólo corren si ya hay un sandbox `RUNNING` de esa imagen;
+con `--launch` crea uno efímero de 300 s y lo mata al terminar:
 
 ```bash
-rayito doctor --template rayito-base --launch     # --launch prueba un sandbox efímero (≈ $0,002)
+rayito doctor --template rayito-base --launch     # --launch: un sandbox efímero (≈ $0,002)
 ```
+
+Una salida típica en una cuenta recién preparada (con el SDK 0.8.0):
 
 <!-- noqa: example: salida de consola, no es código -->
 ```text
 OK   credentials     cuenta 123456789012, us-east-1, assumed-role
-OK   managed-images  al2023-1 disponible, versión más nueva …
-OK   quotas          … cuotas de MicroVM, ninguna por debajo del default
-WARN iam-simulation  sin permiso explícito para lambda:PassNetworkConnector; …
+OK   managed-images  al2023-1 disponible, versión más nueva 1.0
+OK   quotas          18 cuotas de MicroVM, ninguna por debajo del default
+WARN iam-simulation  sin permiso explícito para lambda:PassNetworkConnector; simulación orientativa: las comprobaciones 2, 5, 6 y 8 son las que cuentan
+       policy_source_arn: arn:aws:iam::123456789012:role/<tu-rol>
+       explicit_deny: []
+       denied_by_organizations: []
+       implicit_deny: ['lambda:PassNetworkConnector']
 OK   bucket          s3://amzn-s3-demo-bucket accesible en us-east-1
 OK   image-gate      rayito-base 1.0 lanzable
 OK   sandboxes       ningún MicroVM RUNNING de rayito-base
-OK   token           token acuñado por create() para microvm-<id>
-OK   agent           rayd 0.5.0 agent_ready, kernel_ready=True, …
-OK   compatibility   …
+OK   token           token acuñado por create() para microvm-00000000-0000-0000-0000-000000000001
+OK   agent           rayd 0.8.0 agent_ready, kernel_ready=True, imds_blocked=False
+OK   compatibility   SDK 0.8.0, agent_version 0.8.0; imagen 1.0 (contador de builds, informativo)
+
+SDK  rayd mínimo  Estado  Nota
+0.1  0.1.0                M6: imds_blocked, hook_anomalies y metadata exigen el rayd del tag rayd-v0.1.0
+0.2  0.2.0                M7: Checkpoint/Restore (persist=) y language= exigen el rayd del tag rayd-v0.2.0
+0.3  0.3.0                M9: max_lifetime/on_timeout, set_timeout, get_metrics_history, network= y los kernels Deno
+                          exigen el rayd del tag rayd-v0.3.0
+0.4  0.4.0                0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente en
+                          español exigen el rayd del tag rayd-v0.4.0
+0.5  0.5.0                0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales (secretos,
+                          índice, OTel) se validan con el rayd del tag rayd-v0.5.0
+0.6  0.6.0                0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, pasarela de secretos,
+                          start/ready de templates) exigen el rayd del tag rayd-v0.6.0
+0.7  0.7.0                0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks aislados,
+                          persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0
+0.8  0.8.0        OK      0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida con el rayd
+                          del tag rayd-v0.8.0
 
 rayito doctor: 9 OK, 1 WARN, 0 FAIL, 0 SKIP
+sandbox de --launch terminado: microvm-00000000-0000-0000-0000-000000000001
 ```
+
+Cada línea es `OK`, `WARN`, `FAIL` o `SKIP`; un `WARN` o `FAIL` lista
+debajo sus detalles. Después va la tabla de compatibilidad SDK ↔ `rayd`,
+con el estado en la fila de tu SDK, y el recuento. La orden sale con código
+1 sólo si hay algún `FAIL`. `--json` da lo mismo como un documento JSON.
 
 El `WARN` de `iam-simulation` sobre `lambda:PassNetworkConnector` es
 esperado: el simulador de IAM lo marca incluso con permisos de
-administrador y no bloquea nada. Qué hacer con cada `FAIL`:
+administrador y no bloquea nada (las comprobaciones que cuentan son las de
+imágenes gestionadas, bucket, imagen y token). Qué hacer con cada `FAIL`:
 [Solución de problemas](../operacion/solucion-de-problemas.md#rayito-doctor).
 
 ## Siguiente paso

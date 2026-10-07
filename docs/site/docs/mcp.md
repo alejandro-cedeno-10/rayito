@@ -12,8 +12,15 @@ por ciclo de suspensión ([modelo de costes](cost.md)); nada queda vivo más
 allá de `RAYITO_MCP_TIMEOUT_SECONDS`.
 
 Para frameworks que hablan con herramientas propias y no con MCP (LangChain,
-Vercel AI SDK) hay dos adaptadores de cincuenta líneas en
-`docs/examples/langchain_tool.py` y `docs/examples/vercel_ai_tool.ts`.
+Vercel AI SDK) hay dos adaptadores de cincuenta líneas:
+[LangChain y Vercel AI](guias/langchain-y-vercel-ai.md).
+
+Esta página es el caso inverso al de
+[Agente en el sandbox](guias/agente-en-el-sandbox.md): aquí el agente vive
+fuera (tu host MCP) y usa el sandbox como herramienta. Para darle
+servidores MCP a un agente que corre **dentro** del sandbox (`sbx.agent`),
+usa `AgentSpec(mcp={"nombre": McpLocal(...) | McpRemote(...)})`
+([Subagentes, servidores MCP y permisos](guias/agente-en-el-sandbox.md#subagentes-servidores-mcp-y-permisos)).
 
 ## Instalación
 
@@ -45,7 +52,7 @@ con un bloque `env`); ninguna bandera de línea de comandos la duplica.
 | `RAYITO_TEMPLATE` | Nombre o ARN de la imagen (la misma variable que lee `Sandbox.create`) | Obligatoria para las herramientas que tocan el sandbox; no se valida al arrancar, la primera llamada que la necesita devuelve un error que la nombra |
 | `RAYITO_TEMPLATE_VERSION` | Versión de la imagen | Última `ACTIVE` |
 | `RAYITO_EXECUTION_ROLE_ARN` | Execution role del MicroVM; con rol, `logging="cloudwatch"` | Sin rol → `logging="disabled"` |
-| `AWS_REGION` / `AWS_DEFAULT_REGION` / `AWS_PROFILE` y las variables de credenciales | Las lee boto3; el servidor no pasa región ni sesión propias | Defaults de boto3 |
+| `AWS_DEFAULT_REGION` / `AWS_PROFILE` y las variables de credenciales | Las lee boto3 (`AWS_REGION` no: boto3 sólo mira `AWS_DEFAULT_REGION` y el perfil); el servidor no pasa región ni sesión propias | Defaults de boto3 |
 | `RAYITO_MCP_TIMEOUT_SECONDS` | Vida máxima del sandbox (running + suspended) | `3600`; entero en `60..=28800`, si no el servidor sale con código 2 |
 | `RAYITO_MCP_IDLE_SECONDS` | Segundos sin tráfico antes de que AWS suspenda el sandbox; `0` desactiva la auto-suspensión | `300`; `0` o entero `>= 60` y menor que `RAYITO_MCP_TIMEOUT_SECONDS` (con un timeout por debajo de 300 s hay que bajar el idle o ponerlo a `0`), si no el servidor sale con código 2 |
 | `RAYITO_MCP_LOG_LEVEL` | Nivel del log (siempre por stderr) | `INFO`; uno de `DEBUG INFO WARNING ERROR CRITICAL` |
@@ -98,7 +105,7 @@ existe ...; la siguiente llamada crea uno nuevo`).
 
 ```bash
 claude mcp add rayito \
-  -e RAYITO_TEMPLATE=rayito-base -e AWS_REGION=us-east-1 -e AWS_PROFILE=<perfil> \
+  -e RAYITO_TEMPLATE=rayito-base -e AWS_REGION=us-east-1 -e AWS_DEFAULT_REGION=us-east-1 -e AWS_PROFILE=<tu-perfil> \
   -- uvx --from "rayito[mcp]" rayito-mcp
 ```
 
@@ -119,7 +126,7 @@ macOS, `%APPDATA%\Claude\` en Windows):
       "env": {
         "RAYITO_TEMPLATE": "rayito-base",
         "AWS_REGION": "us-east-1",
-        "AWS_PROFILE": "<perfil>"
+        "AWS_PROFILE": "<tu-perfil>"
       }
     }
   }
@@ -140,7 +147,7 @@ Cursor, `.cursor/mcp.json`:
     "rayito": {
       "command": "uvx",
       "args": ["--from", "rayito[mcp]", "rayito-mcp"],
-      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<perfil>"}
+      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<tu-perfil>"}
     }
   }
 }
@@ -155,7 +162,7 @@ VS Code, `.vscode/mcp.json`:
       "type": "stdio",
       "command": "uvx",
       "args": ["--from", "rayito[mcp]", "rayito-mcp"],
-      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<perfil>"}
+      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<tu-perfil>"}
     }
   }
 }
@@ -193,7 +200,7 @@ claude mcp add --transport http rayito-http http://127.0.0.1:8000/mcp
 ## Inspector
 
 ```bash
-RAYITO_TEMPLATE=rayito-base AWS_REGION=us-east-1 AWS_PROFILE=<perfil> \
+RAYITO_TEMPLATE=rayito-base AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE=<tu-perfil> \
   pnpm dlx @modelcontextprotocol/inspector \
   uv run --project <repo>/clients/python --extra mcp rayito-mcp
 ```

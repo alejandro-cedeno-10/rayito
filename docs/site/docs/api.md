@@ -7,12 +7,14 @@ para el shim de E2B); los módulos con guion bajo son internos.
 | Página | Qué contiene |
 |---|---|
 | [Sandbox](referencia/python/sandbox.md) | `Sandbox` y `AsyncSandbox`: crear, conectar, ejecutar, pausar, destruir |
-| [Subclientes](referencia/python/subclientes.md) | `sbx.commands`, `sbx.files`, `sbx.pty`, `sbx.git`, sus handles y el paginador del listado |
+| [Subclientes](referencia/python/subclientes.md) | `sbx.commands`, `sbx.files`, `sbx.pty`, `sbx.git`, `sbx.agent` (con `AgentSpec`, sus eventos y las pasarelas del modelo), sus handles y el paginador del listado |
 | [Pool](referencia/python/pool.md) | `SandboxPool`, `AsyncSandboxPool`, `PoolConfig` y los backends |
-| [Modelos](referencia/python/modelos.md) | los tipos de datos: `SandboxInfo`, `Execution`, `Result`, `EntryInfo`, `S3Staging`… |
-| [Opcionales](referencia/python/opcionales.md) | `SecretStore`, `SecretCache`, `SecretRef` y `DynamoDbIndex` (apagados por defecto, con coste) |
+| [Modelos](referencia/python/modelos.md) | los tipos de datos: `SandboxInfo`, `Execution`, `Result`, `EntryInfo`, `S3Staging`, los gráficos, `ClientSettings`, `TransportSettings`… |
+| [Opcionales](referencia/python/opcionales.md) | las funciones con coste, apagadas por defecto: secretos, índice, montajes S3, tamaños, eventos, OTLP, pasarela de secretos, templates, pilas opcionales, volúmenes EFS y dominio propio (estos dos, experimentales) |
 | [Excepciones](referencia/python/excepciones.md) | la jerarquía de errores |
 | [Shim E2B](referencia/python/shim-e2b.md) | `rayito.e2b`: el SDK de E2B 2.x sobre Rayito |
+
+`rayito.__version__` da la versión del paquete instalado.
 
 Convenciones:
 

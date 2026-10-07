@@ -76,18 +76,42 @@ mandas teclas y del que recibes bytes.
     rayito sandbox connect microvm-<id> --token-file ~/.rayito/demo.token   # Ctrl-D para salir
     ```
 
+=== "Shim E2B"
+
+    ```python
+    from rayito.e2b import PtySize, Sandbox
+
+    with Sandbox.create() as sbx:
+        chunks: list[bytes] = []
+        pty = sbx.pty.create(PtySize(rows=24, cols=80), on_data=chunks.append)  # (1)!
+        sbx.pty.send_stdin(pty.pid, b"echo hola\n")
+        sbx.pty.resize(pty.pid, PtySize(rows=40, cols=120))
+        sbx.pty.kill(pty.pid)
+    ```
+
+    1. El orden de E2B, `PtySize(rows, cols)`, y sus firmas posicionales;
+       devuelve el mismo `PtyHandle` nativo.
+
 ## Paso a paso
 
 1. `pty.create()` arranca el shell de login del usuario (`<shell> -i -l`,
    uid 1000) con `TERM=xterm-256color`. Devuelve un `PtyHandle`, que es un
    `CommandHandle` cuyos trozos son bytes de la terminal.
-2. `send_input(data)` escribe teclas (texto o bytes; `"\x03"` es Ctrl-C).
+2. `send_input(data)` escribe teclas (texto o bytes; `"\x03"` es Ctrl-C);
+   `send_stdin(data)` es un alias con el nombre de E2B.
 3. Lee la salida iterando el handle o con un callback `on_data` (TypeScript:
    `onData`), que recibe cada trozo de bytes.
 4. `resize(size)` cambia filas y columnas: el programa recibe `SIGWINCH`.
 5. `kill()` termina la terminal; `disconnect()` la suelta sin matarla y
    `pty.connect(pid)` vuelve a engancharse más tarde, desde este u otro
-   proceso.
+   proceso, con `on_data=`, `from_seq=` y `timeout=` (TypeScript: `onData`,
+   `fromSeq`, `timeoutMs`).
+
+Sin el handle, los mismos métodos van por `pid` en `sbx.pty`:
+`send_input(pid, data)` (o `send_stdin`), `resize(pid, size)` y
+`kill(pid)`. El `PtyHandle` tiene además `pid`, `exit_code`, `wait()` y
+`close_stdin()` como cualquier `CommandHandle`, y las PTY vivas aparecen en
+`commands.list()` con `kind="pty"`.
 
 Para conectar una terminal web, reenvía los bytes de `on_data` al
 navegador y lo que teclea el usuario a `send_input`.
@@ -119,14 +143,15 @@ perder salida. Leer una PTY de un sandbox suspendido no lo despierta.
 | Python | TypeScript | Cuándo | Qué hacer |
 |---|---|---|---|
 | `TimeoutException` | `TimeoutError` | la terminal llegó a su `timeout` | pasa `timeout=None` para sesiones largas |
-| `RateLimitException` | `RateLimitError` | más de 256 procesos y PTYs vivos | cierra terminales que no uses |
+| `RateLimitException` | `RateLimitError` | demasiados procesos y PTYs vivos ([Límites](../limits.md)) | cierra terminales que no uses |
 | `InvalidArgumentException` | `InvalidArgumentError` | `shell` que no es una ruta absoluta, tamaño inválido | corrige el argumento |
 
 ## Diferencias con E2B
 
 - El orden de `PtySize` del SDK nativo es `(cols, rows)`; el shim de E2B
   conserva `(rows, cols)`.
-- `send_stdin` del shim es `send_input` en el SDK nativo.
+- `send_stdin` de E2B existe también en el SDK nativo como alias de
+  `send_input`.
 
 ## Ver también
 

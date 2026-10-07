@@ -9,8 +9,9 @@ por las [Guías](../guias/index.md); esta sección es para consultar.
 
     ---
 
-    `Sandbox`, `AsyncSandbox`, subclientes, pool, modelos, opcionales,
-    excepciones y el shim de E2B, generados desde los docstrings.
+    `Sandbox`, `AsyncSandbox`, subclientes (`commands`, `files`, `pty`,
+    `git`, `agent`…), pool, modelos, opcionales, excepciones y el shim de
+    E2B, generados desde los docstrings.
 
     [:octicons-arrow-right-24: Referencia de Python](../api.md)
 
@@ -27,7 +28,8 @@ por las [Guías](../guias/index.md); esta sección es para consultar.
 
     ---
 
-    `rayito image`, `rayito sandbox`, `rayito doctor`.
+    `rayito doctor`, `image`, `sandbox`, `stack`, `events`, `template`,
+    `domain` y `agent`.
 
     [:octicons-arrow-right-24: CLI](../cli.md)
 
@@ -41,9 +43,25 @@ por las [Guías](../guias/index.md); esta sección es para consultar.
 
 </div>
 
-Además: [Variables de entorno](variables-de-entorno.md),
-[Límites](../limits.md), [Otros lenguajes (gRPC)](otros-lenguajes.md) y el
-[Changelog](changelog.md).
+Todas las páginas de la sección:
+
+| Página | Qué contiene |
+|---|---|
+| [Python: resumen](../api.md) | qué se importa de `rayito` y de `rayito.e2b`, y por dónde empezar |
+| [Python: Sandbox](python/sandbox.md) | `Sandbox` y `AsyncSandbox`: crear, conectar, ciclo de vida, red, persistencia |
+| [Python: Subclientes](python/subclientes.md) | `commands`, `files`, `pty`, `git` y `agent`, con sus handles |
+| [Python: Pool](python/pool.md) | `SandboxPool`, `AsyncSandboxPool`, `PoolConfig` y los backends |
+| [Python: Modelos](python/modelos.md) | los tipos de datos que devuelven y aceptan las llamadas |
+| [Python: Opcionales](python/opcionales.md) | las clases de las funciones opcionales (secretos, montajes, eventos, templates…) |
+| [Python: Excepciones](python/excepciones.md) | la jerarquía de excepciones |
+| [Python: Shim E2B](python/shim-e2b.md) | `rayito.e2b` |
+| [TypeScript](typescript.md) | clases y métodos públicos del paquete npm y de `rayito/e2b` |
+| [CLI](../cli.md) | cada orden de `rayito` y sus opciones |
+| [Errores](errores.md) | cada error en Python y TypeScript, cuándo ocurre y qué hacer |
+| [Variables de entorno](variables-de-entorno.md) | `RAYITO_*` y las variables de AWS que leen el SDK y la CLI |
+| [Límites](../limits.md) | límites de la plataforma, versionado y compatibilidad SDK ↔ `rayd` |
+| [Otros lenguajes (gRPC)](otros-lenguajes.md) | hablar con `rayd` desde un lenguaje sin SDK oficial |
+| [Changelog](changelog.md) | los cambios de cada versión |
 
 ## Python y TypeScript: cómo se corresponden los nombres
 

@@ -232,6 +232,13 @@ métricas](#instantanea-e-historial)).
 Guía completa, nombres de span, atributos y lo que nunca se registra:
 [OpenTelemetry](funciones-opcionales/opentelemetry.md).
 
+Enviar **desde el sandbox** las métricas del historial (CPU, memoria y
+disco) a tu colector OTLP es otra función opcional, también apagada por
+defecto: `create(telemetry=TelemetryExport(...))`, y
+`sbx.get_telemetry_status()` (TypeScript: `getTelemetryStatus()`) cuenta lo
+exportado y lo descartado. Ver
+[Exportación OTLP](funciones-opcionales/exportacion-otlp.md).
+
 ## En el shim de E2B
 
 `sbx.get_metrics(start, end)` devuelve el historial como

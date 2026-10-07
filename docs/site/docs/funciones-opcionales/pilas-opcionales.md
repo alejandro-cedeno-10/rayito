@@ -1,6 +1,6 @@
 # Pilas opcionales (`rayito stack`)
 
-M15 (Rayito 0.6) introduce un convenio único para desplegar, consultar y
+Desde 0.6.0 hay un convenio único para desplegar, consultar y
 borrar la infraestructura opcional de las funciones de coste (ADR-016):
 `OptionalStacks` en el SDK y `rayito stack` en la CLI. Ninguna función se
 despliega sola — siempre es una llamada explícita tuya — y el propio SDK no
@@ -57,7 +57,7 @@ Se pasan con `parameters={...}` (TypeScript: `{ parameters: {...} }`) o
 | `sizes-guard` | `ImageArns` (obligatorio) | — |
 | `events-webhooks` | `LogGroupName` (obligatorio), `ReconcilerIntervalMinutes`; `ArtifactBucket` lo rellena `artifact_bucket=`/`--artifact-bucket` | —, `5` |
 | `otlp-export` | ninguno | — |
-| `templates` | `ArtifactBucketArn`, `BuildRoleArn`, `BaseImageBucketArn` (obligatorios), `ImageLogGroupPrefix`, `ProtectedImageNamePrefix` | —, —, —, `/rayito`, `rayito-base` |
+| `templates` | `ArtifactBucketArn`, `BuildRoleArn` (obligatorios), `ImageLogGroupPrefix`, `BaseImageBucketArn`, `ProtectedImageNamePrefix` | —, —, `/rayito`, vacío (el bucket de artefactos), `rayito-base` |
 | `custom-domain` | `PublicDomain`, `CertificateArn` (obligatorios, certificado ACM en us-east-1), `AlternateDomainNames` | —, —, vacío (alias comodín `*.<PublicDomain>`) |
 | `efs-volumes` | `VpcId`, `SubnetIds` (obligatorios, de 1 a 3), `ConnectorName`, `AllowWrite`, `AccessPointArns`, `ReadOnlyAccessPointArns` | —, —, `rayito-efs`, `true`, vacío (cualquier access point del sistema de ficheros), vacío |
 

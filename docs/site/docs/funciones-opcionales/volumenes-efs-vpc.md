@@ -1,4 +1,4 @@
-# Volúmenes EFS en tu VPC
+# Volúmenes EFS en tu VPC (experimental)
 
 <small>Desde 0.7.0, experimental ([Novedades](../novedades/0.7.0.md#volumenes-efs)).</small>
 

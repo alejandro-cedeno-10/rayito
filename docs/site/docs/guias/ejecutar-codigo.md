@@ -80,7 +80,10 @@ abiertos siguen ahí en la siguiente llamada.
 Cada `Result` trae las representaciones que produjo el kernel: `text`,
 `html`, `markdown`, `svg`, `png`, `jpeg`, `pdf`, `latex`, `json`,
 `javascript`, `chart` (datos del gráfico) y `data`. `formats()` dice cuáles
-hay.
+hay, `is_main_result` (TypeScript: `isMainResult`) marca el valor de la
+última expresión y `extra` guarda los tipos MIME que no tienen campo propio
+(y el aviso `rayito/omitted` de un resultado
+[demasiado grande](../limits.md)).
 
 ### Gráficos
 
@@ -185,8 +188,12 @@ mientras la celda corre, sin esperar al final:
 ### Contextos
 
 Cada contexto es un kernel independiente con su propio estado. El contexto
-`default` existe siempre; `create_code_context()` crea otros (hasta 8 por
-sandbox), con su `cwd`, su lenguaje y sus `envs`.
+`default` existe siempre; `create_code_context()` crea otros (con un tope
+por sandbox, ver [Límites](../limits.md)), con su `cwd`, su `language`, sus
+`envs` y, opcionalmente, sus [`secrets`](../secrets.md). Devuelve un
+`CodeContext` (`id`, `language`, `cwd`); `run_code(context=)`,
+`restart_code_context()` y `remove_code_context()` aceptan el objeto o su
+`id`.
 
 === "Python"
 
@@ -262,14 +269,19 @@ agente reinicia ese contexto (y su estado se pierde).
 |---|---|---|---|
 | el código lanza | `execution.error` (no es una excepción) | `execution.error` | lee `error.name`, `error.value` y `error.traceback` |
 | la celda tarda más que `timeout` | `error.name == "ExecutionTimeout"` | igual | sube `timeout` |
-| `language` y `context` a la vez, `envs` en un kernel no Python | `InvalidArgumentException` | `InvalidArgumentError` | elige uno |
+| `language` y `context` a la vez, `envs` en un kernel no Python, `code` de más de 1 MiB | `InvalidArgumentException` | `InvalidArgumentError` | elige uno; para código grande, escríbelo a un fichero y ejecútalo |
 | kernel que la imagen no trae (`bash` en `rayito-base`) | `UnimplementedError` | `UnimplementedError` | usa `rayito-base-poly` |
-| más de 8 contextos | `RateLimitException` | `RateLimitError` | borra contextos con `remove_code_context` |
+| demasiados contextos ([Límites](../limits.md)) | `RateLimitException` | `RateLimitError` | borra contextos con `remove_code_context` |
 | una celda silenciosa se suspende a mitad | (el SDK se reengancha solo) | igual | sube `max_idle_seconds` ([Pausar y reanudar](pausar-reanudar.md)) |
 
 ## Diferencias con E2B
 
-- Ninguna en la API de Python: `rayito.e2b` usa el mismo `run_code`.
+- La misma API: `rayito.e2b` (Python y TypeScript) llama al `run_code` nativo
+  y devuelve la misma `Execution`. Dos detalles del shim: un `language` que
+  no existe (`r`, `java`) es `UnimplementedError` sin llamar al agente, como
+  en E2B, y en Python `timeout=None` son los 300 s por defecto (en el nativo,
+  `None` es sin límite). En el shim de Python, `secrets=` y los `envs` de
+  `create_code_context` sólo están en el nativo (`sbx.native`).
 - Lenguajes: Python siempre; bash, JavaScript y TypeScript en
   `rayito-base-poly`; R y Java no existen.
 

@@ -21,11 +21,11 @@ página lleva una de dos etiquetas:
 |---|---|
 | 1 sandbox de 2 GB durante 10 minutos | 600 s × $0,126/h ≈ **$0,021**, más el lanzamiento ($0,0014) ≈ **$0,022** |
 | 1 sandbox de 2 GB durante 1 hora | **$0,126** + $0,0014 |
-| Un agente con 100 sesiones al día de 5 minutos | 100 × (300 s × $0,126/h + $0,0014) ≈ **$1,19/día** |
+| Un agente con 100 sesiones al día de 5 minutos | sólo la VM: 100 × (300 s × $0,126/h + $0,0014) ≈ **$1,19/día**; el modelo se paga aparte ([coste de un agente](#coste-de-un-agente-vm-frente-a-modelo)) |
 | El mismo sandbox pausado 8 horas | almacenamiento del snapshot (≈ 0,92 GB × $0,08/GB-mes durante 8 h) ≈ **$0,0008** + un ciclo suspend/resume ($0,0049) |
 | Mantener publicada una versión de imagen | ≈ **$0,04 por semana** (mínimo una semana por versión) |
 | `rayito doctor --launch` | ≈ **$0,002** |
-| Un pool de 3 plazas ociosas | ≈ 3 × $0,6 = **$1,8/mes** (ver abajo) |
+| Un pool de 3 plazas ociosas | ≈ 3 × $0,60 = **$1,80/mes** (ver abajo) |
 
 Sin free tier ni cuota de plan: pagas por segundo mientras el sandbox está
 `RUNNING`, por GB en cada snapshot y por el almacenamiento de las versiones
@@ -103,8 +103,8 @@ distintas, y es fácil confundirlas:
 | Concepto | Coste por plaza |
 |---|---|
 | Sólo el almacenamiento del snapshot mientras está aparcada | 0,92 GB × $0,08/GB-mes ≈ **$0,074/mes** |
-| Reciclado: cada ≈ 7 h la plaza se relanza y se vuelve a aparcar para que nunca llegue al límite de 8 h | ≈ $0,005 por ciclo ≈ **$0,52/mes** |
-| **Total de una plaza ociosa** | ≈ **$0,6/mes** (frente a ≈ $91/mes de un sandbox `RUNNING` todo el mes) |
+| Reciclado: cada ≈ 7 h la plaza se relanza y se vuelve a aparcar para que nunca llegue al límite de 8 h | ≈ $0,0052 por ciclo × ≈ 103 ciclos ≈ **$0,53/mes** |
+| **Total de una plaza ociosa** | ≈ **$0,60/mes** (frente a ≈ $91/mes de un sandbox `RUNNING` todo el mes) |
 | Tomar una plaza | $0,0014 (lectura del snapshot) + el cómputo normal mientras la usas |
 
 <a id="tiempos-fuente-docsbenchmarks2026-09-cold-startmd-milestonesmd-aws_api_notesmd-16"></a>
@@ -280,12 +280,13 @@ Cómo salen las cifras de las plazas:
 
 | Tu caso | Opción | Coste extra (List) |
 |---|---|---|
+| Lo normal: una tarea o una conversación, sin requisitos de latencia del primer mensaje | ninguna: `Sandbox.create(...)` + `sbx.agent.run(...)` | $0 |
 | Tareas sueltas, puedes esperar unos segundos | A. Prefetch / `prepare()` | ≈ $0 |
 | Conversaciones con pausas de minutos u horas (< 8 h) | B. `pause()` y `connect()` | ≈ $0,005–0,006 por ciclo + ≈ $0,0001/h guardado |
 | Muchas tomas al día, latencia mínima | C. Pool con `warmup` | ≈ $0,64/plaza/mes |
 | Lo anterior y el servidor ya arrancado | D. Pool con servidor residente | ≈ $0,82/plaza/mes (no recomendada: apenas gana a C) |
 
-Decidido con las medidas: A queda encendida por defecto porque, desde que
+Todas son opcionales. Decidido con las medidas: A queda encendida por defecto porque, desde que
 el demonio espera a que el guest se calme, ya no retrasa `create()`
 (Q153), aunque de extremo a extremo su ganancia de hoy cae dentro del
 ruido. C es la recomendada para latencia mínima. D funciona desde la

@@ -37,8 +37,14 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de arr
   que factura $0,126/h mientras corre, y el `create()` de 6 s es despreciable
   frente a minutos de trabajo.
 - La configuración de lanzamiento es **por pool** (`envs`, `metadata`,
-  `cpu_time_limit`, política de idle, conectores, rol, `timeout`): dos
-  configuraciones son dos pools.
+  `cpu_time_limit`, política de idle, conectores, rol, `timeout`, egress):
+  dos configuraciones son dos pools.
+- **Agente en el sandbox**: no hace falta un pool. El arranque normal es
+  `Sandbox.create(...)` + `sbx.agent.run(...)`, y los turnos de una misma
+  conversación van mejor pausando su VM; un pool con
+  [`warmup`](#calentamiento-warmup-y-servidor-residente) sólo compensa con
+  muchas conversaciones **nuevas** que necesitan el primer mensaje rápido
+  ([¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)).
 
 ## API
 
@@ -56,9 +62,12 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de arr
     ```
 
     `Sandbox.create(pool=pool)` es azúcar de `pool.take()`: acepta
-    `ready_timeout`, `request_timeout` y `reconnect_timeout` y rechaza con
+    `ready_timeout`, `request_timeout`, `reconnect_timeout`, `secrets`,
+    `secret_cache`, `transfer` y `logger`, y rechaza con
     `InvalidArgumentException` cualquier otro kwarg de lanzamiento o de plano
-    (`template`, `timeout`, `envs`, `region`, `control_plane`...). `pool`
+    (`template`, `timeout`, `envs`, `region`, `control_plane`, `gateways`,
+    `persist`, `index`...). Para abrir una pasarela en la plaza tomada (un
+    agente, por ejemplo) usa `pool.take(gateways=...)`. `pool`
     recibe un `SandboxPool` ya arrancado, nunca un `PoolConfig`: un pool tiene
     un hilo, N VMs y una factura, y se arranca y cierra explícitamente.
 
@@ -102,20 +111,40 @@ fichero en 336 s, ≈ $0,25). Percentil nearest-rank como en el benchmark de arr
 
 ### `PoolConfig`
 
-| Campo | Por defecto | Qué es |
+En TypeScript `PoolConfig` es el objeto que recibe `new SandboxPool(...)`,
+con los mismos campos en camelCase y los tiempos en milisegundos.
+
+| Campo (Python / TypeScript) | Por defecto | Qué es |
 |---|---|---|
 | `size` | — | plazas aparcadas (`1..=64`; 64 × 2 GB son 128 GB de la cuota regional de 1 024 GB) |
-| `template`, `template_version` | `RAYITO_TEMPLATE`, última | la imagen: un pool es una imagen y una versión |
-| `timeout` | 28 800 | vida máxima de cada plaza (`maximumDurationInSeconds`, cuenta el tiempo suspendido); aparcar todo lo que AWS permite |
+| `template`, `template_version` / `templateVersion` | `RAYITO_TEMPLATE`, última | la imagen: un pool es una imagen y una versión |
+| `timeout` / `timeoutMs` | 28 800 s | vida máxima de cada plaza (`maximumDurationInSeconds`, cuenta el tiempo suspendido); aparcar todo lo que AWS permite |
 | `idle` | `IdlePolicy()` | obligatorio y con `auto_resume=True`; `suspended_duration_seconds` se resuelve a `timeout − max_idle_seconds`, la red de seguridad de una plaza olvidada |
 | `envs`, `metadata`, `cpu_time_limit`, `execution_role_arn`, `ingress`, `egress`, `logging` | como en `create()` | fijos en el `runHookPayload` y en `run-microvm`: por pool, no por toma |
-| `min_remaining_seconds` | 3 600 | vida mínima con la que se entrega una plaza; por debajo se recicla |
-| `fill_concurrency` | 4 | calentamientos en vuelo (acota handles y memoria; el ritmo lo ponen los token buckets) |
-| `sweep_interval_seconds` | 30 | cadencia del reciclado y la reconciliación |
-| `ready_timeout` | 90 | plazo de readiness de cada calentamiento |
+| `allow_internet_access` / `allowInternetAccess`, `network` | `True`, ninguna | la política de egress de todas las plazas, como en `create()`; un pool de agentes pasa `allow_internet_access=False` |
+| `min_remaining_seconds` / `minRemainingMs` | 3 600 s | vida mínima con la que se entrega una plaza; por debajo se recicla |
+| `fill_concurrency` / `fillConcurrency` | 4 | calentamientos en vuelo (`1..=8`; acota handles y memoria; el ritmo lo ponen los token buckets) |
+| `sweep_interval_seconds` / `sweepIntervalMs` | 30 s | cadencia del reciclado y la reconciliación (mínimo 5 s) |
+| `ready_timeout` / `readyTimeoutMs` | 90 s | plazo de readiness de cada calentamiento |
+| `index` | ninguno | `DynamoDbIndex(...)`: escribe la fila del [índice de metadatos](optional-features.md) de cada plaza al lanzarla (coste propio, apagado por defecto) |
+| `warmup` | `()` / `[]` | pasos que cada plaza corre antes de aparcarse; ver [Calentamiento](#calentamiento-warmup-y-servidor-residente) |
 
 No hay `access_token` (uno por plaza, ver custodia) ni `allowed_ports`
 (`get_host(port)` acuña por puerto tras la toma, como después de `create()`).
+Tampoco `gateways` ni `secrets`: las plazas calientes nunca llevan secretos,
+que se enlazan al tomar.
+
+### `take()`
+
+| Python | TypeScript | Por defecto | Qué es |
+|---|---|---|---|
+| `wait` | `waitMs` | 0 | cuánto esperar a que el relleno aparque una plaza antes de caer a `create()` |
+| `ready_timeout`, `request_timeout`, `reconnect_timeout` | `readyTimeoutMs`, `requestTimeoutMs`, `reconnectTimeoutMs` | como en `create()` | plazos del handle que se entrega |
+| `secrets`, `secret_cache` | `secrets`, `secretCache` | ninguno | [secretos](optional-features.md) inyectados en el sandbox tomado |
+| `gateways` | `gateways` | ninguna | abre la [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) en el sandbox tomado, igual que `create(gateways=)`; es lo que necesita un agente |
+| — | `logger` | ninguno | logger del handle |
+
+`close(drain=True)` (TS: `close({ drain })`) y `stats()` completan la API.
 
 ## Qué hace una toma
 
@@ -257,12 +286,10 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 ## Calentamiento (`warmup`) y servidor residente
 
-!!! warning "Sin publicar"
-    `PoolConfig.warmup` está en `main` y sale con 0.8.0. Las cifras de
-    esta sección están medidas en AWS real el 2026-10-07 (Q147 y Q148 de
-    `AWS_API_NOTES.md`); los costes son precios de lista (consultados
-    2026-10-06) por esos tiempos.
-    [Agente en el sandbox](guias/agente-en-el-sandbox.md).
+Las cifras de esta sección están medidas en AWS real el 2026-10-07 (Q147
+y Q148 de `AWS_API_NOTES.md`); los costes son precios de lista
+(consultados 2026-10-06) por esos tiempos, con el detalle en
+[Precios](cost.md#coste-de-la-vm-con-fast-start).
 
 Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (19,6 s de
 mediana tras `create()` sin prefetch, medido) en cada VM nueva. `PoolConfig.warmup` deja ese coste en
@@ -272,26 +299,50 @@ tiene que ser rápido: para los turnos de una misma conversación basta con
 pausar la VM entre ellos, sin pool (ver
 [¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)).
 
-```python
-from rayito import PoolConfig, agent_pool_warmup
+=== "Python"
 
-config = PoolConfig(
-    size=3,
-    template="rayito-agent",
-    allow_internet_access=False,   # obligatorio en un pool de agentes
-    warmup=agent_pool_warmup("opencode"),
-)
-```
+    ```python
+    from rayito import PoolConfig, agent_pool_warmup
 
-Cada paso de `warmup` corre tras `_settle` y antes de `pause()`; un fallo
+    config = PoolConfig(
+        size=3,
+        template="rayito-agent",
+        allow_internet_access=False,  # un pool de agentes cierra el egress
+        warmup=agent_pool_warmup("opencode"),
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { SandboxPool, agentPoolWarmup } from "rayito";
+
+    const pool = new SandboxPool({
+      size: 3,
+      template: "rayito-agent",
+      allowInternetAccess: false, // un pool de agentes cierra el egress
+      warmup: agentPoolWarmup("opencode"),
+    });
+    console.log(pool);
+    ```
+
+La pasarela del modelo se abre al tomar la plaza, con
+`pool.take(gateways=...)`: ejemplo completo en
+[Agente en el sandbox: pool de agentes](guias/agente-en-el-sandbox.md#pool-de-agentes-c).
+
+`agent_pool_warmup(runtime="opencode", *, serve=False)` (TS:
+`agentPoolWarmup(runtime, { serve })`) devuelve una lista de `WarmupStep`
+(`cmd`, `background=False`, `timeout_seconds`/`timeoutMs`, `tag`); puedes
+pasar tus propios pasos en `warmup` igual. Cada paso corre tras la celda de
+asentado (abajo) y antes de `pause()`; un fallo
 cuenta como un calentamiento fallido (se termina el VM, se aplica el mismo
 backoff que un calentamiento normal, `failed += 1`). Un paso en segundo
 plano (`background=True`) se lanza y se suelta: el relleno no espera a que
-acabe.
+acabe. Un reciclado relanza la plaza y vuelve a correrlos.
 
 | Opción | Qué precalienta | Medido (pool de 2, n=5) | Coste por ciclo de reciclado (≈ cada 7 h) | Coste por plaza al mes |
 |---|---|---|---|---|
-| **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode (y deepagents, si aplica) ya en la caché de páginas | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
+| **C: `agent_pool_warmup("opencode")`** | el binario de OpenCode ya en la caché de páginas (`agent_pool_warmup("deepagents")` hace lo propio con deepagents) | toma → primer token **p50 5,1 s / p95 6,7 s**; plaza lista en 15,5 s | lanzamiento $0,0014 + 15,5 s de cómputo $0,0005 + aparcar ≈ 0,92 GB $0,0035 ⇒ ≈ **$0,0054** | ≈ **$0,64** (frente a $0,60 de una plaza base) |
 | **D: `agent_pool_warmup("opencode", serve=True)`** | lo de C, más `opencode serve` ya arrancado (349 MiB de RSS) y con una instancia calentada | antes del arreglo, sin texto (abajo); con la relectura del servidor, toma → primer token **p50 4,8 s / p95 6,1 s**, 5 de 5 con texto; plaza lista en 17,7 s | aparcar ≈ 1,29 GB ⇒ ≈ **$0,0069** | ≈ **$0,82** |
 
 La API no devuelve el tamaño del snapshot de un `suspend`: el de C se toma
@@ -348,8 +399,8 @@ B, C y D: [Agente en el sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 | Aparcar (snapshot write al `pause()`) | 0,92 × $0,0038 ≈ **$0,0035** |
 | Tomar (snapshot read al `resume`) | 0,92 × $0,00155 ≈ **$0,0014** |
 | Calentar (lanzamiento: read + ≈ 7 s `RUNNING`) | $0,0014 + $0,00025 ≈ **$0,0017** |
-| Reciclado de una plaza ociosa (cada ≈ 7 h con los defaults: calentar + aparcar) | ≈ **$0,005** ⇒ ≈ 3,4/día ⇒ ≈ **$0,52/mes** |
-| **Total plaza ociosa** | ≈ **$0,6/mes** (frente a $91/mes una VM `RUNNING`) |
+| Reciclado de una plaza ociosa (cada ≈ 7 h con los defaults: calentar + aparcar) | ≈ **$0,0052** ⇒ ≈ 3,4/día (≈ 103/mes) ⇒ ≈ **$0,53/mes** |
+| **Total plaza ociosa** | ≈ **$0,60/mes** (frente a $91/mes una VM `RUNNING`) |
 | Plaza tomada | la toma ($0,0014) + el sandbox normal ($0,126/h mientras corre) |
 
 El e2e completo (≈ 46 lanzamientos de segundos: 20 tomas + 20 `create()` +

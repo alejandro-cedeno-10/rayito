@@ -8,16 +8,19 @@ y cada sandbox tiene su propio *access token*, que genera el SDK al crearlo.
 ## ¿Cuánto cuesta?
 
 Lo que consuma en tu factura de AWS: ≈ $0,126 por hora y sandbox de 2 GB
-mientras corre, unos céntimos por lanzamiento y por ciclo de pausa, y
-≈ $0,04 por semana por versión de imagen publicada. Ejemplos en
-[Costes](../cost.md).
+mientras corre, una fracción de céntimo por lanzamiento y ≈ $0,04 por semana
+por versión de imagen publicada. Un agente de IA suma los tokens del
+modelo, que suelen pesar más que la VM. Ejemplos y cada componente en
+[Precios](../cost.md#cuanto-cuesta-con-ejemplos).
 
 ## ¿Cómo elijo CPU y memoria?
 
-Con la imagen. El tamaño es una propiedad de la imagen de Lambda MicroVMs,
-no de `create()`: publica una imagen por tamaño
-(`rayito image publish --memory-mib 4096 --image-name myimg-4gb`) y elige la
-imagen al crear el sandbox ([Límites: tamaño](../limits.md#tamano-cpuram)).
+Con la imagen. El tamaño es una propiedad de la imagen de Lambda MicroVMs:
+publica las imágenes de cada tamaño con `rayito image publish --sizes` y
+elige al crear con `Sandbox.create(size=...)`, o publica una imagen propia
+con `--memory-mib` y créala por su nombre
+([Tamaños](../funciones-opcionales/tamanos.md),
+[Límites: tamaño](../limits.md#tamano-cpuram)).
 
 ## ¿Puede un sandbox vivir más de 8 horas?
 
@@ -64,6 +67,18 @@ No, salvo que le des un *execution role* (`execution_role_arn=`), que por
 defecto no existe. Las transferencias por S3 las firma tu proceso, no el
 sandbox ([Seguridad](../security.md)).
 
+## ¿Puedo correr un agente de IA dentro del sandbox?
+
+Sí, desde 0.8.0: `sbx.agent.run(...)` corre un agente de código (OpenCode o
+deepagents) dentro del sandbox, sobre una imagen construida con
+`AgentTemplate`. Lo normal es crear el sandbox con `Sandbox.create(...)` y
+llamar a `sbx.agent.run(...)`; el pool, el calentamiento y el servidor
+residente son opcionales para arrancar más rápido. La credencial del modelo
+sólo pasa por la pasarela de secretos, y los permisos del agente no son una
+frontera de seguridad: la frontera es el MicroVM con la salida cerrada
+([Agente en el sandbox](../guias/agente-en-el-sandbox.md),
+[Seguridad](../security.md#agente-de-codigo-dentro-del-sandbox)).
+
 ## ¿Qué pasa si mi proceso muere con sandboxes vivos?
 
 Siguen vivos (y facturando) hasta su `timeout`. Con el
@@ -88,7 +103,11 @@ AWS y no quieres operar un clúster. Fuentes de la tabla:
 ## ¿Es estable?
 
 Cada versión se acepta contra AWS real, no contra simuladores, y las
-releases están firmadas ([Verificar una release](../verify.md)). La única
-función opcional sin aceptación en AWS real todavía es el
-[índice de metadatos](../funciones-opcionales/indice-de-metadatos.md).
+releases están firmadas ([Verificar una release](../verify.md)). Dos
+funciones opcionales son **experimentales**: el
+[dominio propio](../funciones-opcionales/dominio-propio.md), aún sin
+verificar de punta a punta en AWS real, y los
+[volúmenes EFS](../funciones-opcionales/volumenes-efs.md). El
+[índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) sigue
+pendiente de aceptación en AWS real. Todas están apagadas por defecto.
 Cambios por versión: [Changelog](../referencia/changelog.md).

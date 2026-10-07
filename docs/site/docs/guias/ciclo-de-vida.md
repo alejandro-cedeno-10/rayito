@@ -80,6 +80,26 @@ un MicroVM de Lambda en tu cuenta, con una vida máxima de 8 horas.
     rayito sandbox kill microvm-<id>                  # o: rayito sandbox kill --all
     ```
 
+=== "Shim E2B"
+
+    ```python
+    from rayito.e2b import Sandbox
+
+    with Sandbox.create("rayito-base", timeout=1800, metadata={"run": "42"}) as sbx:  # (1)!
+        print(sbx.get_info().sandbox_id, sbx.is_running())
+        token = sbx.native.access_token  # (2)!
+
+    for item in Sandbox.list().next_items():  # (3)!
+        print(item.sandbox_id, item.state)
+    ```
+
+    1. En el shim, `timeout` es el plazo lógico de E2B (300 s por defecto),
+       no la vida de la plataforma: ver [Plazo del servidor](../lifecycle.md#en-el-shim-de-e2b).
+    2. E2B no tiene este token; guárdalo si otro proceso va a usar
+       `Sandbox.connect(sandbox_id, access_token=...)`.
+    3. Un `SandboxPaginator` de E2B (`next_items()`, `has_next`,
+       `next_token`).
+
 ## Paso a paso
 
 ### Crear
@@ -89,38 +109,108 @@ espera a que el agente y el kernel estén listos. La imagen sale, por orden,
 del primer argumento (`template`), de `RAYITO_TEMPLATE` o falla. Puede ser un
 nombre (`rayito-base`, resuelto al ARN de tu cuenta) o un ARN completo.
 
-El tamaño del sandbox (CPU y memoria) es una propiedad de la imagen, no de
-`create()`: para tener sandboxes de 4 GB publica una imagen de 4 GB
-([Límites](../limits.md#tamano-cpuram)).
+El tamaño del sandbox (CPU y memoria) es una propiedad de la imagen: la
+memoria se fija al publicarla. `size="4gb"` (TypeScript: `size: "4gb"`)
+elige, sin llamar a AWS, la imagen de ese tamaño ya publicada
+(`rayito-base-4gb`); ver [Tamaños](../funciones-opcionales/tamanos.md) y
+[Límites: tamaño](../limits.md#tamano-cpuram).
 
 ### Destruir
 
 `kill()` termina el MicroVM (`terminate-microvm`) y devuelve `True` si lo
 encontró. `with` (Python) y `await using` (TypeScript) lo llaman al salir;
 sin ellos, llama tú a `kill()` en un `finally`. La forma de clase,
-`Sandbox.kill(sandbox_id)`, mata un sandbox del que sólo tienes el id.
+`Sandbox.kill(sandbox_id)`, mata un sandbox del que sólo tienes el id (no
+necesita el access token). `close()` es otra cosa: libera los recursos
+locales del handle (canales, hilo de renovación del token) y deja el
+MicroVM vivo.
 
 !!! warning "Un sandbox olvidado factura"
     Vive hasta su `timeout` (3600 s por defecto, tope 8 h) facturando
-    ≈ $0,126/h a 2 GB. Con la [auto-suspensión](pausar-reanudar.md) por
-    defecto, un sandbox sin tráfico se suspende a los 300 s y deja de
-    facturar cómputo, pero sigue pagando el almacenamiento de su snapshot.
+    cómputo ([precios](../cost.md#precios)). Con la
+    [auto-suspensión](pausar-reanudar.md) por defecto, un sandbox sin
+    tráfico se suspende a los 300 s y deja de facturar cómputo, pero sigue
+    pagando el almacenamiento de su snapshot.
 
 ### Conectar
 
 `Sandbox.connect(sandbox_id, access_token=...)` abre un handle nuevo sobre
 un sandbox existente, desde cualquier proceso con credenciales de AWS. Hace
-falta el *access token* del sandbox (`sbx.access_token`), que se genera en
-`create()` y no se puede recuperar después: guárdalo junto al id. Si el
-sandbox estaba suspendido, `connect()` lo reanuda.
+falta el *access token* del sandbox (`sbx.access_token`, o la variable
+`RAYITO_ACCESS_TOKEN`), que se genera en `create()` y no se puede recuperar
+después: guárdalo junto al id. Si el sandbox estaba suspendido, `connect()`
+lo reanuda; con `timeout=` alarga además su
+[plazo lógico](../lifecycle.md#set_timeout-y-connecttimeout).
+
+Sobre un handle que ya tienes, `sbx.connect()` (TypeScript:
+`await sbx.connect()`) lo reabre igual: reanuda si hace falta, espera al
+agente y devuelve el mismo objeto. Es la forma de continuar después de un
+`pause()` ([Pausar y reanudar](pausar-reanudar.md)).
+
+=== "Python"
+
+    ```python
+    from rayito import Sandbox
+
+    sbx = Sandbox.create()
+    sandbox_id, token = sbx.sandbox_id, sbx.access_token  # guárdalos juntos
+    sbx.close()  # (1)!
+
+    again = Sandbox.connect(sandbox_id, access_token=token)
+    try:
+        print(again.commands.run("echo sigo vivo").stdout)
+    finally:
+        again.kill()
+    ```
+
+    1. Suelta el handle local; el sandbox sigue corriendo.
+
+=== "Python (async)"
+
+    ```python
+    import asyncio
+
+    from rayito import AsyncSandbox
+
+
+    async def main() -> None:
+        sbx = await AsyncSandbox.create()
+        sandbox_id, token = sbx.sandbox_id, sbx.access_token
+        await sbx.close()
+
+        again = await AsyncSandbox.connect(sandbox_id, access_token=token)
+        async with again:
+            print((await again.commands.run("echo sigo vivo")).stdout)
+
+
+    asyncio.run(main())
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    const sbx = await Sandbox.create();
+    const { sandboxId, accessToken } = sbx; // guárdalos juntos
+    sbx.close(); // suelta el handle local; el sandbox sigue corriendo
+
+    await using again = await Sandbox.connect(sandboxId, { accessToken });
+    console.log((await again.commands.run("echo sigo vivo")).stdout);
+    ```
 
 ### Inspeccionar
 
 `get_info()` devuelve un `SandboxInfo`: `sandbox_id`, `state`
-(`RUNNING`, `SUSPENDED`…), `template`, `template_version`, `started_at`,
-`metadata`, `expires_at`, `agent_version`, `cpu_count` y `memory_mb`.
-`Sandbox.get_info(sandbox_id)` hace lo mismo sin handle. `is_running()`
-responde si el agente contesta.
+(`RUNNING`, `SUSPENDED`…), `endpoint`, `template`, `template_version`,
+`started_at`, `metadata`, `lifecycle`, `agent_version`, `cpu_count` y
+`memory_mb` (más `size` si usaste `size=`). `expires_at` es el plazo
+vigente, `platform_expires_at` el tope de la plataforma y
+`remaining_seconds()` lo que queda ([Plazo del servidor](../lifecycle.md)).
+`Sandbox.get_info(sandbox_id)` hace lo mismo sin handle. `sbx.info` es la
+última `SandboxInfo` conocida, sin llamar a AWS. `is_running()` responde si
+el agente contesta, y `get_health()` devuelve el `SandboxHealth` del agente
+(`resume_generation`, `kernel_state_lost`, `lifecycle`…).
 
 ### Metadatos
 
@@ -131,9 +221,13 @@ token del proxy para el sandbox lo lee. Sirve para filtrar el listado.
 ### Listar
 
 `Sandbox.list()` recorre `list-microvms` de forma perezosa y devuelve
-`SandboxListItem` (`sandbox_id`, `state`, `template`, `started_at`,
-`metadata`). Filtros: `template=`, `states=`, `metadata=`. Para un cursor
-que se pueda guardar y reanudar, `Sandbox.paginate()`
+`SandboxListItem` (`sandbox_id`, `state`, `template`, `template_version`,
+`started_at`, `metadata`). En Python síncrono es un iterador; en
+`AsyncSandbox.list()` una corrutina que devuelve la lista, y en TypeScript
+un `AsyncIterable`. Filtros: `template=`, `template_version=`, `states=`,
+`metadata=`, `started_after=` y `order=` (TypeScript: `templateVersion`,
+`startedAfter`). Para un cursor que se pueda guardar y reanudar,
+`Sandbox.paginate()`
 ([Métricas y listado](../observability.md#listado-reanudable)).
 
 !!! note "`list(metadata=)` es O(n)"
@@ -156,25 +250,39 @@ que se pueda guardar y reanudar, `Sandbox.paginate()`
 | `cpu_time_limit` | `cpuTimeLimit` | — | segundos de CPU por proceso (`RLIMIT_CPU`) |
 | `execution_role_arn` | `executionRoleArn` | — | rol IAM dentro del sandbox (IMDSv2); sin él no hay credenciales dentro |
 | `logging` | `logging` | `"disabled"` | `"cloudwatch"` envía los logs del runtime (necesita `execution_role_arn`) |
-| `allowed_ports` | `allowedPorts` | `[8080]` | puertos que el proxy puede alcanzar ([Puertos y host](puertos-y-host.md)) |
+| `allowed_ports` | `allowedPorts` | sólo 8080 | puertos extra del token principal del proxy ([Puertos y host](puertos-y-host.md)) |
 | `ingress`, `egress` | `ingress`, `egress` | conectores gestionados | conectores de red de Lambda MicroVMs |
 | `network`, `allow_internet_access` | `network`, `allowInternetAccess` | sin restricción | [Red saliente](../network.md) (sólo `rayito-base-caps`) |
 | `transfer` | `transfer` | `RAYITO_TRANSFER_BUCKET` | bucket para ficheros grandes y URLs ([Ficheros y S3](../files.md)) |
-| `persist` | `persist` | — | [Persistencia](../persistence.md) |
+| `persist`, `persist_timeout` | `persist`, `persistTimeoutMs` | —, 600 s | `HOME` en S3 que sobrevive a `kill()` y a las 8 h ([Persistencia](../persistence.md)) |
 | `pool` | `pool` | — | tomar de un [pool](../pool.md) |
 | `access_token` | `accessToken` | 32 bytes aleatorios | fija el secreto del sandbox |
 | `region`, `session` | `region` | la de la sesión | región y credenciales de AWS |
 | `ready_timeout`, `request_timeout`, `reconnect_timeout` | `readyTimeoutMs`, `requestTimeoutMs`, `reconnectTimeoutMs` | 90 / 60 / 60 s | plazos del cliente |
 | `keep_on_failure` | `keepOnFailure` | `False` | no termina el MicroVM si el arranque falla (para depurar) |
+| `logger` | `logger` | logger `rayito` / en silencio | dónde registra el SDK (sólo ids, estados y duraciones) |
+| `control_plane`, `transport` | `controlPlane`, `transport` | AWS real | adaptadores inyectables (tests, [entorno local](probar-en-local.md)) |
+| — | `signal` | — | `AbortSignal` que cancela la creación |
 | `secrets`, `secret_cache` | `secrets`, `secretCache` | apagado | [Secretos](../secrets.md) (opcional, con coste) |
 | `index` | `index` | apagado | [Índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) (opcional, con coste) |
 | `tracer_provider` | `tracerProvider` | apagado | [OpenTelemetry](../funciones-opcionales/opentelemetry.md) |
+| `size` | `size` | la imagen de siempre | [Tamaños](../funciones-opcionales/tamanos.md) (opcional) |
+| `mounts` | `mounts` | apagado | [Montajes S3](../funciones-opcionales/montajes-s3.md) (opcional, con coste) |
+| `volumes` | `volumes` | apagado | [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md) (**experimental**, opcional, con coste) |
+| `events` | `events` | apagado | [Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md) (opcional, con coste) |
+| `telemetry` | `telemetry` | apagado | [Exportación OTLP](../funciones-opcionales/exportacion-otlp.md) (opcional, con coste) |
+| `gateways` | `gateways` | apagado | [Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md) (opcional, con coste) |
+| `domain` | `domain` | — | reservado para el [dominio propio](../funciones-opcionales/dominio-propio.md) (**experimental**): hoy lanza `UnimplementedError` |
+
+Todas las opciones con coste están apagadas por defecto: ver
+[Funciones opcionales](../optional-features.md).
 
 ## Errores y solución de problemas
 
 | Python | TypeScript | Cuándo | Qué hacer |
 |---|---|---|---|
-| `InvalidArgumentException` | `InvalidArgumentError` | sin imagen (`RAYITO_TEMPLATE`), `envs` + `metadata` > 4096 caracteres, `timeout` > 28 800 | corrige el argumento; no se llamó a AWS |
+| `InvalidArgumentException` | `InvalidArgumentError` | sin imagen (`RAYITO_TEMPLATE`), `envs` + `metadata` por encima del [límite del payload](../limits.md) | corrige el argumento; no se llamó a AWS |
+| `SandboxLifetimeException` | `SandboxLifetimeError` | `timeout` o `max_lifetime` por encima de 28 800 s | baja el plazo; para más, [Persistencia](../persistence.md) |
 | `SandboxNotFoundException` | `SandboxNotFoundError` | `connect()` o `get_info()` de un id que no existe o ya terminó | crea uno nuevo |
 | `AuthenticationException` | `AuthenticationError` | access token incorrecto o credenciales de AWS caducadas | revisa el token guardado; `aws sso login` |
 | `SandboxNotReadyException` | `SandboxNotReadyError` | el agente no estuvo listo en `ready_timeout` | `rayito doctor`; prueba `keep_on_failure=True` y mira los logs |
@@ -190,7 +298,8 @@ Tabla completa: [Errores](../referencia/errores.md).
   sandboxes pausados sin límite.
 - `connect()` y las formas de clase necesitan el access token del sandbox:
   no hay API key que lo sustituya.
-- No hay CPU ni memoria por sandbox: el tamaño lo fija la imagen.
+- No hay `cpu_count`/`memory_mb` por sandbox: el tamaño lo fija la imagen
+  (`size=` elige entre imágenes ya publicadas de cada tamaño).
 
 ## Ver también
 

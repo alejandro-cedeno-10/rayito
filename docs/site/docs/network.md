@@ -51,8 +51,13 @@ solo no cierra la red).
   (cualquier subdominio a cualquier profundidad, **nunca** el propio
   dominio). Los nombres de host sólo valen en `allow_out`.
 - Un selector puede ser una función que recibe el contexto de E2B
-  (`ctx.all_traffic`).
-- Máximo 256 entradas por lista y 64 nombres de host.
+  (`ctx.all_traffic`): `network={"deny_out": lambda ctx: [ctx.all_traffic]}`.
+- `network=` acepta un `dict` con las claves de E2B (`allow_out`,
+  `deny_out`, `egress_proxy`) o un `NetworkPolicy(allow_out=...,
+  deny_out=..., egress_proxy=...)` ya resuelto; en TypeScript, un objeto con
+  `allowOut`, `denyOut` y `egressProxy`.
+- Tope de entradas por lista y de nombres de host: ver
+  [Límites](limits.md).
 
 ## Ejemplos
 
@@ -149,6 +154,15 @@ solo no cierra la red).
     with Sandbox.create("rayito-base-caps", allow_internet_access=False) as sbx:
         sbx.update_network({"allow_out": ["api.example.com"], "deny_out": [ALL_TRAFFIC]})
     ```
+
+`update_network()` sustituye la política entera (no la mezcla con la
+anterior) y `update_network(None)` la quita; `allow_internet_access=False`
+añade `ALL_TRAFFIC` a `deny_out`. Las dos, y `get_network()`, devuelven un
+`NetworkState`: `allow_out`, `deny_out`, `egress_proxy_configured` (nunca
+la dirección ni las credenciales del proxy), `enforcement` y
+`local_proxy_port` (TypeScript: `allowOut`, `denyOut`,
+`egressProxyConfigured`, `localProxyPort`). En el shim de E2B,
+`update_network()` devuelve `None`, como E2B.
 
 ## Cómo llega el proxy a tus procesos
 

@@ -20,7 +20,11 @@ AWS Lambda MicroVM (Firecracker, ARM64)
 │              ZMQ ipc:// bajo /run/rayito/k/<contexto>/
 │              ►► aquí corre el código del usuario (run_code)
 │
-└─ procesos y PTYs de commands.run / pty.create (uid 1000, hijos directos de rayd)
+├─ procesos y PTYs de commands.run / pty.create (uid 1000, hijos directos de rayd)
+│    también el agente de sbx.agent (OpenCode o deepagents)
+│
+└─ pasarela de secretos (dentro de rayd, sólo con gateways=)
+     HTTP en 127.0.0.1:<puerto>  ── añade la credencial y reenvía al upstream
 ```
 
 | Pieza | Lenguaje | Dónde corre | Quién la usa |
@@ -29,6 +33,7 @@ AWS Lambda MicroVM (Firecracker, ARM64)
 | kernel-sidecar | Python 3.12 | dentro del MicroVM, hijo de `rayd`, uid 1000 | sólo `rayd` (JSON lines por stdio) |
 | ipykernel (uno por contexto) | Python | dentro del MicroVM, hijo del sidecar, uid 1000; **aquí corre el código del usuario** | el sidecar (`jupyter_client`, ZMQ `ipc://`) |
 | procesos y PTYs (`commands`, `pty`) | lo que el usuario lance | dentro del MicroVM, hijos de `rayd`, uid 1000 | el SDK vía `ProcessService` / `PtyService` |
+| agente de `sbx.agent` (OpenCode o deepagents) | el runtime de la imagen `rayito-agent` | dentro del MicroVM, un proceso de `commands`, uid 1000 | el SDK, que lo lanza y lee sus eventos |
 | SDK Python (`rayito`) | Python ≥ 3.11 | **fuera** del MicroVM, en el proceso del cliente (tu app, tu agente, tu CI) | tu código |
 | SDK TypeScript (`rayito`) | TypeScript / Node ≥ 20 | **fuera**, en el proceso del cliente | tu código |
 | llamadas al plano de control | boto3 / AWS SDK JS v3 dentro del SDK | **fuera**, desde el proceso del cliente hacia la API `lambda-microvms` | el SDK (`create`, `list`, `pause`, `resume`, `kill`, tokens) |
@@ -51,6 +56,19 @@ en Rust con `jupyter-zmq-client` sigue siendo una opción evaluada, no un
 objetivo.
 
 Si esta página y `ARCHITECTURE.md` difieren, manda `ARCHITECTURE.md`.
+
+## El agente dentro del sandbox
+
+`sbx.agent.run()` no corre ningún modelo en tu proceso: lanza el runtime
+del agente (OpenCode por defecto) como un proceso más del sandbox, con el
+mismo filesystem, los mismos comandos y el mismo egress que cualquier otro
+código, y lee sus eventos. El agente llama a su modelo a través de la
+[pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md), que
+`rayd` sirve en loopback: añade la credencial a cada petición sin que el
+código del sandbox pueda leerla. Lo normal es un `Sandbox.create()` y
+`sbx.agent.run(...)`; un pool calentado o un servidor residente sólo
+acortan el arranque ([¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)), y
+`persist=` guarda los ficheros si la conversación se para más de 8 h.
 
 <a id="desde-que-lenguajes-se-usa-rayito"></a>
 
@@ -94,7 +112,7 @@ La política de idle (`create(idle=IdlePolicy(...))`, 300 s por defecto)
 suspende el MicroVM cuando no recibe tráfico y lo reanuda con la siguiente
 llamada (`auto_resume=True`). Un ciclo suspend/resume cuesta ≈ $0,0049 a
 2 GB, lo mismo que ≈ 140 s de cómputo, así que un `max_idle_seconds` por
-debajo de ≈ 150 s nunca ahorra dinero ([Costes](cost.md#precios)).
+debajo de ≈ 150 s nunca ahorra dinero ([Precios](cost.md#componentes-del-precio)).
 `idle=None` desactiva la auto-suspensión. Guía: [Pausar y
 reanudar](guias/pausar-reanudar.md).
 
@@ -203,4 +221,4 @@ el filtro, nunca se interpreta) que puedes guardar y pasar a otro proceso.
       difieren, manda `ARCHITECTURE.md`.
     - Vista del guest frente al tamaño de la imagen: fila Q68 de
       [`AWS_API_NOTES.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md).
-    - Coste del ciclo suspend/resume: [Costes](cost.md).
+    - Coste del ciclo suspend/resume: [Precios](cost.md#componentes-del-precio).

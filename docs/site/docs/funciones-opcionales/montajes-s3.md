@@ -55,8 +55,9 @@ En cualquier otra imagen, `create()` termina el VM y lanza
 
 La clave de `mounts=`/`mounts` es la ruta absoluta donde aparece el bucket
 dentro del guest: bajo `/mnt/` o `/home/user/`, sin solaparse con otro
-montaje (la misma regla que compartirá `volumes=` de `m15-efs-volumes`), y
-como mucho 4 montajes en total por sandbox.
+montaje (la misma regla que usa `volumes=` de los
+[volúmenes EFS](volumenes-efs.md)), y como mucho 4 montajes en total por
+sandbox, sumando `mounts=` y `volumes=`.
 
 ## Antes de empezar: el allowlist de la imagen (obligatorio)
 
@@ -104,7 +105,8 @@ ni sus objetos).
 `create()` no vuelve hasta que cada montaje está montado: si alguno falla
 (o sigue sin responder tras 15 s), termina el VM y lanza `MountException`
 con el motivo en `code` (`iam_denied`, `not_found`, `not_allowed`,
-`invalid_path`, `helper_missing`, `network` o `timeout`). En cuanto
+`invalid_path`, `helper_missing`, `network` o `timeout`; `unknown` si el
+agente manda una clase que tu versión del SDK aún no conoce). En cuanto
 `create()` vuelve, la carpeta ya se puede leer.
 
 === "Python"

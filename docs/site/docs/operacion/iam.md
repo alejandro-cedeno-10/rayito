@@ -13,6 +13,19 @@ lo concede.
 | `infra/secrets-access.yaml` | las políticas `RayitoSecretsReader` y `RayitoSecretsAdmin` | $0 | sólo si usas [secretos](../secrets.md) |
 | `infra/metadata-index.yaml` | la tabla DynamoDB y las políticas `RayitoIndexWriter` y `RayitoIndexReader` | $0 en reposo | sólo si usas el [índice de metadatos](../funciones-opcionales/indice-de-metadatos.md) |
 | `infra/egress-connector.yaml` | un conector de red VPC con un security group deny-all | el de tu VPC | sólo si quieres controlar la salida a internet fuera del sandbox ([Red saliente](../network.md#la-alternativa-de-plataforma)) |
+| `infra/templates.yaml` | la política `RayitoTemplateBuilder` | $0 | sólo si construyes templates (`Template.build`, `AgentTemplate`) ([Templates](../funciones-opcionales/templates.md)) |
+| `infra/s3-mounts.yaml` | la política `RayitoS3MountAccess`, para el execution role | $0 | sólo si usas `mounts=` ([Montajes S3](../funciones-opcionales/montajes-s3.md)) |
+| `infra/otlp-export.yaml` | la política `RayitoOtlpExport`, para el execution role | $0 | sólo si usas `telemetry=` con `OtlpAuth.execution_role()` ([Exportación OTLP](../funciones-opcionales/exportacion-otlp.md)) |
+| `infra/sizes-guard.yaml` | la política `RayitoRunAllowedSizes` (un Deny) | $0 | sólo si quieres limitar los tamaños que se lanzan ([Tamaños](../funciones-opcionales/tamanos.md)) |
+| `infra/events-webhooks.yaml` | la pila de eventos y las políticas `EventsLauncherPolicy`, `EventsReaderPolicy`, `EventsWebhookAdminPolicy` y `EventsOperatorPolicy` | ver [Precios](../cost.md) | sólo si usas `events=` ([Eventos y webhooks](../funciones-opcionales/eventos-y-webhooks.md)) |
+| `infra/efs-volumes.yaml` (experimental) | EFS en tu VPC, su conector y la política `RayitoEfsVolumeClient` para el execution role | ver [Precios](../cost.md) | sólo si usas volúmenes EFS ([Volúmenes EFS en tu VPC](../funciones-opcionales/volumenes-efs-vpc.md)) |
+| `infra/custom-domain.yaml` (experimental) | CloudFront, su Function y un KeyValueStore; ningún rol ni política | ver [Precios](../cost.md) | sólo si usas `CustomDomain` ([Dominio propio](../funciones-opcionales/dominio-propio.md)) |
+
+Las plantillas opcionales se despliegan con `rayito stack deploy <componente>`
+(o `aws cloudformation deploy`), que necesita
+`cloudformation:CreateStack/UpdateStack/DescribeStacks/DeleteStack` y los
+permisos de lo que crea la plantilla
+([Pilas opcionales](../funciones-opcionales/pilas-opcionales.md)).
 
 !!! warning "Un servicio en producción sólo lanza sandboxes"
     Vincula `SandboxLauncherPolicy` (output `SandboxLauncherPolicyArn`) al
@@ -27,9 +40,9 @@ lo concede.
 
 | Función | Permisos del llamante | Dónde están |
 |---|---|---|
-| Crear, conectar, pausar, reanudar, listar y matar sandboxes | `lambda:RunMicrovm`, `GetMicrovm`, `ListMicrovms`, `SuspendMicrovm`, `ResumeMicrovm`, `TerminateMicrovm`, `CreateMicrovmAuthToken`, `lambda:PassNetworkConnector` (conectores gestionados) | `SandboxLauncherPolicy` (o `CallerPolicy`) de `infra/iam.yaml` |
-| Publicar y podar imágenes (`rayito image`) | `lambda:CreateMicrovmImage`, `UpdateMicrovmImage`, `GetMicrovmImage*`, `ListMicrovmImage*`, `DeleteMicrovmImageVersion`; `iam:PassRole` del rol de build; `s3:PutObject`/`GetObject` sobre `<bucket>/rayito/*` y `s3:ListBucket` | `ImagePublisherPolicy` (o `CallerPolicy`) |
-| `rayito doctor` | lo anterior más `servicequotas:ListServiceQuotas` y, opcionalmente, `iam:SimulatePrincipalPolicy` e `iam:GetRole` | `CallerPolicy` (salvo la simulación, que se salta si falta). Con sólo `SandboxLauncherPolicy`, la simulación avisa (`WARN`) de las acciones de publicación que faltan: es lo esperado |
+| Crear, conectar, pausar, reanudar, listar y matar sandboxes | `lambda:RunMicrovm`, `GetMicrovm`, `ListMicrovms`, `SuspendMicrovm`, `ResumeMicrovm`, `TerminateMicrovm`, `CreateMicrovmAuthToken`; las lecturas de imagen con las que el SDK resuelve nombres y tamaños (`ListMicrovmImages`, `GetMicrovmImage`, `GetMicrovmImageVersion`, `ListMicrovmImageVersions`, `ListTags` y `ListManagedMicrovmImages`/`ListManagedMicrovmImageVersions`); `lambda:PassNetworkConnector` (conectores gestionados) | `SandboxLauncherPolicy` (o `CallerPolicy`) de `infra/iam.yaml` |
+| Publicar y podar imágenes (`rayito image`) | `lambda:CreateMicrovmImage`, `UpdateMicrovmImage`, `UpdateMicrovmImageVersion`, `DeleteMicrovmImageVersion`, `GetMicrovmImage*`, `ListMicrovmImage*`, `GetMicrovmImageBuild`, `ListMicrovmImageBuilds`, `TagResource`; `iam:PassRole` del rol de build; `s3:PutObject`/`GetObject` sobre `<bucket>/rayito/*` y `s3:ListBucket` | `ImagePublisherPolicy` (o `CallerPolicy`) |
+| `rayito doctor` | lo anterior más `servicequotas:ListServiceQuotas` (en las tres políticas) y, opcionalmente, `iam:SimulatePrincipalPolicy` e `iam:GetRole`; con `--efs-vpc-id`, `ec2:Describe*` | `CallerPolicy` (salvo la simulación, que se salta si falta, y `ec2:Describe*`). Con sólo `SandboxLauncherPolicy`, la simulación avisa (`WARN`) de las acciones de publicación que faltan: es lo esperado |
 | Ejecutar código, comandos, ficheros, PTY, git, métricas | ninguno más: viajan por el canal del sandbox con su access token | — |
 | Plazo del servidor, `update_network`, formas de clase | ninguno más | — |
 | `execution_role_arn=` (credenciales dentro del sandbox) | `iam:PassRole` sobre ese rol | `SandboxLauncherPolicy` o `CallerPolicy` (para el `ExecutionRole` de la plantilla) |
@@ -43,6 +56,9 @@ lo concede.
 | Eventos: lanzar con `events=` | `secretsmanager:GetSecretValue` sobre la clave del stack y `cloudformation:DescribeStacks` sobre la pila | `EventsLauncherPolicy` (pila `events-webhooks`) |
 | Eventos: leer (`get_events`) | `dynamodb:Query` sobre las filas de eventos y el índice `gsi1`, y `DescribeStacks` | `EventsReaderPolicy` |
 | Eventos: webhooks (`register_webhook`, `list_webhooks`, `delete_webhook`) | `dynamodb:PutItem`/`DeleteItem`/`Query` sólo sobre filas `WEBHOOK`, y `DescribeStacks` | `EventsWebhookAdminPolicy` (de operador: los webhooks son de toda la pila) |
+| Templates (`Template.build`, `rayito template build`, `AgentTemplate`, `rayito agent template build`) | `lambda:CreateMicrovmImage`/`UpdateMicrovmImage` (nunca sobre `rayito-base*`), `iam:PassRole` del rol de build, S3 sobre `<bucket>/rayito/templates/*` y lectura de los logs de build | `RayitoTemplateBuilder` (`infra/templates.yaml`) |
+| Agente (`sbx.agent.run`/`.stream`) | ninguno más: viaja por el canal del sandbox. La credencial del modelo llega por la pasarela (`gateways=`, presets `bedrock_gateway`…): `secretsmanager:GetSecretValue` sobre ese secreto, en las credenciales del llamante, no en el execution role. Los permisos de Bedrock son los de la clave de API que guardas en el secreto, no los tuyos | `RayitoSecretsReader` ([Agente en el sandbox](../guias/agente-en-el-sandbox.md), [Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md)) |
+| Montajes S3 (`mounts=`), telemetría con `OtlpAuth.execution_role()`, volúmenes EFS | ninguno en el llamante salvo EFS (`elasticfilesystem:CreateAccessPoint`/`DescribeAccessPoints`/`DeleteAccessPoint` para `VolumeStore`, ver [Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)); el **execution role** necesita la política de la pila | `RayitoS3MountAccess`, `RayitoOtlpExport`, `RayitoEfsVolumeClient` |
 | Limitar los tamaños que se pueden lanzar | un Deny de `RunMicrovm` fuera de la lista y de publicar imágenes | `RayitoRunAllowedSizes` (pila `sizes-guard`): sólo para el lanzador, nunca el publicador |
 | Proxy local (`rayito sandbox proxy`) | `lambda:GetMicrovm` y `CreateMicrovmAuthToken` | `SandboxLauncherPolicy` o `CallerPolicy` |
 | Logs de CloudWatch (`rayito sandbox logs`) | `logs:DescribeLogStreams` y `logs:GetLogEvents` sobre el grupo `/rayito/<imagen>` | no viene en la plantilla: añádelo a tu política |

@@ -46,8 +46,9 @@ traer el secreto en cada llamada (`SecretCache`).
       token de una API con permiso sólo de lectura y que caduque en una hora);
     - úsalo sólo en procesos que controlas (el comando concreto que lo
       necesita, no el shell entero), o
-    - espera al gateway de credenciales en loopback (fuera de este alcance):
-      el valor no sería legible por el código del sandbox.
+    - usa la [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)
+      (`gateways=`, desde 0.6.0): el sandbox usa la credencial contra un
+      `upstream` fijo sin poder leer su valor.
 
 ## Qué activa y qué cuesta
 
@@ -94,18 +95,14 @@ recibiera uno por `secrets=` podría falsificar entregas firmadas. El SDK
 también se niega a leerlos por `secrets=`/`SecretCache`
 (`InvalidArgumentException`) aunque tu política lo permitiera.
 `SecretPrefix` debe terminar en `/`: `rayito` (sin barra) concedería
-también secretos ajenos como `rayito-prod-db`. Para desplegarla:
+también secretos ajenos como `rayito-prod-db`. Se despliega como el
+componente `secrets-access` de [`rayito stack`](funciones-opcionales/pilas-opcionales.md):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/secrets-access.yaml
-aws cloudformation deploy --stack-name rayito-secrets-access \
-  --template-file secrets-access.yaml --capabilities CAPABILITY_IAM \
-  --parameter-overrides SecretPrefix=rayito/
-# con una clave KMS propia (SecretStore(kms_key_id=...)), añade al final:
-#   KmsKeyArn=arn:aws:kms:<región>:<cuenta>:key/<id>
-
-aws cloudformation describe-stacks --stack-name rayito-secrets-access \
-  --query "Stacks[0].Outputs" --output table    # ReaderPolicyArn y AdminPolicyArn
+rayito stack deploy secrets-access --param SecretPrefix=rayito/
+# con una clave KMS propia (SecretStore(kms_key_id=...)), añade:
+#   --param KmsKeyArn=arn:aws:kms:<región>:123456789012:key/<id>
+rayito stack status secrets-access    # salidas ReaderPolicyArn y AdminPolicyArn
 ```
 
 Asigna `ReaderPolicyArn` (o `AdminPolicyArn` si vas a crear y borrar
@@ -113,8 +110,10 @@ secretos) a quien ejecuta el SDK, igual que la política de
 [Configurar AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam):
 `aws iam attach-user-policy` o `aws iam attach-role-policy`. `SecretPrefix`
 debe coincidir con `SecretStore(prefix=)`. Para borrarla:
-`aws cloudformation delete-stack --stack-name rayito-secrets-access` (quita
-las políticas, no los secretos). Más detalle:
+`rayito stack destroy secrets-access` (quita las políticas, no los
+secretos). Desde el SDK, `OptionalStacks().deploy("secrets-access", ...)`
+hace lo mismo. Si prefieres CloudFormation a mano, la plantilla es
+`infra/secrets-access.yaml`; más detalle en
 [`infra/README.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/infra/README.md#secretos-infrasecrets-accessyaml-m13a).
 
 ## Ejemplos
@@ -313,7 +312,8 @@ logs de Rayito; el log DEBUG del SDK de AWS sí los contiene (ver el aviso de
 2. **Borra los secretos** que ya no uses (`SecretStore().destroy(nombre)`,
    `Secret.destroy(nombre)` o la consola): Secrets Manager los factura
    ($0,40/mes cada uno) **hasta que se borran**, uses o no Rayito.
-3. Si desplegaste `infra/secrets-access.yaml`, borra el stack.
+3. Si desplegaste la pila de políticas, bórrala:
+   `rayito stack destroy secrets-access`.
 
 Modelo de amenazas: T18 de
 [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)

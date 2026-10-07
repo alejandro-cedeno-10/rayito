@@ -96,11 +96,20 @@ Lo que cambia fuera del código:
     | Git | `Git`, `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode` ([Git](git.md)) |
     | Code interpreter | `Execution`, `Result`, `Logs`, `OutputMessage`, `ExecutionError`, `Context`, `MIMEType`, `RunCodeLanguage` y los charts `ChartType`, `ScaleType`, `Chart`, `Chart2D`, `PointData`, `LineChart`, `ScatterChart`, `BarChart`, `BarData`, `PieChart`, `PieData`, `BoxAndWhiskerChart`, `BoxAndWhiskerData`, `SuperChart` |
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `AsyncSecret`, `SecretInfo`, `SecretPaginator`, `AsyncSecretPaginator` |
-    | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException`, `SecretException`, `SecretNotFoundException` |
+    | Excepciones | `SandboxException`, `TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `InvalidArgumentException`, `AuthenticationException`, `RateLimitException`, `CommandExitException`, `NotEnoughSpaceException`, `ServiceBusyException`, `FileUploadException`, `GitAuthException`, `GitUpstreamException`, `TemplateException`, `BuildException` (clases propias del shim: ver la nota de abajo), `SecretException`, `SecretNotFoundException`, `VolumeException`, `VolumeNotFoundException`, `VolumePathNotFoundException` |
     | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template`, `AsyncTemplate` construyen de verdad; `alias_exists`/`assign_tags`/`remove_tags`/`get_tags` siguen sin equivalente |
     | Volúmenes EFS (desde 0.7.0, experimental, ver [Volúmenes EFS](funciones-opcionales/volumenes-efs.md#shim-e2b-e2bvolume_store)) | `Volume`, `AsyncVolume` hacen CRUD real con `E2B(volume_store=...)`; sin él, y en las operaciones de contenido, lanzan |
     | Sin primitiva (importan, pero toda llamada lanza) | `get_signature` |
     | Sólo Rayito | `UnimplementedError`, `RayitoCompatWarning` |
+
+    !!! warning "`TemplateException` y `BuildException` no son las nativas en Python"
+        `rayito.e2b.TemplateException` y `rayito.e2b.BuildException` son
+        clases propias del shim que nada lanza: `Template.build()` (también
+        el del shim) lanza `rayito.TemplateException` y
+        `rayito.BuildException`, que son otras clases. Un
+        `except rayito.e2b.BuildException` no atrapa un build fallido:
+        atrapa `rayito.BuildException` (o `SandboxException`, base de las dos
+        nativas). En TypeScript, `rayito/e2b` sí reexporta las nativas.
 
 === "TypeScript"
 
@@ -114,14 +123,14 @@ Lo que cambia fuera del código:
 
     | Grupo | Nombres |
     |---|---|
-    | Sandbox y cliente | `Sandbox` (también por defecto), `SandboxPaginator`, `E2B`, `ConnectionConfig`, `ALL_TRAFFIC`; tipos `SandboxOpts`, `SandboxConnectOpts`, `SandboxInstanceConnectOpts`, `SandboxInfo`, `SandboxMetrics`, `SandboxMetricsOpts`, `SandboxLifecycle`, `SandboxNetworkOpts`, `SandboxNetworkUpdate`, `SandboxListOpts`, `SandboxPauseOpts`, `SandboxUrlOpts`, `SandboxState`, `ConnectionOpts`, `E2BClientOpts`, `Username`, `Logger` |
-    | Comandos, ficheros y PTY | `Filesystem`, `Pty`, `FileType`, `FilesystemEventType`, `DEFAULT_WATCH_TIMEOUT_MS`; tipos `CommandHandle`, `CommandResult`, `EntryInfo`, `WriteInfo`, `FilesystemEvent`, `WatchOpts`, `PtySize`, `PtyCreateOpts`, `PtyConnectOpts` |
+    | Sandbox y cliente | `Sandbox` (también por defecto), `SandboxPaginator`, `E2B`, `ConnectionConfig`, `ALL_TRAFFIC`; tipos `SandboxOpts`, `SandboxConnectOpts`, `SandboxInstanceConnectOpts`, `SandboxInfo`, `SandboxInfoLifecycle`, `SandboxMetrics`, `SandboxMetricsOpts`, `SandboxLifecycle`, `SandboxOnTimeout`, `SandboxOnResume`, `SandboxNetworkOpts`, `SandboxNetworkInfo`, `SandboxNetworkSelector`, `SandboxNetworkUpdate`, `SandboxListOpts`, `SandboxPauseOpts`, `SandboxUrlOpts`, `SandboxState`, `ConnectionOpts`, `E2BClientOpts`, `Username`, `Logger` |
+    | Comandos, ficheros y PTY | `Filesystem`, `Pty`, `FileType`, `FilesystemEventType`, `DEFAULT_WATCH_TIMEOUT_MS`; tipos `CommandHandle`, `CommandResult`, `EntryInfo`, `WriteInfo`, `FilesystemEvent`, `WatchOpts`, `WatchEventCallback`, `PtySize`, `PtyCreateOpts`, `PtyConnectOpts`, `PtyOutputCallback` |
     | Git | `Git`; tipos `GitStatus`, `GitBranches`, `GitFileStatus`, `GitResetMode` ([Git](git.md)) |
     | Code interpreter | `Execution`, `Result`; tipos `Context`, `Logs`, `OutputMessage`, `ExecutionError` |
     | Secretos (CRUD sobre AWS Secrets Manager, ver [Secretos](#secretos-secret-asyncsecret)) | `Secret`, `SecretPaginator`; tipos `SecretInfo`, `SecretCreateOpts`, `SecretUpdateOpts`, `SecretGetInfoOpts`, `SecretExistsOpts`, `SecretDestroyOpts`, `SecretListOpts`, `SecretConnectionOpts` |
     | Errores (las clases nativas de `rayito`: `instanceof` vale entre los dos) | `SandboxError`, `TimeoutError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `InvalidArgumentError`, `AuthenticationError`, `RateLimitError`, `CommandExitError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`), `FileUploadError`, `GitAuthError`, `GitUpstreamError`, `TemplateError`, `BuildError`, `UnimplementedError`, `SecretError`, `SecretNotFoundError` |
     | Templates declarativos (desde 0.6.0, ver [Templates](funciones-opcionales/templates.md)) | `Template` construye de verdad; `aliasExists`/`assignTags`/`removeTags`/`getTags` siguen sin equivalente |
-    | Volúmenes EFS (desde 0.7.0, experimental, ver [Volúmenes EFS](funciones-opcionales/volumenes-efs.md#shim-e2b-e2bvolume_store)) | `Volume` hace CRUD real con `new E2B({ volumeStore })`; sin él, y en las operaciones de contenido, lanza |
+    | Volúmenes EFS (desde 0.7.0, experimental, ver [Volúmenes EFS](funciones-opcionales/volumenes-efs.md#shim-e2b-e2bvolume_store)) | `Volume` (y `bindVolume`, que lo liga a un `VolumeStore`) hace CRUD real con `new E2B({ volumeStore })`; sin él, y en las operaciones de contenido, lanza. Los errores de volumen (`VolumeError`, `VolumeNotFoundError`, `VolumePathNotFoundError`) no se reexportan aquí: impórtalos de `rayito` |
     | Sin primitiva (importan, pero toda llamada lanza) | `getSignature` |
 
     `rayito/e2b` es una entrada del mismo paquete npm `rayito` (ESM y
@@ -156,7 +165,7 @@ nada se aproxima en silencio.
 | `sbx.kill()`, `Sandbox.kill(id)`, `sbx.is_running(request_timeout=)`, `sbx.sandbox_id`, `sbx.sandbox_domain` | igual |
 | `sbx.pause()` / `beta_pause()` → `bool`, `Sandbox.connect(id)` sobre un sandbox pausado | `suspend-microvm` y `resume-microvm` |
 | `Sandbox.list(query=SandboxQuery(metadata=...))` sobre sandboxes `RUNNING` | filtro en cliente, O(n) ([coste](#el-coste-de-listquerysandboxquerymetadata)) |
-| Las excepciones de `e2b.exceptions` (`TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `CommandExitException`, `GitAuthException`, ...) | las mismas clases nativas bajo esos nombres; `NotEnoughSpaceException` es `DiskFullException` y se lanza con el disco lleno; `ServiceBusyException` se lanza ante `InsufficientCapacityException`; desde 0.6.0, `TemplateException` y `BuildException` se lanzan de verdad desde `Template.build()` ([Templates](funciones-opcionales/templates.md)) |
+| Las excepciones de `e2b.exceptions` (`TimeoutException`, `NotFoundException`, `FileNotFoundException`, `SandboxNotFoundException`, `CommandExitException`, `GitAuthException`, ...) | las mismas clases nativas bajo esos nombres; `NotEnoughSpaceException` es `DiskFullException` y se lanza con el disco lleno; `ServiceBusyException` se lanza ante `InsufficientCapacityException`; desde 0.6.0, `Template.build()` lanza `TemplateException` y `BuildException` de verdad: en TS son las de `rayito/e2b`; en Python son las nativas `rayito.TemplateException`/`rayito.BuildException`, no las de `rayito.e2b` (ver el aviso de la [tabla de imports](#tabla-de-imports)) ([Templates](funciones-opcionales/templates.md)) |
 
 ## Se mapea, con una nota
 
@@ -220,12 +229,14 @@ rechazada. Las claves y los motivos de esta tabla son los de
 | `Template.alias_exists`/`assign_tags`/`remove_tags`/`get_tags` (y en `AsyncTemplate`) | `Template.aliasExists`/`assignTags`/`removeTags`/`getTags` | create/update-microvm-image no admite etiquetas por versión (sólo por imagen, con lambda:TagResource aparte, AWS_API_NOTES.md §27): usa el ARN de la imagen con la CLI de AWS mientras tanto |
 
 !!! note "`agent`: no es una entrada de esta tabla"
-    `rayito.e2b.Sandbox` no tiene atributo `agent` en absoluto (el shim de
-    E2B no cambia para este diseño): tocarlo es un `AttributeError` normal
-    de Python/TypeScript, no un `UnimplementedError` de Rayito, y no hay
-    clave `agent` en `_unimplemented.py` ni en `unimplemented.ts`. Conecta
-    con el SDK nativo sobre el mismo sandbox y usa `sbx.agent` desde ahí:
-    `rayito.Sandbox.connect(sbx.sandbox_id)`. Ver
+    El agente de IA de 0.8.0 (`sbx.agent`) no es API de E2B, así que
+    `rayito.e2b.Sandbox` no tiene atributo `agent`: tocarlo es un
+    `AttributeError` normal de Python (en TypeScript, un error de tipos), no
+    un `UnimplementedError`, y no hay clave `agent` en `_unimplemented.py`
+    ni en `unimplemented.ts`. Usa el sandbox nativo que el shim lleva
+    dentro: `sbx.native.agent.run(...)` (igual en TypeScript), o
+    `rayito.Sandbox.connect(sandbox_id)` desde otro proceso. El sandbox
+    necesita la imagen y la pasarela del agente: ver
     [Agente en el sandbox](guias/agente-en-el-sandbox.md).
 
 Desde 0.6.0, `Template`/`AsyncTemplate` (y `E2B(...).Template`/
@@ -276,6 +287,14 @@ Diferencias reales entre los dos shims:
   `UnimplementedError`: en TS la falta de credencial es un error de
   autenticación a propósito. Python lanza `UnimplementedError` con el motivo
   de la tabla. En los dos casos no se llama a AWS.
+- **`TemplateException`/`BuildException`.** En TS son las clases nativas
+  (`instanceof` vale con lo que lanza `Template.build()`); en Python son
+  clases propias del shim que nada lanza, y hay que atrapar las de
+  `rayito` ([tabla de imports](#tabla-de-imports)).
+- **Errores de volumen.** Python los exporta desde `rayito.e2b`
+  (`VolumeException`, `VolumeNotFoundException`,
+  `VolumePathNotFoundException`, las nativas); TS no los reexporta desde
+  `rayito/e2b`: impórtalos de `rayito` (`VolumeError`...).
 - **Mensaje de `UnimplementedError`.** `feature` y `reason` coinciden; el
   texto de `str(error)` / `error.message` difiere en la frase de enlace
   (Python: «no está disponible en Rayito»; TS: «no está disponible»), así que

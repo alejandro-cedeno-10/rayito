@@ -10,7 +10,9 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md),
 [Pasarela de secretos](../../funciones-opcionales/pasarela-de-secretos.md),
 [Templates declarativos](../../funciones-opcionales/templates.md),
-[Pilas opcionales](../../funciones-opcionales/pilas-opcionales.md) y
+[Pilas opcionales](../../funciones-opcionales/pilas-opcionales.md),
+[Volúmenes EFS](../../funciones-opcionales/volumenes-efs.md) (experimental),
+[Dominio propio](../../funciones-opcionales/dominio-propio.md) (experimental) y
 [Funciones opcionales](../../optional-features.md).
 
 ## Pilas opcionales
@@ -26,6 +28,8 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ::: rayito.StackStatus
 
 ::: rayito.CostStatement
+
+::: rayito.StackArtifact
 
 ## Montajes S3
 
@@ -56,6 +60,24 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ::: rayito.BuildStatus
 
 ::: rayito.ReadyCommand
+
+::: rayito.ReadyPoll
+
+::: rayito.TemplateSpec
+
+::: rayito.BaseImageRef
+
+::: rayito.StartSpec
+
+::: rayito.RunStep
+
+::: rayito.CopyStep
+
+::: rayito.EnvStep
+
+::: rayito.WorkdirStep
+
+::: rayito.UserStep
 
 ::: rayito.wait_for_port
 
@@ -92,6 +114,7 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 ::: rayito.GatewayStatus
 
 ::: rayito.GatewayHandle
+
 ## Exportación OTLP
 
 Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
@@ -105,6 +128,8 @@ Guía: [Exportación OTLP](../../funciones-opcionales/exportacion-otlp.md).
 ## Volúmenes EFS (experimental)
 
 ::: rayito.VolumeStore
+
+::: rayito.AsyncVolumeStore
 
 ::: rayito.EfsVolume
 
