@@ -266,7 +266,11 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 Un [agente](guias/agente-en-el-sandbox.md) paga su primer `exec` (19,6 s de
 mediana tras `create()` sin prefetch, medido) en cada VM nueva. `PoolConfig.warmup` deja ese coste en
-el calentamiento de la plaza, antes de aparcarla, en vez de en la toma:
+el calentamiento de la plaza, antes de aparcarla, en vez de en la toma.
+Sólo compensa si llegan muchas conversaciones **nuevas** cuyo primer mensaje
+tiene que ser rápido: para los turnos de una misma conversación basta con
+pausar la VM entre ellos, sin pool (ver
+[¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)).
 
 ```python
 from rayito import PoolConfig, agent_pool_warmup

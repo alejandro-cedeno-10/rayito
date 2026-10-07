@@ -1,6 +1,6 @@
 ---
 title: Agente en el sandbox
-description: Correr un agente de código (OpenCode) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
+description: Correr un agente de código (OpenCode o deepagents) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
 ---
 
 # Agente en el sandbox
@@ -323,16 +323,147 @@ haces; ese aviso es **próximamente**). Riesgos y mitigaciones en
 ## Arranque rápido
 
 El primer `exec` de OpenCode tras `create()` es lento porque lee el binario
-desde el disco de la VM recién restaurada (Q142). Hay cuatro formas de
-quitarse ese coste, y se combinan (un pool con `warmup` sobre una imagen con
-prefetch, por ejemplo):
+desde el disco de la VM recién restaurada (Q142): el primer token de una
+VM nueva llega a los 20–28 s. **Para la mayoría de los casos no hace falta
+ningún pool**: ese coste se paga una vez por conversación, y los turnos
+siguientes van sobre la misma VM.
+
+### ¿Qué uso?
+
+1. **¿La conversación dura menos de 8 h desde `create()`?** (el tope de la
+   plataforma cuenta el tiempo lanzada **más** el suspendido) → **una VM por
+   conversación, pausada entre turnos (B)**. Crea una vez (primer token
+   ≈ 20 s), pausa al acabar cada turno y reanuda con `connect()` (≈ 3 s
+   hasta el primer token, Q149). No cuesta nada extra salvo
+   ≈ $0,005–0,006 por ciclo suspend/resume y ≈ $0,0001/h mientras está
+   pausada. Sin escribir código: la [auto-suspensión](pausar-reanudar.md#auto-suspension-e-idlepolicy)
+   por defecto (`IdlePolicy(max_idle_seconds=300, auto_resume=True)`) ya
+   la suspende tras 300 s sin tráfico, y la siguiente llamada del SDK
+   (`agent.run` incluida) la despierta sola. Sólo tienes que crearla con
+   un `timeout` que cubra la conversación (por defecto 3600 s, tope 8 h).
+2. **¿Puede quedarse parada más de 8 h?** → guarda su `HOME` en S3 con
+   [persistencia](../persistence.md) (`persist=`) y, cuando vuelva el
+   usuario, crea otra VM con el mismo `persist=`: restaura el `HOME`, y con
+   él las sesiones de OpenCode, así que `session_id` sigue valiendo. Pagas
+   otra vez el primer `exec` frío.
+3. **¿Llegan muchas conversaciones *nuevas* y su primer mensaje tiene que
+   ser rápido?** → un **pool con `warmup` (C)**: el primer token llega a
+   ≈ 5 s de la toma, a cambio de ≈ $0,64 al mes por plaza ociosa.
+4. **D (pool con servidor residente)**: no recomendada por ahora.
+
+Una conversación de varios turnos sobre la misma VM (B):
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, AgentSpec, Sandbox, bedrock_gateway
+
+    MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    spec = AgentSpec(model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"))
+
+    sbx = Sandbox.create(
+        template="rayito-agent",
+        timeout=8 * 3600,  # (1)!
+        allow_internet_access=False,
+        gateways={"bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID])},
+    )
+    try:
+        first = sbx.agent.run("Lee el README y resume el proyecto.", spec=spec)
+        sbx.pause()  # (2)!
+        sbx.connect()  # (3)!
+        second = sbx.agent.run("Ahora propón tres mejoras.", spec=spec, session_id=first.session_id)
+        print(second.text)
+    finally:
+        sbx.kill()
+    ```
+
+    1. El tope: 8 h lanzada + suspendida.
+    2. Entre turnos; sin esta línea, la auto-suspensión lo hace a los 300 s sin tráfico.
+    3. ≈ 3 s hasta el primer token del turno siguiente. Desde otro proceso,
+       `Sandbox.connect(sandbox_id, access_token=...)`
+       ([Ciclo de vida](ciclo-de-vida.md#conectar)).
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, AgentSpec, Sandbox, bedrockGateway } from "rayito";
+
+    const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+    const spec = new AgentSpec({
+      model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: "us-east-1" }),
+    });
+
+    const sbx = await Sandbox.create({
+      template: "rayito-agent",
+      timeoutMs: 8 * 3600 * 1000, // el tope: 8 h lanzada + suspendida
+      allowInternetAccess: false,
+      gateways: { bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [MODEL_ID] }) },
+    });
+    try {
+      const first = await sbx.agent.run("Lee el README y resume el proyecto.", { spec });
+      await sbx.pause(); // sin esta línea, la auto-suspensión lo hace a los 300 s sin tráfico
+      await sbx.connect(); // ≈ 3 s hasta el primer token del turno siguiente
+      const second = await sbx.agent.run("Ahora propón tres mejoras.", { spec, sessionId: first.sessionId });
+      console.log(second.text);
+    } finally {
+      await sbx.kill();
+    }
+    ```
+
+Más de 8 h entre turnos: el `HOME` (con las sesiones del agente) va a S3 y
+vuelve en la VM siguiente:
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentSpec, S3Prefix, Sandbox
+
+    role = os.environ["RAYITO_EXECUTION_ROLE_ARN"]
+    home = S3Prefix("amzn-s3-demo-bucket", prefix="rayito-home", name="conversacion-42")
+
+
+    def turn(spec: AgentSpec, prompt: str, session_id: str | None) -> str:
+        with Sandbox.create("rayito-agent", execution_role_arn=role, persist=home) as sbx:  # (1)!
+            result = sbx.agent.run(prompt, spec=spec, session_id=session_id)
+            sbx.checkpoint_files()  # (2)!
+            return result.session_id
+    ```
+
+    1. Restaura el `HOME` guardado, si lo hay. La imagen necesita las
+       capacidades de persistencia (`AgentTemplate` parte de
+       `rayito-base-caps`) y la VM, la pasarela del modelo (`gateways=`),
+       omitida aquí.
+    2. `s3://amzn-s3-demo-bucket/rayito-home/conversacion-42/home.tar.gz`.
+
+=== "TypeScript"
+
+    ```ts
+    import { type AgentSpec, S3Prefix, Sandbox } from "rayito";
+
+    const executionRoleArn = process.env.RAYITO_EXECUTION_ROLE_ARN ?? "";
+    const persist = new S3Prefix({ bucket: "amzn-s3-demo-bucket", prefix: "rayito-home", name: "conversacion-42" });
+
+    export async function turn(spec: AgentSpec, prompt: string, sessionId?: string): Promise<string> {
+      await using sbx = await Sandbox.create({ template: "rayito-agent", executionRoleArn, persist });
+      const result = await sbx.agent.run(prompt, { spec, sessionId });
+      await sbx.checkpointFiles(); // el HOME, con las sesiones del agente, a S3
+      return result.sessionId;
+    }
+    ```
+
+### Las cuatro opciones
+
+Se combinan (un pool con `warmup` sobre una imagen con prefetch, por
+ejemplo):
 
 | Opción | Qué hace | Cuándo usarla | Coste por encima de la VM |
 |---|---|---|---|
-| **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | tareas sueltas que pueden esperar unos segundos | ≈ $0 |
-| **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` la reanuda | una conversación que sigue minutos u horas después (< 8 h lanzada + suspendida) | ≈ $0,005–0,006 por ciclo suspend/resume + ≈ $0,0001/h guardada |
-| **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | muchas tomas al día y latencia mínima: **la recomendada hoy** | ≈ **$0,64/plaza ociosa/mes** |
-| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` | lo de C, si la nueva medida confirma que gana | ≈ **$0,82/plaza ociosa/mes** |
+| **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0 |
+| **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` (o cualquier llamada, con auto-resume) la reanuda | **el caso general**: una conversación de menos de 8 h desde `create()` | ≈ $0,005–0,006 por ciclo suspend/resume + ≈ $0,0001/h pausada |
+| **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | sólo si llegan muchas conversaciones **nuevas** y el primer mensaje tiene que ser rápido | ≈ **$0,64/plaza ociosa/mes** |
+| **D. Pool con servidor residente** | `agent_pool_warmup("opencode", serve=True)` deja además `opencode serve` arrancado y `run` se engancha con `--attach` | no recomendada por ahora | ≈ **$0,82/plaza ociosa/mes** |
 
 Cada ejecución, además, cuesta su VM (≈ $0,002–0,003 entre lanzamiento y
 segundos de cómputo hasta la respuesta) y su modelo (≈ $0,0009 una respuesta
@@ -363,7 +494,7 @@ corta de Claude Haiku 4.5 con la caché de prompts ya escrita). Desglose en
       `AgentFailed(reason="protocol_error")` o un resultado sin texto
       aunque el servidor completaba la respuesta. Ahora el SDK crea la
       sesión en el servidor y, al salir `run`, relee de él los mensajes de
-      esa vuelta. Mientras no esté la nueva medida, usa C.
+      esa vuelta. Mientras no esté la nueva medida, no la uses: C cubre el mismo caso.
     - **deepagents** no se cachea con un prompt corto: su prompt de una
       palabra son ≈ 3 503 tokens de entrada, por debajo de los 4 096 que
       Haiku exige para un punto de caché, así que cada vuelta los paga

@@ -71,7 +71,8 @@ class PoolConfig:
     su salida (un exit distinto de 0 o su plazo es un calentamiento fallido:
     la plaza se termina y el relleno aplica el backoff); uno con
     `background=True` se arranca y se suelta. Un reciclado relanza la plaza
-    y vuelve a correrlos. `agent_pool_warmup()` da los del agente de IA.
+    y vuelve a correrlos. `agent_pool_warmup()` da los del agente de IA;
+    para los turnos de una misma conversación basta con pausar su VM.
     `allow_internet_access` y `network` son la política de egress de todas
     las plazas, como en `Sandbox.create()`; un pool de agentes debe pasar
     `allow_internet_access=False`. Las pasarelas siguen aplicándose sólo en
