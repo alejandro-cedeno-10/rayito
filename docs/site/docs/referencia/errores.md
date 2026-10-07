@@ -125,8 +125,7 @@ excepción: llega en `execution.error`.
 
 ## `AgentException` / `AgentError`
 
-En `main` desde `ai-agent-core`, sin publicar todavía (llega con 0.8.0):
-[Agente en el sandbox](../guias/agente-en-el-sandbox.md).
+Desde 0.8.0: [Agente en el sandbox](../guias/agente-en-el-sandbox.md).
 
 Lleva `reason`, `session_id`/`sessionId`, `usage`, `exit_code`/`exitCode` y `detail_code`/`detailCode`.
 El mensaje es una tabla fija en español por `reason`; nunca el texto crudo

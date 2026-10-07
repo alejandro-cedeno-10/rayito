@@ -16,15 +16,14 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.7"
-    Volúmenes EFS compartidos en vivo entre sandboxes, dentro de tu VPC;
-    dominio propio con CloudFront, como función experimental; un entorno
-    para probar en local con Docker y Floci, sin cuenta de AWS; y un
-    endurecimiento de seguridad de `rayd`, los SDK, la infraestructura y la
-    release. Todo lo que tiene coste, apagado por defecto. En 0.7.1, `rayd`
-    lleva además sus avisos de licencia de terceros.
-    [Novedades de 0.7.1](novedades/0.7.1.md) ·
-    [0.7.0](novedades/0.7.0.md) ·
+!!! tip "Nuevo en 0.8"
+    Un agente de código dentro del sandbox (`sbx.agent` con OpenCode o
+    deepagents) que llama a su modelo sólo por la pasarela de secretos;
+    arranque rápido con `AgentTemplate`, pausa entre turnos o un pool
+    calentado; y una página de precios que separa la VM de los tokens del
+    modelo. Todo lo que tiene coste, apagado por defecto.
+    [Novedades de 0.8.0](novedades/0.8.0.md) ·
+    [0.7.x](novedades/0.7.1.md) ·
     [0.6.x](novedades/0.6.0.md)
 
 ## Empieza en tres pasos
@@ -224,6 +223,9 @@ código y reconexión en Python, Python async y TypeScript.
 | `volumes=`, `VolumeStore`, `EfsVolumes` (opcional, experimental, 0.7) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
 | `CustomDomain`, `rayito domain` (opcional, experimental, 0.7) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
 | `make local-up`, `make local-e2e` (0.7) | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
+| `sbx.agent.run / stream / prepare`, `bedrock_gateway`… (0.8) | un agente de código (OpenCode o deepagents) dentro del sandbox, con su modelo por la pasarela de secretos | [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
+| `AgentTemplate`, `rayito agent template build` (opcional, 0.8) | la imagen del agente, con sus binarios fijados por sha256 y prefetch | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
+| `PoolConfig(warmup=agent_pool_warmup(...))` (opcional, 0.8) | plazas del pool con el agente ya calentado | [Pool](pool.md#calentamiento-warmup-y-servidor-residente) |
 
 Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
 `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.

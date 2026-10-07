@@ -257,8 +257,9 @@ handler de `/run`) es de `rayd`, `AWS_API_NOTES.md` Q53.
 
 ## Calentamiento (`warmup`) y servidor residente
 
-!!! warning "Sin publicar"
-    `PoolConfig.warmup` está en `main` y sale con 0.8.0. Las cifras de
+!!! info "Desde 0.8.0"
+    `PoolConfig.warmup` llega con
+    [0.8.0](novedades/0.8.0.md). Las cifras de
     esta sección están medidas en AWS real el 2026-10-07 (Q147 y Q148 de
     `AWS_API_NOTES.md`); los costes son precios de lista (consultados
     2026-10-06) por esos tiempos.
