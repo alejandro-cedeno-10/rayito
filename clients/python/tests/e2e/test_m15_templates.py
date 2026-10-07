@@ -22,9 +22,10 @@ se usa dos veces sobre el mismo nombre): tope de coste de la función en
 cara de las ocho). Los nombres de imagen llevan un sufijo aleatorio por
 corrida para no chocar entre corridas concurrentes. El fixture
 `built_images` borra al terminar cada test (pase o falle) la imagen que
-construyó, con sus versiones (`image_cleanup.py`); lo que no pueda borrar
-hace fallar el test con el nombre, para borrarlo a mano. Necesita
-`lambda:DeleteMicrovmImage` en la identidad de la aceptación.
+construyó, con sus versiones y su grupo de logs `/rayito/<nombre>`
+(`image_cleanup.py`); lo que no pueda borrar hace fallar el test con el
+nombre, para borrarlo a mano. Necesita `lambda:DeleteMicrovmImage` y
+`logs:DeleteLogGroup` sobre `/rayito/*` en la identidad de la aceptación.
 """
 
 from __future__ import annotations
@@ -64,12 +65,14 @@ def _run_name(label: str) -> str:
 
 @pytest.fixture
 def built_images(control_plane: LambdaMicrovmsControlPlane) -> Iterator[BuiltImages]:
-    """Las imágenes que construye el test; se borran al terminar, también
-    si el test falla, y lo que no se pudo borrar hace fallar el teardown."""
+    """Las imágenes que construye el test y sus grupos de logs; se borran al
+    terminar, también si el test falla, y lo que no se pudo borrar hace
+    fallar el teardown."""
     session = control_plane.session
     assert session is not None, "control_plane se construye con from_session()"
     microvms = session.client("lambda-microvms", region_name=control_plane.region)
-    images = BuiltImages(microvms, resolve_arn=control_plane.resolve_template_arn)
+    logs = session.client("logs", region_name=control_plane.region)
+    images = BuiltImages(microvms, resolve_arn=control_plane.resolve_template_arn, logs=logs)
     yield images
     failures = images.delete_all()
     if failures:
