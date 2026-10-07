@@ -37,7 +37,7 @@
     ]
   },
   "raw_config": {
-    "reserved": ["provider", "autoupdate", "share", "enabled_providers", "model", "small_model", "mcp", "agent", "permission", "instructions"],
+    "reserved": ["provider", "autoupdate", "share", "enabled_providers", "model", "small_model", "mcp", "agent", "permission", "instructions", "plugin"],
     "allowed": [{"theme": "dark"}, {"lsp": false, "formatter": false}]
   },
   "spec": {

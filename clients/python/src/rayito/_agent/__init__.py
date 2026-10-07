@@ -39,8 +39,17 @@ from rayito._agent._events import (
 )
 from rayito._agent._gateways import (
     anthropic_gateway,
+    azure_openai_gateway,
     bedrock_gateway,
+    deepseek_gateway,
+    gemini_gateway,
+    groq_gateway,
+    litellm_gateway,
+    mistral_gateway,
     openai_compatible_gateway,
+    openai_gateway,
+    openrouter_gateway,
+    xai_gateway,
 )
 from rayito._agent._runtime import WarmupStep
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
@@ -78,8 +87,17 @@ __all__ = [
     "WarmupStep",
     "agent_pool_warmup",
     "anthropic_gateway",
+    "azure_openai_gateway",
     "bedrock_gateway",
+    "deepseek_gateway",
     "failure_message",
+    "gemini_gateway",
+    "groq_gateway",
+    "litellm_gateway",
+    "mistral_gateway",
     "openai_compatible_gateway",
+    "openai_gateway",
+    "openrouter_gateway",
     "truncate_tool_output",
+    "xai_gateway",
 ]

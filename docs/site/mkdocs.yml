@@ -157,6 +157,7 @@ nav:
           - Servidor MCP: mcp.md
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
           - "Agente en el sandbox": guias/agente-en-el-sandbox.md
+          - "Proveedores del agente": guias/agente-proveedores.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:

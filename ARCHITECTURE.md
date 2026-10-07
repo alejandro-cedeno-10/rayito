@@ -2584,3 +2584,22 @@ cerrado. El coste del modelo domina el de la VM (7-20 veces en el spike).
 **Reversible.** Aditivo: un paquete nuevo en cada SDK y una propiedad nueva
 en `Sandbox`; ni el shim de E2B ni ningún agente anterior ven
 comportamiento distinto.
+
+**Nota (`ai-agent-providers`).** `ModelProvider` suma `openai`
+(Responses API, también xAI), `google` (Gemini API) y `azure` (Azure
+OpenAI v1), y hay nueve presets más con clave estática:
+`openai_gateway`, `gemini_gateway`, `azure_openai_gateway`,
+`openrouter_gateway`, `groq_gateway`, `mistral_gateway`,
+`deepseek_gateway`, `xai_gateway` y `litellm_gateway`. Un valor nuevo de
+`ModelProvider` sólo existe si el runtime necesita otro paquete cliente:
+OpenRouter, Groq, Mistral, DeepSeek y LiteLLM siguen siendo
+`openai-compatible` con su `base_path`. Sólo Bedrock y Gemini llevan el
+modelo en la ruta; en las APIs al estilo de OpenAI la pasarela no puede
+limitar el modelo y el tope de gasto es el del proveedor (SECURITY.md
+T29). Los valores viven en `testdata/agent/provider-catalogue.json`, que
+leen los tests de los dos SDKs. deepagents con `azure` lanza
+`UnimplementedError` hasta que la pasarela sepa quitar una cabecera. Las
+suscripciones de consumo (plan de ChatGPT, Claude Pro/Max, Copilot,
+SuperGrok) se rechazan o aplazan; los motivos están en
+`docs/site/docs/guias/agente-proveedores.md`. Sin cambio en `rayd` ni en el
+`.proto`.

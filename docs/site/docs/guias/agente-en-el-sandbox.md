@@ -41,6 +41,10 @@ construye la `SecretGateway` con el `allow=` ya restringido:
 | `anthropic_gateway(secret, *, rate_per_minute=0)` / `anthropicGateway(secret, { ratePerMinute })` | `https://api.anthropic.com` | `x-api-key` | `POST /v1/messages` |
 | `openai_compatible_gateway(secret, *, upstream, base_path="", rate_per_minute=0)` / `openaiCompatibleGateway(secret, { upstream, basePath, ratePerMinute })` | el `upstream` que pases | `authorization` | `POST <base_path>/chat/completions` |
 
+OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI y un
+proxy de LiteLLM tienen su propio preset: ver
+[Proveedores del agente](agente-proveedores.md).
+
 `secret` es el nombre de un secreto (o un `SecretRef`). `bedrock_gateway`
 nunca abre `/model/*`: eso dejaría llamar desde dentro del sandbox a
 cualquier modelo de la cuenta, fuera del presupuesto de tokens del SDK. No

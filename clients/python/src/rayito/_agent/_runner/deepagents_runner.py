@@ -57,9 +57,11 @@ DENIED_TOOL_MESSAGE: Final = "Permiso denegado por la configuración del agente.
 MODEL_ERROR_MODULES: Final = (
     "anthropic",
     "botocore",
+    "google",
     "httpx",
     "langchain_anthropic",
     "langchain_aws",
+    "langchain_google_genai",
     "langchain_openai",
     "openai",
 )
@@ -340,6 +342,16 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     if provider == "openai-compatible":
         module = importlib.import_module("langchain_openai")
         return module.ChatOpenAI(model=model_id, base_url=base_url, api_key=placeholder)
+    if provider == "openai":
+        module = importlib.import_module("langchain_openai")
+        return module.ChatOpenAI(
+            model=model_id, base_url=base_url, api_key=placeholder, use_responses_api=True
+        )
+    if provider == "google":
+        module = importlib.import_module("langchain_google_genai")
+        return module.ChatGoogleGenerativeAI(
+            model=model_id, base_url=base_url, google_api_key=placeholder
+        )
     raise RunnerError("protocol_error", "unknown_provider")
 
 

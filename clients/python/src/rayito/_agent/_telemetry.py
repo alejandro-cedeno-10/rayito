@@ -18,6 +18,9 @@ _PROVIDER_NAMES: dict[str, str] = {
     "bedrock": "aws.bedrock",
     "anthropic": "anthropic",
     "openai-compatible": "openai",
+    "openai": "openai",
+    "google": "gcp.gemini",
+    "azure": "azure.ai.openai",
 }
 
 

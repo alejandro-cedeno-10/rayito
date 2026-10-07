@@ -28,13 +28,17 @@ from rayito._limits import (
 from rayito._secret_gateway._domain import is_safe_request_path, validate_route_name
 from rayito.exceptions import InvalidArgumentException
 
-ModelProvider: TypeAlias = Literal["bedrock", "anthropic", "openai-compatible"]
+ModelProvider: TypeAlias = Literal[
+    "bedrock", "anthropic", "openai-compatible", "openai", "google", "azure"
+]
 PermissionAction: TypeAlias = Literal["allow", "deny"]
 ToolPermission: TypeAlias = "PermissionAction | Mapping[str, PermissionAction]"
 
 #: Los proveedores que un runtime sabe hablar a través de una pasarela
-#: (`SecretGateway`): Bedrock `Converse`, la Messages API de Anthropic y
-#: cualquier API con `chat/completions` de OpenAI.
+#: (`SecretGateway`): Bedrock `Converse`, la Messages API de Anthropic,
+#: cualquier API con `chat/completions` de OpenAI (OpenRouter, Groq,
+#: Mistral, DeepSeek, LiteLLM), la Responses API de OpenAI (también xAI),
+#: Gemini y Azure OpenAI v1 (`testdata/agent/provider-catalogue.json`).
 MODEL_PROVIDERS: Final[tuple[str, ...]] = get_args(ModelProvider)
 PERMISSION_ACTIONS: Final[tuple[str, ...]] = get_args(PermissionAction)
 #: El runtime que usa `sbx.agent.run()` si no se pasa `runtime=`.
@@ -49,7 +53,8 @@ ASK_ACTION: Final = "ask"
 DEFAULT_DENIED_TOOLS: Final[tuple[str, ...]] = ("question", "webfetch", "websearch")
 #: Claves de la configuración de OpenCode que escribe el adaptador:
 #: `raw_config` no puede tocarlas, porque llevarían el modelo fuera de la
-#: pasarela (`provider`, `enabled_providers`), reactivarían descargas
+#: pasarela (`provider`, `enabled_providers`, `plugin`: los plugins OAuth
+#: de suscripciones rechazadas), reactivarían descargas
 #: (`autoupdate`, `share`) o anularían permisos y límites.
 RESERVED_CONFIG_KEYS: Final[tuple[str, ...]] = (
     "provider",
@@ -62,6 +67,7 @@ RESERVED_CONFIG_KEYS: Final[tuple[str, ...]] = (
     "agent",
     "permission",
     "instructions",
+    "plugin",
 )
 #: El agente principal que el adaptador de OpenCode configura; un subagente
 #: con este nombre lo sustituiría.
@@ -150,7 +156,12 @@ class AgentModel:
     aplicado, por ejemplo con `bedrock_gateway(...)`); si el sandbox no la
     tiene, `sbx.agent.run()` falla con `InvalidArgumentException` antes de
     cualquier RPC. `region` es obligatoria con `provider="bedrock"`.
-    `base_path` sólo se usa con `"openai-compatible"` (`"/v1"`).
+    `base_path` sólo se usa con `"openai-compatible"` (`"/v1"`) y es el
+    del preset: `"/api/v1"` con `openrouter_gateway`, `"/openai/v1"` con
+    `groq_gateway`, `"/v1"` con `mistral_gateway` y `litellm_gateway`, `""`
+    con `deepseek_gateway`. `"openai"` va con `openai_gateway` o
+    `xai_gateway`, `"google"` con `gemini_gateway` y `"azure"` con
+    `azure_openai_gateway`; esos tres fijan su ruta en el adaptador.
     `prompt_caching=True` deja que el runtime marque puntos de caché
     (Bedrock `cachePoint`, Anthropic `cache_control`): con dos o más pasos
     abarata la entrada repetida."""

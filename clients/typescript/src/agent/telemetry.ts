@@ -16,6 +16,9 @@ const PROVIDER_NAMES: Readonly<Record<ModelProvider, string>> = {
   bedrock: "aws.bedrock",
   anthropic: "anthropic",
   "openai-compatible": "openai",
+  openai: "openai",
+  google: "gcp.gemini",
+  azure: "azure.ai.openai",
 };
 
 /** Atributos conocidos antes de ejecutar nada: el modelo pedido, su

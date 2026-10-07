@@ -13,7 +13,7 @@
  * `InvalidArgumentError` antes de cualquier RPC.
  */
 
-import { InvalidArgumentError } from "../errors.js";
+import { InvalidArgumentError, UnimplementedError } from "../errors.js";
 import {
   AGENT_PROTOCOL_VERSION,
   AGENT_STATE_DIR,
@@ -76,6 +76,17 @@ export const DEEPAGENTS_FLAG_ENVS: Readonly<Record<string, string>> = Object.fre
 });
 /** Fallos que el runner puede declarar; el resto sólo los decide el SDK. */
 export const RUNNER_FAILURE_REASONS = ["model_error", "runtime_error", "protocol_error"] as const;
+
+/** Lo que la clase de LangChain espera en `base_url` con los proveedores
+ * nativos (`ChatOpenAI` añade `/responses`; `ChatGoogleGenerativeAI`, su
+ * `/v1beta/models/...`). Con `"openai-compatible"` se usa
+ * `AgentModel.basePath`. */
+export const DEEPAGENTS_NATIVE_BASE_PATHS: Readonly<Record<string, string>> = Object.freeze({
+  openai: "/v1",
+  google: "",
+});
+/** Proveedores que el runner aún no sabe hablar a través de la pasarela. */
+export const DEEPAGENTS_UNSUPPORTED_PROVIDERS: readonly string[] = Object.freeze(["azure"]);
 
 const ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
 const SESSION_ID_PATTERN = /^rda_[0-9a-f]{32}$/;
@@ -149,7 +160,15 @@ export function buildDeepAgentsConfig(
     );
   }
   const model = spec.model;
+  if (DEEPAGENTS_UNSUPPORTED_PROVIDERS.includes(model.provider)) {
+    throw new UnimplementedError(
+      `deepagents con AgentModel({ provider: '${model.provider}' })`,
+      "AzureChatOpenAI y ChatOpenAI mandan una cabecera que Azure lee como credencial y la " +
+        "pasarela aún no puede quitarla; usa runtime 'opencode'",
+    );
+  }
   const gatewayUrl = options.gatewayUrls[model.gateway] as string;
+  const basePath = DEEPAGENTS_NATIVE_BASE_PATHS[model.provider] ?? model.basePath;
   const subagents = Object.entries(spec.agents).map(([name, sub]) => ({
     name,
     description: sub.description,
@@ -165,7 +184,7 @@ export function buildDeepAgentsConfig(
     provider: model.provider,
     model: model.id,
     region: model.region ?? null,
-    base_url: stripTrailingSlashes(gatewayUrl) + model.basePath,
+    base_url: stripTrailingSlashes(gatewayUrl) + basePath,
     credential_placeholder: MODEL_CREDENTIAL_PLACEHOLDER,
     prompt_caching: model.promptCaching,
     instructions: spec.instructions ?? null,
