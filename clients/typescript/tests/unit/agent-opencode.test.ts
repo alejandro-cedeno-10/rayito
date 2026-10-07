@@ -161,6 +161,31 @@ describe("OpenCode run command", () => {
     expect(command.script).not.toContain("hola");
   });
 
+  test("rejects a session id that is not OpenCode's", () => {
+    expect(() =>
+      new OpenCodeRuntime().command({
+        spec: bedrockSpec(),
+        prompt: "x",
+        workdir: "/home/user",
+        sessionId: 'a"b',
+      }),
+    ).toThrow(InvalidArgumentError);
+  });
+
+  test("attached run creates the session and rereads the turn", () => {
+    const { script } = new OpenCodeRuntime().command({
+      spec: bedrockSpec(),
+      prompt: "x",
+      workdir: "/home/user",
+      attach: true,
+    });
+    expect(script).toContain('"permission":"question","action":"deny"');
+    expect(script).toContain('set -- "$@" -s "$sid"');
+    expect(script).toContain("/message?directory=%2Fhome%2Fuser&limit=1");
+    expect(script).toContain('exec "$@"');
+    expect(script.endsWith('exit "$rc"\n')).toBe(true);
+  });
+
   test("rejects an unknown attach", () => {
     expect(() =>
       new OpenCodeRuntime().command({
@@ -190,6 +215,75 @@ describe("OpenCode events", () => {
     expect(typed.attached).toBe(expected.attached);
     expect(typed.ignoredLines).toBe(expected.ignored_lines);
     expect(snake(runtime.finish(state, 0))).toEqual(expected.done);
+  });
+
+  const attachCases = readJson("opencode-attach", "expected.json").cases;
+  test.each(Object.keys(attachCases))("attached run %s recovers dropped parts", (name) => {
+    const expected = attachCases[name];
+    const runtime = new OpenCodeRuntime();
+    const state = runtime.newState();
+    const events: unknown[] = [];
+    const lines = readFileSync(join(TESTDATA, "opencode-attach", `${name}.jsonl`), "utf8").split(
+      "\n",
+    );
+    for (const line of lines.filter((l) => l !== "")) {
+      events.push(...runtime.parseLine(UTF8.encode(line), state).map(snake));
+    }
+    expect(events).toEqual(expected.events);
+    const typed = state as OpenCodeState;
+    expect(typed.attached).toBe(expected.attached);
+    expect(typed.ignoredLines).toBe(expected.ignored_lines);
+    expect(snake(runtime.finish(state, 0))).toEqual(expected.done);
+  });
+
+  function reread(parts: unknown[], info: Record<string, unknown> = {}): Uint8Array {
+    const message = { info: { role: "assistant", time: { created: 20 }, ...info }, parts };
+    return UTF8.encode(JSON.stringify({ type: "rayito.message", message }));
+  }
+
+  test("reread follows the CLI filters", () => {
+    const runtime = new OpenCodeRuntime();
+    const state = runtime.newState();
+    runtime.parseLine(
+      UTF8.encode('{"type":"rayito.attached","sessionID":"ses_1","since":10}'),
+      state,
+    );
+    const parts = [
+      { id: "p1", type: "reasoning", text: "pienso", time: { end: 1 } },
+      { id: "p2", type: "text", text: "a medias", time: {} },
+      { id: "p3", type: "tool", tool: "bash", state: { status: "running" } },
+      { id: "p4", type: "patch" },
+      { type: "text", text: "sin id", time: { end: 1 } },
+      { id: "p5", type: "text", text: "fin", time: { end: 1 } },
+    ];
+    expect(runtime.parseLine(reread(parts), state).map((e) => e.type)).toEqual(["text"]);
+    expect(runtime.parseLine(reread(parts), state)).toEqual([]);
+  });
+
+  test("reread gives reasoning only when asked", () => {
+    const runtime = new OpenCodeRuntime();
+    const state = runtime.newState();
+    runtime.parseLine(
+      UTF8.encode('{"type":"rayito.attached","sessionID":"ses_1","reasoning":true}'),
+      state,
+    );
+    const part = { id: "p1", type: "reasoning", text: "pienso", time: { end: 1 } };
+    expect(runtime.parseLine(reread([part]), state).map((e) => e.type)).toEqual(["reasoning"]);
+  });
+
+  test("reread keeps the streamed error and ignores garbage", () => {
+    const runtime = new OpenCodeRuntime();
+    const state = runtime.newState();
+    runtime.parseLine(
+      UTF8.encode('{"type":"error","sessionID":"ses_1","error":{"name":"A"}}'),
+      state,
+    );
+    expect(runtime.parseLine(reread([], { error: { name: "B" } }), state)).toEqual([]);
+    expect(runtime.parseLine(UTF8.encode('{"type":"rayito.message","message":[]}'), state)).toEqual(
+      [],
+    );
+    expect((state as OpenCodeState).ignoredLines).toBe(1);
+    expect(runtime.finish(state, 0)).toMatchObject({ detailCode: "A" });
   });
 
   test.each([

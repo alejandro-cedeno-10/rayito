@@ -36,3 +36,9 @@
   events on AWS, so D is not recommended. The acceptance also found that
   the template did not install the deepagents runner; fixed here.
 - [ ] 3.5 Fix or drop serve-in-pool (D) before archiving (Q148).
+  - [x] 3.5.1 Root cause in `run.ts` (attach `finish()` does not await the
+    event loop; same in 1.18.35) and local reproduction.
+  - [x] 3.5.2 The run script creates the session and re-reads the turn;
+    the adapter dedups by part id (D9), Python and TypeScript, with the
+    captured fixtures `testdata/agent/opencode-attach/`.
+  - [ ] 3.5.3 AWS re-measure of D (n=5): take → first token and end.
