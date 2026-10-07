@@ -19,12 +19,14 @@
  *
  * Nombres de imagen con un sufijo aleatorio por corrida. El `afterEach`
  * borra la imagen que construyó cada test (pase o falle), con sus
- * versiones (`image-cleanup.ts`); lo que no pueda borrar hace fallar el
- * test con el nombre, para borrarlo a mano. Necesita
- * `lambda:DeleteMicrovmImage` en la identidad de la aceptación.
+ * versiones y su grupo de logs `/rayito/<nombre>` (`image-cleanup.ts`); lo
+ * que no pueda borrar hace fallar el test con el nombre, para borrarlo a
+ * mano. Necesita `lambda:DeleteMicrovmImage` y `logs:DeleteLogGroup` sobre
+ * `/rayito/*` en la identidad de la aceptación.
  */
 
 import { randomBytes } from "node:crypto";
+import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { afterEach, describe, expect, test } from "vitest";
 import { BuildError, type BuildOptions, InvalidArgumentError, Template } from "../../src/index.js";
 import { e2eEnabled, useE2E } from "./helpers.js";
@@ -63,6 +65,7 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     images ??= new BuiltImages({
       client: e2e.controlPlane.client,
       resolveArn: (name) => e2e.controlPlane.resolveTemplateArn(name),
+      logs: new CloudWatchLogsClient(regionOption(e2e.settings.region)),
     });
     return images;
   }
