@@ -5,10 +5,7 @@ description: Correr un agente de código (OpenCode o deepagents) dentro del sand
 
 # Agente en el sandbox
 
-!!! warning "Sin publicar todavía"
-    `sbx.agent`, el runtime deepagents, `AgentTemplate` y el calentamiento
-    del pool están en `main` pero aún no en una release: llegan con la 0.8.0
-    ([borrador de Novedades](../novedades/0.8.0.md)).
+<small>Desde 0.8.0 ([Novedades de 0.8.0](../novedades/0.8.0.md)).</small>
 
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode))
 **dentro** del propio sandbox. El agente ve el mismo filesystem, los mismos

@@ -281,7 +281,7 @@ CycloneDX) van firmados keyless con cosign; PyPI y npm publican por OIDC con
 attestations. Receta completa en [`docs/site/docs/verify.md`](docs/site/docs/verify.md):
 
 ```bash
-RAYD_VERSION=0.6.1   # la versión que instalas: la identidad liga la firma a ese tag
+RAYD_VERSION=0.8.0   # la versión que instalas: la identidad liga la firma a ese tag
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
