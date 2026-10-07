@@ -25,7 +25,7 @@ rutas permitidas, y se combina con un `AgentModel`.
 | Mistral | `mistral_gateway(secret)` / `mistralGateway(secret)` | `https://api.mistral.ai` | `authorization` (`Bearer …`) | `POST /v1/chat/completions` | `provider="openai-compatible"`, `base_path="/v1"` |
 | DeepSeek | `deepseek_gateway(secret)` / `deepseekGateway(secret)` | `https://api.deepseek.com` | `authorization` (`Bearer …`) | `POST /chat/completions` | `provider="openai-compatible"` sin `base_path` |
 | xAI | `xai_gateway(secret)` / `xaiGateway(secret)` | `https://api.x.ai` | `authorization` (`Bearer xai-…`) | `POST /v1/responses`, `POST /v1/chat/completions` | `provider="openai"` |
-| LiteLLM (proxy propio) | `litellm_gateway(secret, upstream="https://…", base_path="/v1")` / `litellmGateway(secret, { upstream, basePath })` | el `upstream` que pases (`https://host`) | `authorization` (`Bearer <clave virtual>`) | `POST <base_path>/chat/completions`, `POST <base_path>/responses` | `provider="openai-compatible"`, `base_path` igual al del preset |
+| LiteLLM (proxy propio) | `litellm_gateway(secret, upstream="https://…", base_path="/v1")` / `litellmGateway(secret, { upstream, basePath })` | el `upstream` que pases (`https://host`) | `authorization` (`Bearer <clave virtual>`) | `POST <base_path>/responses`, `POST <base_path>/chat/completions` | `provider="openai-compatible"`, `base_path` igual al del preset |
 
 Todos aceptan `rate_per_minute` / `ratePerMinute`. Los valores exactos están
 en `testdata/agent/provider-catalogue.json`, el fichero que comprueban los
@@ -46,7 +46,9 @@ Notas por proveedor:
 - **xAI** usa el proveedor `openai`: OpenCode y deepagents le hablan con la
   Responses API como a OpenAI, contra otro upstream.
 - **LiteLLM.** El proxy tiene que estar detrás de HTTPS y ser alcanzable
-  desde la VPC del sandbox. Un `localhost` de tu portátil no lo es.
+  desde la VPC del sandbox. Un `localhost` de tu portátil no lo es: el preset
+  rechaza `localhost`, loopback (`127.0.0.0/8`), `0.0.0.0` y enlace local
+  (`169.254.0.0/16`).
 - **vLLM, LM Studio, Ollama, Together, Fireworks…** siguen yendo por
   `openai_compatible_gateway`, con las mismas condiciones que LiteLLM.
 
@@ -136,7 +138,8 @@ APIs al estilo de OpenAI). Con OpenAI:
 ## Límites del lado del proveedor
 
 Sólo Bedrock y Gemini llevan el modelo en la **ruta**, así que la allowlist
-de la pasarela lo limita. En las APIs al estilo de OpenAI (OpenAI, Azure
+de la pasarela lo limita. En Anthropic (`anthropic_gateway`, sólo
+`POST /v1/messages`) y en las APIs al estilo de OpenAI (OpenAI, Azure
 OpenAI, xAI, OpenRouter, Groq, Mistral, DeepSeek, LiteLLM) el modelo va en
 el **cuerpo**, que la pasarela reenvía sin leer: el código del sandbox
 puede pedir cualquier modelo que la clave permita, fuera del presupuesto
@@ -148,6 +151,7 @@ Fija el tope en el proveedor:
 - **OpenRouter:** límite de crédito en la clave. Su propia documentación
   avisa de que un agente desbocado puede gastar todo el saldo.
 - **Azure OpenAI:** sólo los despliegues que necesites y su cuota (TPM).
+- **Anthropic:** un workspace propio para la clave, con límite de gasto.
 - **LiteLLM:** presupuesto y modelos permitidos por clave virtual.
 - **Groq, Mistral, DeepSeek, xAI:** límites de gasto o de uso de la cuenta
   o del equipo.
@@ -168,7 +172,8 @@ se admiten:
 | GitHub Copilot | Rechazada | Su soporte en OpenCode es para uso interactivo; no hay términos para flotas desatendidas y exigiría reutilizar el OAuth de OpenCode. |
 | SuperGrok | Rechazada | No hay términos publicados para automatización. Usa la clave de API de xAI. |
 
-Tampoco se pueden colar por otro camino: `provider` y `enabled_providers`
-son claves reservadas de `raw_config`, ningún tipo del SDK tiene campo de
+Tampoco se pueden colar por otro camino: `provider`, `enabled_providers` y
+`plugin` son claves reservadas de `raw_config` (así no se carga un plugin
+OAuth de Copilot, Codex o Gemini), ningún tipo del SDK tiene campo de
 credencial, y el adaptador de OpenCode nunca escribe un `auth.json` ni las
 claves `auth` o `plugin`.

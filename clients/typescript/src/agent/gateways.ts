@@ -73,6 +73,18 @@ export const DEEPSEEK_BASE_PATH = "";
 /** docs.x.ai/docs/api-reference (consultado el 2026-10-07). */
 export const XAI_UPSTREAM = "https://api.x.ai";
 export const XAI_BASE_PATH = "/v1";
+/** `https://host[:puerto]` del proxy propio (LiteLLM); el mismo patrón está en Python. */
+const PROXY_UPSTREAM_PATTERN =
+  /^https:\/\/(?<host>[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)(?::(?<port>[0-9]{1,5}))?$/;
+const IPV4_PATTERN = /^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/;
+const LOCALHOST = "localhost";
+/** `0.0.0.0/8` y `127.0.0.0/8` (loopback). */
+const RESERVED_IPV4_FIRST_OCTETS = [0, 127] as const;
+/** `169.254.0.0/16`: enlace local (metadatos de la instancia). */
+const LINK_LOCAL_IPV4_PREFIX = [169, 254] as const;
+const MAX_IPV4_OCTET = 255;
+const MIN_PORT = 1;
+const MAX_PORT = 65535;
 /** El proxy de LiteLLM sirve la API de OpenAI bajo `/v1` con una clave
  * virtual en `authorization: Bearer` (docs.litellm.ai/docs/proxy/user_keys,
  * consultado el 2026-10-07). */
@@ -305,10 +317,11 @@ export interface LitellmGatewayOptions {
 }
 
 /**
- * Pasarela hacia un proxy de LiteLLM propio (`POST
- * <basePath>/chat/completions` y `POST <basePath>/responses`), para
+ * Pasarela hacia un proxy de LiteLLM propio (`POST <basePath>/responses`
+ * y `POST <basePath>/chat/completions`), para
  * `AgentModel({ provider: "openai-compatible", basePath })`. `upstream` es
- * `https://host` alcanzable desde la VPC del sandbox; `secret` guarda
+ * `https://host[:puerto]` alcanzable desde la VPC del sandbox (nunca
+ * loopback, enlace local ni `0.0.0.0`); `secret` guarda
  * `Bearer <clave virtual>`. Los presupuestos de la clave virtual son el
  * tope de gasto: la pasarela no limita el modelo.
  */
@@ -317,15 +330,46 @@ export function litellmGateway(secret: SecretLike, options: LitellmGatewayOption
     options.basePath ?? LITELLM_DEFAULT_BASE_PATH,
     "litellmGateway({ basePath })",
   );
-  return new SecretGateway({
-    upstream: options.upstream,
-    headers: { [OPENAI_AUTH_HEADER]: secret },
-    allow: [
-      [POST, `${basePath}${OPENAI_CHAT_COMPLETIONS_PATH}`],
-      [POST, `${basePath}${OPENAI_RESPONSES_PATH}`],
-    ],
-    ratePerMinute: options.ratePerMinute,
-  });
+  validateProxyUpstream(options.upstream, "litellmGateway({ upstream })");
+  return bearerGateway(secret, options.upstream, basePath, options.ratePerMinute);
+}
+
+/**
+ * `https://host[:puerto]` con un nombre DNS o una IPv4 que no sea de
+ * loopback, enlace local ni `0.0.0.0`: el sandbox no alcanza el `localhost`
+ * del llamante y `169.254.0.0/16` es el servicio de metadatos.
+ */
+function validateProxyUpstream(upstream: unknown, label: string): void {
+  const match = typeof upstream === "string" ? PROXY_UPSTREAM_PATTERN.exec(upstream) : null;
+  if (match === null) {
+    throw new InvalidArgumentError(
+      `${label} debe ser 'https://host[:puerto]' con un nombre DNS o una IPv4`,
+    );
+  }
+  const host = (match.groups?.host ?? "").toLowerCase();
+  const port = match.groups?.port;
+  if (
+    host === LOCALHOST ||
+    host.endsWith(`.${LOCALHOST}`) ||
+    (IPV4_PATTERN.test(host) && isReservedIpv4(host)) ||
+    (port !== undefined && (Number(port) < MIN_PORT || Number(port) > MAX_PORT))
+  ) {
+    throw new InvalidArgumentError(
+      `${label} no puede apuntar a loopback, enlace local ni a un puerto fuera de rango`,
+    );
+  }
+}
+
+function isReservedIpv4(host: string): boolean {
+  const octets = host.split(".").map(Number);
+  if (octets.some((octet) => octet > MAX_IPV4_OCTET)) {
+    return true;
+  }
+  const [first, second] = octets;
+  return (
+    (RESERVED_IPV4_FIRST_OCTETS as readonly number[]).includes(first ?? -1) ||
+    (first === LINK_LOCAL_IPV4_PREFIX[0] && second === LINK_LOCAL_IPV4_PREFIX[1])
+  );
 }
 
 function openaiStyleAllow(basePath: string): (readonly [string, string])[] {

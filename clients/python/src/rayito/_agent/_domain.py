@@ -53,7 +53,8 @@ ASK_ACTION: Final = "ask"
 DEFAULT_DENIED_TOOLS: Final[tuple[str, ...]] = ("question", "webfetch", "websearch")
 #: Claves de la configuración de OpenCode que escribe el adaptador:
 #: `raw_config` no puede tocarlas, porque llevarían el modelo fuera de la
-#: pasarela (`provider`, `enabled_providers`), reactivarían descargas
+#: pasarela (`provider`, `enabled_providers`, `plugin`: los plugins OAuth
+#: de suscripciones rechazadas), reactivarían descargas
 #: (`autoupdate`, `share`) o anularían permisos y límites.
 RESERVED_CONFIG_KEYS: Final[tuple[str, ...]] = (
     "provider",
@@ -66,6 +67,7 @@ RESERVED_CONFIG_KEYS: Final[tuple[str, ...]] = (
     "agent",
     "permission",
     "instructions",
+    "plugin",
 )
 #: El agente principal que el adaptador de OpenCode configura; un subagente
 #: con este nombre lo sustituiría.

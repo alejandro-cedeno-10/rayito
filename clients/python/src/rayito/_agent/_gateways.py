@@ -101,6 +101,21 @@ XAI_BASE_PATH: Final = "/v1"
 #: El proxy de LiteLLM sirve la API de OpenAI bajo `/v1` (y también en la
 #: raíz) con una clave virtual en `authorization: Bearer`
 #: (docs.litellm.ai/docs/proxy/user_keys, consultado el 2026-10-07).
+#: `https://host[:puerto]` del proxy propio (LiteLLM): etiquetas DNS o
+#: una IPv4; el mismo patrón está en el SDK de TypeScript.
+PROXY_UPSTREAM_PATTERN: Final = re.compile(
+    r"https://(?P<host>[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)(?::(?P<port>[0-9]{1,5}))?"
+)
+IPV4_PATTERN: Final = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
+LOCALHOST: Final = "localhost"
+#: `0.0.0.0/8` y `127.0.0.0/8` (loopback).
+RESERVED_IPV4_FIRST_OCTETS: Final = (0, 127)
+#: `169.254.0.0/16`: enlace local (metadatos de la instancia).
+LINK_LOCAL_IPV4_PREFIX: Final = (169, 254)
+MAX_IPV4_OCTET: Final = 255
+MIN_PORT: Final = 1
+MAX_PORT: Final = 65535
 LITELLM_DEFAULT_BASE_PATH: Final = "/v1"
 _POST: Final = "POST"
 _DNS_LABEL_PATTERN: Final = re.compile(
@@ -279,23 +294,46 @@ def litellm_gateway(
     base_path: str = LITELLM_DEFAULT_BASE_PATH,
     rate_per_minute: int = 0,
 ) -> SecretGateway:
-    """Pasarela hacia un proxy de LiteLLM propio (`POST
-    <base_path>/chat/completions` y `POST <base_path>/responses`), para
+    """Pasarela hacia un proxy de LiteLLM propio (`POST <base_path>/responses`
+    y `POST <base_path>/chat/completions`), para
     `AgentModel(provider="openai-compatible", base_path=base_path)`.
-    `upstream` es `https://host` alcanzable desde la VPC del sandbox (nunca
-    un `localhost` del portátil); `secret` guarda `Bearer <clave virtual>`.
+    `upstream` es `https://host[:puerto]` alcanzable desde la VPC del
+    sandbox (nunca loopback, enlace local ni `0.0.0.0`); `secret` guarda `Bearer <clave virtual>`.
     Los presupuestos y modelos por clave virtual de LiteLLM son el tope de
     gasto: la pasarela no limita el modelo."""
     validate_base_path(base_path, "litellm_gateway(base_path=)")
-    return SecretGateway(
-        upstream=upstream,
-        headers={OPENAI_AUTH_HEADER: secret},
-        allow=[
-            (_POST, f"{base_path}{OPENAI_CHAT_COMPLETIONS_PATH}"),
-            (_POST, f"{base_path}{OPENAI_RESPONSES_PATH}"),
-        ],
-        rate_per_minute=rate_per_minute,
-    )
+    _validate_proxy_upstream(upstream, "litellm_gateway(upstream=)")
+    return _bearer_gateway(secret, upstream, base_path, rate_per_minute)
+
+
+def _validate_proxy_upstream(upstream: object, label: str) -> None:
+    """`https://host[:puerto]` con un nombre DNS o una IPv4 que no sea de
+    loopback, enlace local ni `0.0.0.0`: el sandbox no alcanza el
+    `localhost` del llamante y `169.254.0.0/16` es el servicio de
+    metadatos de la instancia."""
+    match = PROXY_UPSTREAM_PATTERN.fullmatch(upstream) if isinstance(upstream, str) else None
+    if match is None:
+        raise InvalidArgumentException(
+            f"{label} debe ser 'https://host[:puerto]' con un nombre DNS o una IPv4"
+        )
+    host = match.group("host").lower()
+    port = match.group("port")
+    if (
+        host == LOCALHOST
+        or host.endswith(f".{LOCALHOST}")
+        or (IPV4_PATTERN.fullmatch(host) is not None and _is_reserved_ipv4(host))
+        or (port is not None and not MIN_PORT <= int(port) <= MAX_PORT)
+    ):
+        raise InvalidArgumentException(
+            f"{label} no puede apuntar a loopback, enlace local ni a un puerto fuera de rango"
+        )
+
+
+def _is_reserved_ipv4(host: str) -> bool:
+    octets = [int(octet) for octet in host.split(".")]
+    if any(octet > MAX_IPV4_OCTET for octet in octets):
+        return True
+    return octets[0] in RESERVED_IPV4_FIRST_OCTETS or tuple(octets[:2]) == LINK_LOCAL_IPV4_PREFIX
 
 
 def _openai_style_allow(base_path: str) -> list[tuple[str, str]]:

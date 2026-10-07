@@ -48,7 +48,12 @@ interface ProviderEntry {
   readonly opencode_base_path?: string;
   readonly deepagents: "supported" | "unimplemented";
   readonly deepagents_base_path?: string;
+  readonly opencode_operation?: string;
+  readonly deepagents_operation?: string;
 }
+
+/** Prefijos de `<runtime>_base_path` / `<runtime>_operation` en el catálogo. */
+const RUNTIMES = ["opencode", "deepagents"] as const;
 
 interface Catalogue {
   readonly secret: string;
@@ -140,6 +145,16 @@ describe("gateway presets", () => {
       if (model.provider === "openai-compatible") {
         expect(entry.allow.some(([, path]) => path.startsWith(`${model.basePath}/`))).toBe(true);
       }
+      const provider = CATALOGUE.model_providers[model.provider] as ProviderEntry;
+      const modelId = (entry.args.models as string[] | undefined)?.[0] ?? model.id;
+      const allowed = entry.allow.map(([, path]) => path);
+      for (const runtime of RUNTIMES) {
+        const operation = provider[`${runtime}_operation`];
+        if (operation !== undefined) {
+          const basePath = provider[`${runtime}_base_path`] ?? "";
+          expect(allowed).toContain(basePath + operation.replace("{model}", modelId));
+        }
+      }
     },
   );
 
@@ -157,8 +172,10 @@ describe("gateway presets", () => {
   test("presets carry the rate limit", () => {
     expect(rayito.openaiGateway("k", { ratePerMinute: 30 }).ratePerMinute).toBe(30);
     expect(
-      rayito.litellmGateway("k", { upstream: "https://litellm.example.com", ratePerMinute: 30 })
-        .ratePerMinute,
+      rayito.litellmGateway("k", {
+        upstream: "https://litellm.example.com",
+        ratePerMinute: 30,
+      }).ratePerMinute,
     ).toBe(30);
   });
 
@@ -186,7 +203,11 @@ describe("model providers", () => {
     }
     expect(
       () =>
-        new AgentModel({ provider: "chatgpt-plan" as ModelProvider, id: "m", gateway: "modelo" }),
+        new AgentModel({
+          provider: "chatgpt-plan" as ModelProvider,
+          id: "m",
+          gateway: "modelo",
+        }),
     ).toThrow(InvalidArgumentError);
   });
 
@@ -221,26 +242,40 @@ describe("model providers", () => {
     expect(config.plugin).toBeUndefined();
     expect(config.provider).toEqual({
       [id]: {
-        options: { baseURL: GATEWAY_URL + entry.opencode_base_path, apiKey: PLACEHOLDER },
+        options: {
+          baseURL: GATEWAY_URL + entry.opencode_base_path,
+          apiKey: PLACEHOLDER,
+        },
         models: { "modelo-a": {} },
       },
     });
   });
 
-  test.each(["provider", "enabled_providers"])("rawConfig cannot set %s", (key) => {
+  test.each([
+    ["provider", { openai: {} }],
+    ["enabled_providers", ["openai"]],
+    ["plugin", ["opencode-oauth-plugin"]],
+  ] as const)("rawConfig cannot set %s", (key, value) => {
     expect(
       () =>
         new AgentSpec({
-          model: new AgentModel({ provider: "openai", id: "modelo-a", gateway: "modelo" }),
-          rawConfig: { [key]: { openai: {} } },
+          model: new AgentModel({
+            provider: "openai",
+            id: "modelo-a",
+            gateway: "modelo",
+          }),
+          rawConfig: { [key]: value },
         }),
-    ).toThrow(InvalidArgumentError);
+    ).toThrow(new RegExp(key));
   });
 
   test.each(NATIVE)("deepagents %s", (provider) => {
     const entry = CATALOGUE.model_providers[provider] as ProviderEntry;
     const runtime = new DeepAgents();
-    const options = { gatewayUrls: { modelo: GATEWAY_URL }, workdir: "/home/user" };
+    const options = {
+      gatewayUrls: { modelo: GATEWAY_URL },
+      workdir: "/home/user",
+    };
     if (entry.deepagents === "unimplemented") {
       expect(() => runtime.buildConfig(spec(provider), options)).toThrow(UnimplementedError);
       return;

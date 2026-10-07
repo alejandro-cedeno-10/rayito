@@ -1,5 +1,5 @@
 {
-  "_comment": "Catálogo de proveedores de modelo del agente (cambio OpenSpec ai-agent-providers). Única fuente de verdad para los tests de Python y TypeScript: cada preset de pasarela debe producir exactamente este upstream, estas cabeceras y esta allowlist, y cada ModelProvider debe configurar así OpenCode y deepagents. Los args van en snake_case; el test de TypeScript los pasa a camelCase. Fuentes consultadas el 2026-10-07: platform.openai.com/docs/api-reference, ai.google.dev/gemini-api/docs/api-key, learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle, openrouter.ai/docs/api/reference/authentication, console.groq.com/docs/openai, docs.mistral.ai/api, api-docs.deepseek.com, docs.x.ai/docs/api-reference, docs.litellm.ai/docs/proxy/user_keys.",
+  "_comment": "Catálogo de proveedores de modelo del agente (cambio OpenSpec ai-agent-providers). Única fuente de verdad para los tests de Python y TypeScript: cada preset de pasarela debe producir exactamente este upstream, estas cabeceras y esta allowlist, y cada ModelProvider debe configurar así OpenCode y deepagents. Los args van en snake_case; el test de TypeScript los pasa a camelCase. Fuentes consultadas el 2026-10-07: platform.openai.com/docs/api-reference, ai.google.dev/gemini-api/docs/api-key, learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle, openrouter.ai/docs/api/reference/authentication, console.groq.com/docs/openai, docs.mistral.ai/api, api-docs.deepseek.com, docs.x.ai/docs/api-reference, docs.litellm.ai/docs/proxy/user_keys. Cada *_operation es el sufijo que el SDK del runtime añade a su *_base_path ({model} = id del modelo): la ruta resultante debe estar en la allowlist del preset.",
   "secret": "provider-key",
   "presets": [
     {
@@ -122,8 +122,8 @@
       "upstream": "https://litellm.example.com",
       "headers": ["authorization"],
       "allow": [
-        ["POST", "/v1/chat/completions"],
-        ["POST", "/v1/responses"]
+        ["POST", "/v1/responses"],
+        ["POST", "/v1/chat/completions"]
       ],
       "model_allowlist": false
     },
@@ -137,8 +137,8 @@
       "upstream": "https://litellm.example.com",
       "headers": ["authorization"],
       "allow": [
-        ["POST", "/chat/completions"],
-        ["POST", "/responses"]
+        ["POST", "/responses"],
+        ["POST", "/chat/completions"]
       ],
       "model_allowlist": false
     }
@@ -157,7 +157,16 @@
     {"why": "LiteLLM sin host", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://"}},
     {"why": "LiteLLM base_path con barra final", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com", "base_path": "/v1/"}},
     {"why": "LiteLLM base_path relativo", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com", "base_path": "v1"}},
-    {"why": "LiteLLM base_path con punto-punto", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com", "base_path": "/v1/../admin"}}
+    {"why": "LiteLLM base_path con punto-punto", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com", "base_path": "/v1/../admin"}},
+    {"why": "LiteLLM en localhost", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://localhost"}},
+    {"why": "LiteLLM en un subdominio de localhost", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://api.localhost"}},
+    {"why": "LiteLLM en loopback", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://127.0.0.1"}},
+    {"why": "LiteLLM en enlace local (metadatos)", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://169.254.169.254"}},
+    {"why": "LiteLLM en 0.0.0.0", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://0.0.0.0"}},
+    {"why": "LiteLLM con espacio en el host", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://lite llm.example.com"}},
+    {"why": "LiteLLM con carácter de control", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com\u0007"}},
+    {"why": "LiteLLM sólo con puerto", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://:443"}},
+    {"why": "LiteLLM con puerto fuera de rango", "python": "litellm_gateway", "typescript": "litellmGateway", "args": {"upstream": "https://litellm.example.com:70000"}}
   ],
   "model_providers": {
     "bedrock": {"otel_provider": "aws.bedrock", "opencode_provider_id": "amazon-bedrock", "deepagents": "supported"},
@@ -168,19 +177,24 @@
       "opencode_provider_id": "openai",
       "opencode_base_path": "/v1",
       "deepagents": "supported",
-      "deepagents_base_path": "/v1"
+      "deepagents_base_path": "/v1",
+      "opencode_operation": "/responses",
+      "deepagents_operation": "/responses"
     },
     "google": {
       "otel_provider": "gcp.gemini",
       "opencode_provider_id": "google",
       "opencode_base_path": "/v1beta",
       "deepagents": "supported",
-      "deepagents_base_path": ""
+      "deepagents_base_path": "",
+      "opencode_operation": "/models/{model}:streamGenerateContent",
+      "deepagents_operation": "/v1beta/models/{model}:streamGenerateContent"
     },
     "azure": {
       "otel_provider": "azure.ai.openai",
       "opencode_provider_id": "azure",
       "opencode_base_path": "/openai",
+      "opencode_operation": "/v1/responses",
       "deepagents": "unimplemented"
     }
   },

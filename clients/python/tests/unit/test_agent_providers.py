@@ -29,6 +29,8 @@ CATALOGUE: dict[str, Any] = json.loads(
 SECRET: str = CATALOGUE["secret"]
 GATEWAY_URL = "http://127.0.0.1:18005"
 PLACEHOLDER = "placeholder-not-a-secret"
+#: Prefijos de `<runtime>_base_path` / `<runtime>_operation` en el catálogo.
+RUNTIMES = ("opencode", "deepagents")
 
 
 def _build(entry: dict[str, Any]) -> SecretGateway:
@@ -66,6 +68,14 @@ def test_preset_pairs_with_its_agent_model(entry: dict[str, Any]) -> None:
     )
     if model.provider == "openai-compatible":
         assert any(path.startswith(f"{model.base_path}/") for _, path in entry["allow"])
+    provider = CATALOGUE["model_providers"][model.provider]
+    model_id = next(iter(entry["args"].get("models", [model.id])))
+    allowed = {path for _, path in entry["allow"]}
+    for runtime in RUNTIMES:
+        operation = provider.get(f"{runtime}_operation")
+        if operation is not None:
+            path = provider[f"{runtime}_base_path"] + operation.format(model=model_id)
+            assert path in allowed, f"{runtime} pediría {path}"
 
 
 @pytest.mark.parametrize("entry", CATALOGUE["presets"], ids=lambda entry: str(entry["name"]))
@@ -160,12 +170,20 @@ def test_opencode_never_ships_an_auth_file(provider: str) -> None:
     assert "plugin" not in config
 
 
-@pytest.mark.parametrize("key", ["provider", "enabled_providers"])
-def test_raw_config_cannot_bring_another_provider(key: str) -> None:
-    with pytest.raises(InvalidArgumentException):
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("provider", {"openai": {}}),
+        ("enabled_providers", ["openai"]),
+        ("plugin", ["opencode-oauth-plugin"]),
+    ],
+)
+def test_raw_config_cannot_bring_another_provider(key: str, value: object) -> None:
+    """Ni otro proveedor ni un plugin OAuth de una suscripción rechazada."""
+    with pytest.raises(InvalidArgumentException, match=key):
         AgentSpec(
             model=AgentModel(provider="openai", id="modelo-a", gateway="modelo"),
-            raw_config={key: {"openai": {}}},
+            raw_config={key: value},
         )
 
 

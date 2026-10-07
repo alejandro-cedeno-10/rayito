@@ -69,6 +69,7 @@ export const RESERVED_CONFIG_KEYS = [
   "agent",
   "permission",
   "instructions",
+  "plugin",
 ] as const;
 /** El agente principal que configura el adaptador de OpenCode. */
 export const RESERVED_AGENT_NAMES = ["build"] as const;

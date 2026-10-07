@@ -63,7 +63,7 @@ gateway with a placeholder key. Phase 1 covers only static API keys.
    refused (Anthropic's terms forbid routing or intermediating consumer
    credentials). GitHub Copilot and SuperGrok: refused (no terms for
    unattended fleets; would reuse OpenCode's OAuth client). They cannot
-   sneak in: `provider` and `enabled_providers` are reserved `raw_config`
+   sneak in: `provider`, `enabled_providers` and `plugin` are reserved `raw_config`
    keys, the adapter writes no `auth.json`, `auth` or `plugin` key, and no
    SDK type carries a credential.
 7. **Single source of truth.** `testdata/agent/provider-catalogue.json`,
