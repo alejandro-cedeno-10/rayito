@@ -6,12 +6,22 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Cambios que rompen
+
+- **Se eliminan `GatewayError` y `GatewayErrorOptions`** (no estarán en
+  0.9.0). `GatewayError` nunca se lanzaba: lo que la pasarela de secretos
+  rechaza por petición llega al proceso del sandbox como respuesta HTTP
+  (403, 429, 502, 504), y una configuración que `rayd` rechaza es
+  `SandboxError`. Migración: quita el import y cualquier
+  `instanceof GatewayError`; si capturabas fallos de la pasarela al crear o
+  refrescar, usa `instanceof SandboxError`.
+
 ### Changed
 
 - **TSDoc alineado con la documentación** (barrido de docs de 0.8): los
   errores sin TSDoc lo tienen, los códigos de `MountError`, `AgentError`
-  (`runtime_version_mismatch` y `output_limit`, reservados) y `GatewayError`
-  (hoy no se lanza) dicen lo que pasa de verdad, y `reincarnate()` lista
+  (`runtime_version_mismatch` y `output_limit`, reservados)
+  dicen lo que pasa de verdad, y `reincarnate()` lista
   todo lo que reaplica.
 
 ## [0.8.0] - 2026-10-07

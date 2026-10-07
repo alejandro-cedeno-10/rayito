@@ -157,3 +157,14 @@ def test_gateway_status_url_is_loopback_and_never_prints_a_secret() -> None:
     status = GatewayStatus(port=54321)
     assert status.url == "http://127.0.0.1:54321"
     assert status.last_error_class is None
+
+
+def test_sdk_exposes_no_gateway_specific_exception() -> None:
+    """La pasarela rechaza por petición con HTTP dentro del sandbox; el SDK
+    no tiene una excepción propia que nunca se lanzaría."""
+    import rayito
+    from rayito import exceptions
+
+    assert "GatewayException" not in rayito.__all__
+    assert not hasattr(rayito, "GatewayException")
+    assert not hasattr(exceptions, "GatewayException")

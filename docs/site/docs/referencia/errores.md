@@ -40,7 +40,6 @@ cuándo ocurre y qué hacer.
     ├── TemplateException
     ├── StackException
     ├── WebhookException
-    ├── GatewayException
     ├── CustomDomainException
     └── AgentException
     AuthenticationException          (Exception: un problema de credenciales, no del sandbox)
@@ -86,7 +85,6 @@ cuándo ocurre y qué hacer.
     ├── TemplateError
     ├── StackError
     ├── WebhookError
-    ├── GatewayError
     ├── CustomDomainError
     └── AgentError
     AuthenticationError              (Error)
@@ -146,7 +144,6 @@ excepción: llega en `execution.error`.
 | `StackException` | `StackError` | CloudFormation (`code`) | `OptionalStacks.deploy/status/destroy` falló: `blocked` (pila en `ROLLBACK_COMPLETE`), `not_found`, `in_progress`, `failed` | ver [Pilas opcionales](../funciones-opcionales/pilas-opcionales.md#como-se-comporta) |
 | `BuildException` | `BuildError` | el build de la imagen (`reason`) | `Template.build()` falló: un paso del Dockerfile (`step`, `command`, `exit_code`, `log_tail`), el `ready_cmd`, la cuota de builds o el plazo | ver [Templates](../funciones-opcionales/templates.md#errores) |
 | `TemplateException` | `TemplateError` | el SDK | nombre de template inválido (1-64 `[A-Za-z0-9_-]`, sin `:tag`) | corrige el nombre; la imagen base inválida es `BuildException` con `reason="base_image_*"` |
-| `GatewayException` (`code`) | `GatewayError` (`code`) | — | reservada: hoy no se lanza. Lo que la [pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md) rechaza llega al proceso del sandbox como respuesta HTTP (403, 429, 502, 504); una configuración que `rayd` rechaza es `SandboxException` | — |
 | `CustomDomainException` | `CustomDomainError` | CloudFormation, CloudFront KVS | `CustomDomain` (experimental): deploy/status/destroy de la pila, o `expose()`/`get_host()` sin ruta válida | ver [Dominio propio](../funciones-opcionales/dominio-propio.md) |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
 | `AgentException` | `AgentError` | el runtime del agente (`reason`) | `sbx.agent.run()`/`.stream()` falló: ver la tabla siguiente | lee `reason`, `session_id` y `usage`; nunca contiene el prompt ni la respuesta |
