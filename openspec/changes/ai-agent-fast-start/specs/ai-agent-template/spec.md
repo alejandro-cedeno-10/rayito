@@ -27,11 +27,15 @@ The template SHALL bake `AGENT_TEMPLATE_MANIFEST_PATH` (`/opt/agents/rayito-agen
 - **THEN** `deepagents` and `runner_sha256` are null and `prefetch_paths` is `["/opt/agents/bin/opencode", "/opt/agents/bin/rg"]`
 
 ### Requirement: The prefetch daemon warms the page cache after a snapshot restore
-With `prefetch=True` the template SHALL install `rayito-agent-prefetch` (package data) at `/opt/agents/bin/` and set it as `start_cmd` with the manifest path, `AGENT_PREFETCH_RESTORE_JUMP_SECONDS` (30) and `AGENT_PREFETCH_INTERVAL_SECONDS` (2). The daemon SHALL sleep the interval in a loop and, when the wall clock jumped more than the threshold, read every `prefetch_paths` entry with `nice -n 19` and, if the deepagents venv exists, import its modules once; it SHALL NOT write files nor open network connections. With `prefetch=False` there SHALL be no `start_cmd` and no script in the context.
+With `prefetch=True` the template SHALL install `rayito-agent-prefetch` (package data) at `/opt/agents/bin/` and set it as `start_cmd` with the manifest path, `AGENT_PREFETCH_RESTORE_JUMP_SECONDS` (30) and `AGENT_PREFETCH_INTERVAL_SECONDS` (2). The daemon SHALL sleep the interval in a loop and, when the wall clock jumped more than the threshold, first wait until the guest has had no I/O in flight (`/proc/diskstats`) for one second in a row, at most 60 s, so its reads never compete with the boot that `create()` waits for, and then read every `prefetch_paths` entry with `nice -n 19` and, if the deepagents venv exists, import its modules once; it SHALL NOT write files nor open network connections. With `prefetch=False` there SHALL be no `start_cmd` and no script in the context.
 
 #### Scenario: a clock jump triggers the prefetch
 - **WHEN** a unit test runs the script with a fake `date` that jumps by 100 s
 - **THEN** it reads the manifest's path through `nice`
+
+#### Scenario: the prefetch waits for the boot to go quiet
+- **WHEN** a unit test runs the script after the jump with a `diskstats` file that shows I/O in flight, and later one that shows none
+- **THEN** it reads nothing while I/O is in flight and reads the manifest's path once the guest is quiet
 
 ### Requirement: rayito agent template build is the CLI over AgentTemplate
 The CLI SHALL provide `rayito agent template build --bucket B [--name] [--base] [--memory-mb] [--deepagents/--no-deepagents] [--prefetch/--no-prefetch] [--force] [--timeout]`, with defaults taken from the SDK constants, printing `template_id=` and `build_id=` (or JSON with `--json`), and failing with a message on `InvalidArgumentException` or `BuildException`.
