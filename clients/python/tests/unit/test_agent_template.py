@@ -121,6 +121,7 @@ def test_build_passes_context_and_memory(monkeypatch: pytest.MonkeyPatch) -> Non
     assert seen["memory_mb"] == 4096
     assert seen["bucket"] == "amzn-s3-demo-bucket"
     assert seen["files"] == [
+        "deepagents_runner.py",
         "rayito-agent-prefetch",
         "rayito-agent.json",
         "requirements-deepagents.txt",
@@ -233,3 +234,19 @@ def test_cli_rejects_small_memory(monkeypatch: pytest.MonkeyPatch) -> None:
         ["template", "build", "--bucket", "amzn-s3-demo-bucket", "--memory-mb", "1024"],
     )
     assert result.exit_code != 0
+
+
+def test_deepagents_runner_is_installed_and_pinned_in_the_manifest() -> None:
+    """El runner que `runtime="deepagents"` ejecuta se hornea de root y 0755
+    en `DEEPAGENTS_RUNNER_PATH`, y su sha256 va en el manifiesto; sin
+    deepagents, ni el fichero ni el hash."""
+    template = AgentTemplate()
+    runner = _template.deepagents_runner()
+    assert template.context_files()[_template.DEEPAGENTS_RUNNER_NAME] == runner
+    assert template.manifest()["runner_sha256"] == hashlib.sha256(runner).hexdigest()
+    dockerfile = template.to_dockerfile()
+    assert '"/opt/agents/rayito/deepagents_runner.py"]' in dockerfile
+    assert "chmod 0755 /opt/agents/rayito/deepagents_runner.py" in dockerfile
+    only = AgentTemplate(runtimes=("opencode",))
+    assert only.manifest()["runner_sha256"] is None
+    assert _template.DEEPAGENTS_RUNNER_NAME not in only.context_files()

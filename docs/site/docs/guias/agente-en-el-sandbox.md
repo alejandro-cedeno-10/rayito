@@ -325,21 +325,39 @@ haces; ese aviso es **próximamente**). Riesgos y mitigaciones en
 
 ## Arranque rápido
 
-El primer `exec` de OpenCode tras `create()` tardó una mediana de 11,3 s en
-el spike (es la primera lectura del binario desde el disco restaurado).
-Cómo elegir:
+El primer `exec` de OpenCode tras `create()` es lento porque lee el binario
+desde el disco de la VM recién restaurada (Q142). Cómo elegir:
 
 | Si… | Usa | Estado | Coste por encima de la VM |
 |---|---|---|---|
-| no quieres pagar nada extra | **A. Prefetch** al crear (`AgentTemplate(prefetch=True)`) o `sbx.agent.prepare()` en cualquier imagen | `prepare()` en `main`; el demonio de prefetch, próximamente | ≈ $0 (Precio de lista) |
-| la misma conversación sigue más tarde (< 8 h) | **B. `pause()` entre turnos** y `connect()` | disponible | ≈ $0,008 por ciclo suspend/resume (Precio de lista) |
-| necesitas el agente caliente al instante, con tráfico regular | **C. Pool con `warmup`** | próximamente | ≈ $0,78/plaza/mes (estimación) |
-| además quieres el servidor de OpenCode ya arrancado | **D. Pool con servidor residente** | próximamente | ≈ $0,92/plaza/mes (estimación) |
+| no quieres pagar nada extra | **A. Prefetch** al crear (`AgentTemplate(prefetch=True)`) o `sbx.agent.prepare()` en cualquier imagen | en `main` (0.8.0) | ≈ $0 |
+| la misma conversación sigue más tarde (< 8 h) | **B. `pause()` entre turnos** y `connect()` | disponible | ≈ $0,005–0,006 por ciclo suspend/resume |
+| necesitas el agente caliente al instante, con tráfico regular | **C. Pool con `warmup`** | en `main` (0.8.0) | ≈ **$0,64/plaza/mes** |
+| además quieres el servidor de OpenCode ya arrancado | **D. Pool con servidor residente** | en `main`, **no recomendado**: ver abajo | ≈ $0,82/plaza/mes |
 
-La etapa de aceptación en AWS medirá A, C y D (AWS_API_NOTES Q146–Q152); las
-cifras "Medido en AWS real" se añadirán aquí entonces. Desglose en
-[Precios](../cost.md#plaza-de-pool-de-agente-c-y-d) y
-[Pool](../pool.md#calentamiento-warmup-y-servidor-residente).
+!!! success "Medido en AWS real (2026-10-07, us-east-1, Claude Haiku 4.5, n=5)"
+    Tiempo hasta el primer token de una respuesta corta, con el egress
+    cerrado y el modelo por `bedrock_gateway`:
+
+    | Escenario | p50 | p95 |
+    |---|---|---|
+    | `create()` sin prefetch → primer token | 28,3 s | 41,1 s |
+    | `create()` con prefetch (A) → primer token | 20,5 s | 37,0 s |
+    | `connect()` tras `pause()` (B) → primer token | 3,1 s | 3,2 s |
+    | `pool.take()` con `warmup` (C) → primer token | 5,1 s | 6,7 s |
+    | tras `create()`, primer token de deepagents (frente a 5,0 s de OpenCode) | 7,5 s | 9,3 s |
+
+    El prefetch baja el tramo posterior a `create()` de 19,6 s a 4,7 s
+    (−76 %), pero su lectura compite con el arranque y alarga `create()`
+    unos 8 s: de extremo a extremo gana un 28 %. Los primeros lanzamientos
+    de una versión de imagen recién publicada tardan bastante más
+    (`create()` de 26 a 65 s).
+    **D no funciona todavía**: en AWS, `opencode run --attach` (1.18.34)
+    sale tras el primer evento aunque el servidor complete la respuesta, y
+    el SDK lo ve como `AgentFailed(reason="protocol_error")`. Usa C.
+    Detalle en `AWS_API_NOTES.md` Q146–Q152; desglose de costes en
+    [Precios](../cost.md#plaza-de-pool-de-agente-c-y-d) y
+    [Pool](../pool.md#calentamiento-warmup-y-servidor-residente).
 
 === "Python"
 

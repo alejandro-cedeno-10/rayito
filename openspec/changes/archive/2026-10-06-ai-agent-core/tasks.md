@@ -47,4 +47,4 @@
 - [x] 4.1 Local e2e through the gateway (`local-agent-e2e`: gated by the
   `RAYITO_LOCAL_BEDROCK_KEY_FILE` key file, model and region overridable
   with `RAYITO_E2E_BEDROCK_MODEL`/`RAYITO_E2E_BEDROCK_REGION`).
-- [ ] 4.2 AWS acceptance (Q146–Q152) and archive.
+- [x] 4.2 AWS acceptance (Q146–Q152) and archive.
