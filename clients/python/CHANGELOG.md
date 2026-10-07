@@ -59,6 +59,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   esa misma cadena. Quien sólo exporta `AWS_DEFAULT_REGION` no nota
   cambios.
 
+- **`Sandbox.connect()` y `AsyncSandbox.connect()` recuperan `sbx.gateways`**: otro proceso ya puede usar
+  `sbx.agent` sobre un sandbox creado con `gateways=` sin recrearlo.
+  `connect()` lee una vez el `ConfigureStatus` de `rayd` (nombre, puerto y
+  último error de cada ruta; nunca el upstream ni las cabeceras) si el
+  agente anuncia `secret_gateway` y el handle no aplicó `gateways=` él
+  mismo. En un handle recuperado, `refresh()` sólo relee el estado y cada
+  `connect()` vuelve a leerlo con el timeout de petición de esa llamada.
+  Rotar la clave (`refresh()` o `reincarnate()`) sigue siendo cosa del
+  handle que llamó a `create(gateways=)`: en uno recuperado, `reincarnate()`
+  lanza. Si `rayd` rechaza el token en esa lectura, `connect()` no falla:
+  se salta la recuperación y el `AuthenticationException` sale en la
+  primera llamada autenticada, como hasta ahora.
+
 ### Changed
 
 - `rayito doctor` conoce la serie 0.9: la tabla de compatibilidad
@@ -73,21 +86,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   región del índice y de `Template.build` piden `AWS_REGION`. La ayuda de
   `rayito image sizes`, `doctor`, `sandbox proxy`, `agent template build` y
   `domain` ya no nombra detalles internos.
-
-### Fixed
-
-- **`Sandbox.connect()` y `AsyncSandbox.connect()` recuperan `sbx.gateways`**: otro proceso ya puede usar
-  `sbx.agent` sobre un sandbox creado con `gateways=` sin recrearlo.
-  `connect()` lee una vez el `ConfigureStatus` de `rayd` (nombre, puerto y
-  último error de cada ruta; nunca el upstream ni las cabeceras) si el
-  agente anuncia `secret_gateway` y el handle no aplicó `gateways=` él
-  mismo. En un handle recuperado, `refresh()` sólo relee el estado y cada
-  `connect()` vuelve a leerlo con el timeout de petición de esa llamada.
-  Rotar la clave (`refresh()` o `reincarnate()`) sigue siendo cosa del
-  handle que llamó a `create(gateways=)`: en uno recuperado, `reincarnate()`
-  lanza. Si `rayd` rechaza el token en esa lectura, `connect()` no falla:
-  se salta la recuperación y el `AuthenticationException` sale en la
-  primera llamada autenticada, como hasta ahora.
 
 ## [0.8.0] - 2026-10-07
 
