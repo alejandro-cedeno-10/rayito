@@ -188,7 +188,12 @@ from rayito._sandbox_base import (
     with_size_facts,
     write_index_record,
 )
-from rayito._secret_gateway import EMPTY_GATEWAYS, GatewayHandle
+from rayito._secret_gateway import (
+    EMPTY_GATEWAYS,
+    GatewayHandle,
+    gateways_recoverable,
+    recovered_gateways,
+)
 from rayito._secret_gateway import SECTION_NAME as GATEWAY_SECTION
 from rayito._secrets import (
     SecretBinding,
@@ -971,6 +976,7 @@ class AsyncSandbox:
                 await self._refresher.refresh_all()
             await self._wait_until_ready(terminate_on_failure=False)
             await self._extend_after_readiness(timeout, request_timeout=request_timeout)
+            await self._recover_gateways()
         return self
 
     @classmethod
@@ -1053,6 +1059,7 @@ class AsyncSandbox:
             sandbox._secrets = binding
             try:
                 await sandbox._extend_after_readiness(timeout, request_timeout=None)
+                await sandbox._recover_gateways()
             except BaseException:
                 await sandbox.close()
                 raise
@@ -2081,6 +2088,19 @@ class AsyncSandbox:
         if self._secrets is not None and self._secrets.cache is not None:
             return self._secrets.cache
         return self._default_secret_cache()
+
+    async def _recover_gateways(self) -> None:
+        """Misma semántica que `Sandbox._recover_gateways`, en `asyncio`."""
+        if GATEWAY_SECTION in self._section_handles or not gateways_recoverable(
+            self._agent_features
+        ):
+            return
+        reader = functools.partial(
+            call_configure_status, self._configure, timeout=self._request_timeout
+        )
+        recovered = recovered_gateways(await reader(), async_reader=reader)
+        if recovered is not EMPTY_GATEWAYS:
+            self._section_handles[GATEWAY_SECTION] = recovered
 
     async def _reapply_section(
         self, section: ConfigureSection, *, timeout: float

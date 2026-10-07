@@ -425,6 +425,70 @@ Los `reason` posibles están en
 [Errores](../referencia/errores.md#agentexception-agenterror). Ningún mensaje
 lleva el texto del proveedor, el prompt ni contenido del sandbox.
 
+## Usar el agente desde otro proceso
+
+Un proceso puede crear el sandbox con `gateways=` y otro (un worker, una
+API, una tarea programada) conducir el agente con `Sandbox.connect()`, sin
+recrearlo. `connect()` pide a `rayd` un `ConfigureStatus` de sólo lectura y
+reconstruye `sbx.gateways`: nombre, puerto y último error de cada ruta.
+Ningún secreto sale de `rayd`: ni el upstream, ni las cabeceras, ni sus
+valores.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel, AgentSpec, Sandbox
+
+    MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    spec = AgentSpec(
+        model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"),
+    )
+
+    sbx = Sandbox.connect("microvm-00000000-0000-0000-0000-000000000001")
+    print(sbx.gateways["bedrock"].url)
+    result = sbx.agent.run("Resume el README.", spec=spec)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AgentModel, AgentSpec, AsyncSandbox
+
+    MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+    async def main() -> None:
+        spec = AgentSpec(
+            model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"),
+        )
+        sbx = await AsyncSandbox.connect("microvm-00000000-0000-0000-0000-000000000001")
+        result = await sbx.agent.run("Resume el README.", spec=spec)
+        print(result.text)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel, AgentSpec, Sandbox } from "rayito";
+
+    const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+    const spec = new AgentSpec({
+      model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: "us-east-1" }),
+    });
+
+    const sbx = await Sandbox.connect("microvm-00000000-0000-0000-0000-000000000001");
+    console.log(sbx.gateways.get("bedrock")?.url);
+    const result = await sbx.agent.run("Resume el README.", { spec });
+    ```
+
+Sin la definición de la pasarela no hay nada que rotar: en un handle
+recuperado, `sbx.gateways.refresh()` sólo relee el estado (puertos y
+errores). Para rotar la clave, llama a `refresh()` desde el proceso que pasó
+`gateways=`, o usa `reincarnate()`. El handle que creó el sandbox conserva
+el suyo aunque vuelva a llamar a `connect()`. Sobre un agente sin la función
+`secret_gateway`, `sbx.gateways` queda vacío y `connect()` no hace ninguna
+llamada extra.
+
 ## Permisos: no son una frontera de seguridad
 
 `AgentPermissions(default="allow"|"deny", tools={...})` decide qué

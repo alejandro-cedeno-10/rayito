@@ -19,6 +19,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `sandbox proxy`, `agent template build` y `domain` ya no nombra detalles
   internos.
 
+### Fixed
+
+- **`Sandbox.connect()` y `AsyncSandbox.connect()` recuperan `sbx.gateways`**: otro proceso ya puede usar
+  `sbx.agent` sobre un sandbox creado con `gateways=` sin recrearlo.
+  `connect()` lee una vez el `ConfigureStatus` de `rayd` (nombre, puerto y
+  último error de cada ruta; nunca el upstream ni las cabeceras) si el
+  agente anuncia `secret_gateway` y el handle no aplicó `gateways=` él
+  mismo. En un handle recuperado, `refresh()` sólo relee el estado: rotar
+  la clave sigue siendo cosa del proceso que creó la pasarela.
+
 ## [0.8.0] - 2026-10-07
 
 ### Cambios que rompen

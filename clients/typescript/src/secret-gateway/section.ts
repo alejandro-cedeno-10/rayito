@@ -9,6 +9,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import {
+  type AgentFeatures,
   type ConfigureSectionFactory,
   ImmediateSection,
   type PostApplySection,
@@ -165,3 +166,38 @@ export class GatewayHandle {
 }
 
 export const EMPTY_GATEWAYS: GatewayHandle = new GatewayHandle({});
+
+/** Relee `ConfigureStatus` sin mandar ningún `Configure`: el `refresh()` de
+ * un `sbx.gateways` recuperado por `connect()`. */
+export type StatusReader = () => Promise<ConfigureStatusResponse>;
+
+/** `connect()` sólo pregunta por las pasarelas a un agente que anuncia
+ * `ConfigureService` y la función `secretGateway`: sobre uno anterior,
+ * `sbx.gateways` queda vacío sin ninguna llamada extra. Espejo de
+ * `gateways_recoverable` de Python. */
+export function gatewaysRecoverable(features: AgentFeatures | undefined): boolean {
+  return features?.configure === true && features.secretGateway;
+}
+
+/**
+ * El `sbx.gateways` que `connect()` reconstruye desde el `ConfigureStatus`
+ * de un sandbox en marcha: sólo nombre, puerto y último error de cada ruta,
+ * porque `rayd` nunca devuelve el upstream, las cabeceras ni sus valores.
+ * Sin la definición original no hay nada que rotar, así que su `refresh()`
+ * sólo relee el estado; rotar un secreto sigue siendo cosa del proceso que
+ * pasó `gateways` (o de un `reincarnate()`). `EMPTY_GATEWAYS` si el sandbox
+ * no tiene pasarelas. Espejo de `recovered_gateways` de Python.
+ */
+export function recoveredGateways(
+  status: ConfigureStatusResponse,
+  reader?: StatusReader,
+): GatewayHandle {
+  const statuses = statusesOf(status);
+  if (Object.keys(statuses).length === 0) {
+    return EMPTY_GATEWAYS;
+  }
+  return new GatewayHandle(
+    statuses,
+    reader === undefined ? undefined : async () => statusesOf(await reader()),
+  );
+}
