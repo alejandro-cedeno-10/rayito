@@ -33,14 +33,33 @@ export class SandboxError extends Error {
   }
 }
 
+/**
+ * Venció un plazo: el `timeoutMs` de un comando o de `runCode`, el de una
+ * llamada (`DEADLINE_EXCEEDED`) o el plazo del propio sandbox
+ * (`sandbox_timeout` de `rayd`).
+ */
 export class TimeoutError extends SandboxError {}
 
+/**
+ * Un argumento inválido, detectado por el SDK antes de llamar a nadie, por el
+ * agente (`INVALID_ARGUMENT`, `FAILED_PRECONDITION`) o por la API de AWS
+ * (`ValidationException`). El mensaje nombra el argumento.
+ */
 export class InvalidArgumentError extends SandboxError {}
 
+/**
+ * Lo pedido no existe: un proceso, un contexto de código o un checkpoint
+ * (`NOT_FOUND`, `OUT_OF_RANGE` del agente).
+ */
 export class NotFoundError extends SandboxError {}
 
+/** El fichero o directorio no existe (`NOT_FOUND` en `sbx.files`). */
 export class FileNotFoundError extends NotFoundError {}
 
+/**
+ * El sandbox no existe o ya terminó (`ResourceNotFoundException` del plano de
+ * control, o un MicroVM terminado al reconectar).
+ */
 export class SandboxNotFoundError extends NotFoundError {}
 
 export interface SandboxNotReadyErrorOptions extends SandboxErrorOptions {
@@ -64,8 +83,18 @@ export class SandboxNotReadyError extends SandboxError {
   }
 }
 
+/**
+ * El sandbox no está en un estado que admita la operación: se está
+ * suspendiendo, reanudando o terminando (puerta de fase de `rayd`, o
+ * `ConflictException` del plano de control). Suele bastar reintentar.
+ */
 export class SandboxStateError extends SandboxError {}
 
+/**
+ * `timeoutMs` o `maxLifetimeMs` por encima del tope de la plataforma
+ * (28 800 000 ms, 8 h contando running y suspendido); el SDK lo lanza antes
+ * de llamar a AWS.
+ */
 export class SandboxLifetimeError extends SandboxError {}
 
 /** `take()` sobre un `SandboxPool` que no fue arrancado o ya fue cerrado. */
@@ -165,6 +194,11 @@ export interface RateLimitErrorOptions extends SandboxErrorOptions {
   readonly retryAfter?: number | undefined;
 }
 
+/**
+ * Límite de tasa o de recursos: `RESOURCE_EXHAUSTED` del agente (procesos,
+ * PTYs, contextos o transferencias simultáneas) o `ThrottlingException` de
+ * AWS. `retryAfter` son los segundos que AWS sugiere esperar, si los dio.
+ */
 export class RateLimitError extends SandboxError {
   readonly retryAfter: number | undefined;
 
@@ -224,6 +258,11 @@ export class GitAuthError extends AuthenticationError {}
 /** `git push`/`pull` sin upstream configurado; el mensaje dice cómo fijarlo. */
 export class GitUpstreamError extends SandboxError {}
 
+/**
+ * Cuota de la cuenta agotada (`ServiceQuotaExceededException`): no describe
+ * un sandbox, por eso no es `SandboxError`. `quotaCode` es el código de
+ * Service Quotas, si AWS lo dio.
+ */
 export class QuotaExceededError extends Error {
   readonly quotaCode: string | undefined;
 
@@ -235,6 +274,11 @@ export class QuotaExceededError extends Error {
   }
 }
 
+/**
+ * AWS no tiene capacidad momentánea para el MicroVM
+ * (`InsufficientCapacityException`); se reintenta con backoff. No es
+ * `SandboxError`.
+ */
 export class CapacityError extends Error {
   constructor(message: string) {
     super(message);
@@ -319,10 +363,8 @@ export class IndexWriteError extends SandboxIndexError {}
 
 // ------------------------------------------------------------- M15 (Rayito 0.6)
 //
-// Cada clase la usa la función OpenSpec que la nombra en su docstring; hasta
-// entonces nada la lanza (foundations sólo la pre-crea como seam, §1(g) de la
-// arquitectura de M15). `code` es una cadena cerrada, nunca el mensaje de AWS
-// ni un identificador del usuario.
+// Cada clase la lanza la función opcional que nombra su TSDoc. `code` es una
+// cadena cerrada, nunca el mensaje de AWS ni un identificador del usuario.
 
 export interface MountErrorOptions extends SandboxErrorOptions {
   readonly code: string;
@@ -331,7 +373,8 @@ export interface MountErrorOptions extends SandboxErrorOptions {
 /**
  * Un montaje de `mounts` (m15-s3-mounts) falló o sigue sin asentarse. `code`
  * es uno de `network`, `iam_denied`, `not_found`, `not_allowed`,
- * `helper_missing`, `timeout`.
+ * `invalid_path`, `helper_missing`, `timeout` o `unknown` (una clase que el
+ * agente manda y este SDK todavía no conoce).
  */
 export class MountError extends SandboxError {
   readonly code: string;
@@ -345,7 +388,10 @@ export class MountError extends SandboxError {
 /** Error de un volumen EFS (m15-efs-volumes, experimental). */
 export class VolumeError extends SandboxError {}
 
-/** El `AccessPoint` del volumen no existe. */
+/**
+ * El volumen no existe: `VolumeStore.get`/`destroy` sobre un nombre sin
+ * `AccessPoint`, o el access point o el sistema de ficheros ya no están.
+ */
 export class VolumeNotFoundError extends VolumeError {}
 
 export interface VolumeMountErrorOptions extends SandboxErrorOptions {
@@ -369,7 +415,11 @@ export class VolumeMountError extends VolumeError {
   }
 }
 
-/** Una operación de contenido nombra una ruta fuera del volumen montado. */
+/**
+ * Reservado con el nombre de E2B: esta versión no lo lanza. Las operaciones
+ * de contenido de un volumen (`readFile`/`writeFile`/... del shim de E2B) no
+ * tienen plano de datos propio fuera de un sandbox y son `UnimplementedError`.
+ */
 export class VolumePathNotFoundError extends VolumeError {}
 
 export interface BuildErrorOptions extends SandboxErrorOptions {
@@ -431,14 +481,23 @@ export class StackError extends SandboxError {
   }
 }
 
-/** `LifecycleEvents` webhooks (m15-events-webhooks) falló. */
+/**
+ * `LifecycleEvents` (m15-events-webhooks) no pudo leer o escribir en su pila
+ * (webhooks, eventos o la clave), o `create({ events })` sin la pila
+ * desplegada; el mensaje nunca repite una URL ni un secreto.
+ */
 export class WebhookError extends SandboxError {}
 
 export interface GatewayErrorOptions extends SandboxErrorOptions {
   readonly code: string;
 }
 
-/** Un `SecretGateway` (m15-secrets-gateway) rechazó o no pudo enrutar una petición. */
+/**
+ * Reservada para `SecretGateway` (m15-secrets-gateway): esta versión del SDK
+ * no la lanza. Lo que la pasarela rechaza por petición llega al proceso del
+ * sandbox como respuesta HTTP (403, 429, 502, 504), y una configuración que
+ * `rayd` rechaza es `SandboxError`.
+ */
 export class GatewayError extends SandboxError {
   readonly code: string;
 
@@ -463,9 +522,10 @@ export interface AgentErrorOptions extends SandboxErrorOptions {
  * Una ejecución del agente de IA (`sbx.agent.run()`, `ai-agent-core`)
  * falló. `reason` es una lista cerrada: `model_error` (`detailCode` lleva la
  * clase del error del proveedor, `APIError`), `runtime_error`,
- * `runtime_missing`, `runtime_version_mismatch`, `protocol_error`,
- * `timeout`, `max_steps`, `token_budget`, `output_limit`, `aborted` o
- * `busy`. `usage` son los tokens consumidos hasta el fallo. El mensaje sale
+ * `runtime_missing`, `protocol_error`, `timeout`, `max_steps`,
+ * `token_budget` (en estos dos el SDK para el runtime), `aborted` o `busy`.
+ * `runtime_version_mismatch` y `output_limit` están reservados: hoy no se
+ * emiten. `usage` son los tokens consumidos hasta el fallo. El mensaje sale
  * de una tabla fija por `reason`: nunca lleva el texto del proveedor, el
  * prompt ni contenido del sandbox.
  */

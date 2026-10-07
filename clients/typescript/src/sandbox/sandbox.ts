@@ -2085,12 +2085,14 @@ export class Sandbox implements AsyncDisposable {
    * `kill()` de este sandbox. El nuevo tiene un tope fresco, otro `sandboxId`
    * y otro token salvo que el original fuera explícito (con `index` en el
    * `create()`, el nuevo escribe su propia fila en el mismo índice) y las
-   * mismas opciones 0.6 que acaban en `Configure` (`mounts`, `events`,
-   * `telemetry`, `gateways`): el sucesor las vuelve a planear y aplicar por el
-   * mismo camino que `create()`, con sus propios hechos (`events` deriva
-   * `k_sbx` del nuevo `sandboxId`, `mounts` espera otra vez a `mounted`,
-   * `telemetry` usa la imagen y la memoria del sucesor, cada cabecera de
-   * `gateways` se resuelve otra vez); kernels, procesos y
+   * mismas opciones que acaban en `Configure` (`mounts`, `volumes`, `events`,
+   * `telemetry`, `gateways`, `domain`; `size` ya va en el ARN de la imagen):
+   * el sucesor las vuelve a planear y aplicar por el mismo camino que
+   * `create()`, con sus propios hechos (`events` deriva `k_sbx` del nuevo
+   * `sandboxId`, `mounts` espera otra vez a `mounted`, `volumes` resuelve
+   * otra vez las IPs de los mount targets, `telemetry` usa la imagen y la
+   * memoria del sucesor, cada cabecera de `gateways` se resuelve otra vez);
+   * kernels, procesos y
    * PTY no sobreviven (ADR-007). Si el
    * `create()` falla, este sandbox sigue vivo y se relanza el mismo error
    * (con sus campos tipados: `code`, `state`...) con la `uri` del checkpoint

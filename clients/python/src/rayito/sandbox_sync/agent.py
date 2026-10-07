@@ -57,22 +57,32 @@ class Agent:
         `InvalidArgumentException` antes de cualquier llamada. El sandbox
         ya factura por segundo, con o sin agente.
     Coste aproximado: depende del modelo y de los pasos, no de Rayito.
-        Guía (us-east-1, 2026-09-30): 10 pasos de Haiku 4.5 regional (15k
-        tokens de entrada + 400 de salida por paso) ≈ $0,187 sin caché /
-        $0,083 con caché de prompts; 5 minutos de MicroVM de 2 GB ≈
-        $0,0119. El modelo cuesta 7-20x más que la VM (`cost.md`).
+        Guía con precios de lista (us-east-1, consultados 2026-10-06,
+        https://aws.amazon.com/bedrock/pricing y
+        https://aws.amazon.com/lambda/pricing/): 10 pasos de Haiku 4.5
+        regional (15k tokens de entrada + 400 de salida por paso) ≈ $0,187
+        sin caché / $0,083 con caché de prompts; 5 minutos de MicroVM de
+        2 GB ≈ $0,0119. El modelo cuesta entre 7x y 21x la VM (`cost.md`,
+        "Coste de un agente").
     IAM: ninguno adicional a lo que ya pide la pasarela (`SecretGateway`,
         `secretsmanager:GetSecretValue`).
     Cómo apagarla: no llames a `sbx.agent.run()`/`stream()`/`prepare()`.
     Ejemplo:
-        sbx = Sandbox.create(gateways={"bedrock": bedrock_gateway(...)})
-        result = sbx.agent.run(
-            "lista los ficheros de /home/user",
-            spec=AgentSpec(model=AgentModel(
-                provider="bedrock", id="claude-haiku-4-5",
-                gateway="bedrock", region="us-east-1",
-            )),
-        )
+        model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        with Sandbox.create(
+            "rayito-agent",
+            allow_internet_access=False,
+            gateways={"bedrock": bedrock_gateway(
+                "bedrock-key", region="us-east-1", models=[model_id],
+            )},
+        ) as sbx:
+            result = sbx.agent.run(
+                "lista los ficheros de /home/user",
+                spec=AgentSpec(model=AgentModel(
+                    provider="bedrock", id=model_id,
+                    gateway="bedrock", region="us-east-1",
+                )),
+            )
     """
 
     def __init__(self, sandbox: AgentSandbox) -> None:

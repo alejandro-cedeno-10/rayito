@@ -114,6 +114,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   `make image-publish-caps MOUNT_BUCKETS=<bucket>`), sin nombrar el bucket.
   El texto vive en `MOUNT_ERROR_HINTS`, igual en los dos SDKs
   (`testdata/s3-mounts/error-hints.json`).
+- **TSDoc alineado con la documentación** (barrido de docs de 0.8): los
+  errores sin TSDoc lo tienen, los códigos de `MountError`, `AgentError`
+  (`runtime_version_mismatch` y `output_limit`, reservados) y `GatewayError`
+  (hoy no se lanza) dicen lo que pasa de verdad, y `reincarnate()` lista
+  todo lo que reaplica.
 
 ### Security
 

@@ -406,8 +406,9 @@ class Sandbox:
         defecto) es el plazo lógico que impone `rayd` y `max_lifetime` la vida
         de plataforma; `lifecycle` decide si al vencer se termina o se pausa;
         `allow_internet_access=False` y `network` son la política de egress en
-        el guest (`rayito-base-caps`); `mcp`, `iam` y `volume_mounts` son
-        `UnimplementedError`. `headers`, `proxy` y `retries` llegan al canal
+        el guest (`rayito-base-caps`); `mcp` e `iam` son `UnimplementedError`,
+        y `volume_mounts` también salvo con un `E2B(volume_store=...)`
+        (experimental). `headers`, `proxy` y `retries` llegan al canal
         y al plano; `api_key`, `domain`, `debug`, `api_url`, `sandbox_url`,
         `validate_api_key`, `api_headers` y `secure=False` avisan con un
         `RayitoCompatWarning` cada uno. Sobre una imagen anterior a 0.3.0 el VM

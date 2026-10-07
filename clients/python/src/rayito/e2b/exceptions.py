@@ -6,8 +6,10 @@ lo que lanza el shim y un `except rayito.e2b.UnimplementedError` lo que
 lanza el SDK nativo. El shim la construye con `doc=COMPAT_DOC_PATH`.
 `NotEnoughSpaceException` y `ServiceBusyException` son alias de las clases
 que Rayito sí lanza (`DiskFullException`, `CapacityException`);
-`TemplateException` y `BuildException` existen para que los `except` de un
-programa E2B sigan compilando. `SecretException` y `SecretNotFoundException`
+`TemplateException` y `BuildException` son clases propias del shim que
+existen para que los `except` de un programa E2B sigan compilando, pero
+nunca se lanzan: `Template.build()` del shim lanza las nativas
+(`rayito.TemplateException`, `rayito.BuildException`). `SecretException` y `SecretNotFoundException`
 son las nativas (las lanza el `Secret`/`AsyncSecret` del shim); a diferencia
 de E2B, `SecretException` es un `SandboxException` y
 `SecretNotFoundException` también es la `NotFoundException` nativa.
@@ -52,14 +54,16 @@ ServiceBusyException = CapacityException
 
 
 class TemplateException(SandboxException):
-    """Nombre de E2B para un error de template. Rayito nunca la lanza: una
-    imagen inexistente es `NotFoundException` del plano de control."""
+    """Nombre de E2B para un error de template. Rayito nunca la lanza: un
+    nombre de template inválido en `Template.build()` es la nativa
+    `rayito.TemplateException`, y una imagen inexistente,
+    `NotFoundException` del plano de control."""
 
 
 class BuildException(Exception):
     """Nombre de E2B para un error de construcción de template. Rayito nunca
-    la lanza: no hay API de construcción de templates (`Template` es
-    `UnimplementedError`)."""
+    la lanza: un build fallido de `Template.build()` (también el del shim)
+    lanza la nativa `rayito.BuildException`, que es un `SandboxException`."""
 
 
 __all__ = [

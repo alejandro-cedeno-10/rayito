@@ -576,8 +576,8 @@ class Sandbox:
          `agent_ready` y `kernel_ready` (el kernel por defecto ya rotado).
 
          Sin `max_lifetime` ni `on_timeout`, `timeout` es la vida máxima
-         (running + suspended, tope 8 h) y no se puede cambiar después
-        . Con cualquiera de los dos (exige una imagen 0.3.0 o posterior),
+         (running + suspended, tope 8 h) y no se puede cambiar después.
+         Con cualquiera de los dos (exige una imagen 0.3.0 o posterior),
          `timeout` es el plazo lógico que impone `rayd` aunque el cliente
          muera, movible con `set_timeout()` y `connect(timeout=)`, y
          `max_lifetime` (`120..=28800`, por defecto `timeout + 60`) es
@@ -605,7 +605,9 @@ class Sandbox:
          suspendida del `SandboxPool` (ya arrancado) con la configuración de
          lanzamiento de su `PoolConfig`; cualquier otro kwarg de lanzamiento o
          de plano distinto de su valor por defecto es `InvalidArgumentException`.
-         Sólo `ready_timeout`, `request_timeout` y `reconnect_timeout` pasan.
+         Pasan los tres timeouts del handle (`ready_timeout`, `request_timeout`,
+         `reconnect_timeout`), `secrets`/`secret_cache`, `transfer`, `logger`
+         y `tracer_provider`; `gateways=` no: llama a `pool.take(gateways=...)`.
 
          `persist=S3Prefix(...)` (requiere `execution_role_arn`) enlaza el
          `HOME` del sandbox a `s3://bucket/prefix/name/`: con `name` dado, tras
@@ -2245,14 +2247,16 @@ class Sandbox:
         sandbox, y devuelve el nuevo. El nuevo tiene 8 h frescas, otro
         `sandbox_id`, otro access token (salvo que el original fuera explícito)
         y los mismos `metadata` (con `index=` en el `create()`, el nuevo escribe
-        su propia fila en el mismo índice) y las mismas opciones 0.6 que
-        acaban en `ConfigureSandbox` (`mounts=`, `events=`, `telemetry=`,
-        `gateways=`): el sucesor las vuelve a planear y aplicar en su único
+        su propia fila en el mismo índice) y las mismas opciones que
+        acaban en `ConfigureSandbox` (`mounts=`, `volumes=`, `events=`,
+        `telemetry=`, `gateways=`, `domain=`; `size=` ya va en el ARN de la
+        imagen): el sucesor las vuelve a planear y aplicar en su único
         `Configure` por el mismo camino que `create()`, con sus propios
         hechos — `events=` deriva `k_sbx` del nuevo `sandbox_id`, `mounts=`
-        espera otra vez a `mounted`, `telemetry=` usa la imagen y la memoria
-        del sucesor y cada cabecera de `gateways=` se resuelve otra vez,
-        nunca reenviando un valor ya leído; las
+        espera otra vez a `mounted`, `volumes=` resuelve otra vez las IPs de
+        los mount targets, `telemetry=` usa la imagen y la memoria del
+        sucesor y cada cabecera de `gateways=` se resuelve otra vez, nunca
+        reenviando un valor ya leído; las
         variables del kernel, los procesos y las PTY no sobreviven, sólo los
         ficheros del `HOME`. Si el
         `create()` falla, este sandbox sigue vivo y la excepción lleva una nota

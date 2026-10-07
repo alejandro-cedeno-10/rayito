@@ -58,10 +58,13 @@ export interface AgentPrepareOptions {
  *     `InvalidArgumentError` antes de cualquier llamada. El propio sandbox
  *     ya factura por segundo, con o sin agente.
  * Coste aproximado: depende del modelo y de los pasos, no de Rayito. Guía
- *     (us-east-1, 2026-09-30): 10 pasos de Haiku 4.5 regional (15k tokens
- *     de entrada + 400 de salida por paso) ≈ $0,187 sin caché / $0,083 con
- *     caché de prompts; 5 minutos de MicroVM de 2 GB ≈ $0,0119. El modelo
- *     cuesta 7–20× más que la VM (`docs/site/docs/cost.md`).
+ *     con precios de lista (us-east-1, consultados 2026-10-06,
+ *     https://aws.amazon.com/bedrock/pricing y
+ *     https://aws.amazon.com/lambda/pricing/): 10 pasos de Haiku 4.5
+ *     regional (15k tokens de entrada + 400 de salida por paso) ≈ $0,187
+ *     sin caché / $0,083 con caché de prompts; 5 minutos de MicroVM de 2 GB
+ *     ≈ $0,0119. El modelo cuesta entre 7× y 21× la VM
+ *     (`docs/site/docs/cost.md`, "Coste de un agente").
  * IAM: ninguno adicional a lo que ya pide la pasarela (`SecretGateway`,
  *     `secretsmanager:GetSecretValue`).
  * Cómo apagarla: no llames a `sbx.agent.run()`/`stream()`/`prepare()`.
@@ -69,11 +72,14 @@ export interface AgentPrepareOptions {
  * ```ts
  * import { Sandbox, AgentSpec, AgentModel, bedrockGateway } from "rayito";
  *
- * const sbx = await Sandbox.create({
- *   gateways: { bedrock: bedrockGateway({ secret: "bedrock-key", region: "us-east-1", models: ["claude-haiku-4-5"] }) },
+ * const modelId = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+ * await using sbx = await Sandbox.create({
+ *   template: "rayito-agent",
+ *   allowInternetAccess: false,
+ *   gateways: { bedrock: bedrockGateway("bedrock-key", { region: "us-east-1", models: [modelId] }) },
  * });
  * const result = await sbx.agent.run("lista los ficheros de /home/user", {
- *   spec: new AgentSpec({ model: new AgentModel({ provider: "bedrock", id: "claude-haiku-4-5", gateway: "bedrock", region: "us-east-1" }) }),
+ *   spec: new AgentSpec({ model: new AgentModel({ provider: "bedrock", id: modelId, gateway: "bedrock", region: "us-east-1" }) }),
  * });
  * ```
  */

@@ -1,4 +1,8 @@
 [
   { "name": "class VolumeStore", "pattern": "^(export )?declare class VolumeStore\\b" },
-  { "name": "class EfsVolumes", "pattern": "^(export )?declare class EfsVolumes\\b" }
+  { "name": "class EfsVolumes", "pattern": "^(export )?declare class EfsVolumes\\b" },
+  {
+    "name": "opción volumes",
+    "pattern": "^\\s*readonly volumes\\?: Readonly<Record<string, EfsVolume>>"
+  }
 ]

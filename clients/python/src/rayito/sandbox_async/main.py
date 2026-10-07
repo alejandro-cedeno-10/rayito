@@ -1862,9 +1862,9 @@ class AsyncSandbox:
         persist_timeout: float = DEFAULT_PERSIST_TIMEOUT_SECONDS,
     ) -> Self:
         """Misma semántica que `Sandbox.reincarnate`: checkpoint → `create(persist=)`
-        con las mismas opciones (restaura, y reaplica `mounts=`/`events=`/
-        `telemetry=`/`gateways=` en el `Configure` del sucesor) → `kill()` de
-        este sandbox."""
+        con las mismas opciones (restaura, y reaplica `mounts=`/`volumes=`/
+        `events=`/`telemetry=`/`gateways=`/`domain=` en el `Configure` del
+        sucesor; `size=` ya va en el ARN) → `kill()` de este sandbox."""
         options = self._launch_options
         if options is None:
             raise reincarnate_requires_create_error()

@@ -61,7 +61,7 @@ from rayito.sandbox_sync.main import Sandbox
 
 sandbox_app = typer.Typer(
     no_args_is_help=True,
-    help="MicroVMs: list, info, kill, logs, create, connect, exec, metrics.",
+    help="MicroVMs: list, info, kill, logs, create, connect, proxy, exec, metrics.",
 )
 
 LIST_COLUMNS = ("sandbox_id", "state", "template", "template_version", "started_at", "age")
@@ -554,8 +554,9 @@ def proxy_command(
         ),
     ] = _proxy.DEFAULT_MAX_CONNECTIONS,
 ) -> None:
-    """Expone un puerto del guest en `http://<bind>:<local-port>` sin coste
-    de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos;
+    """Expone un puerto del guest en `http://<bind>:<local-port>`.
+
+    Sin coste de AWS más allá de `GetMicrovm` + `CreateMicrovmAuthToken` (gratuitos;
     IAM: `lambda:GetMicrovm` y `lambda:CreateMicrovmAuthToken`, ya en
     `infra/iam.yaml`). Un sandbox `SUSPENDED` con auto-resume se despierta
     con la primera petición (eso sí factura cómputo, más la lectura de

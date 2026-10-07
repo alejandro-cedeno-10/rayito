@@ -39,7 +39,7 @@ from rayito.cli._publish import (
 from rayito.cli._session import Clients, clients_of, json_mode
 
 image_app = typer.Typer(
-    no_args_is_help=True, help="Imágenes de MicroVM: publish, list, prune, zip."
+    no_args_is_help=True, help="Imágenes de MicroVM: publish, list, sizes, prune, zip."
 )
 
 BUCKET_ENV_VAR = "RAYITO_BUCKET"
@@ -244,14 +244,14 @@ def publish_command(
     ] = [],  # noqa: B006
     with_efs: Annotated[bool, typer.Option("--with-efs", help=WITH_EFS_HELP)] = False,
 ) -> None:
-    """Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
+    """Publica la imagen: sube el zip y espera a que la versión sea lanzable.
+
+    Sube el zip a S3 (clave por sha256), crea o actualiza la imagen y
     espera al gate de tres estados; reutiliza una versión igual. Con
     `--sizes` publica, además, una imagen por tamaño desde el mismo
-    artefacto, informando todo en un único bloque de salida (m15-sizes-
-    catalog, `publish_with_sizes`): un documento JSON o un
-    `RAYITO_TEMPLATE=` del baseline seguido de un `RAYITO_TEMPLATE_<SIZE>=`
-    por tamaño, nunca uno por imagen. Sin `--sizes`, sólo el baseline, como
-    antes de sizes-catalog."""
+    artefacto y lo informa todo en un único bloque de salida: un documento
+    JSON, o un `RAYITO_TEMPLATE=` del baseline seguido de un
+    `RAYITO_TEMPLATE_<SIZE>=` por tamaño. Sin `--sizes`, sólo el baseline."""
     size_names = validate_sizes(sizes)
     validate_baseline_memory_mib(memory_mib, size_names)
     environment_variables = parse_environment_assignments(env)
@@ -391,22 +391,16 @@ def sizes_command(
         ),
     ] = None,
 ) -> None:
-    """Por cada tamaño del catálogo cerrado, qué imagen de esta variante ya
-    publicó `rayito image publish --sizes` (o si ninguna): siempre una
-    `list-microvm-images` filtrada por el nombre base y, sólo si hay al
-    menos un tamaño adicional publicado, una `GetMicrovmImageVersion` (sin
-    cuota propia) por cada imagen publicada para `sameArtifact` (ver
-    `active_code_artifact`) — con sólo el baseline publicado, ninguna
-    llamada adicional, igual que antes de `sameArtifact`. Nunca construye,
-    publica ni lanza nada. `sameArtifact` compara el `codeArtifact.uri` de
-    la versión activa de cada tamaño contra el del baseline: `False`
-    detecta un tamaño publicado desde un zip distinto al baseline (la
-    deriva que un parity check de `agent_version` buscaría lanzando N
-    sandboxes, aquí gratis y sin lanzar ninguno); `None` cuando el tamaño o
-    el baseline no tienen versión activa que comparar. `--image-name` sigue
-    la misma precedencia que en `publish` (aceptación en AWS real de PR
-    #76: sin él, una familia publicada con `publish --image-name X --sizes`
-    no se podía listar)."""
+    """Qué tamaño del catálogo cerrado ya está publicado para esta variante.
+
+    Por cada tamaño (`512mb` a `8gb`), qué imagen publicó `rayito image
+    publish --sizes` o si ninguna. Hace una `list-microvm-images` filtrada por
+    el nombre base y, sólo si hay algún tamaño adicional publicado, una
+    `GetMicrovmImageVersion` (gratuita) por imagen publicada. Nunca
+    construye, publica ni lanza nada. `sameArtifact` compara el artefacto
+    de la versión activa de cada tamaño con el del baseline: `false` delata
+    un tamaño publicado desde un zip distinto. `--image-name` lista la
+    familia publicada con `rayito image publish --image-name X --sizes`."""
     base_name = image_name or default_image_name(validate_variant(variant))
     clients = clients_of(ctx)
     published = {image["name"]: image for image in listed_images(clients, base_name)}

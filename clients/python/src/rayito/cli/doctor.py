@@ -164,9 +164,11 @@ def doctor(
         ),
     ] = None,
 ) -> None:
-    """Diagnostica la cuenta: credenciales, imágenes gestionadas, cuotas,
-    IAM, bucket, gate de la imagen, MicroVMs vivos, token, agente y
-    compatibilidad SDK ↔ rayd ↔ imagen; con --efs-vpc-id, además, si esa
+    """Diagnostica la cuenta antes del primer `Sandbox.create()`.
+
+    Diez comprobaciones: credenciales, imágenes gestionadas, cuotas, IAM,
+    bucket, gate de la imagen, MicroVMs vivos, token, agente y
+    compatibilidad SDK ↔ rayd ↔ imagen. Con --efs-vpc-id, además, si esa
     VPC existente sirve para volúmenes EFS (sin crear nada)."""
     clients = clients_of(ctx)
     context = DoctorContext(

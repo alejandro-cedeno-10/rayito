@@ -55,8 +55,12 @@ def _stacks(ctx: typer.Context) -> OptionalStacks:
 @domain_app.command("deploy")
 def deploy_command(
     ctx: typer.Context,
-    public_domain: Annotated[str, typer.Option("--public-domain")],
-    certificate_arn: Annotated[str, typer.Option("--certificate-arn")],
+    public_domain: Annotated[
+        str, typer.Option("--public-domain", help="Dominio público (p. ej. sbx.example.com).")
+    ],
+    certificate_arn: Annotated[
+        str, typer.Option("--certificate-arn", help="Certificado ACM, en us-east-1.")
+    ],
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
     alternate_domain_names: Annotated[
         list[str] | None,
@@ -70,6 +74,7 @@ def deploy_command(
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Despliega (o actualiza) la pila custom-domain; imprime su coste y el CNAME."""
     domain = _domain(ctx, public_domain, stack_name)
     if not json_mode(ctx):
         component = component_by_name(STACK_COMPONENT)
@@ -100,6 +105,7 @@ def status_command(
     ctx: typer.Context,
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
 ) -> None:
+    """Estado y salidas de la pila custom-domain (sólo lectura)."""
     status = _stacks(ctx).status(STACK_COMPONENT, stack_name=stack_name)
     if json_mode(ctx):
         emit_json(
@@ -122,6 +128,7 @@ def destroy_command(
     stack_name: Annotated[str | None, typer.Option("--stack-name")] = None,
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
+    """Borra la pila custom-domain; dice antes qué se conserva."""
     component = component_by_name(STACK_COMPONENT)
     assert component is not None  # registrado por foundations, siempre presente
     if not json_mode(ctx):

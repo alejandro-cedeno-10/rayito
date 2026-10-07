@@ -400,7 +400,8 @@ export interface AgentSpecOptions {
  * `smallModel` es por defecto `model.id`; `instructions` va a un
  * `AGENTS.md` propio, nunca al del directorio de trabajo; `rawConfig` se
  * fusiona al final y no puede tocar `RESERVED_CONFIG_KEYS`;
- * `runtimeVersion` se compara con el manifiesto de la plantilla.
+ * `runtimeVersion` sólo se valida como texto: hoy no se compara con el
+ * manifiesto de la plantilla y nunca produce `runtime_version_mismatch`.
  */
 export class AgentSpec {
   readonly model: AgentModel;
