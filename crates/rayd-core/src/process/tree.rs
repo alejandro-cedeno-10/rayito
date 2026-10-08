@@ -87,7 +87,7 @@ fn same_process(entry: &ProcEntry, member: &ProcEntry) -> bool {
 /// if `table` still holds it as itself, so the children of a recycled pid
 /// are never taken for its descendants.
 #[must_use]
-pub fn descendants(table: &[ProcEntry], roots: &[ProcEntry]) -> Vec<ProcEntry> {
+fn descendants(table: &[ProcEntry], roots: &[ProcEntry]) -> Vec<ProcEntry> {
     let mut seen: HashSet<i32> = roots.iter().map(|root| root.pid).collect();
     let mut frontier: Vec<i32> = roots
         .iter()
@@ -125,11 +125,6 @@ impl ProcessTree {
             root,
             members: Vec::new(),
         }
-    }
-
-    #[must_use]
-    pub fn root(&self) -> ProcEntry {
-        self.root
     }
 
     /// Delivers `signal` to every member reachable now (the known ones

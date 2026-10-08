@@ -270,8 +270,9 @@ class Commands:
         return [process_info_from_proto(info) for info in response.processes]
 
     def kill(self, pid: int, *, request_timeout: float | None = None) -> bool:
-        """SIGKILL al grupo del proceso (o de la PTY). False si el pid no
-        existe o ya terminó."""
+        """SIGKILL al grupo del proceso (o de la PTY) y, si se lanzó con
+        `kill_tree=True`, antes a todo su árbol. False si el pid no existe o
+        ya terminó."""
         request = process_pb2.SendSignalRequest(pid=validate_pid(pid), signal=SIGKILL)
         try:
             self._sandbox._process_call(

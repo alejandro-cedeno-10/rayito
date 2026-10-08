@@ -35,10 +35,7 @@ pub use registry::{
 pub use ring::OutputRing;
 pub use spec::{ProcessConfigInfo, SpawnInput, SpawnSpec, plan_spawn, sandbox_limits};
 pub use timeout::{EndReason, TimeoutPlan, TimeoutStep, WaitOutcome, end_from_wait};
-pub use tree::{
-    KillScope, MAX_FREEZE_PASSES, MemberSignaller, ProcessTree, SIGSTOP, TREE_SETTLE_POLL,
-    descendants,
-};
+pub use tree::{KillScope, MemberSignaller, ProcessTree, TREE_SETTLE_POLL};
 
 /// Highest POSIX signal number `SendSignal` accepts (Linux real-time range).
 pub const MAX_SIGNAL: i32 = 64;

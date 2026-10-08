@@ -752,7 +752,8 @@ export class Commands {
     return response.processes.map(processInfoFromProto);
   }
 
-  /** `SendSignal(pid, SIGKILL)`; `false` cuando el pid no existe. */
+  /** `SendSignal(pid, SIGKILL)`: al grupo y, si se lanzó con `killTree`, antes a todo
+   * su árbol; `false` cuando el pid no existe. */
   async kill(pid: number, options: RequestOptions = {}): Promise<boolean> {
     const request = create(SendSignalRequestSchema, { pid: validatePid(pid), signal: SIGKILL });
     try {
