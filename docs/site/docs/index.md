@@ -16,17 +16,17 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.9"
-    Una release de limpieza: otro proceso puede usar el agente de un
-    sandbox con `Sandbox.connect()` (recupera `sbx.gateways`), el SDK de
-    Python honra `AWS_REGION`, y se retiran la opción D del arranque rápido
-    del agente y las excepciones de la pasarela que nada lanzaba. Tiene
-    cambios que rompen, con su migración. 0.9.1 corrige
-    `Sandbox.create()` con un `timeout` corto y sin `idle`.
-    [Novedades de 0.9.1](novedades/0.9.1.md) ·
-    [0.9.0](novedades/0.9.0.md) ·
-    [0.8.0](novedades/0.8.0.md) ·
-    [0.7.x](novedades/0.7.1.md)
+!!! tip "Nuevo en 0.10"
+    El agente del sandbox puede usar **más proveedores de modelo**: OpenAI,
+    Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI o tu
+    propio proxy de LiteLLM, cada uno con un preset listo. Además, el
+    timeout y `abort()` del agente **paran todo lo que lanzó**, y
+    deepagents funciona con modelos que no son de Bedrock y cuenta sus
+    tokens. Sin cambios que rompan.
+    [Novedades de 0.10.0](novedades/0.10.0.md) ·
+    [Proveedores del agente](guias/agente-proveedores.md) ·
+    [0.9.1](novedades/0.9.1.md) ·
+    [0.9.0](novedades/0.9.0.md)
 
 ## Empieza en tres pasos
 

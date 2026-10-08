@@ -182,6 +182,21 @@ tiene que estar en el proveedor: presupuesto por proyecto, límite de crédito
 por clave o presupuesto de la clave virtual de LiteLLM
 ([Límites del lado del proveedor](guias/agente-proveedores.md#limites-del-lado-del-proveedor)).
 
+Lo que mantiene acotadas las dos facturas desde dentro del SDK:
+
+- **Modelo:** `AgentLimits.max_total_tokens` / `maxTotalTokens` corta la
+  ejecución al pasar el presupuesto de tokens. Desde 0.10.0 funciona
+  también con deepagents y `provider="openai-compatible"`; antes esos pasos
+  llegaban con 0 tokens y el límite no cortaba nunca. Sólo cuenta lo que
+  pide el agente, no lo que otro código del sandbox pida por la pasarela:
+  para eso está el tope del proveedor y `rate_per_minute`.
+- **VM:** el timeout del agente (`timeout_seconds` / `timeoutMs`) y
+  `abort()` paran desde 0.10.0 todo lo que lanzó el agente, así que un
+  servidor o un `sleep` olvidado no deja el agente ocupado
+  ([Qué garantizan el timeout y `abort()`](guias/agente-en-el-sandbox.md#que-garantizan-el-timeout-y-abort)).
+  El sandbox sigue facturando mientras esté `RUNNING`: ciérralo o deja que
+  venza su `timeout`.
+
 ### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
 
 | Modelo | Perfil | Entrada /1M tok | Salida /1M tok | Escritura de caché (5 min) | Lectura de caché |
