@@ -16,7 +16,7 @@ const started = Date.now();
 await using sbx = await Sandbox.create({
   template,
   timeoutMs: 10 * 60_000,
-  metadata: { pattern: "lambda-microvms-e2b-sandbox" },
+  metadata: { pattern: "lambda-microvms-sandbox-sdk" },
 });
 console.log(`sandbox ${sbx.sandboxId} ready in ${Date.now() - started} ms`);
 

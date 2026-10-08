@@ -1,8 +1,8 @@
 {
-  "name": "lambda-microvms-e2b-sandbox-client",
+  "name": "lambda-microvms-sandbox-sdk-client",
   "version": "1.0.0",
   "private": true,
-  "description": "Client for the AWS Lambda MicroVMs E2B-compatible sandbox pattern (Rayito SDK)",
+  "description": "Client for the AWS Lambda MicroVMs sandbox SDK pattern (Rayito SDK)",
   "license": "MIT-0",
   "type": "module",
   "engines": {
@@ -10,7 +10,6 @@
   },
   "scripts": {
     "sandbox": "tsx sandbox.ts",
-    "e2b": "tsx e2b-swap.ts",
     "build-agent-image": "tsx build-agent-image.ts",
     "agent": "tsx agent.ts",
     "typecheck": "tsc --noEmit"
