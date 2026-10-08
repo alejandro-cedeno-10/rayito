@@ -1,6 +1,6 @@
 # Spike: OpenCode y deepagents con los nuevos proveedores
 
-2026-10-07, cambio `agent-provider-runtimes` (fase 1 de `ai-agent-providers`:
+2026-10-07, cambio `ai-agent-providers`, tareas §6 (fase 1:
 presets de clave de API estática). Objetivo: comprobar, antes de fijar los
 adaptadores, que el binario de OpenCode fijado (`agentOpencodeVersion` de
 `limits.json`, 1.18.34) y los paquetes de LangChain del venv de deepagents

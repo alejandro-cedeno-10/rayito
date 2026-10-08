@@ -12,6 +12,8 @@ import type { ModelProvider } from "../../src/agent/domain.js";
 import {
   OPENCODE_CONFIG_PATH,
   OPENCODE_INSTRUCTIONS_PATH,
+  OPENCODE_NATIVE_BASE_PATHS,
+  OPENCODE_NATIVE_NPM,
   OpenCodeRuntime,
   type OpenCodeState,
 } from "../../src/agent/opencode.js";
@@ -259,4 +261,10 @@ describe("OpenCode events", () => {
     expect(runtime.templateSteps()).toEqual([]);
     expect(resolveRuntime("opencode")).toBeInstanceOf(OpenCodeRuntime);
   });
+});
+
+test("los mapas de proveedores nativos comparten claves", () => {
+  expect(Object.keys(OPENCODE_NATIVE_NPM).sort()).toEqual(
+    Object.keys(OPENCODE_NATIVE_BASE_PATHS).sort(),
+  );
 });

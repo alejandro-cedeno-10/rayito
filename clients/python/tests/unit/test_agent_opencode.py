@@ -23,7 +23,10 @@ from rayito import (
 )
 from rayito._agent._opencode import (
     OPENCODE_CONFIG_PATH,
+    OPENCODE_FLAG_ENVS,
     OPENCODE_INSTRUCTIONS_PATH,
+    OPENCODE_NATIVE_BASE_PATHS,
+    OPENCODE_NATIVE_NPM,
     OpenCodeRuntime,
     OpenCodeState,
 )
@@ -268,3 +271,13 @@ def test_warmup_steps() -> None:
 
 def test_registry_resolves_opencode() -> None:
     assert isinstance(resolve_runtime("opencode"), OpenCodeRuntime)
+
+
+def test_native_provider_maps_share_keys() -> None:
+    assert set(OPENCODE_NATIVE_BASE_PATHS) == set(OPENCODE_NATIVE_NPM)
+
+
+def test_dev_dockerfile_env_matches_flag_envs() -> None:
+    dockerfile = (TESTDATA.parents[1] / "dev" / "local" / "agent" / "Dockerfile").read_text()
+    for name, value in OPENCODE_FLAG_ENVS.items():
+        assert f"{name}={value}" in dockerfile

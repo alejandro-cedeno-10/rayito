@@ -117,7 +117,7 @@ documenta que el guest ve más memoria que la configurada).
 |---|---|---|---|
 | OpenCode | MIT | versión + sha256 del asset de la release | `scripts/check_pins.py` contra `limits.json`/`agentRuntimes` |
 | ripgrep | MIT/Unlicense | versión + sha256 | idem |
-| deepagents + `langchain-aws` (y `langchain-openai` con el runtime OpenAI-compatible) | MIT | `requirements-deepagents.txt` con `--hash`, `pip install --require-hashes --no-deps --only-binary=:all:` | `pip check` en el propio `run_cmd`; `pip-audit` en CI |
+| deepagents + `langchain-aws`, `langchain-anthropic`, `langchain-openai` y `langchain-google-genai` | MIT | `requirements-deepagents.txt` con `--hash`, `pip install --require-hashes --no-deps --only-binary=:all:` | `pip check` en el propio `run_cmd`; el smoke test del build importa los cuatro paquetes; `pip-audit` en CI |
 
 Todo queda `root:root` y `0755`: el usuario del sandbox (uid 1000) no puede
 reemplazar los binarios ni el venv ([T30](../security.md#agente-de-codigo-dentro-del-sandbox)).
@@ -125,7 +125,8 @@ Las variables `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_DISABLE_MODELS_FETCH`,
 `OPENCODE_DISABLE_LSP_DOWNLOAD`, `OPENCODE_DISABLE_DEFAULT_PLUGINS`,
 `OPENCODE_PURE` y `OPENCODE_DISABLE_CLAUDE_CODE` apagan todo lo que OpenCode
 intentaría bajar de Internet al arrancar y evitan que lea un `.claude/` del
-workdir. El manifiesto horneado en `/opt/agents/rayito-agent.json`
+workdir. `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0` impide que el proveedor `openai`
+abra un WebSocket hacia la Responses API: la pasarela sólo reenvía HTTP. El manifiesto horneado en `/opt/agents/rayito-agent.json`
 (`rayito.agent-template/1`) lista versiones, sha256 y las rutas que el
 prefetch calienta. `sbx.agent` no lo lee: `AgentSpec.runtime_version` no se
 compara con él.

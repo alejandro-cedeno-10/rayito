@@ -2599,7 +2599,7 @@ limitar el modelo y el tope de gasto es el del proveedor (SECURITY.md
 T29). Los valores viven en `testdata/agent/provider-catalogue.json`, que
 leen los tests de los dos SDKs. deepagents con `azure` usa
 `AzureChatOpenAI` con la Responses API, que manda la clave en `api-key` y
-no en `Authorization` (`agent-provider-runtimes`). Las
+no en `Authorization` (`ai-agent-providers`, tareas §6). Las
 suscripciones de consumo (plan de ChatGPT, Claude Pro/Max, Copilot,
 SuperGrok) se rechazan o aplazan; los motivos están en
 `docs/site/docs/guias/agente-proveedores.md`. Sin cambio en `rayd` ni en el
