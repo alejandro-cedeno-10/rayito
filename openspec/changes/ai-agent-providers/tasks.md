@@ -40,3 +40,10 @@
 
 - [x] 7.1 `ChatOpenAI(stream_usage=True)` for `openai-compatible` in the deepagents runner (TypeScript copy, `deepagents-models.json`, template vectors)
 - [x] 7.2 Live check with the egress closed: Bedrock `/openai/v1`, `bedrock-mantle` (Chat Completions and Responses) and LiteLLM, OpenCode and deepagents
+
+## 8. Local integration verification (agent-provider-local-e2e)
+
+- [x] 8.1 Fake HTTPS upstream in the Docker + Floci harness (`dev/local/providers/`): one-shot CA trusted only by `rayd`, aliases for the nine catalogue hosts, minimal Chat Completions, Responses and Gemini streaming shapes, request log for the tests
+- [x] 8.2 Local e2e in both SDKs: every preset with OpenCode and deepagents, egress closed; the real key header reaches the upstream, the placeholder never leaves, a non-allowed path gets 403 and the agent completes a turn; wired into the `local-e2e` workflow
+- [x] 8.3 Optional real-API smoke test, skipped unless `RAYITO_SMOKE_<PRESET>_SECRET` is set, capped with `AgentLimits(max_total_tokens=...)` below 0.01 USD per provider
+- [x] 8.4 Fix found by 8.2: deepagents venv ships `socksio` so httpx accepts the sandbox's `ALL_PROXY=socks5h://...`

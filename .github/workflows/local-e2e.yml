@@ -3,7 +3,10 @@ name: local-e2e
 # El subconjunto `local` de los e2e de Python y TypeScript contra el entorno
 # Docker + Floci de dev/local (docs/site/docs/guias/probar-en-local.md):
 # `make local-up` construye `rayd` dentro de Docker, la imagen de producto
-# como guest y el runner, y `make local-e2e` corre los tests. Sin AWS ni
+# como guest y el runner, y `make local-e2e` corre los tests; después
+# `make local-providers-up` cambia el guest por la variante de agentes con el
+# upstream falso de los proveedores y `make local-providers-e2e` corre los
+# suyos. Sin AWS ni
 # credenciales ni secretos del repositorio: no hay `id-token` ni `environment`.
 # Corre en arm64 porque la base de la imagen de producto solo existe para
 # arm64. En los PR solo cuando cambia algo del entorno local o del propio
@@ -18,6 +21,9 @@ on:
       - "clients/python/tests/local/**"
       - "clients/typescript/tests/local/**"
       - "clients/typescript/vitest.config.ts"
+      - "clients/python/src/rayito/_agent/_assets/**"
+      - "clients/python/src/rayito/_agent/_runner/**"
+      - "testdata/agent/provider-catalogue.json"
       - "image/Dockerfile"
       - "crates/**"
       - "proto/**"
@@ -53,9 +59,15 @@ jobs:
         run: make local-up LOCAL_CARGO_JOBS=4
       - name: make local-e2e
         run: make local-e2e
+      # Los nueve presets de proveedor con OpenCode y deepagents contra el
+      # upstream HTTPS falso de dev/local/providers: sin claves ni Internet.
+      - name: make local-providers-up
+        run: make local-providers-up
+      - name: make local-providers-e2e
+        run: make local-providers-e2e
       - name: compose logs (sin contenido de usuario; solo ids, estados y códigos)
         if: failure()
-        run: docker compose -f dev/local/compose.yaml logs --no-color --tail 400
+        run: docker compose -f dev/local/compose.yaml -f dev/local/agent/compose.yaml -f dev/local/providers/compose.yaml logs --no-color --tail 400
       - name: make local-down
         if: always()
         run: make local-down

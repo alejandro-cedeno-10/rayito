@@ -1,0 +1,77 @@
+# Sobrecarga del entorno local para los proveedores de modelo del agente
+# (tests `local` de los presets de pasarela, docs/site/docs/guias/probar-en-local.md).
+# Va encima del compose base y del de agentes (`make local-providers-up`):
+#
+#   fake-upstream  un servidor HTTPS falso (providers/fake_upstream.py) que
+#                  contesta como OpenAI, Gemini, Azure OpenAI, OpenRouter,
+#                  Groq, Mistral, DeepSeek, xAI y LiteLLM. Vive en la red
+#                  interna `providers` con un alias por cada host de
+#                  testdata/agent/provider-catalogue.json, así el DNS del
+#                  runner (y del guest, que comparte su red) los resuelve a él
+#                  y no a Internet. Sin puertos en el host.
+#   guest          confía en la CA de un solo uso del falso por SSL_CERT_FILE
+#                  (el almacén del sistema más esa CA); `rayd` es el único que
+#                  llega al upstream, por la pasarela de secretos.
+#
+# Ninguna clave real entra: los tests guardan en el Secrets Manager de Floci
+# un valor aleatorio y comprueban que es ése el que llega al upstream falso.
+services:
+  fake-upstream:
+    image: rayito-local-runner:dev
+    # Root sólo dentro del contenedor, sin capabilities salvo la del 443:
+    # escribe la CA en los volúmenes con nombre (que nacen de root).
+    user: "0:0"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 128
+    command: ["python3", "/src/dev/local/providers/fake_upstream.py"]
+    volumes:
+      - ../..:/src:ro
+      - provider-tls:/tls
+      - provider-ca:/ca
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      providers:
+        # Los hosts de `upstream` del catálogo; si añades un preset, añade
+        # aquí su host (el test local falla si alguno no resuelve aquí).
+        aliases:
+          - api.openai.com
+          - generativelanguage.googleapis.com
+          - mi-recurso-01.openai.azure.com
+          - openrouter.ai
+          - api.groq.com
+          - api.mistral.ai
+          - api.deepseek.com
+          - api.x.ai
+          - litellm.example.com
+
+  runner:
+    environment:
+      # Dónde leen los tests lo que recibió el upstream falso.
+      RAYITO_LOCAL_FAKE_UPSTREAM_ADMIN: http://fake-upstream:8081
+    networks: [aws, egress, providers]
+
+  guest:
+    depends_on:
+      fake-upstream:
+        condition: service_healthy
+    environment:
+      SSL_CERT_FILE: /opt/rayito-local-ca/bundle.pem
+    volumes:
+      - provider-ca:/opt/rayito-local-ca:ro
+
+networks:
+  providers:
+    internal: true
+
+volumes:
+  provider-tls: {}
+  provider-ca: {}
