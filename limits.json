@@ -114,5 +114,5 @@
   "defaultWarmupStepTimeoutSeconds": 120,
   "agentPrefetchRestoreJumpSeconds": 30,
   "agentPrefetchIntervalSeconds": 2,
-  "agentDeepagentsRequirementsSha256": "edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa"
+  "agentDeepagentsRequirementsSha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
 }

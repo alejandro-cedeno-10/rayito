@@ -68,6 +68,13 @@ def test_requirements_package_data_matches_pinned_sha() -> None:
     assert b"--hash=sha256:" in data
 
 
+def test_requirements_include_the_socks_extra_of_httpx() -> None:
+    """`rayd` exporta `ALL_PROXY=socks5h://...` en el sandbox: sin
+    `socksio`, httpx no crea el cliente de ningún modelo que no sea de
+    Bedrock (ImportError), aunque llame a la pasarela en loopback."""
+    assert b"\nsocksio==" in _template.deepagents_requirements()
+
+
 def test_manifest_schema_and_prefetch_paths() -> None:
     manifest = AgentTemplate().manifest()
     assert manifest["schema"] == AGENT_TEMPLATE_MANIFEST_SCHEMA
